@@ -1,10 +1,10 @@
-To make **Apex (`.apx`)** a first-class citizen in code editors, we need a **Syntax Highlighting Specification**. This defines how an IDE like VS Code or Sublime Text identifies "parts of speech" in your code to apply colors.
+To make **Quirk (`.qk`)** a first-class citizen in code editors, we need a **Syntax Highlighting Specification**. This defines how an IDE like VS Code or Sublime Text identifies "parts of speech" in your code to apply colors.
 
-Because Apex is designed for **scannability**, the colors should emphasize memory management (`ref`, `move`, `del`) and structural definitions (`struct`, `extend`, `define`).
+Because Quirk is designed for **scannability**, the colors should emphasize memory management (`ref`, `move`, `del`) and structural definitions (`struct`, `extend`, `define`).
 
 ---
 
-### Apex Syntax Highlighting Guide
+### Quirk Syntax Highlighting Guide
 
 Here is the "TextMate" scope mapping for your language. This is the logic used to create themes.
 
@@ -24,7 +24,7 @@ Here is the "TextMate" scope mapping for your language. This is the logic used t
 When you open a `.apx` file, the syntax highlighting helps the developer see the "memory flow" at a glance.
 
 ```rust
-// Apex Example: Combat Logic
+// Quirk Example: Combat Logic
 use system.math
 
 struct Warrior {
@@ -55,13 +55,13 @@ define main() {
 
 ### Creating the VS Code Extension
 
-To actually get these colors in VS Code, you would create a `package.json` and a `syntaxes/apex.tmLanguage.json`.
+To actually get these colors in VS Code, you would create a `package.json` and a `syntaxes/quirk.tmLanguage.json`.
 
 **The Regex for your `:=` operator would look like this:**
 
 ```json
 {
-  "name": "keyword.operator.assignment.apex",
+  "name": "keyword.operator.assignment.quirk",
   "match": ":="
 }
 
@@ -71,7 +71,7 @@ To actually get these colors in VS Code, you would create a `package.json` and a
 
 ```json
 {
-  "name": "keyword.declaration.function.apex",
+  "name": "keyword.declaration.function.quirk",
   "match": "\\b(define)\\b"
 }
 
@@ -87,4 +87,4 @@ Since you want it to be **fast and performant**, I recommend the following tech 
 
 1. **Frontend:** Written in **C++** or **Rust** (for speed).
 2. **Parser:** Use a tool like **tree-sitter** (this is what GitHub and Neovim use to understand code structure).
-3. **Backend:** **LLVM**. You feed your Apex code into LLVM, and it handles the complex machine-code optimization for Intel, AMD, and Apple Silicon.
+3. **Backend:** **LLVM**. You feed your Quirk code into LLVM, and it handles the complex machine-code optimization for Intel, AMD, and Apple Silicon.

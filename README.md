@@ -1,4 +1,4 @@
-# The Apex (.apx) Formal Specification
+# The Quirk (.qk) Formal Specification
 
 **Version:** 1.0
 
@@ -29,7 +29,7 @@ The following are reserved words and cannot be used as identifiers:
 
 ## 2. Type System
 
-Apex is **statically typed**. Types must be known at compile time.
+Quirk is **statically typed**. Types must be known at compile time.
 
 ### 2.1 Primitive Types (Classic)
 
@@ -52,7 +52,7 @@ Apex is **statically typed**. Types must be known at compile time.
 
 ## 3. Memory Management Model
 
-Apex uses **Explicit Ownership**.
+Quirk uses **Explicit Ownership**.
 
 1. **Scope-Based:** Variables declared with `:=` are owned by the current `{}` block. They are freed when the block ends unless moved.
 2. **References (`ref`):** Creates an alias to existing data. Does not claim ownership. Prevents expensive memory copying.
@@ -119,7 +119,7 @@ if condition { ... } else { ... }
 
 ### Your Language Identity Card
 
-* **Name:** Apex
-* **Extension:** `.apx`
+* **Name:** Quirk
+* **Extension:** `.qk`
 * **Speed Goal:** 95-100% of C performance.
 * **Readability:** High (Similar to Python/Swift but with C structure).

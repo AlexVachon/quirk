@@ -1,0 +1,265 @@
+#include "llvm/Support/FileSystem.h"
+#include "llvm/Support/raw_ostream.h"
+
+#include <iostream>
+#include <fstream>
+#include <sstream>
+#include <vector>
+#include <set>
+#include <filesystem>
+
+#include "lexer.hpp"
+#include "parser.hpp"
+#include "sema.hpp"
+
+// Include Codegen (which includes StructGen, BuiltinGen, etc.)
+#include "Backend/Codegen.cpp"
+
+namespace fs = std::filesystem;
+
+// ==========================================================
+//  AST PRINTER (Dumps AST to ast.log)
+// ==========================================================
+class ASTPrinter {
+    std::ostream& out;
+
+    void printIndent(int indent) {
+        for (int i = 0; i < indent; ++i)
+            out << "  ";
+    }
+
+   public:
+    ASTPrinter(std::ostream& output) : out(output) {}
+
+    void print(Node* node, int indent = 0) {
+        if (!node)
+            return;
+
+        printIndent(indent);
+
+        if (auto f = dynamic_cast<FunctionNode*>(node)) {
+            out << "[Function] " << f->name << (f->isExtern ? " (extern)" : "")
+                << " -> " << (f->returnType.empty() ? "void" : f->returnType)
+                << "\n";
+            for (auto& p : f->parameters) {
+                printIndent(indent + 1);
+                out << "Param: " << p.name << " : " << p.type << "\n";
+            }
+            for (auto& stmt : f->body)
+                print(stmt.get(), indent + 1);
+
+        } else if (auto s = dynamic_cast<StructNode*>(node)) {
+            out << "[Struct] " << s->name << "\n";
+            for (auto& field : s->fields) {
+                printIndent(indent + 1);
+                out << "Field: " << field.name << " : " << field.type << "\n";
+            }
+
+        } else if (auto v = dynamic_cast<VarDeclNode*>(node)) {
+            out << "[VarDecl] " << v->op << " Type: " << v->typeAnnotation
+                << "\n";
+            print(v->lhs.get(), indent + 1);
+            print(v->expression.get(), indent + 1);
+
+        } else if (auto i = dynamic_cast<IfNode*>(node)) {
+            out << "[If]\n";
+            printIndent(indent + 1);
+            out << "Condition:\n";
+            print(i->condition.get(), indent + 2);
+            printIndent(indent + 1);
+            out << "Then:\n";
+            for (auto& s : i->thenBranch)
+                print(s.get(), indent + 2);
+            if (!i->elseBranch.empty()) {
+                printIndent(indent + 1);
+                out << "Else:\n";
+                for (auto& s : i->elseBranch)
+                    print(s.get(), indent + 2);
+            }
+
+        } else if (auto w = dynamic_cast<WhileNode*>(node)) {
+            out << "[While]\n";
+            print(w->condition.get(), indent + 1);
+            for (auto& s : w->body)
+                print(s.get(), indent + 1);
+
+        } else if (auto ret = dynamic_cast<ReturnNode*>(node)) {
+            out << "[Return]\n";
+            if (ret->expression)
+                print(ret->expression.get(), indent + 1);
+
+        } else if (auto call = dynamic_cast<CallNode*>(node)) {
+            out << "[Call]\n";
+            print(call->callee.get(), indent + 1);
+            for (auto& arg : call->args) {
+                printIndent(indent + 1);
+                out << "Arg: " << arg.name << "\n";
+                print(arg.value.get(), indent + 2);
+            }
+
+        } else if (auto bin = dynamic_cast<BinaryOpNode*>(node)) {
+            out << "[BinaryOp] " << bin->op << "\n";
+            print(bin->left.get(), indent + 1);
+            print(bin->right.get(), indent + 1);
+
+        } else if (auto lit = dynamic_cast<LiteralNode*>(node)) {
+            out << "[Literal] " << lit->value << "\n";
+
+        } else if (auto mem = dynamic_cast<MemberAccessNode*>(node)) {
+            out << "[MemberAccess] ." << mem->memberName << "\n";
+            print(mem->object.get(), indent + 1);
+
+        } else if (auto cons = dynamic_cast<ConstructorNode*>(node)) {
+            out << "[Constructor] " << cons->structName << "\n";
+            for (auto& arg : cons->args) {
+                printIndent(indent + 1);
+                out << "Field: " << arg.fieldName << "\n";
+                print(arg.value.get(), indent + 2);
+            }
+
+        } else {
+            out << "[Unknown Node]\n";
+        }
+    }
+
+    void printAll(const std::vector<std::unique_ptr<Node>>& nodes) {
+        for (const auto& node : nodes) {
+            print(node.get());
+            out << "\n";
+        }
+    }
+};
+
+// ==========================================================
+//  MAIN COMPILER LOGIC
+// ==========================================================
+
+std::set<std::string> loadedModules;
+
+std::vector<std::unique_ptr<Node>> processFile(const std::string& filePath) {
+    std::cerr << "[DEBUG] Processing file: " << filePath << std::endl;
+    std::string absPath = fs::absolute(filePath).string();
+    if (loadedModules.count(absPath))
+        return {};
+    loadedModules.insert(absPath);
+
+    std::ifstream file(filePath);
+    if (!file.is_open()) {
+        std::cerr << "Error: Could not open module '" << filePath << "'"
+                  << std::endl;
+        exit(1);
+    }
+    std::stringstream buffer;
+    buffer << file.rdbuf();
+    std::string source = buffer.str();
+
+    Lexer lexer(source);
+    auto tokens = lexer.tokenize();
+
+    Parser parser(tokens, source);
+    auto nodes = parser.parse();
+
+    std::vector<std::unique_ptr<Node>> allNodes;
+
+    for (const auto& node : nodes) {
+        if (auto use = dynamic_cast<UseNode*>(node.get())) {
+            std::string importPath;
+            if (!use->subTarget.empty()) {
+                importPath = "stdlib/" + use->moduleName + "/init.qk";
+            } else {
+                importPath = "stdlib/" + use->moduleName + "/init.qk";
+                if (!fs::exists(importPath)) {
+                    importPath = "stdlib/" + use->moduleName + ".qk";
+                }
+            }
+            auto importedNodes = processFile(importPath);
+            for (auto& n : importedNodes)
+                allNodes.push_back(std::move(n));
+        } else {
+            allNodes.push_back(
+                std::move(const_cast<std::unique_ptr<Node>&>(node)));
+        }
+    }
+    return allNodes;
+}
+
+int main(int argc, char* argv[]) {
+    // 1. Redirect Debug Logs to compiler_debug.log
+    std::ofstream logFile("compiler.log");
+    std::streambuf* cerr_buffer = std::cerr.rdbuf();
+    std::cerr.rdbuf(logFile.rdbuf());
+
+    if (argc < 2) {
+        std::cout << "Usage: apex [-r] <file.qk>" << std::endl;
+        return 1;
+    }
+
+    std::string filename = (std::string(argv[1]) == "-r") ? argv[2] : argv[1];
+    bool runImmediate = (std::string(argv[1]) == "-r");
+
+    std::cerr << "[DEBUG] Loading standard library..." << std::endl;
+    auto ast = processFile("stdlib/std/init.qk");
+
+    std::cerr << "[DEBUG] Loading user file..." << std::endl;
+    auto userNodes = processFile(filename);
+    for (auto& node : userNodes)
+        ast.push_back(std::move(node));
+
+    // 2. Dump AST to ast.log
+    std::cerr << "[DEBUG] Dumping AST to ast.log..." << std::endl;
+    std::ofstream astLog("ast.log");
+    if (astLog.is_open()) {
+        ASTPrinter printer(astLog);
+        printer.printAll(ast);
+        astLog.close();
+    } else {
+        std::cerr << "[ERROR] Could not open ast.log for writing." << std::endl;
+    }
+
+    std::cerr << "[DEBUG] Running Semantic Analysis..." << std::endl;
+    Sema sema;
+    if (!sema.analyze(ast)) {
+        std::cout << "Compilation Failed. See compiler_debug.log for details."
+                  << std::endl;
+        return 1;
+    }
+
+    std::cerr << "[DEBUG] Starting Code Generation..." << std::endl;
+    LLVMCodegen codegen;
+
+    // --- UPDATED LOGIC: Always write to output.ll ---
+    std::string irPath = "output.ll";
+    std::error_code EC;
+    raw_fd_ostream dest(irPath, EC, sys::fs::F_None);
+    if (EC) {
+        std::cerr << "Error opening output file: " << EC.message() << std::endl;
+        return 1;
+    }
+
+    codegen.compile(ast, dest);
+    dest.flush();
+    dest.close();
+    // ------------------------------------------------
+
+    if (runImmediate) {
+        std::cerr << "[DEBUG] Compilation finished. Executing with lli..."
+                  << std::endl;
+
+        std::string runtimePath = "./bin/runtime.so";
+
+        // Command: lli -load=./bin/runtime.so output.ll
+        // No temporary file deletion needed.
+        std::string cmd = "lli -load=" + runtimePath + " " + irPath;
+
+        int ret = system(cmd.c_str());
+
+        if (ret != 0)
+            std::cerr << "[DEBUG] Execution failed or returned non-zero."
+                      << std::endl;
+    }
+
+    std::cerr << "[DEBUG] Done!" << std::endl;
+    std::cerr.rdbuf(cerr_buffer);
+
+    return 0;
+}

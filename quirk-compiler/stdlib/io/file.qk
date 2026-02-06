@@ -1,0 +1,46 @@
+use std.sys
+
+struct FileIterator {
+    file_ref: File
+    current_line: String
+
+    define __init(self, f: File) {
+        self.file_ref := f
+        self.current_line := 0
+    }
+
+    define __has_next(self) -> bool {
+        self.current_line := self.file_ref.read_line()
+        return self.current_line != 0
+    }
+
+    define __next(self) -> String {
+        return self.current_line
+    }
+}
+
+struct File {
+    handle: ptr
+    is_open: int
+
+    // Takes High-Level String Objects
+    extern define open(path: String, mode: String) -> File
+    
+    extern define read(self) -> String
+    extern define read_line(self) -> String 
+    extern define close(self)
+
+    extern define write(self, content: String) -> void
+
+    define __enter(self) -> File { 
+        return self 
+    }
+    
+    define __exit(self) { 
+        self.close() 
+    }
+
+    define __iter(self) -> FileIterator {
+        return FileIterator(self)
+    }
+}

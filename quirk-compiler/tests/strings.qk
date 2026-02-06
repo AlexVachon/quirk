@@ -1,0 +1,52 @@
+define main() {
+    num := 12345
+    base_str := " this is my string. A String contains characters. "
+
+    print(base_str.upper())
+    print(base_str.title())
+    print(base_str.lower())
+    print(base_str.capitalize())
+    print(base_str.sentence_case())
+
+    url := "https://example.com/search?q=hello world!"
+
+    print(url.encode())
+    print(base_str.count("i"))
+    print(base_str.endswith("characters."))
+    print(base_str.find("contains"))
+    print("This is simple format: %s".format("Hello world"))
+    print("This is %{type} format: %{msg}".format(type: "complex", msg: "Hello world"))
+    print(base_str.index("String"))
+
+    print(base_str.trim())
+    print(base_str.replace("String", "STRING"))
+    print(base_str.startswith("potato"))
+    print(base_str.substring(5, 10))
+    print("|".join([1, 2, 3]))
+    print("12".isdigit())
+    print("12".isalpha())
+
+    print(base_str.remove("l"))
+    print("-".repeat(10))
+    print("stressed".reverse())
+
+    // ID Formatting
+    id := "42"
+    print("ID: " + id.zfill(5))      // Output: ID: 00042
+
+    // Table Alignment
+    col1 := "Name".ljust(10, " ")
+    col2 := "Price".rjust(8, " ")
+    print(col1 + "|" + col2)         // Output: Name      |   Price
+    
+    val1 := "Apple".ljust(10, ".")
+    val2 := "$1.50".rjust(8, ".")
+    print(val1 + "|" + val2)         // Output: Apple.....|...$1.50
+
+    // Readable checks
+    if "Team".contains("ea") {
+        print("Found it!")
+    }
+
+
+}

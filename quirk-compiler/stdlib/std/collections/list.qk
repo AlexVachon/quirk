@@ -1,0 +1,115 @@
+// stdlib/std/collections/list.apx
+use std.sys
+
+struct ListIterator {
+    list_ref: List
+    idx: int
+
+    define __init(self, l: List) {
+        self.list_ref := l
+        self.idx := 0
+    }
+
+    define __has_next(self) -> bool {
+        return self.idx < self.list_ref.len()
+    }
+
+    define __next(self) -> any {
+        val := self.list_ref[self.idx]
+        self.idx := self.idx + 1
+        return val
+    }
+}
+
+struct List {
+    data: ptr     
+    length: int   
+    capacity: int 
+
+    define __init(self, initial_cap: int) {
+        if initial_cap < 1 { initial_cap := 1 }
+        self.capacity := initial_cap
+        self.length := 0
+        self.data := malloc(self.capacity * 8) 
+    }
+
+    define append(self, item: any) {
+        if self.length == self.capacity {
+            self._resize(self.capacity * 2)
+        }
+        self.data[self.length] := item
+        self.length := self.length + 1
+    }
+
+    define pop(self) -> any {
+        if self.length == 0 { return 0 } 
+        self.length := self.length - 1
+        return self.data[self.length]
+    }
+
+    define len(self) -> int {
+        return self.length
+    }
+
+    define clear(self) {
+        self.length := 0
+    }
+
+    define is_empty(self) -> bool {
+        return self.length == 0
+    }
+
+    define _resize(self, new_cap: int) {
+        self.capacity := new_cap
+        self.data := realloc(self.data, new_cap * 8)
+    }
+
+    define __del(self) {
+        free(self.data)
+    }
+
+    define __iter(self) -> ListIterator {
+        return ListIterator(self)
+    }
+
+    define __get(self, index: int) -> any {
+        if index < 0 { index := self.length + index }
+
+        if (index < 0) or (index >= self.length) {
+            printf("IndexError: list index out of range (index: %d, len: %d)\n", index, self.length)
+            exit(1)
+        }
+        return self.data[index]
+    }
+
+    define __set(self, index: int, item: any) {
+        if index < 0 { index := self.length + index }
+
+        if (index < 0) or (index >= self.length) {
+            printf("IndexError: list assignment index out of range\n")
+            exit(1)
+        }
+        self.data[index] := item
+    }
+    
+    define __str(self) -> String {
+        return self.__repr()
+    }
+    
+    define __repr(self) -> String {
+        // [FIX] Initialize as a String Object, not a raw C-string literal
+        s := String("[") 
+        
+        i := 0
+        for item in self {
+             if i > 0 { s := s + ", " }
+             
+             // The format function returns a String, and 's' is now a String
+             // so the + operator works correctly (String + String).
+             s := s + "%s".format(item) 
+             i := i + 1
+        }
+        s := s + "]"
+        return s
+    }
+}

@@ -1,0 +1,120 @@
+use std.sys
+use std.collections.list
+
+struct StringIterator {
+    str_ref: String
+    idx: int
+
+    define __init(self, s: String) {
+        self.str_ref := s
+        self.idx := 0
+    }
+
+    define __has_next(self) -> bool {
+        return self.idx < self.str_ref.length
+    }
+
+    define __next(self) -> char {
+        // Access raw buffer
+        val := char_at(self.str_ref.buffer, self.idx)
+        self.idx := self.idx + 1
+        return val
+    }
+}
+
+struct String {
+    length: int
+    buffer: cstring
+
+    define __init(self, raw: cstring) {
+        self.length := strlen(raw)
+        self.buffer := malloc(self.length + 1)
+        strcpy(self.buffer, raw)
+    }
+
+    extern define format(self, ...args: List) -> String
+    extern define format_map(self, keys: List, values: List) -> String
+    extern define format_list(self, args: List) -> String
+
+    extern define split(self, delimiter: String) -> List
+    extern define join(self, items: List) -> String
+    extern define substring(self, start: int, end: int) -> String
+    
+    extern define upper(self) -> String
+    extern define lower(self) -> String
+
+    extern define title(self) -> String
+    extern define capitalize(self) -> String
+    extern define sentence_case(self) -> String
+
+    extern define encode(self) -> String
+
+    extern define count(self, sub: String) -> int
+    extern define startswith(self, prefix: String) -> bool
+    extern define endswith(self, suffix: String) -> bool
+    extern define find(self, sub: String) -> int
+    extern define index(self, sub: String) -> int
+
+    extern define replace(self, old: String, new: String) -> String
+    extern define remove(self, sub: String) -> String
+    extern define repeat(self, n: int) -> String
+    extern define reverse(self) -> String
+
+    extern define zfill(self, width: int) -> String
+    extern define ljust(self, width: int, pad: String) -> String
+    extern define rjust(self, width: int, pad: String) -> String
+    
+    // Add this:
+    extern define center(self, width: int, pad: String) -> String
+
+    extern define trim(self) -> String
+    extern define lstrip(self) -> String
+    extern define rstrip(self) -> String
+
+    extern define swapcase(self) -> String
+
+    extern define isalpha(self) -> bool
+    extern define isdigit(self) -> bool
+    extern define isspace(self) -> bool
+    extern define contains(self, sub: String) -> bool
+
+
+    define __del(self) {
+        free(self.buffer)
+    }
+
+    define __iter(self) -> StringIterator {
+        return StringIterator(self)
+    }
+
+    define __str(self) -> cstring {
+        return self.buffer
+    }
+
+    define __repr(self) -> cstring {
+        return "\"" + self.buffer + "\""
+    }
+
+    define __add(self, other: String) -> String {
+        newLen := self.length + other.length
+        raw := malloc(newLen + 1)
+
+        strcpy(raw, self.buffer)
+        strcat(raw, other.buffer)
+
+        // Convert raw -> Object
+        res := String(raw)
+
+        free(raw)
+        return res
+    }
+
+    define __eq(self, other: String) -> bool {
+        if self.length != other.length { return false }
+        return strcmp(self.buffer, other.buffer) == 0
+    }
+
+    define empty(self) -> bool {
+        return self.length == 0
+    }
+}

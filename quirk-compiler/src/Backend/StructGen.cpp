@@ -119,15 +119,15 @@ class StructGen {
                     Type* expectedType =
                         initFunc->getFunctionType()->getParamType(i + 1);
                     if (argVal->getType() != expectedType) {
+                        // ... existing pointer checks ...
+
+                        // --- NEW: Implicit Int to Double Cast ---
                         if (argVal->getType()->isIntegerTy() &&
-                            expectedType->isPointerTy()) {
-                            argVal =
-                                Builder.CreateIntToPtr(argVal, expectedType);
-                        } else if (argVal->getType()->isPointerTy() &&
-                                   expectedType->isPointerTy()) {
-                            argVal =
-                                Builder.CreateBitCast(argVal, expectedType);
+                            expectedType->isDoubleTy()) {
+                            argVal = Builder.CreateSIToFP(argVal, expectedType,
+                                                          "int_to_dbl");
                         }
+                        // ----------------------------------------
                     }
                 }
                 initArgs.push_back(argVal);
@@ -197,6 +197,13 @@ class StructGen {
                             argVal =
                                 Builder.CreateBitCast(argVal, expectedType);
                         }
+                        // --- NEW: Implicit Int to Double Cast ---
+                        else if (argVal->getType()->isIntegerTy() &&
+                                 expectedType->isDoubleTy()) {
+                            argVal = Builder.CreateSIToFP(argVal, expectedType,
+                                                          "int_to_dbl");
+                        }
+                        // ----------------------------------------
                     }
                     finalArgs.push_back(argVal);
                 }

@@ -14,8 +14,11 @@ define main() {
     print(base_str.count("i"))
     print(base_str.endswith("characters."))
     print(base_str.find("contains"))
-    print("This is simple format: %s".format("Hello world"))
-    print("This is %{type} format: %{msg}".format(type: "complex", msg: "Hello world"))
+
+    print("Language: {}, Version: {}".format("Quirk", 1))
+    print("Language: {lang}, Version: {version%.2f}".format(lang: "Quirk", version: 1.54623))
+    print("Hello {user}!".format_map(["user"], ["Alex"]))
+
     print(base_str.index("String"))
 
     print(base_str.trim())

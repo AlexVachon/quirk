@@ -1,5 +1,4 @@
-// stdlib/std/collections/list.apx
-use std.sys
+use core.sys
 
 struct ListIterator {
     list_ref: List

@@ -1,0 +1,6 @@
+use math
+
+define main() {
+    v := Vector2(1, 2)
+    print(v)
+}

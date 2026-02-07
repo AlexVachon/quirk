@@ -1,2 +1,3 @@
 *.log
 quirk-compiler/*.log
+quirk-compiler/*.ll

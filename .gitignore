@@ -1,0 +1,5 @@
+*.log
+quirk-compiler/*.log
+quirk-compiler/*.ll
+quirk-compiler/bin
+quirk-compiler/obj

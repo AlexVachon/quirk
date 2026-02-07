@@ -18,6 +18,7 @@ define main() {
     print("Language: {}, Version: {}".format("Quirk", 1))
     print("Language: {lang}, Version: {version%.2f}".format(lang: "Quirk", version: 1.54623))
     print("Hello {user}!".format_map(["user"], ["Alex"]))
+    print("This is value of num ${num}")
 
     print(base_str.index("String"))
 

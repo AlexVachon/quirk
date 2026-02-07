@@ -3,6 +3,7 @@
 
 #include <string>
 #include <vector>
+#include <deque>
 
 enum class TokenType {
     // Keywords
@@ -79,16 +80,23 @@ struct Token {
 
 class Lexer {
    public:
-    Lexer(const std::string& source);
+    Lexer(const std::string& source) : src(source), pos(0), line(1), col(1) {}
     std::vector<Token> tokenize();
 
    private:
     std::string src;
-    size_t pos = 0;
-    int line = 1;
+    size_t pos;
+    int line;
+    int col;
 
-    char peek() { return (pos < src.length()) ? src[pos] : '\0'; }
-    char advance() { return src[pos++]; }
+    std::deque<Token> tokenBuffer;
+
+    char peek(int offset = 0) const;
+    char advance();
+    bool match(char expected);
+
+    void tokenizeString();
+    Token nextToken();
 };
 
 #endif

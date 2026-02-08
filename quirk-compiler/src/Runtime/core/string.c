@@ -561,30 +561,28 @@ String* String_join(String* self, List* items) {
         uintptr_t val = (uintptr_t)item;
 
         if (val <= MAX_SMALL_INT) {
-            // It's likely an Integer: Count digits
-            // snprintf(NULL, 0, ...) returns the length without writing
             char temp[32];
             total_len += sprintf(temp, "%d", (int)val);
         } else {
-            // It's likely a String (char*): Add strlen
-            char* s = (char*)item;
-            if (s)
-                total_len += strlen(s);
+            // FIX: Assume it is a String Object, not a raw char*
+            String* s = (String*)item;
+            if (s && s->buffer) {
+                total_len += s->length;
+            }
         }
 
-        // Add separator length (if not last item)
         if (i < items->length - 1) {
             total_len += self->length;
         }
     }
 
-    // Allocate buffer (+1 for null terminator)
+    // Allocate
     char* result = (char*)malloc(total_len + 1);
     if (!result)
         return NULL;
 
     char* ptr = result;
-    *ptr = '\0';  // Start empty
+    *ptr = '\0';
 
     // --- PASS 2: Build the string ---
     for (int i = 0; i < items->length; i++) {
@@ -592,24 +590,22 @@ String* String_join(String* self, List* items) {
         uintptr_t val = (uintptr_t)item;
 
         if (val <= MAX_SMALL_INT) {
-            // Write Integer
             ptr += sprintf(ptr, "%d", (int)val);
         } else {
-            // Write String
-            char* s = (char*)item;
-            if (s) {
-                strcpy(ptr, s);
-                ptr += strlen(s);
+            // FIX: Unwrap String Object
+            String* s = (String*)item;
+            if (s && s->buffer) {
+                strcpy(ptr, s->buffer);
+                ptr += s->length;
             }
         }
 
-        // Add separator
         if (i < items->length - 1) {
             memcpy(ptr, self->buffer, self->length);
             ptr += self->length;
         }
     }
-    *ptr = '\0';  // Ensure null termination
+    *ptr = '\0';
 
     return make_String_taking_ownership(result);
 }
@@ -802,7 +798,7 @@ String* String_center(String* self, int width, String* pad) {
     return make_String_taking_ownership(result);
 }
 
-int String_isdigit(String* self) {
+int String_is_digit(String* self) {
     if (!self || self->length == 0)
         return 0;
     for (int i = 0; i < self->length; i++) {
@@ -812,7 +808,7 @@ int String_isdigit(String* self) {
     return 1;
 }
 
-int String_isalpha(String* self) {
+int String_is_alpha(String* self) {
     if (!self || self->length == 0)
         return 0;
     for (int i = 0; i < self->length; i++) {
@@ -848,18 +844,15 @@ void append_formatted(char** buf,
     if (fmt_spec && (strchr(fmt_spec, 'f') || strchr(fmt_spec, 'g') ||
                      strchr(fmt_spec, 'e'))) {
         snprintf(format_string, 32, "%%%s", fmt_spec);
-
-        double d_val;
-
-        // DEBUG LOGGING START
-        // printf("[DEBUG] val: 0x%lX, MAX: 0x%X\n", val, MAX_SMALL_INT);
-        // DEBUG LOGGING END
+        double d_val = 0.0;
 
         if (val <= MAX_SMALL_INT) {
-            d_val = (double)((int)val);  // Cast Integer -> Double (1 -> 1.0)
+            d_val = (double)((int)val);
         } else {
-            d_val =
-                bits_to_double(item);  // Reinterpret Bits (Double -> Double)
+            // It is a String pointer (guaranteed by our new compiler logic)
+            char* s = (char*)item;
+            if (s)
+                d_val = strtod(s, NULL);  // Parse "3.14" -> 3.14
         }
 
         snprintf(output_buffer, 128, format_string, d_val);
@@ -867,7 +860,7 @@ void append_formatted(char** buf,
         return;
     }
 
-    // 2. Handle Small Integers (Default %d)
+    // 2. Handle Small Integers
     if (val <= MAX_SMALL_INT) {
         if (fmt_spec && strlen(fmt_spec) > 0) {
             snprintf(format_string, 32, "%%%s", fmt_spec);
@@ -879,7 +872,7 @@ void append_formatted(char** buf,
         snprintf(output_buffer, 128, format_string, (int)val);
         buffer_append(buf, cap, len, output_buffer);
     }
-    // 3. Handle Strings / Objects
+    // 3. Handle Strings (Everything else is now a String!)
     else {
         char* s = (char*)item;
         if (!s)
@@ -892,10 +885,14 @@ void append_formatted(char** buf,
             snprintf(output_buffer, 128, format_string, s);
         } else {
             buffer_append(buf, cap, len, s);
-            return;
         }
-        buffer_append(buf, cap, len, output_buffer);
     }
+}
+
+char* _float_to_str(double val) {
+    char* buf = (char*)malloc(64);
+    snprintf(buf, 64, "%g", val); 
+    return buf;
 }
 
 // --------------------------------------------------------
@@ -1098,4 +1095,133 @@ List* String_split(String* strObj, String* delimObj) {
     list->data[idx] = strdup(start);
 
     return list;
+}
+
+// [Add to src/Runtime/core/string.c]
+
+// ==========================================
+//  PARSING TOOLS
+// ==========================================
+
+int String_to_int(String* self) {
+    if (!self || !self->buffer)
+        return 0;
+    // Base 10 conversion
+    return (int)strtol(self->buffer, NULL, 10);
+}
+
+double String_to_float(String* self) {
+    if (!self || !self->buffer)
+        return 0.0;
+    return strtod(self->buffer, NULL);
+}
+
+// ==========================================
+//  SMART LINE SPLITTER
+// ==========================================
+
+List* String_lines(String* self) {
+    if (!self || !self->buffer)
+        return NULL;
+
+    // First pass: Count lines
+    int count = 1;
+    char* ptr = self->buffer;
+    while (*ptr) {
+        if (*ptr == '\n')
+            count++;
+        ptr++;
+    }
+
+    List* list = (List*)malloc(sizeof(List));
+    list->length = 0;        // Will increment as we add
+    list->capacity = count;  // Approximation
+    list->data = (void**)malloc(sizeof(void*) * count);
+
+    char* start = self->buffer;
+    ptr = self->buffer;
+
+    while (*ptr) {
+        // Handle \r\n (Windows) or \n (Unix)
+        if (*ptr == '\n' || *ptr == '\r') {
+            int len = ptr - start;
+
+            // Extract line
+            char* line = (char*)malloc(len + 1);
+            strncpy(line, start, len);
+            line[len] = '\0';
+
+            // Add to list
+            list->data[list->length++] = make_String_taking_ownership(line);
+
+            // Skip newline char(s)
+            if (*ptr == '\r' && *(ptr + 1) == '\n')
+                ptr++;  // Skip \n in \r\n
+
+            start = ptr + 1;
+        }
+        ptr++;
+    }
+
+    // Add last line
+    if (start <= ptr) {
+        int len = ptr - start;
+        char* line = (char*)malloc(len + 1);
+        strncpy(line, start, len);
+        line[len] = '\0';
+        list->data[list->length++] = make_String_taking_ownership(line);
+    }
+
+    return list;
+}
+
+// ==========================================
+//  FUZZY MATCHING (Levenshtein)
+// ==========================================
+
+int min3(int a, int b, int c) {
+    int m = a;
+    if (b < m)
+        m = b;
+    if (c < m)
+        m = c;
+    return m;
+}
+
+int String_distance(String* self, String* other) {
+    if (!self || !other)
+        return 0;
+
+    int len1 = self->length;
+    int len2 = other->length;
+
+    // Allocation: (len1 + 1) * (len2 + 1) matrix
+    // Optimization: We could use 2 rows, but a full matrix is easier to read
+    // for now
+    int* matrix = (int*)malloc((len1 + 1) * (len2 + 1) * sizeof(int));
+
+// Access macro
+#define M(r, c) matrix[(r) * (len2 + 1) + (c)]
+
+    // Init first row/col
+    for (int i = 0; i <= len1; i++)
+        M(i, 0) = i;
+    for (int j = 0; j <= len2; j++)
+        M(0, j) = j;
+
+    for (int i = 1; i <= len1; i++) {
+        for (int j = 1; j <= len2; j++) {
+            int cost = (self->buffer[i - 1] == other->buffer[j - 1]) ? 0 : 1;
+
+            M(i, j) = min3(M(i - 1, j) + 1,        // Deletion
+                           M(i, j - 1) + 1,        // Insertion
+                           M(i - 1, j - 1) + cost  // Substitution
+            );
+        }
+    }
+
+    int result = M(len1, len2);
+    free(matrix);
+#undef M
+    return result;
 }

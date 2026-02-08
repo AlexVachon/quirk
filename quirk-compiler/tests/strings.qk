@@ -27,8 +27,8 @@ define main() {
     print(base_str.startswith("potato"))
     print(base_str.substring(5, 10))
     print("|".join([1, 2, 3]))
-    print("12".isdigit())
-    print("12".isalpha())
+    print("12".is_digit())
+    print("12".is_alpha())
 
     print(base_str.remove("l"))
     print("-".repeat(10))
@@ -52,5 +52,27 @@ define main() {
         print("Found it!")
     }
 
+    s_num := "123"
+    s_pi := "3.14159"
+    
+    // Explicitly converting strings to numbers
+    total := s_num.to_int() + 10     // 133
+    area := s_pi.to_float() * 2.0    // 6.28...
+    
+    print("Parsed: ${total}, ${area}")
+
+    // 2. Fuzzy Matching
+    word := "kitten"
+    typo := "sitting"
+    dist := word.distance(typo)
+    
+    print("Edits needed to turn $word into ${typo}: ${dist}") // Output: 3
+
+    // 3. Line Processing
+    config := "name=Quirk\nversion=1.0\r\nstatus=active"
+    lines := config.lines()
+    
+    // Using your new 'format_list' implicitly via $lines
+    print("Config lines: ${lines}")
 
 }

@@ -36,6 +36,8 @@ struct String {
     extern define title(self) -> String
     extern define capitalize(self) -> String
     extern define sentence_case(self) -> String
+    extern define swapcase(self) -> String
+
     extern define encode(self) -> String
 
     extern define count(self, sub: String) -> int
@@ -43,6 +45,7 @@ struct String {
     extern define endswith(self, suffix: String) -> bool
     extern define find(self, sub: String) -> int
     extern define index(self, sub: String) -> int
+    extern define contains(self, sub: String) -> bool
 
     extern define replace(self, old: String, new: String) -> String
     extern define remove(self, sub: String) -> String
@@ -57,14 +60,19 @@ struct String {
     extern define trim(self) -> String
     extern define lstrip(self) -> String
     extern define rstrip(self) -> String
-    extern define swapcase(self) -> String
 
-    extern define isalpha(self) -> bool
-    extern define isdigit(self) -> bool
-    extern define isspace(self) -> bool
-    extern define contains(self, sub: String) -> bool
+    extern define is_alpha(self) -> bool
+    extern define is_digit(self) -> bool
+    extern define is_space(self) -> bool
 
-    define empty(self) -> bool {
-        return self.length == 0
-    }
+    extern define to_int(self) -> int
+    extern define to_float(self) -> double
+    
+    extern define lines(self) -> List
+
+    extern define distance(self, other: String) -> int
+
+    define empty(self) -> bool { return self.length == 0 }
 }
+
+extern define _float_to_str(val: double) -> cstring

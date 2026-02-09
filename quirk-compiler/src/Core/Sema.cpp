@@ -1,5 +1,5 @@
-#include "sema.hpp"
 #include <iostream>
+#include "sema.hpp"
 
 std::string Sema::currentClass = "";
 
@@ -358,8 +358,11 @@ std::string Sema::checkCall(CallNode* node) {
     if (auto m = dynamic_cast<MemberAccessNode*>(node->callee.get())) {
         std::string objType = checkExpression(m->object.get());
 
-        // Auto-Box cstring -> String for method lookup
-        if (objType == "cstring" || objType == "string")
+        if (objType == "int")
+            objType = "Int";
+        else if (objType == "double")
+            objType = "Double";
+        else if (objType == "cstring")
             objType = "String";
 
         if (structRegistry.count(objType)) {
@@ -430,11 +433,32 @@ std::string Sema::resolveVariable(const std::string& name) {
 
 std::string Sema::resolveMember(const std::string& sName,
                                 const std::string& mName) {
-    if (!structRegistry.count(sName))
+    // 1. Map Primitives to their "Pseudo-Struct" names
+    std::string lookupName = sName;
+    if (sName == "int")
+        lookupName = "Int";
+    else if (sName == "double")
+        lookupName = "Double";
+    else if (sName == "bool")
+        lookupName = "Bool";
+
+    // 2. Look up in Registry
+    if (!structRegistry.count(lookupName))
         return "unknown";
-    for (const auto& f : structRegistry[sName]->fields)
+
+    // 3. Check Fields
+    for (const auto& f : structRegistry[lookupName]->fields)
         if (f.name == mName)
             return f.type;
+
+    // 4. Check Methods (Crucial for "10.str()")
+    //    The method will be registered as "Int_str"
+    std::string funcName = lookupName + "_" + mName;
+    if (methodRegistry[lookupName].count(funcName)) {
+        // Return the function type (simplified logic here)
+        return "method";
+    }
+
     return "unknown";
 }
 

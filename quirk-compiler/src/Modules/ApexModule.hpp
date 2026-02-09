@@ -1,19 +1,22 @@
 #pragma once
+#include "llvm/IR/Module.h"
 #include "llvm/IR/LLVMContext.h"
-#include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/Type.h"
 #include <map>
-#include <string>
-#include <vector>
 
-class StructGen;
+class StructGen; // Forward decl
 
 using namespace llvm;
 
 class ApexModule {
 public:
     virtual ~ApexModule() = default;
-    
+
     virtual void registerStructs(LLVMContext& ctx, 
                                  std::map<std::string, StructType*>& structTypes, 
-                                 StructGen* structGen) = 0;
+                                 StructGen* structGen) {}
+
+    virtual void registerFunctions(Module* module, 
+                                   LLVMContext& ctx, 
+                                   std::map<std::string, StructType*>& structTypes) {}
 };

@@ -8,8 +8,8 @@
 // ===== PUBLIC API =====
 
 typedef struct {
-    int length;     // Index 0
-    char* buffer;   // Index 1
+    int length;    // Index 0
+    char* buffer;  // Index 1
 } String;
 
 typedef struct {
@@ -31,5 +31,9 @@ typedef struct {
 // Helper to create objects from C
 String* make_String(const char* raw);
 String* make_String_taking_ownership(char* raw_buffer);
+
+// ===== PRIMITIVE HELPERS (Optional but recommended) =====
+String* Int_str(int self);
+String* Double_str(double self);
 
 #endif

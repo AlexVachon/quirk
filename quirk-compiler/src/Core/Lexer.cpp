@@ -1,6 +1,6 @@
-#include "lexer.hpp"
 #include <cctype>
 #include <iostream>
+#include "lexer.hpp"
 
 // =========================================================
 //  HELPER METHODS
@@ -137,12 +137,18 @@ Token Lexer::nextToken() {
         std::string num;
         while (isdigit(peek()))
             num += advance();
-        if (peek() == '.') {
+
+        // ONLY consume dot if the NEXT char is a digit
+        // This allows "10.str()" to work (dot belongs to member access)
+        // But "10.5" will still be a double.
+        if (peek() == '.' && isdigit(peek(1))) {
             num += advance();
             while (isdigit(peek()))
                 num += advance();
+            return {TokenType::FLOAT_LITERAL, num, line};  // Return Double
         }
-        return {TokenType::INT_LITERAL, num, line};
+
+        return {TokenType::INT_LITERAL, num, line};  // Return Int
     }
 
     // 5. Multi-character Operators

@@ -1,5 +1,5 @@
-#include "parser.hpp"
 #include <iostream>
+#include "parser.hpp"
 
 Parser::Parser(const std::vector<Token>& tokens, const std::string& source)
     : tokens(tokens), source(source) {}
@@ -100,6 +100,8 @@ std::unique_ptr<Node> Parser::parseExpression(int min_precedence) {
 
     // 1. Primary
     if (t.type == TokenType::INT_LITERAL) {
+        left = std::make_unique<LiteralNode>(t.value);
+    } else if (t.type == TokenType::FLOAT_LITERAL) {
         left = std::make_unique<LiteralNode>(t.value);
     } else if (t.type == TokenType::STRING_LITERAL) {
         left = std::make_unique<LiteralNode>(t.value);

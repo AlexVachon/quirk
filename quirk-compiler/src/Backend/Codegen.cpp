@@ -668,17 +668,40 @@ class LLVMCodegen {
                 Value* ptr = handleExpression(binOp->left.get());
                 Value* index = handleExpression(binOp->right.get());
 
+                // 1. Handle Structs (e.g. List, Map)
                 if (ptr->getType()->isPointerTy() &&
                     ptr->getType()->getPointerElementType()->isStructTy()) {
                     StructType* st = cast<StructType>(
                         ptr->getType()->getPointerElementType());
                     Function* func =
                         TheModule->getFunction(st->getName().str() + "___set");
+                    
                     if (func) {
+                        // --- FIX START: Auto-boxing for __set ---
+                        // Ensure the value matches the 3rd argument (item) type
+                        if (func->arg_size() >= 3) {
+                            Type* expectedType = func->getFunctionType()->getParamType(2);
+                            
+                            if (val->getType() != expectedType) {
+                                // Box Integer -> Ptr (e.g. i32 -> i8*)
+                                if (val->getType()->isIntegerTy() && expectedType->isPointerTy()) {
+                                    val = Builder.CreateIntToPtr(val, expectedType);
+                                } 
+                                // Bitcast Ptr -> Ptr (e.g. String* -> i8*)
+                                else if (val->getType()->isPointerTy() && expectedType->isPointerTy()) {
+                                    val = Builder.CreateBitCast(val, expectedType);
+                                }
+                                // Double -> Ptr (if needed) or other casts could go here
+                            }
+                        }
+                        // --- FIX END ---
+                        
                         Builder.CreateCall(func, {ptr, index, val});
                         return;
                     }
                 }
+                
+                // 2. Fallback for raw arrays (non-structs)
                 if (val->getType()->isPointerTy()) {
                     ptr = Builder.CreateBitCast(
                         ptr,
@@ -806,6 +829,7 @@ Value* LLVMCodegen::handleExpression(Node* node) {
         if (!L || !R)
             return nullptr;
 
+        // 1. Array Access
         if (binOp->op == "[]") {
             if (L->getType()->isPointerTy() &&
                 L->getType()->getPointerElementType()->isIntegerTy(8)) {
@@ -829,7 +853,7 @@ Value* LLVMCodegen::handleExpression(Node* node) {
                 Builder.CreateGEP(Type::getInt32Ty(Context), ptr, R));
         }
 
-        // 4. FIX: Handle "Struct != 0" (Null Checks) FIRST
+        // 2. Handle "Struct != 0" (Null Checks)
         if (binOp->op == "==" || binOp->op == "!=") {
             if (L->getType()->isPointerTy() && R->getType()->isIntegerTy())
                 R = Builder.CreateIntToPtr(R, L->getType());
@@ -844,43 +868,93 @@ Value* LLVMCodegen::handleExpression(Node* node) {
             }
         }
 
-        bool L_str = (L->getType()->isPointerTy() &&
-                      L->getType()->getPointerElementType()->isIntegerTy(8));
-        bool R_str = (R->getType()->isPointerTy() &&
-                      R->getType()->getPointerElementType()->isIntegerTy(8));
+        // --- 5. Robust String Auto-Boxing & Coercion ---
+        
+        bool L_is_cstring = (L->getType()->isPointerTy() && 
+                             L->getType()->getPointerElementType()->isIntegerTy(8));
+        bool R_is_cstring = (R->getType()->isPointerTy() && 
+                             R->getType()->getPointerElementType()->isIntegerTy(8));
 
-        // 5. String Auto-boxing
+        bool L_is_StringObj = false;
+        if (L->getType()->isPointerTy() && L->getType()->getPointerElementType()->isStructTy()) {
+             StructType* st = cast<StructType>(L->getType()->getPointerElementType());
+             if (st->getName() == "String") L_is_StringObj = true;
+        }
+
+        bool R_is_StringObj = false;
+        if (R->getType()->isPointerTy() && R->getType()->getPointerElementType()->isStructTy()) {
+             StructType* st = cast<StructType>(R->getType()->getPointerElementType());
+             if (st->getName() == "String") R_is_StringObj = true;
+        }
+
         if (binOp->op == "+") {
-            if (L_str && R->getType()->isPointerTy() &&
-                R->getType()->getPointerElementType()->isStructTy()) {
-                StructType* st =
-                    cast<StructType>(R->getType()->getPointerElementType());
-                if (st->getName() == "String") {
+            // Case A: String (Obj/CStr) + Object -> Convert Object to StringObj
+            if ((L_is_cstring || L_is_StringObj) && !R_is_cstring && !R_is_StringObj && 
+                R->getType()->isPointerTy() && R->getType()->getPointerElementType()->isStructTy()) {
+                StructType* st = cast<StructType>(R->getType()->getPointerElementType());
+                Value* strVal = structGen->generateStrCall(R, st->getName().str());
+                if (strVal) {
+                    R = strVal;
+                    R_is_StringObj = true; // R is now a String Object
+                }
+            }
+
+            // Case B: Object + String (Obj/CStr) -> Convert Object to StringObj
+            if (!L_is_cstring && !L_is_StringObj && (R_is_cstring || R_is_StringObj) && 
+                L->getType()->isPointerTy() && L->getType()->getPointerElementType()->isStructTy()) {
+                StructType* st = cast<StructType>(L->getType()->getPointerElementType());
+                Value* strVal = structGen->generateStrCall(L, st->getName().str());
+                if (strVal) {
+                    L = strVal;
+                    L_is_StringObj = true; // L is now a String Object
+                }
+            }
+
+            // Case C: Convert Numbers to String Objects if other side is String
+            bool isStrConcat = (L_is_cstring || L_is_StringObj) || (R_is_cstring || R_is_StringObj);
+            
+            if (isStrConcat) {
+                if (L->getType()->isIntegerTy()) {
+                    L = builtinGen->generateIntToString(L); 
+                    L_is_StringObj = true;
+                } else if (L->getType()->isDoubleTy()) {
+                    L = builtinGen->generateDoubleToString(L);
+                    L_is_StringObj = true;
+                }
+
+                if (R->getType()->isIntegerTy()) {
+                    R = builtinGen->generateIntToString(R); 
+                    R_is_StringObj = true;
+                } else if (R->getType()->isDoubleTy()) {
+                    R = builtinGen->generateDoubleToString(R);
+                    R_is_StringObj = true;
+                }
+            }
+
+            // Case D: Execute Concatenation (Box c-strings if needed)
+            // We re-check flags because L/R might have changed above
+            L_is_cstring = (L->getType()->isPointerTy() && L->getType()->getPointerElementType()->isIntegerTy(8));
+            R_is_cstring = (R->getType()->isPointerTy() && R->getType()->getPointerElementType()->isIntegerTy(8));
+            
+            if (isStrConcat) {
+                // BOX L if it is still a c-string
+                if (L_is_cstring) {
                     std::vector<Value*> args = {L};
                     L = structGen->allocateAndInit("String", args);
                 }
+                // BOX R if it is still a c-string
+                if (R_is_cstring) {
+                    std::vector<Value*> args = {R};
+                    R = structGen->allocateAndInit("String", args);
+                }
+                
+                // Now both are definitely String Objects
+                return builtinGen->generateStringConcat(L, R);
             }
         }
 
-        // 6. String Concatenation
-        if (binOp->op == "+") {
-            if (L_str && R_str)
-                return builtinGen->generateStringConcat(L, R);
-            if (L_str && R->getType()->isIntegerTy())
-                return builtinGen->generateStringConcat(
-                    L, builtinGen->generateIntToString(R));
-            if (L->getType()->isIntegerTy() && R_str)
-                return builtinGen->generateStringConcat(
-                    builtinGen->generateIntToString(L), R);
-            if (L_str && R->getType()->isDoubleTy())
-                return builtinGen->generateStringConcat(
-                    L, builtinGen->generateDoubleToString(R));
-            if (L->getType()->isDoubleTy() && R_str)
-                return builtinGen->generateStringConcat(
-                    builtinGen->generateDoubleToString(L), R);
-        }
-
-        if (L_str && R_str && (binOp->op == "==" || binOp->op == "!="))
+        // 6. String Comparison (C-String specific optimization)
+        if (L_is_cstring && R_is_cstring && (binOp->op == "==" || binOp->op == "!="))
             return builtinGen->generateStringCompare(L, R, binOp->op);
 
         // 8. Struct Operator Overloading

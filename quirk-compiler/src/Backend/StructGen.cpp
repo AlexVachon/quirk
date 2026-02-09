@@ -202,9 +202,10 @@ class StructGen {
         Function* f = TheModule->getFunction(funcName);
         if (f)
             return Builder.CreateCall(f, {obj});
+
         return generateReprCall(obj, structName);
     }
-
+    
     Value* generateReprCall(Value* obj, const std::string& structName) {
         std::string funcName = structName + "___repr";
         Function* f = TheModule->getFunction(funcName);

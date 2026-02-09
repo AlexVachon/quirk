@@ -1,101 +1,35 @@
 use core.sys
+use core.string
 
 struct ListIterator {
     list_ref: List
     idx: int
 
-    define __init(self, l: List) {
-        self.list_ref := l
-        self.idx := 0
-    }
-
-    define __has_next(self) -> bool {
-        return self.idx < self.list_ref.len()
-    }
-
-    define __next(self) -> any {
-        val := self.list_ref[self.idx]
-        self.idx := self.idx + 1
-        return val
-    }
+    extern define __init(self, l: List)
+    extern define __has_next(self) -> bool
+    extern define __next(self) -> any
 }
 
 struct List {
-    data: ptr     
     length: int   
     capacity: int 
 
-    define __init(self, initial_cap: int) {
-        if initial_cap < 1 { initial_cap := 1 }
-        self.capacity := initial_cap
-        self.length := 0
-        self.data := malloc(self.capacity * 8) 
-    }
+    extern define __init(self, initial_cap: int)
+    extern define __del(self)
 
-    define append(self, item: any) {
-        if self.length == self.capacity {
-            self._resize(self.capacity * 2)
-        }
-        self.data[self.length] := item
-        self.length := self.length + 1
-    }
+    extern define append(self, item: any)
+    extern define pop(self) -> any
+    extern define length(self) -> int
+    extern define clear(self)
+    extern define is_empty(self) -> bool
 
-    define pop(self) -> any {
-        if self.length == 0 { return 0 } 
-        self.length := self.length - 1
-        return self.data[self.length]
-    }
+    // Internal but exposed if needed
+    extern define _resize(self, new_cap: int)
 
-    define len(self) -> int {
-        return self.length
-    }
-
-    define clear(self) {
-        self.length := 0
-    }
-
-    define is_empty(self) -> bool {
-        return self.length == 0
-    }
-
-    define _resize(self, new_cap: int) {
-        self.capacity := new_cap
-        self.data := realloc(self.data, new_cap * 8)
-    }
-
-    define __del(self) {
-        free(self.data)
-    }
-
-    define __iter(self) -> ListIterator {
-        return ListIterator(self)
-    }
-
-    define __get(self, index: int) -> any {
-        if index < 0 { index := self.length + index }
-
-        if (index < 0) or (index >= self.length) {
-            printf("IndexError: list index out of range (index: %d, len: %d)\n", index, self.length)
-            exit(1)
-        }
-        return self.data[index]
-    }
-
-    define __set(self, index: int, item: any) {
-        if index < 0 { index := self.length + index }
-
-        if (index < 0) or (index >= self.length) {
-            printf("IndexError: list assignment index out of range\n")
-            exit(1)
-        }
-        self.data[index] := item
-    }
-    
-    define __str(self) -> String {
-        return self.__repr()
-    }
-    
-    define __repr(self) -> String {
-        return "[" + ", ".join(self) + "]"
-    }
+    // Operators
+    extern define __iter(self) -> ListIterator
+    extern define __get(self, index: int) -> any
+    extern define __set(self, index: int, item: any)
+    extern define __str(self) -> String
+    extern define __repr(self) -> String
 }

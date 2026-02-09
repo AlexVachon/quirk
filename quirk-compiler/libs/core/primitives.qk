@@ -1,0 +1,27 @@
+use core.string
+
+struct Int {
+    extern define str(self) -> String
+    extern define to_float(self) -> Double
+
+    extern define abs(self) -> Int
+    extern define pow(self, exp: Int) -> Int
+
+    extern define is_even(self) -> bool
+    extern define is_odd(self) -> bool
+}
+
+struct Double {
+    extern define str(self) -> String
+    extern define to_int(self) -> Int
+
+    extern define abs(self) -> Double
+    extern define ceil(self) -> Double
+    extern define floor(self) -> Double
+    extern define round(self) -> Double
+    extern define sqrt(self) -> Double
+}
+
+struct Bool {
+    extern define str(self) -> String
+}

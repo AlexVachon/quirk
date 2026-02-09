@@ -1,0 +1,42 @@
+define main() {
+    // 1. Integer Tests
+    num := -42
+    print("--- Integer Tests ---")
+    print("Value: " + num.str())
+    print("Absolute: " + num.abs().str())
+    
+    // Math
+    pow_val := 2.pow(3)
+    print("2^3: " + pow_val.str())
+    
+    // Checks
+    print("Is -42 even? " + num.is_even().str())
+    print("Is -42 odd? " + num.is_odd().str())
+    print("Is 7 even? " + 7.is_even().str())
+
+    // Conversion
+    f_val := num.to_float()
+    print("As float: ${f_val % .2f}")
+
+
+    // 2. Double Tests
+    print("\n--- Double Tests ---")
+    pi := 3.14159
+    neg_pi := -3.14159
+    
+    print("Value: " + pi.str())
+    print("Abs (-3.14): " + neg_pi.abs().str())
+    
+    // Rounding
+    print("Ceil (3.14): " + pi.ceil().str())
+    print("Floor (3.14): " + pi.floor().str())
+    print("Round (3.14): " + pi.round().str())
+    print("Round (3.6): " + 3.6.round().str())
+
+    // Math
+    print("Sqrt (16.0): " + 16.0.sqrt().str())
+
+    // Conversion
+    i_val := pi.to_int()
+    print("As int: " + i_val.str())
+}

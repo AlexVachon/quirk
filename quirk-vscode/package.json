@@ -1,0 +1,25 @@
+{
+  "name": "quirk-lang",
+  "displayName": "Quirk Language",
+  "description": "Language support for Quirk",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "contributes": {
+    "languages": [{
+      "id": "quirk",
+      "aliases": ["Quirk", "quirk"],
+      "extensions": [".qk"],
+      "configuration": "./language-configuration.json"
+    }],
+    "grammars": [{
+      "language": "quirk",
+      "scopeName": "source.quirk",
+      "path": "./syntaxes/quirk.tmLanguage.json"
+    }]
+  }
+}

@@ -33,6 +33,7 @@ enum class TokenType {
     // Literals
     IDENTIFIER,
     INT_LITERAL,
+    FLOAT_LITERAL,
     STRING_LITERAL,
     TRUE,
     FALSE,

@@ -1,31 +1,38 @@
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
-#include "llvm/IR/Verifier.h"
 #include "llvm/IR/Type.h"
-#include "llvm/IR/Function.h"
-#include "llvm/IR/DerivedTypes.h"
-#include "llvm/IR/Constants.h"
+#include "llvm/IR/Verifier.h"
 
-#include <vector>
-#include <memory>
-#include <map>
 #include <functional>
 #include <iostream>
+#include <map>
+#include <memory>
+#include <vector>
 
 #include "ast.hpp"
 
-#include "TypeGen.cpp"
-#include "VariableGen.cpp"
 #include "ControlFlowGen.cpp"
+#include "MathGen.cpp"
 #include "StructGen.cpp"
 #include "BuiltinGen.cpp"
-#include "MathGen.cpp"
 #include "TypeExtensions.cpp"
+#include "TypeGen.cpp"
+#include "VariableGen.cpp"
 
 #include "../Modules/ModuleRegistry.cpp"
 
 using namespace llvm;
+
+std::string printType(Type* t) {
+    std::string type_str;
+    raw_string_ostream rso(type_str);
+    t->print(rso);
+    return rso.str();
+}
 
 class LLVMCodegen {
     LLVMContext Context;
@@ -76,7 +83,8 @@ class LLVMCodegen {
         builtinGen->Initialize();
 
         // Modules
-        moduleRegistry->registerAll(Context, StructTypes, structGen.get());
+        moduleRegistry->registerAll(Context, StructTypes, structGen.get(),
+                                    TheModule.get());
         std::cerr << "[CG] Modules Registered. Structs: " << StructTypes.size()
                   << std::endl;
 
@@ -416,18 +424,22 @@ class LLVMCodegen {
                     return nullptr;
             } else {
                 // Instance Call
+
+                // 1. Handle Structs (passed by value? store to stack)
                 if (objPtr->getType()->isStructTy()) {
                     Value* mem = Builder.CreateAlloca(objPtr->getType());
                     Builder.CreateStore(objPtr, mem);
                     objPtr = mem;
                 }
 
+                // 2. Handle Double Pointers (Ptr -> Ptr -> Struct)
                 if (objPtr->getType()->isPointerTy() &&
                     objPtr->getType()->getPointerElementType()->isPointerTy()) {
                     objPtr = Builder.CreateLoad(
                         objPtr->getType()->getPointerElementType(), objPtr);
                 }
 
+                // 3. Handle C-String Auto-boxing (char* -> String)
                 if (objPtr->getType()->isPointerTy() &&
                     objPtr->getType()->getPointerElementType()->isIntegerTy(
                         8)) {
@@ -435,9 +447,27 @@ class LLVMCodegen {
                     objPtr = structGen->allocateAndInit("String", ctorArgs);
                 }
 
-                StructType* st = cast<StructType>(
-                    objPtr->getType()->getPointerElementType());
-                typeName = st->getName().str();
+                // --- FIX: DETECT PRIMITIVES SAFELY ---
+                if (objPtr->getType()->isIntegerTy()) {
+                    if (objPtr->getType()->isIntegerTy(1)) {
+                        typeName = "Bool";
+                    } else {
+                        typeName = "Int";
+                    }
+                } else if (objPtr->getType()->isDoubleTy()) {
+                    typeName = "Double";
+                } else if (objPtr->getType()->isPointerTy() &&
+                           objPtr->getType()
+                               ->getPointerElementType()
+                               ->isStructTy()) {
+                    StructType* st = cast<StructType>(
+                        objPtr->getType()->getPointerElementType());
+                    typeName = st->getName().str();
+                } else {
+                    std::cerr << "Error: Cannot call method on type "
+                              << printType(objPtr->getType()) << std::endl;
+                    return nullptr;
+                }
             }
 
             if (objPtr) {

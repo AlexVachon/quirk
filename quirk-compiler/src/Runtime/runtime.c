@@ -2,6 +2,7 @@
 // This is the simplest way to link everything into one .so without complex Makefiles.
 
 #include "core/string.c"
+#include "core/primitives.c"
 #include "core/file.c"
 #include "core/list.c"
 

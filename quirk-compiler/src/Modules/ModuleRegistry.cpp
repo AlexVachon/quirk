@@ -1,10 +1,11 @@
 #pragma once
 #include "ApexModule.hpp"
 
-#include "StdString.cpp"
+#include "StdFile.cpp"
 #include "StdList.cpp"
 #include "StdMath.cpp"
-#include "StdFile.cpp"
+#include "StdPrimitives.cpp"
+#include "StdString.cpp"
 
 class ModuleRegistry {
     std::vector<ApexModule*> modules;
@@ -12,6 +13,7 @@ class ModuleRegistry {
    public:
     ModuleRegistry() {
         modules.push_back(new StdStringModule());
+        modules.push_back(new StdPrimitivesModule());
         modules.push_back(new StdListModule());
         modules.push_back(new StdMathModule());
         modules.push_back(new StdFileModule());
@@ -24,9 +26,17 @@ class ModuleRegistry {
 
     void registerAll(LLVMContext& ctx,
                      std::map<std::string, StructType*>& structTypes,
-                     StructGen* structGen) {
-        for (auto* m : modules) {
-            m->registerStructs(ctx, structTypes, structGen);
+                     StructGen* structGen,
+                     Module* module) {
+
+        // 1. Register Structs
+        for (auto& mod : modules) {
+            mod->registerStructs(ctx, structTypes, structGen);
+        }
+
+        // 2. Register Functions (NEW)
+        for (auto& mod : modules) {
+            mod->registerFunctions(module, ctx, structTypes);
         }
     }
 };

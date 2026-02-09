@@ -1,263 +1,370 @@
 #include "lexer.hpp"
 #include <cctype>
+#include <iostream>
 
-Lexer::Lexer(const std::string& source) : src(source) {}
+// =========================================================
+//  HELPER METHODS
+// =========================================================
+
+char Lexer::peek(int offset) const {
+    if (pos + offset >= src.length())
+        return '\0';
+    return src[pos + offset];
+}
+
+char Lexer::advance() {
+    if (pos >= src.length())
+        return '\0';
+    char c = src[pos++];
+    return c;
+}
+
+bool Lexer::match(char expected) {
+    if (peek() == expected) {
+        advance();
+        return true;
+    }
+    return false;
+}
+
+// =========================================================
+//  MAIN TOKENIZE LOOP
+// =========================================================
 
 std::vector<Token> Lexer::tokenize() {
     std::vector<Token> tokens;
-
-    while (pos < src.length()) {
-        char c = peek();
-
-        // 1. Skip Whitespace
-        if (isspace(c)) {
-            if (c == '\n')
-                line++;
-            advance();
+    while (true) {
+        // 1. Drain Buffer first (from String Interpolation desugaring)
+        if (!tokenBuffer.empty()) {
+            tokens.push_back(tokenBuffer.front());
+            tokenBuffer.pop_front();
+            if (tokens.back().type == TokenType::EOF_TOKEN)
+                break;
             continue;
         }
 
-        // 2. Handle Strings
-        if (c == '"') {
-            std::string literal;
-            literal += advance();  // Keep the starting "
-            while (peek() != '"' && pos < src.length()) {
-                if (peek() == '\n')
-                    line++;
+        // 2. Scan next raw token
+        Token t = nextToken();
+        tokens.push_back(t);
+        if (t.type == TokenType::EOF_TOKEN)
+            break;
+    }
+    return tokens;
+}
 
-                // --- FIX: Handle Escape Sequences ---
-                if (peek() == '\\') {
-                    literal += advance();  // Consume '\'
-                    if (pos < src.length()) {
-                        literal += advance();  // Consume the escaped character
-                                               // (e.g. '"')
-                    }
-                    continue;
-                }
-                // ------------------------------------
+// =========================================================
+//  TOKEN SCANNER
+// =========================================================
 
-                literal += advance();
-            }
-            if (peek() == '"')
-                literal += advance();  // Keep the ending "
-
-            tokens.push_back({TokenType::STRING_LITERAL, literal, line});
-            continue;
-        }
-
-        // ... (Rest of the file remains exactly the same) ...
-
-        // 3. Handle Identifiers and Keywords
-        if (isalpha(c) || c == '_') {
-            std::string ident;
-            while (isalnum(peek()) || peek() == '_')
-                ident += advance();
-
-            if (ident == "define")
-                tokens.push_back({TokenType::DEFINE, ident, line});
-            else if (ident == "struct")
-                tokens.push_back({TokenType::STRUCT, ident, line});
-            else if (ident == "use")
-                tokens.push_back({TokenType::USE, ident, line});
-            else if (ident == "extend")
-                tokens.push_back({TokenType::EXTEND, ident, line});
-            else if (ident == "init")
-                tokens.push_back({TokenType::INIT, ident, line});
-            else if (ident == "extern")
-                tokens.push_back({TokenType::EXTERN, ident, line});
-            else if (ident == "return")
-                tokens.push_back({TokenType::RETURN, ident, line});
-            else if (ident == "if")
-                tokens.push_back({TokenType::IF, ident, line});
-            else if (ident == "else")
-                tokens.push_back({TokenType::ELSE, ident, line});
-            else if (ident == "elif")
-                tokens.push_back({TokenType::ELIF, ident, line});
-            else if (ident == "and")
-                tokens.push_back({TokenType::AND, ident, line});
-            else if (ident == "or")
-                tokens.push_back({TokenType::OR, ident, line});
-            else if (ident == "not")
-                tokens.push_back({TokenType::NOT, ident, line});
-            else if (ident == "while")
-                tokens.push_back({TokenType::WHILE, ident, line});
-            else if (ident == "for")
-                tokens.push_back({TokenType::FOR, ident, line});
-            else if (ident == "in")
-                tokens.push_back({TokenType::IN, ident, line});
-            else if (ident == "ref")
-                tokens.push_back({TokenType::REF, ident, line});
-            else if (ident == "with")
-                tokens.push_back({TokenType::WITH, ident, line});
-            else if (ident == "as")
-                tokens.push_back({TokenType::AS, ident, line});
-            else if (ident == "del")
-                tokens.push_back({TokenType::DEL, ident, line});
-            else if (ident == "true")
-                tokens.push_back({TokenType::TRUE, ident, line});
-            else if (ident == "false")
-                tokens.push_back({TokenType::FALSE, ident, line});
-            else
-                tokens.push_back({TokenType::IDENTIFIER, ident, line});
-            continue;
-        }
-
-        // 4. Handle Numbers
-        if (isdigit(c)) {
-            std::string num;
-            while (isdigit(peek()))
-                num += advance();
-            if (peek() == '.') {
-                num += advance();
-                while (isdigit(peek()))
-                    num += advance();
-            }
-            tokens.push_back({TokenType::INT_LITERAL, num, line});
-            continue;
-        }
-
-        // 5. Multi-character Operators (:= and ->)
-        if (c == ':' && pos + 1 < src.length() && src[pos + 1] == '=') {
-            advance();
-            advance();
-            tokens.push_back({TokenType::ASSIGN_INIT, ":=", line});
-            continue;
-        }
-
-        // 6. Equality (==)
-        if (c == '=') {
-            if (pos + 1 < src.length() && src[pos + 1] == '=') {
-                advance();
-                advance();
-                tokens.push_back({TokenType::EQUAL, "==", line});
-                continue;
-            }
-        }
-
-        // Arrow (->) and Minus-Assign (-=)
-        if (c == '-') {
-            if (pos + 1 < src.length() && src[pos + 1] == '>') {
-                advance();
-                advance();
-                tokens.push_back({TokenType::ARROW, "->", line});
-                continue;
-            }
-            if (pos + 1 < src.length() && src[pos + 1] == '=') {
-                advance();
-                advance();
-                tokens.push_back({TokenType::MINUS_ASSIGN, "-=", line});
-                continue;
-            }
-        }
-
-        // 7. Comments
-        if (c == '/') {
-            if (pos + 1 < src.length() && src[pos + 1] == '/') {
-                while (pos < src.length() && peek() != '\n') {
-                    advance();
-                }
-                continue;
-            }
-        }
-
-        // Comparison Operators (>=, >, <=, <, !=)
-        if (c == '>') {
-            if (pos + 1 < src.length() && src[pos + 1] == '=') {
-                advance();
-                advance();
-                tokens.push_back({TokenType::GREATER_EQUAL, ">=", line});
-            } else {
-                advance();
-                tokens.push_back({TokenType::GREATER, ">", line});
-            }
-            continue;
-        }
-
-        if (c == '<') {
-            if (pos + 1 < src.length() && src[pos + 1] == '=') {
-                advance();
-                advance();
-                tokens.push_back({TokenType::LESS_EQUAL, "<=", line});
-            } else {
-                advance();
-                tokens.push_back({TokenType::LESS, "<", line});
-            }
-            continue;
-        }
-
-        if (c == '!') {
-            if (pos + 1 < src.length() && src[pos + 1] == '=') {
-                advance();
-                advance();
-                tokens.push_back({TokenType::NOT_EQUAL, "!=", line});
-                continue;
-            }
-        }
-
-        // 8. Single-character Tokens
-        switch (c) {
-            case '(':
-                tokens.push_back({TokenType::LPAREN, "(", line});
-                break;
-            case ')':
-                tokens.push_back({TokenType::RPAREN, ")", line});
-                break;
-            case '{':
-                tokens.push_back({TokenType::LBRACE, "{", line});
-                break;
-            case '}':
-                tokens.push_back({TokenType::RBRACE, "}", line});
-                break;
-            case '[':
-                tokens.push_back({TokenType::LBRACKET, "[", line});
-                break;
-            case ']':
-                tokens.push_back({TokenType::RBRACKET, "]", line});
-                break;
-            case ':':
-                tokens.push_back({TokenType::COLON, ":", line});
-                break;
-            case ';':
-                tokens.push_back({TokenType::SEMICOLON, ";", line});
-                break;
-            case ',':
-                tokens.push_back({TokenType::COMMA, ",", line});
-                break;
-            case '+':
-                tokens.push_back({TokenType::PLUS, "+", line});
-                break;
-            case '-':
-                tokens.push_back({TokenType::MINUS, "-", line});
-                break;
-            case '*':
-                tokens.push_back({TokenType::STAR, "*", line});
-                break;
-            case '/':
-                tokens.push_back({TokenType::SLASH, "/", line});
-                break;
-            case '=':
-                tokens.push_back({TokenType::ASSIGN, "=", line});
-                break;
-            case '.':
-                if (pos + 1 < src.length() && src[pos] == '.' &&
-                    src[pos + 1] == '.') {
-                    advance();  // 2nd dot
-                    advance();  // 3rd dot
-                    tokens.push_back({TokenType::ELLIPSIS, "...", line});
-                } else {
-                    tokens.push_back({TokenType::DOT, ".", line});
-                }
-                break;
-            case '|':
-                tokens.push_back({TokenType::PIPE, "|", line});
-                break;
-            default:
-                tokens.push_back({TokenType::ERROR, std::string(1, c), line});
-                break;
-        }
+Token Lexer::nextToken() {
+    // 1. Skip Whitespace
+    while (pos < src.length() && isspace(peek())) {
+        if (peek() == '\n')
+            line++;
         advance();
     }
 
-    tokens.push_back({TokenType::EOF_TOKEN, "", line});
-    return tokens;
+    if (pos >= src.length())
+        return {TokenType::EOF_TOKEN, "", line};
+
+    char c = peek();
+
+    // 2. Handle Strings (With Interpolation Support)
+    if (c == '"') {
+        tokenizeString();  // Pushes tokens to tokenBuffer
+        // Return the first token immediately
+        Token t = tokenBuffer.front();
+        tokenBuffer.pop_front();
+        return t;
+    }
+
+    // 3. Handle Identifiers and Keywords
+    if (isalpha(c) || c == '_') {
+        std::string ident;
+        while (isalnum(peek()) || peek() == '_')
+            ident += advance();
+
+        if (ident == "define")
+            return {TokenType::DEFINE, ident, line};
+        if (ident == "struct")
+            return {TokenType::STRUCT, ident, line};
+        if (ident == "use")
+            return {TokenType::USE, ident, line};
+        if (ident == "extend")
+            return {TokenType::EXTEND, ident, line};
+        if (ident == "init")
+            return {TokenType::INIT, ident, line};
+        if (ident == "extern")
+            return {TokenType::EXTERN, ident, line};
+        if (ident == "return")
+            return {TokenType::RETURN, ident, line};
+        if (ident == "if")
+            return {TokenType::IF, ident, line};
+        if (ident == "else")
+            return {TokenType::ELSE, ident, line};
+        if (ident == "elif")
+            return {TokenType::ELIF, ident, line};
+        if (ident == "and")
+            return {TokenType::AND, ident, line};
+        if (ident == "or")
+            return {TokenType::OR, ident, line};
+        if (ident == "not")
+            return {TokenType::NOT, ident, line};
+        if (ident == "while")
+            return {TokenType::WHILE, ident, line};
+        if (ident == "for")
+            return {TokenType::FOR, ident, line};
+        if (ident == "in")
+            return {TokenType::IN, ident, line};
+        if (ident == "ref")
+            return {TokenType::REF, ident, line};
+        if (ident == "with")
+            return {TokenType::WITH, ident, line};
+        if (ident == "as")
+            return {TokenType::AS, ident, line};
+        if (ident == "del")
+            return {TokenType::DEL, ident, line};
+        if (ident == "true")
+            return {TokenType::TRUE, ident, line};
+        if (ident == "false")
+            return {TokenType::FALSE, ident, line};
+
+        return {TokenType::IDENTIFIER, ident, line};
+    }
+
+    // 4. Handle Numbers
+    if (isdigit(c)) {
+        std::string num;
+        while (isdigit(peek()))
+            num += advance();
+        if (peek() == '.') {
+            num += advance();
+            while (isdigit(peek()))
+                num += advance();
+        }
+        return {TokenType::INT_LITERAL, num, line};
+    }
+
+    // 5. Multi-character Operators
+    if (c == ':' && peek(1) == '=') {
+        advance();
+        advance();
+        return {TokenType::ASSIGN_INIT, ":=", line};
+    }
+    if (c == '=' && peek(1) == '=') {
+        advance();
+        advance();
+        return {TokenType::EQUAL, "==", line};
+    }
+    if (c == '-' && peek(1) == '>') {
+        advance();
+        advance();
+        return {TokenType::ARROW, "->", line};
+    }
+    if (c == '-' && peek(1) == '=') {
+        advance();
+        advance();
+        return {TokenType::MINUS_ASSIGN, "-=", line};
+    }
+    if (c == '.' && peek(1) == '.' && peek(2) == '.') {
+        advance();
+        advance();
+        advance();
+        return {TokenType::ELLIPSIS, "...", line};
+    }
+
+    // 6. Comments
+    if (c == '/') {
+        if (peek(1) == '/') {
+            while (pos < src.length() && peek() != '\n') {
+                advance();
+            }
+            return nextToken();  // Recursively call to get the real next token
+        }
+    }
+
+    // Comparison Operators
+    if (c == '>') {
+        if (peek(1) == '=') {
+            advance();
+            advance();
+            return {TokenType::GREATER_EQUAL, ">=", line};
+        }
+        advance();
+        return {TokenType::GREATER, ">", line};
+    }
+    if (c == '<') {
+        if (peek(1) == '=') {
+            advance();
+            advance();
+            return {TokenType::LESS_EQUAL, "<=", line};
+        }
+        advance();
+        return {TokenType::LESS, "<", line};
+    }
+    if (c == '!') {
+        if (peek(1) == '=') {
+            advance();
+            advance();
+            return {TokenType::NOT_EQUAL, "!=", line};
+        }
+    }
+
+    // 7. Single-character Tokens
+    advance();  // Consume the char
+    switch (c) {
+        case '(':
+            return {TokenType::LPAREN, "(", line};
+        case ')':
+            return {TokenType::RPAREN, ")", line};
+        case '{':
+            return {TokenType::LBRACE, "{", line};
+        case '}':
+            return {TokenType::RBRACE, "}", line};
+        case '[':
+            return {TokenType::LBRACKET, "[", line};
+        case ']':
+            return {TokenType::RBRACKET, "]", line};
+        case ':':
+            return {TokenType::COLON, ":", line};
+        case ';':
+            return {TokenType::SEMICOLON, ";", line};
+        case ',':
+            return {TokenType::COMMA, ",", line};
+        case '+':
+            return {TokenType::PLUS, "+", line};
+        case '-':
+            return {TokenType::MINUS, "-", line};
+        case '*':
+            return {TokenType::STAR, "*", line};
+        case '/':
+            return {TokenType::SLASH, "/", line};
+        case '=':
+            return {TokenType::ASSIGN, "=", line};
+        case '.':
+            return {TokenType::DOT, ".", line};
+        case '|':
+            return {TokenType::PIPE, "|", line};
+        default:
+            return {TokenType::ERROR, std::string(1, c), line};
+    }
+}
+
+// =========================================================
+//  STRING INTERPOLATION LOGIC
+// =========================================================
+
+void Lexer::tokenizeString() {
+    int startLine = line;
+    advance();  // Skip opening quote
+
+    std::vector<std::string> args;
+    std::string format_builder = "";
+
+    while (pos < src.length() && peek() != '"') {
+        char c = peek();
+
+        // Handle Escapes
+        if (c == '\\') {
+            advance();  // Consume '\'
+            if (pos < src.length()) {
+                char esc = advance();
+                format_builder += '\\';
+                format_builder += esc;
+            }
+            continue;
+        }
+
+        // 1. Found '$' - Start Interpolation
+        if (c == '$') {
+            advance();  // Skip '$'
+
+            // Case A: ${expression % fmt}
+            if (peek() == '{') {
+                advance();  // Skip '{'
+                std::string expr = "";
+                std::string fmt = "";
+                bool readingFmt = false;
+
+                // Read until '}'
+                while (pos < src.length() && peek() != '}') {
+                    // Check for Modulo/Format separator '%' or Pipe '|'
+                    if (!readingFmt && (peek() == '%' || peek() == '|')) {
+                        readingFmt = true;
+                        advance();
+                        continue;
+                    }
+
+                    if (readingFmt)
+                        fmt += advance();
+                    else
+                        expr += advance();
+                }
+                if (peek() == '}')
+                    advance();  // Skip '}'
+
+                // Add placeholder to string: "{ % .2f}" or "{}"
+                format_builder += "{";
+                if (!fmt.empty()) {
+                    format_builder +=
+                        " % ";  // Normalized separator for Runtime
+                    format_builder += fmt;
+                }
+                format_builder += "}";
+
+                // Capture expression
+                // Simple whitespace trim
+                size_t first = expr.find_first_not_of(" \t");
+                if (std::string::npos != first) {
+                    size_t last = expr.find_last_not_of(" \t");
+                    expr = expr.substr(first, (last - first + 1));
+                }
+                args.push_back(expr);
+            }
+            // Case B: $variable (Simple Identifier)
+            else if (isalpha(peek()) || peek() == '_') {
+                std::string id = "";
+                while (isalnum(peek()) || peek() == '_') {
+                    id += advance();
+                }
+                format_builder += "{}";
+                args.push_back(id);
+            }
+            // Case C: Just a '$' symbol (escaped or trailing)
+            else {
+                format_builder += "$";
+            }
+        }
+        // 2. Normal Character
+        else {
+            format_builder += advance();
+        }
+    }
+
+    if (peek() == '"')
+        advance();  // Skip closing quote
+
+    // --- EMIT TOKENS ---
+
+    // 1. The literal string token
+    // IMPORTANT: We must re-add the quotes because the Parser expects them!
+    tokenBuffer.push_back(
+        {TokenType::STRING_LITERAL, "\"" + format_builder + "\"", startLine});
+
+    // 2. If interpolations exist, generate: .format(arg1, arg2)
+    if (!args.empty()) {
+        tokenBuffer.push_back({TokenType::DOT, ".", startLine});
+        tokenBuffer.push_back({TokenType::IDENTIFIER, "format", startLine});
+        tokenBuffer.push_back({TokenType::LPAREN, "(", startLine});
+
+        for (size_t i = 0; i < args.size(); i++) {
+            tokenBuffer.push_back({TokenType::IDENTIFIER, args[i], startLine});
+
+            if (i < args.size() - 1) {
+                tokenBuffer.push_back({TokenType::COMMA, ",", startLine});
+            }
+        }
+
+        tokenBuffer.push_back({TokenType::RPAREN, ")", startLine});
+    }
 }

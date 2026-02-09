@@ -1,5 +1,4 @@
-// stdlib/std/collections/list.apx
-use std.sys
+use core.sys
 
 struct ListIterator {
     list_ref: List
@@ -97,19 +96,6 @@ struct List {
     }
     
     define __repr(self) -> String {
-        // [FIX] Initialize as a String Object, not a raw C-string literal
-        s := String("[") 
-        
-        i := 0
-        for item in self {
-             if i > 0 { s := s + ", " }
-             
-             // The format function returns a String, and 's' is now a String
-             // so the + operator works correctly (String + String).
-             s := s + "%s".format(item) 
-             i := i + 1
-        }
-        s := s + "]"
-        return s
+        return "[" + ", ".join(self) + "]"
     }
 }

@@ -138,11 +138,14 @@ std::set<std::string> loadedModules;
 
 std::vector<std::unique_ptr<Node>> processFile(const std::string& filePath) {
     std::cerr << "[DEBUG] Processing file: " << filePath << std::endl;
+
+    // 1. Check for circular imports
     std::string absPath = fs::absolute(filePath).string();
     if (loadedModules.count(absPath))
         return {};
     loadedModules.insert(absPath);
 
+    // 2. Open File
     std::ifstream file(filePath);
     if (!file.is_open()) {
         std::cerr << "Error: Could not open module '" << filePath << "'"
@@ -153,31 +156,53 @@ std::vector<std::unique_ptr<Node>> processFile(const std::string& filePath) {
     buffer << file.rdbuf();
     std::string source = buffer.str();
 
+    // 3. Parse
     Lexer lexer(source);
     auto tokens = lexer.tokenize();
-
     Parser parser(tokens, source);
     auto nodes = parser.parse();
 
     std::vector<std::unique_ptr<Node>> allNodes;
 
-    for (const auto& node : nodes) {
+    // 4. Process Imports recursively
+    for (auto& node : nodes) {
+        // Is this a 'use' statement?
         if (auto use = dynamic_cast<UseNode*>(node.get())) {
             std::string importPath;
+
+            // CASE 1: Explicit Sub-file (e.g., use io.file)
             if (!use->subTarget.empty()) {
-                importPath = "stdlib/" + use->moduleName + "/init.qk";
-            } else {
-                importPath = "stdlib/" + use->moduleName + "/init.qk";
-                if (!fs::exists(importPath)) {
-                    importPath = "stdlib/" + use->moduleName + ".qk";
+                importPath =
+                    "libs/" + use->moduleName + "/" + use->subTarget + ".qk";
+            }
+            // CASE 2: Module Import (e.g., use math)
+            else {
+                // Priority 1: Check for package entry point (__init.qk)
+                std::string pkgInit = "libs/" + use->moduleName + "/__init.qk";
+
+                // Priority 2: Check for single file module (math.qk)
+                std::string singleFile = "libs/" + use->moduleName + ".qk";
+
+                if (fs::exists(pkgInit)) {
+                    importPath = pkgInit;
+                } else if (fs::exists(singleFile)) {
+                    importPath = singleFile;
+                } else {
+                    std::cerr << "Error: Module '" << use->moduleName
+                              << "' not found." << std::endl;
+                    exit(1);
                 }
             }
+
+            // Recurse!
             auto importedNodes = processFile(importPath);
-            for (auto& n : importedNodes)
-                allNodes.push_back(std::move(n));
-        } else {
-            allNodes.push_back(
-                std::move(const_cast<std::unique_ptr<Node>&>(node)));
+            for (auto& importedNode : importedNodes) {
+                allNodes.push_back(std::move(importedNode));
+            }
+        }
+        // Normal Node (Function, Struct, etc.)
+        else {
+            allNodes.push_back(std::move(node));
         }
     }
     return allNodes;
@@ -198,7 +223,7 @@ int main(int argc, char* argv[]) {
     bool runImmediate = (std::string(argv[1]) == "-r");
 
     std::cerr << "[DEBUG] Loading standard library..." << std::endl;
-    auto ast = processFile("stdlib/std/init.qk");
+    auto ast = processFile("libs/core/__init.qk");
 
     std::cerr << "[DEBUG] Loading user file..." << std::endl;
     auto userNodes = processFile(filename);

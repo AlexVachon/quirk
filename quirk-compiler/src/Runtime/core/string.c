@@ -7,6 +7,124 @@
 
 #define MAX_SMALL_INT 0xFFFFF
 
+// ==========================================
+//  HELPERS (Must be defined before use)
+// ==========================================
+
+// --- Helper: Dynamic Buffer Appender ---
+void buffer_append(char** buf, int* cap, int* len, const char* str) {
+    if (!str)
+        return;
+    int str_len = strlen(str);
+    while (*len + str_len >= *cap) {
+        *cap *= 2;
+        *buf = (char*)realloc(*buf, *cap);
+    }
+    strcpy(*buf + *len, str);
+    *len += str_len;
+}
+
+// --- Helper: Convert Any (Int/String) to Text ---
+void append_any(char** buf, int* cap, int* len, void* item) {
+    uintptr_t val = (uintptr_t)item;
+    if (val <= MAX_SMALL_INT) {
+        char temp[32];
+        sprintf(temp, "%d", (int)val);
+        buffer_append(buf, cap, len, temp);
+    } else {
+        char* s = (char*)item;
+        if (s)
+            buffer_append(buf, cap, len, s);
+    }
+}
+
+// ==========================================
+//  LIFECYCLE (Init / Del)
+// ==========================================
+
+void String__init(String* self, char* raw) {
+    if (!raw) {
+        self->length = 0;
+        self->buffer = strdup("");
+    } else {
+        self->length = strlen(raw);
+        self->buffer = strdup(raw);
+    }
+}
+
+void String___del(String* self) {
+    if (self->buffer) {
+        free(self->buffer);
+        self->buffer = NULL;
+    }
+}
+
+// ==========================================
+//  OPERATORS (__add, __eq, __str)
+// ==========================================
+
+String* String___add(String* self, String* other) {
+    if (!self || !other)
+        return make_String("");
+
+    int new_len = self->length + other->length;
+    char* raw = (char*)malloc(new_len + 1);
+    if (!raw)
+        return NULL;
+
+    strcpy(raw, self->buffer);
+    strcat(raw, other->buffer);
+
+    return make_String_taking_ownership(raw);
+}
+
+int String___eq(String* self, String* other) {
+    if (self->length != other->length)
+        return 0;
+    return strcmp(self->buffer, other->buffer) == 0;
+}
+
+char* String___str(String* self) {
+    return self->buffer;
+}
+
+char* String___repr(String* self) {
+    // Returns "content" (with quotes)
+    int len = self->length + 2;  // +2 for quotes
+    char* raw = (char*)malloc(len + 1);
+    snprintf(raw, len + 1, "\"%s\"", self->buffer);
+    return raw;
+}
+
+// ==========================================
+//  ITERATOR
+// ==========================================
+
+void StringIterator__init(StringIterator* self, String* s) {
+    self->str_ref = s;
+    self->idx = 0;
+}
+
+int StringIterator___has_next(StringIterator* self) {
+    if (!self || !self->str_ref)
+        return 0;
+    return self->idx < self->str_ref->length;
+}
+
+char StringIterator___next(StringIterator* self) {
+    if (!self || !self->str_ref)
+        return '\0';
+    char c = self->str_ref->buffer[self->idx];
+    self->idx++;
+    return c;
+}
+
+StringIterator* String___iter(String* self) {
+    StringIterator* iter = (StringIterator*)malloc(sizeof(StringIterator));
+    StringIterator__init(iter, self);
+    return iter;
+}
+
 String* make_String_taking_ownership(char* raw_buffer) {
     if (!raw_buffer)
         return NULL;
@@ -443,30 +561,28 @@ String* String_join(String* self, List* items) {
         uintptr_t val = (uintptr_t)item;
 
         if (val <= MAX_SMALL_INT) {
-            // It's likely an Integer: Count digits
-            // snprintf(NULL, 0, ...) returns the length without writing
             char temp[32];
             total_len += sprintf(temp, "%d", (int)val);
         } else {
-            // It's likely a String (char*): Add strlen
-            char* s = (char*)item;
-            if (s)
-                total_len += strlen(s);
+            // FIX: Assume it is a String Object, not a raw char*
+            String* s = (String*)item;
+            if (s && s->buffer) {
+                total_len += s->length;
+            }
         }
 
-        // Add separator length (if not last item)
         if (i < items->length - 1) {
             total_len += self->length;
         }
     }
 
-    // Allocate buffer (+1 for null terminator)
+    // Allocate
     char* result = (char*)malloc(total_len + 1);
     if (!result)
         return NULL;
 
     char* ptr = result;
-    *ptr = '\0';  // Start empty
+    *ptr = '\0';
 
     // --- PASS 2: Build the string ---
     for (int i = 0; i < items->length; i++) {
@@ -474,24 +590,22 @@ String* String_join(String* self, List* items) {
         uintptr_t val = (uintptr_t)item;
 
         if (val <= MAX_SMALL_INT) {
-            // Write Integer
             ptr += sprintf(ptr, "%d", (int)val);
         } else {
-            // Write String
-            char* s = (char*)item;
-            if (s) {
-                strcpy(ptr, s);
-                ptr += strlen(s);
+            // FIX: Unwrap String Object
+            String* s = (String*)item;
+            if (s && s->buffer) {
+                strcpy(ptr, s->buffer);
+                ptr += s->length;
             }
         }
 
-        // Add separator
         if (i < items->length - 1) {
             memcpy(ptr, self->buffer, self->length);
             ptr += self->length;
         }
     }
-    *ptr = '\0';  // Ensure null termination
+    *ptr = '\0';
 
     return make_String_taking_ownership(result);
 }
@@ -684,7 +798,7 @@ String* String_center(String* self, int width, String* pad) {
     return make_String_taking_ownership(result);
 }
 
-int String_isdigit(String* self) {
+int String_is_digit(String* self) {
     if (!self || self->length == 0)
         return 0;
     for (int i = 0; i < self->length; i++) {
@@ -694,7 +808,7 @@ int String_isdigit(String* self) {
     return 1;
 }
 
-int String_isalpha(String* self) {
+int String_is_alpha(String* self) {
     if (!self || self->length == 0)
         return 0;
     for (int i = 0; i < self->length; i++) {
@@ -704,114 +818,235 @@ int String_isalpha(String* self) {
     return 1;
 }
 
+// --- Helper: Safely cast void* bits back to double ---
+double bits_to_double(void* ptr) {
+    union {
+        void* p;
+        double d;
+    } u;
+    u.p = ptr;
+    return u.d;
+}
+
+// --- Helper: Append with Format Specifier ---
+// [src/Runtime/core/string.c]
+
+void append_formatted(char** buf,
+                      int* cap,
+                      int* len,
+                      void* item,
+                      const char* fmt_spec) {
+    uintptr_t val = (uintptr_t)item;
+    char format_string[32];
+    char output_buffer[128];
+
+    // 1. Check if user wants a Float (%f, %g, %e)
+    if (fmt_spec && (strchr(fmt_spec, 'f') || strchr(fmt_spec, 'g') ||
+                     strchr(fmt_spec, 'e'))) {
+        snprintf(format_string, 32, "%%%s", fmt_spec);
+        double d_val = 0.0;
+
+        if (val <= MAX_SMALL_INT) {
+            d_val = (double)((int)val);
+        } else {
+            // It is a String pointer (guaranteed by our new compiler logic)
+            char* s = (char*)item;
+            if (s)
+                d_val = strtod(s, NULL);  // Parse "3.14" -> 3.14
+        }
+
+        snprintf(output_buffer, 128, format_string, d_val);
+        buffer_append(buf, cap, len, output_buffer);
+        return;
+    }
+
+    // 2. Handle Small Integers
+    if (val <= MAX_SMALL_INT) {
+        if (fmt_spec && strlen(fmt_spec) > 0) {
+            snprintf(format_string, 32, "%%%s", fmt_spec);
+            if (strchr(format_string, 's'))
+                strcpy(format_string, "%d");
+        } else {
+            strcpy(format_string, "%d");
+        }
+        snprintf(output_buffer, 128, format_string, (int)val);
+        buffer_append(buf, cap, len, output_buffer);
+    }
+    // 3. Handle Strings (Everything else is now a String!)
+    else {
+        char* s = (char*)item;
+        if (!s)
+            s = "(null)";
+
+        if (fmt_spec && strlen(fmt_spec) > 0) {
+            snprintf(format_string, 32, "%%%s", fmt_spec);
+            if (strpbrk(format_string, "dxfge"))
+                strcpy(format_string, "%s");
+            snprintf(output_buffer, 128, format_string, s);
+        } else {
+            buffer_append(buf, cap, len, s);
+        }
+    }
+}
+
+char* _float_to_str(double val) {
+    char* buf = (char*)malloc(64);
+    snprintf(buf, 64, "%g", val); 
+    return buf;
+}
+
+// --------------------------------------------------------
+//  New "f-string" style Formatter for Map (Named)
+//  Supports: "Hello {name}" and "Pi: {val % .2f}"
+// --------------------------------------------------------
 String* String_format_map(String* self, List* keys, List* values) {
     if (!self || !self->buffer)
         return make_String("");
 
-    int buffer_cap = 2048;
-    char* result_buf = (char*)malloc(buffer_cap);
-    if (!result_buf)
-        return NULL;
-    result_buf[0] = '\0';
+    int cap = 2048;
+    int len = 0;
+    char* res = (char*)malloc(cap);
+    res[0] = '\0';
 
-    int i = 0;
-    while (i < self->length) {
-        if (self->buffer[i] == '%' && (i + 1 < self->length) &&
-            self->buffer[i + 1] == '{') {
-            char* close_ptr = strchr(self->buffer + i, '}');
+    char* ptr = self->buffer;
+
+    while (*ptr) {
+        if (*ptr == '{') {
+            // Escape "{{" -> "{"
+            if (*(ptr + 1) == '{') {
+                buffer_append(&res, &cap, &len, "{");
+                ptr += 2;
+                continue;
+            }
+
+            char* close_ptr = strchr(ptr, '}');
             if (close_ptr) {
-                int key_start = i + 2;
-                int key_len = close_ptr - (self->buffer + key_start);
+                // --- Look for PERCENT '%' Separator ---
+                char* sep_ptr = strchr(ptr, '%');
 
-                char* key = (char*)malloc(key_len + 1);
-                strncpy(key, self->buffer + key_start, key_len);
-                key[key_len] = '\0';
+                char* fmt_spec = NULL;
+                char spec_buffer[16];
+                char* key_end = close_ptr;
 
-                int idx = find_key_index(keys, key);
-                char* val_str = "?";
+                // Verify separator is inside the braces
+                if (sep_ptr && sep_ptr < close_ptr) {
+                    // Found specifier!
+                    key_end = sep_ptr;
+
+                    // Skip the '%' and any space after it
+                    char* spec_start = sep_ptr + 1;
+                    while (*spec_start == ' ')
+                        spec_start++;
+
+                    int spec_len = close_ptr - spec_start;
+
+                    if (spec_len < 15 && spec_len > 0) {
+                        strncpy(spec_buffer, spec_start, spec_len);
+                        spec_buffer[spec_len] = '\0';
+                        fmt_spec = spec_buffer;
+                    }
+                }
+
+                // Extract Key Name
+                int key_len = key_end - (ptr + 1);
+                // Trim trailing spaces from key name
+                while (key_len > 0 && ptr[1 + key_len - 1] == ' ')
+                    key_len--;
+
+                char* key_name = (char*)malloc(key_len + 1);
+                strncpy(key_name, ptr + 1, key_len);
+                key_name[key_len] = '\0';
+
+                // Lookup Value
+                int idx = find_key_index(keys, key_name);
                 if (idx != -1 && idx < values->length) {
-                    val_str = (char*)values->data[idx];
+                    append_formatted(&res, &cap, &len, values->data[idx],
+                                     fmt_spec);
+                } else {
+                    // Keep original if not found: "{unknown}"
+                    buffer_append(&res, &cap, &len, "{");
+                    buffer_append(&res, &cap, &len, key_name);
+                    buffer_append(&res, &cap, &len, "}");
                 }
-
-                if (strlen(result_buf) + strlen(val_str) >= buffer_cap) {
-                    buffer_cap = (buffer_cap * 2) + strlen(val_str);
-                    result_buf = (char*)realloc(result_buf, buffer_cap);
-                }
-                strcat(result_buf, val_str);
-                free(key);
-
-                i = (close_ptr - self->buffer) + 1;
+                free(key_name);
+                ptr = close_ptr + 1;
                 continue;
             }
         }
 
-        int len = strlen(result_buf);
-        if (len + 1 >= buffer_cap) {
-            buffer_cap *= 2;
-            result_buf = (char*)realloc(result_buf, buffer_cap);
-        }
-        result_buf[len] = self->buffer[i];
-        result_buf[len + 1] = '\0';
-        i++;
+        char c[2] = {*ptr, '\0'};
+        buffer_append(&res, &cap, &len, c);
+        ptr++;
     }
 
-    return make_String_taking_ownership(result_buf);
+    return make_String_taking_ownership(res);
 }
 
+// --------------------------------------------------------
+//  New "f-string" style Formatter for List (Positional)
+//  Supports: "Hello {}" and "Pi: { % .2f }"
+// --------------------------------------------------------
 String* String_format_list(String* self, List* args) {
     if (!self || !self->buffer)
         return make_String("");
 
-    int buffer_cap = 2048;
-    char* result_buf = (char*)malloc(buffer_cap);
-    if (!result_buf)
-        return NULL;
-    result_buf[0] = '\0';
+    int cap = 2048;
+    int len = 0;
+    char* res = (char*)malloc(cap);
+    res[0] = '\0';
 
     int arg_idx = 0;
-    int i = 0;
+    char* ptr = self->buffer;
 
-    while (i < self->length) {
-        if (self->buffer[i] == '%' && (i + 1 < self->length)) {
-            char specifier = self->buffer[i + 1];
-
-            if (specifier == '%') {
-                int len = strlen(result_buf);
-                if (len + 1 >= buffer_cap) {
-                    buffer_cap *= 2;
-                    result_buf = (char*)realloc(result_buf, buffer_cap);
-                }
-                result_buf[len] = '%';
-                result_buf[len + 1] = '\0';
-                i += 2;
+    while (*ptr) {
+        if (*ptr == '{') {
+            if (*(ptr + 1) == '{') {
+                buffer_append(&res, &cap, &len, "{");
+                ptr += 2;
                 continue;
             }
 
-            if (arg_idx < args->length) {
-                char* val_str = (char*)args->data[arg_idx];
-                arg_idx++;
+            char* close_ptr = strchr(ptr, '}');
+            if (close_ptr) {
+                // --- Look for PERCENT '%' Separator ---
+                char* sep_ptr = strchr(ptr, '%');
 
-                if (strlen(result_buf) + strlen(val_str) >= buffer_cap) {
-                    buffer_cap = (buffer_cap * 2) + strlen(val_str);
-                    result_buf = (char*)realloc(result_buf, buffer_cap);
+                char* fmt_spec = NULL;
+                char spec_buffer[16];
+
+                if (sep_ptr && sep_ptr < close_ptr) {
+                    char* spec_start = sep_ptr + 1;
+                    while (*spec_start == ' ')
+                        spec_start++;
+                    int spec_len = close_ptr - spec_start;
+                    if (spec_len < 15 && spec_len > 0) {
+                        strncpy(spec_buffer, spec_start, spec_len);
+                        spec_buffer[spec_len] = '\0';
+                        fmt_spec = spec_buffer;
+                    }
                 }
-                strcat(result_buf, val_str);
-                i += 2;
+
+                if (arg_idx < args->length) {
+                    append_formatted(&res, &cap, &len, args->data[arg_idx++],
+                                     fmt_spec);
+                }
+                ptr = close_ptr + 1;
                 continue;
             }
         }
 
-        int len = strlen(result_buf);
-        if (len + 1 >= buffer_cap) {
-            buffer_cap *= 2;
-            result_buf = (char*)realloc(result_buf, buffer_cap);
+        if (*ptr == '}' && *(ptr + 1) == '}') {
+            buffer_append(&res, &cap, &len, "}");
+            ptr += 2;
+            continue;
         }
-        result_buf[len] = self->buffer[i];
-        result_buf[len + 1] = '\0';
-        i++;
+
+        char c[2] = {*ptr, '\0'};
+        buffer_append(&res, &cap, &len, c);
+        ptr++;
     }
 
-    return make_String_taking_ownership(result_buf);
+    return make_String_taking_ownership(res);
 }
 
 List* String_split(String* strObj, String* delimObj) {
@@ -860,4 +1095,133 @@ List* String_split(String* strObj, String* delimObj) {
     list->data[idx] = strdup(start);
 
     return list;
+}
+
+// [Add to src/Runtime/core/string.c]
+
+// ==========================================
+//  PARSING TOOLS
+// ==========================================
+
+int String_to_int(String* self) {
+    if (!self || !self->buffer)
+        return 0;
+    // Base 10 conversion
+    return (int)strtol(self->buffer, NULL, 10);
+}
+
+double String_to_float(String* self) {
+    if (!self || !self->buffer)
+        return 0.0;
+    return strtod(self->buffer, NULL);
+}
+
+// ==========================================
+//  SMART LINE SPLITTER
+// ==========================================
+
+List* String_lines(String* self) {
+    if (!self || !self->buffer)
+        return NULL;
+
+    // First pass: Count lines
+    int count = 1;
+    char* ptr = self->buffer;
+    while (*ptr) {
+        if (*ptr == '\n')
+            count++;
+        ptr++;
+    }
+
+    List* list = (List*)malloc(sizeof(List));
+    list->length = 0;        // Will increment as we add
+    list->capacity = count;  // Approximation
+    list->data = (void**)malloc(sizeof(void*) * count);
+
+    char* start = self->buffer;
+    ptr = self->buffer;
+
+    while (*ptr) {
+        // Handle \r\n (Windows) or \n (Unix)
+        if (*ptr == '\n' || *ptr == '\r') {
+            int len = ptr - start;
+
+            // Extract line
+            char* line = (char*)malloc(len + 1);
+            strncpy(line, start, len);
+            line[len] = '\0';
+
+            // Add to list
+            list->data[list->length++] = make_String_taking_ownership(line);
+
+            // Skip newline char(s)
+            if (*ptr == '\r' && *(ptr + 1) == '\n')
+                ptr++;  // Skip \n in \r\n
+
+            start = ptr + 1;
+        }
+        ptr++;
+    }
+
+    // Add last line
+    if (start <= ptr) {
+        int len = ptr - start;
+        char* line = (char*)malloc(len + 1);
+        strncpy(line, start, len);
+        line[len] = '\0';
+        list->data[list->length++] = make_String_taking_ownership(line);
+    }
+
+    return list;
+}
+
+// ==========================================
+//  FUZZY MATCHING (Levenshtein)
+// ==========================================
+
+int min3(int a, int b, int c) {
+    int m = a;
+    if (b < m)
+        m = b;
+    if (c < m)
+        m = c;
+    return m;
+}
+
+int String_distance(String* self, String* other) {
+    if (!self || !other)
+        return 0;
+
+    int len1 = self->length;
+    int len2 = other->length;
+
+    // Allocation: (len1 + 1) * (len2 + 1) matrix
+    // Optimization: We could use 2 rows, but a full matrix is easier to read
+    // for now
+    int* matrix = (int*)malloc((len1 + 1) * (len2 + 1) * sizeof(int));
+
+// Access macro
+#define M(r, c) matrix[(r) * (len2 + 1) + (c)]
+
+    // Init first row/col
+    for (int i = 0; i <= len1; i++)
+        M(i, 0) = i;
+    for (int j = 0; j <= len2; j++)
+        M(0, j) = j;
+
+    for (int i = 1; i <= len1; i++) {
+        for (int j = 1; j <= len2; j++) {
+            int cost = (self->buffer[i - 1] == other->buffer[j - 1]) ? 0 : 1;
+
+            M(i, j) = min3(M(i - 1, j) + 1,        // Deletion
+                           M(i, j - 1) + 1,        // Insertion
+                           M(i - 1, j - 1) + cost  // Substitution
+            );
+        }
+    }
+
+    int result = M(len1, len2);
+    free(matrix);
+#undef M
+    return result;
 }

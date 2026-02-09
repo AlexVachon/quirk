@@ -5,11 +5,17 @@
 #include <stdlib.h>
 #include <string.h>
 
-// ===== PUBLIC API (Simple and clean) =====
+// ===== PUBLIC API =====
+
 typedef struct {
-    int length;
-    char* buffer;
+    int length;     // Index 0
+    char* buffer;   // Index 1
 } String;
+
+typedef struct {
+    String* str_ref;
+    int idx;
+} StringIterator;
 
 typedef struct {
     void** data;
@@ -22,6 +28,8 @@ typedef struct {
     int is_open;
 } File;
 
+// Helper to create objects from C
 String* make_String(const char* raw);
+String* make_String_taking_ownership(char* raw_buffer);
 
 #endif

@@ -24,6 +24,11 @@ typedef struct {
 } List;
 
 typedef struct {
+    List* list_ref;
+    int idx;
+} ListIterator;
+
+typedef struct {
     void* handle;
     int is_open;
 } File;

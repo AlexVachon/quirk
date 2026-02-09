@@ -1,9 +1,9 @@
-#include "types.h"
-#include <string.h>
+#include <ctype.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <stdint.h>
-#include <ctype.h>
+#include <string.h>
+#include "types.h"
 
 #define MAX_SMALL_INT 0xFFFFF
 
@@ -43,6 +43,18 @@ void append_any(char** buf, int* cap, int* len, void* item) {
 // ==========================================
 
 void String__init(String* self, char* raw) {
+    uintptr_t val = (uintptr_t)raw;
+
+    // 1. Safety Check: Is this actually a Small Integer?
+    if (val <= MAX_SMALL_INT) {
+        char temp[32];
+        sprintf(temp, "%d", (int)val);
+        self->length = strlen(temp);
+        self->buffer = strdup(temp);
+        return;
+    }
+
+    // 2. Standard String Initialization
     if (!raw) {
         self->length = 0;
         self->buffer = strdup("");
@@ -137,9 +149,18 @@ String* make_String_taking_ownership(char* raw_buffer) {
 
 String* make_String(const char* raw) {
     String* s = (String*)malloc(sizeof(String));
-    s->length = strlen(raw);
-    s->buffer = (char*)malloc(s->length + 1);
-    strcpy(s->buffer, raw);
+
+    uintptr_t val = (uintptr_t)raw;
+    if (val <= MAX_SMALL_INT) {
+        char temp[32];
+        sprintf(temp, "%d", (int)val);
+        s->length = strlen(temp);
+        s->buffer = strdup(temp);
+    } else {
+        s->length = strlen(raw);
+        s->buffer = (char*)malloc(s->length + 1);
+        strcpy(s->buffer, raw);
+    }
     return s;
 }
 
@@ -891,7 +912,7 @@ void append_formatted(char** buf,
 
 char* _float_to_str(double val) {
     char* buf = (char*)malloc(64);
-    snprintf(buf, 64, "%g", val); 
+    snprintf(buf, 64, "%g", val);
     return buf;
 }
 

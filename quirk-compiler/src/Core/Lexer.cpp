@@ -90,6 +90,8 @@ Token Lexer::nextToken() {
             return {TokenType::STRUCT, ident, line};
         if (ident == "use")
             return {TokenType::USE, ident, line};
+        if (ident == "from")
+            return {TokenType::FROM, ident, line};
         if (ident == "extend")
             return {TokenType::EXTEND, ident, line};
         if (ident == "init")

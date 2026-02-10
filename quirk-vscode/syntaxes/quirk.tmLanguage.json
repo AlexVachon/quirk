@@ -6,6 +6,9 @@
       "include": "#comments"
     },
     {
+      "include": "#imports"
+    },
+    {
       "include": "#keywords"
     },
     {
@@ -22,6 +25,37 @@
     }
   ],
   "repository": {
+    "imports": {
+      "patterns": [
+        {
+          "name": "meta.import.specific.quirk",
+          "match": "\\b(from)\\s+([a-zA-Z_][\\w.]*)\\s+(use)\\b",
+          "captures": {
+            "1": {
+              "name": "keyword.control.quirk" 
+            },
+            "2": {
+              "name": "entity.name.namespace.quirk"
+            },
+            "3": {
+              "name": "keyword.control.quirk"
+            }
+          }
+        },
+        {
+          "name": "meta.import.general.quirk",
+          "match": "\\b(use)\\s+([a-zA-Z_][\\w.]*)\\b",
+          "captures": {
+            "1": {
+              "name": "keyword.control.quirk"
+            },
+            "2": {
+              "name": "entity.name.namespace.quirk"
+            }
+          }
+        }
+      ]
+    },
     "comments": {
       "patterns": [
         {
@@ -37,8 +71,8 @@
           "match": "\\b(if|else|elif|while|for|in|return|break|continue)\\b"
         },
         {
-          "name": "keyword.other.quirk",
-          "match": "\\b(define|struct|extern|use|init|del)\\b"
+          "name": "keyword.control.quirk", 
+          "match": "\\b(define|struct|extern|init|del)\\b"
         },
         {
           "name": "constant.language.quirk",

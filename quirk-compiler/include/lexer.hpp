@@ -26,6 +26,7 @@ enum class TokenType {
     MOVE,
     DEL,
     USE,
+    FROM,
     IN,
     WITH,
     AS,

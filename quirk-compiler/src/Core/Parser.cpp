@@ -215,6 +215,8 @@ std::unique_ptr<Node> Parser::parseStatement() {
 
     if (type == TokenType::USE)
         return parseUse();
+    if (type == TokenType::FROM)
+        return parseUse();
     if (type == TokenType::IF)
         return parseIf();
     if (type == TokenType::WITH)
@@ -534,12 +536,40 @@ std::unique_ptr<StructNode> Parser::parseStruct() {
     return node;
 }
 
+// [src/Core/Parser.cpp]
+
 std::unique_ptr<Node> Parser::parseUse() {
-    consume(TokenType::USE, "Expected 'use'");
-    std::string path = advance().value;
-    while (match(TokenType::DOT))
-        path += "/" + advance().value;
-    return std::make_unique<UseNode>(path, "");
+    std::string path;
+    std::vector<std::string> filters;
+
+    // Case 1: "from core.math use { Vector2 }"
+    if (match(TokenType::FROM)) {
+        // 1. Parse Path
+        path = advance().value;
+        while (match(TokenType::DOT)) {
+            path += "/" + advance().value;
+        }
+
+        // 2. Expect 'use'
+        consume(TokenType::USE, "Expected 'use' after module path");
+
+        // 3. Parse Filter List "{ A, B }"
+        consume(TokenType::LBRACE, "Expected '{' for import list");
+        do {
+            filters.push_back(advance().value);
+        } while (match(TokenType::COMMA));
+        consume(TokenType::RBRACE, "Expected '}'");
+    } 
+    // Case 2: "use core.math" (Import All)
+    else {
+        consume(TokenType::USE, "Expected 'use'");
+        path = advance().value;
+        while (match(TokenType::DOT)) {
+            path += "/" + advance().value;
+        }
+    }
+
+    return std::make_unique<UseNode>(path, filters);
 }
 
 std::unique_ptr<Node> Parser::parseWith() {

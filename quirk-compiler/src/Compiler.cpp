@@ -117,6 +117,9 @@ class ASTPrinter {
                 print(arg.value.get(), indent + 2);
             }
 
+        } else if (auto use = dynamic_cast<UseNode*>(node)) {
+            out << "[Use] " << use->moduleName << "\n";
+        
         } else {
             out << "[Unknown Node]\n";
         }
@@ -136,72 +139,59 @@ class ASTPrinter {
 
 std::set<std::string> loadedModules;
 
-std::vector<std::unique_ptr<Node>> processFile(const std::string& filePath) {
+std::string getModuleName(const std::string& path) {
+    std::string mod = path;
+    if (mod.find("libs/") == 0) mod = mod.substr(5);
+    size_t dot = mod.find_last_of('.');
+    if (dot != std::string::npos) mod = mod.substr(0, dot);
+    std::replace(mod.begin(), mod.end(), '/', '.');
+    return mod;
+}
+
+std::vector<std::unique_ptr<Node>> processFile(const std::string& filePath, bool isMainFile = false) {
     std::cerr << "[DEBUG] Processing file: " << filePath << std::endl;
 
-    // 1. Check for circular imports
     std::string absPath = fs::absolute(filePath).string();
-    if (loadedModules.count(absPath))
-        return {};
+    if (loadedModules.count(absPath)) return {};
     loadedModules.insert(absPath);
 
-    // 2. Open File
     std::ifstream file(filePath);
     if (!file.is_open()) {
-        std::cerr << "Error: Could not open module '" << filePath << "'"
-                  << std::endl;
+        std::cerr << "Error: Could not open module '" << filePath << "'" << std::endl;
         exit(1);
     }
     std::stringstream buffer;
     buffer << file.rdbuf();
     std::string source = buffer.str();
 
-    // 3. Parse
     Lexer lexer(source);
     auto tokens = lexer.tokenize();
     Parser parser(tokens, source);
     auto nodes = parser.parse();
 
+    // --- NEW: Determine Module Name ---
+    std::string currentModule = isMainFile ? "main" : getModuleName(filePath);
+
     std::vector<std::unique_ptr<Node>> allNodes;
 
-    // 4. Process Imports recursively
     for (auto& node : nodes) {
-        // Is this a 'use' statement?
+        // --- NEW: Tag Node ---
+        node->moduleName = currentModule;
+
         if (auto use = dynamic_cast<UseNode*>(node.get())) {
-            std::string importPath;
-
-            // CASE 1: Explicit Sub-file (e.g., use io.file)
-            if (!use->subTarget.empty()) {
-                importPath =
-                    "libs/" + use->moduleName + "/" + use->subTarget + ".qk";
-            }
-            // CASE 2: Module Import (e.g., use math)
-            else {
-                // Priority 1: Check for package entry point (__init.qk)
-                std::string pkgInit = "libs/" + use->moduleName + "/__init.qk";
-
-                // Priority 2: Check for single file module (math.qk)
-                std::string singleFile = "libs/" + use->moduleName + ".qk";
-
-                if (fs::exists(pkgInit)) {
-                    importPath = pkgInit;
-                } else if (fs::exists(singleFile)) {
-                    importPath = singleFile;
-                } else {
-                    std::cerr << "Error: Module '" << use->moduleName
-                              << "' not found." << std::endl;
-                    exit(1);
-                }
+            std::string importPath = "libs/" + use->moduleName + ".qk";
+            if (!fs::exists(importPath)) {
+                 std::string initPath = "libs/" + use->moduleName + "/__init.qk";
+                 if (fs::exists(initPath)) importPath = initPath;
             }
 
-            // Recurse!
-            auto importedNodes = processFile(importPath);
+            // Recurse (isMainFile is false for imports)
+            auto importedNodes = processFile(importPath, false);
             for (auto& importedNode : importedNodes) {
                 allNodes.push_back(std::move(importedNode));
             }
-        }
-        // Normal Node (Function, Struct, etc.)
-        else {
+            allNodes.push_back(std::move(node)); // Keep UseNode for Sema
+        } else {
             allNodes.push_back(std::move(node));
         }
     }
@@ -209,7 +199,7 @@ std::vector<std::unique_ptr<Node>> processFile(const std::string& filePath) {
 }
 
 int main(int argc, char* argv[]) {
-    // 1. Redirect Debug Logs to compiler_debug.log
+    // 1. Redirect Debug Logs to compiler.log
     std::ofstream logFile("compiler.log");
     std::streambuf* cerr_buffer = std::cerr.rdbuf();
     std::cerr.rdbuf(logFile.rdbuf());
@@ -223,10 +213,11 @@ int main(int argc, char* argv[]) {
     bool runImmediate = (std::string(argv[1]) == "-r");
 
     std::cerr << "[DEBUG] Loading standard library..." << std::endl;
+    // We assume libs/core/__init.qk exists and loads basic types
     auto ast = processFile("libs/core/__init.qk");
 
     std::cerr << "[DEBUG] Loading user file..." << std::endl;
-    auto userNodes = processFile(filename);
+    auto userNodes = processFile(filename, true);
     for (auto& node : userNodes)
         ast.push_back(std::move(node));
 
@@ -244,7 +235,7 @@ int main(int argc, char* argv[]) {
     std::cerr << "[DEBUG] Running Semantic Analysis..." << std::endl;
     Sema sema;
     if (!sema.analyze(ast)) {
-        std::cout << "Compilation Failed. See compiler_debug.log for details."
+        std::cout << "Compilation Failed. See compiler.log for details."
                   << std::endl;
         return 1;
     }
@@ -252,7 +243,6 @@ int main(int argc, char* argv[]) {
     std::cerr << "[DEBUG] Starting Code Generation..." << std::endl;
     LLVMCodegen codegen;
 
-    // --- UPDATED LOGIC: Always write to output.ll ---
     std::string irPath = "output.ll";
     std::error_code EC;
     raw_fd_ostream dest(irPath, EC, sys::fs::F_None);
@@ -264,16 +254,13 @@ int main(int argc, char* argv[]) {
     codegen.compile(ast, dest);
     dest.flush();
     dest.close();
-    // ------------------------------------------------
 
     if (runImmediate) {
         std::cerr << "[DEBUG] Compilation finished. Executing with lli..."
                   << std::endl;
 
+        // Ensure runtime.so is built and in ./bin/
         std::string runtimePath = "./bin/runtime.so";
-
-        // Command: lli -load=./bin/runtime.so output.ll
-        // No temporary file deletion needed.
         std::string cmd = "lli -load=" + runtimePath + " " + irPath;
 
         int ret = system(cmd.c_str());

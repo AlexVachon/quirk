@@ -1,15 +1,25 @@
+// [include/sema.hpp]
+
 #ifndef SEMA_HPP
 #define SEMA_HPP
 
 #include <string>
 #include <map>
 #include <vector>
+#include <set>
 #include "ast.hpp"
 
 struct Symbol {
     std::string name;
     std::string type;
 };
+
+// --- NEW: Visibility Context ---
+struct VisibilityContext {
+    std::set<std::string> visibleModules; // e.g. "core", "math"
+    std::set<std::string> visibleSymbols; // e.g. "Vector2"
+};
+// -------------------------------
 
 class Sema {
    public:
@@ -19,20 +29,24 @@ class Sema {
    private:
     FunctionNode* currentFunctionNode = nullptr;
 
+    // --- NEW: Per-Module Visibility Map ---
+    std::map<std::string, VisibilityContext> moduleVisibility;
+    
+    bool isVisible(const std::string& name, const std::string& symbolModule, const std::string& currentModule);
+    // --------------------------------------
+
     std::map<std::string, Symbol> globalSymbols;
     std::map<std::string, StructNode*> structRegistry;
     std::map<std::string, std::map<std::string, FunctionNode*>> methodRegistry;
     std::vector<std::map<std::string, std::string>> scopeStack;
 
-    // Scope Helpers
+    // (Keep rest of the class unchanged)
     void enterScope();
     void exitScope();
     void defineVariable(const std::string& name, const std::string& type);
-    void loadBuiltinModule(const std::string& name);
 
     std::string resolveVariable(const std::string& name);
-    std::string resolveMember(const std::string& structName,
-                              const std::string& memberName);
+    std::string resolveMember(const std::string& structName, const std::string& memberName);
 
     void checkFunction(FunctionNode* node);
     void checkVarDecl(VarDeclNode* node);
@@ -42,9 +56,10 @@ class Sema {
     void checkFor(ForNode* node);
     void checkWith(WithNode* node);
     void checkReturn(ReturnNode* node);
+    
+    void checkUse(UseNode* node);
 
     std::string checkExpression(Node* node);
-
     std::string checkLiteral(LiteralNode* node);
     std::string checkBinaryOp(BinaryOpNode* node);
     std::string checkMemberAccess(MemberAccessNode* node);

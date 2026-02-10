@@ -4,7 +4,7 @@
 
 using namespace llvm;
 
-// We assume StructGen is ALREADY DEFINED because Codegen.cpp includes it first.
+// We assume StructGen is defined because Codegen.cpp includes StructGen.cpp BEFORE BuiltinGen.cpp
 class StructGen;
 
 class BuiltinGen {
@@ -20,6 +20,8 @@ class BuiltinGen {
                StructGen* sg)
         : Context(ctx), TheModule(mod), Builder(builder), structGen(sg) {}
 
+    void setStructGen(StructGen* sg) { structGen = sg; }
+
     void Initialize() {
         // --- libc functions ---
 
@@ -31,8 +33,6 @@ class BuiltinGen {
                          TheModule);
 
         // sprintf(i8*, i8*, ...) -> i32
-        // FIX: We declare this explicitly so 'sys.qk' doesn't override it with
-        // wrong types
         std::vector<Type*> sprintfArgs = {Type::getInt8PtrTy(Context),
                                           Type::getInt8PtrTy(Context)};
         FunctionType* sprintfType =
@@ -88,32 +88,26 @@ class BuiltinGen {
     }
 
     // --- HELPER: Int to String ---
-    // --- HELPER: Int to String ---
     Value* generateIntToString(Value* val) {
-        // 1. Handle Boolean (i1) -> Call Bool_str
+        // 1. Handle Boolean
         if (val->getType()->isIntegerTy(1)) {
             Function* f = TheModule->getFunction("Bool_str");
             if (f)
                 return Builder.CreateCall(f, {val});
         }
 
-        // 2. Handle Int (Ensure i32)
-        // Int_str expects i32. If we have i8, i16, or i64, cast it.
+        // 2. Ensure i32 for C calls
         if (val->getType()->getIntegerBitWidth() != 32) {
             val = Builder.CreateIntCast(val, Type::getInt32Ty(Context), true);
         }
 
-        // 3. Delegate to C Runtime 'Int_str'
+        // 3. Delegate to C Runtime
         Function* f = TheModule->getFunction("Int_str");
         if (f) {
             return Builder.CreateCall(f, {val});
         }
 
-        // Fallback (Should not happen if primitives.c is linked)
-        std::cerr << "[Warning] Int_str not found, falling back to manual "
-                     "sprintf generation."
-                  << std::endl;
-
+        // Fallback: Manual sprintf
         Function* mallocFunc = TheModule->getFunction("malloc");
         Value* buffer = Builder.CreateCall(
             mallocFunc, {ConstantInt::get(Type::getInt64Ty(Context), 32)});
@@ -128,13 +122,11 @@ class BuiltinGen {
 
     // --- HELPER: Double to String ---
     Value* generateDoubleToString(Value* val) {
-        // Optimized: Delegate to C Runtime 'Double_str'
         Function* f = TheModule->getFunction("Double_str");
         if (f) {
             return Builder.CreateCall(f, {val});
         }
 
-        // Fallback to old '_float_to_str'
         Function* f2s = TheModule->getFunction("_float_to_str");
         if (f2s) {
             Value* rawStr = Builder.CreateCall(f2s, {val});
@@ -145,11 +137,10 @@ class BuiltinGen {
     }
 
     Value* generateStringConcat(Value* L, Value* R) {
-        // Expecting L and R to be String* (Structs)
         Function* addFunc = TheModule->getFunction("String___add");
         if (addFunc)
             return Builder.CreateCall(addFunc, {L, R});
-        return L;  // Fail gracefully
+        return L;
     }
 
     Value* generateStringCompare(Value* L, Value* R, std::string op) {
@@ -165,67 +156,88 @@ class BuiltinGen {
     Value* generatePrint(CallNode* call,
                          std::function<Value*(Node*)> exprHandler) {
         Function* printfFunc = TheModule->getFunction("printf");
-        Value* val = exprHandler(call->args[0].value.get());
-        if (!val)
-            return nullptr;
 
-        // 1. Handle Strings (Struct String)
-        if (val->getType()->isPointerTy() &&
-            val->getType()->getPointerElementType()->isStructTy()) {
-            StructType* st =
-                cast<StructType>(val->getType()->getPointerElementType());
-            std::string structName = st->getName().str();
+        // Loop through ALL arguments
+        for (auto& arg : call->args) {
+            Value* val = exprHandler(arg.value.get());
+            if (!val) continue;
+            
+            Type* type = val->getType();
 
-            if (structName == "String") {
-                // Call .__str() (which returns cstring)
-                Value* strVal = structGen->generateStrCall(val, structName);
-                if (strVal) {
-                    Value* fmt = Builder.CreateGlobalStringPtr("%s\n");
-                    return Builder.CreateCall(printfFunc, {fmt, strVal});
+            // 1. Strings / Structs
+            if (type->isPointerTy() && type->getPointerElementType()->isStructTy()) {
+                StructType* st =
+                    cast<StructType>(type->getPointerElementType());
+                std::string structName = st->getName().str();
+
+                // Clean name (remove "struct." or suffixes)
+                if (structName.find("struct.") == 0) 
+                    structName = structName.substr(7);
+                size_t dotPos = structName.find('.');
+                if (dotPos != std::string::npos && std::isdigit(structName[dotPos+1])) {
+                     structName = structName.substr(0, dotPos);
                 }
-            } else {
-                // Generic Struct: Call __str if exists
-                Value* strObj = structGen->generateStrCall(val, structName);
-                if (strObj) {
-                    // Unwrap if it returns a String object
-                    if (strObj->getType()->isPointerTy() &&
-                        strObj->getType()
-                            ->getPointerElementType()
-                            ->isStructTy()) {
-                        // String struct: [len, buffer]
-                        // We want index 1 (buffer)
-                        Value* bufferPtr = Builder.CreateStructGEP(
-                            cast<StructType>(
-                                strObj->getType()->getPointerElementType()),
-                            strObj, 1);
+
+                if (structName == "String") {
+                    // String Object: Unwrap 'buffer'
+                    Value* bufPtr = structGen->getMemberPtr(val, "buffer");
+                    if (bufPtr) {
                         Value* cStr = Builder.CreateLoad(
-                            Type::getInt8PtrTy(Context), bufferPtr);
+                            Type::getInt8PtrTy(Context), bufPtr);
                         Value* fmt = Builder.CreateGlobalStringPtr("%s\n");
-                        return Builder.CreateCall(printfFunc, {fmt, cStr});
+                        Builder.CreateCall(printfFunc, {fmt, cStr});
+                    }
+                } else {
+                    // Generic Struct: Call __str()
+                    // This relies on StructGen::generateStrCall (added in previous step)
+                    Value* strObj = structGen->generateStrCall(val, structName);
+                    
+                    if (strObj) {
+                        // Check if __str returned a String Object or cstring
+                        if (strObj->getType()->isPointerTy() &&
+                            strObj->getType()->getPointerElementType()->isStructTy()) {
+                            
+                            // It returned a String Object -> Unwrap buffer
+                            Value* bufPtr = structGen->getMemberPtr(strObj, "buffer");
+                            if (bufPtr) {
+                                Value* cStr = Builder.CreateLoad(
+                                    Type::getInt8PtrTy(Context), bufPtr);
+                                Value* fmt = Builder.CreateGlobalStringPtr("%s\n");
+                                Builder.CreateCall(printfFunc, {fmt, cStr});
+                            }
+                        } 
+                        else if (strObj->getType()->isPointerTy() && 
+                                 strObj->getType()->getPointerElementType()->isIntegerTy(8)) {
+                            // It returned a raw cstring -> Print directly
+                            Value* fmt = Builder.CreateGlobalStringPtr("%s\n");
+                            Builder.CreateCall(printfFunc, {fmt, strObj});
+                        }
+                    } else {
+                         // Fallback: Print Address if no __str
+                         Value* fmt = Builder.CreateGlobalStringPtr("<%s at %p>\n");
+                         Value* nameVal = Builder.CreateGlobalStringPtr(structName);
+                         Builder.CreateCall(printfFunc, {fmt, nameVal, val});
                     }
                 }
             }
+            // 2. Int
+            else if (type->isIntegerTy()) {
+                Value* fmt = Builder.CreateGlobalStringPtr("%d\n");
+                Builder.CreateCall(printfFunc, {fmt, val});
+            }
+            // 3. Double
+            else if (type->isDoubleTy()) {
+                Value* fmt = Builder.CreateGlobalStringPtr("%f\n");
+                Builder.CreateCall(printfFunc, {fmt, val});
+            }
+            // 4. Raw C-String
+            else if (type->isPointerTy() &&
+                     type->getPointerElementType()->isIntegerTy(8)) {
+                Value* fmt = Builder.CreateGlobalStringPtr("%s\n");
+                Builder.CreateCall(printfFunc, {fmt, val});
+            }
         }
-
-        // 2. Handle Int
-        if (val->getType()->isIntegerTy()) {
-            Value* fmt = Builder.CreateGlobalStringPtr("%d\n");
-            return Builder.CreateCall(printfFunc, {fmt, val});
-        }
-
-        // 3. Handle Double
-        if (val->getType()->isDoubleTy()) {
-            Value* fmt = Builder.CreateGlobalStringPtr("%f\n");
-            return Builder.CreateCall(printfFunc, {fmt, val});
-        }
-
-        // 4. Handle C-String (i8*)
-        if (val->getType()->isPointerTy() &&
-            val->getType()->getPointerElementType()->isIntegerTy(8)) {
-            Value* fmt = Builder.CreateGlobalStringPtr("%s\n");
-            return Builder.CreateCall(printfFunc, {fmt, val});
-        }
-
-        return nullptr;
+        
+        return ConstantInt::get(Type::getInt32Ty(Context), 0);
     }
 };

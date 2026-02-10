@@ -1,6 +1,6 @@
 {
-  "name": "quirk-lang",
-  "displayName": "Quirk Language",
+  "name": "quirk",
+  "displayName": "Quirk",
   "description": "Language support for Quirk",
   "version": "0.0.1",
   "engines": {
@@ -9,17 +9,35 @@
   "categories": [
     "Programming Languages"
   ],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onLanguage:quirk"
+  ],
   "contributes": {
-    "languages": [{
-      "id": "quirk",
-      "aliases": ["Quirk", "quirk"],
-      "extensions": [".qk"],
-      "configuration": "./language-configuration.json"
-    }],
-    "grammars": [{
-      "language": "quirk",
-      "scopeName": "source.quirk",
-      "path": "./syntaxes/quirk.tmLanguage.json"
-    }]
+    "languages": [
+      {
+        "id": "quirk",
+        "aliases": ["Quirk", "quirk"],
+        "extensions": [".qk"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "quirk",
+        "scopeName": "source.quirk",
+        "path": "./syntaxes/quirk.tmLanguage.json"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^16.x",
+    "@types/vscode": "^1.75.0",
+    "typescript": "^4.9.x"
   }
 }

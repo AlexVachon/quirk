@@ -8,6 +8,8 @@
 
 class Node {
    public:
+   std::string moduleName;
+   
     virtual ~Node() = default;
     virtual void print(int indent) const = 0;
 };
@@ -15,15 +17,18 @@ class Node {
 class UseNode : public Node {
    public:
     std::string moduleName;
-    std::string subTarget;
+    std::vector<std::string> filterList; 
 
-    UseNode(std::string mod, std::string sub = "")
-        : moduleName(mod), subTarget(sub) {}
+    UseNode(std::string mod, std::vector<std::string> filters = {})
+        : moduleName(mod), filterList(filters) {}
 
     void print(int indent) const override {
         std::cout << std::string(indent, ' ') << "Use: " << moduleName;
-        if (!subTarget.empty())
-            std::cout << "." << subTarget;
+        if (!filterList.empty()) {
+            std::cout << " (Only: ";
+            for (auto& s : filterList) std::cout << s << " ";
+            std::cout << ")";
+        }
         std::cout << std::endl;
     }
 };

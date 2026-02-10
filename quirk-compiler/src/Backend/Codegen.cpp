@@ -567,6 +567,31 @@ class LLVMCodegen {
                 }
 
                 Type* expectedType = parentFunc->getReturnType();
+
+                // --- FIX START: Auto-Unbox String Object -> cstring (i8*) ---
+                // If function expects 'i8*' (cstring) but we have a 'String' struct pointer
+                if (expectedType->isPointerTy() && 
+                    expectedType->getPointerElementType()->isIntegerTy(8)) {
+                    
+                    if (retVal->getType()->isPointerTy() && 
+                        retVal->getType()->getPointerElementType()->isStructTy()) {
+                        
+                        StructType* st = cast<StructType>(
+                            retVal->getType()->getPointerElementType());
+                        
+                        // Fuzzy check for String struct
+                        if (st->getName().str().find("String") != std::string::npos) {
+                            // Automatically extract 'buffer' field
+                            Value* bufPtr = structGen->getMemberPtr(retVal, "buffer");
+                            if (bufPtr) {
+                                retVal = Builder.CreateLoad(
+                                    Type::getInt8PtrTy(Context), bufPtr);
+                            }
+                        }
+                    }
+                }
+                // --- FIX END -----------------------------------------------
+
                 if (retVal->getType() != expectedType) {
                     if (retVal->getType()->isIntegerTy() &&
                         expectedType->isIntegerTy())
@@ -581,6 +606,11 @@ class LLVMCodegen {
                     else if (retVal->getType()->isIntegerTy() &&
                              expectedType->isDoubleTy())
                         retVal = Builder.CreateSIToFP(retVal, expectedType);
+                    // Add generic pointer cast (e.g., void* <-> i8*)
+                    else if (retVal->getType()->isPointerTy() &&
+                             expectedType->isPointerTy()) {
+                        retVal = Builder.CreateBitCast(retVal, expectedType);
+                    }
                 }
                 Builder.CreateRet(retVal);
             } else {
@@ -592,8 +622,18 @@ class LLVMCodegen {
                 objPtr->getType()->getPointerElementType()->isStructTy()) {
                 StructType* st = cast<StructType>(
                     objPtr->getType()->getPointerElementType());
+                // Safe name lookup using stripped name
+                std::string sName = st->getName().str();
+                if (sName.find("struct.") == 0) sName = sName.substr(7);
+                
                 Function* dtorFunc =
-                    TheModule->getFunction(st->getName().str() + "__del");
+                    TheModule->getFunction(sName + "__del");
+                
+                // Try fuzzy lookup if exact match fails
+                if (!dtorFunc) {
+                     // (Optional) Iterate functions to find matching suffix if needed
+                }
+
                 if (dtorFunc)
                     Builder.CreateCall(dtorFunc, {objPtr});
             }

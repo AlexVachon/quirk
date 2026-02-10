@@ -1,8 +1,8 @@
-#include "llvm/IR/IRBuilder.h"
-#include "ast.hpp"
 #include <functional>
 #include <iostream>
 #include <vector>
+#include "ast.hpp"
+#include "llvm/IR/IRBuilder.h"
 
 using namespace llvm;
 
@@ -42,58 +42,69 @@ class TypeExtensions {
    private:
     // --- UPDATED: Box values instead of converting to String ---
     Value* prepareValueForRuntime(Value* v) {
-        if (!v)
-            return Constant::getNullValue(Type::getInt8PtrTy(Context));
+        if (!v) return Constant::getNullValue(Type::getInt8PtrTy(Context));
 
         Type* type = v->getType();
 
-        // 1. Handle Integers (Keep as is -> Tagged Int)
+        // 1. Integers (Box to void*)
         if (type->isIntegerTy()) {
             return Builder.CreateIntToPtr(v, Type::getInt8PtrTy(Context));
         }
 
-        // 2. Handle Doubles (Convert to String!)
+        // 2. Doubles (Convert to String)
         if (type->isDoubleTy()) {
             Function* f2s = TheModule->getFunction("_float_to_str");
-            if (!f2s) {
-                // Fallback declaration if missing
-                FunctionType* ft =
-                    FunctionType::get(Type::getInt8PtrTy(Context),
-                                      {Type::getDoubleTy(Context)}, false);
-                f2s = Function::Create(ft, Function::ExternalLinkage,
-                                       "_float_to_str", TheModule);
+            if (!f2s) { 
+                // Fallback / Auto-gen signature if missing
+                FunctionType* ft = FunctionType::get(Type::getInt8PtrTy(Context), {Type::getDoubleTy(Context)}, false);
+                f2s = Function::Create(ft, Function::ExternalLinkage, "_float_to_str", TheModule);
             }
             return Builder.CreateCall(f2s, {v});
         }
 
-        // 3. Handle Pointers (Strings, Structs, Lists)
+        // 3. Pointers (Strings, Structs)
         if (type->isPointerTy()) {
-            // Check if it's a Quirk Struct (e.g., %List*, %Vector*)
             Type* elType = type->getPointerElementType();
+            
             if (elType->isStructTy()) {
                 StructType* st = cast<StructType>(elType);
                 std::string name = st->getName().str();
+                if (name.find("struct.") == 0) name = name.substr(7);
 
-                // If it's already a String, unwrap buffer
-                if (name == "String") {
-                    Value* p = Builder.CreateStructGEP(st, v, 1);
-                    return Builder.CreateLoad(Type::getInt8PtrTy(Context), p);
+                // A. Already a String Object? Unwrap .buffer
+                if (name.find("String") == 0) { 
+                    Value* bufPtr = structGen->getMemberPtr(v, "buffer");
+                    if (bufPtr) return Builder.CreateLoad(Type::getInt8PtrTy(Context), bufPtr);
                 }
 
-                // If it's another Struct (List, etc.), call .__str()
-                // We assume any struct passed to format has __str
+                // B. Other Struct? Call .__str()
                 std::string strMethod = name + "___str";
                 Function* strFunc = TheModule->getFunction(strMethod);
+                if (!strFunc) {
+                    strMethod = name + "__str";
+                    strFunc = TheModule->getFunction(strMethod);
+                }
+
                 if (strFunc) {
-                    Value* strObj = Builder.CreateCall(strFunc, {v});
-                    // Unwrap the result String object -> buffer
-                    StructType* strType = TheModule->getTypeByName("String");
-                    Value* p = Builder.CreateStructGEP(strType, strObj, 1);
-                    return Builder.CreateLoad(Type::getInt8PtrTy(Context), p);
+                    Value* retVal = Builder.CreateCall(strFunc, {v});
+
+                    // --- FIX: Check Return Type ---
+                    // Case 1: Returns raw cstring (i8*) -> Use directly
+                    if (retVal->getType()->isPointerTy() && 
+                        retVal->getType()->getPointerElementType()->isIntegerTy(8)) {
+                        return retVal;
+                    }
+
+                    // Case 2: Returns String Object -> Unwrap .buffer
+                    if (retVal->getType()->isPointerTy() && 
+                        retVal->getType()->getPointerElementType()->isStructTy()) {
+                        Value* bufPtr = structGen->getMemberPtr(retVal, "buffer");
+                        if (bufPtr) return Builder.CreateLoad(Type::getInt8PtrTy(Context), bufPtr);
+                    }
                 }
             }
-
-            // Fallback: simple cast
+            
+            // Fallback: Cast to i8* (e.g. raw string literal)
             return Builder.CreateBitCast(v, Type::getInt8PtrTy(Context));
         }
 

@@ -50,6 +50,7 @@ class Sema {
     std::string checkMemberAccess(MemberAccessNode* node);
     std::string checkCall(CallNode* node);
     std::string checkListLiteral(ListLiteralNode* node);
+    std::string checkMapLiteral(MapLiteralNode* node);
     std::string checkConstructor(ConstructorNode* node);
 };
 

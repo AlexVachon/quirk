@@ -12,6 +12,9 @@
       "include": "#strings"
     },
     {
+      "include": "#numbers"
+    },
+    {
       "include": "#types"
     },
     {
@@ -51,7 +54,19 @@
       "patterns": [
         {
           "name": "support.type.quirk",
-          "match": "\\b(int|double|float|bool|string|cstring|void|any|list|List|String)\\b"
+          "match": "\\b(int|double|float|bool|string|cstring|void|any|list|List|String|Map)\\b"
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.float.quirk",
+          "match": "\\b\\d+\\.\\d+([eE][+-]?\\d+)?\\b"
+        },
+        {
+          "name": "constant.numeric.integer.quirk",
+          "match": "\\b\\d+\\b"
         }
       ]
     },
@@ -75,7 +90,9 @@
         {
           "match": "\\b([a-zA-Z_]\\w*)\\s*\\(",
           "captures": {
-            "1": { "name": "entity.name.function.quirk" }
+            "1": {
+              "name": "entity.name.function.quirk"
+            }
           }
         }
       ]

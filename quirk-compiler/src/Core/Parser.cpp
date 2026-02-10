@@ -129,7 +129,22 @@ std::unique_ptr<Node> Parser::parseExpression(int min_precedence) {
         }
         consume(TokenType::RBRACKET, "Expected ']' after list elements");
         left = std::make_unique<ListLiteralNode>(std::move(elements));
-    } else if (t.type == TokenType::LPAREN) {
+    } else if (t.type == TokenType::LBRACE) {
+        auto node = std::make_unique<MapLiteralNode>();
+
+        if (peek().type == TokenType::RBRACE) {
+            advance();
+        } else {
+            do {
+                auto key = parseExpression(0);
+                consume(TokenType::COLON, "Expected ':' after map key");
+                auto value = parseExpression(0);
+                node->elements.push_back({std::move(key), std::move(value)});
+            } while (match(TokenType::COMMA));
+            consume(TokenType::RBRACE, "Expected '}' after map literal");
+        }
+        left = std::move(node);
+    }else if (t.type == TokenType::LPAREN) {
         left = parseExpression(0);
         consume(TokenType::RPAREN, "Expected ')'");
     } else if (t.type == TokenType::NOT) {
@@ -545,6 +560,31 @@ std::unique_ptr<Node> Parser::parseWith() {
     }
     consume(TokenType::RBRACE, "Expected '}'");
 
+    return node;
+}
+
+std::unique_ptr<Node> Parser::parseMapLiteral() {
+    auto node = std::make_unique<MapLiteralNode>();
+    consume(TokenType::LBRACE, "Expected '{'");
+
+    // Check for empty map "{}"
+    if (match(TokenType::RBRACE)) {
+        return node;
+    }
+
+    do {
+        // Parse Key
+        auto key = parseExpression(0);
+        consume(TokenType::COLON, "Expected ':' after map key");
+        
+        // Parse Value
+        auto value = parseExpression(0);
+        
+        node->elements.push_back({std::move(key), std::move(value)});
+
+    } while (match(TokenType::COMMA)); // Continue if comma found
+
+    consume(TokenType::RBRACE, "Expected '}' after map literal");
     return node;
 }
 

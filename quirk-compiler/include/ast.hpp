@@ -1,10 +1,10 @@
 #ifndef AST_HPP
 #define AST_HPP
 
+#include <iostream>
+#include <memory>
 #include <string>
 #include <vector>
-#include <memory>
-#include <iostream>
 
 class Node {
    public:
@@ -29,14 +29,15 @@ class UseNode : public Node {
 };
 
 class WithNode : public Node {
-public:
+   public:
     std::unique_ptr<Node> resource;
     std::string varName;
     std::vector<std::unique_ptr<Node>> body;
 
     void print(int indent) const override {
         std::string space(indent, ' ');
-        std::cout << space << "With Resource as " << varName << " {" << std::endl;
+        std::cout << space << "With Resource as " << varName << " {"
+                  << std::endl;
         resource->print(indent + 2);
         std::cout << space << " Body:" << std::endl;
         for (const auto& stmt : body) {
@@ -268,6 +269,25 @@ class ListLiteralNode : public Node {
             elem->print(indent + 2);
         }
         std::cout << std::string(indent, ' ') << "]" << std::endl;
+    }
+};
+
+struct MapLiteralNode : public Node {
+    // Stores pairs of (Key, Value)
+    std::vector<std::pair<std::unique_ptr<Node>, std::unique_ptr<Node>>> elements;
+
+    MapLiteralNode() = default;
+
+    void print(int indent) const override {
+        std::string space(indent, ' ');
+        std::cout << space << "MapLiteral: {" << std::endl;
+        for (const auto& pair : elements) {
+            std::cout << space << "  Key:" << std::endl;
+            pair.first->print(indent + 4);
+            std::cout << space << "  Value:" << std::endl;
+            pair.second->print(indent + 4);
+        }
+        std::cout << space << "}" << std::endl;
     }
 };
 

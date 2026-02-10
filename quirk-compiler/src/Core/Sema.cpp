@@ -220,6 +220,8 @@ std::string Sema::checkExpression(Node* node) {
         return checkCall(c);
     if (auto arr = dynamic_cast<ListLiteralNode*>(node))
         return checkListLiteral(arr);
+    if (auto map = dynamic_cast<MapLiteralNode*>(node))
+        return checkMapLiteral(map);
     return "unknown";
 }
 
@@ -248,18 +250,45 @@ std::string Sema::checkBinaryOp(BinaryOpNode* node) {
 
     // 1. Array Access
     if (node->op == "[]") {
-        if (rType != "int")
+        // Case A: Struct Access (Map, List, etc.)
+        if (structRegistry.count(lType)) {
+            std::string funcName = lType + "___get";
+            
+            // Check if the struct implements __get
+            if (methodRegistry[lType].count(funcName)) {
+                // Verify Index Type matches __get argument
+                FunctionNode* func = methodRegistry[lType][funcName];
+                if (!func->parameters.empty()) {
+                    std::string expectedKeyType = func->parameters[0].type;
+                    
+                    // Allow auto-boxing (cstring -> String)
+                    bool validKey = (rType == expectedKeyType);
+                    if (expectedKeyType == "String" && (rType == "cstring" || rType == "string")) {
+                        validKey = true;
+                    }
+                    
+                    if (!validKey) {
+                        std::cerr << "Error: Type mismatch for '" << lType 
+                                  << "[]'. Expected '" << expectedKeyType 
+                                  << "' index, got '" << rType << "'." << std::endl;
+                        exit(1);
+                    }
+                }
+                return func->returnType;
+            }
+        }
+
+        // Case B: Raw Array Access (Must be Integer)
+        if (rType != "int") {
+            std::cerr << "Error: Array index must be 'int', but got '" 
+                      << rType << "'." << std::endl;
             exit(1);
+        }
+
         if (lType == "ptr" || lType == "cstring" || lType == "string" ||
             lType == "any")
             return (lType == "cstring" || lType == "string") ? "char" : "any";
 
-        // Struct Operator Lookup: __get
-        if (structRegistry.count(lType)) {
-            std::string funcName = lType + "___get";
-            if (methodRegistry[lType].count(funcName))
-                return methodRegistry[lType][funcName]->returnType;
-        }
         exit(1);
     }
 
@@ -384,9 +413,26 @@ std::string Sema::checkListLiteral(ListLiteralNode* node) {
     return "List";
 }
 
+std::string Sema::checkMapLiteral(MapLiteralNode* node) {
+    if (!structRegistry.count("Map")) {
+        std::cerr << "Error: Map type not defined. Did you 'use core.collections.map'?" << std::endl;
+        exit(1);
+    }
+    for (auto& pair : node->elements) {
+        std::string keyType = checkExpression(pair.first.get());
+        if (keyType != "String" && keyType != "cstring" && keyType != "string") {
+                std::cerr << "Error: Map keys must be String, got '" << keyType << "'" << std::endl;
+                exit(1);
+        }
+        checkExpression(pair.second.get());
+    }
+    return "Map";
+}
+
 void Sema::enterScope() {
     scopeStack.push_back({});
 }
+
 void Sema::exitScope() {
     if (!scopeStack.empty())
         scopeStack.pop_back();

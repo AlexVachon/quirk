@@ -13,8 +13,6 @@ OBJ_DIR = obj
 BIN_DIR = bin
 
 # --- 1. CORE COMPILER FILES ---
-# NOTE: We only compile the "root" files. 
-# Codegen.cpp includes TypeGen.cpp, StructGen.cpp, etc. directly.
 SRCS = src/Compiler.cpp src/Core/Lexer.cpp src/Core/Parser.cpp src/Core/Sema.cpp
 OBJS = $(patsubst $(SRC_DIR)/%.cpp, $(OBJ_DIR)/%.o, $(SRCS))
 DEPS = $(OBJS:.o=.d)
@@ -22,7 +20,9 @@ DEPS = $(OBJS:.o=.d)
 TARGET = $(BIN_DIR)/quirk
 
 # --- 2. RUNTIME LIBRARY ---
+# UPDATE: List all your runtime C files here
 RUNTIME_SRC = src/Runtime/runtime.c
+
 RUNTIME_LIB = $(BIN_DIR)/runtime.so
 
 # --- RULES ---
@@ -44,7 +44,8 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 $(RUNTIME_LIB): $(RUNTIME_SRC)
 	@mkdir -p $(BIN_DIR)
 	@echo "Compiling Runtime Library..."
-	$(CC) $(CFLAGS) $< -o $@
+	# UPDATE: Use '$^' to compile ALL source files defined in RUNTIME_SRC
+	$(CC) $(CFLAGS) $^ -o $@
 
 # Include dependency files
 -include $(DEPS)
@@ -55,7 +56,7 @@ clean:
 
 # Run a test (Loading the runtime)
 test: all
-	./$(TARGET) -r tests/main.qk > output.ll
+	./$(TARGET) -r tests/maps.qk > output.ll
 	lli -load=$(RUNTIME_LIB) output.ll
 
 .PHONY: all clean test

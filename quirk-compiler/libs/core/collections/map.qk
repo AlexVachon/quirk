@@ -1,0 +1,37 @@
+use core.sys
+use core.string
+
+// --- ADDED FOR FUTURE ITERATION SUPPORT ---
+struct MapIterator {
+    map_ref: Map
+    current_idx: int
+
+    extern define __init(self, m: Map)
+    extern define __has_next(self) -> bool
+    // Returns the KEY (String) by default
+    extern define __next(self) -> String 
+}
+
+struct Map {
+    entries: ptr
+    capacity: int
+    size: int
+
+    extern define __init(self)
+    extern define __del(self)
+
+    extern define put(self, key: String, value: any)
+    extern define get(self, key: String) -> any
+    extern define has(self, key: String) -> bool
+    extern define remove(self, key: String)
+    extern define len(self) -> int
+    extern define clear(self)
+
+    // Operators
+    extern define __get(self, key: String) -> any
+    extern define __set(self, key: String, value: any)
+    extern define __str(self) -> String
+
+    // --- ADDED FOR ITERATION ---
+    extern define __iter(self) -> MapIterator
+}

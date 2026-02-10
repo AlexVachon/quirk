@@ -11,8 +11,8 @@ struct StringIterator {
 }
 
 struct String {
-    length: int
     buffer: cstring
+    length: int
 
     extern define __init(self, raw: cstring)
     extern define __del(self)

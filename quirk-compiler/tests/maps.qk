@@ -1,0 +1,18 @@
+use core.collections.map
+
+define main() {
+    // Test Map Literal
+    m := {"name": "Alice", "city": "Paris", "age": 30}
+
+    print("Name: " + m.get("name"))
+    print("City: " + m["city"])
+    print("Age: " + m["age"])
+
+    // Test Empty Map
+    empty_map := {}
+    print("Empty size: " + empty_map.len())
+
+    map_struct := Map()
+    map_struct.put("language", "Quirk")
+    print("Language: " + map_struct.get("language"))
+}

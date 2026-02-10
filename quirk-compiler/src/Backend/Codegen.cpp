@@ -673,35 +673,57 @@ class LLVMCodegen {
                     ptr->getType()->getPointerElementType()->isStructTy()) {
                     StructType* st = cast<StructType>(
                         ptr->getType()->getPointerElementType());
-                    Function* func =
-                        TheModule->getFunction(st->getName().str() + "___set");
+                    
+                    // --- STRIP "struct." PREFIX ---
+                    std::string structName = st->getName().str();
+                    if (structName.find("struct.") == 0) 
+                        structName = structName.substr(7);
+                    // -----------------------------
+
+                    Function* func = TheModule->getFunction(structName + "___set");
                     
                     if (func) {
-                        // --- FIX START: Auto-boxing for __set ---
-                        // Ensure the value matches the 3rd argument (item) type
-                        if (func->arg_size() >= 3) {
-                            Type* expectedType = func->getFunctionType()->getParamType(2);
+                        // FIX: Auto-box KEY (index) for __set
+                        if (func->arg_size() >= 2) {
+                            Type* keyType = func->getFunctionType()->getParamType(1);
                             
-                            if (val->getType() != expectedType) {
-                                // Box Integer -> Ptr (e.g. i32 -> i8*)
-                                if (val->getType()->isIntegerTy() && expectedType->isPointerTy()) {
-                                    val = Builder.CreateIntToPtr(val, expectedType);
-                                } 
-                                // Bitcast Ptr -> Ptr (e.g. String* -> i8*)
-                                else if (val->getType()->isPointerTy() && expectedType->isPointerTy()) {
-                                    val = Builder.CreateBitCast(val, expectedType);
+                            // Check if Key needs boxing (c-string -> String Struct)
+                            if (index->getType()->isPointerTy() && 
+                                index->getType()->getPointerElementType()->isIntegerTy(8) &&
+                                keyType->isPointerTy() && 
+                                keyType->getPointerElementType()->isStructTy()) {
+                                
+                                StructType* paramSt = cast<StructType>(
+                                    keyType->getPointerElementType());
+                                
+                                // Relaxed check: contains "String"
+                                if (paramSt->getName().str().find("String") != std::string::npos) {
+                                    std::vector<Value*> args = {index};
+                                    index = structGen->allocateAndInit("String", args);
                                 }
-                                // Double -> Ptr (if needed) or other casts could go here
                             }
                         }
-                        // --- FIX END ---
+
+                        // Auto-box VALUE (Any)
+                        if (func->arg_size() >= 3) {
+                            Type* valType = func->getFunctionType()->getParamType(2);
+                            
+                            if (val->getType() != valType) {
+                                if (val->getType()->isIntegerTy() && valType->isPointerTy()) {
+                                    val = Builder.CreateIntToPtr(val, valType);
+                                } 
+                                else if (val->getType()->isPointerTy() && valType->isPointerTy()) {
+                                    val = Builder.CreateBitCast(val, valType);
+                                }
+                            }
+                        }
                         
                         Builder.CreateCall(func, {ptr, index, val});
                         return;
                     }
                 }
                 
-                // 2. Fallback for raw arrays (non-structs)
+                // 2. Fallback for raw arrays
                 if (val->getType()->isPointerTy()) {
                     ptr = Builder.CreateBitCast(
                         ptr,
@@ -788,9 +810,11 @@ class LLVMCodegen {
 };
 
 Value* LLVMCodegen::handleExpression(Node* node) {
+    // 1. Function Calls
     if (auto call = dynamic_cast<CallNode*>(node))
         return handleCall(call);
 
+    // 2. Literals (Int, Float, Bool, String)
     if (auto lit = dynamic_cast<LiteralNode*>(node)) {
         if (lit->value == "true")
             return ConstantInt::getTrue(Context);
@@ -810,27 +834,80 @@ Value* LLVMCodegen::handleExpression(Node* node) {
             return varGen->resolveVariable(lit->value);
     }
 
+    // 3. List Literals
     if (auto arr = dynamic_cast<ListLiteralNode*>(node)) {
         return structGen->generateListLiteral(
             arr, [this](Node* n) { return this->handleExpression(n); });
     }
 
+    // Map Literals
+    if (auto mapLit = dynamic_cast<MapLiteralNode*>(node)) {
+        return structGen->generateMapLiteral(
+            mapLit, [this](Node* n) { return this->handleExpression(n); });
+    }
+
+    // 4. Binary Operators (+, -, *, /, [], and, or)
     if (auto binOp = dynamic_cast<BinaryOpNode*>(node)) {
+        // A. Logical 'not'
         if (binOp->op == "not")
             return mathGen->generateNot(handleExpression(binOp->left.get()));
+
+        // B. Short-circuit 'and' / 'or'
         if (binOp->op == "and" || binOp->op == "or")
             return mathGen->generateLogicOp(
                 binOp->op, handleExpression(binOp->left.get()),
                 binOp->right.get(),
                 [this](Node* n) { return this->handleExpression(n); });
 
+        // Evaluate Operands
         Value* L = handleExpression(binOp->left.get());
         Value* R = handleExpression(binOp->right.get());
         if (!L || !R)
             return nullptr;
 
-        // 1. Array Access
+        // C. Array/Map Access '[]'
         if (binOp->op == "[]") {
+            // Case 1: Struct Operator Overloading (Map, List)
+            if (L->getType()->isPointerTy() &&
+                L->getType()->getPointerElementType()->isStructTy()) {
+                StructType* st =
+                    cast<StructType>(L->getType()->getPointerElementType());
+                
+                // Strip "struct." prefix if present
+                std::string structName = st->getName().str();
+                if (structName.find("struct.") == 0) 
+                    structName = structName.substr(7);
+                
+                std::string funcName = structName + "___get";
+                
+                if (auto* func = TheModule->getFunction(funcName)) {
+                     // --- FIX: Auto-box KEY (index) for __get ---
+                     if (func->arg_size() >= 2) {
+                        Type* keyType = func->getFunctionType()->getParamType(1);
+                        
+                        // Check if R is raw c-string but function expects String Struct
+                        if (R->getType()->isPointerTy() && 
+                            R->getType()->getPointerElementType()->isIntegerTy(8) &&
+                            keyType->isPointerTy() && 
+                            keyType->getPointerElementType()->isStructTy()) {
+                             
+                             StructType* paramSt = cast<StructType>(
+                                 keyType->getPointerElementType());
+                             
+                             // Relaxed Check: Matches "String", "struct.String", "String.0"
+                             if (paramSt->getName().str().find("String") != std::string::npos) {
+                                 std::vector<Value*> args = {R};
+                                 R = structGen->allocateAndInit("String", args);
+                             }
+                        }
+                     }
+                     // -------------------------------------------
+
+                    return Builder.CreateCall(func, {L, R});
+                }
+            }
+
+            // Case 2: Raw C-String Access (char*)
             if (L->getType()->isPointerTy() &&
                 L->getType()->getPointerElementType()->isIntegerTy(8)) {
                 Value* ptr = Builder.CreateBitCast(
@@ -839,189 +916,64 @@ Value* LLVMCodegen::handleExpression(Node* node) {
                     Type::getInt8PtrTy(Context),
                     Builder.CreateGEP(Type::getInt8PtrTy(Context), ptr, R));
             }
-            if (L->getType()->isPointerTy() &&
-                L->getType()->getPointerElementType()->isStructTy()) {
-                StructType* st =
-                    cast<StructType>(L->getType()->getPointerElementType());
-                std::string funcName = st->getName().str() + "___get";
-                if (auto* func = TheModule->getFunction(funcName))
-                    return Builder.CreateCall(func, {L, R});
-            }
+
+            // Case 3: Raw Integer Array Access
             Value* ptr = Builder.CreateBitCast(L, Type::getInt32PtrTy(Context));
             return Builder.CreateLoad(
                 Type::getInt32Ty(Context),
                 Builder.CreateGEP(Type::getInt32Ty(Context), ptr, R));
         }
 
-        // 2. Handle "Struct != 0" (Null Checks)
-        if (binOp->op == "==" || binOp->op == "!=") {
-            if (L->getType()->isPointerTy() && R->getType()->isIntegerTy())
-                R = Builder.CreateIntToPtr(R, L->getType());
-            else if (L->getType()->isIntegerTy() && R->getType()->isPointerTy())
-                L = Builder.CreateIntToPtr(L, R->getType());
-
-            if (L->getType()->isPointerTy() && R->getType()->isPointerTy()) {
-                if (binOp->op == "==")
-                    return Builder.CreateICmpEQ(L, R, "ptr_eq");
-                if (binOp->op == "!=")
-                    return Builder.CreateICmpNE(L, R, "ptr_ne");
-            }
-        }
-
-        // --- 5. Robust String Auto-Boxing & Coercion ---
-        
-        bool L_is_cstring = (L->getType()->isPointerTy() && 
-                             L->getType()->getPointerElementType()->isIntegerTy(8));
-        bool R_is_cstring = (R->getType()->isPointerTy() && 
-                             R->getType()->getPointerElementType()->isIntegerTy(8));
-
-        bool L_is_StringObj = false;
-        if (L->getType()->isPointerTy() && L->getType()->getPointerElementType()->isStructTy()) {
-             StructType* st = cast<StructType>(L->getType()->getPointerElementType());
-             if (st->getName() == "String") L_is_StringObj = true;
-        }
-
-        bool R_is_StringObj = false;
-        if (R->getType()->isPointerTy() && R->getType()->getPointerElementType()->isStructTy()) {
-             StructType* st = cast<StructType>(R->getType()->getPointerElementType());
-             if (st->getName() == "String") R_is_StringObj = true;
-        }
-
         if (binOp->op == "+") {
-            // Case A: String (Obj/CStr) + Object -> Convert Object to StringObj
-            if ((L_is_cstring || L_is_StringObj) && !R_is_cstring && !R_is_StringObj && 
-                R->getType()->isPointerTy() && R->getType()->getPointerElementType()->isStructTy()) {
-                StructType* st = cast<StructType>(R->getType()->getPointerElementType());
-                Value* strVal = structGen->generateStrCall(R, st->getName().str());
-                if (strVal) {
-                    R = strVal;
-                    R_is_StringObj = true; // R is now a String Object
-                }
-            }
+            // Check if either side is a Pointer (implies String/char*)
+            bool lIsPtr = L->getType()->isPointerTy();
+            bool rIsPtr = R->getType()->isPointerTy();
 
-            // Case B: Object + String (Obj/CStr) -> Convert Object to StringObj
-            if (!L_is_cstring && !L_is_StringObj && (R_is_cstring || R_is_StringObj) && 
-                L->getType()->isPointerTy() && L->getType()->getPointerElementType()->isStructTy()) {
-                StructType* st = cast<StructType>(L->getType()->getPointerElementType());
-                Value* strVal = structGen->generateStrCall(L, st->getName().str());
-                if (strVal) {
-                    L = strVal;
-                    L_is_StringObj = true; // L is now a String Object
-                }
-            }
-
-            // Case C: Convert Numbers to String Objects if other side is String
-            bool isStrConcat = (L_is_cstring || L_is_StringObj) || (R_is_cstring || R_is_StringObj);
-            
-            if (isStrConcat) {
+            if (lIsPtr || rIsPtr) {
+                // 1. Convert Left to String Object
+                Value* lStr = L;
                 if (L->getType()->isIntegerTy()) {
-                    L = builtinGen->generateIntToString(L); 
-                    L_is_StringObj = true;
+                    lStr = builtinGen->generateIntToString(L);
                 } else if (L->getType()->isDoubleTy()) {
-                    L = builtinGen->generateDoubleToString(L);
-                    L_is_StringObj = true;
-                }
-
-                if (R->getType()->isIntegerTy()) {
-                    R = builtinGen->generateIntToString(R); 
-                    R_is_StringObj = true;
-                } else if (R->getType()->isDoubleTy()) {
-                    R = builtinGen->generateDoubleToString(R);
-                    R_is_StringObj = true;
-                }
-            }
-
-            // Case D: Execute Concatenation (Box c-strings if needed)
-            // We re-check flags because L/R might have changed above
-            L_is_cstring = (L->getType()->isPointerTy() && L->getType()->getPointerElementType()->isIntegerTy(8));
-            R_is_cstring = (R->getType()->isPointerTy() && R->getType()->getPointerElementType()->isIntegerTy(8));
-            
-            if (isStrConcat) {
-                // BOX L if it is still a c-string
-                if (L_is_cstring) {
+                    lStr = builtinGen->generateDoubleToString(L);
+                } else if (lIsPtr && L->getType()->getPointerElementType()->isIntegerTy(8)) {
+                    // Auto-box C-string (i8*) to String Object
                     std::vector<Value*> args = {L};
-                    L = structGen->allocateAndInit("String", args);
+                    lStr = structGen->allocateAndInit("String", args);
                 }
-                // BOX R if it is still a c-string
-                if (R_is_cstring) {
+
+                // 2. Convert Right to String Object
+                Value* rStr = R;
+                if (R->getType()->isIntegerTy()) {
+                    rStr = builtinGen->generateIntToString(R);
+                } else if (R->getType()->isDoubleTy()) {
+                    rStr = builtinGen->generateDoubleToString(R);
+                } else if (rIsPtr && R->getType()->getPointerElementType()->isIntegerTy(8)) {
+                    // Auto-box C-string (i8*) to String Object
                     std::vector<Value*> args = {R};
-                    R = structGen->allocateAndInit("String", args);
+                    rStr = structGen->allocateAndInit("String", args);
                 }
-                
-                // Now both are definitely String Objects
-                return builtinGen->generateStringConcat(L, R);
-            }
-        }
 
-        // 6. String Comparison (C-String specific optimization)
-        if (L_is_cstring && R_is_cstring && (binOp->op == "==" || binOp->op == "!="))
-            return builtinGen->generateStringCompare(L, R, binOp->op);
-
-        // 8. Struct Operator Overloading
-        if (L->getType()->isPointerTy() &&
-            L->getType()->getPointerElementType()->isStructTy()) {
-            StructType* st =
-                cast<StructType>(L->getType()->getPointerElementType());
-            std::string structName = st->getName().str();
-            std::string magicMethod = "";
-            if (binOp->op == "+")
-                magicMethod = "__add";
-            else if (binOp->op == "-")
-                magicMethod = "__sub";
-            else if (binOp->op == "*")
-                magicMethod = "__mul";
-            else if (binOp->op == "/")
-                magicMethod = "__div";
-            else if (binOp->op == "==")
-                magicMethod = "__eq";
-            else if (binOp->op == "!=")
-                magicMethod = "__eq";
-
-            if (!magicMethod.empty()) {
-                std::string funcName = structName + "_" + magicMethod;
-                Function* opFunc = TheModule->getFunction(funcName);
-
-                if (opFunc) {
-                    Value* arg2 = R;
-                    if (opFunc->arg_size() == 2) {
-                        Type* expectedType =
-                            opFunc->getFunctionType()->getParamType(1);
-                        if (arg2->getType() != expectedType) {
-                            // Auto-box literal to String
-                            if (arg2->getType()->isPointerTy() &&
-                                arg2->getType()
-                                    ->getPointerElementType()
-                                    ->isIntegerTy(8) &&
-                                expectedType->isPointerTy() &&
-                                expectedType->getPointerElementType()
-                                    ->isStructTy() &&
-                                expectedType->getPointerElementType()
-                                        ->getStructName() == "String") {
-                                std::vector<Value*> args = {arg2};
-                                arg2 =
-                                    structGen->allocateAndInit("String", args);
-                            } else if (arg2->getType()->isIntegerTy() &&
-                                       expectedType->isDoubleTy()) {
-                                arg2 = Builder.CreateSIToFP(arg2, expectedType);
-                            }
-                        }
-                    }
-                    Value* result = Builder.CreateCall(opFunc, {L, arg2});
-                    if (binOp->op == "!=")
-                        return Builder.CreateNot(result);
-                    return result;
+                // 3. Call String___add
+                Function* addFunc = TheModule->getFunction("String___add");
+                if (addFunc) {
+                    return Builder.CreateCall(addFunc, {lStr, rStr});
                 }
             }
         }
 
+        // D. STANDARD MATH OPS (+, -, *, /, ==, !=)
+        // --- CRITICAL FIX: Missing in your previous snippet ---
         return mathGen->generateBinaryOp(binOp->op, L, R);
     }
 
+    // 5. Member Access (obj.field)
     if (auto member = dynamic_cast<MemberAccessNode*>(node)) {
         Value* objPtr = handleExpression(member->object.get());
         return structGen->generateMemberAccess(objPtr, member->memberName);
     }
 
+    // 6. Constructors
     if (auto c = dynamic_cast<ConstructorNode*>(node))
         return handleConstructor(c);
 

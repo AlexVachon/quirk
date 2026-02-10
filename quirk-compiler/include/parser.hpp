@@ -45,4 +45,7 @@ private:
     std::unique_ptr<CallNode> parseCall();
     std::unique_ptr<VarDeclNode> parseVarDecl();
     std::unique_ptr<ConstructorNode> parseConstructor();
+
+    // std::unique_ptr<Node> parseListLiteral();    
+    std::unique_ptr<Node> parseMapLiteral();
 };

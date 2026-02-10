@@ -8,8 +8,8 @@
 // ===== PUBLIC API =====
 
 typedef struct {
-    int length;    // Index 0
     char* buffer;  // Index 1
+    int length;  // Index 0
 } String;
 
 typedef struct {
@@ -29,15 +29,35 @@ typedef struct {
 } ListIterator;
 
 typedef struct {
+    char* key;
+    void* value;
+    int is_occupied;
+    int is_deleted;
+} MapEntry;
+
+typedef struct {
+    MapEntry* entries;
+    int capacity;
+    int size;
+} Map;
+
+typedef struct {
+    Map* map_ref;
+    int current_idx;
+} MapIterator;
+
+typedef struct {
     void* handle;
     int is_open;
 } File;
 
-// Helper to create objects from C
 String* make_String(const char* raw);
 String* make_String_taking_ownership(char* raw_buffer);
 
-// ===== PRIMITIVE HELPERS (Optional but recommended) =====
+// --- ADD THIS LINE ---
+String* String_join(String* self, List* items);
+
+// ===== PRIMITIVE HELPERS =====
 String* Int_str(int self);
 String* Double_str(double self);
 

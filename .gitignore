@@ -1,6 +1,7 @@
 *.log
+quirk-compiler/.venv/
 quirk-compiler/*.log
 quirk-compiler/*.ll
-quirk-compiler/bin
+!quirk-compiler/bin
 quirk-compiler/obj
 quirk-vscode/node_modules

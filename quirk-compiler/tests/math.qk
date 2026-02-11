@@ -1,4 +1,4 @@
-use math
+from math use { Vector2 }
 
 define main() {
     v := Vector2(1, 2)

@@ -15,7 +15,6 @@ struct List {
     capacity: int 
 
     extern define __init(self, initial_cap: int)
-    extern define __del(self)
 
     extern define append(self, item: any)
     extern define pop(self) -> any
@@ -30,6 +29,8 @@ struct List {
     extern define __iter(self) -> ListIterator
     extern define __get(self, index: int) -> any
     extern define __set(self, index: int, item: any)
+    extern define __del(self)
     extern define __str(self) -> String
     extern define __repr(self) -> String
+
 }

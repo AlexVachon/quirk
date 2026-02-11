@@ -1,4 +1,4 @@
-from math.vectors use { Vector3 }
+from math.vectors use { Vector2 }
 from core.collections.list use { List }
 
 define main() {

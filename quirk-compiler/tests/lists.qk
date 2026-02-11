@@ -1,3 +1,5 @@
+from core.collections.list use {List}
+
 define main() {
     print("--- List Tests ---")
 

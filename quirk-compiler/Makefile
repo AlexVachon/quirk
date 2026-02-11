@@ -52,7 +52,8 @@ $(RUNTIME_LIB): $(RUNTIME_SRC)
 
 # Clean up
 clean:
-	rm -rf $(OBJ_DIR) $(BIN_DIR)
+	rm -rf $(OBJ_DIR)
+	rm -f $(TARGET) $(RUNTIME_LIB)
 
 # Run a test (Loading the runtime)
 test: all

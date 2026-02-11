@@ -1,12 +1,13 @@
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/raw_ostream.h"
 
-#include <iostream>
+#include <algorithm>  // for std::replace
+#include <filesystem>
 #include <fstream>
+#include <iostream>
+#include <set>
 #include <sstream>
 #include <vector>
-#include <set>
-#include <filesystem>
 
 #include "lexer.hpp"
 #include "parser.hpp"
@@ -119,7 +120,7 @@ class ASTPrinter {
 
         } else if (auto use = dynamic_cast<UseNode*>(node)) {
             out << "[Use] " << use->moduleName << "\n";
-        
+
         } else {
             out << "[Unknown Node]\n";
         }
@@ -134,6 +135,68 @@ class ASTPrinter {
 };
 
 // ==========================================================
+//  IMPORT RESOLUTION LOGIC (Virtual Env Support)
+// ==========================================================
+
+std::vector<std::string> getSearchPaths() {
+    std::vector<std::string> paths;
+
+    // 1. Check for Virtual Environment (QUIRK_HOME)
+    const char* envHome = std::getenv("QUIRK_HOME");
+
+    if (envHome) {
+        std::string venvBase = std::string(envHome);
+        
+        // Priority 1: Installed Packages (e.g. use requests -> packages/requests.qk)
+        paths.push_back(venvBase + "/lib/quirk/packages/");
+        
+        // Priority 2: Standard Library PARENT
+        // We look in 'quirk' so that 'use core.sys' resolves to 'quirk/core/sys.qk'
+        paths.push_back(venvBase + "/lib/quirk/"); 
+        
+        // Priority 3: Root libs (Legacy/Fallback)
+        paths.push_back(venvBase + "/libs/");
+    }
+
+    // 2. Local Project 'libs' (Manual overrides)
+    paths.push_back("./libs/");
+
+    // 3. System Global Fallback
+    if (!envHome) {
+        paths.push_back("/usr/local/lib/quirk/packages/");
+        // Same logic here: point to parent of core
+        paths.push_back("/usr/local/lib/quirk/"); 
+    }
+
+    return paths;
+}
+
+std::string resolveImportPath(const std::string& moduleName) {
+    // "math.vectors" -> "math/vectors"
+    std::string relPath = moduleName;
+    std::replace(relPath.begin(), relPath.end(), '.', '/');
+
+    std::vector<std::string> variants = {
+        relPath + ".qk",        // math/vectors.qk
+        relPath + "/__init.qk"  // math/vectors/__init.qk
+    };
+
+    auto searchPaths = getSearchPaths();
+
+    for (const auto& root : searchPaths) {
+        for (const auto& variant : variants) {
+            // Construct path safely
+            fs::path fullPath = fs::path(root) / variant;
+            if (fs::exists(fullPath)) {
+                return fullPath.string();
+            }
+        }
+    }
+
+    return "";  // Not found
+}
+
+// ==========================================================
 //  MAIN COMPILER LOGIC
 // ==========================================================
 
@@ -141,23 +204,28 @@ std::set<std::string> loadedModules;
 
 std::string getModuleName(const std::string& path) {
     std::string mod = path;
-    if (mod.find("libs/") == 0) mod = mod.substr(5);
+    if (mod.find("libs/") == 0)
+        mod = mod.substr(5);
     size_t dot = mod.find_last_of('.');
-    if (dot != std::string::npos) mod = mod.substr(0, dot);
+    if (dot != std::string::npos)
+        mod = mod.substr(0, dot);
     std::replace(mod.begin(), mod.end(), '/', '.');
     return mod;
 }
 
-std::vector<std::unique_ptr<Node>> processFile(const std::string& filePath, bool isMainFile = false) {
+std::vector<std::unique_ptr<Node>> processFile(const std::string& filePath,
+                                               bool isMainFile = false) {
     std::cerr << "[DEBUG] Processing file: " << filePath << std::endl;
 
     std::string absPath = fs::absolute(filePath).string();
-    if (loadedModules.count(absPath)) return {};
+    if (loadedModules.count(absPath))
+        return {};
     loadedModules.insert(absPath);
 
     std::ifstream file(filePath);
     if (!file.is_open()) {
-        std::cerr << "Error: Could not open module '" << filePath << "'" << std::endl;
+        std::cerr << "Error: Could not open module '" << filePath << "'"
+                  << std::endl;
         exit(1);
     }
     std::stringstream buffer;
@@ -169,28 +237,35 @@ std::vector<std::unique_ptr<Node>> processFile(const std::string& filePath, bool
     Parser parser(tokens, source);
     auto nodes = parser.parse();
 
-    // --- NEW: Determine Module Name ---
+    // Determine Module Name
     std::string currentModule = isMainFile ? "main" : getModuleName(filePath);
-
     std::vector<std::unique_ptr<Node>> allNodes;
 
     for (auto& node : nodes) {
-        // --- NEW: Tag Node ---
         node->moduleName = currentModule;
 
         if (auto use = dynamic_cast<UseNode*>(node.get())) {
-            std::string importPath = "libs/" + use->moduleName + ".qk";
-            if (!fs::exists(importPath)) {
-                 std::string initPath = "libs/" + use->moduleName + "/__init.qk";
-                 if (fs::exists(initPath)) importPath = initPath;
-            }
+            // --- NEW: Use Helper to Resolve Path ---
+            std::string importPath = resolveImportPath(use->moduleName);
 
-            // Recurse (isMainFile is false for imports)
+            if (importPath.empty()) {
+                std::cerr << "Error: Could not resolve module '"
+                          << use->moduleName << "'" << std::endl;
+                std::cerr
+                    << "Checked paths (ensure QUIRK_HOME is set if using venv):"
+                    << std::endl;
+                for (auto& p : getSearchPaths())
+                    std::cerr << " - " << p << std::endl;
+                exit(1);
+            }
+            // ----------------------------------------
+
+            // Recurse
             auto importedNodes = processFile(importPath, false);
             for (auto& importedNode : importedNodes) {
                 allNodes.push_back(std::move(importedNode));
             }
-            allNodes.push_back(std::move(node)); // Keep UseNode for Sema
+            allNodes.push_back(std::move(node));
         } else {
             allNodes.push_back(std::move(node));
         }
@@ -205,21 +280,23 @@ int main(int argc, char* argv[]) {
     std::cerr.rdbuf(logFile.rdbuf());
 
     if (argc < 2) {
-        std::cout << "Usage: apex [-r] <file.qk>" << std::endl;
+        std::cout << "Usage: quirk [-r] <file.qk>" << std::endl;
         return 1;
     }
 
     std::string filename = (std::string(argv[1]) == "-r") ? argv[2] : argv[1];
     bool runImmediate = (std::string(argv[1]) == "-r");
 
-    std::cerr << "[DEBUG] Loading standard library..." << std::endl;
-    // We assume libs/core/__init.qk exists and loads basic types
-    auto ast = processFile("libs/core/__init.qk");
+    // Load Standard Library (Implicitly via Imports or manually here)
+    // Note: If you want implicit core loading, you can uncomment below,
+    // but ensure 'core' is resolvable via resolveImportPath("core")
+    // std::cerr << "[DEBUG] Loading standard library..." << std::endl;
+    // auto ast = processFile(resolveImportPath("core"));
 
+    // For now, let's just start with the user file.
+    // If the user file says 'use core', it will load it.
     std::cerr << "[DEBUG] Loading user file..." << std::endl;
-    auto userNodes = processFile(filename, true);
-    for (auto& node : userNodes)
-        ast.push_back(std::move(node));
+    std::vector<std::unique_ptr<Node>> ast = processFile(filename, true);
 
     // 2. Dump AST to ast.log
     std::cerr << "[DEBUG] Dumping AST to ast.log..." << std::endl;
@@ -228,8 +305,6 @@ int main(int argc, char* argv[]) {
         ASTPrinter printer(astLog);
         printer.printAll(ast);
         astLog.close();
-    } else {
-        std::cerr << "[ERROR] Could not open ast.log for writing." << std::endl;
     }
 
     std::cerr << "[DEBUG] Running Semantic Analysis..." << std::endl;
@@ -259,10 +334,21 @@ int main(int argc, char* argv[]) {
         std::cerr << "[DEBUG] Compilation finished. Executing with lli..."
                   << std::endl;
 
-        // Ensure runtime.so is built and in ./bin/
+        // Runtime lookup priority:
+        // 1. QUIRK_HOME/bin/runtime.so (if venv)
+        // 2. ./bin/runtime.so (local dev)
         std::string runtimePath = "./bin/runtime.so";
-        std::string cmd = "lli -load=" + runtimePath + " " + irPath;
+        const char* envHome = std::getenv("QUIRK_HOME");
+        if (envHome) {
+            std::string venvRuntime = std::string(envHome) + "/bin/runtime.so";
+            if (fs::exists(venvRuntime)) {
+                // Since lli might not like absolute paths on some systems
+                // without -L, passing absolute path to -load usually works.
+                runtimePath = venvRuntime;
+            }
+        }
 
+        std::string cmd = "lli -load=" + runtimePath + " " + irPath;
         int ret = system(cmd.c_str());
 
         if (ret != 0)

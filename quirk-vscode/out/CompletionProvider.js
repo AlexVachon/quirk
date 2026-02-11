@@ -19,7 +19,6 @@ class QuirkCompletionProvider {
         }
         return undefined;
     }
-    // --- Module Suggestions (Folders/Files) ---
     provideModuleCompletions(document, typedPath) {
         let relativeDir = typedPath.replace(/\./g, '/');
         let parentDir = "";
@@ -40,10 +39,16 @@ class QuirkCompletionProvider {
             return [];
         const rootPath = workspaceFolder.uri.fsPath;
         const searchRoots = [
+            // 1. Root Venv
+            path.join(rootPath, '.venv', 'lib', 'quirk', 'packages'),
+            path.join(rootPath, '.venv', 'lib', 'quirk'),
+            // 2. Subfolder Venv (Fix for parent folder workspace)
+            path.join(rootPath, 'quirk-compiler', '.venv', 'lib', 'quirk', 'packages'),
+            path.join(rootPath, 'quirk-compiler', '.venv', 'lib', 'quirk'),
+            // 3. Local
             path.join(rootPath, 'libs'),
             path.join(rootPath, 'src'),
-            path.join(rootPath, 'quirk-compiler', 'libs'),
-            path.join(rootPath, 'quirk-compiler', 'src')
+            path.join(rootPath, 'quirk-compiler', 'libs')
         ];
         const completionItems = [];
         for (const root of searchRoots) {
@@ -69,7 +74,6 @@ class QuirkCompletionProvider {
                         else {
                             kind = vscode.CompletionItemKind.Module;
                         }
-                        // Prevent duplicates
                         if (!completionItems.some(i => i.label === name)) {
                             completionItems.push(new vscode.CompletionItem(name, kind));
                         }
@@ -80,7 +84,6 @@ class QuirkCompletionProvider {
         }
         return completionItems;
     }
-    // --- Symbol Suggestions (Top-level Structs/Defines only) ---
     provideSymbolCompletions(document, modulePath) {
         const filePath = this.resolveModulePath(document, modulePath);
         if (!filePath)
@@ -91,32 +94,26 @@ class QuirkCompletionProvider {
             const content = fs.readFileSync(filePath, 'utf-8');
             const lines = content.split(/\r?\n/);
             for (const line of lines) {
-                // 1. Remove comments to avoid false brace counting
                 const cleanLine = line.replace(/\/\/.*$/, '').trim();
                 if (cleanLine.length === 0)
                     continue;
-                // 2. ONLY check for definitions if we are at Top Level (Depth 0)
                 if (braceDepth === 0) {
-                    // Match "struct List"
                     const structMatch = /^\s*struct\s+([a-zA-Z0-9_]+)/.exec(cleanLine);
                     if (structMatch) {
                         const item = new vscode.CompletionItem(structMatch[1], vscode.CompletionItemKind.Struct);
                         item.detail = `struct ${structMatch[1]}`;
                         items.push(item);
                     }
-                    // Match "define myFunc" (but NOT "extern define" inside implied scope if brace logic fails)
-                    // We assume standard formatting: top level defines start at beginning of line or depth 0
                     const funcMatch = /^\s*(?:extern\s+)?define\s+([a-zA-Z0-9_]+)/.exec(cleanLine);
                     if (funcMatch) {
                         const funcName = funcMatch[1];
-                        if (!funcName.startsWith('__')) { // Optional: Hide internal dunder methods
+                        if (!funcName.startsWith('__')) {
                             const item = new vscode.CompletionItem(funcName, vscode.CompletionItemKind.Function);
                             item.detail = `function ${funcName}`;
                             items.push(item);
                         }
                     }
                 }
-                // 3. Update Brace Depth
                 for (const char of cleanLine) {
                     if (char === '{')
                         braceDepth++;
@@ -137,10 +134,14 @@ class QuirkCompletionProvider {
         const rootPath = workspaceFolder.uri.fsPath;
         const relativePath = modulePath.replace(/\./g, '/');
         const searchRoots = [
+            path.join(rootPath, '.venv', 'lib', 'quirk', 'packages'),
+            path.join(rootPath, '.venv', 'lib', 'quirk'),
+            // Fix:
+            path.join(rootPath, 'quirk-compiler', '.venv', 'lib', 'quirk', 'packages'),
+            path.join(rootPath, 'quirk-compiler', '.venv', 'lib', 'quirk'),
             path.join(rootPath, 'libs'),
             path.join(rootPath, 'src'),
-            path.join(rootPath, 'quirk-compiler', 'libs'),
-            path.join(rootPath, 'quirk-compiler', 'src')
+            path.join(rootPath, 'quirk-compiler', 'libs')
         ];
         const variants = [
             relativePath + '.qk',

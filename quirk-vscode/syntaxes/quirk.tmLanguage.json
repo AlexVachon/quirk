@@ -88,7 +88,7 @@
       "patterns": [
         {
           "name": "support.type.quirk",
-          "match": "\\b(int|double|float|bool|string|cstring|void|any|list|List|String|Map)\\b"
+          "match": "\\b(int|Int|double|Double|bool|Bool|cstring|void|any|List|String|Map)\\b"
         }
       ]
     },

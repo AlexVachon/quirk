@@ -1,0 +1,6 @@
+from .utils use { greeting } 
+
+define main() -> Int {
+    greeting("Hello from ftf_imports!")
+    return 0
+}

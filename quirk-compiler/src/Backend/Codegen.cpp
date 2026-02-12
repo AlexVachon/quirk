@@ -566,79 +566,86 @@ class LLVMCodegen {
                     exit(1);
                 }
 
-                Type* expectedType = parentFunc->getReturnType();
-
-                // --- FIX START: Auto-Unbox String Object -> cstring (i8*) ---
-                // If function expects 'i8*' (cstring) but we have a 'String' struct pointer
-                if (expectedType->isPointerTy() && 
-                    expectedType->getPointerElementType()->isIntegerTy(8)) {
+                // =========================================================
+                // SPECIAL LOGIC: 'main' returning a value
+                // =========================================================
+                if (parentFunc->getName() == "main") {
                     
-                    if (retVal->getType()->isPointerTy() && 
-                        retVal->getType()->getPointerElementType()->isStructTy()) {
-                        
-                        StructType* st = cast<StructType>(
-                            retVal->getType()->getPointerElementType());
-                        
-                        // Fuzzy check for String struct
-                        if (st->getName().str().find("String") != std::string::npos) {
-                            // Automatically extract 'buffer' field
-                            Value* bufPtr = structGen->getMemberPtr(retVal, "buffer");
-                            if (bufPtr) {
-                                retVal = Builder.CreateLoad(
-                                    Type::getInt8PtrTy(Context), bufPtr);
+                    // FIX 1: If returning Int (i32), use it as Exit Code (Silent)
+                    if (retVal->getType()->isIntegerTy(32)) {
+                        Builder.CreateRet(retVal);
+                        return;
+                    }
+
+                    // FIX 2: For other types (String, List), Print them -> Return 0
+                    Value* strVal = nullptr;
+                    Type* ty = retVal->getType();
+
+                    if (ty->isPointerTy() && ty->getPointerElementType()->isStructTy()) {
+                        StructType* st = cast<StructType>(ty->getPointerElementType());
+                        std::string typeName = st->getName().str();
+                        if (typeName.find("struct.") == 0) typeName = typeName.substr(7);
+
+                        if (typeName == "String") {
+                            strVal = retVal;
+                        } else {
+                            Function* strFunc = TheModule->getFunction(typeName + "___str");
+                            if (strFunc) {
+                                strVal = Builder.CreateCall(strFunc, {retVal});
                             }
                         }
+                    } 
+                    else if (ty->isDoubleTy()) {
+                         if (auto* f = TheModule->getFunction("Double_str")) strVal = Builder.CreateCall(f, {retVal});
                     }
-                }
-                // --- FIX END -----------------------------------------------
+                    else if (ty->isIntegerTy(1)) { // Bool
+                         if (auto* f = TheModule->getFunction("Bool_str")) strVal = Builder.CreateCall(f, {retVal});
+                    }
 
-                if (retVal->getType() != expectedType) {
-                    if (retVal->getType()->isIntegerTy() &&
-                        expectedType->isIntegerTy())
-                        retVal =
-                            Builder.CreateIntCast(retVal, expectedType, true);
-                    else if (retVal->getType()->isIntegerTy() &&
-                             expectedType->isPointerTy())
-                        retVal = Builder.CreateIntToPtr(retVal, expectedType);
-                    else if (retVal->getType()->isPointerTy() &&
-                             expectedType->isIntegerTy())
-                        retVal = Builder.CreatePtrToInt(retVal, expectedType);
-                    else if (retVal->getType()->isIntegerTy() &&
-                             expectedType->isDoubleTy())
-                        retVal = Builder.CreateSIToFP(retVal, expectedType);
-                    // Add generic pointer cast (e.g., void* <-> i8*)
-                    else if (retVal->getType()->isPointerTy() &&
-                             expectedType->isPointerTy()) {
-                        retVal = Builder.CreateBitCast(retVal, expectedType);
+                    if (strVal) {
+                        Value* bufPtr = structGen->getMemberPtr(strVal, "buffer");
+                        if (bufPtr) {
+                            Value* cStr = Builder.CreateLoad(Type::getInt8PtrTy(Context), bufPtr);
+                            Function* printfFunc = TheModule->getFunction("printf");
+                            Value* fmt = Builder.CreateGlobalStringPtr("%s\n");
+                            Builder.CreateCall(printfFunc, {fmt, cStr});
+                        }
                     }
+
+                    Builder.CreateRet(ConstantInt::get(Type::getInt32Ty(Context), 0));
+                    return;
+                }
+                // =========================================================
+
+                Type* expectedType = parentFunc->getReturnType();
+                if (retVal->getType() != expectedType) {
+                    if (retVal->getType()->isIntegerTy() && expectedType->isIntegerTy())
+                        retVal = Builder.CreateIntCast(retVal, expectedType, true);
                 }
                 Builder.CreateRet(retVal);
             } else {
-                Builder.CreateRetVoid();
+                if (parentFunc->getName() == "main") {
+                    Builder.CreateRet(ConstantInt::get(Type::getInt32Ty(Context), 0));
+                } else {
+                    Builder.CreateRetVoid();
+                }
             }
-        } else if (auto delNode = dynamic_cast<DeleteNode*>(node)) {
+        } 
+        
+        // ... (DeleteNode and other statements) ...
+        else if (auto delNode = dynamic_cast<DeleteNode*>(node)) {
             Value* objPtr = handleExpression(delNode->target.get());
             if (objPtr && objPtr->getType()->isPointerTy() &&
                 objPtr->getType()->getPointerElementType()->isStructTy()) {
                 StructType* st = cast<StructType>(
                     objPtr->getType()->getPointerElementType());
-                // Safe name lookup using stripped name
                 std::string sName = st->getName().str();
                 if (sName.find("struct.") == 0) sName = sName.substr(7);
                 
-                Function* dtorFunc =
-                    TheModule->getFunction(sName + "__del");
-                
-                // Try fuzzy lookup if exact match fails
-                if (!dtorFunc) {
-                     // (Optional) Iterate functions to find matching suffix if needed
-                }
-
-                if (dtorFunc)
-                    Builder.CreateCall(dtorFunc, {objPtr});
+                Function* dtorFunc = TheModule->getFunction(sName + "__del");
+                if (dtorFunc) Builder.CreateCall(dtorFunc, {objPtr});
             }
-            Value* rawPtr =
-                Builder.CreateBitCast(objPtr, Type::getInt8PtrTy(Context));
+            Value* rawPtr = Builder.CreateBitCast(objPtr, Type::getInt8PtrTy(Context));
             Builder.CreateCall(TheModule->getFunction("free"), {rawPtr});
         }
     }

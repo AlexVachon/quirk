@@ -77,142 +77,65 @@ class LLVMCodegen {
         moduleRegistry = std::make_unique<ModuleRegistry>();
     }
 
-    void compile(const std::vector<std::unique_ptr<Node>>& nodes,
-                 raw_ostream& out = errs()) {
-        std::cerr << "[CG] Starting Compilation..." << std::endl;
+    void compile(const std::vector<std::unique_ptr<Node>>& nodes, raw_ostream& out = errs()) {
         builtinGen->Initialize();
+        moduleRegistry->registerAll(Context, StructTypes, structGen.get(), TheModule.get());
 
-        // Modules
-        moduleRegistry->registerAll(Context, StructTypes, structGen.get(),
-                                    TheModule.get());
-        std::cerr << "[CG] Modules Registered. Structs: " << StructTypes.size()
-                  << std::endl;
-
-        // =========================================================
-        // PASS 0: User Structs (Two-Phase for Circular Deps)
-        // =========================================================
-        std::cerr << "[CG] Pass 0: User Structs..." << std::endl;
-
-        // Phase A: Forward Declare all structs (Opaque)
+        // PASS 0: User Structs
         for (const auto& node : nodes) {
             if (auto s = dynamic_cast<StructNode*>(node.get())) {
-                if (!StructTypes.count(s->name)) {
-                    StructTypes[s->name] = StructType::create(Context, s->name);
-                }
+                if (!StructTypes.count(s->name)) StructTypes[s->name] = StructType::create(Context, s->name);
             }
         }
-
-        // Phase B: Define Bodies
         for (const auto& node : nodes) {
             if (auto s = dynamic_cast<StructNode*>(node.get())) {
                 StructType* st = StructTypes[s->name];
-
-                if (!st->isOpaque()) {
-                    std::vector<std::string> fieldNames;
-                    for (const auto& field : s->fields)
-                        fieldNames.push_back(field.name);
-                    structGen->registerStructLayout(s->name, fieldNames);
-                    continue;
-                }
-
+                if (!st->isOpaque()) continue;
                 std::vector<Type*> elementTypes;
                 std::vector<std::string> fieldNames;
-
-                // 1. Add Parent Fields (Inheritance)
-                for (const auto& parent : s->parents) {
-                    if (StructTypes.count(parent)) {
-                        elementTypes.push_back(StructTypes[parent]);
-                    }
-                }
-
-                // 2. Add Own Fields
                 for (const auto& field : s->fields) {
                     Type* t = typeGen->getLLVMType(field.type);
-
-                    // Structs as Fields should be Pointers
-                    if (t->isStructTy()) {
-                        t = PointerType::getUnqual(t);
-                    }
+                    if (t->isStructTy()) t = PointerType::getUnqual(t);
                     elementTypes.push_back(t);
                     fieldNames.push_back(field.name);
                 }
-
                 st->setBody(elementTypes);
                 structGen->registerStructLayout(s->name, fieldNames);
             }
         }
 
-        // PASS 1: Pre-declare helper functions
-        std::cerr << "[CG] Pass 1: Function Declarations..." << std::endl;
+        // PASS 1: Function Declarations
         for (const auto& node : nodes) {
             if (auto func = dynamic_cast<FunctionNode*>(node.get())) {
-                if (func->name == "main" || builtinGen->isBuiltin(func->name))
-                    continue;
-                if (TheModule->getFunction(func->name) && !func->isExtern)
-                    continue;
-
+                if (func->name == "main" || builtinGen->isBuiltin(func->name)) continue;
                 Type* retTy = typeGen->getFunctionReturnType(func->returnType);
-                if (func->returnType.empty()) {
-                    for (auto& stmt : func->body) {
-                        if (dynamic_cast<ReturnNode*>(stmt.get())) {
-                            retTy = Type::getInt32Ty(Context);
-                            break;
-                        }
-                    }
-                }
-
-                if (!func->parameters.empty() &&
-                    func->parameters.back().isVariadic) {
-                    variadicFunctions[func->name] = true;
-                }
-
                 std::vector<Type*> argTypes;
-                if (!func->cls.empty() && !func->isStatic)
-                    argTypes.push_back(typeGen->getLLVMType(func->cls));
-                for (const auto& param : func->parameters)
-                    argTypes.push_back(typeGen->getLLVMType(param.type));
-
+                if (!func->cls.empty() && !func->isStatic) argTypes.push_back(typeGen->getLLVMType(func->cls));
+                for (const auto& param : func->parameters) argTypes.push_back(typeGen->getLLVMType(param.type));
                 FunctionType* FT = FunctionType::get(retTy, argTypes, false);
-                Function::Create(FT, Function::ExternalLinkage, func->name,
-                                 TheModule.get());
+                Function::Create(FT, Function::ExternalLinkage, func->name, TheModule.get());
             }
         }
 
-        // PASS 2: Compile bodies
-        std::cerr << "[CG] Pass 2: Function Bodies..." << std::endl;
+        // PASS 2: Compile Bodies
         for (const auto& node : nodes) {
             if (auto func = dynamic_cast<FunctionNode*>(node.get())) {
-                if (func->name != "main") {
-                    std::cerr << "  -> Compiling " << func->name << "..."
-                              << std::endl;
-                    compileFunction(func);
-                }
+                if (func->name != "main") compileFunction(func);
             }
         }
 
         // PASS 3: Main
-        std::cerr << "[CG] Pass 3: Main..." << std::endl;
-        FunctionType* mainType =
-            FunctionType::get(Type::getInt32Ty(Context), {}, false);
-        Function* mainFunc = Function::Create(
-            mainType, Function::ExternalLinkage, "main", TheModule.get());
+        FunctionType* mainType = FunctionType::get(Type::getInt32Ty(Context), {}, false);
+        Function* mainFunc = Function::Create(mainType, Function::ExternalLinkage, "main", TheModule.get());
         Builder.SetInsertPoint(BasicBlock::Create(Context, "entry", mainFunc));
-        varGen->clear();
         for (const auto& node : nodes) {
             if (auto func = dynamic_cast<FunctionNode*>(node.get())) {
                 if (func->name == "main") {
-                    std::cerr << "[CG] Found main function. Generating body..."
-                              << std::endl;  // Log this
-                    for (const auto& stmt : func->body)
-                        handleStatement(stmt.get(), mainFunc);
+                    for (const auto& stmt : func->body) handleStatement(stmt.get(), mainFunc);
                 }
             }
         }
-        if (!Builder.GetInsertBlock()->getTerminator()) {
-            Builder.CreateRet(ConstantInt::get(Type::getInt32Ty(Context), 0));
-        }
-
-        std::cerr << "[CG] Finished. Printing..." << std::endl;
+        if (!Builder.GetInsertBlock()->getTerminator()) Builder.CreateRet(ConstantInt::get(Type::getInt32Ty(Context), 0));
         TheModule->print(out, nullptr);
     }
 
@@ -535,111 +458,48 @@ class LLVMCodegen {
     }
 
     void handleStatement(Node* node, Function* parentFunc) {
-        if (auto vdecl = dynamic_cast<VarDeclNode*>(node)) {
-            handleVarDecl(vdecl);
-        } else if (auto ifNode = dynamic_cast<IfNode*>(node))
-            handleIf(ifNode, parentFunc);
-        else if (auto whileNode = dynamic_cast<WhileNode*>(node))
-            handleWhile(whileNode, parentFunc);
-        else if (auto withNode = dynamic_cast<WithNode*>(node))
-            handleWith(withNode, parentFunc);
-        else if (auto forNode = dynamic_cast<ForNode*>(node)) {
-            flowGen->generateFor(
-                forNode, parentFunc,
-                [this](Node* n) { return this->handleExpression(n); },
-                [this](const std::string& name, std::vector<Value*>& args) {
-                    return structGen->allocateAndInit(name, args);
-                },
-                [this, parentFunc](Node* n) {
-                    this->handleStatement(n, parentFunc);
-                },
-                varGen.get());
-        } else if (auto call = dynamic_cast<CallNode*>(node))
-            handleCall(call);
+        if (auto vdecl = dynamic_cast<VarDeclNode*>(node)) handleVarDecl(vdecl);
+        else if (auto call = dynamic_cast<CallNode*>(node)) handleCall(call);
         else if (auto ret = dynamic_cast<ReturnNode*>(node)) {
             if (ret->expression) {
                 Value* retVal = handleExpression(ret->expression.get());
 
-                if (!retVal) {
-                    std::cerr << "COMPILER ERROR: Return expression null in "
-                              << parentFunc->getName().str() << std::endl;
-                    exit(1);
-                }
-
-                Type* expectedType = parentFunc->getReturnType();
-
-                // --- FIX START: Auto-Unbox String Object -> cstring (i8*) ---
-                // If function expects 'i8*' (cstring) but we have a 'String' struct pointer
-                if (expectedType->isPointerTy() && 
-                    expectedType->getPointerElementType()->isIntegerTy(8)) {
-                    
-                    if (retVal->getType()->isPointerTy() && 
-                        retVal->getType()->getPointerElementType()->isStructTy()) {
-                        
-                        StructType* st = cast<StructType>(
-                            retVal->getType()->getPointerElementType());
-                        
-                        // Fuzzy check for String struct
-                        if (st->getName().str().find("String") != std::string::npos) {
-                            // Automatically extract 'buffer' field
-                            Value* bufPtr = structGen->getMemberPtr(retVal, "buffer");
-                            if (bufPtr) {
-                                retVal = Builder.CreateLoad(
-                                    Type::getInt8PtrTy(Context), bufPtr);
-                            }
-                        }
+                // Special handling for 'main'
+                if (parentFunc->getName() == "main") {
+                    if (retVal->getType()->isIntegerTy(32)) {
+                        Builder.CreateRet(retVal);
+                        return;
                     }
+                    Builder.CreateRet(ConstantInt::get(Type::getInt32Ty(Context), 0));
+                    return;
                 }
-                // --- FIX END -----------------------------------------------
 
+                // --- TYPE MATCHING LOGIC ---
+                Type* expectedType = parentFunc->getReturnType();
                 if (retVal->getType() != expectedType) {
-                    if (retVal->getType()->isIntegerTy() &&
-                        expectedType->isIntegerTy())
-                        retVal =
-                            Builder.CreateIntCast(retVal, expectedType, true);
-                    else if (retVal->getType()->isIntegerTy() &&
-                             expectedType->isPointerTy())
-                        retVal = Builder.CreateIntToPtr(retVal, expectedType);
-                    else if (retVal->getType()->isPointerTy() &&
-                             expectedType->isIntegerTy())
-                        retVal = Builder.CreatePtrToInt(retVal, expectedType);
-                    else if (retVal->getType()->isIntegerTy() &&
-                             expectedType->isDoubleTy())
-                        retVal = Builder.CreateSIToFP(retVal, expectedType);
-                    // Add generic pointer cast (e.g., void* <-> i8*)
-                    else if (retVal->getType()->isPointerTy() &&
-                             expectedType->isPointerTy()) {
-                        retVal = Builder.CreateBitCast(retVal, expectedType);
+                    // 1. Integer casting
+                    if (retVal->getType()->isIntegerTy() && expectedType->isIntegerTy()) {
+                        retVal = Builder.CreateIntCast(retVal, expectedType, true);
+                    }
+                    // 2. String Struct -> cstring (i8*) fix [cite: 50, 53, 59]
+                    else if (expectedType->isPointerTy() && expectedType->getPointerElementType()->isIntegerTy(8) &&
+                             retVal->getType()->isPointerTy() && retVal->getType()->getPointerElementType()->isStructTy()) {
+                        
+                        StructType* st = cast<StructType>(retVal->getType()->getPointerElementType());
+                        std::string sName = st->getName().str();
+                        if (sName.find("struct.") == 0) sName = sName.substr(7);
+                        
+                        if (sName == "String") {
+                            Function* strFunc = TheModule->getFunction("String___str");
+                            if (strFunc) retVal = Builder.CreateCall(strFunc, {retVal});
+                        }
                     }
                 }
                 Builder.CreateRet(retVal);
             } else {
-                Builder.CreateRetVoid();
+                if (parentFunc->getName() == "main") Builder.CreateRet(ConstantInt::get(Type::getInt32Ty(Context), 0));
+                else Builder.CreateRetVoid();
             }
-        } else if (auto delNode = dynamic_cast<DeleteNode*>(node)) {
-            Value* objPtr = handleExpression(delNode->target.get());
-            if (objPtr && objPtr->getType()->isPointerTy() &&
-                objPtr->getType()->getPointerElementType()->isStructTy()) {
-                StructType* st = cast<StructType>(
-                    objPtr->getType()->getPointerElementType());
-                // Safe name lookup using stripped name
-                std::string sName = st->getName().str();
-                if (sName.find("struct.") == 0) sName = sName.substr(7);
-                
-                Function* dtorFunc =
-                    TheModule->getFunction(sName + "__del");
-                
-                // Try fuzzy lookup if exact match fails
-                if (!dtorFunc) {
-                     // (Optional) Iterate functions to find matching suffix if needed
-                }
-
-                if (dtorFunc)
-                    Builder.CreateCall(dtorFunc, {objPtr});
-            }
-            Value* rawPtr =
-                Builder.CreateBitCast(objPtr, Type::getInt8PtrTy(Context));
-            Builder.CreateCall(TheModule->getFunction("free"), {rawPtr});
         }
     }
 

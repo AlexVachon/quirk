@@ -240,40 +240,29 @@ std::string getModuleName(const std::string& path) {
     std::string mod = path;
 
     // 1. Remove leading "./"
-    if (mod.find("./") == 0) {
-        mod = mod.substr(2);
-    }
+    if (mod.find("./") == 0) mod = mod.substr(2);
 
-    // 2. Remove "libs/" prefix (Standard Library)
-    if (mod.find("libs/") == 0) {
-        mod = mod.substr(5);
-    }
-    // 3. Remove "src/" prefix (User source code)
-    else if (mod.find("src/") == 0) {
-        mod = mod.substr(4);
-    }
-    // 4. Remove ".venv/lib/quirk/packages/" (Virtual Env)
-    else {
-        std::string venvPkg = ".venv/lib/quirk/packages/";
-        size_t pos = mod.find(venvPkg);
-        if (pos != std::string::npos) {
-            mod = mod.substr(pos + venvPkg.length());
-        }
+    // 2. Remove standard prefixes
+    if (mod.find("libs/") == 0) mod = mod.substr(5);
+    else if (mod.find("src/") == 0) mod = mod.substr(4);
+    
+    // 3. Dynamic Virtual Env stripping
+    const char* envHome = std::getenv("QUIRK_HOME");
+    if (envHome) {
+        std::string venvPkg = std::string(envHome) + "/lib/quirk/packages/";
+        std::string venvCore = std::string(envHome) + "/lib/quirk/";
         
-        std::string venvCore = ".venv/lib/quirk/";
-        pos = mod.find(venvCore);
-        if (pos != std::string::npos) {
+        size_t pos;
+        if ((pos = mod.find(venvPkg)) != std::string::npos) {
+            mod = mod.substr(pos + venvPkg.length());
+        } else if ((pos = mod.find(venvCore)) != std::string::npos) {
             mod = mod.substr(pos + venvCore.length());
         }
     }
 
-    // 5. Remove extension
+    // 4. Remove extension and normalize to dots
     size_t lastDot = mod.find_last_of('.');
-    if (lastDot != std::string::npos) {
-        mod = mod.substr(0, lastDot);
-    }
-
-    // 6. Normalize separators
+    if (lastDot != std::string::npos) mod = mod.substr(0, lastDot);
     std::replace(mod.begin(), mod.end(), '/', '.');
     std::replace(mod.begin(), mod.end(), '\\', '.');
 

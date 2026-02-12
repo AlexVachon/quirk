@@ -1,6 +1,6 @@
 from math use { Vector2 }
 
-define main() {
+define main() -> void {
     v := Vector2(1, 2)
     print(v)
 }

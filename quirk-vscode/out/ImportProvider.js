@@ -10,8 +10,9 @@ class QuirkDefinitionProvider {
         if (!workspaceFolder)
             return null;
         const rootPath = workspaceFolder.uri.fsPath;
+        const currentFilePath = document.uri.fsPath;
         const lineText = document.lineAt(position).text;
-        const wordRange = document.getWordRangeAtPosition(position);
+        const wordRange = document.getWordRangeAtPosition(position, /[a-zA-Z0-9_.]+/); // Fixed range to include dots
         if (!wordRange)
             return null;
         const symbol = document.getText(wordRange);
@@ -21,23 +22,18 @@ class QuirkDefinitionProvider {
             return null;
         // ---------------------------------------------------------
         // 2. Handle Module Imports (Clicking the path itself)
-        //    Matches: "use math.vectors" OR "from math.vectors"
+        //    Matches: "use .sys" OR "from ..utils"
         // ---------------------------------------------------------
-        const moduleMatch = /^\s*(?:use|from)\s+([a-zA-Z0-9_.]+)/.exec(lineText);
+        // Regex updated to allow leading dots: \.?\.*
+        const moduleMatch = /^\s*(?:use|from)\s+([.a-zA-Z0-9_]+)/.exec(lineText);
         if (moduleMatch) {
             const fullModulePath = moduleMatch[1];
             const matchIndex = lineText.indexOf(fullModulePath);
             const matchEnd = matchIndex + fullModulePath.length;
-            // Check if cursor is specifically on the module path string
             if (wordRange.start.character >= matchIndex && wordRange.end.character <= matchEnd) {
-                // Resolve the clicked segment (e.g. clicking 'math' in 'math.vectors')
-                const segment = document.getText(wordRange);
-                const segmentIndex = fullModulePath.indexOf(segment);
-                let clickedPath = fullModulePath;
-                if (segmentIndex !== -1) {
-                    clickedPath = fullModulePath.substring(0, segmentIndex + segment.length);
-                }
-                const file = this.resolvePathFromRoot(rootPath, clickedPath);
+                // Determine exactly which part was clicked
+                // For relative imports, we usually just want to resolve the whole thing if clicked anywhere
+                const file = this.resolvePath(rootPath, currentFilePath, fullModulePath);
                 if (file) {
                     return new vscode.Location(vscode.Uri.file(file), new vscode.Position(0, 0));
                 }
@@ -45,21 +41,17 @@ class QuirkDefinitionProvider {
         }
         // ---------------------------------------------------------
         // 3. Handle Symbol Imports (Clicking the symbol inside {})
-        //    Matches: "from math use { Vector2 }"
         // ---------------------------------------------------------
-        const fromImportRegex = /^\s*from\s+([a-zA-Z0-9_.]+)\s+use\s+\{([^}]*)/;
+        const fromImportRegex = /^\s*from\s+([.a-zA-Z0-9_]+)\s+use\s+\{([^}]*)/;
         const fromMatch = fromImportRegex.exec(lineText);
         if (fromMatch) {
             const modulePath = fromMatch[1];
             const importsContent = fromMatch[2];
             const openBraceIndex = lineText.indexOf('{');
-            // Ensure cursor is inside the definition block (after '{')
             if (position.character > openBraceIndex) {
                 if (importsContent.includes(symbol)) {
-                    const filePath = this.resolvePathFromRoot(rootPath, modulePath);
+                    const filePath = this.resolvePath(rootPath, currentFilePath, modulePath);
                     if (filePath) {
-                        // --- NEW: Deep Search ---
-                        // recursively check imports inside the target file
                         const targetLoc = this.findDefinitionDeep(rootPath, filePath, symbol);
                         return targetLoc || new vscode.Location(vscode.Uri.file(filePath), new vscode.Position(0, 0));
                     }
@@ -67,113 +59,62 @@ class QuirkDefinitionProvider {
             }
         }
         // ---------------------------------------------------------
-        // 4. Handle Usage in Code (General Go to Definition)
+        // 4. Handle Usage in Code (Deep Search)
         // ---------------------------------------------------------
-        // A. Check Local File First
+        // A. Check Local File
         const localDef = this.findSymbolInFile(document.fileName, symbol);
         if (localDef && !localDef.range.contains(position))
             return localDef;
-        // B. Check Imported Modules
+        // B. Check Imports
         const text = document.getText();
-        // Scan "from X use { Y }"
-        const fromRegex = /from\s+([a-zA-Z0-9_.]+)\s+use\s+\{([^}]+)\}/g;
+        // Scan "from ... use { ... }"
+        const fromRegex = /from\s+([.a-zA-Z0-9_]+)\s+use\s+\{([^}]+)\}/g;
         let match;
         while ((match = fromRegex.exec(text)) !== null) {
             if (match[2].includes(symbol)) {
-                const filePath = this.resolvePathFromRoot(rootPath, match[1]);
+                const filePath = this.resolvePath(rootPath, currentFilePath, match[1]);
                 if (filePath) {
                     return this.findDefinitionDeep(rootPath, filePath, symbol);
                 }
             }
         }
-        // Scan "use X"
-        const useRegex = /^use\s+([a-zA-Z0-9_.]+)/gm;
-        while ((match = useRegex.exec(text)) !== null) {
-            const filePath = this.resolvePathFromRoot(rootPath, match[1]);
-            if (filePath) {
-                // For 'use math', we generally don't deep search automatically unless strictly necessary
-                // to avoid performance hits, but for "Go to Definition" it's usually acceptable.
-                const targetLoc = this.findDefinitionDeep(rootPath, filePath, symbol);
-                if (targetLoc)
-                    return targetLoc;
-            }
-        }
         return null;
     }
     // ---------------------------------------------------------
-    // HELPER: Deep Search (Recursive)
+    // HELPER: Path Resolution (Handles Relative & Absolute)
     // ---------------------------------------------------------
-    findDefinitionDeep(rootPath, filePath, symbol, visited = new Set()) {
-        // Prevent infinite loops (circular imports)
-        if (visited.has(filePath))
+    resolvePath(rootPath, currentFile, modulePath) {
+        // 1. Relative Imports (starts with .)
+        if (modulePath.startsWith('.')) {
+            // Count dots: "." = 1 (current), ".." = 2 (parent)
+            let dotCount = 0;
+            while (dotCount < modulePath.length && modulePath[dotCount] === '.') {
+                dotCount++;
+            }
+            const subPath = modulePath.substring(dotCount); // "sys" from ".sys"
+            let searchDir = path.dirname(currentFile);
+            // Move up directories (start at 1 because dirname is already current dir)
+            for (let i = 1; i < dotCount; i++) {
+                searchDir = path.dirname(searchDir);
+            }
+            const relativeParts = subPath.replace(/\./g, '/'); // "utils.math" -> "utils/math"
+            const variants = [
+                path.join(searchDir, relativeParts + '.qk'),
+                path.join(searchDir, relativeParts, '__init.qk')
+            ];
+            for (const v of variants) {
+                if (fs.existsSync(v))
+                    return v;
+            }
             return null;
-        visited.add(filePath);
-        // 1. Check current file
-        const loc = this.findSymbolInFile(filePath, symbol);
-        if (loc)
-            return loc;
-        // 2. Scan for re-exports / sub-imports
-        // We look for 'use <mod>' lines in this file
-        try {
-            const content = fs.readFileSync(filePath, 'utf-8');
-            const lines = content.split(/\r?\n/);
-            for (const line of lines) {
-                const clean = line.replace(/\/\/.*$/, '').trim();
-                if (!clean.startsWith('use') && !clean.startsWith('from'))
-                    continue;
-                // Match "use math.vectors"
-                const useMatch = /^\s*use\s+([a-zA-Z0-9_.]+)/.exec(clean);
-                if (useMatch) {
-                    const subModPath = useMatch[1];
-                    const resolvedSubPath = this.resolvePathFromRoot(rootPath, subModPath);
-                    if (resolvedSubPath) {
-                        const subLoc = this.findDefinitionDeep(rootPath, resolvedSubPath, symbol, visited);
-                        if (subLoc)
-                            return subLoc;
-                    }
-                }
-                // Match "from math.vectors use ..." (Re-exporting symbols)
-                // If the file does 'from ... use { Vector2 }', we should follow that too.
-                const fromMatch = /^\s*from\s+([a-zA-Z0-9_.]+)\s+use/.exec(clean);
-                if (fromMatch) {
-                    const subModPath = fromMatch[1];
-                    const resolvedSubPath = this.resolvePathFromRoot(rootPath, subModPath);
-                    if (resolvedSubPath) {
-                        const subLoc = this.findDefinitionDeep(rootPath, resolvedSubPath, symbol, visited);
-                        if (subLoc)
-                            return subLoc;
-                    }
-                }
-            }
         }
-        catch (e) { }
-        return null;
-    }
-    findSymbolInFile(filePath, symbol) {
-        try {
-            const content = fs.readFileSync(filePath, 'utf-8');
-            const lines = content.split(/\r?\n/);
-            for (let i = 0; i < lines.length; i++) {
-                // Matches: "struct Vector2", "define main", "extern define print"
-                const defRegex = new RegExp(`^\\s*(?:extern\\s+)?(?:struct|define)\\s+${symbol}\\b`);
-                if (defRegex.test(lines[i])) {
-                    return new vscode.Location(vscode.Uri.file(filePath), new vscode.Position(i, 0));
-                }
-            }
-        }
-        catch (e) { }
-        return null;
-    }
-    resolvePathFromRoot(rootPath, modulePath) {
+        // 2. Absolute Imports
         const relativePath = modulePath.replace(/\./g, '/');
         const searchRoots = [
-            // Priority 1: VENV
             path.join(rootPath, '.venv', 'lib', 'quirk', 'packages'),
             path.join(rootPath, '.venv', 'lib', 'quirk'),
-            // Priority 2: Compiler VENV
             path.join(rootPath, 'quirk-compiler', '.venv', 'lib', 'quirk', 'packages'),
             path.join(rootPath, 'quirk-compiler', '.venv', 'lib', 'quirk'),
-            // Priority 3: Local Libs
             path.join(rootPath, 'libs'),
             path.join(rootPath, 'src'),
             path.join(rootPath, 'quirk-compiler', 'libs'),
@@ -190,6 +131,47 @@ class QuirkDefinitionProvider {
                     return fullPath;
             }
         }
+        return null;
+    }
+    findDefinitionDeep(rootPath, filePath, symbol, visited = new Set()) {
+        if (visited.has(filePath))
+            return null;
+        visited.add(filePath);
+        const loc = this.findSymbolInFile(filePath, symbol);
+        if (loc)
+            return loc;
+        try {
+            const content = fs.readFileSync(filePath, 'utf-8');
+            const lines = content.split(/\r?\n/);
+            for (const line of lines) {
+                const clean = line.replace(/\/\/.*$/, '').trim();
+                // Recursively follow "from .sub use { ... }" or "use .sub"
+                const importMatch = /^\s*(?:use|from)\s+([.a-zA-Z0-9_]+)/.exec(clean);
+                if (importMatch) {
+                    const resolvedPath = this.resolvePath(rootPath, filePath, importMatch[1]);
+                    if (resolvedPath) {
+                        const subLoc = this.findDefinitionDeep(rootPath, resolvedPath, symbol, visited);
+                        if (subLoc)
+                            return subLoc;
+                    }
+                }
+            }
+        }
+        catch (e) { }
+        return null;
+    }
+    findSymbolInFile(filePath, symbol) {
+        try {
+            const content = fs.readFileSync(filePath, 'utf-8');
+            const lines = content.split(/\r?\n/);
+            for (let i = 0; i < lines.length; i++) {
+                const defRegex = new RegExp(`^\\s*(?:extern\\s+)?(?:struct|define|def|init)\\s+${symbol}\\b`);
+                if (defRegex.test(lines[i])) {
+                    return new vscode.Location(vscode.Uri.file(filePath), new vscode.Position(i, 0));
+                }
+            }
+        }
+        catch (e) { }
         return null;
     }
 }

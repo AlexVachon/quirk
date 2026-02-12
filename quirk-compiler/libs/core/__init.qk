@@ -1,3 +1,5 @@
-use core.sys
-use core.collections.list
-use core.string
+use .sys
+use .collections.list
+use .collections.map
+use .primitives
+use .string

@@ -536,37 +536,43 @@ std::unique_ptr<StructNode> Parser::parseStruct() {
     return node;
 }
 
-// [src/Core/Parser.cpp]
 
 std::unique_ptr<Node> Parser::parseUse() {
-    std::string path;
+    std::string path = "";
     std::vector<std::string> filters;
 
-    // Case 1: "from core.math use { Vector2 }"
-    if (match(TokenType::FROM)) {
-        // 1. Parse Path
-        path = advance().value;
+    // Helper to parse the path "core.sys" -> "core/sys" OR ".sys" -> ".sys"
+    auto parsePath = [&]() {
+        // 1. Handle Leading Dots (Relative Imports)
         while (match(TokenType::DOT)) {
-            path += "/" + advance().value;
+            path += ".";
         }
 
-        // 2. Expect 'use'
-        consume(TokenType::USE, "Expected 'use' after module path");
+        // 2. Read first identifier segment
+        if (peek().type == TokenType::IDENTIFIER) {
+            path += advance().value;
+        }
 
-        // 3. Parse Filter List "{ A, B }"
-        consume(TokenType::LBRACE, "Expected '{' for import list");
+        // 3. Read subsequent segments
+        while (match(TokenType::DOT)) {
+            // We use '/' for internal representation of separators, 
+            // but keep the leading '.' for relative detection.
+            path += "/" + advance().value;
+        }
+    };
+
+    if (match(TokenType::FROM)) {
+        parsePath();
+        consume(TokenType::USE, "Expected 'use' after module path");
+        consume(TokenType::LBRACE, "Expected '{'");
         do {
             filters.push_back(advance().value);
         } while (match(TokenType::COMMA));
         consume(TokenType::RBRACE, "Expected '}'");
     } 
-    // Case 2: "use core.math" (Import All)
     else {
         consume(TokenType::USE, "Expected 'use'");
-        path = advance().value;
-        while (match(TokenType::DOT)) {
-            path += "/" + advance().value;
-        }
+        parsePath();
     }
 
     return std::make_unique<UseNode>(path, filters);

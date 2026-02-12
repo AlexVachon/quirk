@@ -7,7 +7,7 @@ struct Vector2 {
         self.y := y
     }
 
-    define __str(self) -> string {
+    define __str(self) -> String {
         return "v(" + self.x + ", " + self.y + ")"
     }
 
@@ -54,7 +54,7 @@ struct Vector3 {
         self.z := z
     }
 
-    define __str(self) -> string {
+    define __str(self) -> String {
         return "Vec3(" + self.x + ", " + self.y + ", " + self.z + ")" 
     }
 

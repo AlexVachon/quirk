@@ -3,175 +3,71 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
+    private outputChannel: vscode.OutputChannel;
 
-    public provideCompletionItems(
-        document: vscode.TextDocument,
-        position: vscode.Position
-    ): vscode.ProviderResult<vscode.CompletionItem[]> {
+    constructor(outputChannel: vscode.OutputChannel) {
+        this.outputChannel = outputChannel;
+    }
 
+    public provideCompletionItems(document: vscode.TextDocument, position: vscode.Position): vscode.ProviderResult<vscode.CompletionItem[]> {
         const linePrefix = document.lineAt(position).text.substring(0, position.character);
-
-        // 1. Module Import: "use .core" or "use core."
-        // Updated regex to allow leading dots
-        const moduleImportMatch = /^\s*(?:use|from)\s+([.a-zA-Z0-9_]*)$/.exec(linePrefix);
-        if (moduleImportMatch) {
-            return this.provideModuleCompletions(document, moduleImportMatch[1]);
+        const moduleMatch = /^\s*(?:use|from)\s+([.a-zA-Z0-9_]*)$/.exec(linePrefix);
+        
+        if (moduleMatch) {
+            return this.provideModuleCompletions(document, moduleMatch[1]);
         }
-
-        // 2. Symbol Import: "from .core use { "
-        const symbolImportMatch = /^\s*from\s+([.a-zA-Z0-9_]+)\s+use\s+\{(.*)$/.exec(linePrefix);
-        if (symbolImportMatch) {
-            return this.provideSymbolCompletions(document, symbolImportMatch[1]);
-        }
-
         return undefined;
     }
 
+    private findProjectRoot(currentFile: string): string {
+        let currentDir = path.dirname(currentFile);
+        const workspaceFolder = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(currentFile));
+        const stopAt = workspaceFolder ? workspaceFolder.uri.fsPath : "/";
+        while (currentDir.length >= stopAt.length) {
+            if (fs.existsSync(path.join(currentDir, 'Makefile')) || fs.existsSync(path.join(currentDir, 'libs'))) return currentDir;
+            const parent = path.dirname(currentDir);
+            if (parent === currentDir) break;
+            currentDir = parent;
+        }
+        return stopAt;
+    }
+
     private provideModuleCompletions(document: vscode.TextDocument, typedPath: string): vscode.CompletionItem[] {
-        let searchRoots: string[] = [];
-        let lookFor = typedPath;
+        const projectRoot = this.findProjectRoot(document.uri.fsPath);
+        const searchRoots: string[] = [];
 
-        const workspaceFolder = vscode.workspace.getWorkspaceFolder(document.uri);
-        if (!workspaceFolder) return [];
-        const rootPath = workspaceFolder.uri.fsPath;
-
-        // --- RELATIVE IMPORT LOGIC ---
-        if (typedPath.startsWith('.')) {
-            let dotCount = 0;
-            while (dotCount < typedPath.length && typedPath[dotCount] === '.') {
-                dotCount++;
-            }
-
-            // Calculate base directory based on dots
-            let searchDir = path.dirname(document.uri.fsPath);
-            for (let i = 1; i < dotCount; i++) {
-                searchDir = path.dirname(searchDir);
-            }
-            searchRoots = [searchDir];
-
-            // Strip the dots for the file search part
-            // e.g. ".sys" -> look for "sys" in current dir
-            lookFor = typedPath.substring(dotCount);
-        }
-        // --- ABSOLUTE IMPORT LOGIC ---
-        else {
-            searchRoots = [
-                path.join(rootPath, '.venv', 'lib', 'quirk', 'packages'),
-                path.join(rootPath, '.venv', 'lib', 'quirk'),
-                path.join(rootPath, 'quirk-compiler', '.venv', 'lib', 'quirk', 'packages'),
-                path.join(rootPath, 'quirk-compiler', '.venv', 'lib', 'quirk'),
-                path.join(rootPath, 'libs'),
-                path.join(rootPath, 'src'),
-                path.join(rootPath, 'quirk-compiler', 'libs')
-            ];
+        if (process.env['QUIRK_HOME']) {
+            const v = process.env['QUIRK_HOME']!;
+            searchRoots.push(path.join(v, 'lib', 'quirk', 'packages'), path.join(v, 'lib', 'quirk'));
         }
 
-        // Handle subdirectories in the typed path (e.g. "collections.li")
-        let parentDir = "";
-        let filePrefix = lookFor.replace(/\./g, '/');
-
-        if (filePrefix.includes('/')) {
-            const lastSlash = filePrefix.lastIndexOf('/');
-            parentDir = filePrefix.substring(0, lastSlash);
-        }
-
-        const completionItems: vscode.CompletionItem[] = [];
-
-        for (const root of searchRoots) {
-            const targetPath = path.join(root, parentDir);
-
-            if (fs.existsSync(targetPath) && fs.lstatSync(targetPath).isDirectory()) {
-                try {
-                    const files = fs.readdirSync(targetPath);
-                    for (const file of files) {
-                        if (file.startsWith('.') && file !== '..') continue; // Skip hidden files but allow strict parent logic if needed
-
-                        const fullPath = path.join(targetPath, file);
-                        const isDir = fs.lstatSync(fullPath).isDirectory();
-                        let name = file;
-                        let kind = vscode.CompletionItemKind.Folder;
-
-                        if (!isDir) {
-                            if (!file.endsWith('.qk')) continue;
-                            if (file === '__init.qk') continue;
-                            name = file.substring(0, file.length - 3);
-                            kind = vscode.CompletionItemKind.File;
-                        } else {
-                            kind = vscode.CompletionItemKind.Module;
-                        }
-
-                        if (!completionItems.some(i => i.label === name)) {
-                            completionItems.push(new vscode.CompletionItem(name, kind));
-                        }
-                    }
-                } catch (e) { }
-            }
-        }
-        return completionItems;
-    }
-
-    private provideSymbolCompletions(document: vscode.TextDocument, modulePath: string): vscode.CompletionItem[] {
-        // Reuse the logic from Definition Provider (but simplified here for brevity)
-        // We need to resolve the path using the relative logic
-        let filePath = this.resolvePath(document, modulePath);
-        if (!filePath) return [];
-
-        const items: vscode.CompletionItem[] = [];
-        // ... (Parsing logic matches previous version) ...
         try {
-            const content = fs.readFileSync(filePath, 'utf-8');
-            const lines = content.split(/\r?\n/);
-            for (const line of lines) {
-                const clean = line.replace(/\/\/.*$/, '').trim();
-                const structMatch = /^\s*struct\s+([a-zA-Z0-9_]+)/.exec(clean);
-                if (structMatch) items.push(new vscode.CompletionItem(structMatch[1], vscode.CompletionItemKind.Struct));
-
-                const funcMatch = /^\s*(?:extern\s+)?(?:define|def)\s+([a-zA-Z0-9_]+)/.exec(clean);
-                if (funcMatch && !funcMatch[1].startsWith('__')) {
-                    items.push(new vscode.CompletionItem(funcMatch[1], vscode.CompletionItemKind.Function));
-                }
+            const items = fs.readdirSync(projectRoot);
+            for (const item of items) {
+                const lp = path.join(projectRoot, item, 'lib', 'quirk');
+                if (fs.existsSync(lp)) searchRoots.push(path.join(lp, 'packages'), lp);
             }
-        } catch (e) { }
-        return items;
-    }
+        } catch (e) {}
 
-    // Duplicated helper for now to avoid circular dependencies in this snippet
-    private resolvePath(document: vscode.TextDocument, modulePath: string): string | null {
-        const workspaceFolder = vscode.workspace.getWorkspaceFolder(document.uri);
-        if (!workspaceFolder) return null;
-        const rootPath = workspaceFolder.uri.fsPath;
-        const currentFilePath = document.uri.fsPath;
+        searchRoots.push(path.join(projectRoot, 'libs'), path.join(projectRoot, 'src'));
 
-        if (modulePath.startsWith('.')) {
-            let dotCount = 0;
-            while (dotCount < modulePath.length && modulePath[dotCount] === '.') dotCount++;
-
-            const subPath = modulePath.substring(dotCount);
-            let searchDir = path.dirname(currentFilePath);
-            for (let i = 1; i < dotCount; i++) searchDir = path.dirname(searchDir);
-
-            const relParts = subPath.replace(/\./g, '/');
-            const v1 = path.join(searchDir, relParts + '.qk');
-            const v2 = path.join(searchDir, relParts, '__init.qk');
-            if (fs.existsSync(v1)) return v1;
-            if (fs.existsSync(v2)) return v2;
-            return null;
-        }
-
-        const relativePath = modulePath.replace(/\./g, '/');
-        const searchRoots = [
-            path.join(rootPath, '.venv', 'lib', 'quirk', 'packages'),
-            path.join(rootPath, '.venv', 'lib', 'quirk'),
-            path.join(rootPath, 'libs'),
-            path.join(rootPath, 'src')
-        ];
-
+        const completions: vscode.CompletionItem[] = [];
         for (const root of searchRoots) {
-            const v1 = path.join(root, relativePath + '.qk');
-            const v2 = path.join(root, relativePath, '__init.qk');
-            if (fs.existsSync(v1)) return v1;
-            if (fs.existsSync(v2)) return v2;
+            if (!fs.existsSync(root)) continue;
+            try {
+                const files = fs.readdirSync(root);
+                for (const f of files) {
+                    let name = f;
+                    let kind = vscode.CompletionItemKind.Module;
+                    if (!fs.lstatSync(path.join(root, f)).isDirectory()) {
+                        if (!f.endsWith('.qk') || f === '__init.qk') continue;
+                        name = f.substring(0, f.length - 3);
+                        kind = vscode.CompletionItemKind.File;
+                    }
+                    if (!completions.some(c => c.label === name)) completions.push(new vscode.CompletionItem(name, kind));
+                }
+            } catch (e) {}
         }
-        return null;
+        return completions;
     }
 }

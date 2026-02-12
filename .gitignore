@@ -4,6 +4,5 @@ quirk-compiler/*.log
 quirk-compiler/*.ll
 quirk-compiler/bin/quirk
 quirk-compiler/bin/runtime.so
-quirk-compiler/bin
 quirk-compiler/obj
 quirk-vscode/node_modules

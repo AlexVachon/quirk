@@ -19,6 +19,10 @@
         "id": "quirk",
         "aliases": ["Quirk", "quirk"],
         "extensions": [".qk"],
+        "icon": {
+          "light": "./icons/icon.svg",
+          "dark": "./icons/icon.svg"
+        },
         "configuration": "./language-configuration.json"
       }
     ],

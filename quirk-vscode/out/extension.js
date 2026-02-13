@@ -1,7 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.activate = activate;
-exports.deactivate = deactivate;
+exports.deactivate = exports.activate = void 0;
 const vscode = require("vscode");
 const ImportProvider_1 = require("./ImportProvider");
 const CompletionProvider_1 = require("./CompletionProvider");
@@ -12,5 +11,7 @@ function activate(context) {
     const selector = { language: 'quirk', scheme: 'file' };
     context.subscriptions.push(vscode.languages.registerDefinitionProvider(selector, new ImportProvider_1.QuirkDefinitionProvider(logChannel)), vscode.languages.registerCompletionItemProvider(selector, new CompletionProvider_1.QuirkCompletionProvider(logChannel), '.', '{', ',', ' '));
 }
+exports.activate = activate;
 function deactivate() { }
+exports.deactivate = deactivate;
 //# sourceMappingURL=extension.js.map

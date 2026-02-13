@@ -1,6 +1,6 @@
-from math use { Vector2 }
+use math
 
 define main() -> void {
-    v := Vector2(1, 2)
+    v := math.Vector2(1, 2)
     print(v)
 }

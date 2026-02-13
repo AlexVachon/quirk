@@ -1,4 +1,10 @@
-use .collections.list
-use .collections.map
-use .primitives
-use .string
+from .collections.list use {
+    List, ListIterator
+}
+from .collections.map use {
+    Map, MapIterator
+}
+from .primitives use {
+    Int, Double, Bool
+}
+from .string use { String, StringIterator }

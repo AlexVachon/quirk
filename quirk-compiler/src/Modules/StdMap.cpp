@@ -21,7 +21,7 @@ class StdMapModule : public ApexModule {
         if (structTypes.count("String")) {
             stringStruct = structTypes["String"];
         } else {
-            stringStruct = module->getTypeByName("String");
+            stringStruct = StructType::getTypeByName(ctx, "String");
             if (!stringStruct) {
                 // If missing, create an opaque struct named "String"
                 // This forces LLVM to treat arguments as %String*

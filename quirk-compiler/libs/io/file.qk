@@ -1,4 +1,3 @@
-use std.sys
 
 struct FileIterator {
     file_ref: File

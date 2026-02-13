@@ -106,7 +106,7 @@ class ControlFlowGen {
         // functions.
         if (iterable->getType()->isPointerTy() &&
             iterable->getType()->getPointerElementType()->isPointerTy()) {
-            iterable = Builder.CreateLoad(iterable, "iterable_load");
+            iterable = Builder.CreateLoad(iterable->getType()->getPointerElementType(), iterable, "iterable_load");
         }
         // --- [CRITICAL FIX END] ---
 

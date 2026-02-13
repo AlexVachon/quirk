@@ -12,35 +12,89 @@ class QuirkDefinitionProvider {
         const currentFilePath = document.uri.fsPath;
         const projectRoot = this.findProjectRoot(currentFilePath);
         const lineText = document.lineAt(position).text;
-        const wordRange = document.getWordRangeAtPosition(position, /[a-zA-Z0-9_.]+/);
-        if (!wordRange)
+        const range = document.getWordRangeAtPosition(position, /[a-zA-Z0-9_]+/);
+        if (!range)
             return null;
-        const symbol = document.getText(wordRange);
+        const symbol = document.getText(range);
         this.outputChannel.appendLine(`\n[Definition] Request for symbol: "${symbol}"`);
-        const importMatch = /^\s*(?:use|from)\s+([.a-zA-Z0-9_]+)/.exec(lineText);
-        let targetModule = "";
-        if (importMatch) {
-            targetModule = importMatch[1];
-        }
-        else {
-            const fromMatch = /^\s*from\s+([.a-zA-Z0-9_]+)\s+use/.exec(lineText);
-            if (fromMatch)
-                targetModule = fromMatch[1];
-        }
-        if (targetModule) {
-            const file = this.resolvePath(projectRoot, currentFilePath, targetModule);
-            if (file) {
-                if (!importMatch) {
-                    return this.findSymbolInFile(file, symbol);
+        // =========================================================
+        // 1. MODULE ALIAS (math.Vector2 -> jump to "use math")
+        // =========================================================
+        const importLocation = this.findImportLineInCurrentFile(document, symbol);
+        if (importLocation) {
+            // If clicking the definition line itself, jump to file
+            if (position.line === importLocation.range.start.line) {
+                const importMatch = /^\s*(?:use|from)\s+([.a-zA-Z0-9_/]+)/.exec(lineText);
+                if (importMatch) {
+                    const targetModule = importMatch[1];
+                    const file = this.resolvePath(projectRoot, currentFilePath, targetModule);
+                    if (file)
+                        return new vscode.Location(vscode.Uri.file(file), new vscode.Position(0, 0));
                 }
-                return new vscode.Location(vscode.Uri.file(file), new vscode.Position(0, 0));
+            }
+            else {
+                return importLocation;
             }
         }
-        return this.findSymbolInFile(currentFilePath, symbol);
+        // =========================================================
+        // 2. MEMBER ACCESS (math.Vector2 -> resolve math -> find Vector2)
+        // =========================================================
+        if (range.start.character > 1 && lineText.charAt(range.start.character - 1) === '.') {
+            const prefixRange = document.getWordRangeAtPosition(new vscode.Position(position.line, range.start.character - 2), /[a-zA-Z0-9_]+/);
+            if (prefixRange) {
+                const moduleAlias = document.getText(prefixRange);
+                this.outputChannel.appendLine(`[Definition] Detected member access via alias: "${moduleAlias}"`);
+                const modulePath = this.resolveImportPathFromAlias(document, moduleAlias);
+                if (modulePath) {
+                    const file = this.resolvePath(projectRoot, currentFilePath, modulePath);
+                    if (file) {
+                        this.outputChannel.appendLine(`[Definition] searching for "${symbol}" inside ${file}`);
+                        return this.findSymbolInFile(projectRoot, file, symbol);
+                    }
+                }
+            }
+        }
+        // Fallback: Look in current file
+        return this.findSymbolInFile(projectRoot, currentFilePath, symbol);
     }
-    /**
-     * Walks up from the current file to find the folder containing a Makefile or libs folder.
-     */
+    findImportLineInCurrentFile(document, symbol) {
+        const text = document.getText();
+        const lines = text.split(/\r?\n/);
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            const useMatch = /^\s*use\s+([.a-zA-Z0-9_/]+)/.exec(line);
+            if (useMatch) {
+                const fullPath = useMatch[1];
+                const alias = fullPath.split(/[\.\/]/).pop();
+                if (alias === symbol) {
+                    return new vscode.Location(document.uri, new vscode.Position(i, useMatch.index));
+                }
+            }
+            const fromMatch = /^\s*from\s+([.a-zA-Z0-9_/]+)/.exec(line);
+            if (fromMatch) {
+                const fullPath = fromMatch[1];
+                const alias = fullPath.split(/[\.\/]/).pop();
+                if (alias === symbol) {
+                    return new vscode.Location(document.uri, new vscode.Position(i, fromMatch.index));
+                }
+            }
+        }
+        return null;
+    }
+    resolveImportPathFromAlias(document, alias) {
+        const text = document.getText();
+        const lines = text.split(/\r?\n/);
+        for (const line of lines) {
+            const useMatch = /^\s*use\s+([.a-zA-Z0-9_/]+)/.exec(line);
+            if (useMatch) {
+                const fullPath = useMatch[1];
+                const implicitAlias = fullPath.split(/[\.\/]/).pop();
+                if (implicitAlias === alias)
+                    return fullPath;
+            }
+        }
+        return null;
+    }
     findProjectRoot(currentFile) {
         let currentDir = path.dirname(currentFile);
         const workspaceFolder = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(currentFile));
@@ -57,15 +111,9 @@ class QuirkDefinitionProvider {
         return stopAt;
     }
     resolvePath(projectRoot, currentFile, modulePath) {
-        this.outputChannel.appendLine(`[Path] Project Root detected: ${projectRoot}`);
-        this.outputChannel.appendLine(`[Path] Resolving: "${modulePath}"`);
         // 1. Handle Relative Imports (.utils)
         if (modulePath.startsWith('.')) {
-            const resolved = this.resolveRelative(currentFile, modulePath);
-            if (resolved) {
-                this.outputChannel.appendLine(`[Path] SUCCESS: Relative found at ${resolved}`);
-                return resolved;
-            }
+            return this.resolveRelative(currentFile, modulePath);
         }
         const searchRoots = [];
         // 2. Add Active Environment (QUIRK_HOME)
@@ -73,14 +121,16 @@ class QuirkDefinitionProvider {
             const v = process.env['QUIRK_HOME'];
             searchRoots.push(path.join(v, 'lib', 'quirk', 'packages'), path.join(v, 'lib', 'quirk'));
         }
-        // 3. Python-style Scan: Check folders inside the detected Project Root
+        // 3. Virtual Environment Scan (Restore .venv lookup)
         try {
             const items = fs.readdirSync(projectRoot);
             for (const item of items) {
                 const fullItemPath = path.join(projectRoot, item);
+                // Check if directory has 'lib/quirk' (standard virtual env structure)
                 const quirkLib = path.join(fullItemPath, 'lib', 'quirk');
                 if (fs.existsSync(quirkLib) && fs.lstatSync(fullItemPath).isDirectory()) {
-                    this.outputChannel.appendLine(`[Path] Detected Environment: ${item}`);
+                    this.outputChannel.appendLine(`[Path] Detected Virtual Environment: ${item}`);
+                    // Add 'packages' and base lib to search path
                     searchRoots.push(path.join(quirkLib, 'packages'), quirkLib);
                 }
             }
@@ -93,14 +143,10 @@ class QuirkDefinitionProvider {
         for (const root of searchRoots) {
             for (const v of variants) {
                 const full = path.join(root, v);
-                this.outputChannel.appendLine(`[Path] Checking: ${full}`);
-                if (fs.existsSync(full)) {
-                    this.outputChannel.appendLine(`[Path] SUCCESS: Found ${full}`);
+                if (fs.existsSync(full))
                     return full;
-                }
             }
         }
-        this.outputChannel.appendLine(`[Path] FAILED: Could not resolve ${modulePath}`);
         return null;
     }
     resolveRelative(currentFile, modulePath) {
@@ -119,17 +165,40 @@ class QuirkDefinitionProvider {
             return v2;
         return null;
     }
-    findSymbolInFile(filePath, symbol) {
+    findSymbolInFile(projectRoot, filePath, symbol, visited = new Set()) {
+        if (visited.has(filePath))
+            return null;
+        visited.add(filePath);
         try {
             const content = fs.readFileSync(filePath, 'utf-8');
             const lines = content.split(/\r?\n/);
+            // 1. Check for Definitions
+            const defRegex = new RegExp(`\\b(struct|define|def|init)\\s+${symbol}\\b`);
             for (let i = 0; i < lines.length; i++) {
-                if (new RegExp(`\\b(struct|define|def|init)\\s+${symbol}\\b`).test(lines[i])) {
+                if (defRegex.test(lines[i])) {
                     return new vscode.Location(vscode.Uri.file(filePath), new vscode.Position(i, 0));
                 }
             }
+            // 2. Check for Re-exports
+            const reExportRegex = new RegExp(`from\\s+([.a-zA-Z0-9_/]+)\\s+use\\s+\\{([^}]*)\\}`);
+            let match;
+            const fullContent = content;
+            const globalRegex = new RegExp(reExportRegex, 'g');
+            while ((match = globalRegex.exec(fullContent)) !== null) {
+                const importPath = match[1];
+                const importedSymbols = match[2];
+                if (new RegExp(`\\b${symbol}\\b`).test(importedSymbols)) {
+                    this.outputChannel.appendLine(`[Definition] Found re-export of "${symbol}" from "${importPath}" in ${path.basename(filePath)}`);
+                    const nextFile = this.resolvePath(projectRoot, filePath, importPath);
+                    if (nextFile) {
+                        return this.findSymbolInFile(projectRoot, nextFile, symbol, visited);
+                    }
+                }
+            }
         }
-        catch (e) { }
+        catch (e) {
+            this.outputChannel.appendLine(`[Definition] Error reading ${filePath}: ${e}`);
+        }
         return null;
     }
 }

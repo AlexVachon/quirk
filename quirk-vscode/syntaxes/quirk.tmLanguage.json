@@ -2,65 +2,55 @@
   "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
   "name": "Quirk",
   "patterns": [
-    {
-      "include": "#comments"
-    },
-    {
-      "include": "#imports"
-    },
-    {
-      "include": "#keywords"
-    },
-    {
-      "include": "#strings"
-    },
-    {
-      "include": "#numbers"
-    },
-    {
-      "include": "#types"
-    },
-    {
-      "include": "#functions"
-    }
+    { "include": "#comments" },
+    { "include": "#imports" },
+    { "include": "#definitions" },
+    { "include": "#keywords" },
+    { "include": "#strings" },
+    { "include": "#numbers" },
+    { "include": "#types" },
+    { "include": "#functions" },
+    { "include": "#operators" }
   ],
   "repository": {
     "imports": {
       "patterns": [
         {
-          "name": "meta.import.specific.quirk",
-          "match": "\\b(from)\\s+([.]*[a-zA-Z_][\\w.]*)\\s+(use)\\b",
+          "match": "\\b(from)\\s+([a-zA-Z0-9_./]+)\\s+(use)\\b",
           "captures": {
-            "1": {
-              "name": "keyword.control.quirk"
-            },
-            "2": {
-              "name": "entity.name.namespace.quirk"
-            },
-            "3": {
-              "name": "keyword.control.quirk"
-            }
+            "1": { "name": "keyword.control.import.quirk" },
+            "2": { "name": "entity.name.namespace.quirk" },
+            "3": { "name": "keyword.control.import.quirk" }
           }
         },
         {
-          "name": "meta.import.general.quirk",
-          "match": "\\b(use)\\s+([.]*[a-zA-Z_][\\w.]*)\\b",
+          "match": "\\b(use)\\s+([a-zA-Z0-9_./]+)\\b",
           "captures": {
-            "1": {
-              "name": "keyword.control.quirk"
-            },
-            "2": {
-              "name": "entity.name.namespace.quirk"
-            }
+            "1": { "name": "keyword.control.import.quirk" },
+            "2": { "name": "entity.name.namespace.quirk" }
           }
         }
       ]
     },
-    "comments": {
+    "definitions": {
       "patterns": [
         {
-          "name": "comment.line.double-slash.quirk",
-          "match": "//.*$"
+          "match": "\\b(struct)\\s+([a-zA-Z_]\\w*)",
+          "captures": {
+            "1": { "name": "storage.type.struct.quirk" },
+            "2": { "name": "entity.name.type.struct.quirk" }
+          }
+        },
+        {
+          "match": "\\b(define|init)\\s+([a-zA-Z_]\\w*)?",
+          "captures": {
+            "1": { "name": "storage.type.function.quirk" },
+            "2": { "name": "entity.name.function.definition.quirk" }
+          }
+        },
+        {
+          "match": "\\b(extern)\\b",
+          "name": "storage.modifier.quirk"
         }
       ]
     },
@@ -68,11 +58,11 @@
       "patterns": [
         {
           "name": "keyword.control.quirk",
-          "match": "\\b(if|else|elif|while|for|in|return|break|continue)\\b"
+          "match": "\\b(if|else|elif|while|for|in|return|break|continue|with|as)\\b"
         },
         {
-          "name": "keyword.control.quirk",
-          "match": "\\b(define|struct|extern|init|del)\\b"
+          "name": "keyword.other.quirk",
+          "match": "\\b(del)\\b"
         },
         {
           "name": "constant.language.quirk",
@@ -87,8 +77,12 @@
     "types": {
       "patterns": [
         {
-          "name": "support.type.quirk",
-          "match": "\\b(int|Int|double|Double|bool|Bool|cstring|void|any|List|String|Map)\\b"
+          "name": "support.type.primitive.quirk",
+          "match": "\\b(int|double|bool|cstring|void|any|ptr)\\b"
+        },
+        {
+          "name": "support.type.object.quirk",
+          "match": "\\b(List|String|Map|Int|Double|Bool|File)\\b"
         }
       ]
     },
@@ -109,14 +103,7 @@
       "begin": "\"",
       "end": "\"",
       "patterns": [
-        {
-          "name": "constant.character.escape.quirk",
-          "match": "\\\\."
-        },
-        {
-          "name": "variable.interpolation.quirk",
-          "match": "\\$\\{[^}]+\\}|\\$[a-zA-Z_]\\w*"
-        }
+        { "name": "constant.character.escape.quirk", "match": "\\\\." }
       ]
     },
     "functions": {
@@ -124,11 +111,38 @@
         {
           "match": "\\b([a-zA-Z_]\\w*)\\s*\\(",
           "captures": {
-            "1": {
-              "name": "entity.name.function.quirk"
-            }
+            "1": { "name": "entity.name.function.call.quirk" }
           }
         }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.assignment.quirk",
+          "match": "(:=|\\+=|-=|\\*=|/=|%=|=)"
+        },
+        {
+          "name": "keyword.operator.arithmetic.quirk",
+          "match": "(\\+|-|\\*|/|%)"
+        },
+        {
+          "name": "keyword.operator.comparison.quirk",
+          "match": "(==|!=|<=|>=|<|>)"
+        },
+        {
+          "name": "keyword.operator.logical.quirk",
+          "match": "\\b(and|or|not)\\b"
+        },
+        {
+          "name": "storage.type.function.arrow.quirk",
+          "match": "->"
+        }
+      ]
+    },
+    "comments": {
+      "patterns": [
+        { "name": "comment.line.double-slash.quirk", "match": "//.*$" }
       ]
     }
   },

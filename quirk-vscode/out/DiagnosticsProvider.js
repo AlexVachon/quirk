@@ -8,8 +8,8 @@ const KEYWORDS = new Set([
     'extern', 'true', 'false', 'null', 'del', 'init', 'def', 'extend'
 ]);
 const BUILTINS = new Set([
-    'print', 'printf', 'malloc', 'free', 'exit', 'String', 'List', 'Map',
-    'File', 'int', 'double', 'bool', 'cstring', 'any', 'void', 'ptr', 'self'
+    'print', 'exit', 'String', 'List', 'Map',
+    'File', 'Int', 'Double', 'Bool', 'any', 'void'
 ]);
 function maskLine(line) {
     let masked = "";
@@ -68,18 +68,21 @@ function maskLine(line) {
     return masked;
 }
 function refreshDiagnostics(doc, quirkDiagnostics) {
+    var _a, _b;
     if (doc.languageId !== 'quirk')
         return;
     const diagnostics = [];
     const text = doc.getText();
     const lines = text.split(/\r?\n/);
-    // ==========================================
-    // PASS 1: Collect File-Level Globals & Imports
-    // ==========================================
+    const declarations = new Map();
+    const usages = new Set();
     const fileGlobals = new Set();
     let inDocBlock = false;
-    for (const line of lines) {
-        // --- SKIP DOC BLOCKS ---
+    // ==========================================
+    // PASS 1: Collect Declarations & Globals
+    // ==========================================
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
         if (line.trim() === '---') {
             inDocBlock = !inDocBlock;
             continue;
@@ -88,8 +91,14 @@ function refreshDiagnostics(doc, quirkDiagnostics) {
             continue;
         const cleanLine = maskLine(line);
         let match = /^\s*(?:extern\s+)?(?:struct|define|def|init)\s+([a-zA-Z_]\w*)/.exec(cleanLine);
-        if (match)
-            fileGlobals.add(match[1]);
+        if (match) {
+            const name = match[1];
+            fileGlobals.add(name);
+            if (name !== 'main' && !name.startsWith('__')) {
+                const startIdx = cleanLine.indexOf(name, match.index);
+                declarations.set(name, new vscode.Range(i, startIdx, i, startIdx + name.length));
+            }
+        }
         match = /^\s*use\s+([.a-zA-Z0-9_/]+)/.exec(cleanLine);
         if (match) {
             const alias = match[1].split(/[\.\/]/).pop();
@@ -104,14 +113,13 @@ function refreshDiagnostics(doc, quirkDiagnostics) {
         }
     }
     // ==========================================
-    // PASS 2: Line-by-Line Scope Analysis
+    // PASS 2: Detailed Scope & Usage Scan
     // ==========================================
     let locals = new Set();
     let inStruct = false;
-    inDocBlock = false; // Reset for pass 2
+    inDocBlock = false;
     for (let i = 0; i < lines.length; i++) {
         const originalLine = lines[i];
-        // --- SKIP DOC BLOCKS ---
         if (originalLine.trim() === '---') {
             inDocBlock = !inDocBlock;
             continue;
@@ -130,48 +138,89 @@ function refreshDiagnostics(doc, quirkDiagnostics) {
         if (inStruct) {
             maskedLine = maskedLine.replace(/^\s*([a-zA-Z_]\w*)\s*:/, (match, p1) => match.replace(p1, ' '.repeat(p1.length)));
         }
+        // --- DECLARATION TRACKING (Local) ---
         const funcMatch = /^\s*(?:extern\s+)?(?:define|def|init)\s+[a-zA-Z_]\w*\s*\(([^)]*)\)/.exec(maskedLine);
         if (funcMatch) {
             locals = new Set();
             const paramsStr = funcMatch[1];
-            const paramMatches = [...paramsStr.matchAll(/\b([a-zA-Z_]\w*)\s*(?::|$|,)/g)];
-            for (const pm of paramMatches)
-                locals.add(pm[1]);
+            // Updated Regex: Specifically captures the name before the colon
+            // and ignores the type part (e.g., captures 'url' from 'url: String')
+            const paramMatches = [...paramsStr.matchAll(/\b([a-zA-Z_]\w*)\s*(?::\s*[a-zA-Z_]\w*)?(?::|$|,)/g)];
+            for (const pm of paramMatches) {
+                const pName = pm[1];
+                locals.add(pName);
+                // Skip 'self' and ensure we only flag the parameter name, not the type
+                if (pName !== 'self' && !BUILTINS.has(pName)) {
+                    const startIdx = originalLine.indexOf(pName, funcMatch.index);
+                    declarations.set(`${i}_${pName}`, new vscode.Range(i, startIdx, i, startIdx + pName.length));
+                }
+            }
         }
         const assignMatch = /([a-zA-Z_]\w*)\s*(?::[a-zA-Z0-9_]+)?\s*:=/.exec(maskedLine);
-        if (assignMatch)
-            locals.add(assignMatch[1]);
-        const forMatch = /^\s*for\s+(?:ref\s+)?([a-zA-Z_]\w*)\s+in\b/.exec(maskedLine);
-        if (forMatch)
-            locals.add(forMatch[1]);
-        const withMatch = /\bwith\s+.*\s+as\s+([a-zA-Z_]\w*)\b/.exec(maskedLine);
-        if (withMatch)
-            locals.add(withMatch[1]);
+        if (assignMatch) {
+            const vName = assignMatch[1];
+            if (!locals.has(vName)) {
+                locals.add(vName);
+                const startIdx = originalLine.indexOf(vName);
+                declarations.set(`${i}_${vName}`, new vscode.Range(i, startIdx, i, startIdx + vName.length));
+            }
+        }
+        // --- USAGE SCAN ---
         const identRegex = /(?<!\.)\b([a-zA-Z_]\w*)\b/g;
         let match;
         while ((match = identRegex.exec(maskedLine)) !== null) {
             const ident = match[1];
-            if (KEYWORDS.has(ident) || BUILTINS.has(ident) || fileGlobals.has(ident) || locals.has(ident)) {
+            if (KEYWORDS.has(ident) || BUILTINS.has(ident))
                 continue;
-            }
             const restOfLine = maskedLine.substring(match.index + ident.length);
-            if (/^\s*:(?!=)/.test(restOfLine)) {
+            if (/^\s*:(?!=)/.test(restOfLine))
+                continue;
+            const range = new vscode.Range(i, match.index, i, match.index + ident.length);
+            // ✨ NEW FIX: Skip if this specific occurrence is a declaration 
+            if (((_a = declarations.get(ident)) === null || _a === void 0 ? void 0 : _a.isEqual(range)) || ((_b = declarations.get(`${i}_${ident}`)) === null || _b === void 0 ? void 0 : _b.isEqual(range))) {
                 continue;
             }
-            const range = new vscode.Range(i, match.index, i, match.index + ident.length);
-            const diagnostic = new vscode.Diagnostic(range, `'${ident}' is not defined. (Missing import or assignment?)`, vscode.DiagnosticSeverity.Warning);
-            diagnostic.code = "undefined_symbol";
-            diagnostics.push(diagnostic);
+            if (locals.has(ident) || fileGlobals.has(ident)) {
+                usages.add(ident); // Global usage
+                for (let k = i; k >= 0; k--) {
+                    if (declarations.has(`${k}_${ident}`)) {
+                        usages.add(`${k}_${ident}`); // Local instance usage 
+                        break;
+                    }
+                }
+            }
+            else {
+                diagnostics.push(new vscode.Diagnostic(range, `'${ident}' is not defined.`, vscode.DiagnosticSeverity.Warning));
+            }
         }
     }
+    // ==========================================
+    // PASS 3: Generate "Unused" Diagnostics 
+    // ==========================================
+    declarations.forEach((range, key) => {
+        if (!usages.has(key)) {
+            const cleanKey = key.includes('_') ? key.split('_')[1] : key;
+            // 1. Change Severity to Warning for the yellow wavy underline
+            const diagnostic = new vscode.Diagnostic(range, `'${cleanKey}' is declared but never used.`, vscode.DiagnosticSeverity.Warning // 
+            );
+            // 2. Keep the Unnecessary tag to keep the variable "faded"
+            diagnostic.tags = [vscode.DiagnosticTag.Unnecessary]; // 
+            // 3. Optional: Add a custom code for your Quick Fix to target
+            diagnostic.code = "unused_symbol";
+            diagnostics.push(diagnostic);
+        }
+    });
     quirkDiagnostics.set(doc.uri, diagnostics);
 }
 exports.refreshDiagnostics = refreshDiagnostics;
 function subscribeToDocumentChanges(context, quirkDiagnostics) {
-    if (vscode.window.activeTextEditor)
+    if (vscode.window.activeTextEditor) {
         refreshDiagnostics(vscode.window.activeTextEditor.document, quirkDiagnostics);
-    context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(editor => { if (editor)
-        refreshDiagnostics(editor.document, quirkDiagnostics); }));
+    }
+    context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(editor => {
+        if (editor)
+            refreshDiagnostics(editor.document, quirkDiagnostics);
+    }));
     context.subscriptions.push(vscode.workspace.onDidChangeTextDocument(e => refreshDiagnostics(e.document, quirkDiagnostics)));
     context.subscriptions.push(vscode.workspace.onDidCloseTextDocument(doc => quirkDiagnostics.delete(doc.uri)));
 }

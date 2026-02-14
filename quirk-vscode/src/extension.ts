@@ -6,6 +6,7 @@ import { QuirkSemanticTokensProvider, legend } from './SemanticTokensProvider';
 import { subscribeToDocumentChanges } from './DiagnosticsProvider';
 import { QuirkDocumentSymbolProvider } from './OutlineProvider';
 import { QuirkSignatureHelpProvider } from './SignatureHelpProvider';
+import { QuirkQuickFixProvider } from './QuickFixProvider';
 
 export function activate(context: vscode.ExtensionContext) {
     const logChannel = vscode.window.createOutputChannel("Quirk Language Server");
@@ -34,7 +35,10 @@ export function activate(context: vscode.ExtensionContext) {
             selector, 
             new QuirkSignatureHelpProvider(), 
             '(', ','
-        )
+        ),
+        vscode.languages.registerCodeActionsProvider(selector, new QuirkQuickFixProvider(), {
+            providedCodeActionKinds: QuirkQuickFixProvider.providedCodeActionKinds
+        })
     );
 }
 

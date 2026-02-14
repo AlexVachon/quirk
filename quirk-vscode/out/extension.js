@@ -9,6 +9,7 @@ const SemanticTokensProvider_1 = require("./SemanticTokensProvider");
 const DiagnosticsProvider_1 = require("./DiagnosticsProvider");
 const OutlineProvider_1 = require("./OutlineProvider");
 const SignatureHelpProvider_1 = require("./SignatureHelpProvider");
+const QuickFixProvider_1 = require("./QuickFixProvider");
 function activate(context) {
     const logChannel = vscode.window.createOutputChannel("Quirk Language Server");
     logChannel.show(true);
@@ -19,7 +20,9 @@ function activate(context) {
     context.subscriptions.push(quirkDiagnostics);
     (0, DiagnosticsProvider_1.subscribeToDocumentChanges)(context, quirkDiagnostics);
     // Register existing providers
-    context.subscriptions.push(vscode.languages.registerDefinitionProvider(selector, new ImportProvider_1.QuirkDefinitionProvider(logChannel)), vscode.languages.registerCompletionItemProvider(selector, new CompletionProvider_1.QuirkCompletionProvider(logChannel), '.', '{', ',', ' '), vscode.languages.registerHoverProvider(selector, new HoverProvider_1.QuirkHoverProvider()), vscode.languages.registerDocumentSemanticTokensProvider(selector, new SemanticTokensProvider_1.QuirkSemanticTokensProvider(), SemanticTokensProvider_1.legend), vscode.languages.registerDocumentSymbolProvider(selector, new OutlineProvider_1.QuirkDocumentSymbolProvider()), vscode.languages.registerSignatureHelpProvider(selector, new SignatureHelpProvider_1.QuirkSignatureHelpProvider(), '(', ','));
+    context.subscriptions.push(vscode.languages.registerDefinitionProvider(selector, new ImportProvider_1.QuirkDefinitionProvider(logChannel)), vscode.languages.registerCompletionItemProvider(selector, new CompletionProvider_1.QuirkCompletionProvider(logChannel), '.', '{', ',', ' '), vscode.languages.registerHoverProvider(selector, new HoverProvider_1.QuirkHoverProvider()), vscode.languages.registerDocumentSemanticTokensProvider(selector, new SemanticTokensProvider_1.QuirkSemanticTokensProvider(), SemanticTokensProvider_1.legend), vscode.languages.registerDocumentSymbolProvider(selector, new OutlineProvider_1.QuirkDocumentSymbolProvider()), vscode.languages.registerSignatureHelpProvider(selector, new SignatureHelpProvider_1.QuirkSignatureHelpProvider(), '(', ','), vscode.languages.registerCodeActionsProvider(selector, new QuickFixProvider_1.QuirkQuickFixProvider(), {
+        providedCodeActionKinds: QuickFixProvider_1.QuirkQuickFixProvider.providedCodeActionKinds
+    }));
 }
 exports.activate = activate;
 function deactivate() { }

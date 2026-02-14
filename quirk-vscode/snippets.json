@@ -1,4 +1,17 @@
 {
+    "Docstring Template": {
+        "prefix": "---",
+        "body": [
+            "---",
+            "${1:Description of the function.}",
+            "",
+            "@param :",
+            "- **${2:param1}** ${3:Description.}",
+            "@returns **${4:void}**",
+            "---"
+        ],
+        "description": "Generate a Quirk docstring template"
+    },
     "Definition": {
         "prefix": "def",
         "body": [

@@ -6,4 +6,3 @@ quirk-compiler/bin/quirk
 quirk-compiler/bin/runtime.so
 quirk-compiler/obj
 quirk-vscode/node_modules
-quirk-vscode/out

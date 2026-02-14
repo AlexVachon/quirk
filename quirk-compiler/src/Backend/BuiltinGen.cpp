@@ -220,10 +220,29 @@ class BuiltinGen {
                     }
                 }
             }
-            // 2. Int
+            // 2. Int or Bool (Both are IntegerTy in LLVM)
             else if (type->isIntegerTy()) {
-                Value* fmt = Builder.CreateGlobalStringPtr("%d\n");
-                Builder.CreateCall(printfFunc, {fmt, val});
+                // Check if it's a 1-bit boolean
+                if (type->getIntegerBitWidth() == 1) {
+                    // Call Bool_str which returns a String*
+                    Function* boolStrFunc = TheModule->getFunction("Bool_str");
+                    if (boolStrFunc) {
+                        Value* strObj = Builder.CreateCall(boolStrFunc, {val});
+                        
+                        // Extract cstring from String Object and print
+                        Value* bufPtr = structGen->getMemberPtr(strObj, "buffer");
+                        if (bufPtr) {
+                            Value* cStr = Builder.CreateLoad(Type::getInt8PtrTy(Context), bufPtr);
+                            Value* fmt = Builder.CreateGlobalStringPtr("%s\n");
+                            Builder.CreateCall(printfFunc, {fmt, cStr});
+                        }
+                    }
+                } 
+                // Regular 32-bit integer
+                else {
+                    Value* fmt = Builder.CreateGlobalStringPtr("%d\n");
+                    Builder.CreateCall(printfFunc, {fmt, val});
+                }
             }
             // 3. Double
             else if (type->isDoubleTy()) {

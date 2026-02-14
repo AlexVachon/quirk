@@ -57,6 +57,7 @@ struct Parameter {
     std::string type;
     bool isRef = false;
     bool isVariadic = false;
+    std::unique_ptr<Node> defaultValue = nullptr;
 };
 
 class FunctionNode : public Node {

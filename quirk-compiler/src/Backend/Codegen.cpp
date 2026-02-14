@@ -40,6 +40,7 @@ class LLVMCodegen {
     IRBuilder<> Builder;
 
     std::map<std::string, bool> variadicFunctions;
+    std::map<std::string, FunctionNode*> functionDeclarations;
 
     std::map<std::string, StructType*> StructTypes;
 
@@ -110,6 +111,8 @@ class LLVMCodegen {
         // PASS 1: Function Declarations
         for (const auto& node : nodes) {
             if (auto func = dynamic_cast<FunctionNode*>(node.get())) {
+                functionDeclarations[func->name] = func;
+                
                 if (func->name == "main" || builtinGen->isBuiltin(func->name)) continue;
                 Type* retTy = typeGen->getFunctionReturnType(func->returnType);
                 std::vector<Type*> argTypes;
@@ -365,23 +368,90 @@ class LLVMCodegen {
     }
 
     // Helper to process arguments and handle casting/boxing
+    // Helper to process arguments and handle casting/boxing/named arguments
     void processCallArgs(Function* func, const std::vector<Arg>& astArgs, std::vector<Value*>& finalArgs, size_t offset) {
-        bool isVariadic = variadicFunctions.count(func->getName().str());
-        size_t fixedArgCount = func->arg_size(); 
+        std::string funcName = func->getName().str();
+        FunctionNode* funcNode = functionDeclarations[funcName];
         
-        // Note: func->arg_size() includes 'self' if it's a method, 
-        // so 'offset' helps us align AST args to LLVM args.
-        
+        bool isVariadic = variadicFunctions.count(funcName);
+        size_t fixedArgCount = func->arg_size();
+        size_t requiredFixedCount = isVariadic ? (fixedArgCount - 1) : fixedArgCount;
+
+        // Buffer to hold matched arguments before casting
+        std::vector<Value*> matchedArgs(fixedArgCount, nullptr);
         std::vector<Value*> variadicBundle;
-        size_t argIdx = offset; // Start matching from offset (e.g. 1 if self is used)
 
-        for (auto& a : astArgs) {
-            Value* argVal = handleExpression(a.value.get());
+        // ==========================================
+        // PASS 1: Map Provided Arguments to Slots
+        // ==========================================
+        size_t positionalIdx = offset;
 
-            if (argIdx < fixedArgCount) {
-                Type* expectedType = func->getFunctionType()->getParamType(argIdx);
+        for (const auto& arg : astArgs) {
+            if (!arg.name.empty()) {
+                // --- NAMED ARGUMENT ---
+                bool found = false;
+                if (funcNode) {
+                    for (size_t i = offset; i < requiredFixedCount; ++i) {
+                        size_t paramIdx = i - offset;
+                        if (paramIdx < funcNode->parameters.size() && funcNode->parameters[paramIdx].name == arg.name) {
+                            if (matchedArgs[i] != nullptr) {
+                                std::cerr << "Error: Argument '" << arg.name << "' passed multiple times." << std::endl;
+                                return;
+                            }
+                            matchedArgs[i] = handleExpression(arg.value.get());
+                            found = true;
+                            break;
+                        }
+                    }
+                }
+                if (!found) {
+                    std::cerr << "Error: Unknown parameter '" << arg.name << "' in call to " << funcName << std::endl;
+                    return;
+                }
+            } else {
+                // --- POSITIONAL ARGUMENT ---
+                // Skip any slots that were already filled by named arguments
+                while (positionalIdx < requiredFixedCount && matchedArgs[positionalIdx] != nullptr) {
+                    positionalIdx++;
+                }
 
-                // FIX: Auto-box c_string -> String struct
+                if (positionalIdx < requiredFixedCount) {
+                    matchedArgs[positionalIdx] = handleExpression(arg.value.get());
+                    positionalIdx++;
+                } else {
+                    // Overflow arguments go to the Variadic Bundle
+                    variadicBundle.push_back(handleExpression(arg.value.get()));
+                }
+            }
+        }
+
+        // ==========================================
+        // PASS 2: Apply Defaults & Type Casting
+        // ==========================================
+        for (size_t i = offset; i < fixedArgCount; i++) {
+            size_t astIdx = i - offset;
+            Value* argVal = matchedArgs[i];
+
+            // 1. Fallback to Default Value if slot is empty
+            if (!argVal && funcNode && astIdx < funcNode->parameters.size() && funcNode->parameters[astIdx].defaultValue) {
+                argVal = handleExpression(funcNode->parameters[astIdx].defaultValue.get());
+            }
+
+            // 2. Error if a required slot is STILL empty
+            if (!argVal && i < requiredFixedCount) {
+                std::string pName = (funcNode && astIdx < funcNode->parameters.size()) ? funcNode->parameters[astIdx].name : std::to_string(astIdx);
+                std::cerr << "Error: Missing required argument for parameter '" << pName << "'" << std::endl;
+                return;
+            }
+
+            // 3. Apply Boxing and Casting (Your existing logic)
+            if (argVal) {
+                Type* expectedType = func->getFunctionType()->getParamType(i);
+
+                if (argVal->getType()->isIntegerTy(1) && expectedType->isIntegerTy(32)) {
+                    argVal = Builder.CreateZExt(argVal, Type::getInt32Ty(Context));
+                }
+
                 if (argVal->getType()->isPointerTy() &&
                     argVal->getType()->getPointerElementType()->isIntegerTy(8) &&
                     expectedType->isPointerTy() &&
@@ -392,7 +462,6 @@ class LLVMCodegen {
                         argVal = structGen->allocateAndInit("String", ctorArgs);
                     }
                 }
-                // Implicit Casts
                 else if (argVal->getType() != expectedType) {
                     if (argVal->getType()->isIntegerTy() && expectedType->isIntegerTy())
                         argVal = Builder.CreateIntCast(argVal, expectedType, true);
@@ -404,30 +473,27 @@ class LLVMCodegen {
                         argVal = Builder.CreateSIToFP(argVal, expectedType);
                 }
                 finalArgs.push_back(argVal);
-            } else {
-                // Variadic
-                if (argVal->getType()->isIntegerTy()) {
-                    argVal = Builder.CreateIntToPtr(argVal, Type::getInt8PtrTy(Context));
-                } else if (argVal->getType() != Type::getInt8PtrTy(Context)) {
-                    argVal = Builder.CreateBitCast(argVal, Type::getInt8PtrTy(Context));
-                }
-                variadicBundle.push_back(argVal);
             }
-            argIdx++;
         }
 
-        // Handle VarArgs Bundle
-        if (!variadicBundle.empty() || isVariadic) {
-            // Note: Your original logic seemingly put all varargs into a List
-            // If the function signature expects a List as the last arg, do it.
-            // Assuming simplified varargs here based on previous code:
-             if (isVariadic) {
-                Value* listObj = structGen->createListFromValues(variadicBundle);
-                finalArgs.push_back(listObj);
+        // ==========================================
+        // PASS 3: Finalize Variadic List Bundle
+        // ==========================================
+        if (isVariadic) {
+            std::vector<Value*> castedVariadic;
+            for (Value* vArg : variadicBundle) {
+                if (vArg->getType()->isIntegerTy()) {
+                    vArg = Builder.CreateIntToPtr(vArg, Type::getInt8PtrTy(Context));
+                } else if (!vArg->getType()->isPointerTy()) {
+                    vArg = Builder.CreateBitCast(vArg, Type::getInt8PtrTy(Context));
+                }
+                castedVariadic.push_back(vArg);
             }
+            Value* listObj = structGen->createListFromValues(castedVariadic);
+            finalArgs.push_back(listObj);
         }
     }
-
+    
     void handleStatement(Node* node, Function* parentFunc) {
         if (auto u = dynamic_cast<UseNode*>(node)) handleUse(u); // <--- Dispatch UseNode
         else if (auto vdecl = dynamic_cast<VarDeclNode*>(node)) handleVarDecl(vdecl);

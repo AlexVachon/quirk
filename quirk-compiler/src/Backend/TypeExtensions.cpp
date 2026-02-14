@@ -40,29 +40,43 @@ class TypeExtensions {
     }
 
    private:
-    // --- UPDATED: Box values instead of converting to String ---
+    // --- UPDATED: Convert all primitives to C-Strings (i8*) ---
     Value* prepareValueForRuntime(Value* v) {
         if (!v) return Constant::getNullValue(Type::getInt8PtrTy(Context));
 
         Type* type = v->getType();
 
-        // 1. Integers (Box to void*)
+        // 1. Booleans (i1 -> "true" / "false")
+        if (type->isIntegerTy(1)) {
+            // LLVM's CreateSelect behaves like a ternary operator: (v ? "true" : "false")
+            Value* trueStr = Builder.CreateGlobalStringPtr("true");
+            Value* falseStr = Builder.CreateGlobalStringPtr("false");
+            return Builder.CreateSelect(v, trueStr, falseStr);
+        }
+
+        // 2. Integers (i32 -> Call Int_str -> Unwrap .buffer)
         if (type->isIntegerTy()) {
+            Function* f = TheModule->getFunction("Int_str");
+            if (f) {
+                Value* strObj = Builder.CreateCall(f, {v});
+                Value* bufPtr = structGen->getMemberPtr(strObj, "buffer");
+                if (bufPtr) return Builder.CreateLoad(Type::getInt8PtrTy(Context), bufPtr);
+            }
             return Builder.CreateIntToPtr(v, Type::getInt8PtrTy(Context));
         }
 
-        // 2. Doubles (Convert to String)
+        // 3. Doubles (Double -> Call Double_str -> Unwrap .buffer)
         if (type->isDoubleTy()) {
-            Function* f2s = TheModule->getFunction("_float_to_str");
-            if (!f2s) { 
-                // Fallback / Auto-gen signature if missing
-                FunctionType* ft = FunctionType::get(Type::getInt8PtrTy(Context), {Type::getDoubleTy(Context)}, false);
-                f2s = Function::Create(ft, Function::ExternalLinkage, "_float_to_str", TheModule);
+            Function* f = TheModule->getFunction("Double_str");
+            if (f) {
+                Value* strObj = Builder.CreateCall(f, {v});
+                Value* bufPtr = structGen->getMemberPtr(strObj, "buffer");
+                if (bufPtr) return Builder.CreateLoad(Type::getInt8PtrTy(Context), bufPtr);
             }
-            return Builder.CreateCall(f2s, {v});
+            return Constant::getNullValue(Type::getInt8PtrTy(Context));
         }
 
-        // 3. Pointers (Strings, Structs)
+        // 4. Pointers (Strings, Structs)
         if (type->isPointerTy()) {
             Type* elType = type->getPointerElementType();
             
@@ -88,7 +102,7 @@ class TypeExtensions {
                 if (strFunc) {
                     Value* retVal = Builder.CreateCall(strFunc, {v});
 
-                    // --- FIX: Check Return Type ---
+                    // Check Return Type
                     // Case 1: Returns raw cstring (i8*) -> Use directly
                     if (retVal->getType()->isPointerTy() && 
                         retVal->getType()->getPointerElementType()->isIntegerTy(8)) {

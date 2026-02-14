@@ -8,7 +8,8 @@ const KEYWORDS = new Set([
 
 const BUILTINS = new Set([
     'print', 'exit', 'String', 'List', 'Map',
-    'File', 'Int', 'int', 'Double', 'double', 'Bool', 'bool', 'any', 'void'
+    'File', 'Int', 'int', 'Double', 'double', 'Bool', 'bool', 'any', 'void',
+    'true', 'false', 'null'
 ]);
 
 function maskLine(line: string): string {

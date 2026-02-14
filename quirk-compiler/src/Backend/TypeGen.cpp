@@ -15,19 +15,17 @@ public:
         : Context(ctx), StructTypes(structs) {}
 
     Type* getLLVMType(const std::string& typeName) {
-        if (typeName == "int") return Type::getInt32Ty(Context);
-        if (typeName == "bool") return Type::getInt1Ty(Context);
-        if (typeName == "char") return Type::getInt8Ty(Context);
-        if (typeName == "double") return Type::getDoubleTy(Context);
+        // FIX: Map uppercase primitive names to LLVM primitives
+        if (typeName == "int" || typeName == "Int") return Type::getInt32Ty(Context);
+        if (typeName == "bool" || typeName == "Bool") return Type::getInt1Ty(Context);
+        if (typeName == "char" || typeName == "Char") return Type::getInt8Ty(Context);
+        if (typeName == "double" || typeName == "Double") return Type::getDoubleTy(Context);
         if (typeName == "void") return Type::getVoidTy(Context);
         
-        // FIX: Add "cstring" to pointer types
-        // "string" is kept for legacy compatibility if needed, but cstring is preferred
         if (typeName == "ptr" || typeName == "cstring" || typeName == "string" || typeName == "any") {
             return Type::getInt8PtrTy(Context);
         }
 
-        // Structs are passed by reference (Pointer to Struct)
         if (StructTypes.count(typeName)) {
             return PointerType::getUnqual(StructTypes[typeName]);
         }

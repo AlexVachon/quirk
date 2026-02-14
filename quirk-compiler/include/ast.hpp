@@ -376,4 +376,34 @@ class DeleteNode : public Node {
     }
 };
 
+class TryCatchNode : public Node {
+   public:
+    std::vector<std::unique_ptr<Node>> tryBlock;
+    std::string catchVar;
+    std::string catchType;
+    std::vector<std::unique_ptr<Node>> catchBlock;
+
+    void print(int indent) const override {
+        std::string space(indent, ' ');
+        std::cout << space << "Try {" << std::endl;
+        for (const auto& stmt : tryBlock) stmt->print(indent + 2);
+        std::cout << space << "} Catch (" << catchVar << ": " << catchType << ") {" << std::endl;
+        for (const auto& stmt : catchBlock) stmt->print(indent + 2);
+        std::cout << space << "}" << std::endl;
+    }
+};
+
+class ThrowNode : public Node {
+   public:
+    std::unique_ptr<Node> expression;
+
+    ThrowNode(std::unique_ptr<Node> expr) : expression(std::move(expr)) {}
+
+    void print(int indent) const override {
+        std::string space(indent, ' ');
+        std::cout << space << "Throw:" << std::endl;
+        expression->print(indent + 2);
+    }
+};
+
 #endif

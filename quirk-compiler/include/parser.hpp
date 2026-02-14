@@ -36,6 +36,8 @@ private:
     std::unique_ptr<Node> parseFor();
     std::unique_ptr<Node> parseUse();
     std::unique_ptr<Node> parseWith();
+    std::unique_ptr<Node> parseTry();
+    std::unique_ptr<Node> parseThrow();
     
     // Definition parsing
     std::unique_ptr<FunctionNode> parseFunction();

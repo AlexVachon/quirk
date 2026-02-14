@@ -97,19 +97,35 @@ class StructGen {
                     Type* expectedType = initFunc->getFunctionType()->getParamType(i + 1);
 
                     if (argVal->getType() != expectedType) {
-                        // 1. Int -> Double (e.g. Vector2(3, 4))
-                        if (argVal->getType()->isIntegerTy() && expectedType->isDoubleTy()) {
+                        
+                        // ✨ 1. NEW: Auto-box cstring -> String Struct
+                        if (argVal->getType()->isPointerTy() && 
+                            argVal->getType()->getPointerElementType()->isIntegerTy(8) &&
+                            expectedType->isPointerTy() && 
+                            expectedType->getPointerElementType()->isStructTy()) {
+                            
+                            StructType* st = cast<StructType>(expectedType->getPointerElementType());
+                            if (st->getName() == "String") {
+                                // Recursively call allocateAndInit to properly build the String object!
+                                std::vector<Value*> ctorArgs = {argVal};
+                                argVal = allocateAndInit("String", ctorArgs);
+                            } else {
+                                argVal = Builder.CreateBitCast(argVal, expectedType);
+                            }
+                        }
+                        // 2. Int -> Double (e.g. Vector2(3, 4))
+                        else if (argVal->getType()->isIntegerTy() && expectedType->isDoubleTy()) {
                             argVal = Builder.CreateSIToFP(argVal, expectedType);
                         }
-                        // 2. Double -> Int
+                        // 3. Double -> Int
                         else if (argVal->getType()->isDoubleTy() && expectedType->isIntegerTy()) {
                             argVal = Builder.CreateFPToSI(argVal, expectedType);
                         }
-                        // 3. Pointer Casting (e.g. void* -> int*)
+                        // 4. Pointer Casting (e.g. void* -> int*)
                         else if (argVal->getType()->isPointerTy() && expectedType->isPointerTy()) {
                             argVal = Builder.CreateBitCast(argVal, expectedType);
                         }
-                        // 4. Int -> Pointer (e.g. 0 -> NULL)
+                        // 5. Int -> Pointer (e.g. 0 -> NULL)
                         else if (argVal->getType()->isIntegerTy() && expectedType->isPointerTy()) {
                             argVal = Builder.CreateIntToPtr(argVal, expectedType);
                         }

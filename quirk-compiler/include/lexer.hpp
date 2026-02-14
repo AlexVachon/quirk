@@ -40,6 +40,8 @@ enum class TokenType {
     FALSE,
     PIPE,
 
+    TRY, CATCH, THROW,
+
     // Operators
     ASSIGN_INIT,
     ASSIGN,

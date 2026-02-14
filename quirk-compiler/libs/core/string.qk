@@ -19,8 +19,8 @@ struct String {
     extern define __add(self, other: String) -> String
     extern define __eq(self, other: String) -> bool
     extern define __iter(self) -> StringIterator
-    extern define __str(self) -> cstring
-    extern define __repr(self) -> cstring
+    extern define __str(self) -> String
+    extern define __repr(self) -> String
 
     extern define format(self, ...args: List) -> String
     extern define format_map(self, keys: List, values: List) -> String

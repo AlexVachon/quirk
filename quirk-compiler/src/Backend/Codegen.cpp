@@ -495,6 +495,13 @@ class LLVMCodegen {
     }
     
     void handleStatement(Node* node, Function* parentFunc) {
+        // --- NEW: Dead Code Elimination ---
+        // If the current block already has a terminator (from a 'return' or 'throw'),
+        // we ignore any subsequent statements in this scope.
+        if (Builder.GetInsertBlock()->getTerminator()) {
+            return; 
+        }
+
         if (auto u = dynamic_cast<UseNode*>(node)) handleUse(u); // <--- Dispatch UseNode
         else if (auto vdecl = dynamic_cast<VarDeclNode*>(node)) handleVarDecl(vdecl);
         else if (auto call = dynamic_cast<CallNode*>(node)) handleCall(call);
@@ -511,6 +518,15 @@ class LLVMCodegen {
                 varGen.get());
         }
         else if (auto wi = dynamic_cast<WithNode*>(node)) handleWith(wi, parentFunc);
+        else if (auto t = dynamic_cast<TryCatchNode*>(node)) {
+            flowGen->generateTryCatch(t, parentFunc, 
+                [this, parentFunc](Node* n) { this->handleStatement(n, parentFunc); },
+                varGen.get(), StructTypes);
+        }
+        else if (auto th = dynamic_cast<ThrowNode*>(node)) {
+            flowGen->generateThrow(th, parentFunc, 
+                [this](Node* n) { return this->handleExpression(n); });
+        }
         else if (auto ret = dynamic_cast<ReturnNode*>(node)) {
             if (ret->expression) {
                 Value* retVal = handleExpression(ret->expression.get());
@@ -532,17 +548,17 @@ class LLVMCodegen {
                     if (retVal->getType()->isIntegerTy() && expectedType->isIntegerTy()) {
                         retVal = Builder.CreateIntCast(retVal, expectedType, true);
                     }
-                    // 2. String Struct -> cstring (i8*) fix
-                    else if (expectedType->isPointerTy() && expectedType->getPointerElementType()->isIntegerTy(8) &&
-                             retVal->getType()->isPointerTy() && retVal->getType()->getPointerElementType()->isStructTy()) {
+                    // 2. Raw C-String to String Object (The correct fix)
+                    else if (retVal->getType()->isPointerTy() && retVal->getType()->getPointerElementType()->isIntegerTy(8) &&
+                             expectedType->isPointerTy() && expectedType->getPointerElementType()->isStructTy()) {
                         
-                        StructType* st = cast<StructType>(retVal->getType()->getPointerElementType());
+                        StructType* st = cast<StructType>(expectedType->getPointerElementType());
                         std::string sName = st->getName().str();
                         if (sName.find("struct.") == 0) sName = sName.substr(7);
                         
                         if (sName == "String") {
-                            Function* strFunc = TheModule->getFunction("String___str");
-                            if (strFunc) retVal = Builder.CreateCall(strFunc, {retVal});
+                            std::vector<Value*> sArgs = {retVal};
+                            retVal = structGen->allocateAndInit("String", sArgs);
                         }
                     }
                 }

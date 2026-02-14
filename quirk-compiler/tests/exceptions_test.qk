@@ -1,0 +1,9 @@
+define main() -> void {
+    try {
+        print("Attempting dangerous operation...")
+        throw Exception("Could not connect to database!")
+        print("This will never print.")
+    } catch (e: Exception) {
+        print("Caught an error: ${e}")
+    }
+}

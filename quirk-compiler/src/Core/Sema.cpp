@@ -199,6 +199,25 @@ void Sema::checkStatement(Node *node)
         checkFor(f);
     else if (auto c = dynamic_cast<CallNode *>(node))
         checkExpression(c);
+    else if (auto t = dynamic_cast<TryCatchNode*>(node)) {
+        enterScope();
+        for (auto& s : t->tryBlock) checkStatement(s.get());
+        exitScope();
+
+        enterScope();
+        if (!structRegistry.count(t->catchType)) {
+            std::cerr << "Error: Catch type '" << t->catchType << "' is undefined." << std::endl; exit(1);
+        }
+        defineVariable(t->catchVar, t->catchType);
+        for (auto& s : t->catchBlock) checkStatement(s.get());
+        exitScope();
+    }
+    else if (auto th = dynamic_cast<ThrowNode*>(node)) {
+        std::string type = checkExpression(th->expression.get());
+        if (!structRegistry.count(type)) {
+            std::cerr << "Error: Can only throw Struct objects, got '" << type << "'." << std::endl; exit(1);
+        }
+    }
     else if (auto r = dynamic_cast<ReturnNode *>(node))
         checkReturn(r);
 }

@@ -225,6 +225,10 @@ std::unique_ptr<Node> Parser::parseStatement() {
         return parseWhile();
     if (type == TokenType::FOR)
         return parseFor();
+    if (type == TokenType::TRY) 
+        return parseTry();
+    if (type == TokenType::THROW) 
+        return parseThrow();
     if (peek().type == TokenType::DEL) {
         advance();
         return std::make_unique<DeleteNode>(parseExpression(0));
@@ -648,4 +652,35 @@ void Parser::reportError(const std::string& message, const Token& token) {
     std::cerr << "    " << lineCode << "\n";
     std::cerr << "    \033[1;33m^--- Here\033[0m\n\n";
     exit(1);
+}
+
+std::unique_ptr<Node> Parser::parseTry() {
+    consume(TokenType::TRY, "Expected 'try'");
+    auto node = std::make_unique<TryCatchNode>();
+    
+    consume(TokenType::LBRACE, "Expected '{' after try");
+    while (peek().type != TokenType::RBRACE && !isAtEnd()) {
+        node->tryBlock.push_back(parseStatement());
+    }
+    consume(TokenType::RBRACE, "Expected '}'");
+
+    consume(TokenType::CATCH, "Expected 'catch'");
+    consume(TokenType::LPAREN, "Expected '('");
+    node->catchVar = advance().value;
+    consume(TokenType::COLON, "Expected ':'");
+    node->catchType = advance().value;
+    consume(TokenType::RPAREN, "Expected ')'");
+
+    consume(TokenType::LBRACE, "Expected '{' after catch");
+    while (peek().type != TokenType::RBRACE && !isAtEnd()) {
+        node->catchBlock.push_back(parseStatement());
+    }
+    consume(TokenType::RBRACE, "Expected '}'");
+    
+    return node;
+}
+
+std::unique_ptr<Node> Parser::parseThrow() {
+    consume(TokenType::THROW, "Expected 'throw'");
+    return std::make_unique<ThrowNode>(parseExpression(0));
 }

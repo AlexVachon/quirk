@@ -259,4 +259,76 @@ class ControlFlowGen {
                   << "be a raw string)." << std::endl;
         exit(1);
     }
+
+    void generateTryCatch(TryCatchNode* node, Function* parentFunc,
+                          std::function<void(Node*)> stmtHandler,
+                          VariableGen* varGen,
+                          std::map<std::string, StructType*>& StructTypes) {
+        
+        BasicBlock* tryBB = BasicBlock::Create(Context, "try_block", parentFunc);
+        BasicBlock* catchBB = BasicBlock::Create(Context, "catch_block", parentFunc);
+        BasicBlock* endBB = BasicBlock::Create(Context, "end_try", parentFunc);
+
+        // 1. Get Jump Buffer and call setjmp
+        Value* jmpBuf = Builder.CreateCall(TheModule->getFunction("quirk_get_jmp_buf"));
+        Value* setjmpRes = Builder.CreateCall(TheModule->getFunction("setjmp"), {jmpBuf});
+
+        // 2. If setjmp returns 0, we are starting the try block. If != 0, an exception occurred.
+        Value* isCatch = Builder.CreateICmpNE(setjmpRes, ConstantInt::get(Type::getInt32Ty(Context), 0));
+        Builder.CreateCondBr(isCatch, catchBB, tryBB);
+
+        // --- TRY BLOCK ---
+        Builder.SetInsertPoint(tryBB);
+        for (auto& stmt : node->tryBlock) stmtHandler(stmt.get());
+        
+        if (!Builder.GetInsertBlock()->getTerminator()) {
+            Builder.CreateCall(TheModule->getFunction("quirk_pop_try")); // Success! Pop buffer
+            Builder.CreateBr(endBB);
+        }
+
+        // --- CATCH BLOCK ---
+        Builder.SetInsertPoint(catchBB);
+        Value* rawExc = Builder.CreateCall(TheModule->getFunction("quirk_get_exception"));
+        
+        // Cast raw i8* to the expected Exception Struct pointer
+        Type* catchType = PointerType::getUnqual(StructTypes[node->catchType]);
+        Value* castedExc = Builder.CreateBitCast(rawExc, catchType);
+        
+        varGen->defineLocalVariable(node->catchVar, castedExc);
+
+        for (auto& stmt : node->catchBlock) stmtHandler(stmt.get());
+        
+        if (!Builder.GetInsertBlock()->getTerminator()) {
+            Builder.CreateBr(endBB);
+        }
+
+        Builder.SetInsertPoint(endBB);
+    }
+
+    void generateThrow(ThrowNode* node, Function* parentFunc, std::function<Value*(Node*)> exprHandler) {
+        Value* excObj = exprHandler(node->expression.get());
+        Value* rawExc = Builder.CreateBitCast(excObj, Type::getInt8PtrTy(Context));
+        
+        // 1. Store the exception globally
+        Builder.CreateCall(TheModule->getFunction("quirk_set_exception"), {rawExc});
+
+        // 2. Check if we are inside a try block
+        Value* depth = Builder.CreateCall(TheModule->getFunction("quirk_get_try_depth"));
+        Value* hasCatch = Builder.CreateICmpSGE(depth, ConstantInt::get(Type::getInt32Ty(Context), 0));
+
+        BasicBlock* jumpBB = BasicBlock::Create(Context, "do_longjmp", parentFunc);
+        BasicBlock* crashBB = BasicBlock::Create(Context, "do_crash", parentFunc);
+        Builder.CreateCondBr(hasCatch, jumpBB, crashBB);
+
+        // 3. Jump to nearest catch
+        Builder.SetInsertPoint(jumpBB);
+        Value* activeBuf = Builder.CreateCall(TheModule->getFunction("quirk_get_current_jmp_buf"));
+        Builder.CreateCall(TheModule->getFunction("longjmp"), {activeBuf, ConstantInt::get(Type::getInt32Ty(Context), 1)});
+        Builder.CreateUnreachable();
+
+        // 4. Crash if unhandled
+        Builder.SetInsertPoint(crashBB);
+        Builder.CreateCall(TheModule->getFunction("quirk_unhandled_exception"));
+        Builder.CreateUnreachable();
+    }
 };

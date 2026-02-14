@@ -1,6 +1,8 @@
-use math
+use math.vectors
 
 define main() -> void {
-    v := math.Vector2(1, 2)
-    print(v)
+    v2 := Vector2(1, 3)
+
+    print(v2.x)
+    
 }

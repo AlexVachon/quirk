@@ -22,7 +22,6 @@ class QuirkDefinitionProvider {
         // =========================================================
         const importLocation = this.findImportLineInCurrentFile(document, symbol);
         if (importLocation) {
-            // If clicking the definition line itself, jump to file
             if (position.line === importLocation.range.start.line) {
                 const importMatch = /^\s*(?:use|from)\s+([.a-zA-Z0-9_/]+)/.exec(lineText);
                 if (importMatch) {
@@ -54,8 +53,48 @@ class QuirkDefinitionProvider {
                 }
             }
         }
-        // Fallback: Look in current file
+        // =========================================================
+        // 3. LOCAL VARIABLE OR PARAMETER (e.g. v2 := Vector2(1, 3))
+        // =========================================================
+        // If it's not a member access (no dot before it), check for local variables
+        if (range.start.character === 0 || lineText.charAt(range.start.character - 1) !== '.') {
+            const localLocation = this.findLocalVariableInCurrentFile(document, position, symbol);
+            if (localLocation) {
+                this.outputChannel.appendLine(`[Definition] Found local variable assignment for: "${symbol}"`);
+                return localLocation;
+            }
+        }
+        // =========================================================
+        // 4. FALLBACK: Look in current file for Structs/Functions
+        // =========================================================
         return this.findSymbolInFile(projectRoot, currentFilePath, symbol);
+    }
+    /**
+     * Scans backwards from the cursor to find where a variable was assigned (:=)
+     * or defined as a function parameter.
+     */
+    findLocalVariableInCurrentFile(document, position, symbol) {
+        // Matches: v2 :=  OR  v2: Vector2 := 
+        const assignRegex = new RegExp(`\\b${symbol}\\b\\s*(?::\\s*[A-Za-z0-9_]+\\s*)?:=`);
+        for (let i = position.line; i >= 0; i--) {
+            const lineText = document.lineAt(i).text;
+            // 1. Check for Assignment
+            const match = assignRegex.exec(lineText);
+            if (match) {
+                return new vscode.Location(document.uri, new vscode.Position(i, match.index));
+            }
+            // 2. Check for Function Parameter (e.g., define __add(self, other: Vector2))
+            const funcDefMatch = /^\s*(?:extern\s+)?(?:define|def|init)\s+[a-zA-Z0-9_]+\s*\(([^)]*)\)/.exec(lineText);
+            if (funcDefMatch) {
+                const params = funcDefMatch[1];
+                if (new RegExp(`\\b${symbol}\\b`).test(params)) {
+                    // Find the exact column of the parameter
+                    const symbolIdx = lineText.indexOf(symbol, funcDefMatch.index);
+                    return new vscode.Location(document.uri, new vscode.Position(i, Math.max(0, symbolIdx)));
+                }
+            }
+        }
+        return null;
     }
     findImportLineInCurrentFile(document, symbol) {
         const text = document.getText();
@@ -111,32 +150,25 @@ class QuirkDefinitionProvider {
         return stopAt;
     }
     resolvePath(projectRoot, currentFile, modulePath) {
-        // 1. Handle Relative Imports (.utils)
         if (modulePath.startsWith('.')) {
             return this.resolveRelative(currentFile, modulePath);
         }
         const searchRoots = [];
-        // 2. Add Active Environment (QUIRK_HOME)
         if (process.env['QUIRK_HOME']) {
             const v = process.env['QUIRK_HOME'];
             searchRoots.push(path.join(v, 'lib', 'quirk', 'packages'), path.join(v, 'lib', 'quirk'));
         }
-        // 3. Virtual Environment Scan (Restore .venv lookup)
         try {
             const items = fs.readdirSync(projectRoot);
             for (const item of items) {
                 const fullItemPath = path.join(projectRoot, item);
-                // Check if directory has 'lib/quirk' (standard virtual env structure)
                 const quirkLib = path.join(fullItemPath, 'lib', 'quirk');
                 if (fs.existsSync(quirkLib) && fs.lstatSync(fullItemPath).isDirectory()) {
-                    this.outputChannel.appendLine(`[Path] Detected Virtual Environment: ${item}`);
-                    // Add 'packages' and base lib to search path
                     searchRoots.push(path.join(quirkLib, 'packages'), quirkLib);
                 }
             }
         }
         catch (e) { }
-        // 4. Default Project Fallbacks
         searchRoots.push(path.join(projectRoot, 'libs'), path.join(projectRoot, 'src'));
         const relPath = modulePath.replace(/\./g, '/');
         const variants = [relPath + '.qk', path.join(relPath, '__init.qk')];

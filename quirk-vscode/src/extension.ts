@@ -7,6 +7,9 @@ import { subscribeToDocumentChanges } from './DiagnosticsProvider';
 import { QuirkDocumentSymbolProvider } from './OutlineProvider';
 import { QuirkSignatureHelpProvider } from './SignatureHelpProvider';
 import { QuirkQuickFixProvider } from './QuickFixProvider';
+import { QuirkRenameProvider } from './RenameProvider';
+import { QuirkReferenceProvider } from './ReferenceProvider';
+import { QuirkDocumentFormattingEditProvider } from './FormatterProvider';
 
 export function activate(context: vscode.ExtensionContext) {
     const logChannel = vscode.window.createOutputChannel("Quirk Language Server");
@@ -38,7 +41,10 @@ export function activate(context: vscode.ExtensionContext) {
         ),
         vscode.languages.registerCodeActionsProvider(selector, new QuirkQuickFixProvider(), {
             providedCodeActionKinds: QuirkQuickFixProvider.providedCodeActionKinds
-        })
+        }),
+        vscode.languages.registerRenameProvider(selector, new QuirkRenameProvider()),
+        vscode.languages.registerReferenceProvider(selector, new QuirkReferenceProvider()),
+        vscode.languages.registerDocumentFormattingEditProvider(selector, new QuirkDocumentFormattingEditProvider()),
     );
 }
 

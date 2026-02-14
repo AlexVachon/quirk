@@ -1,8 +1,7 @@
-use math.vectors
+from math use { Vector2 }
 
 define main() -> void {
     v2 := Vector2(1, 3)
 
     print(v2.x)
-    
 }

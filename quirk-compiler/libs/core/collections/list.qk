@@ -1,5 +1,4 @@
-use core.sys
-use core.string
+from core.string use { String }
 
 struct ListIterator {
     list_ref: List

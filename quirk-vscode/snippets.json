@@ -1,0 +1,61 @@
+{
+    "Docstring Template": {
+        "prefix": "---",
+        "body": [
+            "---",
+            "${1:Description of the function.}",
+            "",
+            "@param :",
+            "- **${2:param1}** ${3:Description.}",
+            "@returns **${4:void}**",
+            "---"
+        ],
+        "description": "Generate a Quirk docstring template"
+    },
+    "Definition": {
+        "prefix": "def",
+        "body": [
+            "define ${1:name}(${2:args}) -> ${3:void} {",
+            "\t$0",
+            "}"
+        ],
+        "description": "Define a new function"
+    },
+    "Struct": {
+        "prefix": "struct",
+        "body": [
+            "struct ${1:Name} {",
+            "\t${2:field}: ${3:type}",
+            "}"
+        ],
+        "description": "Define a new struct"
+    },
+    "If Statement": {
+        "prefix": "if",
+        "body": [
+            "if ${1:condition} {",
+            "\t$0",
+            "}"
+        ],
+        "description": "If statement"
+    },
+    "Use": {
+        "prefix": "use",
+        "body": "use ${1:core.sys}",
+        "description": "Import a module"
+    },
+    "Main": {
+        "prefix": "main",
+        "body": [
+            "define main() -> void {",
+            "\t$0",
+            "}"
+        ],
+        "description": "Main function entry point"
+    },
+    "Print": {
+        "prefix": "print",
+        "body": "print(${1:message})",
+        "description": "Print to console"
+    }
+}

@@ -17,9 +17,18 @@
     "languages": [
       {
         "id": "quirk",
-        "aliases": ["Quirk", "quirk"],
-        "extensions": [".qk"],
-        "configuration": "./language-configuration.json"
+        "aliases": [
+          "Quirk",
+          "quirk"
+        ],
+        "extensions": [
+          ".qk"
+        ],
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "light": "./icons/icon.svg",
+          "dark": "./icons/icon.svg"
+        }
       }
     ],
     "grammars": [
@@ -27,6 +36,12 @@
         "language": "quirk",
         "scopeName": "source.quirk",
         "path": "./syntaxes/quirk.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "quirk",
+        "path": "./snippets.json"
       }
     ]
   },

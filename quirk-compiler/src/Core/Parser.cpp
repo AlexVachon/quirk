@@ -399,7 +399,11 @@ std::unique_ptr<FunctionNode> Parser::parseFunction() {
                         peek());
         }
 
-        node->parameters.push_back(param);
+        if (match(TokenType::ASSIGN)) {
+            param.defaultValue = parseExpression(0);
+        }
+
+        node->parameters.push_back(std::move(param));
         if (peek().type == TokenType::COMMA)
             advance();
     }

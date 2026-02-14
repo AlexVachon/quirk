@@ -6,21 +6,25 @@
 //  HELPER METHODS
 // =========================================================
 
-char Lexer::peek(int offset) const {
+char Lexer::peek(int offset) const
+{
     if (pos + offset >= src.length())
         return '\0';
     return src[pos + offset];
 }
 
-char Lexer::advance() {
+char Lexer::advance()
+{
     if (pos >= src.length())
         return '\0';
     char c = src[pos++];
     return c;
 }
 
-bool Lexer::match(char expected) {
-    if (peek() == expected) {
+bool Lexer::match(char expected)
+{
+    if (peek() == expected)
+    {
         advance();
         return true;
     }
@@ -31,11 +35,14 @@ bool Lexer::match(char expected) {
 //  MAIN TOKENIZE LOOP
 // =========================================================
 
-std::vector<Token> Lexer::tokenize() {
+std::vector<Token> Lexer::tokenize()
+{
     std::vector<Token> tokens;
-    while (true) {
+    while (true)
+    {
         // 1. Drain Buffer first (from String Interpolation desugaring)
-        if (!tokenBuffer.empty()) {
+        if (!tokenBuffer.empty())
+        {
             tokens.push_back(tokenBuffer.front());
             tokenBuffer.pop_front();
             if (tokens.back().type == TokenType::EOF_TOKEN)
@@ -56,9 +63,11 @@ std::vector<Token> Lexer::tokenize() {
 //  TOKEN SCANNER
 // =========================================================
 
-Token Lexer::nextToken() {
+Token Lexer::nextToken()
+{
     // 1. Skip Whitespace
-    while (pos < src.length() && isspace(peek())) {
+    while (pos < src.length() && isspace(peek()))
+    {
         if (peek() == '\n')
             line++;
         advance();
@@ -69,9 +78,43 @@ Token Lexer::nextToken() {
 
     char c = peek();
 
+    // ---------------------------------------------------------
+    //  NEW: Skip Markdown-style Docstrings (--- ... ---)
+    // ---------------------------------------------------------
+    if (c == '-' && peek(1) == '-' && peek(2) == '-')
+    {
+        advance(); // consume 1st '-'
+        advance(); // consume 2nd '-'
+        advance(); // consume 3rd '-'
+
+        // We are now inside a doc block. Skip EVERYTHING until we see the next ---
+        while (pos < src.length())
+        {
+            if (peek() == '\n')
+                line++;
+
+            // Check for closing ---
+            if (peek() == '-' && peek(1) == '-' && peek(2) == '-')
+            {
+                advance(); // consume 1st '-'
+                advance(); // consume 2nd '-'
+                advance(); // consume 3rd '-'
+
+                // We successfully skipped the whole block.
+                // Recursively call nextToken() to get the actual next piece of code!
+                return nextToken();
+            }
+            advance();
+        }
+
+        // If we hit EOF before closing the doc block, just return EOF.
+        return {TokenType::EOF_TOKEN, "", line};
+    }
+
     // 2. Handle Strings (With Interpolation Support)
-    if (c == '"') {
-        tokenizeString();  // Pushes tokens to tokenBuffer
+    if (c == '"')
+    {
+        tokenizeString(); // Pushes tokens to tokenBuffer
         // Return the first token immediately
         Token t = tokenBuffer.front();
         tokenBuffer.pop_front();
@@ -79,7 +122,8 @@ Token Lexer::nextToken() {
     }
 
     // 3. Handle Identifiers and Keywords
-    if (isalpha(c) || c == '_') {
+    if (isalpha(c) || c == '_')
+    {
         std::string ident;
         while (isalnum(peek()) || peek() == '_')
             ident += advance();
@@ -135,7 +179,8 @@ Token Lexer::nextToken() {
     }
 
     // 4. Handle Numbers
-    if (isdigit(c)) {
+    if (isdigit(c))
+    {
         std::string num;
         while (isdigit(peek()))
             num += advance();
@@ -143,57 +188,61 @@ Token Lexer::nextToken() {
         // ONLY consume dot if the NEXT char is a digit
         // This allows "10.str()" to work (dot belongs to member access)
         // But "10.5" will still be a double.
-        if (peek() == '.' && isdigit(peek(1))) {
+        if (peek() == '.' && isdigit(peek(1)))
+        {
             num += advance();
             while (isdigit(peek()))
                 num += advance();
-            return {TokenType::FLOAT_LITERAL, num, line};  // Return Double
+            return {TokenType::FLOAT_LITERAL, num, line}; // Return Double
         }
 
-        return {TokenType::INT_LITERAL, num, line};  // Return Int
+        return {TokenType::INT_LITERAL, num, line}; // Return Int
     }
 
     // 5. Multi-character Operators
-    if (c == ':' && peek(1) == '=') {
+    if (c == ':' && peek(1) == '=')
+    {
         advance();
         advance();
         return {TokenType::ASSIGN_INIT, ":=", line};
     }
-    if (c == '=' && peek(1) == '=') {
+    if (c == '=' && peek(1) == '=')
+    {
         advance();
         advance();
         return {TokenType::EQUAL, "==", line};
     }
-    if (c == '-' && peek(1) == '>') {
+    if (c == '-' && peek(1) == '>')
+    {
         advance();
         advance();
         return {TokenType::ARROW, "->", line};
     }
-    if (c == '-' && peek(1) == '=') {
+    if (c == '-' && peek(1) == '=')
+    {
         advance();
         advance();
         return {TokenType::MINUS_ASSIGN, "-=", line};
     }
-    if (c == '.' && peek(1) == '.' && peek(2) == '.') {
-        advance();
-        advance();
-        advance();
-        return {TokenType::ELLIPSIS, "...", line};
-    }
 
     // 6. Comments
-    if (c == '/') {
-        if (peek(1) == '/') {
-            while (pos < src.length() && peek() != '\n') {
+    if (c == '/')
+    {
+        if (peek(1) == '/')
+        {
+            while (pos < src.length() && peek() != '\n')
+            {
                 advance();
             }
-            return nextToken();  // Recursively call to get the real next token
+            return nextToken(); // Recursively call to get the real next token
         }
     }
 
     // Comparison Operators
-    if (c == '>') {
-        if (peek(1) == '=') {
+    if (c == '>')
+    {
+        if (peek(1) == '=')
+        {
             advance();
             advance();
             return {TokenType::GREATER_EQUAL, ">=", line};
@@ -201,8 +250,10 @@ Token Lexer::nextToken() {
         advance();
         return {TokenType::GREATER, ">", line};
     }
-    if (c == '<') {
-        if (peek(1) == '=') {
+    if (c == '<')
+    {
+        if (peek(1) == '=')
+        {
             advance();
             advance();
             return {TokenType::LESS_EQUAL, "<=", line};
@@ -210,8 +261,10 @@ Token Lexer::nextToken() {
         advance();
         return {TokenType::LESS, "<", line};
     }
-    if (c == '!') {
-        if (peek(1) == '=') {
+    if (c == '!')
+    {
+        if (peek(1) == '=')
+        {
             advance();
             advance();
             return {TokenType::NOT_EQUAL, "!=", line};
@@ -219,42 +272,43 @@ Token Lexer::nextToken() {
     }
 
     // 7. Single-character Tokens
-    advance();  // Consume the char
-    switch (c) {
-        case '(':
-            return {TokenType::LPAREN, "(", line};
-        case ')':
-            return {TokenType::RPAREN, ")", line};
-        case '{':
-            return {TokenType::LBRACE, "{", line};
-        case '}':
-            return {TokenType::RBRACE, "}", line};
-        case '[':
-            return {TokenType::LBRACKET, "[", line};
-        case ']':
-            return {TokenType::RBRACKET, "]", line};
-        case ':':
-            return {TokenType::COLON, ":", line};
-        case ';':
-            return {TokenType::SEMICOLON, ";", line};
-        case ',':
-            return {TokenType::COMMA, ",", line};
-        case '+':
-            return {TokenType::PLUS, "+", line};
-        case '-':
-            return {TokenType::MINUS, "-", line};
-        case '*':
-            return {TokenType::STAR, "*", line};
-        case '/':
-            return {TokenType::SLASH, "/", line};
-        case '=':
-            return {TokenType::ASSIGN, "=", line};
-        case '.':
-            return {TokenType::DOT, ".", line};
-        case '|':
-            return {TokenType::PIPE, "|", line};
-        default:
-            return {TokenType::ERROR, std::string(1, c), line};
+    advance(); // Consume the char
+    switch (c)
+    {
+    case '(':
+        return {TokenType::LPAREN, "(", line};
+    case ')':
+        return {TokenType::RPAREN, ")", line};
+    case '{':
+        return {TokenType::LBRACE, "{", line};
+    case '}':
+        return {TokenType::RBRACE, "}", line};
+    case '[':
+        return {TokenType::LBRACKET, "[", line};
+    case ']':
+        return {TokenType::RBRACKET, "]", line};
+    case ':':
+        return {TokenType::COLON, ":", line};
+    case ';':
+        return {TokenType::SEMICOLON, ";", line};
+    case ',':
+        return {TokenType::COMMA, ",", line};
+    case '+':
+        return {TokenType::PLUS, "+", line};
+    case '-':
+        return {TokenType::MINUS, "-", line};
+    case '*':
+        return {TokenType::STAR, "*", line};
+    case '/':
+        return {TokenType::SLASH, "/", line};
+    case '=':
+        return {TokenType::ASSIGN, "=", line};
+    case '.':
+        return {TokenType::DOT, ".", line};
+    case '|':
+        return {TokenType::PIPE, "|", line};
+    default:
+        return {TokenType::ERROR, std::string(1, c), line};
     }
 }
 
@@ -262,20 +316,24 @@ Token Lexer::nextToken() {
 //  STRING INTERPOLATION LOGIC
 // =========================================================
 
-void Lexer::tokenizeString() {
+void Lexer::tokenizeString()
+{
     int startLine = line;
-    advance();  // Skip opening quote
+    advance(); // Skip opening quote
 
     std::vector<std::string> args;
     std::string format_builder = "";
 
-    while (pos < src.length() && peek() != '"') {
+    while (pos < src.length() && peek() != '"')
+    {
         char c = peek();
 
         // Handle Escapes
-        if (c == '\\') {
-            advance();  // Consume '\'
-            if (pos < src.length()) {
+        if (c == '\\')
+        {
+            advance(); // Consume '\'
+            if (pos < src.length())
+            {
                 char esc = advance();
                 format_builder += '\\';
                 format_builder += esc;
@@ -284,20 +342,24 @@ void Lexer::tokenizeString() {
         }
 
         // 1. Found '$' - Start Interpolation
-        if (c == '$') {
-            advance();  // Skip '$'
+        if (c == '$')
+        {
+            advance(); // Skip '$'
 
             // Case A: ${expression % fmt}
-            if (peek() == '{') {
-                advance();  // Skip '{'
+            if (peek() == '{')
+            {
+                advance(); // Skip '{'
                 std::string expr = "";
                 std::string fmt = "";
                 bool readingFmt = false;
 
                 // Read until '}'
-                while (pos < src.length() && peek() != '}') {
+                while (pos < src.length() && peek() != '}')
+                {
                     // Check for Modulo/Format separator '%' or Pipe '|'
-                    if (!readingFmt && (peek() == '%' || peek() == '|')) {
+                    if (!readingFmt && (peek() == '%' || peek() == '|'))
+                    {
                         readingFmt = true;
                         advance();
                         continue;
@@ -309,13 +371,14 @@ void Lexer::tokenizeString() {
                         expr += advance();
                 }
                 if (peek() == '}')
-                    advance();  // Skip '}'
+                    advance(); // Skip '}'
 
                 // Add placeholder to string: "{ % .2f}" or "{}"
                 format_builder += "{";
-                if (!fmt.empty()) {
+                if (!fmt.empty())
+                {
                     format_builder +=
-                        " % ";  // Normalized separator for Runtime
+                        " % "; // Normalized separator for Runtime
                     format_builder += fmt;
                 }
                 format_builder += "}";
@@ -323,34 +386,39 @@ void Lexer::tokenizeString() {
                 // Capture expression
                 // Simple whitespace trim
                 size_t first = expr.find_first_not_of(" \t");
-                if (std::string::npos != first) {
+                if (std::string::npos != first)
+                {
                     size_t last = expr.find_last_not_of(" \t");
                     expr = expr.substr(first, (last - first + 1));
                 }
                 args.push_back(expr);
             }
             // Case B: $variable (Simple Identifier)
-            else if (isalpha(peek()) || peek() == '_') {
+            else if (isalpha(peek()) || peek() == '_')
+            {
                 std::string id = "";
-                while (isalnum(peek()) || peek() == '_') {
+                while (isalnum(peek()) || peek() == '_')
+                {
                     id += advance();
                 }
                 format_builder += "{}";
                 args.push_back(id);
             }
             // Case C: Just a '$' symbol (escaped or trailing)
-            else {
+            else
+            {
                 format_builder += "$";
             }
         }
         // 2. Normal Character
-        else {
+        else
+        {
             format_builder += advance();
         }
     }
 
     if (peek() == '"')
-        advance();  // Skip closing quote
+        advance(); // Skip closing quote
 
     // --- EMIT TOKENS ---
 
@@ -360,15 +428,18 @@ void Lexer::tokenizeString() {
         {TokenType::STRING_LITERAL, "\"" + format_builder + "\"", startLine});
 
     // 2. If interpolations exist, generate: .format(arg1, arg2)
-    if (!args.empty()) {
+    if (!args.empty())
+    {
         tokenBuffer.push_back({TokenType::DOT, ".", startLine});
         tokenBuffer.push_back({TokenType::IDENTIFIER, "format", startLine});
         tokenBuffer.push_back({TokenType::LPAREN, "(", startLine});
 
-        for (size_t i = 0; i < args.size(); i++) {
+        for (size_t i = 0; i < args.size(); i++)
+        {
             tokenBuffer.push_back({TokenType::IDENTIFIER, args[i], startLine});
 
-            if (i < args.size() - 1) {
+            if (i < args.size() - 1)
+            {
                 tokenBuffer.push_back({TokenType::COMMA, ",", startLine});
             }
         }

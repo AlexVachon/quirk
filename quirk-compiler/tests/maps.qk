@@ -1,4 +1,4 @@
-use core.collections.map
+from core.collections.map use { Map }
 
 define main() {
     // Test Map Literal

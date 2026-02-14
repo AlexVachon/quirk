@@ -1,0 +1,16 @@
+<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="quirk-grad-fit" x1="30" y1="30" x2="98" y2="98" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#A855F7" /> <stop offset="1" stop-color="#22D3EE" /> </linearGradient>
+  </defs>
+  
+  <path d="M100 64C100 83.8823 83.8823 100 64 100C44.1177 100 28 83.8823 28 64C28 44.1177 44.1177 28 64 28C75 28 84 32 91 40" 
+        stroke="url(#quirk-grad-fit)" 
+        stroke-width="18" 
+        stroke-linecap="round" />
+  
+  <path d="M82 82L100 100" 
+        stroke="url(#quirk-grad-fit)" 
+        stroke-width="18" 
+        stroke-linecap="round" />
+</svg>

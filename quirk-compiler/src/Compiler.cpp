@@ -411,7 +411,7 @@ int main(int argc, char* argv[]) {
 
     std::string irPath = "output.ll";
     std::error_code EC;
-    raw_fd_ostream dest(irPath, EC, sys::fs::F_None);
+    raw_fd_ostream dest(irPath, EC, sys::fs::OF_None);
     if (EC) {
         std::cerr.rdbuf(cerr_buffer);
         std::cerr << "Error opening output file: " << EC.message() << std::endl;

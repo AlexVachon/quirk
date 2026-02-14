@@ -1,5 +1,4 @@
-use core.sys
-use core.string
+from core.string use { String }
 
 // --- ADDED FOR FUTURE ITERATION SUPPORT ---
 struct MapIterator {

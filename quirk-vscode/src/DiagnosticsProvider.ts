@@ -8,7 +8,7 @@ const KEYWORDS = new Set([
 
 const BUILTINS = new Set([
     'print', 'exit', 'String', 'List', 'Map',
-    'File', 'Int', 'Double', 'Bool', 'any', 'void'
+    'File', 'Int', 'int', 'Double', 'double', 'Bool', 'bool', 'any', 'void'
 ]);
 
 function maskLine(line: string): string {
@@ -77,6 +77,9 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
     // ==========================================
     // PASS 1: Collect Declarations & Globals
     // ==========================================
+    let multiLineImport = "";
+    let isReadingImport = false;
+
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
         if (line.trim() === '---') { inDocBlock = !inDocBlock; continue; }
@@ -84,17 +87,31 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
 
         const cleanLine = maskLine(line);
 
-        let match = /^\s*(?:extern\s+)?(?:struct|define|def|init)\s+([a-zA-Z_]\w*)/.exec(cleanLine);
-        if (match) {
-            const name = match[1];
-            fileGlobals.add(name);
-            if (name !== 'main' && !name.startsWith('__')) {
-                const startIdx = cleanLine.indexOf(name, match.index);
-                declarations.set(name, new vscode.Range(i, startIdx, i, startIdx + name.length));
+        // 1. Handle Multi-line Destructuring: from module use { ... }
+        if (isReadingImport) {
+            multiLineImport += " " + cleanLine;
+            if (cleanLine.includes('}')) {
+                const symbolsMatch = /\{([^}]*)\}/.exec(multiLineImport);
+                if (symbolsMatch) {
+                    symbolsMatch[1].split(',').forEach(s => {
+                        const trimmed = s.trim();
+                        if (trimmed) fileGlobals.add(trimmed);
+                    });
+                }
+                isReadingImport = false;
+                multiLineImport = "";
             }
+            continue;
         }
 
-        match = /^\s*use\s+([.a-zA-Z0-9_/]+)/.exec(cleanLine);
+        if (/^\s*from\s+.*use\s+\{/.test(cleanLine) && !cleanLine.includes('}')) {
+            isReadingImport = true;
+            multiLineImport = cleanLine;
+            continue;
+        }
+
+        // 2. Standard Single-line Imports
+        let match = /^\s*use\s+([.a-zA-Z0-9_/]+)/.exec(cleanLine);
         if (match) {
             const alias = match[1].split(/[\.\/]/).pop();
             if (alias) fileGlobals.add(alias);
@@ -102,8 +119,21 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
 
         match = /^\s*from\s+[.a-zA-Z0-9_/]+\s+use\s+\{([^}]*)\}/.exec(cleanLine);
         if (match) {
-            const symbols = match[1].split(',').map(s => s.trim());
-            symbols.forEach(s => { if (s) fileGlobals.add(s); });
+            match[1].split(',').forEach(s => {
+                const trimmed = s.trim();
+                if (trimmed) fileGlobals.add(trimmed);
+            });
+        }
+
+        // 3. Global Declarations (Funcs/Structs)
+        match = /^\s*(?:extern\s+)?(?:struct|define|def|init)\s+([a-zA-Z_]\w*)/.exec(cleanLine);
+        if (match) {
+            const name = match[1];
+            fileGlobals.add(name);
+            if (name !== 'main' && !name.startsWith('__')) {
+                const startIdx = cleanLine.indexOf(name, match.index);
+                declarations.set(name, new vscode.Range(i, startIdx, i, startIdx + name.length));
+            }
         }
     }
 
@@ -135,16 +165,15 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
         if (funcMatch) {
             locals = new Set<string>();
             const paramsStr = funcMatch[1];
-            
-            // Updated Regex: Specifically captures the name before the colon
-            // and ignores the type part (e.g., captures 'url' from 'url: String')
+
+            // Specifically capture name before colon and ignore the type part
             const paramMatches = [...paramsStr.matchAll(/\b([a-zA-Z_]\w*)\s*(?::\s*[a-zA-Z_]\w*)?(?::|$|,)/g)];
-            
+
             for (const pm of paramMatches) {
                 const pName = pm[1];
                 locals.add(pName);
-                
-                // Skip 'self' and ensure we only flag the parameter name, not the type
+
+                // Skip 'self' and built-in types
                 if (pName !== 'self' && !BUILTINS.has(pName)) {
                     const startIdx = originalLine.indexOf(pName, funcMatch.index);
                     declarations.set(`${i}_${pName}`, new vscode.Range(i, startIdx, i, startIdx + pName.length));
@@ -175,7 +204,7 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
 
             const range = new vscode.Range(i, match.index, i, match.index + ident.length);
 
-            // ✨ NEW FIX: Skip if this specific occurrence is a declaration 
+            // Skip if this specific occurrence is a declaration
             if (declarations.get(ident)?.isEqual(range) || declarations.get(`${i}_${ident}`)?.isEqual(range)) {
                 continue;
             }
@@ -201,17 +230,13 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
         if (!usages.has(key)) {
             const cleanKey = key.includes('_') ? key.split('_')[1] : key;
 
-            // 1. Change Severity to Warning for the yellow wavy underline
             const diagnostic = new vscode.Diagnostic(
                 range,
                 `'${cleanKey}' is declared but never used.`,
-                vscode.DiagnosticSeverity.Warning // 
+                vscode.DiagnosticSeverity.Warning
             );
 
-            // 2. Keep the Unnecessary tag to keep the variable "faded"
-            diagnostic.tags = [vscode.DiagnosticTag.Unnecessary]; // 
-
-            // 3. Optional: Add a custom code for your Quick Fix to target
+            diagnostic.tags = [vscode.DiagnosticTag.Unnecessary];
             diagnostic.code = "unused_symbol";
 
             diagnostics.push(diagnostic);

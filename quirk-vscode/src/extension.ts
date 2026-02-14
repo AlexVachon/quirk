@@ -3,8 +3,9 @@ import { QuirkDefinitionProvider } from './ImportProvider';
 import { QuirkCompletionProvider } from './CompletionProvider';
 import { QuirkHoverProvider } from './HoverProvider';
 import { QuirkSemanticTokensProvider, legend } from './SemanticTokensProvider';
-// --- NEW IMPORT ---
 import { subscribeToDocumentChanges } from './DiagnosticsProvider';
+import { QuirkDocumentSymbolProvider } from './OutlineProvider';
+import { QuirkSignatureHelpProvider } from './SignatureHelpProvider';
 
 export function activate(context: vscode.ExtensionContext) {
     const logChannel = vscode.window.createOutputChannel("Quirk Language Server");
@@ -27,7 +28,13 @@ export function activate(context: vscode.ExtensionContext) {
             '.', '{', ',', ' '
         ),
         vscode.languages.registerHoverProvider(selector, new QuirkHoverProvider()),
-        vscode.languages.registerDocumentSemanticTokensProvider(selector, new QuirkSemanticTokensProvider(), legend)
+        vscode.languages.registerDocumentSemanticTokensProvider(selector, new QuirkSemanticTokensProvider(), legend),
+        vscode.languages.registerDocumentSymbolProvider(selector, new QuirkDocumentSymbolProvider()),
+        vscode.languages.registerSignatureHelpProvider(
+            selector, 
+            new QuirkSignatureHelpProvider(), 
+            '(', ','
+        )
     );
 }
 

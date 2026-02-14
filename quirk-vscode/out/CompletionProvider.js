@@ -10,32 +10,76 @@ class QuirkCompletionProvider {
     }
     provideCompletionItems(document, position) {
         const linePrefix = document.lineAt(position).text.substring(0, position.character);
-        // 1. DESTRUCTURING IMPORT
         const destructureMatch = /^\s*from\s+([.a-zA-Z0-9_/]+)\s+use\s+\{([^}]*)$/.exec(linePrefix);
-        if (destructureMatch) {
+        if (destructureMatch)
             return this.provideDestructureCompletions(document, destructureMatch[1]);
-        }
-        // 2. IMPORT PATHS
         const importMatch = /^\s*(?:use|from)\s+([.a-zA-Z0-9_/]*)$/.exec(linePrefix);
-        if (importMatch) {
+        if (importMatch)
             return this.providePathCompletions(document, importMatch[1]);
-        }
-        // 3. DOT ACCESS (Module Member OR Object Property)
         const memberMatch = /([a-zA-Z0-9_]+)\.$/.exec(linePrefix);
         if (memberMatch) {
             const aliasOrVar = memberMatch[1];
             const modulePath = this.resolveImportPathFromAlias(document, aliasOrVar);
-            if (modulePath) {
+            if (modulePath)
                 return this.provideMemberCompletions(document, modulePath);
-            }
             return this.provideObjectMemberCompletions(document, position, aliasOrVar);
         }
-        // 4. GENERAL COMPLETIONS
         const wordMatch = /[a-zA-Z0-9_]+$/.exec(linePrefix);
-        if (wordMatch || linePrefix.trim() === '') {
+        if (wordMatch || linePrefix.trim() === '')
             return this.provideGeneralCompletions(document, position);
-        }
         return undefined;
+    }
+    // =========================================================
+    // ✨ Markdown Formatter Helper (Clean Layout)
+    // =========================================================
+    formatDocstring(docstring) {
+        const md = new vscode.MarkdownString();
+        let description = [];
+        let paramsList = [];
+        let returnsText = "";
+        let readingParamsList = false;
+        for (const line of docstring) {
+            const trimmed = line.trim();
+            const singleParamMatch = /^@param\s+(?:\*\*)?([a-zA-Z0-9_]+)(?:\*\*)?\s*(.*)/.exec(trimmed);
+            if (singleParamMatch && singleParamMatch[1] !== ':') {
+                paramsList.push(`* \`${singleParamMatch[1]}\` — ${singleParamMatch[2]}`);
+                readingParamsList = false;
+                continue;
+            }
+            if (/^@params?\s*:?$/.test(trimmed)) {
+                readingParamsList = true;
+                continue;
+            }
+            if (readingParamsList) {
+                const bulletMatch = /^[-*]\s+(?:\*\*)?([a-zA-Z0-9_]+)(?:\*\*)?[\s:]*(.*)/.exec(trimmed);
+                if (bulletMatch) {
+                    paramsList.push(`* \`${bulletMatch[1]}\` — ${bulletMatch[2]}`);
+                    continue;
+                }
+                else if (trimmed === '') {
+                    continue;
+                }
+                else if (!trimmed.startsWith('@return')) {
+                    readingParamsList = false;
+                }
+            }
+            if (trimmed.startsWith('@return')) {
+                readingParamsList = false;
+                returnsText = trimmed.replace(/^@returns?\s+/, '').replace(/\*\*/g, '').trim();
+                continue;
+            }
+            description.push(line + '  ');
+        }
+        // Assemble the final Markdown
+        if (description.length > 0)
+            md.appendMarkdown(description.join('\n') + '\n\n');
+        if (paramsList.length > 0) {
+            md.appendMarkdown('**Parameters:**\n\n' + paramsList.join('\n') + '\n\n');
+        }
+        if (returnsText) {
+            md.appendMarkdown(`**Returns:** ${returnsText}\n`);
+        }
+        return md;
     }
     // =========================================================
     // TYPE INFERENCE & OBJECT COMPLETIONS
@@ -77,82 +121,72 @@ class QuirkCompletionProvider {
         const items = [];
         const seen = new Set();
         const content = fs.readFileSync(targetFile, 'utf-8');
-        const addCompletion = (label, kind) => {
+        const addCompletion = (label, kind, docstr = []) => {
             if (!seen.has(label)) {
                 seen.add(label);
                 const item = new vscode.CompletionItem(label, kind);
-                // --- NEW STRICT SORTING HIERARCHY ---
+                if (docstr.length > 0) {
+                    item.documentation = this.formatDocstring(docstr);
+                }
                 if (label.startsWith('__')) {
-                    item.sortText = '3_' + label; // Magic methods at the absolute bottom
+                    item.sortText = '3_' + label;
                 }
                 else if (kind === vscode.CompletionItemKind.Field) {
-                    item.sortText = '1_' + label; // Properties/Fields at the absolute top
+                    item.sortText = '1_' + label;
                 }
                 else {
-                    item.sortText = '2_' + label; // Normal methods in the middle
+                    item.sortText = '2_' + label;
                 }
                 items.push(item);
             }
         };
-        const extractBody = (keyword, name) => {
-            const regex = new RegExp(`\\b${keyword}\\s+${name}\\b`);
-            const matchIndex = content.search(regex);
-            if (matchIndex !== -1) {
-                const startIndex = content.indexOf('{', matchIndex);
-                if (startIndex !== -1) {
-                    let braceCount = 1;
-                    let endIndex = startIndex + 1;
-                    while (endIndex < content.length && braceCount > 0) {
-                        if (content[endIndex] === '{')
-                            braceCount++;
-                        else if (content[endIndex] === '}')
-                            braceCount--;
-                        endIndex++;
+        const structMatch = new RegExp(`\\bstruct\\s+${structName}\\b`).exec(content);
+        if (structMatch) {
+            const startIndex = content.indexOf('{', structMatch.index);
+            if (startIndex !== -1) {
+                let braceCount = 1;
+                let endIndex = startIndex + 1;
+                while (endIndex < content.length && braceCount > 0) {
+                    if (content[endIndex] === '{')
+                        braceCount++;
+                    else if (content[endIndex] === '}')
+                        braceCount--;
+                    endIndex++;
+                }
+                const structBody = content.substring(startIndex + 1, endIndex - 1);
+                const lines = structBody.split(/\r?\n/);
+                let currentDocstring = [];
+                let inDocBlock = false;
+                for (const line of lines) {
+                    const trimmed = line.trim();
+                    if (trimmed === '---') {
+                        inDocBlock = !inDocBlock;
+                        if (inDocBlock)
+                            currentDocstring = [];
+                        continue;
                     }
-                    return content.substring(startIndex + 1, endIndex - 1);
-                }
-            }
-            return null;
-        };
-        // 1. Scan Nested Struct Body
-        const structBody = extractBody('struct', structName);
-        if (structBody) {
-            const lines = structBody.split(/\r?\n/);
-            for (const line of lines) {
-                const fieldMatch = /^\s*([a-zA-Z0-9_]+)\s*:\s*[a-zA-Z0-9_]+/.exec(line);
-                if (fieldMatch && !line.includes('(') && !line.includes('return') && !line.includes('=')) {
-                    addCompletion(fieldMatch[1], vscode.CompletionItemKind.Field);
-                }
-                const methodMatch = /^\s*(?:extern\s+)?(?:define|def)\s+([a-zA-Z0-9_]+)/.exec(line);
-                if (methodMatch) {
-                    const methodName = methodMatch[1];
-                    if (methodName !== '__init' && methodName !== 'init') {
-                        addCompletion(methodName, vscode.CompletionItemKind.Method);
+                    if (inDocBlock) {
+                        currentDocstring.push(trimmed);
+                        continue;
                     }
-                }
-            }
-        }
-        // 2. Scan Nested Extend Body
-        const extendBody = extractBody('extend', structName);
-        if (extendBody) {
-            const lines = extendBody.split(/\r?\n/);
-            for (const line of lines) {
-                const methodMatch = /^\s*(?:extern\s+)?(?:define|def)\s+([a-zA-Z0-9_]+)/.exec(line);
-                if (methodMatch) {
-                    const methodName = methodMatch[1];
-                    if (methodName !== '__init' && methodName !== 'init') {
-                        addCompletion(methodName, vscode.CompletionItemKind.Method);
+                    if (trimmed !== '' && !trimmed.startsWith('//') && !/^\s*(?:extern\s+)?(?:define|def|init)/.test(line)) {
+                        currentDocstring = [];
+                    }
+                    const fieldMatch = /^\s*([a-zA-Z0-9_]+)\s*:\s*[a-zA-Z0-9_]+/.exec(line);
+                    if (fieldMatch && !line.includes('(') && !line.includes('return') && !line.includes('=')) {
+                        addCompletion(fieldMatch[1], vscode.CompletionItemKind.Field, currentDocstring);
+                        currentDocstring = [];
+                        continue;
+                    }
+                    const methodMatch = /^\s*(?:extern\s+)?(?:define|def)\s+([a-zA-Z0-9_]+)/.exec(line);
+                    if (methodMatch) {
+                        const methodName = methodMatch[1];
+                        if (methodName !== '__init' && methodName !== 'init') {
+                            addCompletion(methodName, vscode.CompletionItemKind.Method, currentDocstring);
+                        }
+                        currentDocstring = [];
                     }
                 }
-            }
-        }
-        // 3. Scan C-Style Methods
-        const methodRegex = new RegExp(`(?:define|def|init)\\s+${structName}_([a-zA-Z0-9_]+)`, 'g');
-        let methodMatch;
-        while ((methodMatch = methodRegex.exec(content)) !== null) {
-            let methodName = methodMatch[1];
-            if (methodName !== '_init' && methodName !== 'init') {
-                addCompletion(methodName, vscode.CompletionItemKind.Method);
             }
         }
         return items;
@@ -277,7 +311,23 @@ class QuirkCompletionProvider {
         try {
             const content = fs.readFileSync(filePath, 'utf-8');
             const lines = content.split(/\r?\n/);
+            let currentDocstring = [];
+            let inDocBlock = false;
             for (const line of lines) {
+                const trimmed = line.trim();
+                if (trimmed === '---') {
+                    inDocBlock = !inDocBlock;
+                    if (inDocBlock)
+                        currentDocstring = [];
+                    continue;
+                }
+                if (inDocBlock) {
+                    currentDocstring.push(trimmed);
+                    continue;
+                }
+                if (trimmed !== '' && !trimmed.startsWith('//') && !/^\s*(?:extern\s+)?(?:struct|define|def|init)/.test(line)) {
+                    currentDocstring = [];
+                }
                 const defMatch = /^\s*(?:extern\s+)?(?:struct|define|def|init)\s+([a-zA-Z0-9_]+)/.exec(line);
                 if (defMatch) {
                     const name = defMatch[1];
@@ -285,6 +335,10 @@ class QuirkCompletionProvider {
                         continue;
                     const item = new vscode.CompletionItem(name, line.includes('struct') ? vscode.CompletionItemKind.Struct : vscode.CompletionItemKind.Function);
                     item.sortText = '2_' + name;
+                    if (currentDocstring.length > 0) {
+                        item.documentation = this.formatDocstring(currentDocstring);
+                        currentDocstring = [];
+                    }
                     items.push(item);
                 }
             }
@@ -299,6 +353,8 @@ class QuirkCompletionProvider {
                             const newItem = new vscode.CompletionItem(expItem.label, expItem.kind);
                             newItem.detail = `(from ${path.basename(targetFile)})`;
                             newItem.sortText = '2_' + expItem.label;
+                            if (expItem.documentation)
+                                newItem.documentation = expItem.documentation;
                             items.push(newItem);
                         }
                     });

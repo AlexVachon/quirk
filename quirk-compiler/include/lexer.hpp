@@ -66,8 +66,8 @@ enum class TokenType {
     DOT,
     MINUS_ASSIGN,
 
-    // NEW: Ellipsis "..."
     ELLIPSIS,
+    TRIPLE_MINUS,
 
     // Special
     EOF_TOKEN,

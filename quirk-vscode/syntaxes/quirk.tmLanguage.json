@@ -2,15 +2,33 @@
   "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
   "name": "Quirk",
   "patterns": [
-    { "include": "#comments" },
-    { "include": "#imports" },
-    { "include": "#definitions" },
-    { "include": "#keywords" },
-    { "include": "#strings" },
-    { "include": "#numbers" },
-    { "include": "#types" },
-    { "include": "#functions" },
-    { "include": "#operators" }
+    {
+      "include": "#comments"
+    },
+    {
+      "include": "#imports"
+    },
+    {
+      "include": "#definitions"
+    },
+    {
+      "include": "#keywords"
+    },
+    {
+      "include": "#strings"
+    },
+    {
+      "include": "#numbers"
+    },
+    {
+      "include": "#types"
+    },
+    {
+      "include": "#functions"
+    },
+    {
+      "include": "#operators"
+    }
   ],
   "repository": {
     "imports": {
@@ -18,16 +36,26 @@
         {
           "match": "\\b(from)\\s+([a-zA-Z0-9_./]+)\\s+(use)\\b",
           "captures": {
-            "1": { "name": "keyword.control.import.quirk" },
-            "2": { "name": "entity.name.namespace.quirk" },
-            "3": { "name": "keyword.control.import.quirk" }
+            "1": {
+              "name": "keyword.control.import.quirk"
+            },
+            "2": {
+              "name": "entity.name.namespace.quirk"
+            },
+            "3": {
+              "name": "keyword.control.import.quirk"
+            }
           }
         },
         {
           "match": "\\b(use)\\s+([a-zA-Z0-9_./]+)\\b",
           "captures": {
-            "1": { "name": "keyword.control.import.quirk" },
-            "2": { "name": "entity.name.namespace.quirk" }
+            "1": {
+              "name": "keyword.control.import.quirk"
+            },
+            "2": {
+              "name": "entity.name.namespace.quirk"
+            }
           }
         }
       ]
@@ -37,15 +65,23 @@
         {
           "match": "\\b(struct)\\s+([a-zA-Z_]\\w*)",
           "captures": {
-            "1": { "name": "storage.type.struct.quirk" },
-            "2": { "name": "entity.name.type.struct.quirk" }
+            "1": {
+              "name": "storage.type.struct.quirk"
+            },
+            "2": {
+              "name": "entity.name.type.struct.quirk"
+            }
           }
         },
         {
           "match": "\\b(define|init)\\s+([a-zA-Z_]\\w*)?",
           "captures": {
-            "1": { "name": "storage.type.function.quirk" },
-            "2": { "name": "entity.name.function.definition.quirk" }
+            "1": {
+              "name": "storage.type.function.quirk"
+            },
+            "2": {
+              "name": "entity.name.function.definition.quirk"
+            }
           }
         },
         {
@@ -103,7 +139,30 @@
       "begin": "\"",
       "end": "\"",
       "patterns": [
-        { "name": "constant.character.escape.quirk", "match": "\\\\." }
+        {
+          "name": "constant.character.escape.quirk",
+          "match": "\\\\."
+        },
+        {
+          "name": "meta.embedded.line.quirk",
+          "begin": "\\$\\{",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.template-expression.begin.quirk"
+            }
+          },
+          "end": "\\}",
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.template-expression.end.quirk"
+            }
+          },
+          "patterns": [
+            {
+              "include": "$self"
+            }
+          ]
+        }
       ]
     },
     "functions": {
@@ -111,7 +170,9 @@
         {
           "match": "\\b([a-zA-Z_]\\w*)\\s*\\(",
           "captures": {
-            "1": { "name": "entity.name.function.call.quirk" }
+            "1": {
+              "name": "entity.name.function.call.quirk"
+            }
           }
         }
       ]
@@ -142,7 +203,15 @@
     },
     "comments": {
       "patterns": [
-        { "name": "comment.line.double-slash.quirk", "match": "//.*$" }
+        {
+          "name": "comment.block.documentation.quirk",
+          "begin": "^\\s*---\\s*$",
+          "end": "^\\s*---\\s*$"
+        },
+        {
+          "name": "comment.line.double-slash.quirk",
+          "match": "//.*$"
+        }
       ]
     }
   },

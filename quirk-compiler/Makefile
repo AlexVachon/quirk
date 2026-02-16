@@ -46,8 +46,7 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 $(RUNTIME_LIB): $(RUNTIME_SRC)
 	@mkdir -p $(BIN_DIR)
 	@echo "Compiling Runtime Library..."
-	# UPDATE: Use '$^' to compile ALL source files defined in RUNTIME_SRC
-	$(CC) $(CFLAGS) $^ -o $@
+	$(CC) $(CFLAGS) $^ -o $@ -lgc
 
 # Include dependency files
 -include $(DEPS)

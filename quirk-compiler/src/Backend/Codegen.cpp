@@ -144,6 +144,10 @@ class LLVMCodegen {
         Function* mainFunc = Function::Create(mainType, Function::ExternalLinkage, "main", TheModule.get());
         Builder.SetInsertPoint(BasicBlock::Create(Context, "entry", mainFunc));
         
+        FunctionCallee gcInit = TheModule->getOrInsertFunction("GC_init", 
+            FunctionType::get(Type::getVoidTy(Context), false));
+        Builder.CreateCall(gcInit);
+
         activeModuleAliases.clear();
         
         for (const auto& node : nodes) {

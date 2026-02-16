@@ -81,7 +81,9 @@ class StructGen {
         StructType* st = StructTypes[name];
         Value* allocSize = ConstantExpr::getSizeOf(st);
 
-        Function* mallocFunc = TheModule->getFunction("malloc");
+        FunctionCallee mallocFunc = TheModule->getOrInsertFunction("GC_malloc", 
+            FunctionType::get(Type::getInt8PtrTy(Context), {Type::getInt64Ty(Context)}, false));
+
         if (allocSize->getType()->getIntegerBitWidth() < 64)
             allocSize = Builder.CreateZExt(allocSize, Type::getInt64Ty(Context));
 
@@ -265,7 +267,9 @@ class StructGen {
         uint64_t bufSize = values.empty() ? 8 : values.size() * 8;
         Value* size = ConstantInt::get(Type::getInt64Ty(Context), bufSize);
 
-        Function* mallocFunc = TheModule->getFunction("malloc");
+        FunctionCallee mallocFunc = TheModule->getOrInsertFunction("GC_malloc", 
+            FunctionType::get(Type::getInt8PtrTy(Context), {Type::getInt64Ty(Context)}, false));
+            
         Value* buffer = Builder.CreateCall(mallocFunc, {size});
         Value* bufferPtr = Builder.CreateBitCast(buffer, PointerType::getUnqual(voidPtr));
 

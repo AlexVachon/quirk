@@ -235,7 +235,6 @@ class ControlFlowGen {
         exit(1);
     }
 
-    // --- NEW: Updated TryCatch to perform Runtime String Type Evaluation ---
     void generateTryCatch(
         TryCatchNode* node,
         Function* parentFunc,
@@ -247,18 +246,14 @@ class ControlFlowGen {
             BasicBlock::Create(Context, "try_block", parentFunc);
         BasicBlock* endBB = BasicBlock::Create(Context, "end_try", parentFunc);
 
-        // Initial setup: Get jump buffer and setjmp
         Value* jmpBuf =
             Builder.CreateCall(TheModule->getFunction("quirk_get_jmp_buf"));
         Value* setjmpRes =
             Builder.CreateCall(TheModule->getFunction("setjmp"), {jmpBuf});
 
-        // Check if we are entering from setjmp (exception thrown) or normal
-        // flow
         Value* isCatch = Builder.CreateICmpNE(
             setjmpRes, ConstantInt::get(Type::getInt32Ty(Context), 0));
 
-        // Create the first evaluation block in the chain
         BasicBlock* firstEvalBB =
             BasicBlock::Create(Context, "catch_eval_0", parentFunc);
         Builder.CreateCondBr(isCatch, firstEvalBB, tryBB);
@@ -276,9 +271,6 @@ class ControlFlowGen {
         // --- CATCH BLOCKS CHAIN ---
         BasicBlock* currentEvalBB = firstEvalBB;
 
-        // Assuming node->catchBlocks is a std::vector of CatchBlock structs
-        // Each CatchBlock has: std::vector<std::string> types, std::string
-        // varName, std::vector<std::unique_ptr<Node>> body
         for (size_t i = 0; i < node->catchBlocks.size(); ++i) {
             auto& cb = node->catchBlocks[i];
             Builder.SetInsertPoint(currentEvalBB);
@@ -286,7 +278,6 @@ class ControlFlowGen {
             Value* rawExc = Builder.CreateCall(
                 TheModule->getFunction("quirk_get_exception"));
 
-            // Setup type extraction (similar to previous version)
             Type* baseExcType =
                 PointerType::getUnqual(StructTypes["Exception"]);
             Value* baseExc = Builder.CreateBitCast(rawExc, baseExcType);
@@ -305,8 +296,6 @@ class ControlFlowGen {
                                              Type::getInt8PtrTy(Context)},
                                             false));
 
-            // 1. Gather ALL valid types for THIS catch block (including
-            // children for each listed type)
             std::vector<std::string> allValidTypes;
             for (const std::string& targetTypeName : cb.types) {
                 allValidTypes.push_back(targetTypeName);
@@ -330,7 +319,6 @@ class ControlFlowGen {
                 }
             }
 
-            // 2. Build the matching condition for this specific block
             Value* isMatch = ConstantInt::getFalse(Context);
             for (const std::string& vType : allValidTypes) {
                 Value* targetTypeStr = Builder.CreateGlobalStringPtr(vType);
@@ -354,8 +342,6 @@ class ControlFlowGen {
 
             // --- MATCH BODY ---
             Builder.SetInsertPoint(matchBodyBB);
-            // Cast to the first type mentioned in the catch for the local
-            // variable
             Type* catchTypeLLVM =
                 PointerType::getUnqual(StructTypes[cb.types[0]]);
             Value* castedExc = Builder.CreateBitCast(rawExc, catchTypeLLVM);
@@ -399,8 +385,6 @@ class ControlFlowGen {
         Builder.SetInsertPoint(endBB);
     }
 
-    // --- UPDATED: generateThrow now takes StructTypes and an initHelper for
-    // Strings ---
     void generateThrow(ThrowNode* node,
                        Function* parentFunc,
                        std::function<Value*(Node*)> exprHandler,
@@ -409,33 +393,39 @@ class ControlFlowGen {
                                             std::vector<Value*>&)> initHelper) {
         Value* excObj = exprHandler(node->expression.get());
 
-        // --- NEW: Inject File and Line into Exception memory ---
+        // --- INJECT METADATA INTO EXCEPTION ---
         if (StructTypes.count("Exception")) {
-            Type* baseExcType = PointerType::getUnqual(StructTypes["Exception"]);
+            Type* baseExcType =
+                PointerType::getUnqual(StructTypes["Exception"]);
             Value* baseExc = Builder.CreateBitCast(excObj, baseExcType);
 
             // 1. Set File (Index 2 in the Exception struct)
-            Value* fileFieldPtr = Builder.CreateStructGEP(StructTypes["Exception"], baseExc, 2);
-            std::string currentModule = node->moduleName.empty() ? "unknown_file" : node->moduleName;
+            Value* fileFieldPtr =
+                Builder.CreateStructGEP(StructTypes["Exception"], baseExc, 2);
+            std::string currentModule =
+                node->moduleName.empty() ? "unknown_file" : node->moduleName;
             Value* rawFileName = Builder.CreateGlobalStringPtr(currentModule);
+
             std::vector<Value*> fileArgs = {rawFileName};
-            Value* fileStrObj = initHelper("String", fileArgs);
+            Value* fileStrObj =
+                initHelper("String", fileArgs);
             Builder.CreateStore(fileStrObj, fileFieldPtr);
 
             // 2. Set Line (Index 3 in the Exception struct)
-            Value* lineFieldPtr = Builder.CreateStructGEP(StructTypes["Exception"], baseExc, 3);
-            Value* lineVal = ConstantInt::get(Type::getInt32Ty(Context), node->line);
+            Value* lineFieldPtr =
+                Builder.CreateStructGEP(StructTypes["Exception"], baseExc, 3);
+            Value* lineVal =
+                ConstantInt::get(Type::getInt32Ty(Context), node->line);
             Builder.CreateStore(lineVal, lineFieldPtr);
 
-            // 3. Set Function Name (Index 4 in the Exception struct)
-            Value* funcFieldPtr = Builder.CreateStructGEP(StructTypes["Exception"], baseExc, 4);
+            // 3. Set Callee Name (Index 4 in the Exception struct)
+            Value* calleeFieldPtr = Builder.CreateStructGEP(StructTypes["Exception"], baseExc, 4);
             // Grab the name of the function we are currently inside
-            Value* rawFuncName = Builder.CreateGlobalStringPtr(parentFunc->getName().str());
-            std::vector<Value*> funcArgs = {rawFuncName};
-            Value* funcStrObj = initHelper("String", funcArgs);
-            Builder.CreateStore(funcStrObj, funcFieldPtr);
+            Value* rawCalleeName = Builder.CreateGlobalStringPtr(parentFunc->getName().str());
+            std::vector<Value*> calleeArgs = {rawCalleeName};
+            Value* calleeStrObj = initHelper("String", calleeArgs);
+            Builder.CreateStore(calleeStrObj, calleeFieldPtr);
         }
-        // --- END NEW ---
 
         Value* rawExc =
             Builder.CreateBitCast(excObj, Type::getInt8PtrTy(Context));

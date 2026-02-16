@@ -7,7 +7,6 @@
 #include "StdMath.cpp"
 #include "StdPrimitives.cpp"
 #include "StdString.cpp"
-#include "StdExceptions.cpp"
 
 class ModuleRegistry {
     std::vector<QuirkModule*> modules;

@@ -19,7 +19,7 @@ struct Exception {
         
         code_line := String(raw_c_str)
 
-        return "Traceback (most recent call last):\n  File \"${self.file}\", line ${self.line}, in ${self.func_name}\n    ${code_line}\n${self.type}: ${self.message}"
+        return "Traceback (most recent call last):\n  File \"${self.file}\", line ${self.line}, in ${self.callee}\n    ${code_line}\n${self.type}: ${self.message}"
     }
 }
 

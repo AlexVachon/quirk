@@ -173,22 +173,24 @@ class ControlFlowGen {
 
     // --- NEW: Updated TryCatch to perform Runtime String Type Evaluation ---
     void generateTryCatch(TryCatchNode* node, Function* parentFunc,
-                          std::function<void(Node*)> stmtHandler,
-                          VariableGen* varGen,
-                          std::map<std::string, StructType*>& StructTypes,
-                          std::map<std::string, std::vector<std::string>>& structHierarchy) {
-        
+                      std::function<void(Node*)> stmtHandler,
+                      VariableGen* varGen,
+                      std::map<std::string, StructType*>& StructTypes,
+                      std::map<std::string, std::vector<std::string>>& structHierarchy) {
+                        
         BasicBlock* tryBB = BasicBlock::Create(Context, "try_block", parentFunc);
-        BasicBlock* catchEvalBB = BasicBlock::Create(Context, "catch_eval", parentFunc);
-        BasicBlock* catchMatchBB = BasicBlock::Create(Context, "catch_match", parentFunc);
-        BasicBlock* catchRethrowBB = BasicBlock::Create(Context, "catch_rethrow", parentFunc);
         BasicBlock* endBB = BasicBlock::Create(Context, "end_try", parentFunc);
 
+        // Initial setup: Get jump buffer and setjmp
         Value* jmpBuf = Builder.CreateCall(TheModule->getFunction("quirk_get_jmp_buf"));
         Value* setjmpRes = Builder.CreateCall(TheModule->getFunction("setjmp"), {jmpBuf});
 
+        // Check if we are entering from setjmp (exception thrown) or normal flow
         Value* isCatch = Builder.CreateICmpNE(setjmpRes, ConstantInt::get(Type::getInt32Ty(Context), 0));
-        Builder.CreateCondBr(isCatch, catchEvalBB, tryBB);
+        
+        // Create the first evaluation block in the chain
+        BasicBlock* firstEvalBB = BasicBlock::Create(Context, "catch_eval_0", parentFunc);
+        Builder.CreateCondBr(isCatch, firstEvalBB, tryBB);
 
         // --- TRY BLOCK ---
         Builder.SetInsertPoint(tryBB);
@@ -199,78 +201,88 @@ class ControlFlowGen {
             Builder.CreateBr(endBB);
         }
 
-        // --- CATCH EVALUATION BLOCK ---
-        Builder.SetInsertPoint(catchEvalBB);
-        Value* rawExc = Builder.CreateCall(TheModule->getFunction("quirk_get_exception"));
+        // --- CATCH BLOCKS CHAIN ---
+        BasicBlock* currentEvalBB = firstEvalBB;
         
-        if (!StructTypes.count("Exception") || !StructTypes.count("String")) {
-            std::cerr << "Fatal Error: 'Exception' or 'String' struct not loaded before Try/Catch." << std::endl;
-            exit(1);
-        }
+        // Assuming node->catchBlocks is a std::vector of CatchBlock structs
+        // Each CatchBlock has: std::vector<std::string> types, std::string varName, std::vector<std::unique_ptr<Node>> body
+        for (size_t i = 0; i < node->catchBlocks.size(); ++i) {
+            auto& cb = node->catchBlocks[i];
+            Builder.SetInsertPoint(currentEvalBB);
 
-        // 1. Extract the `type` String from the thrown Exception
-        Type* baseExcType = PointerType::getUnqual(StructTypes["Exception"]);
-        Value* baseExc = Builder.CreateBitCast(rawExc, baseExcType);
-        
-        // GEP to the first field (Index 0), which is `type: String`
-        Value* typeFieldPtr = Builder.CreateStructGEP(StructTypes["Exception"], baseExc, 0);
-        Value* typeStringObj = Builder.CreateLoad(PointerType::getUnqual(StructTypes["String"]), typeFieldPtr);
+            Value* rawExc = Builder.CreateCall(TheModule->getFunction("quirk_get_exception"));
+            
+            // Setup type extraction (similar to previous version)
+            Type* baseExcType = PointerType::getUnqual(StructTypes["Exception"]);
+            Value* baseExc = Builder.CreateBitCast(rawExc, baseExcType);
+            Value* typeFieldPtr = Builder.CreateStructGEP(StructTypes["Exception"], baseExc, 0);
+            Value* typeStringObj = Builder.CreateLoad(PointerType::getUnqual(StructTypes["String"]), typeFieldPtr);
+            Value* bufferPtr = Builder.CreateStructGEP(StructTypes["String"], typeStringObj, 0);
+            Value* runtimeTypeCStr = Builder.CreateLoad(Type::getInt8PtrTy(Context), bufferPtr);
 
-        // Extract the raw C-string buffer from the String object (Index 0 of String struct)
-        Value* bufferPtr = Builder.CreateStructGEP(StructTypes["String"], typeStringObj, 0);
-        Value* runtimeTypeCStr = Builder.CreateLoad(Type::getInt8PtrTy(Context), bufferPtr);
+            FunctionCallee strcmpFunc = TheModule->getOrInsertFunction("strcmp", 
+                FunctionType::get(Type::getInt32Ty(Context), {Type::getInt8PtrTy(Context), Type::getInt8PtrTy(Context)}, false));
 
-        FunctionCallee strcmpFunc = TheModule->getOrInsertFunction("strcmp", 
-            FunctionType::get(Type::getInt32Ty(Context), {Type::getInt8PtrTy(Context), Type::getInt8PtrTy(Context)}, false));
-
-        // 2. Determine all valid types this catch block should handle
-        std::vector<std::string> validTypes = { node->catchType };
-        for (const auto& pair : structHierarchy) {
-            std::function<bool(const std::string&)> inheritsFrom = [&](const std::string& t) {
-                if (t == node->catchType) return true;
-                if (structHierarchy.count(t)) {
-                    for (const auto& p : structHierarchy.at(t)) {
-                        if (inheritsFrom(p)) return true;
+            // 1. Gather ALL valid types for THIS catch block (including children for each listed type)
+            std::vector<std::string> allValidTypes;
+            for (const std::string& targetTypeName : cb.types) {
+                allValidTypes.push_back(targetTypeName);
+                for (const auto& pair : structHierarchy) {
+                    std::function<bool(const std::string&)> inheritsFrom = [&](const std::string& t) {
+                        if (t == targetTypeName) return true;
+                        if (structHierarchy.count(t)) {
+                            for (const auto& p : structHierarchy.at(t)) {
+                                if (inheritsFrom(p)) return true;
+                            }
+                        }
+                        return false;
+                    };
+                    if (inheritsFrom(pair.first) && pair.first != targetTypeName) {
+                        allValidTypes.push_back(pair.first);
                     }
                 }
-                return false;
-            };
-            if (inheritsFrom(pair.first) && pair.first != node->catchType) {
-                validTypes.push_back(pair.first);
             }
+
+            // 2. Build the matching condition for this specific block
+            Value* isMatch = ConstantInt::getFalse(Context);
+            for (const std::string& vType : allValidTypes) {
+                Value* targetTypeStr = Builder.CreateGlobalStringPtr(vType);
+                Value* cmpRes = Builder.CreateCall(strcmpFunc, {runtimeTypeCStr, targetTypeStr});
+                Value* isZero = Builder.CreateICmpEQ(cmpRes, ConstantInt::get(Type::getInt32Ty(Context), 0));
+                isMatch = Builder.CreateOr(isMatch, isZero);
+            }
+
+            BasicBlock* matchBodyBB = BasicBlock::Create(Context, "catch_match_" + std::to_string(i), parentFunc);
+            BasicBlock* nextEvalBB = (i + 1 < node->catchBlocks.size()) 
+                                    ? BasicBlock::Create(Context, "catch_eval_" + std::to_string(i+1), parentFunc)
+                                    : BasicBlock::Create(Context, "catch_rethrow", parentFunc);
+
+            Builder.CreateCondBr(isMatch, matchBodyBB, nextEvalBB);
+
+            // --- MATCH BODY ---
+            Builder.SetInsertPoint(matchBodyBB);
+            // Cast to the first type mentioned in the catch for the local variable
+            Type* catchTypeLLVM = PointerType::getUnqual(StructTypes[cb.types[0]]);
+            Value* castedExc = Builder.CreateBitCast(rawExc, catchTypeLLVM);
+            varGen->defineLocalVariable(cb.varName, castedExc);
+
+            for (auto& stmt : cb.body) stmtHandler(stmt.get());
+            
+            if (!Builder.GetInsertBlock()->getTerminator()) {
+                Builder.CreateBr(endBB);
+            }
+
+            currentEvalBB = nextEvalBB;
         }
 
-        // 3. Build the LLVM condition: (strcmp(type, "X") == 0) || (strcmp(type, "Y") == 0) ...
-        Value* isMatch = ConstantInt::getFalse(Context);
-        for (const std::string& vType : validTypes) {
-            Value* targetTypeStr = Builder.CreateGlobalStringPtr(vType);
-            Value* cmpRes = Builder.CreateCall(strcmpFunc, {runtimeTypeCStr, targetTypeStr});
-            Value* isZero = Builder.CreateICmpEQ(cmpRes, ConstantInt::get(Type::getInt32Ty(Context), 0));
-            isMatch = Builder.CreateOr(isMatch, isZero);
-        }
-
-        Builder.CreateCondBr(isMatch, catchMatchBB, catchRethrowBB);
-
-        // --- CATCH MATCH BLOCK ---
-        Builder.SetInsertPoint(catchMatchBB);
-        Type* catchType = PointerType::getUnqual(StructTypes[node->catchType]);
-        Value* castedExc = Builder.CreateBitCast(rawExc, catchType);
-        varGen->defineLocalVariable(node->catchVar, castedExc);
-
-        for (auto& stmt : node->catchBlock) stmtHandler(stmt.get());
-        
-        if (!Builder.GetInsertBlock()->getTerminator()) {
-            Builder.CreateBr(endBB);
-        }
-
-        // --- CATCH RETHROW BLOCK (If type didn't match) ---
-        Builder.SetInsertPoint(catchRethrowBB);
+        // --- FINAL RETHROW BLOCK ---
+        Builder.SetInsertPoint(currentEvalBB);
         Value* depth = Builder.CreateCall(TheModule->getFunction("quirk_get_try_depth"));
-        Value* hasCatch = Builder.CreateICmpSGE(depth, ConstantInt::get(Type::getInt32Ty(Context), 0));
+        Value* hasParentCatch = Builder.CreateICmpSGE(depth, ConstantInt::get(Type::getInt32Ty(Context), 0));
 
         BasicBlock* jumpBB = BasicBlock::Create(Context, "rethrow_jump", parentFunc);
         BasicBlock* crashBB = BasicBlock::Create(Context, "rethrow_crash", parentFunc);
-        Builder.CreateCondBr(hasCatch, jumpBB, crashBB);
+        Builder.CreateCondBr(hasParentCatch, jumpBB, crashBB);
 
         Builder.SetInsertPoint(jumpBB);
         Value* parentBuf = Builder.CreateCall(TheModule->getFunction("quirk_get_current_jmp_buf"));

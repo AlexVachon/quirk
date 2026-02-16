@@ -194,7 +194,6 @@ std::unique_ptr<Node> Parser::parseExpression(int min_precedence) {
                     advance();
                 }
                 
-                // ✨ FIX: Safely move unique_ptr into the struct
                 Arg newArg;
                 newArg.name = argName;
                 newArg.value = parseExpression(0);
@@ -343,7 +342,6 @@ std::unique_ptr<FunctionNode> Parser::parseFunction() {
         isExtern = true;
     }
 
-    // Check for DEFINE or INIT
     bool isInit = false;
     if (peek().type == TokenType::INIT) {
         advance();
@@ -356,7 +354,6 @@ std::unique_ptr<FunctionNode> Parser::parseFunction() {
     if (isInit) {
         name = "init";
     } else {
-        // FIXED: We must explicitly consume the IDENTIFIER token for the name
         if (peek().type == TokenType::IDENTIFIER) {
             name = advance().value;
         } else {
@@ -373,7 +370,6 @@ std::unique_ptr<FunctionNode> Parser::parseFunction() {
     while (peek().type != TokenType::RPAREN && !isAtEnd()) {
         Parameter param;
 
-        // 1. Check for Variadic '...'
         if (peek().type == TokenType::ELLIPSIS) {
             advance();
             param.isVariadic = true;
@@ -386,7 +382,6 @@ std::unique_ptr<FunctionNode> Parser::parseFunction() {
 
         param.name = advance().value;
 
-        // 2. Parse Type Annotation
         if (peek().type == TokenType::COLON) {
             advance();
             if (peek().type == TokenType::REF) {
@@ -400,9 +395,6 @@ std::unique_ptr<FunctionNode> Parser::parseFunction() {
             }
         }
 
-        // 3. Validation: Variadic arg must be List
-        // The fix is here: we pass `peek()` as the second argument to
-        // reportError
         if (param.isVariadic && param.type != "List") {
             reportError("Variadic argument must be typed as List (found '" +
                             param.type + "')",
@@ -443,7 +435,6 @@ std::unique_ptr<CallNode> Parser::parseCall() {
             advance();
         }
 
-        // ✨ FIX: Safely move unique_ptr into the struct
         Arg newArg;
         newArg.name = argName;
         newArg.value = parseExpression(0);
@@ -474,7 +465,6 @@ std::unique_ptr<ConstructorNode> Parser::parseConstructor() {
         std::string field = advance().value;
         consume(TokenType::COLON, "Expected ':'");
         
-        // ✨ FIX: Use ConstructorArg instead of Arg
         ConstructorArg newArg;
         newArg.fieldName = field;
         newArg.value = parseExpression(0);
@@ -500,36 +490,26 @@ std::unique_ptr<StructNode> Parser::parseStruct() {
                 node->parents.push_back(advance().value);
             } while (match(TokenType::COMMA));
         }
-        // --- UPDATED: Allow EXTERN / DEFINE / INIT ---
         else if (peek().type == TokenType::DEFINE ||
                  peek().type == TokenType::INIT ||
                  peek().type == TokenType::EXTERN) {
             bool isExtern = (peek().type == TokenType::EXTERN);
-
-            // Check if it is an init (either 'init' or 'extern init')
             bool isInit = (peek().type == TokenType::INIT) ||
                           (isExtern && pos + 1 < (int)tokens.size() &&
                            tokens[pos + 1].type == TokenType::INIT);
 
-            // parseFunction handles consuming 'extern', 'define', and 'init'
-            // tokens
             auto func = parseFunction();
             func->cls = node->name;
 
-            // Name Mangling
             if (isInit) {
                 func->name = node->name + "__init";
             } else {
-                // If user wrote 'extern define format', name becomes
-                // 'String_format'
                 func->name = node->name + "_" + func->name;
             }
 
-            // Safety catch for init naming
             if (!isInit && func->name.find("__init") != std::string::npos)
                 func->name = node->name + "__init";
 
-            // Static vs Instance logic (check for 'self')
             if (!func->parameters.empty() &&
                 func->parameters[0].name == "self") {
                 func->parameters.erase(func->parameters.begin());
@@ -539,7 +519,6 @@ std::unique_ptr<StructNode> Parser::parseStruct() {
             }
             extraNodes.push_back(std::move(func));
         }
-        // --- End Update ---
         else {
             std::string fName = advance().value;
             if (peek().type == TokenType::ASSIGN_INIT) {
@@ -561,27 +540,18 @@ std::unique_ptr<StructNode> Parser::parseStruct() {
     return node;
 }
 
-
 std::unique_ptr<Node> Parser::parseUse() {
     std::string path = "";
     std::vector<std::string> filters;
 
-    // Helper to parse the path "core.sys" -> "core/sys" OR ".sys" -> ".sys"
     auto parsePath = [&]() {
-        // 1. Handle Leading Dots (Relative Imports)
         while (match(TokenType::DOT)) {
             path += ".";
         }
-
-        // 2. Read first identifier segment
         if (peek().type == TokenType::IDENTIFIER) {
             path += advance().value;
         }
-
-        // 3. Read subsequent segments
         while (match(TokenType::DOT)) {
-            // We use '/' for internal representation of separators, 
-            // but keep the leading '.' for relative detection.
             path += "/" + advance().value;
         }
     };
@@ -607,14 +577,10 @@ std::unique_ptr<Node> Parser::parseWith() {
     consume(TokenType::WITH, "Expected 'with'");
     auto node = std::make_unique<WithNode>();
 
-    // 1. Parse Resource (e.g., File.open(...))
     node->resource = parseExpression(0);
-
-    // 2. Parse 'as <identifier>'
     consume(TokenType::AS, "Expected 'as'");
-    node->varName = advance().value;  // Get the variable name
+    node->varName = advance().value;
 
-    // 3. Parse Body
     consume(TokenType::LBRACE, "Expected '{'");
     while (peek().type != TokenType::RBRACE && !isAtEnd()) {
         node->body.push_back(parseStatement());
@@ -628,22 +594,17 @@ std::unique_ptr<Node> Parser::parseMapLiteral() {
     auto node = std::make_unique<MapLiteralNode>();
     consume(TokenType::LBRACE, "Expected '{'");
 
-    // Check for empty map "{}"
     if (match(TokenType::RBRACE)) {
         return node;
     }
 
     do {
-        // Parse Key
         auto key = parseExpression(0);
         consume(TokenType::COLON, "Expected ':' after map key");
-        
-        // Parse Value
         auto value = parseExpression(0);
-        
         node->elements.push_back({std::move(key), std::move(value)});
 
-    } while (match(TokenType::COMMA)); // Continue if comma found
+    } while (match(TokenType::COMMA));
 
     consume(TokenType::RBRACE, "Expected '}' after map literal");
     return node;
@@ -671,6 +632,7 @@ void Parser::reportError(const std::string& message, const Token& token) {
     exit(1);
 }
 
+// --- UPDATED: parseTry supports multiple catch blocks & multiple types ---
 std::unique_ptr<Node> Parser::parseTry() {
     consume(TokenType::TRY, "Expected 'try'");
     auto node = std::make_unique<TryCatchNode>();
@@ -681,18 +643,30 @@ std::unique_ptr<Node> Parser::parseTry() {
     }
     consume(TokenType::RBRACE, "Expected '}'");
 
-    consume(TokenType::CATCH, "Expected 'catch'");
-    consume(TokenType::LPAREN, "Expected '('");
-    node->catchVar = advance().value;
-    consume(TokenType::COLON, "Expected ':'");
-    node->catchType = advance().value;
-    consume(TokenType::RPAREN, "Expected ')'");
+    // Loop through 1 to N catch blocks
+    while (peek().type == TokenType::CATCH) {
+        advance(); // consume CATCH
+        CatchBlock cb;
+        
+        consume(TokenType::LPAREN, "Expected '('");
+        cb.varName = advance().value;
+        consume(TokenType::COLON, "Expected ':'");
+        
+        // Parse one or more comma-separated types
+        do {
+            cb.types.push_back(advance().value);
+        } while (match(TokenType::COMMA));
+        
+        consume(TokenType::RPAREN, "Expected ')'");
 
-    consume(TokenType::LBRACE, "Expected '{' after catch");
-    while (peek().type != TokenType::RBRACE && !isAtEnd()) {
-        node->catchBlock.push_back(parseStatement());
+        consume(TokenType::LBRACE, "Expected '{' after catch");
+        while (peek().type != TokenType::RBRACE && !isAtEnd()) {
+            cb.body.push_back(parseStatement());
+        }
+        consume(TokenType::RBRACE, "Expected '}'");
+        
+        node->catchBlocks.push_back(std::move(cb));
     }
-    consume(TokenType::RBRACE, "Expected '}'");
     
     return node;
 }

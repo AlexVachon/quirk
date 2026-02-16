@@ -1,18 +1,21 @@
-from core.exceptions use {Exception}
+from core.exceptions use { Exception}
 
 struct ProcessError {
     use Exception
 
     define __init(self, process_name: String, message: String) -> void {
-        self.type = "ProcessError"
-        self.message = "Process '${process_name}' failed: ${message}"
+        self.type ="ProcessError"
+        self.message ="Process '${process_name}' failed: ${message}"
     }
 }
 
 define main() -> void {
     try {
-        throw ProcessError("Nginx", "Port 80 is already in use.")
-    } catch (e: ProcessError) {
+        throw TypeError("Oops")
+        throw ProcessError("Nginx","Port 80 is already in use")
+    } catch (e: TypeError, ProcessError) {
         print(e)
+    } catch (e: Exception) {
+        print("Caught generic exception")
     }
 }

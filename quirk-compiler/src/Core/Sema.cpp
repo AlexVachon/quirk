@@ -34,8 +34,6 @@ bool Sema::analyze(const std::vector<std::unique_ptr<Node>> &nodes)
 
     for (const auto &node : nodes)
     {
-        // --- Context-Aware Analysis ---
-        // Ensure every module (including 'main') implicitly sees 'core'
         std::string mod = node->moduleName;
         if (moduleVisibility.find(mod) == moduleVisibility.end())
         {
@@ -64,7 +62,6 @@ void Sema::checkUse(UseNode *node)
     std::string sourceModule = static_cast<Node *>(node)->moduleName;
     VisibilityContext &ctx = moduleVisibility[sourceModule];
 
-    // 1. Handle "from module use { A, B }"
     if (!node->filterList.empty())
     {
         for (const auto &item : node->filterList)
@@ -79,7 +76,6 @@ void Sema::checkUse(UseNode *node)
             ctx.visibleSymbols.insert(item);
         }
     }
-    // 2. Handle "use module" (Namespace Import)
     else
     {
         std::string alias = node->moduleName;
@@ -197,13 +193,20 @@ void Sema::checkStatement(Node *node)
         for (auto& s : t->tryBlock) checkStatement(s.get());
         exitScope();
 
-        enterScope();
-        if (!structRegistry.count(t->catchType)) {
-            std::cerr << "Error: Catch type '" << t->catchType << "' is undefined." << std::endl; exit(1);
+        // --- UPDATED: Validate all catch blocks and all types within them ---
+        for (auto& cb : t->catchBlocks) {
+            enterScope();
+            for (const std::string& typeName : cb.types) {
+                if (!structRegistry.count(typeName)) {
+                    std::cerr << "Error: Catch type '" << typeName << "' is undefined." << std::endl; 
+                    exit(1);
+                }
+            }
+            // Define the local exception variable using the FIRST valid type in the catch signature
+            defineVariable(cb.varName, cb.types[0]);
+            for (auto& s : cb.body) checkStatement(s.get());
+            exitScope();
         }
-        defineVariable(t->catchVar, t->catchType);
-        for (auto& s : t->catchBlock) checkStatement(s.get());
-        exitScope();
     }
     else if (auto th = dynamic_cast<ThrowNode*>(node)) {
         std::string type = checkExpression(th->expression.get());
@@ -456,7 +459,6 @@ std::string Sema::checkCall(CallNode *node)
     {
         std::string objType = checkExpression(m->object.get());
 
-        // Safety fallback mapping just in case
         if (objType == "int") objType = "Int";
         else if (objType == "double") objType = "Double";
         else if (objType == "bool") objType = "Bool";
@@ -465,7 +467,6 @@ std::string Sema::checkCall(CallNode *node)
 
         if (structRegistry.count(objType))
         {
-            // --- NEW: Recursive method resolution for inheritance ---
             std::function<std::string(const std::string&)> searchMethod = [&](const std::string& currentType) -> std::string {
                 if (!structRegistry.count(currentType)) return "";
                 
@@ -475,7 +476,6 @@ std::string Sema::checkCall(CallNode *node)
                     return ret.empty() ? "void" : ret;
                 }
                 
-                // Recurse parents
                 for (const std::string& parent : structRegistry[currentType]->parents) {
                     std::string res = searchMethod(parent);
                     if (!res.empty()) return res;
@@ -486,7 +486,6 @@ std::string Sema::checkCall(CallNode *node)
 
             std::string retType = searchMethod(objType);
             if (!retType.empty()) return retType;
-            // --- END NEW ---
         }
     }
     return "void";
@@ -598,7 +597,6 @@ std::string Sema::resolveMember(const std::string &sName, const std::string &mNa
 {
     std::string lookupName = sName;
     
-    // Safety fallback just in case something sneaks through
     if (sName == "int") lookupName = "Int";
     else if (sName == "double") lookupName = "Double";
     else if (sName == "bool") lookupName = "Bool";
@@ -608,24 +606,20 @@ std::string Sema::resolveMember(const std::string &sName, const std::string &mNa
     if (!structRegistry.count(lookupName))
         return "unknown";
 
-    // --- NEW: Recursive field and method resolution for inheritance ---
     std::function<std::string(const std::string&)> searchMember = [&](const std::string& currentType) -> std::string {
         if (!structRegistry.count(currentType)) return "unknown";
         
         StructNode* st = structRegistry[currentType];
         
-        // 1. Check fields
         for (const auto &f : st->fields) {
             if (f.name == mName) return f.type;
         }
         
-        // 2. Check methods
         std::string funcName = currentType + "_" + mName;
         if (methodRegistry[currentType].count(funcName)) {
             return "method";
         }
         
-        // 3. Check parents recursively
         for (const std::string& parentName : st->parents) {
             std::string res = searchMember(parentName);
             if (res != "unknown") return res;
@@ -635,7 +629,6 @@ std::string Sema::resolveMember(const std::string &sName, const std::string &mNa
     };
 
     return searchMember(lookupName);
-    // --- END NEW ---
 }
 
 void Sema::checkWith(WithNode *node)
@@ -678,7 +671,6 @@ void Sema::checkReturn(ReturnNode *node)
         if (target == "Char" && actual == "Int") valid = true;
         if (actual == "Any") valid = true;
         
-        // Allow treating Int as a generic pointer or pointer arithmetic
         if (actual == "Int" && (targetIsPtr || structRegistry.count(target) || target == "Any")) valid = true;
 
         if (!valid)

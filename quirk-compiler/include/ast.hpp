@@ -376,19 +376,29 @@ class DeleteNode : public Node {
     }
 };
 
+struct CatchBlock {
+    std::string varName;
+    std::vector<std::string> types;
+    std::vector<std::unique_ptr<Node>> body;
+};
+
 class TryCatchNode : public Node {
    public:
     std::vector<std::unique_ptr<Node>> tryBlock;
-    std::string catchVar;
-    std::string catchType;
-    std::vector<std::unique_ptr<Node>> catchBlock;
+    std::vector<CatchBlock> catchBlocks;
 
     void print(int indent) const override {
         std::string space(indent, ' ');
         std::cout << space << "Try {" << std::endl;
         for (const auto& stmt : tryBlock) stmt->print(indent + 2);
-        std::cout << space << "} Catch (" << catchVar << ": " << catchType << ") {" << std::endl;
-        for (const auto& stmt : catchBlock) stmt->print(indent + 2);
+        for (const auto& cb : catchBlocks) {
+            std::cout << space << "} Catch (" << cb.varName << ": ";
+            for (size_t i = 0; i < cb.types.size(); ++i) {
+                std::cout << cb.types[i] << (i < cb.types.size() - 1 ? ", " : "");
+            }
+            std::cout << ") {" << std::endl;
+            for (const auto& stmt : cb.body) stmt->print(indent + 2);
+        }
         std::cout << space << "}" << std::endl;
     }
 };

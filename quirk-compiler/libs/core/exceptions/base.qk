@@ -1,4 +1,4 @@
-from ...sys use { get_source_line }
+from ...sys use { srcline }
 
 struct Exception {
     type: String
@@ -16,12 +16,10 @@ struct Exception {
     }
 
     define __str(self) -> String {
-        raw_c_str := get_source_line(self.file.buffer, self.line)
+        raw := srcline(self.file.buffer, self.line)
         
-        code_line := String(raw_c_str)
+        code_line := String(raw)
 
         return "Traceback (most recent call last):\n  File \"${self.file}\", line ${self.line}, in ${self.callee}\n    ${code_line}\n${self.type}: ${self.message}"
     }
 }
-
-extern define quirk_get_source_line(filename: Any, line: Int) -> Any

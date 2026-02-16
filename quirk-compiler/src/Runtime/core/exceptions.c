@@ -43,7 +43,7 @@ void quirk_unhandled_exception() {
     exit(1);
 }
 
-char* quirk_get_source_line(const char* filename, int target_line) {
+char* srcline(const char* filename, int target_line) {
     FILE* f = fopen(filename, "r");
     if (!f) return strdup("");
     

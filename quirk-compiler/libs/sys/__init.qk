@@ -1,10 +1,7 @@
-extern define quirk_get_source_line(filename: Any, line: Int) -> Any
+
+extern define srcline(filename: Any, line: Int) -> Any
 extern define exit(code: Int) -> void
 
-define get_source_line(filename: String, line: Int) -> String {
-    raw_c_str := quirk_get_source_line(filename.buffer, line)
-    return String(raw_c_str)
-}
 
 define terminate(code: Int) -> void {
     exit(code)

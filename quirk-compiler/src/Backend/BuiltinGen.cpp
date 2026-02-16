@@ -57,6 +57,24 @@ class BuiltinGen {
             Type::getVoidTy(Context), {Type::getInt32Ty(Context)}, false);
         Function::Create(exitType, Function::ExternalLinkage, "exit",
                          TheModule);
+
+        // Exception Handling Runtime
+        Type* voidPtrTy = Type::getInt8PtrTy(Context);
+        Type* i32Ty = Type::getInt32Ty(Context);
+        Type* voidTy = Type::getVoidTy(Context);
+
+        Function::Create(FunctionType::get(voidPtrTy, false), Function::ExternalLinkage, "quirk_get_jmp_buf", TheModule);
+        Function::Create(FunctionType::get(voidTy, false), Function::ExternalLinkage, "quirk_pop_try", TheModule);
+        Function::Create(FunctionType::get(voidTy, {voidPtrTy}, false), Function::ExternalLinkage, "quirk_set_exception", TheModule);
+        Function::Create(FunctionType::get(voidPtrTy, false), Function::ExternalLinkage, "quirk_get_exception", TheModule);
+        Function::Create(FunctionType::get(i32Ty, false), Function::ExternalLinkage, "quirk_get_try_depth", TheModule);
+        Function::Create(FunctionType::get(voidPtrTy, false), Function::ExternalLinkage, "quirk_get_current_jmp_buf", TheModule);
+        Function::Create(FunctionType::get(voidTy, false), Function::ExternalLinkage, "quirk_unhandled_exception", TheModule);
+
+        // Standard C setjmp/longjmp
+        Function* sj = Function::Create(FunctionType::get(i32Ty, {voidPtrTy}, false), Function::ExternalLinkage, "setjmp", TheModule);
+        sj->addFnAttr(Attribute::ReturnsTwice); // Crucial for LLVM optimization safety!
+        Function::Create(FunctionType::get(voidTy, {voidPtrTy, i32Ty}, false), Function::ExternalLinkage, "longjmp", TheModule);
     }
 
     bool isBuiltin(const std::string& name) {
@@ -189,26 +207,23 @@ class BuiltinGen {
                     }
                 } else {
                     // Generic Struct: Call __str()
-                    // This relies on StructGen::generateStrCall (added in previous step)
                     Value* strObj = structGen->generateStrCall(val, structName);
                     
                     if (strObj) {
-                        // Check if __str returned a String Object or cstring
+                        // ✨ UPDATED: __str now reliably returns a String object!
                         if (strObj->getType()->isPointerTy() &&
                             strObj->getType()->getPointerElementType()->isStructTy()) {
                             
-                            // It returned a String Object -> Unwrap buffer
                             Value* bufPtr = structGen->getMemberPtr(strObj, "buffer");
                             if (bufPtr) {
-                                Value* cStr = Builder.CreateLoad(
-                                    Type::getInt8PtrTy(Context), bufPtr);
+                                Value* cStr = Builder.CreateLoad(Type::getInt8PtrTy(Context), bufPtr);
                                 Value* fmt = Builder.CreateGlobalStringPtr("%s\n");
                                 Builder.CreateCall(printfFunc, {fmt, cStr});
                             }
                         } 
+                        // Fallback just in case an older C-runtime method returns raw i8*
                         else if (strObj->getType()->isPointerTy() && 
                                  strObj->getType()->getPointerElementType()->isIntegerTy(8)) {
-                            // It returned a raw cstring -> Print directly
                             Value* fmt = Builder.CreateGlobalStringPtr("%s\n");
                             Builder.CreateCall(printfFunc, {fmt, strObj});
                         }
@@ -220,16 +235,14 @@ class BuiltinGen {
                     }
                 }
             }
-            // 2. Int or Bool (Both are IntegerTy in LLVM)
+            // 2. Int, Bool, or Char (All are IntegerTy in LLVM)
             else if (type->isIntegerTy()) {
-                // Check if it's a 1-bit boolean
+                
+                // A. 1-bit boolean
                 if (type->getIntegerBitWidth() == 1) {
-                    // Call Bool_str which returns a String*
                     Function* boolStrFunc = TheModule->getFunction("Bool_str");
                     if (boolStrFunc) {
                         Value* strObj = Builder.CreateCall(boolStrFunc, {val});
-                        
-                        // Extract cstring from String Object and print
                         Value* bufPtr = structGen->getMemberPtr(strObj, "buffer");
                         if (bufPtr) {
                             Value* cStr = Builder.CreateLoad(Type::getInt8PtrTy(Context), bufPtr);
@@ -238,7 +251,12 @@ class BuiltinGen {
                         }
                     }
                 } 
-                // Regular 32-bit integer
+                // ✨ B. NEW: 8-bit Character
+                else if (type->getIntegerBitWidth() == 8) {
+                    Value* fmt = Builder.CreateGlobalStringPtr("%c\n"); // Print as char (%c)
+                    Builder.CreateCall(printfFunc, {fmt, val});
+                }
+                // C. Regular 32-bit integer
                 else {
                     Value* fmt = Builder.CreateGlobalStringPtr("%d\n");
                     Builder.CreateCall(printfFunc, {fmt, val});

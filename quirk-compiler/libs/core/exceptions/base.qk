@@ -1,0 +1,25 @@
+from ...sys use { srcline }
+
+struct Exception {
+    type: String
+    message: String
+    file: String
+    line: Int
+    callee: String
+
+    define __init(self, message: String) -> void {
+        self.type = "Exception"
+        self.message = message
+        self.file = ""
+        self.line = 0
+        self.callee = ""
+    }
+
+    define __str(self) -> String {
+        raw := srcline(self.file.buffer, self.line)
+        
+        code_line := String(raw)
+
+        return "Traceback (most recent call last):\n  File \"${self.file}\", line ${self.line}, in ${self.callee}\n    ${code_line}\n${self.type}: ${self.message}"
+    }
+}

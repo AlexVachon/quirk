@@ -1,12 +1,13 @@
 #include <iostream>
 #include <map>
 #include <string>
+#include <functional>
 #include "ast.hpp"
 #include "llvm/IR/IRBuilder.h"
 
 using namespace llvm;
 
-class BuiltinGen;  // Forward Declaration
+class BuiltinGen;  
 
 class StructGen {
     LLVMContext& Context;
@@ -16,44 +17,59 @@ class StructGen {
     BuiltinGen* builtinGen;
     std::map<std::string, std::vector<std::string>> structLayouts;
 
+    // --- NEW: Hierarchy tracking ---
+    std::map<std::string, std::vector<std::string>>* structHierarchy = nullptr;
+
    public:
-    StructGen(LLVMContext& ctx,
-              Module* mod,
-              IRBuilder<>& builder,
-              std::map<std::string, StructType*>& structs)
-        : Context(ctx),
-          TheModule(mod),
-          Builder(builder),
-          StructTypes(structs),
-          builtinGen(nullptr) {}
+    StructGen(LLVMContext& ctx, Module* mod, IRBuilder<>& builder, std::map<std::string, StructType*>& structs)
+        : Context(ctx), TheModule(mod), Builder(builder), StructTypes(structs), builtinGen(nullptr) {}
 
     void setBuiltinGen(BuiltinGen* bg) { builtinGen = bg; }
+    
+    // --- NEW: Setter for Hierarchy ---
+    void setHierarchy(std::map<std::string, std::vector<std::string>>* h) { structHierarchy = h; }
 
-    void registerStructLayout(const std::string& name,
-                              const std::vector<std::string>& fields) {
+    void registerStructLayout(const std::string& name, const std::vector<std::string>& fields) {
         structLayouts[name] = fields;
     }
 
     Value* generateStrCall(Value* objPtr, const std::string& structName) {
-        // 1. Construct method name (e.g., "Vector2___str")
-        // We try triple underscore first (standard for operators/str in your setup)
         std::string funcName = structName + "___str";
         Function* strFunc = TheModule->getFunction(funcName);
-
-        // 2. Fallback to double underscore
         if (!strFunc) {
             funcName = structName + "__str";
             strFunc = TheModule->getFunction(funcName);
         }
 
-        if (!strFunc) {
-            // If no __str exists, we cannot print it safely.
-            // Return null so the caller can fallback (e.g. print address)
-            return nullptr;
+        // --- NEW: Search parent __str methods recursively ---
+        if (!strFunc && structHierarchy && structHierarchy->count(structName)) {
+            std::function<Function*(const std::string&)> searchHierarchy = [&](const std::string& currentType) -> Function* {
+                if (structHierarchy->count(currentType)) {
+                    for (const std::string& parentName : structHierarchy->at(currentType)) {
+                        Function* foundFunc = TheModule->getFunction(parentName + "___str");
+                        if (!foundFunc) foundFunc = TheModule->getFunction(parentName + "__str");
+                        if (foundFunc) return foundFunc;
+                        
+                        foundFunc = searchHierarchy(parentName);
+                        if (foundFunc) return foundFunc;
+                    }
+                }
+                return nullptr;
+            };
+            strFunc = searchHierarchy(structName);
+        }
+        // --- END NEW ---
+
+        if (!strFunc) return nullptr;
+
+        // --- NEW: Cast 'self' pointer if using an inherited __str ---
+        Type* expectedSelfType = strFunc->getFunctionType()->getParamType(0);
+        Value* castedSelf = objPtr;
+        if (castedSelf->getType() != expectedSelfType) {
+            castedSelf = Builder.CreateBitCast(castedSelf, expectedSelfType);
         }
 
-        // 3. Call the function
-        return Builder.CreateCall(strFunc, {objPtr}, "str_res");
+        return Builder.CreateCall(strFunc, {castedSelf}, "str_res");
     }
 
     Value* allocateAndInit(const std::string& name, std::vector<Value*>& args) {
@@ -65,51 +81,80 @@ class StructGen {
         StructType* st = StructTypes[name];
         Value* allocSize = ConstantExpr::getSizeOf(st);
 
-        Function* mallocFunc = TheModule->getFunction("malloc");
-        if (!mallocFunc) {
-            std::cerr << "Error: malloc not found" << std::endl;
-            return nullptr;
-        }
+        FunctionCallee mallocFunc = TheModule->getOrInsertFunction("GC_malloc", 
+            FunctionType::get(Type::getInt8PtrTy(Context), {Type::getInt64Ty(Context)}, false));
 
         if (allocSize->getType()->getIntegerBitWidth() < 64)
-            allocSize =
-                Builder.CreateZExt(allocSize, Type::getInt64Ty(Context));
+            allocSize = Builder.CreateZExt(allocSize, Type::getInt64Ty(Context));
 
         Value* rawPtr = Builder.CreateCall(mallocFunc, {allocSize});
-        Value* objPtr =
-            Builder.CreateBitCast(rawPtr, PointerType::getUnqual(st));
+        Value* objPtr = Builder.CreateBitCast(rawPtr, PointerType::getUnqual(st));
 
-        // Detect __init function (e.g., Vector2__init)
         std::string initName = name + "__init";
         Function* initFunc = TheModule->getFunction(initName);
 
+        // --- NEW: Search parent constructors recursively ---
+        if (!initFunc && structHierarchy && structHierarchy->count(name)) {
+            std::function<Function*(const std::string&)> searchHierarchy = [&](const std::string& currentType) -> Function* {
+                if (structHierarchy->count(currentType)) {
+                    for (const std::string& parentName : structHierarchy->at(currentType)) {
+                        Function* foundFunc = TheModule->getFunction(parentName + "__init");
+                        if (foundFunc) return foundFunc;
+                        
+                        foundFunc = searchHierarchy(parentName);
+                        if (foundFunc) return foundFunc;
+                    }
+                }
+                return nullptr;
+            };
+            initFunc = searchHierarchy(name);
+        }
+        // --- END NEW ---
+
         if (initFunc) {
             std::vector<Value*> initArgs;
-            initArgs.push_back(objPtr); // 'self' argument
+            
+            // --- NEW: Cast 'self' pointer if using a parent constructor ---
+            Type* expectedSelfType = initFunc->getFunctionType()->getParamType(0);
+            Value* castedSelf = objPtr;
+            if (castedSelf->getType() != expectedSelfType) {
+                castedSelf = Builder.CreateBitCast(castedSelf, expectedSelfType);
+            }
+            initArgs.push_back(castedSelf);
+            // --- END NEW ---
 
-            // --- FIX START: Cast Arguments to Match Signature ---
             for (size_t i = 0; i < args.size(); i++) {
                 Value* argVal = args[i];
-
-                // Check if function has a defined parameter for this argument
-                // (Index i+1 because index 0 is 'self')
                 if (i + 1 < initFunc->arg_size()) {
                     Type* expectedType = initFunc->getFunctionType()->getParamType(i + 1);
 
                     if (argVal->getType() != expectedType) {
-                        // 1. Int -> Double (e.g. Vector2(3, 4))
-                        if (argVal->getType()->isIntegerTy() && expectedType->isDoubleTy()) {
+                        if (argVal->getType()->isPointerTy() && 
+                            argVal->getType()->getPointerElementType()->isIntegerTy(8) &&
+                            expectedType->isPointerTy() && 
+                            expectedType->getPointerElementType()->isStructTy()) {
+                            
+                            StructType* pst = cast<StructType>(expectedType->getPointerElementType());
+                            if (pst->getName() == "String") {
+                                if (name == "String") {
+                                    argVal = Builder.CreateBitCast(argVal, expectedType);
+                                } else {
+                                    std::vector<Value*> ctorArgs = {argVal};
+                                    argVal = allocateAndInit("String", ctorArgs);
+                                }
+                            } else {
+                                argVal = Builder.CreateBitCast(argVal, expectedType);
+                            }
+                        }
+                        else if (argVal->getType()->isIntegerTy() && expectedType->isDoubleTy()) {
                             argVal = Builder.CreateSIToFP(argVal, expectedType);
                         }
-                        // 2. Double -> Int
                         else if (argVal->getType()->isDoubleTy() && expectedType->isIntegerTy()) {
                             argVal = Builder.CreateFPToSI(argVal, expectedType);
                         }
-                        // 3. Pointer Casting (e.g. void* -> int*)
                         else if (argVal->getType()->isPointerTy() && expectedType->isPointerTy()) {
                             argVal = Builder.CreateBitCast(argVal, expectedType);
                         }
-                        // 4. Int -> Pointer (e.g. 0 -> NULL)
                         else if (argVal->getType()->isIntegerTy() && expectedType->isPointerTy()) {
                             argVal = Builder.CreateIntToPtr(argVal, expectedType);
                         }
@@ -117,26 +162,46 @@ class StructGen {
                 }
                 initArgs.push_back(argVal);
             }
-            // --- FIX END ----------------------------------------
-
             Builder.CreateCall(initFunc, initArgs);
         } else {
-            // Fallback: Manual Field Setting (No __init defined)
+            std::cerr << "[DEBUG] StructGen::allocateAndInit fallback - About to GEP fields manually\n";
             int idx = 0;
             for (auto val : args) {
                 if (idx >= (int)st->getNumElements()) break;
-                
-                // We should technically cast here too, but this path is rarely used
-                // for complex types in your current setup.
                 Value* fieldPtr = Builder.CreateStructGEP(st, objPtr, idx++);
+                
+                Type* expectedType = fieldPtr->getType()->getPointerElementType();
+                
+                if (val->getType() != expectedType) {
+                    if (val->getType()->isPointerTy() && 
+                        val->getType()->getPointerElementType()->isIntegerTy(8) &&
+                        expectedType->isPointerTy() && 
+                        expectedType->getPointerElementType()->isStructTy()) {
+                        
+                        StructType* pst = cast<StructType>(expectedType->getPointerElementType());
+                        std::string sName = pst->getName().str();
+                        if (sName.find("struct.") == 0) sName = sName.substr(7);
+                        
+                        if (sName == "String") {
+                            std::vector<Value*> boxArgs = {val};
+                            val = allocateAndInit("String", boxArgs); // Auto-box string!
+                        } else {
+                            val = Builder.CreateBitCast(val, expectedType);
+                        }
+                    }
+                    else if (val->getType()->isIntegerTy() && expectedType->isIntegerTy()) val = Builder.CreateIntCast(val, expectedType, true);
+                    else if (val->getType()->isPointerTy() && expectedType->isPointerTy()) val = Builder.CreateBitCast(val, expectedType);
+                    else if (val->getType()->isIntegerTy() && expectedType->isPointerTy()) val = Builder.CreateIntToPtr(val, expectedType);
+                    else if (val->getType()->isIntegerTy() && expectedType->isDoubleTy()) val = Builder.CreateSIToFP(val, expectedType);
+                }
+
                 Builder.CreateStore(val, fieldPtr);
             }
         }
         return objPtr;
     }
 
-    Value* generateConstructor(ConstructorNode* node,
-                               std::function<Value*(Node*)> exprHandler) {
+    Value* generateConstructor(ConstructorNode* node, std::function<Value*(Node*)> exprHandler) {
         std::vector<Value*> args;
         for (auto& arg : node->args) {
             args.push_back(exprHandler(arg.value.get()));
@@ -146,25 +211,21 @@ class StructGen {
 
     Value* generateMemberAccess(Value* objPtr, const std::string& memberName) {
         Value* ptr = getMemberPtr(objPtr, memberName);
-        if (!ptr)
-            return nullptr;
+        if (!ptr) return nullptr;
         return Builder.CreateLoad(ptr->getType()->getPointerElementType(), ptr);
     }
 
     Value* getMemberPtr(Value* objPtr, const std::string& memberName) {
-        if (!objPtr->getType()->isPointerTy() ||
+        if (!objPtr || !objPtr->getType()->isPointerTy() ||
             !objPtr->getType()->getPointerElementType()->isStructTy()) {
             return nullptr;
         }
-        StructType* st =
-            cast<StructType>(objPtr->getType()->getPointerElementType());
+
+        StructType* st = cast<StructType>(objPtr->getType()->getPointerElementType());
         std::string structName = st->getName().str();
 
-        // 1. Strip "struct." prefix
-        if (structName.find("struct.") == 0)
-            structName = structName.substr(7);
+        if (structName.find("struct.") == 0) structName = structName.substr(7);
 
-        // 2. Fuzzy Lookup
         std::string matchedName = "";
         if (structLayouts.count(structName)) {
             matchedName = structName;
@@ -177,10 +238,7 @@ class StructGen {
             }
         }
 
-        if (matchedName.empty()) {
-            std::cerr << "[StructGen Error] Layout not found for: " << structName << std::endl;
-            return nullptr;
-        }
+        if (matchedName.empty()) return nullptr;
 
         int index = -1;
         const auto& fields = structLayouts[matchedName];
@@ -191,47 +249,35 @@ class StructGen {
             }
         }
 
-        if (index == -1) {
-            std::cerr << "[StructGen Error] Field '" << memberName 
-                      << "' not found in struct '" << matchedName << "'" << std::endl;
-            return nullptr;
-        }
+        if (index == -1) return nullptr;
+
         return Builder.CreateStructGEP(st, objPtr, index);
     }
 
-    Value* generateListLiteral(ListLiteralNode* node,
-                               std::function<Value*(Node*)> exprHandler) {
+    Value* generateListLiteral(ListLiteralNode* node, std::function<Value*(Node*)> exprHandler) {
         std::vector<Value*> values;
-        for (auto& elem : node->elements) {
-            values.push_back(exprHandler(elem.get()));
-        }
+        for (auto& elem : node->elements) values.push_back(exprHandler(elem.get()));
         return createListFromValues(values);
     }
 
     Value* createListFromValues(std::vector<Value*> values) {
-        if (!StructTypes.count("List"))
-            return nullptr;
+        if (!StructTypes.count("List")) return nullptr;
 
         Type* voidPtr = Type::getInt8PtrTy(Context);
         uint64_t bufSize = values.empty() ? 8 : values.size() * 8;
         Value* size = ConstantInt::get(Type::getInt64Ty(Context), bufSize);
 
-        Function* mallocFunc = TheModule->getFunction("malloc");
+        FunctionCallee mallocFunc = TheModule->getOrInsertFunction("GC_malloc", 
+            FunctionType::get(Type::getInt8PtrTy(Context), {Type::getInt64Ty(Context)}, false));
+            
         Value* buffer = Builder.CreateCall(mallocFunc, {size});
-        Value* bufferPtr =
-            Builder.CreateBitCast(buffer, PointerType::getUnqual(voidPtr));
+        Value* bufferPtr = Builder.CreateBitCast(buffer, PointerType::getUnqual(voidPtr));
 
         for (size_t i = 0; i < values.size(); i++) {
-            Value* slot = Builder.CreateGEP(
-                voidPtr, bufferPtr,
-                ConstantInt::get(Type::getInt32Ty(Context), i));
+            Value* slot = Builder.CreateGEP(voidPtr, bufferPtr, ConstantInt::get(Type::getInt32Ty(Context), i));
             Value* v = values[i];
-
-            if (v->getType()->isIntegerTy()) {
-                v = Builder.CreateIntToPtr(v, voidPtr);
-            } else if (v->getType() != voidPtr) {
-                v = Builder.CreateBitCast(v, voidPtr);
-            }
+            if (v->getType()->isIntegerTy()) v = Builder.CreateIntToPtr(v, voidPtr);
+            else if (v->getType() != voidPtr) v = Builder.CreateBitCast(v, voidPtr);
             Builder.CreateStore(v, slot);
         }
 
@@ -241,8 +287,6 @@ class StructGen {
 
         Value* listObj = allocateAndInit("List", listArgs);
 
-        // Manually overwrite fields (since List__init allocates its own empty buffer)
-        // This replaces the empty buffer with our pre-filled one.
         Value* dataPtr = Builder.CreateStructGEP(StructTypes["List"], listObj, 0);
         Builder.CreateStore(buffer, dataPtr);
 
@@ -255,9 +299,7 @@ class StructGen {
         return listObj;
     }
     
-    // Support for Map Literals (Added previously)
-    Value* generateMapLiteral(MapLiteralNode* node, 
-                              std::function<Value*(Node*)> exprHandler) {
+    Value* generateMapLiteral(MapLiteralNode* node, std::function<Value*(Node*)> exprHandler) {
         std::vector<Value*> emptyArgs;
         Value* mapObj = allocateAndInit("Map", emptyArgs);
         if (!mapObj) return nullptr;
@@ -276,13 +318,9 @@ class StructGen {
             }
 
             Type* voidPtr = Type::getInt8PtrTy(Context);
-            if (val->getType()->isIntegerTy()) {
-                val = Builder.CreateIntToPtr(val, voidPtr);
-            } else if (val->getType()->isPointerTy() && val->getType() != voidPtr) {
-                val = Builder.CreateBitCast(val, voidPtr);
-            }
+            if (val->getType()->isIntegerTy()) val = Builder.CreateIntToPtr(val, voidPtr);
+            else if (val->getType()->isPointerTy() && val->getType() != voidPtr) val = Builder.CreateBitCast(val, voidPtr);
             else if (val->getType()->isDoubleTy()) {
-                // Double -> String -> Void*
                 Function* f2s = TheModule->getFunction("_float_to_str");
                 if (f2s) {
                     Value* rawStr = Builder.CreateCall(f2s, {val});
@@ -293,7 +331,6 @@ class StructGen {
                      val = Builder.CreateBitCast(val, voidPtr);
                 }
             }
-
             Builder.CreateCall(putFunc, {mapObj, key, val});
         }
         return mapObj;

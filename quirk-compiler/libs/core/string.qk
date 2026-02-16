@@ -1,26 +1,27 @@
 from core.collections.list use { List }
+from .primitives use { Char }
 
 struct StringIterator {
     str_ref: String
-    idx: int
+    idx: Int
 
     extern define __init(self, s: String)
-    extern define __has_next(self) -> bool
-    extern define __next(self) -> char
+    extern define __has_next(self) -> Bool
+    extern define __next(self) -> Char
 }
 
 struct String {
-    buffer: cstring
-    length: int
+    buffer: Any
+    length: Int
 
-    extern define __init(self, raw: cstring)
+    extern define __init(self, raw: Any)
     extern define __del(self)
 
     extern define __add(self, other: String) -> String
-    extern define __eq(self, other: String) -> bool
+    extern define __eq(self, other: String) -> Bool
     extern define __iter(self) -> StringIterator
-    extern define __str(self) -> cstring
-    extern define __repr(self) -> cstring
+    extern define __str(self) -> String
+    extern define __repr(self) -> String
 
     extern define format(self, ...args: List) -> String
     extern define format_map(self, keys: List, values: List) -> String
@@ -28,7 +29,7 @@ struct String {
     
     extern define split(self, delimiter: String) -> List
     extern define join(self, items: List) -> String
-    extern define substring(self, start: int, end: int) -> String
+    extern define substring(self, start: Int, end: Int) -> String
     
     extern define upper(self) -> String
     extern define lower(self) -> String
@@ -39,39 +40,39 @@ struct String {
 
     extern define encode(self) -> String
 
-    extern define count(self, sub: String) -> int
-    extern define startswith(self, prefix: String) -> bool
-    extern define endswith(self, suffix: String) -> bool
-    extern define find(self, sub: String) -> int
-    extern define index(self, sub: String) -> int
-    extern define contains(self, sub: String) -> bool
+    extern define count(self, sub: String) -> Int
+    extern define startswith(self, prefix: String) -> Bool
+    extern define endswith(self, suffix: String) -> Bool
+    extern define find(self, sub: String) -> Int
+    extern define index(self, sub: String) -> Int
+    extern define contains(self, sub: String) -> Bool
 
     extern define replace(self, old: String, new: String) -> String
     extern define remove(self, sub: String) -> String
-    extern define repeat(self, n: int) -> String
+    extern define repeat(self, n: Int) -> String
     extern define reverse(self) -> String
 
-    extern define zfill(self, width: int) -> String
-    extern define ljust(self, width: int, pad: String) -> String
-    extern define rjust(self, width: int, pad: String) -> String
-    extern define center(self, width: int, pad: String) -> String
+    extern define zfill(self, width: Int) -> String
+    extern define ljust(self, width: Int, pad: String) -> String
+    extern define rjust(self, width: Int, pad: String) -> String
+    extern define center(self, width: Int, pad: String) -> String
 
     extern define trim(self) -> String
     extern define lstrip(self) -> String
     extern define rstrip(self) -> String
 
-    extern define is_alpha(self) -> bool
-    extern define is_digit(self) -> bool
-    extern define is_space(self) -> bool
+    extern define is_alpha(self) -> Bool
+    extern define is_digit(self) -> Bool
+    extern define is_space(self) -> Bool
 
-    extern define to_int(self) -> int
-    extern define to_float(self) -> double
+    extern define to_int(self) -> Int
+    extern define to_float(self) -> Double
     
     extern define lines(self) -> List
 
-    extern define distance(self, other: String) -> int
+    extern define distance(self, other: String) -> Int
 
-    define empty(self) -> bool { return self.length == 0 }
+    define empty(self) -> Bool { return self.length == 0 }
 }
 
-extern define _float_to_str(val: double) -> cstring
+extern define _float_to_str(val: Double) -> String

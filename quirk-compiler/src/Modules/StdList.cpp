@@ -1,6 +1,6 @@
-#include "ApexModule.hpp"
+#include "QuirkModule.hpp"
 
-class StdListModule : public ApexModule {
+class StdListModule : public QuirkModule {
    public:
     void registerFunctions(
         Module* module,

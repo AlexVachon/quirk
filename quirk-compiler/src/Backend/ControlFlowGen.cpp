@@ -1,7 +1,7 @@
-#include "llvm/IR/IRBuilder.h"
-#include "ast.hpp"
 #include <functional>
 #include <iostream>
+#include "ast.hpp"
+#include "llvm/IR/IRBuilder.h"
 
 #include "VariableGen.cpp"
 
@@ -9,11 +9,10 @@ using namespace llvm;
 
 class ControlFlowGen {
     LLVMContext& Context;
-    Module* TheModule;  // Added Module
+    Module* TheModule;
     IRBuilder<>& Builder;
 
    public:
-    // Update Constructor
     ControlFlowGen(LLVMContext& ctx, Module* mod, IRBuilder<>& build)
         : Context(ctx), TheModule(mod), Builder(build) {}
 
@@ -35,6 +34,7 @@ class ControlFlowGen {
             stmtHandler(stmt.get());
         if (!Builder.GetInsertBlock()->getTerminator())
             Builder.CreateBr(mergeBB);
+
         for (size_t i = 0; i < node->elIfBranches.size(); ++i) {
             parentFunc->getBasicBlockList().push_back(nextBB);
             Builder.SetInsertPoint(nextBB);
@@ -94,36 +94,24 @@ class ControlFlowGen {
                                           std::vector<Value*>&)> initHelper,
                      std::function<void(Node*)> stmtHandler,
                      VariableGen* varGen) {
-        // 1. Evaluate the iterable expression (e.g., variable 'f')
         Value* iterable = exprHandler(node->iterable.get());
         if (!iterable)
             return;
 
-        // --- [CRITICAL FIX START] ---
-        // Auto-Dereference: If the iterable is a pointer-to-pointer (e.g., a
-        // local variable allocated on the stack like %File**), we must load it
-        // to get the actual object pointer (%File*) expected by the iterator
-        // functions.
         if (iterable->getType()->isPointerTy() &&
             iterable->getType()->getPointerElementType()->isPointerTy()) {
-            iterable = Builder.CreateLoad(iterable->getType()->getPointerElementType(), iterable, "iterable_load");
+            iterable =
+                Builder.CreateLoad(iterable->getType()->getPointerElementType(),
+                                   iterable, "iterable_load");
         }
-        // --- [CRITICAL FIX END] ---
 
-        // 2. GENERIC STRUCT ITERATOR (via __iter)
-        // Now this check will correctly identify 'File*' as a Struct Pointer
         if (iterable->getType()->isPointerTy() &&
             iterable->getType()->getPointerElementType()->isStructTy()) {
             StructType* st =
                 cast<StructType>(iterable->getType()->getPointerElementType());
             std::string structName = st->getName().str();
 
-            // A. Call __iter() -> returns Iterator Struct
-            // Try triple underscore first (standard mangling: Struct + "_" +
-            // "__iter")
             Function* iterFunc = TheModule->getFunction(structName + "___iter");
-
-            // Fallback: try double underscore
             if (!iterFunc)
                 iterFunc = TheModule->getFunction(structName + "__iter");
 
@@ -133,11 +121,8 @@ class ControlFlowGen {
                 exit(1);
             }
 
-            // This call now receives the correct %File* (not %File**)
             Value* iteratorObj =
                 Builder.CreateCall(iterFunc, {iterable}, "iter");
-
-            // B. Get iterator type info
             StructType* iterStructType = cast<StructType>(
                 iteratorObj->getType()->getPointerElementType());
             std::string iterName = iterStructType->getName().str();
@@ -152,7 +137,6 @@ class ControlFlowGen {
             Builder.CreateBr(condBB);
             Builder.SetInsertPoint(condBB);
 
-            // C. Call has_next()
             Function* hasNextFunc =
                 TheModule->getFunction(iterName + "___has_next");
             if (!hasNextFunc)
@@ -160,8 +144,7 @@ class ControlFlowGen {
 
             if (!hasNextFunc) {
                 std::cerr << "Error: Iterator '" << iterName
-                          << "' missing __has_next() or _has_next()."
-                          << std::endl;
+                          << "' missing __has_next()." << std::endl;
                 exit(1);
             }
             Value* hasNext =
@@ -169,15 +152,13 @@ class ControlFlowGen {
             Builder.CreateCondBr(hasNext, bodyBB, afterBB);
 
             Builder.SetInsertPoint(bodyBB);
-
-            // D. Call next()
             Function* nextFunc = TheModule->getFunction(iterName + "___next");
             if (!nextFunc)
                 nextFunc = TheModule->getFunction(iterName + "__next");
 
             if (!nextFunc) {
                 std::cerr << "Error: Iterator '" << iterName
-                          << "' missing __next() or _next()." << std::endl;
+                          << "' missing __next()." << std::endl;
                 exit(1);
             }
             Value* item = Builder.CreateCall(nextFunc, {iteratorObj}, "item");
@@ -189,19 +170,15 @@ class ControlFlowGen {
 
             if (!Builder.GetInsertBlock()->getTerminator())
                 Builder.CreateBr(condBB);
-
             Builder.SetInsertPoint(afterBB);
             return;
         }
 
-        // 3. FALLBACK: RAW STRING ITERATION (Auto-box to String struct)
         if (iterable->getType()->isPointerTy() &&
             iterable->getType()->getPointerElementType()->isIntegerTy(8)) {
-            // Auto-box: raw string -> String struct
             std::vector<Value*> args = {iterable};
             Value* stringObj = initHelper("String", args);
 
-            // Replicate Iterator Logic for String
             Function* iterFunc = TheModule->getFunction("String___iter");
             if (!iterFunc)
                 iterFunc = TheModule->getFunction("String__iter");
@@ -214,7 +191,6 @@ class ControlFlowGen {
 
             Value* iteratorObj =
                 Builder.CreateCall(iterFunc, {stringObj}, "iter");
-
             StructType* iterStructType = cast<StructType>(
                 iteratorObj->getType()->getPointerElementType());
             std::string iterName = iterStructType->getName().str();
@@ -255,8 +231,228 @@ class ControlFlowGen {
             return;
         }
 
-        std::cerr << "Error: Object is not iterable (must implement __iter or "
-                  << "be a raw string)." << std::endl;
+        std::cerr << "Error: Object is not iterable." << std::endl;
         exit(1);
+    }
+
+    void generateTryCatch(
+        TryCatchNode* node,
+        Function* parentFunc,
+        std::function<void(Node*)> stmtHandler,
+        VariableGen* varGen,
+        std::map<std::string, StructType*>& StructTypes,
+        std::map<std::string, std::vector<std::string>>& structHierarchy) {
+        BasicBlock* tryBB =
+            BasicBlock::Create(Context, "try_block", parentFunc);
+        BasicBlock* endBB = BasicBlock::Create(Context, "end_try", parentFunc);
+
+        Value* jmpBuf =
+            Builder.CreateCall(TheModule->getFunction("quirk_get_jmp_buf"));
+        Value* setjmpRes =
+            Builder.CreateCall(TheModule->getFunction("setjmp"), {jmpBuf});
+
+        Value* isCatch = Builder.CreateICmpNE(
+            setjmpRes, ConstantInt::get(Type::getInt32Ty(Context), 0));
+
+        BasicBlock* firstEvalBB =
+            BasicBlock::Create(Context, "catch_eval_0", parentFunc);
+        Builder.CreateCondBr(isCatch, firstEvalBB, tryBB);
+
+        // --- TRY BLOCK ---
+        Builder.SetInsertPoint(tryBB);
+        for (auto& stmt : node->tryBlock)
+            stmtHandler(stmt.get());
+
+        if (!Builder.GetInsertBlock()->getTerminator()) {
+            Builder.CreateCall(TheModule->getFunction("quirk_pop_try"));
+            Builder.CreateBr(endBB);
+        }
+
+        // --- CATCH BLOCKS CHAIN ---
+        BasicBlock* currentEvalBB = firstEvalBB;
+
+        for (size_t i = 0; i < node->catchBlocks.size(); ++i) {
+            auto& cb = node->catchBlocks[i];
+            Builder.SetInsertPoint(currentEvalBB);
+
+            Value* rawExc = Builder.CreateCall(
+                TheModule->getFunction("quirk_get_exception"));
+
+            Type* baseExcType =
+                PointerType::getUnqual(StructTypes["Exception"]);
+            Value* baseExc = Builder.CreateBitCast(rawExc, baseExcType);
+            Value* typeFieldPtr =
+                Builder.CreateStructGEP(StructTypes["Exception"], baseExc, 0);
+            Value* typeStringObj = Builder.CreateLoad(
+                PointerType::getUnqual(StructTypes["String"]), typeFieldPtr);
+            Value* bufferPtr = Builder.CreateStructGEP(StructTypes["String"],
+                                                       typeStringObj, 0);
+            Value* runtimeTypeCStr =
+                Builder.CreateLoad(Type::getInt8PtrTy(Context), bufferPtr);
+
+            FunctionCallee strcmpFunc = TheModule->getOrInsertFunction(
+                "strcmp", FunctionType::get(Type::getInt32Ty(Context),
+                                            {Type::getInt8PtrTy(Context),
+                                             Type::getInt8PtrTy(Context)},
+                                            false));
+
+            std::vector<std::string> allValidTypes;
+            for (const std::string& targetTypeName : cb.types) {
+                allValidTypes.push_back(targetTypeName);
+                for (const auto& pair : structHierarchy) {
+                    std::function<bool(const std::string&)> inheritsFrom =
+                        [&](const std::string& t) {
+                            if (t == targetTypeName)
+                                return true;
+                            if (structHierarchy.count(t)) {
+                                for (const auto& p : structHierarchy.at(t)) {
+                                    if (inheritsFrom(p))
+                                        return true;
+                                }
+                            }
+                            return false;
+                        };
+                    if (inheritsFrom(pair.first) &&
+                        pair.first != targetTypeName) {
+                        allValidTypes.push_back(pair.first);
+                    }
+                }
+            }
+
+            Value* isMatch = ConstantInt::getFalse(Context);
+            for (const std::string& vType : allValidTypes) {
+                Value* targetTypeStr = Builder.CreateGlobalStringPtr(vType);
+                Value* cmpRes = Builder.CreateCall(
+                    strcmpFunc, {runtimeTypeCStr, targetTypeStr});
+                Value* isZero = Builder.CreateICmpEQ(
+                    cmpRes, ConstantInt::get(Type::getInt32Ty(Context), 0));
+                isMatch = Builder.CreateOr(isMatch, isZero);
+            }
+
+            BasicBlock* matchBodyBB = BasicBlock::Create(
+                Context, "catch_match_" + std::to_string(i), parentFunc);
+            BasicBlock* nextEvalBB =
+                (i + 1 < node->catchBlocks.size())
+                    ? BasicBlock::Create(Context,
+                                         "catch_eval_" + std::to_string(i + 1),
+                                         parentFunc)
+                    : BasicBlock::Create(Context, "catch_rethrow", parentFunc);
+
+            Builder.CreateCondBr(isMatch, matchBodyBB, nextEvalBB);
+
+            // --- MATCH BODY ---
+            Builder.SetInsertPoint(matchBodyBB);
+            Type* catchTypeLLVM =
+                PointerType::getUnqual(StructTypes[cb.types[0]]);
+            Value* castedExc = Builder.CreateBitCast(rawExc, catchTypeLLVM);
+            varGen->defineLocalVariable(cb.varName, castedExc);
+
+            for (auto& stmt : cb.body)
+                stmtHandler(stmt.get());
+
+            if (!Builder.GetInsertBlock()->getTerminator()) {
+                Builder.CreateBr(endBB);
+            }
+
+            currentEvalBB = nextEvalBB;
+        }
+
+        // --- FINAL RETHROW BLOCK ---
+        Builder.SetInsertPoint(currentEvalBB);
+        Value* depth =
+            Builder.CreateCall(TheModule->getFunction("quirk_get_try_depth"));
+        Value* hasParentCatch = Builder.CreateICmpSGE(
+            depth, ConstantInt::get(Type::getInt32Ty(Context), 0));
+
+        BasicBlock* jumpBB =
+            BasicBlock::Create(Context, "rethrow_jump", parentFunc);
+        BasicBlock* crashBB =
+            BasicBlock::Create(Context, "rethrow_crash", parentFunc);
+        Builder.CreateCondBr(hasParentCatch, jumpBB, crashBB);
+
+        Builder.SetInsertPoint(jumpBB);
+        Value* parentBuf = Builder.CreateCall(
+            TheModule->getFunction("quirk_get_current_jmp_buf"));
+        Builder.CreateCall(
+            TheModule->getFunction("longjmp"),
+            {parentBuf, ConstantInt::get(Type::getInt32Ty(Context), 1)});
+        Builder.CreateUnreachable();
+
+        Builder.SetInsertPoint(crashBB);
+        Builder.CreateCall(TheModule->getFunction("quirk_unhandled_exception"));
+        Builder.CreateUnreachable();
+
+        Builder.SetInsertPoint(endBB);
+    }
+
+    void generateThrow(ThrowNode* node,
+                       Function* parentFunc,
+                       std::function<Value*(Node*)> exprHandler,
+                       std::map<std::string, StructType*>& StructTypes,
+                       std::function<Value*(const std::string&,
+                                            std::vector<Value*>&)> initHelper) {
+        Value* excObj = exprHandler(node->expression.get());
+
+        // --- INJECT METADATA INTO EXCEPTION ---
+        if (StructTypes.count("Exception")) {
+            Type* baseExcType =
+                PointerType::getUnqual(StructTypes["Exception"]);
+            Value* baseExc = Builder.CreateBitCast(excObj, baseExcType);
+
+            // 1. Set File (Index 2 in the Exception struct)
+            Value* fileFieldPtr =
+                Builder.CreateStructGEP(StructTypes["Exception"], baseExc, 2);
+            std::string currentModule =
+                node->moduleName.empty() ? "unknown_file" : node->moduleName;
+            Value* rawFileName = Builder.CreateGlobalStringPtr(currentModule);
+
+            std::vector<Value*> fileArgs = {rawFileName};
+            Value* fileStrObj =
+                initHelper("String", fileArgs);
+            Builder.CreateStore(fileStrObj, fileFieldPtr);
+
+            // 2. Set Line (Index 3 in the Exception struct)
+            Value* lineFieldPtr =
+                Builder.CreateStructGEP(StructTypes["Exception"], baseExc, 3);
+            Value* lineVal =
+                ConstantInt::get(Type::getInt32Ty(Context), node->line);
+            Builder.CreateStore(lineVal, lineFieldPtr);
+
+            // 3. Set Callee Name (Index 4 in the Exception struct)
+            Value* calleeFieldPtr = Builder.CreateStructGEP(StructTypes["Exception"], baseExc, 4);
+            // Grab the name of the function we are currently inside
+            Value* rawCalleeName = Builder.CreateGlobalStringPtr(parentFunc->getName().str());
+            std::vector<Value*> calleeArgs = {rawCalleeName};
+            Value* calleeStrObj = initHelper("String", calleeArgs);
+            Builder.CreateStore(calleeStrObj, calleeFieldPtr);
+        }
+
+        Value* rawExc =
+            Builder.CreateBitCast(excObj, Type::getInt8PtrTy(Context));
+        Builder.CreateCall(TheModule->getFunction("quirk_set_exception"),
+                           {rawExc});
+
+        Value* depth =
+            Builder.CreateCall(TheModule->getFunction("quirk_get_try_depth"));
+        Value* hasCatch = Builder.CreateICmpSGE(
+            depth, ConstantInt::get(Type::getInt32Ty(Context), 0));
+
+        BasicBlock* jumpBB =
+            BasicBlock::Create(Context, "do_longjmp", parentFunc);
+        BasicBlock* crashBB =
+            BasicBlock::Create(Context, "do_crash", parentFunc);
+        Builder.CreateCondBr(hasCatch, jumpBB, crashBB);
+
+        Builder.SetInsertPoint(jumpBB);
+        Value* activeBuf = Builder.CreateCall(
+            TheModule->getFunction("quirk_get_current_jmp_buf"));
+        Builder.CreateCall(
+            TheModule->getFunction("longjmp"),
+            {activeBuf, ConstantInt::get(Type::getInt32Ty(Context), 1)});
+        Builder.CreateUnreachable();
+
+        Builder.SetInsertPoint(crashBB);
+        Builder.CreateCall(TheModule->getFunction("quirk_unhandled_exception"));
+        Builder.CreateUnreachable();
     }
 };

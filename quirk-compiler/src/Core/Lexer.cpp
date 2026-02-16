@@ -174,6 +174,12 @@ Token Lexer::nextToken()
             return {TokenType::TRUE, ident, line};
         if (ident == "false")
             return {TokenType::FALSE, ident, line};
+        if (ident == "try")
+            return {TokenType::TRY, ident, line};
+        if (ident == "catch")
+            return {TokenType::CATCH, ident, line};
+        if (ident == "throw")
+            return {TokenType::THROW, ident, line};
 
         return {TokenType::IDENTIFIER, ident, line};
     }
@@ -434,15 +440,29 @@ void Lexer::tokenizeString()
         tokenBuffer.push_back({TokenType::IDENTIFIER, "format", startLine});
         tokenBuffer.push_back({TokenType::LPAREN, "(", startLine});
 
+        // --- THE FIX: Replace your current for-loop with this one ---
         for (size_t i = 0; i < args.size(); i++)
         {
-            tokenBuffer.push_back({TokenType::IDENTIFIER, args[i], startLine});
+            // Spin up a sub-lexer to correctly tokenize the inner expression!
+            Lexer subLexer(args[i]);
+            std::vector<Token> subTokens = subLexer.tokenize();
+
+            for (const auto &t : subTokens)
+            {
+                if (t.type != TokenType::EOF_TOKEN)
+                {
+                    Token adjustedToken = t;
+                    adjustedToken.line = startLine; // Keep error reporting accurate
+                    tokenBuffer.push_back(adjustedToken);
+                }
+            }
 
             if (i < args.size() - 1)
             {
                 tokenBuffer.push_back({TokenType::COMMA, ",", startLine});
             }
         }
+        // -----------------------------------------------------------
 
         tokenBuffer.push_back({TokenType::RPAREN, ")", startLine});
     }

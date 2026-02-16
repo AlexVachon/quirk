@@ -1,7 +1,9 @@
 # Compiler settings
+LLVM_CONFIG = llvm-config-14
+
 CXX = g++
-CXXFLAGS = -std=c++17 -Wall -Iinclude $(shell llvm-config --cppflags) -MMD -MP
-LDFLAGS = $(shell llvm-config --ldflags --libs all --system-libs)
+CXXFLAGS = -std=c++17 -Wall -Iinclude $(shell $(LLVM_CONFIG) --cppflags) -MMD -MP
+LDFLAGS = $(shell $(LLVM_CONFIG) --ldflags --libs all --system-libs)
 
 # C Runtime Compiler (Standard GCC)
 CC = gcc
@@ -44,8 +46,7 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 $(RUNTIME_LIB): $(RUNTIME_SRC)
 	@mkdir -p $(BIN_DIR)
 	@echo "Compiling Runtime Library..."
-	# UPDATE: Use '$^' to compile ALL source files defined in RUNTIME_SRC
-	$(CC) $(CFLAGS) $^ -o $@
+	$(CC) $(CFLAGS) $^ -o $@ -lgc
 
 # Include dependency files
 -include $(DEPS)

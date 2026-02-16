@@ -7,7 +7,8 @@
 
 class Parser {
     const std::vector<Token>& tokens; 
-    const std::string& source;       
+    const std::string& source;
+    std::string filePath;
     int pos = 0;
     
     std::vector<std::unique_ptr<Node>> extraNodes; 
@@ -15,7 +16,7 @@ class Parser {
     [[noreturn]] void reportError(const std::string& message, const Token& token);
 
 public:
-    Parser(const std::vector<Token>& tokens, const std::string& source);
+    Parser(const std::vector<Token>& tokens, const std::string& source, const std::string& filePath = "unknown_file");
 
     std::vector<std::unique_ptr<Node>> parse();
 
@@ -36,6 +37,8 @@ private:
     std::unique_ptr<Node> parseFor();
     std::unique_ptr<Node> parseUse();
     std::unique_ptr<Node> parseWith();
+    std::unique_ptr<Node> parseTry();
+    std::unique_ptr<Node> parseThrow();
     
     // Definition parsing
     std::unique_ptr<FunctionNode> parseFunction();

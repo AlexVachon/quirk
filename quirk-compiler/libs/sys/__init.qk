@@ -1,0 +1,8 @@
+
+extern define srcline(filename: Any, line: Int) -> Any
+extern define exit(code: Int) -> void
+
+
+define terminate(code: Int) -> void {
+    exit(code)
+}

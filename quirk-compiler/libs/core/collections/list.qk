@@ -2,32 +2,33 @@ from core.string use { String }
 
 struct ListIterator {
     list_ref: List
-    idx: int
+    idx: Int
 
     extern define __init(self, l: List)
-    extern define __has_next(self) -> bool
-    extern define __next(self) -> any
+    extern define __has_next(self) -> Bool
+    extern define __next(self) -> Any
 }
 
 struct List {
-    length: int   
-    capacity: int 
+    data: Any
+    length: Int   
+    capacity: Int 
 
-    extern define __init(self, initial_cap: int)
+    extern define __init(self, initial_cap: Int)
 
-    extern define append(self, item: any)
-    extern define pop(self) -> any
-    extern define length(self) -> int
+    extern define append(self, item: Any)
+    extern define pop(self) -> Any
+    extern define length(self) -> Int
     extern define clear(self)
-    extern define is_empty(self) -> bool
+    extern define is_empty(self) -> Bool
 
     // Internal but exposed if needed
-    extern define _resize(self, new_cap: int)
+    extern define _resize(self, new_cap: Int)
 
     // Operators
     extern define __iter(self) -> ListIterator
-    extern define __get(self, index: int) -> any
-    extern define __set(self, index: int, item: any)
+    extern define __get(self, index: Int) -> Any
+    extern define __set(self, index: Int, item: Any)
     extern define __del(self)
     extern define __str(self) -> String
     extern define __repr(self) -> String

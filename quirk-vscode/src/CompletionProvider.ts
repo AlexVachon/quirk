@@ -297,7 +297,7 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
         const textBeforeCursor = document.getText(new vscode.Range(new vscode.Position(0, 0), position));
 
         ['define', 'struct', 'if', 'else', 'elif', 'while', 'for', 'in', 'return', 'break', 'continue', 'use', 'from', 'with', 'as', 'extern', 'true', 'false', 'null'].forEach(kw => addCompletion(kw, vscode.CompletionItemKind.Keyword));
-        ['print', 'printf', 'malloc', 'free', 'exit', 'String', 'List', 'Map', 'File', 'int', 'double', 'bool', 'cstring', 'any', 'void'].forEach(bi => addCompletion(bi, vscode.CompletionItemKind.Reference, 'Built-in'));
+        ['print', 'printf', 'malloc', 'free', 'exit', 'Char', 'String', 'List', 'Map', 'File', 'Int', 'Double', 'Bool', 'Any', 'void'].forEach(bi => addCompletion(bi, vscode.CompletionItemKind.Reference, 'Built-in'));
 
         let match;
         const varRegex = /([a-zA-Z0-9_]+)\s*:=/g;

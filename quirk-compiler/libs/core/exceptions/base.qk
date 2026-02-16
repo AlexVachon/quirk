@@ -1,3 +1,4 @@
+from ...sys use { get_source_line }
 
 struct Exception {
     type: String
@@ -15,7 +16,7 @@ struct Exception {
     }
 
     define __str(self) -> String {
-        raw_c_str := quirk_get_source_line(self.file.buffer, self.line)
+        raw_c_str := get_source_line(self.file.buffer, self.line)
         
         code_line := String(raw_c_str)
 

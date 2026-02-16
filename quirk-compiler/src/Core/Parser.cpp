@@ -1,8 +1,8 @@
 #include <iostream>
 #include "parser.hpp"
 
-Parser::Parser(const std::vector<Token>& tokens, const std::string& source)
-    : tokens(tokens), source(source) {}
+Parser::Parser(const std::vector<Token>& tokens, const std::string& source, const std::string& filePath)
+    : tokens(tokens), source(source), filePath(filePath) {}
 
 Token Parser::peek() const {
     return tokens[pos];
@@ -672,6 +672,11 @@ std::unique_ptr<Node> Parser::parseTry() {
 }
 
 std::unique_ptr<Node> Parser::parseThrow() {
+    int lineNum = peek().line;
     consume(TokenType::THROW, "Expected 'throw'");
-    return std::make_unique<ThrowNode>(parseExpression(0));
+    
+    auto node = std::make_unique<ThrowNode>(parseExpression(0), lineNum);
+    node->moduleName = this->filePath; 
+    
+    return node;
 }

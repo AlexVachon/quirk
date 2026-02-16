@@ -1,13 +1,26 @@
+
 struct Exception {
     type: String
     message: String
+    file: String
+    line: Int
+    callee: String
 
     define __init(self, message: String) -> void {
         self.type = "Exception"
         self.message = message
+        self.file = ""
+        self.line = 0
+        self.callee = ""
     }
 
     define __str(self) -> String {
-        return "${self.type}: ${self.message}"
+        raw_c_str := quirk_get_source_line(self.file.buffer, self.line)
+        
+        code_line := String(raw_c_str)
+
+        return "Traceback (most recent call last):\n  File \"${self.file}\", line ${self.line}, in ${self.func_name}\n    ${code_line}\n${self.type}: ${self.message}"
     }
 }
+
+extern define quirk_get_source_line(filename: Any, line: Int) -> Any

@@ -1,3 +1,6 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <setjmp.h>
 
 // --- EXCEPTION HANDLING RUNTIME ---
@@ -38,4 +41,30 @@ void* quirk_get_current_jmp_buf() {
 void quirk_unhandled_exception() {
     printf("Fatal: Unhandled Exception!\n");
     exit(1);
+}
+
+char* quirk_get_source_line(const char* filename, int target_line) {
+    FILE* f = fopen(filename, "r");
+    if (!f) return strdup("");
+    
+    char buffer[1024];
+    int current = 1;
+    while (fgets(buffer, sizeof(buffer), f)) {
+        if (current == target_line) {
+            fclose(f);
+            
+            // Trim leading whitespace for clean Python-like formatting
+            char* start = buffer;
+            while (*start == ' ' || *start == '\t') start++;
+            
+            // Trim trailing newline
+            size_t len = strlen(start);
+            if (len > 0 && start[len-1] == '\n') start[len-1] = '\0';
+            
+            return strdup(start);
+        }
+        current++;
+    }
+    fclose(f);
+    return strdup("");
 }

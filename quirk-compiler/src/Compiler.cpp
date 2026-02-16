@@ -290,7 +290,7 @@ std::vector<std::unique_ptr<Node>> processFile(const std::string& filePath,
 
     Lexer lexer(source);
     auto tokens = lexer.tokenize();
-    Parser parser(tokens, source);
+    Parser parser(tokens, source, filePath);
     auto nodes = parser.parse();
 
     // Determine Module Name

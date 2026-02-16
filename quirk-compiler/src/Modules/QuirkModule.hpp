@@ -8,9 +8,9 @@ class StructGen; // Forward decl
 
 using namespace llvm;
 
-class ApexModule {
+class QuirkModule {
 public:
-    virtual ~ApexModule() = default;
+    virtual ~QuirkModule() = default;
 
     virtual void registerStructs(LLVMContext& ctx, 
                                  std::map<std::string, StructType*>& structTypes, 

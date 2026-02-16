@@ -1,5 +1,5 @@
 #pragma once
-#include "ApexModule.hpp"
+#include "QuirkModule.hpp"
 
 #include "StdFile.cpp"
 #include "StdList.cpp"
@@ -10,7 +10,7 @@
 #include "StdExceptions.cpp"
 
 class ModuleRegistry {
-    std::vector<ApexModule*> modules;
+    std::vector<QuirkModule*> modules;
 
    public:
     ModuleRegistry() {

@@ -7,7 +7,6 @@
 File* File_open(String* path, String* mode) {
     File* f = (File*)malloc(sizeof(File));
 
-    // Extract raw C strings from the Apex String objects
     char* path_str = path ? path->buffer : "";
     char* mode_str = mode ? mode->buffer : "r";
 

@@ -1,6 +1,6 @@
-#include "ApexModule.hpp"
+#include "QuirkModule.hpp"
 
-class StdMathModule : public ApexModule {
+class StdMathModule : public QuirkModule {
    public:
     void registerStructs(LLVMContext& ctx,
                          std::map<std::string, StructType*>& structTypes,

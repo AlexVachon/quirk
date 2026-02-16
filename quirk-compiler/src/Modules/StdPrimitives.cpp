@@ -1,6 +1,6 @@
-#include "ApexModule.hpp"
+#include "QuirkModule.hpp"
 
-class StdPrimitivesModule : public ApexModule {
+class StdPrimitivesModule : public QuirkModule {
 public:
     void registerFunctions(Module* module, 
                            LLVMContext& ctx, 

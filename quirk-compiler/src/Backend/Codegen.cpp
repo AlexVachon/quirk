@@ -52,7 +52,7 @@ class LLVMCodegen {
     std::map<std::string, std::string> activeModuleAliases;
 
     LLVMCodegen() : Builder(Context) {
-        TheModule = std::make_unique<Module>("ApexCompiler", Context);
+        TheModule = std::make_unique<Module>("QuirkCompiler", Context);
         typeGen = std::make_unique<TypeGen>(Context, StructTypes);
         flowGen = std::make_unique<ControlFlowGen>(Context, TheModule.get(), Builder);
         structGen = std::make_unique<StructGen>(Context, TheModule.get(), Builder, StructTypes);
@@ -471,7 +471,11 @@ class LLVMCodegen {
             flowGen->generateTryCatch(t, parentFunc, [this, parentFunc](Node* n) { this->handleStatement(n, parentFunc); }, varGen.get(), StructTypes, structHierarchy);
         }
         else if (auto th = dynamic_cast<ThrowNode*>(node)) {
-            flowGen->generateThrow(th, parentFunc, [this](Node* n) { return this->handleExpression(n); });
+            flowGen->generateThrow(th, parentFunc, 
+                [this](Node* n) { return this->handleExpression(n); },
+                StructTypes,
+                [this](const std::string& s, std::vector<Value*>& v) { return this->structGen->allocateAndInit(s, v); }
+            );
         }
         else if (auto ret = dynamic_cast<ReturnNode*>(node)) {
             if (ret->expression) {

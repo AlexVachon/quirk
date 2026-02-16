@@ -1,5 +1,5 @@
 #include <iostream>
-#include <algorithm> // <--- ADDED THIS for std::replace
+#include <algorithm>
 #include "sema.hpp"
 
 std::string Sema::currentClass = "";
@@ -33,7 +33,7 @@ bool Sema::analyze(const std::vector<std::unique_ptr<Node>> &nodes)
 
     for (const auto &node : nodes)
     {
-        // --- NEW: Context-Aware Analysis ---
+        // --- Context-Aware Analysis ---
         // Ensure every module (including 'main') implicitly sees 'core'
         std::string mod = node->moduleName;
         if (moduleVisibility.find(mod) == moduleVisibility.end())
@@ -81,23 +81,15 @@ void Sema::checkUse(UseNode *node)
     // 2. Handle "use module" (Namespace Import)
     else
     {
-        // Register the module alias as a variable with a special type
-        // e.g. use core.sys -> variable "sys" of type "MODULE$core.sys"
         std::string alias = node->moduleName;
-
-        // Extract last part (sys from core.sys)
-        size_t lastDot = alias.rfind('.'); // Parser uses '.' for paths here
+        size_t lastDot = alias.rfind('.'); 
         if (lastDot == std::string::npos)
             lastDot = alias.rfind('/');
         if (lastDot != std::string::npos)
             alias = alias.substr(lastDot + 1);
 
-        // Define it in the current scope
         defineVariable(alias, "MODULE$" + node->moduleName);
 
-        // Also allow implicit visibility for compatibility if needed,
-        // but strictly "use X" usually means "access via X."
-        // We keep this to allow "fully qualified access" internally if needed.
         std::string modName = node->moduleName;
         std::replace(modName.begin(), modName.end(), '/', '.');
         ctx.visibleModules.insert(modName);
@@ -225,9 +217,9 @@ void Sema::checkStatement(Node *node)
 void Sema::checkIf(IfNode *node)
 {
     std::string condType = checkExpression(node->condition.get());
-    if (condType != "bool")
+    if (condType != "Bool")
     {
-        std::cerr << "[Sema Error] 'if' condition must be 'bool', but got '"
+        std::cerr << "[Sema Error] 'if' condition must be 'Bool', but got '"
                   << condType << "'" << std::endl;
         exit(1);
     }
@@ -237,7 +229,7 @@ void Sema::checkIf(IfNode *node)
     exitScope();
     for (auto &b : node->elIfBranches)
     {
-        if (checkExpression(b.condition.get()) != "bool")
+        if (checkExpression(b.condition.get()) != "Bool")
             exit(1);
         enterScope();
         for (auto &s : b.body)
@@ -255,7 +247,7 @@ void Sema::checkIf(IfNode *node)
 
 void Sema::checkWhile(WhileNode *node)
 {
-    if (checkExpression(node->condition.get()) != "bool")
+    if (checkExpression(node->condition.get()) != "Bool")
         exit(1);
     enterScope();
     for (auto &s : node->body)
@@ -266,12 +258,10 @@ void Sema::checkWhile(WhileNode *node)
 void Sema::checkFor(ForNode *node)
 {
     std::string iterType = checkExpression(node->iterable.get());
-    std::string itemType = "any";
+    std::string itemType = "Any";
 
-    if (iterType == "cstring" || iterType == "string")
-        itemType = node->isRef ? "ptr" : "char";
-    else if (iterType == "String")
-        itemType = "char";
+    if (iterType == "String")
+        itemType = "Char";
     else if (iterType == "File")
         itemType = "String";
     else if (structRegistry.count(iterType))
@@ -318,11 +308,11 @@ std::string Sema::checkExpression(Node *node)
 std::string Sema::checkLiteral(LiteralNode *node)
 {
     if (std::isdigit(node->value[0]))
-        return (node->value.find('.') != std::string::npos) ? "double" : "int";
+        return (node->value.find('.') != std::string::npos) ? "Double" : "Int";
     if (node->value[0] == '"')
-        return "cstring";
+        return "String";
     if (node->value == "true" || node->value == "false")
-        return "bool";
+        return "Bool";
     return resolveVariable(node->value);
 }
 
@@ -330,16 +320,16 @@ std::string Sema::checkBinaryOp(BinaryOpNode *node)
 {
     if (node->op == "not")
     {
-        if (checkExpression(node->left.get()) != "bool")
+        if (checkExpression(node->left.get()) != "Bool")
             exit(1);
-        return "bool";
+        return "Bool";
     }
 
     std::string lType = checkExpression(node->left.get());
     std::string rType = checkExpression(node->right.get());
 
     if (node->op == "and" || node->op == "or")
-        return "bool";
+        return "Bool";
 
     // Array Access
     if (node->op == "[]")
@@ -354,9 +344,6 @@ std::string Sema::checkBinaryOp(BinaryOpNode *node)
                 {
                     std::string expectedKeyType = func->parameters[0].type;
                     bool validKey = (rType == expectedKeyType);
-                    if (expectedKeyType == "String" &&
-                        (rType == "cstring" || rType == "string"))
-                        validKey = true;
                     if (!validKey)
                     {
                         std::cerr << "Error: Type mismatch for '" << lType
@@ -368,13 +355,13 @@ std::string Sema::checkBinaryOp(BinaryOpNode *node)
                 return func->returnType;
             }
         }
-        if (rType != "int")
+        if (rType != "Int")
         {
-            std::cerr << "Error: Array index must be 'int'." << std::endl;
+            std::cerr << "Error: Array index must be 'Int'." << std::endl;
             exit(1);
         }
-        if (lType == "ptr" || lType == "cstring" || lType == "string" || lType == "any")
-            return (lType == "cstring" || lType == "string") ? "char" : "any";
+        if (lType == "Any" || lType == "String")
+            return (lType == "String") ? "Char" : "Any";
         exit(1);
     }
 
@@ -399,7 +386,7 @@ std::string Sema::checkBinaryOp(BinaryOpNode *node)
             if (methodRegistry[lType].count(funcName))
             {
                 if (node->op == "==" || node->op == "!=")
-                    return "bool";
+                    return "Bool";
                 return methodRegistry[lType][funcName]->returnType;
             }
         }
@@ -408,22 +395,22 @@ std::string Sema::checkBinaryOp(BinaryOpNode *node)
     // Primitives
     if (node->op == "+")
     {
-        if (lType == "cstring" || rType == "cstring" || lType == "string")
-            return "cstring";
-        if (lType == "double" || rType == "double")
-            return "double";
-        return "int";
+        if (lType == "String" || rType == "String")
+            return "String";
+        if (lType == "Double" || rType == "Double")
+            return "Double";
+        return "Int";
     }
     if (node->op == "-" || node->op == "*" || node->op == "/")
     {
-        if (lType == "double" || rType == "double")
-            return "double";
-        return "int";
+        if (lType == "Double" || rType == "Double")
+            return "Double";
+        return "Int";
     }
     if (node->op == ">" || node->op == "<" || node->op == ">=" ||
         node->op == "<=" || node->op == "==" || node->op == "!=")
     {
-        return "bool";
+        return "Bool";
     }
     exit(1);
 }
@@ -432,23 +419,18 @@ std::string Sema::checkMemberAccess(MemberAccessNode *node)
 {
     std::string objType = checkExpression(node->object.get());
 
-    // --- NEW: Handle Module Access (e.g. sys.getenv) ---
     if (objType.rfind("MODULE$", 0) == 0)
     {
-        std::string modName = objType.substr(7); // Remove "MODULE$"
+        std::string modName = objType.substr(7); 
         std::string funcName = node->memberName;
 
-        // Search for global function
         if (methodRegistry[""].count(funcName))
         {
-            // Validate it belongs to the imported module?
-            // For now, we allow it if the name exists, assuming linker handles it.
             return methodRegistry[""][funcName]->returnType;
         }
         std::cerr << "Error: Module '" << modName << "' has no function '" << funcName << "'" << std::endl;
         exit(1);
     }
-    // ---------------------------------------------------
 
     std::string type = resolveMember(objType, node->memberName);
     if (type == "unknown")
@@ -472,12 +454,13 @@ std::string Sema::checkCall(CallNode *node)
     if (auto m = dynamic_cast<MemberAccessNode *>(node->callee.get()))
     {
         std::string objType = checkExpression(m->object.get());
-        if (objType == "int")
-            objType = "Int";
-        else if (objType == "double")
-            objType = "Double";
-        else if (objType == "cstring")
-            objType = "String";
+
+        // Safety fallback mapping just in case
+        if (objType == "int") objType = "Int";
+        else if (objType == "double") objType = "Double";
+        else if (objType == "bool") objType = "Bool";
+        else if (objType == "char") objType = "Char";
+        else if (objType == "cstring" || objType == "string") objType = "String";
 
         if (structRegistry.count(objType))
         {
@@ -511,7 +494,7 @@ std::string Sema::checkMapLiteral(MapLiteralNode *node)
     for (auto &pair : node->elements)
     {
         std::string keyType = checkExpression(pair.first.get());
-        if (keyType != "String" && keyType != "cstring" && keyType != "string")
+        if (keyType != "String")
         {
             std::cerr << "Error: Map keys must be String." << std::endl;
             exit(1);
@@ -535,17 +518,14 @@ void Sema::defineVariable(const std::string &name, const std::string &type)
     scopeStack.back()[name] = type;
 }
 
-// --- UPDATED RESOLVE VARIABLE ---
 std::string Sema::resolveVariable(const std::string &name)
 {
     for (int i = scopeStack.size() - 1; i >= 0; i--)
         if (scopeStack[i].count(name))
             return scopeStack[i][name];
 
-    // Determine context
     std::string contextModule = currentFunctionNode ? currentFunctionNode->moduleName : "main";
 
-    // Check Structs
     if (structRegistry.count(name))
     {
         StructNode *s = structRegistry[name];
@@ -558,7 +538,6 @@ std::string Sema::resolveVariable(const std::string &name)
         return name;
     }
 
-    // Check Global Functions
     if (methodRegistry[""].count(name))
     {
         FunctionNode *f = methodRegistry[""][name];
@@ -576,13 +555,13 @@ std::string Sema::resolveVariable(const std::string &name)
     if (name == "print" || name == "printf" || name == "free" || name == "exit")
         return "void";
     if (name == "char_at")
-        return "char";
+        return "Char";
     if (name == "set_char_at")
         return "void";
     if (name == "malloc" || name == "realloc")
-        return "ptr";
+        return "Any";
     if (name == "strlen")
-        return "int";
+        return "Int";
 
     if (!currentClass.empty())
     {
@@ -601,12 +580,13 @@ std::string Sema::resolveVariable(const std::string &name)
 std::string Sema::resolveMember(const std::string &sName, const std::string &mName)
 {
     std::string lookupName = sName;
-    if (sName == "int")
-        lookupName = "Int";
-    else if (sName == "double")
-        lookupName = "Double";
-    else if (sName == "bool")
-        lookupName = "Bool";
+    
+    // Safety fallback just in case something sneaks through
+    if (sName == "int") lookupName = "Int";
+    else if (sName == "double") lookupName = "Double";
+    else if (sName == "bool") lookupName = "Bool";
+    else if (sName == "char") lookupName = "Char";
+    else if (sName == "string" || sName == "cstring") lookupName = "String";
 
     if (!structRegistry.count(lookupName))
         return "unknown";
@@ -652,21 +632,18 @@ void Sema::checkReturn(ReturnNode *node)
         return;
     }
 
-    if (target != actual && target != "any")
+    if (target != actual && target != "Any")
     {
-        bool targetIsPtr = (target == "ptr" || target == "cstring" || target == "string");
-        bool actualIsPtr = (actual == "ptr" || actual == "cstring" || actual == "string");
+        bool targetIsPtr = (target == "Any" || target == "String");
+        bool actualIsPtr = (actual == "Any" || actual == "String");
+        
         bool valid = (targetIsPtr && actualIsPtr);
-        if (target == "double" && actual == "int")
-            valid = true;
-        if (target == "char" && actual == "int")
-            valid = true;
-        if (actual == "any")
-            valid = true;
-        if (actual == "int" && (targetIsPtr || structRegistry.count(target) || target == "any"))
-            valid = true;
-        if (target == "String" && (actual == "cstring" || actual == "string"))
-            valid = true;
+        if (target == "Double" && actual == "Int") valid = true;
+        if (target == "Char" && actual == "Int") valid = true;
+        if (actual == "Any") valid = true;
+        
+        // Allow treating Int as a generic pointer or pointer arithmetic
+        if (actual == "Int" && (targetIsPtr || structRegistry.count(target) || target == "Any")) valid = true;
 
         if (!valid)
         {

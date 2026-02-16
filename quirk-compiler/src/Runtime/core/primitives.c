@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
+#include <ctype.h>
 #include <setjmp.h>
 
 // ==========================================
@@ -77,6 +78,21 @@ double Double_sqrt(double self) {
 String* Bool_str(int self) {
     return make_String(self ? "true" : "false");
 }
+
+String* Char_str(char self) {
+    char buffer[2] = {self, '\0'};
+    return make_String(buffer);
+}
+
+char Char__init() { return '\0'; }
+int Char_is_upper(char self) { return isupper((unsigned char)self) != 0; }
+int Char_is_lower(char self) { return islower((unsigned char)self) != 0; }
+int Char_is_digit(char self) { return isdigit((unsigned char)self) != 0; }
+int Char_is_alpha(char self) { return isalpha((unsigned char)self) != 0; }
+int Char_is_space(char self) { return isspace((unsigned char)self) != 0; }
+
+char Char_to_upper(char self) { return toupper((unsigned char)self); }
+char Char_to_lower(char self) { return tolower((unsigned char)self); }
 
 // --- EXCEPTION HANDLING RUNTIME ---
 jmp_buf quirk_try_stack[256];

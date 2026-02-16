@@ -2,7 +2,7 @@ define main() {
     print("--- List Tests ---")
 
     // 1. Initialization & Appending
-    l := List(4) 
+    l := [] 
     l.append(10)
     l.append(20)
     l.append(30)

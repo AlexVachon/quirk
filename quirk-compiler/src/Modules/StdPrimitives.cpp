@@ -9,6 +9,7 @@ public:
         Type* intTy = Type::getInt32Ty(ctx);
         Type* doubleTy = Type::getDoubleTy(ctx);
         Type* boolTy = Type::getInt1Ty(ctx);
+        Type* charTy = Type::getInt8Ty(ctx);
         
         // Ensure String struct is available
         Type* stringPtr = structTypes.count("String") 
@@ -48,5 +49,18 @@ public:
         module->getOrInsertFunction("Double_to_int", FunctionType::get(intTy, {doubleTy}, false));
 
         module->getOrInsertFunction("Bool_str", FunctionType::get(stringPtr, {boolTy}, false));
+
+        
+        module->getOrInsertFunction("Char__init", FunctionType::get(charTy, {}, false));
+        module->getOrInsertFunction("Char_str", FunctionType::get(stringPtr, {charTy}, false));
+        
+        module->getOrInsertFunction("Char_is_upper", FunctionType::get(boolTy, {charTy}, false));
+        module->getOrInsertFunction("Char_is_lower", FunctionType::get(boolTy, {charTy}, false));
+        module->getOrInsertFunction("Char_is_digit", FunctionType::get(boolTy, {charTy}, false));
+        module->getOrInsertFunction("Char_is_alpha", FunctionType::get(boolTy, {charTy}, false));
+        module->getOrInsertFunction("Char_is_space", FunctionType::get(boolTy, {charTy}, false));
+        
+        module->getOrInsertFunction("Char_to_upper", FunctionType::get(charTy, {charTy}, false));
+        module->getOrInsertFunction("Char_to_lower", FunctionType::get(charTy, {charTy}, false));
     }
 };

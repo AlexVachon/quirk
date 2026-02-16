@@ -193,7 +193,13 @@ std::unique_ptr<Node> Parser::parseExpression(int min_precedence) {
                     argName = advance().value;
                     advance();
                 }
-                call->args.push_back({argName, parseExpression(0)});
+                
+                // ✨ FIX: Safely move unique_ptr into the struct
+                Arg newArg;
+                newArg.name = argName;
+                newArg.value = parseExpression(0);
+                call->args.push_back(std::move(newArg));
+                
                 if (peek().type == TokenType::COMMA)
                     advance();
             }
@@ -437,7 +443,12 @@ std::unique_ptr<CallNode> Parser::parseCall() {
             advance();
         }
 
-        node->args.push_back({argName, parseExpression(0)});
+        // ✨ FIX: Safely move unique_ptr into the struct
+        Arg newArg;
+        newArg.name = argName;
+        newArg.value = parseExpression(0);
+        node->args.push_back(std::move(newArg));
+        
         if (peek().type == TokenType::COMMA)
             advance();
     }
@@ -462,7 +473,13 @@ std::unique_ptr<ConstructorNode> Parser::parseConstructor() {
     while (peek().type != TokenType::RPAREN && !isAtEnd()) {
         std::string field = advance().value;
         consume(TokenType::COLON, "Expected ':'");
-        node->args.push_back({field, parseExpression(0)});
+        
+        // ✨ FIX: Use ConstructorArg instead of Arg
+        ConstructorArg newArg;
+        newArg.fieldName = field;
+        newArg.value = parseExpression(0);
+        node->args.push_back(std::move(newArg));
+        
         if (peek().type == TokenType::COMMA)
             advance();
     }

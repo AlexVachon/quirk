@@ -10,9 +10,6 @@
     "Programming Languages"
   ],
   "main": "./out/extension.js",
-  "activationEvents": [
-    "onLanguage:quirk"
-  ],
   "contributes": {
     "languages": [
       {

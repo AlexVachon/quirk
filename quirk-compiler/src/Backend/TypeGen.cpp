@@ -15,19 +15,25 @@ public:
         : Context(ctx), StructTypes(structs) {}
 
     Type* getLLVMType(const std::string& typeName) {
-        // FIX: Map uppercase primitive names to LLVM primitives
         if (typeName == "int" || typeName == "Int") return Type::getInt32Ty(Context);
         if (typeName == "bool" || typeName == "Bool") return Type::getInt1Ty(Context);
         if (typeName == "char" || typeName == "Char") return Type::getInt8Ty(Context);
         if (typeName == "double" || typeName == "Double") return Type::getDoubleTy(Context);
         if (typeName == "void") return Type::getVoidTy(Context);
         
-        if (typeName == "ptr" || typeName == "cstring" || typeName == "string" || typeName == "any") {
+        // ✨ THE FIX: Remove "String" from this list so it is treated as a real Struct!
+        if (typeName == "ptr" || typeName == "cstring" || typeName == "string" || typeName == "Any" || typeName == "any") {
             return Type::getInt8PtrTy(Context);
         }
 
+        // Handle Structs (including String!)
         if (StructTypes.count(typeName)) {
             return PointerType::getUnqual(StructTypes[typeName]);
+        } else {
+            // Forward declaration: create an opaque struct type
+            StructType* opaqueStruct = StructType::create(Context, typeName);
+            StructTypes[typeName] = opaqueStruct;
+            return PointerType::getUnqual(opaqueStruct);
         }
 
         return Type::getInt32Ty(Context);

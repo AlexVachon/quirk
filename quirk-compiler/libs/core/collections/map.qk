@@ -3,32 +3,32 @@ from core.string use { String }
 // --- ADDED FOR FUTURE ITERATION SUPPORT ---
 struct MapIterator {
     map_ref: Map
-    current_idx: int
+    current_idx: Int
 
     extern define __init(self, m: Map)
-    extern define __has_next(self) -> bool
+    extern define __has_next(self) -> Bool
     // Returns the KEY (String) by default
     extern define __next(self) -> String 
 }
 
 struct Map {
-    entries: ptr
-    capacity: int
-    size: int
+    entries: Any
+    capacity: Int
+    size: Int
 
     extern define __init(self)
     extern define __del(self)
 
-    extern define put(self, key: String, value: any)
-    extern define get(self, key: String) -> any
-    extern define has(self, key: String) -> bool
+    extern define put(self, key: String, value: Any)
+    extern define get(self, key: String) -> Any
+    extern define has(self, key: String) -> Bool
     extern define remove(self, key: String)
-    extern define len(self) -> int
+    extern define len(self) -> Int
     extern define clear(self)
 
     // Operators
-    extern define __get(self, key: String) -> any
-    extern define __set(self, key: String, value: any)
+    extern define __get(self, key: String) -> Any
+    extern define __set(self, key: String, value: Any)
     extern define __str(self) -> String
 
     // --- ADDED FOR ITERATION ---

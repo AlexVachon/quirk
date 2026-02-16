@@ -59,6 +59,18 @@ private:
             return Builder.CreateSelect(v, trueStr, falseStr);
         }
 
+        // ✨ NEW: Characters (i8 -> Call Char_str -> Unwrap .buffer)
+        if (type->isIntegerTy(8))
+        {
+            Function *f = TheModule->getFunction("Char_str");
+            if (f) {
+                Value *strObj = Builder.CreateCall(f, {v});
+                Value *bufPtr = structGen->getMemberPtr(strObj, "buffer");
+                if (bufPtr) return Builder.CreateLoad(Type::getInt8PtrTy(Context), bufPtr);
+            }
+            return Builder.CreateIntToPtr(v, Type::getInt8PtrTy(Context));
+        }
+
         // 2. Integers (i32 -> Call Int_str -> Unwrap .buffer)
         if (type->isIntegerTy())
         {

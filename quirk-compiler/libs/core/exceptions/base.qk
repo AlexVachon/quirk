@@ -1,0 +1,13 @@
+struct Exception {
+    type: String
+    message: String
+
+    define __init(self, message: String) -> void {
+        self.type = "Exception"
+        self.message = message
+    }
+
+    define __str(self) -> String {
+        return "${self.type}: ${self.message}"
+    }
+}

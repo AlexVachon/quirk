@@ -114,11 +114,11 @@
       "patterns": [
         {
           "name": "support.type.primitive.quirk",
-          "match": "\\b(int|double|bool|cstring|void|any|ptr)\\b"
+          "match": "\\b(void|Any)\\b"
         },
         {
           "name": "support.type.object.quirk",
-          "match": "\\b(List|String|Map|Int|Double|Bool|File)\\b"
+          "match": "\\b(Char|List|String|Map|Int|Double|Bool|File)\\b"
         }
       ]
     },

@@ -7,8 +7,8 @@ const KEYWORDS = new Set([
 ]);
 
 const BUILTINS = new Set([
-    'print', 'exit', 'String', 'List', 'Map',
-    'File', 'Int', 'int', 'Double', 'double', 'Bool', 'bool', 'any', 'void',
+    'print', 'exit', 'Char', 'String', 'List', 'Map',
+    'File', 'Int', 'Double', 'Bool', 'Any', 'void',
     'true', 'false', 'null'
 ]);
 

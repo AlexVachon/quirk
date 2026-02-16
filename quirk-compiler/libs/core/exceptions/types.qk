@@ -1,0 +1,10 @@
+from .base use { Exception }
+
+struct TypeError {
+    use Exception
+    
+    define __init(self, message: String) -> void {
+        self.type = "TypeError"
+        self.message = message
+    }
+}

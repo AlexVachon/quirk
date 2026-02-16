@@ -1,5 +1,6 @@
 #include <iostream>
 #include <algorithm>
+#include <functional>
 #include "sema.hpp"
 
 std::string Sema::currentClass = "";
@@ -464,12 +465,28 @@ std::string Sema::checkCall(CallNode *node)
 
         if (structRegistry.count(objType))
         {
-            std::string funcName = objType + "_" + m->memberName;
-            if (methodRegistry[objType].count(funcName))
-            {
-                std::string ret = methodRegistry[objType][funcName]->returnType;
-                return ret.empty() ? "void" : ret;
-            }
+            // --- NEW: Recursive method resolution for inheritance ---
+            std::function<std::string(const std::string&)> searchMethod = [&](const std::string& currentType) -> std::string {
+                if (!structRegistry.count(currentType)) return "";
+                
+                std::string funcName = currentType + "_" + m->memberName;
+                if (methodRegistry[currentType].count(funcName)) {
+                    std::string ret = methodRegistry[currentType][funcName]->returnType;
+                    return ret.empty() ? "void" : ret;
+                }
+                
+                // Recurse parents
+                for (const std::string& parent : structRegistry[currentType]->parents) {
+                    std::string res = searchMethod(parent);
+                    if (!res.empty()) return res;
+                }
+                
+                return "";
+            };
+
+            std::string retType = searchMethod(objType);
+            if (!retType.empty()) return retType;
+            // --- END NEW ---
         }
     }
     return "void";
@@ -591,15 +608,34 @@ std::string Sema::resolveMember(const std::string &sName, const std::string &mNa
     if (!structRegistry.count(lookupName))
         return "unknown";
 
-    for (const auto &f : structRegistry[lookupName]->fields)
-        if (f.name == mName)
-            return f.type;
+    // --- NEW: Recursive field and method resolution for inheritance ---
+    std::function<std::string(const std::string&)> searchMember = [&](const std::string& currentType) -> std::string {
+        if (!structRegistry.count(currentType)) return "unknown";
+        
+        StructNode* st = structRegistry[currentType];
+        
+        // 1. Check fields
+        for (const auto &f : st->fields) {
+            if (f.name == mName) return f.type;
+        }
+        
+        // 2. Check methods
+        std::string funcName = currentType + "_" + mName;
+        if (methodRegistry[currentType].count(funcName)) {
+            return "method";
+        }
+        
+        // 3. Check parents recursively
+        for (const std::string& parentName : st->parents) {
+            std::string res = searchMember(parentName);
+            if (res != "unknown") return res;
+        }
+        
+        return "unknown";
+    };
 
-    std::string funcName = lookupName + "_" + mName;
-    if (methodRegistry[lookupName].count(funcName))
-        return "method";
-
-    return "unknown";
+    return searchMember(lookupName);
+    // --- END NEW ---
 }
 
 void Sema::checkWith(WithNode *node)

@@ -7,6 +7,8 @@
 #include "core/list.c"
 #include "core/map.c"
 
+#include "core/exceptions.c"
+
 #include "core/file.c"
 
 char* String_add(char* a, char* b) {

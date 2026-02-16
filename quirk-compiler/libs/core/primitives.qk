@@ -39,15 +39,3 @@ struct Char {
     extern define to_upper(self) -> Char
     extern define to_lower(self) -> Char
 }
-
-struct Exception {
-    message: String
-
-    define __init(self, message: String) {
-        self.message := message
-    }
-
-    define __str(self) -> String {
-        return "Exception: ${self.message}"
-    }
-}

@@ -1,6 +1,7 @@
 #include <iostream>
 #include <map>
 #include <string>
+#include <functional>
 #include "ast.hpp"
 #include "llvm/IR/IRBuilder.h"
 
@@ -16,11 +17,17 @@ class StructGen {
     BuiltinGen* builtinGen;
     std::map<std::string, std::vector<std::string>> structLayouts;
 
+    // --- NEW: Hierarchy tracking ---
+    std::map<std::string, std::vector<std::string>>* structHierarchy = nullptr;
+
    public:
     StructGen(LLVMContext& ctx, Module* mod, IRBuilder<>& builder, std::map<std::string, StructType*>& structs)
         : Context(ctx), TheModule(mod), Builder(builder), StructTypes(structs), builtinGen(nullptr) {}
 
     void setBuiltinGen(BuiltinGen* bg) { builtinGen = bg; }
+    
+    // --- NEW: Setter for Hierarchy ---
+    void setHierarchy(std::map<std::string, std::vector<std::string>>* h) { structHierarchy = h; }
 
     void registerStructLayout(const std::string& name, const std::vector<std::string>& fields) {
         structLayouts[name] = fields;
@@ -33,8 +40,36 @@ class StructGen {
             funcName = structName + "__str";
             strFunc = TheModule->getFunction(funcName);
         }
+
+        // --- NEW: Search parent __str methods recursively ---
+        if (!strFunc && structHierarchy && structHierarchy->count(structName)) {
+            std::function<Function*(const std::string&)> searchHierarchy = [&](const std::string& currentType) -> Function* {
+                if (structHierarchy->count(currentType)) {
+                    for (const std::string& parentName : structHierarchy->at(currentType)) {
+                        Function* foundFunc = TheModule->getFunction(parentName + "___str");
+                        if (!foundFunc) foundFunc = TheModule->getFunction(parentName + "__str");
+                        if (foundFunc) return foundFunc;
+                        
+                        foundFunc = searchHierarchy(parentName);
+                        if (foundFunc) return foundFunc;
+                    }
+                }
+                return nullptr;
+            };
+            strFunc = searchHierarchy(structName);
+        }
+        // --- END NEW ---
+
         if (!strFunc) return nullptr;
-        return Builder.CreateCall(strFunc, {objPtr}, "str_res");
+
+        // --- NEW: Cast 'self' pointer if using an inherited __str ---
+        Type* expectedSelfType = strFunc->getFunctionType()->getParamType(0);
+        Value* castedSelf = objPtr;
+        if (castedSelf->getType() != expectedSelfType) {
+            castedSelf = Builder.CreateBitCast(castedSelf, expectedSelfType);
+        }
+
+        return Builder.CreateCall(strFunc, {castedSelf}, "str_res");
     }
 
     Value* allocateAndInit(const std::string& name, std::vector<Value*>& args) {
@@ -56,9 +91,35 @@ class StructGen {
         std::string initName = name + "__init";
         Function* initFunc = TheModule->getFunction(initName);
 
+        // --- NEW: Search parent constructors recursively ---
+        if (!initFunc && structHierarchy && structHierarchy->count(name)) {
+            std::function<Function*(const std::string&)> searchHierarchy = [&](const std::string& currentType) -> Function* {
+                if (structHierarchy->count(currentType)) {
+                    for (const std::string& parentName : structHierarchy->at(currentType)) {
+                        Function* foundFunc = TheModule->getFunction(parentName + "__init");
+                        if (foundFunc) return foundFunc;
+                        
+                        foundFunc = searchHierarchy(parentName);
+                        if (foundFunc) return foundFunc;
+                    }
+                }
+                return nullptr;
+            };
+            initFunc = searchHierarchy(name);
+        }
+        // --- END NEW ---
+
         if (initFunc) {
             std::vector<Value*> initArgs;
-            initArgs.push_back(objPtr); 
+            
+            // --- NEW: Cast 'self' pointer if using a parent constructor ---
+            Type* expectedSelfType = initFunc->getFunctionType()->getParamType(0);
+            Value* castedSelf = objPtr;
+            if (castedSelf->getType() != expectedSelfType) {
+                castedSelf = Builder.CreateBitCast(castedSelf, expectedSelfType);
+            }
+            initArgs.push_back(castedSelf);
+            // --- END NEW ---
 
             for (size_t i = 0; i < args.size(); i++) {
                 Value* argVal = args[i];
@@ -106,6 +167,32 @@ class StructGen {
             for (auto val : args) {
                 if (idx >= (int)st->getNumElements()) break;
                 Value* fieldPtr = Builder.CreateStructGEP(st, objPtr, idx++);
+                
+                Type* expectedType = fieldPtr->getType()->getPointerElementType();
+                
+                if (val->getType() != expectedType) {
+                    if (val->getType()->isPointerTy() && 
+                        val->getType()->getPointerElementType()->isIntegerTy(8) &&
+                        expectedType->isPointerTy() && 
+                        expectedType->getPointerElementType()->isStructTy()) {
+                        
+                        StructType* pst = cast<StructType>(expectedType->getPointerElementType());
+                        std::string sName = pst->getName().str();
+                        if (sName.find("struct.") == 0) sName = sName.substr(7);
+                        
+                        if (sName == "String") {
+                            std::vector<Value*> boxArgs = {val};
+                            val = allocateAndInit("String", boxArgs); // Auto-box string!
+                        } else {
+                            val = Builder.CreateBitCast(val, expectedType);
+                        }
+                    }
+                    else if (val->getType()->isIntegerTy() && expectedType->isIntegerTy()) val = Builder.CreateIntCast(val, expectedType, true);
+                    else if (val->getType()->isPointerTy() && expectedType->isPointerTy()) val = Builder.CreateBitCast(val, expectedType);
+                    else if (val->getType()->isIntegerTy() && expectedType->isPointerTy()) val = Builder.CreateIntToPtr(val, expectedType);
+                    else if (val->getType()->isIntegerTy() && expectedType->isDoubleTy()) val = Builder.CreateSIToFP(val, expectedType);
+                }
+
                 Builder.CreateStore(val, fieldPtr);
             }
         }

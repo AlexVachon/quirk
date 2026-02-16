@@ -43,127 +43,87 @@ public:
     }
 
 private:
-    // --- UPDATED: Unwrap everything to raw C-Strings (i8*) ---
+    // --- UPDATED: Call __str() dynamically, then unwrap to raw C-Strings (i8*) ---
     Value *prepareValueForRuntime(Value *v)
     {
-        if (!v)
-            return Constant::getNullValue(Type::getInt8PtrTy(Context));
+        if (!v) return Constant::getNullValue(Type::getInt8PtrTy(Context));
 
         Type *type = v->getType();
 
-        // 1. Booleans (i1 -> "true" / "false")
-        if (type->isIntegerTy(1))
-        {
-            Value *trueStr = Builder.CreateGlobalStringPtr("true");
-            Value *falseStr = Builder.CreateGlobalStringPtr("false");
-            return Builder.CreateSelect(v, trueStr, falseStr);
+        // 1. Booleans (i1 -> Call Bool_str -> unwrap)
+        if (type->isIntegerTy(1)) {
+            Function *f = TheModule->getFunction("Bool_str");
+            if (f) v = Builder.CreateCall(f, {v});
         }
-
-        // ✨ NEW: Characters (i8 -> Call Char_str -> Unwrap .buffer)
-        if (type->isIntegerTy(8))
-        {
+        
+        // 2. Characters (i8 -> Call Char_str -> unwrap)
+        else if (type->isIntegerTy(8)) {
             Function *f = TheModule->getFunction("Char_str");
-            if (f) {
-                Value *strObj = Builder.CreateCall(f, {v});
-                Value *bufPtr = structGen->getMemberPtr(strObj, "buffer");
-                if (bufPtr) return Builder.CreateLoad(Type::getInt8PtrTy(Context), bufPtr);
-            }
-            return Builder.CreateIntToPtr(v, Type::getInt8PtrTy(Context));
+            if (f) v = Builder.CreateCall(f, {v});
         }
 
-        // 2. Integers (i32 -> Call Int_str -> Unwrap .buffer)
-        if (type->isIntegerTy())
-        {
+        // 3. Integers (i32 -> Call Int_str -> unwrap)
+        else if (type->isIntegerTy()) {
             Function *f = TheModule->getFunction("Int_str");
-            if (f)
-            {
-                Value *strObj = Builder.CreateCall(f, {v});
-                Value *bufPtr = structGen->getMemberPtr(strObj, "buffer");
-                if (bufPtr)
-                    return Builder.CreateLoad(Type::getInt8PtrTy(Context), bufPtr);
-            }
-            return Builder.CreateIntToPtr(v, Type::getInt8PtrTy(Context));
+            if (f) v = Builder.CreateCall(f, {v});
         }
 
-        // 3. Doubles (Double -> Call Double_str -> Unwrap .buffer)
-        if (type->isDoubleTy())
-        {
+        // 4. Doubles (Double -> Call Double_str -> unwrap)
+        else if (type->isDoubleTy()) {
             Function *f = TheModule->getFunction("Double_str");
-            if (f)
-            {
-                Value *strObj = Builder.CreateCall(f, {v});
-                Value *bufPtr = structGen->getMemberPtr(strObj, "buffer");
-                if (bufPtr)
-                    return Builder.CreateLoad(Type::getInt8PtrTy(Context), bufPtr);
+            if (f) {
+                v = Builder.CreateCall(f, {v});
+            } else {
+                Function *f2s = TheModule->getFunction("_float_to_str");
+                if (f2s) v = Builder.CreateCall(f2s, {v}); 
             }
-            // Fallback
-            Function *f2s = TheModule->getFunction("_float_to_str");
-            if (f2s)
-                return Builder.CreateCall(f2s, {v});
-            return Constant::getNullValue(Type::getInt8PtrTy(Context));
         }
 
-        // 4. Pointers (Strings, Structs)
-        if (type->isPointerTy())
-        {
-            Type *elType = type->getPointerElementType();
+        // 5. Pointers (Structs, Strings, Raw C-Strings)
+        if (v->getType()->isPointerTy()) {
+            Type *elType = v->getType()->getPointerElementType();
 
-            if (elType->isStructTy())
-            {
+            // If it's a Struct, check if we need to call __str
+            if (elType->isStructTy()) {
                 StructType *st = cast<StructType>(elType);
                 std::string name = st->getName().str();
-                if (name.find("struct.") == 0)
-                    name = name.substr(7);
+                if (name.find("struct.") == 0) name = name.substr(7);
 
-                // A. Already a String Object? Unwrap .buffer
-                if (name.find("String") == 0)
-                {
-                    Value *bufPtr = structGen->getMemberPtr(v, "buffer");
-                    if (bufPtr)
-                        return Builder.CreateLoad(Type::getInt8PtrTy(Context), bufPtr);
-                    return Builder.CreateBitCast(v, Type::getInt8PtrTy(Context));
-                }
+                // If it is NOT already a String, call __str
+                if (name.find("String") != 0) {
+                    std::string strMethod = name + "___str";
+                    Function *strFunc = TheModule->getFunction(strMethod);
+                    if (!strFunc) strFunc = TheModule->getFunction(name + "__str");
 
-                // B. Other Struct? Call .__str()
-                std::string strMethod = name + "___str";
-                Function *strFunc = TheModule->getFunction(strMethod);
-                if (!strFunc)
-                    strFunc = TheModule->getFunction(name + "__str");
-
-                if (strFunc)
-                {
-                    Value *retVal = Builder.CreateCall(strFunc, {v});
-
-                    // If __str returned a String Object, unwrap it!
-                    if (retVal->getType()->isPointerTy() &&
-                        retVal->getType()->getPointerElementType()->isStructTy())
-                    {
-                        Value *bufPtr = structGen->getMemberPtr(retVal, "buffer");
-                        if (bufPtr)
-                            return Builder.CreateLoad(Type::getInt8PtrTy(Context), bufPtr);
+                    if (strFunc) {
+                        v = Builder.CreateCall(strFunc, {v}); // Call __str
+                    } else {
+                        // Fallback if no __str exists
+                        return Constant::getNullValue(Type::getInt8PtrTy(Context));
                     }
-
-                    // If it returned a raw cstring, use it directly
-                    if (retVal->getType()->isPointerTy() &&
-                        retVal->getType()->getPointerElementType()->isIntegerTy(8))
-                    {
-                        return retVal;
-                    }
-                    return Builder.CreateBitCast(retVal, Type::getInt8PtrTy(Context));
                 }
             }
 
-            // C. Raw C-String literal -> Use directly!
-            if (elType->isIntegerTy(8))
-            {
+            // --- THE CRITICAL FIX: Unwrap ALL String Objects to i8* ---
+            // Whether it was originally a String, or we just called __str to get one,
+            // we MUST unwrap it to a raw C-string for the C-runtime format list!
+            if (v->getType()->isPointerTy() && v->getType()->getPointerElementType()->isStructTy()) {
+                StructType *st = cast<StructType>(v->getType()->getPointerElementType());
+                if (st->getName().str().find("String") != std::string::npos) {
+                    Value *bufPtr = structGen->getMemberPtr(v, "buffer");
+                    if (bufPtr) {
+                        return Builder.CreateLoad(Type::getInt8PtrTy(Context), bufPtr);
+                    }
+                }
+            }
+            
+            // If it's already a raw C-string (i8*), return as-is
+            if (v->getType()->isPointerTy() && v->getType()->getPointerElementType()->isIntegerTy(8)) {
                 return v;
             }
-
-            // Fallback
-            return Builder.CreateBitCast(v, Type::getInt8PtrTy(Context));
         }
 
-        return v;
+        return Builder.CreateBitCast(v, Type::getInt8PtrTy(Context));
     }
 
     Value *handleStringFormat(Value *objPtr,

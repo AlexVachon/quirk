@@ -7,6 +7,7 @@
 #include "StdMath.cpp"
 #include "StdPrimitives.cpp"
 #include "StdString.cpp"
+#include "StdExceptions.cpp"
 
 class ModuleRegistry {
     std::vector<ApexModule*> modules;
@@ -14,9 +15,10 @@ class ModuleRegistry {
    public:
     ModuleRegistry() {
         modules.push_back(new StdStringModule());
+        // modules.push_back(new StdExceptionsModule());
         modules.push_back(new StdPrimitivesModule());
         modules.push_back(new StdListModule());
-        modules.push_back(new StdMapModule);
+        modules.push_back(new StdMapModule());
         modules.push_back(new StdMathModule());
         modules.push_back(new StdFileModule());
     }

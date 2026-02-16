@@ -36,6 +36,8 @@ class LLVMCodegen {
     std::map<std::string, FunctionNode*> functionDeclarations;
     std::map<std::string, StructType*> StructTypes;
 
+    std::map<std::string, std::vector<std::string>> structHierarchy;
+
     std::unique_ptr<TypeGen> typeGen;
     std::unique_ptr<ControlFlowGen> flowGen;
     std::unique_ptr<StructGen> structGen;
@@ -71,18 +73,46 @@ class LLVMCodegen {
                 if (!StructTypes.count(s->name)) StructTypes[s->name] = StructType::create(Context, s->name);
             }
         }
+        // --- UPDATED: Second Pass - Populate Structs with Field Flattening ---
         for (const auto& node : nodes) {
             if (auto s = dynamic_cast<StructNode*>(node.get())) {
                 StructType* st = StructTypes[s->name];
                 if (!st->isOpaque()) continue;
+
                 std::vector<Type*> elementTypes;
                 std::vector<std::string> fieldNames;
-                for (const auto& field : s->fields) {
-                    Type* t = typeGen->getLLVMType(field.type);
-                    if (t->isStructTy()) t = PointerType::getUnqual(t);
-                    elementTypes.push_back(t);
-                    fieldNames.push_back(field.name);
-                }
+
+                // Recursive helper to flatten parent fields first
+                auto extractFields = [&](StructNode* sn, std::vector<Type*>& types, std::vector<std::string>& names, auto& extractRef) -> void {
+                    // FIX: Use sn->parents based on ast.hpp
+                    for (const std::string& parentName : sn->parents) {
+                        for (const auto& searchNode : nodes) {
+                            if (auto ps = dynamic_cast<StructNode*>(searchNode.get())) {
+                                if (ps->name == parentName) {
+                                    extractRef(ps, types, names, extractRef); // Recurse
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    // Add the struct's own fields
+                    for (const auto& field : sn->fields) {
+                        Type* t = typeGen->getLLVMType(field.type);
+                        if (t->isStructTy()) t = PointerType::getUnqual(t);
+                        types.push_back(t);
+                        names.push_back(field.name);
+                    }
+                };
+
+                // FIX: Store hierarchy using s->parents
+                structHierarchy[s->name] = s->parents; 
+
+                // --- NEW: Pass hierarchy to StructGen ---
+                structGen->setHierarchy(&structHierarchy);
+
+                // Execute the flattening
+                extractFields(s, elementTypes, fieldNames, extractFields);
+
                 st->setBody(elementTypes);
                 structGen->registerStructLayout(s->name, fieldNames);
             }
@@ -290,6 +320,28 @@ class LLVMCodegen {
 
             std::string funcName = typeName + "_" + member->memberName;
             Function* func = TheModule->getFunction(funcName);
+
+            // --- UPDATED: Fallback to Inherited Methods recursively ---
+            if (!func && structHierarchy.count(typeName)) {
+                // Lambda to recursively search up the hierarchy 
+                std::function<Function*(const std::string&)> searchHierarchy = [&](const std::string& currentType) -> Function* {
+                    if (structHierarchy.count(currentType)) {
+                        for (const std::string& parentName : structHierarchy[currentType]) {
+                            Function* foundFunc = TheModule->getFunction(parentName + "_" + member->memberName);
+                            if (foundFunc) return foundFunc;
+                            
+                            // Recurse up the tree
+                            foundFunc = searchHierarchy(parentName);
+                            if (foundFunc) return foundFunc;
+                        }
+                    }
+                    return nullptr;
+                };
+                
+                func = searchHierarchy(typeName);
+            }
+            // --- END UPDATED --- 
+
             if (!func) return nullptr;
 
             std::vector<Value*> args;
@@ -416,7 +468,7 @@ class LLVMCodegen {
         }
         else if (auto wi = dynamic_cast<WithNode*>(node)) handleWith(wi, parentFunc);
         else if (auto t = dynamic_cast<TryCatchNode*>(node)) {
-            flowGen->generateTryCatch(t, parentFunc, [this, parentFunc](Node* n) { this->handleStatement(n, parentFunc); }, varGen.get(), StructTypes);
+            flowGen->generateTryCatch(t, parentFunc, [this, parentFunc](Node* n) { this->handleStatement(n, parentFunc); }, varGen.get(), StructTypes, structHierarchy);
         }
         else if (auto th = dynamic_cast<ThrowNode*>(node)) {
             flowGen->generateThrow(th, parentFunc, [this](Node* n) { return this->handleExpression(n); });
@@ -486,7 +538,24 @@ class LLVMCodegen {
             if (memberPtr) {
                 Type* fieldType = memberPtr->getType()->getPointerElementType();
                 if (val->getType() != fieldType) {
-                    if (val->getType()->isIntegerTy() && fieldType->isIntegerTy()) val = Builder.CreateIntCast(val, fieldType, true);
+                    // --- NEW: Auto-box raw C-strings to String structs ---
+                    if (val->getType()->isPointerTy() && 
+                        val->getType()->getPointerElementType()->isIntegerTy(8) &&
+                        fieldType->isPointerTy() && 
+                        fieldType->getPointerElementType()->isStructTy()) {
+                        
+                        StructType* st = cast<StructType>(fieldType->getPointerElementType());
+                        std::string sName = st->getName().str();
+                        if (sName.find("struct.") == 0) sName = sName.substr(7);
+                        if (sName == "String") {
+                            std::vector<Value*> boxArgs = {val};
+                            val = structGen->allocateAndInit("String", boxArgs);
+                        } else {
+                            val = Builder.CreateBitCast(val, fieldType);
+                        }
+                    }
+                    // --- END NEW --- 
+                    else if (val->getType()->isIntegerTy() && fieldType->isIntegerTy()) val = Builder.CreateIntCast(val, fieldType, true);
                     else if (val->getType()->isPointerTy() && fieldType->isPointerTy()) val = Builder.CreateBitCast(val, fieldType);
                     else if (val->getType()->isIntegerTy() && fieldType->isPointerTy()) val = Builder.CreateIntToPtr(val, fieldType);
                     else if (val->getType()->isIntegerTy() && fieldType->isDoubleTy()) val = Builder.CreateSIToFP(val, fieldType);

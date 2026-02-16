@@ -8,3 +8,8 @@ from .primitives use {
     Int, Double, Bool
 }
 from .string use { String, StringIterator }
+
+from .exceptions use {
+    Exception, 
+    TypeError
+}

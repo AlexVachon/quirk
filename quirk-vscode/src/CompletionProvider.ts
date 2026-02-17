@@ -296,11 +296,11 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
         const fullText = document.getText();
         const textBeforeCursor = document.getText(new vscode.Range(new vscode.Position(0, 0), position));
 
-        ['define', 'struct', 'if', 'else', 'elif', 'while', 'for', 'in', 'return', 'break', 'continue', 'use', 'from', 'with', 'as', 'extern', 'true', 'false', 'null'].forEach(kw => addCompletion(kw, vscode.CompletionItemKind.Keyword));
+        ['define', 'struct', 'if', 'else', 'elif', 'while', 'for', 'in', 'return', 'break', 'continue', 'use', 'from', 'with', 'as', 'true', 'false', 'null', 'trigger'].forEach(kw => addCompletion(kw, vscode.CompletionItemKind.Keyword));
         ['print', 'printf', 'malloc', 'free', 'exit', 'Char', 'String', 'List', 'Map', 'File', 'Int', 'Double', 'Bool', 'Any', 'void'].forEach(bi => addCompletion(bi, vscode.CompletionItemKind.Reference, 'Built-in'));
 
         let match;
-        const varRegex = /([a-zA-Z0-9_]+)\s*:=/g;
+        const varRegex = /([a-zA-Z0-9_]+)\s*(?::=|=|\+=|-=|\*=|\/=)/g;
         while ((match = varRegex.exec(textBeforeCursor)) !== null) addCompletion(match[1], vscode.CompletionItemKind.Variable, 'Local Variable');
 
         const defRegex = /^\s*(?:extern\s+)?(?:define|def|init|struct)\s+([a-zA-Z0-9_]+)/gm;

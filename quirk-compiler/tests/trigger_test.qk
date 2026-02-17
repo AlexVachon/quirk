@@ -6,7 +6,6 @@ struct Player {
         self.name = name
         self.health = 100
         
-        // Now you can name the parameters!
         trigger self.health(current, previous) {
             if current < previous {
                 print("${self.name} took ${previous - current} damage! (Health: ${current})")

@@ -28,6 +28,12 @@
     },
     {
       "include": "#operators"
+    },
+    {
+      "include": "#properties"
+    },
+    {
+      "include": "#variables"
     }
   ],
   "repository": {
@@ -94,7 +100,7 @@
       "patterns": [
         {
           "name": "keyword.control.quirk",
-          "match": "\\b(if|else|elif|while|for|in|return|break|continue|with|as)\\b"
+          "match": "\\b(if|else|elif|while|for|in|return|break|continue|with|as|trigger)\\b"
         },
         {
           "name": "keyword.other.quirk",
@@ -157,11 +163,23 @@
               "name": "punctuation.definition.template-expression.end.quirk"
             }
           },
+          "contentName": "source.quirk",
           "patterns": [
             {
               "include": "$self"
             }
           ]
+        },
+        {
+          "match": "(\\$)([a-zA-Z_]\\w*)",
+          "captures": {
+            "1": {
+              "name": "punctuation.definition.template-expression.quirk"
+            },
+            "2": {
+              "name": "variable.other.readwrite.quirk"
+            }
+          }
         }
       ]
     },
@@ -211,6 +229,29 @@
         {
           "name": "comment.line.double-slash.quirk",
           "match": "//.*$"
+        }
+      ]
+    },
+    "properties": {
+      "patterns": [
+        {
+          "match": "(\\.)([a-zA-Z_]\\w*)\\b",
+          "captures": {
+            "1": {
+              "name": "punctuation.separator.property.quirk"
+            },
+            "2": {
+              "name": "variable.other.property.quirk"
+            }
+          }
+        }
+      ]
+    },
+    "variables": {
+      "patterns": [
+        {
+          "match": "\\b([a-zA-Z_]\\w*)\\b",
+          "name": "variable.other.readwrite.quirk"
         }
       ]
     }

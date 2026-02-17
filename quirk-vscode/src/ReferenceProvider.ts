@@ -21,7 +21,7 @@ export class QuirkReferenceProvider implements vscode.ReferenceProvider {
             'return', 'break', 'continue', 'use', 'from', 'with', 'as',
             'extern', 'true', 'false', 'null', 'del', 'init', 'def', 'extend',
             'print', 'exit', 'Char', 'String', 'List', 'Map', 'File', 'Int', 
-            'Double', 'Bool', 'Any', 'void', 'self'
+            'Double', 'Bool', 'Any', 'void', 'self', 'trigger'
         ]);
 
         if (protectedWords.has(targetWord)) {

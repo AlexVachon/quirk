@@ -30,6 +30,7 @@ enum class TokenType {
     IN,
     WITH,
     AS,
+    TRIGGER,
 
     // Literals
     IDENTIFIER,

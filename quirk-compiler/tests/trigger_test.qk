@@ -1,0 +1,32 @@
+struct Player {
+    name: String
+    health: Int
+
+    define __init(self, name: String) -> void {
+        self.name = name
+        self.health = 100
+        
+        // The struct watches its own internal health!
+        trigger self.health {
+            print("${self.name} now has ${it} health remaining.")
+            if it <= 0 {
+                print("${self.name} has died!")
+            }
+        }
+    }
+
+    define take_damage(self, amount: Int) -> void {
+        // This standard assignment will automatically trigger the hook!
+        self.health = self.health - amount
+    }
+}
+
+define main() -> void {
+    p := Player("Alex")
+    
+    print("Monster attacks!")
+    p.take_damage(40)
+    
+    print("Monster lands a critical hit!")
+    p.take_damage(60)
+}

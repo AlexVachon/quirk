@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <iostream>
 #include "parser.hpp"
 
@@ -41,6 +42,11 @@ std::vector<std::unique_ptr<Node>> Parser::parse() {
         if (type == TokenType::DEFINE || type == TokenType::INIT ||
             type == TokenType::EXTERN) {
             nodes.push_back(parseFunction());
+
+            for (auto& extra : extraNodes)
+                nodes.push_back(std::move(extra));
+            extraNodes.clear();
+
         } else if (type == TokenType::STRUCT) {
             nodes.push_back(parseStruct());
             for (auto& extra : extraNodes)
@@ -58,6 +64,9 @@ std::vector<std::unique_ptr<Node>> Parser::parse() {
             consume(TokenType::RBRACE, "Expected '}'");
         } else {
             nodes.push_back(parseStatement());
+            for (auto& extra : extraNodes)
+                nodes.push_back(std::move(extra));
+            extraNodes.clear();
         }
     }
     return nodes;
@@ -234,6 +243,8 @@ std::unique_ptr<Node> Parser::parseStatement() {
         return parseTry();
     if (type == TokenType::THROW) 
         return parseThrow();
+    if (type == TokenType::TRIGGER)
+        return parseTrigger();
     if (peek().type == TokenType::DEL) {
         advance();
         return std::make_unique<DeleteNode>(parseExpression(0));
@@ -679,4 +690,60 @@ std::unique_ptr<Node> Parser::parseThrow() {
     node->moduleName = this->filePath; 
     
     return node;
+}
+
+std::unique_ptr<Node> Parser::parseTrigger() {
+    consume(TokenType::TRIGGER, "Expected 'trigger'");
+    
+    if (peek().type != TokenType::IDENTIFIER) {
+        reportError("Expected variable name after 'trigger'", peek());
+    }
+    
+    // --- UPDATED: Allow dotted paths like 'self.health' ---
+    std::string varName = advance().value;
+    while (match(TokenType::DOT)) {
+        if (peek().type != TokenType::IDENTIFIER) {
+            reportError("Expected property name after '.'", peek());
+        }
+        varName += "." + advance().value;
+    }
+    // --- END UPDATED ---
+
+    auto lambda = std::make_unique<FunctionNode>();
+    static int triggerCount = 0;
+    
+    std::string safeVarName = varName;
+    std::replace(safeVarName.begin(), safeVarName.end(), '.', '_');
+    
+    std::string safeHandlerName = "__quirk_trigger_" + safeVarName + "_" + std::to_string(triggerCount++);
+    lambda->name = safeHandlerName;
+
+    // --- NEW: Inject the object as the first parameter so we don't lose context! ---
+    size_t dotPos = varName.find('.');
+    if (dotPos != std::string::npos) {
+        Parameter objParam;
+        objParam.name = varName.substr(0, dotPos); // Grabs "self" or "p"
+        objParam.type = "Any"; 
+        lambda->parameters.push_back(std::move(objParam));
+    }
+
+    // Add 'it' as the final parameter
+    Parameter p;
+    p.name = "it";
+    p.type = "Any"; 
+    lambda->parameters.push_back(std::move(p));
+
+    consume(TokenType::LBRACE, "Expected '{'");
+    while (peek().type != TokenType::RBRACE && !isAtEnd()) {
+        lambda->body.push_back(parseStatement());
+    }
+    consume(TokenType::RBRACE, "Expected '}'");
+
+    std::cerr << "[DEBUG] Parser: Lifted trigger block for '" << varName 
+              << "' into function '" << safeHandlerName << "'" << std::endl;
+
+    FunctionNode* rawLambda = lambda.get();
+    extraNodes.push_back(std::move(lambda));
+
+    return std::make_unique<TriggerNode>(varName, safeHandlerName, rawLambda);
 }

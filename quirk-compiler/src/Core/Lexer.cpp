@@ -181,6 +181,9 @@ Token Lexer::nextToken()
         if (ident == "throw")
             return {TokenType::THROW, ident, line};
 
+        if (ident == "trigger")
+            return {TokenType::TRIGGER, ident, line};
+            
         return {TokenType::IDENTIFIER, ident, line};
     }
 

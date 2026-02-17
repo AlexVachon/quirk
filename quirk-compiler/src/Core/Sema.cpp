@@ -130,6 +130,13 @@ void Sema::checkFunction(FunctionNode *f)
         defineVariable(param.name, param.type);
     }
 
+    // // Implicitly define 'it' for trigger handlers
+    // if (f->name.find("__quirk_trigger_") == 0) {
+    //     defineVariable("it", "Any"); // 'it' represents the new value
+    //     // --- NEW LOG ---
+    //     std::cerr << "[DEBUG] Sema: Implicitly defined 'it' for " << f->name << std::endl;
+    // }
+
     if (!f->isExtern)
     {
         for (const auto &statement : f->body)
@@ -212,6 +219,38 @@ void Sema::checkStatement(Node *node)
         std::string type = checkExpression(th->expression.get());
         if (!structRegistry.count(type)) {
             std::cerr << "Error: Can only throw Struct objects, got '" << type << "'." << std::endl; exit(1);
+        }
+    }
+    else if (auto tr = dynamic_cast<TriggerNode*>(node)) {
+        std::string varType;
+        std::string objType; // Store the object type
+        
+        size_t dotPos = tr->varName.find('.');
+        if (dotPos != std::string::npos) {
+            std::string objName = tr->varName.substr(0, dotPos);
+            std::string propName = tr->varName.substr(dotPos + 1);
+            
+            objType = resolveVariable(objName);
+            varType = resolveMember(objType, propName);
+            
+            if (varType == "unknown") {
+                std::cerr << "Error: Cannot trigger on unknown struct member '" << tr->varName << "'" << std::endl;
+                exit(1);
+            }
+        } else {
+            varType = resolveVariable(tr->varName);
+        }
+
+        // --- NEW: Update both parameter types ---
+        if (tr->handlerNode) {
+            if (dotPos != std::string::npos && tr->handlerNode->parameters.size() >= 2) {
+                // Parameter 0 is the object (e.g., self : Player)
+                tr->handlerNode->parameters[0].type = objType;
+                // Parameter 1 is the new value (e.g., it : Int)
+                tr->handlerNode->parameters[1].type = varType;
+            } else if (!tr->handlerNode->parameters.empty()) {
+                tr->handlerNode->parameters[0].type = varType;
+            }
         }
     }
     else if (auto r = dynamic_cast<ReturnNode *>(node))

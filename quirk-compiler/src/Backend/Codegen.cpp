@@ -50,6 +50,7 @@ class LLVMCodegen {
    public:
     static std::string currentCodegenClass;
     std::map<std::string, std::string> activeModuleAliases;
+    std::map<std::string, std::string> activeTriggers;
 
     LLVMCodegen() : Builder(Context) {
         TheModule = std::make_unique<Module>("QuirkCompiler", Context);
@@ -481,6 +482,9 @@ class LLVMCodegen {
                 [this](const std::string& s, std::vector<Value*>& v) { return this->structGen->allocateAndInit(s, v); }
             );
         }
+        else if (auto tr = dynamic_cast<TriggerNode*>(node)) {
+            activeTriggers[tr->varName] = tr->handlerName;
+        }
         else if (auto ret = dynamic_cast<ReturnNode*>(node)) {
             if (ret->expression) {
                 Value* retVal = handleExpression(ret->expression.get());
@@ -537,6 +541,28 @@ class LLVMCodegen {
         if (auto lhs = dynamic_cast<LiteralNode*>(vdecl->lhs.get())) {
             if (!varGen->exists(lhs->value)) varGen->defineLocalVariable(lhs->value, val);
             else varGen->updateLocalVariable(lhs->value, val);
+            if (activeTriggers.count(lhs->value)) {
+                Function* hook = TheModule->getFunction(activeTriggers[lhs->value]);
+                if (hook) {
+                    // --- NEW LOG ---
+                    std::cerr << "[DEBUG] Codegen: Hijacking assignment to '" << lhs->value 
+                              << "' to execute trigger '" << activeTriggers[lhs->value] << "'" << std::endl;
+
+                    Value* argVal = val;
+                    Type* expectedType = hook->getFunctionType()->getParamType(0);
+                    
+                    if (argVal->getType() != expectedType) {
+                        if (argVal->getType()->isIntegerTy() && expectedType->isPointerTy()) 
+                            argVal = Builder.CreateIntToPtr(argVal, expectedType);
+                        else if (argVal->getType()->isPointerTy() && expectedType->isPointerTy()) 
+                            argVal = Builder.CreateBitCast(argVal, expectedType);
+                    }
+                    
+                    Builder.CreateCall(hook, {argVal});
+                } else {
+                     std::cerr << "[WARNING] Codegen: Trigger function '" << activeTriggers[lhs->value] << "' not found!" << std::endl;
+                }
+            }
         } else if (auto member = dynamic_cast<MemberAccessNode*>(vdecl->lhs.get())) {
             Value* objPtr = handleExpression(member->object.get());
             if (objPtr->getType()->isPointerTy() && objPtr->getType()->getPointerElementType()->isPointerTy())
@@ -569,6 +595,41 @@ class LLVMCodegen {
                     else if (val->getType()->isIntegerTy() && fieldType->isDoubleTy()) val = Builder.CreateSIToFP(val, fieldType);
                 }
                 Builder.CreateStore(val, memberPtr);
+
+                if (auto objLit = dynamic_cast<LiteralNode*>(member->object.get())) {
+                    std::string fullPath = objLit->value + "." + member->memberName;
+                    
+                    if (activeTriggers.count(fullPath)) {
+                        Function* hook = TheModule->getFunction(activeTriggers[fullPath]);
+                        if (hook) {
+                            std::vector<Value*> callArgs;
+                            
+                            // 1. Pass the object context (e.g., 'self') if requested
+                            if (hook->arg_size() == 2) {
+                                Value* callObj = objPtr; // objPtr is already resolved above!
+                                Type* expectedObjTy = hook->getFunctionType()->getParamType(0);
+                                if (callObj->getType() != expectedObjTy) {
+                                    callObj = Builder.CreateBitCast(callObj, expectedObjTy);
+                                }
+                                callArgs.push_back(callObj);
+                            }
+
+                            // 2. Pass the new value (e.g., 'it')
+                            Value* argVal = val;
+                            Type* expectedType = hook->getFunctionType()->getParamType(hook->arg_size() - 1);
+                            
+                            if (argVal->getType() != expectedType) {
+                                if (argVal->getType()->isIntegerTy() && expectedType->isPointerTy()) 
+                                    argVal = Builder.CreateIntToPtr(argVal, expectedType);
+                                else if (argVal->getType()->isPointerTy() && expectedType->isPointerTy()) 
+                                    argVal = Builder.CreateBitCast(argVal, expectedType);
+                            }
+                            callArgs.push_back(argVal);
+
+                            Builder.CreateCall(hook, callArgs);
+                        }
+                    }
+                }
             }
         } else if (auto binOp = dynamic_cast<BinaryOpNode*>(vdecl->lhs.get())) {
             if (binOp->op == "[]") {

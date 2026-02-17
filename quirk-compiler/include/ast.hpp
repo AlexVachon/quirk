@@ -417,4 +417,20 @@ class ThrowNode : public Node {
     }
 };
 
+class TriggerNode : public Node {
+   public:
+    std::string varName;
+    std::string handlerName;
+    
+    FunctionNode* handlerNode; 
+
+    TriggerNode(std::string var, std::string handler, FunctionNode* fn) 
+        : varName(var), handlerName(handler), handlerNode(fn) {}
+
+    void print(int indent) const override {
+        std::string space(indent, ' ');
+        std::cout << space << "Trigger on '" << varName << "' -> " << handlerName << std::endl;
+    }
+};
+
 #endif

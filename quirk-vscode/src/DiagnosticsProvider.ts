@@ -3,7 +3,8 @@ import * as vscode from 'vscode';
 const KEYWORDS = new Set([
     'define', 'struct', 'if', 'else', 'elif', 'while', 'for', 'in',
     'return', 'break', 'continue', 'use', 'from', 'with', 'as',
-    'extern', 'true', 'false', 'null', 'del', 'init', 'def', 'extend'
+    'extern', 'true', 'false', 'null', 'del', 'init', 'def',
+    'trigger'
 ]);
 
 const BUILTINS = new Set([
@@ -182,7 +183,29 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
             }
         }
 
-        const assignMatch = /([a-zA-Z_]\w*)\s*(?::[a-zA-Z0-9_]+)?\s*:=/.exec(maskedLine);
+        // --- NEW: TRIGGER DECLARATION TRACKING ---
+        const triggerMatch = /^\s*trigger\s+[a-zA-Z0-9_.]+(?:\s*\(([^)]*)\))?/.exec(maskedLine);
+        if (triggerMatch) {
+            const paramsStr = triggerMatch[1];
+            
+            if (paramsStr) {
+                // User provided custom names: trigger health(new_hp, old_hp)
+                paramsStr.split(',').forEach(p => {
+                    const pName = p.trim();
+                    if (pName) {
+                        locals.add(pName);
+                        const startIdx = originalLine.indexOf(pName, triggerMatch.index);
+                        declarations.set(`${i}_${pName}`, new vscode.Range(i, startIdx, i, startIdx + pName.length));
+                    }
+                });
+            } else {
+                // Implicit variables: it, was
+                locals.add('it');
+                locals.add('was');
+            }
+        }
+
+        const assignMatch = /(?<!\.)\b([a-zA-Z_]\w*)\s*(?::[a-zA-Z0-9_]+)?\s*(?::=|=|\+=|-=|\*=|\/=)/.exec(maskedLine);
         if (assignMatch) {
             const vName = assignMatch[1];
             if (!locals.has(vName)) {
@@ -190,6 +213,14 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
                 const startIdx = originalLine.indexOf(vName);
                 declarations.set(`${i}_${vName}`, new vscode.Range(i, startIdx, i, startIdx + vName.length));
             }
+        }
+
+        // --- MEMBER USAGE SCAN ---
+        // Ensures method calls like .take_damage() mark 'take_damage' as used
+        const memberRegex = /\.\s*([a-zA-Z_]\w*)\b/g;
+        let memMatch;
+        while ((memMatch = memberRegex.exec(maskedLine)) !== null) {
+            usages.add(memMatch[1]);
         }
 
         // --- USAGE SCAN ---
@@ -229,7 +260,8 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
     // ==========================================
     declarations.forEach((range, key) => {
         if (!usages.has(key)) {
-            const cleanKey = key.includes('_') ? key.split('_')[1] : key;
+            // Safely removes local line-number prefixes (e.g. "19_") without breaking underscores
+            const cleanKey = key.replace(/^\d+_/, '');
 
             const diagnostic = new vscode.Diagnostic(
                 range,

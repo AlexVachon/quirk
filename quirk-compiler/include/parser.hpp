@@ -10,6 +10,7 @@ class Parser {
     const std::string& source;
     std::string filePath;
     int pos = 0;
+    int lambdaCount = 0;
     
     std::vector<std::unique_ptr<Node>> extraNodes; 
 
@@ -39,6 +40,7 @@ private:
     std::unique_ptr<Node> parseWith();
     std::unique_ptr<Node> parseTry();
     std::unique_ptr<Node> parseThrow();
+    std::unique_ptr<Node> parseTrigger();
     
     // Definition parsing
     std::unique_ptr<FunctionNode> parseFunction();

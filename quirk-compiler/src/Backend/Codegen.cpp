@@ -74,7 +74,6 @@ class LLVMCodegen {
                 if (!StructTypes.count(s->name)) StructTypes[s->name] = StructType::create(Context, s->name);
             }
         }
-        // --- UPDATED: Second Pass - Populate Structs with Field Flattening ---
         for (const auto& node : nodes) {
             if (auto s = dynamic_cast<StructNode*>(node.get())) {
                 StructType* st = StructTypes[s->name];
@@ -83,20 +82,17 @@ class LLVMCodegen {
                 std::vector<Type*> elementTypes;
                 std::vector<std::string> fieldNames;
 
-                // Recursive helper to flatten parent fields first
                 auto extractFields = [&](StructNode* sn, std::vector<Type*>& types, std::vector<std::string>& names, auto& extractRef) -> void {
-                    // FIX: Use sn->parents based on ast.hpp
                     for (const std::string& parentName : sn->parents) {
                         for (const auto& searchNode : nodes) {
                             if (auto ps = dynamic_cast<StructNode*>(searchNode.get())) {
                                 if (ps->name == parentName) {
-                                    extractRef(ps, types, names, extractRef); // Recurse
+                                    extractRef(ps, types, names, extractRef); 
                                     break;
                                 }
                             }
                         }
                     }
-                    // Add the struct's own fields
                     for (const auto& field : sn->fields) {
                         Type* t = typeGen->getLLVMType(field.type);
                         if (t->isStructTy()) t = PointerType::getUnqual(t);
@@ -105,13 +101,8 @@ class LLVMCodegen {
                     }
                 };
 
-                // FIX: Store hierarchy using s->parents
                 structHierarchy[s->name] = s->parents; 
-
-                // --- NEW: Pass hierarchy to StructGen ---
                 structGen->setHierarchy(&structHierarchy);
-
-                // Execute the flattening
                 extractFields(s, elementTypes, fieldNames, extractFields);
 
                 st->setBody(elementTypes);
@@ -131,7 +122,10 @@ class LLVMCodegen {
                 if (!func->cls.empty() && !func->isStatic) argTypes.push_back(typeGen->getLLVMType(func->cls));
                 for (const auto& param : func->parameters) argTypes.push_back(typeGen->getLLVMType(param.type));
                 FunctionType* FT = FunctionType::get(retTy, argTypes, false);
-                Function::Create(FT, Function::ExternalLinkage, func->name, TheModule.get());
+                
+                // --- NEW: LINKAGE NAME INJECTION ---
+                std::string llvmName = func->linkageName.empty() ? func->name : func->linkageName;
+                Function::Create(FT, Function::ExternalLinkage, llvmName, TheModule.get());
             }
         }
 
@@ -141,13 +135,21 @@ class LLVMCodegen {
             }
         }
 
-        FunctionType* mainType = FunctionType::get(Type::getInt32Ty(Context), {}, false);
+        FunctionType* mainType = FunctionType::get(
+            Type::getInt32Ty(Context), 
+            {Type::getInt32Ty(Context), Type::getInt8PtrTy(Context)->getPointerTo()}, 
+            false
+        );
         Function* mainFunc = Function::Create(mainType, Function::ExternalLinkage, "main", TheModule.get());
         Builder.SetInsertPoint(BasicBlock::Create(Context, "entry", mainFunc));
         
-        FunctionCallee gcInit = TheModule->getOrInsertFunction("GC_init", 
-            FunctionType::get(Type::getVoidTy(Context), false));
-        Builder.CreateCall(gcInit);
+        Value* argc = mainFunc->getArg(0);
+        Value* argv = mainFunc->getArg(1);
+        
+        FunctionCallee runtimeInit = TheModule->getOrInsertFunction("QuirkRuntime_init", 
+            FunctionType::get(Type::getVoidTy(Context), {Type::getInt32Ty(Context), Type::getInt8PtrTy(Context)->getPointerTo()}, false));
+            
+        Builder.CreateCall(runtimeInit, {argc, argv});
 
         activeModuleAliases.clear();
         
@@ -168,7 +170,10 @@ class LLVMCodegen {
         std::string prevClass = currentCodegenClass;
         currentCodegenClass = node->cls;
 
-        Function* F = TheModule->getFunction(node->name);
+        // --- NEW: LINKAGE NAME LOOKUP ---
+        std::string llvmName = node->linkageName.empty() ? node->name : node->linkageName;
+        Function* F = TheModule->getFunction(llvmName);
+        
         if (!F || node->isExtern) {
             currentCodegenClass = prevClass;
             return;
@@ -187,7 +192,6 @@ class LLVMCodegen {
         if (!node->cls.empty() && !node->isStatic) {
             llvm::Argument* selfArg = &*argIt++;
             selfArg->setName("self");
-            std::cerr << "     [Arg] self" << std::endl;
             varGen->defineArgument("self", selfArg);
         }
 
@@ -195,13 +199,10 @@ class LLVMCodegen {
             if (paramIdx >= node->parameters.size()) break;
             std::string argName = node->parameters[paramIdx++].name;
             argIt->setName(argName);
-            std::cerr << "     [Arg] " << argName << std::endl;
             varGen->defineArgument(argName, &*argIt);
         }
 
-        int stmtIdx = 0;
         for (const auto& stmt : node->body) {
-            std::cerr << "     [Stmt " << stmtIdx++ << "] Processing..." << std::endl;
             handleStatement(stmt.get(), F);
         }
 
@@ -259,14 +260,21 @@ class LLVMCodegen {
                 return structGen->allocateAndInit(lit->value, args);
             }
 
-            Function* func = TheModule->getFunction(lit->value);
-            if (!func && !currentCodegenClass.empty()) func = TheModule->getFunction(currentCodegenClass + "_" + lit->value);
+            // --- NEW: LINKAGE NAME RESOLUTION ---
+            Function* func = nullptr;
+            std::string targetName = lit->value;
+            
+            if (functionDeclarations.count(targetName)) {
+                std::string llvmName = functionDeclarations[targetName]->linkageName;
+                func = TheModule->getFunction(llvmName.empty() ? targetName : llvmName);
+            }
+            if (!func) func = TheModule->getFunction(targetName);
+
+            if (!func && !currentCodegenClass.empty()) func = TheModule->getFunction(currentCodegenClass + "_" + targetName);
             if (func) return generateGlobalCall(func, call);
         }
 
         if (auto member = dynamic_cast<MemberAccessNode*>(call->callee.get())) {
-            std::cerr << "[DEBUG] Evaluating Method/Module Call: " << member->memberName << std::endl;
-            
             if (auto lit = dynamic_cast<LiteralNode*>(member->object.get())) {
                 if (activeModuleAliases.count(lit->value)) {
                     std::string memberName = member->memberName;
@@ -275,7 +283,15 @@ class LLVMCodegen {
                         for (auto& a : call->args) args.push_back(handleExpression(a.value.get()));
                         return structGen->allocateAndInit(memberName, args);
                     }
-                    Function* func = TheModule->getFunction(memberName);
+                    
+                    // --- NEW: LINKAGE NAME RESOLUTION ---
+                    Function* func = nullptr;
+                    if (functionDeclarations.count(memberName)) {
+                        std::string llvmName = functionDeclarations[memberName]->linkageName;
+                        func = TheModule->getFunction(llvmName.empty() ? memberName : llvmName);
+                    }
+                    if (!func) func = TheModule->getFunction(memberName);
+
                     if (!func) {
                         std::cerr << "Error: Module function or struct '" << memberName << "' not found." << std::endl;
                         return nullptr;
@@ -326,26 +342,20 @@ class LLVMCodegen {
             std::string funcName = typeName + "_" + member->memberName;
             Function* func = TheModule->getFunction(funcName);
 
-            // --- UPDATED: Fallback to Inherited Methods recursively ---
             if (!func && structHierarchy.count(typeName)) {
-                // Lambda to recursively search up the hierarchy 
                 std::function<Function*(const std::string&)> searchHierarchy = [&](const std::string& currentType) -> Function* {
                     if (structHierarchy.count(currentType)) {
                         for (const std::string& parentName : structHierarchy[currentType]) {
                             Function* foundFunc = TheModule->getFunction(parentName + "_" + member->memberName);
                             if (foundFunc) return foundFunc;
-                            
-                            // Recurse up the tree
                             foundFunc = searchHierarchy(parentName);
                             if (foundFunc) return foundFunc;
                         }
                     }
                     return nullptr;
                 };
-                
                 func = searchHierarchy(typeName);
             }
-            // --- END UPDATED --- 
 
             if (!func) return nullptr;
 
@@ -540,9 +550,9 @@ class LLVMCodegen {
 
         if (auto lhs = dynamic_cast<LiteralNode*>(vdecl->lhs.get())) {
             
-            Value* wasVal = val; // Default to 'val' if it's the first assignment
+            Value* wasVal = val; 
             if (varGen->exists(lhs->value)) {
-                wasVal = varGen->resolveVariable(lhs->value); // Get previous value
+                wasVal = varGen->resolveVariable(lhs->value); 
 
                 if (vdecl->op == "+=") val = mathGen->generateBinaryOp("+", wasVal, val);
                 else if (vdecl->op == "-=") val = mathGen->generateBinaryOp("-", wasVal, val);
@@ -555,7 +565,6 @@ class LLVMCodegen {
             if (activeTriggers.count(lhs->value)) {
                 Function* hook = TheModule->getFunction(activeTriggers[lhs->value]);
                 if (hook) {
-                    // Type cast new val
                     Value* argVal = val;
                     Type* expectedType = hook->getFunctionType()->getParamType(0);
                     if (argVal->getType() != expectedType) {
@@ -563,7 +572,6 @@ class LLVMCodegen {
                         else if (argVal->getType()->isPointerTy() && expectedType->isPointerTy()) argVal = Builder.CreateBitCast(argVal, expectedType);
                     }
                     
-                    // Type cast old val
                     Value* argWasVal = wasVal;
                     Type* expectedWasType = hook->getFunctionType()->getParamType(1);
                     if (argWasVal->getType() != expectedWasType) {
@@ -584,7 +592,6 @@ class LLVMCodegen {
             if (memberPtr) {
                 Type* fieldType = memberPtr->getType()->getPointerElementType();
                 
-                // --- NEW: GHOST LOAD FOR STRUCTS ---
                 Value* wasVal = Builder.CreateLoad(fieldType, memberPtr, "was_val");
 
                 if (vdecl->op == "+=") val = mathGen->generateBinaryOp("+", wasVal, val);
@@ -593,7 +600,6 @@ class LLVMCodegen {
                 else if (vdecl->op == "/=") val = mathGen->generateBinaryOp("/", wasVal, val);
 
                 if (val->getType() != fieldType) {
-                    // --- Auto-box raw C-strings to String structs ---
                     if (val->getType()->isPointerTy() && 
                         val->getType()->getPointerElementType()->isIntegerTy(8) &&
                         fieldType->isPointerTy() && 
@@ -615,7 +621,7 @@ class LLVMCodegen {
                     else if (val->getType()->isIntegerTy() && fieldType->isDoubleTy()) val = Builder.CreateSIToFP(val, fieldType);
                 }
                 
-                Builder.CreateStore(val, memberPtr); // Overwrite memory
+                Builder.CreateStore(val, memberPtr); 
 
                 if (auto objLit = dynamic_cast<LiteralNode*>(member->object.get())) {
                     std::string fullPath = objLit->value + "." + member->memberName;
@@ -625,7 +631,6 @@ class LLVMCodegen {
                         if (hook) {
                             std::vector<Value*> callArgs;
                             
-                            // 1. Pass the object context
                             if (hook->arg_size() == 3) {
                                 Value* callObj = objPtr;
                                 Type* expectedObjTy = hook->getFunctionType()->getParamType(0);
@@ -633,7 +638,6 @@ class LLVMCodegen {
                                 callArgs.push_back(callObj);
                             }
 
-                            // 2. Pass New Value
                             Value* argVal = val;
                             Type* expectedType = hook->getFunctionType()->getParamType(hook->arg_size() - 2);
                             if (argVal->getType() != expectedType) {
@@ -642,7 +646,6 @@ class LLVMCodegen {
                             }
                             callArgs.push_back(argVal);
 
-                            // 3. Pass Old Value
                             Value* argWasVal = wasVal;
                             Type* expectedWasType = hook->getFunctionType()->getParamType(hook->arg_size() - 1);
                             if (argWasVal->getType() != expectedWasType) {
@@ -853,12 +856,10 @@ Value* LLVMCodegen::handleExpression(Node* node) {
     }
 
     if (auto member = dynamic_cast<MemberAccessNode*>(node)) {
-        std::cerr << "\n[DEBUG] Evaluating MemberAccessNode for field: " << member->memberName << std::endl;
         Value* objPtr = handleExpression(member->object.get());
         
         if (objPtr && objPtr->getType()->isPointerTy() && 
             objPtr->getType()->getPointerElementType()->isPointerTy()) {
-            std::cerr << "[DEBUG] Auto-Dereferencing 'self' or variable..." << std::endl;
             objPtr = Builder.CreateLoad(objPtr->getType()->getPointerElementType(), objPtr);
         }
         

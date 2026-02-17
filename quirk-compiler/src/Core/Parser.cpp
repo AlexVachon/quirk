@@ -378,6 +378,34 @@ std::unique_ptr<FunctionNode> Parser::parseFunction() {
     node->name = name;
     node->isExtern = isExtern;
 
+    // --- NEW: AUTOMATIC FFI MANGLING ---
+    std::string prefix = "";
+    std::string p = this->filePath;
+    
+    if (p.length() >= 3 && p.substr(p.length() - 3) == ".qk") {
+        p = p.substr(0, p.length() - 3);
+    }
+        
+    size_t lastSlash = p.find_last_of("/\\");
+    std::string fileName = (lastSlash == std::string::npos) ? p : p.substr(lastSlash + 1);
+    
+    if (fileName == "__init") {
+        std::string dir = (lastSlash == std::string::npos) ? p : p.substr(0, lastSlash);
+        size_t secondSlash = dir.find_last_of("/\\");
+        prefix = (secondSlash == std::string::npos) ? dir : dir.substr(secondSlash + 1);
+    } else {
+        prefix = fileName;
+    }
+    
+    if (!prefix.empty()) prefix[0] = std::toupper(prefix[0]);
+    
+    if (isExtern) {
+        node->linkageName = prefix + "_" + name; // e.g., "Sys_arg_count"
+    } else {
+        node->linkageName = name;
+    }
+    // -----------------------------------
+
     consume(TokenType::LPAREN, "Expected '('");
     while (peek().type != TokenType::RPAREN && !isAtEnd()) {
         Parameter param;
@@ -519,6 +547,13 @@ std::unique_ptr<StructNode> Parser::parseStruct() {
                 func->name = node->name + "_" + func->name;
             }
 
+            if (!isInit && func->name.find("__init") != std::string::npos) {
+                func->name = node->name + "__init";
+            }
+
+            // --- THE FIX: Capture it AFTER normalization! ---
+            func->linkageName = func->name;
+
             if (!isInit && func->name.find("__init") != std::string::npos)
                 func->name = node->name + "__init";
 
@@ -644,7 +679,6 @@ void Parser::reportError(const std::string& message, const Token& token) {
     exit(1);
 }
 
-// --- UPDATED: parseTry supports multiple catch blocks & multiple types ---
 std::unique_ptr<Node> Parser::parseTry() {
     consume(TokenType::TRY, "Expected 'try'");
     auto node = std::make_unique<TryCatchNode>();
@@ -655,16 +689,14 @@ std::unique_ptr<Node> Parser::parseTry() {
     }
     consume(TokenType::RBRACE, "Expected '}'");
 
-    // Loop through 1 to N catch blocks
     while (peek().type == TokenType::CATCH) {
-        advance(); // consume CATCH
+        advance();
         CatchBlock cb;
         
         consume(TokenType::LPAREN, "Expected '('");
         cb.varName = advance().value;
         consume(TokenType::COLON, "Expected ':'");
         
-        // Parse one or more comma-separated types
         do {
             cb.types.push_back(advance().value);
         } while (match(TokenType::COMMA));
@@ -717,19 +749,17 @@ std::unique_ptr<Node> Parser::parseTrigger() {
     std::string safeHandlerName = "__quirk_trigger_" + safeVarName + "_" + std::to_string(triggerCount++);
     lambda->name = safeHandlerName;
 
-    // --- NEW: Parse optional custom parameter names: trigger x(new, old) ---
     std::string newParamName = "it";
     std::string oldParamName = "was";
 
     if (match(TokenType::LPAREN)) {
-        newParamName = advance().value; // User-defined 'it'
+        newParamName = advance().value; 
         if (match(TokenType::COMMA)) {
-            oldParamName = advance().value; // User-defined 'was'
+            oldParamName = advance().value; 
         }
         consume(TokenType::RPAREN, "Expected ')' after trigger parameters");
     }
 
-    // 1. Object Context (if it's a dotted path like self.health)
     size_t dotPos = varName.find('.');
     if (dotPos != std::string::npos) {
         Parameter objParam;
@@ -738,13 +768,11 @@ std::unique_ptr<Node> Parser::parseTrigger() {
         lambda->parameters.push_back(std::move(objParam));
     }
 
-    // 2. New Value
     Parameter pNew;
     pNew.name = newParamName;
     pNew.type = "Any"; 
     lambda->parameters.push_back(std::move(pNew)); 
 
-    // 3. Old Value
     Parameter pOld;
     pOld.name = oldParamName;
     pOld.type = "Any"; 

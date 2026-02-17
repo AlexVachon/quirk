@@ -11,32 +11,22 @@
 #define calloc(x, y) GC_malloc((x) * (y))
 #define free(x)
 
-#include "core/types.h"
+#include "types.h"
 
 #include "core/string.c"
 #include "core/primitives.c"
 #include "core/list.c"
 #include "core/map.c"
-
 #include "core/exceptions.c"
 
-#include "core/file.c"
+#include "libs/file.c"
+#include "libs/sys.c"
 
-char* String_add(char* a, char* b) {
-    if (!a) a = "";
-    if (!b) b = "";
+
+void QuirkRuntime_init(int argc, char** argv) {
+    GC_init();             // Initialize Boehm Garbage Collector
+    Sys_init(argc, argv);  // Initialize OS Arguments
     
-    size_t lenA = strlen(a);
-    size_t lenB = strlen(b);
-    
-    char* result = (char*)malloc(lenA + lenB + 1);
-    if (!result) {
-        fprintf(stderr, "Out of memory in String_add\n");
-        exit(1);
-    }
-    
-    strcpy(result, a);
-    strcat(result, b);
-    
-    return result;
+    // As you add more libraries that need startup logic (e.g., Network_init),
+    // you simply add them here. No C++ compiler changes required!
 }

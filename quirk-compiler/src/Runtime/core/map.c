@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "types.h"
+#include "../types.h"
 
 #define INITIAL_CAPACITY 8
 #define LOAD_FACTOR 0.75

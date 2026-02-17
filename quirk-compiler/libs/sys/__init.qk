@@ -1,8 +1,48 @@
+use core.collections.list
+
+extern define arg_count() -> Int
+extern define arg_get(index: Int) -> String
+extern define getenv(name: String) -> String
+extern define exit(code: Int) -> void
+extern define system(cmd: String) -> Int
 
 extern define srcline(filename: Any, line: Int) -> Any
-extern define exit(code: Int) -> void
 
 
+---
+Returns a List of Strings representing the command-line arguments.
+Index 0 is the name/path of the executing program.
+---
+define args() -> List {
+    lst := []
+    count := arg_count()
+    i := 0
+    
+    while i < count {
+        lst.append(arg_get(i))
+        i += 1
+    }
+    
+    return lst
+}
+
+---
+Retrieves the value of an environment variable. Returns an empty string if not found.
+---
+define env(key: String) -> String {
+    return getenv(key)
+}
+
+---
+Executes a terminal command and returns the OS exit status.
+---
+define run(command: String) -> Int {
+    return system(command)
+}
+
+---
+Immediately terminates the program with the given status code.
+---
 define terminate(code: Int) -> void {
     exit(code)
 }

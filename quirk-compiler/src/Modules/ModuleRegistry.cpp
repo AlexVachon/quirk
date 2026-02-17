@@ -14,7 +14,6 @@ class ModuleRegistry {
    public:
     ModuleRegistry() {
         modules.push_back(new StdStringModule());
-        // modules.push_back(new StdExceptionsModule());
         modules.push_back(new StdPrimitivesModule());
         modules.push_back(new StdListModule());
         modules.push_back(new StdMapModule());

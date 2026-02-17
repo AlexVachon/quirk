@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "types.h"
+#include "../types.h"
 
 #define MAX_SMALL_INT 0xFFFFF
 
@@ -74,6 +74,25 @@ void String___del(String* self) {
 // ==========================================
 //  OPERATORS (__add, __eq, __str)
 // ==========================================
+
+// char* String_add(char* a, char* b) {
+//     if (!a) a = "";
+//     if (!b) b = "";
+    
+//     size_t lenA = strlen(a);
+//     size_t lenB = strlen(b);
+    
+//     char* result = (char*)malloc(lenA + lenB + 1);
+//     if (!result) {
+//         fprintf(stderr, "Out of memory in String_add\n");
+//         exit(1);
+//     }
+    
+//     strcpy(result, a);
+//     strcat(result, b);
+    
+//     return result;
+// }
 
 String* String___add(String* self, String* other) {
     if (!self || !other)

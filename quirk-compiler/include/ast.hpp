@@ -71,6 +71,9 @@ class FunctionNode : public Node {
     bool isExtern = false;
     bool isStatic = false;
 
+    std::string linkageName;
+
+
     void print(int indent) const override {
         std::string space(indent, ' ');
         std::cout << space << (isExtern ? "Extern " : "")

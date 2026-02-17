@@ -3,69 +3,65 @@
 #include <stdlib.h>
 #include <string.h>
 
-// FIX: Accept String* instead of char*
-File* File_open(String* path, String* mode) {
-    File* f = (File*)malloc(sizeof(File));
+// Automatically called when you do `f := File("data.txt", "w")`
+void File__init(File* self, String* path, String* mode) {
+    if (!self) return;
+    
+    char* path_str = (path && path->buffer) ? path->buffer : "";
+    char* mode_str = (mode && mode->buffer) ? mode->buffer : "r";
 
-    char* path_str = path ? path->buffer : "";
-    char* mode_str = mode ? mode->buffer : "r";
-
-    f->handle = fopen(path_str, mode_str);
-
-    if (f->handle) {
-        f->is_open = 1;
-    } else {
-        f->is_open = 0;
-    }
-    return f;
+    self->handle = fopen(path_str, mode_str);
+    self->is_open = (self->handle != NULL) ? 1 : 0;
 }
 
-void File_close(File* f) {
-    if (f && f->is_open && f->handle) {
-        fclose((FILE*)f->handle);
-        f->handle = NULL;
-        f->is_open = 0;
+void File_close(File* self) {
+    if (self && self->is_open && self->handle) {
+        // Prevent closing standard streams (stdout/stderr/stdin)
+        if (self->handle != stdout && self->handle != stderr && self->handle != stdin) {
+            fclose((FILE*)self->handle);
+        }
+        self->handle = NULL;
+        self->is_open = 0;
     }
 }
 
-// FIXED: Corrected parameter name from raw_handle to f
-String* File_read_line(File* f) {
-    if (!f || !f->is_open || !f->handle)  // FIXED: Was "if (!raw_handle)"
-        return NULL;
-    char buffer[1024];
-    if (fgets(buffer, sizeof(buffer),
-              (FILE*)f->handle)) {  // FIXED: Was raw_handle
+String* File_read_line(File* self) {
+    if (!self || !self->is_open || !self->handle) return make_String("");
+    
+    char buffer[2048]; // Supports lines up to 2048 chars
+    if (fgets(buffer, sizeof(buffer), (FILE*)self->handle)) {
+        // Trim the trailing newline
         buffer[strcspn(buffer, "\n")] = 0;
         return make_String(buffer);
     }
-    return NULL;
+    return make_String("");
 }
 
-String* File_read(File* f) {
-    if (!f || !f->is_open || !f->handle)
-        return NULL;
+String* File_read(File* self) {
+    if (!self || !self->is_open || !self->handle) return make_String("");
 
-    fseek((FILE*)f->handle, 0, SEEK_END);
-    long length = ftell((FILE*)f->handle);
-    fseek((FILE*)f->handle, 0, SEEK_SET);
+    fseek((FILE*)self->handle, 0, SEEK_END);
+    long length = ftell((FILE*)self->handle);
+    fseek((FILE*)self->handle, 0, SEEK_SET);
+
+    if (length <= 0) return make_String("");
 
     char* buf = malloc(length + 1);
-    fread(buf, 1, length, (FILE*)f->handle);
-    buf[length] = 0;
+    if (!buf) return make_String("");
 
-    return make_String(buf);
+    size_t read_bytes = fread(buf, 1, length, (FILE*)self->handle);
+    buf[read_bytes] = '\0';
+
+    return make_String_taking_ownership(buf);
 }
 
-void File_write(File* f, String* s) {
-    // 1. Safety Checks (matching your read logic)
-    if (!f || !f->is_open || !f->handle || !s || !s->buffer)
-        return;
+void File_write(File* self, String* s) {
+    if (!self || !self->is_open || !self->handle || !s || !s->buffer) return;
 
-    // 2. Write the data
-    // We use s->length because your String struct explicitly tracks it.
-    // This is safer/faster than strlen, especially if you ever handle binary data.
-    fwrite(s->buffer, 1, s->length, (FILE*)f->handle);
+    // We use s->length instead of strlen(s->buffer) for better performance 
+    // and safety in case of null-bytes inside the string!
+    fwrite(s->buffer, 1, s->length, (FILE*)self->handle);
     
-    // Optional: Flush to ensure data hits the disk immediately
-    fflush((FILE*)f->handle); 
+    // Flush to ensure it hits the disk/console immediately
+    fflush((FILE*)self->handle); 
 }

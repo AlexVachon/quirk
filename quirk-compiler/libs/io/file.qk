@@ -1,45 +1,46 @@
 
-struct FileIterator {
-    file_ref: File
-    current_line: String
+// struct FileIterator {
+//     file_ref: File
+//     current_line: String
 
-    define __init(self, f: File) {
-        self.file_ref := f
-        self.current_line := 0
-    }
+//     define __init(self, f: File) {
+//         self.file_ref := f
+//         self.current_line := 0
+//     }
 
-    define __has_next(self) -> bool {
-        self.current_line := self.file_ref.read_line()
-        return self.current_line != 0
-    }
+//     define __has_next(self) -> bool {
+//         self.current_line := self.file_ref.read_line()
+//         return self.current_line != 0
+//     }
 
-    define __next(self) -> String {
-        return self.current_line
-    }
-}
+//     define __next(self) -> String {
+//         return self.current_line
+//     }
+// }
 
+---
+A handler for reading and writing to the OS file system.
+Supports Context Managers (with blocks) for automatic closure.
+---
 struct File {
-    handle: ptr
-    is_open: int
+    handle: Any
+    is_open: Int 
 
-    // Takes High-Level String Objects
-    extern define open(path: String, mode: String) -> File
+    // Mapped directly to File__init in C
+    extern define __init(self, path: String, mode: String) -> void
     
     extern define read(self) -> String
-    extern define read_line(self) -> String 
-    extern define close(self)
+    extern define read_line(self) -> String
+    extern define write(self, data: String) -> void
+    extern define close(self) -> void
 
-    extern define write(self, content: String) -> void
-
-    define __enter(self) -> File { 
-        return self 
-    }
+    // --- CONTEXT MANAGER SUPPORT ---
     
-    define __exit(self) { 
-        self.close() 
+    define ___enter(self) -> File {
+        return self
     }
 
-    define __iter(self) -> FileIterator {
-        return FileIterator(self)
+    define ___exit(self) -> void {
+        self.close()
     }
 }

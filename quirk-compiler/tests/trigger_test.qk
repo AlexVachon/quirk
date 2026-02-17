@@ -6,27 +6,27 @@ struct Player {
         self.name = name
         self.health = 100
         
-        // The struct watches its own internal health!
-        trigger self.health {
-            print("${self.name} now has ${it} health remaining.")
-            if it <= 0 {
-                print("${self.name} has died!")
+        // Now you can name the parameters!
+        trigger self.health(current, previous) {
+            if current < previous {
+                print("${self.name} took ${previous - current} damage! (Health: ${current})")
+            } elif current > previous {
+                print("${self.name} was healed for ${current - previous} HP! (Health: ${current})")
             }
         }
     }
 
     define take_damage(self, amount: Int) -> void {
-        // This standard assignment will automatically trigger the hook!
-        self.health = self.health - amount
+        self.health -= amount
     }
 }
 
 define main() -> void {
     p := Player("Alex")
     
-    print("Monster attacks!")
+    // This will trigger the damage text
     p.take_damage(40)
     
-    print("Monster lands a critical hit!")
-    p.take_damage(60)
+    // This will trigger the healing text
+    p.health += 20 
 }

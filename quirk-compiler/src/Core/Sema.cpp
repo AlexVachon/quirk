@@ -241,15 +241,18 @@ void Sema::checkStatement(Node *node)
             varType = resolveVariable(tr->varName);
         }
 
-        // --- NEW: Update both parameter types ---
+        // --- NEW: Update all 3 parameter types ---
         if (tr->handlerNode) {
-            if (dotPos != std::string::npos && tr->handlerNode->parameters.size() >= 2) {
-                // Parameter 0 is the object (e.g., self : Player)
-                tr->handlerNode->parameters[0].type = objType;
-                // Parameter 1 is the new value (e.g., it : Int)
-                tr->handlerNode->parameters[1].type = varType;
-            } else if (!tr->handlerNode->parameters.empty()) {
-                tr->handlerNode->parameters[0].type = varType;
+            auto& params = tr->handlerNode->parameters;
+            if (dotPos != std::string::npos && params.size() >= 3) {
+                // [0] = Object Context, [1] = New Value, [2] = Old Value
+                params[0].type = objType;
+                params[1].type = varType;
+                params[2].type = varType;
+            } else if (params.size() >= 2) {
+                // Local Variable: [0] = New Value, [1] = Old Value
+                params[0].type = varType;
+                params[1].type = varType;
             }
         }
     }

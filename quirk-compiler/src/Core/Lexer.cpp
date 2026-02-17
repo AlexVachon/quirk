@@ -209,29 +209,34 @@ Token Lexer::nextToken()
     }
 
     // 5. Multi-character Operators
-    if (c == ':' && peek(1) == '=')
-    {
-        advance();
-        advance();
+    if (c == ':' && peek(1) == '=') {
+        advance(); advance();
         return {TokenType::ASSIGN_INIT, ":=", line};
     }
-    if (c == '=' && peek(1) == '=')
-    {
-        advance();
-        advance();
+    if (c == '=' && peek(1) == '=') {
+        advance(); advance();
         return {TokenType::EQUAL, "==", line};
     }
-    if (c == '-' && peek(1) == '>')
-    {
-        advance();
-        advance();
+    if (c == '-' && peek(1) == '>') {
+        advance(); advance();
         return {TokenType::ARROW, "->", line};
     }
-    if (c == '-' && peek(1) == '=')
-    {
-        advance();
-        advance();
+    if (c == '-' && peek(1) == '=') {
+        advance(); advance();
         return {TokenType::MINUS_ASSIGN, "-=", line};
+    }
+    
+    if (c == '+' && peek(1) == '=') {
+        advance(); advance();
+        return {TokenType::PLUS_ASSIGN, "+=", line};
+    }
+    if (c == '*' && peek(1) == '=') {
+        advance(); advance();
+        return {TokenType::STAR_ASSIGN, "*=", line};
+    }
+    if (c == '/' && peek(1) == '=') {
+        advance(); advance();
+        return {TokenType::SLASH_ASSIGN, "/=", line};
     }
 
     // 6. Comments

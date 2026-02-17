@@ -539,30 +539,42 @@ class LLVMCodegen {
         }
 
         if (auto lhs = dynamic_cast<LiteralNode*>(vdecl->lhs.get())) {
+            
+            Value* wasVal = val; // Default to 'val' if it's the first assignment
+            if (varGen->exists(lhs->value)) {
+                wasVal = varGen->resolveVariable(lhs->value); // Get previous value
+
+                if (vdecl->op == "+=") val = mathGen->generateBinaryOp("+", wasVal, val);
+                else if (vdecl->op == "-=") val = mathGen->generateBinaryOp("-", wasVal, val);
+                else if (vdecl->op == "*=") val = mathGen->generateBinaryOp("*", wasVal, val);
+                else if (vdecl->op == "/=") val = mathGen->generateBinaryOp("/", wasVal, val);
+            }
+
             if (!varGen->exists(lhs->value)) varGen->defineLocalVariable(lhs->value, val);
             else varGen->updateLocalVariable(lhs->value, val);
             if (activeTriggers.count(lhs->value)) {
                 Function* hook = TheModule->getFunction(activeTriggers[lhs->value]);
                 if (hook) {
-                    // --- NEW LOG ---
-                    std::cerr << "[DEBUG] Codegen: Hijacking assignment to '" << lhs->value 
-                              << "' to execute trigger '" << activeTriggers[lhs->value] << "'" << std::endl;
-
+                    // Type cast new val
                     Value* argVal = val;
                     Type* expectedType = hook->getFunctionType()->getParamType(0);
-                    
                     if (argVal->getType() != expectedType) {
-                        if (argVal->getType()->isIntegerTy() && expectedType->isPointerTy()) 
-                            argVal = Builder.CreateIntToPtr(argVal, expectedType);
-                        else if (argVal->getType()->isPointerTy() && expectedType->isPointerTy()) 
-                            argVal = Builder.CreateBitCast(argVal, expectedType);
+                        if (argVal->getType()->isIntegerTy() && expectedType->isPointerTy()) argVal = Builder.CreateIntToPtr(argVal, expectedType);
+                        else if (argVal->getType()->isPointerTy() && expectedType->isPointerTy()) argVal = Builder.CreateBitCast(argVal, expectedType);
                     }
                     
-                    Builder.CreateCall(hook, {argVal});
-                } else {
-                     std::cerr << "[WARNING] Codegen: Trigger function '" << activeTriggers[lhs->value] << "' not found!" << std::endl;
+                    // Type cast old val
+                    Value* argWasVal = wasVal;
+                    Type* expectedWasType = hook->getFunctionType()->getParamType(1);
+                    if (argWasVal->getType() != expectedWasType) {
+                        if (argWasVal->getType()->isIntegerTy() && expectedWasType->isPointerTy()) argWasVal = Builder.CreateIntToPtr(argWasVal, expectedWasType);
+                        else if (argWasVal->getType()->isPointerTy() && expectedWasType->isPointerTy()) argWasVal = Builder.CreateBitCast(argWasVal, expectedWasType);
+                    }
+                    
+                    Builder.CreateCall(hook, {argVal, argWasVal});
                 }
             }
+        
         } else if (auto member = dynamic_cast<MemberAccessNode*>(vdecl->lhs.get())) {
             Value* objPtr = handleExpression(member->object.get());
             if (objPtr->getType()->isPointerTy() && objPtr->getType()->getPointerElementType()->isPointerTy())
@@ -571,8 +583,17 @@ class LLVMCodegen {
             Value* memberPtr = structGen->getMemberPtr(objPtr, member->memberName);
             if (memberPtr) {
                 Type* fieldType = memberPtr->getType()->getPointerElementType();
+                
+                // --- NEW: GHOST LOAD FOR STRUCTS ---
+                Value* wasVal = Builder.CreateLoad(fieldType, memberPtr, "was_val");
+
+                if (vdecl->op == "+=") val = mathGen->generateBinaryOp("+", wasVal, val);
+                else if (vdecl->op == "-=") val = mathGen->generateBinaryOp("-", wasVal, val);
+                else if (vdecl->op == "*=") val = mathGen->generateBinaryOp("*", wasVal, val);
+                else if (vdecl->op == "/=") val = mathGen->generateBinaryOp("/", wasVal, val);
+
                 if (val->getType() != fieldType) {
-                    // --- NEW: Auto-box raw C-strings to String structs ---
+                    // --- Auto-box raw C-strings to String structs ---
                     if (val->getType()->isPointerTy() && 
                         val->getType()->getPointerElementType()->isIntegerTy(8) &&
                         fieldType->isPointerTy() && 
@@ -588,13 +609,13 @@ class LLVMCodegen {
                             val = Builder.CreateBitCast(val, fieldType);
                         }
                     }
-                    // --- END NEW --- 
                     else if (val->getType()->isIntegerTy() && fieldType->isIntegerTy()) val = Builder.CreateIntCast(val, fieldType, true);
                     else if (val->getType()->isPointerTy() && fieldType->isPointerTy()) val = Builder.CreateBitCast(val, fieldType);
                     else if (val->getType()->isIntegerTy() && fieldType->isPointerTy()) val = Builder.CreateIntToPtr(val, fieldType);
                     else if (val->getType()->isIntegerTy() && fieldType->isDoubleTy()) val = Builder.CreateSIToFP(val, fieldType);
                 }
-                Builder.CreateStore(val, memberPtr);
+                
+                Builder.CreateStore(val, memberPtr); // Overwrite memory
 
                 if (auto objLit = dynamic_cast<LiteralNode*>(member->object.get())) {
                     std::string fullPath = objLit->value + "." + member->memberName;
@@ -604,27 +625,31 @@ class LLVMCodegen {
                         if (hook) {
                             std::vector<Value*> callArgs;
                             
-                            // 1. Pass the object context (e.g., 'self') if requested
-                            if (hook->arg_size() == 2) {
-                                Value* callObj = objPtr; // objPtr is already resolved above!
+                            // 1. Pass the object context
+                            if (hook->arg_size() == 3) {
+                                Value* callObj = objPtr;
                                 Type* expectedObjTy = hook->getFunctionType()->getParamType(0);
-                                if (callObj->getType() != expectedObjTy) {
-                                    callObj = Builder.CreateBitCast(callObj, expectedObjTy);
-                                }
+                                if (callObj->getType() != expectedObjTy) callObj = Builder.CreateBitCast(callObj, expectedObjTy);
                                 callArgs.push_back(callObj);
                             }
 
-                            // 2. Pass the new value (e.g., 'it')
+                            // 2. Pass New Value
                             Value* argVal = val;
-                            Type* expectedType = hook->getFunctionType()->getParamType(hook->arg_size() - 1);
-                            
+                            Type* expectedType = hook->getFunctionType()->getParamType(hook->arg_size() - 2);
                             if (argVal->getType() != expectedType) {
-                                if (argVal->getType()->isIntegerTy() && expectedType->isPointerTy()) 
-                                    argVal = Builder.CreateIntToPtr(argVal, expectedType);
-                                else if (argVal->getType()->isPointerTy() && expectedType->isPointerTy()) 
-                                    argVal = Builder.CreateBitCast(argVal, expectedType);
+                                if (argVal->getType()->isIntegerTy() && expectedType->isPointerTy()) argVal = Builder.CreateIntToPtr(argVal, expectedType);
+                                else if (argVal->getType()->isPointerTy() && expectedType->isPointerTy()) argVal = Builder.CreateBitCast(argVal, expectedType);
                             }
                             callArgs.push_back(argVal);
+
+                            // 3. Pass Old Value
+                            Value* argWasVal = wasVal;
+                            Type* expectedWasType = hook->getFunctionType()->getParamType(hook->arg_size() - 1);
+                            if (argWasVal->getType() != expectedWasType) {
+                                if (argWasVal->getType()->isIntegerTy() && expectedWasType->isPointerTy()) argWasVal = Builder.CreateIntToPtr(argWasVal, expectedWasType);
+                                else if (argWasVal->getType()->isPointerTy() && expectedWasType->isPointerTy()) argWasVal = Builder.CreateBitCast(argWasVal, expectedWasType);
+                            }
+                            callArgs.push_back(argWasVal);
 
                             Builder.CreateCall(hook, callArgs);
                         }

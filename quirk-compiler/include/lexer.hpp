@@ -68,6 +68,9 @@ enum class TokenType {
     NOT_EQUAL,
     DOT,
     MINUS_ASSIGN,
+    PLUS_ASSIGN,
+    STAR_ASSIGN,
+    SLASH_ASSIGN,
 
     ELLIPSIS,
     TRIPLE_MINUS,

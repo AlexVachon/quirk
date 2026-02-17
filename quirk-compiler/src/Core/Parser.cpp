@@ -276,8 +276,9 @@ std::unique_ptr<Node> Parser::parseStatement() {
             else if (t == TokenType::RBRACKET || t == TokenType::RPAREN)
                 balance--;
             if (balance == 0 &&
-                (t == TokenType::ASSIGN_INIT || t == TokenType::MINUS_ASSIGN ||
-                 t == TokenType::ASSIGN)) {
+                (t == TokenType::ASSIGN_INIT || t == TokenType::ASSIGN ||
+                 t == TokenType::MINUS_ASSIGN || t == TokenType::PLUS_ASSIGN || 
+                 t == TokenType::STAR_ASSIGN || t == TokenType::SLASH_ASSIGN)) {
                 isAssignment = true;
                 break;
             }
@@ -699,7 +700,6 @@ std::unique_ptr<Node> Parser::parseTrigger() {
         reportError("Expected variable name after 'trigger'", peek());
     }
     
-    // --- UPDATED: Allow dotted paths like 'self.health' ---
     std::string varName = advance().value;
     while (match(TokenType::DOT)) {
         if (peek().type != TokenType::IDENTIFIER) {
@@ -707,7 +707,6 @@ std::unique_ptr<Node> Parser::parseTrigger() {
         }
         varName += "." + advance().value;
     }
-    // --- END UPDATED ---
 
     auto lambda = std::make_unique<FunctionNode>();
     static int triggerCount = 0;
@@ -718,29 +717,44 @@ std::unique_ptr<Node> Parser::parseTrigger() {
     std::string safeHandlerName = "__quirk_trigger_" + safeVarName + "_" + std::to_string(triggerCount++);
     lambda->name = safeHandlerName;
 
-    // --- NEW: Inject the object as the first parameter so we don't lose context! ---
+    // --- NEW: Parse optional custom parameter names: trigger x(new, old) ---
+    std::string newParamName = "it";
+    std::string oldParamName = "was";
+
+    if (match(TokenType::LPAREN)) {
+        newParamName = advance().value; // User-defined 'it'
+        if (match(TokenType::COMMA)) {
+            oldParamName = advance().value; // User-defined 'was'
+        }
+        consume(TokenType::RPAREN, "Expected ')' after trigger parameters");
+    }
+
+    // 1. Object Context (if it's a dotted path like self.health)
     size_t dotPos = varName.find('.');
     if (dotPos != std::string::npos) {
         Parameter objParam;
-        objParam.name = varName.substr(0, dotPos); // Grabs "self" or "p"
+        objParam.name = varName.substr(0, dotPos);
         objParam.type = "Any"; 
         lambda->parameters.push_back(std::move(objParam));
     }
 
-    // Add 'it' as the final parameter
-    Parameter p;
-    p.name = "it";
-    p.type = "Any"; 
-    lambda->parameters.push_back(std::move(p));
+    // 2. New Value
+    Parameter pNew;
+    pNew.name = newParamName;
+    pNew.type = "Any"; 
+    lambda->parameters.push_back(std::move(pNew)); 
+
+    // 3. Old Value
+    Parameter pOld;
+    pOld.name = oldParamName;
+    pOld.type = "Any"; 
+    lambda->parameters.push_back(std::move(pOld));
 
     consume(TokenType::LBRACE, "Expected '{'");
     while (peek().type != TokenType::RBRACE && !isAtEnd()) {
         lambda->body.push_back(parseStatement());
     }
     consume(TokenType::RBRACE, "Expected '}'");
-
-    std::cerr << "[DEBUG] Parser: Lifted trigger block for '" << varName 
-              << "' into function '" << safeHandlerName << "'" << std::endl;
 
     FunctionNode* rawLambda = lambda.get();
     extraNodes.push_back(std::move(lambda));

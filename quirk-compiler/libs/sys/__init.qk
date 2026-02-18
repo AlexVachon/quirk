@@ -1,10 +1,29 @@
 use core.collections.list
+from io.file use { File }
 
 extern define arg_count() -> Int
 extern define arg_get(index: Int) -> String
 extern define getenv(name: String) -> String
-extern define exit(code: Int) -> void
 extern define system(cmd: String) -> Int
+extern define exit(code: Int) -> void
+extern define sleep(ms: Int) -> void
+
+extern define byteorder() -> String
+extern define copyright() -> String
+extern define executable() -> String
+extern define getdefaultencoding() -> String
+extern define getrecursionlimit() -> Int
+extern define setrecursionlimit(limit: Int) -> void
+extern define getsizeof(obj: Any) -> Int
+extern define maxsize() -> Int
+extern define platform() -> String
+extern define version() -> String
+extern define prefix() -> String
+extern define exc_info() -> Any
+
+extern define stdin() -> File
+extern define stdout() -> File
+extern define stderr() -> File
 
 extern define srcline(filename: Any, line: Int) -> Any
 
@@ -13,17 +32,48 @@ extern define srcline(filename: Any, line: Int) -> Any
 Returns a List of Strings representing the command-line arguments.
 Index 0 is the name/path of the executing program.
 ---
-define args() -> List {
+define argv() -> List {
     lst := []
     count := arg_count()
     i := 0
-    
     while i < count {
         lst.append(arg_get(i))
         i += 1
     }
-    
     return lst
+}
+
+---
+Tuple of names of modules compiled into this interpreter.
+---
+define builtin_module_names() -> List {
+    return ["core", "sys", "math", "io"]
+}
+
+---
+List of strings that specifies the search path for modules.
+---
+define path() -> List {
+    return [prefix() + "/libs", prefix() + "/packages", "."]
+}
+
+---
+Dictionary mapping module names to loaded modules.
+(Currently returns an empty map as reflection is pending).
+---
+define modules() -> Map {
+    return {}
+}
+
+---
+Object with information about the Quirk implementation.
+---
+define implementation() -> Map {
+    impl := {}
+    impl["name"] = "quirk"
+    impl["cache_tag"] = "quirk-10"
+    impl["version"] = version()
+    return impl
 }
 
 ---

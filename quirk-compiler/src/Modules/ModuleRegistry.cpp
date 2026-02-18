@@ -18,7 +18,7 @@ class ModuleRegistry {
         modules.push_back(new StdListModule());
         modules.push_back(new StdMapModule());
         modules.push_back(new StdMathModule());
-        modules.push_back(new StdFileModule());
+        // modules.push_back(new StdFileModule());
     }
 
     ~ModuleRegistry() {

@@ -733,8 +733,16 @@ class LLVMCodegen {
         StructType* st = cast<StructType>(resource->getType()->getPointerElementType());
         std::string typeName = st->getName().str();
 
+        if (typeName.find("struct.") == 0) typeName = typeName.substr(7);
+
         std::string enterName = typeName + "___enter";
         Function* enterFunc = TheModule->getFunction(enterName);
+        
+        if (!enterFunc) {
+            std::cerr << "[Codegen Error] Missing " << enterName << " in LLVM Module." << std::endl;
+            return;
+        }
+
         Value* contextVal = Builder.CreateCall(enterFunc, {resource});
 
         varGen->defineLocalVariable(node->varName, contextVal);

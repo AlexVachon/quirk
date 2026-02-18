@@ -501,6 +501,24 @@ std::string Sema::checkCall(CallNode *node)
     {
         std::string objType = checkExpression(m->object.get());
 
+        // --- THE FIX: Handle Module Constructor Calls (e.g. io.File) ---
+        if (objType.rfind("MODULE$", 0) == 0) {
+            std::string funcName = m->memberName;
+            
+            // 1. Is it a Struct Constructor?
+            if (structRegistry.count(funcName)) {
+                return funcName; // It returns the Struct type!
+            }
+            
+            // 2. Is it a standard Module Function?
+            if (methodRegistry[""].count(funcName)) {
+                return methodRegistry[""][funcName]->returnType;
+            }
+            
+            return "void";
+        }
+        // ---------------------------------------------------------------
+
         if (objType == "int") objType = "Int";
         else if (objType == "double") objType = "Double";
         else if (objType == "bool") objType = "Bool";
@@ -676,11 +694,14 @@ std::string Sema::resolveMember(const std::string &sName, const std::string &mNa
 void Sema::checkWith(WithNode *node)
 {
     std::string resType = checkExpression(node->resource.get());
-    if (!structRegistry.count(resType))
+    if (!structRegistry.count(resType)) {
+        std::cerr << "[Sema Error] Resource in 'with' block must be a valid Struct, got: " << resType << std::endl;
         exit(1);
+    }
     if (!methodRegistry[resType].count(resType + "___enter") ||
         !methodRegistry[resType].count(resType + "___exit"))
     {
+        std::cerr << "[Sema Error] Struct '" << resType << "' must implement __enter and __exit to be used in a 'with' block." << std::endl;
         exit(1);
     }
     enterScope();

@@ -79,7 +79,7 @@ Token Lexer::nextToken()
     char c = peek();
 
     // ---------------------------------------------------------
-    //  NEW: Skip Markdown-style Docstrings (--- ... ---)
+    //  Skip Markdown-style Docstrings (--- ... ---)
     // ---------------------------------------------------------
     if (c == '-' && peek(1) == '-' && peek(2) == '-')
     {
@@ -111,8 +111,8 @@ Token Lexer::nextToken()
         return {TokenType::EOF_TOKEN, "", line};
     }
 
-    // 2. Handle Strings (With Interpolation Support)
-    if (c == '"')
+    // --- FIX: Handle BOTH Double and Single Quotes ---
+    if (c == '"' || c == '\'')
     {
         tokenizeString(); // Pushes tokens to tokenBuffer
         // Return the first token immediately
@@ -333,12 +333,16 @@ Token Lexer::nextToken()
 void Lexer::tokenizeString()
 {
     int startLine = line;
+    
+    // --- FIX: Capture the quote type so we know when to stop ---
+    char quoteType = peek(); 
     advance(); // Skip opening quote
 
     std::vector<std::string> args;
     std::string format_builder = "";
 
-    while (pos < src.length() && peek() != '"')
+    // Read until we hit the SAME quote type
+    while (pos < src.length() && peek() != quoteType)
     {
         char c = peek();
 
@@ -391,14 +395,12 @@ void Lexer::tokenizeString()
                 format_builder += "{";
                 if (!fmt.empty())
                 {
-                    format_builder +=
-                        " % "; // Normalized separator for Runtime
+                    format_builder += " % "; // Normalized separator for Runtime
                     format_builder += fmt;
                 }
                 format_builder += "}";
 
                 // Capture expression
-                // Simple whitespace trim
                 size_t first = expr.find_first_not_of(" \t");
                 if (std::string::npos != first)
                 {
@@ -431,47 +433,45 @@ void Lexer::tokenizeString()
         }
     }
 
-    if (peek() == '"')
+    if (peek() == quoteType)
         advance(); // Skip closing quote
 
-    // --- EMIT TOKENS ---
 
-    // 1. The literal string token
-    // IMPORTANT: We must re-add the quotes because the Parser expects them!
-    tokenBuffer.push_back(
-        {TokenType::STRING_LITERAL, "\"" + format_builder + "\"", startLine});
+    // Exactly 1 char and no interpolation? It's a C-style Char!
+    if (quoteType == '\'' && format_builder.length() == 1 && args.empty()) {
+        tokenBuffer.push_back({TokenType::CHAR_LITERAL, "'" + format_builder + "'", startLine});
+    } else {
+        // Otherwise, it's a full String. Force double quotes for downstream safety.
+        tokenBuffer.push_back({TokenType::STRING_LITERAL, "\"" + format_builder + "\"", startLine});
 
-    // 2. If interpolations exist, generate: .format(arg1, arg2)
-    if (!args.empty())
-    {
-        tokenBuffer.push_back({TokenType::DOT, ".", startLine});
-        tokenBuffer.push_back({TokenType::IDENTIFIER, "format", startLine});
-        tokenBuffer.push_back({TokenType::LPAREN, "(", startLine});
-
-        // --- THE FIX: Replace your current for-loop with this one ---
-        for (size_t i = 0; i < args.size(); i++)
+        // If interpolations exist, generate: .format(arg1, arg2)
+        if (!args.empty())
         {
-            // Spin up a sub-lexer to correctly tokenize the inner expression!
-            Lexer subLexer(args[i]);
-            std::vector<Token> subTokens = subLexer.tokenize();
+            tokenBuffer.push_back({TokenType::DOT, ".", startLine});
+            tokenBuffer.push_back({TokenType::IDENTIFIER, "format", startLine});
+            tokenBuffer.push_back({TokenType::LPAREN, "(", startLine});
 
-            for (const auto &t : subTokens)
+            for (size_t i = 0; i < args.size(); i++)
             {
-                if (t.type != TokenType::EOF_TOKEN)
+                Lexer subLexer(args[i]);
+                std::vector<Token> subTokens = subLexer.tokenize();
+
+                for (const auto &t : subTokens)
                 {
-                    Token adjustedToken = t;
-                    adjustedToken.line = startLine; // Keep error reporting accurate
-                    tokenBuffer.push_back(adjustedToken);
+                    if (t.type != TokenType::EOF_TOKEN)
+                    {
+                        Token adjustedToken = t;
+                        adjustedToken.line = startLine; 
+                        tokenBuffer.push_back(adjustedToken);
+                    }
+                }
+
+                if (i < args.size() - 1)
+                {
+                    tokenBuffer.push_back({TokenType::COMMA, ",", startLine});
                 }
             }
-
-            if (i < args.size() - 1)
-            {
-                tokenBuffer.push_back({TokenType::COMMA, ",", startLine});
-            }
+            tokenBuffer.push_back({TokenType::RPAREN, ")", startLine});
         }
-        // -----------------------------------------------------------
-
-        tokenBuffer.push_back({TokenType::RPAREN, ")", startLine});
     }
 }

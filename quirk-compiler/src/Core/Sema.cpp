@@ -357,6 +357,8 @@ std::string Sema::checkLiteral(LiteralNode *node)
         return (node->value.find('.') != std::string::npos) ? "Double" : "Int";
     if (node->value[0] == '"')
         return "String";
+    if (node->value[0] == '\'') // <-- ADD THIS
+        return "Char";          // <-- ADD THIS
     if (node->value == "true" || node->value == "false")
         return "Bool";
     return resolveVariable(node->value);

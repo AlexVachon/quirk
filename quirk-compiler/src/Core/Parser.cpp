@@ -114,6 +114,8 @@ std::unique_ptr<Node> Parser::parseExpression(int min_precedence) {
         left = std::make_unique<LiteralNode>(t.value);
     } else if (t.type == TokenType::STRING_LITERAL) {
         left = std::make_unique<LiteralNode>(t.value);
+    } else if (t.type == TokenType::CHAR_LITERAL) {
+        left = std::make_unique<LiteralNode>(t.value);
     } else if (t.type == TokenType::TRUE) {
         left = std::make_unique<LiteralNode>("true");
     } else if (t.type == TokenType::FALSE) {

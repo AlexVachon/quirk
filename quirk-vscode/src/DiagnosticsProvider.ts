@@ -16,8 +16,10 @@ const BUILTINS = new Set([
 function maskLine(line: string): string {
     let masked = "";
     let inString = false;
+    let quoteChar = ''; 
     let inInterpolation = false;
     let braceDepth = 0;
+    let nestedQuoteChar = ''; // <-- NEW: Tracks quotes inside ${...}
 
     for (let j = 0; j < line.length; j++) {
         const char = line[j];
@@ -27,36 +29,62 @@ function maskLine(line: string): string {
             if (char === '/' && nextChar === '/') {
                 masked += ' '.repeat(line.length - j);
                 break;
-            } else if (char === '"') {
+            } else if (char === '"' || char === "'") { 
                 inString = true;
+                quoteChar = char; 
                 masked += ' ';
             } else {
                 masked += char;
             }
-        } else {
-            if (char === '\\') {
-                masked += '  ';
-                j++;
-            } else if (!inInterpolation && char === '$' && nextChar === '{') {
-                inInterpolation = true;
-                braceDepth = 1;
-                masked += '  ';
-                j++;
-            } else if (inInterpolation) {
-                if (char === '{') braceDepth++;
-                if (char === '}') braceDepth--;
-
-                if (braceDepth === 0) {
-                    inInterpolation = false;
+        } else { // Inside a string
+            if (!inInterpolation) {
+                if (char === '\\') {
+                    masked += '  ';
+                    j++;
+                } else if (char === '$' && nextChar === '{') {
+                    inInterpolation = true;
+                    braceDepth = 1;
+                    masked += '  ';
+                    j++;
+                } else if (char === quoteChar) { 
+                    inString = false;
+                    quoteChar = '';
                     masked += ' ';
                 } else {
-                    masked += char;
+                    masked += ' ';
                 }
-            } else if (char === '"') {
-                inString = false;
-                masked += ' ';
-            } else {
-                masked += ' ';
+            } else { // Inside ${ ... }
+                if (nestedQuoteChar) {
+                    // We are inside a string INSIDE an interpolation
+                    if (char === '\\') {
+                        masked += '  ';
+                        j++;
+                    } else if (char === nestedQuoteChar) {
+                        nestedQuoteChar = ''; // Close nested string
+                        masked += ' ';
+                    } else {
+                        masked += ' '; // Mask the text inside the nested string!
+                    }
+                } else {
+                    // Normal interpolation code
+                    if (char === '"' || char === "'") {
+                        nestedQuoteChar = char; // Open nested string
+                        masked += ' ';
+                    } else if (char === '{') {
+                        braceDepth++;
+                        masked += char;
+                    } else if (char === '}') {
+                        braceDepth--;
+                        if (braceDepth === 0) {
+                            inInterpolation = false;
+                            masked += ' ';
+                        } else {
+                            masked += char;
+                        }
+                    } else {
+                        masked += char; // Keep the variable names so the linter sees them!
+                    }
+                }
             }
         }
     }
@@ -89,7 +117,6 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
 
         const cleanLine = maskLine(line);
 
-        // 1. Handle Multi-line Destructuring: from module use { ... }
         if (isReadingImport) {
             multiLineImport += " " + cleanLine;
             if (cleanLine.includes('}')) {
@@ -112,7 +139,6 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
             continue;
         }
 
-        // 2. Standard Single-line Imports
         let match = /^\s*use\s+([.a-zA-Z0-9_/]+)/.exec(cleanLine);
         if (match) {
             const alias = match[1].split(/[\.\/]/).pop();
@@ -127,7 +153,6 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
             });
         }
 
-        // 3. Global Declarations (Funcs/Structs)
         match = /^\s*(?:extern\s+)?(?:struct|define|def|init)\s+([a-zA-Z_]\w*)/.exec(cleanLine);
         if (match) {
             const name = match[1];
@@ -162,20 +187,16 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
             maskedLine = maskedLine.replace(/^\s*([a-zA-Z_]\w*)\s*:/, (match, p1) => match.replace(p1, ' '.repeat(p1.length)));
         }
 
-        // --- DECLARATION TRACKING (Local) ---
         const funcMatch = /^\s*(?:extern\s+)?(?:define|def|init)\s+[a-zA-Z_]\w*\s*\(([^)]*)\)/.exec(maskedLine);
         if (funcMatch) {
             locals = new Set<string>();
             const paramsStr = funcMatch[1];
-
-            // Specifically capture name before colon and ignore the type part
             const paramMatches = [...paramsStr.matchAll(/\b([a-zA-Z_]\w*)\s*(?::\s*[a-zA-Z_]\w*)?(?::|$|,)/g)];
 
             for (const pm of paramMatches) {
                 const pName = pm[1];
                 locals.add(pName);
 
-                // Skip 'self' and built-in types
                 if (pName !== 'self' && !BUILTINS.has(pName)) {
                     const startIdx = originalLine.indexOf(pName, funcMatch.index);
                     declarations.set(`${i}_${pName}`, new vscode.Range(i, startIdx, i, startIdx + pName.length));
@@ -183,13 +204,10 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
             }
         }
 
-        // --- NEW: TRIGGER DECLARATION TRACKING ---
         const triggerMatch = /^\s*trigger\s+[a-zA-Z0-9_.]+(?:\s*\(([^)]*)\))?/.exec(maskedLine);
         if (triggerMatch) {
             const paramsStr = triggerMatch[1];
-            
             if (paramsStr) {
-                // User provided custom names: trigger health(new_hp, old_hp)
                 paramsStr.split(',').forEach(p => {
                     const pName = p.trim();
                     if (pName) {
@@ -199,13 +217,13 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
                     }
                 });
             } else {
-                // Implicit variables: it, was
                 locals.add('it');
                 locals.add('was');
             }
         }
 
-        const assignMatch = /(?<!\.)\b([a-zA-Z_]\w*)\s*(?::[a-zA-Z0-9_]+)?\s*(?::=|=|\+=|-=|\*=|\/=)/.exec(maskedLine);
+        // --- FIX: Added \s* and \. around the colon to safely handle "data: io.File :=" ---
+        const assignMatch = /(?<!\.)\b([a-zA-Z_]\w*)\s*(?::\s*[a-zA-Z0-9_.]+)?\s*(?::=|=|\+=|-=|\*=|\/=)/.exec(maskedLine);
         if (assignMatch) {
             const vName = assignMatch[1];
             if (!locals.has(vName)) {
@@ -215,11 +233,6 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
             }
         }
 
-        // ==========================================
-        // --- NEW: CONTROL FLOW DECLARATIONS ---
-        // ==========================================
-        
-        // 1. with ... as var
         const withMatch = /\bwith\b.*\bas\s+([a-zA-Z_]\w*)/.exec(maskedLine);
         if (withMatch) {
             const vName = withMatch[1];
@@ -230,7 +243,6 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
             }
         }
 
-        // 2. for var in ...
         const forMatch = /\bfor\s+(?:ref\s+)?([a-zA-Z_]\w*)\s+in\b/.exec(maskedLine);
         if (forMatch) {
             const vName = forMatch[1];
@@ -241,7 +253,6 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
             }
         }
 
-        // 3. catch (var: Type)
         const catchMatch = /\bcatch\s*\(\s*([a-zA-Z_]\w*)\s*:/.exec(maskedLine);
         if (catchMatch) {
             const vName = catchMatch[1];
@@ -252,15 +263,12 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
             }
         }
 
-        // --- MEMBER USAGE SCAN ---
-        // Ensures method calls like .take_damage() mark 'take_damage' as used
         const memberRegex = /\.\s*([a-zA-Z_]\w*)\b/g;
         let memMatch;
         while ((memMatch = memberRegex.exec(maskedLine)) !== null) {
             usages.add(memMatch[1]);
         }
 
-        // --- USAGE SCAN ---
         const identRegex = /(?<!\.)\b([a-zA-Z_]\w*)\b/g;
         let match;
 
@@ -273,16 +281,15 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
 
             const range = new vscode.Range(i, match.index, i, match.index + ident.length);
 
-            // Skip if this specific occurrence is a declaration
             if (declarations.get(ident)?.isEqual(range) || declarations.get(`${i}_${ident}`)?.isEqual(range)) {
                 continue;
             }
 
             if (locals.has(ident) || fileGlobals.has(ident)) {
-                usages.add(ident); // Global usage
+                usages.add(ident); 
                 for (let k = i; k >= 0; k--) {
                     if (declarations.has(`${k}_${ident}`)) {
-                        usages.add(`${k}_${ident}`); // Local instance usage 
+                        usages.add(`${k}_${ident}`);  
                         break;
                     }
                 }
@@ -297,7 +304,6 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
     // ==========================================
     declarations.forEach((range, key) => {
         if (!usages.has(key)) {
-            // Safely removes local line-number prefixes (e.g. "19_") without breaking underscores
             const cleanKey = key.replace(/^\d+_/, '');
 
             const diagnostic = new vscode.Diagnostic(

@@ -21,6 +21,7 @@
 
 #include "libs/file.c"
 #include "libs/sys.c"
+#include "libs/json.c"
 
 
 void QuirkRuntime_init(int argc, char** argv) {

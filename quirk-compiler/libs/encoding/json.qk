@@ -1,0 +1,14 @@
+---
+A high-performance parser for JavaScript Object Notation (JSON).
+---
+
+from ..core.collections use { Map }
+
+---
+Description of the function.
+
+@param :
+- **str** raw string.
+@returns **Any**
+---
+extern define parse(str: String) -> Any

@@ -215,6 +215,43 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
             }
         }
 
+        // ==========================================
+        // --- NEW: CONTROL FLOW DECLARATIONS ---
+        // ==========================================
+        
+        // 1. with ... as var
+        const withMatch = /\bwith\b.*\bas\s+([a-zA-Z_]\w*)/.exec(maskedLine);
+        if (withMatch) {
+            const vName = withMatch[1];
+            if (!locals.has(vName)) {
+                locals.add(vName);
+                const startIdx = originalLine.indexOf(vName, withMatch.index + 4);
+                declarations.set(`${i}_${vName}`, new vscode.Range(i, startIdx, i, startIdx + vName.length));
+            }
+        }
+
+        // 2. for var in ...
+        const forMatch = /\bfor\s+(?:ref\s+)?([a-zA-Z_]\w*)\s+in\b/.exec(maskedLine);
+        if (forMatch) {
+            const vName = forMatch[1];
+            if (!locals.has(vName)) {
+                locals.add(vName);
+                const startIdx = originalLine.indexOf(vName, forMatch.index);
+                declarations.set(`${i}_${vName}`, new vscode.Range(i, startIdx, i, startIdx + vName.length));
+            }
+        }
+
+        // 3. catch (var: Type)
+        const catchMatch = /\bcatch\s*\(\s*([a-zA-Z_]\w*)\s*:/.exec(maskedLine);
+        if (catchMatch) {
+            const vName = catchMatch[1];
+            if (!locals.has(vName)) {
+                locals.add(vName);
+                const startIdx = originalLine.indexOf(vName, catchMatch.index);
+                declarations.set(`${i}_${vName}`, new vscode.Range(i, startIdx, i, startIdx + vName.length));
+            }
+        }
+
         // --- MEMBER USAGE SCAN ---
         // Ensures method calls like .take_damage() mark 'take_damage' as used
         const memberRegex = /\.\s*([a-zA-Z_]\w*)\b/g;

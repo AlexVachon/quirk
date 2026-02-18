@@ -37,6 +37,7 @@ enum class TokenType {
     INT_LITERAL,
     FLOAT_LITERAL,
     STRING_LITERAL,
+    CHAR_LITERAL,
     TRUE,
     FALSE,
     PIPE,

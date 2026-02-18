@@ -765,7 +765,15 @@ Value* LLVMCodegen::handleExpression(Node* node) {
             if (lit->value.find('.') != std::string::npos) return ConstantFP::get(Context, APFloat(std::stod(lit->value)));
             return ConstantInt::get(Type::getInt32Ty(Context), std::stoi(lit->value));
         }
-        if (lit->value.size() >= 2 && lit->value.front() == '"') return Builder.CreateGlobalStringPtr(unescapeString(lit->value.substr(1, lit->value.size() - 2)));
+        if (lit->value.size() >= 2 && lit->value.front() == '"') 
+            return Builder.CreateGlobalStringPtr(unescapeString(lit->value.substr(1, lit->value.size() - 2)));
+        
+        if (lit->value.size() >= 2 && lit->value.front() == '\'') {
+            std::string unescaped = unescapeString(lit->value.substr(1, lit->value.size() - 2));
+            char c = unescaped.empty() ? '\0' : unescaped[0];
+            return ConstantInt::get(Type::getInt8Ty(Context), c);
+        }
+
         if (varGen->exists(lit->value)) return varGen->resolveVariable(lit->value);
     }
 

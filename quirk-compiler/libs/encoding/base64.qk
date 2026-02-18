@@ -1,0 +1,7 @@
+---
+Encodes and decodes data using the Base64 alphabet.
+Used for safely transporting binary data over text protocols.
+---
+
+extern define encode(data: String) -> String
+extern define decode(data: String) -> String

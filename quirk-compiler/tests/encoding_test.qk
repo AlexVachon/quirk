@@ -1,0 +1,16 @@
+use encoding.base64
+use encoding.hex
+
+define main() {
+    msg := 'Hello, Quirk! Welcome to binary safety.'
+    
+    print("--- BASE64 ---")
+    b64 := base64.encode(msg)
+    print("Encoded: ${b64}")
+    print("Decoded: ${base64.decode(b64)}\n")
+    
+    print("--- HEX ---")
+    hx := hex.encode(msg)
+    print("Encoded: ${hx}")
+    print("Decoded: ${hex.decode(hx)}")
+}

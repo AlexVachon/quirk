@@ -22,6 +22,10 @@
 #include "libs/file.c"
 #include "libs/sys.c"
 
+#include "libs/encoding/json.c"
+#include "libs/encoding/base64.c"
+#include "libs/encoding/hex.c"
+
 
 void QuirkRuntime_init(int argc, char** argv) {
     GC_init();             // Initialize Boehm Garbage Collector

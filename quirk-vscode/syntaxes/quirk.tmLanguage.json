@@ -141,9 +141,26 @@
       ]
     },
     "strings": {
-      "name": "string.quoted.double.quirk",
-      "begin": "\"",
-      "end": "\"",
+      "patterns": [
+        {
+          "name": "string.quoted.double.quirk",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            { "include": "#string-content" }
+          ]
+        },
+        {
+          "name": "string.quoted.single.quirk",
+          "begin": "'",
+          "end": "'",
+          "patterns": [
+            { "include": "#string-content" }
+          ]
+        }
+      ]
+    },
+    "string-content": {
       "patterns": [
         {
           "name": "constant.character.escape.quirk",
@@ -153,32 +170,22 @@
           "name": "meta.embedded.line.quirk",
           "begin": "\\$\\{",
           "beginCaptures": {
-            "0": {
-              "name": "punctuation.definition.template-expression.begin.quirk"
-            }
+            "0": { "name": "punctuation.definition.template-expression.begin.quirk" }
           },
           "end": "\\}",
           "endCaptures": {
-            "0": {
-              "name": "punctuation.definition.template-expression.end.quirk"
-            }
+            "0": { "name": "punctuation.definition.template-expression.end.quirk" }
           },
           "contentName": "source.quirk",
           "patterns": [
-            {
-              "include": "$self"
-            }
+            { "include": "$self" }
           ]
         },
         {
           "match": "(\\$)([a-zA-Z_]\\w*)",
           "captures": {
-            "1": {
-              "name": "punctuation.definition.template-expression.quirk"
-            },
-            "2": {
-              "name": "variable.other.readwrite.quirk"
-            }
+            "1": { "name": "punctuation.definition.template-expression.quirk" },
+            "2": { "name": "variable.other.readwrite.quirk" }
           }
         }
       ]

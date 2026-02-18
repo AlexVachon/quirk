@@ -1,0 +1,7 @@
+---
+Encode and decodes data using hexadecimal (Base16).
+Used for viewing raw bytes and cryptographic hashes.
+---
+
+extern define encode(data: String) -> String
+extern define decode(data: String) -> String

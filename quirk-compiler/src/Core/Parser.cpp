@@ -523,9 +523,20 @@ std::unique_ptr<StructNode> Parser::parseStruct() {
     consume(TokenType::STRUCT, "Expected 'struct'");
     auto node = std::make_unique<StructNode>();
     node->name = advance().value;
+
+    // --- NEW: Parse inheritance here (e.g., struct Name : Parent) ---
+    if (match(TokenType::COLON)) {
+        do {
+            node->parents.push_back(advance().value);
+        } while (match(TokenType::COMMA));
+    }
+    // ----------------------------------------------------------------
+
     consume(TokenType::LBRACE, "Expected '{'");
 
     while (peek().type != TokenType::RBRACE && !isAtEnd()) {
+        
+        // (Keeping 'use' for standard library backwards compatibility)
         if (peek().type == TokenType::USE) {
             advance();
             do {
@@ -549,11 +560,11 @@ std::unique_ptr<StructNode> Parser::parseStruct() {
                 func->name = node->name + "_" + func->name;
             }
 
+            // Move the normalizer check ABOVE the linkageName assignment
             if (!isInit && func->name.find("__init") != std::string::npos) {
                 func->name = node->name + "__init";
             }
 
-            // --- THE FIX: Capture it AFTER normalization! ---
             func->linkageName = func->name;
 
             if (!isInit && func->name.find("__init") != std::string::npos)

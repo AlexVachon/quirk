@@ -40,6 +40,18 @@ bool Sema::analyze(const std::vector<std::unique_ptr<Node>> &nodes)
             moduleVisibility[mod].visibleModules.insert("core");
         }
 
+        // --- NEW: Validate Inheritance Tree for Structs ---
+        if (auto s = dynamic_cast<StructNode*>(node.get())) {
+            for (const std::string& parentName : s->parents) {
+                if (!structRegistry.count(parentName)) {
+                    std::cerr << "Semantic Error: Struct '" << s->name 
+                              << "' attempts to inherit from undefined struct '" << parentName << "'." << std::endl;
+                    exit(1);
+                }
+            }
+        }
+        // --------------------------------------------------
+
         if (auto f = dynamic_cast<FunctionNode *>(node.get()))
         {
             checkFunction(f);
@@ -129,13 +141,6 @@ void Sema::checkFunction(FunctionNode *f)
     {
         defineVariable(param.name, param.type);
     }
-
-    // // Implicitly define 'it' for trigger handlers
-    // if (f->name.find("__quirk_trigger_") == 0) {
-    //     defineVariable("it", "Any"); // 'it' represents the new value
-    //     // --- NEW LOG ---
-    //     std::cerr << "[DEBUG] Sema: Implicitly defined 'it' for " << f->name << std::endl;
-    // }
 
     if (!f->isExtern)
     {
@@ -640,6 +645,11 @@ std::string Sema::resolveVariable(const std::string &name)
         return "Any";
     if (name == "strlen")
         return "Int";
+        
+    // --- NEW: Super keyword support ---
+    if (name == "super")
+        return "void";
+    // ----------------------------------
 
     if (!currentClass.empty())
     {

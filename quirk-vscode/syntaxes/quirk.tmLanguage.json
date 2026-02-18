@@ -100,7 +100,7 @@
       "patterns": [
         {
           "name": "keyword.control.quirk",
-          "match": "\\b(if|else|elif|while|for|in|return|break|continue|with|as|trigger)\\b"
+          "match": "\\b(if|else|elif|while|for|in|return|break|continue|with|as|trigger|try|catch|throw)\\b"
         },
         {
           "name": "keyword.other.quirk",

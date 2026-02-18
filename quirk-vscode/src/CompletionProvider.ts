@@ -296,7 +296,7 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
         const fullText = document.getText();
         const textBeforeCursor = document.getText(new vscode.Range(new vscode.Position(0, 0), position));
 
-        ['define', 'struct', 'if', 'else', 'elif', 'while', 'for', 'in', 'return', 'break', 'continue', 'use', 'from', 'with', 'as', 'true', 'false', 'null', 'trigger'].forEach(kw => addCompletion(kw, vscode.CompletionItemKind.Keyword));
+        ['define', 'struct', 'if', 'else', 'elif', 'while', 'for', 'in', 'return', 'break', 'continue', 'use', 'from', 'with', 'as', 'true', 'false', 'null', 'trigger', 'try', 'catch', 'throw'].forEach(kw => addCompletion(kw, vscode.CompletionItemKind.Keyword));
         ['print', 'printf', 'malloc', 'free', 'exit', 'Char', 'String', 'List', 'Map', 'File', 'Int', 'Double', 'Bool', 'Any', 'void'].forEach(bi => addCompletion(bi, vscode.CompletionItemKind.Reference, 'Built-in'));
 
         let match;

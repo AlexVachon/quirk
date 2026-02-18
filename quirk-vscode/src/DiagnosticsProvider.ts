@@ -4,7 +4,7 @@ const KEYWORDS = new Set([
     'define', 'struct', 'if', 'else', 'elif', 'while', 'for', 'in',
     'return', 'break', 'continue', 'use', 'from', 'with', 'as',
     'extern', 'true', 'false', 'null', 'del', 'init', 'def',
-    'trigger'
+    'trigger', 'try', 'catch', 'throw'
 ]);
 
 const BUILTINS = new Set([

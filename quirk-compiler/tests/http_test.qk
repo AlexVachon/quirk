@@ -1,0 +1,27 @@
+use net.http
+from core.exceptions use { SocketError, Exception }
+
+define main() -> void {
+    print("Fetching example.com...")
+
+    try {
+        resp := http.get("http://example.com")
+
+        print("Status: " + resp.status_code.str())
+        print("Body Size: " + resp.body.length.str() + " bytes")
+        
+        print("\n--- Response Preview ---\n")
+
+        if resp.body.length > 200 {
+            print(resp.body.substring(0, 200) + "...")
+        } else {
+            print(resp.body)
+        }
+    } catch (e: SocketError) {
+        print("Connection Failed: " + e.message)
+        e.print_traceback()
+    } catch (e: Exception) {
+        print("General Error: " + e.message)
+        e.print_traceback()
+    }
+}

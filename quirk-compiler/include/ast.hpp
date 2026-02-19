@@ -423,6 +423,20 @@ class ThrowNode : public Node {
     }
 };
 
+class BreakNode : public Node {
+   public:
+    void print(int indent) const override {
+        std::cout << std::string(indent, ' ') << "Break" << std::endl;
+    }
+};
+
+class ContinueNode : public Node {
+   public:
+    void print(int indent) const override {
+        std::cout << std::string(indent, ' ') << "Continue" << std::endl;
+    }
+};
+
 class TriggerNode : public Node {
    public:
     std::string varName;

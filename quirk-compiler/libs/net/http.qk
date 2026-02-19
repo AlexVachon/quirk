@@ -1,0 +1,85 @@
+from core.string use { String }
+from core.collections.map use { Map }
+from core.exceptions.types use { ValueError }
+from net.socket use { Socket }
+
+struct Response {
+    status_code: Int
+    headers: Map
+    body: String
+
+    define __init(self, status: Int, body: String) -> void {
+        self.status_code = status
+        self.body = body
+        self.headers = Map()
+    }
+}
+
+define _parse_url(url: String) -> Map {
+    res := Map()
+    
+    clean_url := url
+    if url.startswith("http://") {
+        clean_url = url.substring(7, url.length)
+    }
+    
+    slash_idx := clean_url.find("/")
+    if slash_idx == -1 {
+        res.put("host", clean_url)
+        res.put("path", "/")
+    } else {
+        res.put("host", clean_url.substring(0, slash_idx))
+        res.put("path", clean_url.substring(slash_idx, clean_url.length))
+    }
+    
+    return res
+}
+
+define get(url: String) -> Response {
+    parts := _parse_url(url)
+    
+    host = parts.get("host")
+    path = parts.get("path")
+    
+    sock := Socket()
+    sock.connect(host, 80)
+    
+    request := "GET " + path + " HTTP/1.1\r\n" + 
+               "Host: " + host + "\r\n" +
+               "User-Agent: Quirk/1.0\r\n" +
+               "Connection: close\r\n" +
+               "\r\n"
+               
+    sock.send(request)
+    
+    raw_response = ""
+    
+    while true {
+        chunk := sock.recv(4096)
+        if chunk.length == 0 {
+            break
+        }
+        raw_response += chunk
+    }
+    sock.close()
+    
+    header_end := raw_response.find("\r\n\r\n")
+    if header_end == -1 {
+        return Response(500, "Invalid HTTP Response")
+    }
+    
+    headers_raw := raw_response.substring(0, header_end)
+    body := raw_response.substring(header_end + 4, raw_response.length)
+    
+    first_line_end := headers_raw.find("\r\n")
+    status_line := headers_raw.substring(0, first_line_end)
+    status_parts := status_line.split(" ")
+    status_code := 0
+    
+    if status_parts.len() > 1 {
+        code_str: String = status_parts.get(1)
+        status_code = code_str.to_int()
+    }
+    
+    return Response(status_code, body)
+}

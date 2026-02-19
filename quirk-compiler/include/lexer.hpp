@@ -45,6 +45,8 @@ enum class TokenType {
 
     TRY, CATCH, THROW,
 
+    BREAK, CONTINUE,
+
     // Operators
     ASSIGN_INIT,
     ASSIGN,

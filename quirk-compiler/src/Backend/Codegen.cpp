@@ -558,6 +558,22 @@ class LLVMCodegen {
         else if (auto call = dynamic_cast<CallNode*>(node)) handleCall(call);
         else if (auto i = dynamic_cast<IfNode*>(node)) handleIf(i, parentFunc);
         else if (auto w = dynamic_cast<WhileNode*>(node)) handleWhile(w, parentFunc);
+        else if (auto brk = dynamic_cast<BreakNode*>(node)) {
+            if (!flowGen->breakStack.empty()) {
+                Builder.CreateBr(flowGen->breakStack.back());
+                // Create a dead block so subsequent IR in this branch has an insert point
+                BasicBlock* dead = BasicBlock::Create(Context, "after_break", parentFunc);
+                Builder.SetInsertPoint(dead);
+            }
+        }
+        else if (auto cont = dynamic_cast<ContinueNode*>(node)) {
+            if (!flowGen->continueStack.empty()) {
+                Builder.CreateBr(flowGen->continueStack.back());
+                // Create a dead block so subsequent IR in this branch has an insert point
+                BasicBlock* dead = BasicBlock::Create(Context, "after_continue", parentFunc);
+                Builder.SetInsertPoint(dead);
+            }
+        }
         else if (auto f = dynamic_cast<ForNode*>(node)) {
             flowGen->generateFor(
                 f, parentFunc,
@@ -631,17 +647,26 @@ class LLVMCodegen {
         if (!val || val->getType()->isVoidTy()) return;
 
         if (!vdecl->typeAnnotation.empty()) {
-            if (vdecl->typeAnnotation == "String" && val->getType()->isPointerTy() && val->getType()->getPointerElementType()->isIntegerTy(8)) {
-                std::vector<Value*> args = {val};
-                val = structGen->allocateAndInit("String", args);
-            }
-        }
-
-        if (!vdecl->typeAnnotation.empty()) {
             Type* targetType = typeGen->getLLVMType(vdecl->typeAnnotation);
-            if (val->getType()->isIntegerTy() && targetType->isPointerTy()) val = Builder.CreateIntToPtr(val, targetType);
-            else if (val->getType()->isPointerTy() && targetType->isPointerTy() && val->getType() != targetType) val = Builder.CreateBitCast(val, targetType);
-            else if (val->getType()->isIntegerTy() && targetType->isDoubleTy()) val = Builder.CreateSIToFP(val, targetType);
+
+            // If val is i8* and the target type is a struct pointer (String*, Socket*, etc.),
+            // it is a type-erased pointer from Map_get/List_get — bitcast it directly.
+            // Do NOT wrap in String__init, which would treat the pointer value as char data.
+            if (val->getType()->isPointerTy() &&
+                val->getType()->getPointerElementType()->isIntegerTy(8) &&
+                targetType->isPointerTy() &&
+                targetType->getPointerElementType()->isStructTy()) {
+                val = Builder.CreateBitCast(val, targetType);
+            }
+            // General numeric/pointer coercions
+            else if (val->getType() != targetType) {
+                if (val->getType()->isIntegerTy() && targetType->isPointerTy())
+                    val = Builder.CreateIntToPtr(val, targetType);
+                else if (val->getType()->isPointerTy() && targetType->isPointerTy())
+                    val = Builder.CreateBitCast(val, targetType);
+                else if (val->getType()->isIntegerTy() && targetType->isDoubleTy())
+                    val = Builder.CreateSIToFP(val, targetType);
+            }
         }
 
         // --- NEW: Helper to safely apply +=, -=, etc. including String concatenation ---
@@ -886,22 +911,33 @@ Value* LLVMCodegen::handleExpression(Node* node) {
         if (lit->value == "true") return ConstantInt::getTrue(Context);
         if (lit->value == "false") return ConstantInt::getFalse(Context);
 
-        // --- NEW: Handle super as a property access ---
+        // Handle super()
         if (lit->value == "super") {
             Value* selfVal = varGen->resolveVariable("self");
             if (!selfVal || structHierarchy[currentCodegenClass].empty()) return nullptr;
             std::string parentName = structHierarchy[currentCodegenClass][0];
             return Builder.CreateBitCast(selfVal, PointerType::getUnqual(StructTypes[parentName]));
         }
-        // ----------------------------------------------
 
+        // Handle Numbers
         if (std::isdigit(lit->value[0])) {
             if (lit->value.find('.') != std::string::npos) return ConstantFP::get(Context, APFloat(std::stod(lit->value)));
             return ConstantInt::get(Type::getInt32Ty(Context), std::stoi(lit->value));
         }
-        if (lit->value.size() >= 2 && lit->value.front() == '"') 
-            return Builder.CreateGlobalStringPtr(unescapeString(lit->value.substr(1, lit->value.size() - 2)));
         
+        // --- CHANGED: Treat "string" as String Object, not raw i8* ---
+        if (lit->value.size() >= 2 && lit->value.front() == '"') {
+            // 1. Create the raw C-String (i8*)
+            std::string rawStr = unescapeString(lit->value.substr(1, lit->value.size() - 2));
+            Value* rawPtr = Builder.CreateGlobalStringPtr(rawStr);
+            
+            // 2. Wrap it in a String Struct immediately!
+            std::vector<Value*> args = {rawPtr};
+            return structGen->allocateAndInit("String", args);
+        }
+        // -------------------------------------------------------------
+
+        // Handle 'c' (Char)
         if (lit->value.size() >= 2 && lit->value.front() == '\'') {
             std::string unescaped = unescapeString(lit->value.substr(1, lit->value.size() - 2));
             char c = unescaped.empty() ? '\0' : unescaped[0];

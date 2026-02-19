@@ -249,6 +249,14 @@ std::unique_ptr<Node> Parser::parseStatement() {
         return parseThrow();
     if (type == TokenType::TRIGGER)
         return parseTrigger();
+    if (type == TokenType::BREAK) {
+        advance();
+        return std::make_unique<BreakNode>();
+    }
+    if (type == TokenType::CONTINUE) {
+        advance();
+        return std::make_unique<ContinueNode>();
+    }
     if (peek().type == TokenType::DEL) {
         advance();
         return std::make_unique<DeleteNode>(parseExpression(0));

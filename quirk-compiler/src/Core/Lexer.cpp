@@ -183,6 +183,11 @@ Token Lexer::nextToken()
         if (ident == "throw")
             return {TokenType::THROW, ident, line};
 
+        if (ident == "break")
+            return {TokenType::BREAK, ident, line};
+        if (ident == "continue")
+            return {TokenType::CONTINUE, ident, line};
+
         if (ident == "trigger")
             return {TokenType::TRIGGER, ident, line};
             

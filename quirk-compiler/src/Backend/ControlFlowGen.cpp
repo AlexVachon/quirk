@@ -13,6 +13,10 @@ class ControlFlowGen {
     IRBuilder<>& Builder;
 
    public:
+    // Break/continue targets — pushed on loop entry, popped on loop exit.
+    std::vector<BasicBlock*> breakStack;
+    std::vector<BasicBlock*> continueStack;
+
     ControlFlowGen(LLVMContext& ctx, Module* mod, IRBuilder<>& build)
         : Context(ctx), TheModule(mod), Builder(build) {}
 
@@ -75,6 +79,10 @@ class ControlFlowGen {
             BasicBlock::Create(Context, "loopbody", parentFunc);
         BasicBlock* afterBB =
             BasicBlock::Create(Context, "afterloop", parentFunc);
+
+        breakStack.push_back(afterBB);
+        continueStack.push_back(condBB);
+
         Builder.CreateBr(condBB);
         Builder.SetInsertPoint(condBB);
         Builder.CreateCondBr(exprHandler(node->condition.get()), bodyBB,
@@ -84,6 +92,10 @@ class ControlFlowGen {
             stmtHandler(stmt.get());
         if (!Builder.GetInsertBlock()->getTerminator())
             Builder.CreateBr(condBB);
+
+        breakStack.pop_back();
+        continueStack.pop_back();
+
         Builder.SetInsertPoint(afterBB);
     }
 
@@ -165,8 +177,14 @@ class ControlFlowGen {
 
             varGen->defineLocalVariable(node->varName, item);
 
+            breakStack.push_back(afterBB);
+            continueStack.push_back(condBB);
+
             for (auto& stmt : node->body)
                 stmtHandler(stmt.get());
+
+            breakStack.pop_back();
+            continueStack.pop_back();
 
             if (!Builder.GetInsertBlock()->getTerminator())
                 Builder.CreateBr(condBB);
@@ -222,8 +240,14 @@ class ControlFlowGen {
 
             varGen->defineLocalVariable(node->varName, item);
 
+            breakStack.push_back(afterBB);
+            continueStack.push_back(condBB);
+
             for (auto& stmt : node->body)
                 stmtHandler(stmt.get());
+
+            breakStack.pop_back();
+            continueStack.pop_back();
 
             if (!Builder.GetInsertBlock()->getTerminator())
                 Builder.CreateBr(condBB);

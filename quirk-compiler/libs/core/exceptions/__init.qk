@@ -1,2 +1,2 @@
 from .base use { Exception }
-from .types use { TypeError, SocketError}
+from .types use { TypeError, ValueError, SocketError}

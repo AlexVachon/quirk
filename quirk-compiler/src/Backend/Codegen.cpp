@@ -300,6 +300,29 @@ class LLVMCodegen {
             if (StructTypes.count(lit->value)) {
                 std::vector<Value*> args;
                 for (auto& a : call->args) args.push_back(handleExpression(a.value.get()));
+
+                // --- FIX: Resolve Default Arguments for Constructors ---
+                std::string initName = lit->value + "__init";
+                
+                // 1. Find the correct __init (handling inheritance)
+                std::string currentType = lit->value;
+                while (!functionDeclarations.count(initName) && structHierarchy.count(currentType) && !structHierarchy[currentType].empty()) {
+                    currentType = structHierarchy[currentType][0];
+                    initName = currentType + "__init";
+                }
+
+                // 2. Fill missing arguments from defaults
+                if (functionDeclarations.count(initName)) {
+                    FunctionNode* funcNode = functionDeclarations[initName];
+                    // Note: 'self' is already stripped from funcNode->parameters in Parser
+                    for (size_t i = args.size(); i < funcNode->parameters.size(); i++) {
+                        if (funcNode->parameters[i].defaultValue) {
+                            args.push_back(handleExpression(funcNode->parameters[i].defaultValue.get()));
+                        }
+                    }
+                }
+                // -------------------------------------------------------
+
                 return structGen->allocateAndInit(lit->value, args);
             }
 

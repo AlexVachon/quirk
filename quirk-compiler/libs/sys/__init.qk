@@ -8,6 +8,15 @@ extern define system(cmd: String) -> Int
 extern define exit(code: Int) -> void
 extern define sleep(ms: Int) -> void
 
+extern define net_socket() -> Int
+extern define net_bind(fd: Int, host: String, port: Int) -> Int
+extern define net_listen(fd: Int, backlog: Int) -> Int
+extern define net_accept(fd: Int) -> Int
+extern define net_connect(fd: Int, host: String, port: Int) -> Int
+extern define net_send(fd: Int, data: String) -> Int
+extern define net_recv(fd: Int, size: Int) -> String
+extern define net_close(fd: Int)
+
 extern define byteorder() -> String
 extern define copyright() -> String
 extern define executable() -> String

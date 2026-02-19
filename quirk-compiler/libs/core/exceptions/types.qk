@@ -6,3 +6,10 @@ struct TypeError : Exception {
         self.type = "TypeError"
     }
 }
+
+struct SocketError : Exception {
+    define __init(self, message: String) -> void {
+        super().__init(message)
+        self.type = "SocketError"
+    }
+}

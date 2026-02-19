@@ -409,9 +409,12 @@ class TryCatchNode : public Node {
 class ThrowNode : public Node {
    public:
     std::unique_ptr<Node> expression;
+    std::unique_ptr<Node> cause;
     int line;
+    std::string moduleName;
 
-    ThrowNode(std::unique_ptr<Node> expr, int lineNum) : expression(std::move(expr)), line(lineNum) {}
+    ThrowNode(std::unique_ptr<Node> expr, std::unique_ptr<Node> causeNode, int l)
+        : expression(std::move(expr)), cause(std::move(causeNode)), line(l) {}
 
     void print(int indent) const override {
         std::string space(indent, ' ');

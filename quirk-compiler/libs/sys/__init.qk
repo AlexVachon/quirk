@@ -21,6 +21,13 @@ extern define version() -> String
 extern define prefix() -> String
 extern define exc_info() -> Any
 
+extern define shadow_size() -> Int
+extern define shadow_frame(index: Int) -> String
+
+extern define capture_backtrace() -> void
+extern define backtrace_size() -> Int
+extern define backtrace_frame(index: Int) -> String
+
 extern define stdin() -> File
 extern define stdout() -> File
 extern define stderr() -> File

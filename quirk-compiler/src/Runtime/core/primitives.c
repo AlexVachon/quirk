@@ -3,7 +3,6 @@
 #include <stdlib.h>
 #include <math.h>
 #include <ctype.h>
-#include <setjmp.h>
 
 // ==========================================
 //  INTEGER METHODS

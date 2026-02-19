@@ -10,6 +10,19 @@ bool Sema::analyze(const std::vector<std::unique_ptr<Node>> &nodes)
     if (scopeStack.empty())
         enterScope();
 
+    // Pass 0: Register Global Module Aliases (Synchronized with Codegen)
+    for (const auto &node : nodes) {
+        if (auto use = dynamic_cast<UseNode*>(node.get())) {
+            if (use->filterList.empty()) {
+                std::string alias = use->moduleName;
+                size_t lastDot = alias.rfind('.');
+                if (lastDot == std::string::npos) lastDot = alias.rfind('/');
+                if (lastDot != std::string::npos) alias = alias.substr(lastDot + 1);
+                globalModuleAliases[alias] = "MODULE$" + use->moduleName;
+            }
+        }
+    }
+
     // Pass 1: Register Structs and Signatures
     for (const auto &node : nodes)
     {
@@ -501,8 +514,20 @@ std::string Sema::checkConstructor(ConstructorNode *node)
 
 std::string Sema::checkCall(CallNode *node)
 {
-    if (auto l = dynamic_cast<LiteralNode *>(node->callee.get()))
+    if (auto l = dynamic_cast<LiteralNode *>(node->callee.get())) {
+        if (l->value == "super") {
+            if (currentClass.empty()) {
+                std::cerr << "Error: Cannot use 'super' outside a class." << std::endl;
+                exit(1);
+            }
+            if (structRegistry[currentClass]->parents.empty()) {
+                std::cerr << "Error: Class '" << currentClass << "' has no parent to call 'super' on." << std::endl;
+                exit(1);
+            }
+            return structRegistry[currentClass]->parents[0];
+        }
         return resolveVariable(l->value);
+    }
 
     if (auto m = dynamic_cast<MemberAccessNode *>(node->callee.get()))
     {
@@ -603,9 +628,15 @@ void Sema::defineVariable(const std::string &name, const std::string &type)
 
 std::string Sema::resolveVariable(const std::string &name)
 {
+    // 1. Check local scopes first
     for (int i = scopeStack.size() - 1; i >= 0; i--)
         if (scopeStack[i].count(name))
             return scopeStack[i][name];
+
+    // 2. Check Global Module Aliases
+    if (globalModuleAliases.count(name)) {
+        return globalModuleAliases[name];
+    }
 
     std::string contextModule = currentFunctionNode ? currentFunctionNode->moduleName : "main";
 
@@ -647,8 +678,12 @@ std::string Sema::resolveVariable(const std::string &name)
         return "Int";
         
     // --- NEW: Super keyword support ---
-    if (name == "super")
+    if (name == "super") {
+        if (!currentClass.empty() && structRegistry.count(currentClass) && !structRegistry[currentClass]->parents.empty()) {
+            return structRegistry[currentClass]->parents[0];
+        }
         return "void";
+    }
     // ----------------------------------
 
     if (!currentClass.empty())

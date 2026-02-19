@@ -249,7 +249,7 @@ class ControlFlowGen {
         Value* jmpBuf =
             Builder.CreateCall(TheModule->getFunction("quirk_get_jmp_buf"));
         Value* setjmpRes =
-            Builder.CreateCall(TheModule->getFunction("setjmp"), {jmpBuf});
+            Builder.CreateCall(TheModule->getFunction("_setjmp"), {jmpBuf});
 
         Value* isCatch = Builder.CreateICmpNE(
             setjmpRes, ConstantInt::get(Type::getInt32Ty(Context), 0));
@@ -350,10 +350,10 @@ class ControlFlowGen {
             for (auto& stmt : cb.body)
                 stmtHandler(stmt.get());
 
+            // CORRECT — just branch to end:
             if (!Builder.GetInsertBlock()->getTerminator()) {
                 Builder.CreateBr(endBB);
             }
-
             currentEvalBB = nextEvalBB;
         }
 
@@ -361,8 +361,8 @@ class ControlFlowGen {
         Builder.SetInsertPoint(currentEvalBB);
         Value* depth =
             Builder.CreateCall(TheModule->getFunction("quirk_get_try_depth"));
-        Value* hasParentCatch = Builder.CreateICmpSGE(
-            depth, ConstantInt::get(Type::getInt32Ty(Context), 0));
+        Value* hasParentCatch = Builder.CreateICmpSGT(
+            depth, ConstantInt::get(Type::getInt32Ty(Context), -1));
 
         BasicBlock* jumpBB =
             BasicBlock::Create(Context, "rethrow_jump", parentFunc);
@@ -432,6 +432,27 @@ class ControlFlowGen {
         Builder.CreateCall(TheModule->getFunction("quirk_set_exception"),
                            {rawExc});
 
+        if (node->cause) {
+            Value* causeObj = exprHandler(node->cause.get());
+            Function* withCauseFunc = TheModule->getFunction("Exception_with_cause");
+            if (withCauseFunc) {
+                // --- FIX: LLVM requires exact type matches for function arguments ---
+                Type* expectedSelfTy = withCauseFunc->getFunctionType()->getParamType(0);
+                Type* expectedCauseTy = withCauseFunc->getFunctionType()->getParamType(1);
+                
+                if (excObj->getType() != expectedSelfTy) {
+                    excObj = Builder.CreateBitCast(excObj, expectedSelfTy);
+                }
+                if (causeObj->getType() != expectedCauseTy) {
+                    causeObj = Builder.CreateBitCast(causeObj, expectedCauseTy);
+                }
+                // --------------------------------------------------------------------
+                
+                // Call it and update excObj with the chained result
+                excObj = Builder.CreateCall(withCauseFunc, {excObj, causeObj});
+            }
+        }
+
         Value* depth =
             Builder.CreateCall(TheModule->getFunction("quirk_get_try_depth"));
         Value* hasCatch = Builder.CreateICmpSGE(
@@ -443,9 +464,11 @@ class ControlFlowGen {
             BasicBlock::Create(Context, "do_crash", parentFunc);
         Builder.CreateCondBr(hasCatch, jumpBB, crashBB);
 
+        // AFTER:
         Builder.SetInsertPoint(jumpBB);
         Value* activeBuf = Builder.CreateCall(
             TheModule->getFunction("quirk_get_current_jmp_buf"));
+        Builder.CreateCall(TheModule->getFunction("quirk_pop_try")); // ← ADD
         Builder.CreateCall(
             TheModule->getFunction("longjmp"),
             {activeBuf, ConstantInt::get(Type::getInt32Ty(Context), 1)});

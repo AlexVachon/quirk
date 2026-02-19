@@ -1,20 +1,28 @@
-from core.exceptions use { Exception}
+from core.exceptions use { Exception }
+use sys 
 
 struct ProcessError : Exception {
-
     define __init(self, process_name: String, message: String) -> void {
-        self.type ="ProcessError"
-        self.message ="Process '${process_name}' failed: ${message}"
+        super().__init("Process '" + process_name + "' failed: " + message)
+        self.type = "ProcessError"
     }
+}
+
+define throw_error(msg: String) -> void {
+    throw TypeError("msg should be String")
 }
 
 define main() -> void {
     try {
-        // throw TypeError("Oops")
-        throw ProcessError("Nginx","Port 80 is already in use")
-    } catch (e: TypeError, ProcessError) {
-        print(e)
+        try {
+            throw_error("This is message")
+        } catch (e: TypeError) {
+            // USING THE NEW 'from' KEYWORD IN AST!
+            throw ProcessError("Nginx", "Port 80 is already in use") from e
+        }
+    } catch (e: ProcessError) {
+        e.print_traceback()
     } catch (e: Exception) {
-        print("Caught generic exception")
+        print("Caught generic exception: " + e.message)
     }
 }

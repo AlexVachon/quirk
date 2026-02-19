@@ -1,8 +1,12 @@
+// [sys.c] — DEBUG BUILD (add fprintf calls to track execution)
+// Replace your sys.c temporarily with this to find the crash.
+
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 #include <limits.h>
 #include <stdint.h>
+#include <gc.h>
 
 #ifdef _WIN32
     #include <windows.h>
@@ -12,137 +16,40 @@
     #include <unistd.h>
 #endif
 
+#ifndef QUIRK_TYPES_H
 #include "../types.h"
+#endif
 
 static int quirk_argc = 0;
 static char** quirk_argv = NULL;
-static int current_recursion_limit = 1000;
 
-// Called by LLVM at the very beginning of the program
 void Sys_init(int argc, char** argv) {
     quirk_argc = argc;
     quirk_argv = argv;
 }
 
-// --- COMMAND LINE ARGS ---
-int Sys_arg_count() { return quirk_argc; }
-String* Sys_arg_get(int index) {
-    if (index < 0 || index >= quirk_argc) return make_String("");
-    return make_String(quirk_argv[index]);
+char* gc_strdup(const char* s) {
+    if (!s) {
+        return NULL;
+    }
+    size_t len = strlen(s) + 1;
+    char* new_s = GC_malloc(len);
+    if (!new_s) {
+        return NULL;
+    }
+    memcpy(new_s, s, len);
+    return new_s;
 }
 
-// --- ENVIRONMENT & SYSTEM ---
-String* Sys_getenv(String* name) {
-    if (!name || !name->buffer) return make_String("");
-    char* val = getenv(name->buffer);
-    return make_String(val ? val : "");
-}
-int Sys_system(String* cmd) {
-    if (!cmd || !cmd->buffer) return -1;
-    return system(cmd->buffer);
-}
-void Sys_exit(int code) { exit(code); }
-void Sys_sleep(int ms) {
-#ifdef _WIN32
-    Sleep(ms);
-#else
-    usleep(ms * 1000);
-#endif
-}
-
-// --- PYTHON-LIKE SYS FEATURES ---
-
-String* Sys_byteorder() {
-    uint32_t num = 1;
-    if (*(uint8_t *)&num == 1) return make_String("little");
-    return make_String("big");
-}
-
-String* Sys_copyright() {
-    return make_String("Copyright (c) 2026 Quirk Contributors.");
-}
-
-String* Sys_executable() {
-    // Returns the path used to invoke the binary
-    if (quirk_argc > 0) return make_String(quirk_argv[0]);
-    return make_String("");
-}
-
-String* Sys_getdefaultencoding() {
-    return make_String("utf-8"); // Standard for modern environments
-}
-
-int Sys_getrecursionlimit() {
-    return current_recursion_limit;
-}
-
-void Sys_setrecursionlimit(int limit) {
-    current_recursion_limit = limit;
-}
-
-int Sys_getsizeof(void* obj) {
-    if (!obj) return 0;
-    // Magic Trick: The Boehm GC knows exactly how big this memory block is!
-    extern size_t GC_size(const void*);
-    return (int)GC_size(obj);
-}
-
-int Sys_maxsize() {
-    // Quirk's 'Int' is 32-bit (i32 in LLVM), so maxsize is INT_MAX
-    return INT_MAX; 
-}
-
-String* Sys_platform() {
-#if defined(_WIN32)
-    return make_String("win32");
-#elif defined(__APPLE__)
-    return make_String("darwin");
-#elif defined(__linux__)
-    return make_String("linux");
-#else
-    return make_String("unknown");
-#endif
-}
-
-String* Sys_version() {
-    return make_String("1.0.0 (Quirk LLVM Backend)");
-}
-
-String* Sys_prefix() {
-    char* env_home = getenv("QUIRK_HOME");
-    return make_String(env_home ? env_home : "/usr/local/lib/quirk");
-}
-
-// --- STANDARD STREAMS ---
-File* Sys_stdin() {
-    File* f = (File*)malloc(sizeof(File));
-    f->handle = stdin;
-    f->is_open = 1;
-    return f;
-}
-File* Sys_stdout() {
-    File* f = (File*)malloc(sizeof(File));
-    f->handle = stdout;
-    f->is_open = 1;
-    return f;
-}
-File* Sys_stderr() {
-    File* f = (File*)malloc(sizeof(File));
-    f->handle = stderr;
-    f->is_open = 1;
-    return f;
-}
-
-// --- EXCEPTION INTERFACE ---
-void* Sys_exc_info() {
-    extern void* quirk_get_exception();
-    return quirk_get_exception();
-}
-
-// --- UTILS ---
 char* Sys_srcline(const char* filename, int target_line) {
+    if (!filename) {
+        return gc_strdup("?");
+    }
     FILE* f = fopen(filename, "r");
-    if (!f) return strdup("");
+    if (!f) {
+        return gc_strdup("");
+    }
+
     char buffer[1024];
     int current = 1;
     while (fgets(buffer, sizeof(buffer), f)) {
@@ -152,10 +59,84 @@ char* Sys_srcline(const char* filename, int target_line) {
             while (*start == ' ' || *start == '\t') start++;
             size_t len = strlen(start);
             if (len > 0 && start[len-1] == '\n') start[len-1] = '\0';
-            return strdup(start);
+            char* result = gc_strdup(start);
+            return result;
         }
         current++;
     }
     fclose(f);
-    return strdup("");
+    return gc_strdup("");
+}
+
+// --- QUIRK SHADOW STACK ---
+typedef struct {
+    const char* func_name;
+    const char* file_name;
+} ShadowFrame;
+
+static ShadowFrame quirk_shadow_stack[1024];
+int quirk_shadow_sp = 0;
+
+void quirk_push_frame(const char* func, const char* file) {
+    if (quirk_shadow_sp < 1024) {
+        quirk_shadow_stack[quirk_shadow_sp].func_name = func;
+        quirk_shadow_stack[quirk_shadow_sp].file_name = file;
+        quirk_shadow_sp++;
+    }
+}
+
+void quirk_pop_frame() {
+    if (quirk_shadow_sp > 0) quirk_shadow_sp--;
+}
+
+int Sys_shadow_size() {
+    return quirk_shadow_sp;
+}
+
+String* Sys_shadow_frame(int index) {
+    if (index < 0 || index >= quirk_shadow_sp) {
+        return make_String("");
+    }
+
+    char buf[512];
+    const char* fn = quirk_shadow_stack[index].func_name ? quirk_shadow_stack[index].func_name : "?";
+    const char* fl = quirk_shadow_stack[index].file_name ? quirk_shadow_stack[index].file_name : "?";
+    snprintf(buf, sizeof(buf), "%s (%s)", fn, fl);
+    return make_String(buf);
+}
+
+// --- SYSTEM BUILTINS ---
+
+int Sys_arg_count() {
+    return quirk_argc;
+}
+
+String* Sys_arg_get(int index) {
+    if (index < 0 || index >= quirk_argc) return make_String("");
+    return make_String(quirk_argv[index]);
+}
+
+String* Sys_prefix() {
+    // Modify this if you want a specific installation prefix
+    return make_String("/usr/local"); 
+}
+
+String* Sys_version() {
+    // Your Quirk version
+    return make_String("1.0.0"); 
+}
+
+String* Sys_getenv(String* key) {
+    if (!key || !key->buffer) return make_String("");
+    char* val = getenv((char*)key->buffer);
+    return make_String(val ? val : "");
+}
+
+int Sys_system(String* cmd) {
+    if (!cmd || !cmd->buffer) return -1;
+    return system((char*)cmd->buffer);
+}
+
+void Sys_exit(int code) {
+    exit(code);
 }

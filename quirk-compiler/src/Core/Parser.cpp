@@ -120,7 +120,9 @@ std::unique_ptr<Node> Parser::parseExpression(int min_precedence) {
         left = std::make_unique<LiteralNode>("true");
     } else if (t.type == TokenType::FALSE) {
         left = std::make_unique<LiteralNode>("false");
-    } else if (t.type == TokenType::IDENTIFIER) {
+    } else if (t.type == TokenType::SUPER) {
+        left = std::make_unique<LiteralNode>("super");
+    }else if (t.type == TokenType::IDENTIFIER) {
         left = std::make_unique<LiteralNode>(t.value);
     } else if (t.type == TokenType::NOT) {
         auto operand = parseExpression(0);
@@ -519,24 +521,27 @@ std::unique_ptr<ConstructorNode> Parser::parseConstructor() {
     return node;
 }
 
+// [Parser.cpp] - inside parseStruct()
+
 std::unique_ptr<StructNode> Parser::parseStruct() {
     consume(TokenType::STRUCT, "Expected 'struct'");
     auto node = std::make_unique<StructNode>();
     node->name = advance().value;
 
-    // --- NEW: Parse inheritance here (e.g., struct Name : Parent) ---
     if (match(TokenType::COLON)) {
         do {
             node->parents.push_back(advance().value);
         } while (match(TokenType::COMMA));
     }
-    // ----------------------------------------------------------------
 
     consume(TokenType::LBRACE, "Expected '{'");
 
+    // --- NEW: Store dynamic default initializations ---
+    std::vector<std::unique_ptr<Node>> defaultInits;
+    // --------------------------------------------------
+
     while (peek().type != TokenType::RBRACE && !isAtEnd()) {
         
-        // (Keeping 'use' for standard library backwards compatibility)
         if (peek().type == TokenType::USE) {
             advance();
             do {
@@ -560,7 +565,6 @@ std::unique_ptr<StructNode> Parser::parseStruct() {
                 func->name = node->name + "_" + func->name;
             }
 
-            // Move the normalizer check ABOVE the linkageName assignment
             if (!isInit && func->name.find("__init") != std::string::npos) {
                 func->name = node->name + "__init";
             }
@@ -592,11 +596,56 @@ std::unique_ptr<StructNode> Parser::parseStruct() {
                 node->fields.push_back({fName, iType, std::move(val)});
             } else {
                 consume(TokenType::COLON, "Expected ':'");
-                node->fields.push_back({fName, advance().value, nullptr});
+                std::string fType = advance().value;
+                node->fields.push_back({fName, fType, nullptr});
+
+                // --- NEW: Parse default property values ---
+                if (match(TokenType::ASSIGN)) {
+                    auto defaultExpr = parseExpression(0);
+                    
+                    auto selfLit = std::make_unique<LiteralNode>("self");
+                    auto memberAcc = std::make_unique<MemberAccessNode>(std::move(selfLit), fName);
+                    auto varDecl = std::make_unique<VarDeclNode>(std::move(memberAcc), std::move(defaultExpr), "=", "");
+                    
+                    defaultInits.push_back(std::move(varDecl));
+                }
+                // ------------------------------------------
             }
         }
     }
     consume(TokenType::RBRACE, "Expected '}'");
+
+    // --- NEW: Inject default initializations into __init AST ---
+    if (!defaultInits.empty()) {
+        FunctionNode* initFunc = nullptr;
+        for (auto& extra : extraNodes) {
+            if (auto func = dynamic_cast<FunctionNode*>(extra.get())) {
+                if (func->name == node->name + "__init") {
+                    initFunc = func;
+                    break;
+                }
+            }
+        }
+        if (initFunc) {
+            // Prepend defaults to existing explicit __init
+            std::vector<std::unique_ptr<Node>> newBody;
+            for (auto& n : defaultInits) newBody.push_back(std::move(n));
+            for (auto& n : initFunc->body) newBody.push_back(std::move(n));
+            initFunc->body = std::move(newBody);
+        } else {
+            // Synthesize a hidden __init if none exists
+            auto synthInit = std::make_unique<FunctionNode>();
+            synthInit->name = node->name + "__init";
+            synthInit->linkageName = synthInit->name;
+            synthInit->cls = node->name;
+            synthInit->isStatic = false;
+            synthInit->returnType = "void";
+            synthInit->body = std::move(defaultInits);
+            extraNodes.push_back(std::move(synthInit));
+        }
+    }
+    // -----------------------------------------------------------
+
     return node;
 }
 
@@ -732,7 +781,14 @@ std::unique_ptr<Node> Parser::parseThrow() {
     int lineNum = peek().line;
     consume(TokenType::THROW, "Expected 'throw'");
     
-    auto node = std::make_unique<ThrowNode>(parseExpression(0), lineNum);
+    auto expr = parseExpression(0);
+    std::unique_ptr<Node> causeExpr = nullptr;
+    
+    if (match(TokenType::FROM)) {
+        causeExpr = parseExpression(0);
+    }
+    
+    auto node = std::make_unique<ThrowNode>(std::move(expr), std::move(causeExpr), lineNum);
     node->moduleName = this->filePath; 
     
     return node;

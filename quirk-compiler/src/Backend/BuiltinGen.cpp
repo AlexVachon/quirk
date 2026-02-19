@@ -72,7 +72,8 @@ class BuiltinGen {
         Function::Create(FunctionType::get(voidTy, false), Function::ExternalLinkage, "quirk_unhandled_exception", TheModule);
 
         // Standard C setjmp/longjmp
-        Function* sj = Function::Create(FunctionType::get(i32Ty, {voidPtrTy}, false), Function::ExternalLinkage, "setjmp", TheModule);
+        // We use _setjmp because standard setjmp is often a compiler macro in glibc
+        Function* sj = Function::Create(FunctionType::get(i32Ty, {voidPtrTy}, false), Function::ExternalLinkage, "_setjmp", TheModule);
         sj->addFnAttr(Attribute::ReturnsTwice); // Crucial for LLVM optimization safety!
         Function::Create(FunctionType::get(voidTy, {voidPtrTy, i32Ty}, false), Function::ExternalLinkage, "longjmp", TheModule);
     }

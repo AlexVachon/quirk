@@ -423,10 +423,12 @@ int main(int argc, char* argv[]) {
     dest.close();
 
     // =======================================================
-    // 6. EXECUTION (JIT / LLI)
+    // 6. EXECUTION (Native Compile + Run)
+    // lli does not support setjmp/longjmp correctly in JIT mode.
+    // We instead compile to a native binary via llc + gcc and run that.
     // =======================================================
     if (runImmediate) {
-        std::cerr << "[DEBUG] Compilation finished. Executing..." << std::endl;
+        std::cerr << "[DEBUG] Compilation finished. Compiling to native binary..." << std::endl;
 
         std::string runtimePath = "./bin/runtime.so";
         const char* envHome = std::getenv("QUIRK_HOME");
@@ -437,9 +439,43 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        std::string cmd = "lli -load=" + runtimePath + " " + irPath;
-        int ret = system(cmd.c_str());
+        // Resolve the directory containing runtime.so for rpath
+        std::string runtimeDir = fs::path(runtimePath).parent_path().string();
+        if (runtimeDir.empty()) runtimeDir = ".";
 
+        // Step 1: Compile LLVM IR -> native object file
+        std::string objPath = "/tmp/quirk_out.o";
+        std::string binPath = "/tmp/quirk_out";
+
+        std::string llcCmd = "llc-14 -filetype=obj -relocation-model=pic "
+                             + irPath + " -o " + objPath;
+        std::cerr << "[DEBUG] Running: " << llcCmd << std::endl;
+        int llcRet = system(llcCmd.c_str());
+        if (llcRet != 0) {
+            std::cerr << "[DEBUG] llc failed to compile IR." << std::endl;
+            std::cerr.rdbuf(cerr_buffer);
+            return 1;
+        }
+
+        // Step 2: Link object + runtime.so -> executable
+        std::string linkCmd = "gcc " + objPath + " " + runtimePath
+                            + " -Wl,-rpath," + runtimeDir
+                            + " -lgc -lm -o " + binPath;
+        std::cerr << "[DEBUG] Running: " << linkCmd << std::endl;
+        int linkRet = system(linkCmd.c_str());
+        if (linkRet != 0) {
+            std::cerr << "[DEBUG] gcc failed to link." << std::endl;
+            std::cerr.rdbuf(cerr_buffer);
+            return 1;
+        }
+
+        // Step 3: Run the native binary
+        std::cerr << "[DEBUG] Executing native binary..." << std::endl;
+        std::cerr.rdbuf(cerr_buffer); // Restore stderr before running so user sees output
+        int ret = system(binPath.c_str());
+
+        // Re-capture for final log message
+        std::cerr.rdbuf(logFile.rdbuf());
         if (ret != 0)
             std::cerr << "[DEBUG] Execution failed or returned non-zero." << std::endl;
     }

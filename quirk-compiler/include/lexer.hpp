@@ -9,6 +9,7 @@ enum class TokenType {
     // Keywords
     DEFINE,
     STRUCT,
+    SUPER,
     INIT,
     EXTERN,
     EXTEND,

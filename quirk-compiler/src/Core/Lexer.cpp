@@ -132,6 +132,8 @@ Token Lexer::nextToken()
             return {TokenType::DEFINE, ident, line};
         if (ident == "struct")
             return {TokenType::STRUCT, ident, line};
+        if (ident == "super")
+            return {TokenType::SUPER, ident, line};
         if (ident == "use")
             return {TokenType::USE, ident, line};
         if (ident == "from")

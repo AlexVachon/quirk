@@ -69,6 +69,12 @@ class LLVMCodegen {
     void compile(const std::vector<std::unique_ptr<Node>>& nodes, raw_ostream& out = errs()) {
         builtinGen->Initialize();
 
+        // --- NEW: Process Top-Level Uses globally ---
+        for (const auto& node : nodes) {
+            if (auto u = dynamic_cast<UseNode*>(node.get())) handleUse(u);
+        }
+        // --------------------------------------------
+
         for (const auto& node : nodes) {
             if (auto s = dynamic_cast<StructNode*>(node.get())) {
                 if (!StructTypes.count(s->name)) StructTypes[s->name] = StructType::create(Context, s->name);
@@ -151,7 +157,14 @@ class LLVMCodegen {
             
         Builder.CreateCall(runtimeInit, {argc, argv});
 
-        activeModuleAliases.clear();
+        // --- NEW: Push 'main' to the shadow stack! ---
+        FunctionCallee pushFrame = TheModule->getOrInsertFunction("quirk_push_frame",
+            Type::getVoidTy(Context), Type::getInt8PtrTy(Context), Type::getInt8PtrTy(Context));
+        
+        Value* mainFuncName = Builder.CreateGlobalStringPtr("main");
+        Value* mainFileName = Builder.CreateGlobalStringPtr("main"); 
+        Builder.CreateCall(pushFrame, {mainFuncName, mainFileName});
+        // ---------------------------------------------
         
         for (const auto& node : nodes) {
             if (auto func = dynamic_cast<FunctionNode*>(node.get())) {
@@ -162,6 +175,12 @@ class LLVMCodegen {
                  handleStatement(node.get(), mainFunc);
             }
         }
+
+        // --- NEW: Pop 'main' from the shadow stack! ---
+        FunctionCallee popFrame = TheModule->getOrInsertFunction("quirk_pop_frame", Type::getVoidTy(Context));
+        Builder.CreateCall(popFrame);
+        // ----------------------------------------------
+        
         if (!Builder.GetInsertBlock()->getTerminator()) Builder.CreateRet(ConstantInt::get(Type::getInt32Ty(Context), 0));
         TheModule->print(out, nullptr);
     }
@@ -184,7 +203,6 @@ class LLVMCodegen {
         Builder.SetInsertPoint(BB);
         
         varGen->clear();
-        activeModuleAliases.clear(); 
 
         size_t paramIdx = 0;
         auto argIt = F->arg_begin();
@@ -202,14 +220,29 @@ class LLVMCodegen {
             varGen->defineArgument(argName, &*argIt);
         }
 
+        // --- NEW: INJECT SHADOW STACK PUSH ---
+        FunctionCallee pushFrame = TheModule->getOrInsertFunction("quirk_push_frame",
+            Type::getVoidTy(Context), Type::getInt8PtrTy(Context), Type::getInt8PtrTy(Context));
+        
+        Value* funcNameVal = Builder.CreateGlobalStringPtr(node->name);
+        Value* fileNameVal = Builder.CreateGlobalStringPtr(node->moduleName);
+        Builder.CreateCall(pushFrame, {funcNameVal, fileNameVal});
+        // -------------------------------------
+
         for (const auto& stmt : node->body) {
             handleStatement(stmt.get(), F);
         }
 
+        // --- NEW: INJECT SHADOW STACK POP ON IMPLICIT RETURN ---
         if (!Builder.GetInsertBlock()->getTerminator()) {
+            FunctionCallee popFrame = TheModule->getOrInsertFunction("quirk_pop_frame", Type::getVoidTy(Context));
+            Builder.CreateCall(popFrame);
+            
             if (F->getReturnType()->isVoidTy()) Builder.CreateRetVoid();
             else Builder.CreateRet(ConstantInt::get(Type::getInt32Ty(Context), 0));
         }
+        // -------------------------------------------------------
+
         if (prevBB) Builder.SetInsertPoint(prevBB);
         currentCodegenClass = prevClass;
     }
@@ -250,6 +283,16 @@ class LLVMCodegen {
     Value* handleCall(CallNode* call) 
     {
         if (auto lit = dynamic_cast<LiteralNode*>(call->callee.get())) {
+
+            // --- FIXED: Super keyword codegen ---
+            if (lit->value == "super") {
+                Value* selfVal = varGen->resolveVariable("self");
+                if (!selfVal || structHierarchy[currentCodegenClass].empty()) return nullptr;
+                std::string parentName = structHierarchy[currentCodegenClass][0];
+                return Builder.CreateBitCast(selfVal, PointerType::getUnqual(StructTypes[parentName]));
+            }
+            // ----------------------------------
+            
             if (builtinGen->isBuiltin(lit->value)) {
                 return builtinGen->handleBuiltin(lit->value, call, [this](Node* n) { return this->handleExpression(n); });
             }
@@ -342,6 +385,13 @@ class LLVMCodegen {
             std::string funcName = typeName + "_" + member->memberName;
             Function* func = TheModule->getFunction(funcName);
 
+            // --- NEW: Constructor Fallback ---
+            // Allows explicitly calling .__init() on a super object
+            if (!func && member->memberName == "__init") {
+                func = TheModule->getFunction(typeName + "__init");
+            }
+            // ---------------------------------
+
             if (!func && structHierarchy.count(typeName)) {
                 std::function<Function*(const std::string&)> searchHierarchy = [&](const std::string& currentType) -> Function* {
                     if (structHierarchy.count(currentType)) {
@@ -360,7 +410,19 @@ class LLVMCodegen {
             if (!func) return nullptr;
 
             std::vector<Value*> args;
-            if (objPtr) args.push_back(objPtr);
+            if (objPtr) {
+                // --- FIX: Safely cast 'self' to the parent class type if calling an inherited method ---
+                if (func->arg_size() > 0) {
+                    Type* expectedSelfType = func->getFunctionType()->getParamType(0);
+                    if (objPtr->getType() != expectedSelfType) {
+                        if (objPtr->getType()->isPointerTy() && expectedSelfType->isPointerTy()) {
+                            objPtr = Builder.CreateBitCast(objPtr, expectedSelfType);
+                        }
+                    }
+                }
+                args.push_back(objPtr);
+            }
+            
             processCallArgs(func, call->args, args, (objPtr ? 1 : 0));
             return Builder.CreateCall(func, args);
         }
@@ -496,10 +558,21 @@ class LLVMCodegen {
             activeTriggers[tr->varName] = tr->handlerName;
         }
         else if (auto ret = dynamic_cast<ReturnNode*>(node)) {
+            // 1. Evaluate the expression FIRST while the shadow stack frame is still valid.
+            Value* retVal = nullptr;
             if (ret->expression) {
-                Value* retVal = handleExpression(ret->expression.get());
+                retVal = handleExpression(ret->expression.get());
                 if (!retVal) return;
-                
+            }
+
+            // 2. NOW safely pop the shadow stack frame.
+            // --- NEW: INJECT SHADOW STACK POP ON EXPLICIT RETURN ---
+            FunctionCallee popFrame = TheModule->getOrInsertFunction("quirk_pop_frame", Type::getVoidTy(Context));
+            Builder.CreateCall(popFrame);
+            // -------------------------------------------------------
+
+            // 3. Emit the Return Instruction
+            if (retVal) {
                 if (parentFunc->getName() == "main") {
                     if (retVal->getType()->isIntegerTy(32)) { Builder.CreateRet(retVal); return; }
                     Builder.CreateRet(ConstantInt::get(Type::getInt32Ty(Context), 0));
@@ -548,20 +621,49 @@ class LLVMCodegen {
             else if (val->getType()->isIntegerTy() && targetType->isDoubleTy()) val = Builder.CreateSIToFP(val, targetType);
         }
 
+        // --- NEW: Helper to safely apply +=, -=, etc. including String concatenation ---
+        auto applyCompoundAssignment = [&](std::string op, Value* wasVal, Value* newVal) -> Value* {
+            if (op == "+=") {
+                // 1. Check if the target is already a String struct
+                if (wasVal->getType()->isPointerTy() && wasVal->getType()->getPointerElementType()->isStructTy()) {
+                    StructType* st = cast<StructType>(wasVal->getType()->getPointerElementType());
+                    if (st->getName().contains("String")) {
+                        Function* addFunc = TheModule->getFunction("String___add");
+                        if (addFunc) return Builder.CreateCall(addFunc, {wasVal, newVal});
+                    }
+                }
+                
+                // 2. NEW FIX: Target is a raw C-String (i8*). Box it safely!
+                if (wasVal->getType()->isPointerTy() && wasVal->getType()->getPointerElementType()->isIntegerTy(8)) {
+                    std::vector<Value*> boxArgs = {wasVal};
+                    Value* boxedStr = structGen->allocateAndInit("String", boxArgs);
+                    Function* addFunc = TheModule->getFunction("String___add");
+                    if (addFunc) return Builder.CreateCall(addFunc, {boxedStr, newVal});
+                }
+
+                // 3. Fallback to standard MathGen for numbers
+                return mathGen->generateBinaryOp("+", wasVal, newVal);
+            }
+            if (op == "-=") return mathGen->generateBinaryOp("-", wasVal, newVal);
+            if (op == "*=") return mathGen->generateBinaryOp("*", wasVal, newVal);
+            if (op == "/=") return mathGen->generateBinaryOp("/", wasVal, newVal);
+            return newVal;
+        };
+        // -------------------------------------------------------------------------------
+
         if (auto lhs = dynamic_cast<LiteralNode*>(vdecl->lhs.get())) {
             
             Value* wasVal = val; 
             if (varGen->exists(lhs->value)) {
                 wasVal = varGen->resolveVariable(lhs->value); 
-
-                if (vdecl->op == "+=") val = mathGen->generateBinaryOp("+", wasVal, val);
-                else if (vdecl->op == "-=") val = mathGen->generateBinaryOp("-", wasVal, val);
-                else if (vdecl->op == "*=") val = mathGen->generateBinaryOp("*", wasVal, val);
-                else if (vdecl->op == "/=") val = mathGen->generateBinaryOp("/", wasVal, val);
+                
+                // --- NEW: Use helper for Local Variables ---
+                val = applyCompoundAssignment(vdecl->op, wasVal, val);
             }
 
             if (!varGen->exists(lhs->value)) varGen->defineLocalVariable(lhs->value, val);
             else varGen->updateLocalVariable(lhs->value, val);
+            
             if (activeTriggers.count(lhs->value)) {
                 Function* hook = TheModule->getFunction(activeTriggers[lhs->value]);
                 if (hook) {
@@ -594,10 +696,8 @@ class LLVMCodegen {
                 
                 Value* wasVal = Builder.CreateLoad(fieldType, memberPtr, "was_val");
 
-                if (vdecl->op == "+=") val = mathGen->generateBinaryOp("+", wasVal, val);
-                else if (vdecl->op == "-=") val = mathGen->generateBinaryOp("-", wasVal, val);
-                else if (vdecl->op == "*=") val = mathGen->generateBinaryOp("*", wasVal, val);
-                else if (vdecl->op == "/=") val = mathGen->generateBinaryOp("/", wasVal, val);
+                // --- NEW: Use helper for Struct Members ---
+                val = applyCompoundAssignment(vdecl->op, wasVal, val);
 
                 if (val->getType() != fieldType) {
                     if (val->getType()->isPointerTy() && 
@@ -660,6 +760,7 @@ class LLVMCodegen {
                 }
             }
         } else if (auto binOp = dynamic_cast<BinaryOpNode*>(vdecl->lhs.get())) {
+            // ... (keep your existing Array [] assignment logic here)
             if (binOp->op == "[]") {
                 Value* ptr = handleExpression(binOp->left.get());
                 Value* index = handleExpression(binOp->right.get());
@@ -761,6 +862,16 @@ Value* LLVMCodegen::handleExpression(Node* node) {
     if (auto lit = dynamic_cast<LiteralNode*>(node)) {
         if (lit->value == "true") return ConstantInt::getTrue(Context);
         if (lit->value == "false") return ConstantInt::getFalse(Context);
+
+        // --- NEW: Handle super as a property access ---
+        if (lit->value == "super") {
+            Value* selfVal = varGen->resolveVariable("self");
+            if (!selfVal || structHierarchy[currentCodegenClass].empty()) return nullptr;
+            std::string parentName = structHierarchy[currentCodegenClass][0];
+            return Builder.CreateBitCast(selfVal, PointerType::getUnqual(StructTypes[parentName]));
+        }
+        // ----------------------------------------------
+
         if (std::isdigit(lit->value[0])) {
             if (lit->value.find('.') != std::string::npos) return ConstantFP::get(Context, APFloat(std::stod(lit->value)));
             return ConstantInt::get(Type::getInt32Ty(Context), std::stoi(lit->value));

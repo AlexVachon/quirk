@@ -39,6 +39,7 @@ class Sema {
     std::map<std::string, StructNode*> structRegistry;
     std::map<std::string, std::map<std::string, FunctionNode*>> methodRegistry;
     std::vector<std::map<std::string, std::string>> scopeStack;
+    std::map<std::string, std::string> globalModuleAliases; // Add this
 
     // (Keep rest of the class unchanged)
     void enterScope();

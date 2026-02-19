@@ -1,9 +1,8 @@
 from .base use { Exception }
 
 struct TypeError : Exception {
-
     define __init(self, message: String) -> void {
+        super().__init(message)
         self.type = "TypeError"
-        self.message = message
     }
 }

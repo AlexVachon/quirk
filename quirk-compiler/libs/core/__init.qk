@@ -1,13 +1,18 @@
 from .collections.list use {
     List, ListIterator
 }
+
 from .collections.map use {
     Map, MapIterator
 }
+
 from .primitives use {
     Int, Double, Bool
 }
-from .string use { String, StringIterator }
+
+from .string use { 
+    String, StringIterator
+}
 
 from .exceptions use {
     Exception, 

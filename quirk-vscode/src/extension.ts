@@ -25,7 +25,10 @@ export function activate(context: vscode.ExtensionContext) {
 
     // Register existing providers
     context.subscriptions.push(
-        vscode.languages.registerDefinitionProvider(selector, new QuirkDefinitionProvider(logChannel)),
+        vscode.languages.registerDefinitionProvider(
+            { scheme: 'file', language: 'quirk' },
+            new QuirkDefinitionProvider(logChannel)
+        ),
         vscode.languages.registerCompletionItemProvider(
             selector,
             new QuirkCompletionProvider(logChannel),

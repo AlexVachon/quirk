@@ -2,39 +2,17 @@
   "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
   "name": "Quirk",
   "patterns": [
-    {
-      "include": "#comments"
-    },
-    {
-      "include": "#imports"
-    },
-    {
-      "include": "#definitions"
-    },
-    {
-      "include": "#keywords"
-    },
-    {
-      "include": "#strings"
-    },
-    {
-      "include": "#numbers"
-    },
-    {
-      "include": "#types"
-    },
-    {
-      "include": "#functions"
-    },
-    {
-      "include": "#operators"
-    },
-    {
-      "include": "#properties"
-    },
-    {
-      "include": "#variables"
-    }
+    { "include": "#comments" },
+    { "include": "#imports" },
+    { "include": "#definitions" },
+    { "include": "#keywords" },
+    { "include": "#strings" },
+    { "include": "#numbers" },
+    { "include": "#types" },
+    { "include": "#functions" },
+    { "include": "#operators" },
+    { "include": "#properties" },
+    { "include": "#variables" }
   ],
   "repository": {
     "imports": {
@@ -42,26 +20,16 @@
         {
           "match": "\\b(from)\\s+([a-zA-Z0-9_./]+)\\s+(use)\\b",
           "captures": {
-            "1": {
-              "name": "keyword.control.import.quirk"
-            },
-            "2": {
-              "name": "entity.name.namespace.quirk"
-            },
-            "3": {
-              "name": "keyword.control.import.quirk"
-            }
+            "1": { "name": "keyword.control.import.quirk" },
+            "2": { "name": "entity.name.namespace.quirk" },
+            "3": { "name": "keyword.control.import.quirk" }
           }
         },
         {
           "match": "\\b(use)\\s+([a-zA-Z0-9_./]+)\\b",
           "captures": {
-            "1": {
-              "name": "keyword.control.import.quirk"
-            },
-            "2": {
-              "name": "entity.name.namespace.quirk"
-            }
+            "1": { "name": "keyword.control.import.quirk" },
+            "2": { "name": "entity.name.namespace.quirk" }
           }
         }
       ]
@@ -71,23 +39,15 @@
         {
           "match": "\\b(struct)\\s+([a-zA-Z_]\\w*)",
           "captures": {
-            "1": {
-              "name": "storage.type.struct.quirk"
-            },
-            "2": {
-              "name": "entity.name.type.struct.quirk"
-            }
+            "1": { "name": "storage.type.struct.quirk" },
+            "2": { "name": "entity.name.type.struct.quirk" }
           }
         },
         {
           "match": "\\b(define|init)\\s+([a-zA-Z_]\\w*)?",
           "captures": {
-            "1": {
-              "name": "storage.type.function.quirk"
-            },
-            "2": {
-              "name": "entity.name.function.definition.quirk"
-            }
+            "1": { "name": "storage.type.function.quirk" },
+            "2": { "name": "entity.name.function.definition.quirk" }
           }
         },
         {
@@ -100,7 +60,7 @@
       "patterns": [
         {
           "name": "keyword.control.quirk",
-          "match": "\\b(if|else|elif|while|for|in|return|break|continue|with|as|trigger|try|catch|throw)\\b"
+          "match": "\\b(if|else|elif|while|for|in|return|break|continue|with|as|trigger|try|catch|throw|from)\\b"
         },
         {
           "name": "keyword.other.quirk",
@@ -112,7 +72,7 @@
         },
         {
           "name": "variable.language.this.quirk",
-          "match": "\\b(self)\\b"
+          "match": "\\b(self|super)\\b"
         }
       ]
     },
@@ -244,12 +204,8 @@
         {
           "match": "(\\.)([a-zA-Z_]\\w*)\\b",
           "captures": {
-            "1": {
-              "name": "punctuation.separator.property.quirk"
-            },
-            "2": {
-              "name": "variable.other.property.quirk"
-            }
+            "1": { "name": "punctuation.separator.property.quirk" },
+            "2": { "name": "variable.other.property.quirk" }
           }
         }
       ]

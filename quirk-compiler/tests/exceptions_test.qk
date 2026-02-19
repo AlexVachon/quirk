@@ -1,4 +1,3 @@
-from core.exceptions use { Exception }
 use sys 
 
 struct ProcessError : Exception {

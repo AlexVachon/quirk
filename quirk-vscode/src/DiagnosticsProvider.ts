@@ -4,13 +4,13 @@ const KEYWORDS = new Set([
     'define', 'struct', 'if', 'else', 'elif', 'while', 'for', 'in',
     'return', 'break', 'continue', 'use', 'from', 'with', 'as',
     'extern', 'true', 'false', 'null', 'del', 'init', 'def',
-    'trigger', 'try', 'catch', 'throw'
+    'trigger', 'try', 'catch', 'throw', 'and', 'or', 'not', 'super'
 ]);
 
 const BUILTINS = new Set([
     'print', 'exit', 'Char', 'String', 'List', 'Map',
     'File', 'Int', 'Double', 'Bool', 'Any', 'void',
-    'true', 'false', 'null'
+    'true', 'false', 'null', 'Exception', 'TypeError'
 ]);
 
 function maskLine(line: string): string {
@@ -19,7 +19,7 @@ function maskLine(line: string): string {
     let quoteChar = ''; 
     let inInterpolation = false;
     let braceDepth = 0;
-    let nestedQuoteChar = ''; // <-- NEW: Tracks quotes inside ${...}
+    let nestedQuoteChar = ''; 
 
     for (let j = 0; j < line.length; j++) {
         const char = line[j];
@@ -36,7 +36,7 @@ function maskLine(line: string): string {
             } else {
                 masked += char;
             }
-        } else { // Inside a string
+        } else {
             if (!inInterpolation) {
                 if (char === '\\') {
                     masked += '  ';
@@ -53,22 +53,20 @@ function maskLine(line: string): string {
                 } else {
                     masked += ' ';
                 }
-            } else { // Inside ${ ... }
+            } else {
                 if (nestedQuoteChar) {
-                    // We are inside a string INSIDE an interpolation
                     if (char === '\\') {
                         masked += '  ';
                         j++;
                     } else if (char === nestedQuoteChar) {
-                        nestedQuoteChar = ''; // Close nested string
+                        nestedQuoteChar = ''; 
                         masked += ' ';
                     } else {
-                        masked += ' '; // Mask the text inside the nested string!
+                        masked += ' '; 
                     }
                 } else {
-                    // Normal interpolation code
                     if (char === '"' || char === "'") {
-                        nestedQuoteChar = char; // Open nested string
+                        nestedQuoteChar = char; 
                         masked += ' ';
                     } else if (char === '{') {
                         braceDepth++;
@@ -82,7 +80,7 @@ function maskLine(line: string): string {
                             masked += char;
                         }
                     } else {
-                        masked += char; // Keep the variable names so the linter sees them!
+                        masked += char; 
                     }
                 }
             }
@@ -168,8 +166,11 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
     // PASS 2: Detailed Scope & Usage Scan
     // ==========================================
     let locals = new Set<string>();
-    let inStruct = false;
     inDocBlock = false;
+    
+    // Robust brace-depth tracking replaces the buggy 'inStruct' regex logic
+    let braceDepth = 0;
+    let currentFuncDepth = -1;
 
     for (let i = 0; i < lines.length; i++) {
         const originalLine = lines[i];
@@ -180,19 +181,19 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
         if (maskedLine.trim() === '') continue;
         if (/^\s*(use|from)\b/.test(maskedLine)) continue;
 
-        if (/^\s*struct\s+[a-zA-Z_]/.test(maskedLine)) inStruct = true;
-        if (inStruct && maskedLine.includes('}')) inStruct = false;
+        const openBraces = (maskedLine.match(/\{/g) || []).length;
+        const closeBraces = (maskedLine.match(/\}/g) || []).length;
 
-        if (inStruct) {
-            maskedLine = maskedLine.replace(/^\s*([a-zA-Z_]\w*)\s*:/, (match, p1) => match.replace(p1, ' '.repeat(p1.length)));
-        }
-
+        // Reset scope if we enter a new function
         const funcMatch = /^\s*(?:extern\s+)?(?:define|def|init)\s+[a-zA-Z_]\w*\s*\(([^)]*)\)/.exec(maskedLine);
         if (funcMatch) {
             locals = new Set<string>();
+            if (!maskedLine.includes('extern')) {
+                currentFuncDepth = braceDepth;
+            }
+            
             const paramsStr = funcMatch[1];
             const paramMatches = [...paramsStr.matchAll(/\b([a-zA-Z_]\w*)\s*(?::\s*[a-zA-Z_]\w*)?(?::|$|,)/g)];
-
             for (const pm of paramMatches) {
                 const pName = pm[1];
                 locals.add(pName);
@@ -204,8 +205,12 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
             }
         }
 
+        // Reset scope if we enter a lambda trigger
         const triggerMatch = /^\s*trigger\s+[a-zA-Z0-9_.]+(?:\s*\(([^)]*)\))?/.exec(maskedLine);
         if (triggerMatch) {
+            locals = new Set<string>();
+            currentFuncDepth = braceDepth;
+            
             const paramsStr = triggerMatch[1];
             if (paramsStr) {
                 paramsStr.split(',').forEach(p => {
@@ -222,44 +227,49 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
             }
         }
 
-        // --- FIX: Added \s* and \. around the colon to safely handle "data: io.File :=" ---
-        const assignMatch = /(?<!\.)\b([a-zA-Z_]\w*)\s*(?::\s*[a-zA-Z0-9_.]+)?\s*(?::=|=|\+=|-=|\*=|\/=)/.exec(maskedLine);
-        if (assignMatch) {
-            const vName = assignMatch[1];
-            if (!locals.has(vName)) {
-                locals.add(vName);
-                const startIdx = originalLine.indexOf(vName);
-                declarations.set(`${i}_${vName}`, new vscode.Range(i, startIdx, i, startIdx + vName.length));
-            }
-        }
+        // Only search for local variable declarations if we are INSIDE a function block.
+        // This prevents the linter from thinking struct property fields are local variables.
+        const isInsideFunc = currentFuncDepth !== -1;
 
-        const withMatch = /\bwith\b.*\bas\s+([a-zA-Z_]\w*)/.exec(maskedLine);
-        if (withMatch) {
-            const vName = withMatch[1];
-            if (!locals.has(vName)) {
-                locals.add(vName);
-                const startIdx = originalLine.indexOf(vName, withMatch.index + 4);
-                declarations.set(`${i}_${vName}`, new vscode.Range(i, startIdx, i, startIdx + vName.length));
+        if (isInsideFunc) {
+            const assignMatch = /(?<!\.)\b([a-zA-Z_]\w*)\s*(?::\s*[a-zA-Z0-9_.]+)?\s*(?::=|=|\+=|-=|\*=|\/=)/.exec(maskedLine);
+            if (assignMatch) {
+                const vName = assignMatch[1];
+                if (!locals.has(vName)) {
+                    locals.add(vName);
+                    const startIdx = originalLine.indexOf(vName);
+                    declarations.set(`${i}_${vName}`, new vscode.Range(i, startIdx, i, startIdx + vName.length));
+                }
             }
-        }
 
-        const forMatch = /\bfor\s+(?:ref\s+)?([a-zA-Z_]\w*)\s+in\b/.exec(maskedLine);
-        if (forMatch) {
-            const vName = forMatch[1];
-            if (!locals.has(vName)) {
-                locals.add(vName);
-                const startIdx = originalLine.indexOf(vName, forMatch.index);
-                declarations.set(`${i}_${vName}`, new vscode.Range(i, startIdx, i, startIdx + vName.length));
+            const withMatch = /\bwith\b.*\bas\s+([a-zA-Z_]\w*)/.exec(maskedLine);
+            if (withMatch) {
+                const vName = withMatch[1];
+                if (!locals.has(vName)) {
+                    locals.add(vName);
+                    const startIdx = originalLine.indexOf(vName, withMatch.index + 4);
+                    declarations.set(`${i}_${vName}`, new vscode.Range(i, startIdx, i, startIdx + vName.length));
+                }
             }
-        }
 
-        const catchMatch = /\bcatch\s*\(\s*([a-zA-Z_]\w*)\s*:/.exec(maskedLine);
-        if (catchMatch) {
-            const vName = catchMatch[1];
-            if (!locals.has(vName)) {
-                locals.add(vName);
-                const startIdx = originalLine.indexOf(vName, catchMatch.index);
-                declarations.set(`${i}_${vName}`, new vscode.Range(i, startIdx, i, startIdx + vName.length));
+            const forMatch = /\bfor\s+(?:ref\s+)?([a-zA-Z_]\w*)\s+in\b/.exec(maskedLine);
+            if (forMatch) {
+                const vName = forMatch[1];
+                if (!locals.has(vName)) {
+                    locals.add(vName);
+                    const startIdx = originalLine.indexOf(vName, forMatch.index);
+                    declarations.set(`${i}_${vName}`, new vscode.Range(i, startIdx, i, startIdx + vName.length));
+                }
+            }
+
+            const catchMatch = /\bcatch\s*\(\s*([a-zA-Z_]\w*)\s*:/.exec(maskedLine);
+            if (catchMatch) {
+                const vName = catchMatch[1];
+                if (!locals.has(vName)) {
+                    locals.add(vName);
+                    const startIdx = originalLine.indexOf(vName, catchMatch.index);
+                    declarations.set(`${i}_${vName}`, new vscode.Range(i, startIdx, i, startIdx + vName.length));
+                }
             }
         }
 
@@ -276,6 +286,7 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
             const ident = match[1];
             if (KEYWORDS.has(ident) || BUILTINS.has(ident)) continue;
 
+            // Prevent struct properties like "file: String" from triggering a warning
             const restOfLine = maskedLine.substring(match.index + ident.length);
             if (/^\s*:(?!=)/.test(restOfLine)) continue;
 
@@ -297,14 +308,26 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
                 diagnostics.push(new vscode.Diagnostic(range, `'${ident}' is not defined.`, vscode.DiagnosticSeverity.Warning));
             }
         }
+
+        // Adjust scope level
+        braceDepth += openBraces - closeBraces;
+        
+        // If we drop back down to the brace level where the function started, we have exited the function body
+        if (currentFuncDepth !== -1 && braceDepth <= currentFuncDepth && closeBraces > 0) {
+            currentFuncDepth = -1;
+        }
     }
 
     // ==========================================
     // PASS 3: Generate "Unused" Diagnostics 
     // ==========================================
     declarations.forEach((range, key) => {
-        if (!usages.has(key)) {
+        // Only warn on unused LOCAL variables. 
+        if (/^\d+_/.test(key) && !usages.has(key)) {
             const cleanKey = key.replace(/^\d+_/, '');
+
+            // --- NEW: Ignore variables prefixed with an underscore ---
+            if (cleanKey.startsWith('_')) return;
 
             const diagnostic = new vscode.Diagnostic(
                 range,

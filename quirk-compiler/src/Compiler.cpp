@@ -1,7 +1,7 @@
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/raw_ostream.h"
 
-#include <algorithm>  // for std::replace
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -13,14 +13,50 @@
 #include "parser.hpp"
 #include "sema.hpp"
 
-// Include Codegen (which includes StructGen, BuiltinGen, etc.)
 #include "Backend/Codegen.cpp"
 
 namespace fs = std::filesystem;
 
 // ==========================================================
-//  AST PRINTER (Dumps AST to ast.log)
+//  COMPILER OPTIONS
 // ==========================================================
+
+struct CompilerOptions {
+    std::string inputFile;
+    bool runImmediate = true;
+    bool verbose      = false;
+    bool emitIR       = false;
+    bool emitAST      = false;
+};
+
+// ==========================================================
+//  LOGGER
+//  In verbose mode: writes [DEBUG] lines to stderr directly.
+//  In normal mode:  silent unless there's an error.
+// ==========================================================
+
+struct Logger {
+    bool verbose;
+    explicit Logger(bool v) : verbose(v) {}
+
+    void debug(const std::string& msg) const {
+        if (verbose)
+            std::cerr << "[DEBUG] " << msg << std::endl;
+    }
+
+    void warn(const std::string& msg) const {
+        std::cerr << "[WARNING] " << msg << std::endl;
+    }
+
+    void error(const std::string& msg) const {
+        std::cerr << "Error: " << msg << std::endl;
+    }
+};
+
+// ==========================================================
+//  AST PRINTER
+// ==========================================================
+
 class ASTPrinter {
     std::ostream& out;
 
@@ -29,19 +65,17 @@ class ASTPrinter {
             out << "  ";
     }
 
-   public:
+public:
     ASTPrinter(std::ostream& output) : out(output) {}
 
     void print(Node* node, int indent = 0) {
-        if (!node)
-            return;
+        if (!node) return;
 
         printIndent(indent);
 
         if (auto f = dynamic_cast<FunctionNode*>(node)) {
             out << "[Function] " << f->name << (f->isExtern ? " (extern)" : "")
-                << " -> " << (f->returnType.empty() ? "void" : f->returnType)
-                << "\n";
+                << " -> " << (f->returnType.empty() ? "void" : f->returnType) << "\n";
             for (auto& p : f->parameters) {
                 printIndent(indent + 1);
                 out << "Param: " << p.name << " : " << p.type << "\n";
@@ -57,8 +91,7 @@ class ASTPrinter {
             }
 
         } else if (auto v = dynamic_cast<VarDeclNode*>(node)) {
-            out << "[VarDecl] " << v->op << " Type: " << v->typeAnnotation
-                << "\n";
+            out << "[VarDecl] " << v->op << " Type: " << v->typeAnnotation << "\n";
             print(v->lhs.get(), indent + 1);
             print(v->expression.get(), indent + 1);
 
@@ -135,92 +168,68 @@ class ASTPrinter {
 };
 
 // ==========================================================
-//  IMPORT RESOLUTION LOGIC (Virtual Env Support)
+//  IMPORT RESOLUTION
 // ==========================================================
 
 std::vector<std::string> getSearchPaths() {
     std::vector<std::string> paths;
 
-    // 1. Check for Virtual Environment (QUIRK_HOME)
     const char* envHome = std::getenv("QUIRK_HOME");
-
     if (envHome) {
         std::string venvBase = std::string(envHome);
-        
-        // Priority 1: Installed Packages (e.g. use requests -> packages/requests.qk)
         paths.push_back(venvBase + "/lib/quirk/packages/");
-        
-        // Priority 2: Standard Library PARENT
-        // We look in 'quirk' so that 'use core.sys' resolves to 'quirk/core/sys.qk'
-        paths.push_back(venvBase + "/lib/quirk/"); 
-        
-        // Priority 3: Root libs (Legacy/Fallback)
+        paths.push_back(venvBase + "/lib/quirk/");
         paths.push_back(venvBase + "/libs/");
     }
 
-    // 2. Local Project 'libs' (Manual overrides)
     paths.push_back("./libs/");
 
-    // 3. System Global Fallback
     if (!envHome) {
         paths.push_back("/usr/local/lib/quirk/packages/");
-        // Same logic here: point to parent of core
-        paths.push_back("/usr/local/lib/quirk/"); 
+        paths.push_back("/usr/local/lib/quirk/");
     }
 
     return paths;
 }
 
 std::string resolveImportPath(const std::string& moduleName, const std::string& relativeTo = "") {
-    
-    // 1. Handle Relative Imports (starts with .)
+
+    // Relative imports (start with '.')
     if (!moduleName.empty() && moduleName[0] == '.') {
         if (relativeTo.empty()) {
             std::cerr << "Error: Relative import '" << moduleName << "' used without context." << std::endl;
             exit(1);
         }
 
-        // Count leading dots: "." = current, ".." = parent
-        // FIX: Changed int to size_t to fix signed/unsigned comparison warning
         size_t dotCount = 0;
-        while (dotCount < moduleName.size() && moduleName[dotCount] == '.') {
+        while (dotCount < moduleName.size() && moduleName[dotCount] == '.')
             dotCount++;
-        }
 
-        // Get the directory of the file doing the import
         fs::path baseDir = fs::path(relativeTo).parent_path();
-
-        // Move up directory tree for each extra dot (start at 1 for current dir)
-        for (size_t i = 1; i < dotCount; i++) {
+        for (size_t i = 1; i < dotCount; i++)
             baseDir = baseDir.parent_path();
-        }
 
-        // Extract the rest of the path (e.g., "sys" from ".sys")
         std::string subPath = moduleName.substr(dotCount);
-        
-        // Construct candidates
-        // Case A: .sys -> base/sys.qk
+
         fs::path candidateFile = baseDir / (subPath + ".qk");
         if (fs::exists(candidateFile)) return candidateFile.string();
 
-        // Case B: .collections -> base/collections/__init.qk
         fs::path candidateInit = baseDir / subPath / "__init.qk";
         if (fs::exists(candidateInit)) return candidateInit.string();
 
-        return ""; // Not found
+        return "";
     }
 
-    // 2. Absolute Imports (Existing Logic)
+    // Absolute imports
     std::string relPath = moduleName;
-    std::replace(relPath.begin(), relPath.end(), '.', '/'); // ensure standard format
+    std::replace(relPath.begin(), relPath.end(), '.', '/');
 
     std::vector<std::string> variants = {
         relPath + ".qk",
         relPath + "/__init.qk"
     };
 
-    auto searchPaths = getSearchPaths();
-    for (const auto& root : searchPaths) {
+    for (const auto& root : getSearchPaths()) {
         for (const auto& variant : variants) {
             fs::path fullPath = fs::path(root) / variant;
             if (fs::exists(fullPath)) return fullPath.string();
@@ -231,7 +240,7 @@ std::string resolveImportPath(const std::string& moduleName, const std::string& 
 }
 
 // ==========================================================
-//  MAIN COMPILER LOGIC
+//  MODULE LOADING
 // ==========================================================
 
 std::set<std::string> loadedModules;
@@ -239,28 +248,23 @@ std::set<std::string> loadedModules;
 std::string getModuleName(const std::string& path) {
     std::string mod = path;
 
-    // 1. Remove leading "./"
     if (mod.find("./") == 0) mod = mod.substr(2);
 
-    // 2. Remove standard prefixes
     if (mod.find("libs/") == 0) mod = mod.substr(5);
     else if (mod.find("src/") == 0) mod = mod.substr(4);
-    
-    // 3. Dynamic Virtual Env stripping
+
     const char* envHome = std::getenv("QUIRK_HOME");
     if (envHome) {
-        std::string venvPkg = std::string(envHome) + "/lib/quirk/packages/";
+        std::string venvPkg  = std::string(envHome) + "/lib/quirk/packages/";
         std::string venvCore = std::string(envHome) + "/lib/quirk/";
-        
+
         size_t pos;
-        if ((pos = mod.find(venvPkg)) != std::string::npos) {
+        if ((pos = mod.find(venvPkg)) != std::string::npos)
             mod = mod.substr(pos + venvPkg.length());
-        } else if ((pos = mod.find(venvCore)) != std::string::npos) {
+        else if ((pos = mod.find(venvCore)) != std::string::npos)
             mod = mod.substr(pos + venvCore.length());
-        }
     }
 
-    // 4. Remove extension and normalize to dots
     size_t lastDot = mod.find_last_of('.');
     if (lastDot != std::string::npos) mod = mod.substr(0, lastDot);
     std::replace(mod.begin(), mod.end(), '/', '.');
@@ -270,8 +274,9 @@ std::string getModuleName(const std::string& path) {
 }
 
 std::vector<std::unique_ptr<Node>> processFile(const std::string& filePath,
+                                               const Logger& log,
                                                bool isMainFile = false) {
-    std::cerr << "[DEBUG] Processing file: " << filePath << std::endl;
+    log.debug("Processing file: " + filePath);
 
     std::string absPath = fs::absolute(filePath).string();
     if (loadedModules.count(absPath))
@@ -280,8 +285,7 @@ std::vector<std::unique_ptr<Node>> processFile(const std::string& filePath,
 
     std::ifstream file(filePath);
     if (!file.is_open()) {
-        std::cerr << "Error: Could not open module '" << filePath << "'"
-                  << std::endl;
+        std::cerr << "Error: Could not open module '" << filePath << "'" << std::endl;
         exit(1);
     }
     std::stringstream buffer;
@@ -293,7 +297,6 @@ std::vector<std::unique_ptr<Node>> processFile(const std::string& filePath,
     Parser parser(tokens, source, filePath);
     auto nodes = parser.parse();
 
-    // Determine Module Name
     std::string currentModule = isMainFile ? "main" : getModuleName(filePath);
     std::vector<std::unique_ptr<Node>> allNodes;
 
@@ -301,25 +304,20 @@ std::vector<std::unique_ptr<Node>> processFile(const std::string& filePath,
         node->moduleName = currentModule;
 
         if (auto use = dynamic_cast<UseNode*>(node.get())) {
-            // Use Helper to Resolve Path (passing context)
             std::string importPath = resolveImportPath(use->moduleName, filePath);
 
             if (importPath.empty()) {
                 std::cerr << "Error: Could not resolve module '"
                           << use->moduleName << "' imported from " << filePath << std::endl;
-                std::cerr
-                    << "Checked paths (ensure QUIRK_HOME is set if using venv):"
-                    << std::endl;
+                std::cerr << "Checked paths (ensure QUIRK_HOME is set if using venv):" << std::endl;
                 for (auto& p : getSearchPaths())
-                    std::cerr << " - " << p << std::endl;
+                    std::cerr << "  - " << p << std::endl;
                 exit(1);
             }
 
-            // Recurse
-            auto importedNodes = processFile(importPath, false);
-            for (auto& importedNode : importedNodes) {
+            auto importedNodes = processFile(importPath, log, false);
+            for (auto& importedNode : importedNodes)
                 allNodes.push_back(std::move(importedNode));
-            }
             allNodes.push_back(std::move(node));
         } else {
             allNodes.push_back(std::move(node));
@@ -328,160 +326,204 @@ std::vector<std::unique_ptr<Node>> processFile(const std::string& filePath,
     return allNodes;
 }
 
-int main(int argc, char* argv[]) {
-    // 1. Redirect Debug Logs to compiler.log
-    std::ofstream logFile("compiler.log");
-    std::streambuf* cerr_buffer = std::cerr.rdbuf();
-    std::cerr.rdbuf(logFile.rdbuf());
+// ==========================================================
+//  USAGE
+// ==========================================================
 
+void printUsage() {
+    std::cout << "Usage: quirk [options] <file.qk>\n"
+              << "\n"
+              << "Options:\n"
+              << "  --compile-only  Compile only, do not run\n"
+              << "  -v              Verbose: show debug output\n"
+              << "  --emit-ir       Write LLVM IR to <file>.ll\n"
+              << "  --emit-ast      Write AST dump to <file>.ast.log\n"
+              << std::endl;
+}
+
+// ==========================================================
+//  MAIN
+// ==========================================================
+
+int main(int argc, char* argv[]) {
     if (argc < 2) {
-        std::cout << "Usage: quirk [-r] <file.qk>" << std::endl;
+        printUsage();
         return 1;
     }
 
-    std::string filename = (std::string(argv[1]) == "-r") ? argv[2] : argv[1];
-    bool runImmediate = (std::string(argv[1]) == "-r");
+    // Parse CLI flags
+    CompilerOptions opts;
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if      (arg == "--compile-only") opts.runImmediate = false;
+        else if (arg == "-v")            opts.verbose      = true;
+        else if (arg == "--emit-ir")     opts.emitIR       = true;
+        else if (arg == "--emit-ast")    opts.emitAST      = true;
+        else if (arg[0] != '-')       opts.inputFile    = arg;
+        else {
+            std::cerr << "Unknown option: " << arg << std::endl;
+            printUsage();
+            return 1;
+        }
+    }
 
-    // Master AST container
+    if (opts.inputFile.empty()) {
+        std::cerr << "Error: No input file specified." << std::endl;
+        printUsage();
+        return 1;
+    }
+
+    // Derive base name for output files (e.g. "tests/strings.qk" -> "strings")
+    fs::path inputPath(opts.inputFile);
+    std::string baseName = inputPath.stem().string();    // "strings"
+    std::string baseDir  = inputPath.parent_path().string();
+    if (baseDir.empty()) baseDir = ".";
+
+    Logger log(opts.verbose);
+
+    // =======================================================
+    // 1. LOAD STANDARD LIBRARY (PRELUDE)
+    // =======================================================
+    log.debug("Loading Standard Library (Prelude)...");
+
     std::vector<std::unique_ptr<Node>> ast;
 
-    // =======================================================
-    // 1. IMPLICITLY LOAD STANDARD LIBRARY (PRELUDE)
-    // =======================================================
-    std::cerr << "[DEBUG] Loading Standard Library (Prelude)..." << std::endl;
-    
-    // This looks for 'core/__init.qk' or 'core.qk'
-    // Passing "" as context since 'core' is an absolute path
     std::string corePath = resolveImportPath("core", "");
-
     if (!corePath.empty()) {
-        auto coreNodes = processFile(corePath);
-        for (auto& node : coreNodes) {
+        auto coreNodes = processFile(corePath, log);
+        log.debug("Loaded " + std::to_string(coreNodes.size()) + " nodes from Core.");
+        for (auto& node : coreNodes)
             ast.push_back(std::move(node));
-        }
-        std::cerr << "[DEBUG] Loaded " << coreNodes.size() << " nodes from Core." << std::endl;
     } else {
-        std::cerr << "[WARNING] 'core' library not found! Standard types (String, List) will fail." << std::endl;
-        
+        log.warn("'core' library not found! Standard types (String, List) will fail.");
         const char* env = std::getenv("QUIRK_HOME");
-        std::cerr << "  QUIRK_HOME: " << (env ? env : "(unset)") << std::endl;
-        std::cerr << "  Search Paths:" << std::endl;
-        for (const auto& p : getSearchPaths()) {
-            std::cerr << "   - " << p << std::endl;
-        }
+        log.warn(std::string("QUIRK_HOME: ") + (env ? env : "(unset)"));
+        for (const auto& p : getSearchPaths())
+            log.warn("  Search path: " + p);
     }
 
     // =======================================================
     // 2. LOAD USER FILE
     // =======================================================
-    std::cerr << "[DEBUG] Loading user file: " << filename << std::endl;
-    
-    auto userNodes = processFile(filename, true);
-    for (auto& node : userNodes) {
+    log.debug("Loading user file: " + opts.inputFile);
+
+    auto userNodes = processFile(opts.inputFile, log, true);
+    for (auto& node : userNodes)
         ast.push_back(std::move(node));
-    }
 
     // =======================================================
-    // 3. DUMP AST (Debugging)
+    // 3. AST DUMP (opt-in only)
     // =======================================================
-    std::cerr << "[DEBUG] Dumping AST to ast.log..." << std::endl;
-    std::ofstream astLog("ast.log");
-    if (astLog.is_open()) {
-        ASTPrinter printer(astLog);
-        printer.printAll(ast);
-        astLog.close();
+    if (opts.emitAST) {
+        std::string astPath = baseDir + "/" + baseName + ".ast.log";
+        std::ofstream astLog(astPath);
+        if (astLog.is_open()) {
+            ASTPrinter printer(astLog);
+            printer.printAll(ast);
+            astLog.close();
+            log.debug("AST written to " + astPath);
+        } else {
+            log.warn("Could not write AST log to " + astPath);
+        }
     }
 
     // =======================================================
     // 4. SEMANTIC ANALYSIS
     // =======================================================
-    std::cerr << "[DEBUG] Running Semantic Analysis..." << std::endl;
+    log.debug("Running Semantic Analysis...");
+
     Sema sema;
     if (!sema.analyze(ast)) {
-        std::cerr.rdbuf(cerr_buffer);
-        std::cout << "Compilation Failed. See compiler.log for details." << std::endl;
+        std::cerr << "Compilation failed." << std::endl;
         return 1;
     }
 
     // =======================================================
     // 5. CODE GENERATION
     // =======================================================
-    std::cerr << "[DEBUG] Starting Code Generation..." << std::endl;
-    LLVMCodegen codegen;
+    log.debug("Starting Code Generation...");
 
-    std::string irPath = "output.ll";
-    std::error_code EC;
-    raw_fd_ostream dest(irPath, EC, sys::fs::OF_None);
-    if (EC) {
-        std::cerr.rdbuf(cerr_buffer);
-        std::cerr << "Error opening output file: " << EC.message() << std::endl;
-        return 1;
+    // IR goes to /tmp for -r (throwaway), or next to source for --emit-ir
+    std::string irPath;
+    if (opts.runImmediate && !opts.emitIR) {
+        irPath = "/tmp/quirk_" + baseName + ".ll";
+    } else if (opts.emitIR) {
+        irPath = baseDir + "/" + baseName + ".ll";
+    } else {
+        irPath = "/tmp/quirk_" + baseName + ".ll";
     }
 
-    codegen.compile(ast, dest);
-    dest.flush();
-    dest.close();
+    {
+        std::error_code EC;
+        raw_fd_ostream dest(irPath, EC, sys::fs::OF_None);
+        if (EC) {
+            std::cerr << "Error: Could not open IR output file '" << irPath
+                      << "': " << EC.message() << std::endl;
+            return 1;
+        }
+
+        LLVMCodegen codegen;
+        codegen.compile(ast, dest);
+        dest.flush();
+    }
+
+    if (opts.emitIR)
+        log.debug("LLVM IR written to " + irPath);
 
     // =======================================================
-    // 6. EXECUTION (Native Compile + Run)
-    // lli does not support setjmp/longjmp correctly in JIT mode.
-    // We instead compile to a native binary via llc + gcc and run that.
+    // 6. COMPILE + RUN (if -r)
     // =======================================================
-    if (runImmediate) {
-        std::cerr << "[DEBUG] Compilation finished. Compiling to native binary..." << std::endl;
+    if (opts.runImmediate) {
+        std::string objPath = "/tmp/quirk_" + baseName + ".o";
+        std::string binPath = "/tmp/quirk_" + baseName;
 
+        // Resolve runtime.so
         std::string runtimePath = "./bin/runtime.so";
         const char* envHome = std::getenv("QUIRK_HOME");
         if (envHome) {
             std::string venvRuntime = std::string(envHome) + "/bin/runtime.so";
-            if (fs::exists(venvRuntime)) {
+            if (fs::exists(venvRuntime))
                 runtimePath = venvRuntime;
-            }
         }
-
-        // Resolve the directory containing runtime.so for rpath
         std::string runtimeDir = fs::path(runtimePath).parent_path().string();
         if (runtimeDir.empty()) runtimeDir = ".";
 
-        // Step 1: Compile LLVM IR -> native object file
-        std::string objPath = "/tmp/quirk_out.o";
-        std::string binPath = "/tmp/quirk_out";
-
+        // Step 1: IR -> object file
         std::string llcCmd = "llc-14 -filetype=obj -relocation-model=pic "
                              + irPath + " -o " + objPath;
-        std::cerr << "[DEBUG] Running: " << llcCmd << std::endl;
-        int llcRet = system(llcCmd.c_str());
-        if (llcRet != 0) {
-            std::cerr << "[DEBUG] llc failed to compile IR." << std::endl;
-            std::cerr.rdbuf(cerr_buffer);
+        log.debug("Running: " + llcCmd);
+        if (system(llcCmd.c_str()) != 0) {
+            std::cerr << "Error: llc failed to compile IR." << std::endl;
             return 1;
         }
 
-        // Step 2: Link object + runtime.so -> executable
+        // Step 2: object + runtime.so -> binary
         std::string linkCmd = "gcc " + objPath + " " + runtimePath
                             + " -Wl,-rpath," + runtimeDir
                             + " -lgc -lm -o " + binPath;
-        std::cerr << "[DEBUG] Running: " << linkCmd << std::endl;
-        int linkRet = system(linkCmd.c_str());
-        if (linkRet != 0) {
-            std::cerr << "[DEBUG] gcc failed to link." << std::endl;
-            std::cerr.rdbuf(cerr_buffer);
+        log.debug("Running: " + linkCmd);
+        if (system(linkCmd.c_str()) != 0) {
+            std::cerr << "Error: gcc failed to link." << std::endl;
             return 1;
         }
 
-        // Step 3: Run the native binary
-        std::cerr << "[DEBUG] Executing native binary..." << std::endl;
-        std::cerr.rdbuf(cerr_buffer); // Restore stderr before running so user sees output
+        // Step 3: run
+        log.debug("Executing: " + binPath);
         int ret = system(binPath.c_str());
 
-        // Re-capture for final log message
-        std::cerr.rdbuf(logFile.rdbuf());
-        if (ret != 0)
-            std::cerr << "[DEBUG] Execution failed or returned non-zero." << std::endl;
+        // Step 4: clean up /tmp artifacts unless --emit-ir was also passed
+        if (!opts.emitIR) {
+            fs::remove(irPath);
+            fs::remove(objPath);
+        }
+        fs::remove(binPath);
+
+        if (ret != 0) {
+            std::cerr << "Error: Program exited with code " << ret << std::endl;
+            return ret;
+        }
     }
 
-    std::cerr << "[DEBUG] Done!" << std::endl;
-    std::cerr.rdbuf(cerr_buffer);
-
+    log.debug("Done.");
     return 0;
 }

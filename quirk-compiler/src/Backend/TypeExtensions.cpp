@@ -30,15 +30,20 @@ public:
           builtinGen(bg) {}
 
     Value *tryHandleMethod(const std::string &typeName,
-                           const std::string &methodName,
-                           Value *objPtr,
-                           const std::vector<Arg> &args,
-                           std::function<Value *(Node *)> exprHandler)
+                       const std::string &methodName,
+                       Value *objPtr,
+                       const std::vector<Arg> &args,
+                       std::function<Value *(Node *)> exprHandler)
     {
         if (typeName == "String" && methodName == "format")
-        {
             return handleStringFormat(objPtr, args, exprHandler);
-        }
+
+        if (typeName == "String" && methodName == "format_map")
+            return handleQuirkFormatMap(objPtr, args, exprHandler);
+
+        if (typeName == "String" && methodName == "format_list")
+            return handleQuirkFormatList(objPtr, args, exprHandler);
+
         return nullptr;
     }
 
@@ -188,5 +193,74 @@ private:
             return Constant::getNullValue(objPtr->getType());
         }
         return Builder.CreateCall(func, {objPtr, keysList, valsList});
+    }
+
+    // Handles: "template".format_map(["key1", "key2"], ["val1", "val2"])
+    // args[0] = keys ListLiteralNode, args[1] = values ListLiteralNode
+    Value *handleQuirkFormatMap(Value *objPtr,
+                                const std::vector<Arg> &args,
+                                std::function<Value *(Node *)> exprHandler)
+    {
+        if (args.size() < 2) return nullptr;
+
+        auto* keysLit  = dynamic_cast<ListLiteralNode*>(args[0].value.get());
+        auto* valsLit  = dynamic_cast<ListLiteralNode*>(args[1].value.get());
+        if (!keysLit || !valsLit) return nullptr;
+
+        // Keys: must stay as raw String* — find_key_index expects String*, not Any*
+        std::vector<Value*> keys;
+        for (auto& elem : keysLit->elements) {
+            Value* v = exprHandler(elem.get());
+            // Ensure it's an i8* (String* bitcast) for find_key_index
+            if (v->getType()->isPointerTy() &&
+                v->getType()->getPointerElementType()->isStructTy()) {
+                v = Builder.CreateBitCast(v, Type::getInt8PtrTy(Context));
+            }
+            keys.push_back(v);
+        }
+
+        // Values: must be boxed as Any* for append_formatted
+        std::vector<Value*> vals;
+        for (auto& elem : valsLit->elements) {
+            Value* v = exprHandler(elem.get());
+            vals.push_back(prepareValueForRuntime(v));
+        }
+
+        Value* keysList = structGen->createListFromValues(keys);
+        Value* valsList = structGen->createListFromValues(vals);
+
+        Function* func = TheModule->getFunction("String_format_map");
+        if (!func) {
+            std::cerr << "Error: 'String_format_map' not found." << std::endl;
+            return Constant::getNullValue(objPtr->getType());
+        }
+        return Builder.CreateCall(func, {objPtr, keysList, valsList});
+    }
+
+    // Handles: "template".format_list(["val1", "val2"])
+    // args[0] = values ListLiteralNode
+    Value *handleQuirkFormatList(Value *objPtr,
+                                const std::vector<Arg> &args,
+                                std::function<Value *(Node *)> exprHandler)
+    {
+        if (args.empty()) return nullptr;
+
+        auto* valsLit = dynamic_cast<ListLiteralNode*>(args[0].value.get());
+        if (!valsLit) return nullptr;
+
+        std::vector<Value*> vals;
+        for (auto& elem : valsLit->elements) {
+            Value* v = exprHandler(elem.get());
+            vals.push_back(prepareValueForRuntime(v));
+        }
+
+        Value* valsList = structGen->createListFromValues(vals);
+
+        Function* func = TheModule->getFunction("String_format_list");
+        if (!func) {
+            std::cerr << "Error: 'String_format_list' not found." << std::endl;
+            return Constant::getNullValue(objPtr->getType());
+        }
+        return Builder.CreateCall(func, {objPtr, valsList});
     }
 };

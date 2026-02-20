@@ -395,6 +395,16 @@ class LLVMCodegen {
                     StructType* st = cast<StructType>(objPtr->getType()->getPointerElementType());
                     typeName = st->getName().str();
                     if (typeName.find("struct.") == 0) typeName = typeName.substr(7);
+
+                    // Any* — unbox to String for method dispatch (most common case)
+                    // For full dynamic dispatch, a switch on tag would be needed.
+                    if (typeName == "Any") {
+                        Function* anyStr = TheModule->getFunction("Any_to_str");
+                        if (anyStr) {
+                            objPtr = Builder.CreateCall(anyStr, {objPtr});
+                            typeName = "String";
+                        }
+                    }
                 } else {
                     return nullptr;
                 }
@@ -408,6 +418,9 @@ class LLVMCodegen {
             std::string funcName = typeName + "_" + member->memberName;
             Function* func = TheModule->getFunction(funcName);
 
+            // Fallback: try triple-underscore operator convention (e.g. List___get, Map___get)
+            if (!func) func = TheModule->getFunction(typeName + "___" + member->memberName);
+
             // --- NEW: Constructor Fallback ---
             // Allows explicitly calling .__init() on a super object
             if (!func && member->memberName == "__init") {
@@ -420,6 +433,7 @@ class LLVMCodegen {
                     if (structHierarchy.count(currentType)) {
                         for (const std::string& parentName : structHierarchy[currentType]) {
                             Function* foundFunc = TheModule->getFunction(parentName + "_" + member->memberName);
+                            if (!foundFunc) foundFunc = TheModule->getFunction(parentName + "___" + member->memberName);
                             if (foundFunc) return foundFunc;
                             foundFunc = searchHierarchy(parentName);
                             if (foundFunc) return foundFunc;
@@ -510,6 +524,18 @@ class LLVMCodegen {
             if (argVal) {
                 Type* expectedType = func->getFunctionType()->getParamType(i);
 
+                // Auto-box to Any* when function expects it
+                if (expectedType->isPointerTy() && expectedType->getPointerElementType()->isStructTy()) {
+                    std::string pName = cast<StructType>(expectedType->getPointerElementType())->getName().str();
+                    if (pName == "Any" || pName == "struct.Any") {
+                        argVal = emitBox(argVal);
+                        if (argVal->getType() != expectedType)
+                            argVal = Builder.CreateBitCast(argVal, expectedType);
+                        finalArgs.push_back(argVal);
+                        continue;
+                    }
+                }
+
                 if (argVal->getType()->isIntegerTy(1) && expectedType->isIntegerTy(32)) {
                     argVal = Builder.CreateZExt(argVal, Type::getInt32Ty(Context));
                 }
@@ -518,10 +544,11 @@ class LLVMCodegen {
                     argVal->getType()->getPointerElementType()->isIntegerTy(8) &&
                     expectedType->isPointerTy() &&
                     expectedType->getPointerElementType()->isStructTy()) {
+                    
                     StructType* st = cast<StructType>(expectedType->getPointerElementType());
+                    
                     if (st->getName() == "String") {
-                        std::vector<Value*> ctorArgs = {argVal};
-                        argVal = structGen->allocateAndInit("String", ctorArgs);
+                        argVal = Builder.CreateBitCast(argVal, expectedType);
                     }
                 }
                 else if (argVal->getType() != expectedType) {
@@ -541,6 +568,29 @@ class LLVMCodegen {
         if (isVariadic) {
             std::vector<Value*> castedVariadic;
             for (Value* vArg : variadicBundle) {
+                // --- FIX: Convert Objects to Strings before passing to Variadic Functions ---
+                Type* ty = vArg->getType();
+                if (ty->isPointerTy() && ty->getPointerElementType()->isStructTy()) {
+                    StructType* st = cast<StructType>(ty->getPointerElementType());
+                    // If it's not already a String, call __str()
+                    if (st->getName().str().find("String") == std::string::npos) {
+                        std::string sName = st->getName().str();
+                        if (sName.find("struct.") == 0) sName = sName.substr(7);
+                        
+                        Function* strFunc = TheModule->getFunction(sName + "___str");
+                        if (strFunc) {
+                            vArg = Builder.CreateCall(strFunc, {vArg});
+                            // Ensure the result is treated as a String Object (pointer), not raw i8*
+                            if (vArg->getType()->isPointerTy() && 
+                                vArg->getType()->getPointerElementType()->isIntegerTy(8)) {
+                                std::vector<Value*> boxArgs = {vArg};
+                                vArg = structGen->allocateAndInit("String", boxArgs);
+                            }
+                        }
+                    }
+                }
+                // ---------------------------------------------------------------------------
+
                 if (vArg->getType()->isIntegerTy()) vArg = Builder.CreateIntToPtr(vArg, Type::getInt8PtrTy(Context));
                 else if (!vArg->getType()->isPointerTy()) vArg = Builder.CreateBitCast(vArg, Type::getInt8PtrTy(Context));
                 castedVariadic.push_back(vArg);
@@ -647,25 +697,33 @@ class LLVMCodegen {
         if (!val || val->getType()->isVoidTy()) return;
 
         if (!vdecl->typeAnnotation.empty()) {
-            Type* targetType = typeGen->getLLVMType(vdecl->typeAnnotation);
+            // Target type is explicitly Any — box the value
+            if (vdecl->typeAnnotation == "Any") {
+                val = emitBox(val);
+            } else {
+                Type* targetType = typeGen->getLLVMType(vdecl->typeAnnotation);
 
-            // If val is i8* and the target type is a struct pointer (String*, Socket*, etc.),
-            // it is a type-erased pointer from Map_get/List_get — bitcast it directly.
-            // Do NOT wrap in String__init, which would treat the pointer value as char data.
-            if (val->getType()->isPointerTy() &&
-                val->getType()->getPointerElementType()->isIntegerTy(8) &&
-                targetType->isPointerTy() &&
-                targetType->getPointerElementType()->isStructTy()) {
-                val = Builder.CreateBitCast(val, targetType);
-            }
-            // General numeric/pointer coercions
-            else if (val->getType() != targetType) {
-                if (val->getType()->isIntegerTy() && targetType->isPointerTy())
-                    val = Builder.CreateIntToPtr(val, targetType);
-                else if (val->getType()->isPointerTy() && targetType->isPointerTy())
+                // Source is Any* and target is a concrete type — unbox
+                if (isAnyType(val)) {
+                    val = emitUnboxToType(val, targetType);
+                }
+                // Source is type-erased i8* (Map_get/List_get) and target is a struct pointer
+                // — bitcast directly (do NOT wrap in String__init)
+                else if (val->getType()->isPointerTy() &&
+                         val->getType()->getPointerElementType()->isIntegerTy(8) &&
+                         targetType->isPointerTy() &&
+                         targetType->getPointerElementType()->isStructTy()) {
                     val = Builder.CreateBitCast(val, targetType);
-                else if (val->getType()->isIntegerTy() && targetType->isDoubleTy())
-                    val = Builder.CreateSIToFP(val, targetType);
+                }
+                // General numeric/pointer coercions
+                else if (val->getType() != targetType) {
+                    if (val->getType()->isIntegerTy() && targetType->isPointerTy())
+                        val = Builder.CreateIntToPtr(val, targetType);
+                    else if (val->getType()->isPointerTy() && targetType->isPointerTy())
+                        val = Builder.CreateBitCast(val, targetType);
+                    else if (val->getType()->isIntegerTy() && targetType->isDoubleTy())
+                        val = Builder.CreateSIToFP(val, targetType);
+                }
             }
         }
 
@@ -867,6 +925,110 @@ class LLVMCodegen {
         flowGen->generateIf(node, parentFunc, [this](Node* n) { return this->handleExpression(n); }, [this, parentFunc](Node* n) { this->handleStatement(n, parentFunc); });
     }
 
+    // ===================================================
+    //  Any helpers
+    // ===================================================
+
+    bool isAnyType(Value* v) {
+        if (!v || !v->getType()->isPointerTy()) return false;
+        Type* el = v->getType()->getPointerElementType();
+        if (!el->isStructTy()) return false;
+        std::string name = cast<StructType>(el)->getName().str();
+        return name == "Any" || name == "struct.Any";
+    }
+
+    // Emit a box_* call wrapping val into Any*
+    Value* emitBox(Value* v) {
+        if (!v) return Constant::getNullValue(Type::getInt8PtrTy(Context));
+        if (isAnyType(v)) return v; // already boxed
+
+        Type* ty = v->getType();
+
+        auto callBox = [&](const std::string& fname, std::vector<Value*> args) -> Value* {
+            Function* f = TheModule->getFunction(fname);
+            if (f) return Builder.CreateCall(f, args);
+            return Constant::getNullValue(PointerType::getUnqual(StructTypes.count("Any") ? (Type*)StructTypes["Any"] : (Type*)Type::getInt8Ty(Context)));
+        };
+
+        if (ty->isIntegerTy(1)) {
+            Value* ext = Builder.CreateZExt(v, Type::getInt32Ty(Context));
+            return callBox("box_bool", {ext});
+        }
+        if (ty->isIntegerTy(8)) {
+            Value* ext = Builder.CreateZExt(v, Type::getInt32Ty(Context));
+            return callBox("box_char", {ext});
+        }
+        if (ty->isIntegerTy()) {
+            Value* c = Builder.CreateIntCast(v, Type::getInt32Ty(Context), true);
+            return callBox("box_int", {c});
+        }
+        if (ty->isDoubleTy()) return callBox("box_double", {v});
+
+        if (ty->isPointerTy()) {
+            Type* el = ty->getPointerElementType();
+            if (el->isStructTy()) {
+                std::string name = cast<StructType>(el)->getName().str();
+                if (name.find("struct.") == 0) name = name.substr(7);
+                // Already Any* — pass through
+                if (name == "Any") return v;
+                // box_* are declared as i8*(i8*) — must bitcast struct ptr to i8* first
+                Value* asPtr = Builder.CreateBitCast(v, Type::getInt8PtrTy(Context));
+                if (name.find("String") != std::string::npos) return callBox("box_string", {asPtr});
+                if (name.find("List")   != std::string::npos) return callBox("box_list",   {asPtr});
+                if (name.find("Map")    != std::string::npos) return callBox("box_map",    {asPtr});
+                // Other struct — call __str first, then box as String
+                std::string strMethod = name + "___str";
+                Function* strFunc = TheModule->getFunction(strMethod);
+                if (!strFunc) strFunc = TheModule->getFunction(name + "__str");
+                if (strFunc) {
+                    Value* strObj = Builder.CreateCall(strFunc, {v});
+                    if (strObj->getType()->isPointerTy() &&
+                        strObj->getType()->getPointerElementType()->isIntegerTy(8)) {
+                        std::vector<Value*> args = {strObj};
+                        strObj = structGen->allocateAndInit("String", args);
+                    }
+                    return callBox("box_string", {Builder.CreateBitCast(strObj, Type::getInt8PtrTy(Context))});
+                }
+                return callBox("box_ptr", {asPtr});
+            }
+            if (el->isIntegerTy(8)) {
+                // raw i8* — wrap in String first, then box
+                std::vector<Value*> sa = {v};
+                Value* strObj = structGen->allocateAndInit("String", sa);
+                return callBox("box_string", {Builder.CreateBitCast(strObj, Type::getInt8PtrTy(Context))});
+            }
+        }
+        return callBox("box_null", {});
+    }
+
+    // Emit unboxing from Any* to a specific LLVM target type
+    Value* emitUnboxToType(Value* anyPtr, Type* targetType) {
+        // Ensure we have Any* not i8*
+        if (anyPtr->getType()->isPointerTy() &&
+            anyPtr->getType()->getPointerElementType()->isIntegerTy(8) &&
+            StructTypes.count("Any")) {
+            anyPtr = Builder.CreateBitCast(anyPtr, PointerType::getUnqual(StructTypes["Any"]));
+        }
+
+        if (targetType->isIntegerTy(32)) {
+            Function* f = TheModule->getFunction("Any_to_int");
+            if (f) return Builder.CreateCall(f, {anyPtr});
+        }
+        if (targetType->isDoubleTy()) {
+            Function* f = TheModule->getFunction("Any_to_float");
+            if (f) return Builder.CreateCall(f, {anyPtr});
+        }
+        if (targetType->isPointerTy() && targetType->getPointerElementType()->isStructTy()) {
+            std::string name = cast<StructType>(targetType->getPointerElementType())->getName().str();
+            if (name.find("struct.") == 0) name = name.substr(7);
+            if (name.find("String") != std::string::npos) {
+                Function* f = TheModule->getFunction("Any_to_str");
+                if (f) return Builder.CreateCall(f, {anyPtr});
+            }
+        }
+        return Builder.CreateBitCast(anyPtr, targetType);
+    }
+
     void handleWhile(WhileNode* node, Function* parentFunc) {
         flowGen->generateWhile(node, parentFunc, [this](Node* n) { return this->handleExpression(n); }, [this, parentFunc](Node* n) { this->handleStatement(n, parentFunc); });
     }
@@ -911,7 +1073,6 @@ Value* LLVMCodegen::handleExpression(Node* node) {
         if (lit->value == "true") return ConstantInt::getTrue(Context);
         if (lit->value == "false") return ConstantInt::getFalse(Context);
 
-        // Handle super()
         if (lit->value == "super") {
             Value* selfVal = varGen->resolveVariable("self");
             if (!selfVal || structHierarchy[currentCodegenClass].empty()) return nullptr;
@@ -919,25 +1080,18 @@ Value* LLVMCodegen::handleExpression(Node* node) {
             return Builder.CreateBitCast(selfVal, PointerType::getUnqual(StructTypes[parentName]));
         }
 
-        // Handle Numbers
         if (std::isdigit(lit->value[0])) {
             if (lit->value.find('.') != std::string::npos) return ConstantFP::get(Context, APFloat(std::stod(lit->value)));
             return ConstantInt::get(Type::getInt32Ty(Context), std::stoi(lit->value));
         }
         
-        // --- CHANGED: Treat "string" as String Object, not raw i8* ---
         if (lit->value.size() >= 2 && lit->value.front() == '"') {
-            // 1. Create the raw C-String (i8*)
             std::string rawStr = unescapeString(lit->value.substr(1, lit->value.size() - 2));
             Value* rawPtr = Builder.CreateGlobalStringPtr(rawStr);
-            
-            // 2. Wrap it in a String Struct immediately!
             std::vector<Value*> args = {rawPtr};
             return structGen->allocateAndInit("String", args);
         }
-        // -------------------------------------------------------------
 
-        // Handle 'c' (Char)
         if (lit->value.size() >= 2 && lit->value.front() == '\'') {
             std::string unescaped = unescapeString(lit->value.substr(1, lit->value.size() - 2));
             char c = unescaped.empty() ? '\0' : unescaped[0];
@@ -959,6 +1113,7 @@ Value* LLVMCodegen::handleExpression(Node* node) {
         if (!L || !R) return nullptr;
 
         if (binOp->op == "[]") {
+            // ... (Keep existing [] logic exactly as is) ...
             if (L->getType()->isPointerTy() && L->getType()->getPointerElementType()->isStructTy()) {
                 StructType* st = cast<StructType>(L->getType()->getPointerElementType());
                 std::string sName = st->getName().str();
@@ -988,7 +1143,7 @@ Value* LLVMCodegen::handleExpression(Node* node) {
                 if (v->getType()->isPointerTy()) {
                     Type* el = v->getType()->getPointerElementType();
                     if (el->isStructTy() && cast<StructType>(el)->getName().contains("String")) return true;
-                    if (el->isIntegerTy(8)) return true;
+                    if (el->isIntegerTy(8)) return true; // Any / i8*
                 }
                 return false;
             };
@@ -996,15 +1151,17 @@ Value* LLVMCodegen::handleExpression(Node* node) {
             if (isStringType(L) || isStringType(R)) {
                 auto makeString = [&](Value* val) -> Value* {
                     Type* ty = val->getType();
+                    // 1. Already a String Struct
                     if (ty->isPointerTy() && ty->getPointerElementType()->isStructTy()) {
                         StructType* st = cast<StructType>(ty->getPointerElementType());
                         if (st->getName().contains("String")) return val;
-
+                        // ... (keep __str call logic) ...
                         std::string sName = st->getName().str();
                         if (sName.find("struct.") == 0) sName = sName.substr(7);
                         Function* strFunc = TheModule->getFunction(sName + "___str");
                         if (strFunc) {
                             Value* ret = Builder.CreateCall(strFunc, {val});
+                            // ... (keep logic) ...
                             if (ret->getType()->isPointerTy() && ret->getType()->getPointerElementType()->isIntegerTy(8)) {
                                 std::vector<Value*> boxArgs = {ret};
                                 return structGen->allocateAndInit("String", boxArgs);
@@ -1012,10 +1169,14 @@ Value* LLVMCodegen::handleExpression(Node* node) {
                             return ret;
                         }
                     }
+                    
+                    // --- FIX 1: Treat Any (i8*) as String Object (Cast), NOT C-String (Construct) ---
                     if (ty->isPointerTy() && ty->getPointerElementType()->isIntegerTy(8)) {
-                        std::vector<Value*> args = {val}; 
-                        return structGen->allocateAndInit("String", args);
+                        StructType* stringType = StructTypes["String"];
+                        return Builder.CreateBitCast(val, PointerType::getUnqual(stringType));
                     }
+                    // --------------------------------------------------------------------------------
+
                     if (ty->isIntegerTy(32)) { if (auto* f = TheModule->getFunction("Int_str")) return Builder.CreateCall(f, {val}); }
                     if (ty->isDoubleTy()) { if (auto* f = TheModule->getFunction("Double_str")) return Builder.CreateCall(f, {val}); }
                     if (ty->isIntegerTy(1)) { if (auto* f = TheModule->getFunction("Bool_str")) return Builder.CreateCall(f, {val}); }
@@ -1027,13 +1188,6 @@ Value* LLVMCodegen::handleExpression(Node* node) {
 
                 if (strL && strR) {
                     Function* addFunc = TheModule->getFunction("String___add");
-                    if (!addFunc) {
-                        Type* strType = strL->getType();
-                        if (strType->isPointerTy() && strType->getPointerElementType()->isStructTy()) {
-                            FunctionType* ft = FunctionType::get(strType, {strType, strType}, false);
-                            addFunc = Function::Create(ft, Function::ExternalLinkage, "String___add", TheModule.get());
-                        }
-                    }
                     if (addFunc) return Builder.CreateCall(addFunc, {strL, strR});
                 }
             }
@@ -1044,10 +1198,21 @@ Value* LLVMCodegen::handleExpression(Node* node) {
     if (auto member = dynamic_cast<MemberAccessNode*>(node)) {
         Value* objPtr = handleExpression(member->object.get());
         
+        // Handle double pointer dereference
         if (objPtr && objPtr->getType()->isPointerTy() && 
             objPtr->getType()->getPointerElementType()->isPointerTy()) {
             objPtr = Builder.CreateLoad(objPtr->getType()->getPointerElementType(), objPtr);
         }
+
+        // --- FIX 2: Enable Member Access on Any (Assume String) ---
+        if (objPtr && objPtr->getType()->isPointerTy() && 
+            objPtr->getType()->getPointerElementType()->isIntegerTy(8)) {
+            // It's Any (i8*). Cast it to String* so we can find members like .to_int()
+            if (StructTypes.count("String")) {
+                objPtr = Builder.CreateBitCast(objPtr, PointerType::getUnqual(StructTypes["String"]));
+            }
+        }
+        // ----------------------------------------------------------
         
         return structGen->generateMemberAccess(objPtr, member->memberName);
     }
@@ -1056,5 +1221,4 @@ Value* LLVMCodegen::handleExpression(Node* node) {
 
     return nullptr;
 }
-
 std::string LLVMCodegen::currentCodegenClass = "";

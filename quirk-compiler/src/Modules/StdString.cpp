@@ -24,5 +24,18 @@ class StdStringModule : public QuirkModule {
                 StructType::create(ctx, elements, "StringIterator");
         }
         structGen->registerStructLayout("StringIterator", {"str_ref", "idx"});
+
+        // Any — Tagged union for dynamic typing
+        // Layout must match C struct: { i32 tag, i32 ival, double dval, i8* ptr }
+        if (structTypes.find("Any") == structTypes.end()) {
+            std::vector<Type*> elements = {
+                Type::getInt32Ty(ctx),   // tag  (AnyTag enum)
+                Type::getInt32Ty(ctx),   // ival (Int / Bool / Char)
+                Type::getDoubleTy(ctx),  // dval (Double)
+                Type::getInt8PtrTy(ctx), // ptr  (String* / List* / Map* / other)
+            };
+            structTypes["Any"] = StructType::create(ctx, elements, "Any");
+        }
+        structGen->registerStructLayout("Any", {"tag", "ival", "dval", "ptr"});
     }
 };

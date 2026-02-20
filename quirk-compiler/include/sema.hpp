@@ -41,6 +41,8 @@ class Sema {
     std::vector<std::map<std::string, std::string>> scopeStack;
     std::map<std::string, std::string> globalModuleAliases; // Add this
 
+    bool isCompatibleTypes(const std::string &expected, const std::string &actual);
+    
     // (Keep rest of the class unchanged)
     void enterScope();
     void exitScope();

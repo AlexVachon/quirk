@@ -43,87 +43,83 @@ public:
     }
 
 private:
-    // --- UPDATED: Call __str() dynamically, then unwrap to raw C-Strings (i8*) ---
-    Value *prepareValueForRuntime(Value *v)
+    // Boxes a value into Any* for passing to format list functions.
+    // The C runtime (append_formatted/append_any) now expects Any* pointers.
+    Value* prepareValueForRuntime(Value* v)
     {
         if (!v) return Constant::getNullValue(Type::getInt8PtrTy(Context));
 
-        Type *type = v->getType();
+        Type* type = v->getType();
 
-        // 1. Booleans (i1 -> Call Bool_str -> unwrap)
-        if (type->isIntegerTy(1)) {
-            Function *f = TheModule->getFunction("Bool_str");
-            if (f) v = Builder.CreateCall(f, {v});
-        }
-        
-        // 2. Characters (i8 -> Call Char_str -> unwrap)
-        else if (type->isIntegerTy(8)) {
-            Function *f = TheModule->getFunction("Char_str");
-            if (f) v = Builder.CreateCall(f, {v});
-        }
-
-        // 3. Integers (i32 -> Call Int_str -> unwrap)
-        else if (type->isIntegerTy()) {
-            Function *f = TheModule->getFunction("Int_str");
-            if (f) v = Builder.CreateCall(f, {v});
-        }
-
-        // 4. Doubles (Double -> Call Double_str -> unwrap)
-        else if (type->isDoubleTy()) {
-            Function *f = TheModule->getFunction("Double_str");
+        auto callBox = [&](const std::string& fname, std::vector<Value*> args) -> Value* {
+            Function* f = TheModule->getFunction(fname);
             if (f) {
-                v = Builder.CreateCall(f, {v});
-            } else {
-                Function *f2s = TheModule->getFunction("_float_to_str");
-                if (f2s) v = Builder.CreateCall(f2s, {v}); 
+                Value* boxed = Builder.CreateCall(f, args);
+                return Builder.CreateBitCast(boxed, Type::getInt8PtrTy(Context));
             }
+            return Constant::getNullValue(Type::getInt8PtrTy(Context));
+        };
+
+        // Bool (i1)
+        if (type->isIntegerTy(1)) {
+            Value* ext = Builder.CreateZExt(v, Type::getInt32Ty(Context));
+            return callBox("box_bool", {ext});
         }
-
-        // 5. Pointers (Structs, Strings, Raw C-Strings)
-        if (v->getType()->isPointerTy()) {
-            Type *elType = v->getType()->getPointerElementType();
-
-            // If it's a Struct, check if we need to call __str
-            if (elType->isStructTy()) {
-                StructType *st = cast<StructType>(elType);
+        // Char (i8)
+        if (type->isIntegerTy(8)) {
+            Value* ext = Builder.CreateZExt(v, Type::getInt32Ty(Context));
+            return callBox("box_char", {ext});
+        }
+        // Int (i32 or other integer)
+        if (type->isIntegerTy()) {
+            Value* casted = Builder.CreateIntCast(v, Type::getInt32Ty(Context), true);
+            return callBox("box_int", {casted});
+        }
+        // Double
+        if (type->isDoubleTy()) {
+            return callBox("box_double", {v});
+        }
+        // Pointer types
+        if (type->isPointerTy()) {
+            Type* el = type->getPointerElementType();
+            if (el->isStructTy()) {
+                StructType* st = cast<StructType>(el);
                 std::string name = st->getName().str();
                 if (name.find("struct.") == 0) name = name.substr(7);
 
-                // If it is NOT already a String, call __str
-                if (name.find("String") != 0) {
-                    std::string strMethod = name + "___str";
-                    Function *strFunc = TheModule->getFunction(strMethod);
-                    if (!strFunc) strFunc = TheModule->getFunction(name + "__str");
-
-                    if (strFunc) {
-                        v = Builder.CreateCall(strFunc, {v}); // Call __str
-                    } else {
-                        // Fallback if no __str exists
-                        return Constant::getNullValue(Type::getInt8PtrTy(Context));
-                    }
+                // Already Any* — pass through as i8*
+                if (name == "Any") {
+                    return Builder.CreateBitCast(v, Type::getInt8PtrTy(Context));
                 }
-            }
-
-            // --- THE CRITICAL FIX: Unwrap ALL String Objects to i8* ---
-            // Whether it was originally a String, or we just called __str to get one,
-            // we MUST unwrap it to a raw C-string for the C-runtime format list!
-            if (v->getType()->isPointerTy() && v->getType()->getPointerElementType()->isStructTy()) {
-                StructType *st = cast<StructType>(v->getType()->getPointerElementType());
-                if (st->getName().str().find("String") != std::string::npos) {
-                    Value *bufPtr = structGen->getMemberPtr(v, "buffer");
-                    if (bufPtr) {
-                        return Builder.CreateLoad(Type::getInt8PtrTy(Context), bufPtr);
+                // box_* declared as i8*(i8*) — must bitcast struct ptr to i8* first
+                Value* asPtr = Builder.CreateBitCast(v, Type::getInt8PtrTy(Context));
+                if (name.find("String") != std::string::npos) return callBox("box_string", {asPtr});
+                if (name.find("List")   != std::string::npos) return callBox("box_list",   {asPtr});
+                if (name.find("Map")    != std::string::npos) return callBox("box_map",    {asPtr});
+                // Other struct — call __str first, then box as String
+                std::string strMethod = name + "___str";
+                Function* strFunc = TheModule->getFunction(strMethod);
+                if (!strFunc) strFunc = TheModule->getFunction(name + "__str");
+                if (strFunc) {
+                    Value* strObj = Builder.CreateCall(strFunc, {v});
+                    if (strObj->getType()->isPointerTy() &&
+                        strObj->getType()->getPointerElementType()->isIntegerTy(8)) {
+                        std::vector<Value*> args = {strObj};
+                        strObj = structGen->allocateAndInit("String", args);
                     }
+                    return callBox("box_string", {Builder.CreateBitCast(strObj, Type::getInt8PtrTy(Context))});
                 }
+                return callBox("box_ptr", {asPtr});
             }
-            
-            // If it's already a raw C-string (i8*), return as-is
-            if (v->getType()->isPointerTy() && v->getType()->getPointerElementType()->isIntegerTy(8)) {
-                return v;
+            // Raw i8* — wrap in String then box
+            if (el->isIntegerTy(8)) {
+                std::vector<Value*> wrapArgs = {v};
+                Value* strObj = structGen->allocateAndInit("String", wrapArgs);
+                return callBox("box_string", {Builder.CreateBitCast(strObj, Type::getInt8PtrTy(Context))});
             }
         }
 
-        return Builder.CreateBitCast(v, Type::getInt8PtrTy(Context));
+        return Constant::getNullValue(Type::getInt8PtrTy(Context));
     }
 
     Value *handleStringFormat(Value *objPtr,
@@ -171,9 +167,14 @@ private:
 
         for (const auto &arg : args)
         {
-            keys.push_back(Builder.CreateGlobalStringPtr(arg.name));
+            // Wrap the raw key name in a String* so find_key_index can handle it
+            // consistently with Quirk-level format_map(["key"], ["val"]) calls.
+            Value* rawKey = Builder.CreateGlobalStringPtr(arg.name);
+            std::vector<Value*> keyArgs = {rawKey};
+            Value* keyStr = structGen->allocateAndInit("String", keyArgs);
+            keys.push_back(Builder.CreateBitCast(keyStr, Type::getInt8PtrTy(Context)));
+
             Value *v = exprHandler(arg.value.get());
-            // --- FIX: Box raw value instead of converting to string ---
             vals.push_back(prepareValueForRuntime(v));
         }
 

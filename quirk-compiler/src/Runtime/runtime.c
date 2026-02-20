@@ -18,6 +18,7 @@
 #include "core/primitives.c"
 #include "core/list.c"
 #include "core/map.c"
+#include "core/any.c"
 #include "core/exceptions.c"
 
 #include "libs/file.c"

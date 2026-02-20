@@ -76,6 +76,28 @@ class BuiltinGen {
         Function* sj = Function::Create(FunctionType::get(i32Ty, {voidPtrTy}, false), Function::ExternalLinkage, "_setjmp", TheModule);
         sj->addFnAttr(Attribute::ReturnsTwice); // Crucial for LLVM optimization safety!
         Function::Create(FunctionType::get(voidTy, {voidPtrTy, i32Ty}, false), Function::ExternalLinkage, "longjmp", TheModule);
+
+        // Any boxing/unboxing runtime
+        // box_* functions return Any* which is registered as a struct
+        // We use i8* here and cast at call sites
+        auto anyPtrTy = Type::getInt8PtrTy(Context); // placeholder until Any struct is resolved
+        Function::Create(FunctionType::get(anyPtrTy, {i32Ty},     false), Function::ExternalLinkage, "box_int",    TheModule);
+        Function::Create(FunctionType::get(anyPtrTy, {Type::getDoubleTy(Context)}, false), Function::ExternalLinkage, "box_double", TheModule);
+        Function::Create(FunctionType::get(anyPtrTy, {i32Ty},     false), Function::ExternalLinkage, "box_bool",   TheModule);
+        Function::Create(FunctionType::get(anyPtrTy, {i32Ty},     false), Function::ExternalLinkage, "box_char",   TheModule);
+        Function::Create(FunctionType::get(anyPtrTy, {anyPtrTy},  false), Function::ExternalLinkage, "box_string", TheModule);
+        Function::Create(FunctionType::get(anyPtrTy, {anyPtrTy},  false), Function::ExternalLinkage, "box_list",   TheModule);
+        Function::Create(FunctionType::get(anyPtrTy, {anyPtrTy},  false), Function::ExternalLinkage, "box_map",    TheModule);
+        Function::Create(FunctionType::get(anyPtrTy, {anyPtrTy},  false), Function::ExternalLinkage, "box_ptr",    TheModule);
+        Function::Create(FunctionType::get(anyPtrTy, {},           false), Function::ExternalLinkage, "box_null",   TheModule);
+
+        Function::Create(FunctionType::get(anyPtrTy, {anyPtrTy},  false), Function::ExternalLinkage, "Any_to_string", TheModule);
+        Function::Create(FunctionType::get(anyPtrTy, {anyPtrTy},  false), Function::ExternalLinkage, "Any_to_str",    TheModule);
+        Function::Create(FunctionType::get(anyPtrTy, {anyPtrTy},  false), Function::ExternalLinkage, "Any___str",     TheModule);
+        Function::Create(FunctionType::get(anyPtrTy, {anyPtrTy},  false), Function::ExternalLinkage, "Any_get_type",  TheModule);
+        Function::Create(FunctionType::get(i32Ty,    {anyPtrTy},  false), Function::ExternalLinkage, "Any_to_int",    TheModule);
+        Function::Create(FunctionType::get(Type::getDoubleTy(Context), {anyPtrTy}, false), Function::ExternalLinkage, "Any_to_float", TheModule);
+        Function::Create(FunctionType::get(i32Ty,    {anyPtrTy, anyPtrTy}, false), Function::ExternalLinkage, "Any_isinstance", TheModule);
     }
 
     bool isBuiltin(const std::string& name) {
@@ -205,6 +227,18 @@ class BuiltinGen {
                             Type::getInt8PtrTy(Context), bufPtr);
                         Value* fmt = Builder.CreateGlobalStringPtr("%s\n");
                         Builder.CreateCall(printfFunc, {fmt, cStr});
+                    }
+                } else if (structName == "Any") {
+                    // Any* — dispatch to Any_to_string then print
+                    Function* anyStr = TheModule->getFunction("Any_to_string");
+                    if (anyStr) {
+                        Value* strObj = Builder.CreateCall(anyStr, {val});
+                        Value* bufPtr = structGen->getMemberPtr(strObj, "buffer");
+                        if (bufPtr) {
+                            Value* cStr = Builder.CreateLoad(Type::getInt8PtrTy(Context), bufPtr);
+                            Value* fmt = Builder.CreateGlobalStringPtr("%s\n");
+                            Builder.CreateCall(printfFunc, {fmt, cStr});
+                        }
                     }
                 } else {
                     // Generic Struct: Call __str()

@@ -218,22 +218,7 @@ int Sys_net_connect(int sockfd, String* host, int port) {
     memcpy(&serv_addr.sin_addr.s_addr, server->h_addr, server->h_length);
     serv_addr.sin_port = htons(port);
 
-    int result = connect(sockfd, (struct sockaddr*)&serv_addr, sizeof(serv_addr));
-    if (result < 0) return result;
-
-    // Set a 10-second receive timeout so recv() doesn't block forever
-    // when the server is slow to close the connection.
-#ifdef _WIN32
-    DWORD timeout_ms = 10000;
-    setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout_ms, sizeof(timeout_ms));
-#else
-    struct timeval tv;
-    tv.tv_sec = 10;
-    tv.tv_usec = 0;
-    setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
-#endif
-
-    return result;
+    return connect(sockfd, (struct sockaddr*)&serv_addr, sizeof(serv_addr));
 }
 int Sys_net_send(int sockfd, String* data) {
     if (!data || !data->buffer) return 0;
@@ -243,12 +228,7 @@ int Sys_net_send(int sockfd, String* data) {
 String* Sys_net_recv(int sockfd, int size) {
     char* buffer = GC_malloc(size + 1);
     int n = recv(sockfd, buffer, size, 0);
-    if (n <= 0) {
-        // n == 0: connection closed cleanly by peer
-        // n <  0: error or timeout (SO_RCVTIMEO expired → EAGAIN/EWOULDBLOCK/WSAETIMEDOUT)
-        // Either way, signal end-of-data to the caller so the read loop can break.
-        return make_String("");
-    }
+    if (n < 0) return make_String("");
     buffer[n] = '\0';
     return make_String(buffer);
 }
@@ -260,3 +240,20 @@ void Sys_net_close(int sockfd) {
         close(sockfd);
     #endif
 }
+
+// ==========================================
+//  STANDARD STREAMS
+// ==========================================
+
+// Wraps a C FILE* handle in a Quirk File struct.
+// is_open=2 signals to File_close that it should NOT fclose() a std stream.
+static File* make_stream_file(FILE* handle) {
+    File* f = (File*)GC_malloc(sizeof(File));
+    f->handle = handle;
+    f->is_open = 2; // sentinel: open but unmanaged (don't fclose)
+    return f;
+}
+
+File* Sys_stdin()  { return make_stream_file(stdin);  }
+File* Sys_stdout() { return make_stream_file(stdout); }
+File* Sys_stderr() { return make_stream_file(stderr); }

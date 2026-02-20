@@ -539,7 +539,7 @@ std::string Sema::checkCall(CallNode *node)
             
             // 1. Is it a Struct Constructor?
             if (structRegistry.count(funcName)) {
-                return funcName; // It returns the Struct type!
+                return funcName;
             }
             
             // 2. Is it a standard Module Function?
@@ -564,7 +564,21 @@ std::string Sema::checkCall(CallNode *node)
                 
                 std::string funcName = currentType + "_" + m->memberName;
                 if (methodRegistry[currentType].count(funcName)) {
-                    std::string ret = methodRegistry[currentType][funcName]->returnType;
+                    FunctionNode *func = methodRegistry[currentType][funcName];
+
+                    // Validate argument types against parameters
+                    for (size_t i = 0; i < node->args.size() && i < func->parameters.size(); ++i) {
+                        std::string argType = checkExpression(node->args[i].value.get());
+                        const std::string &paramType = func->parameters[i].type;
+                        if (!isCompatibleTypes(paramType, argType)) {
+                            std::cerr << "Error: Argument " << i << " of '"
+                                      << funcName << "' expected '" << paramType
+                                      << "' but got '" << argType << "'" << std::endl;
+                            exit(1);
+                        }
+                    }
+
+                    std::string ret = func->returnType;
                     return ret.empty() ? "void" : ret;
                 }
                 
@@ -610,6 +624,25 @@ std::string Sema::checkMapLiteral(MapLiteralNode *node)
         checkExpression(pair.second.get());
     }
     return "Map";
+}
+
+
+bool Sema::isCompatibleTypes(const std::string &expected, const std::string &actual)
+{
+    if (expected == actual) return true;
+    if (expected == "Any" || actual == "Any") return true;
+
+    // Implicit widening coercions
+    if (expected == "Double" && actual == "Int") return true;
+    if (expected == "double" && actual == "Int") return true;
+    if (expected == "Char"   && actual == "Int") return true;
+
+    // Pointer compatibility
+    bool expIsPtr = (expected == "Any" || expected == "String");
+    bool actIsPtr = (actual   == "Any" || actual   == "String");
+    if (expIsPtr && actIsPtr) return true;
+
+    return false;
 }
 
 void Sema::enterScope() { scopeStack.push_back({}); }
@@ -771,23 +804,10 @@ void Sema::checkReturn(ReturnNode *node)
         return;
     }
 
-    if (target != actual && target != "Any")
+    if (!isCompatibleTypes(target, actual))
     {
-        bool targetIsPtr = (target == "Any" || target == "String");
-        bool actualIsPtr = (actual == "Any" || actual == "String");
-        
-        bool valid = (targetIsPtr && actualIsPtr);
-        if (target == "Double" && actual == "Int") valid = true;
-        if (target == "Char" && actual == "Int") valid = true;
-        if (actual == "Any") valid = true;
-        
-        if (actual == "Int" && (targetIsPtr || structRegistry.count(target) || target == "Any")) valid = true;
-
-        if (!valid)
-        {
-            std::cerr << "Error: Function " << currentFunctionNode->name
-                      << " expected " << target << " but got " << actual << std::endl;
-            exit(1);
-        }
+        std::cerr << "Error: Function " << currentFunctionNode->name
+                << " expected " << target << " but got " << actual << std::endl;
+        exit(1);
     }
 }

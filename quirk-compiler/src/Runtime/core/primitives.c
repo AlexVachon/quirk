@@ -83,7 +83,7 @@ String* Core_Primitives_Char_str(char self) {
     return make_String(buffer);
 }
 
-char Core_Primitives_Char__init() { return '\0'; }
+char Core_Primitives_Char___init() { return '\0'; }
 int Core_Primitives_Char_is_upper(char self) { return isupper((unsigned char)self) != 0; }
 int Core_Primitives_Char_is_lower(char self) { return islower((unsigned char)self) != 0; }
 int Core_Primitives_Char_is_digit(char self) { return isdigit((unsigned char)self) != 0; }

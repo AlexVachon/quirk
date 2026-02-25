@@ -359,6 +359,55 @@ std::unique_ptr<Node> Parser::parseFor() {
     return node;
 }
 
+// Computes the full hierarchical module prefix from this->filePath.
+// libs/core/string.qk           -> "Core_String"
+// libs/core/collections/list.qk -> "Core_Collections_List"
+// libs/sys/__init.qk            -> "Sys"
+// userfile.qk                   -> "Userfile"
+std::string Parser::computeModulePrefix() const {
+    std::string p = this->filePath;
+    if (p.size() >= 3 && p.substr(p.size() - 3) == ".qk")
+        p = p.substr(0, p.size() - 3);
+    for (char& c : p) if (c == '\\') c = '/';
+
+    std::vector<std::string> parts;
+    std::string seg;
+    for (char c : p) {
+        if (c == '/') {
+            // Skip empty segments and "." / ".." path components
+            if (!seg.empty() && seg != "." && seg != "..")
+                parts.push_back(seg);
+            seg.clear();
+        } else {
+            seg += c;
+        }
+    }
+    if (!seg.empty() && seg != "." && seg != "..") parts.push_back(seg);
+
+    // Find "libs" anywhere in the path (handles ./libs/... or /abs/path/libs/...)
+    auto libsIt = std::find(parts.begin(), parts.end(), "libs");
+    if (libsIt != parts.end()) {
+        parts.erase(parts.begin(), libsIt + 1);   // drop everything up to and including "libs"
+        if (!parts.empty() && parts.back() == "__init")
+            parts.pop_back();                      // drop trailing "__init"
+    } else {
+        // User file — just use the filename as a single-component prefix
+        std::string last = parts.empty() ? "" : parts.back();
+        if (last == "__init" && parts.size() > 1) last = parts[parts.size() - 2];
+        parts = { last };
+    }
+
+    for (auto& part : parts)
+        if (!part.empty()) part[0] = (char)std::toupper((unsigned char)part[0]);
+
+    std::string result;
+    for (size_t i = 0; i < parts.size(); i++) {
+        if (i > 0) result += "_";
+        result += parts[i];
+    }
+    return result;
+}
+
 std::unique_ptr<FunctionNode> Parser::parseFunction() {
     bool isExtern = false;
     if (peek().type == TokenType::EXTERN) {
@@ -390,33 +439,33 @@ std::unique_ptr<FunctionNode> Parser::parseFunction() {
     node->name = name;
     node->isExtern = isExtern;
 
-    // --- NEW: AUTOMATIC FFI MANGLING ---
-    std::string prefix = "";
-    std::string p = this->filePath;
-    
-    if (p.length() >= 3 && p.substr(p.length() - 3) == ".qk") {
-        p = p.substr(0, p.length() - 3);
-    }
-        
-    size_t lastSlash = p.find_last_of("/\\");
-    std::string fileName = (lastSlash == std::string::npos) ? p : p.substr(lastSlash + 1);
-    
-    if (fileName == "__init") {
-        std::string dir = (lastSlash == std::string::npos) ? p : p.substr(0, lastSlash);
-        size_t secondSlash = dir.find_last_of("/\\");
-        prefix = (secondSlash == std::string::npos) ? dir : dir.substr(secondSlash + 1);
-    } else {
-        prefix = fileName;
-    }
-    
-    if (!prefix.empty()) prefix[0] = std::toupper(prefix[0]);
-    
+    // --- AUTOMATIC FFI MANGLING ---
+    // Derives the full hierarchical module prefix from this->filePath.
+    //
+    // Naming convention (Option B — struct name always included):
+    //   libs/core/string.qk           -> modulePrefix = "Core_String"
+    //   libs/core/primitives.qk       -> modulePrefix = "Core_Primitives"
+    //   libs/core/collections/list.qk -> modulePrefix = "Core_Collections_List"
+    //   libs/core/collections/map.qk  -> modulePrefix = "Core_Collections_Map"
+    //   libs/sys/__init.qk            -> modulePrefix = "Sys"
+    //   libs/io/file.qk               -> modulePrefix = "Io_File"
+    //   userfile.qk  (non-libs)       -> modulePrefix = "Userfile"
+    //
+    // Global extern:  linkageName = modulePrefix + "_" + name
+    //   e.g. extern define float_to_str  ->  "Core_String_float_to_str"
+    //        extern define arg_count      ->  "Sys_arg_count"
+    //
+    // Extern struct method (handled in parseStruct):
+    //   linkageName = modulePrefix + "_" + structName + "_" + rawMethodName
+    //   e.g. Core_String_String_to_float, Core_Collections_List_List_append
+    std::string modulePrefix = computeModulePrefix();
+
     if (isExtern) {
-        node->linkageName = prefix + "_" + name; // e.g., "Sys_arg_count"
+        node->linkageName = modulePrefix + "_" + name;
     } else {
         node->linkageName = name;
     }
-    // -----------------------------------
+    // --------------------------------
 
     consume(TokenType::LPAREN, "Expected '('");
     while (peek().type != TokenType::RPAREN && !isAtEnd()) {
@@ -567,6 +616,14 @@ std::unique_ptr<StructNode> Parser::parseStruct() {
             auto func = parseFunction();
             func->cls = node->name;
 
+            // Save raw method name BEFORE func->name gets the struct prefix prepended.
+            // For extern methods we reconstruct:
+            //   linkageName = modulePrefix + "_" + structName + "_" + rawMethodName
+            // e.g. extern define to_float in struct String in libs/core/string.qk
+            //   -> "Core_String" + "_" + "String" + "_" + "to_float"
+            //   -> "Core_String_String_to_float"
+            std::string rawMethodName = func->name; // e.g. "to_float", "__add", "__init"
+
             if (isInit) {
                 func->name = node->name + "__init";
             } else {
@@ -577,10 +634,13 @@ std::unique_ptr<StructNode> Parser::parseStruct() {
                 func->name = node->name + "__init";
             }
 
-            func->linkageName = func->name;
-
-            if (!isInit && func->name.find("__init") != std::string::npos)
-                func->name = node->name + "__init";
+            if (isExtern) {
+                // modulePrefix is the same for all methods in this file.
+                std::string mp = computeModulePrefix();
+                func->linkageName = mp + "_" + node->name + "_" + rawMethodName;
+            } else {
+                func->linkageName = func->name;
+            }
 
             if (!func->parameters.empty() &&
                 func->parameters[0].name == "self") {

@@ -1,65 +1,65 @@
 #include "../types.h"
 
 // Forward declarations from string.c
-int    String___eq(String* self, String* other);
-int    String_to_int(String* self);
-double String_to_float(String* self);
-String* List___str(List* self);
-String* Map___str(Map* self);
+int    Core_String_String___eq(String* self, String* other);
+int    Core_String_String_to_int(String* self);
+double Core_String_String_to_float(String* self);
+String* Core_Collections_List_List___str(List* self);
+String* Core_Collections_Map_Map___str(Map* self);
 
 // ===================================================
 //  BOX — wrap a primitive/struct into Any*
 // ===================================================
 
-Any* box_int(int32_t v) {
+Any* Core_Primitives_Any_box_int(int32_t v) {
     Any* a = (Any*)malloc(sizeof(Any));
     a->tag = ANY_INT; a->ival = v; a->dval = 0.0; a->ptr = NULL;
     return a;
 }
 
-Any* box_double(double v) {
+Any* Core_Primitives_Any_box_double(double v) {
     Any* a = (Any*)malloc(sizeof(Any));
     a->tag = ANY_DOUBLE; a->ival = 0; a->dval = v; a->ptr = NULL;
     return a;
 }
 
-Any* box_bool(int32_t v) {
+Any* Core_Primitives_Any_box_bool(int32_t v) {
     Any* a = (Any*)malloc(sizeof(Any));
     a->tag = ANY_BOOL; a->ival = v ? 1 : 0; a->dval = 0.0; a->ptr = NULL;
     return a;
 }
 
-Any* box_char(int32_t v) {
+Any* Core_Primitives_Any_box_char(int32_t v) {
     Any* a = (Any*)malloc(sizeof(Any));
     a->tag = ANY_CHAR; a->ival = v; a->dval = 0.0; a->ptr = NULL;
     return a;
 }
 
-Any* box_string(String* v) {
+Any* Core_Primitives_Any_box_string(String* v) {
     Any* a = (Any*)malloc(sizeof(Any));
     a->tag = ANY_STRING; a->ival = 0; a->dval = 0.0; a->ptr = v;
     return a;
 }
 
-Any* box_list(List* v) {
+Any* Core_Primitives_Any_box_list(List* v) {
     Any* a = (Any*)malloc(sizeof(Any));
     a->tag = ANY_LIST; a->ival = 0; a->dval = 0.0; a->ptr = v;
     return a;
 }
 
-Any* box_map(Map* v) {
+Any* Core_Primitives_Any_box_map(Map* v) {
     Any* a = (Any*)malloc(sizeof(Any));
     a->tag = ANY_MAP; a->ival = 0; a->dval = 0.0; a->ptr = v;
     return a;
 }
 
-Any* box_ptr(void* v) {
+Any* Core_Primitives_Any_box_ptr(void* v) {
     Any* a = (Any*)malloc(sizeof(Any));
     a->tag = ANY_PTR; a->ival = 0; a->dval = 0.0; a->ptr = v;
     return a;
 }
 
-Any* box_null(void) {
+Any* Core_Primitives_Any_box_null(void) {
     Any* a = (Any*)malloc(sizeof(Any));
     a->tag = ANY_NULL; a->ival = 0; a->dval = 0.0; a->ptr = NULL;
     return a;
@@ -69,25 +69,25 @@ Any* box_null(void) {
 //  UNBOX — extract a concrete value from Any*
 // ===================================================
 
-int32_t Any_to_int(Any* a) {
+int32_t Core_Primitives_Any_to_int(Any* a) {
     if (!a) return 0;
     switch (a->tag) {
         case ANY_INT:    return a->ival;
         case ANY_BOOL:   return a->ival;
         case ANY_CHAR:   return a->ival;
         case ANY_DOUBLE: return (int32_t)a->dval;
-        case ANY_STRING: return a->ptr ? String_to_int((String*)a->ptr) : 0;
+        case ANY_STRING: return a->ptr ? Core_String_String_to_int((String*)a->ptr) : 0;
         default:         return 0;
     }
 }
 
-double Any_to_float(Any* a) {
+double Core_Primitives_Any_to_float(Any* a) {
     if (!a) return 0.0;
     switch (a->tag) {
         case ANY_DOUBLE: return a->dval;
         case ANY_INT:    return (double)a->ival;
         case ANY_BOOL:   return (double)a->ival;
-        case ANY_STRING: return a->ptr ? String_to_float((String*)a->ptr) : 0.0;
+        case ANY_STRING: return a->ptr ? Core_String_String_to_float((String*)a->ptr) : 0.0;
         default:         return 0.0;
     }
 }
@@ -96,7 +96,7 @@ double Any_to_float(Any* a) {
 //  TYPE INFO
 // ===================================================
 
-String* Any_get_type(Any* a) {
+String* Core_Primitives_Any_get_type(Any* a) {
     if (!a) return make_String("Null");
     switch (a->tag) {
         case ANY_INT:    return make_String("Int");
@@ -113,21 +113,21 @@ String* Any_get_type(Any* a) {
 }
 
 // isinstance(val, "String") etc.
-int Any_isinstance(Any* a, String* type_name) {
+int Core_Primitives_Any_isinstance(Any* a, String* type_name) {
     if (!a || !type_name) return 0;
-    String* t = Any_get_type(a);
-    return String___eq(t, type_name);
+    String* t = Core_Primitives_Any_get_type(a);
+    return Core_String_String___eq(t, type_name);
 }
 
 // ===================================================
 //  TO STRING — dispatch by tag
 // ===================================================
 
-String* Any_to_string(Any* a) {
+String* Core_Primitives_Any_to_string(Any* a) {
     if (!a) return make_String("null");
     switch (a->tag) {
-        case ANY_INT:  return Int_str(a->ival);
-        case ANY_DOUBLE: return Double_str(a->dval);
+        case ANY_INT:  return Core_Primitives_Int_str(a->ival);
+        case ANY_DOUBLE: return Core_Primitives_Double_str(a->dval);
         case ANY_BOOL: return make_String(a->ival ? "true" : "false");
         case ANY_CHAR: {
             char buf[2] = {(char)a->ival, '\0'};
@@ -139,12 +139,12 @@ String* Any_to_string(Any* a) {
         }
         case ANY_LIST: {
             if (!a->ptr) return make_String("[]");
-            String* s = List___str((List*)a->ptr);
+            String* s = Core_Collections_List_List___str((List*)a->ptr);
             return s ? s : make_String("[]");
         }
         case ANY_MAP: {
             if (!a->ptr) return make_String("{}");
-            String* s = Map___str((Map*)a->ptr);
+            String* s = Core_Collections_Map_Map___str((Map*)a->ptr);
             return s ? s : make_String("{}");
         }
         case ANY_PTR:  return make_String("<ptr>");
@@ -154,5 +154,5 @@ String* Any_to_string(Any* a) {
 }
 
 // Alias — matches the naming convention used in __str dispatch
-String* Any_to_str(Any* a) { return Any_to_string(a); }
-String* Any___str(Any* a)  { return Any_to_string(a); }
+String* Core_Primitives_Any_to_str(Any* a) { return Core_Primitives_Any_to_string(a); }
+String* Core_Primitives_Any___str(Any* a)  { return Core_Primitives_Any_to_string(a); }

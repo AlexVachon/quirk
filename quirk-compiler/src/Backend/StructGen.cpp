@@ -16,6 +16,8 @@ class StructGen {
     std::map<std::string, StructType*>& StructTypes;
     BuiltinGen* builtinGen;
     std::map<std::string, std::vector<std::string>> structLayouts;
+    // Maps struct name -> actual LLVM function name for __init
+    std::map<std::string, std::string> structInitMap;
 
     // --- NEW: Hierarchy tracking ---
     std::map<std::string, std::vector<std::string>>* structHierarchy = nullptr;
@@ -31,6 +33,10 @@ class StructGen {
 
     void registerStructLayout(const std::string& name, const std::vector<std::string>& fields) {
         structLayouts[name] = fields;
+    }
+
+    void registerStructInit(const std::string& structName, const std::string& llvmFuncName) {
+        structInitMap[structName] = llvmFuncName;
     }
 
     Value* generateStrCall(Value* objPtr, const std::string& structName) {
@@ -79,26 +85,47 @@ class StructGen {
         }
 
         StructType* st = StructTypes[name];
-        Value* allocSize = ConstantExpr::getSizeOf(st);
+
+        // Guard: opaque structs cannot be size-computed or heap-allocated.
+        // This can happen for empty marker structs (Int, Bool, etc.)
+        // that were never given a body via setBody().
+        if (st->isOpaque()) {
+            std::cerr << "[StructGen] Warning: cannot allocate opaque struct '" << name << "'" << std::endl;
+            return nullptr;
+        }
+
+        // Use DataLayout for safe size calculation (avoids ConstantExpr::getSizeOf
+        // which returns null for zero-element structs in some LLVM versions).
+        const auto& DL = TheModule->getDataLayout();
+        uint64_t sizeBytes = DL.getTypeAllocSize(st);
+        // Ensure at least 1 byte so malloc(0) is never called.
+        if (sizeBytes == 0) sizeBytes = 1;
+        Value* allocSize = ConstantInt::get(Type::getInt64Ty(Context), sizeBytes);
 
         FunctionCallee mallocFunc = TheModule->getOrInsertFunction("GC_malloc", 
             FunctionType::get(Type::getInt8PtrTy(Context), {Type::getInt64Ty(Context)}, false));
 
-        if (allocSize->getType()->getIntegerBitWidth() < 64)
-            allocSize = Builder.CreateZExt(allocSize, Type::getInt64Ty(Context));
-
         Value* rawPtr = Builder.CreateCall(mallocFunc, {allocSize});
         Value* objPtr = Builder.CreateBitCast(rawPtr, PointerType::getUnqual(st));
 
+        // Resolve __init via structInitMap first (accounts for FFI renaming),
+        // then fall back to the bare "<Name>__init" for Quirk-defined structs.
         std::string initName = name + "__init";
-        Function* initFunc = TheModule->getFunction(initName);
+        Function* initFunc = nullptr;
+        if (structInitMap.count(name))
+            initFunc = TheModule->getFunction(structInitMap.at(name));
+        if (!initFunc)
+            initFunc = TheModule->getFunction(initName);
 
         // --- NEW: Search parent constructors recursively ---
         if (!initFunc && structHierarchy && structHierarchy->count(name)) {
             std::function<Function*(const std::string&)> searchHierarchy = [&](const std::string& currentType) -> Function* {
                 if (structHierarchy->count(currentType)) {
                     for (const std::string& parentName : structHierarchy->at(currentType)) {
-                        Function* foundFunc = TheModule->getFunction(parentName + "__init");
+                        Function* foundFunc = nullptr;
+                        if (structInitMap.count(parentName))
+                            foundFunc = TheModule->getFunction(structInitMap.at(parentName));
+                        if (!foundFunc) foundFunc = TheModule->getFunction(parentName + "__init");
                         if (foundFunc) return foundFunc;
                         
                         foundFunc = searchHierarchy(parentName);
@@ -304,7 +331,7 @@ class StructGen {
         Value* mapObj = allocateAndInit("Map", emptyArgs);
         if (!mapObj) return nullptr;
 
-        Function* putFunc = TheModule->getFunction("Map_put");
+        Function* putFunc = TheModule->getFunction("Core_Collections_Map_Map_put");
         if (!putFunc) return mapObj;
 
         for (auto& pair : node->elements) {

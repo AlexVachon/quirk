@@ -5,10 +5,10 @@
 #include <string.h>
 #include "../types.h"
 
-// Forward declaration: Any_to_string is implemented in any.c
+// Forward declaration: Core_Primitives_Any_to_string is implemented in any.c
 // (included here so append_any / append_formatted can call it)
-String* Any_to_string(Any* a);
-double Any_to_float(Any* a);
+String* Core_Primitives_Any_to_string(Any* a);
+double Core_Primitives_Any_to_float(Any* a);
 
 #define MAX_SMALL_INT 0xFFFFF
 
@@ -17,7 +17,7 @@ double Any_to_float(Any* a);
 // ==========================================
 
 // --- Helper: Dynamic Buffer Appender ---
-void buffer_append(char** buf, int* cap, int* len, const char* str) {
+static void buffer_append(char** buf, int* cap, int* len, const char* str) {
     if (!str)
         return;
     int str_len = strlen(str);
@@ -30,22 +30,22 @@ void buffer_append(char** buf, int* cap, int* len, const char* str) {
 }
 
 // Remove quirk_ensure_string — no longer needed with Any* boxing
-// String___add, String___eq now trust that values are proper String* objects.
+// Core_String_String___add, Core_String_String___eq now trust that values are proper String* objects.
 
 // --- Format helpers: items in the list are now Any* pointers ---
 
-void append_any(char** buf, int* cap, int* len, void* item) {
+static void append_any(char** buf, int* cap, int* len, void* item) {
     Any* a = (Any*)item;
     if (!a) {
         buffer_append(buf, cap, len, "null");
         return;
     }
-    String* s = Any_to_string(a);
+    String* s = Core_Primitives_Any_to_string(a);
     if (s && s->buffer)
         buffer_append(buf, cap, len, s->buffer);
 }
 
-void append_formatted(char** buf,
+static void append_formatted(char** buf,
                       int* cap,
                       int* len,
                       void* item,
@@ -63,7 +63,7 @@ void append_formatted(char** buf,
     if (fmt_spec && (strchr(fmt_spec, 'f') || strchr(fmt_spec, 'g') ||
                      strchr(fmt_spec, 'e'))) {
         snprintf(format_string, 32, "%%%s", fmt_spec);
-        double d = Any_to_float(a);
+        double d = Core_Primitives_Any_to_float(a);
         snprintf(output_buffer, 256, format_string, d);
         buffer_append(buf, cap, len, output_buffer);
         return;
@@ -96,7 +96,7 @@ void append_formatted(char** buf,
         }
         default: {
             // String, List, Map, Ptr, Null — convert to string then format
-            String* s = Any_to_string(a);
+            String* s = Core_Primitives_Any_to_string(a);
             const char* cstr = (s && s->buffer) ? s->buffer : "(null)";
             if (fmt_spec && strlen(fmt_spec) > 0) {
                 snprintf(format_string, 32, "%%%s", fmt_spec);
@@ -115,7 +115,7 @@ void append_formatted(char** buf,
 
 // Keys in format lists are always String* objects.
 // (handleMapFormat wraps raw key names in String* before adding to the list.)
-int find_key_index(List* keys, const char* key_name) {
+static int find_key_index(List* keys, const char* key_name) {
     if (!keys || !keys->data)
         return -1;
     for (int i = 0; i < keys->length; i++) {
@@ -131,7 +131,7 @@ int find_key_index(List* keys, const char* key_name) {
 //  LIFECYCLE (Init / Del)
 // ==========================================
 
-void String__init(String* self, char* raw) {
+void Core_String_String___init(String* self, char* raw) {
     uintptr_t val = (uintptr_t)raw;
     if (val <= MAX_SMALL_INT) {
         char temp[32];
@@ -149,7 +149,7 @@ void String__init(String* self, char* raw) {
     }
 }
 
-void String___del(String* self) {
+void Core_String_String___del(String* self) {
     if (self->buffer) {
         free(self->buffer);
         self->buffer = NULL;
@@ -164,7 +164,7 @@ String* make_String_taking_ownership(char* raw_buffer);
 String* make_String(const char* raw);
 
 // List/Map store integers as tagged pointers (inttoptr i32 -> i8*).
-// Until List storage is migrated to Any*, String___add must handle
+// Until List storage is migrated to Any*, Core_String_String___add must handle
 // the case where a retrieved value is a tiny address, not a real String*.
 static inline String* quirk_ensure_string(String* val) {
     uintptr_t v = (uintptr_t)val;
@@ -176,7 +176,7 @@ static inline String* quirk_ensure_string(String* val) {
     return val;
 }
 
-String* String___add(String* self, String* other) {
+String* Core_String_String___add(String* self, String* other) {
     self = quirk_ensure_string(self);
     other = quirk_ensure_string(other);
     if (!self || !other)
@@ -190,7 +190,7 @@ String* String___add(String* self, String* other) {
     return make_String_taking_ownership(raw);
 }
 
-int String___eq(String* self, String* other) {
+int Core_String_String___eq(String* self, String* other) {
     if (!self || !other)
         return self == other;
     if (self->length != other->length)
@@ -198,11 +198,11 @@ int String___eq(String* self, String* other) {
     return strcmp(self->buffer, other->buffer) == 0;
 }
 
-char* String___str(String* self) {
+char* Core_String_String___str(String* self) {
     return self ? self->buffer : "";
 }
 
-char* String___repr(String* self) {
+char* Core_String_String___repr(String* self) {
     int len = self->length + 2;
     char* raw = (char*)malloc(len + 1);
     snprintf(raw, len + 1, "\"%s\"", self->buffer);
@@ -213,18 +213,18 @@ char* String___repr(String* self) {
 //  ITERATOR
 // ==========================================
 
-void StringIterator__init(StringIterator* self, String* s) {
+void Core_String_StringIterator___init(StringIterator* self, String* s) {
     self->str_ref = s;
     self->idx = 0;
 }
 
-int StringIterator___has_next(StringIterator* self) {
+int Core_String_StringIterator___has_next(StringIterator* self) {
     if (!self || !self->str_ref)
         return 0;
     return self->idx < self->str_ref->length;
 }
 
-char StringIterator___next(StringIterator* self) {
+char Core_String_StringIterator___next(StringIterator* self) {
     if (!self || !self->str_ref)
         return '\0';
     char c = self->str_ref->buffer[self->idx];
@@ -232,9 +232,9 @@ char StringIterator___next(StringIterator* self) {
     return c;
 }
 
-StringIterator* String___iter(String* self) {
+StringIterator* Core_String_String___iter(String* self) {
     StringIterator* iter = (StringIterator*)malloc(sizeof(StringIterator));
-    StringIterator__init(iter, self);
+    Core_String_StringIterator___init(iter, self);
     return iter;
 }
 
@@ -270,7 +270,7 @@ String* make_String(const char* raw) {
 //  METHODS
 // ==========================================
 
-String* String_upper(String* self) {
+String* Core_String_String_upper(String* self) {
     if (!self || !self->buffer)
         return make_String("");
     char* temp = (char*)malloc(self->length + 1);
@@ -280,7 +280,7 @@ String* String_upper(String* self) {
     return make_String_taking_ownership(temp);
 }
 
-String* String_lower(String* self) {
+String* Core_String_String_lower(String* self) {
     if (!self || !self->buffer)
         return make_String("");
     char* temp = (char*)malloc(self->length + 1);
@@ -290,7 +290,7 @@ String* String_lower(String* self) {
     return make_String_taking_ownership(temp);
 }
 
-String* String_title(String* self) {
+String* Core_String_String_title(String* self) {
     if (!self || !self->buffer)
         return make_String("");
     char* temp = (char*)malloc(self->length + 1);
@@ -305,7 +305,7 @@ String* String_title(String* self) {
     return make_String_taking_ownership(temp);
 }
 
-String* String_capitalize(String* self) {
+String* Core_String_String_capitalize(String* self) {
     if (!self || !self->buffer)
         return make_String("");
     char* temp = (char*)malloc(self->length + 1);
@@ -318,7 +318,7 @@ String* String_capitalize(String* self) {
     return make_String_taking_ownership(temp);
 }
 
-String* String_sentence_case(String* self) {
+String* Core_String_String_sentence_case(String* self) {
     if (!self || !self->buffer)
         return make_String("");
     char* temp = (char*)malloc(self->length + 1);
@@ -339,12 +339,12 @@ String* String_sentence_case(String* self) {
     return make_String_taking_ownership(temp);
 }
 
-int is_url_safe(char c) {
+static int is_url_safe(char c) {
     return isalnum((unsigned char)c) || c == '-' || c == '_' || c == '.' ||
            c == '~';
 }
 
-String* String_encode(String* self) {
+String* Core_String_String_encode(String* self) {
     if (!self || !self->buffer)
         return make_String("");
     char* temp = (char*)malloc((self->length * 3) + 1);
@@ -364,7 +364,7 @@ String* String_encode(String* self) {
     return make_String_taking_ownership(temp);
 }
 
-int String_count(String* self, String* sub) {
+int Core_String_String_count(String* self, String* sub) {
     if (!self || !self->buffer || !sub || !sub->buffer)
         return 0;
     int sub_len = sub->length;
@@ -379,7 +379,7 @@ int String_count(String* self, String* sub) {
     return count;
 }
 
-int String_endswith(String* self, String* suffix) {
+int Core_String_String_endswith(String* self, String* suffix) {
     if (!self || !self->buffer || !suffix || !suffix->buffer)
         return 0;
     if (suffix->length > self->length)
@@ -388,15 +388,15 @@ int String_endswith(String* self, String* suffix) {
                   suffix->buffer) == 0;
 }
 
-int String_find(String* self, String* sub) {
+int Core_String_String_find(String* self, String* sub) {
     if (!self || !self->buffer || !sub || !sub->buffer)
         return -1;
     char* ptr = strstr(self->buffer, sub->buffer);
     return (ptr == NULL) ? -1 : (int)(ptr - self->buffer);
 }
 
-int String_index(String* self, String* sub) {
-    int idx = String_find(self, sub);
+int Core_String_String_index(String* self, String* sub) {
+    int idx = Core_String_String_find(self, sub);
     if (idx == -1) {
         printf("ValueError: substring not found\n");
         exit(1);
@@ -404,7 +404,7 @@ int String_index(String* self, String* sub) {
     return idx;
 }
 
-String* String_trim(String* self) {
+String* Core_String_String_trim(String* self) {
     if (!self || !self->buffer)
         return make_String("");
     int start = 0, end = self->length - 1;
@@ -421,7 +421,7 @@ String* String_trim(String* self) {
     return make_String_taking_ownership(temp);
 }
 
-String* String_replace(String* self, String* old_str, String* new_str) {
+String* Core_String_String_replace(String* self, String* old_str, String* new_str) {
     if (!self || !self->buffer || !old_str || !new_str)
         return make_String("");
     int count = 0;
@@ -450,7 +450,7 @@ String* String_replace(String* self, String* old_str, String* new_str) {
     return make_String_taking_ownership(result);
 }
 
-String* String_remove(String* self, String* sub) {
+String* Core_String_String_remove(String* self, String* sub) {
     if (!self || !self->buffer || !sub || !sub->buffer)
         return make_String("");
     int sub_len = sub->length;
@@ -476,7 +476,7 @@ String* String_remove(String* self, String* sub) {
     return make_String_taking_ownership(result);
 }
 
-String* String_repeat(String* self, int n) {
+String* Core_String_String_repeat(String* self, int n) {
     if (!self || !self->buffer || n <= 0)
         return make_String("");
     int new_len = self->length * n;
@@ -490,7 +490,7 @@ String* String_repeat(String* self, int n) {
     return make_String_taking_ownership(result);
 }
 
-String* String_reverse(String* self) {
+String* Core_String_String_reverse(String* self) {
     if (!self || !self->buffer)
         return make_String("");
     char* result = (char*)malloc(self->length + 1);
@@ -500,7 +500,7 @@ String* String_reverse(String* self) {
     return make_String_taking_ownership(result);
 }
 
-int String_startswith(String* self, String* prefix) {
+int Core_String_String_startswith(String* self, String* prefix) {
     if (!self || !self->buffer || !prefix || !prefix->buffer)
         return 0;
     if (prefix->length > self->length)
@@ -508,7 +508,7 @@ int String_startswith(String* self, String* prefix) {
     return strncmp(self->buffer, prefix->buffer, prefix->length) == 0;
 }
 
-String* String_substring(String* self, int start, int end) {
+String* Core_String_String_substring(String* self, int start, int end) {
     if (!self || !self->buffer)
         return make_String("");
     if (start < 0)
@@ -528,7 +528,7 @@ String* String_substring(String* self, int start, int end) {
     return make_String_taking_ownership(temp);
 }
 
-List* String_split(String* self, String* delim) {
+List* Core_String_String_split(String* self, String* delim) {
     if (!self || !self->buffer) {
         List* empty = (List*)malloc(sizeof(List));
         empty->length = 0;
@@ -582,7 +582,7 @@ List* String_split(String* self, String* delim) {
     return list;
 }
 
-String* String_join(String* self, List* items) {
+String* Core_String_String_join(String* self, List* items) {
     if (!items || !self || !self->buffer)
         return make_String("");
     int total_len = 0;
@@ -624,7 +624,7 @@ String* String_join(String* self, List* items) {
     return make_String_taking_ownership(result);
 }
 
-String* String_zfill(String* self, int width) {
+String* Core_String_String_zfill(String* self, int width) {
     if (!self || !self->buffer)
         return make_String("");
     if (self->length >= width)
@@ -637,7 +637,7 @@ String* String_zfill(String* self, int width) {
     return make_String_taking_ownership(result);
 }
 
-String* String_ljust(String* self, int width, String* pad) {
+String* Core_String_String_ljust(String* self, int width, String* pad) {
     if (!self || !self->buffer)
         return make_String("");
     char pad_char = (pad && pad->length > 0) ? pad->buffer[0] : ' ';
@@ -651,7 +651,7 @@ String* String_ljust(String* self, int width, String* pad) {
     return make_String_taking_ownership(result);
 }
 
-String* String_rjust(String* self, int width, String* pad) {
+String* Core_String_String_rjust(String* self, int width, String* pad) {
     if (!self || !self->buffer)
         return make_String("");
     char pad_char = (pad && pad->length > 0) ? pad->buffer[0] : ' ';
@@ -665,14 +665,14 @@ String* String_rjust(String* self, int width, String* pad) {
     return make_String_taking_ownership(result);
 }
 
-String* String_lstrip(String* self) {
-    return String_trim(self);
+String* Core_String_String_lstrip(String* self) {
+    return Core_String_String_trim(self);
 }
-String* String_rstrip(String* self) {
-    return String_trim(self);
+String* Core_String_String_rstrip(String* self) {
+    return Core_String_String_trim(self);
 }
 
-String* String_swapcase(String* self) {
+String* Core_String_String_swapcase(String* self) {
     if (!self || !self->buffer)
         return make_String("");
     char* temp = (char*)malloc(self->length + 1);
@@ -689,7 +689,7 @@ String* String_swapcase(String* self) {
     return make_String_taking_ownership(temp);
 }
 
-int String_is_space(String* self) {
+int Core_String_String_is_space(String* self) {
     if (!self || self->length == 0)
         return 0;
     for (int i = 0; i < self->length; i++)
@@ -698,11 +698,11 @@ int String_is_space(String* self) {
     return 1;
 }
 
-int String_contains(String* self, String* sub) {
-    return String_find(self, sub) != -1;
+int Core_String_String_contains(String* self, String* sub) {
+    return Core_String_String_find(self, sub) != -1;
 }
 
-String* String_center(String* self, int width, String* pad) {
+String* Core_String_String_center(String* self, int width, String* pad) {
     if (!self || !self->buffer)
         return make_String("");
     char pad_char = (pad && pad->length > 0) ? pad->buffer[0] : ' ';
@@ -719,7 +719,7 @@ String* String_center(String* self, int width, String* pad) {
     return make_String_taking_ownership(result);
 }
 
-int String_is_digit(String* self) {
+int Core_String_String_is_digit(String* self) {
     if (!self || self->length == 0)
         return 0;
     for (int i = 0; i < self->length; i++)
@@ -728,7 +728,7 @@ int String_is_digit(String* self) {
     return 1;
 }
 
-int String_is_alpha(String* self) {
+int Core_String_String_is_alpha(String* self) {
     if (!self || self->length == 0)
         return 0;
     for (int i = 0; i < self->length; i++)
@@ -737,25 +737,25 @@ int String_is_alpha(String* self) {
     return 1;
 }
 
-int String_to_int(String* self) {
+int Core_String_String_to_int(String* self) {
     if (!self || !self->buffer)
         return 0;
     return (int)strtol(self->buffer, NULL, 10);
 }
 
-double String_to_float(String* self) {
+double Core_String_String_to_float(String* self) {
     if (!self || !self->buffer)
         return 0.0;
     return strtod(self->buffer, NULL);
 }
 
-char* _float_to_str(double val) {
+char* Core_String_float_to_str(double val) {
     char* buf = (char*)malloc(64);
     snprintf(buf, 64, "%g", val);
     return buf;
 }
 
-List* String_lines(String* self) {
+List* Core_String_String_lines(String* self) {
     if (!self || !self->buffer)
         return NULL;
     int count = 1;
@@ -794,7 +794,7 @@ List* String_lines(String* self) {
     return list;
 }
 
-int min3(int a, int b, int c) {
+static int min3(int a, int b, int c) {
     int m = a;
     if (b < m)
         m = b;
@@ -803,7 +803,7 @@ int min3(int a, int b, int c) {
     return m;
 }
 
-int String_distance(String* self, String* other) {
+int Core_String_String_distance(String* self, String* other) {
     if (!self || !other)
         return 0;
     int len1 = self->length;
@@ -827,7 +827,7 @@ int String_distance(String* self, String* other) {
     return result;
 }
 
-String* String_format_map(String* self, List* keys, List* values) {
+String* Core_String_String_format_map(String* self, List* keys, List* values) {
     if (!self || !self->buffer)
         return make_String("");
     int cap = 2048;
@@ -895,7 +895,7 @@ String* String_format_map(String* self, List* keys, List* values) {
     return make_String_taking_ownership(res);
 }
 
-String* String_format_list(String* self, List* args) {
+String* Core_String_String_format_list(String* self, List* args) {
     if (!self || !self->buffer)
         return make_String("");
     int cap = 2048;
@@ -947,6 +947,6 @@ String* String_format_list(String* self, List* args) {
     return make_String_taking_ownership(res);
 }
 
-String* String_format(String* self, List* args) {
-    return String_format_list(self, args);
+String* Core_String_String_format(String* self, List* args) {
+    return Core_String_String_format_list(self, args);
 }

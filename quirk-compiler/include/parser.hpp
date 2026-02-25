@@ -28,6 +28,8 @@ private:
     bool match(TokenType type);
     void consume(TokenType type, const std::string& message);
 
+    std::string computeModulePrefix() const;
+
     // Expression parsing
     std::unique_ptr<Node> parseExpression(int min_precedence);
 

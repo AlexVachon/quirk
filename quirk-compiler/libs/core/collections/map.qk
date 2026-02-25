@@ -3,7 +3,7 @@ from core.string use { String }
 // --- ADDED FOR FUTURE ITERATION SUPPORT ---
 struct MapIterator {
     map_ref: Map
-    current_idx: Int
+    idx: Int
 
     extern define __init(self, m: Map)
     extern define __has_next(self) -> Bool

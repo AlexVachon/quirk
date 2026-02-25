@@ -44,7 +44,7 @@ typedef struct {
 
 typedef struct {
     Map* map_ref;
-    int current_idx;
+    int idx;
 } MapIterator;
 
 typedef struct {

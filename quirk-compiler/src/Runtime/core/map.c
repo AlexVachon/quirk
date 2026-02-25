@@ -7,7 +7,7 @@
 #define LOAD_FACTOR 0.75
 
 // FNV-1a Hash Function (Standard, fast string hashing)
-unsigned int hash_str(const char* key) {
+static unsigned int hash_str(const char* key) {
     unsigned int hash = 2166136261u;
     while (*key) {
         hash ^= (unsigned char)(*key);
@@ -17,14 +17,14 @@ unsigned int hash_str(const char* key) {
     return hash;
 }
 
-// ... (Lifecycle: Map__init, Map___del remain same) ...
-void Map__init(Map* self) {
+// ... (Lifecycle: Core_Collections_Map_Map___init, Core_Collections_Map_Map___del remain same) ...
+void Core_Collections_Map_Map___init(Map* self) {
     self->capacity = INITIAL_CAPACITY;
     self->size = 0;
     self->entries = (MapEntry*)calloc(self->capacity, sizeof(MapEntry));
 }
 
-void Map___del(Map* self) {
+void Core_Collections_Map_Map___del(Map* self) {
     if (self->entries) {
         for (int i = 0; i < self->capacity; i++) {
             if (self->entries[i].is_occupied && self->entries[i].key) {
@@ -37,7 +37,7 @@ void Map___del(Map* self) {
 }
 
 // ... (Map__find_entry remains same, takes const char* raw_key) ...
-MapEntry* Map__find_entry(MapEntry* entries, int capacity, const char* key) {
+static MapEntry* Map__find_entry(MapEntry* entries, int capacity, const char* key) {
     unsigned int hash = hash_str(key);
     int idx = hash % capacity;
     int start_idx = idx;
@@ -55,7 +55,7 @@ MapEntry* Map__find_entry(MapEntry* entries, int capacity, const char* key) {
 }
 
 // ... (Map__resize remains mostly same) ...
-void Map__resize(Map* self) {
+static void Map__resize(Map* self) {
     int old_cap = self->capacity;
     MapEntry* old_entries = self->entries;
 
@@ -80,7 +80,7 @@ void Map__resize(Map* self) {
 //  PUBLIC METHODS (Updated to use String*)
 // ==========================================
 
-void Map_put(Map* self, String* keyObj, void* value) {
+void Core_Collections_Map_Map_put(Map* self, String* keyObj, void* value) {
     // Safety check
     if (!keyObj || !keyObj->buffer)
         return;
@@ -102,7 +102,7 @@ void Map_put(Map* self, String* keyObj, void* value) {
     entry->is_deleted = 0;
 }
 
-void* Map_get(Map* self, String* keyObj) {
+void* Core_Collections_Map_Map_get(Map* self, String* keyObj) {
     if (!keyObj || !keyObj->buffer)
         return NULL;
 
@@ -114,7 +114,7 @@ void* Map_get(Map* self, String* keyObj) {
     return NULL;
 }
 
-int Map_has(Map* self, String* keyObj) {
+int Core_Collections_Map_Map_has(Map* self, String* keyObj) {
     if (!keyObj || !keyObj->buffer)
         return 0;
 
@@ -123,7 +123,7 @@ int Map_has(Map* self, String* keyObj) {
     return (entry && entry->is_occupied);
 }
 
-void Map_remove(Map* self, String* keyObj) {
+void Core_Collections_Map_Map_remove(Map* self, String* keyObj) {
     if (!keyObj || !keyObj->buffer)
         return;
 
@@ -138,11 +138,11 @@ void Map_remove(Map* self, String* keyObj) {
     }
 }
 
-int Map_len(Map* self) {
+int Core_Collections_Map_Map_len(Map* self) {
     return self->size;
 }
 
-void Map_clear(Map* self) {
+void Core_Collections_Map_Map_clear(Map* self) {
     for (int i = 0; i < self->capacity; i++) {
         if (self->entries[i].is_occupied) {
             free(self->entries[i].key);
@@ -157,10 +157,10 @@ void Map_clear(Map* self) {
 //  OPERATORS (Updated to use String*)
 // ==========================================
 
-void* Map___get(Map* self, String* keyObj) {
-    void* val = Map_get(self, keyObj);
-    // Note: Map_has checks raw buffer, so it's safe to call here
-    if (!val && !Map_has(self, keyObj)) {
+void* Core_Collections_Map_Map___get(Map* self, String* keyObj) {
+    void* val = Core_Collections_Map_Map_get(self, keyObj);
+    // Note: Core_Collections_Map_Map_has checks raw buffer, so it's safe to call here
+    if (!val && !Core_Collections_Map_Map_has(self, keyObj)) {
         printf("KeyError: '%s' not found\n",
                keyObj ? keyObj->buffer : "(null)");
         exit(1);
@@ -168,10 +168,47 @@ void* Map___get(Map* self, String* keyObj) {
     return val;
 }
 
-void Map___set(Map* self, String* keyObj, void* value) {
-    Map_put(self, keyObj, value);
+void Core_Collections_Map_Map___set(Map* self, String* keyObj, void* value) {
+    Core_Collections_Map_Map_put(self, keyObj, value);
 }
 
-String* Map___str(Map* self) {
+String* Core_Collections_Map_Map___str(Map* self) {
     return make_String("{Map}");
+}
+// ==========================================
+//  MAP ITERATOR
+// ==========================================
+
+void Core_Collections_Map_MapIterator___init(MapIterator* self, Map* m) {
+    self->map_ref = m;
+    self->idx = 0;
+}
+
+int Core_Collections_Map_MapIterator___has_next(MapIterator* self) {
+    if (!self || !self->map_ref) return 0;
+    // Advance past deleted/empty slots
+    while (self->idx < self->map_ref->capacity &&
+           !self->map_ref->entries[self->idx].is_occupied) {
+        self->idx++;
+    }
+    return self->idx < self->map_ref->capacity;
+}
+
+String* Core_Collections_Map_MapIterator___next(MapIterator* self) {
+    if (!self || !self->map_ref) return make_String("");
+    // Skip to next occupied slot
+    while (self->idx < self->map_ref->capacity &&
+           !self->map_ref->entries[self->idx].is_occupied) {
+        self->idx++;
+    }
+    if (self->idx >= self->map_ref->capacity) return make_String("");
+    const char* key = self->map_ref->entries[self->idx].key;
+    self->idx++;
+    return make_String(key ? key : "");
+}
+
+MapIterator* Core_Collections_Map_Map___iter(Map* self) {
+    MapIterator* iter = (MapIterator*)malloc(sizeof(MapIterator));
+    Core_Collections_Map_MapIterator___init(iter, self);
+    return iter;
 }

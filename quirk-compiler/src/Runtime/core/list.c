@@ -6,18 +6,18 @@
 //  LIST ITERATOR
 // ==========================================
 
-void ListIterator__init(ListIterator* self, List* l) {
+void Core_Collections_List_ListIterator___init(ListIterator* self, List* l) {
     self->list_ref = l;
     self->idx = 0;
 }
 
-int ListIterator___has_next(ListIterator* self) {
+int Core_Collections_List_ListIterator___has_next(ListIterator* self) {
     if (!self || !self->list_ref)
         return 0;
     return self->idx < self->list_ref->length;
 }
 
-void* ListIterator___next(ListIterator* self) {
+void* Core_Collections_List_ListIterator___next(ListIterator* self) {
     if (!self || !self->list_ref)
         return 0;
     void* val = self->list_ref->data[self->idx];
@@ -29,7 +29,7 @@ void* ListIterator___next(ListIterator* self) {
 //  LIST LIFECYCLE
 // ==========================================
 
-void List__init(List* self, int initial_cap) {
+void Core_Collections_List_List___init(List* self, int initial_cap) {
     if (initial_cap < 1)
         initial_cap = 1;
     self->capacity = initial_cap;
@@ -37,7 +37,7 @@ void List__init(List* self, int initial_cap) {
     self->data = (void**)malloc(sizeof(void*) * initial_cap);
 }
 
-void List___del(List* self) {
+void Core_Collections_List_List___del(List* self) {
     if (self->data) {
         // Note: We do NOT free the items inside, because we don't know their
         // type. This is standard behavior for generic containers (shallow
@@ -51,34 +51,34 @@ void List___del(List* self) {
 //  CORE METHODS
 // ==========================================
 
-void List__resize(List* self, int new_cap) {
+static void List__resize(List* self, int new_cap) {
     self->capacity = new_cap;
     self->data = (void**)realloc(self->data, sizeof(void*) * new_cap);
 }
 
-void List_append(List* self, void* item) {
+void Core_Collections_List_List_append(List* self, void* item) {
     if (self->length == self->capacity) {
         List__resize(self, self->capacity * 2);
     }
     self->data[self->length++] = item;
 }
 
-void* List_pop(List* self) {
+void* Core_Collections_List_List_pop(List* self) {
     if (self->length == 0)
         return 0;
     self->length--;
     return self->data[self->length];
 }
 
-int List_len(List* self) {
+int Core_Collections_List_List_length(List* self) {
     return self->length;
 }
 
-void List_clear(List* self) {
+void Core_Collections_List_List_clear(List* self) {
     self->length = 0;
 }
 
-int List_is_empty(List* self) {
+int Core_Collections_List_List_is_empty(List* self) {
     return self->length == 0;
 }
 
@@ -86,13 +86,13 @@ int List_is_empty(List* self) {
 //  OPERATOR OVERLOADING
 // ==========================================
 
-ListIterator* List___iter(List* self) {
+ListIterator* Core_Collections_List_List___iter(List* self) {
     ListIterator* iter = (ListIterator*)malloc(sizeof(ListIterator));
-    ListIterator__init(iter, self);
+    Core_Collections_List_ListIterator___init(iter, self);
     return iter;
 }
 
-void* List___get(List* self, int index) {
+void* Core_Collections_List_List___get(List* self, int index) {
     // Handle negative indexing
     if (index < 0)
         index = self->length + index;
@@ -105,7 +105,7 @@ void* List___get(List* self, int index) {
     return self->data[index];
 }
 
-void List___set(List* self, int index, void* item) {
+void Core_Collections_List_List___set(List* self, int index, void* item) {
     if (index < 0)
         index = self->length + index;
 
@@ -120,13 +120,13 @@ void List___set(List* self, int index, void* item) {
 //  STRING REPRESENTATION
 // ==========================================
 
-// Uses String_join from string.c to create "[a, b, c]"
-String* List___repr(List* self) {
+// Uses Core_String_String_join from string.c to create "[a, b, c]"
+String* Core_Collections_List_List___repr(List* self) {
     // 1. Create the separator ", "
     String* sep = make_String(", ");
 
     // 2. Join the list items
-    String* content = String_join(sep, self);
+    String* content = Core_String_String_join(sep, self);
 
     // 3. Wrap in brackets
     String* open = make_String("[");
@@ -158,6 +158,6 @@ String* List___repr(List* self) {
     return make_String_taking_ownership(raw);
 }
 
-String* List___str(List* self) {
-    return List___repr(self);
+String* Core_Collections_List_List___str(List* self) {
+    return Core_Collections_List_List___repr(self);
 }

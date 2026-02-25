@@ -33,7 +33,7 @@
 // ==========================================
 //  HELPER: Defined BEFORE use (Fixes Error)
 // ==========================================
-char* make_safe_cstr(String* s) {
+static char* make_safe_cstr(String* s) {
     if (!s || !s->buffer) return NULL;
     char* safe = GC_malloc(s->length + 1);
     memcpy(safe, s->buffer, s->length);
@@ -56,7 +56,7 @@ void Sys_init(int argc, char** argv) {
     WSAStartup(MAKEWORD(2, 2), &wsaData);
     #endif
 }
-char* gc_strdup(const char* s) {
+static char* gc_strdup(const char* s) {
     if (!s) {
         return NULL;
     }

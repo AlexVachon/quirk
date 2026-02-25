@@ -1,7 +1,6 @@
 *.log
 quirk-compiler/.venv/
-quirk-compiler/*.log
-quirk-compiler/*.ll
+*.ll
 quirk-compiler/bin/quirk
 quirk-compiler/bin/runtime.so
 quirk-compiler/obj

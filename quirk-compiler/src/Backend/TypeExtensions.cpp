@@ -68,21 +68,21 @@ private:
         // Bool (i1)
         if (type->isIntegerTy(1)) {
             Value* ext = Builder.CreateZExt(v, Type::getInt32Ty(Context));
-            return callBox("box_bool", {ext});
+            return callBox("Core_Primitives_Any_box_bool", {ext});
         }
         // Char (i8)
         if (type->isIntegerTy(8)) {
             Value* ext = Builder.CreateZExt(v, Type::getInt32Ty(Context));
-            return callBox("box_char", {ext});
+            return callBox("Core_Primitives_Any_box_char", {ext});
         }
         // Int (i32 or other integer)
         if (type->isIntegerTy()) {
             Value* casted = Builder.CreateIntCast(v, Type::getInt32Ty(Context), true);
-            return callBox("box_int", {casted});
+            return callBox("Core_Primitives_Any_box_int", {casted});
         }
         // Double
         if (type->isDoubleTy()) {
-            return callBox("box_double", {v});
+            return callBox("Core_Primitives_Any_box_double", {v});
         }
         // Pointer types
         if (type->isPointerTy()) {
@@ -98,9 +98,9 @@ private:
                 }
                 // box_* declared as i8*(i8*) — must bitcast struct ptr to i8* first
                 Value* asPtr = Builder.CreateBitCast(v, Type::getInt8PtrTy(Context));
-                if (name.find("String") != std::string::npos) return callBox("box_string", {asPtr});
-                if (name.find("List")   != std::string::npos) return callBox("box_list",   {asPtr});
-                if (name.find("Map")    != std::string::npos) return callBox("box_map",    {asPtr});
+                if (name.find("String") != std::string::npos) return callBox("Core_Primitives_Any_box_string", {asPtr});
+                if (name.find("List")   != std::string::npos) return callBox("Core_Primitives_Any_box_list",   {asPtr});
+                if (name.find("Map")    != std::string::npos) return callBox("Core_Primitives_Any_box_map",    {asPtr});
                 // Other struct — call __str first, then box as String
                 std::string strMethod = name + "___str";
                 Function* strFunc = TheModule->getFunction(strMethod);
@@ -112,15 +112,15 @@ private:
                         std::vector<Value*> args = {strObj};
                         strObj = structGen->allocateAndInit("String", args);
                     }
-                    return callBox("box_string", {Builder.CreateBitCast(strObj, Type::getInt8PtrTy(Context))});
+                    return callBox("Core_Primitives_Any_box_string", {Builder.CreateBitCast(strObj, Type::getInt8PtrTy(Context))});
                 }
-                return callBox("box_ptr", {asPtr});
+                return callBox("Core_Primitives_Any_box_ptr", {asPtr});
             }
             // Raw i8* — wrap in String then box
             if (el->isIntegerTy(8)) {
                 std::vector<Value*> wrapArgs = {v};
                 Value* strObj = structGen->allocateAndInit("String", wrapArgs);
-                return callBox("box_string", {Builder.CreateBitCast(strObj, Type::getInt8PtrTy(Context))});
+                return callBox("Core_Primitives_Any_box_string", {Builder.CreateBitCast(strObj, Type::getInt8PtrTy(Context))});
             }
         }
 
@@ -153,7 +153,7 @@ private:
 
         Value *argsList = structGen->createListFromValues(runtimeArgs);
 
-        Function *func = TheModule->getFunction("String_format_list");
+        Function *func = TheModule->getFunction("Core_String_String_format_list");
         if (!func)
         {
             std::cerr << "Error: 'String_format_list' not found." << std::endl;
@@ -186,7 +186,7 @@ private:
         Value *keysList = structGen->createListFromValues(keys);
         Value *valsList = structGen->createListFromValues(vals);
 
-        Function *func = TheModule->getFunction("String_format_map");
+        Function *func = TheModule->getFunction("Core_String_String_format_map");
         if (!func)
         {
             std::cerr << "Error: 'String_format_map' not found." << std::endl;
@@ -229,7 +229,7 @@ private:
         Value* keysList = structGen->createListFromValues(keys);
         Value* valsList = structGen->createListFromValues(vals);
 
-        Function* func = TheModule->getFunction("String_format_map");
+        Function* func = TheModule->getFunction("Core_String_String_format_map");
         if (!func) {
             std::cerr << "Error: 'String_format_map' not found." << std::endl;
             return Constant::getNullValue(objPtr->getType());
@@ -256,7 +256,7 @@ private:
 
         Value* valsList = structGen->createListFromValues(vals);
 
-        Function* func = TheModule->getFunction("String_format_list");
+        Function* func = TheModule->getFunction("Core_String_String_format_list");
         if (!func) {
             std::cerr << "Error: 'String_format_list' not found." << std::endl;
             return Constant::getNullValue(objPtr->getType());

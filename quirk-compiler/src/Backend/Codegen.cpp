@@ -23,7 +23,6 @@
 #include "TypeGen.cpp"
 #include "VariableGen.cpp"
 
-#include "../Modules/ModuleRegistry.cpp"
 
 using namespace llvm;
 
@@ -31,6 +30,8 @@ class LLVMCodegen {
     LLVMContext Context;
     std::unique_ptr<Module> TheModule;
     IRBuilder<> Builder;
+
+    bool verbose = false;
 
     std::map<std::string, bool> variadicFunctions;
     std::map<std::string, FunctionNode*> functionDeclarations;
@@ -44,13 +45,14 @@ class LLVMCodegen {
     std::unique_ptr<BuiltinGen> builtinGen;
     std::unique_ptr<VariableGen> varGen;
     std::unique_ptr<MathGen> mathGen;
-    std::unique_ptr<ModuleRegistry> moduleRegistry;
     std::unique_ptr<TypeExtensions> typeExtensions;
 
    public:
     static std::string currentCodegenClass;
     std::map<std::string, std::string> activeModuleAliases;
     std::map<std::string, std::string> activeTriggers;
+
+    void setVerbose(bool v) { verbose = v; }
 
     LLVMCodegen() : Builder(Context) {
         TheModule = std::make_unique<Module>("QuirkCompiler", Context);
@@ -63,10 +65,10 @@ class LLVMCodegen {
         typeExtensions = std::make_unique<TypeExtensions>(Context, TheModule.get(), Builder, structGen.get(), builtinGen.get());
         varGen = std::make_unique<VariableGen>(Context, Builder);
         mathGen = std::make_unique<MathGen>(Context, Builder);
-        moduleRegistry = std::make_unique<ModuleRegistry>();
     }
 
     void compile(const std::vector<std::unique_ptr<Node>>& nodes, raw_ostream& out = errs()) {
+        if (verbose) std::cerr << "[Codegen] compile() started — " << nodes.size() << " top-level node(s)\n";
         builtinGen->Initialize();
 
         // --- NEW: Process Top-Level Uses globally ---
@@ -75,15 +77,19 @@ class LLVMCodegen {
         }
         // --------------------------------------------
 
+        if (verbose) std::cerr << "[Codegen] Pass 1: Registering opaque struct types\n";
         for (const auto& node : nodes) {
             if (auto s = dynamic_cast<StructNode*>(node.get())) {
                 if (!StructTypes.count(s->name)) StructTypes[s->name] = StructType::create(Context, s->name);
             }
         }
+        if (verbose) std::cerr << "[Codegen] Pass 2: Filling struct bodies and resolving inheritance\n";
         for (const auto& node : nodes) {
             if (auto s = dynamic_cast<StructNode*>(node.get())) {
                 StructType* st = StructTypes[s->name];
                 if (!st->isOpaque()) continue;
+
+                if (verbose) std::cerr << "[Codegen]   Filling struct: " << s->name << "\n";
 
                 std::vector<Type*> elementTypes;
                 std::vector<std::string> fieldNames;
@@ -116,25 +122,44 @@ class LLVMCodegen {
             }
         }
 
-        moduleRegistry->registerAll(Context, StructTypes, structGen.get(), TheModule.get());
-
+        if (verbose) std::cerr << "[Codegen] Pass 3: Declaring function prototypes\n";
         for (const auto& node : nodes) {
             if (auto func = dynamic_cast<FunctionNode*>(node.get())) {
                 functionDeclarations[func->name] = func;
                 
                 if (func->name == "main" || builtinGen->isBuiltin(func->name)) continue;
+                if (verbose) std::cerr << "[Codegen]   Declaring prototype: " << func->name << "\n";
                 Type* retTy = typeGen->getFunctionReturnType(func->returnType);
+                // C ABI: Bool return values are int (i32), not i1.
+                // Widen i1 return types for extern functions to avoid truncation.
+                if (func->isExtern && retTy->isIntegerTy(1))
+                    retTy = Type::getInt32Ty(Context);
                 std::vector<Type*> argTypes;
                 if (!func->cls.empty() && !func->isStatic) argTypes.push_back(typeGen->getLLVMType(func->cls));
-                for (const auto& param : func->parameters) argTypes.push_back(typeGen->getLLVMType(param.type));
+                for (const auto& param : func->parameters) {
+                    Type* t = typeGen->getLLVMType(param.type);
+                    // C ABI: Bool params are passed as int (i32), not i1.
+                    // Widen i1 in extern declarations to match the runtime.
+                    if (func->isExtern && t->isIntegerTy(1))
+                        t = Type::getInt32Ty(Context);
+                    argTypes.push_back(t);
+                }
                 FunctionType* FT = FunctionType::get(retTy, argTypes, false);
                 
                 // --- NEW: LINKAGE NAME INJECTION ---
                 std::string llvmName = func->linkageName.empty() ? func->name : func->linkageName;
                 Function::Create(FT, Function::ExternalLinkage, llvmName, TheModule.get());
+
+                // Populate structInitMap so StructGen can find renamed extern __init.
+                // e.g. String__init in libs/core/string.qk -> "Core_String_String___init"
+                if (func->isExtern && !func->cls.empty() &&
+                    func->name.find("__init") != std::string::npos) {
+                    structGen->registerStructInit(func->cls, llvmName);
+                }
             }
         }
 
+        if (verbose) std::cerr << "[Codegen] Pass 4: Compiling function bodies\n";
         for (const auto& node : nodes) {
             if (auto func = dynamic_cast<FunctionNode*>(node.get())) {
                 if (func->name != "main") compileFunction(func);
@@ -149,6 +174,7 @@ class LLVMCodegen {
         Function* mainFunc = Function::Create(mainType, Function::ExternalLinkage, "main", TheModule.get());
         Builder.SetInsertPoint(BasicBlock::Create(Context, "entry", mainFunc));
         
+        if (verbose) std::cerr << "[Codegen] Pass 5: Compiling 'main' body\n";
         Value* argc = mainFunc->getArg(0);
         Value* argv = mainFunc->getArg(1);
         
@@ -182,6 +208,7 @@ class LLVMCodegen {
         // ----------------------------------------------
         
         if (!Builder.GetInsertBlock()->getTerminator()) Builder.CreateRet(ConstantInt::get(Type::getInt32Ty(Context), 0));
+        if (verbose) std::cerr << "[Codegen] compile() finished — emitting IR\n";
         TheModule->print(out, nullptr);
     }
 
@@ -191,9 +218,15 @@ class LLVMCodegen {
 
         // --- NEW: LINKAGE NAME LOOKUP ---
         std::string llvmName = node->linkageName.empty() ? node->name : node->linkageName;
+        if (verbose) {
+            std::cerr << "[Codegen] compileFunction: " << node->name;
+            if (!node->cls.empty()) std::cerr << " (class: " << node->cls << ")";
+            std::cerr << " -> LLVM name: " << llvmName << "\n";
+        }
         Function* F = TheModule->getFunction(llvmName);
         
         if (!F || node->isExtern) {
+            if (verbose) std::cerr << "[Codegen]   Skipping (extern or not found in module)\n";
             currentCodegenClass = prevClass;
             return;
         }
@@ -283,6 +316,7 @@ class LLVMCodegen {
     Value* handleCall(CallNode* call) 
     {
         if (auto lit = dynamic_cast<LiteralNode*>(call->callee.get())) {
+            if (verbose) std::cerr << "[Codegen]     handleCall: callee = " << lit->value << "\n";
 
             // --- FIXED: Super keyword codegen ---
             if (lit->value == "super") {
@@ -342,6 +376,7 @@ class LLVMCodegen {
 
         if (auto member = dynamic_cast<MemberAccessNode*>(call->callee.get())) {
             if (auto lit = dynamic_cast<LiteralNode*>(member->object.get())) {
+                if (verbose) std::cerr << "[Codegen]     handleCall: " << lit->value << "." << member->memberName << "\n";
                 if (activeModuleAliases.count(lit->value)) {
                     std::string memberName = member->memberName;
                     if (StructTypes.count(memberName)) {
@@ -399,13 +434,30 @@ class LLVMCodegen {
                     // Any* — unbox to String for method dispatch (most common case)
                     // For full dynamic dispatch, a switch on tag would be needed.
                     if (typeName == "Any") {
-                        Function* anyStr = TheModule->getFunction("Any_to_str");
+                        Function* anyStr = TheModule->getFunction("Core_Primitives_Any_to_str");
                         if (anyStr) {
                             objPtr = Builder.CreateCall(anyStr, {objPtr});
                             typeName = "String";
                         }
                     }
+                } else if (objPtr->getType()->isPointerTy() && objPtr->getType()->getPointerElementType()->isPointerTy()) {
+                    // Double pointer — load once more and retry
+                    objPtr = Builder.CreateLoad(objPtr->getType()->getPointerElementType(), objPtr);
+                    if (objPtr->getType()->isPointerTy() && objPtr->getType()->getPointerElementType()->isStructTy()) {
+                        StructType* st = cast<StructType>(objPtr->getType()->getPointerElementType());
+                        typeName = st->getName().str();
+                        if (typeName.find("struct.") == 0) typeName = typeName.substr(7);
+                    } else {
+                        if (verbose) std::cerr << "[Codegen] WARNING: cannot resolve type for method call '." << member->memberName << "' after double-pointer load\n";
+                        return nullptr;
+                    }
                 } else {
+                    if (verbose) {
+                        std::string typStr;
+                        llvm::raw_string_ostream rso(typStr);
+                        objPtr->getType()->print(rso);
+                        std::cerr << "[Codegen] WARNING: unhandled object type '" << rso.str() << "' for method call '." << member->memberName << "' — returning nullptr\n";
+                    }
                     return nullptr;
                 }
             }
@@ -444,7 +496,32 @@ class LLVMCodegen {
                 func = searchHierarchy(typeName);
             }
 
-            if (!func) return nullptr;
+            // --- LINKAGE NAME FALLBACK ---
+            // Extern struct methods are registered in the module under their full linkage name
+            // (e.g. "Core_String_String_contains"), but the simple lookup above only tried
+            // "String_contains". Search functionDeclarations for a matching method on this
+            // type using the stored linkageName.
+            if (!func) {
+                std::string methodKey = typeName + "_" + member->memberName;
+                if (functionDeclarations.count(methodKey)) {
+                    const std::string& ln = functionDeclarations[methodKey]->linkageName;
+                    if (!ln.empty()) func = TheModule->getFunction(ln);
+                }
+                // Also try the triple-underscore variant key
+                if (!func) {
+                    std::string methodKeyDunder = typeName + "___" + member->memberName;
+                    if (functionDeclarations.count(methodKeyDunder)) {
+                        const std::string& ln = functionDeclarations[methodKeyDunder]->linkageName;
+                        if (!ln.empty()) func = TheModule->getFunction(ln);
+                    }
+                }
+            }
+            // -----------------------------
+
+            if (!func) {
+                if (verbose) std::cerr << "[Codegen] WARNING: method '" << typeName << "." << member->memberName << "' not found in module — returning nullptr\n";
+                return nullptr;
+            }
 
             std::vector<Value*> args;
             if (objPtr) {
@@ -603,6 +680,25 @@ class LLVMCodegen {
     void handleStatement(Node* node, Function* parentFunc) {
         if (Builder.GetInsertBlock()->getTerminator()) return; 
 
+        // Identify node type for logging
+        auto nodeTypeName = [&]() -> std::string {
+            if (dynamic_cast<VarDeclNode*>(node))   return "VarDecl";
+            if (dynamic_cast<CallNode*>(node))       return "Call";
+            if (dynamic_cast<IfNode*>(node))         return "If";
+            if (dynamic_cast<WhileNode*>(node))      return "While";
+            if (dynamic_cast<ForNode*>(node))        return "For";
+            if (dynamic_cast<ReturnNode*>(node))     return "Return";
+            if (dynamic_cast<BreakNode*>(node))      return "Break";
+            if (dynamic_cast<ContinueNode*>(node))   return "Continue";
+            if (dynamic_cast<ThrowNode*>(node))      return "Throw";
+            if (dynamic_cast<TryCatchNode*>(node))   return "TryCatch";
+            if (dynamic_cast<WithNode*>(node))       return "With";
+            if (dynamic_cast<TriggerNode*>(node))    return "Trigger";
+            if (dynamic_cast<UseNode*>(node))        return "Use";
+            return "Unknown";
+        };
+        if (verbose) std::cerr << "[Codegen]   handleStatement: " << nodeTypeName() << "\n";
+
         if (auto u = dynamic_cast<UseNode*>(node)) handleUse(u);
         else if (auto vdecl = dynamic_cast<VarDeclNode*>(node)) handleVarDecl(vdecl);
         else if (auto call = dynamic_cast<CallNode*>(node)) handleCall(call);
@@ -630,7 +726,18 @@ class LLVMCodegen {
                 [this](Node* n) { return this->handleExpression(n); },
                 [this](const std::string& s, std::vector<Value*>& v) { return this->structGen->allocateAndInit(s, v); },
                 [this, parentFunc](Node* n) { this->handleStatement(n, parentFunc); },
-                varGen.get());
+                varGen.get(),
+                // Linkage-aware resolver: tries module first, then functionDeclarations
+                [this](const std::string& shortName) -> Function* {
+                    // Try the short name first (for Quirk-defined iterators)
+                    if (Function* f = TheModule->getFunction(shortName)) return f;
+                    // Try functionDeclarations linkageName fallback
+                    if (functionDeclarations.count(shortName)) {
+                        const std::string& ln = functionDeclarations[shortName]->linkageName;
+                        if (!ln.empty()) return TheModule->getFunction(ln);
+                    }
+                    return nullptr;
+                });
         }
         else if (auto wi = dynamic_cast<WithNode*>(node)) handleWith(wi, parentFunc);
         else if (auto t = dynamic_cast<TryCatchNode*>(node)) {
@@ -693,6 +800,8 @@ class LLVMCodegen {
     }
 
     void handleVarDecl(VarDeclNode* vdecl) {
+        if (auto lhs = dynamic_cast<LiteralNode*>(vdecl->lhs.get()))
+            if (verbose) std::cerr << "[Codegen]     handleVarDecl: " << lhs->value << " (op: " << vdecl->op << ")\n";
         Value* val = handleExpression(vdecl->expression.get());
         if (!val || val->getType()->isVoidTy()) return;
 
@@ -734,7 +843,7 @@ class LLVMCodegen {
                 if (wasVal->getType()->isPointerTy() && wasVal->getType()->getPointerElementType()->isStructTy()) {
                     StructType* st = cast<StructType>(wasVal->getType()->getPointerElementType());
                     if (st->getName().contains("String")) {
-                        Function* addFunc = TheModule->getFunction("String___add");
+                        Function* addFunc = TheModule->getFunction("Core_String_String___add");
                         if (addFunc) return Builder.CreateCall(addFunc, {wasVal, newVal});
                     }
                 }
@@ -743,7 +852,7 @@ class LLVMCodegen {
                 if (wasVal->getType()->isPointerTy() && wasVal->getType()->getPointerElementType()->isIntegerTy(8)) {
                     std::vector<Value*> boxArgs = {wasVal};
                     Value* boxedStr = structGen->allocateAndInit("String", boxArgs);
-                    Function* addFunc = TheModule->getFunction("String___add");
+                    Function* addFunc = TheModule->getFunction("Core_String_String___add");
                     if (addFunc) return Builder.CreateCall(addFunc, {boxedStr, newVal});
                 }
 
@@ -877,6 +986,14 @@ class LLVMCodegen {
                     if (structName.find("struct.") == 0) structName = structName.substr(7);
 
                     Function* func = TheModule->getFunction(structName + "___set");
+                    // Linkage name fallback: e.g. "Map___set" → "Core_Collections_Map_Map___set"
+                    if (!func) {
+                        std::string key = structName + "___set";
+                        if (functionDeclarations.count(key)) {
+                            const std::string& ln = functionDeclarations[key]->linkageName;
+                            if (!ln.empty()) func = TheModule->getFunction(ln);
+                        }
+                    }
                     if (func) {
                         if (func->arg_size() >= 2) {
                             Type* keyType = func->getFunctionType()->getParamType(1);
@@ -922,7 +1039,17 @@ class LLVMCodegen {
     }
 
     void handleIf(IfNode* node, Function* parentFunc) {
-        flowGen->generateIf(node, parentFunc, [this](Node* n) { return this->handleExpression(n); }, [this, parentFunc](Node* n) { this->handleStatement(n, parentFunc); });
+        if (verbose) std::cerr << "[Codegen]     handleIf\n";
+        flowGen->generateIf(node, parentFunc,
+            [this](Node* n) -> Value* {
+                Value* cond = this->handleExpression(n);
+                if (!cond) {
+                    if (verbose) std::cerr << "[Codegen] WARNING: if-condition evaluated to nullptr, defaulting to false\n";
+                    return ConstantInt::getFalse(Context);
+                }
+                return cond;
+            },
+            [this, parentFunc](Node* n) { this->handleStatement(n, parentFunc); });
     }
 
     // ===================================================
@@ -952,17 +1079,17 @@ class LLVMCodegen {
 
         if (ty->isIntegerTy(1)) {
             Value* ext = Builder.CreateZExt(v, Type::getInt32Ty(Context));
-            return callBox("box_bool", {ext});
+            return callBox("Core_Primitives_Any_box_bool", {ext});
         }
         if (ty->isIntegerTy(8)) {
             Value* ext = Builder.CreateZExt(v, Type::getInt32Ty(Context));
-            return callBox("box_char", {ext});
+            return callBox("Core_Primitives_Any_box_char", {ext});
         }
         if (ty->isIntegerTy()) {
             Value* c = Builder.CreateIntCast(v, Type::getInt32Ty(Context), true);
-            return callBox("box_int", {c});
+            return callBox("Core_Primitives_Any_box_int", {c});
         }
-        if (ty->isDoubleTy()) return callBox("box_double", {v});
+        if (ty->isDoubleTy()) return callBox("Core_Primitives_Any_box_double", {v});
 
         if (ty->isPointerTy()) {
             Type* el = ty->getPointerElementType();
@@ -973,9 +1100,9 @@ class LLVMCodegen {
                 if (name == "Any") return v;
                 // box_* are declared as i8*(i8*) — must bitcast struct ptr to i8* first
                 Value* asPtr = Builder.CreateBitCast(v, Type::getInt8PtrTy(Context));
-                if (name.find("String") != std::string::npos) return callBox("box_string", {asPtr});
-                if (name.find("List")   != std::string::npos) return callBox("box_list",   {asPtr});
-                if (name.find("Map")    != std::string::npos) return callBox("box_map",    {asPtr});
+                if (name.find("String") != std::string::npos) return callBox("Core_Primitives_Any_box_string", {asPtr});
+                if (name.find("List")   != std::string::npos) return callBox("Core_Primitives_Any_box_list",   {asPtr});
+                if (name.find("Map")    != std::string::npos) return callBox("Core_Primitives_Any_box_map",    {asPtr});
                 // Other struct — call __str first, then box as String
                 std::string strMethod = name + "___str";
                 Function* strFunc = TheModule->getFunction(strMethod);
@@ -987,18 +1114,18 @@ class LLVMCodegen {
                         std::vector<Value*> args = {strObj};
                         strObj = structGen->allocateAndInit("String", args);
                     }
-                    return callBox("box_string", {Builder.CreateBitCast(strObj, Type::getInt8PtrTy(Context))});
+                    return callBox("Core_Primitives_Any_box_string", {Builder.CreateBitCast(strObj, Type::getInt8PtrTy(Context))});
                 }
-                return callBox("box_ptr", {asPtr});
+                return callBox("Core_Primitives_Any_box_ptr", {asPtr});
             }
             if (el->isIntegerTy(8)) {
                 // raw i8* — wrap in String first, then box
                 std::vector<Value*> sa = {v};
                 Value* strObj = structGen->allocateAndInit("String", sa);
-                return callBox("box_string", {Builder.CreateBitCast(strObj, Type::getInt8PtrTy(Context))});
+                return callBox("Core_Primitives_Any_box_string", {Builder.CreateBitCast(strObj, Type::getInt8PtrTy(Context))});
             }
         }
-        return callBox("box_null", {});
+        return callBox("Core_Primitives_Any_box_null", {});
     }
 
     // Emit unboxing from Any* to a specific LLVM target type
@@ -1011,18 +1138,18 @@ class LLVMCodegen {
         }
 
         if (targetType->isIntegerTy(32)) {
-            Function* f = TheModule->getFunction("Any_to_int");
+            Function* f = TheModule->getFunction("Core_Primitives_Any_to_int");
             if (f) return Builder.CreateCall(f, {anyPtr});
         }
         if (targetType->isDoubleTy()) {
-            Function* f = TheModule->getFunction("Any_to_float");
+            Function* f = TheModule->getFunction("Core_Primitives_Any_to_float");
             if (f) return Builder.CreateCall(f, {anyPtr});
         }
         if (targetType->isPointerTy() && targetType->getPointerElementType()->isStructTy()) {
             std::string name = cast<StructType>(targetType->getPointerElementType())->getName().str();
             if (name.find("struct.") == 0) name = name.substr(7);
             if (name.find("String") != std::string::npos) {
-                Function* f = TheModule->getFunction("Any_to_str");
+                Function* f = TheModule->getFunction("Core_Primitives_Any_to_str");
                 if (f) return Builder.CreateCall(f, {anyPtr});
             }
         }
@@ -1030,14 +1157,26 @@ class LLVMCodegen {
     }
 
     void handleWhile(WhileNode* node, Function* parentFunc) {
-        flowGen->generateWhile(node, parentFunc, [this](Node* n) { return this->handleExpression(n); }, [this, parentFunc](Node* n) { this->handleStatement(n, parentFunc); });
+        if (verbose) std::cerr << "[Codegen]     handleWhile\n";
+        flowGen->generateWhile(node, parentFunc,
+            [this](Node* n) -> Value* {
+                Value* cond = this->handleExpression(n);
+                if (!cond) {
+                    if (verbose) std::cerr << "[Codegen] WARNING: while-condition evaluated to nullptr, defaulting to false\n";
+                    return ConstantInt::getFalse(Context);
+                }
+                return cond;
+            },
+            [this, parentFunc](Node* n) { this->handleStatement(n, parentFunc); });
     }
 
     Value* handleConstructor(ConstructorNode* node) {
+        if (verbose) std::cerr << "[Codegen]     handleConstructor\n";
         return structGen->generateConstructor(node, [this](Node* n) { return this->handleExpression(n); });
     }
 
     void handleWith(WithNode* node, Function* parentFunc) {
+        if (verbose) std::cerr << "[Codegen]     handleWith: var = " << node->varName << "\n";
         Value* resource = handleExpression(node->resource.get());
         if (!resource) return;
 
@@ -1129,6 +1268,28 @@ Value* LLVMCodegen::handleExpression(Node* node) {
                      }
                     return Builder.CreateCall(func, {L, R});
                 }
+                // Linkage name fallback: e.g. "Map___get" → "Core_Collections_Map_Map___get"
+                {
+                    Function* func = nullptr;
+                    std::string key = sName + "___get";
+                    if (functionDeclarations.count(key)) {
+                        const std::string& ln = functionDeclarations[key]->linkageName;
+                        if (!ln.empty()) func = TheModule->getFunction(ln);
+                    }
+                    if (func) {
+                        if (func->arg_size() >= 2) {
+                            Type* keyType = func->getFunctionType()->getParamType(1);
+                            if (R->getType()->isPointerTy() && R->getType()->getPointerElementType()->isIntegerTy(8) &&
+                                keyType->isPointerTy() && keyType->getPointerElementType()->isStructTy()) {
+                                std::vector<Value*> args = {R};
+                                R = structGen->allocateAndInit("String", args);
+                            }
+                            if (R->getType() != keyType && R->getType()->isPointerTy() && keyType->isPointerTy())
+                                R = Builder.CreateBitCast(R, keyType);
+                        }
+                        return Builder.CreateCall(func, {L, R});
+                    }
+                }
             }
             if (L->getType()->isPointerTy() && L->getType()->getPointerElementType()->isIntegerTy(8)) {
                 Value* ptr = Builder.CreateBitCast(L, PointerType::getUnqual(Type::getInt8PtrTy(Context)));
@@ -1177,9 +1338,14 @@ Value* LLVMCodegen::handleExpression(Node* node) {
                     }
                     // --------------------------------------------------------------------------------
 
-                    if (ty->isIntegerTy(32)) { if (auto* f = TheModule->getFunction("Int_str")) return Builder.CreateCall(f, {val}); }
-                    if (ty->isDoubleTy()) { if (auto* f = TheModule->getFunction("Double_str")) return Builder.CreateCall(f, {val}); }
-                    if (ty->isIntegerTy(1)) { if (auto* f = TheModule->getFunction("Bool_str")) return Builder.CreateCall(f, {val}); }
+                    if (ty->isIntegerTy(32)) { if (auto* f = TheModule->getFunction("Core_Primitives_Int_str")) return Builder.CreateCall(f, {val}); }
+                    if (ty->isDoubleTy()) { if (auto* f = TheModule->getFunction("Core_Primitives_Double_str")) return Builder.CreateCall(f, {val}); }
+                    if (ty->isIntegerTy(1)) {
+                        if (auto* f = TheModule->getFunction("Core_Primitives_Bool_str")) {
+                            Value* ext = Builder.CreateZExt(val, Type::getInt32Ty(Context));
+                            return Builder.CreateCall(f, {ext});
+                        }
+                    }
                     return nullptr; 
                 };
 
@@ -1187,7 +1353,7 @@ Value* LLVMCodegen::handleExpression(Node* node) {
                 Value* strR = makeString(R);
 
                 if (strL && strR) {
-                    Function* addFunc = TheModule->getFunction("String___add");
+                    Function* addFunc = TheModule->getFunction("Core_String_String___add");
                     if (addFunc) return Builder.CreateCall(addFunc, {strL, strR});
                 }
             }

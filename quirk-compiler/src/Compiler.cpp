@@ -463,6 +463,7 @@ int main(int argc, char* argv[]) {
         }
 
         LLVMCodegen codegen;
+        codegen.setVerbose(opts.verbose);
         codegen.compile(ast, dest);
         dest.flush();
     }

@@ -20,6 +20,21 @@ class ControlFlowGen {
     ControlFlowGen(LLVMContext& ctx, Module* mod, IRBuilder<>& build)
         : Context(ctx), TheModule(mod), Builder(build) {}
 
+    // Normalize any value to i1 for use as a branch condition.
+    // Mirrors MathGen::toBool() — needed because extern Bool-returning functions
+    // now correctly return i32 instead of i1 to match the C ABI.
+    Value* toBool(Value* v) {
+        if (!v) return ConstantInt::getFalse(Context);
+        if (v->getType()->isIntegerTy(1)) return v;
+        if (v->getType()->isPointerTy())
+            return Builder.CreateICmpNE(v, Constant::getNullValue(v->getType()), "ptr_bool");
+        if (v->getType()->isDoubleTy())
+            return Builder.CreateFCmpONE(v, ConstantFP::get(Context, APFloat(0.0)), "dbl_bool");
+        if (v->getType()->isIntegerTy())
+            return Builder.CreateICmpNE(v, ConstantInt::get(v->getType(), 0), "int_bool");
+        return ConstantInt::getFalse(Context);
+    }
+
     void generateIf(IfNode* node,
                     Function* parentFunc,
                     std::function<Value*(Node*)> exprHandler,
@@ -31,7 +46,7 @@ class ControlFlowGen {
                                         ? mergeBB
                                         : BasicBlock::Create(Context, "else"))
                                  : BasicBlock::Create(Context, "elif_test");
-        Builder.CreateCondBr(exprHandler(node->condition.get()), thenBB,
+        Builder.CreateCondBr(toBool(exprHandler(node->condition.get())), thenBB,
                              nextBB);
         Builder.SetInsertPoint(thenBB);
         for (auto& stmt : node->thenBranch)
@@ -42,7 +57,7 @@ class ControlFlowGen {
         for (size_t i = 0; i < node->elIfBranches.size(); ++i) {
             parentFunc->getBasicBlockList().push_back(nextBB);
             Builder.SetInsertPoint(nextBB);
-            Value* eiCond = exprHandler(node->elIfBranches[i].condition.get());
+            Value* eiCond = toBool(exprHandler(node->elIfBranches[i].condition.get()));
             BasicBlock* eiBody =
                 BasicBlock::Create(Context, "elif_body", parentFunc);
             nextBB = (i + 1 < node->elIfBranches.size())
@@ -85,7 +100,7 @@ class ControlFlowGen {
 
         Builder.CreateBr(condBB);
         Builder.SetInsertPoint(condBB);
-        Builder.CreateCondBr(exprHandler(node->condition.get()), bodyBB,
+        Builder.CreateCondBr(toBool(exprHandler(node->condition.get())), bodyBB,
                              afterBB);
         Builder.SetInsertPoint(bodyBB);
         for (auto& stmt : node->body)
@@ -105,7 +120,15 @@ class ControlFlowGen {
                      std::function<Value*(const std::string&,
                                           std::vector<Value*>&)> initHelper,
                      std::function<void(Node*)> stmtHandler,
-                     VariableGen* varGen) {
+                     VariableGen* varGen,
+                     std::function<Function*(const std::string&)> funcResolver = nullptr) {
+        // Helper: look up a function by short name, with optional linkage fallback.
+        auto resolveFunc = [&](const std::string& name) -> Function* {
+            Function* f = TheModule->getFunction(name);
+            if (!f && funcResolver) f = funcResolver(name);
+            return f;
+        };
+
         Value* iterable = exprHandler(node->iterable.get());
         if (!iterable)
             return;
@@ -123,9 +146,9 @@ class ControlFlowGen {
                 cast<StructType>(iterable->getType()->getPointerElementType());
             std::string structName = st->getName().str();
 
-            Function* iterFunc = TheModule->getFunction(structName + "___iter");
+            Function* iterFunc = resolveFunc(structName + "___iter");
             if (!iterFunc)
-                iterFunc = TheModule->getFunction(structName + "__iter");
+                iterFunc = resolveFunc(structName + "__iter");
 
             if (!iterFunc) {
                 std::cerr << "Error: Struct '" << structName
@@ -150,9 +173,9 @@ class ControlFlowGen {
             Builder.SetInsertPoint(condBB);
 
             Function* hasNextFunc =
-                TheModule->getFunction(iterName + "___has_next");
+                resolveFunc(iterName + "___has_next");
             if (!hasNextFunc)
-                hasNextFunc = TheModule->getFunction(iterName + "__has_next");
+                hasNextFunc = resolveFunc(iterName + "__has_next");
 
             if (!hasNextFunc) {
                 std::cerr << "Error: Iterator '" << iterName
@@ -161,12 +184,12 @@ class ControlFlowGen {
             }
             Value* hasNext =
                 Builder.CreateCall(hasNextFunc, {iteratorObj}, "has_next");
-            Builder.CreateCondBr(hasNext, bodyBB, afterBB);
+            Builder.CreateCondBr(toBool(hasNext), bodyBB, afterBB);
 
             Builder.SetInsertPoint(bodyBB);
-            Function* nextFunc = TheModule->getFunction(iterName + "___next");
+            Function* nextFunc = resolveFunc(iterName + "___next");
             if (!nextFunc)
-                nextFunc = TheModule->getFunction(iterName + "__next");
+                nextFunc = resolveFunc(iterName + "__next");
 
             if (!nextFunc) {
                 std::cerr << "Error: Iterator '" << iterName
@@ -197,9 +220,9 @@ class ControlFlowGen {
             std::vector<Value*> args = {iterable};
             Value* stringObj = initHelper("String", args);
 
-            Function* iterFunc = TheModule->getFunction("String___iter");
+            Function* iterFunc = resolveFunc("String___iter");
             if (!iterFunc)
-                iterFunc = TheModule->getFunction("String__iter");
+                iterFunc = resolveFunc("String__iter");
 
             if (!iterFunc) {
                 std::cerr << "Error: String struct missing __iter."
@@ -224,17 +247,17 @@ class ControlFlowGen {
             Builder.SetInsertPoint(condBB);
 
             Function* hasNextFunc =
-                TheModule->getFunction(iterName + "___has_next");
+                resolveFunc(iterName + "___has_next");
             if (!hasNextFunc)
-                hasNextFunc = TheModule->getFunction(iterName + "__has_next");
+                hasNextFunc = resolveFunc(iterName + "__has_next");
 
             Value* hasNext = Builder.CreateCall(hasNextFunc, {iteratorObj});
-            Builder.CreateCondBr(hasNext, bodyBB, afterBB);
+            Builder.CreateCondBr(toBool(hasNext), bodyBB, afterBB);
 
             Builder.SetInsertPoint(bodyBB);
-            Function* nextFunc = TheModule->getFunction(iterName + "___next");
+            Function* nextFunc = resolveFunc(iterName + "___next");
             if (!nextFunc)
-                nextFunc = TheModule->getFunction(iterName + "__next");
+                nextFunc = resolveFunc(iterName + "__next");
 
             Value* item = Builder.CreateCall(nextFunc, {iteratorObj});
 

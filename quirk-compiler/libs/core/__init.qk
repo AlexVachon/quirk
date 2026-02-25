@@ -1,8 +1,5 @@
-from .collections.list use {
-    List, ListIterator
-}
-
-from .collections.map use {
+from .collections use {
+    List, ListIterator,
     Map, MapIterator
 }
 

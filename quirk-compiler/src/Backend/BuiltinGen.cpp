@@ -81,23 +81,23 @@ class BuiltinGen {
         // box_* functions return Any* which is registered as a struct
         // We use i8* here and cast at call sites
         auto anyPtrTy = Type::getInt8PtrTy(Context); // placeholder until Any struct is resolved
-        Function::Create(FunctionType::get(anyPtrTy, {i32Ty},     false), Function::ExternalLinkage, "box_int",    TheModule);
-        Function::Create(FunctionType::get(anyPtrTy, {Type::getDoubleTy(Context)}, false), Function::ExternalLinkage, "box_double", TheModule);
-        Function::Create(FunctionType::get(anyPtrTy, {i32Ty},     false), Function::ExternalLinkage, "box_bool",   TheModule);
-        Function::Create(FunctionType::get(anyPtrTy, {i32Ty},     false), Function::ExternalLinkage, "box_char",   TheModule);
-        Function::Create(FunctionType::get(anyPtrTy, {anyPtrTy},  false), Function::ExternalLinkage, "box_string", TheModule);
-        Function::Create(FunctionType::get(anyPtrTy, {anyPtrTy},  false), Function::ExternalLinkage, "box_list",   TheModule);
-        Function::Create(FunctionType::get(anyPtrTy, {anyPtrTy},  false), Function::ExternalLinkage, "box_map",    TheModule);
-        Function::Create(FunctionType::get(anyPtrTy, {anyPtrTy},  false), Function::ExternalLinkage, "box_ptr",    TheModule);
-        Function::Create(FunctionType::get(anyPtrTy, {},           false), Function::ExternalLinkage, "box_null",   TheModule);
+        Function::Create(FunctionType::get(anyPtrTy, {i32Ty},     false), Function::ExternalLinkage, "Core_Primitives_Any_box_int",    TheModule);
+        Function::Create(FunctionType::get(anyPtrTy, {Type::getDoubleTy(Context)}, false), Function::ExternalLinkage, "Core_Primitives_Any_box_double", TheModule);
+        Function::Create(FunctionType::get(anyPtrTy, {i32Ty},     false), Function::ExternalLinkage, "Core_Primitives_Any_box_bool",   TheModule);
+        Function::Create(FunctionType::get(anyPtrTy, {i32Ty},     false), Function::ExternalLinkage, "Core_Primitives_Any_box_char",   TheModule);
+        Function::Create(FunctionType::get(anyPtrTy, {anyPtrTy},  false), Function::ExternalLinkage, "Core_Primitives_Any_box_string", TheModule);
+        Function::Create(FunctionType::get(anyPtrTy, {anyPtrTy},  false), Function::ExternalLinkage, "Core_Primitives_Any_box_list",   TheModule);
+        Function::Create(FunctionType::get(anyPtrTy, {anyPtrTy},  false), Function::ExternalLinkage, "Core_Primitives_Any_box_map",    TheModule);
+        Function::Create(FunctionType::get(anyPtrTy, {anyPtrTy},  false), Function::ExternalLinkage, "Core_Primitives_Any_box_ptr",    TheModule);
+        Function::Create(FunctionType::get(anyPtrTy, {},           false), Function::ExternalLinkage, "Core_Primitives_Any_box_null",   TheModule);
 
-        Function::Create(FunctionType::get(anyPtrTy, {anyPtrTy},  false), Function::ExternalLinkage, "Any_to_string", TheModule);
-        Function::Create(FunctionType::get(anyPtrTy, {anyPtrTy},  false), Function::ExternalLinkage, "Any_to_str",    TheModule);
-        Function::Create(FunctionType::get(anyPtrTy, {anyPtrTy},  false), Function::ExternalLinkage, "Any___str",     TheModule);
-        Function::Create(FunctionType::get(anyPtrTy, {anyPtrTy},  false), Function::ExternalLinkage, "Any_get_type",  TheModule);
-        Function::Create(FunctionType::get(i32Ty,    {anyPtrTy},  false), Function::ExternalLinkage, "Any_to_int",    TheModule);
-        Function::Create(FunctionType::get(Type::getDoubleTy(Context), {anyPtrTy}, false), Function::ExternalLinkage, "Any_to_float", TheModule);
-        Function::Create(FunctionType::get(i32Ty,    {anyPtrTy, anyPtrTy}, false), Function::ExternalLinkage, "Any_isinstance", TheModule);
+        Function::Create(FunctionType::get(anyPtrTy, {anyPtrTy},  false), Function::ExternalLinkage, "Core_Primitives_Any_to_string", TheModule);
+        Function::Create(FunctionType::get(anyPtrTy, {anyPtrTy},  false), Function::ExternalLinkage, "Core_Primitives_Any_to_str",    TheModule);
+        Function::Create(FunctionType::get(anyPtrTy, {anyPtrTy},  false), Function::ExternalLinkage, "Core_Primitives_Any___str",     TheModule);
+        Function::Create(FunctionType::get(anyPtrTy, {anyPtrTy},  false), Function::ExternalLinkage, "Core_Primitives_Any_get_type",  TheModule);
+        Function::Create(FunctionType::get(i32Ty,    {anyPtrTy},  false), Function::ExternalLinkage, "Core_Primitives_Any_to_int",    TheModule);
+        Function::Create(FunctionType::get(Type::getDoubleTy(Context), {anyPtrTy}, false), Function::ExternalLinkage, "Core_Primitives_Any_to_float", TheModule);
+        Function::Create(FunctionType::get(i32Ty,    {anyPtrTy, anyPtrTy}, false), Function::ExternalLinkage, "Core_Primitives_Any_isinstance", TheModule);
     }
 
     bool isBuiltin(const std::string& name) {
@@ -132,9 +132,9 @@ class BuiltinGen {
     Value* generateIntToString(Value* val) {
         // 1. Handle Boolean
         if (val->getType()->isIntegerTy(1)) {
-            Function* f = TheModule->getFunction("Bool_str");
-            if (f)
-                return Builder.CreateCall(f, {val});
+            Value* ext = Builder.CreateZExt(val, Type::getInt32Ty(Context));
+            Function* f = TheModule->getFunction("Core_Primitives_Bool_str");
+            if (f) return Builder.CreateCall(f, {ext});
         }
 
         // 2. Ensure i32 for C calls
@@ -143,7 +143,7 @@ class BuiltinGen {
         }
 
         // 3. Delegate to C Runtime
-        Function* f = TheModule->getFunction("Int_str");
+        Function* f = TheModule->getFunction("Core_Primitives_Int_str");
         if (f) {
             return Builder.CreateCall(f, {val});
         }
@@ -163,12 +163,12 @@ class BuiltinGen {
 
     // --- HELPER: Double to String ---
     Value* generateDoubleToString(Value* val) {
-        Function* f = TheModule->getFunction("Double_str");
+        Function* f = TheModule->getFunction("Core_Primitives_Double_str");
         if (f) {
             return Builder.CreateCall(f, {val});
         }
 
-        Function* f2s = TheModule->getFunction("_float_to_str");
+        Function* f2s = TheModule->getFunction("Core_String_float_to_str");
         if (f2s) {
             Value* rawStr = Builder.CreateCall(f2s, {val});
             std::vector<Value*> ctorArgs = {rawStr};
@@ -178,14 +178,14 @@ class BuiltinGen {
     }
 
     Value* generateStringConcat(Value* L, Value* R) {
-        Function* addFunc = TheModule->getFunction("String___add");
+        Function* addFunc = TheModule->getFunction("Core_String_String___add");
         if (addFunc)
             return Builder.CreateCall(addFunc, {L, R});
         return L;
     }
 
     Value* generateStringCompare(Value* L, Value* R, std::string op) {
-        Function* eqFunc = TheModule->getFunction("String___eq");
+        Function* eqFunc = TheModule->getFunction("Core_String_String___eq");
         if (!eqFunc)
             return ConstantInt::getFalse(Context);
         Value* res = Builder.CreateCall(eqFunc, {L, R});
@@ -230,7 +230,7 @@ class BuiltinGen {
                     }
                 } else if (structName == "Any") {
                     // Any* — dispatch to Any_to_string then print
-                    Function* anyStr = TheModule->getFunction("Any_to_string");
+                    Function* anyStr = TheModule->getFunction("Core_Primitives_Any_to_string");
                     if (anyStr) {
                         Value* strObj = Builder.CreateCall(anyStr, {val});
                         Value* bufPtr = structGen->getMemberPtr(strObj, "buffer");
@@ -275,9 +275,10 @@ class BuiltinGen {
                 
                 // A. 1-bit boolean
                 if (type->getIntegerBitWidth() == 1) {
-                    Function* boolStrFunc = TheModule->getFunction("Bool_str");
+                    Function* boolStrFunc = TheModule->getFunction("Core_Primitives_Bool_str");
                     if (boolStrFunc) {
-                        Value* strObj = Builder.CreateCall(boolStrFunc, {val});
+                        Value* ext = Builder.CreateZExt(val, Type::getInt32Ty(Context));
+                        Value* strObj = Builder.CreateCall(boolStrFunc, {ext});
                         Value* bufPtr = structGen->getMemberPtr(strObj, "buffer");
                         if (bufPtr) {
                             Value* cStr = Builder.CreateLoad(Type::getInt8PtrTy(Context), bufPtr);

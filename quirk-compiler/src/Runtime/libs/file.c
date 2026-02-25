@@ -4,7 +4,7 @@
 #include <string.h>
 
 // Automatically called when you do `f := File("data.txt", "w")`
-void Io_File_File__init(File* self, String* path, String* mode) {
+void Io_File_File___init(File* self, String* path, String* mode) {
     if (!self) return;
     
     char* path_str = (path && path->buffer) ? path->buffer : "";

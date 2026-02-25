@@ -23,6 +23,7 @@
 
 #include "libs/file.c"
 #include "libs/sys.c" 
+#include "libs/net.c"
 
 #include "libs/encoding/json.c"
 #include "libs/encoding/base64.c"

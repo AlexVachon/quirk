@@ -78,31 +78,4 @@ typedef struct {
     void*   ptr;   // String*/List*/Map*/ptr — offset 16, size 8
 } Any;
 
-// ===== CONSTRUCTORS =====
-String* make_String(const char* raw);
-String* make_String_taking_ownership(char* raw_buffer);
-String* String_join(String* self, List* items);
-
-// ===== PRIMITIVES =====
-String* Int_str(int self);
-String* Double_str(double self);
-
-// ===== ANY RUNTIME =====
-Any* box_int(int32_t v);
-Any* box_double(double v);
-Any* box_bool(int32_t v);
-Any* box_char(int32_t v);
-Any* box_string(String* v);
-Any* box_list(List* v);
-Any* box_map(Map* v);
-Any* box_ptr(void* v);
-Any* box_null(void);
-
-String* Any_to_string(Any* a);
-String* Any_to_str(Any* a);
-String* Any_get_type(Any* a);
-int32_t Any_to_int(Any* a);
-double  Any_to_float(Any* a);
-int     Any_isinstance(Any* a, String* type_name);
-
 #endif

@@ -310,10 +310,15 @@ class StructGen {
 
         std::vector<Value*> listArgs;
         int cap = values.empty() ? 1 : values.size();
-        listArgs.push_back(ConstantInt::get(Type::getInt32Ty(Context), cap));
 
+        // [DELETED] This line caused the error!
+        // listArgs.push_back(ConstantInt::get(Type::getInt32Ty(Context), cap)); 
+
+        // Now we call init(self) with NO extra arguments.
         Value* listObj = allocateAndInit("List", listArgs);
 
+        // We manually overwrite data/len/cap below, so the constructor's default
+        // allocation will be safely ignored/overwritten.
         Value* dataPtr = Builder.CreateStructGEP(StructTypes["List"], listObj, 0);
         Builder.CreateStore(buffer, dataPtr);
 

@@ -91,9 +91,9 @@ List* Encoding_Json_Json__parse_array(const char** cursor) {
     (*cursor)++; // Skip '['
     
     List* list = (List*)GC_malloc(sizeof(List));
-    extern void Core_Collections_List_List___init(List*, int);
+    extern void Core_Collections_List_List___init(List*);
     extern void Core_Collections_List_List_append(List*, void*);
-    Core_Collections_List_List___init(list, 4);
+    Core_Collections_List_List___init(list);
 
     Json__skip_whitespace(cursor);
     if (**cursor == ']') {

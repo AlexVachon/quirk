@@ -14,7 +14,7 @@ struct List {
     length: Int   
     capacity: Int 
 
-    extern define __init(self, initial_cap: Int)
+    extern define __init(self)
 
     extern define append(self, item: Any)
     extern define pop(self) -> Any

@@ -52,15 +52,16 @@ define get(url: String) -> Response {
                
     sock.send(request)
     
-    raw_response = ""
+    chunks = List()
     
     while true {
         chunk := sock.recv(4096)
         if chunk.length == 0 {
             break
         }
-        raw_response += chunk
+        chunks.append(chunk)
     }
+    raw_response = "".join(chunks)
     sock.close()
     
     header_end := raw_response.find("\r\n\r\n")

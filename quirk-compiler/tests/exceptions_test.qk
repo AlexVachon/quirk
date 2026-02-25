@@ -20,7 +20,7 @@ define main() -> void {
             throw ProcessError("Nginx", "Port 80 is already in use") from e
         }
     } catch (e: ProcessError) {
-        e.print_traceback()
+        e.traceback()
     } catch (e: Exception) {
         print("Caught generic exception: " + e.message)
     }

@@ -20,7 +20,7 @@ typedef struct {
 
 typedef struct {
     void** data;
-    int length;
+    int size;
     int capacity;
 } List;
 

@@ -6,7 +6,7 @@
 extern void* GC_malloc(size_t);
 
 // Forward Declaration
-void* Encoding_Json_Json__parse_value(const char** cursor);
+void* Encoding_Json__parse_value(const char** cursor);
 
 static void Json__skip_whitespace(const char** cursor) {
     while (isspace(**cursor)) (*cursor)++;
@@ -47,7 +47,7 @@ static char* Json__parse_raw_number(const char** cursor) {
     return buf; 
 }
 
-Map* Encoding_Json_Json__parse_object(const char** cursor) {
+Map* Encoding_Json__parse_object(const char** cursor) {
     (*cursor)++; // Skip '{'
     
     Map* map = (Map*)GC_malloc(sizeof(Map));
@@ -73,7 +73,7 @@ Map* Encoding_Json_Json__parse_object(const char** cursor) {
         if (**cursor == ':') (*cursor)++;
         
         // Map Values are raw C-strings (so 'Any' can auto-box them safely!)
-        void* val = Encoding_Json_Json__parse_value(cursor);
+        void* val = Encoding_Json__parse_value(cursor);
         Core_Collections_Map_Map_put(map, keyObj, val); 
         
         Json__skip_whitespace(cursor);
@@ -87,7 +87,7 @@ Map* Encoding_Json_Json__parse_object(const char** cursor) {
     return map;
 }
 
-List* Encoding_Json_Json__parse_array(const char** cursor) {
+List* Encoding_Json__parse_array(const char** cursor) {
     (*cursor)++; // Skip '['
     
     List* list = (List*)GC_malloc(sizeof(List));
@@ -102,7 +102,7 @@ List* Encoding_Json_Json__parse_array(const char** cursor) {
     }
 
     while (**cursor) {
-        void* val = Encoding_Json_Json__parse_value(cursor);
+        void* val = Encoding_Json__parse_value(cursor);
         Core_Collections_List_List_append(list, val); 
         
         Json__skip_whitespace(cursor);
@@ -116,12 +116,12 @@ List* Encoding_Json_Json__parse_array(const char** cursor) {
     return list;
 }
 
-void* Encoding_Json_Json__parse_value(const char** cursor) {
+void* Encoding_Json__parse_value(const char** cursor) {
     Json__skip_whitespace(cursor);
     
     if (**cursor == '"') return Json__parse_raw_string(cursor);
-    if (**cursor == '{') return Encoding_Json_Json__parse_object(cursor);
-    if (**cursor == '[') return Encoding_Json_Json__parse_array(cursor);
+    if (**cursor == '{') return Encoding_Json__parse_object(cursor);
+    if (**cursor == '[') return Encoding_Json__parse_array(cursor);
     if (isdigit(**cursor) || **cursor == '-') return Json__parse_raw_number(cursor);
     
     if (strncmp(*cursor, "true", 4) == 0) {
@@ -141,8 +141,8 @@ void* Encoding_Json_Json__parse_value(const char** cursor) {
     return NULL;
 }
 
-void* Encoding_Json_Json_parse(String* json_str) {
+void* Encoding_Json_parse(String* json_str) {
     if (!json_str || !json_str->buffer) return NULL;
     const char* cursor = json_str->buffer;
-    return Encoding_Json_Json__parse_value(&cursor);
+    return Encoding_Json__parse_value(&cursor);
 }

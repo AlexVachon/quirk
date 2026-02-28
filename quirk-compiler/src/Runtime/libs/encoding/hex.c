@@ -2,7 +2,7 @@
 
 extern void* GC_malloc(size_t);
 
-String* Encoding_Hex_Hex_encode(String* input) {
+String* Encoding_Hex_encode(String* input) {
     if (!input || !input->buffer || input->length == 0) return make_String("");
     
     size_t in_len = input->length;
@@ -28,7 +28,7 @@ static int hex_val(char c) {
     return 0;
 }
 
-String* Encoding_Hex_Hex_decode(String* input) {
+String* Encoding_Hex_decode(String* input) {
     if (!input || !input->buffer || input->length == 0) return make_String("");
     
     size_t in_len = input->length;

@@ -165,9 +165,16 @@ void Sema::checkFunction(FunctionNode *f)
 
     if (f->returnType == "auto")
     {
+        // No return statement found — default to void
         f->returnType = "void";
-        if (!f->cls.empty())
+        if (!f->cls.empty() && methodRegistry[f->cls].count(f->name))
             methodRegistry[f->cls][f->name]->returnType = "void";
+    }
+    else if (!f->cls.empty() && f->returnType != "void")
+    {
+        // Sync inferred return type back to registry (handles duplicate parsing)
+        if (methodRegistry[f->cls].count(f->name))
+            methodRegistry[f->cls][f->name]->returnType = f->returnType;
     }
 
     exitScope();
@@ -504,6 +511,25 @@ std::string Sema::checkMemberAccess(MemberAccessNode *node)
         std::cerr << "Error: Member '" << node->memberName << "' not found on " << objType << std::endl;
         exit(1);
     }
+    if (type == "method") {
+        std::string mfName = objType + "_" + node->memberName;
+        if (methodRegistry[objType].count(mfName)) {
+            std::string ret = methodRegistry[objType][mfName]->returnType;
+            if (ret.empty() || ret == "auto") return "Any";
+            return ret;
+        }
+        if (structRegistry.count(objType)) {
+            for (const auto& par : structRegistry[objType]->parents) {
+                std::string pf = par + "_" + node->memberName;
+                if (methodRegistry[par].count(pf)) {
+                    std::string ret = methodRegistry[par][pf]->returnType;
+                    if (ret.empty() || ret == "auto") return "Any";
+                    return ret;
+                }
+            }
+        }
+        return "Any";
+    }
     return type;
 }
 
@@ -557,6 +583,70 @@ std::string Sema::checkCall(CallNode *node)
         else if (objType == "char") objType = "Char";
         else if (objType == "cstring" || objType == "string") objType = "String";
 
+        // Builtin method return types for core primitives.
+        // These are defined in Quirk's core library files which may not always
+        // be loaded, so we hard-code their return types here as a fallback to
+        // prevent false type errors (e.g. String.to_int() resolving as 'void').
+        static const std::map<std::string, std::map<std::string, std::string>> builtinMethods = {
+            {"String", {
+                {"to_int",     "Int"},
+                {"to_float",   "Double"},
+                {"to_double",  "Double"},
+                {"lower",      "String"},
+                {"upper",      "String"},
+                {"trim",       "String"},
+                {"strip",      "String"},
+                {"split",      "List"},
+                {"join",       "String"},
+                {"find",       "Int"},
+                {"contains",   "Bool"},
+                {"startswith", "Bool"},
+                {"endswith",   "Bool"},
+                {"replace",    "String"},
+                {"substring",  "String"},
+                {"str",        "String"},
+                {"format",     "String"},
+            }},
+            {"Int", {
+                {"str",        "String"},
+                {"to_float",   "Double"},
+                {"to_double",  "Double"},
+            }},
+            {"Double", {
+                {"str",        "String"},
+                {"to_int",     "Int"},
+            }},
+            {"Bool", {
+                {"str",        "String"},
+            }},
+            {"Char", {
+                {"str",        "String"},
+                {"to_int",     "Int"},
+            }},
+            {"List", {
+                {"get",        "Any"},
+                {"length",     "Int"},
+                {"append",     "void"},
+                {"push",       "void"},
+                {"pop",        "Any"},
+                {"join",       "String"},
+            }},
+            {"Map", {
+                {"get",        "Any"},
+                {"put",        "void"},
+                {"contains",   "Bool"},
+                {"length",     "Int"},
+            }},
+        };
+        auto bmIt = builtinMethods.find(objType);
+        if (bmIt != builtinMethods.end()) {
+            auto mIt = bmIt->second.find(m->memberName);
+            if (mIt != bmIt->second.end()) {
+                // Skip arg type-checking for builtins — their params aren't in the registry.
+                return mIt->second;
+            }
+        }
+
         if (structRegistry.count(objType))
         {
             std::function<std::string(const std::string&)> searchMethod = [&](const std::string& currentType) -> std::string {
@@ -566,12 +656,18 @@ std::string Sema::checkCall(CallNode *node)
                 if (methodRegistry[currentType].count(funcName)) {
                     FunctionNode *func = methodRegistry[currentType][funcName];
 
-                    // Validate argument types against parameters
+                    // Validate argument types against parameters.
+                    // Note: 'self' is already stripped from func->parameters by the parser
+                    // (Parser.cpp erases parameters[0] when name == "self"), so no offset needed.
+                    // Stop early if we hit a variadic parameter — the remaining args are
+                    // bundled into a List at codegen time.
                     for (size_t i = 0; i < node->args.size() && i < func->parameters.size(); ++i) {
+                        if (func->parameters[i].isVariadic) break;
+
                         std::string argType = checkExpression(node->args[i].value.get());
                         const std::string &paramType = func->parameters[i].type;
                         if (!isCompatibleTypes(paramType, argType)) {
-                            std::cerr << "Error: Argument " << i << " of '"
+                            std::cerr << "Error: Argument " << (i + 1) << " of '"
                                       << funcName << "' expected '" << paramType
                                       << "' but got '" << argType << "'" << std::endl;
                             exit(1);
@@ -579,7 +675,8 @@ std::string Sema::checkCall(CallNode *node)
                     }
 
                     std::string ret = func->returnType;
-                    return ret.empty() ? "void" : ret;
+                    if (ret.empty() || ret == "auto") return "Any";
+                    return ret;
                 }
                 
                 for (const std::string& parent : structRegistry[currentType]->parents) {
@@ -735,6 +832,21 @@ std::string Sema::resolveVariable(const std::string &name)
 
 std::string Sema::resolveMember(const std::string &sName, const std::string &mName)
 {
+    // Built-in C-runtime struct fields (from types.h) with no Quirk-side declarations.
+    // str.length, list.size etc. used as bare properties resolve correctly to "Int".
+    static const std::map<std::string, std::map<std::string, std::string>> builtinFields = {
+        {"String", {{"length", "Int"}, {"buffer", "Any"}}},
+        {"List",   {{"size",   "Int"}, {"capacity", "Int"}}},
+        {"Map",    {{"size",   "Int"}, {"capacity", "Int"}}},
+        {"File",   {{"is_open","Bool"}}},
+        {"Any",    {{"tag",    "Int"}, {"ival", "Int"}, {"dval", "Double"}}},
+    };
+    auto bIt = builtinFields.find(sName);
+    if (bIt != builtinFields.end()) {
+        auto fIt = bIt->second.find(mName);
+        if (fIt != bIt->second.end()) return fIt->second;
+    }
+
     std::string lookupName = sName;
     
     if (sName == "int") lookupName = "Int";
@@ -796,7 +908,18 @@ void Sema::checkReturn(ReturnNode *node)
     std::string actual = node->expression ? checkExpression(node->expression.get()) : "void";
     std::string &target = currentFunctionNode->returnType;
 
-    if (target == "auto")
+    // Infer return type from first return statement when no annotation given
+    if (target == "auto" || target.empty())
+    {
+        target = actual;
+        if (!currentFunctionNode->cls.empty())
+            methodRegistry[currentFunctionNode->cls][currentFunctionNode->name]->returnType = actual;
+        return;
+    }
+
+    // "void" here means checkFunction already defaulted it before seeing this return —
+    // treat it as infer-able rather than crashing (handles duplicate file loads)
+    if (target == "void" && actual != "void")
     {
         target = actual;
         if (!currentFunctionNode->cls.empty())

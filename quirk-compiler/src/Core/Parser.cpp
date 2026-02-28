@@ -722,8 +722,15 @@ std::unique_ptr<Node> Parser::parseUse() {
     std::vector<std::string> filters;
 
     auto parsePath = [&]() {
-        while (match(TokenType::DOT)) {
-            path += ".";
+        // Consume leading dots for relative imports (e.g. '.' or '...' or ELLIPSIS)
+        while (peek().type == TokenType::DOT || peek().type == TokenType::ELLIPSIS) {
+            if (peek().type == TokenType::ELLIPSIS) {
+                advance();
+                path += "...";
+            } else {
+                advance();
+                path += ".";
+            }
         }
         if (peek().type == TokenType::IDENTIFIER) {
             path += advance().value;

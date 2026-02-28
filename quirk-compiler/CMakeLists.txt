@@ -1,8 +1,8 @@
 # 1. Configure the project and download/compile dependencies
-# cmake -B build -S . -DCMAKE_TOOLCHAIN_FILE=./vcpkg/scripts/buildsystems/vcpkg.cmake
+# bash setup.sh
 
-# 2. Compile Quirk! (This replaces your 'make' command)
-# cmake --build build
+# 2. Or manually:
+# cmake -B build -S . && cmake --build build
 
 
 cmake_minimum_required(VERSION 3.15)
@@ -18,13 +18,15 @@ include_directories(${LLVM_INCLUDE_DIRS})
 add_definitions(${LLVM_DEFINITIONS})
 llvm_map_components_to_libnames(llvm_libs core orcjit native)
 
-# 2. Find our vcpkg dependencies
-find_package(CURL REQUIRED)
-# --- FIX: Match the exact capitalization exported by the library ---
-find_package(BDWgc CONFIG REQUIRED)
+# 2. Find all deps via pkg-config (installed via apt)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(CURL REQUIRED libcurl)
+pkg_check_modules(BDWGC REQUIRED bdw-gc)
 
 # 3. Include local headers
 include_directories(include)
+include_directories(${CURL_INCLUDE_DIRS})
+include_directories(${BDWGC_INCLUDE_DIRS})
 
 # 4. Define C++ source files
 set(QUIRK_SOURCES
@@ -37,17 +39,17 @@ set(QUIRK_SOURCES
 
 # 5. Build the Compiler Executable (bin/quirk)
 add_executable(quirk ${QUIRK_SOURCES})
-# --- FIX: Link against BDWgc::gc ---
-target_link_libraries(quirk PRIVATE ${llvm_libs} CURL::libcurl BDWgc::gc)
+target_link_libraries(quirk PRIVATE ${llvm_libs} ${CURL_LIBRARIES} ${BDWGC_LIBRARIES})
+target_link_directories(quirk PRIVATE ${CURL_LIBRARY_DIRS} ${BDWGC_LIBRARY_DIRS})
 
 # 6. Build the C Runtime Library (bin/runtime.so)
 add_library(runtime SHARED src/Runtime/runtime.c)
-# --- FIX: Link against BDWgc::gc ---
-target_link_libraries(runtime PRIVATE BDWgc::gc CURL::libcurl)
-set_target_properties(runtime PROPERTIES PREFIX "") 
+target_link_libraries(runtime PRIVATE ${BDWGC_LIBRARIES} ${CURL_LIBRARIES})
+target_link_directories(runtime PRIVATE ${CURL_LIBRARY_DIRS} ${BDWGC_LIBRARY_DIRS})
+set_target_properties(runtime PROPERTIES PREFIX "")
 
 # 7. Output everything directly to the bin/ directory
-set_target_properties(quirk runtime PROPERTIES 
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/bin" 
+set_target_properties(quirk runtime PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/bin"
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/bin"
 )

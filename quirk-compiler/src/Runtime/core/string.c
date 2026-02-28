@@ -118,7 +118,7 @@ static void append_formatted(char** buf,
 static int find_key_index(List* keys, const char* key_name) {
     if (!keys || !keys->data)
         return -1;
-    for (int i = 0; i < keys->length; i++) {
+    for (int i = 0; i < keys->size; i++) {
         String* kObj = (String*)keys->data[i];
         if (kObj && kObj->buffer && strcmp(kObj->buffer, key_name) == 0) {
             return i;
@@ -531,7 +531,7 @@ String* Core_String_String_substring(String* self, int start, int end) {
 List* Core_String_String_split(String* self, String* delim) {
     if (!self || !self->buffer) {
         List* empty = (List*)malloc(sizeof(List));
-        empty->length = 0;
+        empty->size = 0;
         empty->capacity = 0;
         empty->data = NULL;
         return empty;
@@ -554,7 +554,7 @@ List* Core_String_String_split(String* self, String* delim) {
     }
 
     List* list = (List*)malloc(sizeof(List));
-    list->length = 0;
+    list->size = 0;
     list->capacity = count;
     list->data = (void**)malloc(sizeof(void*) * count);
 
@@ -562,7 +562,7 @@ List* Core_String_String_split(String* self, String* delim) {
         // Split into chars
         for (int i = 0; i < self->length; i++) {
             char buf[2] = {self->buffer[i], '\0'};
-            list->data[list->length++] = make_String(buf);
+            list->data[list->size++] = make_String(buf);
         }
         return list;
     }
@@ -574,11 +574,11 @@ List* Core_String_String_split(String* self, String* delim) {
         char* part = (char*)malloc(part_len + 1);
         strncpy(part, src, part_len);
         part[part_len] = '\0';
-        list->data[list->length++] = make_String_taking_ownership(part);
+        list->data[list->size++] = make_String_taking_ownership(part);
         src = found + sep_len;
     }
     // Remainder after last delimiter
-    list->data[list->length++] = make_String(src);
+    list->data[list->size++] = make_String(src);
     return list;
 }
 
@@ -586,7 +586,7 @@ String* Core_String_String_join(String* self, List* items) {
     if (!items || !self || !self->buffer)
         return make_String("");
     int total_len = 0;
-    for (int i = 0; i < items->length; i++) {
+    for (int i = 0; i < items->size; i++) {
         void* item = items->data[i];
         uintptr_t val = (uintptr_t)item;
         if (val <= MAX_SMALL_INT) {
@@ -597,13 +597,13 @@ String* Core_String_String_join(String* self, List* items) {
             if (s && s->buffer)
                 total_len += s->length;
         }
-        if (i < items->length - 1)
+        if (i < items->size - 1)
             total_len += self->length;
     }
     char* result = (char*)malloc(total_len + 1);
     char* ptr = result;
     *ptr = '\0';
-    for (int i = 0; i < items->length; i++) {
+    for (int i = 0; i < items->size; i++) {
         void* item = items->data[i];
         uintptr_t val = (uintptr_t)item;
         if (val <= MAX_SMALL_INT) {
@@ -615,7 +615,7 @@ String* Core_String_String_join(String* self, List* items) {
                 ptr += s->length;
             }
         }
-        if (i < items->length - 1) {
+        if (i < items->size - 1) {
             memcpy(ptr, self->buffer, self->length);
             ptr += self->length;
         }
@@ -766,7 +766,7 @@ List* Core_String_String_lines(String* self) {
         ptr++;
     }
     List* list = (List*)malloc(sizeof(List));
-    list->length = 0;
+    list->size = 0;
     list->capacity = count;
     list->data = (void**)malloc(sizeof(void*) * count);
     char* start = self->buffer;
@@ -777,7 +777,7 @@ List* Core_String_String_lines(String* self) {
             char* line = (char*)malloc(len + 1);
             strncpy(line, start, len);
             line[len] = '\0';
-            list->data[list->length++] = make_String_taking_ownership(line);
+            list->data[list->size++] = make_String_taking_ownership(line);
             if (*ptr == '\r' && *(ptr + 1) == '\n')
                 ptr++;
             start = ptr + 1;
@@ -789,7 +789,7 @@ List* Core_String_String_lines(String* self) {
         char* line = (char*)malloc(len + 1);
         strncpy(line, start, len);
         line[len] = '\0';
-        list->data[list->length++] = make_String_taking_ownership(line);
+        list->data[list->size++] = make_String_taking_ownership(line);
     }
     return list;
 }
@@ -867,7 +867,7 @@ String* Core_String_String_format_map(String* self, List* keys, List* values) {
                 strncpy(key_name, ptr + 1, key_len);
                 key_name[key_len] = '\0';
                 int idx = find_key_index(keys, key_name);
-                if (idx != -1 && idx < values->length) {
+                if (idx != -1 && idx < values->size) {
                     void* val = values->data[idx];
                     // If the value looks like a valid Any* (tag in known
                     // range), use append_formatted. Otherwise treat it as a raw
@@ -927,7 +927,7 @@ String* Core_String_String_format_list(String* self, List* args) {
                         fmt_spec = spec_buffer;
                     }
                 }
-                if (arg_idx < args->length) {
+                if (arg_idx < args->size) {
                     append_formatted(&res, &cap, &len, args->data[arg_idx++],
                                      fmt_spec);
                 }

@@ -11,7 +11,7 @@ struct ListIterator {
 
 struct List {
     data: Any
-    length: Int   
+    size: Int   
     capacity: Int 
 
     extern define __init(self)

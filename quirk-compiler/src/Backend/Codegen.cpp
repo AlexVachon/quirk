@@ -126,6 +126,18 @@ class LLVMCodegen {
         for (const auto& node : nodes) {
             if (auto func = dynamic_cast<FunctionNode*>(node.get())) {
                 functionDeclarations[func->name] = func;
+
+                // --- NEW: Register variadic functions (params declared as ...name: List) ---
+                // We check if any parameter name starts with "..." which is how the parser
+                // marks spread/variadic parameters (e.g. `...args: List`).
+                for (const auto& param : func->parameters) {
+                    if (param.isVariadic) {
+                        variadicFunctions[func->name] = true;
+                        if (verbose) std::cerr << "[Codegen]   Registered variadic function: " << func->name << "\n";
+                        break;
+                    }
+                }
+                // --------------------------------------------------------------------------
                 
                 if (func->name == "main" || builtinGen->isBuiltin(func->name)) continue;
                 if (verbose) std::cerr << "[Codegen]   Declaring prototype: " << func->name << "\n";
@@ -149,6 +161,16 @@ class LLVMCodegen {
                 // --- NEW: LINKAGE NAME INJECTION ---
                 std::string llvmName = func->linkageName.empty() ? func->name : func->linkageName;
                 Function::Create(FT, Function::ExternalLinkage, llvmName, TheModule.get());
+
+                // --- NEW: Also register variadic functions by their LLVM linkage name ---
+                // processCallArgs looks up by func->getName().str() which returns the LLVM
+                // name (e.g. "Core_String_String_format"), not the Quirk name ("format").
+                // Both must be in the map for the lookup on line 556 to work correctly.
+                if (variadicFunctions.count(func->name) && !llvmName.empty() && llvmName != func->name) {
+                    variadicFunctions[llvmName] = true;
+                    if (verbose) std::cerr << "[Codegen]   Registered variadic LLVM name: " << llvmName << "\n";
+                }
+                // ------------------------------------------------------------------------
 
                 // Populate structInitMap so StructGen can find renamed extern __init.
                 // e.g. String__init in libs/core/string.qk -> "Core_String_String___init"
@@ -271,8 +293,13 @@ class LLVMCodegen {
             FunctionCallee popFrame = TheModule->getOrInsertFunction("quirk_pop_frame", Type::getVoidTy(Context));
             Builder.CreateCall(popFrame);
             
-            if (F->getReturnType()->isVoidTy()) Builder.CreateRetVoid();
-            else Builder.CreateRet(ConstantInt::get(Type::getInt32Ty(Context), 0));
+            Type* retTy = F->getReturnType();
+            if (retTy->isVoidTy())
+                Builder.CreateRetVoid();
+            else if (retTy->isIntegerTy(32))
+                Builder.CreateRet(ConstantInt::get(retTy, 0));
+            else
+                Builder.CreateRet(UndefValue::get(retTy));
         }
         // -------------------------------------------------------
 
@@ -518,7 +545,47 @@ class LLVMCodegen {
             }
             // -----------------------------
 
+                        // --- METHOD ALIAS TABLE ---
+            // Maps Quirk method names to their actual LLVM function names.
+            // Needed when the Quirk name differs from the compiled name
+            // (e.g. Exception.traceback() -> Exception_print_traceback).
             if (!func) {
+                static const std::map<std::string, std::map<std::string, std::string>> methodAliases = {
+                    {"Exception", {
+                        {"traceback", "Exception_print_traceback"},
+                    }},
+                };
+                auto typeIt = methodAliases.find(typeName);
+                if (typeIt != methodAliases.end()) {
+                    auto aliasIt = typeIt->second.find(member->memberName);
+                    if (aliasIt != typeIt->second.end()) {
+                        func = TheModule->getFunction(aliasIt->second);
+                    }
+                }
+                // Also search parent types for the alias
+                if (!func && structHierarchy.count(typeName)) {
+                    for (const auto& parent : structHierarchy[typeName]) {
+                        auto parentIt = methodAliases.find(parent);
+                        if (parentIt != methodAliases.end()) {
+                            auto aliasIt = parentIt->second.find(member->memberName);
+                            if (aliasIt != parentIt->second.end()) {
+                                func = TheModule->getFunction(aliasIt->second);
+                                if (func) break;
+                            }
+                        }
+                    }
+                }
+            }
+            // --------------------------
+
+            if (!func) {
+                // Fallback: if the name is an actual struct field (e.g. str.length()),
+                // return the field value directly. This handles field-as-method calls.
+                // Only do this when objPtr is known and the field exists in structLayouts.
+                if (objPtr) {
+                    Value* fieldVal = structGen->generateMemberAccess(objPtr, member->memberName);
+                    if (fieldVal) return fieldVal;
+                }
                 if (verbose) std::cerr << "[Codegen] WARNING: method '" << typeName << "." << member->memberName << "' not found in module — returning nullptr\n";
                 return nullptr;
             }
@@ -1199,9 +1266,12 @@ class LLVMCodegen {
 
         for (const auto& stmt : node->body) handleStatement(stmt.get(), parentFunc);
 
-        std::string exitName = typeName + "___exit";
-        Function* exitFunc = TheModule->getFunction(exitName);
-        if (exitFunc) Builder.CreateCall(exitFunc, {resource});
+        // Only emit __exit cleanup if the body didn't already terminate (e.g. via return)
+        if (!Builder.GetInsertBlock()->getTerminator()) {
+            std::string exitName = typeName + "___exit";
+            Function* exitFunc = TheModule->getFunction(exitName);
+            if (exitFunc) Builder.CreateCall(exitFunc, {resource});
+        }
     }
 };
 
@@ -1319,16 +1389,25 @@ Value* LLVMCodegen::handleExpression(Node* node) {
                         // ... (keep __str call logic) ...
                         std::string sName = st->getName().str();
                         if (sName.find("struct.") == 0) sName = sName.substr(7);
+                        // Try short name first, then search all functions for a matching ___str
                         Function* strFunc = TheModule->getFunction(sName + "___str");
+                        if (!strFunc) {
+                            // Search module for any function ending in <StructName>___str
+                            std::string suffix = sName + "___str";
+                            for (auto& F : *TheModule) {
+                                if (F.getName().endswith(suffix)) { strFunc = &F; break; }
+                            }
+                        }
                         if (strFunc) {
                             Value* ret = Builder.CreateCall(strFunc, {val});
-                            // ... (keep logic) ...
                             if (ret->getType()->isPointerTy() && ret->getType()->getPointerElementType()->isIntegerTy(8)) {
                                 std::vector<Value*> boxArgs = {ret};
                                 return structGen->allocateAndInit("String", boxArgs);
                             }
                             return ret;
                         }
+                        // Last resort: call GC_malloc + init an empty string
+                        return structGen->allocateAndInit("String", std::vector<Value*>{Builder.CreateGlobalStringPtr("[object]")});
                     }
                     
                     // --- FIX 1: Treat Any (i8*) as String Object (Cast), NOT C-String (Construct) ---
@@ -1355,6 +1434,30 @@ Value* LLVMCodegen::handleExpression(Node* node) {
                 if (strL && strR) {
                     Function* addFunc = TheModule->getFunction("Core_String_String___add");
                     if (addFunc) return Builder.CreateCall(addFunc, {strL, strR});
+                }
+                // If makeString failed for one side, don't fall through to integer add
+                return nullptr;
+            }
+        }
+        // String == / != should call ___eq, not icmp eq on pointers
+        if ((binOp->op == "==" || binOp->op == "!=") &&
+            L->getType()->isPointerTy() && R->getType()->isPointerTy()) {
+            Type* elTy = L->getType()->getPointerElementType();
+            if (elTy->isStructTy()) {
+                std::string sName = cast<StructType>(elTy)->getName().str();
+                if (sName.find("struct.") == 0) sName = sName.substr(7);
+                // Find <Type>___eq by searching module for matching suffix
+                Function* eqFunc = TheModule->getFunction(sName + "___eq");
+                if (!eqFunc) {
+                    std::string suffix = sName + "___eq";
+                    for (auto& F : *TheModule)
+                        if (F.getName().endswith(suffix)) { eqFunc = &F; break; }
+                }
+                if (eqFunc) {
+                    Value* eq = Builder.CreateCall(eqFunc, {L, R}, "str_eq");
+                    if (binOp->op == "!=")
+                        eq = Builder.CreateNot(eq, "str_ne");
+                    return eq;
                 }
             }
         }

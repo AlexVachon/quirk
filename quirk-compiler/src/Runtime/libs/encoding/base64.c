@@ -5,7 +5,7 @@ extern void* GC_malloc(size_t);
 
 static const char base64_table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-String* Encoding_Base64_Base64_encode(String* input) {
+String* Encoding_Base64_encode(String* input) {
     if (!input || !input->buffer || input->length == 0) return make_String("");
     
     size_t in_len = input->length;
@@ -46,7 +46,7 @@ static int b64_index(char c) {
     return -1;
 }
 
-String* Encoding_Base64_Base64_decode(String* input) {
+String* Encoding_Base64_decode(String* input) {
     if (!input || !input->buffer || input->length == 0) return make_String("");
     
     size_t in_len = input->length;

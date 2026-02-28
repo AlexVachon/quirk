@@ -78,7 +78,7 @@ class StructGen {
         return Builder.CreateCall(strFunc, {castedSelf}, "str_res");
     }
 
-    Value* allocateAndInit(const std::string& name, std::vector<Value*>& args) {
+    Value* allocateAndInit(const std::string& name, std::vector<Value*> args) {
         if (!StructTypes.count(name)) {
             std::cerr << "Error: Unknown struct " << name << std::endl;
             return nullptr;

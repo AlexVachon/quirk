@@ -4,27 +4,27 @@ set -e  # Stop on first error
 
 echo "Updating system packages..."
 sudo apt-get update
-sudo apt-get install -y cmake pkg-config zip unzip tar git
+sudo apt-get install -y \
+    cmake \
+    pkg-config \
+    zip unzip tar git \
+    libcurl4-openssl-dev \
+    libgc-dev \
+    llvm-14 \
+    libllvm14 \
+    llvm-14-dev
 
-# Clone vcpkg if it doesn't exist
-if [ ! -d "vcpkg" ]; then
-    echo "Cloning vcpkg..."
-    git clone https://github.com/microsoft/vcpkg.git
-else
-    echo "vcpkg already exists, skipping clone."
-fi
+# Wipe old build dir to avoid stale CMake cache
+echo "Cleaning old build..."
+rm -rf build
 
-# Bootstrap vcpkg
-echo "Bootstrapping vcpkg..."
-./vcpkg/bootstrap-vcpkg.sh
-
-# Configure project with CMake
+# Configure project with CMake (no vcpkg — all deps from apt)
 echo "Configuring project..."
-cmake -B build -S . \
-    -DCMAKE_TOOLCHAIN_FILE=./vcpkg/scripts/buildsystems/vcpkg.cmake
+cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
 
 # Build project
 echo "Building project..."
 cmake --build build -j$(nproc)
 
-echo "Setup complete!"
+echo ""
+echo "Setup complete! Binary is at ./bin/quirk"

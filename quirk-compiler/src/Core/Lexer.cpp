@@ -216,6 +216,11 @@ Token Lexer::nextToken()
     }
 
     // 5. Multi-character Operators
+    // Ellipsis '...' must be checked before single DOT
+    if (c == '.' && peek(1) == '.' && peek(2) == '.') {
+        advance(); advance(); advance();
+        return {TokenType::ELLIPSIS, "...", line};
+    }
     if (c == ':' && peek(1) == '=') {
         advance(); advance();
         return {TokenType::ASSIGN_INIT, ":=", line};

@@ -19,7 +19,7 @@ void Core_Collections_List_ListIterator___init(ListIterator* self, List* l) {
 int Core_Collections_List_ListIterator___has_next(ListIterator* self) {
     // Fast fail checks
     if (!self || !self->list_ref) return 0;
-    return self->idx < self->list_ref->length;
+    return self->idx < self->list_ref->size;
 }
 
 void* Core_Collections_List_ListIterator___next(ListIterator* self) {
@@ -37,7 +37,7 @@ void* Core_Collections_List_ListIterator___next(ListIterator* self) {
 // OPTIMIZED: Removed 'initial_cap' argument to support 'List()' constructor calls
 // from the compiler. Sets a sensible default capacity.
 void Core_Collections_List_List___init(List* self) {
-    self->length = 0;
+    self->size = 0;
     self->capacity = DEFAULT_CAPACITY;
     self->data = (void**)malloc(sizeof(void*) * self->capacity);
     
@@ -52,7 +52,7 @@ void Core_Collections_List_List___del(List* self) {
         free(self->data);
         self->data = NULL;
     }
-    self->length = 0;
+    self->size = 0;
     self->capacity = 0;
 }
 
@@ -81,33 +81,33 @@ void Core_Collections_List_List_ensure_capacity(List* self, int min_capacity) {
 
 void Core_Collections_List_List_append(List* self, void* item) {
     // Amortized O(1) growth
-    if (self->length == self->capacity) {
+    if (self->size == self->capacity) {
         List__resize(self, self->capacity * GROWTH_FACTOR);
     }
-    self->data[self->length++] = item;
+    self->data[self->size++] = item;
 }
 
 void* Core_Collections_List_List_pop(List* self) {
-    if (self->length == 0) return 0;
+    if (self->size == 0) return 0;
     
-    self->length--;
-    return self->data[self->length];
+    self->size--;
+    return self->data[self->size];
     // Note: We do NOT shrink the array here.
     // Keeping the capacity high makes future appends faster.
 }
 
 // Inline candidate (if LTO enabled)
 int Core_Collections_List_List_length(List* self) {
-    return self->length;
+    return self->size;
 }
 
 void Core_Collections_List_List_clear(List* self) {
     // Fast clear: just reset length. O(1).
-    self->length = 0;
+    self->size = 0;
 }
 
 int Core_Collections_List_List_is_empty(List* self) {
-    return self->length == 0;
+    return self->size == 0;
 }
 
 // ==========================================
@@ -123,20 +123,20 @@ ListIterator* Core_Collections_List_List___iter(List* self) {
 
 void* Core_Collections_List_List___get(List* self, int index) {
     // Handle negative indexing (Python-style)
-    if (index < 0) index += self->length;
+    if (index < 0) index += self->size;
 
     // Bounds check
-    if (index < 0 || index >= self->length) {
-        printf("IndexError: list index out of range (index: %d, len: %d)\n", index, self->length);
+    if (index < 0 || index >= self->size) {
+        printf("IndexError: list index out of range (index: %d, len: %d)\n", index, self->size);
         exit(1);
     }
     return self->data[index];
 }
 
 void Core_Collections_List_List___set(List* self, int index, void* item) {
-    if (index < 0) index += self->length;
+    if (index < 0) index += self->size;
 
-    if (index < 0 || index >= self->length) {
+    if (index < 0 || index >= self->size) {
         printf("IndexError: list assignment index out of range\n");
         exit(1);
     }
@@ -152,7 +152,7 @@ extern String* make_String_taking_ownership(char*);
 extern String* make_String(const char*);
 
 String* Core_Collections_List_List___repr(List* self) {
-    if (self->length == 0) {
+    if (self->size == 0) {
         return make_String("[]");
     }
 

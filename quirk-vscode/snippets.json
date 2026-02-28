@@ -3,17 +3,37 @@
         "prefix": "---",
         "body": [
             "---",
-            "${1:Description of the function.}",
+            "${1:Brief description of what this does.}",
             "",
             "@param :",
             "- **${2:param1}** ${3:Description.}",
-            "@returns **${4:void}**",
+            "",
+            "@returns ${4:Description of the return value.}",
             "---"
         ],
-        "description": "Generate a Quirk docstring template"
+        "description": "Insert a Quirk docstring block"
     },
-    "Definition": {
-        "prefix": "def",
+
+    "Docstring with Example": {
+        "prefix": "---ex",
+        "body": [
+            "---",
+            "${1:Brief description.}",
+            "",
+            "@param :",
+            "- **${2:param1}** ${3:Description.}",
+            "",
+            "@returns ${4:Return description.}",
+            "",
+            "@example",
+            "${5:// Example usage}",
+            "---"
+        ],
+        "description": "Insert a Quirk docstring block with an example section"
+    },
+
+    "Function Definition": {
+        "prefix": "define",
         "body": [
             "define ${1:name}(${2:args}) -> ${3:void} {",
             "\t$0",
@@ -21,15 +41,55 @@
         ],
         "description": "Define a new function"
     },
-    "Struct": {
+
+    "Function with Docstring": {
+        "prefix": "defn",
+        "body": [
+            "---",
+            "${1:Description.}",
+            "@param :",
+            "- **${2:param}** ${3:Description.}",
+            "@returns ${4:void}",
+            "---",
+            "define ${5:name}(${6:${2}: ${7:Type}}) -> ${4:void} {",
+            "\t$0",
+            "}"
+        ],
+        "description": "Define a function with a docstring"
+    },
+
+    "Struct Definition": {
         "prefix": "struct",
         "body": [
             "struct ${1:Name} {",
-            "\t${2:field}: ${3:type}",
+            "\t${2:field}: ${3:Type}",
+            "",
+            "\t---",
+            "\tConstructor for ${1:Name}.",
+            "\t@param :",
+            "\t- **${2:field}** The ${2:field} value.",
+            "\t---",
+            "\tdefine __init(self, ${2:field}: ${3:Type}) -> void {",
+            "\t\tself.${2:field} = ${2:field}",
+            "\t}",
             "}"
         ],
-        "description": "Define a new struct"
+        "description": "Define a struct with an __init method"
     },
+
+    "Struct with Inheritance": {
+        "prefix": "structx",
+        "body": [
+            "struct ${1:Name} : ${2:Parent} {",
+            "\tdefine __init(self) -> void {",
+            "\t\tsuper().__init(${3:args})",
+            "\t\t$0",
+            "\t}",
+            "}"
+        ],
+        "description": "Define a struct that inherits from another"
+    },
+
     "If Statement": {
         "prefix": "if",
         "body": [
@@ -39,23 +99,110 @@
         ],
         "description": "If statement"
     },
-    "Use": {
+
+    "If-Else": {
+        "prefix": "ife",
+        "body": [
+            "if ${1:condition} {",
+            "\t$0",
+            "} else {",
+            "\t",
+            "}"
+        ],
+        "description": "If-else statement"
+    },
+
+    "For Loop": {
+        "prefix": "for",
+        "body": [
+            "for ${1:item} in ${2:iterable} {",
+            "\t$0",
+            "}"
+        ],
+        "description": "For-in loop"
+    },
+
+    "While Loop": {
+        "prefix": "while",
+        "body": [
+            "while ${1:condition} {",
+            "\t$0",
+            "}"
+        ],
+        "description": "While loop"
+    },
+
+    "Try-Catch": {
+        "prefix": "try",
+        "body": [
+            "try {",
+            "\t$0",
+            "} catch (${1:e}: ${2:Exception}) {",
+            "\tprint(\"Error: \" + ${1:e}.message)",
+            "}"
+        ],
+        "description": "Try-catch exception handling"
+    },
+
+    "Try-Catch-Rethrow": {
+        "prefix": "tryr",
+        "body": [
+            "try {",
+            "\t$0",
+            "} catch (${1:e}: ${2:Exception}) {",
+            "\tthrow ${3:Exception}(${1:e}.message) from ${1:e}",
+            "}"
+        ],
+        "description": "Try-catch with exception chaining"
+    },
+
+    "With (Context Manager)": {
+        "prefix": "with",
+        "body": [
+            "with ${1:File(\"${2:path}\", \"${3:r}\")} as ${4:f} {",
+            "\t$0",
+            "}"
+        ],
+        "description": "Context-managed block"
+    },
+
+    "Use Import": {
         "prefix": "use",
         "body": "use ${1:core.sys}",
         "description": "Import a module"
     },
-    "Main": {
+
+    "Destructure Import": {
+        "prefix": "from",
+        "body": "from ${1:module} use { ${2:symbol} }",
+        "description": "Destructuring import"
+    },
+
+    "Main Function": {
         "prefix": "main",
         "body": [
             "define main() -> void {",
             "\t$0",
             "}"
         ],
-        "description": "Main function entry point"
+        "description": "Main entry point"
     },
+
     "Print": {
         "prefix": "print",
-        "body": "print(${1:message})",
+        "body": "print(${1:value})",
         "description": "Print to console"
+    },
+
+    "Print interpolated": {
+        "prefix": "printi",
+        "body": "print(\"${1:label}: ${2:${3:value}}\")",
+        "description": "Print with string interpolation"
+    },
+
+    "Throw Exception": {
+        "prefix": "throw",
+        "body": "throw ${1:Exception}(\"${2:message}\")",
+        "description": "Throw an exception"
     }
 }

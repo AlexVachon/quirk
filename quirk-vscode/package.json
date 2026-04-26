@@ -2,7 +2,7 @@
   "name": "quirk",
   "displayName": "Quirk",
   "description": "Language support for Quirk",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "engines": {
     "vscode": "^1.75.0"
   },
@@ -14,13 +14,8 @@
     "languages": [
       {
         "id": "quirk",
-        "aliases": [
-          "Quirk",
-          "quirk"
-        ],
-        "extensions": [
-          ".qk"
-        ],
+        "aliases": ["Quirk", "quirk"],
+        "extensions": [".qk"],
         "configuration": "./language-configuration.json",
         "icon": {
           "light": "./icons/icon.svg",
@@ -39,6 +34,77 @@
       {
         "language": "quirk",
         "path": "./snippets.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "quirk.runFile",
+        "title": "Quirk: Run File",
+        "icon": "$(play)"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "quirk.runFile",
+        "key": "ctrl+f5",
+        "mac": "cmd+f5",
+        "when": "editorLangId == quirk"
+      }
+    ],
+    "menus": {
+      "editor/title/run": [
+        {
+          "command": "quirk.runFile",
+          "when": "editorLangId == quirk",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Quirk",
+      "properties": {
+        "quirk.compilerPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the quirk compiler binary. Leave empty to auto-detect from QUIRK_HOME or PATH."
+        },
+        "quirk.quirkHome": {
+          "type": "string",
+          "default": "",
+          "description": "Path to QUIRK_HOME (directory containing bin/ and libs/). Leave empty to use the QUIRK_HOME environment variable."
+        }
+      }
+    },
+    "problemMatchers": [
+      {
+        "name": "quirk",
+        "owner": "quirk",
+        "fileLocation": ["absolute"],
+        "pattern": [
+          {
+            "regexp": "^\\[ERROR\\]\\s+(.*)$",
+            "message": 1
+          },
+          {
+            "regexp": "^ --> (.+):(\\d+):(\\d+)\\s*$",
+            "file": 1,
+            "line": 2,
+            "column": 3
+          }
+        ],
+        "severity": "error"
+      }
+    ],
+    "taskDefinitions": [
+      {
+        "type": "quirk",
+        "required": ["file"],
+        "properties": {
+          "file": {
+            "type": "string",
+            "description": "The .qk file to compile and run."
+          }
+        }
       }
     ]
   },

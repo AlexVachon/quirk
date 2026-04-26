@@ -132,13 +132,14 @@ export class QuirkHoverProvider implements vscode.HoverProvider {
                 let lineNum = def.range.start.line - 1;
                 let readingDocBlock = false;
                 while (lineNum >= 0) {
-                    const t = targetDoc.lineAt(lineNum).text.trim();
+                    const rawLine = targetDoc.lineAt(lineNum).text;
+                    const t = rawLine.trim();
                     if (!readingDocBlock) {
                         if (t === '---') { readingDocBlock = true; }
                         else if (t !== '') { break; }
                     } else {
                         if (t === '---') { break; }
-                        else { docstring.unshift(t); }
+                        else { docstring.unshift(rawLine); }
                     }
                     lineNum--;
                 }

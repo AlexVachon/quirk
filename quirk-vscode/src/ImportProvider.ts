@@ -2,16 +2,15 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 
-// --- FILES AUTOMATICALLY LOADED BY THE COMPILER (PRELUDE) ---
 const PRELUDE_MODULES = [
     'core/__init.qk',
     'core/string.qk',
-    'core/primitives.qk',       
+    'core/primitives.qk',
     'core/exceptions/base.qk',
     'core/exceptions/__init.qk',
     'core/types.qk',
-    'core/collections/list.qk', 
-    'core/collections/map.qk', 
+    'core/collections/list.qk',
+    'core/collections/map.qk',
     'sys/__init.qk'
 ];
 
@@ -25,50 +24,57 @@ export class QuirkDefinitionProvider implements vscode.DefinitionProvider {
     public provideDefinition(
         document: vscode.TextDocument,
         position: vscode.Position,
-        token: vscode.CancellationToken
+        _token: vscode.CancellationToken
     ): vscode.ProviderResult<vscode.Definition> {
         const currentFilePath = document.uri.fsPath;
         const projectRoot = this.findProjectRoot(currentFilePath);
         const lineText = document.lineAt(position).text;
-        
+
         const range = document.getWordRangeAtPosition(position, /[a-zA-Z0-9_]+/);
         if (!range) return null;
 
         const symbol = document.getText(range);
-        this.outputChannel.appendLine(`\n[Definition] Request for symbol: "${symbol}"`);
 
         // =========================================================
         // 0. SUPER() METHOD CALL
         // =========================================================
-        const prefix = lineText.substring(0, range.start.character).trim();
-        const superRegex = new RegExp(`super\\(\\)\\s*\\.\\s*${symbol}\\b`);
-        
-        if (prefix.endsWith('super().') || superRegex.test(lineText)) {
-            this.outputChannel.appendLine(`[Definition] Detected super() call for method: "${symbol}"`);
-            const superLoc = this.findSuperMethod(document, position, symbol, projectRoot);
-            if (superLoc) return superLoc;
-            this.outputChannel.appendLine(`[Definition] Failed to resolve super() parent.`);
+        if (lineText.substring(0, range.start.character).trimEnd().endsWith('super().')) {
+            const loc = this.findSuperMethod(document, position, symbol, projectRoot);
+            if (loc) return loc;
         }
 
         // =========================================================
-        // 1. IMPORT LINE
+        // 1. IMPORT LINE — clicking on the module path or a named import,
+        //    OR using an imported symbol elsewhere in the file
         // =========================================================
         const importLocation = this.findImportLineInCurrentFile(document, symbol);
         if (importLocation) {
-            if (position.line === importLocation.range.start.line) {
-                const importMatch = /^\s*(?:use|from)\s+([.a-zA-Z0-9_/]+)/.exec(lineText);
-                if (importMatch && range.start.character >= lineText.indexOf(importMatch[1])) {
-                     if (symbol === importMatch[1].split(/[\.\/]/).pop()) {
-                         const file = this.resolvePath(projectRoot, currentFilePath, importMatch[1]);
-                         if (file) return new vscode.Location(vscode.Uri.file(file), new vscode.Position(0, 0));
-                     }
+            // Resolve the actual definition regardless of where the cursor is
+            const importLine = document.lineAt(importLocation.range.start.line).text;
+            const importMatch = /^\s*(?:use|from)\s+([.a-zA-Z0-9_/]+)/.exec(importLine);
+            if (importMatch) {
+                // Named import:  from io.file use { File }
+                const braceMatch = /\{([^}]*)\}/.exec(importLine);
+                if (braceMatch && new RegExp(`\\b${symbol}\\b`).test(braceMatch[1])) {
+                    const file = this.resolvePath(projectRoot, currentFilePath, importMatch[1]);
+                    if (file) {
+                        const loc = this.findSymbolInFile(projectRoot, file, symbol);
+                        if (loc) return loc;
+                    }
+                }
+
+                // Module alias:  use encoding.json  (clicking `json`)
+                if (symbol === importMatch[1].split(/[./]/).pop()) {
+                    const file = this.resolvePath(projectRoot, currentFilePath, importMatch[1]);
+                    if (file) return new vscode.Location(vscode.Uri.file(file), new vscode.Position(0, 0));
                 }
             }
+
             return importLocation;
         }
 
         // =========================================================
-        // 2. MEMBER ACCESS
+        // 2. MEMBER ACCESS  — prefix.symbol
         // =========================================================
         if (range.start.character > 0 && lineText.charAt(range.start.character - 1) === '.') {
             const prefixRange = document.getWordRangeAtPosition(
@@ -77,12 +83,33 @@ export class QuirkDefinitionProvider implements vscode.DefinitionProvider {
             );
 
             if (prefixRange) {
-                const moduleAlias = document.getText(prefixRange);
-                if (moduleAlias !== 'super') {
-                    const modulePath = this.resolveImportPathFromAlias(document, moduleAlias);
+                const prefixWord = document.getText(prefixRange);
+
+                if (prefixWord !== 'super') {
+                    // (a) Module alias → function/struct exported from that module
+                    const modulePath = this.resolveImportPathFromAlias(document, prefixWord);
                     if (modulePath) {
                         const file = this.resolvePath(projectRoot, currentFilePath, modulePath);
-                        if (file) return this.findSymbolInFile(projectRoot, file, symbol); 
+                        if (file) {
+                            const loc = this.findSymbolInFile(projectRoot, file, symbol);
+                            if (loc) return loc;
+                        }
+                    }
+
+                    // (b) self → member of the enclosing struct
+                    if (prefixWord === 'self') {
+                        const structName = this.findEnclosingStruct(document, position);
+                        if (structName) {
+                            const loc = this.findStructMember(projectRoot, currentFilePath, structName, symbol);
+                            if (loc) return loc;
+                        }
+                    } else {
+                        // (c) Typed variable → infer struct type, navigate to its member
+                        const typeName = this.inferType(document, position, prefixWord);
+                        if (typeName) {
+                            const loc = this.findStructMemberByType(projectRoot, currentFilePath, typeName, symbol);
+                            if (loc) return loc;
+                        }
                     }
                 }
             }
@@ -91,80 +118,207 @@ export class QuirkDefinitionProvider implements vscode.DefinitionProvider {
         // =========================================================
         // 3. LOCAL VARIABLE OR PARAMETER
         // =========================================================
-        if (range.start.character === 0 || lineText.charAt(range.start.character - 1) !== '.') {
-            const localLocation = this.findLocalVariableInCurrentFile(document, position, symbol);
-            if (localLocation) {
-                this.outputChannel.appendLine(`[Definition] Found local definition for "${symbol}"`);
-                return localLocation;
-            }
-        }
+        const localLocation = this.findLocalDefinition(document, position, symbol);
+        if (localLocation) return localLocation;
 
         // =========================================================
-        // 4. FALLBACK: Global Structs/Functions
+        // 4. GLOBAL: current file, then imports, then prelude
         // =========================================================
         let def = this.findSymbolInFile(projectRoot, currentFilePath, symbol);
         if (def) return def;
 
-        this.outputChannel.appendLine(`[Definition] Checking Prelude for "${symbol}"...`);
+        def = this.findInImportedFiles(projectRoot, document, symbol);
+        if (def) return def;
+
         def = this.findInPrelude(projectRoot, symbol);
         if (def) return def;
 
         return null;
     }
 
-    // --- FIX: Strict Parameter Parsing ---
-    private findLocalVariableInCurrentFile(document: vscode.TextDocument, position: vscode.Position, symbol: string): vscode.Location | null {
-        // 1. Check Assignments:  x := ...  OR  x: Type = ...
-        // We match symbol at the START of the assignment, not the type position
-        const assignRegex = new RegExp(`^\\s*${symbol}\\b\\s*(?::\\s*[A-Za-z0-9_.]+\\s*)?(?:=|:=)`);
-        
-        const funcDefRegex = /^\s*(?:extern\s+)?(?:define|def|init)\s+[a-zA-Z0-9_]+\s*\(([^)]*)\)/;
-        
+    // =========================================================
+    // LOCAL VARIABLE / PARAMETER SEARCH
+    // =========================================================
+
+    private findLocalDefinition(document: vscode.TextDocument, position: vscode.Position, symbol: string): vscode.Location | null {
+        const assignRe    = new RegExp(`^\\s*${symbol}\\b\\s*(?::\\s*[A-Za-z0-9_.]+\\s*)?(?:=|:=)`);
+        const forRe       = new RegExp(`\\bfor\\s+(?:ref\\s+)?${symbol}\\s+in\\b`);
+        const withAsRe    = new RegExp(`\\bwith\\b.*\\bas\\s+${symbol}\\b`);
+        const catchRe     = new RegExp(`\\bcatch\\s*\\(\\s*${symbol}\\s*:`);
+        const funcDefRe   = /^\s*(?:extern\s+)?(?:define|def|init)\s+[a-zA-Z0-9_]+\s*\(([^)]*)\)/;
+
         for (let i = position.line; i >= 0; i--) {
-            const lineText = document.lineAt(i).text.trim();
-            
-            // Check assignment match
-            if (assignRegex.test(lineText)) {
-                return new vscode.Location(document.uri, new vscode.Position(i, lineText.indexOf(symbol)));
+            const rawLine  = document.lineAt(i).text;
+            const trimmed  = rawLine.trim();
+
+            if (assignRe.test(trimmed)) {
+                return new vscode.Location(document.uri, new vscode.Position(i, rawLine.indexOf(symbol)));
             }
-            
-            const funcDefMatch = funcDefRegex.exec(document.lineAt(i).text);
-            if (funcDefMatch) {
-                const params = funcDefMatch[1]; // e.g. "self, msg: String"
-                
-                // Split params and check each one
-                const paramList = params.split(',');
-                for (const rawParam of paramList) {
+
+            let m = forRe.exec(trimmed);
+            if (m) {
+                return new vscode.Location(document.uri, new vscode.Position(i, rawLine.indexOf(symbol, m.index)));
+            }
+
+            m = withAsRe.exec(trimmed);
+            if (m) {
+                const idx = rawLine.lastIndexOf(symbol);
+                return new vscode.Location(document.uri, new vscode.Position(i, idx >= 0 ? idx : 0));
+            }
+
+            m = catchRe.exec(trimmed);
+            if (m) {
+                return new vscode.Location(document.uri, new vscode.Position(i, rawLine.indexOf(symbol, m.index)));
+            }
+
+            const funcMatch = funcDefRe.exec(rawLine);
+            if (funcMatch) {
+                for (const rawParam of funcMatch[1].split(',')) {
                     const p = rawParam.trim();
-                    // Match "symbol" OR "symbol: Type"
-                    // Ensure symbol is the NAME (starts with symbol, followed by colon or end of string)
-                    const isParamName = new RegExp(`^${symbol}\\b\\s*(?::|$)`).test(p);
-                    
-                    if (isParamName) {
-                        const symbolIdx = document.lineAt(i).text.indexOf(symbol, funcDefMatch.index);
-                        return new vscode.Location(document.uri, new vscode.Position(i, Math.max(0, symbolIdx)));
+                    if (new RegExp(`^${symbol}\\b\\s*(?::|$)`).test(p)) {
+                        const idx = rawLine.indexOf(symbol, funcMatch.index);
+                        return new vscode.Location(document.uri, new vscode.Position(i, Math.max(0, idx)));
                     }
                 }
-                
-                // If we hit a function definition boundary, STOP searching upwards.
-                // We don't want to find a variable with the same name in the function above us.
-                break; 
+                // Hit a function boundary — stop searching upward
+                break;
+            }
+        }
+        return null;
+    }
+
+    // =========================================================
+    // STRUCT MEMBER NAVIGATION
+    // =========================================================
+
+    private findEnclosingStruct(document: vscode.TextDocument, position: vscode.Position): string | null {
+        for (let i = position.line; i >= 0; i--) {
+            const m = /^\s*struct\s+([a-zA-Z_]\w*)/.exec(document.lineAt(i).text);
+            if (m) return m[1];
+        }
+        return null;
+    }
+
+    private inferType(document: vscode.TextDocument, position: vscode.Position, varName: string): string | null {
+        const textBefore = document.getText(new vscode.Range(new vscode.Position(0, 0), position));
+        for (const line of textBefore.split(/\r?\n/).reverse()) {
+            // x := SomeType(...)  or  x := module.SomeType(...)
+            let m = new RegExp(`\\b${varName}\\s*:=\\s*(?:[a-zA-Z0-9_]+\\.)?([A-Z][A-Za-z0-9_]*)\\s*\\(`).exec(line);
+            if (m) return m[1];
+            // x: SomeType  or  x: SomeType = ...
+            m = new RegExp(`\\b${varName}\\s*:\\s*(?:[a-zA-Z0-9_]+\\.)?([A-Za-z0-9_]+)`).exec(line);
+            if (m) return m[1];
+        }
+        return null;
+    }
+
+    // Find struct definition (any file) then look for the member inside it
+    private findStructMemberByType(projectRoot: string, currentFile: string, typeName: string, member: string): vscode.Location | null {
+        // Try current file and its imports first
+        const structLoc = this.findSymbolInFile(projectRoot, currentFile, typeName);
+        if (structLoc) {
+            const loc = this.findMemberInStructBody(structLoc.uri.fsPath, typeName, member);
+            if (loc) return loc;
+        }
+        // Try prelude (builtin types like Map, List, String, …)
+        const preludeLoc = this.findInPrelude(projectRoot, typeName);
+        if (preludeLoc) {
+            const loc = this.findMemberInStructBody(preludeLoc.uri.fsPath, typeName, member);
+            if (loc) return loc;
+        }
+        return null;
+    }
+
+    // Convenience: type is already known to be defined in currentFile's project
+    private findStructMember(projectRoot: string, currentFile: string, structName: string, member: string): vscode.Location | null {
+        return this.findStructMemberByType(projectRoot, currentFile, structName, member);
+    }
+
+    private findMemberInStructBody(filePath: string, structName: string, member: string): vscode.Location | null {
+        const content = this.getFileContent(filePath);
+        const lines = content.split(/\r?\n/);
+        const structRe = new RegExp(`^\\s*struct\\s+${structName}\\b`);
+        const memberRe = new RegExp(
+            `(?:(?:extern\\s+)?(?:define|def|init)\\s+${member}\\b)` +
+            `|(?:^\\s*${member}\\s*:(?!=))`
+        );
+
+        let startLine = -1;
+        for (let i = 0; i < lines.length; i++) {
+            if (structRe.test(lines[i])) { startLine = i; break; }
+        }
+        if (startLine === -1) return null;
+
+        let depth = 0;
+        for (let i = startLine; i < lines.length; i++) {
+            const line = lines[i];
+            depth += (line.match(/\{/g) || []).length - (line.match(/\}/g) || []).length;
+            if (i > startLine && depth <= 0) break;
+            if (i === startLine) continue;
+            if (memberRe.test(line)) {
+                const charIdx = line.indexOf(member);
+                return new vscode.Location(vscode.Uri.file(filePath), new vscode.Position(i, Math.max(0, charIdx)));
+            }
+        }
+        return null;
+    }
+
+    // =========================================================
+    // SYMBOL LOOKUP
+    // =========================================================
+
+    private findSymbolInFile(projectRoot: string, filePath: string, symbol: string, visited: Set<string> = new Set()): vscode.Location | null {
+        if (visited.has(filePath)) return null;
+        visited.add(filePath);
+
+        const content = this.getFileContent(filePath);
+        if (!content) return null;
+        const lines = content.split(/\r?\n/);
+
+        const defRe = new RegExp(`^\\s*(?:extern\\s+)?(?:struct|define|def|init)\\s+${symbol}\\b`);
+        for (let i = 0; i < lines.length; i++) {
+            if (defRe.test(lines[i])) {
+                return new vscode.Location(vscode.Uri.file(filePath), new vscode.Position(i, Math.max(0, lines[i].indexOf(symbol))));
+            }
+        }
+
+        // Follow re-exports
+        const reExportRe = /from\s+([.a-zA-Z0-9_/]+)\s+use\s+\{([^}]*)\}/g;
+        let match: RegExpExecArray | null;
+        while ((match = reExportRe.exec(content)) !== null) {
+            if (new RegExp(`\\b${symbol}\\b`).test(match[2])) {
+                const next = this.resolvePath(projectRoot, filePath, match[1]);
+                if (next) {
+                    const res = this.findSymbolInFile(projectRoot, next, symbol, visited);
+                    if (res) return res;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private findInImportedFiles(projectRoot: string, document: vscode.TextDocument, symbol: string): vscode.Location | null {
+        const fullText = document.getText();
+        const importRe = /^\s*(?:use|from)\s+([.a-zA-Z0-9_/]+)/gm;
+        let m: RegExpExecArray | null;
+        while ((m = importRe.exec(fullText)) !== null) {
+            const file = this.resolvePath(projectRoot, document.uri.fsPath, m[1]);
+            if (file) {
+                const loc = this.findSymbolInFile(projectRoot, file, symbol);
+                if (loc) return loc;
             }
         }
         return null;
     }
 
     private findInPrelude(projectRoot: string, symbol: string): vscode.Location | null {
-        let libsDir = path.join(projectRoot, 'libs');
-        if (!fs.existsSync(libsDir)) libsDir = path.join(projectRoot, 'src'); 
-
-        for (const mod of PRELUDE_MODULES) {
-            const fullPath = path.join(libsDir, mod);
-            if (fs.existsSync(fullPath)) {
-                const loc = this.findSymbolInFile(projectRoot, fullPath, symbol, new Set());
-                if (loc) {
-                    this.outputChannel.appendLine(`[Definition] Found "${symbol}" in prelude: ${mod}`);
-                    return loc;
+        for (const root of this.getLibRoots(projectRoot)) {
+            for (const mod of PRELUDE_MODULES) {
+                const fullPath = path.join(root, mod);
+                if (fs.existsSync(fullPath)) {
+                    const loc = this.findSymbolInFile(projectRoot, fullPath, symbol, new Set());
+                    if (loc) return loc;
                 }
             }
         }
@@ -173,106 +327,33 @@ export class QuirkDefinitionProvider implements vscode.DefinitionProvider {
 
     private findSuperMethod(document: vscode.TextDocument, position: vscode.Position, methodName: string, projectRoot: string): vscode.Location | null {
         let parentStructName: string | null = null;
-        
         for (let i = position.line; i >= 0; i--) {
-            const match = /^\s*struct\s+[a-zA-Z_]\w*\s*:\s*([a-zA-Z_]\w*)/.exec(document.lineAt(i).text);
-            if (match) {
-                parentStructName = match[1];
-                break;
-            }
+            const m = /^\s*struct\s+[a-zA-Z_]\w*\s*:\s*([a-zA-Z_]\w*)/.exec(document.lineAt(i).text);
+            if (m) { parentStructName = m[1]; break; }
         }
-        
         if (!parentStructName) return null;
-        this.outputChannel.appendLine(`[Definition] Found parent struct: ${parentStructName}`);
 
-        let structLocation = this.findSymbolInFile(projectRoot, document.uri.fsPath, parentStructName);
-        if (!structLocation) structLocation = this.findInPrelude(projectRoot, parentStructName);
+        const structLoc = this.findSymbolInFile(projectRoot, document.uri.fsPath, parentStructName)
+            || this.findInPrelude(projectRoot, parentStructName);
+        if (!structLoc) return null;
 
-        if (!structLocation) return null;
-
-        const targetFilePath = structLocation.uri.fsPath;
-        const content = this.getFileContent(targetFilePath); 
-        const lines = content.split(/\r?\n/);
-        
-        let inTargetStruct = false;
-        
-        for (let i = structLocation.range.start.line; i < lines.length; i++) {
-            const line = lines[i];
-            if (new RegExp(`^\\s*struct\\s+${parentStructName}\\b`).test(line)) {
-                inTargetStruct = true;
-                continue;
-            }
-            if (inTargetStruct && (/^}/.test(line.trim()) || /^\s*struct\s+/.test(line))) break; 
-
-            if (inTargetStruct) {
-                const methodRegex = new RegExp(`(?:extern\\s+)?(?:define|def|init)\\s+${methodName}\\b`);
-                if (methodRegex.test(line)) {
-                    return new vscode.Location(structLocation.uri, new vscode.Position(i, line.indexOf(methodName)));
-                }
-            }
-        }
-        return null;
+        return this.findMemberInStructBody(structLoc.uri.fsPath, parentStructName, methodName);
     }
 
-    private getFileContent(filePath: string): string {
-        for (const doc of vscode.workspace.textDocuments) {
-            if (doc.uri.fsPath === filePath) return doc.getText();
-        }
-        try {
-            return fs.readFileSync(filePath, 'utf-8');
-        } catch (e) {
-            return "";
-        }
-    }
-
-    private findSymbolInFile(projectRoot: string, filePath: string, symbol: string, visited: Set<string> = new Set()): vscode.Location | null {
-        if (visited.has(filePath)) return null;
-        visited.add(filePath);
-
-        try {
-            const content = this.getFileContent(filePath);
-            const lines = content.split(/\r?\n/);
-
-            // 1. Definition check
-            const defRegex = new RegExp(`^\\s*(?:extern\\s+)?(?:struct|define|def|init)\\s+${symbol}\\b`);
-            for (let i = 0; i < lines.length; i++) {
-                if (defRegex.test(lines[i])) {
-                    const charIndex = lines[i].indexOf(symbol);
-                    return new vscode.Location(vscode.Uri.file(filePath), new vscode.Position(i, Math.max(0, charIndex)));
-                }
-            }
-
-            // 2. Re-export check
-            const reExportRegex = /from\s+([.a-zA-Z0-9_/]+)\s+use\s+\{([^}]*)\}/g;
-            let match;
-            while ((match = reExportRegex.exec(content)) !== null) {
-                const importPath = match[1];
-                const importedSymbols = match[2];
-                if (new RegExp(`\\b${symbol}\\b`).test(importedSymbols)) {
-                    const nextFile = this.resolvePath(projectRoot, filePath, importPath);
-                    if (nextFile) {
-                        const res = this.findSymbolInFile(projectRoot, nextFile, symbol, visited);
-                        if (res) return res;
-                    }
-                }
-            }
-        } catch (e) { }
-        return null;
-    }
+    // =========================================================
+    // IMPORT / ALIAS HELPERS
+    // =========================================================
 
     private findImportLineInCurrentFile(document: vscode.TextDocument, symbol: string): vscode.Location | null {
         for (let i = 0; i < document.lineCount; i++) {
             const line = document.lineAt(i).text;
-            const importMatch = /^\s*(?:use|from)\s+([.a-zA-Z0-9_/]+)/.exec(line);
-            if (importMatch) {
-                const alias = importMatch[1].split(/[\.\/]/).pop();
-                if (alias === symbol) return new vscode.Location(document.uri, new vscode.Position(i, importMatch.index));
-                if (line.includes(`{`) && line.includes(symbol)) {
-                     if (new RegExp(`\\{\\s*[^}]*\\b${symbol}\\b`).test(line)) {
-                         const idx = line.indexOf(symbol);
-                         return new vscode.Location(document.uri, new vscode.Position(i, idx));
-                     }
-                }
+            const m = /^\s*(?:use|from)\s+([.a-zA-Z0-9_/]+)/.exec(line);
+            if (!m) continue;
+            if (m[1].split(/[./]/).pop() === symbol) {
+                return new vscode.Location(document.uri, new vscode.Position(i, m.index));
+            }
+            if (line.includes('{') && new RegExp(`\\{[^}]*\\b${symbol}\\b`).test(line)) {
+                return new vscode.Location(document.uri, new vscode.Position(i, line.indexOf(symbol)));
             }
         }
         return null;
@@ -281,26 +362,20 @@ export class QuirkDefinitionProvider implements vscode.DefinitionProvider {
     private resolveImportPathFromAlias(document: vscode.TextDocument, alias: string): string | null {
         for (let i = 0; i < document.lineCount; i++) {
             const line = document.lineAt(i).text;
-            const useMatch = /^\s*(?:use|from)\s+([.a-zA-Z0-9_/]+)/.exec(line);
-            if (useMatch && useMatch[1].split(/[\.\/]/).pop() === alias) return useMatch[1];
+            const m = /^\s*(?:use|from)\s+([.a-zA-Z0-9_/]+)/.exec(line);
+            if (m && m[1].split(/[./]/).pop() === alias) return m[1];
         }
         return null;
     }
 
-    private findProjectRoot(currentFile: string): string {
-        let currentDir = path.dirname(currentFile);
-        while (currentDir.length > 3) {
-            if (fs.existsSync(path.join(currentDir, 'Makefile')) || fs.existsSync(path.join(currentDir, 'libs'))) return currentDir;
-            currentDir = path.dirname(currentDir);
-        }
-        return currentDir;
-    }
+    // =========================================================
+    // PATH RESOLUTION
+    // =========================================================
 
     public resolvePath(projectRoot: string, currentFile: string, modulePath: string): string | null {
         if (modulePath.startsWith('.')) return this.resolveRelative(currentFile, modulePath);
-        const searchRoots = [path.join(projectRoot, 'libs'), path.join(projectRoot, 'src')];
         const relPath = modulePath.replace(/\./g, '/');
-        for (const root of searchRoots) {
+        for (const root of this.getSearchRoots(projectRoot)) {
             const v1 = path.join(root, relPath + '.qk');
             const v2 = path.join(root, relPath, '__init.qk');
             if (fs.existsSync(v1)) return v1;
@@ -310,15 +385,55 @@ export class QuirkDefinitionProvider implements vscode.DefinitionProvider {
     }
 
     private resolveRelative(currentFile: string, modulePath: string): string | null {
-        const match = /^(\.+)(.*)$/.exec(modulePath);
-        if (!match) return null;
+        const m = /^(\.+)(.*)$/.exec(modulePath);
+        if (!m) return null;
         let searchDir = path.dirname(currentFile);
-        for (let i = 1; i < match[1].length; i++) searchDir = path.dirname(searchDir);
-        const subPath = match[2].replace(/\./g, '/');
+        for (let i = 1; i < m[1].length; i++) searchDir = path.dirname(searchDir);
+        const subPath = m[2].replace(/\./g, '/');
         const v1 = path.join(searchDir, subPath + '.qk');
         const v2 = path.join(searchDir, subPath, '__init.qk');
         if (fs.existsSync(v1)) return v1;
         if (fs.existsSync(v2)) return v2;
         return null;
+    }
+
+    private getSearchRoots(projectRoot: string): string[] {
+        const roots: string[] = [];
+        const home = process.env['QUIRK_HOME'];
+        if (home) {
+            roots.push(
+                path.join(home, 'lib', 'quirk', 'packages'),
+                path.join(home, 'lib', 'quirk'),
+                path.join(home, 'libs')
+            );
+        }
+        roots.push(path.join(projectRoot, 'libs'), path.join(projectRoot, 'src'));
+        return roots;
+    }
+
+    private getLibRoots(projectRoot: string): string[] {
+        const roots: string[] = [];
+        const home = process.env['QUIRK_HOME'];
+        if (home) roots.push(path.join(home, 'libs'), path.join(home, 'lib', 'quirk'));
+        roots.push(path.join(projectRoot, 'libs'), path.join(projectRoot, 'src'));
+        return roots;
+    }
+
+    private findProjectRoot(currentFile: string): string {
+        let dir = path.dirname(currentFile);
+        while (dir.length > 3) {
+            if (fs.existsSync(path.join(dir, 'Makefile')) || fs.existsSync(path.join(dir, 'libs'))) return dir;
+            const parent = path.dirname(dir);
+            if (parent === dir) break;
+            dir = parent;
+        }
+        return dir;
+    }
+
+    private getFileContent(filePath: string): string {
+        for (const doc of vscode.workspace.textDocuments) {
+            if (doc.uri.fsPath === filePath) return doc.getText();
+        }
+        try { return fs.readFileSync(filePath, 'utf-8'); } catch { return ''; }
     }
 }

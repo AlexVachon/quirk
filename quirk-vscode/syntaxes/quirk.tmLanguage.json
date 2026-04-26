@@ -9,6 +9,7 @@
     { "include": "#strings" },
     { "include": "#numbers" },
     { "include": "#types" },
+    { "include": "#method-calls" },
     { "include": "#functions" },
     { "include": "#operators" },
     { "include": "#properties" },
@@ -146,6 +147,17 @@
           "captures": {
             "1": { "name": "punctuation.definition.template-expression.quirk" },
             "2": { "name": "variable.other.readwrite.quirk" }
+          }
+        }
+      ]
+    },
+    "method-calls": {
+      "patterns": [
+        {
+          "match": "(\\.)([a-zA-Z_]\\w*)\\s*(?=\\()",
+          "captures": {
+            "1": { "name": "punctuation.separator.method.quirk" },
+            "2": { "name": "entity.name.function.method.quirk" }
           }
         }
       ]

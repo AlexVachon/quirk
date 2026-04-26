@@ -2,11 +2,32 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 
+const FILE_CACHE_TTL_MS = 5000;
+
+interface CachedFile {
+    content: string;
+    ts: number;
+}
+
 export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
     private outputChannel: vscode.OutputChannel;
+    private fileCache = new Map<string, CachedFile>();
+    private searchRootsCache: string[] | null = null;
+    private searchRootsCacheKey = '';
 
     constructor(outputChannel: vscode.OutputChannel) {
         this.outputChannel = outputChannel;
+    }
+
+    private readFile(filePath: string): string | null {
+        const now = Date.now();
+        const cached = this.fileCache.get(filePath);
+        if (cached && now - cached.ts < FILE_CACHE_TTL_MS) return cached.content;
+        try {
+            const content = fs.readFileSync(filePath, 'utf-8');
+            this.fileCache.set(filePath, { content, ts: now });
+            return content;
+        } catch { return null; }
     }
 
     public provideCompletionItems(
@@ -188,11 +209,10 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
     private findParentStruct(projectRoot: string, currentFile: string, structName: string): string | null {
         const targetFile = this.findFileContainingStruct(projectRoot, currentFile, structName);
         if (!targetFile) return null;
-        try {
-            const content = fs.readFileSync(targetFile, 'utf-8');
-            const match = new RegExp(`\\bstruct\\s+${structName}\\s*:\\s*([A-Za-z0-9_]+)`).exec(content);
-            return match ? match[1] : null;
-        } catch { return null; }
+        const content = this.readFile(targetFile);
+        if (!content) return null;
+        const match = new RegExp(`\\bstruct\\s+${structName}\\s*:\\s*([A-Za-z0-9_]+)`).exec(content);
+        return match ? match[1] : null;
     }
 
     private getStructMembers(
@@ -205,7 +225,8 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
 
         const items: vscode.CompletionItem[] = [];
         const seen = new Set<string>();
-        const content = fs.readFileSync(targetFile, 'utf-8');
+        const content = this.readFile(targetFile);
+        if (!content) return items;
 
         const addCompletion = (
             label: string,
@@ -297,8 +318,8 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
     }
 
     private findFileContainingStruct(projectRoot: string, currentFile: string, structName: string): string | null {
-        try {
-            const content = fs.readFileSync(currentFile, 'utf-8');
+        const content = this.readFile(currentFile);
+        if (content) {
             if (new RegExp(`\\bstruct\\s+${structName}\\b`).test(content)) return currentFile;
 
             for (const line of content.split(/\r?\n/)) {
@@ -311,7 +332,7 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
                     }
                 }
             }
-        } catch { }
+        }
 
         const implicitCores = ['core', 'core.sys', 'core.string', 'core.collections.list', 'core.collections.map', 'core.primitives'];
         for (const coreMod of implicitCores) {
@@ -327,22 +348,21 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
     private deepFindStruct(projectRoot: string, filePath: string, structName: string, visited = new Set<string>()): string | null {
         if (visited.has(filePath)) return null;
         visited.add(filePath);
-        try {
-            const content = fs.readFileSync(filePath, 'utf-8');
-            if (new RegExp(`\\bstruct\\s+${structName}\\b`).test(content)) return filePath;
+        const content = this.readFile(filePath);
+        if (!content) return null;
+        if (new RegExp(`\\bstruct\\s+${structName}\\b`).test(content)) return filePath;
 
-            const reExportRegex = /from\s+([.a-zA-Z0-9_/]+)\s+use\s+\{([^}]*)\}/g;
-            let match;
-            while ((match = reExportRegex.exec(content)) !== null) {
-                if (new RegExp(`\\b${structName}\\b`).test(match[2])) {
-                    const targetFile = this.resolvePath(projectRoot, filePath, match[1]);
-                    if (targetFile) {
-                        const found = this.deepFindStruct(projectRoot, targetFile, structName, visited);
-                        if (found) return found;
-                    }
+        const reExportRegex = /from\s+([.a-zA-Z0-9_/]+)\s+use\s+\{([^}]*)\}/g;
+        let match;
+        while ((match = reExportRegex.exec(content)) !== null) {
+            if (new RegExp(`\\b${structName}\\b`).test(match[2])) {
+                const targetFile = this.resolvePath(projectRoot, filePath, match[1]);
+                if (targetFile) {
+                    const found = this.deepFindStruct(projectRoot, targetFile, structName, visited);
+                    if (found) return found;
                 }
             }
-        } catch { }
+        }
         return null;
     }
 
@@ -494,8 +514,8 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
         visited.add(filePath);
         const items: vscode.CompletionItem[] = [];
 
-        try {
-            const content = fs.readFileSync(filePath, 'utf-8');
+        const content = this.readFile(filePath);
+        if (content) {
             const lines = content.split(/\r?\n/);
             let currentDocstring: string[] = [];
             let inDocBlock = false;
@@ -560,7 +580,7 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
                     });
                 }
             }
-        } catch { }
+        }
         return items;
     }
 
@@ -649,6 +669,11 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
     }
 
     private getSearchRoots(projectRoot: string): string[] {
+        const cacheKey = projectRoot + '|' + (process.env['QUIRK_HOME'] || '');
+        if (this.searchRootsCache && this.searchRootsCacheKey === cacheKey) {
+            return this.searchRootsCache;
+        }
+
         const roots: string[] = [];
         if (process.env['QUIRK_HOME']) {
             roots.push(
@@ -665,6 +690,9 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
             }
         } catch { }
         roots.push(path.join(projectRoot, 'libs'), path.join(projectRoot, 'src'));
+
+        this.searchRootsCache = roots;
+        this.searchRootsCacheKey = cacheKey;
         return roots;
     }
 

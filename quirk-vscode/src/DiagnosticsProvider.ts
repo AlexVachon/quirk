@@ -167,7 +167,12 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
     // ==========================================
     let locals = new Set<string>();
     inDocBlock = false;
-    
+
+    // Precompile regexes used inside the per-line loop
+    const memberRegex = /\.\s*([a-zA-Z_]\w*)\b/g;
+    const identRegex = /(?<!\.)\b([a-zA-Z_]\w*)\b/g;
+    const restOfLineColonRe = /^\s*:(?!=)/;
+
     // Robust brace-depth tracking replaces the buggy 'inStruct' regex logic
     let braceDepth = 0;
     let currentFuncDepth = -1;
@@ -273,13 +278,13 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
             }
         }
 
-        const memberRegex = /\.\s*([a-zA-Z_]\w*)\b/g;
+        memberRegex.lastIndex = 0;
         let memMatch;
         while ((memMatch = memberRegex.exec(maskedLine)) !== null) {
             usages.add(memMatch[1]);
         }
 
-        const identRegex = /(?<!\.)\b([a-zA-Z_]\w*)\b/g;
+        identRegex.lastIndex = 0;
         let match;
 
         while ((match = identRegex.exec(maskedLine)) !== null) {
@@ -288,7 +293,7 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
 
             // Prevent struct properties like "file: String" from triggering a warning
             const restOfLine = maskedLine.substring(match.index + ident.length);
-            if (/^\s*:(?!=)/.test(restOfLine)) continue;
+            if (restOfLineColonRe.test(restOfLine)) continue;
 
             const range = new vscode.Range(i, match.index, i, match.index + ident.length);
 
@@ -356,8 +361,12 @@ export function subscribeToDocumentChanges(context: vscode.ExtensionContext, qui
         })
     );
 
+    let debounceTimer: ReturnType<typeof setTimeout> | undefined;
     context.subscriptions.push(
-        vscode.workspace.onDidChangeTextDocument(e => refreshDiagnostics(e.document, quirkDiagnostics))
+        vscode.workspace.onDidChangeTextDocument(e => {
+            if (debounceTimer) clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(() => refreshDiagnostics(e.document, quirkDiagnostics), 300);
+        })
     );
 
     context.subscriptions.push(

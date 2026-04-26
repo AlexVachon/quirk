@@ -1,0 +1,21 @@
+
+enum Direction {
+    North
+    South
+    East
+    West
+}
+
+define main() {
+    d := Direction.North
+
+    if d == Direction.North {
+        print("Going north!")
+    } elif d == Direction.South {
+        print("Going south!")
+    } elif d == Direction.East {
+        print("Going east!")
+    } elif d == Direction.West {
+        print("Going west!")
+    }
+}

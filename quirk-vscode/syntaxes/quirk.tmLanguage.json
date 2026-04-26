@@ -9,6 +9,7 @@
     { "include": "#strings" },
     { "include": "#numbers" },
     { "include": "#types" },
+    { "include": "#enum-access" },
     { "include": "#method-calls" },
     { "include": "#functions" },
     { "include": "#operators" },
@@ -42,6 +43,13 @@
           "captures": {
             "1": { "name": "storage.type.struct.quirk" },
             "2": { "name": "entity.name.type.struct.quirk" }
+          }
+        },
+        {
+          "match": "\\b(enum)\\s+([a-zA-Z_]\\w*)",
+          "captures": {
+            "1": { "name": "storage.type.enum.quirk" },
+            "2": { "name": "entity.name.type.enum.quirk" }
           }
         },
         {
@@ -147,6 +155,18 @@
           "captures": {
             "1": { "name": "punctuation.definition.template-expression.quirk" },
             "2": { "name": "variable.other.readwrite.quirk" }
+          }
+        }
+      ]
+    },
+    "enum-access": {
+      "patterns": [
+        {
+          "match": "\\b([A-Z][a-zA-Z0-9_]*)(\\.)((?:[A-Z][a-zA-Z0-9_]*))\\b(?!\\s*\\()",
+          "captures": {
+            "1": { "name": "entity.name.type.enum.quirk" },
+            "2": { "name": "punctuation.separator.enum.quirk" },
+            "3": { "name": "variable.other.enummember.quirk" }
           }
         }
       ]

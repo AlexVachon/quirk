@@ -40,6 +40,9 @@ class LLVMCodegen {
 
     std::map<std::string, std::vector<std::string>> structHierarchy;
 
+    std::map<std::string, std::vector<std::string>> enumVariants;  // name -> ordered variants
+    std::map<std::string, std::string> varEnumTypes;               // varName -> enum type name
+
     std::map<std::string, std::string> sourceMap;
     std::string currentFilePath;
 
@@ -114,6 +117,13 @@ class LLVMCodegen {
                 if (!StructTypes.count(s->name)) StructTypes[s->name] = StructType::create(Context, s->name);
             }
         }
+        // Pass 1b: Register enum variant lists (body generation deferred to after Pass 3)
+        for (const auto& node : nodes) {
+            if (auto* e = dynamic_cast<EnumNode*>(node.get())) {
+                enumVariants[e->name] = e->variants;
+            }
+        }
+
         if (verbose) std::cerr << "[Codegen] Pass 2: Filling struct bodies and resolving inheritance\n";
         for (const auto& node : nodes) {
             if (auto s = dynamic_cast<StructNode*>(node.get())) {
@@ -208,6 +218,53 @@ class LLVMCodegen {
                 if (func->isExtern && !func->cls.empty() &&
                     func->name.find("__init") != std::string::npos) {
                     structGen->registerStructInit(func->cls, llvmName);
+                }
+            }
+        }
+
+        // Pass 3b: Generate __EnumName_str(i32)->String* helpers
+        // Runs after Pass 3 so String's body and __init prototype are both declared.
+        {
+            // Ensure make_String is declared (external runtime helper i8*->i8*)
+            Function* makeStrFn = TheModule->getFunction("make_String");
+            if (!makeStrFn) {
+                FunctionType* mkFT = FunctionType::get(
+                    Type::getInt8PtrTy(Context), {Type::getInt8PtrTy(Context)}, false);
+                makeStrFn = Function::Create(mkFT, Function::ExternalLinkage, "make_String", TheModule.get());
+            }
+            Type* strPtrTy = StructTypes.count("String")
+                ? (Type*)PointerType::getUnqual(StructTypes["String"])
+                : (Type*)Type::getInt8PtrTy(Context);
+
+            for (const auto& node : nodes) {
+                if (auto* e = dynamic_cast<EnumNode*>(node.get())) {
+                    std::string fnName = "__" + e->name + "_str";
+                    FunctionType* ft = FunctionType::get(strPtrTy, {Type::getInt32Ty(Context)}, false);
+                    Function* strFn = Function::Create(ft, Function::InternalLinkage, fnName, TheModule.get());
+
+                    BasicBlock* entry = BasicBlock::Create(Context, "entry", strFn);
+                    BasicBlock* dflt  = BasicBlock::Create(Context, "default", strFn);
+                    Builder.SetInsertPoint(entry);
+                    Value* arg = strFn->arg_begin();
+                    SwitchInst* sw = Builder.CreateSwitch(arg, dflt, (unsigned)e->variants.size());
+
+                    auto makeStr = [&](const std::string& text) -> Value* {
+                        Value* rawPtr = Builder.CreateGlobalStringPtr(text);
+                        Value* strVal = Builder.CreateCall(makeStrFn, {rawPtr});
+                        return strPtrTy->isPointerTy() && strPtrTy != Type::getInt8PtrTy(Context)
+                            ? Builder.CreateBitCast(strVal, strPtrTy)
+                            : strVal;
+                    };
+
+                    for (int i = 0; i < (int)e->variants.size(); i++) {
+                        BasicBlock* bb = BasicBlock::Create(Context, "case_" + e->variants[i], strFn);
+                        sw->addCase(ConstantInt::get(Type::getInt32Ty(Context), i), bb);
+                        Builder.SetInsertPoint(bb);
+                        Builder.CreateRet(makeStr(e->variants[i]));
+                    }
+
+                    Builder.SetInsertPoint(dflt);
+                    Builder.CreateRet(makeStr("<unknown>"));
                 }
             }
         }
@@ -444,10 +501,28 @@ class LLVMCodegen {
                 }
             }
 
+            // Enum .str() / .name()
+            if (member->memberName == "str" || member->memberName == "name") {
+                if (auto* objLit = dynamic_cast<LiteralNode*>(member->object.get())) {
+                    std::string enumType;
+                    if (varEnumTypes.count(objLit->value))
+                        enumType = varEnumTypes[objLit->value];
+                    else if (enumVariants.count(objLit->value))
+                        enumType = objLit->value; // e.g. Direction.str() — unlikely but handle it
+                    if (!enumType.empty()) {
+                        Function* strFn = TheModule->getFunction("__" + enumType + "_str");
+                        if (strFn) {
+                            Value* val = handleExpression(member->object.get());
+                            if (val) return Builder.CreateCall(strFn, {val});
+                        }
+                    }
+                }
+            }
+
             Value* objPtr = handleExpression(member->object.get());
             std::string typeName;
 
-            if (!objPtr) { 
+            if (!objPtr) {
                 if (auto lit = dynamic_cast<LiteralNode*>(member->object.get())) {
                     if (StructTypes.count(lit->value)) typeName = lit->value;
                 }
@@ -963,7 +1038,16 @@ class LLVMCodegen {
 
             if (!varGen->exists(lhs->value)) varGen->defineLocalVariable(lhs->value, val);
             else varGen->updateLocalVariable(lhs->value, val);
-            
+
+            // Track enum type for .str() calls
+            if (auto* rhsMember = dynamic_cast<MemberAccessNode*>(vdecl->expression.get())) {
+                if (auto* rhsLit = dynamic_cast<LiteralNode*>(rhsMember->object.get())) {
+                    if (enumVariants.count(rhsLit->value)) {
+                        varEnumTypes[lhs->value] = rhsLit->value;
+                    }
+                }
+            }
+
             if (activeTriggers.count(lhs->value)) {
                 Function* hook = TheModule->getFunction(activeTriggers[lhs->value]);
                 if (hook) {
@@ -1525,8 +1609,20 @@ Value* LLVMCodegen::handleExpression(Node* node) {
     }
 
     if (auto member = dynamic_cast<MemberAccessNode*>(node)) {
+        // Enum variant access: Direction.North
+        if (auto* lit = dynamic_cast<LiteralNode*>(member->object.get())) {
+            if (enumVariants.count(lit->value)) {
+                const auto& variants = enumVariants[lit->value];
+                auto it = std::find(variants.begin(), variants.end(), member->memberName);
+                if (it != variants.end()) {
+                    int idx = (int)std::distance(variants.begin(), it);
+                    return ConstantInt::get(Type::getInt32Ty(Context), idx);
+                }
+            }
+        }
+
         Value* objPtr = handleExpression(member->object.get());
-        
+
         // Handle double pointer dereference
         if (objPtr && objPtr->getType()->isPointerTy() && 
             objPtr->getType()->getPointerElementType()->isPointerTy()) {

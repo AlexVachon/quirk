@@ -47,6 +47,8 @@ std::vector<std::unique_ptr<Node>> Parser::parse() {
                 nodes.push_back(std::move(extra));
             extraNodes.clear();
 
+        } else if (type == TokenType::ENUM) {
+            nodes.push_back(parseEnum());
         } else if (type == TokenType::STRUCT) {
             nodes.push_back(parseStruct());
             for (auto& extra : extraNodes)
@@ -729,6 +731,22 @@ std::unique_ptr<StructNode> Parser::parseStruct() {
     }
     // -----------------------------------------------------------
 
+    return node;
+}
+
+std::unique_ptr<EnumNode> Parser::parseEnum() {
+    consume(TokenType::ENUM, "Expected 'enum'");
+    auto node = std::make_unique<EnumNode>();
+    Token nameTok = peek();
+    consume(TokenType::IDENTIFIER, "Expected enum name");
+    node->name = nameTok.value;
+    node->line = nameTok.line;
+    node->col  = nameTok.col;
+    consume(TokenType::LBRACE, "Expected '{' after enum name");
+    while (peek().type == TokenType::IDENTIFIER) {
+        node->variants.push_back(advance().value);
+    }
+    consume(TokenType::RBRACE, "Expected '}' to close enum");
     return node;
 }
 

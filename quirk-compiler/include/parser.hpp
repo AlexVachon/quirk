@@ -47,6 +47,7 @@ private:
     // Definition parsing
     std::unique_ptr<FunctionNode> parseFunction();
     std::unique_ptr<StructNode> parseStruct();
+    std::unique_ptr<EnumNode> parseEnum();
     
     // Helpers
     std::unique_ptr<CallNode> parseCall();

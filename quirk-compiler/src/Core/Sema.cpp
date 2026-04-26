@@ -40,6 +40,9 @@ bool Sema::analyze(const std::vector<std::unique_ptr<Node>> &nodes)
             else
                 methodRegistry[""][f->name] = f;
         }
+        else if (auto e = dynamic_cast<EnumNode*>(node.get())) {
+            enumRegistry[e->name] = e;
+        }
     }
 
     // Pass 2: Analyze Bodies
@@ -495,6 +498,12 @@ std::string Sema::checkBinaryOp(BinaryOpNode *node)
             return "Double";
         return "Int";
     }
+    // Allow comparison between same enum types
+    if (node->op == "==" || node->op == "!=") {
+        if (enumRegistry.count(lType) && lType == rType) return "Bool";
+        if (enumRegistry.count(lType) || enumRegistry.count(rType)) return "Bool";
+    }
+
     if (node->op == ">" || node->op == "<" || node->op == ">=" ||
         node->op == "<=" || node->op == "==" || node->op == "!=")
     {
@@ -507,6 +516,21 @@ std::string Sema::checkBinaryOp(BinaryOpNode *node)
 
 std::string Sema::checkMemberAccess(MemberAccessNode *node)
 {
+    // Enum variant access: Direction.North
+    if (auto lit = dynamic_cast<LiteralNode*>(node->object.get())) {
+        if (enumRegistry.count(lit->value)) {
+            EnumNode* en = enumRegistry[lit->value];
+            if (node->memberName == "str" || node->memberName == "name") return "String";
+            auto it = std::find(en->variants.begin(), en->variants.end(), node->memberName);
+            if (it == en->variants.end()) {
+                std::cerr << "Error: '" << node->memberName
+                          << "' is not a variant of enum '" << lit->value << "'\n";
+                exit(1);
+            }
+            return en->name;
+        }
+    }
+
     std::string objType = checkExpression(node->object.get());
 
     if (objType.rfind("MODULE$", 0) == 0)
@@ -746,6 +770,7 @@ std::string Sema::checkMapLiteral(MapLiteralNode *node)
 bool Sema::isCompatibleTypes(const std::string &expected, const std::string &actual)
 {
     if (expected == actual) return true;
+    if (enumRegistry.count(expected) || enumRegistry.count(actual)) return true;
     if (expected == "Any" || actual == "Any") return true;
     if (expected == "Null" || actual == "Null") return true;
 

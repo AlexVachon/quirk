@@ -4,7 +4,7 @@ const KEYWORDS = new Set([
     'define', 'struct', 'if', 'else', 'elif', 'while', 'for', 'in',
     'return', 'break', 'continue', 'use', 'from', 'with', 'as',
     'extern', 'true', 'false', 'null', 'del', 'init', 'def',
-    'trigger', 'try', 'catch', 'throw', 'and', 'or', 'not', 'super'
+    'trigger', 'try', 'catch', 'throw', 'and', 'or', 'not', 'super', 'enum'
 ]);
 
 const BUILTINS = new Set([
@@ -107,6 +107,7 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
     // ==========================================
     let multiLineImport = "";
     let isReadingImport = false;
+    let isReadingEnum = false;
 
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
@@ -127,6 +128,29 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
                 }
                 isReadingImport = false;
                 multiLineImport = "";
+            }
+            continue;
+        }
+
+        // Enum block: collect name + all variants into fileGlobals
+        if (isReadingEnum) {
+            if (cleanLine.includes('}')) { isReadingEnum = false; }
+            else {
+                const variantMatch = /^\s*([a-zA-Z_]\w*)\s*$/.exec(cleanLine);
+                if (variantMatch) fileGlobals.add(variantMatch[1]);
+            }
+            continue;
+        }
+
+        const enumMatch = /^\s*enum\s+([a-zA-Z_]\w*)/.exec(cleanLine);
+        if (enumMatch) {
+            fileGlobals.add(enumMatch[1]);
+            // Collect inline variants (e.g. enum Small { A B C })
+            const inlineBody = /\{([^}]*)\}/.exec(cleanLine);
+            if (inlineBody) {
+                inlineBody[1].split(/\s+/).forEach(v => { if (v) fileGlobals.add(v); });
+            } else {
+                isReadingEnum = true;
             }
             continue;
         }

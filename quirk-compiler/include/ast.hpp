@@ -456,4 +456,17 @@ class TriggerNode : public Node {
     }
 };
 
+class EnumNode : public Node {
+   public:
+    std::string name;
+    std::vector<std::string> variants;   // in declaration order
+
+    void print(int indent) const override {
+        std::string space(indent, ' ');
+        std::cout << space << "Enum: " << name << " {";
+        for (const auto& v : variants) std::cout << " " << v;
+        std::cout << " }" << std::endl;
+    }
+};
+
 #endif

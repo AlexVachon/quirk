@@ -157,6 +157,7 @@ Token Lexer::nextToken()
         if (ident == "break")    return {TokenType::BREAK,      ident, startLine, startCol};
         if (ident == "continue") return {TokenType::CONTINUE,   ident, startLine, startCol};
         if (ident == "trigger")  return {TokenType::TRIGGER,    ident, startLine, startCol};
+        if (ident == "enum")     return {TokenType::ENUM,       ident, startLine, startCol};
         return {TokenType::IDENTIFIER, ident, startLine, startCol};
     }
 

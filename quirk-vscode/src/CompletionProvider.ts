@@ -395,6 +395,7 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
         const keywords: [string, string?, string?][] = [
             ['define',   'define ${1:name}(${2:args}) -> ${3:void} {\n\t$0\n}',   'Define a function'],
             ['struct',   'struct ${1:Name} {\n\t${2:field}: ${3:Type}\n}',         'Define a struct'],
+            ['enum', 'enum ${1:Name} {\n\t${2:Variant1}\n\t${3:Variant2}\n}', 'Define an enum'],
             ['if',       'if ${1:condition} {\n\t$0\n}',                           'If statement'],
             ['else',     'else {\n\t$0\n}',                                        'Else block'],
             ['elif',     'elif ${1:condition} {\n\t$0\n}',                         'Else-if branch'],

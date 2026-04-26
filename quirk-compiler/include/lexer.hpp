@@ -33,6 +33,7 @@ enum class TokenType {
     AS,
     IS,
     TRIGGER,
+    ENUM,
 
     // Literals
     IDENTIFIER,

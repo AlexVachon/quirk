@@ -1,0 +1,39 @@
+---
+Serialization interface for Quirk structs.
+
+Inherit `ISerializable` and override `to_json()` to make any struct
+serializable — including as the `json:` argument to `net.http` requests.
+
+@example
+struct User : ISerializable {
+    name: String
+    age: Int
+
+    define __init(self, name: String, age: Int) -> void {
+        self.name = name
+        self.age = age
+    }
+
+    define to_json(self) -> String {
+        return "{\"name\":\"" + self.name + "\",\"age\":" + self.age.str() + "}"
+    }
+}
+
+user := User("Alice", 30)
+res := http.post("http://api.example.com/users", json: user)
+---
+struct ISerializable {
+
+    ---
+    Serialize this object to a JSON string.
+    Override this in every subclass.
+    @returns A valid JSON string representing this object.
+    ---
+    define to_json(self) -> String {
+        return "null"
+    }
+
+    define __str(self) -> String {
+        return self.to_json()
+    }
+}

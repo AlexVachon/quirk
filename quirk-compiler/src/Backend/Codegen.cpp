@@ -11,17 +11,18 @@
 #include <iostream>
 #include <map>
 #include <memory>
+#include <sstream>
 #include <vector>
 
 #include "ast.hpp"
 
-#include "ControlFlowGen.cpp"
-#include "MathGen.cpp"
-#include "StructGen.cpp"
-#include "BuiltinGen.cpp"
-#include "TypeExtensions.cpp"
-#include "TypeGen.cpp"
-#include "VariableGen.cpp"
+#include "TypeGen.hpp"
+#include "VariableGen.hpp"
+#include "MathGen.hpp"
+#include "StructGen.hpp"
+#include "BuiltinGen.hpp"
+#include "TypeExtensions.hpp"
+#include "ControlFlowGen.hpp"
 
 
 using namespace llvm;
@@ -39,6 +40,9 @@ class LLVMCodegen {
 
     std::map<std::string, std::vector<std::string>> structHierarchy;
 
+    std::map<std::string, std::string> sourceMap;
+    std::string currentFilePath;
+
     std::unique_ptr<TypeGen> typeGen;
     std::unique_ptr<ControlFlowGen> flowGen;
     std::unique_ptr<StructGen> structGen;
@@ -53,6 +57,33 @@ class LLVMCodegen {
     std::map<std::string, std::string> activeTriggers;
 
     void setVerbose(bool v) { verbose = v; }
+
+    void setSourceMap(const std::map<std::string, std::string>& sm) { sourceMap = sm; }
+
+    [[noreturn]] void fatalError(const std::string& msg, int line, int col) {
+        std::cerr << "\033[1;31m[ERROR]\033[0m " << msg << "\n";
+
+        if (line > 0 && !currentFilePath.empty() && sourceMap.count(currentFilePath)) {
+            const std::string& src = sourceMap.at(currentFilePath);
+            std::cerr << " --> " << currentFilePath << ":" << line << ":" << col << "\n\n";
+
+            // Extract the requested line from the source
+            int cur = 1;
+            std::string lineText;
+            std::istringstream ss(src);
+            while (std::getline(ss, lineText)) {
+                if (cur++ == line) break;
+            }
+
+            std::cerr << "    " << lineText << "\n";
+            int caretOff = (col > 0) ? col - 1 : 0;
+            std::cerr << "    " << std::string(caretOff, ' ') << "\033[1;33m^--- Here\033[0m\n\n";
+        } else if (line > 0) {
+            std::cerr << " --> line " << line << ", col " << col << "\n\n";
+        }
+
+        exit(1);
+    }
 
     LLVMCodegen() : Builder(Context) {
         TheModule = std::make_unique<Module>("QuirkCompiler", Context);
@@ -183,6 +214,7 @@ class LLVMCodegen {
 
         if (verbose) std::cerr << "[Codegen] Pass 4: Compiling function bodies\n";
         for (const auto& node : nodes) {
+            if (!node->filePath.empty()) currentFilePath = node->filePath;
             if (auto func = dynamic_cast<FunctionNode*>(node.get())) {
                 if (func->name != "main") compileFunction(func);
             }
@@ -215,6 +247,7 @@ class LLVMCodegen {
         // ---------------------------------------------
         
         for (const auto& node : nodes) {
+            if (!node->filePath.empty()) currentFilePath = node->filePath;
             if (auto func = dynamic_cast<FunctionNode*>(node.get())) {
                 if (func->name == "main") {
                     for (const auto& stmt : func->body) handleStatement(stmt.get(), mainFunc);
@@ -387,18 +420,10 @@ class LLVMCodegen {
                 return structGen->allocateAndInit(lit->value, args);
             }
 
-            // --- NEW: LINKAGE NAME RESOLUTION ---
-            Function* func = nullptr;
-            std::string targetName = lit->value;
-            
-            if (functionDeclarations.count(targetName)) {
-                std::string llvmName = functionDeclarations[targetName]->linkageName;
-                func = TheModule->getFunction(llvmName.empty() ? targetName : llvmName);
-            }
-            if (!func) func = TheModule->getFunction(targetName);
-
-            if (!func && !currentCodegenClass.empty()) func = TheModule->getFunction(currentCodegenClass + "_" + targetName);
+            Function* func = resolveFunction(lit->value, currentCodegenClass);
             if (func) return generateGlobalCall(func, call);
+
+            fatalError("Unknown function '" + lit->value + "'", call->line, call->col);
         }
 
         if (auto member = dynamic_cast<MemberAccessNode*>(call->callee.get())) {
@@ -412,18 +437,9 @@ class LLVMCodegen {
                         return structGen->allocateAndInit(memberName, args);
                     }
                     
-                    // --- NEW: LINKAGE NAME RESOLUTION ---
-                    Function* func = nullptr;
-                    if (functionDeclarations.count(memberName)) {
-                        std::string llvmName = functionDeclarations[memberName]->linkageName;
-                        func = TheModule->getFunction(llvmName.empty() ? memberName : llvmName);
-                    }
-                    if (!func) func = TheModule->getFunction(memberName);
-
-                    if (!func) {
-                        std::cerr << "Error: Module function or struct '" << memberName << "' not found." << std::endl;
-                        return nullptr;
-                    }
+                    Function* func = resolveFunction(memberName);
+                    if (!func)
+                        fatalError("Unknown function '" + memberName + "'", member->line, member->col);
                     return generateGlobalCall(func, call);
                 }
             }
@@ -524,26 +540,11 @@ class LLVMCodegen {
             }
 
             // --- LINKAGE NAME FALLBACK ---
-            // Extern struct methods are registered in the module under their full linkage name
-            // (e.g. "Core_String_String_contains"), but the simple lookup above only tried
-            // "String_contains". Search functionDeclarations for a matching method on this
-            // type using the stored linkageName.
-            if (!func) {
-                std::string methodKey = typeName + "_" + member->memberName;
-                if (functionDeclarations.count(methodKey)) {
-                    const std::string& ln = functionDeclarations[methodKey]->linkageName;
-                    if (!ln.empty()) func = TheModule->getFunction(ln);
-                }
-                // Also try the triple-underscore variant key
-                if (!func) {
-                    std::string methodKeyDunder = typeName + "___" + member->memberName;
-                    if (functionDeclarations.count(methodKeyDunder)) {
-                        const std::string& ln = functionDeclarations[methodKeyDunder]->linkageName;
-                        if (!ln.empty()) func = TheModule->getFunction(ln);
-                    }
-                }
-            }
-            // -----------------------------
+            // Extern struct methods may be registered under a full linkage name
+            // (e.g. "Core_String_String_contains") — try resolveFunction for both
+            // the plain and triple-underscore key forms.
+            if (!func) func = resolveFunction(typeName + "_"   + member->memberName);
+            if (!func) func = resolveFunction(typeName + "___" + member->memberName);
 
                         // --- METHOD ALIAS TABLE ---
             // Maps Quirk method names to their actual LLVM function names.
@@ -586,8 +587,8 @@ class LLVMCodegen {
                     Value* fieldVal = structGen->generateMemberAccess(objPtr, member->memberName);
                     if (fieldVal) return fieldVal;
                 }
-                if (verbose) std::cerr << "[Codegen] WARNING: method '" << typeName << "." << member->memberName << "' not found in module — returning nullptr\n";
-                return nullptr;
+                fatalError("Unknown method '" + typeName + "." + member->memberName + "'",
+                           member->line, member->col);
             }
 
             std::vector<Value*> args;
@@ -614,6 +615,23 @@ class LLVMCodegen {
         std::vector<Value*> finalArgs;
         processCallArgs(func, call->args, finalArgs, 0);
         return Builder.CreateCall(func, finalArgs);
+    }
+
+    // Resolves a Quirk function name to an LLVM Function*, consulting
+    // functionDeclarations for the stored linkageName before falling back
+    // to a direct module lookup.
+    Function* resolveFunction(const std::string& name,
+                              const std::string& classPrefix = "") {
+        if (functionDeclarations.count(name)) {
+            const std::string& ln = functionDeclarations[name]->linkageName;
+            Function* f = TheModule->getFunction(ln.empty() ? name : ln);
+            if (f) return f;
+        }
+        Function* f = TheModule->getFunction(name);
+        if (f) return f;
+        if (!classPrefix.empty())
+            f = TheModule->getFunction(classPrefix + "_" + name);
+        return f;
     }
 
     void processCallArgs(Function* func, const std::vector<Arg>& astArgs, std::vector<Value*>& finalArgs, size_t offset) {
@@ -771,7 +789,7 @@ class LLVMCodegen {
         else if (auto call = dynamic_cast<CallNode*>(node)) handleCall(call);
         else if (auto i = dynamic_cast<IfNode*>(node)) handleIf(i, parentFunc);
         else if (auto w = dynamic_cast<WhileNode*>(node)) handleWhile(w, parentFunc);
-        else if (auto brk = dynamic_cast<BreakNode*>(node)) {
+        else if (dynamic_cast<BreakNode*>(node)) {
             if (!flowGen->breakStack.empty()) {
                 Builder.CreateBr(flowGen->breakStack.back());
                 // Create a dead block so subsequent IR in this branch has an insert point
@@ -779,7 +797,7 @@ class LLVMCodegen {
                 Builder.SetInsertPoint(dead);
             }
         }
-        else if (auto cont = dynamic_cast<ContinueNode*>(node)) {
+        else if (dynamic_cast<ContinueNode*>(node)) {
             if (!flowGen->continueStack.empty()) {
                 Builder.CreateBr(flowGen->continueStack.back());
                 // Create a dead block so subsequent IR in this branch has an insert point
@@ -1316,6 +1334,48 @@ Value* LLVMCodegen::handleExpression(Node* node) {
     if (auto binOp = dynamic_cast<BinaryOpNode*>(node)) {
         if (binOp->op == "not") return mathGen->generateNot(handleExpression(binOp->left.get()));
         if (binOp->op == "and" || binOp->op == "or") return mathGen->generateLogicOp(binOp->op, handleExpression(binOp->left.get()), binOp->right.get(), [this](Node* n) { return this->handleExpression(n); });
+
+        // ── `val is TypeName` ─────────────────────────────────────────────────
+        // RHS is always a LiteralNode whose value is the bare type name string.
+        // Emits: Core_Primitives_Any_isinstance(val_as_i8*, type_name_String*)
+        if (binOp->op == "is") {
+            Value* lval = handleExpression(binOp->left.get());
+            if (!lval) return ConstantInt::getFalse(Context);
+
+            std::string typeName;
+            if (auto* lit = dynamic_cast<LiteralNode*>(binOp->right.get()))
+                typeName = lit->value;
+
+            // Build a null-terminated C string constant for the type name
+            Constant* typeNameCStr = Builder.CreateGlobalStringPtr(typeName, "type_name_cstr");
+
+            // Get or declare make_String
+            Function* makeStrFn = TheModule->getFunction("make_String");
+            if (!makeStrFn) {
+                // Declare as (i8*) -> i8* (opaque pointer to String)
+                FunctionType* ft = FunctionType::get(
+                    Type::getInt8PtrTy(Context), {Type::getInt8PtrTy(Context)}, false);
+                makeStrFn = Function::Create(ft, Function::ExternalLinkage, "make_String", TheModule.get());
+            }
+            Value* typeStrVal = Builder.CreateCall(makeStrFn, {typeNameCStr}, "type_str");
+
+            // Cast lval to i8* for isinstance
+            Value* lvalI8 = lval->getType()->isPointerTy()
+                ? Builder.CreateBitCast(lval, Type::getInt8PtrTy(Context))
+                : Builder.CreateIntToPtr(lval, Type::getInt8PtrTy(Context));
+
+            // Get or declare Core_Primitives_Any_isinstance(i8*, i8*) -> i32
+            Function* isinstanceFn = TheModule->getFunction("Core_Primitives_Quirk_isinstance");
+            if (!isinstanceFn) {
+                FunctionType* ft = FunctionType::get(
+                    Type::getInt32Ty(Context),
+                    {Type::getInt8PtrTy(Context), Type::getInt8PtrTy(Context)}, false);
+                isinstanceFn = Function::Create(ft, Function::ExternalLinkage, "Core_Primitives_Quirk_isinstance", TheModule.get());
+            }
+            Value* result = Builder.CreateCall(isinstanceFn, {lvalI8, typeStrVal}, "isinstance_result");
+            return Builder.CreateICmpNE(result, ConstantInt::get(Type::getInt32Ty(Context), 0), "is_bool");
+        }
+        // ── end `is` ─────────────────────────────────────────────────────────
 
         Value* L = handleExpression(binOp->left.get());
         Value* R = handleExpression(binOp->right.get());

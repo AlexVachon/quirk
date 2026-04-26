@@ -153,6 +153,47 @@ void Core_Collections_Map_Map_clear(Map* self) {
     self->size = 0;
 }
 
+
+// ==========================================
+//  COLLECTION VIEWS
+// ==========================================
+
+// Returns a List of all keys as String* objects.
+// This is what Quirk's `map.keys()` compiles to.
+List* Core_Collections_Map_Map_keys(Map* self) {
+    extern void Core_Collections_List_List___init(List*);
+    extern void Core_Collections_List_List_append(List*, void*);
+
+    List* result = (List*)malloc(sizeof(List));
+    Core_Collections_List_List___init(result);
+
+    if (!self) return result;
+    for (int i = 0; i < self->capacity; i++) {
+        if (self->entries[i].is_occupied && self->entries[i].key) {
+            String* k = make_String(self->entries[i].key);
+            Core_Collections_List_List_append(result, (void*)k);
+        }
+    }
+    return result;
+}
+
+// Returns a List of all values as void* (the raw stored pointers).
+List* Core_Collections_Map_Map_values(Map* self) {
+    extern void Core_Collections_List_List___init(List*);
+    extern void Core_Collections_List_List_append(List*, void*);
+
+    List* result = (List*)malloc(sizeof(List));
+    Core_Collections_List_List___init(result);
+
+    if (!self) return result;
+    for (int i = 0; i < self->capacity; i++) {
+        if (self->entries[i].is_occupied) {
+            Core_Collections_List_List_append(result, self->entries[i].value);
+        }
+    }
+    return result;
+}
+
 // ==========================================
 //  OPERATORS (Updated to use String*)
 // ==========================================
@@ -173,7 +214,48 @@ void Core_Collections_Map_Map___set(Map* self, String* keyObj, void* value) {
 }
 
 String* Core_Collections_Map_Map___str(Map* self) {
-    return make_String("{Map}");
+    if (!self || self->size == 0) return make_String("{}");
+
+    // Dynamic buffer
+    int cap = 256, len = 0;
+    char* buf = (char*)malloc(cap);
+    buf[len++] = '{';
+
+    int first = 1;
+    for (int i = 0; i < self->capacity; i++) {
+        if (!self->entries[i].is_occupied) continue;
+        const char* k = self->entries[i].key ? self->entries[i].key : "";
+        // Value: try to get a printable form via Any_to_string if it is an Any*,
+        // otherwise fall back to raw pointer address.
+        // For now we emit key: <value> pairs where value is shown as a string if possible.
+        const char* v = "(?)";
+        // Rough approximation: if the stored pointer looks like a C string
+        // (i.e. the first byte is printable ASCII and not a struct field tag),
+        // print it directly.
+        char* stored = (char*)self->entries[i].value;
+        char vbuf[64];
+        if (stored && (unsigned char)stored[0] >= 32 && (unsigned char)stored[0] < 127) {
+            v = stored;
+        } else if (!stored) {
+            v = "null";
+        } else {
+            snprintf(vbuf, sizeof(vbuf), "<ptr:%p>", (void*)stored);
+            v = vbuf;
+        }
+
+        int needed = (first ? 0 : 2) + 1 + strlen(k) + 3 + strlen(v) + 1;
+        while (len + needed + 2 >= cap) { cap *= 2; buf = (char*)realloc(buf, cap); }
+
+        if (!first) { buf[len++] = ','; buf[len++] = ' '; }
+        buf[len++] = '"';
+        strcpy(buf + len, k); len += strlen(k);
+        buf[len++] = '"'; buf[len++] = ':'; buf[len++] = ' ';
+        strcpy(buf + len, v); len += strlen(v);
+        first = 0;
+    }
+    buf[len++] = '}';
+    buf[len] = '\0';
+    return make_String_taking_ownership(buf);
 }
 // ==========================================
 //  MAP ITERATOR

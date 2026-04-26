@@ -11,6 +11,10 @@ from .string use {
     String, StringIterator
 }
 
+from .serializable use {
+    ISerializable
+}
+
 from .exceptions use {
     Exception, 
     TypeError

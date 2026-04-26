@@ -78,4 +78,21 @@ typedef struct {
     void*   ptr;   // String*/List*/Map*/ptr — offset 16, size 8
 } Any;
 
+
+// ===================================================
+//  UTILITY: Safe C-string extraction from String*
+//  Defined here so all C modules can use it without
+//  depending on sys.c include order.
+// ===================================================
+
+#include <gc.h>
+
+static inline char* make_safe_cstr(String* s) {
+    if (!s || !s->buffer) return NULL;
+    char* safe = (char*)GC_malloc(s->length + 1);
+    memcpy(safe, s->buffer, s->length);
+    safe[s->length] = '\0';
+    return safe;
+}
+
 #endif

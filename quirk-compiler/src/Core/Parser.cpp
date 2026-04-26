@@ -85,6 +85,7 @@ int getPrecedence(TokenType type) {
         case TokenType::GREATER_EQUAL:
         case TokenType::LESS_EQUAL:
         case TokenType::NOT_EQUAL:
+        case TokenType::IS:
             return 10;
         case TokenType::PLUS:
         case TokenType::MINUS:
@@ -120,6 +121,8 @@ std::unique_ptr<Node> Parser::parseExpression(int min_precedence) {
         left = std::make_unique<LiteralNode>("true");
     } else if (t.type == TokenType::FALSE) {
         left = std::make_unique<LiteralNode>("false");
+    } else if (t.type == TokenType::QUIRK_NULL) {
+        left = std::make_unique<LiteralNode>("null");
     } else if (t.type == TokenType::SUPER) {
         left = std::make_unique<LiteralNode>("super");
     }else if (t.type == TokenType::IDENTIFIER) {
@@ -181,8 +184,10 @@ std::unique_ptr<Node> Parser::parseExpression(int min_precedence) {
 
         if (opToken.type == TokenType::DOT) {
             Token member = advance();
-            left = std::make_unique<MemberAccessNode>(std::move(left),
-                                                      member.value);
+            auto memberNode = std::make_unique<MemberAccessNode>(std::move(left), member.value);
+            memberNode->line = member.line;
+            memberNode->col  = member.col;
+            left = std::move(memberNode);
         } else if (opToken.type == TokenType::LBRACKET) {
             auto indexExpr = parseExpression(0);
             consume(TokenType::RBRACKET, "Expected ']'");
@@ -199,6 +204,8 @@ std::unique_ptr<Node> Parser::parseExpression(int min_precedence) {
                 }
             }
             auto call = std::make_unique<CallNode>(std::move(left));
+            call->line = opToken.line;
+            call->col  = opToken.col;
             while (peek().type != TokenType::RPAREN && !isAtEnd()) {
                 std::string argName = "";
                 if (peek().type == TokenType::IDENTIFIER &&
@@ -217,6 +224,12 @@ std::unique_ptr<Node> Parser::parseExpression(int min_precedence) {
             }
             consume(TokenType::RPAREN, "Expected ')'");
             left = std::move(call);
+        } else if (opToken.type == TokenType::IS) {
+            // `val is TypeName` — consume the type name as a string literal
+            // so codegen can call Core_Primitives_Any_isinstance(val, "TypeName")
+            Token typeName = advance();
+            auto typeNode = std::make_unique<LiteralNode>(typeName.value);
+            left = std::make_unique<BinaryOpNode>("is", std::move(left), std::move(typeNode));
         } else {
             auto right = parseExpression(next_prec);
             left = std::make_unique<BinaryOpNode>(
@@ -524,8 +537,10 @@ std::unique_ptr<FunctionNode> Parser::parseFunction() {
 }
 
 std::unique_ptr<CallNode> Parser::parseCall() {
-    std::string name = advance().value;
-    auto node = std::make_unique<CallNode>(std::make_unique<LiteralNode>(name));
+    Token nameTok = advance();
+    auto node = std::make_unique<CallNode>(std::make_unique<LiteralNode>(nameTok.value));
+    node->line = nameTok.line;
+    node->col  = nameTok.col;
     consume(TokenType::LPAREN, "Expected '('");
     while (peek().type != TokenType::RPAREN && !isAtEnd()) {
         std::string argName = "";
@@ -795,8 +810,8 @@ std::unique_ptr<Node> Parser::parseMapLiteral() {
 }
 
 void Parser::reportError(const std::string& message, const Token& token) {
-    std::cerr << "\033[1;31m[ERROR]\033[0m " << message << " at line "
-              << token.line << ":\n\n";
+    std::cerr << "\033[1;31m[ERROR]\033[0m " << message
+              << " at line " << token.line << ", col " << token.col << ":\n\n";
     size_t lineStart = 0;
     int currentLine = 1;
     for (size_t i = 0; i < source.length(); i++) {
@@ -812,7 +827,8 @@ void Parser::reportError(const std::string& message, const Token& token) {
         lineEnd = source.length();
     std::string lineCode = source.substr(lineStart, lineEnd - lineStart);
     std::cerr << "    " << lineCode << "\n";
-    std::cerr << "    \033[1;33m^--- Here\033[0m\n\n";
+    int caretOffset = (token.col > 0) ? token.col - 1 : 0;
+    std::cerr << "    " << std::string(caretOffset, ' ') << "\033[1;33m^--- Here\033[0m\n\n";
     exit(1);
 }
 

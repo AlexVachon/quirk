@@ -156,3 +156,108 @@ String* Core_Primitives_Any_to_string(Any* a) {
 // Alias — matches the naming convention used in __str dispatch
 String* Core_Primitives_Any_to_str(Any* a) { return Core_Primitives_Any_to_string(a); }
 String* Core_Primitives_Any___str(Any* a)  { return Core_Primitives_Any_to_string(a); }
+// ===================================================
+//  STRUCTURAL isinstance — works for raw pointers
+//
+//  Core_Primitives_Any_isinstance takes Any* which needs
+//  a tag field. This version uses structural heuristics
+//  identical to json.c so `val is Map`, `val is String`
+//  etc. work when val is a raw Quirk struct pointer.
+// ===================================================
+extern int32_t Core_String_String___eq_cstr(String* s, const char* cstr);
+
+static int _is_pow2_cap(int v) {
+    return v >= 8 && v <= 65536 && (v & (v-1)) == 0;
+}
+
+int Core_Primitives_Quirk_isinstance(void* val, String* type_str) {
+    if (!val || !type_str || !type_str->buffer) return 0;
+    const char* t = type_str->buffer;
+
+    // Any* check (tag 0-8)
+    int32_t first_i32 = *((int32_t*)val);
+    if (first_i32 >= 0 && first_i32 <= 8) {
+        Any* a = (Any*)val;
+        String* actual = Core_Primitives_Any_get_type(a);
+        return Core_String_String___eq(actual, type_str);
+    }
+
+    void* inner = *((void**)val);
+    if (!inner) return strcmp(t, "Null") == 0;
+
+    // String*: [char* @0][i32 len @8], len 0-4096, buf[len]=='\0'
+    if (strcmp(t, "String") == 0) {
+        int32_t slen = *((int32_t*)((char*)val + 8));
+        if (slen >= 0 && slen <= 4096) {
+            const char* buf = (const char*)inner;
+            return buf[slen] == '\0';
+        }
+        return 0;
+    }
+
+    // Map*: [ptr @0][cap i32 @8][size i32 @12]
+    if (strcmp(t, "Map") == 0) {
+        int32_t cap  = *((int32_t*)((char*)val + 8));
+        int32_t size = *((int32_t*)((char*)val + 12));
+        return _is_pow2_cap(cap) && size >= 0 && size <= cap;
+    }
+
+    // List*: [ptr @0][size i32 @8][cap i32 @12]
+    if (strcmp(t, "List") == 0) {
+        int32_t size = *((int32_t*)((char*)val + 8));
+        int32_t cap  = *((int32_t*)((char*)val + 12));
+        return _is_pow2_cap(cap) && size >= 0 && size <= cap;
+    }
+
+    // For user-defined struct types and ISerializable, we cannot determine
+    // the type without RTTI. Return 0 (unknown).
+    return 0;
+}
+
+// ===================================================
+//  ISerializable vtable registry
+//
+//  Since Quirk structs have no vtable, we maintain a
+//  simple hash map from (void* instance) -> to_json_fn.
+//  Structs that inherit ISerializable call
+//  Quirk_register_serializable(self, their_to_json_fn)
+//  inside __init. ISerializable_to_json does a lookup.
+// ===================================================
+#include <stdlib.h>
+
+typedef String* (*ToJsonFn)(void*);
+
+#define SERIAL_REGISTRY_CAP 256
+typedef struct { void* key; ToJsonFn fn; } SerialEntry;
+static SerialEntry _serial_registry[SERIAL_REGISTRY_CAP];
+static int _serial_count = 0;
+
+void Quirk_register_serializable(void* instance, ToJsonFn fn) {
+    if (_serial_count < SERIAL_REGISTRY_CAP) {
+        _serial_registry[_serial_count].key = instance;
+        _serial_registry[_serial_count].fn  = fn;
+        _serial_count++;
+    }
+}
+
+static ToJsonFn Quirk_lookup_to_json(void* instance) {
+    for (int i = 0; i < _serial_count; i++) {
+        if (_serial_registry[i].key == instance)
+            return _serial_registry[i].fn;
+    }
+    return NULL;
+}
+
+// Called from ISerializable_to_json in the IR — does vtable lookup
+String* Quirk_ISerializable_to_json(void* self) {
+    if (!self) return make_String("null");
+    ToJsonFn fn = Quirk_lookup_to_json(self);
+    if (fn) return fn(self);
+    return make_String("null");
+}
+
+// Also used by Encoding_Json_dumps for ISerializable dispatch
+int Quirk_is_serializable(void* self) {
+    if (!self) return 0;
+    return Quirk_lookup_to_json(self) != NULL;
+}

@@ -300,8 +300,10 @@ void Sema::checkIf(IfNode *node)
     exitScope();
     for (auto &b : node->elIfBranches)
     {
-        if (checkExpression(b.condition.get()) != "Bool")
+        if (checkExpression(b.condition.get()) != "Bool") {
+            std::cerr << "[Sema Error] 'elif' condition must be 'Bool'" << std::endl;
             exit(1);
+        }
         enterScope();
         for (auto &s : b.body)
             checkStatement(s.get());
@@ -318,8 +320,10 @@ void Sema::checkIf(IfNode *node)
 
 void Sema::checkWhile(WhileNode *node)
 {
-    if (checkExpression(node->condition.get()) != "Bool")
+    if (checkExpression(node->condition.get()) != "Bool") {
+        std::cerr << "[Sema Error] 'while' condition must be 'Bool'" << std::endl;
         exit(1);
+    }
     enterScope();
     for (auto &s : node->body)
         checkStatement(s.get());
@@ -386,6 +390,8 @@ std::string Sema::checkLiteral(LiteralNode *node)
         return "Char";          // <-- ADD THIS
     if (node->value == "true" || node->value == "false")
         return "Bool";
+    if (node->value == "null")
+        return "Null";
     return resolveVariable(node->value);
 }
 
@@ -393,8 +399,16 @@ std::string Sema::checkBinaryOp(BinaryOpNode *node)
 {
     if (node->op == "not")
     {
-        if (checkExpression(node->left.get()) != "Bool")
+        if (checkExpression(node->left.get()) != "Bool") {
+            std::cerr << "[Sema Error] 'not' operand must be 'Bool'" << std::endl;
             exit(1);
+        }
+        return "Bool";
+    }
+
+    if (node->op == "is")
+    {
+        checkExpression(node->left.get());
         return "Bool";
     }
 
@@ -435,6 +449,7 @@ std::string Sema::checkBinaryOp(BinaryOpNode *node)
         }
         if (lType == "Any" || lType == "String")
             return (lType == "String") ? "Char" : "Any";
+        std::cerr << "[Sema Error] Type '" << lType << "' does not support indexing with '[]'" << std::endl;
         exit(1);
     }
 
@@ -485,6 +500,8 @@ std::string Sema::checkBinaryOp(BinaryOpNode *node)
     {
         return "Bool";
     }
+    std::cerr << "[Sema Error] Unsupported operator '" << node->op
+              << "' on types '" << lType << "' and '" << rType << "'" << std::endl;
     exit(1);
 }
 
@@ -696,8 +713,10 @@ std::string Sema::checkCall(CallNode *node)
 
 std::string Sema::checkListLiteral(ListLiteralNode *node)
 {
-    if (!structRegistry.count("List"))
+    if (!structRegistry.count("List")) {
+        std::cerr << "Error: 'List' type not available — is 'core' loaded?" << std::endl;
         exit(1);
+    }
     for (auto &elem : node->elements)
         checkExpression(elem.get());
     return "List";
@@ -728,6 +747,7 @@ bool Sema::isCompatibleTypes(const std::string &expected, const std::string &act
 {
     if (expected == actual) return true;
     if (expected == "Any" || actual == "Any") return true;
+    if (expected == "Null" || actual == "Null") return true;
 
     // Implicit widening coercions
     if (expected == "Double" && actual == "Int") return true;

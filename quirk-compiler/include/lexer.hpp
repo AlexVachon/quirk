@@ -31,6 +31,7 @@ enum class TokenType {
     IN,
     WITH,
     AS,
+    IS,
     TRIGGER,
 
     // Literals
@@ -41,6 +42,7 @@ enum class TokenType {
     CHAR_LITERAL,
     TRUE,
     FALSE,
+    QUIRK_NULL,
     PIPE,
 
     TRY, CATCH, THROW,
@@ -88,6 +90,7 @@ struct Token {
     TokenType type;
     std::string value;
     int line;
+    int col = 0;
 };
 
 class Lexer {

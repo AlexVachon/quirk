@@ -31,18 +31,8 @@
 #endif
 
 // ==========================================
-//  HELPER: Defined BEFORE use (Fixes Error)
-// ==========================================
-static char* make_safe_cstr(String* s) {
-    if (!s || !s->buffer) return NULL;
-    char* safe = GC_malloc(s->length + 1);
-    memcpy(safe, s->buffer, s->length);
-    safe[s->length] = '\0'; 
-    return safe;
-}
-
-// ==========================================
 //  SYSTEM RUNTIME
+//  NOTE: make_safe_cstr is now in types.h
 // ==========================================
 
 static int quirk_argc = 0;

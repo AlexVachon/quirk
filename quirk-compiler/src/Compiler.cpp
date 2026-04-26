@@ -255,14 +255,18 @@ std::string getModuleName(const std::string& path) {
 
     const char* envHome = std::getenv("QUIRK_HOME");
     if (envHome) {
-        std::string venvPkg  = std::string(envHome) + "/lib/quirk/packages/";
-        std::string venvCore = std::string(envHome) + "/lib/quirk/";
+        std::string base     = std::string(envHome);
+        std::string venvPkg  = base + "/lib/quirk/packages/";
+        std::string venvCore = base + "/lib/quirk/";
+        std::string venvLibs = base + "/libs/";   // local dev layout: $QUIRK_HOME/libs/
 
         size_t pos;
         if ((pos = mod.find(venvPkg)) != std::string::npos)
             mod = mod.substr(pos + venvPkg.length());
         else if ((pos = mod.find(venvCore)) != std::string::npos)
             mod = mod.substr(pos + venvCore.length());
+        else if ((pos = mod.find(venvLibs)) != std::string::npos)
+            mod = mod.substr(pos + venvLibs.length());
     }
 
     size_t lastDot = mod.find_last_of('.');
@@ -275,6 +279,7 @@ std::string getModuleName(const std::string& path) {
 
 std::vector<std::unique_ptr<Node>> processFile(const std::string& filePath,
                                                const Logger& log,
+                                               std::map<std::string, std::string>& sourceMap,
                                                bool isMainFile = false) {
     log.debug("Processing file: " + filePath);
 
@@ -291,6 +296,7 @@ std::vector<std::unique_ptr<Node>> processFile(const std::string& filePath,
     std::stringstream buffer;
     buffer << file.rdbuf();
     std::string source = buffer.str();
+    sourceMap[absPath] = source;
 
     Lexer lexer(source);
     auto tokens = lexer.tokenize();
@@ -302,6 +308,7 @@ std::vector<std::unique_ptr<Node>> processFile(const std::string& filePath,
 
     for (auto& node : nodes) {
         node->moduleName = currentModule;
+        node->filePath   = absPath;
 
         if (auto use = dynamic_cast<UseNode*>(node.get())) {
             std::string importPath = resolveImportPath(use->moduleName, filePath);
@@ -315,7 +322,7 @@ std::vector<std::unique_ptr<Node>> processFile(const std::string& filePath,
                 exit(1);
             }
 
-            auto importedNodes = processFile(importPath, log, false);
+            auto importedNodes = processFile(importPath, log, sourceMap, false);
             for (auto& importedNode : importedNodes)
                 allNodes.push_back(std::move(importedNode));
             allNodes.push_back(std::move(node));
@@ -355,11 +362,12 @@ int main(int argc, char* argv[]) {
     CompilerOptions opts;
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
-        if      (arg == "--compile-only") opts.runImmediate = false;
-        else if (arg == "-v")            opts.verbose      = true;
-        else if (arg == "--emit-ir")     opts.emitIR       = true;
-        else if (arg == "--emit-ast")    opts.emitAST      = true;
-        else if (arg[0] != '-')       opts.inputFile    = arg;
+        if      (arg == "-h" || arg == "--help") { printUsage(); return 0; }
+        else if (arg == "--compile-only") opts.runImmediate = false;
+        else if (arg == "-v")             opts.verbose      = true;
+        else if (arg == "--emit-ir")      opts.emitIR       = true;
+        else if (arg == "--emit-ast")     opts.emitAST      = true;
+        else if (arg[0] != '-')           opts.inputFile    = arg;
         else {
             std::cerr << "Unknown option: " << arg << std::endl;
             printUsage();
@@ -387,10 +395,11 @@ int main(int argc, char* argv[]) {
     log.debug("Loading Standard Library (Prelude)...");
 
     std::vector<std::unique_ptr<Node>> ast;
+    std::map<std::string, std::string> sourceMap;
 
     std::string corePath = resolveImportPath("core", "");
     if (!corePath.empty()) {
-        auto coreNodes = processFile(corePath, log);
+        auto coreNodes = processFile(corePath, log, sourceMap);
         log.debug("Loaded " + std::to_string(coreNodes.size()) + " nodes from Core.");
         for (auto& node : coreNodes)
             ast.push_back(std::move(node));
@@ -407,7 +416,7 @@ int main(int argc, char* argv[]) {
     // =======================================================
     log.debug("Loading user file: " + opts.inputFile);
 
-    auto userNodes = processFile(opts.inputFile, log, true);
+    auto userNodes = processFile(opts.inputFile, log, sourceMap, true);
     for (auto& node : userNodes)
         ast.push_back(std::move(node));
 
@@ -464,6 +473,7 @@ int main(int argc, char* argv[]) {
 
         LLVMCodegen codegen;
         codegen.setVerbose(opts.verbose);
+        codegen.setSourceMap(sourceMap);
         codegen.compile(ast, dest);
         dest.flush();
     }

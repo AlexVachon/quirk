@@ -24,6 +24,8 @@ struct Map {
     extern define has(self, key: String) -> Bool
     extern define remove(self, key: String)
     extern define len(self) -> Int
+    extern define keys(self) -> List
+    extern define values(self) -> List
     extern define clear(self)
 
     // Operators

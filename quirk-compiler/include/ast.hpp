@@ -8,8 +8,11 @@
 
 class Node {
    public:
-   std::string moduleName;
-   
+    std::string moduleName;
+    std::string filePath;
+    int line = 0;
+    int col  = 0;
+
     virtual ~Node() = default;
     virtual void print(int indent) const = 0;
 };

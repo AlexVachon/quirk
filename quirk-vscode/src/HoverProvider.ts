@@ -151,7 +151,7 @@ export class QuirkHoverProvider implements vscode.HoverProvider {
                 }
 
                 // For variable hovers (not define/struct lines) show inferred type
-                const isDefLine = /^\s*(?:extern\s+)?(?:define|def|init|struct)\b/.test(defLine);
+                const isDefLine = /^\s*(?:extern\s+)?(?:define|def|init|struct|enum)\b/.test(defLine);
                 if (!isDefLine) {
                     const inferredType = _sharedFormatter.inferTypeOfVariable(document, position, word);
                     if (inferredType) {

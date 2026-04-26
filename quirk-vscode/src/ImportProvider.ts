@@ -30,6 +30,13 @@ export class QuirkDefinitionProvider implements vscode.DefinitionProvider {
         const projectRoot = this.findProjectRoot(currentFilePath);
         const lineText = document.lineAt(position).text;
 
+        // =========================================================
+        // -1. INSIDE A DOCBLOCK → navigate to enclosing definition
+        // =========================================================
+        if (this.isInDocblock(document, position)) {
+            return this.findEnclosingDefinition(document, position);
+        }
+
         const range = document.getWordRangeAtPosition(position, /[a-zA-Z0-9_]+/);
         if (!range) return null;
 
@@ -109,6 +116,12 @@ export class QuirkDefinitionProvider implements vscode.DefinitionProvider {
                         if (typeName) {
                             const loc = this.findStructMemberByType(projectRoot, currentFilePath, typeName, symbol);
                             if (loc) return loc;
+                        }
+
+                        // (d) Enum variant: Direction.North — PascalCase prefix
+                        if (/^[A-Z]/.test(prefixWord)) {
+                            const variantLoc = this.findEnumVariantInFiles(projectRoot, currentFilePath, prefixWord, symbol, document);
+                            if (variantLoc) return variantLoc;
                         }
                     }
                 }
@@ -275,7 +288,7 @@ export class QuirkDefinitionProvider implements vscode.DefinitionProvider {
         if (!content) return null;
         const lines = content.split(/\r?\n/);
 
-        const defRe = new RegExp(`^\\s*(?:extern\\s+)?(?:struct|define|def|init)\\s+${symbol}\\b`);
+        const defRe = new RegExp(`^\\s*(?:extern\\s+)?(?:struct|define|def|init|enum)\\s+${symbol}\\b`);
         for (let i = 0; i < lines.length; i++) {
             if (defRe.test(lines[i])) {
                 return new vscode.Location(vscode.Uri.file(filePath), new vscode.Position(i, Math.max(0, lines[i].indexOf(symbol))));
@@ -338,6 +351,118 @@ export class QuirkDefinitionProvider implements vscode.DefinitionProvider {
         if (!structLoc) return null;
 
         return this.findMemberInStructBody(structLoc.uri.fsPath, parentStructName, methodName);
+    }
+
+    // =========================================================
+    // DOCBLOCK HELPERS
+    // =========================================================
+
+    private isInDocblock(document: vscode.TextDocument, position: vscode.Position): boolean {
+        let inDoc = false;
+        for (let i = 0; i <= position.line; i++) {
+            if (document.lineAt(i).text.trim() === '---') inDoc = !inDoc;
+        }
+        return inDoc;
+    }
+
+    private findEnclosingDefinition(document: vscode.TextDocument, position: vscode.Position): vscode.Location | null {
+        for (let i = position.line; i < document.lineCount; i++) {
+            const line = document.lineAt(i).text;
+            const m = /^\s*(?:extern\s+)?(?:struct|define|def|init|enum)\s+([a-zA-Z_]\w*)/.exec(line);
+            if (m) {
+                return new vscode.Location(document.uri, new vscode.Position(i, line.indexOf(m[1])));
+            }
+            // Hit closing --- without finding a definition
+            if (i > position.line && line.trim() === '---') break;
+        }
+        return null;
+    }
+
+    /** Returns the line index of the opening `---` of a docblock immediately before defLine, or -1. */
+    private findPrecedingDocstring(lines: string[], defLine: number): number {
+        let i = defLine - 1;
+        while (i >= 0 && lines[i].trim() === '') i--;
+        if (i >= 0 && lines[i].trim() === '---') {
+            i--;
+            while (i >= 0 && lines[i].trim() !== '---') i--;
+            return i >= 0 ? i : -1;
+        }
+        return -1;
+    }
+
+    // =========================================================
+    // ENUM HELPERS
+    // =========================================================
+
+    private findEnumVariantInFiles(
+        projectRoot: string, currentFile: string,
+        enumName: string, variantName: string,
+        document: vscode.TextDocument
+    ): vscode.Location | null {
+        // 1. Current file
+        let loc = this.findEnumVariant(currentFile, enumName, variantName);
+        if (loc) return loc;
+
+        // 2. Imported files
+        const importRe = /^\s*(?:use|from)\s+([.a-zA-Z0-9_/]+)/gm;
+        let m: RegExpExecArray | null;
+        while ((m = importRe.exec(document.getText())) !== null) {
+            const file = this.resolvePath(projectRoot, currentFile, m[1]);
+            if (file) {
+                loc = this.findEnumVariant(file, enumName, variantName);
+                if (loc) return loc;
+            }
+        }
+
+        // 3. Prelude
+        for (const root of this.getLibRoots(projectRoot)) {
+            for (const mod of PRELUDE_MODULES) {
+                const fullPath = path.join(root, mod);
+                if (fs.existsSync(fullPath)) {
+                    loc = this.findEnumVariant(fullPath, enumName, variantName);
+                    if (loc) return loc;
+                }
+            }
+        }
+        return null;
+    }
+
+    private findEnumVariant(filePath: string, enumName: string, variantName: string): vscode.Location | null {
+        const content = this.getFileContent(filePath);
+        if (!content) return null;
+        const lines = content.split(/\r?\n/);
+        const enumRe = new RegExp(`^\\s*enum\\s+${enumName}\\b`);
+
+        let startLine = -1;
+        for (let i = 0; i < lines.length; i++) {
+            if (enumRe.test(lines[i])) { startLine = i; break; }
+        }
+        if (startLine === -1) return null;
+
+        // Inline: enum Color { Red Green Blue }
+        const inlineMatch = /\{([^}]*)\}/.exec(lines[startLine]);
+        if (inlineMatch) {
+            const col = lines[startLine].indexOf(variantName, lines[startLine].indexOf('{'));
+            if (col !== -1) return new vscode.Location(vscode.Uri.file(filePath), new vscode.Position(startLine, col));
+            return null;
+        }
+
+        // Multi-line body (skip nested docblocks)
+        let depth = 0;
+        let inDocBlock = false;
+        const variantRe = new RegExp(`^\\s*(${variantName})\\s*(?://.*)?$`);
+        for (let i = startLine; i < lines.length; i++) {
+            const line = lines[i];
+            if (line.trim() === '---') { inDocBlock = !inDocBlock; continue; }
+            if (inDocBlock) continue;
+            depth += (line.match(/\{/g) || []).length - (line.match(/\}/g) || []).length;
+            if (i > startLine && depth <= 0) break;
+            if (i === startLine) continue;
+            if (variantRe.test(line)) {
+                return new vscode.Location(vscode.Uri.file(filePath), new vscode.Position(i, line.indexOf(variantName)));
+            }
+        }
+        return null;
     }
 
     // =========================================================

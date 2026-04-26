@@ -1,4 +1,7 @@
 
+---
+All possible directions from a compass.
+---
 enum Direction {
     North
     South
@@ -6,6 +9,9 @@ enum Direction {
     West
 }
 
+---
+Main function to run `enum_test.qk` script.
+---
 define main() {
     d := Direction.North
 

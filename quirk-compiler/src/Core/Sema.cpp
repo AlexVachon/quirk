@@ -34,6 +34,17 @@ bool Sema::analyze(const std::vector<std::unique_ptr<Node>> &nodes)
     }
     if (!structRegistry.count("Type")) structRegistry["Type"] = &builtinTypeNode;
 
+    // Register built-in Callable struct (used by lambda expressions)
+    static StructNode builtinCallableNode;
+    if (builtinCallableNode.name.empty()) {
+        builtinCallableNode.name = "Callable";
+        StructField ff; ff.name = "fn";  ff.type = "Any";
+        StructField ef; ef.name = "env"; ef.type = "Any";
+        builtinCallableNode.fields.push_back(std::move(ff));
+        builtinCallableNode.fields.push_back(std::move(ef));
+    }
+    if (!structRegistry.count("Callable")) structRegistry["Callable"] = &builtinCallableNode;
+
     // Pass 1: Register Structs and Signatures
     for (const auto &node : nodes)
     {
@@ -410,6 +421,16 @@ std::string Sema::checkExpression(Node *node)
         return checkListLiteral(arr);
     if (auto map = dynamic_cast<MapLiteralNode *>(node))
         return checkMapLiteral(map);
+    if (auto lambda = dynamic_cast<LambdaNode *>(node)) {
+        // Infer return type by type-checking the body with params in scope
+        enterScope();
+        for (const auto& p : lambda->params)
+            if (!p.type.empty()) defineVariable(p.name, p.type);
+        if (lambda->isExpression && lambda->exprBody)
+            lambda->inferredReturnType = checkExpression(lambda->exprBody.get());
+        exitScope();
+        return "Callable";
+    }
     return "unknown";
 }
 
@@ -432,7 +453,8 @@ std::string Sema::checkBinaryOp(BinaryOpNode *node)
 {
     if (node->op == "not")
     {
-        if (checkExpression(node->left.get()) != "Bool") {
+        std::string t = checkExpression(node->left.get());
+        if (t != "Bool" && t != "Any" && t != "Int") {
             std::cerr << "[Sema Error] 'not' operand must be 'Bool'" << std::endl;
             exit(1);
         }
@@ -442,6 +464,13 @@ std::string Sema::checkBinaryOp(BinaryOpNode *node)
     if (node->op == "is")
     {
         checkExpression(node->left.get());
+        return "Bool";
+    }
+
+    if (node->op == "in")
+    {
+        checkExpression(node->left.get());
+        checkExpression(node->right.get());
         return "Bool";
     }
 

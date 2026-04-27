@@ -74,6 +74,10 @@
           "match": "\\b(if|else|elif|while|for|in|return|break|continue|with|as|trigger|try|catch|throw|finally|from)\\b"
         },
         {
+          "name": "keyword.other.lambda.quirk",
+          "match": "\\bfn\\b"
+        },
+        {
           "name": "keyword.other.quirk",
           "match": "\\b(del)\\b"
         },
@@ -103,7 +107,7 @@
         },
         {
           "name": "support.type.object.quirk",
-          "match": "\\b(Char|List|String|Map|Int|Double|Bool|File)\\b"
+          "match": "\\b(Char|List|String|Map|Int|Double|Bool|File|Callable)\\b"
         }
       ]
     },
@@ -233,6 +237,10 @@
         {
           "name": "storage.type.function.arrow.quirk",
           "match": "->"
+        },
+        {
+          "name": "keyword.operator.lambda.quirk",
+          "match": "=>"
         }
       ]
     },

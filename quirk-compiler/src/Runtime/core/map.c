@@ -296,3 +296,35 @@ MapIterator* Core_Collections_Map_Map___iter(Map* self) {
     Core_Collections_Map_MapIterator___init(iter, self);
     return iter;
 }
+
+// ==========================================
+//  FUNCTIONAL METHODS (lambda support)
+// ==========================================
+
+typedef void* (*LambdaFn1)(void* env, void* arg);
+
+// each(fn(key: String, value: Any)) — calls cb with key and value for every entry
+void Core_Collections_Map_Map_each(Map* self, Callable* cb) {
+    LambdaFn2 fn = (LambdaFn2)cb->fn;
+    for (int i = 0; i < self->capacity; i++) {
+        if (self->entries[i].is_occupied)
+            fn(cb->env, make_String(self->entries[i].key), self->entries[i].value);
+    }
+}
+
+// each_value(fn(value: Any)) — calls cb with only the value
+void Core_Collections_Map_Map_each_value(Map* self, Callable* cb) {
+    LambdaFn1 fn = (LambdaFn1)cb->fn;
+    for (int i = 0; i < self->capacity; i++) {
+        if (self->entries[i].is_occupied)
+            fn(cb->env, self->entries[i].value);
+    }
+}
+
+void Core_Collections_Map_Map_each_key(Map* self, Callable* cb) {
+    LambdaFn1 fn = (LambdaFn1)cb->fn;
+    for (int i = 0; i < self->capacity; i++) {
+        if (self->entries[i].is_occupied)
+            fn(cb->env, make_String(self->entries[i].key));
+    }
+}

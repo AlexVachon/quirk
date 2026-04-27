@@ -192,3 +192,84 @@ String* Core_Collections_List_List___repr(List* self) {
 String* Core_Collections_List_List___str(List* self) {
     return Core_Collections_List_List___repr(self);
 }
+
+// ==========================================
+//  MEMBERSHIP TEST
+// ==========================================
+
+// `elem in list` — works for String* (by value) and other pointer types (by identity).
+// Tagged-integer i8* values are <= 0xFFFFFFFF on 64-bit systems; heap pointers are above.
+int Core_Collections_List_List_contains(List* self, void* elem) {
+    for (int i = 0; i < self->size; i++) {
+        void* item = self->data[i];
+        if (item == elem) return 1;
+        if ((uintptr_t)item > 0xFFFFFFFFUL && (uintptr_t)elem > 0xFFFFFFFFUL) {
+            String* s1 = (String*)item;
+            String* s2 = (String*)elem;
+            if (s1->buffer && s2->buffer && s1->length == s2->length &&
+                memcmp(s1->buffer, s2->buffer, s1->length) == 0) return 1;
+        }
+    }
+    return 0;
+}
+
+// ==========================================
+//  FUNCTIONAL METHODS (lambda support)
+// ==========================================
+
+typedef void* (*LambdaFn1)(void* env, void* arg);
+typedef void* (*LambdaFn2)(void* env, void* acc, void* arg);
+
+List* Core_Collections_List_List_map(List* self, Callable* cb) {
+    LambdaFn1 fn = (LambdaFn1)cb->fn;
+    List* result = (List*)GC_malloc(sizeof(List));
+    Core_Collections_List_List___init(result);
+    for (int i = 0; i < self->size; i++)
+        Core_Collections_List_List_append(result, fn(cb->env, self->data[i]));
+    return result;
+}
+
+List* Core_Collections_List_List_filter(List* self, Callable* cb) {
+    LambdaFn1 fn = (LambdaFn1)cb->fn;
+    List* result = (List*)GC_malloc(sizeof(List));
+    Core_Collections_List_List___init(result);
+    for (int i = 0; i < self->size; i++)
+        if (fn(cb->env, self->data[i]) != NULL)
+            Core_Collections_List_List_append(result, self->data[i]);
+    return result;
+}
+
+void Core_Collections_List_List_each(List* self, Callable* cb) {
+    LambdaFn1 fn = (LambdaFn1)cb->fn;
+    for (int i = 0; i < self->size; i++)
+        fn(cb->env, self->data[i]);
+}
+
+void* Core_Collections_List_List_reduce(List* self, void* initial, Callable* cb) {
+    LambdaFn2 fn = (LambdaFn2)cb->fn;
+    void* acc = initial;
+    for (int i = 0; i < self->size; i++)
+        acc = fn(cb->env, acc, self->data[i]);
+    return acc;
+}
+
+int Core_Collections_List_List_any(List* self, Callable* cb) {
+    LambdaFn1 fn = (LambdaFn1)cb->fn;
+    for (int i = 0; i < self->size; i++)
+        if (fn(cb->env, self->data[i]) != NULL) return 1;
+    return 0;
+}
+
+int Core_Collections_List_List_all(List* self, Callable* cb) {
+    LambdaFn1 fn = (LambdaFn1)cb->fn;
+    for (int i = 0; i < self->size; i++)
+        if (fn(cb->env, self->data[i]) == NULL) return 0;
+    return 1;
+}
+
+void* Core_Collections_List_List_find(List* self, Callable* cb) {
+    LambdaFn1 fn = (LambdaFn1)cb->fn;
+    for (int i = 0; i < self->size; i++)
+        if (fn(cb->env, self->data[i]) != NULL) return self->data[i];
+    return NULL;
+}

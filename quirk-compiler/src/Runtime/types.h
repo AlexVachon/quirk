@@ -57,6 +57,11 @@ typedef struct {
     const char* file_name;
 } ShadowFrame;
 
+typedef struct {
+    void* fn;   // i8* (*fn)(i8* env, i8* arg0, ...)
+    void* env;  // captured variable struct, may be NULL
+} Callable;
+
 // ===================================================
 //  Any — Tagged Union for dynamic typing
 //

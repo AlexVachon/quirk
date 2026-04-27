@@ -213,7 +213,18 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
         const typeName = this.inferTypeOfVariable(document, position, variableName);
         if (!typeName) return [];
         const projectRoot = this.findProjectRoot(document.uri.fsPath);
-        const items = this.getStructMembersWithInheritance(projectRoot, document.uri.fsPath, typeName);
+
+        // Labels that will be superseded by richer hand-crafted completions below
+        const overriddenByLambdaMethods = new Set<string>(
+            typeName === 'List' ? ['map', 'filter', 'each', 'reduce', 'any', 'all', 'find'] :
+            typeName === 'Map'  ? ['each', 'each_key', 'each_value'] : []
+        );
+
+        const rawItems = this.getStructMembersWithInheritance(projectRoot, document.uri.fsPath, typeName);
+        const items = rawItems.filter(i => {
+            const label = typeof i.label === 'string' ? i.label : (i.label as any).label;
+            return !overriddenByLambdaMethods.has(label);
+        });
 
         // Magic attributes available on every struct instance
         if (variableName === 'self') {
@@ -236,6 +247,94 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
             );
             classItem.sortText = '3___class';
             items.push(classItem);
+        }
+
+        // List functional methods
+        if (typeName === 'List') {
+            const listMethods: { label: string; detail: string; doc: string; snippet: string }[] = [
+                {
+                    label: 'map',
+                    detail: '(cb: Callable) → List',
+                    doc: 'Transform each element and return a new List.\n\n```quirk\ndoubled := nums.map(fn(x: Int) => x * 2)\n```',
+                    snippet: 'map(fn(${1:x}: ${2:Int}) => ${3:$1})$0',
+                },
+                {
+                    label: 'filter',
+                    detail: '(cb: Callable) → List',
+                    doc: 'Keep elements where the predicate is true.\n\n```quirk\nbig := nums.filter(fn(x: Int) => x > 2)\n```',
+                    snippet: 'filter(fn(${1:x}: ${2:Int}) => ${3:$1 > 0})$0',
+                },
+                {
+                    label: 'each',
+                    detail: '(cb: Callable)',
+                    doc: 'Call callback for each element (no return value).\n\n```quirk\nnums.each(fn(x: Int) => print(x))\n// or with a block:\nnums.each(fn(x: Int) {\n    print(x)\n})\n```',
+                    snippet: 'each(fn(${1:x}: ${2:Int}) => ${3:print($1)})$0',
+                },
+                {
+                    label: 'reduce',
+                    detail: '(initial: Any, cb: Callable) → Any',
+                    doc: 'Fold elements into a single value.\n\n```quirk\nsum: Int = nums.reduce(0, fn(acc: Int, x: Int) => acc + x)\n```',
+                    snippet: 'reduce(${1:0}, fn(${2:acc}: ${3:Int}, ${4:x}: ${5:Int}) => ${6:$2 + $4})$0',
+                },
+                {
+                    label: 'any',
+                    detail: '(cb: Callable) → Bool',
+                    doc: 'Return `true` if at least one element matches the predicate.\n\n```quirk\nhas_big := nums.any(fn(x: Int) => x > 4)\n```',
+                    snippet: 'any(fn(${1:x}: ${2:Int}) => ${3:$1 > 0})$0',
+                },
+                {
+                    label: 'all',
+                    detail: '(cb: Callable) → Bool',
+                    doc: 'Return `true` if every element matches the predicate.\n\n```quirk\nall_pos := nums.all(fn(x: Int) => x > 0)\n```',
+                    snippet: 'all(fn(${1:x}: ${2:Int}) => ${3:$1 > 0})$0',
+                },
+                {
+                    label: 'find',
+                    detail: '(cb: Callable) → Any',
+                    doc: 'Return the first matching element, or `null` if none found.\n\n```quirk\nfound: Int = nums.find(fn(x: Int) => x > 3)\n```',
+                    snippet: 'find(fn(${1:x}: ${2:Int}) => ${3:$1 > 0})$0',
+                },
+            ];
+            for (const m of listMethods) {
+                const item = new vscode.CompletionItem(m.label, vscode.CompletionItemKind.Method);
+                item.detail = m.detail;
+                item.documentation = new vscode.MarkdownString(`**\`List.${m.label}\`** — ${m.doc}`);
+                item.insertText = new vscode.SnippetString(m.snippet);
+                item.sortText = '0_' + m.label;
+                items.push(item);
+            }
+        }
+
+        // Map functional methods
+        if (typeName === 'Map') {
+            const mapMethods: { label: string; detail: string; doc: string; snippet: string }[] = [
+                {
+                    label: 'each',
+                    detail: '(fn(key: String, value: Any))',
+                    doc: 'Call callback for each key-value pair.\n\n```quirk\npeople.each(fn(id: String, person: Map) {\n    print(id + ": " + person.get("name"))\n})\n```',
+                    snippet: 'each(fn(${1:key}: String, ${2:value}) {\n\t$0\n})',
+                },
+                {
+                    label: 'each_key',
+                    detail: '(fn(key: String))',
+                    doc: 'Call callback for each key only.\n\n```quirk\nm.each_key(fn(k: String) => print(k))\n```',
+                    snippet: 'each_key(fn(${1:key}: String) => ${2:print($1)})$0',
+                },
+                {
+                    label: 'each_value',
+                    detail: '(fn(value: Any))',
+                    doc: 'Call callback for each value only.\n\n```quirk\nm.each_value(fn(v: Map) => print(v.get("name")))\n```',
+                    snippet: 'each_value(fn(${1:value}) => ${2})$0',
+                },
+            ];
+            for (const m of mapMethods) {
+                const item = new vscode.CompletionItem(m.label, vscode.CompletionItemKind.Method);
+                item.detail = m.detail;
+                item.documentation = new vscode.MarkdownString(`**\`Map.${m.label}\`** — ${m.doc}`);
+                item.insertText = new vscode.SnippetString(m.snippet);
+                item.sortText = '0_' + m.label;
+                items.push(item);
+            }
         }
 
         // Type descriptor members (result of self.__class)
@@ -296,17 +395,32 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
             }
         }
 
+        // Methods that return List regardless of receiver type
+        const listReturnMethods = new Set(['map', 'filter', 'keys', 'values']);
+
         for (const line of lines) {
+            const esc = variableName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+            // x := [...]  or  x = [...]  → List literal
+            if (new RegExp(`\\b${esc}\\s*(?::=|=)\\s*\\[`).test(line)) return 'List';
+
+            // x := { or x = {  → Map literal
+            if (new RegExp(`\\b${esc}\\s*(?::=|=)\\s*\\{`).test(line)) return 'Map';
+
+            // x := something.map(...) / .filter(...) / .keys() / .values()  → List
+            const chainedMatch = new RegExp(`\\b${esc}\\s*:=\\s*.+\\.(${[...listReturnMethods].join('|')})\\s*\\(`).exec(line);
+            if (chainedMatch) return 'List';
+
             // x := SomeType(...)
-            let match = new RegExp(`\\b${variableName}\\s*:=\\s*(?:[a-zA-Z0-9_]+\\.)?([A-Z][A-Za-z0-9_]+)\\s*\\(`).exec(line);
+            let match = new RegExp(`\\b${esc}\\s*:=\\s*(?:[a-zA-Z0-9_]+\\.)?([A-Z][A-Za-z0-9_]+)\\s*\\(`).exec(line);
             if (match) return match[1];
 
             // x: SomeType  or  x: SomeType =
-            match = new RegExp(`\\b${variableName}\\s*:\\s*(?:[a-zA-Z0-9_]+\\.)?([A-Za-z0-9_]+)`).exec(line);
+            match = new RegExp(`\\b${esc}\\s*:\\s*(?:[a-zA-Z0-9_]+\\.)?([A-Za-z0-9_]+)`).exec(line);
             if (match) return match[1];
 
             // x := someIdentifier  (catch-all, might be a constructor alias)
-            match = new RegExp(`\\b${variableName}\\s*:=\\s*(?:[a-zA-Z0-9_]+\\.)?([A-Za-z0-9_]+)$`).exec(line);
+            match = new RegExp(`\\b${esc}\\s*:=\\s*(?:[a-zA-Z0-9_]+\\.)?([A-Za-z0-9_]+)$`).exec(line);
             if (match) return match[1];
         }
 
@@ -551,6 +665,7 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
             ['true'],    ['false'],   ['null'],
             ['and'],     ['or'],      ['not'],
             ['trigger'], ['catch'],   ['super'],
+            ['fn',       'fn(${1:x}) => ${2:x}',                                    'Lambda expression'],
         ];
         for (const [kw, snippet, doc] of keywords) {
             addItem(kw, vscode.CompletionItemKind.Keyword, 'keyword', snippet, doc);
@@ -570,6 +685,7 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
             ['Map',       'Built-in Map<K,V> type'],
             ['File',      'Built-in File type'],
             ['Any',       'Dynamic Any type'],
+            ['Callable',  'Lambda / function value (produced by fn(...) => ...)'],
             ['void',      'No return value'],
             ['Exception',           'Base exception class'],
             ['TypeError',           'Type mismatch'],

@@ -94,8 +94,16 @@ private:
                 return callBox("Core_Primitives_Any_box_ptr", {asPtr});
             }
             if (el->isIntegerTy(8)) {
-                std::vector<Value*> wrapArgs = {v};
-                Value* strObj = structGen->allocateAndInit("String", wrapArgs);
+                // raw i8* — may be String*, Any*, or tagged integer; convert safely
+                Function* opaqueToStr = TheModule->getFunction("quirk_opaque_to_string");
+                if (!opaqueToStr) {
+                    StructType* strTy = StructType::getTypeByName(Context, "String");
+                    if (!strTy) strTy = StructType::getTypeByName(Context, "struct.String");
+                    Type* retTy = strTy ? (Type*)PointerType::getUnqual(strTy) : (Type*)Type::getInt8PtrTy(Context);
+                    FunctionType* ft = FunctionType::get(retTy, {Type::getInt8PtrTy(Context)}, false);
+                    opaqueToStr = Function::Create(ft, Function::ExternalLinkage, "quirk_opaque_to_string", TheModule);
+                }
+                Value* strObj = Builder.CreateCall(opaqueToStr, {v});
                 return callBox("Core_Primitives_Any_box_string",
                                {Builder.CreateBitCast(strObj, Type::getInt8PtrTy(Context))});
             }

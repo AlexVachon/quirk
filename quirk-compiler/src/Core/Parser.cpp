@@ -88,6 +88,7 @@ int getPrecedence(TokenType type) {
         case TokenType::LESS_EQUAL:
         case TokenType::NOT_EQUAL:
         case TokenType::IS:
+        case TokenType::IN:
             return 10;
         case TokenType::PLUS:
         case TokenType::MINUS:
@@ -169,6 +170,30 @@ std::unique_ptr<Node> Parser::parseExpression(int min_precedence) {
         auto operand = parseExpression(40);
         left =
             std::make_unique<BinaryOpNode>("not", std::move(operand), nullptr);
+    } else if (t.type == TokenType::FN) {
+        auto lambda = std::make_unique<LambdaNode>();
+        consume(TokenType::LPAREN, "Expected '(' after 'fn'");
+        while (peek().type != TokenType::RPAREN && !isAtEnd()) {
+            LambdaParam p;
+            p.name = advance().value;
+            if (match(TokenType::COLON))
+                p.type = advance().value;
+            lambda->params.push_back(std::move(p));
+            if (!match(TokenType::COMMA)) break;
+        }
+        consume(TokenType::RPAREN, "Expected ')' after lambda params");
+        if (peek().type == TokenType::FAT_ARROW) {
+            advance();
+            lambda->isExpression = true;
+            lambda->exprBody = parseExpression(0);
+        } else {
+            consume(TokenType::LBRACE, "Expected '=>' or '{' after lambda params");
+            lambda->isExpression = false;
+            while (peek().type != TokenType::RBRACE && !isAtEnd())
+                lambda->stmtBody.push_back(parseStatement());
+            consume(TokenType::RBRACE, "Expected '}' to close lambda body");
+        }
+        left = std::move(lambda);
     } else {
         reportError("Unexpected token: " + t.value, t);
     }
@@ -867,18 +892,23 @@ std::unique_ptr<Node> Parser::parseTry() {
         consume(TokenType::LPAREN, "Expected '('");
         // Support both  catch (e: Type)  and type-only  catch (Type)
         std::string first = advance().value;
+        if (first == "`") first = advance().value;
         if (match(TokenType::COLON)) {
             // Named form: catch (e: Type, Type2, ...)
             cb.varName = first;
             do {
-                cb.types.push_back(advance().value);
+                std::string t = advance().value;
+                if (t == "`") t = advance().value;
+                cb.types.push_back(t);
             } while (match(TokenType::COMMA));
         } else {
             // Anonymous form: catch (Type, Type2, ...) — no binding variable
             cb.varName = "";
             cb.types.push_back(first);
             while (match(TokenType::COMMA)) {
-                cb.types.push_back(advance().value);
+                std::string t = advance().value;
+                if (t == "`") t = advance().value;
+                cb.types.push_back(t);
             }
         }
 

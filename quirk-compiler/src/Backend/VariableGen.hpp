@@ -80,4 +80,7 @@ class VariableGen {
     }
 
     bool exists(const std::string& name) { return NamedValues.count(name); }
+
+    std::map<std::string, Value*> snapshot() const { return NamedValues; }
+    void restore(const std::map<std::string, Value*>& saved) { NamedValues = saved; }
 };

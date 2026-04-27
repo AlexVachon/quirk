@@ -4,12 +4,13 @@ const KEYWORDS = new Set([
     'define', 'struct', 'if', 'else', 'elif', 'while', 'for', 'in',
     'return', 'break', 'continue', 'use', 'from', 'with', 'as',
     'extern', 'true', 'false', 'null', 'del', 'init', 'def',
-    'trigger', 'try', 'catch', 'throw', 'finally', 'and', 'or', 'not', 'super', 'enum'
+    'trigger', 'try', 'catch', 'throw', 'finally', 'and', 'or', 'not', 'super', 'enum',
+    'fn'
 ]);
 
 const BUILTINS = new Set([
     'print', 'exit', 'Char', 'String', 'List', 'Map',
-    'File', 'Int', 'Double', 'Bool', 'Any', 'void',
+    'File', 'Int', 'Double', 'Bool', 'Any', 'void', 'Callable',
     'true', 'false', 'null',
     'Exception', 'TypeError', 'ValueError', 'IndexError', 'KeyError',
     'IOError', 'FileNotFoundError', 'RuntimeError', 'NotImplementedError',
@@ -234,13 +235,15 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
                 currentFuncDepth = braceDepth;
             }
             
+            const isExtern = maskedLine.includes('extern');
             const paramsStr = funcMatch[1];
             const paramMatches = [...paramsStr.matchAll(/\b([a-zA-Z_]\w*)\s*(?::\s*[a-zA-Z_]\w*)?(?::|$|,)/g)];
             for (const pm of paramMatches) {
                 const pName = pm[1];
                 locals.add(pName);
 
-                if (pName !== 'self' && !BUILTINS.has(pName)) {
+                // extern define params are implemented in C — never "used" in Quirk source
+                if (!isExtern && pName !== 'self' && !BUILTINS.has(pName)) {
                     const startIdx = originalLine.indexOf(pName, funcMatch.index);
                     declarations.set(`${i}_${pName}`, new vscode.Range(i, startIdx, i, startIdx + pName.length));
                 }
@@ -312,6 +315,18 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
                     const startIdx = originalLine.indexOf(vName, catchMatch.index);
                     declarations.set(`${i}_${vName}`, new vscode.Range(i, startIdx, i, startIdx + vName.length));
                 }
+            }
+
+            // Lambda params: fn(x: Int, y) => ... or fn(x) { ... }
+            const lambdaParamRegex = /\bfn\s*\(([^)]*)\)/g;
+            let lambdaParamMatch;
+            while ((lambdaParamMatch = lambdaParamRegex.exec(maskedLine)) !== null) {
+                lambdaParamMatch[1].split(',').forEach(part => {
+                    const pName = part.trim().split(':')[0].trim();
+                    if (pName && /^[a-zA-Z_]\w*$/.test(pName)) {
+                        locals.add(pName);
+                    }
+                });
             }
         }
 

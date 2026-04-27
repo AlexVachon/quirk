@@ -35,4 +35,9 @@ struct Map {
 
     // --- ADDED FOR ITERATION ---
     extern define __iter(self) -> MapIterator
+
+    // Functional methods — each(fn(key: String, value: Any))
+    extern define each(self, cb: Callable)
+    extern define each_value(self, cb: Callable)
+    extern define each_key(self, cb: Callable)
 }

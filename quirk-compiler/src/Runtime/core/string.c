@@ -34,15 +34,40 @@ static void buffer_append(char** buf, int* cap, int* len, const char* str) {
 
 // --- Format helpers: items in the list are now Any* pointers ---
 
+// Determine if a raw void* looks like a valid Any* by checking whether the
+// first 4 bytes (the tag field) fall in the known AnyTag range.  On 64-bit
+// systems every real heap allocation lives above 0xFFFFFFFF, so a pointer
+// value <= 0xFFFFFFFF is a tagged integer (inttoptr i32 -> i8*), not Any*.
+static inline int is_valid_any_ptr(void* item) {
+    if (!item) return 0;
+    if ((uintptr_t)item <= 0xFFFFFFFFUL) return 0;  // tagged integer
+    int32_t tag = *(int32_t*)item;
+    return tag >= ANY_INT && tag <= ANY_NULL;
+}
+
 static void append_any(char** buf, int* cap, int* len, void* item) {
-    Any* a = (Any*)item;
-    if (!a) {
+    if (!item) {
         buffer_append(buf, cap, len, "null");
         return;
     }
-    String* s = Core_Primitives_Any_to_string(a);
-    if (s && s->buffer)
-        buffer_append(buf, cap, len, s->buffer);
+    // Tagged integer passed as pointer
+    if ((uintptr_t)item <= 0xFFFFFFFFUL) {
+        char tmp[32];
+        snprintf(tmp, sizeof(tmp), "%d", (int)(uintptr_t)item);
+        buffer_append(buf, cap, len, tmp);
+        return;
+    }
+    if (is_valid_any_ptr(item)) {
+        Any* a = (Any*)item;
+        String* s = Core_Primitives_Any_to_string(a);
+        if (s && s->buffer)
+            buffer_append(buf, cap, len, s->buffer);
+    } else {
+        // Raw String* (or other heap object) — use buffer directly
+        String* s = (String*)item;
+        if (s->buffer)
+            buffer_append(buf, cap, len, s->buffer);
+    }
 }
 
 static void append_formatted(char** buf,
@@ -50,14 +75,44 @@ static void append_formatted(char** buf,
                       int* len,
                       void* item,
                       const char* fmt_spec) {
-    Any* a = (Any*)item;
-    if (!a) {
+    if (!item) {
         buffer_append(buf, cap, len, "(null)");
         return;
     }
 
     char format_string[32];
     char output_buffer[256];
+
+    // Tagged integer passed as pointer
+    if ((uintptr_t)item <= 0xFFFFFFFFUL) {
+        int ival = (int)(uintptr_t)item;
+        if (fmt_spec && strlen(fmt_spec) > 0) {
+            snprintf(format_string, 32, "%%%s", fmt_spec);
+            if (strchr(format_string, 's')) strcpy(format_string, "%d");
+            snprintf(output_buffer, 256, format_string, ival);
+        } else {
+            snprintf(output_buffer, 256, "%d", ival);
+        }
+        buffer_append(buf, cap, len, output_buffer);
+        return;
+    }
+
+    // Raw String* or other heap object that is NOT a valid Any*
+    if (!is_valid_any_ptr(item)) {
+        String* s = (String*)item;
+        const char* cstr = (s && s->buffer) ? s->buffer : "(null)";
+        if (fmt_spec && strlen(fmt_spec) > 0) {
+            snprintf(format_string, 32, "%%%s", fmt_spec);
+            if (strpbrk(format_string, "dxfge")) strcpy(format_string, "%s");
+            snprintf(output_buffer, 256, format_string, cstr);
+            buffer_append(buf, cap, len, output_buffer);
+        } else {
+            buffer_append(buf, cap, len, cstr);
+        }
+        return;
+    }
+
+    Any* a = (Any*)item;
 
     // Float format spec (%f, %g, %e)?
     if (fmt_spec && (strchr(fmt_spec, 'f') || strchr(fmt_spec, 'g') ||
@@ -100,7 +155,6 @@ static void append_formatted(char** buf,
             const char* cstr = (s && s->buffer) ? s->buffer : "(null)";
             if (fmt_spec && strlen(fmt_spec) > 0) {
                 snprintf(format_string, 32, "%%%s", fmt_spec);
-                // If format is numeric but value is a string, skip spec
                 if (strpbrk(format_string, "dxfge"))
                     strcpy(format_string, "%s");
                 snprintf(output_buffer, 256, format_string, cstr);
@@ -143,10 +197,25 @@ void Core_String_String___init(String* self, char* raw) {
     if (!raw) {
         self->length = 0;
         self->buffer = strdup("");
-    } else {
-        self->length = strlen(raw);
-        self->buffer = strdup(raw);
+        return;
     }
+    // If raw is actually an Any* (first 4 bytes are a valid AnyTag), extract
+    // its string representation instead of treating it as a raw C string.
+    int32_t possible_tag = *(int32_t*)raw;
+    if (possible_tag >= ANY_INT && possible_tag <= ANY_NULL) {
+        Any* a = (Any*)raw;
+        String* extracted = Core_Primitives_Any_to_string(a);
+        if (extracted && extracted->buffer) {
+            self->length = extracted->length;
+            self->buffer = strdup(extracted->buffer);
+        } else {
+            self->length = 0;
+            self->buffer = strdup("");
+        }
+        return;
+    }
+    self->length = strlen(raw);
+    self->buffer = strdup(raw);
 }
 
 void Core_String_String___del(String* self) {
@@ -868,20 +937,7 @@ String* Core_String_String_format_map(String* self, List* keys, List* values) {
                 key_name[key_len] = '\0';
                 int idx = find_key_index(keys, key_name);
                 if (idx != -1 && idx < values->size) {
-                    void* val = values->data[idx];
-                    // If the value looks like a valid Any* (tag in known
-                    // range), use append_formatted. Otherwise treat it as a raw
-                    // String*.
-                    Any* a = (Any*)val;
-                    if (a && a->tag >= ANY_INT && a->tag <= ANY_PTR) {
-                        append_formatted(&res, &cap, &len, val, fmt_spec);
-                    } else {
-                        // Raw String* passed directly — treat as string value
-                        String* s = (String*)val;
-                        const char* cstr =
-                            (s && s->buffer) ? s->buffer : "(null)";
-                        buffer_append(&res, &cap, &len, cstr);
-                    }
+                    append_formatted(&res, &cap, &len, values->data[idx], fmt_spec);
                 }
                 free(key_name);
                 ptr = close_ptr + 1;

@@ -465,6 +465,33 @@ class TriggerNode : public Node {
     }
 };
 
+struct LambdaParam {
+    std::string name;
+    std::string type; // empty = untyped
+};
+
+class LambdaNode : public Node {
+   public:
+    std::vector<LambdaParam> params;
+    std::unique_ptr<Node> exprBody;                    // set for fn(x) => expr
+    std::vector<std::unique_ptr<Node>> stmtBody;       // set for fn(x) { stmts }
+    bool isExpression = true;
+    std::string inferredReturnType;                    // set by Sema; empty = opaque i8*
+
+    void print(int indent) const override {
+        std::string space(indent, ' ');
+        std::cout << space << "Lambda(";
+        for (size_t i = 0; i < params.size(); i++) {
+            std::cout << params[i].name;
+            if (!params[i].type.empty()) std::cout << ": " << params[i].type;
+            if (i + 1 < params.size()) std::cout << ", ";
+        }
+        std::cout << ") =>" << std::endl;
+        if (isExpression && exprBody) exprBody->print(indent + 2);
+        else for (const auto& s : stmtBody) s->print(indent + 2);
+    }
+};
+
 class EnumNode : public Node {
    public:
     std::string name;

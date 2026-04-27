@@ -4,6 +4,8 @@
 #include <string.h>
 
 extern void* GC_malloc(size_t);
+extern String* make_String(const char* raw);
+extern String* make_String_taking_ownership(char* raw);
 
 // Forward Declaration
 void* Encoding_Json__parse_value(const char** cursor);
@@ -12,39 +14,35 @@ static void Json__skip_whitespace(const char** cursor) {
     while (isspace(**cursor)) (*cursor)++;
 }
 
-// --- FIX: Returns a RAW C-string (used for dynamic Any values) ---
-static char* Json__parse_raw_string(const char** cursor) {
+// Returns a String* so quirk_opaque_to_string and Json__serialize_any can detect it
+static String* Json__parse_raw_string(const char** cursor) {
     (*cursor)++; // Skip opening quote
     const char* start = *cursor;
     while (**cursor && **cursor != '"') {
-        if (**cursor == '\\') (*cursor)++; 
+        if (**cursor == '\\') (*cursor)++;
         (*cursor)++;
     }
     int len = *cursor - start;
-    
     char* buf = (char*)GC_malloc(len + 1);
     strncpy(buf, start, len);
     buf[len] = '\0';
-    
     (*cursor)++; // Skip closing quote
-    return buf; 
+    return make_String_taking_ownership(buf);
 }
 
-// --- FIX: Returns a RAW C-string ---
-static char* Json__parse_raw_number(const char** cursor) {
+// Returns a String* so quirk_opaque_to_string and Json__serialize_any can detect it
+static String* Json__parse_raw_number(const char** cursor) {
     const char* start = *cursor;
     if (**cursor == '-') (*cursor)++;
-    while (isdigit(**cursor) || **cursor == '.' || **cursor == 'e' || 
+    while (isdigit(**cursor) || **cursor == '.' || **cursor == 'e' ||
            **cursor == 'E' || **cursor == '+' || **cursor == '-') {
         (*cursor)++;
     }
     int len = *cursor - start;
-    
     char* buf = (char*)GC_malloc(len + 1);
     strncpy(buf, start, len);
     buf[len] = '\0';
-    
-    return buf; 
+    return make_String_taking_ownership(buf);
 }
 
 Map* Encoding_Json__parse_object(const char** cursor) {
@@ -66,8 +64,7 @@ Map* Encoding_Json__parse_object(const char** cursor) {
         if (**cursor != '"') break; 
         
         // Map Keys MUST be String Objects
-        char* raw_key = Json__parse_raw_string(cursor);
-        String* keyObj = make_String_taking_ownership(raw_key);
+        String* keyObj = Json__parse_raw_string(cursor);
         
         Json__skip_whitespace(cursor);
         if (**cursor == ':') (*cursor)++;
@@ -124,24 +121,9 @@ void* Encoding_Json__parse_value(const char** cursor) {
     if (**cursor == '[') return Encoding_Json__parse_array(cursor);
     if (isdigit(**cursor) || **cursor == '-') return Json__parse_raw_number(cursor);
     
-    if (strncmp(*cursor, "true", 4) == 0) {
-        *cursor += 4;
-        char* buf = (char*)GC_malloc(5);
-        strcpy(buf, "true");
-        return buf;
-    }
-    if (strncmp(*cursor, "false", 5) == 0) {
-        *cursor += 5;
-        char* buf = (char*)GC_malloc(6);
-        strcpy(buf, "false");
-        return buf;
-    }
-    if (strncmp(*cursor, "null", 4) == 0) {
-        *cursor += 4;
-        char* buf = (char*)GC_malloc(5);
-        strcpy(buf, "null");
-        return buf;
-    }
+    if (strncmp(*cursor, "true", 4) == 0)  { *cursor += 4; return make_String("true"); }
+    if (strncmp(*cursor, "false", 5) == 0) { *cursor += 5; return make_String("false"); }
+    if (strncmp(*cursor, "null", 4) == 0)  { *cursor += 4; return make_String("null"); }
     
     (*cursor)++; 
     return NULL;
@@ -269,10 +251,11 @@ static void Json__serialize_any(void* val, AnyTag hint, char** buf, int* cap, in
 
     // Detection order:
     //   0. ISerializable — checked FIRST, using only the safe first 4 bytes
-    //   1. String*  — inner_ptr[0] >= 32 (printable), len 0-4096, buf[len]=='\0'
-    //   2. Map*     — pow2 cap>=8, entries[0].is_occupied <= 1
-    //   3. List*    — cap 1-65536, size <= cap
-    //   4. Any*     — tag 1-8 (after pointer-based structs to avoid false positives)
+    //   1. Any*     — tag 0..8, checked BEFORE inner_ptr dereference (prevents crash
+    //                 when tag value is a small int like 6 that would be dereferenced)
+    //   2. String*  — inner_ptr[0] >= 32 (printable), len 0-4096, buf[len]=='\0'
+    //   3. Map*     — pow2 cap>=8, entries[0].is_occupied <= 1
+    //   4. List*    — cap 1-65536, size <= cap
     //   5. char*    — raw C-string fallback from json parser
     //
     // ISerializable is checked FIRST because user structs (e.g. Point{i32,i32})
@@ -293,13 +276,28 @@ static void Json__serialize_any(void* val, AnyTag hint, char** buf, int* cap, in
         }
     }
 
-    // All remaining types are at least 16 bytes, so reading inner_ptr and
-    // offset-8/12 fields is safe.
-    void* inner_ptr = *((void**)val);
+    // 1. Any* — check BEFORE reading inner_ptr to prevent crash when tag is a small int
+    //    (e.g. Any*{tag=6} means inner_ptr=6, dereferencing it → SIGSEGV)
+    {
+        int32_t possible_tag = *((int32_t*)val);
+        if (possible_tag >= ANY_INT && possible_tag <= ANY_NULL) {
+            Any* a = (Any*)val;
+            Json__serialize_any(val, (AnyTag)a->tag, buf, cap, len);
+            return;
+        }
+    }
 
-    // 1. String* — [char* buf @0][i32 len @8]
+    // All remaining types are at least 16 bytes, so reading inner_ptr and
+    // offset-8/12 fields is safe. Guard against null/small invalid pointers.
+    void* inner_ptr = *((void**)val);
+    if (!inner_ptr || (uintptr_t)inner_ptr <= 0xFFFFUL) {
+        Json__buf_append(buf, cap, len, "null");
+        return;
+    }
+
+    // 2. String* — [char* buf @0][i32 len @8]
     //    buf[0] >= 32: printable ASCII, never confused with Map (is_occupied=0/1)
-    if (inner_ptr) {
+    {
         int32_t str_len = *((int32_t*)((char*)val + 8));
         unsigned char buf_first = *((unsigned char*)inner_ptr);
         if (str_len >= 0 && str_len <= 4096 && buf_first >= 32) {
@@ -311,12 +309,12 @@ static void Json__serialize_any(void* val, AnyTag hint, char** buf, int* cap, in
         }
     }
 
-    // 2. Map* — [entries* @0][cap i32 @8][size i32 @12]
+    // 3. Map* — [entries* @0][cap i32 @8][size i32 @12]
     //    MapEntry layout: { char* key @0, void* value @8, int is_occupied @16, int is_deleted @20 }
     //    is_occupied is always exactly 0 or 1 (set explicitly by Map_put/Map_remove).
     //    We must read offset 16, NOT offset 0 (key) — key is a non-null heap pointer
     //    when slot 0 is occupied, making key[0] > 1 and breaking the old check.
-    if (inner_ptr) {
+    {
         int32_t map_cap  = *((int32_t*)((char*)val + 8));
         int32_t map_size = *((int32_t*)((char*)val + 12));
         int32_t is_occupied_0 = *((int32_t*)((char*)inner_ptr + 16));
@@ -328,9 +326,9 @@ static void Json__serialize_any(void* val, AnyTag hint, char** buf, int* cap, in
         }
     }
 
-    // 3. List* — [data* @0][size i32 @8][cap i32 @12]
+    // 4. List* — [data* @0][size i32 @8][cap i32 @12]
     //    cap >= 1 (compiler-emitted lists may have cap=2).
-    if (inner_ptr) {
+    {
         int32_t list_size = *((int32_t*)((char*)val + 8));
         int32_t list_cap  = *((int32_t*)((char*)val + 12));
         if (list_cap >= 1 && list_cap <= 65536 &&
@@ -340,18 +338,8 @@ static void Json__serialize_any(void* val, AnyTag hint, char** buf, int* cap, in
         }
     }
 
-    // 4. Any* — [i32 tag @0] — after pointer-based structs
-    {
-        int32_t possible_tag = *((int32_t*)val);
-        if (possible_tag >= ANY_INT && possible_tag <= ANY_NULL) {
-            Any* a = (Any*)val;
-            Json__serialize_any(val, (AnyTag)a->tag, buf, cap, len);
-            return;
-        }
-    }
-
     // 5. Raw C-string (json.c parser scalars — printable ASCII)
-    const     const char* s = (const char*)val;
+    const char* s = (const char*)val;
     unsigned char first = (unsigned char)s[0];
     if (first >= 32 && first < 128) {
         int is_num = (first == '-' || (first >= '0' && first <= '9'));

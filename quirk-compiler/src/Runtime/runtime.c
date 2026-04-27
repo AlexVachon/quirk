@@ -38,5 +38,35 @@ static void* __gc_calloc(size_t n, size_t s) {
 
 void QuirkRuntime_init(int argc, char** argv) {
     GC_INIT();             // <--- USE MACRO: Handles stack base detection automatically
-    Sys_init(argc, argv);  
+    Sys_init(argc, argv);
+}
+
+// Convert a boxed opaque value to String*.
+// Handles three cases:
+//   1. Tagged integer: pointer value <= 0xFFFFFFFF (inttoptr i32 -> i8*)
+//   2. Any*: first 4 bytes are a valid AnyTag (0..ANY_NULL=8)
+//   3. String*: first field is a heap pointer to char buffer
+String* quirk_opaque_to_string(void* val) {
+    if (!val) return make_String("null");
+    uintptr_t uval = (uintptr_t)val;
+    // Case 1: tagged integer
+    if (uval <= 0xFFFFFFFFUL) {
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%d", (int)uval);
+        return make_String(buf);
+    }
+    // Case 2: Any* — first 4 bytes are tag in 0..ANY_NULL
+    int32_t possible_tag = *(int32_t*)val;
+    if (possible_tag >= ANY_INT && possible_tag <= ANY_NULL) {
+        return Core_Primitives_Any_to_string((Any*)val);
+    }
+    // Case 3: String* — use buffer directly
+    String* s = (String*)val;
+    return (s->buffer) ? s : make_String("null");
+}
+
+// Print a boxed opaque value (i8* returned from Any-typed methods like map.get).
+void quirk_print_opaque(void* val) {
+    String* s = quirk_opaque_to_string(val);
+    printf("%s\n", s->buffer ? s->buffer : "");
 }

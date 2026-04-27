@@ -50,6 +50,9 @@ enum class TokenType {
 
     BREAK, CONTINUE,
 
+    FN,
+    FAT_ARROW,
+
     // Operators
     ASSIGN_INIT,
     ASSIGN,

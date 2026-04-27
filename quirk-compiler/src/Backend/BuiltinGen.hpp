@@ -224,8 +224,16 @@ class BuiltinGen {
                 Value* fmt = Builder.CreateGlobalStringPtr("%f\n");
                 Builder.CreateCall(printfFunc, {fmt, val});
             } else if (type->isPointerTy() && type->getPointerElementType()->isIntegerTy(8)) {
-                Value* fmt = Builder.CreateGlobalStringPtr("%s\n");
-                Builder.CreateCall(printfFunc, {fmt, val});
+                // i8* may be a boxed String* (from map.get / Any-typed returns).
+                // quirk_print_opaque distinguishes heap String* from tagged-int pointers.
+                Function* printOpaque = TheModule->getFunction("quirk_print_opaque");
+                if (!printOpaque) {
+                    FunctionType* ft = FunctionType::get(
+                        Type::getVoidTy(Context), {Type::getInt8PtrTy(Context)}, false);
+                    printOpaque = Function::Create(ft, Function::ExternalLinkage,
+                        "quirk_print_opaque", TheModule);
+                }
+                Builder.CreateCall(printOpaque, {val});
             }
         }
 

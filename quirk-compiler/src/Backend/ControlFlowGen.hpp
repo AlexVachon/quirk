@@ -203,6 +203,20 @@ class ControlFlowGen {
         exit(1);
     }
 
+    // Emit print_traceback on the active exception then terminate.
+    // Called at every "unhandled exception" site instead of the bare runtime stub.
+    void emitUnhandledException(std::map<std::string, StructType*>& StructTypes) {
+        Value* rawExc = Builder.CreateCall(TheModule->getFunction("quirk_get_exception"));
+        Function* printFn = TheModule->getFunction("Exception_print_traceback");
+        if (printFn && StructTypes.count("Exception")) {
+            Type* selfTy = printFn->getFunctionType()->getParamType(0);
+            Value* casted = Builder.CreateBitCast(rawExc, selfTy);
+            Builder.CreateCall(printFn, {casted});
+        }
+        Builder.CreateCall(TheModule->getFunction("quirk_unhandled_exception"));
+        Builder.CreateUnreachable();
+    }
+
     void generateTryCatch(TryCatchNode* node, Function* parentFunc,
                           std::function<void(Node*)> stmtHandler,
                           VariableGen* varGen,
@@ -218,10 +232,16 @@ class ControlFlowGen {
         BasicBlock* firstEvalBB = BasicBlock::Create(Context, "catch_eval_0", parentFunc);
         Builder.CreateCondBr(isCatch, firstEvalBB, tryBB);
 
+        // Helper: emit finally statements inline at any exit point.
+        auto emitFinally = [&]() {
+            for (auto& stmt : node->finallyBlock) stmtHandler(stmt.get());
+        };
+
         Builder.SetInsertPoint(tryBB);
         for (auto& stmt : node->tryBlock) stmtHandler(stmt.get());
         if (!Builder.GetInsertBlock()->getTerminator()) {
             Builder.CreateCall(TheModule->getFunction("quirk_pop_try"));
+            emitFinally();
             Builder.CreateBr(endBB);
         }
 
@@ -277,14 +297,18 @@ class ControlFlowGen {
 
             Type* catchTypeLLVM = PointerType::getUnqual(StructTypes[cb.types[0]]);
             Value* castedExc = Builder.CreateBitCast(rawExc, catchTypeLLVM);
-            varGen->defineLocalVariable(cb.varName, castedExc);
+            if (!cb.varName.empty()) varGen->defineLocalVariable(cb.varName, castedExc);
 
             for (auto& stmt : cb.body) stmtHandler(stmt.get());
-            if (!Builder.GetInsertBlock()->getTerminator()) Builder.CreateBr(endBB);
+            if (!Builder.GetInsertBlock()->getTerminator()) {
+                emitFinally();
+                Builder.CreateBr(endBB);
+            }
             currentEvalBB = nextEvalBB;
         }
 
         Builder.SetInsertPoint(currentEvalBB);
+        emitFinally();
         Value* depth = Builder.CreateCall(TheModule->getFunction("quirk_get_try_depth"));
         Value* hasParentCatch = Builder.CreateICmpSGT(depth, ConstantInt::get(Type::getInt32Ty(Context), -1));
 
@@ -299,8 +323,7 @@ class ControlFlowGen {
         Builder.CreateUnreachable();
 
         Builder.SetInsertPoint(crashBB);
-        Builder.CreateCall(TheModule->getFunction("quirk_unhandled_exception"));
-        Builder.CreateUnreachable();
+        emitUnhandledException(StructTypes);
 
         Builder.SetInsertPoint(endBB);
     }
@@ -309,6 +332,26 @@ class ControlFlowGen {
                        std::function<Value*(Node*)> exprHandler,
                        std::map<std::string, StructType*>& StructTypes,
                        std::function<Value*(const std::string&, std::vector<Value*>&)> initHelper) {
+        // Bare throw: re-raise the currently active exception unchanged.
+        if (!node->expression) {
+            Value* depth    = Builder.CreateCall(TheModule->getFunction("quirk_get_try_depth"));
+            Value* hasCatch = Builder.CreateICmpSGE(depth, ConstantInt::get(Type::getInt32Ty(Context), 0));
+
+            BasicBlock* jumpBB  = BasicBlock::Create(Context, "rethrow_jump",  parentFunc);
+            BasicBlock* crashBB = BasicBlock::Create(Context, "rethrow_crash", parentFunc);
+            Builder.CreateCondBr(hasCatch, jumpBB, crashBB);
+
+            Builder.SetInsertPoint(jumpBB);
+            Value* activeBuf = Builder.CreateCall(TheModule->getFunction("quirk_get_current_jmp_buf"));
+            Builder.CreateCall(TheModule->getFunction("longjmp"),
+                               {activeBuf, ConstantInt::get(Type::getInt32Ty(Context), 1)});
+            Builder.CreateUnreachable();
+
+            Builder.SetInsertPoint(crashBB);
+            emitUnhandledException(StructTypes);
+            return;
+        }
+
         Value* excObj = exprHandler(node->expression.get());
 
         if (StructTypes.count("Exception")) {
@@ -360,7 +403,6 @@ class ControlFlowGen {
         Builder.CreateUnreachable();
 
         Builder.SetInsertPoint(crashBB);
-        Builder.CreateCall(TheModule->getFunction("quirk_unhandled_exception"));
-        Builder.CreateUnreachable();
+        emitUnhandledException(StructTypes);
     }
 };

@@ -8,6 +8,7 @@
     { "include": "#keywords" },
     { "include": "#strings" },
     { "include": "#numbers" },
+    { "include": "#exceptions" },
     { "include": "#types" },
     { "include": "#enum-access" },
     { "include": "#method-calls" },
@@ -69,7 +70,7 @@
       "patterns": [
         {
           "name": "keyword.control.quirk",
-          "match": "\\b(if|else|elif|while|for|in|return|break|continue|with|as|trigger|try|catch|throw|from)\\b"
+          "match": "\\b(if|else|elif|while|for|in|return|break|continue|with|as|trigger|try|catch|throw|finally|from)\\b"
         },
         {
           "name": "keyword.other.quirk",
@@ -82,6 +83,14 @@
         {
           "name": "variable.language.this.quirk",
           "match": "\\b(self|super)\\b"
+        }
+      ]
+    },
+    "exceptions": {
+      "patterns": [
+        {
+          "name": "support.class.exception.quirk",
+          "match": "\\b(Exception|TypeError|ValueError|IndexError|KeyError|IOError|FileNotFoundError|RuntimeError|NotImplementedError|ZeroDivisionError|AssertionError|NullError|SocketError)\\b"
         }
       ]
     },

@@ -392,6 +392,7 @@ class TryCatchNode : public Node {
    public:
     std::vector<std::unique_ptr<Node>> tryBlock;
     std::vector<CatchBlock> catchBlocks;
+    std::vector<std::unique_ptr<Node>> finallyBlock;
 
     void print(int indent) const override {
         std::string space(indent, ' ');
@@ -404,6 +405,10 @@ class TryCatchNode : public Node {
             }
             std::cout << ") {" << std::endl;
             for (const auto& stmt : cb.body) stmt->print(indent + 2);
+        }
+        if (!finallyBlock.empty()) {
+            std::cout << space << "} Finally {" << std::endl;
+            for (const auto& stmt : finallyBlock) stmt->print(indent + 2);
         }
         std::cout << space << "}" << std::endl;
     }
@@ -421,8 +426,12 @@ class ThrowNode : public Node {
 
     void print(int indent) const override {
         std::string space(indent, ' ');
-        std::cout << space << "Throw (Line " << line << "):" << std::endl;
-        expression->print(indent + 2);
+        if (expression) {
+            std::cout << space << "Throw (Line " << line << "):" << std::endl;
+            expression->print(indent + 2);
+        } else {
+            std::cout << space << "Rethrow (Line " << line << ")" << std::endl;
+        }
     }
 };
 

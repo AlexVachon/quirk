@@ -863,15 +863,25 @@ std::unique_ptr<Node> Parser::parseTry() {
     while (peek().type == TokenType::CATCH) {
         advance();
         CatchBlock cb;
-        
+
         consume(TokenType::LPAREN, "Expected '('");
-        cb.varName = advance().value;
-        consume(TokenType::COLON, "Expected ':'");
-        
-        do {
-            cb.types.push_back(advance().value);
-        } while (match(TokenType::COMMA));
-        
+        // Support both  catch (e: Type)  and type-only  catch (Type)
+        std::string first = advance().value;
+        if (match(TokenType::COLON)) {
+            // Named form: catch (e: Type, Type2, ...)
+            cb.varName = first;
+            do {
+                cb.types.push_back(advance().value);
+            } while (match(TokenType::COMMA));
+        } else {
+            // Anonymous form: catch (Type, Type2, ...) — no binding variable
+            cb.varName = "";
+            cb.types.push_back(first);
+            while (match(TokenType::COMMA)) {
+                cb.types.push_back(advance().value);
+            }
+        }
+
         consume(TokenType::RPAREN, "Expected ')'");
 
         consume(TokenType::LBRACE, "Expected '{' after catch");
@@ -879,17 +889,41 @@ std::unique_ptr<Node> Parser::parseTry() {
             cb.body.push_back(parseStatement());
         }
         consume(TokenType::RBRACE, "Expected '}'");
-        
+
         node->catchBlocks.push_back(std::move(cb));
     }
-    
+
+    if (match(TokenType::FINALLY)) {
+        consume(TokenType::LBRACE, "Expected '{' after finally");
+        while (peek().type != TokenType::RBRACE && !isAtEnd()) {
+            node->finallyBlock.push_back(parseStatement());
+        }
+        consume(TokenType::RBRACE, "Expected '}'");
+    }
+
     return node;
 }
 
 std::unique_ptr<Node> Parser::parseThrow() {
     int lineNum = peek().line;
     consume(TokenType::THROW, "Expected 'throw'");
-    
+
+    // Bare throw: re-raises the current exception without arguments.
+    // Detected when the next token cannot begin an expression.
+    TokenType next = peek().type;
+    bool canStartExpr = (next == TokenType::IDENTIFIER || next == TokenType::INT_LITERAL  ||
+                         next == TokenType::FLOAT_LITERAL || next == TokenType::STRING_LITERAL ||
+                         next == TokenType::CHAR_LITERAL || next == TokenType::LPAREN         ||
+                         next == TokenType::LBRACKET      || next == TokenType::LBRACE         ||
+                         next == TokenType::MINUS         || next == TokenType::NOT            ||
+                         next == TokenType::TRUE          || next == TokenType::FALSE          ||
+                         next == TokenType::QUIRK_NULL);
+    if (!canStartExpr) {
+        auto node = std::make_unique<ThrowNode>(nullptr, nullptr, lineNum);
+        node->moduleName = this->filePath;
+        return node;
+    }
+
     auto expr = parseExpression(0);
     std::unique_ptr<Node> causeExpr = nullptr;
     

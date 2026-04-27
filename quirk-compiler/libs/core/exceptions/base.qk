@@ -1,5 +1,23 @@
 from ...sys use { srcline, shadow_size, shadow_frame }
 
+---
+Base class for all exceptions in Quirk.
+Catch this type to handle any exception regardless of its specific kind.
+
+Fields: message, type, file, line, traceback, cause_trace
+
+@note Prefer catching a specific subclass (ValueError, IOError, etc.) over
+      catching Exception directly, so unrelated errors are not silently swallowed.
+@warning Catching Exception will also catch RuntimeError, NullError, and all
+         other built-in exceptions — use with care in broad catch blocks.
+
+@example:
+try {
+    throw ValueError("bad input")
+} catch (e: Exception) {
+    print(e.type + ": " + e.message)
+}
+---
 struct Exception {
     type: String
     message: String

@@ -154,6 +154,7 @@ Token Lexer::nextToken()
         if (ident == "try")      return {TokenType::TRY,        ident, startLine, startCol};
         if (ident == "catch")    return {TokenType::CATCH,      ident, startLine, startCol};
         if (ident == "throw")    return {TokenType::THROW,      ident, startLine, startCol};
+        if (ident == "finally")  return {TokenType::FINALLY,    ident, startLine, startCol};
         if (ident == "break")    return {TokenType::BREAK,      ident, startLine, startCol};
         if (ident == "continue") return {TokenType::CONTINUE,   ident, startLine, startCol};
         if (ident == "trigger")  return {TokenType::TRIGGER,    ident, startLine, startCol};

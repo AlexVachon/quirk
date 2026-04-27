@@ -198,13 +198,15 @@ List* Core_Collections_Map_Map_values(Map* self) {
 //  OPERATORS (Updated to use String*)
 // ==========================================
 
+extern void quirk_throw_exception(const char* type_name, const char* message);
+
 void* Core_Collections_Map_Map___get(Map* self, String* keyObj) {
     void* val = Core_Collections_Map_Map_get(self, keyObj);
-    // Note: Core_Collections_Map_Map_has checks raw buffer, so it's safe to call here
     if (!val && !Core_Collections_Map_Map_has(self, keyObj)) {
-        printf("KeyError: '%s' not found\n",
-               keyObj ? keyObj->buffer : "(null)");
-        exit(1);
+        const char* key = (keyObj && keyObj->buffer) ? keyObj->buffer : "(null)";
+        char buf[256];
+        snprintf(buf, sizeof(buf), "'%s'", key);
+        quirk_throw_exception("KeyError", buf);
     }
     return val;
 }

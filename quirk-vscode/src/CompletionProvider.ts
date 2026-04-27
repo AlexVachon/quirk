@@ -63,12 +63,17 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
     // =========================================================
     // DOCSTRING PARSER — shared utility, also used by HoverProvider
     // =========================================================
-    public formatDocstring(docstring: string[]): vscode.MarkdownString {
+    public formatDocstring(docstring: string[]): { md: vscode.MarkdownString, deprecated: boolean } {
         const md = new vscode.MarkdownString();
         md.isTrusted = true;
         let description: string[] = [];
         let paramsList: string[] = [];
         let returnsText = "";
+        let throwsList: string[] = [];
+        let notes: string[] = [];
+        let warnings: string[] = [];
+        let deprecated = false;
+        let deprecatedReason = "";
         let readingParamsList = false;
         let exampleLines: string[] = [];
         let readingExample = false;
@@ -91,7 +96,7 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
                 continue;
             }
 
-            // @param :  (block-list form)
+            // @params:  (block-list form)
             if (/^@params?\s*:?$/.test(trimmed)) { readingParamsList = true; continue; }
 
             if (readingParamsList) {
@@ -113,18 +118,49 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
                 continue;
             }
 
+            // @throws TypeName desc
+            const throwsMatch = /^@throws?\s+([a-zA-Z_]\w*)(?:\s+(.*))?/.exec(trimmed);
+            if (throwsMatch) {
+                const desc = throwsMatch[2] ? ' — ' + throwsMatch[2] : '';
+                throwsList.push(`* \`${throwsMatch[1]}\`${desc}`);
+                continue;
+            }
+
+            // @deprecated reason
+            const deprecatedMatch = /^@deprecated\s*(.*)/.exec(trimmed);
+            if (deprecatedMatch) {
+                deprecated = true;
+                deprecatedReason = deprecatedMatch[1].trim();
+                continue;
+            }
+
+            // @note text
+            const noteMatch = /^@note\s+(.+)/.exec(trimmed);
+            if (noteMatch) { notes.push(noteMatch[1]); continue; }
+
+            // @warning text
+            const warningMatch = /^@warning\s+(.+)/.exec(trimmed);
+            if (warningMatch) { warnings.push(warningMatch[1]); continue; }
+
             description.push(line + '  ');
         }
 
+        if (deprecated) {
+            const reason = deprecatedReason ? ` — ${deprecatedReason}` : '';
+            md.appendMarkdown(`> ~~**Deprecated**~~${reason}\n\n`);
+        }
         if (description.length > 0) md.appendMarkdown(description.join('\n') + '\n\n');
-        if (paramsList.length > 0) md.appendMarkdown('**Parameters:**\n\n' + paramsList.join('\n') + '\n\n');
-        if (returnsText) md.appendMarkdown(`**Returns:** ${returnsText}\n\n`);
+        for (const n of notes)    md.appendMarkdown(`> 📝 **Note:** ${n}\n\n`);
+        for (const w of warnings) md.appendMarkdown(`> ⚠️ **Warning:** ${w}\n\n`);
+        if (paramsList.length > 0)  md.appendMarkdown('**Parameters:**\n\n' + paramsList.join('\n') + '\n\n');
+        if (returnsText)            md.appendMarkdown(`**Returns:** ${returnsText}\n\n`);
+        if (throwsList.length > 0)  md.appendMarkdown('**Throws:**\n\n' + throwsList.join('\n') + '\n\n');
         if (exampleLines.length > 0) {
             md.appendMarkdown('**Example:**\n');
             md.appendCodeblock(exampleLines.join('\n'), 'quirk');
         }
 
-        return md;
+        return { md, deprecated };
     }
 
     // =========================================================
@@ -238,7 +274,11 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
             if (seen.has(label)) return;
             seen.add(label);
             const item = new vscode.CompletionItem(label, kind);
-            if (docstr.length > 0) item.documentation = this.formatDocstring(docstr);
+            if (docstr.length > 0) {
+                const parsed = this.formatDocstring(docstr);
+                item.documentation = parsed.md;
+                if (parsed.deprecated) item.tags = [vscode.CompletionItemTag.Deprecated];
+            }
             if (insertText) item.insertText = new vscode.SnippetString(insertText);
             if (detail) item.detail = detail;
             item.sortText = label.startsWith('__')
@@ -431,9 +471,19 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
             ['File',      'Built-in File type'],
             ['Any',       'Dynamic Any type'],
             ['void',      'No return value'],
-            ['Exception', 'Base exception class',  'Exception(${1:message})'],
-            ['TypeError', 'Type mismatch exception','TypeError(${1:message})'],
-            ['ValueError','Invalid value exception','ValueError(${1:message})'],
+            ['Exception',           'Base exception class'],
+            ['TypeError',           'Type mismatch'],
+            ['ValueError',          'Invalid value'],
+            ['IndexError',          'List/string index out of range'],
+            ['KeyError',            'Map key not found'],
+            ['IOError',             'File or I/O failure'],
+            ['FileNotFoundError',   'File or directory not found'],
+            ['RuntimeError',        'Generic runtime error'],
+            ['NotImplementedError', 'Abstract method not implemented'],
+            ['ZeroDivisionError',   'Division by zero'],
+            ['AssertionError',      'Assertion failed'],
+            ['NullError',           'Null value dereferenced'],
+            ['SocketError',         'Socket or network failure'],
         ];
         for (const [name, doc, snippet] of builtins) {
             addItem(name, vscode.CompletionItemKind.Class, 'built-in', snippet, doc);
@@ -554,7 +604,9 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
                     }
 
                     if (currentDocstring.length > 0) {
-                        item.documentation = this.formatDocstring(currentDocstring);
+                        const parsed = this.formatDocstring(currentDocstring);
+                        item.documentation = parsed.md;
+                        if (parsed.deprecated) item.tags = [vscode.CompletionItemTag.Deprecated];
                         currentDocstring = [];
                     }
 

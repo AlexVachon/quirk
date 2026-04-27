@@ -1,2 +1,7 @@
 from .base use { Exception }
-from .types use { TypeError, ValueError, SocketError}
+from .types use {
+    TypeError, ValueError, IndexError, KeyError,
+    IOError, FileNotFoundError,
+    RuntimeError, NotImplementedError,
+    SocketError, ZeroDivisionError, AssertionError, NullError
+}

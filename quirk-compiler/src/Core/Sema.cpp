@@ -228,26 +228,45 @@ void Sema::checkStatement(Node *node)
         for (auto& s : t->tryBlock) checkStatement(s.get());
         exitScope();
 
-        // --- UPDATED: Validate all catch blocks and all types within them ---
-        for (auto& cb : t->catchBlocks) {
+        for (size_t i = 0; i < t->catchBlocks.size(); ++i) {
+            auto& cb = t->catchBlocks[i];
             enterScope();
             for (const std::string& typeName : cb.types) {
                 if (!structRegistry.count(typeName)) {
-                    std::cerr << "Error: Catch type '" << typeName << "' is undefined." << std::endl; 
+                    std::cerr << "Error: Catch type '" << typeName << "' is undefined." << std::endl;
                     exit(1);
                 }
+                if (structRegistry.count("Exception") && !inheritsFromException(typeName)) {
+                    std::cerr << "Error: Catch type '" << typeName
+                              << "' does not inherit from 'Exception'." << std::endl;
+                    exit(1);
+                }
+                for (size_t j = 0; j < i; ++j) {
+                    for (const std::string& prevType : t->catchBlocks[j].types) {
+                        if (inheritsFromException(typeName, prevType)) {
+                            std::cerr << "Warning: catch (" << cb.varName << ": " << typeName
+                                      << ") is unreachable — '" << prevType
+                                      << "' in block " << (j + 1) << " already handles it." << std::endl;
+                        }
+                    }
+                }
             }
-            // Define the local exception variable using the FIRST valid type in the catch signature
-            defineVariable(cb.varName, cb.types[0]);
+            if (!cb.varName.empty()) defineVariable(cb.varName, cb.types[0]);
             for (auto& s : cb.body) checkStatement(s.get());
             exitScope();
         }
+
+        for (auto& s : t->finallyBlock) checkStatement(s.get());
     }
     else if (auto th = dynamic_cast<ThrowNode*>(node)) {
-        std::string type = checkExpression(th->expression.get());
-        if (!structRegistry.count(type)) {
-            std::cerr << "Error: Can only throw Struct objects, got '" << type << "'." << std::endl; exit(1);
+        if (th->expression) {
+            std::string type = checkExpression(th->expression.get());
+            if (!structRegistry.count(type)) {
+                std::cerr << "Error: Can only throw Struct objects, got '" << type << "'." << std::endl;
+                exit(1);
+            }
         }
+        // bare throw (nullptr expression): re-raises current exception — no type check needed
     }
     else if (auto tr = dynamic_cast<TriggerNode*>(node)) {
         std::string varType;
@@ -784,6 +803,16 @@ bool Sema::isCompatibleTypes(const std::string &expected, const std::string &act
     bool actIsPtr = (actual   == "Any" || actual   == "String");
     if (expIsPtr && actIsPtr) return true;
 
+    return false;
+}
+
+bool Sema::inheritsFromException(const std::string& typeName, const std::string& baseType)
+{
+    if (typeName == baseType) return true;
+    if (!structRegistry.count(typeName)) return false;
+    for (const auto& parent : structRegistry.at(typeName)->parents) {
+        if (inheritsFromException(parent, baseType)) return true;
+    }
     return false;
 }
 

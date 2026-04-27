@@ -121,24 +121,26 @@ ListIterator* Core_Collections_List_List___iter(List* self) {
     return iter;
 }
 
-void* Core_Collections_List_List___get(List* self, int index) {
-    // Handle negative indexing (Python-style)
-    if (index < 0) index += self->size;
+extern void quirk_throw_exception(const char* type_name, const char* message);
 
-    // Bounds check
+void* Core_Collections_List_List___get(List* self, int index) {
+    if (index < 0) index += self->size;
     if (index < 0 || index >= self->size) {
-        printf("IndexError: list index out of range (index: %d, len: %d)\n", index, self->size);
-        exit(1);
+        char buf[128];
+        snprintf(buf, sizeof(buf),
+                 "list index %d out of range (size: %d)", index, self->size);
+        quirk_throw_exception("IndexError", buf);
     }
     return self->data[index];
 }
 
 void Core_Collections_List_List___set(List* self, int index, void* item) {
     if (index < 0) index += self->size;
-
     if (index < 0 || index >= self->size) {
-        printf("IndexError: list assignment index out of range\n");
-        exit(1);
+        char buf[128];
+        snprintf(buf, sizeof(buf),
+                 "list assignment index %d out of range (size: %d)", index, self->size);
+        quirk_throw_exception("IndexError", buf);
     }
     self->data[index] = item;
 }

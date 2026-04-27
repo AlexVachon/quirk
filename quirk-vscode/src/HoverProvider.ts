@@ -22,7 +22,8 @@ export class QuirkHoverProvider implements vscode.HoverProvider {
             'struct':   '**`struct`** — declare a data structure.\n\n```quirk\nstruct Point { x: Int  y: Int }\n```',
             'try':      '**`try`** — begin an exception-safe block.',
             'catch':    '**`catch`** — handle a thrown exception.\n\n```quirk\ncatch (e: Exception) { print(e.message) }\n```',
-            'throw':    '**`throw`** — raise an exception.\n\n```quirk\nthrow TypeError("Expected Int")\n```',
+            'throw':    '**`throw`** — raise an exception. Bare `throw` re-raises the current exception.\n\n```quirk\nthrow TypeError("Expected Int")\n```',
+            'finally':  '**`finally`** — block that always runs after try/catch, whether or not an exception was thrown.\n\n```quirk\ntry { f := File("x.txt", "r") } catch (e: Exception) { ... } finally { f.close() }\n```',
             'return':   '**`return`** — return a value from a function.',
             'for':      '**`for`** — iterate over a collection.\n\n```quirk\nfor item in list { ... }\n```',
             'while':    '**`while`** — loop while a condition holds.',
@@ -55,9 +56,6 @@ export class QuirkHoverProvider implements vscode.HoverProvider {
             'File':      '**Built-in type** `File`\n\nFile handle. Methods: `.read()`, `.write()`, `.close()`.',
             'Any':       '**Built-in type** `Any`\n\nDynamic type — accepts any value.',
             'void':      '**Type** `void` — no return value.',
-            'Exception': '**Built-in** `Exception`\n\nBase exception class. Fields: `.message`, `.type`.',
-            'TypeError': '**Built-in** `TypeError` : `Exception`\n\nRaised for type mismatches.',
-            'ValueError':'**Built-in** `ValueError` : `Exception`\n\nRaised for invalid values.',
         };
         if (word in builtinHovers) {
             const md = new vscode.MarkdownString(builtinHovers[word]);
@@ -110,7 +108,7 @@ export class QuirkHoverProvider implements vscode.HoverProvider {
                     if (docLines.length > 0) {
                         md.appendMarkdown('\n---\n');
                         const formatted = _sharedFormatter.formatDocstring(docLines);
-                        md.appendMarkdown(formatted.value);
+                        md.appendMarkdown(formatted.md.value);
                     }
 
                     return new vscode.Hover(md);
@@ -147,7 +145,7 @@ export class QuirkHoverProvider implements vscode.HoverProvider {
                 if (docstring.length > 0) {
                     md.appendMarkdown('\n---\n');
                     const formatted = _sharedFormatter.formatDocstring(docstring);
-                    md.appendMarkdown(formatted.value);
+                    md.appendMarkdown(formatted.md.value);
                 }
 
                 // For variable hovers (not define/struct lines) show inferred type

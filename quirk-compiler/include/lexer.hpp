@@ -46,7 +46,7 @@ enum class TokenType {
     QUIRK_NULL,
     PIPE,
 
-    TRY, CATCH, THROW,
+    TRY, CATCH, THROW, FINALLY,
 
     BREAK, CONTINUE,
 

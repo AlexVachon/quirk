@@ -4,13 +4,16 @@ const KEYWORDS = new Set([
     'define', 'struct', 'if', 'else', 'elif', 'while', 'for', 'in',
     'return', 'break', 'continue', 'use', 'from', 'with', 'as',
     'extern', 'true', 'false', 'null', 'del', 'init', 'def',
-    'trigger', 'try', 'catch', 'throw', 'and', 'or', 'not', 'super', 'enum'
+    'trigger', 'try', 'catch', 'throw', 'finally', 'and', 'or', 'not', 'super', 'enum'
 ]);
 
 const BUILTINS = new Set([
     'print', 'exit', 'Char', 'String', 'List', 'Map',
     'File', 'Int', 'Double', 'Bool', 'Any', 'void',
-    'true', 'false', 'null', 'Exception', 'TypeError'
+    'true', 'false', 'null',
+    'Exception', 'TypeError', 'ValueError', 'IndexError', 'KeyError',
+    'IOError', 'FileNotFoundError', 'RuntimeError', 'NotImplementedError',
+    'SocketError', 'ZeroDivisionError', 'AssertionError', 'NullError'
 ]);
 
 function maskLine(line: string): string {
@@ -200,6 +203,7 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
     // Robust brace-depth tracking replaces the buggy 'inStruct' regex logic
     let braceDepth = 0;
     let currentFuncDepth = -1;
+    let inMultiLineImport = false;
 
     for (let i = 0; i < lines.length; i++) {
         const originalLine = lines[i];
@@ -208,7 +212,16 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
 
         let maskedLine = maskLine(originalLine);
         if (maskedLine.trim() === '') continue;
-        if (/^\s*(use|from)\b/.test(maskedLine)) continue;
+
+        // Skip import lines, tracking multi-line { } blocks so their braces don't skew braceDepth
+        if (/^\s*(use|from)\b/.test(maskedLine)) {
+            if (maskedLine.includes('{') && !maskedLine.includes('}')) inMultiLineImport = true;
+            continue;
+        }
+        if (inMultiLineImport) {
+            if (maskedLine.includes('}')) inMultiLineImport = false;
+            continue;
+        }
 
         const openBraces = (maskedLine.match(/\{/g) || []).length;
         const closeBraces = (maskedLine.match(/\}/g) || []).length;

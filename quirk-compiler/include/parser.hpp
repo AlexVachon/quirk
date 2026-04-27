@@ -43,6 +43,7 @@ private:
     std::unique_ptr<Node> parseTry();
     std::unique_ptr<Node> parseThrow();
     std::unique_ptr<Node> parseTrigger();
+    std::unique_ptr<Node> parseMatch();
     
     // Definition parsing
     std::unique_ptr<FunctionNode> parseFunction();

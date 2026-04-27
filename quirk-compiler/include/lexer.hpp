@@ -34,6 +34,8 @@ enum class TokenType {
     IS,
     TRIGGER,
     ENUM,
+    MATCH,
+    CASE,
 
     // Literals
     IDENTIFIER,

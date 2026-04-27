@@ -5,6 +5,7 @@ const KEYWORDS = new Set([
     'return', 'break', 'continue', 'use', 'from', 'with', 'as',
     'extern', 'true', 'false', 'null', 'del', 'init', 'def',
     'trigger', 'try', 'catch', 'throw', 'finally', 'and', 'or', 'not', 'super', 'enum',
+    'match', 'case', '_',
     'fn'
 ]);
 
@@ -277,10 +278,10 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
         const isInsideFunc = currentFuncDepth !== -1;
 
         if (isInsideFunc) {
-            const assignMatch = /(?<!\.)\b([a-zA-Z_]\w*)\s*(?::\s*[a-zA-Z0-9_.]+)?\s*(?::=|=|\+=|-=|\*=|\/=)/.exec(maskedLine);
+            const assignMatch = /(?<!\.)\b([a-zA-Z_]\w*)\s*(?::\s*[a-zA-Z0-9_.]+)?\s*(?::=|=(?!>)|\+=|-=|\*=|\/=)/.exec(maskedLine);
             if (assignMatch) {
                 const vName = assignMatch[1];
-                if (!locals.has(vName)) {
+                if (!locals.has(vName) && !KEYWORDS.has(vName) && !BUILTINS.has(vName)) {
                     locals.add(vName);
                     const startIdx = originalLine.indexOf(vName);
                     declarations.set(`${i}_${vName}`, new vscode.Range(i, startIdx, i, startIdx + vName.length));

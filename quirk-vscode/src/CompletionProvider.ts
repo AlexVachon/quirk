@@ -657,6 +657,8 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
             ['for',      'for ${1:item} in ${2:iterable} {\n\t$0\n}',             'For-in loop'],
             ['try',      'try {\n\t$0\n} catch (${1:e}: ${2:Exception}) {\n\t\n}','Try-catch block'],
             ['throw',    'throw ${1:Exception}("${2:message}")',                   'Throw an exception'],
+            ['match',    'match ${1:value} {\n\tcase ${2:pattern} => $0\n\tcase _ => \n}', 'Match statement'],
+            ['case',     'case ${1:pattern} => $0',                                'Match arm'],
             ['return'],  ['break'],   ['continue'],
             ['use',      'use ${1:module}',                                        'Import a module'],
             ['from',     'from ${1:module} use { ${2:symbol} }',                  'Destructure import'],

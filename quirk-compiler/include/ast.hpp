@@ -505,4 +505,37 @@ class EnumNode : public Node {
     }
 };
 
+struct MatchArm {
+    std::vector<std::unique_ptr<Node>> patterns;  // expressions; empty when isWildcard
+    bool isWildcard = false;
+    std::vector<std::unique_ptr<Node>> body;
+};
+
+class MatchNode : public Node {
+   public:
+    std::unique_ptr<Node> scrutinee;
+    std::vector<MatchArm> arms;
+
+    void print(int indent) const override {
+        std::string space(indent, ' ');
+        std::cout << space << "Match (" << std::endl;
+        scrutinee->print(indent + 2);
+        std::cout << space << ") {" << std::endl;
+        for (const auto& arm : arms) {
+            if (arm.isWildcard) {
+                std::cout << space << "  case _:" << std::endl;
+            } else {
+                std::cout << space << "  case ";
+                for (size_t i = 0; i < arm.patterns.size(); ++i) {
+                    arm.patterns[i]->print(0);
+                    if (i + 1 < arm.patterns.size()) std::cout << ", ";
+                }
+                std::cout << ":" << std::endl;
+            }
+            for (const auto& s : arm.body) s->print(indent + 4);
+        }
+        std::cout << space << "}" << std::endl;
+    }
+};
+
 #endif

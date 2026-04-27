@@ -71,7 +71,11 @@
       "patterns": [
         {
           "name": "keyword.control.quirk",
-          "match": "\\b(if|else|elif|while|for|in|return|break|continue|with|as|trigger|try|catch|throw|finally|from)\\b"
+          "match": "\\b(if|else|elif|while|for|in|return|break|continue|with|as|trigger|try|catch|throw|finally|from|match|case)\\b"
+        },
+        {
+          "name": "keyword.other.wildcard.quirk",
+          "match": "(?<=\\bcase\\s+)_\\b"
         },
         {
           "name": "keyword.other.lambda.quirk",

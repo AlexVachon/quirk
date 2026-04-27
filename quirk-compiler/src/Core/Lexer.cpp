@@ -159,6 +159,8 @@ Token Lexer::nextToken()
         if (ident == "continue") return {TokenType::CONTINUE,   ident, startLine, startCol};
         if (ident == "trigger")  return {TokenType::TRIGGER,    ident, startLine, startCol};
         if (ident == "enum")     return {TokenType::ENUM,       ident, startLine, startCol};
+        if (ident == "match")    return {TokenType::MATCH,      ident, startLine, startCol};
+        if (ident == "case")     return {TokenType::CASE,       ident, startLine, startCol};
         if (ident == "fn")       return {TokenType::FN,         ident, startLine, startCol};
         return {TokenType::IDENTIFIER, ident, startLine, startCol};
     }

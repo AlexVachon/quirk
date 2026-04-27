@@ -280,6 +280,15 @@ void Sema::checkStatement(Node *node)
 
         for (auto& s : t->finallyBlock) checkStatement(s.get());
     }
+    else if (auto m = dynamic_cast<MatchNode*>(node)) {
+        checkExpression(m->scrutinee.get());
+        for (auto& arm : m->arms) {
+            for (auto& pat : arm.patterns) checkExpression(pat.get());
+            enterScope();
+            for (auto& s : arm.body) checkStatement(s.get());
+            exitScope();
+        }
+    }
     else if (auto th = dynamic_cast<ThrowNode*>(node)) {
         if (th->expression) {
             std::string type = checkExpression(th->expression.get());

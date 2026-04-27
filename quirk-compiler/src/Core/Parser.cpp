@@ -283,8 +283,10 @@ std::unique_ptr<Node> Parser::parseStatement() {
         return parseWhile();
     if (type == TokenType::FOR)
         return parseFor();
-    if (type == TokenType::TRY) 
+    if (type == TokenType::TRY)
         return parseTry();
+    if (type == TokenType::MATCH)
+        return parseMatch();
     if (type == TokenType::THROW) 
         return parseThrow();
     if (type == TokenType::TRIGGER)
@@ -931,6 +933,43 @@ std::unique_ptr<Node> Parser::parseTry() {
         consume(TokenType::RBRACE, "Expected '}'");
     }
 
+    return node;
+}
+
+std::unique_ptr<Node> Parser::parseMatch() {
+    consume(TokenType::MATCH, "Expected 'match'");
+    auto node = std::make_unique<MatchNode>();
+    node->scrutinee = parseExpression(0);
+    consume(TokenType::LBRACE, "Expected '{' after match expression");
+
+    while (peek().type != TokenType::RBRACE && !isAtEnd()) {
+        consume(TokenType::CASE, "Expected 'case' in match block");
+        MatchArm arm;
+
+        // Parse comma-separated patterns; _ is the wildcard
+        do {
+            if (peek().type == TokenType::IDENTIFIER && peek().value == "_") {
+                advance();
+                arm.isWildcard = true;
+                break;  // nothing further to parse for patterns
+            }
+            arm.patterns.push_back(parseExpression(2));  // prec=2: allows member access, not comma
+        } while (match(TokenType::COMMA));
+
+        // Body: `=> stmt` (single statement) or `{ stmts }` (block)
+        if (match(TokenType::FAT_ARROW)) {
+            arm.body.push_back(parseStatement());
+        } else {
+            consume(TokenType::LBRACE, "Expected '=>' or '{' after case pattern");
+            while (peek().type != TokenType::RBRACE && !isAtEnd())
+                arm.body.push_back(parseStatement());
+            consume(TokenType::RBRACE, "Expected '}'");
+        }
+
+        node->arms.push_back(std::move(arm));
+    }
+
+    consume(TokenType::RBRACE, "Expected '}' to close match block");
     return node;
 }
 

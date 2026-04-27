@@ -426,4 +426,96 @@ class ControlFlowGen {
         Builder.SetInsertPoint(crashBB);
         emitUnhandledException(StructTypes);
     }
+
+    void generateMatch(MatchNode* node, Function* parentFunc,
+                       std::function<Value*(Node*)> exprHandler,
+                       std::function<void(Node*)> stmtHandler) {
+        Value* scrutVal = exprHandler(node->scrutinee.get());
+        if (!scrutVal) return;
+
+        BasicBlock* mergeBB = BasicBlock::Create(Context, "match_cont");
+
+        for (size_t i = 0; i < node->arms.size(); ++i) {
+            auto& arm = node->arms[i];
+            BasicBlock* bodyBB = BasicBlock::Create(Context, "case_body", parentFunc);
+            BasicBlock* nextBB = (i + 1 < node->arms.size())
+                                 ? BasicBlock::Create(Context, "case_next")
+                                 : mergeBB;
+
+            if (arm.isWildcard) {
+                Builder.CreateBr(bodyBB);
+            } else {
+                // OR together equality checks for all patterns in this arm
+                Value* cond = nullptr;
+                for (auto& patNode : arm.patterns) {
+                    Value* patVal = exprHandler(patNode.get());
+                    Value* eq = toBool(emitMatchEq(scrutVal, patVal));
+                    cond = cond ? Builder.CreateOr(cond, eq, "match_or") : eq;
+                }
+                if (!cond) cond = ConstantInt::getFalse(Context);
+                Builder.CreateCondBr(cond, bodyBB, nextBB);
+            }
+
+            Builder.SetInsertPoint(bodyBB);
+            for (auto& stmt : arm.body) stmtHandler(stmt.get());
+            if (!Builder.GetInsertBlock()->getTerminator())
+                Builder.CreateBr(mergeBB);
+
+            if (nextBB != mergeBB) {
+                parentFunc->getBasicBlockList().push_back(nextBB);
+                Builder.SetInsertPoint(nextBB);
+            }
+        }
+
+        parentFunc->getBasicBlockList().push_back(mergeBB);
+        Builder.SetInsertPoint(mergeBB);
+    }
+
+private:
+    // Emit scrutinee == pattern, handling int, double, bool, String*, and enum (i32)
+    Value* emitMatchEq(Value* L, Value* R) {
+        if (!L || !R) return ConstantInt::getFalse(Context);
+
+        Type* lt = L->getType();
+        Type* rt = R->getType();
+
+        // Coerce int widths so ICmpEQ doesn't blow up
+        if (lt->isIntegerTy() && rt->isIntegerTy()) {
+            if (lt->getIntegerBitWidth() != rt->getIntegerBitWidth()) {
+                unsigned w = std::max(lt->getIntegerBitWidth(), rt->getIntegerBitWidth());
+                L = Builder.CreateIntCast(L, Type::getIntNTy(Context, w), true, "eq_cast");
+                R = Builder.CreateIntCast(R, Type::getIntNTy(Context, w), true, "eq_cast");
+            }
+            return Builder.CreateICmpEQ(L, R, "match_eq");
+        }
+
+        if (lt->isDoubleTy() && rt->isDoubleTy())
+            return Builder.CreateFCmpOEQ(L, R, "match_eq");
+
+        // Struct pointer: call StructName___eq magic method
+        if (lt->isPointerTy() && lt->getPointerElementType()->isStructTy()) {
+            std::string sName = cast<StructType>(lt->getPointerElementType())->getName().str();
+            if (sName.find("struct.") == 0) sName = sName.substr(7);
+            Function* eqFn = TheModule->getFunction(sName + "___eq");
+            if (!eqFn) {
+                std::string suffix = "___eq";
+                for (auto& F : *TheModule)
+                    if (F.getName().endswith(suffix)) { eqFn = &F; break; }
+            }
+            if (eqFn) {
+                // Ensure R has the same type as L (both String* for example)
+                if (R->getType() != L->getType())
+                    R = Builder.CreateBitCast(R, L->getType(), "eq_cast");
+                return Builder.CreateCall(eqFn, {L, R}, "match_eq");
+            }
+        }
+
+        // Fallback: raw pointer / opaque comparison
+        if (lt->isPointerTy() && rt->isPointerTy()) {
+            if (lt != rt) R = Builder.CreateBitCast(R, lt, "eq_cast");
+            return Builder.CreateICmpEQ(L, R, "match_eq");
+        }
+
+        return ConstantInt::getFalse(Context);
+    }
 };

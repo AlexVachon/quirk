@@ -1180,6 +1180,7 @@ class LLVMCodegen {
             if (dynamic_cast<ContinueNode*>(node))   return "Continue";
             if (dynamic_cast<ThrowNode*>(node))      return "Throw";
             if (dynamic_cast<TryCatchNode*>(node))   return "TryCatch";
+            if (dynamic_cast<MatchNode*>(node))       return "Match";
             if (dynamic_cast<WithNode*>(node))       return "With";
             if (dynamic_cast<TriggerNode*>(node))    return "Trigger";
             if (dynamic_cast<UseNode*>(node))        return "Use";
@@ -1230,6 +1231,11 @@ class LLVMCodegen {
         else if (auto wi = dynamic_cast<WithNode*>(node)) handleWith(wi, parentFunc);
         else if (auto t = dynamic_cast<TryCatchNode*>(node)) {
             flowGen->generateTryCatch(t, parentFunc, [this, parentFunc](Node* n) { this->handleStatement(n, parentFunc); }, varGen.get(), StructTypes, structHierarchy);
+        }
+        else if (auto mt = dynamic_cast<MatchNode*>(node)) {
+            flowGen->generateMatch(mt, parentFunc,
+                [this](Node* n) { return this->handleExpression(n); },
+                [this, parentFunc](Node* n) { this->handleStatement(n, parentFunc); });
         }
         else if (auto th = dynamic_cast<ThrowNode*>(node)) {
             flowGen->generateThrow(th, parentFunc, 

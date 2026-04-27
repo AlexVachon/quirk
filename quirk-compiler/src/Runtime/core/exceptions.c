@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <setjmp.h>
+#include "../types.h"
 
 // --- EXCEPTION HANDLING RUNTIME ---
 jmp_buf quirk_try_stack[256];
@@ -13,6 +14,7 @@ int quirk_try_depth = -1;
 void* quirk_active_exception = NULL;
 
 extern int quirk_shadow_sp;
+extern ShadowFrame quirk_shadow_stack[];
 int quirk_saved_shadow_sp[256];
 
 void* quirk_get_jmp_buf() {
@@ -75,6 +77,20 @@ typedef struct {
 
 extern String* make_String(const char* raw);
 
+void quirk_capture_traceback(void* exc_ptr) {
+    QuirkException* exc = (QuirkException*)exc_ptr;
+    char buf[8192];
+    int pos = 0;
+    for (int i = quirk_shadow_sp - 1; i >= 0; i--) {
+        const char* fn = quirk_shadow_stack[i].func_name ? quirk_shadow_stack[i].func_name : "?";
+        const char* fl = quirk_shadow_stack[i].file_name ? quirk_shadow_stack[i].file_name : "?";
+        if (strstr(fn, "__init")) continue;
+        int written = snprintf(buf + pos, sizeof(buf) - pos, "  at %s (%s)\n", fn, fl);
+        if (written > 0) pos += written;
+    }
+    exc->traceback = make_String(buf);
+}
+
 void quirk_throw_exception(const char* type_name, const char* message) {
     QuirkException* exc = (QuirkException*)GC_malloc(sizeof(QuirkException));
     exc->type        = make_String(type_name);
@@ -85,6 +101,7 @@ void quirk_throw_exception(const char* type_name, const char* message) {
     exc->traceback   = make_String("");
     exc->cause_trace = make_String("");
 
+    quirk_capture_traceback(exc);
     quirk_active_exception = exc;
 
     if (quirk_try_depth >= 0) {

@@ -22,8 +22,22 @@ class ControlFlowGen {
     Value* toBool(Value* v) {
         if (!v) return ConstantInt::getFalse(Context);
         if (v->getType()->isIntegerTy(1)) return v;
-        if (v->getType()->isPointerTy())
+        if (v->getType()->isPointerTy()) {
+            // Prefer __bool magic method on structs
+            Type* elTy = v->getType()->getPointerElementType();
+            if (elTy->isStructTy()) {
+                std::string sName = cast<StructType>(elTy)->getName().str();
+                if (sName.find("struct.") == 0) sName = sName.substr(7);
+                Function* boolFunc = TheModule->getFunction(sName + "___bool");
+                if (!boolFunc) {
+                    std::string suffix = sName + "___bool";
+                    for (auto& F : *TheModule)
+                        if (F.getName().endswith(suffix)) { boolFunc = &F; break; }
+                }
+                if (boolFunc) return Builder.CreateCall(boolFunc, {v}, "obj_bool");
+            }
             return Builder.CreateICmpNE(v, Constant::getNullValue(v->getType()), "ptr_bool");
+        }
         if (v->getType()->isDoubleTy())
             return Builder.CreateFCmpONE(v, ConstantFP::get(Context, APFloat(0.0)), "dbl_bool");
         if (v->getType()->isIntegerTy())
@@ -374,6 +388,13 @@ class ControlFlowGen {
         }
 
         Value* rawExc = Builder.CreateBitCast(excObj, Type::getInt8PtrTy(Context));
+
+        // Capture the shadow-stack traceback at throw time (Python-style)
+        FunctionCallee captureFn = TheModule->getOrInsertFunction(
+            "quirk_capture_traceback",
+            FunctionType::get(Type::getVoidTy(Context), {Type::getInt8PtrTy(Context)}, false));
+        Builder.CreateCall(captureFn, {rawExc});
+
         Builder.CreateCall(TheModule->getFunction("quirk_set_exception"), {rawExc});
 
         if (node->cause) {

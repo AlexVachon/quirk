@@ -242,6 +242,22 @@ class StructGen {
     }
 
     Value* generateMemberAccess(Value* objPtr, const std::string& memberName) {
+        // __len magic: .length on a struct that defines __len calls it
+        if (memberName == "length" && objPtr && objPtr->getType()->isPointerTy()) {
+            Type* elTy = objPtr->getType()->getPointerElementType();
+            if (elTy->isStructTy()) {
+                std::string sName = cast<StructType>(elTy)->getName().str();
+                if (sName.find("struct.") == 0) sName = sName.substr(7);
+                Function* lenFunc = TheModule->getFunction(sName + "___len");
+                if (!lenFunc) {
+                    std::string suffix = sName + "___len";
+                    for (auto& F : *TheModule)
+                        if (F.getName().endswith(suffix)) { lenFunc = &F; break; }
+                }
+                if (lenFunc) return Builder.CreateCall(lenFunc, {objPtr}, "obj_len");
+            }
+        }
+
         Value* ptr = getMemberPtr(objPtr, memberName);
         if (!ptr) return nullptr;
         return Builder.CreateLoad(ptr->getType()->getPointerElementType(), ptr);

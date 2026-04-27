@@ -44,6 +44,41 @@ export class QuirkHoverProvider implements vscode.HoverProvider {
             return new vscode.Hover(md);
         }
 
+        // ---- Magic method / attribute hovers ----
+        const magicHovers: Record<string, string> = {
+            '__init':     '**`__init`** — constructor, called when the struct is instantiated.\n\n```quirk\ndefine __init(self, message: String) -> void { ... }\n```',
+            '__del':      '**`__del`** — destructor, called when the struct instance is destroyed.',
+            '__str':      '**`__str`** — human-readable string conversion, used by `print()` and string concatenation.\n\n```quirk\ndefine __str(self) -> String { return "MyStruct(" + self.value.str() + ")" }\n```',
+            '__repr':     '**`__repr`** — developer representation. Used as a fallback when `__str` is absent.\n\n```quirk\ndefine __repr(self) -> String { return "MyStruct{value=" + self.value.str() + "}" }\n```',
+            '__bool':     '**`__bool`** — truthiness. Enables `if obj:`, `not obj`, and `while obj:`.\n\n```quirk\ndefine __bool(self) -> Bool { return self.size > 0 }\n```',
+            '__len':      '**`__len`** — length protocol. Called when `.length` is accessed on the struct.\n\n```quirk\ndefine __len(self) -> Int { return self.items.length }\n```',
+            '__get':      '**`__get`** — index read. Called for `obj[i]`.\n\n```quirk\ndefine __get(self, index: Int) -> Any { return self.data[index] }\n```',
+            '__set':      '**`__set`** — index write. Called for `obj[i] = v`.\n\n```quirk\ndefine __set(self, index: Int, value: Any) -> void { self.data[index] = value }\n```',
+            '__iter':     '**`__iter`** — iterator factory. Enables `for item in obj:`.\n\n```quirk\ndefine __iter(self) -> MyIterator { return MyIterator(self) }\n```',
+            '__has_next': '**`__has_next`** — iterator protocol. Return `true` if more elements remain.',
+            '__next':     '**`__next`** — iterator protocol. Advance and return the next element.',
+            '__add':      '**`__add`** — `+` operator.\n\n```quirk\ndefine __add(self, other: Vec2) -> Vec2 { return Vec2(self.x + other.x, self.y + other.y) }\n```',
+            '__sub':      '**`__sub`** — `-` operator.',
+            '__mul':      '**`__mul`** — `*` operator.',
+            '__div':      '**`__div`** — `/` operator.',
+            '__eq':       '**`__eq`** — `==` operator. Also used for `!=` if `__ne` is not defined.\n\n```quirk\ndefine __eq(self, other: Point) -> Bool { return self.x == other.x and self.y == other.y }\n```',
+            '__ne':       '**`__ne`** — `!=` operator. Falls back to `!__eq` if not defined.',
+            '__lt':       '**`__lt`** — `<` operator.',
+            '__le':       '**`__le`** — `<=` operator.',
+            '__gt':       '**`__gt`** — `>` operator.',
+            '__ge':       '**`__ge`** — `>=` operator.',
+            '__enter':    '**`__enter`** — context manager open. Called at the start of `with obj as x { }`.',
+            '__exit':     '**`__exit`** — context manager close. Always called at the end of `with`, even if an exception occurs.',
+            '__name':     '**`__name`** — the struct\'s name as a `String`. When accessed on `self`, returns the compile-time class name. When accessed on a `Type` instance (`self.__class.__name`), reads the stored name.\n\n```quirk\nprint(self.__name)           // "TypeError"\nprint(self.__class.__name)   // "TypeError"\n```',
+            '__parent':   '**`__parent`** — the parent struct\'s name as a `String`. Only meaningful on a `Type` instance (`self.__class.__parent`).\n\n```quirk\nprint(self.__class.__parent)  // "Exception"\n```',
+            '__class':    '**`__class`** — magic attribute. Returns a `Type` descriptor for the enclosing struct.\n\nAccess `.__name` and `.__parent` on the result.\n\n```quirk\nprint(self.__class.__name)    // "TypeError"\nprint(self.__class.__parent)  // "Exception"\n```',
+        };
+        if (word in magicHovers) {
+            const md = new vscode.MarkdownString(magicHovers[word]);
+            md.isTrusted = true;
+            return new vscode.Hover(md);
+        }
+
         // ---- Built-in type hovers ----
         const builtinHovers: Record<string, string> = {
             'String':    '**Built-in type** `String`\n\nUTF-8 string with methods: `.length`, `.substring()`, `.split()`, `.trim()`, etc.',

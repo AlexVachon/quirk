@@ -10,6 +10,7 @@
     { "include": "#numbers" },
     { "include": "#exceptions" },
     { "include": "#types" },
+    { "include": "#magic-methods" },
     { "include": "#enum-access" },
     { "include": "#method-calls" },
     { "include": "#functions" },
@@ -177,6 +178,14 @@
             "2": { "name": "punctuation.separator.enum.quirk" },
             "3": { "name": "variable.other.enummember.quirk" }
           }
+        }
+      ]
+    },
+    "magic-methods": {
+      "patterns": [
+        {
+          "match": "\\b(__init|__del|__str|__repr|__bool|__len|__get|__set|__iter|__has_next|__next|__add|__sub|__mul|__div|__eq|__ne|__lt|__le|__gt|__ge|__enter|__exit|__name|__parent|__class)\\b",
+          "name": "support.function.magic.quirk"
         }
       ]
     },

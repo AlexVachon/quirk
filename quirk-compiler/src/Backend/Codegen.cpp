@@ -117,6 +117,9 @@ class LLVMCodegen {
                 if (!StructTypes.count(s->name)) StructTypes[s->name] = StructType::create(Context, s->name);
             }
         }
+        // Built-in Type struct (for self.__class)
+        if (!StructTypes.count("Type")) StructTypes["Type"] = StructType::create(Context, "struct.Type");
+
         // Pass 1b: Register enum variant lists (body generation deferred to after Pass 3)
         for (const auto& node : nodes) {
             if (auto* e = dynamic_cast<EnumNode*>(node.get())) {
@@ -161,6 +164,13 @@ class LLVMCodegen {
                 st->setBody(elementTypes);
                 structGen->registerStructLayout(s->name, fieldNames);
             }
+        }
+
+        // Fill built-in Type struct body: { String*, String* } for { name, parent }
+        if (StructTypes.count("Type") && StructTypes["Type"]->isOpaque() && StructTypes.count("String")) {
+            Type* strPtrTy = PointerType::getUnqual(StructTypes["String"]);
+            StructTypes["Type"]->setBody({strPtrTy, strPtrTy});
+            structGen->registerStructLayout("Type", {"name", "parent"});
         }
 
         if (verbose) std::cerr << "[Codegen] Pass 3: Declaring function prototypes\n";
@@ -380,9 +390,32 @@ class LLVMCodegen {
 
         // --- NEW: INJECT SHADOW STACK POP ON IMPLICIT RETURN ---
         if (!Builder.GetInsertBlock()->getTerminator()) {
+            // Auto-stamp self.type for Exception __init methods.
+            // Since __init is compiled once per struct, currentCodegenClass is the
+            // ACTUAL subclass (e.g. "TypeError") — not the parent.  This ensures
+            // that calling super().__init() doesn't silently overwrite the type.
+            bool isInitMethod = node->name.find("__init") != std::string::npos && !node->cls.empty();
+            if (isInitMethod && StructTypes.count("Exception") && StructTypes.count("String")) {
+                std::function<bool(const std::string&)> inheritsException = [&](const std::string& c) -> bool {
+                    if (c == "Exception") return true;
+                    if (structHierarchy.count(c))
+                        for (const auto& p : structHierarchy.at(c))
+                            if (inheritsException(p)) return true;
+                    return false;
+                };
+                if (inheritsException(node->cls)) {
+                    Value* selfVal = &*F->arg_begin();
+                    Value* excPtr  = Builder.CreateBitCast(selfVal, PointerType::getUnqual(StructTypes["Exception"]));
+                    Value* typeFieldPtr = Builder.CreateStructGEP(StructTypes["Exception"], excPtr, 0);
+                    Value* rawPtr  = Builder.CreateGlobalStringPtr(currentCodegenClass);
+                    Value* strObj  = structGen->allocateAndInit("String", std::vector<Value*>{rawPtr});
+                    Builder.CreateStore(strObj, typeFieldPtr);
+                }
+            }
+
             FunctionCallee popFrame = TheModule->getOrInsertFunction("quirk_pop_frame", Type::getVoidTy(Context));
             Builder.CreateCall(popFrame);
-            
+
             Type* retTy = F->getReturnType();
             if (retTy->isVoidTy())
                 Builder.CreateRetVoid();
@@ -1272,10 +1305,12 @@ class LLVMCodegen {
                 if (name.find("String") != std::string::npos) return callBox("Core_Primitives_Any_box_string", {asPtr});
                 if (name.find("List")   != std::string::npos) return callBox("Core_Primitives_Any_box_list",   {asPtr});
                 if (name.find("Map")    != std::string::npos) return callBox("Core_Primitives_Any_box_map",    {asPtr});
-                // Other struct — call __str first, then box as String
+                // Other struct — call __str, fall back to __repr, then box as String
                 std::string strMethod = name + "___str";
                 Function* strFunc = TheModule->getFunction(strMethod);
                 if (!strFunc) strFunc = TheModule->getFunction(name + "__str");
+                if (!strFunc) strFunc = TheModule->getFunction(name + "___repr");
+                if (!strFunc) strFunc = TheModule->getFunction(name + "__repr");
                 if (strFunc) {
                     Value* strObj = Builder.CreateCall(strFunc, {v});
                     if (strObj->getType()->isPointerTy() &&
@@ -1583,25 +1618,36 @@ Value* LLVMCodegen::handleExpression(Node* node) {
                 return nullptr;
             }
         }
-        // String == / != should call ___eq, not icmp eq on pointers
-        if ((binOp->op == "==" || binOp->op == "!=") &&
+        // Struct operator overloading: ==, !=, <, <=, >, >=
+        static const std::map<std::string,std::string> opToMagic = {
+            {"==","__eq"}, {"!=","__ne"}, {"<","__lt"}, {"<=","__le"}, {">","__gt"},{">=","__ge"}
+        };
+        if (opToMagic.count(binOp->op) &&
             L->getType()->isPointerTy() && R->getType()->isPointerTy()) {
             Type* elTy = L->getType()->getPointerElementType();
             if (elTy->isStructTy()) {
                 std::string sName = cast<StructType>(elTy)->getName().str();
                 if (sName.find("struct.") == 0) sName = sName.substr(7);
-                // Find <Type>___eq by searching module for matching suffix
-                Function* eqFunc = TheModule->getFunction(sName + "___eq");
-                if (!eqFunc) {
-                    std::string suffix = sName + "___eq";
-                    for (auto& F : *TheModule)
-                        if (F.getName().endswith(suffix)) { eqFunc = &F; break; }
+
+                auto resolveFunc = [&](const std::string& suffix) -> Function* {
+                    Function* f = TheModule->getFunction(sName + "___" + suffix.substr(2));
+                    if (!f) for (auto& F : *TheModule)
+                        if (F.getName().endswith("___" + suffix.substr(2))) { f = &F; break; }
+                    return f;
+                };
+
+                std::string magicName = opToMagic.at(binOp->op);
+                Function* opFunc = resolveFunc(magicName);
+                // !=  falls back to !__eq if __ne is not defined
+                bool negated = false;
+                if (!opFunc && binOp->op == "!=") {
+                    opFunc = resolveFunc("__eq");
+                    negated = true;
                 }
-                if (eqFunc) {
-                    Value* eq = Builder.CreateCall(eqFunc, {L, R}, "str_eq");
-                    if (binOp->op == "!=")
-                        eq = Builder.CreateNot(eq, "str_ne");
-                    return eq;
+                if (opFunc) {
+                    Value* result = Builder.CreateCall(opFunc, {L, R}, "cmp_result");
+                    if (negated) result = Builder.CreateNot(result, "cmp_ne");
+                    return result;
                 }
             }
         }
@@ -1619,6 +1665,63 @@ Value* LLVMCodegen::handleExpression(Node* node) {
                     return ConstantInt::get(Type::getInt32Ty(Context), idx);
                 }
             }
+        }
+
+        // Magic attribute: __name → struct name string
+        // If accessed on a Type* instance (e.g. self.__class.__name), read field 0.
+        // Otherwise return the compile-time enclosing class name.
+        if (member->memberName == "__name") {
+            Value* obj = handleExpression(member->object.get());
+            if (obj && obj->getType()->isPointerTy() && StructTypes.count("Type")) {
+                llvm::Type* elTy = obj->getType()->getPointerElementType();
+                if (elTy == StructTypes["Type"]) {
+                    Value* fieldPtr = Builder.CreateStructGEP(StructTypes["Type"], obj, 0, "type_name_ptr");
+                    return Builder.CreateLoad(PointerType::getUnqual(StructTypes["String"]), fieldPtr, "type_name");
+                }
+            }
+            Value* rawPtr = Builder.CreateGlobalStringPtr(currentCodegenClass);
+            return structGen->allocateAndInit("String", std::vector<Value*>{rawPtr});
+        }
+
+        // Magic attribute: __parent → parent struct name string (only valid on Type* instances)
+        if (member->memberName == "__parent") {
+            Value* obj = handleExpression(member->object.get());
+            if (obj && obj->getType()->isPointerTy() && StructTypes.count("Type")) {
+                llvm::Type* elTy = obj->getType()->getPointerElementType();
+                if (elTy == StructTypes["Type"]) {
+                    Value* fieldPtr = Builder.CreateStructGEP(StructTypes["Type"], obj, 1, "type_parent_ptr");
+                    return Builder.CreateLoad(PointerType::getUnqual(StructTypes["String"]), fieldPtr, "type_parent");
+                }
+            }
+            // Fallback: return compile-time parent name from structHierarchy
+            std::string parentName = (!structHierarchy[currentCodegenClass].empty())
+                ? structHierarchy[currentCodegenClass][0] : "";
+            Value* rawPtr = Builder.CreateGlobalStringPtr(parentName);
+            return structGen->allocateAndInit("String", std::vector<Value*>{rawPtr});
+        }
+
+        // Magic attribute: self.__class → Type{ name, parent } instance
+        if (member->memberName == "__class") {
+            StructType* typeST = StructTypes.count("Type") ? StructTypes["Type"] : nullptr;
+            if (!typeST || typeST->isOpaque()) return nullptr;
+
+            std::string parentName = (!structHierarchy[currentCodegenClass].empty())
+                ? structHierarchy[currentCodegenClass][0] : "";
+
+            const auto& DL = TheModule->getDataLayout();
+            uint64_t sz = DL.getTypeAllocSize(typeST);
+            if (sz == 0) sz = 1;
+            FunctionCallee mallocFn = TheModule->getOrInsertFunction("GC_malloc",
+                FunctionType::get(Type::getInt8PtrTy(Context), {Type::getInt64Ty(Context)}, false));
+            Value* raw    = Builder.CreateCall(mallocFn, {ConstantInt::get(Type::getInt64Ty(Context), sz)});
+            Value* typePtr = Builder.CreateBitCast(raw, PointerType::getUnqual(typeST));
+
+            auto makeStr = [&](const std::string& s) {
+                return structGen->allocateAndInit("String", std::vector<Value*>{Builder.CreateGlobalStringPtr(s)});
+            };
+            Builder.CreateStore(makeStr(currentCodegenClass), Builder.CreateStructGEP(typeST, typePtr, 0));
+            Builder.CreateStore(makeStr(parentName),          Builder.CreateStructGEP(typeST, typePtr, 1));
+            return typePtr;
         }
 
         Value* objPtr = handleExpression(member->object.get());

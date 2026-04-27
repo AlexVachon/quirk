@@ -1,4 +1,28 @@
-from ...sys use { srcline, shadow_size, shadow_frame }
+from ...sys use { srcline }
+
+define _format_cause(prev: Exception) -> String {
+    code := String(srcline(prev.file.buffer, prev.line))
+    return "Traceback (most recent call last):\n" +
+           prev.traceback +
+           "  File \"" + prev.file + "\", line " + prev.line.str() + ", in " + prev.callee + "\n" +
+           "    " + code + "\n" +
+           prev.type + ": " + prev.message + "\n\n" +
+           "During handling of the above exception, another exception occurred:\n\n"
+}
+
+define _format_traceback(e: Exception) -> String {
+    code := String(srcline(e.file.buffer, e.line))
+    header: String = ""
+    if not e.cause_trace.empty() {
+        header = e.cause_trace
+    }
+    return header +
+           "Traceback (most recent call last):\n" +
+           e.traceback +
+           "  File \"" + e.file + "\", line " + e.line.str() + ", in " + e.callee + "\n" +
+           "    " + code + "\n" +
+           e.type + ": " + e.message
+}
 
 ---
 Base class for all exceptions in Quirk.
@@ -7,9 +31,10 @@ Catch this type to handle any exception regardless of its specific kind.
 Fields: message, type, file, line, traceback, cause_trace
 
 @note Prefer catching a specific subclass (ValueError, IOError, etc.) over
-      catching Exception directly, so unrelated errors are not silently swallowed.
+catching Exception directly, so unrelated errors are not silently swallowed.
+
 @warning Catching Exception will also catch RuntimeError, NullError, and all
-         other built-in exceptions — use with care in broad catch blocks.
+other built-in exceptions — use with care in broad catch blocks.
 
 @example:
 try {
@@ -25,65 +50,22 @@ struct Exception {
     line: Int = 0
     callee: String = ""
     traceback: String = ""
-
     cause_trace: String = ""
 
     define __init(self, message: String) -> void {
-        self.type = "Exception"
         self.message = message
-
-        size := shadow_size()
-        i := size - 1 
-        
-        while i >= 0 {
-            frame := shadow_frame(i)
-            
-            if not frame.contains("__init") {
-                self.traceback += "  at " + frame + "\n"
-            }
-            
-            i -= 1
-        }
     }
 
-    // Now simply returns the type and message (e.g., "ProcessError: Port 80 is already in use")
     define __str(self) -> String {
         return self.type + ": " + self.message
     }
 
     define with_cause(self, previous: Exception) -> Exception {
-        // 1. Extract the exact line of code for the PREVIOUS exception
-        prev_raw := srcline(previous.file.buffer, previous.line)
-        prev_code := String(prev_raw)
-
-        // 2. Build the perfectly formatted Python-style block
-        self.cause_trace = "Traceback (most recent call last):\n" + 
-                           previous.traceback + 
-                           "  File \"" + previous.file + "\", line " + previous.line.str() + ", in " + previous.callee + "\n" +
-                           "    " + prev_code + "\n" + 
-                           previous.type + ": " + previous.message + "\n\n" +
-                           "During handling of the above exception, another exception occurred:\n\n"
-                           
+        self.cause_trace = _format_cause(previous)
         return self
     }
 
     define print_traceback(self) -> void {
-        raw := srcline(self.file.buffer, self.line)
-        code_line := String(raw)
-
-        // FIX: Explicitly type as String so it is never treated as a raw pointer
-        full_traceback: String = ""
-        
-        if not self.cause_trace.empty() {
-            full_traceback += self.cause_trace
-        }
-
-        full_traceback += "Traceback (most recent call last):\n" + 
-               self.traceback + 
-               "  File \"" + self.file + "\", line " + self.line.str() + ", in " + self.callee + "\n" +
-               "    " + code_line + "\n" + 
-               self.type + ": " + self.message
-               
-        print(full_traceback)
+        print(_format_traceback(self))
     }
 }

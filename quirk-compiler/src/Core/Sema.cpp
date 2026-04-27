@@ -23,6 +23,17 @@ bool Sema::analyze(const std::vector<std::unique_ptr<Node>> &nodes)
         }
     }
 
+    // Register built-in Type struct (used by self.__class)
+    static StructNode builtinTypeNode;
+    if (builtinTypeNode.name.empty()) {
+        builtinTypeNode.name = "Type";
+        StructField nf; nf.name = "name";   nf.type = "String";
+        StructField pf; pf.name = "parent"; pf.type = "String";
+        builtinTypeNode.fields.push_back(std::move(nf));
+        builtinTypeNode.fields.push_back(std::move(pf));
+    }
+    if (!structRegistry.count("Type")) structRegistry["Type"] = &builtinTypeNode;
+
     // Pass 1: Register Structs and Signatures
     for (const auto &node : nodes)
     {
@@ -479,24 +490,28 @@ std::string Sema::checkBinaryOp(BinaryOpNode *node)
     if (structRegistry.count(lType))
     {
         std::string magic;
-        if (node->op == "+")
-            magic = "__add";
-        else if (node->op == "-")
-            magic = "__sub";
-        else if (node->op == "*")
-            magic = "__mul";
-        else if (node->op == "/")
-            magic = "__div";
-        else if (node->op == "==" || node->op == "!=")
-            magic = "__eq";
+        if (node->op == "+")       magic = "__add";
+        else if (node->op == "-")  magic = "__sub";
+        else if (node->op == "*")  magic = "__mul";
+        else if (node->op == "/")  magic = "__div";
+        else if (node->op == "==") magic = "__eq";
+        else if (node->op == "!=") magic = "__ne";
+        else if (node->op == "<")  magic = "__lt";
+        else if (node->op == "<=") magic = "__le";
+        else if (node->op == ">")  magic = "__gt";
+        else if (node->op == ">=") magic = "__ge";
 
         if (!magic.empty())
         {
+            // For !=, fall back to __eq if __ne is not defined
             std::string funcName = lType + "_" + magic;
+            if (!methodRegistry[lType].count(funcName) && node->op == "!=")
+                funcName = lType + "_" + "__eq";
+
             if (methodRegistry[lType].count(funcName))
             {
-                if (node->op == "==" || node->op == "!=")
-                    return "Bool";
+                static const std::set<std::string> boolOps = {"==","!=","<","<=",">",">="};
+                if (boolOps.count(node->op)) return "Bool";
                 return methodRegistry[lType][funcName]->returnType;
             }
         }
@@ -551,6 +566,11 @@ std::string Sema::checkMemberAccess(MemberAccessNode *node)
     }
 
     std::string objType = checkExpression(node->object.get());
+
+    // Magic attributes
+    if (node->memberName == "__name")   return "String";
+    if (node->memberName == "__parent") return "String";
+    if (node->memberName == "__class")  return "Type";
 
     if (objType.rfind("MODULE$", 0) == 0)
     {

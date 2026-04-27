@@ -45,8 +45,8 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
         const importMatch = /^\s*(?:use|from)\s+([.a-zA-Z0-9_/]*)$/.exec(linePrefix);
         if (importMatch) return this.providePathCompletions(document, importMatch[1]);
 
-        // someVar.  — member completions
-        const memberMatch = /([a-zA-Z0-9_]+)\.$/.exec(linePrefix);
+        // someVar.  or  someVar.partial  — member completions
+        const memberMatch = /([a-zA-Z0-9_]+)\.([a-zA-Z0-9_]*)$/.exec(linePrefix);
         if (memberMatch) {
             const aliasOrVar = memberMatch[1];
             const modulePath = this.resolveImportPathFromAlias(document, aliasOrVar);
@@ -77,9 +77,27 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
         let readingParamsList = false;
         let exampleLines: string[] = [];
         let readingExample = false;
+        let readingNoteList = false;
+        let readingWarningList = false;
+
+        const isListItem = (s: string) => s.startsWith('-') || s.startsWith('*') || /^\d+[\.\)]/.test(s);
 
         for (const line of docstring) {
             const trimmed = line.trim();
+
+            // Collect list items appended to the current @note block
+            if (readingNoteList) {
+                if (isListItem(trimmed)) { notes[notes.length - 1] += '\n' + trimmed; continue; }
+                if (trimmed === '') continue;
+                readingNoteList = false;
+            }
+
+            // Collect list items appended to the current @warning block
+            if (readingWarningList) {
+                if (isListItem(trimmed)) { warnings[warnings.length - 1] += '\n' + trimmed; continue; }
+                if (trimmed === '') continue;
+                readingWarningList = false;
+            }
 
             // @example block — collect until next @ tag
             if (/^@example\s*:?\s*$/.test(trimmed)) { readingExample = true; continue; }
@@ -134,24 +152,44 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
                 continue;
             }
 
-            // @note text
-            const noteMatch = /^@note\s+(.+)/.exec(trimmed);
-            if (noteMatch) { notes.push(noteMatch[1]); continue; }
+            // @note [text] — optional inline text, then collects following list items
+            const noteMatch = /^@note\s*(.*)/.exec(trimmed);
+            if (noteMatch) {
+                notes.push(noteMatch[1].trim());
+                readingNoteList = true;
+                readingWarningList = false;
+                continue;
+            }
 
-            // @warning text
-            const warningMatch = /^@warning\s+(.+)/.exec(trimmed);
-            if (warningMatch) { warnings.push(warningMatch[1]); continue; }
+            // @warning [text] — optional inline text, then collects following list items
+            const warningMatch = /^@warning\s*(.*)/.exec(trimmed);
+            if (warningMatch) {
+                warnings.push(warningMatch[1].trim());
+                readingNoteList = false;
+                readingWarningList = true;
+                continue;
+            }
 
             description.push(line + '  ');
         }
 
+        const renderBlock = (emoji: string, label: string, content: string) => {
+            const [head, ...rest] = content.split('\n');
+            if (rest.length === 0) {
+                md.appendMarkdown(`${emoji} **${label}:** ${head}\n\n`);
+            } else {
+                const header = head ? `${emoji} **${label}:** ${head}\n` : `${emoji} **${label}:**\n`;
+                md.appendMarkdown(header + rest.join('\n') + '\n\n');
+            }
+        };
+
         if (deprecated) {
             const reason = deprecatedReason ? ` — ${deprecatedReason}` : '';
-            md.appendMarkdown(`> ~~**Deprecated**~~${reason}\n\n`);
+            md.appendMarkdown(`~~**Deprecated**~~${reason}\n\n`);
         }
         if (description.length > 0) md.appendMarkdown(description.join('\n') + '\n\n');
-        for (const n of notes)    md.appendMarkdown(`> 📝 **Note:** ${n}\n\n`);
-        for (const w of warnings) md.appendMarkdown(`> ⚠️ **Warning:** ${w}\n\n`);
+        for (const n of notes)    renderBlock('📝', 'Note', n);
+        for (const w of warnings) renderBlock('⚠️', 'Warning', w);
         if (paramsList.length > 0)  md.appendMarkdown('**Parameters:**\n\n' + paramsList.join('\n') + '\n\n');
         if (returnsText)            md.appendMarkdown(`**Returns:** ${returnsText}\n\n`);
         if (throwsList.length > 0)  md.appendMarkdown('**Throws:**\n\n' + throwsList.join('\n') + '\n\n');
@@ -175,7 +213,69 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
         const typeName = this.inferTypeOfVariable(document, position, variableName);
         if (!typeName) return [];
         const projectRoot = this.findProjectRoot(document.uri.fsPath);
-        return this.getStructMembersWithInheritance(projectRoot, document.uri.fsPath, typeName);
+        const items = this.getStructMembersWithInheritance(projectRoot, document.uri.fsPath, typeName);
+
+        // Magic attributes available on every struct instance
+        if (variableName === 'self') {
+            const nameItem = new vscode.CompletionItem('__name', vscode.CompletionItemKind.Property);
+            nameItem.detail = 'magic attribute → String';
+            nameItem.documentation = new vscode.MarkdownString(
+                '**`__name`** — the struct\'s name as a `String`.\n\n' +
+                '```quirk\nprint(self.__name)           // "TypeError"\nprint(self.__class.__name)   // "TypeError"\n```'
+            );
+            nameItem.sortText = '3___name';
+            items.push(nameItem);
+
+            const classItem = new vscode.CompletionItem('__class', vscode.CompletionItemKind.Property);
+            classItem.detail = 'magic attribute → Type';
+            classItem.documentation = new vscode.MarkdownString(
+                '**`__class`** — `Type` descriptor for the enclosing struct.\n\n' +
+                'Access `.__name` and `.__parent` on the result.\n\n' +
+                '```quirk\nprint(self.__class.__name)    // "TypeError"\n' +
+                'print(self.__class.__parent)  // "Exception"\n```'
+            );
+            classItem.sortText = '3___class';
+            items.push(classItem);
+        }
+
+        // Type descriptor members (result of self.__class)
+        if (typeName === 'Type') {
+            const makeTypeAttr = (label: string, doc: string) => {
+                const item = new vscode.CompletionItem(label, vscode.CompletionItemKind.Property);
+                item.detail = 'Type attribute → String';
+                item.documentation = new vscode.MarkdownString(doc);
+                item.sortText = '1_' + label;
+                return item;
+            };
+            items.push(makeTypeAttr('__name',
+                '**`__name`** — the name of the struct this `Type` describes.\n\n' +
+                '```quirk\nprint(self.__class.__name)  // "TypeError"\n```'));
+            items.push(makeTypeAttr('__parent',
+                '**`__parent`** — the parent struct name of the struct this `Type` describes.\n\n' +
+                '```quirk\nprint(self.__class.__parent)  // "Exception"\n```'));
+        }
+
+        return items;
+    }
+
+    // Returns the name of the struct if the cursor is directly inside a struct body
+    // (i.e. not nested inside a define/def/init within that struct).
+    private getDirectStructContext(document: vscode.TextDocument, position: vscode.Position): string | null {
+        const textBefore = document.getText(new vscode.Range(new vscode.Position(0, 0), position));
+        let depth = 0;
+        for (let i = textBefore.length - 1; i >= 0; i--) {
+            const ch = textBefore[i];
+            if (ch === '}') { depth++; }
+            else if (ch === '{') {
+                depth--;
+                if (depth < 0) {
+                    const preceding = textBefore.substring(0, i).trimEnd();
+                    const m = /\bstruct\s+([a-zA-Z0-9_]+)(?:\s*:\s*[a-zA-Z0-9_]+)?\s*$/.exec(preceding);
+                    return m ? m[1] : null;
+                }
+            }
+        }
+        return null;
     }
 
     public inferTypeOfVariable(
@@ -191,7 +291,7 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
             for (const line of lines) {
                 let m = /\bstruct\s+([a-zA-Z0-9_]+)/.exec(line)
                     || /\bextend\s+([a-zA-Z0-9_]+)/.exec(line)
-                    || /(?:define|def|init)\s+([a-zA-Z0-9_]+)_/.exec(line);
+                    || /(?:define|def|init)\s+([A-Z][a-zA-Z0-9_]*)_/.exec(line);
                 if (m) return m[1];
             }
         }
@@ -536,6 +636,46 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
                         addItem(exp.label, exp.kind || vscode.CompletionItemKind.Reference, `from ${modulePath}`);
                     }
                 });
+            }
+        }
+
+        // ---- Magic methods (only when cursor is directly inside a struct body) ----
+        if (this.getDirectStructContext(document, position)) {
+            const magicMethods: [string, string, string][] = [
+                // Lifecycle
+                ['__init',     'define __init(self$1) -> void {\n\t$0\n}',                               'Constructor — called on instantiation'],
+                ['__del',      'define __del(self) -> void {\n\t$0\n}',                                  'Destructor — called on destruction'],
+                // String conversion
+                ['__str',      'define __str(self) -> String {\n\t$0\n}',                                'Human-readable string — used by print() and concatenation'],
+                ['__repr',     'define __repr(self) -> String {\n\t$0\n}',                               'Developer representation — used as fallback when __str is absent'],
+                // Boolean / length
+                ['__bool',     'define __bool(self) -> Bool {\n\t$0\n}',                                 'Truthiness — enables if obj: / not obj / while obj:'],
+                ['__len',      'define __len(self) -> Int {\n\t$0\n}',                                   'Length — called by .length on the struct'],
+                // Indexing
+                ['__get',      'define __get(self, index: ${1:Int}) -> ${2:Any} {\n\t$0\n}',             'Index read — obj[i]'],
+                ['__set',      'define __set(self, index: ${1:Int}, value: ${2:Any}) -> void {\n\t$0\n}','Index write — obj[i] = v'],
+                // Iteration
+                ['__iter',     'define __iter(self) -> ${1:Iterator} {\n\t$0\n}',                        'Iterator — enables for-in loops'],
+                ['__has_next', 'define __has_next(self) -> Bool {\n\t$0\n}',                             'Iterator protocol — true if more elements remain'],
+                ['__next',     'define __next(self) -> ${1:Any} {\n\t$0\n}',                             'Iterator protocol — returns the next element'],
+                // Arithmetic operators
+                ['__add',      'define __add(self, other: ${1:Self}) -> ${2:Self} {\n\t$0\n}',           '+ operator'],
+                ['__sub',      'define __sub(self, other: ${1:Self}) -> ${2:Self} {\n\t$0\n}',           '- operator'],
+                ['__mul',      'define __mul(self, other: ${1:Self}) -> ${2:Self} {\n\t$0\n}',           '* operator'],
+                ['__div',      'define __div(self, other: ${1:Self}) -> ${2:Self} {\n\t$0\n}',           '/ operator'],
+                // Comparison operators
+                ['__eq',       'define __eq(self, other: ${1:Self}) -> Bool {\n\t$0\n}',                 '== operator'],
+                ['__ne',       'define __ne(self, other: ${1:Self}) -> Bool {\n\t$0\n}',                 '!= operator (falls back to !__eq if absent)'],
+                ['__lt',       'define __lt(self, other: ${1:Self}) -> Bool {\n\t$0\n}',                 '< operator'],
+                ['__le',       'define __le(self, other: ${1:Self}) -> Bool {\n\t$0\n}',                 '<= operator'],
+                ['__gt',       'define __gt(self, other: ${1:Self}) -> Bool {\n\t$0\n}',                 '> operator'],
+                ['__ge',       'define __ge(self, other: ${1:Self}) -> Bool {\n\t$0\n}',                 '>= operator'],
+                // Context manager
+                ['__enter',    'define __enter(self) -> void {\n\t$0\n}',                                'Context manager open — with obj as x { }'],
+                ['__exit',     'define __exit(self) -> void {\n\t$0\n}',                                 'Context manager close — always runs'],
+            ];
+            for (const [name, snippet, doc] of magicMethods) {
+                addItem(name, vscode.CompletionItemKind.Method, 'magic method', snippet, doc);
             }
         }
 

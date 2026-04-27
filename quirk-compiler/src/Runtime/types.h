@@ -52,6 +52,11 @@ typedef struct {
     int is_open;
 } File;
 
+typedef struct {
+    const char* func_name;
+    const char* file_name;
+} ShadowFrame;
+
 // ===================================================
 //  Any — Tagged Union for dynamic typing
 //

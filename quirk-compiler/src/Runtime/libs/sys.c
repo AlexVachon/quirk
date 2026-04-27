@@ -87,12 +87,9 @@ char* Sys_srcline(const char* filename, int target_line) {
 }
 
 // --- QUIRK SHADOW STACK ---
-typedef struct {
-    const char* func_name;
-    const char* file_name;
-} ShadowFrame;
+#include "../types.h"
 
-static ShadowFrame quirk_shadow_stack[1024];
+ShadowFrame quirk_shadow_stack[1024];
 int quirk_shadow_sp = 0;
 
 void quirk_push_frame(const char* func, const char* file) {

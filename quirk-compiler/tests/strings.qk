@@ -1,4 +1,8 @@
-struct CustomString : String {}
+struct CustomString : String {
+    define __init(self, raw: String = "Hello") {
+        super().__init(raw)
+    }
+}
 
 define main() {
     num := 12345
@@ -79,6 +83,8 @@ define main() {
     print("Config lines: ${lines}")
 
     c_string := CustomString()
+    print(c_string)
     print(type(c_string))
+    print(type(c_string as String))
 
 }

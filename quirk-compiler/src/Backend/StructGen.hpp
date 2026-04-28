@@ -38,6 +38,14 @@ class StructGen {
 
     void registerTypeId(const std::string& name, int id) { typeIdMap[name] = id; }
 
+    bool inheritsFrom(const std::string& typeName, const std::string& base) {
+        if (typeName == base) return true;
+        if (!structHierarchy || !structHierarchy->count(typeName)) return false;
+        for (const auto& p : structHierarchy->at(typeName))
+            if (inheritsFrom(p, base)) return true;
+        return false;
+    }
+
     Value* generateStrCall(Value* objPtr, const std::string& structName) {
         std::string funcName = structName + "___str";
         Function* strFunc = TheModule->getFunction(funcName);

@@ -442,6 +442,7 @@ int main(int argc, char* argv[]) {
     log.debug("Running Semantic Analysis...");
 
     Sema sema;
+    sema.setSourceMap(sourceMap);
     if (!sema.analyze(ast)) {
         std::cerr << "Compilation failed." << std::endl;
         return 1;

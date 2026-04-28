@@ -1,9 +1,50 @@
 #include <iostream>
 #include <algorithm>
 #include <functional>
+#include <sstream>
 #include "sema.hpp"
 
 std::string Sema::currentClass = "";
+
+[[noreturn]] void Sema::fatalError(const std::string& msg, int line, int col,
+                                    const std::string& filePath) {
+    std::cerr << "\033[1;31m[ERROR]\033[0m " << msg << "\n";
+
+    // Fallback to lastNode if no explicit location given
+    if (line <= 0 && lastNode && lastNode->line > 0) {
+        line     = lastNode->line;
+        col      = lastNode->col;
+    }
+    std::string path = (!filePath.empty())           ? filePath
+                       : (lastNode && !lastNode->filePath.empty()) ? lastNode->filePath
+                       : currentFilePath;
+
+    if (line > 0) {
+        std::cerr << " --> ";
+        if (!path.empty()) std::cerr << path << ":";
+        std::cerr << line;
+        if (col > 0) std::cerr << ":" << col;
+        std::cerr << "\n";
+
+        if (!path.empty() && sourceMap.count(path)) {
+            const std::string& src = sourceMap.at(path);
+            int cur = 1;
+            std::string lineText;
+            std::istringstream ss(src);
+            while (std::getline(ss, lineText)) {
+                if (cur++ == line) break;
+            }
+            std::string ln = std::to_string(line);
+            std::cerr << "   |\n";
+            std::cerr << ln << " | " << lineText << "\n";
+            int off = (col > 1) ? col - 1 : 0;
+            std::cerr << std::string(ln.size(), ' ') << " | "
+                      << std::string(off, ' ')
+                      << "\033[1;33m^--- here\033[0m\n\n";
+        }
+    }
+    exit(1);
+}
 
 bool Sema::analyze(const std::vector<std::unique_ptr<Node>> &nodes)
 {
@@ -81,14 +122,14 @@ bool Sema::analyze(const std::vector<std::unique_ptr<Node>> &nodes)
         // --- NEW: Validate Inheritance Tree for Structs ---
         if (auto s = dynamic_cast<StructNode*>(node.get())) {
             for (const std::string& parentName : s->parents) {
-                if (!structRegistry.count(parentName)) {
-                    std::cerr << "Semantic Error: Struct '" << s->name 
-                              << "' attempts to inherit from undefined struct '" << parentName << "'." << std::endl;
-                    exit(1);
-                }
+                if (!structRegistry.count(parentName))
+                    fatalError("struct '" + s->name + "' inherits from undefined type '" + parentName + "'",
+                               s->line, s->col, s->filePath);
             }
         }
         // --------------------------------------------------
+
+        if (!node->filePath.empty()) currentFilePath = node->filePath;
 
         if (auto f = dynamic_cast<FunctionNode *>(node.get()))
         {
@@ -118,11 +159,8 @@ void Sema::checkUse(UseNode *node)
         {
             bool found = structRegistry.count(item) || methodRegistry[""].count(item);
             if (!found)
-            {
-                std::cerr << "Error: Module '" << node->moduleName
-                          << "' does not export symbol '" << item << "'" << std::endl;
-                exit(1);
-            }
+                fatalError("module '" + node->moduleName + "' does not export symbol '" + item + "'",
+                           node->line, node->col, node->filePath);
             ctx.visibleSymbols.insert(item);
         }
     }
@@ -170,6 +208,7 @@ void Sema::checkFunction(FunctionNode *f)
 
     currentClass = f->cls;
     currentFunctionNode = f;
+    if (!f->filePath.empty()) currentFilePath = f->filePath;
 
     enterScope();
 
@@ -212,6 +251,7 @@ void Sema::checkFunction(FunctionNode *f)
 
 void Sema::checkVarDecl(VarDeclNode *node)
 {
+    lastNode = node;
     std::string exprType = checkExpression(node->expression.get());
 
     if (auto lit = dynamic_cast<LiteralNode *>(node->lhs.get()))
@@ -224,11 +264,8 @@ void Sema::checkVarDecl(VarDeclNode *node)
     {
         std::string objType = checkExpression(member->object.get());
         if (resolveMember(objType, member->memberName) == "unknown")
-        {
-            std::cerr << "Error: Member '" << member->memberName
-                      << "' not found in " << objType << std::endl;
-            exit(1);
-        }
+            fatalError("member '" + member->memberName + "' not found in '" + objType + "'",
+                       member->line, member->col, member->filePath);
     }
 }
 
@@ -257,21 +294,19 @@ void Sema::checkStatement(Node *node)
             auto& cb = t->catchBlocks[i];
             enterScope();
             for (const std::string& typeName : cb.types) {
-                if (!structRegistry.count(typeName)) {
-                    std::cerr << "Error: Catch type '" << typeName << "' is undefined." << std::endl;
-                    exit(1);
-                }
-                if (structRegistry.count("Exception") && !inheritsFromException(typeName)) {
-                    std::cerr << "Error: Catch type '" << typeName
-                              << "' does not inherit from 'Exception'." << std::endl;
-                    exit(1);
-                }
+                if (!structRegistry.count(typeName))
+                    fatalError("catch type '" + typeName + "' is not defined",
+                               t->line, t->col, t->filePath);
+                if (structRegistry.count("Exception") && !inheritsFromException(typeName))
+                    fatalError("catch type '" + typeName + "' does not inherit from 'Exception'",
+                               t->line, t->col, t->filePath);
                 for (size_t j = 0; j < i; ++j) {
                     for (const std::string& prevType : t->catchBlocks[j].types) {
                         if (inheritsFromException(typeName, prevType)) {
-                            std::cerr << "Warning: catch (" << cb.varName << ": " << typeName
-                                      << ") is unreachable — '" << prevType
-                                      << "' in block " << (j + 1) << " already handles it." << std::endl;
+                            std::cerr << "\033[1;33m[WARNING]\033[0m catch (" << cb.varName
+                                      << ": " << typeName << ") is unreachable — '"
+                                      << prevType << "' in block " << (j + 1)
+                                      << " already handles it\n";
                         }
                     }
                 }
@@ -295,10 +330,9 @@ void Sema::checkStatement(Node *node)
     else if (auto th = dynamic_cast<ThrowNode*>(node)) {
         if (th->expression) {
             std::string type = checkExpression(th->expression.get());
-            if (!structRegistry.count(type)) {
-                std::cerr << "Error: Can only throw Struct objects, got '" << type << "'." << std::endl;
-                exit(1);
-            }
+            if (!structRegistry.count(type))
+                fatalError("can only throw struct objects, got '" + type + "'",
+                           th->line, 0, th->filePath);
         }
         // bare throw (nullptr expression): re-raises current exception — no type check needed
     }
@@ -314,10 +348,9 @@ void Sema::checkStatement(Node *node)
             objType = resolveVariable(objName);
             varType = resolveMember(objType, propName);
             
-            if (varType == "unknown") {
-                std::cerr << "Error: Cannot trigger on unknown struct member '" << tr->varName << "'" << std::endl;
-                exit(1);
-            }
+            if (varType == "unknown")
+                fatalError("cannot trigger on unknown member '" + tr->varName + "'",
+                           tr->line, tr->col, tr->filePath);
         } else {
             varType = resolveVariable(tr->varName);
         }
@@ -343,23 +376,19 @@ void Sema::checkStatement(Node *node)
 
 void Sema::checkIf(IfNode *node)
 {
+    lastNode = node;
     std::string condType = checkExpression(node->condition.get());
     if (condType != "Bool")
-    {
-        std::cerr << "[Sema Error] 'if' condition must be 'Bool', but got '"
-                  << condType << "'" << std::endl;
-        exit(1);
-    }
+        fatalError("'if' condition must be 'Bool', got '" + condType + "'",
+                   node->line, node->col, node->filePath);
     enterScope();
     for (auto &s : node->thenBranch)
         checkStatement(s.get());
     exitScope();
     for (auto &b : node->elIfBranches)
     {
-        if (checkExpression(b.condition.get()) != "Bool") {
-            std::cerr << "[Sema Error] 'elif' condition must be 'Bool'" << std::endl;
-            exit(1);
-        }
+        if (checkExpression(b.condition.get()) != "Bool")
+            fatalError("'elif' condition must be 'Bool'", node->line, node->col, node->filePath);
         enterScope();
         for (auto &s : b.body)
             checkStatement(s.get());
@@ -376,10 +405,9 @@ void Sema::checkIf(IfNode *node)
 
 void Sema::checkWhile(WhileNode *node)
 {
-    if (checkExpression(node->condition.get()) != "Bool") {
-        std::cerr << "[Sema Error] 'while' condition must be 'Bool'" << std::endl;
-        exit(1);
-    }
+    lastNode = node;
+    if (checkExpression(node->condition.get()) != "Bool")
+        fatalError("'while' condition must be 'Bool'", node->line, node->col, node->filePath);
     enterScope();
     for (auto &s : node->body)
         checkStatement(s.get());
@@ -478,10 +506,9 @@ std::string Sema::checkBinaryOp(BinaryOpNode *node)
     if (node->op == "not")
     {
         std::string t = checkExpression(node->left.get());
-        if (t != "Bool" && t != "Any" && t != "Int") {
-            std::cerr << "[Sema Error] 'not' operand must be 'Bool'" << std::endl;
-            exit(1);
-        }
+        if (t != "Bool" && t != "Any" && t != "Int")
+            fatalError("'not' operand must be 'Bool', got '" + t + "'",
+                       node->line, node->col, node->filePath);
         return "Bool";
     }
 
@@ -541,25 +568,20 @@ std::string Sema::checkBinaryOp(BinaryOpNode *node)
                     std::string expectedKeyType = func->parameters[0].type;
                     bool validKey = (rType == expectedKeyType);
                     if (!validKey)
-                    {
-                        std::cerr << "Error: Type mismatch for '" << lType
-                                  << "[]'. Expected '" << expectedKeyType
-                                  << "' index, got '" << rType << "'." << std::endl;
-                        exit(1);
-                    }
+                        fatalError("type mismatch for '" + lType + "[]': expected '" +
+                                   expectedKeyType + "' index, got '" + rType + "'",
+                                   node->line, node->col, node->filePath);
                 }
                 return func->returnType;
             }
         }
         if (rType != "Int")
-        {
-            std::cerr << "Error: Array index must be 'Int'." << std::endl;
-            exit(1);
-        }
+            fatalError("array index must be 'Int', got '" + rType + "'",
+                       node->line, node->col, node->filePath);
         if (lType == "Any" || lType == "String")
             return (lType == "String") ? "Char" : "Any";
-        std::cerr << "[Sema Error] Type '" << lType << "' does not support indexing with '[]'" << std::endl;
-        exit(1);
+        fatalError("type '" + lType + "' does not support indexing with '[]'",
+                   node->line, node->col, node->filePath);
     }
 
     // Operator Overloading
@@ -619,9 +641,8 @@ std::string Sema::checkBinaryOp(BinaryOpNode *node)
     {
         return "Bool";
     }
-    std::cerr << "[Sema Error] Unsupported operator '" << node->op
-              << "' on types '" << lType << "' and '" << rType << "'" << std::endl;
-    exit(1);
+    fatalError("unsupported operator '" + node->op + "' on types '" + lType + "' and '" + rType + "'",
+               node->line, node->col, node->filePath);
 }
 
 std::string Sema::checkMemberAccess(MemberAccessNode *node)
@@ -632,11 +653,9 @@ std::string Sema::checkMemberAccess(MemberAccessNode *node)
             EnumNode* en = enumRegistry[lit->value];
             if (node->memberName == "str" || node->memberName == "name") return "String";
             auto it = std::find(en->variants.begin(), en->variants.end(), node->memberName);
-            if (it == en->variants.end()) {
-                std::cerr << "Error: '" << node->memberName
-                          << "' is not a variant of enum '" << lit->value << "'\n";
-                exit(1);
-            }
+            if (it == en->variants.end())
+                fatalError("'" + node->memberName + "' is not a variant of enum '" + lit->value + "'",
+                           node->line, node->col, node->filePath);
             return en->name;
         }
     }
@@ -659,16 +678,14 @@ std::string Sema::checkMemberAccess(MemberAccessNode *node)
         {
             return methodRegistry[""][funcName]->returnType;
         }
-        std::cerr << "Error: Module '" << modName << "' has no function '" << funcName << "'" << std::endl;
-        exit(1);
+        fatalError("module '" + modName + "' has no function '" + funcName + "'",
+                   node->line, node->col, node->filePath);
     }
 
     std::string type = resolveMember(objType, node->memberName);
     if (type == "unknown")
-    {
-        std::cerr << "Error: Member '" << node->memberName << "' not found on " << objType << std::endl;
-        exit(1);
-    }
+        fatalError("'" + objType + "' has no member '" + node->memberName + "'",
+                   node->line, node->col, node->filePath);
     if (type == "method") {
         std::string mfName = objType + "_" + node->memberName;
         if (methodRegistry[objType].count(mfName)) {
@@ -691,25 +708,63 @@ std::string Sema::checkMemberAccess(MemberAccessNode *node)
     return type;
 }
 
+void Sema::checkInitArgCount(const std::string& name, FunctionNode* init,
+                              int provided, int line, int col, const std::string& filePath) {
+    int required = 0, total = 0;
+    bool hasVariadic = false;
+    for (const auto& p : init->parameters) {
+        if (p.isVariadic) { hasVariadic = true; break; }
+        total++;
+        if (!p.defaultValue) required++;
+    }
+    if (hasVariadic || (provided >= required && provided <= total)) return;
+
+    std::string expect = (required == total)
+        ? std::to_string(required) + " argument" + (required == 1 ? "" : "s")
+        : "between " + std::to_string(required) + " and " + std::to_string(total) + " arguments";
+    fatalError(name + "() takes " + expect +
+               " but " + std::to_string(provided) + " " + (provided == 1 ? "was" : "were") + " given",
+               line, col, filePath);
+}
+
 std::string Sema::checkConstructor(ConstructorNode *node)
 {
-    return structRegistry.count(node->structName) ? node->structName : "unknown";
+    if (!structRegistry.count(node->structName)) return "unknown";
+
+    std::string initName = node->structName + "__init";
+    if (methodRegistry.count(node->structName) &&
+        methodRegistry[node->structName].count(initName)) {
+        checkInitArgCount(node->structName, methodRegistry[node->structName][initName],
+                          (int)node->args.size(), node->line, node->col, node->filePath);
+    }
+
+    return node->structName;
 }
 
 std::string Sema::checkCall(CallNode *node)
 {
     if (auto l = dynamic_cast<LiteralNode *>(node->callee.get())) {
         if (l->value == "super") {
-            if (currentClass.empty()) {
-                std::cerr << "Error: Cannot use 'super' outside a class." << std::endl;
-                exit(1);
-            }
-            if (structRegistry[currentClass]->parents.empty()) {
-                std::cerr << "Error: Class '" << currentClass << "' has no parent to call 'super' on." << std::endl;
-                exit(1);
-            }
+            if (currentClass.empty())
+                fatalError("'super' used outside of a struct method", node->line, node->col, node->filePath);
+            if (structRegistry[currentClass]->parents.empty())
+                fatalError("'" + currentClass + "' has no parent — cannot use 'super'",
+                           node->line, node->col, node->filePath);
             return structRegistry[currentClass]->parents[0];
         }
+
+        // Positional constructor call: Foo(...) where Foo is a known struct.
+        // Validate argument count against __init (self already stripped by parser).
+        if (structRegistry.count(l->value)) {
+            std::string initName = l->value + "__init";
+            if (methodRegistry.count(l->value) &&
+                methodRegistry[l->value].count(initName)) {
+                checkInitArgCount(l->value, methodRegistry[l->value][initName],
+                                  (int)node->args.size(), node->line, node->col, node->filePath);
+            }
+            return l->value;
+        }
+
         return resolveVariable(l->value);
     }
 
@@ -832,12 +887,10 @@ std::string Sema::checkCall(CallNode *node)
 
                         std::string argType = checkExpression(node->args[i].value.get());
                         const std::string &paramType = func->parameters[i].type;
-                        if (!isCompatibleTypes(paramType, argType)) {
-                            std::cerr << "Error: Argument " << (i + 1) << " of '"
-                                      << funcName << "' expected '" << paramType
-                                      << "' but got '" << argType << "'" << std::endl;
-                            exit(1);
-                        }
+                        if (!isCompatibleTypes(paramType, argType))
+                            fatalError("argument " + std::to_string(i + 1) + " of '" + funcName +
+                                       "' expected '" + paramType + "' but got '" + argType + "'",
+                                       node->line, node->col, node->filePath);
                     }
 
                     std::string ret = func->returnType;
@@ -862,10 +915,8 @@ std::string Sema::checkCall(CallNode *node)
 
 std::string Sema::checkListLiteral(ListLiteralNode *node)
 {
-    if (!structRegistry.count("List")) {
-        std::cerr << "Error: 'List' type not available — is 'core' loaded?" << std::endl;
-        exit(1);
-    }
+    if (!structRegistry.count("List"))
+        fatalError("'List' type not available — is core loaded?", node->line, node->col, node->filePath);
     for (auto &elem : node->elements)
         checkExpression(elem.get());
     return "List";
@@ -874,18 +925,13 @@ std::string Sema::checkListLiteral(ListLiteralNode *node)
 std::string Sema::checkMapLiteral(MapLiteralNode *node)
 {
     if (!structRegistry.count("Map"))
-    {
-        std::cerr << "Error: Map type not defined." << std::endl;
-        exit(1);
-    }
+        fatalError("'Map' type not available — is core loaded?", node->line, node->col, node->filePath);
     for (auto &pair : node->elements)
     {
         std::string keyType = checkExpression(pair.first.get());
         if (keyType != "String")
-        {
-            std::cerr << "Error: Map keys must be String." << std::endl;
-            exit(1);
-        }
+            fatalError("map keys must be 'String', got '" + keyType + "'",
+                       node->line, node->col, node->filePath);
         checkExpression(pair.second.get());
     }
     return "Map";
@@ -954,11 +1000,7 @@ std::string Sema::resolveVariable(const std::string &name)
     {
         StructNode *s = structRegistry[name];
         if (!isVisible(name, s->moduleName, contextModule))
-        {
-            std::cerr << "Error: Symbol '" << name << "' defined in '"
-                      << s->moduleName << "' is not visible in '" << contextModule << "'." << std::endl;
-            exit(1);
-        }
+            fatalError("symbol '" + name + "' (from '" + s->moduleName + "') is not visible here — did you 'use' it?");
         return name;
     }
 
@@ -966,11 +1008,7 @@ std::string Sema::resolveVariable(const std::string &name)
     {
         FunctionNode *f = methodRegistry[""][name];
         if (!isVisible(name, f->moduleName, contextModule))
-        {
-            std::cerr << "Error: Function '" << name << "' defined in '"
-                      << f->moduleName << "' is not visible in '" << contextModule << "'." << std::endl;
-            exit(1);
-        }
+            fatalError("function '" + name + "' (from '" + f->moduleName + "') is not visible here — did you 'use' it?");
         std::string ret = f->returnType;
         return ret.empty() ? "void" : ret;
     }
@@ -1006,8 +1044,7 @@ std::string Sema::resolveVariable(const std::string &name)
         }
     }
 
-    std::cerr << "Error: Undefined variable '" << name << "'" << std::endl;
-    exit(1);
+    fatalError("undefined variable or function '" + name + "'");
 }
 
 std::string Sema::resolveMember(const std::string &sName, const std::string &mName)
@@ -1065,17 +1102,15 @@ std::string Sema::resolveMember(const std::string &sName, const std::string &mNa
 
 void Sema::checkWith(WithNode *node)
 {
+    lastNode = node;
     std::string resType = checkExpression(node->resource.get());
-    if (!structRegistry.count(resType)) {
-        std::cerr << "[Sema Error] Resource in 'with' block must be a valid Struct, got: " << resType << std::endl;
-        exit(1);
-    }
+    if (!structRegistry.count(resType))
+        fatalError("'with' resource must be a struct, got '" + resType + "'",
+                   node->line, node->col, node->filePath);
     if (!methodRegistry[resType].count(resType + "___enter") ||
         !methodRegistry[resType].count(resType + "___exit"))
-    {
-        std::cerr << "[Sema Error] Struct '" << resType << "' must implement __enter and __exit to be used in a 'with' block." << std::endl;
-        exit(1);
-    }
+        fatalError("'" + resType + "' must implement __enter and __exit for use in 'with'",
+                   node->line, node->col, node->filePath);
     enterScope();
     defineVariable(node->varName, resType);
     for (auto &stmt : node->body)

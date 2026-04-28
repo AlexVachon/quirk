@@ -7,6 +7,7 @@
 #include <map>
 #include <vector>
 #include <set>
+#include <sstream>
 #include "ast.hpp"
 
 struct Symbol {
@@ -24,10 +25,23 @@ struct VisibilityContext {
 class Sema {
    public:
     bool analyze(const std::vector<std::unique_ptr<Node>>& nodes);
+    void setSourceMap(const std::map<std::string, std::string>& sm) { sourceMap = sm; }
     static std::string currentClass;
 
    private:
+    std::map<std::string, std::string> sourceMap;
+    std::string currentFilePath;   // set per top-level node; used by fatalError
+    Node* lastNode = nullptr;      // updated as we walk — used by fatalError for location
     FunctionNode* currentFunctionNode = nullptr;
+
+    [[noreturn]] void fatalError(const std::string& msg, int line = 0, int col = 0,
+                                 const std::string& filePath = "");
+    [[noreturn]] void fatalError(const std::string& msg, Node* node) {
+        fatalError(msg, node ? node->line : 0, node ? node->col : 0,
+                   node ? node->filePath : "");
+    }
+    void checkInitArgCount(const std::string& name, FunctionNode* init,
+                           int provided, int line, int col, const std::string& filePath);
 
     // --- NEW: Per-Module Visibility Map ---
     std::map<std::string, VisibilityContext> moduleVisibility;

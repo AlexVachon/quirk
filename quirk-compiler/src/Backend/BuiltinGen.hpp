@@ -244,6 +244,21 @@ class BuiltinGen {
                             Value* fmt = Builder.CreateGlobalStringPtr("%s\n");
                             Builder.CreateCall(printfFunc, {fmt, strObj});
                         }
+                    } else if (structGen->inheritsFrom(structName, "String")) {
+                        // String subclass with no __str override — read the String buffer directly.
+                        // The layout is identical to String (no __type_id since String is
+                        // extern-backed), so bitcasting to String* is safe.
+                        StructType* strTy = StructType::getTypeByName(Context, "String");
+                        if (!strTy) strTy = StructType::getTypeByName(Context, "struct.String");
+                        if (strTy) {
+                            Value* asStr = Builder.CreateBitCast(val, PointerType::getUnqual(strTy));
+                            Value* bufPtr = structGen->getMemberPtr(asStr, "buffer");
+                            if (bufPtr) {
+                                Value* cStr = Builder.CreateLoad(Type::getInt8PtrTy(Context), bufPtr);
+                                Value* fmt = Builder.CreateGlobalStringPtr("%s\n");
+                                Builder.CreateCall(printfFunc, {fmt, cStr});
+                            }
+                        }
                     } else {
                         Value* fmt = Builder.CreateGlobalStringPtr("<%s at %p>\n");
                         Value* nameVal = Builder.CreateGlobalStringPtr(structName);

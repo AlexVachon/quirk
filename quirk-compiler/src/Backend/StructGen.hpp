@@ -19,6 +19,7 @@ class StructGen {
     std::map<std::string, std::vector<std::string>> structLayouts;
     std::map<std::string, std::string> structInitMap;
     std::map<std::string, std::vector<std::string>>* structHierarchy = nullptr;
+    std::map<std::string, int> typeIdMap;
 
    public:
     StructGen(LLVMContext& ctx, Module* mod, IRBuilder<>& builder, std::map<std::string, StructType*>& structs)
@@ -34,6 +35,8 @@ class StructGen {
     void registerStructInit(const std::string& structName, const std::string& llvmFuncName) {
         structInitMap[structName] = llvmFuncName;
     }
+
+    void registerTypeId(const std::string& name, int id) { typeIdMap[name] = id; }
 
     Value* generateStrCall(Value* objPtr, const std::string& structName) {
         std::string funcName = structName + "___str";
@@ -164,6 +167,16 @@ class StructGen {
             }
             Builder.CreateCall(initFunc, initArgs);
 
+            // Store __type_id for virtual dispatch (field 0 of vtable-eligible structs)
+            if (typeIdMap.count(name) && structLayouts.count(name)) {
+                const auto& layout = structLayouts[name];
+                if (!layout.empty() && layout[0] == "__type_id") {
+                    Value* tidPtr = Builder.CreateStructGEP(st, objPtr, 0, "tid_gep");
+                    Builder.CreateStore(
+                        ConstantInt::get(Type::getInt32Ty(Context), typeIdMap[name]), tidPtr);
+                }
+            }
+
             // ISerializable registration
             if (structHierarchy && structHierarchy->count(name)) {
                 bool isSerializable = false;
@@ -199,7 +212,10 @@ class StructGen {
             }
         } else {
             std::cerr << "[DEBUG] StructGen::allocateAndInit fallback - About to GEP fields manually\n";
-            int idx = 0;
+            // For vtable-eligible structs __type_id is field 0; skip it here and store below.
+            bool hasTypeId = typeIdMap.count(name) && structLayouts.count(name) &&
+                             !structLayouts[name].empty() && structLayouts[name][0] == "__type_id";
+            int idx = hasTypeId ? 1 : 0;
             for (auto val : args) {
                 if (idx >= (int)st->getNumElements()) break;
                 Value* fieldPtr = Builder.CreateStructGEP(st, objPtr, idx++);
@@ -230,6 +246,12 @@ class StructGen {
                 }
 
                 Builder.CreateStore(val, fieldPtr);
+            }
+            // Store __type_id for fallback path as well
+            if (hasTypeId) {
+                Value* tidPtr = Builder.CreateStructGEP(st, objPtr, 0, "tid_gep");
+                Builder.CreateStore(
+                    ConstantInt::get(Type::getInt32Ty(Context), typeIdMap[name]), tidPtr);
             }
         }
         return objPtr;

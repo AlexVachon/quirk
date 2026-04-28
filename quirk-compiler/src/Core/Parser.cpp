@@ -1,5 +1,7 @@
 #include <algorithm>
 #include <iostream>
+#include <map>
+#include <set>
 #include "parser.hpp"
 
 Parser::Parser(const std::vector<Token>& tokens, const std::string& source, const std::string& filePath)
@@ -770,6 +772,58 @@ std::unique_ptr<StructNode> Parser::parseStruct() {
         }
     }
     consume(TokenType::RBRACE, "Expected '}'");
+
+    // --- Implicit field inference ---
+    // Scan __init body for `self.X = Y` where X is not an explicit field.
+    // Infer the field type from Y: parameter type > literal type > Any.
+    // This lets users write `self.side = side` in __init without declaring
+    // `side: Int` at the top of the struct.
+    {
+        std::set<std::string> declaredFields;
+        for (const auto& f : node->fields) declaredFields.insert(f.name);
+
+        for (auto& extra : extraNodes) {
+            auto* func = dynamic_cast<FunctionNode*>(extra.get());
+            if (!func || func->name != node->name + "__init") continue;
+
+            // Map parameter names → declared types (self already stripped)
+            std::map<std::string, std::string> paramTypes;
+            for (const auto& p : func->parameters) paramTypes[p.name] = p.type;
+
+            for (const auto& stmt : func->body) {
+                auto* vd = dynamic_cast<VarDeclNode*>(stmt.get());
+                if (!vd || vd->op != "=") continue;
+
+                auto* mem = dynamic_cast<MemberAccessNode*>(vd->lhs.get());
+                if (!mem) continue;
+
+                auto* selfLit = dynamic_cast<LiteralNode*>(mem->object.get());
+                if (!selfLit || selfLit->value != "self") continue;
+
+                const std::string& fieldName = mem->memberName;
+                if (declaredFields.count(fieldName)) continue;
+
+                // Infer type from the RHS
+                std::string inferredType = "Any";
+                if (auto* rhs = dynamic_cast<LiteralNode*>(vd->expression.get())) {
+                    if (paramTypes.count(rhs->value)) {
+                        inferredType = paramTypes[rhs->value]; // matches a param name
+                    } else if (!rhs->value.empty()) {
+                        char c = rhs->value[0];
+                        if (c == '"' || c == '\'')                               inferredType = "String";
+                        else if (rhs->value == "true" || rhs->value == "false")  inferredType = "Bool";
+                        else if (std::isdigit(c) && rhs->value.find('.') != std::string::npos) inferredType = "Double";
+                        else if (std::isdigit(c))                                inferredType = "Int";
+                    }
+                }
+
+                node->fields.push_back({fieldName, inferredType, nullptr});
+                declaredFields.insert(fieldName);
+            }
+            break; // only scan the first __init
+        }
+    }
+    // --------------------------------
 
     // --- NEW: Inject default initializations into __init AST ---
     if (!defaultInits.empty()) {

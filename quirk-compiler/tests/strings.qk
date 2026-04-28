@@ -1,6 +1,4 @@
-struct CustomString: String {
-
-}
+struct CustomString : String {}
 
 define main() {
     num := 12345

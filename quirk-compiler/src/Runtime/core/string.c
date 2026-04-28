@@ -214,6 +214,17 @@ void Core_String_String___init(String* self, char* raw) {
         }
         return;
     }
+    // Detect when raw is actually a String* (e.g. from super().__init(content)).
+    // A String*'s first 8 bytes are the buffer pointer (a heap address >> MAX_SMALL_INT)
+    // and the next 4 bytes are the length (a small non-negative integer).
+    // A plain C string would have ASCII bytes at offset 0 which form a tiny "pointer".
+    String* maybe_str = (String*)raw;
+    uintptr_t buf_addr = (uintptr_t)maybe_str->buffer;
+    if (buf_addr > MAX_SMALL_INT && maybe_str->length >= 0 && maybe_str->length < (1 << 20)) {
+        self->length = maybe_str->length;
+        self->buffer = maybe_str->buffer ? strdup(maybe_str->buffer) : strdup("");
+        return;
+    }
     self->length = strlen(raw);
     self->buffer = strdup(raw);
 }

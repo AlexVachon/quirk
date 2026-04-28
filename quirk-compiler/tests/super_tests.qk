@@ -1,0 +1,214 @@
+// =============================================================
+//  super() — test suite
+//
+//  Covers:
+//    1. super().__init()  with a user-defined parent
+//    2. super().__init()  with an extern parent (String)
+//    3. super().method()  — calling an inherited method
+//    4. super().field     — reading an inherited field
+//    5. Deep inheritance  — grandchild chains through child
+//    6. super() in exception subclasses
+//    7. Override + super  — child overrides a method, then
+//                           calls the parent version via super()
+// =============================================================
+
+// ─────────────────────────────────────────────
+// 1. User-defined parent  (__init chain)
+// ─────────────────────────────────────────────
+
+struct Animal {
+    name: String
+    sound: String
+
+    define __init(self, name: String, sound: String) -> void {
+        self.name  = name
+        self.sound = sound
+    }
+
+    define speak(self) -> String {
+        return self.name + " says " + self.sound
+    }
+
+    define describe(self) -> String {
+        return "Animal: " + self.name
+    }
+}
+
+struct Dog: Animal {
+    breed: String
+
+    define __init(self, name: String, breed: String) -> void {
+        super().__init(name, "Woof")
+        self.breed = breed
+    }
+
+    define describe(self) -> String {
+        return super().describe() + " (" + self.breed + ")"
+    }
+}
+
+// ─────────────────────────────────────────────
+// 2. Extern parent  (String)
+// ─────────────────────────────────────────────
+
+struct Tag: String {
+    define __init(self, text: String) -> void {
+        super().__init(text)
+    }
+
+    define wrapped(self) -> String {
+        return "<" + super().upper() + ">"
+    }
+}
+
+struct PrefixedString: String {
+    prefix: String
+
+    define __init(self, content: String, prefix: String) -> void {
+        super().__init(content)
+        self.prefix = prefix
+    }
+
+    define get(self) -> String {
+        return self.prefix + ": " + super().upper()
+    }
+}
+
+// ─────────────────────────────────────────────
+// 3. Deep inheritance  (3 levels)
+// ─────────────────────────────────────────────
+
+struct Vehicle {
+    speed: Int
+
+    define __init(self, speed: Int) -> void {
+        self.speed = speed
+    }
+
+    define info(self) -> String {
+        return "speed=" + self.speed.str()
+    }
+}
+
+struct Car: Vehicle {
+    brand: String
+
+    define __init(self, speed: Int, brand: String) -> void {
+        super().__init(speed)
+        self.brand = brand
+    }
+
+    define info(self) -> String {
+        return super().info() + " brand=" + self.brand
+    }
+}
+
+struct ElectricCar: Car {
+    range_km: Int
+
+    define __init(self, speed: Int, brand: String, range_km: Int) -> void {
+        super().__init(speed, brand)
+        self.range_km = range_km
+    }
+
+    define info(self) -> String {
+        return super().info() + " range=" + self.range_km.str() + "km"
+    }
+}
+
+// ─────────────────────────────────────────────
+// 4. Override + super  (call parent version)
+// ─────────────────────────────────────────────
+
+struct Shape {
+    color: String
+
+    define __init(self, color: String) -> void {
+        self.color = color
+    }
+
+    define area(self) -> Int {
+        return 0
+    }
+
+    define label(self) -> String {
+        return "Shape[" + self.color + "] area=" + self.area().str()
+    }
+}
+
+struct Square: Shape {
+    //side: Int
+
+    define __init(self, color: String, side: Int) -> void {
+        super().__init(color)
+        self.side = side
+    }
+
+    define area(self) -> Int {
+        return self.side * self.side
+    }
+
+    define label(self) -> String {
+        return super().label() + " side=" + self.side.str()
+    }
+}
+
+// ─────────────────────────────────────────────
+// 5. Exception subclasses  (existing pattern)
+// ─────────────────────────────────────────────
+
+struct NetworkError: Exception {
+    define __init(self, host: String, msg: String) -> void {
+        super().__init("Cannot reach '" + host + "': " + msg)
+        self.type = "NetworkError"
+    }
+}
+
+// ─────────────────────────────────────────────
+// main
+// ─────────────────────────────────────────────
+
+define main() {
+
+    // ── 1. User-defined parent ──────────────────
+    d := Dog("Rex", "Labrador")
+    print(d.speak())            // Rex says Woof
+    print(d.describe())         // Animal: Rex (Labrador)
+    print(d.name)               // Rex
+    print(d.breed)              // Labrador
+
+    // ── 2. Extern parent (String) ───────────────
+    t := Tag("hello")
+    print(t.wrapped())          // <HELLO>
+    print(type(t))              // Tag
+    print(t.length)             // 5
+
+    ps := PrefixedString("world", "msg")
+    print(ps.get())             // msg: WORLD
+    print(ps.length)            // 5
+
+    // ── 3. Deep inheritance ─────────────────────
+    ec := ElectricCar(200, "Tesla", 500)
+    print(ec.info())            // speed=200 brand=Tesla range=500km
+    print(ec.speed)             // 200
+    print(ec.brand)             // Tesla
+    print(ec.range_km)          // 500
+
+    // ── 4. Override + super ─────────────────────
+    sq := Square("red", 4)
+    print(sq.area())            // 16
+    // sq.label() calls Shape.label() (via super), which calls self.area() via
+    // virtual dispatch → resolves to Square.area() (returns 16).
+    print(sq.label())           // Shape[red] area=16 side=4
+    print(sq.color)             // red
+
+    // ── 5. Exception subclass ───────────────────
+    try {
+        throw NetworkError("example.com", "connection refused")
+    } catch (e: NetworkError) {
+        print(e.message)        // Cannot reach 'example.com': connection refused
+        print(e.type)           // NetworkError
+    }
+
+    print("All super() tests passed")
+}

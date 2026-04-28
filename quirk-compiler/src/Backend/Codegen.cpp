@@ -41,6 +41,12 @@ class LLVMCodegen {
 
     std::map<std::string, std::vector<std::string>> structHierarchy;
 
+    // Virtual dispatch tables
+    std::set<std::string> vtableEligible;   // structs that get __type_id at field 0
+    std::map<std::string, int> structTypeIds; // struct name → unique runtime type ID
+    // overrideMap[parentType][methodName] = [(childType, childTypeId), ...]
+    std::map<std::string, std::map<std::string, std::vector<std::pair<std::string,int>>>> overrideMap;
+
     std::map<std::string, std::vector<std::string>> enumVariants;  // name -> ordered variants
     std::map<std::string, std::string> varEnumTypes;               // varName -> enum type name
 
@@ -132,6 +138,63 @@ class LLVMCodegen {
             }
         }
 
+        // --- Virtual dispatch pre-scan ---
+        // Determine which structs get __type_id (vtable-eligible):
+        //   - Has at least one user-defined (non-extern) method with a body
+        //   - Does NOT inherit from any all-extern struct (String, List, etc.) or Exception
+        // "Callable" and "Type" are built-in special structs, always excluded.
+        {
+            // Structs whose __init is extern are C-backed (memory layout defined by C runtime).
+            // We must NOT add __type_id to those, or the C ABI would break.
+            // String, StringIterator, List, Map, Char, etc. all have extern __init.
+            std::set<std::string> externOnly = {"Type", "Callable"};
+            for (const auto& n : nodes) {
+                if (auto s = dynamic_cast<StructNode*>(n.get())) {
+                    for (const auto& n2 : nodes) {
+                        if (auto f = dynamic_cast<FunctionNode*>(n2.get())) {
+                            if (f->cls == s->name && f->isExtern &&
+                                f->name.find("__init") != std::string::npos) {
+                                externOnly.insert(s->name);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Preliminary hierarchy from AST parents (structHierarchy built during Pass 2)
+            std::map<std::string, std::vector<std::string>> astH;
+            for (const auto& n : nodes)
+                if (auto s = dynamic_cast<StructNode*>(n.get())) astH[s->name] = s->parents;
+
+            // Recursively check: struct is vtable-eligible iff it and all ancestors
+            // are not in externOnly and are not "Exception".
+            std::function<bool(const std::string&, std::set<std::string>&)> eligible =
+                [&](const std::string& name, std::set<std::string>& vis) -> bool {
+                    if (vis.count(name)) return true;
+                    vis.insert(name);
+                    if (externOnly.count(name) || name == "Exception") return false;
+                    if (astH.count(name))
+                        for (const auto& p : astH[name])
+                            if (!eligible(p, vis)) return false;
+                    return true;
+                };
+
+            for (const auto& n : nodes) {
+                if (auto s = dynamic_cast<StructNode*>(n.get())) {
+                    std::set<std::string> vis;
+                    if (eligible(s->name, vis)) vtableEligible.insert(s->name);
+                }
+            }
+
+            // Assign unique type IDs (1-based; 0 = no type / extern)
+            int nextId = 1;
+            for (const auto& n : nodes)
+                if (auto s = dynamic_cast<StructNode*>(n.get()))
+                    if (vtableEligible.count(s->name)) structTypeIds[s->name] = nextId++;
+        }
+        // ---------------------------------
+
         if (verbose) std::cerr << "[Codegen] Pass 2: Filling struct bodies and resolving inheritance\n";
         for (const auto& node : nodes) {
             if (auto s = dynamic_cast<StructNode*>(node.get())) {
@@ -166,6 +229,13 @@ class LLVMCodegen {
                 structGen->setHierarchy(&structHierarchy);
                 typeExtensions->setHierarchy(&structHierarchy, &StructTypes);
                 extractFields(s, elementTypes, fieldNames, extractFields);
+
+                // Prepend __type_id (i32) as field 0 for vtable-eligible structs.
+                // This provides the runtime type tag needed for virtual dispatch.
+                if (vtableEligible.count(s->name)) {
+                    elementTypes.insert(elementTypes.begin(), Type::getInt32Ty(Context));
+                    fieldNames.insert(fieldNames.begin(), "__type_id");
+                }
 
                 st->setBody(elementTypes);
                 structGen->registerStructLayout(s->name, fieldNames);
@@ -244,6 +314,48 @@ class LLVMCodegen {
                 }
             }
         }
+
+        // --- Post-Pass-3: Virtual dispatch setup ---
+        // Register type IDs with StructGen so allocateAndInit can stamp __type_id.
+        for (const auto& [name, id] : structTypeIds)
+            structGen->registerTypeId(name, id);
+
+        // Build overrideMap: for each user-defined method in a vtable-eligible struct,
+        // find ancestor structs that also define that method and record the override.
+        {
+            // Extract raw method name from full funcName and its cls prefix.
+            auto methodSuffix = [](const std::string& fn, const std::string& cls) -> std::string {
+                if (fn.size() <= cls.size()) return "";
+                std::string s = fn.substr(cls.size());
+                // "__init", "__str", etc.: suffix starts with "__"
+                if (s.size() >= 2 && s[0] == '_' && s[1] == '_') return s;
+                // regular methods: "ClassName_method" → strip the leading "_"
+                if (!s.empty() && s[0] == '_') return s.substr(1);
+                return "";
+            };
+
+            for (const auto& [funcName, funcNode] : functionDeclarations) {
+                const std::string& cls = funcNode->cls;
+                if (cls.empty() || !vtableEligible.count(cls) || funcNode->isExtern) continue;
+                std::string rawMethod = methodSuffix(funcName, cls);
+                if (rawMethod.empty()) continue;
+
+                std::function<void(const std::string&)> checkAncestor = [&](const std::string& parent) {
+                    if (!vtableEligible.count(parent)) return;
+                    std::string parentFn = (rawMethod.size() >= 2 && rawMethod[0] == '_' && rawMethod[1] == '_')
+                        ? parent + rawMethod        // e.g. "Shape__init"
+                        : parent + "_" + rawMethod; // e.g. "Shape_area"
+                    if (functionDeclarations.count(parentFn))
+                        overrideMap[parent][rawMethod].push_back({cls, structTypeIds[cls]});
+                    if (structHierarchy.count(parent))
+                        for (const auto& gp : structHierarchy[parent]) checkAncestor(gp);
+                };
+
+                if (structHierarchy.count(cls))
+                    for (const auto& parent : structHierarchy[cls]) checkAncestor(parent);
+            }
+        }
+        // -------------------------------------------
 
         // Pass 3b: Generate __EnumName_str(i32)->String* helpers
         // Runs after Pass 3 so String's body and __init prototype are both declared.
@@ -1023,19 +1135,31 @@ class LLVMCodegen {
             // Fallback: try triple-underscore operator convention (e.g. List___get, Map___get)
             if (!func) func = TheModule->getFunction(typeName + "___" + member->memberName);
 
-            // --- NEW: Constructor Fallback ---
-            // Allows explicitly calling .__init() on a super object
+            // Constructor fallback: super().__init(v)
+            // Parser stores __init under "TypeName__init" (no separator), while
+            // the general method-dispatch path produces "TypeName___init" (with _).
+            // resolveFunction consults functionDeclarations + linkageName so it
+            // correctly reaches extern implementations like Core_String_String___init.
             if (!func && member->memberName == "__init") {
-                func = TheModule->getFunction(typeName + "__init");
+                func = resolveFunction(typeName + "__init");   // user-defined parent path
+                if (!func) func = resolveFunction(typeName + "___init"); // extern parent fallback
             }
-            // ---------------------------------
 
+            // Walk inheritance chain for inherited methods (user-defined parents only;
+            // extern parents are resolved via resolveFunction below).
             if (!func && structHierarchy.count(typeName)) {
                 std::function<Function*(const std::string&)> searchHierarchy = [&](const std::string& currentType) -> Function* {
                     if (structHierarchy.count(currentType)) {
                         for (const std::string& parentName : structHierarchy[currentType]) {
                             Function* foundFunc = TheModule->getFunction(parentName + "_" + member->memberName);
                             if (!foundFunc) foundFunc = TheModule->getFunction(parentName + "___" + member->memberName);
+                            // Also check via resolveFunction for extern parent methods
+                            if (!foundFunc) foundFunc = resolveFunction(parentName + "_"   + member->memberName);
+                            if (!foundFunc) foundFunc = resolveFunction(parentName + "___" + member->memberName);
+                            if (!foundFunc && member->memberName == "__init") {
+                                foundFunc = resolveFunction(parentName + "__init");
+                                if (!foundFunc) foundFunc = resolveFunction(parentName + "___init");
+                            }
                             if (foundFunc) return foundFunc;
                             foundFunc = searchHierarchy(parentName);
                             if (foundFunc) return foundFunc;
@@ -1098,6 +1222,119 @@ class LLVMCodegen {
                            member->line, member->col);
             }
 
+            // --- VIRTUAL DISPATCH ---
+            // When a method is overridden in a subclass and the receiver is a vtable-eligible
+            // struct, generate a switch on __type_id (field 0) instead of a direct call.
+            // super() calls are always static — skip dispatch for those.
+            {
+                bool isSuperCall = false;
+                if (auto callExpr = dynamic_cast<CallNode*>(member->object.get()))
+                    if (auto lit2 = dynamic_cast<LiteralNode*>(callExpr->callee.get()))
+                        isSuperCall = (lit2->value == "super");
+
+                if (!isSuperCall && objPtr &&
+                    vtableEligible.count(typeName) &&
+                    overrideMap.count(typeName) &&
+                    overrideMap[typeName].count(member->memberName)) {
+
+                    const auto& overrides = overrideMap[typeName][member->memberName];
+
+                    // Pre-evaluate non-self arguments once before the switch.
+                    std::vector<Value*> rawArgs;
+                    for (const auto& cArg : call->args)
+                        rawArgs.push_back(handleExpression(cArg.value.get()));
+
+                    // Load __type_id from field 0 of the receiver.
+                    StructType* recvST = cast<StructType>(objPtr->getType()->getPointerElementType());
+                    Value* tidPtr = Builder.CreateStructGEP(recvST, objPtr, 0, "tid_ptr");
+                    Value* tid    = Builder.CreateLoad(Type::getInt32Ty(Context), tidPtr, "tid");
+
+                    Function* curFn   = Builder.GetInsertBlock()->getParent();
+                    Type*     retTy   = func->getReturnType();
+                    bool      isVoid  = retTy->isVoidTy();
+
+                    BasicBlock* defaultBB = BasicBlock::Create(Context, "vd_def", curFn);
+                    BasicBlock* mergeBB   = BasicBlock::Create(Context, "vd_merge", curFn);
+                    SwitchInst* sw = Builder.CreateSwitch(tid, defaultBB, (unsigned)overrides.size());
+
+                    std::vector<std::pair<BasicBlock*, Value*>> phiInputs;
+
+                    // Helper to coerce a pre-computed arg to the expected LLVM type.
+                    auto coerce = [&](Value* v, Type* expected) -> Value* {
+                        if (v->getType() == expected) return v;
+                        if (v->getType()->isPointerTy() && expected->isPointerTy())
+                            return Builder.CreateBitCast(v, expected);
+                        if (v->getType()->isIntegerTy() && expected->isIntegerTy())
+                            return Builder.CreateIntCast(v, expected, true);
+                        if (v->getType()->isIntegerTy() && expected->isDoubleTy())
+                            return Builder.CreateSIToFP(v, expected);
+                        return v;
+                    };
+
+                    for (const auto& [subName, subId] : overrides) {
+                        const std::string& mn = member->memberName;
+                        std::string subFnName = (mn.size() >= 2 && mn[0] == '_' && mn[1] == '_')
+                            ? subName + mn : subName + "_" + mn;
+                        Function* subFn = TheModule->getFunction(subFnName);
+                        if (!subFn) subFn = resolveFunction(subFnName);
+                        if (!subFn) continue;
+
+                        BasicBlock* caseBB = BasicBlock::Create(Context, "vd_" + subName, curFn);
+                        sw->addCase(ConstantInt::get(Type::getInt32Ty(Context), subId), caseBB);
+                        Builder.SetInsertPoint(caseBB);
+
+                        Value* castSelf = objPtr;
+                        if (StructTypes.count(subName)) {
+                            Type* subPtrTy = PointerType::getUnqual(StructTypes[subName]);
+                            if (castSelf->getType() != subPtrTy)
+                                castSelf = Builder.CreateBitCast(castSelf, subPtrTy, "as_" + subName);
+                        }
+                        std::vector<Value*> subArgs = {castSelf};
+                        for (size_t i = 0; i < rawArgs.size(); i++) {
+                            size_t pi = i + 1;
+                            subArgs.push_back(pi < subFn->arg_size()
+                                ? coerce(rawArgs[i], subFn->getFunctionType()->getParamType(pi))
+                                : rawArgs[i]);
+                        }
+                        Value* subResult = Builder.CreateCall(subFn, subArgs, isVoid ? "" : "vd_r");
+                        Builder.CreateBr(mergeBB);
+                        if (!isVoid) phiInputs.push_back({caseBB, subResult});
+                    }
+
+                    // Default: static dispatch to the statically resolved method.
+                    Builder.SetInsertPoint(defaultBB);
+                    Value* defSelf = objPtr;
+                    if (func->arg_size() > 0) {
+                        Type* expSelf = func->getFunctionType()->getParamType(0);
+                        if (defSelf->getType() != expSelf &&
+                            defSelf->getType()->isPointerTy() && expSelf->isPointerTy())
+                            defSelf = Builder.CreateBitCast(defSelf, expSelf, "as_parent");
+                    }
+                    std::vector<Value*> defArgs = {defSelf};
+                    for (size_t i = 0; i < rawArgs.size(); i++) {
+                        size_t pi = i + 1;
+                        defArgs.push_back(pi < func->arg_size()
+                            ? coerce(rawArgs[i], func->getFunctionType()->getParamType(pi))
+                            : rawArgs[i]);
+                    }
+                    Value* defResult = Builder.CreateCall(func, defArgs, isVoid ? "" : "vd_def_r");
+                    Builder.CreateBr(mergeBB);
+
+                    Builder.SetInsertPoint(mergeBB);
+                    if (!isVoid) {
+                        PHINode* phi = Builder.CreatePHI(retTy, (unsigned)(phiInputs.size() + 1), "vd_phi");
+                        for (auto& [bb, v] : phiInputs) phi->addIncoming(v, bb);
+                        phi->addIncoming(defResult, defaultBB);
+                        if (phi->getType()->isIntegerTy(32) &&
+                            externBoolReturnFunctions.count(func->getName().str()))
+                            return Builder.CreateTrunc(phi, Type::getInt1Ty(Context));
+                        return phi;
+                    }
+                    return nullptr;
+                }
+            }
+            // --- END VIRTUAL DISPATCH ---
+
             std::vector<Value*> args;
             if (objPtr) {
                 // --- FIX: Safely cast 'self' to the parent class type if calling an inherited method ---
@@ -1111,7 +1348,7 @@ class LLVMCodegen {
                 }
                 args.push_back(objPtr);
             }
-            
+
             processCallArgs(func, call->args, args, (objPtr ? 1 : 0));
             Value* result = Builder.CreateCall(func, args);
             // Extern Bool-returning methods are widened to i32 for C ABI — truncate back to i1.

@@ -1,16 +1,107 @@
-use encoding.base64
-use encoding.hex
+use encoding.json
+from core.serializable use { ISerializable }
+from io.file use { File }
+
+// ── User-defined struct implementing ISerializable ────────────────────
+
+struct Point : ISerializable {
+    x: Int
+    y: Int
+
+    define __init(self, x: Int, y: Int) -> void {
+        self.x = x
+        self.y = y
+    }
+
+    define to_json(self) -> String {
+        return "{\"x\":" + self.x.str() + ",\"y\":" + self.y.str() + "}"
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
 
 define main() {
-    msg := 'Hello, Quirk! Welcome to binary safety.'
-    
-    print("--- BASE64 ---")
-    b64 := base64.encode(msg)
-    print("Encoded: ${b64}")
-    print("Decoded: ${base64.decode(b64)}\n")
-    
-    print("--- HEX ---")
-    hx := hex.encode(msg)
-    print("Encoded: ${hx}")
-    print("Decoded: ${hex.decode(hx)}")
+
+    // --- dumps: Map ---
+    print("--- dumps (Map) ---")
+    m := Map()
+    m.put("name", "Alice")
+    m.put("age", "30")          // emitted as 30
+    m.put("active", "true")     // emitted as true
+    m.put("score", "98.6")       // emitted as 98.6
+    m.put("nickname", "null")   // emitted as null
+    print(json.dumps(m))
+    // {"name":"Alice","age":30,"active":true,"score":98.6,"nickname":null}
+
+
+    // --- dumps: List ---
+    print("\n--- dumps (List) ---")
+    items := List()
+    items.append("hello")
+    items.append("42")
+    items.append("true")
+    items.append("null")
+    print(json.dumps(items))
+    // ["hello",42,true,null]
+
+
+    // --- dumps: ISerializable struct ---
+    print("\n--- dumps (ISerializable) ---")
+    p := Point(10, 25)
+    print(json.dumps(p))
+    // {"x":10,"y":25}
+
+
+    // --- dumps: plain String ---
+    print("\n--- dumps (String) ---")
+    print(json.dumps("hello"))      // "hello"
+    print(json.dumps("42"))         // 42
+    print(json.dumps("true"))       // true
+    print(json.dumps("say \"hi\"")) // "say \"hi\""
+
+
+    // --- loads ---
+    print("\n--- loads ---")
+    raw := "{\"product\":\"Quirk\",\"version\":\"1.0\",\"stable\":true}"
+    data: Map = json.loads(raw)
+    print(data.get("product"))   // Quirk
+    print(data.get("version"))   // 1.0
+    print(data.get("stable"))    // true
+
+
+    // --- round-trip ---
+    print("\n--- round-trip ---")
+    original := Map()
+    original.put("x", "7")
+    original.put("label", "origin")
+    serialized := json.dumps(original)
+    recovered: Map = json.loads(serialized)
+    print("x=${recovered.get("x")}, label=${recovered.get("label")}")
+    // x=7, label=origin
+
+
+    // --- dump / load (file I/O) ---
+    print("\n--- dump / load ---")
+    config := Map()
+    config.put("host", "localhost")
+    config.put("port", "8080")
+    config.put("debug", "true")
+
+    with File("/tmp/config.json", "w") as f {
+        json.dump(config, f)
+    }
+
+    with File("/tmp/config.json", "r") as f {
+        loaded: Map = json.load(f)
+        print(loaded.get("host"))   // localhost
+        print(loaded.get("port"))   // 8080
+        print(loaded.get("debug"))  // true
+    }
+
+
+    // --- http integration (JsonMap/JsonList still available) ---
+    // For net.http's `json:` param, use JsonMap / JsonList:
+    //   http.post(url, json: JsonMap(m))
+    //   http.post(url, json: p)           ← ISerializable works directly
+    // For everything else, just use json.dumps(val).
 }

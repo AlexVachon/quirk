@@ -10,6 +10,41 @@ bool Sema::analyze(const std::vector<std::unique_ptr<Node>> &nodes)
     if (scopeStack.empty())
         enterScope();
 
+    // Pass 0: Register Global Module Aliases (Synchronized with Codegen)
+    for (const auto &node : nodes) {
+        if (auto use = dynamic_cast<UseNode*>(node.get())) {
+            if (use->filterList.empty()) {
+                std::string alias = use->moduleName;
+                size_t lastDot = alias.rfind('.');
+                if (lastDot == std::string::npos) lastDot = alias.rfind('/');
+                if (lastDot != std::string::npos) alias = alias.substr(lastDot + 1);
+                globalModuleAliases[alias] = "MODULE$" + use->moduleName;
+            }
+        }
+    }
+
+    // Register built-in Type struct (used by self.__class)
+    static StructNode builtinTypeNode;
+    if (builtinTypeNode.name.empty()) {
+        builtinTypeNode.name = "Type";
+        StructField nf; nf.name = "name";   nf.type = "String";
+        StructField pf; pf.name = "parent"; pf.type = "String";
+        builtinTypeNode.fields.push_back(std::move(nf));
+        builtinTypeNode.fields.push_back(std::move(pf));
+    }
+    if (!structRegistry.count("Type")) structRegistry["Type"] = &builtinTypeNode;
+
+    // Register built-in Callable struct (used by lambda expressions)
+    static StructNode builtinCallableNode;
+    if (builtinCallableNode.name.empty()) {
+        builtinCallableNode.name = "Callable";
+        StructField ff; ff.name = "fn";  ff.type = "Any";
+        StructField ef; ef.name = "env"; ef.type = "Any";
+        builtinCallableNode.fields.push_back(std::move(ff));
+        builtinCallableNode.fields.push_back(std::move(ef));
+    }
+    if (!structRegistry.count("Callable")) structRegistry["Callable"] = &builtinCallableNode;
+
     // Pass 1: Register Structs and Signatures
     for (const auto &node : nodes)
     {
@@ -27,6 +62,9 @@ bool Sema::analyze(const std::vector<std::unique_ptr<Node>> &nodes)
             else
                 methodRegistry[""][f->name] = f;
         }
+        else if (auto e = dynamic_cast<EnumNode*>(node.get())) {
+            enumRegistry[e->name] = e;
+        }
     }
 
     // Pass 2: Analyze Bodies
@@ -39,6 +77,18 @@ bool Sema::analyze(const std::vector<std::unique_ptr<Node>> &nodes)
         {
             moduleVisibility[mod].visibleModules.insert("core");
         }
+
+        // --- NEW: Validate Inheritance Tree for Structs ---
+        if (auto s = dynamic_cast<StructNode*>(node.get())) {
+            for (const std::string& parentName : s->parents) {
+                if (!structRegistry.count(parentName)) {
+                    std::cerr << "Semantic Error: Struct '" << s->name 
+                              << "' attempts to inherit from undefined struct '" << parentName << "'." << std::endl;
+                    exit(1);
+                }
+            }
+        }
+        // --------------------------------------------------
 
         if (auto f = dynamic_cast<FunctionNode *>(node.get()))
         {
@@ -130,13 +180,6 @@ void Sema::checkFunction(FunctionNode *f)
         defineVariable(param.name, param.type);
     }
 
-    // // Implicitly define 'it' for trigger handlers
-    // if (f->name.find("__quirk_trigger_") == 0) {
-    //     defineVariable("it", "Any"); // 'it' represents the new value
-    //     // --- NEW LOG ---
-    //     std::cerr << "[DEBUG] Sema: Implicitly defined 'it' for " << f->name << std::endl;
-    // }
-
     if (!f->isExtern)
     {
         for (const auto &statement : f->body)
@@ -147,9 +190,16 @@ void Sema::checkFunction(FunctionNode *f)
 
     if (f->returnType == "auto")
     {
+        // No return statement found — default to void
         f->returnType = "void";
-        if (!f->cls.empty())
+        if (!f->cls.empty() && methodRegistry[f->cls].count(f->name))
             methodRegistry[f->cls][f->name]->returnType = "void";
+    }
+    else if (!f->cls.empty() && f->returnType != "void")
+    {
+        // Sync inferred return type back to registry (handles duplicate parsing)
+        if (methodRegistry[f->cls].count(f->name))
+            methodRegistry[f->cls][f->name]->returnType = f->returnType;
     }
 
     exitScope();
@@ -200,26 +250,54 @@ void Sema::checkStatement(Node *node)
         for (auto& s : t->tryBlock) checkStatement(s.get());
         exitScope();
 
-        // --- UPDATED: Validate all catch blocks and all types within them ---
-        for (auto& cb : t->catchBlocks) {
+        for (size_t i = 0; i < t->catchBlocks.size(); ++i) {
+            auto& cb = t->catchBlocks[i];
             enterScope();
             for (const std::string& typeName : cb.types) {
                 if (!structRegistry.count(typeName)) {
-                    std::cerr << "Error: Catch type '" << typeName << "' is undefined." << std::endl; 
+                    std::cerr << "Error: Catch type '" << typeName << "' is undefined." << std::endl;
                     exit(1);
                 }
+                if (structRegistry.count("Exception") && !inheritsFromException(typeName)) {
+                    std::cerr << "Error: Catch type '" << typeName
+                              << "' does not inherit from 'Exception'." << std::endl;
+                    exit(1);
+                }
+                for (size_t j = 0; j < i; ++j) {
+                    for (const std::string& prevType : t->catchBlocks[j].types) {
+                        if (inheritsFromException(typeName, prevType)) {
+                            std::cerr << "Warning: catch (" << cb.varName << ": " << typeName
+                                      << ") is unreachable — '" << prevType
+                                      << "' in block " << (j + 1) << " already handles it." << std::endl;
+                        }
+                    }
+                }
             }
-            // Define the local exception variable using the FIRST valid type in the catch signature
-            defineVariable(cb.varName, cb.types[0]);
+            if (!cb.varName.empty()) defineVariable(cb.varName, cb.types[0]);
             for (auto& s : cb.body) checkStatement(s.get());
+            exitScope();
+        }
+
+        for (auto& s : t->finallyBlock) checkStatement(s.get());
+    }
+    else if (auto m = dynamic_cast<MatchNode*>(node)) {
+        checkExpression(m->scrutinee.get());
+        for (auto& arm : m->arms) {
+            for (auto& pat : arm.patterns) checkExpression(pat.get());
+            enterScope();
+            for (auto& s : arm.body) checkStatement(s.get());
             exitScope();
         }
     }
     else if (auto th = dynamic_cast<ThrowNode*>(node)) {
-        std::string type = checkExpression(th->expression.get());
-        if (!structRegistry.count(type)) {
-            std::cerr << "Error: Can only throw Struct objects, got '" << type << "'." << std::endl; exit(1);
+        if (th->expression) {
+            std::string type = checkExpression(th->expression.get());
+            if (!structRegistry.count(type)) {
+                std::cerr << "Error: Can only throw Struct objects, got '" << type << "'." << std::endl;
+                exit(1);
+            }
         }
+        // bare throw (nullptr expression): re-raises current exception — no type check needed
     }
     else if (auto tr = dynamic_cast<TriggerNode*>(node)) {
         std::string varType;
@@ -275,8 +353,10 @@ void Sema::checkIf(IfNode *node)
     exitScope();
     for (auto &b : node->elIfBranches)
     {
-        if (checkExpression(b.condition.get()) != "Bool")
+        if (checkExpression(b.condition.get()) != "Bool") {
+            std::cerr << "[Sema Error] 'elif' condition must be 'Bool'" << std::endl;
             exit(1);
+        }
         enterScope();
         for (auto &s : b.body)
             checkStatement(s.get());
@@ -293,8 +373,10 @@ void Sema::checkIf(IfNode *node)
 
 void Sema::checkWhile(WhileNode *node)
 {
-    if (checkExpression(node->condition.get()) != "Bool")
+    if (checkExpression(node->condition.get()) != "Bool") {
+        std::cerr << "[Sema Error] 'while' condition must be 'Bool'" << std::endl;
         exit(1);
+    }
     enterScope();
     for (auto &s : node->body)
         checkStatement(s.get());
@@ -348,6 +430,28 @@ std::string Sema::checkExpression(Node *node)
         return checkListLiteral(arr);
     if (auto map = dynamic_cast<MapLiteralNode *>(node))
         return checkMapLiteral(map);
+    if (auto lambda = dynamic_cast<LambdaNode *>(node)) {
+        // Infer return type by type-checking the body with params in scope
+        enterScope();
+        for (const auto& p : lambda->params)
+            if (!p.type.empty()) defineVariable(p.name, p.type);
+        if (lambda->isExpression && lambda->exprBody)
+            lambda->inferredReturnType = checkExpression(lambda->exprBody.get());
+        exitScope();
+        return "Callable";
+    }
+    if (auto tern = dynamic_cast<TernaryNode*>(node)) {
+        checkExpression(tern->condition.get());
+        std::string thenType = checkExpression(tern->thenExpr.get());
+        std::string elseType = checkExpression(tern->elseExpr.get());
+        if (thenType == elseType) return thenType;
+        // Strip optional markers for comparison
+        auto strip = [](const std::string& s) {
+            return (!s.empty() && s.back() == '?') ? s.substr(0, s.size() - 1) : s;
+        };
+        if (strip(thenType) == strip(elseType)) return strip(thenType);
+        return thenType;
+    }
     return "unknown";
 }
 
@@ -361,6 +465,8 @@ std::string Sema::checkLiteral(LiteralNode *node)
         return "Char";          // <-- ADD THIS
     if (node->value == "true" || node->value == "false")
         return "Bool";
+    if (node->value == "null")
+        return "Null";
     return resolveVariable(node->value);
 }
 
@@ -368,8 +474,30 @@ std::string Sema::checkBinaryOp(BinaryOpNode *node)
 {
     if (node->op == "not")
     {
-        if (checkExpression(node->left.get()) != "Bool")
+        std::string t = checkExpression(node->left.get());
+        if (t != "Bool" && t != "Any" && t != "Int") {
+            std::cerr << "[Sema Error] 'not' operand must be 'Bool'" << std::endl;
             exit(1);
+        }
+        return "Bool";
+    }
+
+    if (node->op == "?")
+    {
+        checkExpression(node->left.get());
+        return "Bool";
+    }
+
+    if (node->op == "is")
+    {
+        checkExpression(node->left.get());
+        return "Bool";
+    }
+
+    if (node->op == "in")
+    {
+        checkExpression(node->left.get());
+        checkExpression(node->right.get());
         return "Bool";
     }
 
@@ -378,6 +506,14 @@ std::string Sema::checkBinaryOp(BinaryOpNode *node)
 
     if (node->op == "and" || node->op == "or")
         return "Bool";
+
+    // Null-coalesce: result is the non-optional type of the LHS
+    if (node->op == "??") {
+        // Strip trailing ? from lType to get the base type
+        std::string base = lType;
+        if (!base.empty() && base.back() == '?') base.pop_back();
+        return base.empty() ? rType : base;
+    }
 
     // Array Access
     if (node->op == "[]")
@@ -410,6 +546,7 @@ std::string Sema::checkBinaryOp(BinaryOpNode *node)
         }
         if (lType == "Any" || lType == "String")
             return (lType == "String") ? "Char" : "Any";
+        std::cerr << "[Sema Error] Type '" << lType << "' does not support indexing with '[]'" << std::endl;
         exit(1);
     }
 
@@ -417,24 +554,28 @@ std::string Sema::checkBinaryOp(BinaryOpNode *node)
     if (structRegistry.count(lType))
     {
         std::string magic;
-        if (node->op == "+")
-            magic = "__add";
-        else if (node->op == "-")
-            magic = "__sub";
-        else if (node->op == "*")
-            magic = "__mul";
-        else if (node->op == "/")
-            magic = "__div";
-        else if (node->op == "==" || node->op == "!=")
-            magic = "__eq";
+        if (node->op == "+")       magic = "__add";
+        else if (node->op == "-")  magic = "__sub";
+        else if (node->op == "*")  magic = "__mul";
+        else if (node->op == "/")  magic = "__div";
+        else if (node->op == "==") magic = "__eq";
+        else if (node->op == "!=") magic = "__ne";
+        else if (node->op == "<")  magic = "__lt";
+        else if (node->op == "<=") magic = "__le";
+        else if (node->op == ">")  magic = "__gt";
+        else if (node->op == ">=") magic = "__ge";
 
         if (!magic.empty())
         {
+            // For !=, fall back to __eq if __ne is not defined
             std::string funcName = lType + "_" + magic;
+            if (!methodRegistry[lType].count(funcName) && node->op == "!=")
+                funcName = lType + "_" + "__eq";
+
             if (methodRegistry[lType].count(funcName))
             {
-                if (node->op == "==" || node->op == "!=")
-                    return "Bool";
+                static const std::set<std::string> boolOps = {"==","!=","<","<=",">",">="};
+                if (boolOps.count(node->op)) return "Bool";
                 return methodRegistry[lType][funcName]->returnType;
             }
         }
@@ -455,17 +596,47 @@ std::string Sema::checkBinaryOp(BinaryOpNode *node)
             return "Double";
         return "Int";
     }
+    // Allow comparison between same enum types
+    if (node->op == "==" || node->op == "!=") {
+        if (enumRegistry.count(lType) && lType == rType) return "Bool";
+        if (enumRegistry.count(lType) || enumRegistry.count(rType)) return "Bool";
+    }
+
     if (node->op == ">" || node->op == "<" || node->op == ">=" ||
         node->op == "<=" || node->op == "==" || node->op == "!=")
     {
         return "Bool";
     }
+    std::cerr << "[Sema Error] Unsupported operator '" << node->op
+              << "' on types '" << lType << "' and '" << rType << "'" << std::endl;
     exit(1);
 }
 
 std::string Sema::checkMemberAccess(MemberAccessNode *node)
 {
+    // Enum variant access: Direction.North
+    if (auto lit = dynamic_cast<LiteralNode*>(node->object.get())) {
+        if (enumRegistry.count(lit->value)) {
+            EnumNode* en = enumRegistry[lit->value];
+            if (node->memberName == "str" || node->memberName == "name") return "String";
+            auto it = std::find(en->variants.begin(), en->variants.end(), node->memberName);
+            if (it == en->variants.end()) {
+                std::cerr << "Error: '" << node->memberName
+                          << "' is not a variant of enum '" << lit->value << "'\n";
+                exit(1);
+            }
+            return en->name;
+        }
+    }
+
     std::string objType = checkExpression(node->object.get());
+    // Strip Optional marker before method lookup
+    if (!objType.empty() && objType.back() == '?') objType.pop_back();
+
+    // Magic attributes
+    if (node->memberName == "__name")   return "String";
+    if (node->memberName == "__parent") return "String";
+    if (node->memberName == "__class")  return "Type";
 
     if (objType.rfind("MODULE$", 0) == 0)
     {
@@ -486,6 +657,25 @@ std::string Sema::checkMemberAccess(MemberAccessNode *node)
         std::cerr << "Error: Member '" << node->memberName << "' not found on " << objType << std::endl;
         exit(1);
     }
+    if (type == "method") {
+        std::string mfName = objType + "_" + node->memberName;
+        if (methodRegistry[objType].count(mfName)) {
+            std::string ret = methodRegistry[objType][mfName]->returnType;
+            if (ret.empty() || ret == "auto") return "Any";
+            return ret;
+        }
+        if (structRegistry.count(objType)) {
+            for (const auto& par : structRegistry[objType]->parents) {
+                std::string pf = par + "_" + node->memberName;
+                if (methodRegistry[par].count(pf)) {
+                    std::string ret = methodRegistry[par][pf]->returnType;
+                    if (ret.empty() || ret == "auto") return "Any";
+                    return ret;
+                }
+            }
+        }
+        return "Any";
+    }
     return type;
 }
 
@@ -496,12 +686,26 @@ std::string Sema::checkConstructor(ConstructorNode *node)
 
 std::string Sema::checkCall(CallNode *node)
 {
-    if (auto l = dynamic_cast<LiteralNode *>(node->callee.get()))
+    if (auto l = dynamic_cast<LiteralNode *>(node->callee.get())) {
+        if (l->value == "super") {
+            if (currentClass.empty()) {
+                std::cerr << "Error: Cannot use 'super' outside a class." << std::endl;
+                exit(1);
+            }
+            if (structRegistry[currentClass]->parents.empty()) {
+                std::cerr << "Error: Class '" << currentClass << "' has no parent to call 'super' on." << std::endl;
+                exit(1);
+            }
+            return structRegistry[currentClass]->parents[0];
+        }
         return resolveVariable(l->value);
+    }
 
     if (auto m = dynamic_cast<MemberAccessNode *>(node->callee.get()))
     {
         std::string objType = checkExpression(m->object.get());
+        // Strip Optional marker before method lookup (e.g. "String?" -> "String")
+        if (!objType.empty() && objType.back() == '?') objType.pop_back();
 
         // --- THE FIX: Handle Module Constructor Calls (e.g. io.File) ---
         if (objType.rfind("MODULE$", 0) == 0) {
@@ -509,7 +713,7 @@ std::string Sema::checkCall(CallNode *node)
             
             // 1. Is it a Struct Constructor?
             if (structRegistry.count(funcName)) {
-                return funcName; // It returns the Struct type!
+                return funcName;
             }
             
             // 2. Is it a standard Module Function?
@@ -527,6 +731,70 @@ std::string Sema::checkCall(CallNode *node)
         else if (objType == "char") objType = "Char";
         else if (objType == "cstring" || objType == "string") objType = "String";
 
+        // Builtin method return types for core primitives.
+        // These are defined in Quirk's core library files which may not always
+        // be loaded, so we hard-code their return types here as a fallback to
+        // prevent false type errors (e.g. String.to_int() resolving as 'void').
+        static const std::map<std::string, std::map<std::string, std::string>> builtinMethods = {
+            {"String", {
+                {"to_int",     "Int"},
+                {"to_float",   "Double"},
+                {"to_double",  "Double"},
+                {"lower",      "String"},
+                {"upper",      "String"},
+                {"trim",       "String"},
+                {"strip",      "String"},
+                {"split",      "List"},
+                {"join",       "String"},
+                {"find",       "Int"},
+                {"contains",   "Bool"},
+                {"startswith", "Bool"},
+                {"endswith",   "Bool"},
+                {"replace",    "String"},
+                {"substring",  "String"},
+                {"str",        "String"},
+                {"format",     "String"},
+            }},
+            {"Int", {
+                {"str",        "String"},
+                {"to_float",   "Double"},
+                {"to_double",  "Double"},
+            }},
+            {"Double", {
+                {"str",        "String"},
+                {"to_int",     "Int"},
+            }},
+            {"Bool", {
+                {"str",        "String"},
+            }},
+            {"Char", {
+                {"str",        "String"},
+                {"to_int",     "Int"},
+            }},
+            {"List", {
+                {"get",        "Any"},
+                {"length",     "Int"},
+                {"append",     "void"},
+                {"push",       "void"},
+                {"pop",        "Any"},
+                {"join",       "String"},
+            }},
+            {"Map", {
+                {"get",        "Any"},
+                {"put",        "void"},
+                {"contains",   "Bool"},
+                {"length",     "Int"},
+            }},
+        };
+        auto bmIt = builtinMethods.find(objType);
+        if (bmIt != builtinMethods.end()) {
+            auto mIt = bmIt->second.find(m->memberName);
+            if (mIt != bmIt->second.end()) {
+                // Skip arg type-checking for builtins — their params aren't in the registry.
+                return mIt->second;
+            }
+        }
+
         if (structRegistry.count(objType))
         {
             std::function<std::string(const std::string&)> searchMethod = [&](const std::string& currentType) -> std::string {
@@ -534,8 +802,29 @@ std::string Sema::checkCall(CallNode *node)
                 
                 std::string funcName = currentType + "_" + m->memberName;
                 if (methodRegistry[currentType].count(funcName)) {
-                    std::string ret = methodRegistry[currentType][funcName]->returnType;
-                    return ret.empty() ? "void" : ret;
+                    FunctionNode *func = methodRegistry[currentType][funcName];
+
+                    // Validate argument types against parameters.
+                    // Note: 'self' is already stripped from func->parameters by the parser
+                    // (Parser.cpp erases parameters[0] when name == "self"), so no offset needed.
+                    // Stop early if we hit a variadic parameter — the remaining args are
+                    // bundled into a List at codegen time.
+                    for (size_t i = 0; i < node->args.size() && i < func->parameters.size(); ++i) {
+                        if (func->parameters[i].isVariadic) break;
+
+                        std::string argType = checkExpression(node->args[i].value.get());
+                        const std::string &paramType = func->parameters[i].type;
+                        if (!isCompatibleTypes(paramType, argType)) {
+                            std::cerr << "Error: Argument " << (i + 1) << " of '"
+                                      << funcName << "' expected '" << paramType
+                                      << "' but got '" << argType << "'" << std::endl;
+                            exit(1);
+                        }
+                    }
+
+                    std::string ret = func->returnType;
+                    if (ret.empty() || ret == "auto") return "Any";
+                    return ret;
                 }
                 
                 for (const std::string& parent : structRegistry[currentType]->parents) {
@@ -555,8 +844,10 @@ std::string Sema::checkCall(CallNode *node)
 
 std::string Sema::checkListLiteral(ListLiteralNode *node)
 {
-    if (!structRegistry.count("List"))
+    if (!structRegistry.count("List")) {
+        std::cerr << "Error: 'List' type not available — is 'core' loaded?" << std::endl;
         exit(1);
+    }
     for (auto &elem : node->elements)
         checkExpression(elem.get());
     return "List";
@@ -582,6 +873,37 @@ std::string Sema::checkMapLiteral(MapLiteralNode *node)
     return "Map";
 }
 
+
+bool Sema::isCompatibleTypes(const std::string &expected, const std::string &actual)
+{
+    if (expected == actual) return true;
+    if (enumRegistry.count(expected) || enumRegistry.count(actual)) return true;
+    if (expected == "Any" || actual == "Any") return true;
+    if (expected == "Null" || actual == "Null") return true;
+
+    // Implicit widening coercions
+    if (expected == "Double" && actual == "Int") return true;
+    if (expected == "double" && actual == "Int") return true;
+    if (expected == "Char"   && actual == "Int") return true;
+
+    // Pointer compatibility
+    bool expIsPtr = (expected == "Any" || expected == "String");
+    bool actIsPtr = (actual   == "Any" || actual   == "String");
+    if (expIsPtr && actIsPtr) return true;
+
+    return false;
+}
+
+bool Sema::inheritsFromException(const std::string& typeName, const std::string& baseType)
+{
+    if (typeName == baseType) return true;
+    if (!structRegistry.count(typeName)) return false;
+    for (const auto& parent : structRegistry.at(typeName)->parents) {
+        if (inheritsFromException(parent, baseType)) return true;
+    }
+    return false;
+}
+
 void Sema::enterScope() { scopeStack.push_back({}); }
 void Sema::exitScope()
 {
@@ -598,9 +920,15 @@ void Sema::defineVariable(const std::string &name, const std::string &type)
 
 std::string Sema::resolveVariable(const std::string &name)
 {
+    // 1. Check local scopes first
     for (int i = scopeStack.size() - 1; i >= 0; i--)
         if (scopeStack[i].count(name))
             return scopeStack[i][name];
+
+    // 2. Check Global Module Aliases
+    if (globalModuleAliases.count(name)) {
+        return globalModuleAliases[name];
+    }
 
     std::string contextModule = currentFunctionNode ? currentFunctionNode->moduleName : "main";
 
@@ -640,6 +968,15 @@ std::string Sema::resolveVariable(const std::string &name)
         return "Any";
     if (name == "strlen")
         return "Int";
+        
+    // --- NEW: Super keyword support ---
+    if (name == "super") {
+        if (!currentClass.empty() && structRegistry.count(currentClass) && !structRegistry[currentClass]->parents.empty()) {
+            return structRegistry[currentClass]->parents[0];
+        }
+        return "void";
+    }
+    // ----------------------------------
 
     if (!currentClass.empty())
     {
@@ -657,6 +994,21 @@ std::string Sema::resolveVariable(const std::string &name)
 
 std::string Sema::resolveMember(const std::string &sName, const std::string &mName)
 {
+    // Built-in C-runtime struct fields (from types.h) with no Quirk-side declarations.
+    // str.length, list.size etc. used as bare properties resolve correctly to "Int".
+    static const std::map<std::string, std::map<std::string, std::string>> builtinFields = {
+        {"String", {{"length", "Int"}, {"buffer", "Any"}}},
+        {"List",   {{"size",   "Int"}, {"capacity", "Int"}}},
+        {"Map",    {{"size",   "Int"}, {"capacity", "Int"}}},
+        {"File",   {{"is_open","Bool"}}},
+        {"Any",    {{"tag",    "Int"}, {"ival", "Int"}, {"dval", "Double"}}},
+    };
+    auto bIt = builtinFields.find(sName);
+    if (bIt != builtinFields.end()) {
+        auto fIt = bIt->second.find(mName);
+        if (fIt != bIt->second.end()) return fIt->second;
+    }
+
     std::string lookupName = sName;
     
     if (sName == "int") lookupName = "Int";
@@ -718,7 +1070,8 @@ void Sema::checkReturn(ReturnNode *node)
     std::string actual = node->expression ? checkExpression(node->expression.get()) : "void";
     std::string &target = currentFunctionNode->returnType;
 
-    if (target == "auto")
+    // Infer return type from first return statement when no annotation given
+    if (target == "auto" || target.empty())
     {
         target = actual;
         if (!currentFunctionNode->cls.empty())
@@ -726,23 +1079,20 @@ void Sema::checkReturn(ReturnNode *node)
         return;
     }
 
-    if (target != actual && target != "Any")
+    // "void" here means checkFunction already defaulted it before seeing this return —
+    // treat it as infer-able rather than crashing (handles duplicate file loads)
+    if (target == "void" && actual != "void")
     {
-        bool targetIsPtr = (target == "Any" || target == "String");
-        bool actualIsPtr = (actual == "Any" || actual == "String");
-        
-        bool valid = (targetIsPtr && actualIsPtr);
-        if (target == "Double" && actual == "Int") valid = true;
-        if (target == "Char" && actual == "Int") valid = true;
-        if (actual == "Any") valid = true;
-        
-        if (actual == "Int" && (targetIsPtr || structRegistry.count(target) || target == "Any")) valid = true;
+        target = actual;
+        if (!currentFunctionNode->cls.empty())
+            methodRegistry[currentFunctionNode->cls][currentFunctionNode->name]->returnType = actual;
+        return;
+    }
 
-        if (!valid)
-        {
-            std::cerr << "Error: Function " << currentFunctionNode->name
-                      << " expected " << target << " but got " << actual << std::endl;
-            exit(1);
-        }
+    if (!isCompatibleTypes(target, actual))
+    {
+        std::cerr << "Error: Function " << currentFunctionNode->name
+                << " expected " << target << " but got " << actual << std::endl;
+        exit(1);
     }
 }

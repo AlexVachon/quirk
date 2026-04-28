@@ -1,0 +1,78 @@
+define greet(name: String?) -> String {
+    return name ?? "stranger"
+}
+
+define upper_or_none(s: String?) -> String {
+    result := s?.upper()
+    return result ?? "(null)"
+}
+
+define main() -> void {
+    print("--- null-coalesce (??) ---")
+
+    a: String? = null
+    print(a ?? "default")
+
+    b: String? = "hello"
+    print(b ?? "default")
+
+    c: String? = null
+    d: String? = null
+    e: String? = "found"
+    print(c ?? d ?? e ?? "none")
+
+    print(greet(null))
+    print(greet("Alex"))
+
+    print("--- safe call (?.) ---")
+
+    s: String? = "quirk"
+    print(s?.upper() ?? "(null)")
+
+    n: String? = null
+    print(n?.upper() ?? "(null)")
+
+    print(upper_or_none("world"))
+    print(upper_or_none(null))
+
+    print("--- optional int ---")
+    x: Int? = null
+    y: Int? = 42
+    print(x ?? 0)
+    print(y ?? 0)
+
+    print("--- null check (?) ---")
+
+    p: String? = "present"
+    q: String? = null
+    print(p?)
+    print(q?)
+
+    if p? {
+        print("p has a value")
+    }
+    if not q? {
+        print("q is null")
+    }
+
+    xi: Int? = null
+    yi: Int? = 7
+    print(xi?)
+    print(yi?)
+
+    print("--- ternary (?) ---")
+
+    flag: Bool = true
+    print(flag? "yes" : "no")
+
+    n2: Int = 5
+    print(n2? "nonzero" : "zero")
+
+    z: Int = 0
+    print(z? "nonzero" : "zero")
+
+    s2: String? = "hello"
+    n3: String? = null
+    print(s2? s2 ?? "" : "was null")
+    print(n3? n3 ?? "" : "was null")
+}

@@ -1,0 +1,76 @@
+from . use {
+    socket, bind, listen, accept,
+    connect, send, recv, close
+}
+from core.string use { String }
+from core.exceptions.types use { SocketError }
+
+struct Socket {
+    fd: Int
+    host: String = "127.0.0.1"
+    port: Int = 8080
+    is_open: Bool = false
+
+    define __init(self, _fd: Int = -1) -> void {
+        if _fd == -1 {
+            self.fd := socket()
+        } else {
+            self.fd := _fd
+        }
+        
+        if self.fd < 0 {
+            throw SocketError("Failed to create socket descriptor")
+        }
+        self.is_open = true
+    }
+
+    define bind(self, host: String, port: Int) -> void {
+        self.host = host
+        self.port = port
+        res := bind(self.fd, host, port)
+        if res < 0 {
+            throw SocketError("Failed to bind to " + host + ":" + port.str())
+        }
+    }
+
+    define listen(self, backlog: Int = 5) -> void {
+        res := listen(self.fd, backlog)
+        if res < 0 {
+            throw SocketError("Failed to listen on socket")
+        }
+    }
+
+    define accept(self) -> Socket {
+        client_fd := accept(self.fd)
+        if client_fd < 0 {
+            throw SocketError("Failed to accept incoming connection")
+        }
+        return Socket(client_fd)
+    }
+
+    define connect(self, host: String, port: Int) -> void {
+        res := connect(self.fd, host, port)
+        if res < 0 {
+            throw SocketError("Could not connect to " + host + ":" + port.str())
+        }
+        self.is_open = true
+    }
+
+    define send(self, data: String) -> Int {
+        return send(self.fd, data)
+    }
+
+    define recv(self, size: Int = 1024) -> String {
+        return recv(self.fd, size)
+    }
+
+    define close(self) -> void {
+        if self.is_open {
+            close(self.fd)
+            self.is_open = false
+        }
+    }
+    
+    define __enter(self) -> Socket { return self }
+    define __exit(self) -> void { self.close() }
+}

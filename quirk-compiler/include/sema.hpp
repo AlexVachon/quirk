@@ -37,9 +37,14 @@ class Sema {
 
     std::map<std::string, Symbol> globalSymbols;
     std::map<std::string, StructNode*> structRegistry;
+    std::map<std::string, EnumNode*> enumRegistry;
     std::map<std::string, std::map<std::string, FunctionNode*>> methodRegistry;
     std::vector<std::map<std::string, std::string>> scopeStack;
+    std::map<std::string, std::string> globalModuleAliases; // Add this
 
+    bool isCompatibleTypes(const std::string &expected, const std::string &actual);
+    bool inheritsFromException(const std::string& typeName, const std::string& baseType = "Exception");
+    
     // (Keep rest of the class unchanged)
     void enterScope();
     void exitScope();

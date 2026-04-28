@@ -1,36 +1,72 @@
+// [runtime.c]
 // The "Unity Build" approach: Include the C files directly.
-// This is the simplest way to link everything into one .so without complex Makefiles.
 #include <gc.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 
-// --- HIJACK MACROS GO *AFTER* STANDARD INCLUDES ---
+// --- HIJACK MACROS ---
 #define malloc(x) GC_malloc(x)
 #define realloc(x, y) GC_realloc(x, y)
-#define calloc(x, y) GC_malloc((x) * (y))
+// GC_malloc does not zero-initialize; use a helper to preserve calloc semantics
+static void* __gc_calloc(size_t n, size_t s) {
+    void* p = GC_malloc(n * s);
+    if (p) memset(p, 0, n * s);
+    return p;
+}
+#define calloc(x, y) __gc_calloc((x), (y))
 #define free(x)
 
-#include "types.h"
+#include "types.h"  // NOTE: make_safe_cstr is defined inline in types.h
+                    //       sys.c no longer needs its own definition.
 
+// Note: Ensure these paths match your actual directory structure
 #include "core/string.c"
 #include "core/primitives.c"
 #include "core/list.c"
 #include "core/map.c"
+#include "core/any.c"
 #include "core/exceptions.c"
 
 #include "libs/file.c"
-#include "libs/sys.c"
+#include "libs/sys.c" 
+#include "libs/net.c"
 
 #include "libs/encoding/json.c"
 #include "libs/encoding/base64.c"
 #include "libs/encoding/hex.c"
 
-
 void QuirkRuntime_init(int argc, char** argv) {
-    GC_init();             // Initialize Boehm Garbage Collector
-    Sys_init(argc, argv);  // Initialize OS Arguments
-    
-    // As you add more libraries that need startup logic (e.g., Network_init),
-    // you simply add them here. No C++ compiler changes required!
+    GC_INIT();             // <--- USE MACRO: Handles stack base detection automatically
+    Sys_init(argc, argv);
+}
+
+// Convert a boxed opaque value to String*.
+// Handles three cases:
+//   1. Tagged integer: pointer value <= 0xFFFFFFFF (inttoptr i32 -> i8*)
+//   2. Any*: first 4 bytes are a valid AnyTag (0..ANY_NULL=8)
+//   3. String*: first field is a heap pointer to char buffer
+String* quirk_opaque_to_string(void* val) {
+    if (!val) return make_String("null");
+    uintptr_t uval = (uintptr_t)val;
+    // Case 1: tagged integer
+    if (uval <= 0xFFFFFFFFUL) {
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%d", (int)uval);
+        return make_String(buf);
+    }
+    // Case 2: Any* — first 4 bytes are tag in 0..ANY_NULL
+    int32_t possible_tag = *(int32_t*)val;
+    if (possible_tag >= ANY_INT && possible_tag <= ANY_NULL) {
+        return Core_Primitives_Any_to_string((Any*)val);
+    }
+    // Case 3: String* — use buffer directly
+    String* s = (String*)val;
+    return (s->buffer) ? s : make_String("null");
+}
+
+// Print a boxed opaque value (i8* returned from Any-typed methods like map.get).
+void quirk_print_opaque(void* val) {
+    String* s = quirk_opaque_to_string(val);
+    printf("%s\n", s->buffer ? s->buffer : "");
 }

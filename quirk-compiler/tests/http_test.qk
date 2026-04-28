@@ -1,0 +1,17 @@
+use net.http
+from core.exceptions use { SocketError, Exception }
+
+define main() {
+    resp := http.get("http://example.com")
+
+    if resp.ok {
+        print("Success: " + resp.status_code.str())
+        print("Server: " + resp.headers.get("Server")) // Access headers!
+        print("Body: " + resp.text)
+    } else {
+        print("Failed: ${resp.status_code.str()}")
+    }
+
+    resp2 := http.post("http://example.com/api", "name=Quirk")
+    print(resp2)
+}

@@ -8,8 +8,11 @@
 
 class Node {
    public:
-   std::string moduleName;
-   
+    std::string moduleName;
+    std::string filePath;
+    int line = 0;
+    int col  = 0;
+
     virtual ~Node() = default;
     virtual void print(int indent) const = 0;
 };
@@ -170,13 +173,14 @@ class MemberAccessNode : public Node {
    public:
     std::unique_ptr<Node> object;
     std::string memberName;
+    bool isSafeAccess = false;  // true when accessed via ?.
 
     MemberAccessNode(std::unique_ptr<Node> obj, std::string member)
         : object(std::move(obj)), memberName(member) {}
 
     void print(int indent) const override {
         std::string space(indent, ' ');
-        std::cout << space << "MemberAccess: ." << memberName << std::endl;
+        std::cout << space << "MemberAccess: " << (isSafeAccess ? "?." : ".") << memberName << std::endl;
         object->print(indent + 2);
     }
 };
@@ -389,6 +393,7 @@ class TryCatchNode : public Node {
    public:
     std::vector<std::unique_ptr<Node>> tryBlock;
     std::vector<CatchBlock> catchBlocks;
+    std::vector<std::unique_ptr<Node>> finallyBlock;
 
     void print(int indent) const override {
         std::string space(indent, ' ');
@@ -402,6 +407,10 @@ class TryCatchNode : public Node {
             std::cout << ") {" << std::endl;
             for (const auto& stmt : cb.body) stmt->print(indent + 2);
         }
+        if (!finallyBlock.empty()) {
+            std::cout << space << "} Finally {" << std::endl;
+            for (const auto& stmt : finallyBlock) stmt->print(indent + 2);
+        }
         std::cout << space << "}" << std::endl;
     }
 };
@@ -409,14 +418,35 @@ class TryCatchNode : public Node {
 class ThrowNode : public Node {
    public:
     std::unique_ptr<Node> expression;
+    std::unique_ptr<Node> cause;
     int line;
+    std::string moduleName;
 
-    ThrowNode(std::unique_ptr<Node> expr, int lineNum) : expression(std::move(expr)), line(lineNum) {}
+    ThrowNode(std::unique_ptr<Node> expr, std::unique_ptr<Node> causeNode, int l)
+        : expression(std::move(expr)), cause(std::move(causeNode)), line(l) {}
 
     void print(int indent) const override {
         std::string space(indent, ' ');
-        std::cout << space << "Throw (Line " << line << "):" << std::endl;
-        expression->print(indent + 2);
+        if (expression) {
+            std::cout << space << "Throw (Line " << line << "):" << std::endl;
+            expression->print(indent + 2);
+        } else {
+            std::cout << space << "Rethrow (Line " << line << ")" << std::endl;
+        }
+    }
+};
+
+class BreakNode : public Node {
+   public:
+    void print(int indent) const override {
+        std::cout << std::string(indent, ' ') << "Break" << std::endl;
+    }
+};
+
+class ContinueNode : public Node {
+   public:
+    void print(int indent) const override {
+        std::cout << std::string(indent, ' ') << "Continue" << std::endl;
     }
 };
 
@@ -433,6 +463,100 @@ class TriggerNode : public Node {
     void print(int indent) const override {
         std::string space(indent, ' ');
         std::cout << space << "Trigger on '" << varName << "' -> " << handlerName << std::endl;
+    }
+};
+
+struct LambdaParam {
+    std::string name;
+    std::string type; // empty = untyped
+};
+
+class LambdaNode : public Node {
+   public:
+    std::vector<LambdaParam> params;
+    std::unique_ptr<Node> exprBody;                    // set for fn(x) => expr
+    std::vector<std::unique_ptr<Node>> stmtBody;       // set for fn(x) { stmts }
+    bool isExpression = true;
+    std::string inferredReturnType;                    // set by Sema; empty = opaque i8*
+
+    void print(int indent) const override {
+        std::string space(indent, ' ');
+        std::cout << space << "Lambda(";
+        for (size_t i = 0; i < params.size(); i++) {
+            std::cout << params[i].name;
+            if (!params[i].type.empty()) std::cout << ": " << params[i].type;
+            if (i + 1 < params.size()) std::cout << ", ";
+        }
+        std::cout << ") =>" << std::endl;
+        if (isExpression && exprBody) exprBody->print(indent + 2);
+        else for (const auto& s : stmtBody) s->print(indent + 2);
+    }
+};
+
+class EnumNode : public Node {
+   public:
+    std::string name;
+    std::vector<std::string> variants;   // in declaration order
+
+    void print(int indent) const override {
+        std::string space(indent, ' ');
+        std::cout << space << "Enum: " << name << " {";
+        for (const auto& v : variants) std::cout << " " << v;
+        std::cout << " }" << std::endl;
+    }
+};
+
+struct MatchArm {
+    std::vector<std::unique_ptr<Node>> patterns;  // expressions; empty when isWildcard
+    bool isWildcard = false;
+    std::vector<std::unique_ptr<Node>> body;
+};
+
+class MatchNode : public Node {
+   public:
+    std::unique_ptr<Node> scrutinee;
+    std::vector<MatchArm> arms;
+
+    void print(int indent) const override {
+        std::string space(indent, ' ');
+        std::cout << space << "Match (" << std::endl;
+        scrutinee->print(indent + 2);
+        std::cout << space << ") {" << std::endl;
+        for (const auto& arm : arms) {
+            if (arm.isWildcard) {
+                std::cout << space << "  case _:" << std::endl;
+            } else {
+                std::cout << space << "  case ";
+                for (size_t i = 0; i < arm.patterns.size(); ++i) {
+                    arm.patterns[i]->print(0);
+                    if (i + 1 < arm.patterns.size()) std::cout << ", ";
+                }
+                std::cout << ":" << std::endl;
+            }
+            for (const auto& s : arm.body) s->print(indent + 4);
+        }
+        std::cout << space << "}" << std::endl;
+    }
+};
+
+class TernaryNode : public Node {
+   public:
+    std::unique_ptr<Node> condition;
+    std::unique_ptr<Node> thenExpr;
+    std::unique_ptr<Node> elseExpr;
+
+    TernaryNode(std::unique_ptr<Node> cond, std::unique_ptr<Node> thn, std::unique_ptr<Node> els)
+        : condition(std::move(cond)), thenExpr(std::move(thn)), elseExpr(std::move(els)) {}
+
+    void print(int indent) const override {
+        std::string space(indent, ' ');
+        std::cout << space << "Ternary (\n";
+        condition->print(indent + 2);
+        std::cout << space << "  ?\n";
+        thenExpr->print(indent + 2);
+        std::cout << space << "  :\n";
+        elseExpr->print(indent + 2);
+        std::cout << space << ")\n";
     }
 };
 

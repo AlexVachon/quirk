@@ -1,9 +1,10 @@
 *.log
 quirk-compiler/.venv/
-quirk-compiler/*.log
-quirk-compiler/*.ll
+*.ll
+quirk-compiler/vcpkg_installed
 quirk-compiler/bin/quirk
 quirk-compiler/bin/runtime.so
 quirk-compiler/obj
+quirk-compiler/build
 quirk-vscode/node_modules
 quirk-vscode/out

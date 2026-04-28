@@ -1,0 +1,54 @@
+use sys
+
+struct AppError : Exception {
+    define __init(self, msg: String) -> void {
+        super().__init(msg)
+        self.type = "AppError"
+    }
+}
+
+// ---- Test 1: finally runs on normal exit ----
+define test_finally_normal() -> void {
+    x := 0
+    try {
+        x = 1
+    } catch (e: Exception) {
+        x = 99
+    } finally {
+        print("finally:normal")
+    }
+}
+
+// ---- Test 2: finally runs after catch ----
+define test_finally_after_catch() -> void {
+    try {
+        throw AppError("boom")
+    } catch (e: AppError) {
+        print("caught:AppError")
+    } finally {
+        print("finally:after_catch")
+    }
+}
+
+// ---- Test 3: bare throw re-raises from catch ----
+define test_rethrow() -> void{
+    try {
+        try {
+            throw AppError("inner")
+        } catch (AppError) {
+            print("rethrowing")
+            throw
+        }
+    } catch (e: Exception) {
+        print("outer:caught:" + e.message)
+    }
+}
+
+// ---- Test 4: sema rejects non-Exception catch type ----
+// (compile-time check — tested manually)
+
+define main() -> void {
+    test_finally_normal()
+    test_finally_after_catch()
+    test_rethrow()
+}

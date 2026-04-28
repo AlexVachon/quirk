@@ -9,6 +9,7 @@ enum class TokenType {
     // Keywords
     DEFINE,
     STRUCT,
+    SUPER,
     INIT,
     EXTERN,
     EXTEND,
@@ -30,7 +31,11 @@ enum class TokenType {
     IN,
     WITH,
     AS,
+    IS,
     TRIGGER,
+    ENUM,
+    MATCH,
+    CASE,
 
     // Literals
     IDENTIFIER,
@@ -40,9 +45,15 @@ enum class TokenType {
     CHAR_LITERAL,
     TRUE,
     FALSE,
+    QUIRK_NULL,
     PIPE,
 
-    TRY, CATCH, THROW,
+    TRY, CATCH, THROW, FINALLY,
+
+    BREAK, CONTINUE,
+
+    FN,
+    FAT_ARROW,
 
     // Operators
     ASSIGN_INIT,
@@ -76,6 +87,10 @@ enum class TokenType {
     ELLIPSIS,
     TRIPLE_MINUS,
 
+    QUESTION,        // ?
+    QUESTION_DOT,    // ?.
+    NULL_COALESCE,   // ??
+
     // Special
     EOF_TOKEN,
     ERROR
@@ -85,6 +100,7 @@ struct Token {
     TokenType type;
     std::string value;
     int line;
+    int col = 0;
 };
 
 class Lexer {

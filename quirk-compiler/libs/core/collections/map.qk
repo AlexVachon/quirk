@@ -3,7 +3,7 @@ from core.string use { String }
 // --- ADDED FOR FUTURE ITERATION SUPPORT ---
 struct MapIterator {
     map_ref: Map
-    current_idx: Int
+    idx: Int
 
     extern define __init(self, m: Map)
     extern define __has_next(self) -> Bool
@@ -24,6 +24,8 @@ struct Map {
     extern define has(self, key: String) -> Bool
     extern define remove(self, key: String)
     extern define len(self) -> Int
+    extern define keys(self) -> List
+    extern define values(self) -> List
     extern define clear(self)
 
     // Operators
@@ -33,4 +35,9 @@ struct Map {
 
     // --- ADDED FOR ITERATION ---
     extern define __iter(self) -> MapIterator
+
+    // Functional methods — each(fn(key: String, value: Any))
+    extern define each(self, cb: Callable)
+    extern define each_value(self, cb: Callable)
+    extern define each_key(self, cb: Callable)
 }

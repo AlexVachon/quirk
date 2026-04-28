@@ -1,0 +1,180 @@
+from core.string use { String }
+from core.collections.map use { Map }
+from core.exceptions.types use { ValueError }
+from net.socket use { Socket }
+
+struct Response {
+    status_code: Int
+    headers: Map
+    text: String
+    ok: Bool
+
+    define __init(self, status: Int, body: String, headers: Map) -> void {
+        self.status_code = status
+        self.text = body
+        self.headers = headers
+        self.ok = (status >= 200) and (status < 300)
+    }
+
+    define __str(self) {
+        return "<Response [${self.status_code.str()}]>"
+    }
+}
+
+define _parse_url(url: String) -> Map {
+    res := Map()
+    clean_url := url
+    if url.startswith("http://") {
+        clean_url = url.substring(7, url.length())
+    }
+    res.put("port", "80")
+    res.put("path", "/")
+    slash_idx := clean_url.find("/")
+    host_part := clean_url
+    if slash_idx != -1 {
+        host_part = clean_url.substring(0, slash_idx)
+        path := clean_url.substring(slash_idx, clean_url.length())
+        res.put("path", path)
+    }
+    colon_idx := host_part.find(":")
+    if colon_idx != -1 {
+        res.put("host", host_part.substring(0, colon_idx))
+        port_str := host_part.substring(colon_idx + 1, host_part.length())
+        res.put("port", port_str)
+    } else {
+        res.put("host", host_part)
+    }
+    return res
+}
+
+define _hex_to_int(hex: String) -> Int {
+    result := 0
+    i := 0
+    while i < hex.length() {
+        c := hex.substring(i, i + 1).lower()
+        digit := 0
+        if c == "0" { digit = 0 }
+        elif c == "1" { digit = 1 }
+        elif c == "2" { digit = 2 }
+        elif c == "3" { digit = 3 }
+        elif c == "4" { digit = 4 }
+        elif c == "5" { digit = 5 }
+        elif c == "6" { digit = 6 }
+        elif c == "7" { digit = 7 }
+        elif c == "8" { digit = 8 }
+        elif c == "9" { digit = 9 }
+        elif c == "a" { digit = 10 }
+        elif c == "b" { digit = 11 }
+        elif c == "c" { digit = 12 }
+        elif c == "d" { digit = 13 }
+        elif c == "e" { digit = 14 }
+        elif c == "f" { digit = 15 }
+        result = result * 16 + digit
+        i = i + 1
+    }
+    return result
+}
+
+define _decode_chunked(body: String) -> String {
+    result := ""
+    remaining := body
+    while remaining.length() > 0 {
+        crlf := remaining.find("\r\n")
+        if crlf == -1 {
+            break
+        }
+        size_str := remaining.substring(0, crlf).trim()
+        if size_str.length() == 0 {
+            break
+        }
+        chunk_size := _hex_to_int(size_str)
+        if chunk_size == 0 {
+            break
+        }
+        data_start := crlf + 2
+        data_end := data_start + chunk_size
+        if data_end > remaining.length() {
+            data_end = remaining.length()
+        }
+        result += remaining.substring(data_start, data_end)
+        next := data_end + 2
+        if next > remaining.length() {
+            break
+        }
+        remaining = remaining.substring(next, remaining.length())
+    }
+    return result
+}
+
+define request(method: String, url: String, data: String = "") -> Response {
+    url_parts := _parse_url(url)
+    host: String = url_parts.get("host")
+    path: String = url_parts.get("path")
+    port_str: String = url_parts.get("port")
+    port := port_str.to_int()
+
+    with Socket() as s {
+        s.connect(host, port)
+        req := method.upper() + " " + path + " HTTP/1.1\r\n" +
+               "Host: " + host + "\r\n" +
+               "User-Agent: Quirk/1.0\r\n" +
+               "Connection: close\r\n"
+        if data.length() > 0 {
+            req += "Content-Length: " + data.length().str() + "\r\n"
+        }
+        req += "\r\n" + data
+        s.send(req)
+        chunks := List()
+        while true {
+            chunk := s.recv(4096)
+            if chunk.length() == 0 {
+                break
+            }
+            chunks.append(chunk)
+        }
+        raw_response := "".join(chunks)
+        header_end := raw_response.find("\r\n\r\n")
+        if header_end == -1 {
+            return Response(500, "", Map())
+        }
+        headers_raw := raw_response.substring(0, header_end)
+        raw_body := raw_response.substring(header_end + 4, raw_response.length())
+        body := raw_body
+        if headers_raw.lower().contains("transfer-encoding: chunked") {
+            body = _decode_chunked(raw_body)
+        }
+        lines := headers_raw.split("\r\n")
+        status_line: String = lines.get(0)
+        status_parts := status_line.split(" ")
+        status_code := 0
+        if status_parts.length() > 1 {
+            code_str: String = status_parts.get(1)
+            status_code = code_str.to_int()
+        }
+        headers_map := Map()
+        i := 1
+        while i < lines.length() {
+            line: String = lines.get(i)
+            split_idx := line.find(":")
+            if split_idx != -1 {
+                key := line.substring(0, split_idx).trim()
+                val := line.substring(split_idx + 1, line.length()).trim()
+                headers_map.put(key, val)
+            }
+            i = i + 1
+        }
+        return Response(status_code, body, headers_map)
+    }
+}
+
+define get(url: String) -> Response {
+    return request("GET", url)
+}
+
+define post(url: String, data: String) -> Response {
+    return request("POST", url, data)
+}
+
+define delete(url: String) -> Response {
+    return request("DELETE", url)
+}

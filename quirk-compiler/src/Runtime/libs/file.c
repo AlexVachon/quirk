@@ -4,7 +4,7 @@
 #include <string.h>
 
 // Automatically called when you do `f := File("data.txt", "w")`
-void File__init(File* self, String* path, String* mode) {
+void Io_File_File___init(File* self, String* path, String* mode) {
     if (!self) return;
     
     char* path_str = (path && path->buffer) ? path->buffer : "";
@@ -14,7 +14,7 @@ void File__init(File* self, String* path, String* mode) {
     self->is_open = (self->handle != NULL) ? 1 : 0;
 }
 
-void File_close(File* self) {
+void Io_File_File_close(File* self) {
     if (self && self->is_open && self->handle) {
         // Prevent closing standard streams (stdout/stderr/stdin)
         if (self->handle != stdout && self->handle != stderr && self->handle != stdin) {
@@ -25,7 +25,7 @@ void File_close(File* self) {
     }
 }
 
-String* File_read_line(File* self) {
+String* Io_File_File_read_line(File* self) {
     if (!self || !self->is_open || !self->handle) return make_String("");
     
     char buffer[2048]; // Supports lines up to 2048 chars
@@ -37,7 +37,7 @@ String* File_read_line(File* self) {
     return make_String("");
 }
 
-String* File_read(File* self) {
+String* Io_File_File_read(File* self) {
     if (!self || !self->is_open || !self->handle) return make_String("");
 
     fseek((FILE*)self->handle, 0, SEEK_END);
@@ -55,7 +55,7 @@ String* File_read(File* self) {
     return make_String_taking_ownership(buf);
 }
 
-void File_write(File* self, String* s) {
+void Io_File_File_write(File* self, String* s) {
     if (!self || !self->is_open || !self->handle || !s || !s->buffer) return;
 
     // We use s->length instead of strlen(s->buffer) for better performance 

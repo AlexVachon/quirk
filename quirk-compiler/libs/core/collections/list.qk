@@ -11,10 +11,10 @@ struct ListIterator {
 
 struct List {
     data: Any
-    length: Int   
+    size: Int   
     capacity: Int 
 
-    extern define __init(self, initial_cap: Int)
+    extern define __init(self)
 
     extern define append(self, item: Any)
     extern define pop(self) -> Any
@@ -32,5 +32,14 @@ struct List {
     extern define __del(self)
     extern define __str(self) -> String
     extern define __repr(self) -> String
+
+    // Functional methods (take a Callable produced by fn(...) => ...)
+    extern define map(self, cb: Callable) -> List
+    extern define filter(self, cb: Callable) -> List
+    extern define each(self, cb: Callable) -> void
+    extern define reduce(self, initial: Any, cb: Callable) -> Any
+    extern define any(self, cb: Callable) -> Bool
+    extern define all(self, cb: Callable) -> Bool
+    extern define find(self, cb: Callable) -> Any
 
 }

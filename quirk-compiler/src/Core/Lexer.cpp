@@ -187,6 +187,15 @@ Token Lexer::nextToken()
     }
 
     // 5. Multi-character Operators
+    // Optional/safe operators must come before single '?'
+    if (c == '?' && peek(1) == '?') {
+        advance(); advance();
+        return {TokenType::NULL_COALESCE, "??", startLine, startCol};
+    }
+    if (c == '?' && peek(1) == '.') {
+        advance(); advance();
+        return {TokenType::QUESTION_DOT, "?.", startLine, startCol};
+    }
     // Ellipsis '...' must be checked before single DOT
     if (c == '.' && peek(1) == '.' && peek(2) == '.') {
         advance(); advance(); advance();
@@ -268,6 +277,7 @@ Token Lexer::nextToken()
     case '=':  return {TokenType::ASSIGN,     "=", startLine, startCol};
     case '.':  return {TokenType::DOT,        ".", startLine, startCol};
     case '|':  return {TokenType::PIPE,       "|", startLine, startCol};
+    case '?':  return {TokenType::QUESTION,   "?", startLine, startCol};
     default:   return {TokenType::ERROR, std::string(1, c), startLine, startCol};
     }
 }

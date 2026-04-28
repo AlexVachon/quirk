@@ -200,7 +200,7 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
     // Precompile regexes used inside the per-line loop
     const memberRegex = /\.\s*([a-zA-Z_]\w*)\b/g;
     const identRegex = /(?<!\.)\b([a-zA-Z_]\w*)\b/g;
-    const restOfLineColonRe = /^\s*:(?!=)/;
+    const restOfLineColonRe = /^:(?!=)/;
 
     // Robust brace-depth tracking replaces the buggy 'inStruct' regex logic
     let braceDepth = 0;
@@ -238,7 +238,7 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
             
             const isExtern = maskedLine.includes('extern');
             const paramsStr = funcMatch[1];
-            const paramMatches = [...paramsStr.matchAll(/\b([a-zA-Z_]\w*)\s*(?::\s*[a-zA-Z_]\w*)?(?::|$|,)/g)];
+            const paramMatches = [...paramsStr.matchAll(/\b([a-zA-Z_]\w*)\s*(?::\s*[a-zA-Z_][\w.?]*)?(?::|$|,)/g)];
             for (const pm of paramMatches) {
                 const pName = pm[1];
                 locals.add(pName);
@@ -278,7 +278,7 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
         const isInsideFunc = currentFuncDepth !== -1;
 
         if (isInsideFunc) {
-            const assignMatch = /(?<!\.)\b([a-zA-Z_]\w*)\s*(?::\s*[a-zA-Z0-9_.]+)?\s*(?::=|=(?!>)|\+=|-=|\*=|\/=)/.exec(maskedLine);
+            const assignMatch = /(?<!\.)\b([a-zA-Z_]\w*)\s*(?::\s*[a-zA-Z0-9_.?]+)?\s*(?::=|=(?!>)|\+=|-=|\*=|\/=)/.exec(maskedLine);
             if (assignMatch) {
                 const vName = assignMatch[1];
                 if (!locals.has(vName) && !KEYWORDS.has(vName) && !BUILTINS.has(vName)) {

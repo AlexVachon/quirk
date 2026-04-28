@@ -173,13 +173,14 @@ class MemberAccessNode : public Node {
    public:
     std::unique_ptr<Node> object;
     std::string memberName;
+    bool isSafeAccess = false;  // true when accessed via ?.
 
     MemberAccessNode(std::unique_ptr<Node> obj, std::string member)
         : object(std::move(obj)), memberName(member) {}
 
     void print(int indent) const override {
         std::string space(indent, ' ');
-        std::cout << space << "MemberAccess: ." << memberName << std::endl;
+        std::cout << space << "MemberAccess: " << (isSafeAccess ? "?." : ".") << memberName << std::endl;
         object->print(indent + 2);
     }
 };
@@ -535,6 +536,27 @@ class MatchNode : public Node {
             for (const auto& s : arm.body) s->print(indent + 4);
         }
         std::cout << space << "}" << std::endl;
+    }
+};
+
+class TernaryNode : public Node {
+   public:
+    std::unique_ptr<Node> condition;
+    std::unique_ptr<Node> thenExpr;
+    std::unique_ptr<Node> elseExpr;
+
+    TernaryNode(std::unique_ptr<Node> cond, std::unique_ptr<Node> thn, std::unique_ptr<Node> els)
+        : condition(std::move(cond)), thenExpr(std::move(thn)), elseExpr(std::move(els)) {}
+
+    void print(int indent) const override {
+        std::string space(indent, ' ');
+        std::cout << space << "Ternary (\n";
+        condition->print(indent + 2);
+        std::cout << space << "  ?\n";
+        thenExpr->print(indent + 2);
+        std::cout << space << "  :\n";
+        elseExpr->print(indent + 2);
+        std::cout << space << ")\n";
     }
 };
 

@@ -306,6 +306,7 @@ class LLVMCodegen {
         Builder.SetInsertPoint(BasicBlock::Create(Context, "entry", mainFunc));
         
         if (verbose) std::cerr << "[Codegen] Pass 5: Compiling 'main' body\n";
+        varGen->clear();  // avoid variable table leaking from last compiled function into main
         Value* argc = mainFunc->getArg(0);
         Value* argv = mainFunc->getArg(1);
         
@@ -812,6 +813,36 @@ class LLVMCodegen {
 
             Value* objPtr = handleExpression(member->object.get());
             std::string typeName;
+
+            // Safe call: obj?.method(args) — skip the call if obj is null
+            if (member->isSafeAccess && objPtr && objPtr->getType()->isPointerTy()) {
+                Function* parentFunc = Builder.GetInsertBlock()->getParent();
+                BasicBlock* preBB    = Builder.GetInsertBlock();
+                BasicBlock* doCallBB = BasicBlock::Create(Context, "safe_call", parentFunc);
+                BasicBlock* afterBB  = BasicBlock::Create(Context, "safe_after");
+                Builder.CreateCondBr(
+                    Builder.CreateICmpEQ(objPtr, Constant::getNullValue(objPtr->getType()), "safe_isnull"),
+                    afterBB, doCallBB);
+
+                // Execute the actual call in doCallBB
+                Builder.SetInsertPoint(doCallBB);
+                member->isSafeAccess = false;
+                Value* res = handleCall(call);
+                member->isSafeAccess = true;
+                BasicBlock* callEndBB = Builder.GetInsertBlock();
+                if (!callEndBB->getTerminator()) Builder.CreateBr(afterBB);
+
+                // Merge results via PHI node — preserves actual return type
+                parentFunc->getBasicBlockList().push_back(afterBB);
+                Builder.SetInsertPoint(afterBB);
+                if (res && !res->getType()->isVoidTy()) {
+                    PHINode* phi = Builder.CreatePHI(res->getType(), 2, "safe_result");
+                    phi->addIncoming(Constant::getNullValue(res->getType()), preBB);
+                    phi->addIncoming(res, callEndBB);
+                    return phi;
+                }
+                return nullptr;
+            }
 
             if (!objPtr) {
                 if (auto lit = dynamic_cast<LiteralNode*>(member->object.get())) {
@@ -1735,8 +1766,9 @@ Value* LLVMCodegen::handleExpression(Node* node) {
     if (auto lambda = dynamic_cast<LambdaNode*>(node)) return handleLambda(lambda);
 
     if (auto lit = dynamic_cast<LiteralNode*>(node)) {
-        if (lit->value == "true") return ConstantInt::getTrue(Context);
+        if (lit->value == "true")  return ConstantInt::getTrue(Context);
         if (lit->value == "false") return ConstantInt::getFalse(Context);
+        if (lit->value == "null")  return Constant::getNullValue(Type::getInt8PtrTy(Context));
 
         if (lit->value == "super") {
             Value* selfVal = varGen->resolveVariable("self");
@@ -1771,6 +1803,19 @@ Value* LLVMCodegen::handleExpression(Node* node) {
 
     if (auto binOp = dynamic_cast<BinaryOpNode*>(node)) {
         if (binOp->op == "not") return mathGen->generateNot(handleExpression(binOp->left.get()));
+
+        // Postfix `?` — null/zero check: true when value is not null/zero
+        if (binOp->op == "?") {
+            Value* val = handleExpression(binOp->left.get());
+            if (!val) return ConstantInt::getFalse(Context);
+            if (val->getType()->isPointerTy())
+                return Builder.CreateICmpNE(val, Constant::getNullValue(val->getType()), "hasval");
+            if (val->getType()->isIntegerTy())
+                return Builder.CreateICmpNE(val, ConstantInt::get(val->getType(), 0), "hasval");
+            if (val->getType()->isDoubleTy())
+                return Builder.CreateFCmpONE(val, ConstantFP::get(val->getType(), 0.0), "hasval");
+            return ConstantInt::getTrue(Context);
+        }
         if (binOp->op == "and" || binOp->op == "or") return mathGen->generateLogicOp(binOp->op, handleExpression(binOp->left.get()), binOp->right.get(), [this](Node* n) { return this->handleExpression(n); });
 
         // ── `val is TypeName` ─────────────────────────────────────────────────
@@ -2006,6 +2051,21 @@ Value* LLVMCodegen::handleExpression(Node* node) {
                 }
             }
         }
+        if (binOp->op == "??") {
+            if (!L) return R;
+            if (!L->getType()->isPointerTy()) return L; // non-pointer can't be null
+            Value* isNull = Builder.CreateICmpEQ(
+                L, Constant::getNullValue(L->getType()), "coalesce_isnull");
+            Value* rhs = R ? R : Constant::getNullValue(L->getType());
+            if (rhs->getType() != L->getType()) {
+                if (rhs->getType()->isPointerTy())
+                    rhs = Builder.CreateBitCast(rhs, L->getType(), "coalesce_cast");
+                else
+                    rhs = Constant::getNullValue(L->getType());
+            }
+            return Builder.CreateSelect(isNull, rhs, L, "coalesce");
+        }
+
         return mathGen->generateBinaryOp(binOp->op, L, R);
     }
 
@@ -2101,6 +2161,57 @@ Value* LLVMCodegen::handleExpression(Node* node) {
     }
 
     if (auto c = dynamic_cast<ConstructorNode*>(node)) return handleConstructor(c);
+
+    if (auto tern = dynamic_cast<TernaryNode*>(node)) {
+        Value* cond = handleExpression(tern->condition.get());
+        if (!cond) return nullptr;
+
+        Value* condBool;
+        if (cond->getType()->isIntegerTy(1))
+            condBool = cond;
+        else if (cond->getType()->isPointerTy())
+            condBool = Builder.CreateICmpNE(cond, Constant::getNullValue(cond->getType()), "tern_cond");
+        else if (cond->getType()->isIntegerTy())
+            condBool = Builder.CreateICmpNE(cond, ConstantInt::get(cond->getType(), 0), "tern_cond");
+        else if (cond->getType()->isDoubleTy())
+            condBool = Builder.CreateFCmpONE(cond, ConstantFP::get(cond->getType(), 0.0), "tern_cond");
+        else
+            condBool = cond;
+
+        Function* parentFunc = Builder.GetInsertBlock()->getParent();
+        BasicBlock* thenBB  = BasicBlock::Create(Context, "tern_then", parentFunc);
+        BasicBlock* elseBB  = BasicBlock::Create(Context, "tern_else");
+        BasicBlock* mergeBB = BasicBlock::Create(Context, "tern_merge");
+
+        Builder.CreateCondBr(condBool, thenBB, elseBB);
+
+        Builder.SetInsertPoint(thenBB);
+        Value* thenVal = handleExpression(tern->thenExpr.get());
+        BasicBlock* thenEndBB = Builder.GetInsertBlock();
+        if (!thenEndBB->getTerminator()) Builder.CreateBr(mergeBB);
+
+        parentFunc->getBasicBlockList().push_back(elseBB);
+        Builder.SetInsertPoint(elseBB);
+        Value* elseVal = handleExpression(tern->elseExpr.get());
+        BasicBlock* elseEndBB = Builder.GetInsertBlock();
+        if (!elseEndBB->getTerminator()) Builder.CreateBr(mergeBB);
+
+        parentFunc->getBasicBlockList().push_back(mergeBB);
+        Builder.SetInsertPoint(mergeBB);
+
+        if (!thenVal || !elseVal || thenVal->getType()->isVoidTy() || elseVal->getType()->isVoidTy())
+            return nullptr;
+
+        Type* thenTy = thenVal->getType();
+        Type* elseTy = elseVal->getType();
+        if (thenTy != elseTy && thenTy->isPointerTy() && elseTy->isPointerTy())
+            elseVal = Builder.CreateBitCast(elseVal, thenTy, "tern_cast");
+
+        PHINode* phi = Builder.CreatePHI(thenVal->getType(), 2, "tern_result");
+        phi->addIncoming(thenVal, thenEndBB);
+        phi->addIncoming(elseVal, elseEndBB);
+        return phi;
+    }
 
     return nullptr;
 }

@@ -16,6 +16,9 @@ public:
         : Context(ctx), StructTypes(structs) {}
 
     Type* getLLVMType(const std::string& typeName) {
+        // Strip Optional marker — "String?" and "String" resolve identically
+        if (!typeName.empty() && typeName.back() == '?')
+            return getLLVMType(typeName.substr(0, typeName.size() - 1));
         if (typeName == "int" || typeName == "Int") return Type::getInt32Ty(Context);
         if (typeName == "bool" || typeName == "Bool") return Type::getInt1Ty(Context);
         if (typeName == "char" || typeName == "Char") return Type::getInt8Ty(Context);

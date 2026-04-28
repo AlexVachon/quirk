@@ -440,6 +440,18 @@ std::string Sema::checkExpression(Node *node)
         exitScope();
         return "Callable";
     }
+    if (auto tern = dynamic_cast<TernaryNode*>(node)) {
+        checkExpression(tern->condition.get());
+        std::string thenType = checkExpression(tern->thenExpr.get());
+        std::string elseType = checkExpression(tern->elseExpr.get());
+        if (thenType == elseType) return thenType;
+        // Strip optional markers for comparison
+        auto strip = [](const std::string& s) {
+            return (!s.empty() && s.back() == '?') ? s.substr(0, s.size() - 1) : s;
+        };
+        if (strip(thenType) == strip(elseType)) return strip(thenType);
+        return thenType;
+    }
     return "unknown";
 }
 
@@ -470,6 +482,12 @@ std::string Sema::checkBinaryOp(BinaryOpNode *node)
         return "Bool";
     }
 
+    if (node->op == "?")
+    {
+        checkExpression(node->left.get());
+        return "Bool";
+    }
+
     if (node->op == "is")
     {
         checkExpression(node->left.get());
@@ -488,6 +506,14 @@ std::string Sema::checkBinaryOp(BinaryOpNode *node)
 
     if (node->op == "and" || node->op == "or")
         return "Bool";
+
+    // Null-coalesce: result is the non-optional type of the LHS
+    if (node->op == "??") {
+        // Strip trailing ? from lType to get the base type
+        std::string base = lType;
+        if (!base.empty() && base.back() == '?') base.pop_back();
+        return base.empty() ? rType : base;
+    }
 
     // Array Access
     if (node->op == "[]")
@@ -604,6 +630,8 @@ std::string Sema::checkMemberAccess(MemberAccessNode *node)
     }
 
     std::string objType = checkExpression(node->object.get());
+    // Strip Optional marker before method lookup
+    if (!objType.empty() && objType.back() == '?') objType.pop_back();
 
     // Magic attributes
     if (node->memberName == "__name")   return "String";
@@ -676,6 +704,8 @@ std::string Sema::checkCall(CallNode *node)
     if (auto m = dynamic_cast<MemberAccessNode *>(node->callee.get()))
     {
         std::string objType = checkExpression(m->object.get());
+        // Strip Optional marker before method lookup (e.g. "String?" -> "String")
+        if (!objType.empty() && objType.back() == '?') objType.pop_back();
 
         // --- THE FIX: Handle Module Constructor Calls (e.g. io.File) ---
         if (objType.rfind("MODULE$", 0) == 0) {

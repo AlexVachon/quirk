@@ -75,8 +75,21 @@ std::vector<std::unique_ptr<Node>> Parser::parse() {
 }
 
 // --- Expression Parsing ---
+static bool canStartTernaryExpr(TokenType t) {
+    return t == TokenType::INT_LITERAL    || t == TokenType::FLOAT_LITERAL  ||
+           t == TokenType::STRING_LITERAL || t == TokenType::CHAR_LITERAL   ||
+           t == TokenType::TRUE           || t == TokenType::FALSE          ||
+           t == TokenType::QUIRK_NULL     || t == TokenType::SUPER          ||
+           t == TokenType::IDENTIFIER     || t == TokenType::NOT            ||
+           t == TokenType::MINUS          || t == TokenType::LBRACKET       ||
+           t == TokenType::LPAREN         || t == TokenType::FN;
+    // LBRACE excluded: avoids ambiguity with block `{` in `if cond? { ... }`
+}
+
 int getPrecedence(TokenType type) {
     switch (type) {
+        case TokenType::NULL_COALESCE:
+            return 3;
         case TokenType::OR:
             return 5;
         case TokenType::AND:
@@ -97,6 +110,8 @@ int getPrecedence(TokenType type) {
         case TokenType::SLASH:
             return 30;
         case TokenType::DOT:
+        case TokenType::QUESTION_DOT:
+        case TokenType::QUESTION:
             return 40;
         case TokenType::LBRACKET:
             return 50;
@@ -209,11 +224,12 @@ std::unique_ptr<Node> Parser::parseExpression(int min_precedence) {
 
         Token opToken = advance();
 
-        if (opToken.type == TokenType::DOT) {
+        if (opToken.type == TokenType::DOT || opToken.type == TokenType::QUESTION_DOT) {
             Token member = advance();
             auto memberNode = std::make_unique<MemberAccessNode>(std::move(left), member.value);
             memberNode->line = member.line;
             memberNode->col  = member.col;
+            memberNode->isSafeAccess = (opToken.type == TokenType::QUESTION_DOT);
             left = std::move(memberNode);
         } else if (opToken.type == TokenType::LBRACKET) {
             auto indexExpr = parseExpression(0);
@@ -257,6 +273,17 @@ std::unique_ptr<Node> Parser::parseExpression(int min_precedence) {
             Token typeName = advance();
             auto typeNode = std::make_unique<LiteralNode>(typeName.value);
             left = std::make_unique<BinaryOpNode>("is", std::move(left), std::move(typeNode));
+        } else if (opToken.type == TokenType::QUESTION) {
+            if (canStartTernaryExpr(peek().type)) {
+                // Ternary: condition? thenExpr : elseExpr
+                auto thenExpr = parseExpression(0);
+                consume(TokenType::COLON, "Expected ':' in ternary expression");
+                auto elseExpr = parseExpression(0);
+                left = std::make_unique<TernaryNode>(std::move(left), std::move(thenExpr), std::move(elseExpr));
+            } else {
+                // Postfix `?` — null/zero check: expr? → true if expr is not null
+                left = std::make_unique<BinaryOpNode>("?", std::move(left), nullptr);
+            }
         } else {
             auto right = parseExpression(next_prec);
             left = std::make_unique<BinaryOpNode>(
@@ -532,6 +559,7 @@ std::unique_ptr<FunctionNode> Parser::parseFunction() {
                 param.isRef = true;
             }
             param.type = advance().value;
+            if (peek().type == TokenType::QUESTION) { advance(); param.type += "?"; }
             while (peek().type == TokenType::PIPE) {
                 advance();
                 param.type += "|" + advance().value;
@@ -553,8 +581,10 @@ std::unique_ptr<FunctionNode> Parser::parseFunction() {
             advance();
     }
     consume(TokenType::RPAREN, "Expected ')'");
-    if (match(TokenType::ARROW))
+    if (match(TokenType::ARROW)) {
         node->returnType = advance().value;
+        if (peek().type == TokenType::QUESTION) { advance(); node->returnType += "?"; }
+    }
     if (isExtern)
         return node;
 
@@ -595,8 +625,10 @@ std::unique_ptr<CallNode> Parser::parseCall() {
 std::unique_ptr<VarDeclNode> Parser::parseVarDecl() {
     auto lhs = parseExpression(35);
     std::string typeStr = "";
-    if (match(TokenType::COLON))
+    if (match(TokenType::COLON)) {
         typeStr = advance().value;
+        if (peek().type == TokenType::QUESTION) { advance(); typeStr += "?"; }
+    }
     std::string opStr = advance().value;
     return std::make_unique<VarDeclNode>(std::move(lhs), parseExpression(0),
                                          opStr, typeStr);

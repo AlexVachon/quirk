@@ -97,9 +97,8 @@ class BuiltinGen {
 
     Value* generateIntToString(Value* val) {
         if (val->getType()->isIntegerTy(1)) {
-            Value* ext = Builder.CreateZExt(val, Type::getInt32Ty(Context));
             Function* f = TheModule->getFunction("Core_Primitives_Bool_str");
-            if (f) return Builder.CreateCall(f, {ext});
+            if (f) return Builder.CreateCall(f, {val});
         }
         if (val->getType()->getIntegerBitWidth() != 32)
             val = Builder.CreateIntCast(val, Type::getInt32Ty(Context), true);
@@ -204,8 +203,7 @@ class BuiltinGen {
                 if (type->getIntegerBitWidth() == 1) {
                     Function* boolStrFunc = TheModule->getFunction("Core_Primitives_Bool_str");
                     if (boolStrFunc) {
-                        Value* ext = Builder.CreateZExt(val, Type::getInt32Ty(Context));
-                        Value* strObj = Builder.CreateCall(boolStrFunc, {ext});
+                        Value* strObj = Builder.CreateCall(boolStrFunc, {val});
                         Value* bufPtr = structGen->getMemberPtr(strObj, "buffer");
                         if (bufPtr) {
                             Value* cStr = Builder.CreateLoad(Type::getInt8PtrTy(Context), bufPtr);

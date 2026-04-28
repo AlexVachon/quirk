@@ -87,6 +87,10 @@ enum class TokenType {
     ELLIPSIS,
     TRIPLE_MINUS,
 
+    QUESTION,        // ?
+    QUESTION_DOT,    // ?.
+    NULL_COALESCE,   // ??
+
     // Special
     EOF_TOKEN,
     ERROR

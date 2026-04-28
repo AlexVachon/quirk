@@ -10,7 +10,7 @@ const KEYWORDS = new Set([
 ]);
 
 const BUILTINS = new Set([
-    'print', 'exit', 'Char', 'String', 'List', 'Map',
+    'print', 'printf', 'type', 'exit', 'Char', 'String', 'List', 'Map',
     'File', 'Int', 'Double', 'Bool', 'Any', 'void', 'Callable',
     'true', 'false', 'null',
     'Exception', 'TypeError', 'ValueError', 'IndexError', 'KeyError',

@@ -60,6 +60,16 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
             }
         }
 
+        // Literal value followed by a dot: "hello"., true., false., 42.
+        // Must come before memberMatch since that regex only handles identifiers.
+        if (/(?:"[^"]*"|'[^']*')\.[a-zA-Z0-9_]*$/.test(linePrefix))
+            return this.provideObjectMemberCompletions(document, position, '', 'String');
+        if (/\b(true|false)\.[a-zA-Z0-9_]*$/.test(linePrefix))
+            return this.provideObjectMemberCompletions(document, position, '', 'Bool');
+        // \d+\.(?!\d) — int literal dot, but not a double like 3.14
+        if (/\b\d+\.(?!\d)[a-zA-Z0-9_]*$/.test(linePrefix))
+            return this.provideObjectMemberCompletions(document, position, '', 'Int');
+
         // someVar.  or  someVar.partial  — member completions
         const memberMatch = /([a-zA-Z0-9_]+)\.([a-zA-Z0-9_]*)$/.exec(linePrefix);
         if (memberMatch) {
@@ -593,6 +603,9 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
 
     // Return type of a free function call — scans current file and imports.
     private inferFunctionReturnType(projectRoot: string, document: vscode.TextDocument, funcName: string): string | null {
+        // Built-in functions with known return types
+        if (funcName === 'type') return 'String';
+
         const defRe = new RegExp(
             `(?:extern\\s+)?define\\s+${funcName}\\s*\\([^)]*\\)\\s*->\\s*([A-Za-z0-9_]+)`
         );
@@ -940,9 +953,10 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
 
         // ---- Built-ins ----
         const builtins: [string, string, string?][] = [
-            ['print',     '`print(value)` — print to stdout',       'print(${1:value})'],
-            ['printf',    '`printf(fmt, ...)` — formatted print',    'printf(${1:fmt}${2:, args})'],
-            ['exit',      '`exit(code)` — terminate program',        'exit(${1:0})'],
+            ['print',     '`print(value)` — print to stdout',                          'print(${1:value})'],
+            ['printf',    '`printf(fmt, ...)` — formatted print',                   'printf(${1:fmt}${2:, args})'],
+            ['type',      '`type(value) → String` — return the type name of a value', 'type(${1:value})'],
+            ['exit',      '`exit(code)` — terminate program',                       'exit(${1:0})'],
             ['String',    'Built-in String type'],
             ['Int',       'Built-in Int type'],
             ['Double',    'Built-in Double type'],

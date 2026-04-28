@@ -1,3 +1,7 @@
+struct CustomString: String {
+
+}
+
 define main() {
     num := 12345
     base_str := " this is my string. A String contains characters. "
@@ -58,10 +62,10 @@ define main() {
     // Explicitly converting strings to numbers
     total := s_num.to_int() + 10     // 133
     area := s_pi.to_float() * 2.0    // 6.28...
-    print("true".to_bool())
+    print("true".to_bool().str()) // convert string -> boolean -> string
     
     print("Parsed: ${total}, ${area}")
-
+    
     // 2. Fuzzy Matching
     word := "kitten"
     typo := "sitting"
@@ -75,5 +79,8 @@ define main() {
     
     // Using your new 'format_list' implicitly via $lines
     print("Config lines: ${lines}")
+
+    c_string := CustomString()
+    print(type(c_string))
 
 }

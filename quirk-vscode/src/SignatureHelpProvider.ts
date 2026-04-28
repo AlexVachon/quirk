@@ -20,6 +20,24 @@ export class QuirkSignatureHelpProvider implements vscode.SignatureHelpProvider 
         // Count commas, but skip commas inside nested parentheses
         const activeParameter = this.countArgs(argsString) - 1;
 
+        // Builtin functions — no .qk source, so provide signature directly
+        const builtinSignatures: Record<string, { sig: string; params: string[]; doc: string }> = {
+            print:  { sig: 'print(value)',       params: ['value'],      doc: 'Print a value to stdout followed by a newline.' },
+            printf: { sig: 'printf(fmt, ...)',   params: ['fmt', '...'], doc: 'Formatted print using C-style format strings.' },
+            type:   { sig: 'type(value) → String', params: ['value'],   doc: 'Return the type name of the value as a `String`.\n\n`type(42)` → `"Int"`, `type("hi")` → `"String"`, etc.' },
+            exit:   { sig: 'exit(code)',          params: ['code'],      doc: 'Terminate the program with the given exit code.' },
+        };
+        if (funcName in builtinSignatures) {
+            const b = builtinSignatures[funcName];
+            const sigInfo = new vscode.SignatureInformation(b.sig, new vscode.MarkdownString(b.doc));
+            sigInfo.parameters = b.params.map(p => new vscode.ParameterInformation(p));
+            const help = new vscode.SignatureHelp();
+            help.signatures = [sigInfo];
+            help.activeSignature = 0;
+            help.activeParameter = Math.min(activeParameter, Math.max(0, b.params.length - 1));
+            return help;
+        }
+
         try {
             // Compute the position of the function name so go-to-definition finds it
             const callStart = callMatch.index + (callMatch[1] ? callMatch[1].length + 1 : 0);

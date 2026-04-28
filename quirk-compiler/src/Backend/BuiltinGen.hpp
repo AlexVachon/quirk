@@ -77,14 +77,65 @@ class BuiltinGen {
     }
 
     bool isBuiltin(const std::string& name) {
-        return name == "print" || name == "printf" || name == "malloc" || name == "free";
+        return name == "print" || name == "printf" || name == "malloc" || name == "free" || name == "type";
     }
 
     Value* handleBuiltin(const std::string& name, CallNode* call,
                          std::function<Value*(Node*)> exprHandler) {
         if (name == "print")   return generatePrint(call, exprHandler);
         if (name == "printf")  return generatePrintf(call, exprHandler);
+        if (name == "type")    return generateType(call, exprHandler);
         return nullptr;
+    }
+
+    Value* generateType(CallNode* call, std::function<Value*(Node*)> exprHandler) {
+        if (call->args.empty()) return nullptr;
+        Value* val = exprHandler(call->args[0].value.get());
+        if (!val) return nullptr;
+
+        Type* llvmType = val->getType();
+
+        auto makeTypeString = [&](const std::string& name) -> Value* {
+            Value* raw = Builder.CreateGlobalStringPtr(name);
+            std::vector<Value*> args = {raw};
+            return structGen->allocateAndInit("String", args);
+        };
+
+        // Pointer types: struct*, Any*, i8*
+        if (llvmType->isPointerTy()) {
+            Type* elem = llvmType->getPointerElementType();
+            if (elem->isStructTy()) {
+                StructType* st = cast<StructType>(elem);
+                std::string structName = st->getName().str();
+                if (structName.find("struct.") == 0) structName = structName.substr(7);
+                size_t dotPos = structName.find('.');
+                if (dotPos != std::string::npos && std::isdigit(structName[dotPos + 1]))
+                    structName = structName.substr(0, dotPos);
+
+                if (structName == "Any") {
+                    // Runtime dispatch via the Any tag
+                    Function* getType = TheModule->getFunction("Core_Primitives_Any_get_type");
+                    if (getType) return Builder.CreateCall(getType, {val});
+                }
+                return makeTypeString(structName);
+            }
+            // i8* opaque — likely a boxed Any*; delegate to runtime tag dispatch
+            Function* getType = TheModule->getFunction("Core_Primitives_Any_get_type");
+            if (getType) {
+                // Cast i8* → Any* (first param type of Core_Primitives_Any_get_type)
+                Type* anyPtrTy = getType->getFunctionType()->getParamType(0);
+                Value* anyPtr = Builder.CreateBitCast(val, anyPtrTy);
+                return Builder.CreateCall(getType, {anyPtr});
+            }
+            return makeTypeString("Any");
+        }
+
+        // Primitive LLVM types — known statically
+        if (llvmType->isIntegerTy(1))  return makeTypeString("Bool");
+        if (llvmType->isIntegerTy(8))  return makeTypeString("Char");
+        if (llvmType->isIntegerTy())   return makeTypeString("Int");
+        if (llvmType->isDoubleTy())    return makeTypeString("Double");
+        return makeTypeString("Unknown");
     }
 
     Value* generatePrintf(CallNode* call, std::function<Value*(Node*)> exprHandler) {

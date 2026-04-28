@@ -91,6 +91,10 @@ export class QuirkHoverProvider implements vscode.HoverProvider {
             'File':      '**Built-in type** `File`\n\nFile handle. Methods: `.read()`, `.write()`, `.close()`.',
             'Any':       '**Built-in type** `Any`\n\nDynamic type — accepts any value.',
             'void':      '**Type** `void` — no return value.',
+            'print':     '**Built-in** `print(value)`\n\nPrint a value to stdout followed by a newline. Accepts any type — calls `.__str()` on structs automatically.',
+            'printf':    '**Built-in** `printf(fmt, ...)`\n\nFormatted print using C-style format strings.\n\n```quirk\nprintf("%s is %d years old\\n", name, age)\n```',
+            'type':      '**Built-in** `type(value) → String`\n\nReturn the type name of a value as a `String`.\n\n```quirk\ntype(42)        // "Int"\ntype("hello")   // "String"\ntype(true)      // "Bool"\ntype(3.14)      // "Double"\ntype(\'z\')     // "Char"\n\na: Any = 99\ntype(a)         // "Int"  (runtime dispatch)\n\np := Point(1, 2)\ntype(p)         // "Point"\n```\n\nFor `Any`-typed variables the lookup is done at runtime via the tag in the boxed value.',
+            'exit':      '**Built-in** `exit(code)`\n\nTerminate the program with the given exit code.\n\n```quirk\nexit(0)   // success\nexit(1)   // failure\n```',
         };
         if (word in builtinHovers) {
             const md = new vscode.MarkdownString(builtinHovers[word]);

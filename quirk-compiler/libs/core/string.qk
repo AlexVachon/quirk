@@ -14,7 +14,7 @@ struct String {
     buffer: Any
     length: Int
 
-    extern define __init(self, raw: Any)
+    extern define __init(self, raw: Any = "")
     extern define __del(self)
 
     extern define __add(self, other: String) -> String

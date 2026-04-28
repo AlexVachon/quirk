@@ -30,6 +30,15 @@
           }
         },
         {
+          "match": "\\b(from)\\s+([a-zA-Z0-9_./]+)\\s+(as)\\s+([a-zA-Z_]\\w*)\\b",
+          "captures": {
+            "1": { "name": "keyword.control.import.quirk" },
+            "2": { "name": "entity.name.namespace.quirk" },
+            "3": { "name": "keyword.control.import.quirk" },
+            "4": { "name": "entity.name.namespace.alias.quirk" }
+          }
+        },
+        {
           "match": "\\b(use)\\s+([a-zA-Z0-9_./]+)\\b",
           "captures": {
             "1": { "name": "keyword.control.import.quirk" },
@@ -71,7 +80,7 @@
       "patterns": [
         {
           "name": "keyword.control.quirk",
-          "match": "\\b(if|else|elif|while|for|in|return|break|continue|with|as|trigger|try|catch|throw|finally|from|match|case)\\b"
+          "match": "\\b(if|else|elif|while|for|in|return|break|continue|with|as|trigger|try|catch|throw|finally|from|match|case|where|is|not|and|or)\\b"
         },
         {
           "name": "keyword.other.wildcard.quirk",
@@ -99,7 +108,7 @@
       "patterns": [
         {
           "name": "support.class.exception.quirk",
-          "match": "\\b(Exception|TypeError|ValueError|IndexError|KeyError|IOError|FileNotFoundError|RuntimeError|NotImplementedError|ZeroDivisionError|AssertionError|NullError|SocketError)\\b"
+          "match": "\\b(Exception|TypeError|ValueError|IndexError|KeyError|IOError|FileNotFoundError|RuntimeError|NotImplementedError|ZeroDivisionError|AssertionError|NullError|SocketError|WhereConditionError)\\b"
         }
       ]
     },

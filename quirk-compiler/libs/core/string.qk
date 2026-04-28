@@ -67,6 +67,8 @@ struct String {
 
     extern define to_int(self) -> Int
     extern define to_float(self) -> Double
+    extern define to_bool(self) -> Bool
+    extern define to_char(self) -> Char
     
     extern define lines(self) -> List
 

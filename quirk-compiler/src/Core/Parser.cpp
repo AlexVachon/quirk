@@ -109,6 +109,8 @@ int getPrecedence(TokenType type) {
         case TokenType::STAR:
         case TokenType::SLASH:
             return 30;
+        case TokenType::AS:
+            return 35;
         case TokenType::DOT:
         case TokenType::QUESTION_DOT:
         case TokenType::QUESTION:
@@ -273,6 +275,11 @@ std::unique_ptr<Node> Parser::parseExpression(int min_precedence) {
             Token typeName = advance();
             auto typeNode = std::make_unique<LiteralNode>(typeName.value);
             left = std::make_unique<BinaryOpNode>("is", std::move(left), std::move(typeNode));
+        } else if (opToken.type == TokenType::AS) {
+            // `val as TypeName` — type cast; RHS is the target type name
+            Token typeName = advance();
+            auto typeNode = std::make_unique<LiteralNode>(typeName.value);
+            left = std::make_unique<BinaryOpNode>("as", std::move(left), std::move(typeNode));
         } else if (opToken.type == TokenType::QUESTION) {
             if (canStartTernaryExpr(peek().type)) {
                 // Ternary: condition? thenExpr : elseExpr
@@ -588,6 +595,11 @@ std::unique_ptr<FunctionNode> Parser::parseFunction() {
     if (isExtern)
         return node;
 
+    if (peek().type == TokenType::WHERE) {
+        advance();
+        node->whereClause = parseExpression(0);
+    }
+
     consume(TokenType::LBRACE, "Expected '{'");
     while (peek().type != TokenType::RBRACE && !isAtEnd())
         node->body.push_back(parseStatement());
@@ -834,13 +846,19 @@ std::unique_ptr<Node> Parser::parseUse() {
 
     if (match(TokenType::FROM)) {
         parsePath();
-        consume(TokenType::USE, "Expected 'use' after module path");
+        if (peek().type == TokenType::AS) {
+            // from .path as alias — whole-module import with explicit alias
+            advance();
+            std::string alias = advance().value;
+            return std::make_unique<UseNode>(path, std::vector<std::string>{}, alias);
+        }
+        consume(TokenType::USE, "Expected 'use' or 'as' after module path");
         consume(TokenType::LBRACE, "Expected '{'");
         do {
             filters.push_back(advance().value);
         } while (match(TokenType::COMMA));
         consume(TokenType::RBRACE, "Expected '}'");
-    } 
+    }
     else {
         consume(TokenType::USE, "Expected 'use'");
         parsePath();

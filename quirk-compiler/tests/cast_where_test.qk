@@ -1,0 +1,46 @@
+define divide(a: Int, b: Int) -> Double where b != 0 {
+    return a as Double / b as Double
+}
+
+---
+Small function that returns the given integer
+if it's value is non-negative, otherwise it returns a WhereConditionError at runtime.
+---
+define clamp_positive(x: Int) -> Int where x >= 0 {
+    return x
+}
+
+define main() -> void {
+    print("--- as casting ---")
+
+    i: Int = 7
+    d: Double = i as Double
+    print(d)
+
+    pi: Double = 3.14
+    n: Int = pi as Int
+    print(n)
+
+    flag: Bool = 0 as Bool
+    print(flag)
+
+    flag2: Bool = 42 as Bool
+    print(flag2)
+
+    c: Char = 65 as Char
+    print(c)
+
+    ci: Int = c as Int
+    print(ci)
+
+    print("--- where clause ---")
+
+    print(divide(10, 4))
+    print(divide(9, 3))
+
+    try {
+        print(clamp_positive(5))   
+    } catch (e: WhereConditionError) {
+        print("The number must be positive - ${e}")
+    }
+}

@@ -45,6 +45,21 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
         const importMatch = /^\s*(?:use|from)\s+([.a-zA-Z0-9_/]*)$/.exec(linePrefix);
         if (importMatch) return this.providePathCompletions(document, importMatch[1]);
 
+        // Chained method call: expr.method(args).partial
+        // Handles string literals, variables, and multi-level chains.
+        // e.g. "true".to_bool().s  →  Bool methods
+        //      word.distance(typo).  →  Int methods
+        //      s.split(",").  →  List methods
+        if (/\)\.[a-zA-Z0-9_]*$/.test(linePrefix)) {
+            const lastDot = linePrefix.lastIndexOf('.');
+            const exprStr = linePrefix.substring(0, lastDot);
+            const tailExpr = this.extractTailExpr(exprStr);
+            if (tailExpr !== null) {
+                const chainedType = this.inferExpressionType(tailExpr, document, position);
+                if (chainedType) return this.provideObjectMemberCompletions(document, position, '', chainedType);
+            }
+        }
+
         // someVar.  or  someVar.partial  — member completions
         const memberMatch = /([a-zA-Z0-9_]+)\.([a-zA-Z0-9_]*)$/.exec(linePrefix);
         if (memberMatch) {
@@ -208,9 +223,10 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
     private provideObjectMemberCompletions(
         document: vscode.TextDocument,
         position: vscode.Position,
-        variableName: string
+        variableName: string,
+        overrideType?: string
     ): vscode.CompletionItem[] {
-        const typeName = this.inferTypeOfVariable(document, position, variableName);
+        const typeName = overrideType ?? this.inferTypeOfVariable(document, position, variableName);
         if (!typeName) return [];
         const projectRoot = this.findProjectRoot(document.uri.fsPath);
 
@@ -385,6 +401,10 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
         const textBeforeCursor = document.getText(new vscode.Range(new vscode.Position(0, 0), position));
         const lines = textBeforeCursor.split(/\r?\n/).reverse();
 
+        // Built-in type names used as static namespaces: Int.parse(), Double.parse(), etc.
+        const primitiveTypes = new Set(['Int', 'Double', 'Bool', 'Char', 'String', 'List', 'Map']);
+        if (primitiveTypes.has(variableName)) return variableName;
+
         // self → look up the enclosing struct definition
         if (variableName === 'self') {
             for (const line of lines) {
@@ -398,6 +418,8 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
         // Methods that return List regardless of receiver type
         const listReturnMethods = new Set(['map', 'filter', 'keys', 'values']);
 
+        const projectRoot = this.findProjectRoot(document.uri.fsPath);
+
         for (const line of lines) {
             const esc = variableName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -407,9 +429,88 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
             // x := { or x = {  → Map literal
             if (new RegExp(`\\b${esc}\\s*(?::=|=)\\s*\\{`).test(line)) return 'Map';
 
+            // x := "..."  or  x = "..."  → String literal
+            if (new RegExp(`\\b${esc}\\s*(?::=|=)\\s*"`).test(line)) return 'String';
+
+            // x := 3.14  → Double literal (must come before Int check)
+            if (new RegExp(`\\b${esc}\\s*(?::=|=)\\s*\\d+\\.\\d`).test(line)) return 'Double';
+
+            // x := 42  → Int literal
+            if (new RegExp(`\\b${esc}\\s*(?::=|=)\\s*\\d`).test(line)) return 'Int';
+
+            // x := true / false  → Bool
+            if (new RegExp(`\\b${esc}\\s*(?::=|=)\\s*(?:true|false)\\b`).test(line)) return 'Bool';
+
+            // x := 'a'  → Char literal
+            if (new RegExp(`\\b${esc}\\s*(?::=|=)\\s*'`).test(line)) return 'Char';
+
             // x := something.map(...) / .filter(...) / .keys() / .values()  → List
             const chainedMatch = new RegExp(`\\b${esc}\\s*:=\\s*.+\\.(${[...listReturnMethods].join('|')})\\s*\\(`).exec(line);
             if (chainedMatch) return 'List';
+
+            // x := receiver.method(...)  → look up method return type
+            const methodCallMatch = new RegExp(`\\b${esc}\\s*:=\\s*([a-zA-Z0-9_]+)\\.([a-zA-Z0-9_]+)\\s*\\(`).exec(line);
+            if (methodCallMatch) {
+                const receiverName = methodCallMatch[1];
+                const methodName   = methodCallMatch[2];
+                const receiverType = this.inferTypeOfVariable(document, position, receiverName);
+                if (receiverType) {
+                    const ret = this.inferMethodReturnType(projectRoot, document.uri.fsPath, receiverType, methodName);
+                    if (ret) return ret;
+                }
+            }
+
+            // x := someFunc(...)  → look up function return type
+            const funcCallMatch = new RegExp(`\\b${esc}\\s*:=\\s*([a-z][a-zA-Z0-9_]*)\\s*\\(`).exec(line);
+            if (funcCallMatch) {
+                const ret = this.inferFunctionReturnType(projectRoot, document, funcCallMatch[1]);
+                if (ret) return ret;
+            }
+
+            // x := expr + expr  — if either side contains a string literal or "+" with a known String, result is String
+            const concatMatch = new RegExp(`\\b${esc}\\s*:=\\s*(.+)\\+(.+)`).exec(line);
+            if (concatMatch && (/"/.test(concatMatch[1]) || /"/.test(concatMatch[2]))) return 'String';
+
+            // x := a + b  — if a has a known numeric type, propagate it (Double wins over Int)
+            const arithMatch = new RegExp(`\\b${esc}\\s*:=\\s*([a-zA-Z0-9_]+)\\s*[+\\-*\\/]`).exec(line);
+            if (arithMatch) {
+                const lhsType = this.inferTypeOfVariable(document, position, arithMatch[1]);
+                if (lhsType === 'Double') return 'Double';
+                if (lhsType === 'Int')    return 'Int';
+            }
+
+            // x := condition? thenExpr : elseExpr  — use the then-branch type
+            const ternaryMatch = new RegExp(`\\b${esc}\\s*:=\\s*.+\\?\\s*([a-zA-Z0-9_"'\`[{]+)`).exec(line);
+            if (ternaryMatch) {
+                const thenToken = ternaryMatch[1];
+                if (thenToken.startsWith('"')) return 'String';
+                if (/^\d+\.\d/.test(thenToken))  return 'Double';
+                if (/^\d/.test(thenToken))        return 'Int';
+                if (thenToken === 'true' || thenToken === 'false') return 'Bool';
+                if (thenToken.startsWith('['))    return 'List';
+                if (thenToken.startsWith('{'))    return 'Map';
+                const thenType = this.inferTypeOfVariable(document, position, thenToken);
+                if (thenType) return thenType;
+            }
+
+            // lambda param:  fn(varName: Type)  or  fn(varName: Type, ...)
+            const lambdaParamMatch = new RegExp(`\\bfn\\s*\\([^)]*\\b${esc}\\s*:\\s*([A-Za-z0-9_]+)`).exec(line);
+            if (lambdaParamMatch) return lambdaParamMatch[1];
+
+            // for varName in iterable  → infer element type from iterable
+            const forMatch = new RegExp(`\\bfor\\s+(?:ref\\s+)?${esc}\\s+in\\s+([a-zA-Z0-9_"'\\[]+)`).exec(line);
+            if (forMatch) {
+                const iterable = forMatch[1];
+                if (iterable.startsWith('"') || iterable.startsWith("'")) return 'Char'; // string literal → Char elements
+                const iterType = this.inferTypeOfVariable(document, position, iterable);
+                if (iterType === 'String') return 'Char';
+                // List element type is unknown at static analysis time; return Any so members are offered
+                if (iterType === 'List') return 'Any';
+            }
+
+            // catch (varName: ExceptionType)  → ExceptionType
+            const catchParamMatch = new RegExp(`\\bcatch\\s*\\(\\s*${esc}\\s*:\\s*([A-Za-z0-9_]+)`).exec(line);
+            if (catchParamMatch) return catchParamMatch[1];
 
             // x := SomeType(...)
             let match = new RegExp(`\\b${esc}\\s*:=\\s*(?:[a-zA-Z0-9_]+\\.)?([A-Z][A-Za-z0-9_]+)\\s*\\(`).exec(line);
@@ -423,6 +524,169 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
             match = new RegExp(`\\b${esc}\\s*:=\\s*(?:[a-zA-Z0-9_]+\\.)?([A-Za-z0-9_]+)$`).exec(line);
             if (match) return match[1];
         }
+
+        return null;
+    }
+
+    // Return type of `receiverType.methodName()` — built-in table first, then source scan.
+    private inferMethodReturnType(projectRoot: string, currentFile: string, receiverType: string, methodName: string): string | null {
+        // Built-in method return types for core types
+        const builtinReturns: Record<string, Record<string, string>> = {
+            String: {
+                upper: 'String', lower: 'String', title: 'String', capitalize: 'String',
+                sentence_case: 'String', swapcase: 'String', trim: 'String', lstrip: 'String',
+                rstrip: 'String', replace: 'String', remove: 'String', repeat: 'String',
+                reverse: 'String', encode: 'String', substring: 'String', zfill: 'String',
+                ljust: 'String', rjust: 'String', center: 'String', join: 'String',
+                format: 'String', format_map: 'String', format_list: 'String',
+                split: 'List', lines: 'List',
+                find: 'Int', index: 'Int', count: 'Int', distance: 'Int',
+                to_int: 'Int', to_float: 'Double', to_bool: 'Bool', to_char: 'Char',
+                startswith: 'Bool', endswith: 'Bool', contains: 'Bool', is_alpha: 'Bool',
+                is_digit: 'Bool', is_space: 'Bool', empty: 'Bool',
+                str: 'String',
+            },
+            List: {
+                map: 'List', filter: 'List', keys: 'List', values: 'List', find: 'Any',
+                join: 'String',
+                length: 'Int', len: 'Int',
+                any: 'Bool', all: 'Bool',
+                pop: 'Any', get: 'Any',
+            },
+            Map: {
+                get: 'Any', keys: 'List', values: 'List',
+                len: 'Int',
+                has: 'Bool',
+            },
+            Int: {
+                str: 'String', is_even: 'Bool', is_odd: 'Bool',
+            },
+            Double: {
+                str: 'String',
+            },
+            Bool: {
+                str: 'String',
+            },
+            Char: {
+                str: 'String', is_upper: 'Bool', is_lower: 'Bool',
+                is_digit: 'Bool', is_alpha: 'Bool', is_space: 'Bool',
+                to_int: 'Int',
+            },
+        };
+
+        if (builtinReturns[receiverType]?.[methodName]) {
+            return builtinReturns[receiverType][methodName];
+        }
+
+        // Fall back to scanning the struct definition for the method's return type
+        const structFile = this.findFileContainingStruct(projectRoot, currentFile, receiverType);
+        if (!structFile) return null;
+        const content = this.readFile(structFile);
+        if (!content) return null;
+
+        const methodRe = new RegExp(
+            `(?:extern\\s+)?(?:define|def)\\s+${methodName}\\s*\\([^)]*\\)\\s*->\\s*([A-Za-z0-9_]+)`
+        );
+        const m = methodRe.exec(content);
+        return m ? m[1] : null;
+    }
+
+    // Return type of a free function call — scans current file and imports.
+    private inferFunctionReturnType(projectRoot: string, document: vscode.TextDocument, funcName: string): string | null {
+        const defRe = new RegExp(
+            `(?:extern\\s+)?define\\s+${funcName}\\s*\\([^)]*\\)\\s*->\\s*([A-Za-z0-9_]+)`
+        );
+
+        // Current file
+        const src = document.getText();
+        let m = defRe.exec(src);
+        if (m) return m[1];
+
+        // Imported files (shallow — one level of imports)
+        const importRe = /^\s*(?:use|from)\s+([.a-zA-Z0-9_/]+)/gm;
+        let im: RegExpExecArray | null;
+        while ((im = importRe.exec(src)) !== null) {
+            const resolved = this.resolvePath(projectRoot, document.uri.fsPath, im[1]);
+            if (!resolved) continue;
+            const content = this.readFile(resolved);
+            if (!content) continue;
+            m = defRe.exec(content);
+            if (m) return m[1];
+        }
+
+        return null;
+    }
+
+    // Extract the last "complete" sub-expression from a string, respecting
+    // balanced parens and quoted strings. Returns the extracted expression or null.
+    // e.g. 'print("true".to_bool()' → '"true".to_bool()'
+    private extractTailExpr(s: string): string | null {
+        s = s.trimEnd();
+        if (!s.length) return null;
+
+        // Walk backward through balanced parens to find where the expression starts
+        let i = s.length - 1;
+        let depth = 0;
+
+        // Each iteration steps backward one "unit" (paren group, string, or char)
+        outer: while (i >= 0) {
+            const c = s[i];
+            if (c === ')') { depth++; i--; continue; }
+            if (c === '(') {
+                if (depth > 0) { depth--; i--; continue; }
+                break; // unmatched '(' — this is a call-context boundary
+            }
+            if (depth === 0) {
+                // Stop at operator / punctuation that isn't part of an expression
+                if ('+-*/%,;=!<>&|^~@#'.includes(c)) break;
+            }
+            if ((c === '"' || c === "'") && depth === 0) {
+                // Walk backward through the string literal
+                const q = c;
+                i--;
+                while (i >= 0 && !(s[i] === q && s[i - 1] !== '\\')) i--;
+                i--; // skip opening quote
+                continue;
+            }
+            i--;
+        }
+
+        const tail = s.substring(i + 1).trimStart();
+        return tail.length ? tail : null;
+    }
+
+    // Recursively infer the Quirk type of a simple expression string.
+    // Handles literals, identifiers, and single/multi-level method chains.
+    private inferExpressionType(expr: string, document: vscode.TextDocument, position: vscode.Position): string | null {
+        expr = expr.trim();
+        if (!expr) return null;
+
+        // Method call chain MUST come first: receiver.method(args)
+        // If the expression ends with ')', it's a call — check this before literal sniffing
+        // so "true".to_bool() isn't short-circuited to String by the string-literal check.
+        // Use lazy `.*?` so we peel off the OUTERMOST call last (matching from the end)
+        const callRe = /^(.*?)\.([a-zA-Z_]\w*)\(([^()]*)\)$/.exec(expr);
+        if (callRe) {
+            const receiverExpr = callRe[1];
+            const methodName   = callRe[2];
+            const receiverType = this.inferExpressionType(receiverExpr, document, position);
+            if (receiverType) {
+                const projectRoot = this.findProjectRoot(document.uri.fsPath);
+                return this.inferMethodReturnType(projectRoot, document.uri.fsPath, receiverType, methodName);
+            }
+        }
+
+        // Literals (checked after method-call so "str".method() isn't short-circuited)
+        if (/^["']/.test(expr))                     return 'String';
+        if (/^\d+\.\d/.test(expr))                  return 'Double';
+        if (/^\d/.test(expr))                       return 'Int';
+        if (/^(true|false)$/.test(expr))            return 'Bool';
+        if (expr.startsWith('['))                   return 'List';
+        if (expr.startsWith('{'))                   return 'Map';
+
+        // Simple identifier
+        if (/^[a-zA-Z_]\w*$/.test(expr))
+            return this.inferTypeOfVariable(document, position, expr);
 
         return null;
     }
@@ -663,6 +927,7 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
             ['use',      'use ${1:module}',                                        'Import a module'],
             ['from',     'from ${1:module} use { ${2:symbol} }',                  'Destructure import'],
             ['with',     'with ${1:expr} as ${2:name} {\n\t$0\n}',               'Context manager'],
+            ['where',    'where ${1:condition}',                                   'Precondition on a function (where clause)'],
             ['in'],      ['as'],      ['del'],
             ['true'],    ['false'],   ['null'],
             ['and'],     ['or'],      ['not'],
@@ -702,6 +967,7 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
             ['AssertionError',      'Assertion failed'],
             ['NullError',           'Null value dereferenced'],
             ['SocketError',         'Socket or network failure'],
+            ['WhereConditionError', 'where precondition violated'],
         ];
         for (const [name, doc, snippet] of builtins) {
             addItem(name, vscode.CompletionItemKind.Class, 'built-in', snippet, doc);

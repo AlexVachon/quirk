@@ -42,6 +42,24 @@
         "description": "Define a new function"
     },
 
+    "Function with Where Clause": {
+        "prefix": "defw",
+        "body": [
+            "define ${1:name}(${2:args}) -> ${3:void} where ${4:condition} {",
+            "\t$0",
+            "}"
+        ],
+        "description": "Define a function with a where precondition"
+    },
+
+    "Import as Alias": {
+        "prefix": "fromas",
+        "body": [
+            "from ${1:.module} as ${2:alias}"
+        ],
+        "description": "Import a module with an alias (from .path as name)"
+    },
+
     "Function with Docstring": {
         "prefix": "defn",
         "body": [

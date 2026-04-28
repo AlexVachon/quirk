@@ -60,6 +60,7 @@ class LLVMCodegen {
     std::map<std::string, std::string> activeModuleAliases;
     std::map<std::string, std::string> activeTriggers;
     std::map<std::string, std::string> callableReturnTypes; // varName → inferred return type
+    std::set<std::string> externBoolReturnFunctions;       // LLVM names widened i1→i32 for C ABI
 
     void setVerbose(bool v) { verbose = v; }
 
@@ -161,8 +162,9 @@ class LLVMCodegen {
                     }
                 };
 
-                structHierarchy[s->name] = s->parents; 
+                structHierarchy[s->name] = s->parents;
                 structGen->setHierarchy(&structHierarchy);
+                typeExtensions->setHierarchy(&structHierarchy, &StructTypes);
                 extractFields(s, elementTypes, fieldNames, extractFields);
 
                 st->setBody(elementTypes);
@@ -203,10 +205,10 @@ class LLVMCodegen {
                 if (func->name == "main" || builtinGen->isBuiltin(func->name)) continue;
                 if (verbose) std::cerr << "[Codegen]   Declaring prototype: " << func->name << "\n";
                 Type* retTy = typeGen->getFunctionReturnType(func->returnType);
+                bool retIsBool = func->isExtern && retTy->isIntegerTy(1);
                 // C ABI: Bool return values are int (i32), not i1.
                 // Widen i1 return types for extern functions to avoid truncation.
-                if (func->isExtern && retTy->isIntegerTy(1))
-                    retTy = Type::getInt32Ty(Context);
+                if (retIsBool) retTy = Type::getInt32Ty(Context);
                 std::vector<Type*> argTypes;
                 if (!func->cls.empty() && !func->isStatic) argTypes.push_back(typeGen->getLLVMType(func->cls));
                 for (const auto& param : func->parameters) {
@@ -218,10 +220,11 @@ class LLVMCodegen {
                     argTypes.push_back(t);
                 }
                 FunctionType* FT = FunctionType::get(retTy, argTypes, false);
-                
+
                 // --- NEW: LINKAGE NAME INJECTION ---
                 std::string llvmName = func->linkageName.empty() ? func->name : func->linkageName;
                 Function::Create(FT, Function::ExternalLinkage, llvmName, TheModule.get());
+                if (retIsBool) externBoolReturnFunctions.insert(llvmName);
 
                 // --- NEW: Also register variadic functions by their LLVM linkage name ---
                 // processCallArgs looks up by func->getName().str() which returns the LLVM
@@ -385,6 +388,72 @@ class LLVMCodegen {
             argIt->setName(argName);
             varGen->defineArgument(argName, &*argIt);
         }
+
+        // --- where clause guard ---
+        if (node->whereClause) {
+            Value* cond = handleExpression(node->whereClause.get());
+            if (cond) {
+                Value* condBool;
+                if (cond->getType()->isIntegerTy(1))
+                    condBool = cond;
+                else if (cond->getType()->isIntegerTy())
+                    condBool = Builder.CreateICmpNE(cond, ConstantInt::get(cond->getType(), 0), "where_cond");
+                else
+                    condBool = cond;
+
+                BasicBlock* failBB = BasicBlock::Create(Context, "where_fail", F);
+                BasicBlock* passBB = BasicBlock::Create(Context, "where_pass", F);
+                Builder.CreateCondBr(condBool, passBB, failBB);
+
+                Builder.SetInsertPoint(failBB);
+                // Throw WhereConditionError — same sequence as generateThrow
+                std::string errMsg = "where clause violated in '" + node->name + "'";
+                Value* rawMsg = Builder.CreateGlobalStringPtr(errMsg);
+                std::vector<Value*> msgArgs = {rawMsg};
+                Value* strObj = structGen->allocateAndInit("String", msgArgs);
+                std::vector<Value*> excArgs = {strObj};
+                Value* excObj = structGen->allocateAndInit("WhereConditionError", excArgs);
+
+                if (StructTypes.count("Exception")) {
+                    Type* baseExcTy = PointerType::getUnqual(StructTypes["Exception"]);
+                    Value* baseExc  = Builder.CreateBitCast(excObj, baseExcTy);
+                    Value* filePtr  = Builder.CreateStructGEP(StructTypes["Exception"], baseExc, 2);
+                    Value* rawFile  = Builder.CreateGlobalStringPtr(node->moduleName.empty() ? "unknown" : node->moduleName);
+                    std::vector<Value*> fileArgs = {rawFile};
+                    Builder.CreateStore(structGen->allocateAndInit("String", fileArgs), filePtr);
+                    Value* calleePtr = Builder.CreateStructGEP(StructTypes["Exception"], baseExc, 4);
+                    Value* rawCallee = Builder.CreateGlobalStringPtr(node->name);
+                    std::vector<Value*> calleeArgs = {rawCallee};
+                    Builder.CreateStore(structGen->allocateAndInit("String", calleeArgs), calleePtr);
+                }
+
+                Value* rawExc = Builder.CreateBitCast(excObj, Type::getInt8PtrTy(Context));
+                FunctionCallee captureFn = TheModule->getOrInsertFunction(
+                    "quirk_capture_traceback",
+                    FunctionType::get(Type::getVoidTy(Context), {Type::getInt8PtrTy(Context)}, false));
+                Builder.CreateCall(captureFn, {rawExc});
+                Builder.CreateCall(TheModule->getFunction("quirk_set_exception"), {rawExc});
+
+                Value* depth    = Builder.CreateCall(TheModule->getFunction("quirk_get_try_depth"));
+                Value* hasCatch = Builder.CreateICmpSGE(depth, ConstantInt::get(Type::getInt32Ty(Context), 0));
+                BasicBlock* jumpBB  = BasicBlock::Create(Context, "where_longjmp", F);
+                BasicBlock* crashBB = BasicBlock::Create(Context, "where_crash",   F);
+                Builder.CreateCondBr(hasCatch, jumpBB, crashBB);
+
+                Builder.SetInsertPoint(jumpBB);
+                Value* activeBuf = Builder.CreateCall(TheModule->getFunction("quirk_get_current_jmp_buf"));
+                Builder.CreateCall(TheModule->getFunction("quirk_pop_try"));
+                Builder.CreateCall(TheModule->getFunction("longjmp"),
+                                   {activeBuf, ConstantInt::get(Type::getInt32Ty(Context), 1)});
+                Builder.CreateUnreachable();
+
+                Builder.SetInsertPoint(crashBB);
+                flowGen->emitUnhandledException(StructTypes);
+
+                Builder.SetInsertPoint(passBB);
+            }
+        }
+        // ---------------------------------
 
         // --- NEW: INJECT SHADOW STACK PUSH ---
         FunctionCallee pushFrame = TheModule->getOrInsertFunction("quirk_push_frame",
@@ -685,7 +754,11 @@ class LLVMCodegen {
     }
 
     void handleUse(UseNode* node) {
-        if (node->filterList.empty()) {
+        if (!node->alias.empty()) {
+            // Explicit alias: from .path as alias
+            activeModuleAliases[node->alias] = node->moduleName;
+        } else if (node->filterList.empty()) {
+            // Derive alias from last path component
             std::string alias = node->moduleName;
             size_t lastDot = alias.rfind('.');
             if (lastDot == std::string::npos) lastDot = alias.rfind('/');
@@ -1040,7 +1113,12 @@ class LLVMCodegen {
             }
             
             processCallArgs(func, call->args, args, (objPtr ? 1 : 0));
-            return Builder.CreateCall(func, args);
+            Value* result = Builder.CreateCall(func, args);
+            // Extern Bool-returning methods are widened to i32 for C ABI — truncate back to i1.
+            if (result->getType()->isIntegerTy(32) &&
+                externBoolReturnFunctions.count(func->getName().str()))
+                return Builder.CreateTrunc(result, Type::getInt1Ty(Context));
+            return result;
         }
         return nullptr;
     }
@@ -1048,7 +1126,13 @@ class LLVMCodegen {
     Value* generateGlobalCall(Function* func, CallNode* call) {
         std::vector<Value*> finalArgs;
         processCallArgs(func, call->args, finalArgs, 0);
-        return Builder.CreateCall(func, finalArgs);
+        Value* result = Builder.CreateCall(func, finalArgs);
+        // Extern Bool-returning functions are widened to i32 for C ABI.
+        // Truncate back to i1 so the rest of codegen (print, comparisons, etc.) sees Bool.
+        if (result->getType()->isIntegerTy(32) &&
+            externBoolReturnFunctions.count(func->getName().str()))
+            return Builder.CreateTrunc(result, Type::getInt1Ty(Context));
+        return result;
     }
 
     // Resolves a Quirk function name to an LLVM Function*, consulting
@@ -1640,6 +1724,7 @@ class LLVMCodegen {
             if (el->isStructTy()) {
                 std::string name = cast<StructType>(el)->getName().str();
                 if (name.find("struct.") == 0) name = name.substr(7);
+                { size_t d = name.find('.'); if (d != std::string::npos && std::isdigit((unsigned char)name[d+1])) name = name.substr(0, d); }
                 // Already Any* — pass through
                 if (name == "Any") return v;
                 // box_* are declared as i8*(i8*) — must bitcast struct ptr to i8* first
@@ -1647,14 +1732,29 @@ class LLVMCodegen {
                 if (name.find("String") != std::string::npos) return callBox("Core_Primitives_Any_box_string", {asPtr});
                 if (name.find("List")   != std::string::npos) return callBox("Core_Primitives_Any_box_list",   {asPtr});
                 if (name.find("Map")    != std::string::npos) return callBox("Core_Primitives_Any_box_map",    {asPtr});
-                // Other struct — call __str, fall back to __repr, then box as String
-                std::string strMethod = name + "___str";
-                Function* strFunc = TheModule->getFunction(strMethod);
-                if (!strFunc) strFunc = TheModule->getFunction(name + "__str");
-                if (!strFunc) strFunc = TheModule->getFunction(name + "___repr");
-                if (!strFunc) strFunc = TheModule->getFunction(name + "__repr");
+                // Other struct — call __str, walking up the inheritance hierarchy
+                auto findStrFunc = [&](const std::string& typeName) -> Function* {
+                    Function* f = TheModule->getFunction(typeName + "___str");
+                    if (!f) { std::string sfx = typeName + "___str"; for (auto& F : *TheModule) if (F.getName().endswith(sfx)) { f = &F; break; } }
+                    if (!f) f = TheModule->getFunction(typeName + "__str");
+                    if (!f) f = TheModule->getFunction(typeName + "___repr");
+                    if (!f) f = TheModule->getFunction(typeName + "__repr");
+                    return f;
+                };
+                Function* strFunc = findStrFunc(name);
+                Value* strSelf = v;
+                if (!strFunc) {
+                    // Walk inheritance hierarchy
+                    std::string current = name;
+                    while (!strFunc && structHierarchy.count(current) && !structHierarchy[current].empty()) {
+                        current = structHierarchy[current][0];
+                        strFunc = findStrFunc(current);
+                        if (strFunc && StructTypes.count(current))
+                            strSelf = Builder.CreateBitCast(v, PointerType::getUnqual(StructTypes[current]));
+                    }
+                }
                 if (strFunc) {
-                    Value* strObj = Builder.CreateCall(strFunc, {v});
+                    Value* strObj = Builder.CreateCall(strFunc, {strSelf});
                     if (strObj->getType()->isPointerTy() &&
                         strObj->getType()->getPointerElementType()->isIntegerTy(8)) {
                         std::vector<Value*> args = {strObj};
@@ -1889,6 +1989,70 @@ Value* LLVMCodegen::handleExpression(Node* node) {
         }
         // ── end `in` ─────────────────────────────────────────────────────────
 
+        // ── `expr as TypeName` ───────────────────────────────────────────────
+        if (binOp->op == "as") {
+            Value* src = handleExpression(binOp->left.get());
+            if (!src) return nullptr;
+            std::string targetType;
+            if (auto* lit = dynamic_cast<LiteralNode*>(binOp->right.get()))
+                targetType = lit->value;
+
+            Type* srcTy = src->getType();
+            Type* i32Ty = Type::getInt32Ty(Context);
+            Type* i1Ty  = Type::getInt1Ty(Context);
+            Type* i8Ty  = Type::getInt8Ty(Context);
+            Type* dblTy = Type::getDoubleTy(Context);
+
+            if (targetType == "Double" || targetType == "Float") {
+                if (srcTy->isIntegerTy())  return Builder.CreateSIToFP(src, dblTy, "cast_dbl");
+                if (srcTy->isDoubleTy())   return src;
+            }
+            if (targetType == "Int") {
+                if (srcTy->isDoubleTy())      return Builder.CreateFPToSI(src, i32Ty, "cast_int");
+                if (srcTy->isIntegerTy(1))    return Builder.CreateZExt(src, i32Ty, "cast_int");
+                if (srcTy->isIntegerTy(8))    return Builder.CreateZExt(src, i32Ty, "cast_int");
+                if (srcTy->isIntegerTy(32))   return src;
+                if (srcTy->isPointerTy())     return Builder.CreatePtrToInt(src, i32Ty, "cast_int");
+            }
+            if (targetType == "Bool") {
+                if (srcTy->isIntegerTy(1))  return src;
+                if (srcTy->isIntegerTy())   return Builder.CreateICmpNE(src, ConstantInt::get(srcTy, 0), "cast_bool");
+                if (srcTy->isDoubleTy())    return Builder.CreateFCmpONE(src, ConstantFP::get(dblTy, 0.0), "cast_bool");
+                if (srcTy->isPointerTy())   return Builder.CreateICmpNE(src, Constant::getNullValue(srcTy), "cast_bool");
+            }
+            if (targetType == "Char") {
+                if (srcTy->isIntegerTy(8))  return src;
+                if (srcTy->isIntegerTy())   return Builder.CreateTrunc(src, i8Ty, "cast_char");
+            }
+            if (targetType == "String") {
+                // Int/Bool/Double → String via runtime str helpers
+                if (srcTy->isIntegerTy(1)) {
+                    Function* f = TheModule->getFunction("Core_Primitives_Bool_str");
+                    if (f) return Builder.CreateCall(f, {src}, "cast_str");
+                }
+                if (srcTy->isIntegerTy()) {
+                    Value* i32val = srcTy->isIntegerTy(32) ? src : Builder.CreateSExt(src, i32Ty);
+                    Function* f = TheModule->getFunction("Core_Primitives_Int_str");
+                    if (f) return Builder.CreateCall(f, {i32val}, "cast_str");
+                }
+                if (srcTy->isDoubleTy()) {
+                    Function* f = TheModule->getFunction("Core_Primitives_Double_str");
+                    if (f) return Builder.CreateCall(f, {src}, "cast_str");
+                }
+            }
+            // Pointer-to-pointer: bitcast (covers Any, struct upcasts, etc.)
+            if (srcTy->isPointerTy()) {
+                Type* dstTy = typeGen->getLLVMType(targetType);
+                if (dstTy && dstTy->isPointerTy())
+                    return Builder.CreateBitCast(src, dstTy, "cast_ptr");
+                // Any = i8*
+                if (targetType == "Any")
+                    return Builder.CreateBitCast(src, Type::getInt8PtrTy(Context), "cast_any");
+            }
+            return src; // no-op fallback
+        }
+        // ── end `as` ─────────────────────────────────────────────────────────
+
         Value* L = handleExpression(binOp->left.get());
         Value* R = handleExpression(binOp->right.get());
         if (!L || !R) return nullptr;
@@ -1961,17 +2125,27 @@ Value* LLVMCodegen::handleExpression(Node* node) {
                         // ... (keep __str call logic) ...
                         std::string sName = st->getName().str();
                         if (sName.find("struct.") == 0) sName = sName.substr(7);
-                        // Try short name first, then search all functions for a matching ___str
-                        Function* strFunc = TheModule->getFunction(sName + "___str");
+                        { size_t d = sName.find('.'); if (d != std::string::npos && std::isdigit((unsigned char)sName[d+1])) sName = sName.substr(0, d); }
+                        // Try direct name, then walk inheritance hierarchy for __str
+                        auto findStr = [&](const std::string& t) -> Function* {
+                            Function* f = TheModule->getFunction(t + "___str");
+                            if (!f) { std::string sfx = t + "___str"; for (auto& F : *TheModule) if (F.getName().endswith(sfx)) { f = &F; break; } }
+                            if (!f) f = TheModule->getFunction(t + "__str");
+                            return f;
+                        };
+                        Function* strFunc = findStr(sName);
+                        Value* strSelf = val;
                         if (!strFunc) {
-                            // Search module for any function ending in <StructName>___str
-                            std::string suffix = sName + "___str";
-                            for (auto& F : *TheModule) {
-                                if (F.getName().endswith(suffix)) { strFunc = &F; break; }
+                            std::string cur = sName;
+                            while (!strFunc && structHierarchy.count(cur) && !structHierarchy[cur].empty()) {
+                                cur = structHierarchy[cur][0];
+                                strFunc = findStr(cur);
+                                if (strFunc && StructTypes.count(cur))
+                                    strSelf = Builder.CreateBitCast(val, PointerType::getUnqual(StructTypes[cur]));
                             }
                         }
                         if (strFunc) {
-                            Value* ret = Builder.CreateCall(strFunc, {val});
+                            Value* ret = Builder.CreateCall(strFunc, {strSelf});
                             if (ret->getType()->isPointerTy() && ret->getType()->getPointerElementType()->isIntegerTy(8)) {
                                 std::vector<Value*> boxArgs = {ret};
                                 return structGen->allocateAndInit("String", boxArgs);

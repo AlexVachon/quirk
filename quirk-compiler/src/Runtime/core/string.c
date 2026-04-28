@@ -806,16 +806,67 @@ int Core_String_String_is_alpha(String* self) {
     return 1;
 }
 
+extern void quirk_throw_exception(const char* type_name, const char* message);
+
 int Core_String_String_to_int(String* self) {
-    if (!self || !self->buffer)
+    if (!self || !self->buffer || self->length == 0) {
+        quirk_throw_exception("ValueError", "cannot convert empty string to Int");
         return 0;
-    return (int)strtol(self->buffer, NULL, 10);
+    }
+    char* end;
+    long val = strtol(self->buffer, &end, 10);
+    if (end == self->buffer || *end != '\0') {
+        char msg[256];
+        snprintf(msg, sizeof(msg), "invalid literal for Int: '%s'", self->buffer);
+        quirk_throw_exception("ValueError", msg);
+        return 0;
+    }
+    return (int)val;
 }
 
 double Core_String_String_to_float(String* self) {
-    if (!self || !self->buffer)
+    if (!self || !self->buffer || self->length == 0) {
+        quirk_throw_exception("ValueError", "cannot convert empty string to Double");
         return 0.0;
-    return strtod(self->buffer, NULL);
+    }
+    char* end;
+    double val = strtod(self->buffer, &end);
+    if (end == self->buffer || *end != '\0') {
+        char msg[256];
+        snprintf(msg, sizeof(msg), "invalid literal for Double: '%s'", self->buffer);
+        quirk_throw_exception("ValueError", msg);
+        return 0.0;
+    }
+    return val;
+}
+
+int8_t Core_String_String_to_bool(String* self) {
+    if (!self || !self->buffer) {
+        quirk_throw_exception("ValueError", "cannot convert null string to Bool");
+        return 0;
+    }
+    if (strcmp(self->buffer, "true") == 0)  return 1;
+    if (strcmp(self->buffer, "false") == 0) return 0;
+    char msg[256];
+    snprintf(msg, sizeof(msg),
+             "invalid literal for Bool: '%s' (expected 'true' or 'false')", self->buffer);
+    quirk_throw_exception("ValueError", msg);
+    return 0;
+}
+
+char Core_String_String_to_char(String* self) {
+    if (!self || !self->buffer || self->length == 0) {
+        quirk_throw_exception("ValueError", "cannot convert empty string to Char");
+        return '\0';
+    }
+    if (self->length != 1) {
+        char msg[256];
+        snprintf(msg, sizeof(msg),
+                 "invalid conversion to Char: expected single character, got '%s'", self->buffer);
+        quirk_throw_exception("ValueError", msg);
+        return '\0';
+    }
+    return self->buffer[0];
 }
 
 char* Core_String_float_to_str(double val) {

@@ -36,6 +36,7 @@ enum class TokenType {
     ENUM,
     MATCH,
     CASE,
+    WHERE,
 
     // Literals
     IDENTIFIER,

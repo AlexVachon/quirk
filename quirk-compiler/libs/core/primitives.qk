@@ -9,6 +9,8 @@ struct Int {
 
     extern define is_even(self) -> Bool
     extern define is_odd(self) -> Bool
+
+    extern define parse(s: String) -> Int
 }
 
 struct Double {
@@ -20,22 +22,28 @@ struct Double {
     extern define floor(self) -> Double
     extern define round(self) -> Double
     extern define sqrt(self) -> Double
+
+    extern define parse(s: String) -> Double
 }
 
 struct Bool {
     extern define str(self) -> String
+
+    extern define parse(s: String) -> Bool
 }
 
 struct Char {
     extern define __init(self)
     extern define str(self) -> String
-    
+
     extern define is_upper(self) -> Bool
     extern define is_lower(self) -> Bool
     extern define is_digit(self) -> Bool
     extern define is_alpha(self) -> Bool
     extern define is_space(self) -> Bool
-    
+
     extern define to_upper(self) -> Char
     extern define to_lower(self) -> Char
+
+    extern define parse(s: String) -> Char
 }

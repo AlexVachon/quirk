@@ -42,6 +42,9 @@ export class QuirkDefinitionProvider implements vscode.DefinitionProvider {
 
         const symbol = document.getText(range);
 
+        // Whether the word is immediately after a dot — member access, not an alias reference
+        const isMemberAccess = range.start.character > 0 && lineText.charAt(range.start.character - 1) === '.';
+
         // =========================================================
         // 0. SUPER() METHOD CALL
         // =========================================================
@@ -52,9 +55,11 @@ export class QuirkDefinitionProvider implements vscode.DefinitionProvider {
 
         // =========================================================
         // 1. IMPORT LINE — clicking on the module path or a named import,
-        //    OR using an imported symbol elsewhere in the file
+        //    OR using an imported symbol elsewhere in the file.
+        //    Skip when the cursor is on a member (e.g. the `greet` in
+        //    `greet.greet(...)`) so it resolves to the function, not the module.
         // =========================================================
-        const importLocation = this.findImportLineInCurrentFile(document, symbol);
+        const importLocation = !isMemberAccess && this.findImportLineInCurrentFile(document, symbol);
         if (importLocation) {
             // Resolve the actual definition regardless of where the cursor is
             const importLine = document.lineAt(importLocation.range.start.line).text;
@@ -75,6 +80,13 @@ export class QuirkDefinitionProvider implements vscode.DefinitionProvider {
                     const file = this.resolvePath(projectRoot, currentFilePath, importMatch[1]);
                     if (file) return new vscode.Location(vscode.Uri.file(file), new vscode.Position(0, 0));
                 }
+
+                // from .path as alias — resolve alias to the module file
+                const asAliasImportMatch = /^\s*from\s+([.a-zA-Z0-9_/]+)\s+as\s+([a-zA-Z_]\w*)/.exec(importLine);
+                if (asAliasImportMatch && asAliasImportMatch[2] === symbol) {
+                    const file = this.resolvePath(projectRoot, currentFilePath, asAliasImportMatch[1]);
+                    if (file) return new vscode.Location(vscode.Uri.file(file), new vscode.Position(0, 0));
+                }
             }
 
             return importLocation;
@@ -83,7 +95,7 @@ export class QuirkDefinitionProvider implements vscode.DefinitionProvider {
         // =========================================================
         // 2. MEMBER ACCESS  — prefix.symbol
         // =========================================================
-        if (range.start.character > 0 && lineText.charAt(range.start.character - 1) === '.') {
+        if (isMemberAccess) {
             const prefixRange = document.getWordRangeAtPosition(
                 new vscode.Position(position.line, range.start.character - 2),
                 /[a-zA-Z0-9_]+/
@@ -472,6 +484,14 @@ export class QuirkDefinitionProvider implements vscode.DefinitionProvider {
     private findImportLineInCurrentFile(document: vscode.TextDocument, symbol: string): vscode.Location | null {
         for (let i = 0; i < document.lineCount; i++) {
             const line = document.lineAt(i).text;
+
+            // from .path as alias — alias is the declared name
+            const asAliasMatch = /^\s*from\s+([.a-zA-Z0-9_/]+)\s+as\s+([a-zA-Z_]\w*)/.exec(line);
+            if (asAliasMatch && asAliasMatch[2] === symbol) {
+                const col = line.indexOf(symbol, line.indexOf(' as '));
+                return new vscode.Location(document.uri, new vscode.Position(i, Math.max(0, col)));
+            }
+
             const m = /^\s*(?:use|from)\s+([.a-zA-Z0-9_/]+)/.exec(line);
             if (!m) continue;
             if (m[1].split(/[./]/).pop() === symbol) {
@@ -487,6 +507,10 @@ export class QuirkDefinitionProvider implements vscode.DefinitionProvider {
     private resolveImportPathFromAlias(document: vscode.TextDocument, alias: string): string | null {
         for (let i = 0; i < document.lineCount; i++) {
             const line = document.lineAt(i).text;
+            // from .path as alias
+            const asMatch = /^\s*from\s+([.a-zA-Z0-9_/]+)\s+as\s+([a-zA-Z_]\w*)/.exec(line);
+            if (asMatch && asMatch[2] === alias) return asMatch[1];
+            // use module.name  (last segment matches alias)
             const m = /^\s*(?:use|from)\s+([.a-zA-Z0-9_/]+)/.exec(line);
             if (m && m[1].split(/[./]/).pop() === alias) return m[1];
         }

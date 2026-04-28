@@ -5,7 +5,7 @@ const KEYWORDS = new Set([
     'return', 'break', 'continue', 'use', 'from', 'with', 'as',
     'extern', 'true', 'false', 'null', 'del', 'init', 'def',
     'trigger', 'try', 'catch', 'throw', 'finally', 'and', 'or', 'not', 'super', 'enum',
-    'match', 'case', '_',
+    'match', 'case', '_', 'where', 'is',
     'fn'
 ]);
 
@@ -15,7 +15,7 @@ const BUILTINS = new Set([
     'true', 'false', 'null',
     'Exception', 'TypeError', 'ValueError', 'IndexError', 'KeyError',
     'IOError', 'FileNotFoundError', 'RuntimeError', 'NotImplementedError',
-    'SocketError', 'ZeroDivisionError', 'AssertionError', 'NullError'
+    'SocketError', 'ZeroDivisionError', 'AssertionError', 'NullError', 'WhereConditionError'
 ]);
 
 function maskLine(line: string): string {
@@ -172,6 +172,10 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
             if (alias) fileGlobals.add(alias);
         }
 
+        // from .path as alias — register the alias as a known global
+        const fromAsMatch = /^\s*from\s+[.a-zA-Z0-9_/]+\s+as\s+([a-zA-Z_]\w*)/.exec(cleanLine);
+        if (fromAsMatch) fileGlobals.add(fromAsMatch[1]);
+
         match = /^\s*from\s+[.a-zA-Z0-9_/]+\s+use\s+\{([^}]*)\}/.exec(cleanLine);
         if (match) {
             match[1].split(',').forEach(s => {
@@ -195,6 +199,7 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
     // PASS 2: Detailed Scope & Usage Scan
     // ==========================================
     let locals = new Set<string>();
+    const localTypes = new Map<string, string>(); // varName → inferred Quirk type
     inDocBlock = false;
 
     // Precompile regexes used inside the per-line loop
@@ -278,13 +283,47 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
         const isInsideFunc = currentFuncDepth !== -1;
 
         if (isInsideFunc) {
-            const assignMatch = /(?<!\.)\b([a-zA-Z_]\w*)\s*(?::\s*[a-zA-Z0-9_.?]+)?\s*(?::=|=(?!>)|\+=|-=|\*=|\/=)/.exec(maskedLine);
+            const assignMatch = /(?<!\.)\b([a-zA-Z_]\w*)\s*(?::\s*([a-zA-Z0-9_.?]+))?\s*(?::=|=(?!>)|\+=|-=|\*=|\/=)/.exec(maskedLine);
             if (assignMatch) {
                 const vName = assignMatch[1];
                 if (!locals.has(vName) && !KEYWORDS.has(vName) && !BUILTINS.has(vName)) {
                     locals.add(vName);
                     const startIdx = originalLine.indexOf(vName);
                     declarations.set(`${i}_${vName}`, new vscode.Range(i, startIdx, i, startIdx + vName.length));
+                }
+                // Infer type from explicit annotation or RHS
+                if (!localTypes.has(vName)) {
+                    const rhs = maskedLine.slice((assignMatch.index ?? 0) + assignMatch[0].length).trim();
+                    const explicitType = assignMatch[2];
+                    if (explicitType && explicitType !== 'void') {
+                        localTypes.set(vName, explicitType);
+                    } else if (rhs.startsWith('"'))                  { localTypes.set(vName, 'String'); }
+                    else if (/^\d+\.\d/.test(rhs))                   { localTypes.set(vName, 'Double'); }
+                    else if (/^\d/.test(rhs))                        { localTypes.set(vName, 'Int'); }
+                    else if (/^(?:true|false)\b/.test(rhs))          { localTypes.set(vName, 'Bool'); }
+                    else if (rhs.startsWith("'"))                    { localTypes.set(vName, 'Char'); }
+                    else if (rhs.startsWith('['))                     { localTypes.set(vName, 'List'); }
+                    else if (rhs.startsWith('{'))                    { localTypes.set(vName, 'Map'); }
+                    else {
+                        // x := receiver.method(...)
+                        const mCall = /^([a-zA-Z0-9_]+)\.([a-zA-Z0-9_]+)\s*\(/.exec(rhs);
+                        if (mCall) {
+                            const recvType = localTypes.get(mCall[1]);
+                            if (recvType) {
+                                const methodReturnTypes: Record<string, Record<string, string>> = {
+                                    String: { upper:'String', lower:'String', trim:'String', replace:'String',
+                                              split:'List', lines:'List', to_int:'Int', to_float:'Double',
+                                              to_bool:'Bool', to_char:'Char', find:'Int', count:'Int',
+                                              contains:'Bool', startswith:'Bool', endswith:'Bool', distance:'Int',
+                                              substring:'String', join:'String', reverse:'String', encode:'String' },
+                                    List:   { join:'String', find:'Any', any:'Bool', all:'Bool', get:'Any' },
+                                    Map:    { get:'Any', keys:'List', values:'List', has:'Bool' },
+                                };
+                                const ret = methodReturnTypes[recvType]?.[mCall[2]];
+                                if (ret) localTypes.set(vName, ret);
+                            }
+                        }
+                    }
                 }
             }
 
@@ -298,7 +337,7 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
                 }
             }
 
-            const forMatch = /\bfor\s+(?:ref\s+)?([a-zA-Z_]\w*)\s+in\b/.exec(maskedLine);
+            const forMatch = /\bfor\s+(?:ref\s+)?([a-zA-Z_]\w*)\s+in\s+([a-zA-Z0-9_"'\[]+)/.exec(maskedLine);
             if (forMatch) {
                 const vName = forMatch[1];
                 if (!locals.has(vName)) {
@@ -306,9 +345,18 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
                     const startIdx = originalLine.indexOf(vName, forMatch.index);
                     declarations.set(`${i}_${vName}`, new vscode.Range(i, startIdx, i, startIdx + vName.length));
                 }
+                // Infer element type from the iterable
+                const iterable = forMatch[2];
+                if (iterable.startsWith('"') || iterable.startsWith("'")) {
+                    localTypes.set(vName, 'Char');
+                } else {
+                    const iterType = localTypes.get(iterable);
+                    if (iterType === 'String') localTypes.set(vName, 'Char');
+                    else if (iterType === 'List') localTypes.set(vName, 'Any');
+                }
             }
 
-            const catchMatch = /\bcatch\s*\(\s*([a-zA-Z_]\w*)\s*:/.exec(maskedLine);
+            const catchMatch = /\bcatch\s*\(\s*([a-zA-Z_]\w*)\s*:\s*([a-zA-Z_]\w*)/.exec(maskedLine);
             if (catchMatch) {
                 const vName = catchMatch[1];
                 if (!locals.has(vName)) {
@@ -316,6 +364,7 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
                     const startIdx = originalLine.indexOf(vName, catchMatch.index);
                     declarations.set(`${i}_${vName}`, new vscode.Range(i, startIdx, i, startIdx + vName.length));
                 }
+                localTypes.set(vName, catchMatch[2]); // e: WhereConditionError → WhereConditionError
             }
 
             // Lambda params: fn(x: Int, y) => ... or fn(x) { ... }

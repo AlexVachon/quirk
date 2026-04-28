@@ -20,13 +20,15 @@ class Node {
 class UseNode : public Node {
    public:
     std::string moduleName;
-    std::vector<std::string> filterList; 
+    std::vector<std::string> filterList;
+    std::string alias; // from .path as alias
 
-    UseNode(std::string mod, std::vector<std::string> filters = {})
-        : moduleName(mod), filterList(filters) {}
+    UseNode(std::string mod, std::vector<std::string> filters = {}, std::string alias = "")
+        : moduleName(mod), filterList(filters), alias(alias) {}
 
     void print(int indent) const override {
         std::cout << std::string(indent, ' ') << "Use: " << moduleName;
+        if (!alias.empty()) std::cout << " as " << alias;
         if (!filterList.empty()) {
             std::cout << " (Only: ";
             for (auto& s : filterList) std::cout << s << " ";
@@ -75,6 +77,7 @@ class FunctionNode : public Node {
     bool isStatic = false;
 
     std::string linkageName;
+    std::unique_ptr<Node> whereClause;
 
 
     void print(int indent) const override {

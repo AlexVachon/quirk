@@ -39,4 +39,7 @@ define main() {
     // Conversion
     i_val := pi.to_int()
     print("As int: " + i_val.str())
+
+    s_val := "123"
+    print("As Int: ${Int.parse(s_val)}")
 }

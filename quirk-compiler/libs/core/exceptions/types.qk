@@ -227,3 +227,24 @@ struct NullError : RuntimeError {
         super().__init(message)
     }
 }
+
+---
+Raised when a function's `where` precondition is violated at runtime.
+Inherits from RuntimeError.
+
+@example:
+define sqrt(x: Double) -> Double where x >= 0.0 {
+    return x
+}
+
+try {
+    sqrt(-1.0)
+} catch (e: WhereConditionError) {
+    print("Precondition failed: " + e.message)
+}
+---
+struct WhereConditionError : RuntimeError {
+    define __init(self, message: String) -> void {
+        super().__init(message)
+    }
+}

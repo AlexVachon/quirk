@@ -58,6 +58,7 @@ define main() {
     // Explicitly converting strings to numbers
     total := s_num.to_int() + 10     // 133
     area := s_pi.to_float() * 2.0    // 6.28...
+    print("true".to_bool())
     
     print("Parsed: ${total}, ${area}")
 

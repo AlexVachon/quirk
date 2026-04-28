@@ -1,0 +1,6 @@
+from .greet_lib as greet
+
+define main() -> void {
+    print(greet.greet("Alex"))
+    print(greet.shout("hello from quirk"))
+}

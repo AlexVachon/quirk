@@ -180,6 +180,9 @@ void Sema::checkFunction(FunctionNode *f)
         defineVariable(param.name, param.type);
     }
 
+    if (f->whereClause)
+        checkExpression(f->whereClause.get());
+
     if (!f->isExtern)
     {
         for (const auto &statement : f->body)
@@ -494,6 +497,15 @@ std::string Sema::checkBinaryOp(BinaryOpNode *node)
         return "Bool";
     }
 
+    if (node->op == "as")
+    {
+        checkExpression(node->left.get());
+        // RHS is always a LiteralNode holding the target type name
+        if (auto lit = dynamic_cast<LiteralNode*>(node->right.get()))
+            return lit->value;
+        return "unknown";
+    }
+
     if (node->op == "in")
     {
         checkExpression(node->left.get());
@@ -740,6 +752,8 @@ std::string Sema::checkCall(CallNode *node)
                 {"to_int",     "Int"},
                 {"to_float",   "Double"},
                 {"to_double",  "Double"},
+                {"to_bool",    "Bool"},
+                {"to_char",    "Char"},
                 {"lower",      "String"},
                 {"upper",      "String"},
                 {"trim",       "String"},
@@ -759,17 +773,21 @@ std::string Sema::checkCall(CallNode *node)
                 {"str",        "String"},
                 {"to_float",   "Double"},
                 {"to_double",  "Double"},
+                {"parse",      "Int"},
             }},
             {"Double", {
                 {"str",        "String"},
                 {"to_int",     "Int"},
+                {"parse",      "Double"},
             }},
             {"Bool", {
                 {"str",        "String"},
+                {"parse",      "Bool"},
             }},
             {"Char", {
                 {"str",        "String"},
                 {"to_int",     "Int"},
+                {"parse",      "Char"},
             }},
             {"List", {
                 {"get",        "Any"},

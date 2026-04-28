@@ -203,7 +203,11 @@ class BuiltinGen {
                 if (type->getIntegerBitWidth() == 1) {
                     Function* boolStrFunc = TheModule->getFunction("Core_Primitives_Bool_str");
                     if (boolStrFunc) {
-                        Value* strObj = Builder.CreateCall(boolStrFunc, {val});
+                        // Bool_str is declared as taking i32 (C ABI widening) — ZExt i1 to match.
+                        Value* widened = boolStrFunc->getFunctionType()->getParamType(0)->isIntegerTy(32)
+                            ? Builder.CreateZExt(val, Type::getInt32Ty(Context))
+                            : val;
+                        Value* strObj = Builder.CreateCall(boolStrFunc, {widened});
                         Value* bufPtr = structGen->getMemberPtr(strObj, "buffer");
                         if (bufPtr) {
                             Value* cStr = Builder.CreateLoad(Type::getInt8PtrTy(Context), bufPtr);

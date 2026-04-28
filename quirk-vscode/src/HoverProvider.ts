@@ -81,11 +81,11 @@ export class QuirkHoverProvider implements vscode.HoverProvider {
 
         // ---- Built-in type hovers ----
         const builtinHovers: Record<string, string> = {
-            'String':    '**Built-in type** `String`\n\nUTF-8 string with methods: `.length`, `.substring()`, `.split()`, `.trim()`, etc.',
-            'Int':       '**Built-in type** `Int`\n\n32-bit signed integer.',
-            'Double':    '**Built-in type** `Double`\n\n64-bit floating-point number.',
-            'Bool':      '**Built-in type** `Bool`\n\n`true` or `false`.',
-            'Char':      '**Built-in type** `Char`\n\nA single character.',
+            'String':    '**Built-in type** `String`\n\nUTF-8 string.\n\nMethods: `.length`, `.substring()`, `.split()`, `.trim()`, `.to_int()`, `.to_float()`, `.to_bool()`, `.to_char()`, etc.\n\nAll `.to_*()` methods throw `ValueError` on invalid input.',
+            'Int':       '**Built-in type** `Int`\n\n32-bit signed integer.\n\nMethods: `.str()`, `.abs()`, `.pow()`, `.to_float()`, `.is_even()`, `.is_odd()`\n\nStatic: `Int.parse(s)` — parse a string, throws `ValueError` on failure.',
+            'Double':    '**Built-in type** `Double`\n\n64-bit floating-point number.\n\nMethods: `.str()`, `.to_int()`, `.abs()`, `.ceil()`, `.floor()`, `.round()`, `.sqrt()`\n\nStatic: `Double.parse(s)` — parse a string, throws `ValueError` on failure.',
+            'Bool':      '**Built-in type** `Bool`\n\n`true` or `false`.\n\nMethods: `.str()`\n\nStatic: `Bool.parse(s)` — accepts `"true"` or `"false"`, throws `ValueError` otherwise.',
+            'Char':      '**Built-in type** `Char`\n\nA single character.\n\nMethods: `.str()`, `.to_upper()`, `.to_lower()`, `.is_alpha()`, `.is_digit()`, `.is_space()`\n\nStatic: `Char.parse(s)` — parse a single-character string, throws `ValueError` otherwise.',
             'List':      '**Built-in type** `List`\n\nDynamic array. Methods: `.append()`, `.pop()`, `.length`, etc.',
             'Map':       '**Built-in type** `Map`\n\nHash map. Methods: `.put()`, `.get()`, `.has()`, `.len()`, etc.',
             'File':      '**Built-in type** `File`\n\nFile handle. Methods: `.read()`, `.write()`, `.close()`.',
@@ -164,6 +164,7 @@ export class QuirkHoverProvider implements vscode.HoverProvider {
                 const docstring: string[] = [];
                 let lineNum = def.range.start.line - 1;
                 let readingDocBlock = false;
+                let docBlockOpenLine = -1;
                 while (lineNum >= 0) {
                     const rawLine = targetDoc.lineAt(lineNum).text;
                     const t = rawLine.trim();
@@ -171,10 +172,20 @@ export class QuirkHoverProvider implements vscode.HoverProvider {
                         if (t === '---') { readingDocBlock = true; }
                         else if (t !== '') { break; }
                     } else {
-                        if (t === '---') { break; }
+                        if (t === '---') { docBlockOpenLine = lineNum; break; }
                         else { docstring.unshift(rawLine); }
                     }
                     lineNum--;
+                }
+
+                // If the opening --- has only blank lines before it, this is a
+                // module-level docstring, not a function docstring — don't steal it.
+                if (docBlockOpenLine >= 0) {
+                    let isModuleDoc = true;
+                    for (let j = 0; j < docBlockOpenLine; j++) {
+                        if (targetDoc.lineAt(j).text.trim() !== '') { isModuleDoc = false; break; }
+                    }
+                    if (isModuleDoc) docstring.length = 0;
                 }
 
                 if (docstring.length > 0) {

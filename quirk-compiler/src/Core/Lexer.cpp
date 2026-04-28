@@ -162,6 +162,7 @@ Token Lexer::nextToken()
         if (ident == "match")    return {TokenType::MATCH,      ident, startLine, startCol};
         if (ident == "case")     return {TokenType::CASE,       ident, startLine, startCol};
         if (ident == "fn")       return {TokenType::FN,         ident, startLine, startCol};
+        if (ident == "where")    return {TokenType::WHERE,      ident, startLine, startCol};
         return {TokenType::IDENTIFIER, ident, startLine, startCol};
     }
 

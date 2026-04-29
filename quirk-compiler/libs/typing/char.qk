@@ -12,7 +12,7 @@ print(c.to_lower())   // 'a'
 struct Char {
     extern define __init(self)
     extern define str(self) -> String
-    define __str(self) -> String { return self.str() }
+    extern define __str(self) -> String
 
     extern define is_upper(self) -> Bool
     extern define is_lower(self) -> Bool

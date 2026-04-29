@@ -16,7 +16,7 @@ struct Int {
     @returns: String
     ---
     extern define str(self) -> String
-    define __str(self) -> String { return self.str() }
+    extern define __str(self) -> String
 
     extern define to_float(self) -> Double
 

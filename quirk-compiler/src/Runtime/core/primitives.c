@@ -160,3 +160,8 @@ char Core_Primitives_Char_parse(String* s) {
     }
     return s->buffer[0];
 }
+
+String* Core_Primitives_Int___str(int self)    { return Core_Primitives_Int_str(self); }
+String* Core_Primitives_Double___str(double self) { return Core_Primitives_Double_str(self); }
+String* Core_Primitives_Bool___str(int self)   { return Core_Primitives_Bool_str(self); }
+String* Core_Primitives_Char___str(char self)  { return Core_Primitives_Char_str(self); }

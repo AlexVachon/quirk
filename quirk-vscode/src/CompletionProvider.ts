@@ -60,7 +60,7 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
             }
         }
 
-        // Literal value followed by a dot: "hello"., true., false., 42.
+        // Literal value followed by a dot: "hello"., true., false., 42., []., {}.
         // Must come before memberMatch since that regex only handles identifiers.
         if (/(?:"[^"]*"|'[^']*')\.[a-zA-Z0-9_]*$/.test(linePrefix))
             return this.provideObjectMemberCompletions(document, position, '', 'String');
@@ -69,6 +69,20 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
         // \d+\.(?!\d) — int literal dot, but not a double like 3.14
         if (/\b\d+\.(?!\d)[a-zA-Z0-9_]*$/.test(linePrefix))
             return this.provideObjectMemberCompletions(document, position, '', 'Int');
+        // [...]., []., ["a", "b"]. — list literal dot (NOT index access like l[1].)
+        if (/(?<![a-zA-Z0-9_])\[.*\][ \t]*\.[a-zA-Z0-9_]*$/.test(linePrefix))
+            return this.provideObjectMemberCompletions(document, position, '', 'List');
+
+        // someVar[expr]. — index access dot: infer element type from the container variable
+        const indexAccessMatch = /([a-zA-Z0-9_]+)\[[^\]]*\][ \t]*\.[a-zA-Z0-9_]*$/.exec(linePrefix);
+        if (indexAccessMatch) {
+            const containerVar = indexAccessMatch[1];
+            const containerType = this.inferTypeOfVariable(document, position, containerVar);
+            // List[i] → element type unknown (Any); String[i] → Char; Map[k] → Any
+            if (containerType === 'String') return this.provideObjectMemberCompletions(document, position, '', 'Char');
+            // For List/Map the element type is Any — no useful completions available
+            return [];
+        }
 
         // someVar.  or  someVar.partial  — member completions
         const memberMatch = /([a-zA-Z0-9_]+)\.([a-zA-Z0-9_]*)$/.exec(linePrefix);
@@ -572,34 +586,45 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
                 find: 'Int', index: 'Int', count: 'Int', distance: 'Int',
                 to_int: 'Int', to_float: 'Double', to_bool: 'Bool', to_char: 'Char',
                 startswith: 'Bool', endswith: 'Bool', contains: 'Bool', is_alpha: 'Bool',
-                is_digit: 'Bool', is_space: 'Bool', empty: 'Bool',
-                str: 'String',
+                is_digit: 'Bool', is_space: 'Bool', is_empty: 'Bool',
+                str: 'String', __str: 'String',
             },
             List: {
-                map: 'List', filter: 'List', keys: 'List', values: 'List', find: 'Any',
+                map: 'List', filter: 'List', find: 'Any',
                 join: 'String',
-                length: 'Int', len: 'Int',
-                any: 'Bool', all: 'Bool',
+                length: 'Int',
+                any: 'Bool', all: 'Bool', is_empty: 'Bool',
                 pop: 'Any', get: 'Any',
+                reduce: 'Any',
             },
             Map: {
                 get: 'Any', keys: 'List', values: 'List',
-                len: 'Int',
-                has: 'Bool',
+                length: 'Int',
+                has: 'Bool', is_empty: 'Bool',
             },
             Int: {
-                str: 'String', is_even: 'Bool', is_odd: 'Bool',
+                str: 'String', __str: 'String',
+                abs: 'Int', pow: 'Int',
+                to_float: 'Double',
+                is_even: 'Bool', is_odd: 'Bool',
+                parse: 'Int',
             },
             Double: {
-                str: 'String',
+                str: 'String', __str: 'String',
+                abs: 'Double', ceil: 'Double', floor: 'Double', round: 'Double', sqrt: 'Double',
+                to_int: 'Int',
+                parse: 'Double',
             },
             Bool: {
-                str: 'String',
+                str: 'String', __str: 'String',
+                parse: 'Bool',
             },
             Char: {
-                str: 'String', is_upper: 'Bool', is_lower: 'Bool',
+                str: 'String', __str: 'String',
+                is_upper: 'Bool', is_lower: 'Bool',
                 is_digit: 'Bool', is_alpha: 'Bool', is_space: 'Bool',
-                to_int: 'Int',
+                to_upper: 'Char', to_lower: 'Char',
+                parse: 'Char',
             },
             Tuple: {
                 length: 'Int',
@@ -890,7 +915,7 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
             }
         }
 
-        const implicitCores = ['typing', 'typing.string', 'typing.collections.list', 'typing.collections.map', 'typing.primitives', 'typing.callable'];
+        const implicitCores = ['typing', 'typing.string', 'typing.int', 'typing.double', 'typing.bool', 'typing.char', 'typing.collections.list', 'typing.collections.map', 'typing.collections.tuple', 'typing.callable', 'typing.serializable', 'typing.exceptions'];
         for (const coreMod of implicitCores) {
             const coreFile = this.resolvePath(projectRoot, currentFile, coreMod);
             if (coreFile) {

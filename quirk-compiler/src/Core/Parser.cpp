@@ -537,6 +537,13 @@ std::string Parser::computeModulePrefix() const {
     for (auto& part : parts)
         if (part == "typing") part = "core";
 
+    // Normalize split primitive files back to "primitives" so the C runtime symbols match.
+    // typing/int.qk, typing/double.qk, typing/bool.qk, typing/char.qk all live under
+    // core/primitives.c in the runtime.
+    for (auto& part : parts)
+        if (part == "int" || part == "double" || part == "bool" || part == "char")
+            part = "primitives";
+
     for (auto& part : parts)
         if (!part.empty()) part[0] = (char)std::toupper((unsigned char)part[0]);
 

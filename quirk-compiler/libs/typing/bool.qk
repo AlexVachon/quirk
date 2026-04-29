@@ -5,7 +5,7 @@ Boolean type. Only two values: `true` and `false`.
 ---
 struct Bool {
     extern define str(self) -> String
-    define __str(self) -> String { return self.str() }
+    extern define __str(self) -> String
 
     ---
     Parses `"true"` or `"false"`.

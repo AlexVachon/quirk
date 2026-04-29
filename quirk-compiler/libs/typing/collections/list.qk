@@ -1,5 +1,5 @@
-from core.string use { String }
-from core.callable use { Callable }
+from typing.string use { String }
+from typing.callable use { Callable }
 
 struct ListIterator {
     list_ref: List

@@ -1,4 +1,4 @@
-from core.collections.list use { List }
+from typing.collections.list use { List }
 from .primitives use { Char }
 
 struct StringIterator {

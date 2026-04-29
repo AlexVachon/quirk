@@ -1,5 +1,5 @@
 from net use { Socket }
-from core.exceptions use { SocketError }
+from typing.exceptions use { SocketError }
 
 define main() -> void {
     print("Starting Quirk HTTP Server...")

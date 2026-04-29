@@ -1,4 +1,4 @@
-from core.string use { String }
+from typing.string use { String }
 
 ---
 An immutable, fixed-size ordered sequence of heterogeneous values.

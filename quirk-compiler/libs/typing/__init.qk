@@ -19,6 +19,6 @@ from .serializable use {
 }
 
 from .exceptions use {
-    Exception, 
+    Exception,
     TypeError
 }

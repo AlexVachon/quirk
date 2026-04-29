@@ -890,7 +890,7 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
             }
         }
 
-        const implicitCores = ['core', 'core.sys', 'core.string', 'core.collections.list', 'core.collections.map', 'core.primitives'];
+        const implicitCores = ['typing', 'typing.string', 'typing.collections.list', 'typing.collections.map', 'typing.primitives', 'typing.callable'];
         for (const coreMod of implicitCores) {
             const coreFile = this.resolvePath(projectRoot, currentFile, coreMod);
             if (coreFile) {

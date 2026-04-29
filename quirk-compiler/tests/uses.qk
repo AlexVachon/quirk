@@ -1,5 +1,5 @@
 from math.vectors use { Vector2 }
-from core.collections.list use { List }
+from typing.collections.list use { List }
 
 define main() {
     v := Vector2(3, 4)

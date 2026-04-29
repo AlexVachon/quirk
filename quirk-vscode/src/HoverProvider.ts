@@ -16,8 +16,8 @@ export class QuirkHoverProvider implements vscode.HoverProvider {
 
         // ---- Keyword hovers ----
         const keywordHovers: Record<string, string> = {
-            'use':      '**`use`** — import a module.\n\n```quirk\nuse core.sys\n```',
-            'from':     '**`from`** — destructuring import.\n\n```quirk\nfrom core.http use { request }\n```',
+            'use':      '**`use`** — import a module.\n\n```quirk\nuse sys\n```',
+            'from':     '**`from`** — destructuring import.\n\n```quirk\nfrom net.http use { request }\n```',
             'define':   '**`define`** — declare a function.\n\n```quirk\ndefine greet(name: String) -> void { ... }\n```',
             'struct':   '**`struct`** — declare a data structure.\n\n```quirk\nstruct Point { x: Int  y: Int }\n```',
             'try':      '**`try`** — begin an exception-safe block.',

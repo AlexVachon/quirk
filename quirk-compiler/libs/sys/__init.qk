@@ -1,4 +1,4 @@
-use core.collections.list
+use typing.collections.list
 from io.file use { File }
 
 extern define arg_count() -> Int
@@ -54,7 +54,7 @@ define argv() -> List {
 Tuple of names of modules compiled into this interpreter.
 ---
 define builtin_module_names() -> List {
-    return ["core", "sys", "math", "io"]
+    return ["typing", "sys", "math", "io"]
 }
 
 ---

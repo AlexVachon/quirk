@@ -1,4 +1,4 @@
-from core.string use { String }
+from typing.string use { String }
 
 struct MapIterator {
     map_ref: Map

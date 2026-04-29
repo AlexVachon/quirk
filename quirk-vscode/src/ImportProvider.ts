@@ -3,14 +3,17 @@ import * as path from 'path';
 import * as fs from 'fs';
 
 const PRELUDE_MODULES = [
-    'core/__init.qk',
-    'core/string.qk',
-    'core/primitives.qk',
-    'core/exceptions/base.qk',
-    'core/exceptions/__init.qk',
-    'core/types.qk',
-    'core/collections/list.qk',
-    'core/collections/map.qk',
+    'typing/__init.qk',
+    'typing/string.qk',
+    'typing/primitives.qk',
+    'typing/callable.qk',
+    'typing/serializable.qk',
+    'typing/exceptions/base.qk',
+    'typing/exceptions/__init.qk',
+    'typing/exceptions/types.qk',
+    'typing/collections/list.qk',
+    'typing/collections/map.qk',
+    'typing/collections/tuple.qk',
     'sys/__init.qk'
 ];
 

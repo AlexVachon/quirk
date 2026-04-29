@@ -27,7 +27,7 @@ export class QuirkSemanticTokensProvider implements vscode.DocumentSemanticToken
             const useMatch = /^\s*use\s+([.a-zA-Z0-9_/]+)/.exec(line);
             if (useMatch) {
                 const fullPath = useMatch[1];
-                // Extract last part: "core.math" -> "math"
+                // Extract last part: "typing.collections.list" -> "list"
                 const alias = fullPath.split(/[\.\/]/).pop();
                 if (alias) moduleAliases.add(alias);
             }

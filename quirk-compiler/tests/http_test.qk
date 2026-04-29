@@ -1,5 +1,5 @@
 use net.http
-from core.exceptions use { SocketError, Exception }
+from typing.exceptions use { SocketError, Exception }
 
 define main() {
     resp := http.get("http://example.com")

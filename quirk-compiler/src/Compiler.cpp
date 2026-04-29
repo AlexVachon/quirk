@@ -397,14 +397,14 @@ int main(int argc, char* argv[]) {
     std::vector<std::unique_ptr<Node>> ast;
     std::map<std::string, std::string> sourceMap;
 
-    std::string corePath = resolveImportPath("core", "");
+    std::string corePath = resolveImportPath("typing", "");
     if (!corePath.empty()) {
         auto coreNodes = processFile(corePath, log, sourceMap);
-        log.debug("Loaded " + std::to_string(coreNodes.size()) + " nodes from Core.");
+        log.debug("Loaded " + std::to_string(coreNodes.size()) + " nodes from typing.");
         for (auto& node : coreNodes)
             ast.push_back(std::move(node));
     } else {
-        log.warn("'core' library not found! Standard types (String, List) will fail.");
+        log.warn("'typing' library not found! Standard types (String, List) will fail.");
         const char* env = std::getenv("QUIRK_HOME");
         log.warn(std::string("QUIRK_HOME: ") + (env ? env : "(unset)"));
         for (const auto& p : getSearchPaths())

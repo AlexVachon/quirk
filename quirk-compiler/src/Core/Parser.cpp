@@ -533,6 +533,10 @@ std::string Parser::computeModulePrefix() const {
         parts = { last };
     }
 
+    // Normalize "typing" → "core" so libs/typing/string.qk still emits Core_String_* linkage names.
+    for (auto& part : parts)
+        if (part == "typing") part = "core";
+
     for (auto& part : parts)
         if (!part.empty()) part[0] = (char)std::toupper((unsigned char)part[0]);
 
@@ -983,7 +987,7 @@ std::unique_ptr<Node> Parser::parseWith() {
     consume(TokenType::WITH, "Expected 'with'");
     auto node = std::make_unique<WithNode>();
 
-    node->resource = parseExpression(0);
+    node->resource = parseExpression(35);
     consume(TokenType::AS, "Expected 'as'");
     node->varName = advance().value;
 

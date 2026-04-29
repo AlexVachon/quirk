@@ -2,8 +2,8 @@ from . use {
     socket, bind, listen, accept,
     connect, send, recv, close
 }
-from core.string use { String }
-from core.exceptions.types use { SocketError }
+from typing.string use { String }
+from typing.exceptions.types use { SocketError }
 
 struct Socket {
     fd: Int

@@ -106,7 +106,7 @@ bool Sema::analyze(const std::vector<std::unique_ptr<Node>> &nodes)
         std::string mod = node->moduleName;
         if (moduleVisibility.find(mod) == moduleVisibility.end())
         {
-            moduleVisibility[mod].visibleModules.insert("core");
+            moduleVisibility[mod].visibleModules.insert("typing");
         }
 
         // --- NEW: Validate Inheritance Tree for Structs ---
@@ -175,7 +175,7 @@ bool Sema::isVisible(const std::string &name, const std::string &symbolModule, c
 {
     if (currentModule != "main")
         return true;
-    if (symbolModule.find("core") == 0)
+    if (symbolModule.find("typing") == 0 || symbolModule.find("core") == 0)
         return true;
     if (symbolModule == currentModule)
         return true;

@@ -281,7 +281,13 @@ class LLVMCodegen {
                 // Widen i1 return types for extern functions to avoid truncation.
                 if (retIsBool) retTy = Type::getInt32Ty(Context);
                 std::vector<Type*> argTypes;
-                if (!func->cls.empty() && !func->isStatic) argTypes.push_back(typeGen->getLLVMType(func->cls));
+                if (!func->cls.empty() && !func->isStatic) {
+                    Type* selfTy = typeGen->getLLVMType(func->cls);
+                    // C ABI: Bool self is passed as int (i32), not i1.
+                    if (func->isExtern && selfTy && selfTy->isIntegerTy(1))
+                        selfTy = Type::getInt32Ty(Context);
+                    argTypes.push_back(selfTy);
+                }
                 for (const auto& param : func->parameters) {
                     Type* t = typeGen->getLLVMType(param.type);
                     // C ABI: Bool params are passed as int (i32), not i1.
@@ -1344,6 +1350,9 @@ class LLVMCodegen {
                     if (objPtr->getType() != expectedSelfType) {
                         if (objPtr->getType()->isPointerTy() && expectedSelfType->isPointerTy()) {
                             objPtr = Builder.CreateBitCast(objPtr, expectedSelfType);
+                        } else if (objPtr->getType()->isIntegerTy(1) && expectedSelfType->isIntegerTy(32)) {
+                            // Bool self widening: C ABI passes Bool as int (i32)
+                            objPtr = Builder.CreateZExt(objPtr, expectedSelfType);
                         }
                     }
                 }
@@ -1474,8 +1483,21 @@ class LLVMCodegen {
                         argVal = Builder.CreateIntCast(argVal, expectedType, true);
                     else if (argVal->getType()->isIntegerTy() && expectedType->isPointerTy())
                         argVal = Builder.CreateIntToPtr(argVal, expectedType);
-                    else if (argVal->getType()->isPointerTy() && expectedType->isPointerTy())
-                        argVal = Builder.CreateBitCast(argVal, expectedType);
+                    else if (argVal->getType()->isPointerTy() && expectedType->isPointerTy()) {
+                        // When passing String* where i8* (raw char*) is expected, extract
+                        // the buffer field instead of bitcasting — avoids heuristic false positives.
+                        auto* argElem = argVal->getType()->getPointerElementType();
+                        if (argElem->isStructTy() &&
+                            cast<StructType>(argElem)->getName() == "String" &&
+                            expectedType->getPointerElementType()->isIntegerTy(8)) {
+                            auto* strTy = cast<StructType>(argElem);
+                            Value* bufGEP = Builder.CreateGEP(strTy, argVal,
+                                {Builder.getInt32(0), Builder.getInt32(0)});
+                            argVal = Builder.CreateLoad(expectedType, bufGEP);
+                        } else {
+                            argVal = Builder.CreateBitCast(argVal, expectedType);
+                        }
+                    }
                     else if (argVal->getType()->isIntegerTy() && expectedType->isDoubleTy())
                         argVal = Builder.CreateSIToFP(argVal, expectedType);
                 }
@@ -2298,7 +2320,10 @@ Value* LLVMCodegen::handleExpression(Node* node) {
                 // Int/Bool/Double → String via runtime str helpers
                 if (srcTy->isIntegerTy(1)) {
                     Function* f = TheModule->getFunction("Core_Primitives_Bool_str");
-                    if (f) return Builder.CreateCall(f, {src}, "cast_str");
+                    if (f) {
+                        Value* ext = Builder.CreateZExt(src, i32Ty);
+                        return Builder.CreateCall(f, {ext}, "cast_str");
+                    }
                 }
                 if (srcTy->isIntegerTy()) {
                     Value* i32val = srcTy->isIntegerTy(32) ? src : Builder.CreateSExt(src, i32Ty);

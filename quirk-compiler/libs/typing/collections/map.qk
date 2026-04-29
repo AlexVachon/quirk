@@ -20,7 +20,7 @@ m.put("age", 30)
 print(m.get("name"))    // "Alice"
 print(m.has("age"))     // true
 m.remove("age")
-print(m.len())          // 1
+print(m.length())       // 1
 ---
 struct Map {
     entries: Any
@@ -28,14 +28,14 @@ struct Map {
     size: Int
 
     extern define __init(self)
-    extern define __del(self)
+    extern define __del(self) -> void
 
     ---
     Inserts or updates a key-value pair.
     @param key: String — the key
     @param value: Any — the value to associate
     ---
-    extern define put(self, key: String, value: Any)
+    extern define put(self, key: String, value: Any) -> void
 
     ---
     Returns the value for the given key, or `null` if not found.
@@ -55,13 +55,13 @@ struct Map {
     Removes the entry with the given key. Does nothing if the key is absent.
     @param key: String
     ---
-    extern define remove(self, key: String)
+    extern define remove(self, key: String) -> void
 
     ---
     Returns the number of key-value pairs.
     @returns: Int
     ---
-    extern define len(self) -> Int
+    extern define length(self) -> Int
 
     ---
     Returns all keys as a `List` of `String`.
@@ -78,10 +78,16 @@ struct Map {
     ---
     Removes all entries from the map.
     ---
-    extern define clear(self)
+    extern define clear(self) -> void
+
+    ---
+    Returns `true` if the map has no entries.
+    @returns: Bool
+    ---
+    define is_empty(self) -> Bool { return self.length() == 0 }
 
     extern define __get(self, key: String) -> Any
-    extern define __set(self, key: String, value: Any)
+    extern define __set(self, key: String, value: Any) -> void
     extern define __str(self) -> String
     extern define __iter(self) -> MapIterator
 
@@ -92,17 +98,17 @@ struct Map {
     @example:
     m.each(fn(k: String, v: Any) => print(k + ": " + v))
     ---
-    extern define each(self, cb: Callable)
+    extern define each(self, cb: Callable) -> void
 
     ---
     Calls `cb` for each value only.
     @param cb: Callable — `fn(value: Any)`
     ---
-    extern define each_value(self, cb: Callable)
+    extern define each_value(self, cb: Callable) -> void
 
     ---
     Calls `cb` for each key only.
     @param cb: Callable — `fn(key: String)`
     ---
-    extern define each_key(self, cb: Callable)
+    extern define each_key(self, cb: Callable) -> void
 }

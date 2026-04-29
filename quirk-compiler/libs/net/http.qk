@@ -16,7 +16,7 @@ struct Response {
         self.ok = (status >= 200) and (status < 300)
     }
 
-    define __str(self) {
+    define __str(self) -> String {
         return "<Response [${self.status_code.str()}]>"
     }
 }

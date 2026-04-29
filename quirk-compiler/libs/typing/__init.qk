@@ -6,9 +6,10 @@ from .collections use {
 
 from .callable use { Callable }
 
-from .primitives use {
-    Int, Double, Bool
-}
+from .int use { Int }
+from .double use { Double }
+from .bool use { Bool }
+from .char use { Char }
 
 from .string use { 
     String, StringIterator

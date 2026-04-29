@@ -1,0 +1,35 @@
+from typing.string use { String }
+
+---
+64-bit IEEE 754 floating-point number.
+
+@example:
+x := 3.14
+print(x.ceil())    // 4.0
+print(x.str())     // "3.14"
+---
+struct Double {
+    extern define str(self) -> String
+    define __str(self) -> String { return self.str() }
+    extern define to_int(self) -> Int
+
+    extern define abs(self) -> Double
+    extern define ceil(self) -> Double
+    extern define floor(self) -> Double
+    extern define round(self) -> Double
+
+    ---
+    Returns the square root.
+    @returns: Double
+    @throws ValueError — if the value is negative
+    ---
+    extern define sqrt(self) -> Double
+
+    ---
+    Parses a string as a floating-point number.
+    @param s: String
+    @returns: Double
+    @throws ValueError — if `s` is not a valid number
+    ---
+    extern define parse(s: String) -> Double
+}

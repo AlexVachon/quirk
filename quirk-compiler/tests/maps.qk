@@ -10,7 +10,7 @@ define main() {
 
     // Test Empty Map
     empty_map := {}
-    print("Empty size: " + empty_map.len())
+    print("Empty size: " + empty_map.length())
 
     map_struct := Map()
     map_struct.put("language", "Quirk")

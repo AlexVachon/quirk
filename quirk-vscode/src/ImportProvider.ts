@@ -5,7 +5,10 @@ import * as fs from 'fs';
 const PRELUDE_MODULES = [
     'typing/__init.qk',
     'typing/string.qk',
-    'typing/primitives.qk',
+    'typing/int.qk',
+    'typing/double.qk',
+    'typing/bool.qk',
+    'typing/char.qk',
     'typing/callable.qk',
     'typing/serializable.qk',
     'typing/exceptions/base.qk',

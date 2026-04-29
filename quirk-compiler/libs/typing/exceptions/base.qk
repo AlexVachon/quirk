@@ -13,7 +13,7 @@ define _format_cause(prev: Exception) -> String {
 define _format_traceback(e: Exception) -> String {
     code := String(srcline(e.file.buffer, e.line))
     header: String = ""
-    if not e.cause_trace.empty() {
+    if not e.cause_trace.is_empty() {
         header = e.cause_trace
     }
     return header +

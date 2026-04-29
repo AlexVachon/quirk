@@ -10,4 +10,4 @@ extern define accept(fd: Int) -> Int
 extern define connect(fd: Int, host: String, port: Int) -> Int
 extern define send(fd: Int, data: String) -> Int
 extern define recv(fd: Int, size: Int) -> String
-extern define close(fd: Int)
+extern define close(fd: Int) -> void

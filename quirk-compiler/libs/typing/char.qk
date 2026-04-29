@@ -1,0 +1,33 @@
+from typing.string use { String }
+
+---
+A single UTF-8 character.
+Character literals use single quotes: `'a'`.
+
+@example:
+c := 'A'
+print(c.is_upper())   // true
+print(c.to_lower())   // 'a'
+---
+struct Char {
+    extern define __init(self)
+    extern define str(self) -> String
+    define __str(self) -> String { return self.str() }
+
+    extern define is_upper(self) -> Bool
+    extern define is_lower(self) -> Bool
+    extern define is_digit(self) -> Bool
+    extern define is_alpha(self) -> Bool
+    extern define is_space(self) -> Bool
+
+    extern define to_upper(self) -> Char
+    extern define to_lower(self) -> Char
+
+    ---
+    Parses the first character of `s`.
+    @param s: String
+    @returns: Char
+    @throws ValueError — if `s` is empty
+    ---
+    extern define parse(s: String) -> Char
+}

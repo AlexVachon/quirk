@@ -1,5 +1,5 @@
 from typing.collections.list use { List }
-from .primitives use { Char }
+from .char use { Char }
 
 struct StringIterator {
     str_ref: String
@@ -160,7 +160,7 @@ struct String {
     Returns `true` if the string has zero characters.
     @returns: Bool
     ---
-    define empty(self) -> Bool { return self.length == 0 }
+    define is_empty(self) -> Bool { return self.length == 0 }
 }
 
 extern define _float_to_str(val: Double) -> String

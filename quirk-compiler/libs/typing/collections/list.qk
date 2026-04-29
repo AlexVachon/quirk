@@ -32,7 +32,7 @@ struct List {
     Appends a value to the end of the list.
     @param item: Any — the value to add
     ---
-    extern define append(self, item: Any)
+    extern define append(self, item: Any) -> void
 
     ---
     Removes and returns the last element.
@@ -50,7 +50,7 @@ struct List {
     ---
     Removes all elements from the list.
     ---
-    extern define clear(self)
+    extern define clear(self) -> void
 
     ---
     Returns `true` if the list has no elements.
@@ -58,7 +58,7 @@ struct List {
     ---
     extern define is_empty(self) -> Bool
 
-    extern define _resize(self, new_cap: Int)
+    extern define _resize(self, new_cap: Int) -> void
 
     extern define __iter(self) -> ListIterator
 
@@ -76,9 +76,9 @@ struct List {
     @param item: Any — the new value
     @throws IndexError — if index is out of bounds
     ---
-    extern define __set(self, index: Int, item: Any)
+    extern define __set(self, index: Int, item: Any) -> void
 
-    extern define __del(self)
+    extern define __del(self) -> void
     extern define __str(self) -> String
     extern define __repr(self) -> String
 

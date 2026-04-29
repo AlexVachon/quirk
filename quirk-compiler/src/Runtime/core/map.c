@@ -138,7 +138,7 @@ void Core_Collections_Map_Map_remove(Map* self, String* keyObj) {
     }
 }
 
-int Core_Collections_Map_Map_len(Map* self) {
+int Core_Collections_Map_Map_length(Map* self) {
     return self->size;
 }
 

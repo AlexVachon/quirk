@@ -7,20 +7,16 @@ define main() {
     l.append(20)
     l.append(30)
 
-    // FIX: Use implicit conversion via '+' (Recommended)
-    // The compiler automatically converts (String + Int) and (String + List)
-    print("Length (should be 3): " + l.length()) 
-    print("Content: " + l) 
+    print("Length (should be 3): " + l.length())
+    print("Content: " + l)
 
     // 2. Access & Setting
-    // FIX: l[1] returns 'any', but our '+' operator handles auto-boxing now
     print("Item at index 1: " + l[1])
     
     l[1] := 99
     print("Modified at index 1: " + l[1])
     
-    // FIX: explicit __str() is also allowed if you want just the string
-    print("New Content: " + l.__str())
+    print("New Content: " + l)
 
     // 3. Popping
     val := l.pop()
@@ -28,7 +24,6 @@ define main() {
     print("Length after pop: " + l.length())
 
     // 4. Clearing & Empty Check
-    // Bool also auto-converts with '+'
     print("Is empty? " + l.is_empty())
     l.clear()
     print("Cleared. Is empty? " + l.is_empty())

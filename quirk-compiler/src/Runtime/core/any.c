@@ -6,6 +6,8 @@ int    Core_String_String_to_int(String* self);
 double Core_String_String_to_float(String* self);
 String* Core_Collections_List_List___str(List* self);
 String* Core_Collections_Map_Map___str(Map* self);
+String* Core_Collections_Tuple_Tuple___str(Tuple* self);
+String* Core_Callable_Callable___str(Callable* self);
 
 // ===================================================
 //  BOX — wrap a primitive/struct into Any*
@@ -65,6 +67,18 @@ Any* Core_Primitives_Any_box_null(void) {
     return a;
 }
 
+Any* Core_Primitives_Any_box_tuple(Tuple* v) {
+    Any* a = (Any*)malloc(sizeof(Any));
+    a->tag = ANY_TUPLE; a->ival = 0; a->dval = 0.0; a->ptr = v;
+    return a;
+}
+
+Any* Core_Primitives_Any_box_callable(Callable* v) {
+    Any* a = (Any*)malloc(sizeof(Any));
+    a->tag = ANY_CALLABLE; a->ival = 0; a->dval = 0.0; a->ptr = v;
+    return a;
+}
+
 // ===================================================
 //  UNBOX — extract a concrete value from Any*
 // ===================================================
@@ -108,7 +122,9 @@ String* Core_Primitives_Any_get_type(Any* a) {
         case ANY_MAP:    return make_String("Map");
         case ANY_PTR:    return make_String("Ptr");
         case ANY_NULL:   return make_String("Null");
-        default:         return make_String("Unknown");
+        case ANY_TUPLE:    return make_String("Tuple");
+        case ANY_CALLABLE: return make_String("Callable");
+        default:           return make_String("Unknown");
     }
 }
 
@@ -147,6 +163,15 @@ String* Core_Primitives_Any_to_string(Any* a) {
             String* s = Core_Collections_Map_Map___str((Map*)a->ptr);
             return s ? s : make_String("{}");
         }
+        case ANY_TUPLE: {
+            if (!a->ptr) return make_String("()");
+            String* s = Core_Collections_Tuple_Tuple___str((Tuple*)a->ptr);
+            return s ? s : make_String("()");
+        }
+        case ANY_CALLABLE: {
+            if (!a->ptr) return make_String("<Callable>");
+            return Core_Callable_Callable___str((Callable*)a->ptr);
+        }
         case ANY_PTR:  return make_String("<ptr>");
         case ANY_NULL: return make_String("null");
         default:       return make_String("?");
@@ -174,9 +199,9 @@ int Core_Primitives_Quirk_isinstance(void* val, String* type_str) {
     if (!val || !type_str || !type_str->buffer) return 0;
     const char* t = type_str->buffer;
 
-    // Any* check (tag 0-8)
+    // Any* check (tag 0-10, inclusive of ANY_CALLABLE)
     int32_t first_i32 = *((int32_t*)val);
-    if (first_i32 >= 0 && first_i32 <= 8) {
+    if (first_i32 >= 0 && first_i32 <= 10) {
         Any* a = (Any*)val;
         String* actual = Core_Primitives_Any_get_type(a);
         return Core_String_String___eq(actual, type_str);

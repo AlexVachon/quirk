@@ -129,7 +129,14 @@ class LLVMCodegen {
         // Built-in Type struct (for self.__class)
         if (!StructTypes.count("Type")) StructTypes["Type"] = StructType::create(Context, "struct.Type");
         // Built-in Callable struct (for lambdas)
+        // Body must be { i8*, i8* } (fn ptr + env ptr) — pre-fill before Pass 2 so it is
+        // never overwritten from the .qk field list (emitCallableCall depends on these GEP offsets).
         if (!StructTypes.count("Callable")) StructTypes["Callable"] = StructType::create(Context, "struct.Callable");
+        if (StructTypes["Callable"]->isOpaque()) {
+            Type* i8PtrTy = Type::getInt8PtrTy(Context);
+            StructTypes["Callable"]->setBody({i8PtrTy, i8PtrTy});
+            structGen->registerStructLayout("Callable", {"fn", "env"});
+        }
 
         // Pass 1b: Register enum variant lists (body generation deferred to after Pass 3)
         for (const auto& node : nodes) {
@@ -147,7 +154,7 @@ class LLVMCodegen {
             // Structs whose __init is extern are C-backed (memory layout defined by C runtime).
             // We must NOT add __type_id to those, or the C ABI would break.
             // String, StringIterator, List, Map, Char, etc. all have extern __init.
-            std::set<std::string> externOnly = {"Type", "Callable"};
+            std::set<std::string> externOnly = {"Type", "Callable", "Tuple"};
             for (const auto& n : nodes) {
                 if (auto s = dynamic_cast<StructNode*>(n.get())) {
                     for (const auto& n2 : nodes) {
@@ -247,12 +254,6 @@ class LLVMCodegen {
             Type* strPtrTy = PointerType::getUnqual(StructTypes["String"]);
             StructTypes["Type"]->setBody({strPtrTy, strPtrTy});
             structGen->registerStructLayout("Type", {"name", "parent"});
-        }
-        // Fill built-in Callable struct body: { i8* fn, i8* env }
-        if (StructTypes.count("Callable") && StructTypes["Callable"]->isOpaque()) {
-            Type* i8PtrTy = Type::getInt8PtrTy(Context);
-            StructTypes["Callable"]->setBody({i8PtrTy, i8PtrTy});
-            structGen->registerStructLayout("Callable", {"fn", "env"});
         }
 
         if (verbose) std::cerr << "[Codegen] Pass 3: Declaring function prototypes\n";
@@ -1660,6 +1661,34 @@ class LLVMCodegen {
         Value* val = handleExpression(vdecl->expression.get());
         if (!val || val->getType()->isVoidTy()) return;
 
+        // Tuple destructuring: (a, b) := tuple_expr
+        if (auto* tupLhs = dynamic_cast<TupleLiteralNode*>(vdecl->lhs.get())) {
+            Function* getFn = TheModule->getFunction("Core_Collections_Tuple_Tuple___get");
+            if (!getFn && StructTypes.count("Tuple")) {
+                Type* tuplePtrTy = PointerType::getUnqual(StructTypes["Tuple"]);
+                FunctionType* ft = FunctionType::get(Type::getInt8PtrTy(Context),
+                    {tuplePtrTy, Type::getInt32Ty(Context)}, false);
+                getFn = Function::Create(ft, Function::ExternalLinkage, "Core_Collections_Tuple_Tuple___get", TheModule.get());
+            }
+            if (getFn) {
+                // Ensure val is Tuple*
+                Value* tuplePtr = val;
+                if (StructTypes.count("Tuple") &&
+                    (!tuplePtr->getType()->isPointerTy() ||
+                     tuplePtr->getType()->getPointerElementType() != StructTypes["Tuple"]))
+                    tuplePtr = Builder.CreateBitCast(tuplePtr, PointerType::getUnqual(StructTypes["Tuple"]));
+                for (int i = 0; i < (int)tupLhs->elements.size(); i++) {
+                    auto* nameNode = dynamic_cast<LiteralNode*>(tupLhs->elements[i].get());
+                    if (!nameNode) continue;
+                    Value* elem = Builder.CreateCall(getFn,
+                        {tuplePtr, ConstantInt::get(Type::getInt32Ty(Context), i)});
+                    if (!varGen->exists(nameNode->value)) varGen->defineLocalVariable(nameNode->value, elem);
+                    else varGen->updateLocalVariable(nameNode->value, elem);
+                }
+            }
+            return;
+        }
+
         if (!vdecl->typeAnnotation.empty()) {
             // Target type is explicitly Any — box the value
             if (vdecl->typeAnnotation == "Any") {
@@ -1969,6 +1998,7 @@ class LLVMCodegen {
                 if (name.find("String") != std::string::npos) return callBox("Core_Primitives_Any_box_string", {asPtr});
                 if (name.find("List")   != std::string::npos) return callBox("Core_Primitives_Any_box_list",   {asPtr});
                 if (name.find("Map")    != std::string::npos) return callBox("Core_Primitives_Any_box_map",    {asPtr});
+                if (name.find("Tuple")  != std::string::npos) return callBox("Core_Primitives_Any_box_tuple",  {asPtr});
                 // Other struct — call __str, walking up the inheritance hierarchy
                 auto findStrFunc = [&](const std::string& typeName) -> Function* {
                     Function* f = TheModule->getFunction(typeName + "___str");
@@ -2137,6 +2167,9 @@ Value* LLVMCodegen::handleExpression(Node* node) {
 
     if (auto arr = dynamic_cast<ListLiteralNode*>(node)) return structGen->generateListLiteral(arr, [this](Node* n) { return this->handleExpression(n); });
     if (auto mapLit = dynamic_cast<MapLiteralNode*>(node)) return structGen->generateMapLiteral(mapLit, [this](Node* n) { return this->handleExpression(n); });
+    if (auto tup = dynamic_cast<TupleLiteralNode*>(node)) return structGen->generateTupleLiteral(tup,
+        [this](Node* n) { return this->handleExpression(n); },
+        [this](Value* v) { return this->emitBox(v); });
 
     if (auto binOp = dynamic_cast<BinaryOpNode*>(node)) {
         if (binOp->op == "not") return mathGen->generateNot(handleExpression(binOp->left.get()));

@@ -120,7 +120,7 @@
         },
         {
           "name": "support.type.object.quirk",
-          "match": "\\b(Char|List|String|Map|Int|Double|Bool|File|Callable)\\b"
+          "match": "\\b(Char|List|String|Map|Int|Double|Bool|File|Callable|Tuple)\\b"
         }
       ]
     },

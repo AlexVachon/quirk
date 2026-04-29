@@ -11,7 +11,7 @@ const KEYWORDS = new Set([
 
 const BUILTINS = new Set([
     'print', 'printf', 'type', 'exit', 'Char', 'String', 'List', 'Map',
-    'File', 'Int', 'Double', 'Bool', 'Any', 'void', 'Callable',
+    'File', 'Int', 'Double', 'Bool', 'Any', 'void', 'Callable', 'Tuple',
     'true', 'false', 'null',
     'Exception', 'TypeError', 'ValueError', 'IndexError', 'KeyError',
     'IOError', 'FileNotFoundError', 'RuntimeError', 'NotImplementedError',
@@ -278,13 +278,41 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
             }
         }
 
-        // Only search for local variable declarations if we are INSIDE a function block.
-        // This prevents the linter from thinking struct property fields are local variables.
+        // Allow declaration tracking inside a function body OR at the top level (braceDepth === 0).
+        // braceDepth > 0 outside a function means we're inside a struct body — skip to avoid
+        // treating type-annotated fields like `data: Any` as variable declarations.
         const isInsideFunc = currentFuncDepth !== -1;
+        const isTopLevel = braceDepth === 0;
 
-        if (isInsideFunc) {
+        if (isInsideFunc || isTopLevel) {
+            // Parenthesized tuple destructuring: (x, y) := expr
+            const parenDestructMatch = /^\s*\(\s*([a-zA-Z_]\w*(?:\s*,\s*[a-zA-Z_]\w*)*)\s*\)\s*:=/.exec(maskedLine);
+            if (parenDestructMatch) {
+                parenDestructMatch[1].split(',').forEach(part => {
+                    const vName = part.trim();
+                    if (vName && !locals.has(vName) && !KEYWORDS.has(vName) && !BUILTINS.has(vName)) {
+                        locals.add(vName);
+                        const startIdx = originalLine.indexOf(vName);
+                        declarations.set(`${i}_${vName}`, new vscode.Range(i, startIdx, i, startIdx + vName.length));
+                    }
+                });
+            }
+
+            // Bare tuple destructuring: x, y := expr  (two or more names before :=)
+            const bareDestructMatch = /^\s*([a-zA-Z_]\w*(?:\s*,\s*[a-zA-Z_]\w*)+)\s*:=/.exec(maskedLine);
+            if (bareDestructMatch && !parenDestructMatch) {
+                bareDestructMatch[1].split(',').forEach(part => {
+                    const vName = part.trim();
+                    if (vName && !locals.has(vName) && !KEYWORDS.has(vName) && !BUILTINS.has(vName)) {
+                        locals.add(vName);
+                        const startIdx = originalLine.indexOf(vName);
+                        declarations.set(`${i}_${vName}`, new vscode.Range(i, startIdx, i, startIdx + vName.length));
+                    }
+                });
+            }
+
             const assignMatch = /(?<!\.)\b([a-zA-Z_]\w*)\s*(?::\s*([a-zA-Z0-9_.?]+))?\s*(?::=|=(?!>)|\+=|-=|\*=|\/=)/.exec(maskedLine);
-            if (assignMatch) {
+            if (assignMatch && !parenDestructMatch && !bareDestructMatch) {
                 const vName = assignMatch[1];
                 if (!locals.has(vName) && !KEYWORDS.has(vName) && !BUILTINS.has(vName)) {
                     locals.add(vName);
@@ -304,6 +332,7 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
                     else if (rhs.startsWith("'"))                    { localTypes.set(vName, 'Char'); }
                     else if (rhs.startsWith('['))                     { localTypes.set(vName, 'List'); }
                     else if (rhs.startsWith('{'))                    { localTypes.set(vName, 'Map'); }
+                    else if (rhs.startsWith('('))                    { localTypes.set(vName, 'Tuple'); }
                     else {
                         // x := receiver.method(...)
                         const mCall = /^([a-zA-Z0-9_]+)\.([a-zA-Z0-9_]+)\s*\(/.exec(rhs);
@@ -318,6 +347,7 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
                                               substring:'String', join:'String', reverse:'String', encode:'String' },
                                     List:   { join:'String', find:'Any', any:'Bool', all:'Bool', get:'Any' },
                                     Map:    { get:'Any', keys:'List', values:'List', has:'Bool' },
+                                    Tuple:  { length:'Int', get:'Any' },
                                 };
                                 const ret = methodReturnTypes[recvType]?.[mCall[2]];
                                 if (ret) localTypes.set(vName, ret);

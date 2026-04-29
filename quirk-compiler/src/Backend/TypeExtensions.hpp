@@ -86,6 +86,8 @@ private:
                 if (name.find("String") != std::string::npos) return callBox("Core_Primitives_Any_box_string", {asPtr});
                 if (name.find("List")   != std::string::npos) return callBox("Core_Primitives_Any_box_list",   {asPtr});
                 if (name.find("Map")    != std::string::npos) return callBox("Core_Primitives_Any_box_map",    {asPtr});
+                if (name.find("Tuple")    != std::string::npos) return callBox("Core_Primitives_Any_box_tuple",    {asPtr});
+                if (name.find("Callable") != std::string::npos) return callBox("Core_Primitives_Any_box_callable", {asPtr});
 
                 // Find __str walking up the inheritance hierarchy
                 auto findStr = [&](const std::string& t) -> Function* {

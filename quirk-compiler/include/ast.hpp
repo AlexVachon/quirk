@@ -272,6 +272,21 @@ class LiteralNode : public Node {
     }
 };
 
+class TupleLiteralNode : public Node {
+   public:
+    std::vector<std::unique_ptr<Node>> elements;
+
+    TupleLiteralNode(std::vector<std::unique_ptr<Node>> elems)
+        : elements(std::move(elems)) {}
+
+    void print(int indent) const override {
+        std::cout << std::string(indent, ' ') << "TupleLiteral: (" << std::endl;
+        for (const auto& elem : elements)
+            elem->print(indent + 2);
+        std::cout << std::string(indent, ' ') << ")" << std::endl;
+    }
+};
+
 class ListLiteralNode : public Node {
    public:
     std::vector<std::unique_ptr<Node>> elements;

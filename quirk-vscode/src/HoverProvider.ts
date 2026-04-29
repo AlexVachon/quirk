@@ -44,7 +44,8 @@ export class QuirkHoverProvider implements vscode.HoverProvider {
             return new vscode.Hover(md);
         }
 
-        // ---- Magic method / attribute hovers ----
+        // ---- Magic method descriptions — used as fallback only, not an early return ----
+        // Priority: specific docstring from the .qk file > generic description below.
         const magicHovers: Record<string, string> = {
             '__init':     '**`__init`** — constructor, called when the struct is instantiated.\n\n```quirk\ndefine __init(self, message: String) -> void { ... }\n```',
             '__del':      '**`__del`** — destructor, called when the struct instance is destroyed.',
@@ -73,33 +74,34 @@ export class QuirkHoverProvider implements vscode.HoverProvider {
             '__parent':   '**`__parent`** — the parent struct\'s name as a `String`. Only meaningful on a `Type` instance (`self.__class.__parent`).\n\n```quirk\nprint(self.__class.__parent)  // "Exception"\n```',
             '__class':    '**`__class`** — magic attribute. Returns a `Type` descriptor for the enclosing struct.\n\nAccess `.__name` and `.__parent` on the result.\n\n```quirk\nprint(self.__class.__name)    // "TypeError"\nprint(self.__class.__parent)  // "Exception"\n```',
         };
-        if (word in magicHovers) {
-            const md = new vscode.MarkdownString(magicHovers[word]);
-            md.isTrusted = true;
-            return new vscode.Hover(md);
-        }
 
-        // ---- Built-in type hovers ----
-        const builtinHovers: Record<string, string> = {
-            'String':    '**Built-in type** `String`\n\nUTF-8 string.\n\nMethods: `.length`, `.substring()`, `.split()`, `.trim()`, `.to_int()`, `.to_float()`, `.to_bool()`, `.to_char()`, etc.\n\nAll `.to_*()` methods throw `ValueError` on invalid input.',
-            'Int':       '**Built-in type** `Int`\n\n32-bit signed integer.\n\nMethods: `.str()`, `.abs()`, `.pow()`, `.to_float()`, `.is_even()`, `.is_odd()`\n\nStatic: `Int.parse(s)` — parse a string, throws `ValueError` on failure.',
-            'Double':    '**Built-in type** `Double`\n\n64-bit floating-point number.\n\nMethods: `.str()`, `.to_int()`, `.abs()`, `.ceil()`, `.floor()`, `.round()`, `.sqrt()`\n\nStatic: `Double.parse(s)` — parse a string, throws `ValueError` on failure.',
-            'Bool':      '**Built-in type** `Bool`\n\n`true` or `false`.\n\nMethods: `.str()`\n\nStatic: `Bool.parse(s)` — accepts `"true"` or `"false"`, throws `ValueError` otherwise.',
-            'Char':      '**Built-in type** `Char`\n\nA single character.\n\nMethods: `.str()`, `.to_upper()`, `.to_lower()`, `.is_alpha()`, `.is_digit()`, `.is_space()`\n\nStatic: `Char.parse(s)` — parse a single-character string, throws `ValueError` otherwise.',
-            'List':      '**Built-in type** `List`\n\nDynamic array. Methods: `.append()`, `.pop()`, `.length`, etc.',
-            'Map':       '**Built-in type** `Map`\n\nHash map. Methods: `.put()`, `.get()`, `.has()`, `.len()`, etc.',
-            'File':      '**Built-in type** `File`\n\nFile handle. Methods: `.read()`, `.write()`, `.close()`.',
+        // ---- Built-in function / literal hovers (not struct types) ----
+        const builtinFnHovers: Record<string, string> = {
             'Any':       '**Built-in type** `Any`\n\nDynamic type — accepts any value.',
             'void':      '**Type** `void` — no return value.',
             'print':     '**Built-in** `print(value)`\n\nPrint a value to stdout followed by a newline. Accepts any type — calls `.__str()` on structs automatically.',
             'printf':    '**Built-in** `printf(fmt, ...)`\n\nFormatted print using C-style format strings.\n\n```quirk\nprintf("%s is %d years old\\n", name, age)\n```',
-            'type':      '**Built-in** `type(value) → String`\n\nReturn the type name of a value as a `String`.\n\n```quirk\ntype(42)        // "Int"\ntype("hello")   // "String"\ntype(true)      // "Bool"\ntype(3.14)      // "Double"\ntype(\'z\')     // "Char"\n\na: Any = 99\ntype(a)         // "Int"  (runtime dispatch)\n\np := Point(1, 2)\ntype(p)         // "Point"\n```\n\nFor `Any`-typed variables the lookup is done at runtime via the tag in the boxed value.',
+            'type':      '**Built-in** `type(value) → String`\n\nReturn the type name of a value as a `String`.\n\n```quirk\ntype(42)        // "Int"\ntype("hello")   // "String"\ntype(true)      // "Bool"\ntype(3.14)      // "Double"\n```\n\nFor `Any`-typed variables the lookup is done at runtime via the tag in the boxed value.',
             'exit':      '**Built-in** `exit(code)`\n\nTerminate the program with the given exit code.\n\n```quirk\nexit(0)   // success\nexit(1)   // failure\n```',
         };
-        if (word in builtinHovers) {
-            const md = new vscode.MarkdownString(builtinHovers[word]);
+        if (word in builtinFnHovers) {
+            const md = new vscode.MarkdownString(builtinFnHovers[word]);
             md.isTrusted = true;
             return new vscode.Hover(md);
+        }
+
+        // ---- Built-in struct types — read docstrings live from the .qk lib files ----
+        const builtinStructTypes = new Set([
+            'String', 'Int', 'Double', 'Bool', 'Char',
+            'List', 'Map', 'Tuple', 'Callable', 'File',
+            'Exception', 'TypeError', 'ValueError', 'IndexError', 'KeyError',
+            'IOError', 'FileNotFoundError', 'RuntimeError', 'NotImplementedError',
+            'SocketError', 'ZeroDivisionError', 'AssertionError', 'NullError', 'WhereConditionError',
+        ]);
+        if (builtinStructTypes.has(word)) {
+            const projectRoot = _sharedFormatter.findProjectRoot(document.uri.fsPath);
+            const docMd = _sharedFormatter.getStructDocHover(projectRoot, document.uri.fsPath, word);
+            if (docMd) return new vscode.Hover(docMd);
         }
 
         // ---- Definition-based hover ----
@@ -196,6 +198,10 @@ export class QuirkHoverProvider implements vscode.HoverProvider {
                     md.appendMarkdown('\n---\n');
                     const formatted = _sharedFormatter.formatDocstring(docstring);
                     md.appendMarkdown(formatted.md.value);
+                } else if (word in magicHovers) {
+                    // No specific docstring — fall back to the generic magic method description.
+                    md.appendMarkdown('\n---\n');
+                    md.appendMarkdown(magicHovers[word]);
                 }
 
                 // For variable hovers (not define/struct lines) show inferred type
@@ -210,6 +216,13 @@ export class QuirkHoverProvider implements vscode.HoverProvider {
                 return new vscode.Hover(md);
             }
         } catch { }
+
+        // No definition found — last-resort fallback for magic methods.
+        if (word in magicHovers) {
+            const md = new vscode.MarkdownString(magicHovers[word]);
+            md.isTrusted = true;
+            return new vscode.Hover(md);
+        }
 
         return null;
     }

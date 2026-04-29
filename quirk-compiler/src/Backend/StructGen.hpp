@@ -53,6 +53,18 @@ class StructGen {
             funcName = structName + "__str";
             strFunc = TheModule->getFunction(funcName);
         }
+        // Endswith fallback: find any function whose name ends with "<Struct>___str"
+        // e.g. Core_Collections_Tuple_Tuple___str found when searching "Tuple"
+        if (!strFunc) {
+            std::string suffix = structName + "___str";
+            for (auto& F : *TheModule)
+                if (F.getName().endswith(suffix)) { strFunc = &F; break; }
+        }
+        if (!strFunc) {
+            std::string suffix = structName + "__str";
+            for (auto& F : *TheModule)
+                if (F.getName().endswith(suffix)) { strFunc = &F; break; }
+        }
 
         if (!strFunc && structHierarchy && structHierarchy->count(structName)) {
             std::function<Function*(const std::string&)> searchHierarchy = [&](const std::string& currentType) -> Function* {
@@ -60,6 +72,11 @@ class StructGen {
                     for (const std::string& parentName : structHierarchy->at(currentType)) {
                         Function* foundFunc = TheModule->getFunction(parentName + "___str");
                         if (!foundFunc) foundFunc = TheModule->getFunction(parentName + "__str");
+                        if (!foundFunc) {
+                            std::string sfx = parentName + "___str";
+                            for (auto& F : *TheModule)
+                                if (F.getName().endswith(sfx)) { foundFunc = &F; break; }
+                        }
                         if (foundFunc) return foundFunc;
                         foundFunc = searchHierarchy(parentName);
                         if (foundFunc) return foundFunc;
@@ -327,6 +344,37 @@ class StructGen {
 
         if (index == -1) return nullptr;
         return Builder.CreateStructGEP(st, objPtr, index);
+    }
+
+    Value* generateTupleLiteral(TupleLiteralNode* node, std::function<Value*(Node*)> exprHandler,
+                                std::function<Value*(Value*)> boxHandler) {
+        if (!StructTypes.count("Tuple")) return nullptr;
+        int count = (int)node->elements.size();
+
+        // Declare quirk_tuple_new if not yet in module
+        Function* newFn = TheModule->getFunction("quirk_tuple_new");
+        if (!newFn) {
+            Type* retTy = PointerType::getUnqual(StructTypes["Tuple"]);
+            FunctionType* ft = FunctionType::get(retTy, {Type::getInt32Ty(Context)}, false);
+            newFn = Function::Create(ft, Function::ExternalLinkage, "quirk_tuple_new", TheModule);
+        }
+        Function* setFn = TheModule->getFunction("quirk_tuple_set");
+        if (!setFn) {
+            Type* tuplePtrTy = PointerType::getUnqual(StructTypes["Tuple"]);
+            FunctionType* ft = FunctionType::get(Type::getVoidTy(Context),
+                {tuplePtrTy, Type::getInt32Ty(Context), Type::getInt8PtrTy(Context)}, false);
+            setFn = Function::Create(ft, Function::ExternalLinkage, "quirk_tuple_set", TheModule);
+        }
+
+        Value* tupleObj = Builder.CreateCall(newFn, {ConstantInt::get(Type::getInt32Ty(Context), count)});
+        Type* voidPtr = Type::getInt8PtrTy(Context);
+        for (int i = 0; i < count; i++) {
+            Value* elem = exprHandler(node->elements[i].get());
+            Value* boxed = boxHandler(elem);
+            if (boxed->getType() != voidPtr) boxed = Builder.CreateBitCast(boxed, voidPtr);
+            Builder.CreateCall(setFn, {tupleObj, ConstantInt::get(Type::getInt32Ty(Context), i), boxed});
+        }
+        return tupleObj;
     }
 
     Value* generateListLiteral(ListLiteralNode* node, std::function<Value*(Node*)> exprHandler) {

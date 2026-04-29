@@ -104,6 +104,7 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
         let readingExample = false;
         let readingNoteList = false;
         let readingWarningList = false;
+        let readingReturns = false;
 
         const isListItem = (s: string) => s.startsWith('-') || s.startsWith('*') || /^\d+[\.\)]/.test(s);
 
@@ -122,6 +123,13 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
                 if (isListItem(trimmed)) { warnings[warnings.length - 1] += '\n' + trimmed; continue; }
                 if (trimmed === '') continue;
                 readingWarningList = false;
+            }
+
+            // @returns continuation — collect indented lines after a bare "@returns:"
+            if (readingReturns) {
+                if (trimmed.startsWith('@')) { readingReturns = false; }
+                else if (trimmed !== '') { returnsText += (returnsText ? ' ' : '') + trimmed; continue; }
+                else { continue; }
             }
 
             // @example block — collect until next @ tag
@@ -157,7 +165,8 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
             // @returns / @return
             if (trimmed.startsWith('@return')) {
                 readingParamsList = false;
-                returnsText = trimmed.replace(/^@returns?\s+/, '').replace(/\*\*/g, '').trim();
+                returnsText = trimmed.replace(/^@returns?\s*:?\s*/, '').replace(/\*\*/g, '').trim();
+                readingReturns = !returnsText;
                 continue;
             }
 
@@ -361,6 +370,16 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
                 item.sortText = '0_' + m.label;
                 items.push(item);
             }
+        }
+
+        // Tuple methods
+        if (typeName === 'Tuple') {
+            const lengthItem = new vscode.CompletionItem('length', vscode.CompletionItemKind.Method);
+            lengthItem.detail = '() → Int';
+            lengthItem.documentation = new vscode.MarkdownString('**`Tuple.length`** — returns the number of elements.\n\n```quirk\nt := (1, 2, 3)\nprint(t.length())  // 3\n```');
+            lengthItem.insertText = new vscode.SnippetString('length()');
+            lengthItem.sortText = '0_length';
+            items.push(lengthItem);
         }
 
         // Type descriptor members (result of self.__class)
@@ -581,6 +600,12 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
                 str: 'String', is_upper: 'Bool', is_lower: 'Bool',
                 is_digit: 'Bool', is_alpha: 'Bool', is_space: 'Bool',
                 to_int: 'Int',
+            },
+            Tuple: {
+                length: 'Int',
+            },
+            Callable: {
+                __str: 'String',
             },
         };
 
@@ -966,6 +991,7 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
             ['Map',       'Built-in Map<K,V> type'],
             ['File',      'Built-in File type'],
             ['Any',       'Dynamic Any type'],
+            ['Tuple',     'Immutable fixed-size sequence — (a, b, c)'],
             ['Callable',  'Lambda / function value (produced by fn(...) => ...)'],
             ['void',      'No return value'],
             ['Exception',           'Base exception class'],
@@ -1297,5 +1323,40 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
             currentDir = parent;
         }
         return stopAt;
+    }
+
+    // Read the --- docstring block that sits directly above `struct TypeName` in a .qk file.
+    // Returns null if no file or docstring is found.
+    public getStructDocHover(projectRoot: string, currentFile: string, typeName: string): vscode.MarkdownString | null {
+        const filePath = this.findFileContainingStruct(projectRoot, currentFile, typeName);
+        if (!filePath) return null;
+        const content = this.readFile(filePath);
+        if (!content) return null;
+
+        const lines = content.split(/\r?\n/);
+        // Find the `struct TypeName` line
+        const structLineIdx = lines.findIndex(l => new RegExp(`^\\s*struct\\s+${typeName}\\b`).test(l));
+        if (structLineIdx < 0) return null;
+
+        // Backward scan for the closing --- of the docstring above
+        const docLines: string[] = [];
+        let i = structLineIdx - 1;
+        // Skip blank lines between struct and docstring
+        while (i >= 0 && lines[i].trim() === '') i--;
+        if (i < 0 || lines[i].trim() !== '---') return null;
+        i--; // step past closing ---
+        while (i >= 0 && lines[i].trim() !== '---') {
+            docLines.unshift(lines[i]);
+            i--;
+        }
+
+        if (docLines.length === 0) return null;
+
+        const md = new vscode.MarkdownString();
+        md.isTrusted = true;
+        md.appendMarkdown(`**\`${typeName}\`** — *${vscode.workspace.asRelativePath(filePath)}*\n\n---\n`);
+        const formatted = this.formatDocstring(docLines);
+        md.appendMarkdown(formatted.md.value);
+        return md;
     }
 }

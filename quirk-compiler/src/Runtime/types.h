@@ -62,6 +62,11 @@ typedef struct {
     void* env;  // captured variable struct, may be NULL
 } Callable;
 
+typedef struct {
+    void** data;
+    int size;
+} Tuple;
+
 // ===================================================
 //  Any — Tagged Union for dynamic typing
 //
@@ -77,8 +82,10 @@ typedef enum {
     ANY_STRING = 4,   // ptr  holds String*
     ANY_LIST   = 5,   // ptr  holds List*
     ANY_MAP    = 6,   // ptr  holds Map*
-    ANY_PTR    = 7,   // ptr  holds arbitrary struct*
-    ANY_NULL   = 8,   // no value
+    ANY_PTR      = 7,   // ptr  holds arbitrary struct*
+    ANY_NULL     = 8,   // no value
+    ANY_TUPLE    = 9,   // ptr  holds Tuple*
+    ANY_CALLABLE = 10,  // ptr  holds Callable*
 } AnyTag;
 
 typedef struct {

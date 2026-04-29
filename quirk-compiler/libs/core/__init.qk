@@ -1,7 +1,10 @@
 from .collections use {
     List, ListIterator,
-    Map, MapIterator
+    Map, MapIterator,
+    Tuple
 }
+
+from .callable use { Callable }
 
 from .primitives use {
     Int, Double, Bool

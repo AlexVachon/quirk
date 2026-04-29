@@ -1,18 +1,57 @@
 from core.string use { String }
 
+---
+32-bit signed integer.
+Supports arithmetic operators (`+`, `-`, `*`, `/`, `%`, `**`) and comparisons.
+
+@example:
+n := 42
+print(n.str())       // "42"
+print(n.is_even())   // true
+print(n.pow(2))      // 1764
+---
 struct Int {
+    ---
+    Returns the string representation of this integer.
+    @returns: String
+    ---
     extern define str(self) -> String
+
     extern define to_float(self) -> Double
 
+    ---
+    Returns the absolute value.
+    @returns: Int
+    ---
     extern define abs(self) -> Int
+
+    ---
+    Returns `self` raised to the power `exp`.
+    @param exp: Int — exponent (must be ≥ 0)
+    @returns: Int
+    ---
     extern define pow(self, exp: Int) -> Int
 
     extern define is_even(self) -> Bool
     extern define is_odd(self) -> Bool
 
+    ---
+    Parses a string as an integer.
+    @param s: String
+    @returns: Int
+    @throws ValueError — if `s` is not a valid integer
+    ---
     extern define parse(s: String) -> Int
 }
 
+---
+64-bit IEEE 754 floating-point number.
+
+@example:
+x := 3.14
+print(x.ceil())    // 4.0
+print(x.str())     // "3.14"
+---
 struct Double {
     extern define str(self) -> String
     extern define to_int(self) -> Int
@@ -21,17 +60,47 @@ struct Double {
     extern define ceil(self) -> Double
     extern define floor(self) -> Double
     extern define round(self) -> Double
+
+    ---
+    Returns the square root.
+    @returns: Double
+    @throws ValueError — if the value is negative
+    ---
     extern define sqrt(self) -> Double
 
+    ---
+    Parses a string as a floating-point number.
+    @param s: String
+    @returns: Double
+    @throws ValueError — if `s` is not a valid number
+    ---
     extern define parse(s: String) -> Double
 }
 
+---
+Boolean type. Only two values: `true` and `false`.
+---
 struct Bool {
     extern define str(self) -> String
 
+    ---
+    Parses `"true"` or `"false"`.
+    @param s: String
+    @returns: Bool
+    @throws ValueError — if `s` is not `"true"` or `"false"`
+    ---
     extern define parse(s: String) -> Bool
 }
 
+---
+A single UTF-8 character.
+Character literals use single quotes: `'a'`.
+
+@example:
+c := 'A'
+print(c.is_upper())   // true
+print(c.to_lower())   // 'a'
+---
 struct Char {
     extern define __init(self)
     extern define str(self) -> String
@@ -45,5 +114,11 @@ struct Char {
     extern define to_upper(self) -> Char
     extern define to_lower(self) -> Char
 
+    ---
+    Parses the first character of `s`.
+    @param s: String
+    @returns: Char
+    @throws ValueError — if `s` is empty
+    ---
     extern define parse(s: String) -> Char
 }

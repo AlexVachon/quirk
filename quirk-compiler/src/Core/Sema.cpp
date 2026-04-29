@@ -75,16 +75,6 @@ bool Sema::analyze(const std::vector<std::unique_ptr<Node>> &nodes)
     }
     if (!structRegistry.count("Type")) structRegistry["Type"] = &builtinTypeNode;
 
-    // Register built-in Callable struct (used by lambda expressions)
-    static StructNode builtinCallableNode;
-    if (builtinCallableNode.name.empty()) {
-        builtinCallableNode.name = "Callable";
-        StructField ff; ff.name = "fn";  ff.type = "Any";
-        StructField ef; ef.name = "env"; ef.type = "Any";
-        builtinCallableNode.fields.push_back(std::move(ff));
-        builtinCallableNode.fields.push_back(std::move(ef));
-    }
-    if (!structRegistry.count("Callable")) structRegistry["Callable"] = &builtinCallableNode;
 
     // Pass 1: Register Structs and Signatures
     for (const auto &node : nodes)
@@ -254,7 +244,15 @@ void Sema::checkVarDecl(VarDeclNode *node)
     lastNode = node;
     std::string exprType = checkExpression(node->expression.get());
 
-    if (auto lit = dynamic_cast<LiteralNode *>(node->lhs.get()))
+    if (auto tup = dynamic_cast<TupleLiteralNode *>(node->lhs.get()))
+    {
+        // Tuple destructuring: (a, b) := tuple_expr
+        for (auto& elem : tup->elements) {
+            if (auto* nameNode = dynamic_cast<LiteralNode*>(elem.get()))
+                defineVariable(nameNode->value, "Any");
+        }
+    }
+    else if (auto lit = dynamic_cast<LiteralNode *>(node->lhs.get()))
     {
         std::string finalType =
             node->typeAnnotation.empty() ? exprType : node->typeAnnotation;
@@ -461,6 +459,10 @@ std::string Sema::checkExpression(Node *node)
         return checkListLiteral(arr);
     if (auto map = dynamic_cast<MapLiteralNode *>(node))
         return checkMapLiteral(map);
+    if (auto tup = dynamic_cast<TupleLiteralNode *>(node)) {
+        for (auto& elem : tup->elements) checkExpression(elem.get());
+        return "Tuple";
+    }
     if (auto lambda = dynamic_cast<LambdaNode *>(node)) {
         // Infer return type by type-checking the body with params in scope
         enterScope();
@@ -1049,12 +1051,20 @@ std::string Sema::resolveVariable(const std::string &name)
 
 std::string Sema::resolveMember(const std::string &sName, const std::string &mName)
 {
+    // Tuple numeric index access: t.0, t.1, ...
+    if (sName == "Tuple" && !mName.empty()) {
+        bool isNumeric = true;
+        for (char c : mName) if (!std::isdigit((unsigned char)c)) { isNumeric = false; break; }
+        if (isNumeric) return "Any";
+    }
+
     // Built-in C-runtime struct fields (from types.h) with no Quirk-side declarations.
     // str.length, list.size etc. used as bare properties resolve correctly to "Int".
     static const std::map<std::string, std::map<std::string, std::string>> builtinFields = {
         {"String", {{"length", "Int"}, {"buffer", "Any"}}},
         {"List",   {{"size",   "Int"}, {"capacity", "Int"}}},
         {"Map",    {{"size",   "Int"}, {"capacity", "Int"}}},
+        {"Tuple",  {{"size", "Int"}}},
         {"File",   {{"is_open","Bool"}}},
         {"Any",    {{"tag",    "Int"}, {"ival", "Int"}, {"dval", "Double"}}},
     };

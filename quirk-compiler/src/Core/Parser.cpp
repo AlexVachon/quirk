@@ -182,9 +182,29 @@ std::unique_ptr<Node> Parser::parseExpression(int min_precedence) {
             consume(TokenType::RBRACE, "Expected '}' after map literal");
         }
         left = std::move(node);
-    }else if (t.type == TokenType::LPAREN) {
-        left = parseExpression(0);
-        consume(TokenType::RPAREN, "Expected ')'");
+    } else if (t.type == TokenType::LPAREN) {
+        if (peek().type == TokenType::RPAREN) {
+            // Empty tuple: ()
+            advance();
+            left = std::make_unique<TupleLiteralNode>(std::vector<std::unique_ptr<Node>>{});
+        } else {
+            auto first = parseExpression(0);
+            if (peek().type == TokenType::COMMA) {
+                // Tuple literal: (a, b, ...) or (a,) single-element
+                std::vector<std::unique_ptr<Node>> elements;
+                elements.push_back(std::move(first));
+                while (match(TokenType::COMMA)) {
+                    if (peek().type == TokenType::RPAREN) break; // trailing comma
+                    elements.push_back(parseExpression(0));
+                }
+                consume(TokenType::RPAREN, "Expected ')'");
+                left = std::make_unique<TupleLiteralNode>(std::move(elements));
+            } else {
+                // Parenthesized expression
+                consume(TokenType::RPAREN, "Expected ')'");
+                left = std::move(first);
+            }
+        }
     } else if (t.type == TokenType::NOT) {
         auto operand = parseExpression(40);
         left =
@@ -347,6 +367,34 @@ std::unique_ptr<Node> Parser::parseStatement() {
         return std::make_unique<ReturnNode>(std::move(expr));
     }
     if (type == TokenType::IDENTIFIER) {
+        // Tuple destructuring without parens: x, y := expr
+        // Lookahead: IDENT (COMMA IDENT)+ ASSIGN_INIT
+        {
+            size_t ahead = pos;
+            int nameCount = 0;
+            while (ahead < tokens.size() &&
+                   tokens[ahead].type == TokenType::IDENTIFIER &&
+                   tokens[ahead].line == currentLine) {
+                nameCount++;
+                ahead++;
+                if (ahead < tokens.size() && tokens[ahead].type == TokenType::COMMA)
+                    ahead++;
+                else
+                    break;
+            }
+            if (nameCount >= 2 && ahead < tokens.size() &&
+                tokens[ahead].type == TokenType::ASSIGN_INIT) {
+                std::vector<std::unique_ptr<Node>> names;
+                for (int i = 0; i < nameCount; i++) {
+                    names.push_back(std::make_unique<LiteralNode>(advance().value));
+                    if (i < nameCount - 1) advance(); // consume comma
+                }
+                advance(); // consume :=
+                auto tupLhs = std::make_unique<TupleLiteralNode>(std::move(names));
+                return std::make_unique<VarDeclNode>(std::move(tupLhs), parseExpression(0), ":=", "");
+            }
+        }
+
         if (pos + 1 < static_cast<int>(tokens.size())) {
             TokenType next = tokens[pos + 1].type;
             if (next == TokenType::ASSIGN_INIT || next == TokenType::ASSIGN ||
@@ -381,6 +429,16 @@ std::unique_ptr<Node> Parser::parseStatement() {
         if (pos + 1 < static_cast<int>(tokens.size()) &&
             tokens[pos + 1].type == TokenType::LPAREN)
             return parseCall();
+    }
+    // Tuple destructuring: (a, b) := rhs
+    if (type == TokenType::LPAREN) {
+        auto expr = parseExpression(0);
+        if (dynamic_cast<TupleLiteralNode*>(expr.get()) &&
+            peek().type == TokenType::ASSIGN_INIT) {
+            advance(); // consume :=
+            return std::make_unique<VarDeclNode>(std::move(expr), parseExpression(0), ":=", "");
+        }
+        return expr;
     }
     return parseExpression(0);
 }

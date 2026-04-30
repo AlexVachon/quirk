@@ -72,3 +72,16 @@ void quirk_print_opaque(void* val) {
     String* s = quirk_opaque_to_string(val);
     printf("%s\n", s->buffer ? s->buffer : "");
 }
+
+// Return the type name of an opaque i8* value — safe version of Core_Primitives_Any_get_type
+// that handles tagged integers without dereferencing invalid addresses.
+String* quirk_opaque_get_type(void* val) {
+    if (!val) return make_String("Null");
+    uintptr_t uval = (uintptr_t)val;
+    if (uval <= 0xFFFFFFFFUL) return make_String("Int");
+    int32_t possible_tag = *(int32_t*)val;
+    if (possible_tag >= ANY_INT && possible_tag <= ANY_NULL)
+        return Core_Primitives_Any_get_type((Any*)val);
+    // Assume String* (most common non-Any heap value in opaque slots)
+    return make_String("String");
+}

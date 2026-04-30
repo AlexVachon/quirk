@@ -119,15 +119,17 @@ class BuiltinGen {
                 }
                 return makeTypeString(structName);
             }
-            // i8* opaque — likely a boxed Any*; delegate to runtime tag dispatch
-            Function* getType = TheModule->getFunction("Core_Primitives_Any_get_type");
-            if (getType) {
-                // Cast i8* → Any* (first param type of Core_Primitives_Any_get_type)
-                Type* anyPtrTy = getType->getFunctionType()->getParamType(0);
-                Value* anyPtr = Builder.CreateBitCast(val, anyPtrTy);
-                return Builder.CreateCall(getType, {anyPtr});
+            // i8* opaque — may be a tagged integer or boxed Any*; use the safe helper
+            // that checks the pointer value before dereferencing (avoids segfault on tagged ints).
+            Function* opaqueGetType = TheModule->getFunction("quirk_opaque_get_type");
+            if (!opaqueGetType) {
+                Type* retTy = TheModule->getFunction("Core_Primitives_Any_get_type")
+                    ? TheModule->getFunction("Core_Primitives_Any_get_type")->getReturnType()
+                    : (Type*)Type::getInt8PtrTy(Context);
+                FunctionType* ft = FunctionType::get(retTy, {Type::getInt8PtrTy(Context)}, false);
+                opaqueGetType = Function::Create(ft, Function::ExternalLinkage, "quirk_opaque_get_type", TheModule);
             }
-            return makeTypeString("Any");
+            return Builder.CreateCall(opaqueGetType, {val});
         }
 
         // Primitive LLVM types — known statically

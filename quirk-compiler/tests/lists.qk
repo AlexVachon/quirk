@@ -20,7 +20,8 @@ define main() {
 
     // 3. Popping
     val := l.pop()
-    print("Popped value: " + val)
+    
+    print("Popped value: " + type(val))
     print("Length after pop: " + l.length())
 
     // 4. Clearing & Empty Check

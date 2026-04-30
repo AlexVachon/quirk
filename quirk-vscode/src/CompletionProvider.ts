@@ -78,9 +78,11 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
         if (indexAccessMatch) {
             const containerVar = indexAccessMatch[1];
             const containerType = this.inferTypeOfVariable(document, position, containerVar);
-            // List[i] → element type unknown (Any); String[i] → Char; Map[k] → Any
             if (containerType === 'String') return this.provideObjectMemberCompletions(document, position, '', 'Char');
-            // For List/Map the element type is Any — no useful completions available
+            if (containerType === 'List') {
+                const elemType = this.inferElementType(document, position, containerVar);
+                if (elemType) return this.provideObjectMemberCompletions(document, position, '', elemType);
+            }
             return [];
         }
 
@@ -466,6 +468,10 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
         for (const line of lines) {
             const esc = variableName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+            // x := expr as TypeName  — explicit cast overrides any inferred type
+            const castMatch = new RegExp(`\\b${esc}\\s*(?::=|=)\\s*.+?\\bas\\s+([A-Z][a-zA-Z0-9_]*)\\s*$`).exec(line);
+            if (castMatch) return castMatch[1];
+
             // x := [...]  or  x = [...]  → List literal
             if (new RegExp(`\\b${esc}\\s*(?::=|=)\\s*\\[`).test(line)) return 'List';
 
@@ -547,8 +553,10 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
                 if (iterable.startsWith('"') || iterable.startsWith("'")) return 'Char'; // string literal → Char elements
                 const iterType = this.inferTypeOfVariable(document, position, iterable);
                 if (iterType === 'String') return 'Char';
-                // List element type is unknown at static analysis time; return Any so members are offered
-                if (iterType === 'List') return 'Any';
+                if (iterType === 'List') {
+                    const elemType = this.inferElementType(document, position, iterable);
+                    if (elemType) return elemType;
+                }
             }
 
             // catch (varName: ExceptionType)  → ExceptionType
@@ -568,6 +576,43 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
             if (match) return match[1];
         }
 
+        return null;
+    }
+
+    // Infer the element type of a List variable from its initialization literal.
+    // e.g. names := ["Alice", "Bob"] → 'String'
+    //      nums  := [1, 2, 3]        → 'Int'
+    //      items := []               → null (unknown)
+    private inferElementType(document: vscode.TextDocument, position: vscode.Position, varName: string): string | null {
+        const textBefore = document.getText(new vscode.Range(new vscode.Position(0, 0), position));
+        const esc = varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+        for (const line of textBefore.split(/\r?\n/).reverse()) {
+            const listMatch = new RegExp(`\\b${esc}\\s*(?::=|=)\\s*\\[([^\\]]*)\\]`).exec(line);
+            if (!listMatch) continue;
+
+            const content = listMatch[1].trim();
+            if (!content) return null; // empty list — element type unknown
+
+            const firstElem = content.split(',')[0].trim();
+            if (!firstElem) return null;
+
+            if (/^"/.test(firstElem))            return 'String';
+            if (/^\d+\.\d/.test(firstElem))      return 'Double';
+            if (/^\d/.test(firstElem))            return 'Int';
+            if (/^(true|false)$/.test(firstElem)) return 'Bool';
+            if (/^'.'$/.test(firstElem))          return 'Char';
+
+            // SomeType(...) constructor
+            const ctorMatch = /^([A-Z][a-zA-Z0-9_]*)\s*\(/.exec(firstElem);
+            if (ctorMatch) return ctorMatch[1];
+
+            // bare identifier — infer its type
+            if (/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(firstElem))
+                return this.inferTypeOfVariable(document, position, firstElem);
+
+            return null;
+        }
         return null;
     }
 
@@ -738,6 +783,10 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
                 return this.inferMethodReturnType(projectRoot, document.uri.fsPath, receiverType, methodName);
             }
         }
+
+        // (expr as TypeName) — cast expression, e.g. (val as Int)
+        const castExprMatch = /^\(\s*.+\s+as\s+([A-Z][a-zA-Z0-9_]*)\s*\)$/.exec(expr);
+        if (castExprMatch) return castExprMatch[1];
 
         // Literals (checked after method-call so "str".method() isn't short-circuited)
         if (/^["']/.test(expr))                     return 'String';

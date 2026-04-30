@@ -55,6 +55,7 @@ typedef struct {
 typedef struct {
     const char* func_name;
     const char* file_name;
+    int         line;
 } ShadowFrame;
 
 typedef struct {

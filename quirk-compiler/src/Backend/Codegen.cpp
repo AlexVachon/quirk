@@ -457,11 +457,13 @@ class LLVMCodegen {
 
         // --- NEW: Push 'main' to the shadow stack! ---
         FunctionCallee pushFrame = TheModule->getOrInsertFunction("quirk_push_frame",
-            Type::getVoidTy(Context), Type::getInt8PtrTy(Context), Type::getInt8PtrTy(Context));
-        
+            Type::getVoidTy(Context), Type::getInt8PtrTy(Context), Type::getInt8PtrTy(Context),
+            Type::getInt32Ty(Context));
+
         Value* mainFuncName = Builder.CreateGlobalStringPtr("main");
-        Value* mainFileName = Builder.CreateGlobalStringPtr("main"); 
-        Builder.CreateCall(pushFrame, {mainFuncName, mainFileName});
+        Value* mainFileName = Builder.CreateGlobalStringPtr("main");
+        Builder.CreateCall(pushFrame, {mainFuncName, mainFileName,
+            ConstantInt::get(Type::getInt32Ty(Context), 0)});
         // ---------------------------------------------
         
         for (const auto& node : nodes) {
@@ -613,11 +615,13 @@ class LLVMCodegen {
 
         // --- NEW: INJECT SHADOW STACK PUSH ---
         FunctionCallee pushFrame = TheModule->getOrInsertFunction("quirk_push_frame",
-            Type::getVoidTy(Context), Type::getInt8PtrTy(Context), Type::getInt8PtrTy(Context));
-        
+            Type::getVoidTy(Context), Type::getInt8PtrTy(Context), Type::getInt8PtrTy(Context),
+            Type::getInt32Ty(Context));
+
         Value* funcNameVal = Builder.CreateGlobalStringPtr(node->name);
         Value* fileNameVal = Builder.CreateGlobalStringPtr(node->moduleName);
-        Builder.CreateCall(pushFrame, {funcNameVal, fileNameVal});
+        Value* lineNumVal  = ConstantInt::get(Type::getInt32Ty(Context), node->line);
+        Builder.CreateCall(pushFrame, {funcNameVal, fileNameVal, lineNumVal});
         // -------------------------------------
 
         for (const auto& stmt : node->body) {

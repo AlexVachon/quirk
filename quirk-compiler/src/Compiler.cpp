@@ -1,7 +1,12 @@
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/TargetSelect.h"
+#include "llvm/Support/TargetRegistry.h"
+#include "llvm/Support/Host.h"
 #include "llvm/IR/Verifier.h"
+#include "llvm/IR/LegacyPassManager.h"
+#include "llvm/Target/TargetMachine.h"
+#include "llvm/Target/TargetOptions.h"
 #include "llvm/ExecutionEngine/Orc/LLJIT.h"
 #include "llvm/ExecutionEngine/Orc/ExecutionUtils.h"
 #include "llvm/ExecutionEngine/Orc/ThreadSafeModule.h"
@@ -28,6 +33,7 @@ namespace fs = std::filesystem;
 
 struct CompilerOptions {
     std::string inputFile;
+    std::string outputFile;   // non-empty → produce native binary, skip JIT
     bool runImmediate = true;
     bool verbose      = false;
     bool emitIR       = false;
@@ -346,10 +352,11 @@ void printUsage() {
     std::cout << "Usage: quirk [options] <file.qk>\n"
               << "\n"
               << "Options:\n"
-              << "  --compile-only  Compile only, do not run\n"
-              << "  -v              Verbose: show debug output\n"
-              << "  --emit-ir       Write LLVM IR to <file>.ll\n"
-              << "  --emit-ast      Write AST dump to <file>.ast.log\n"
+              << "  --compile-only      Compile only, do not run\n"
+              << "  -o <file>           Compile to native binary\n"
+              << "  -v                  Verbose: show debug output\n"
+              << "  --emit-ir           Write LLVM IR to <file>.ll\n"
+              << "  --emit-ast          Write AST dump to <file>.ast.log\n"
               << std::endl;
 }
 
@@ -372,6 +379,11 @@ int main(int argc, char* argv[]) {
         else if (arg == "-v")             opts.verbose      = true;
         else if (arg == "--emit-ir")      opts.emitIR       = true;
         else if (arg == "--emit-ast")     opts.emitAST      = true;
+        else if (arg == "-o") {
+            if (++i >= argc) { std::cerr << "Error: -o requires a filename\n"; return 1; }
+            opts.outputFile    = argv[i];
+            opts.runImmediate  = false;
+        }
         else if (arg[0] != '-')           opts.inputFile    = arg;
         else {
             std::cerr << "Unknown option: " << arg << std::endl;
@@ -496,7 +508,55 @@ int main(int argc, char* argv[]) {
     }
 
     // =======================================================
-    // 6b. JIT COMPILE + RUN (runImmediate, no subprocess)
+    // 6b. NATIVE BINARY OUTPUT (-o <file>)
+    // =======================================================
+    if (!opts.outputFile.empty()) {
+        // Emit optimised IR to a temp file, then compile + link via llc-14 + gcc.
+        // This is the same pipeline used by --emit-ir; it's reliable and avoids
+        // having to manage TargetMachine lifetime alongside the running compiler.
+        std::string irPath  = "/tmp/quirk_" + baseName + ".ll";
+        std::string objPath = "/tmp/quirk_" + baseName + ".o";
+
+        {
+            std::error_code EC;
+            llvm::raw_fd_ostream irDest(irPath, EC, llvm::sys::fs::OF_None);
+            if (EC) {
+                std::cerr << "Error: cannot open temp IR file '" << irPath
+                          << "': " << EC.message() << std::endl;
+                return 1;
+            }
+            LLVMCodegen codegen;
+            codegen.setVerbose(opts.verbose);
+            codegen.setSourceMap(sourceMap);
+            codegen.compile(ast, irDest);
+        }
+
+        // Compile IR → object file
+        std::string llcCmd = "llc-14 -filetype=obj -relocation-model=pic -O2 "
+                           + irPath + " -o " + objPath;
+        log.debug("Compiling: " + llcCmd);
+        if (int r = std::system(llcCmd.c_str())) {
+            std::cerr << "Error: llc failed (exit " << r << ")" << std::endl;
+            return 1;
+        }
+
+        // Link: object + runtime.so → output binary
+        std::string runtimeDir = fs::path(runtimePath).parent_path().string();
+        std::string linkCmd = "gcc " + objPath + " " + runtimePath
+                            + " -lgc -lm -o " + opts.outputFile
+                            + " -Wl,-rpath," + runtimeDir;
+        log.debug("Linking: " + linkCmd);
+        if (int r = std::system(linkCmd.c_str())) {
+            std::cerr << "Error: linker failed (exit " << r << ")" << std::endl;
+            return 1;
+        }
+
+        log.debug("Binary written to " + opts.outputFile);
+        return 0;
+    }
+
+    // =======================================================
+    // 6c. JIT COMPILE + RUN (runImmediate, no subprocess)
     // =======================================================
     if (opts.runImmediate && !opts.emitIR) {
         llvm::InitializeNativeTarget();

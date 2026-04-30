@@ -52,13 +52,15 @@ static void quirk_crash_handler(int sig) {
         for (int i = 0; i < quirk_shadow_sp; i++) {
             const char* fn = quirk_shadow_stack[i].func_name ? quirk_shadow_stack[i].func_name : "?";
             const char* fl = quirk_shadow_stack[i].file_name ? quirk_shadow_stack[i].file_name : "?";
-            fprintf(stderr, "  [%d] %s  (%s)\n", i, fn, fl);
+            int ln = quirk_shadow_stack[i].line;
+            if (ln > 0)
+                fprintf(stderr, "  [%d] %s  (%s:%d)\n", i, fn, fl, ln);
+            else
+                fprintf(stderr, "  [%d] %s  (%s)\n", i, fn, fl);
         }
     } else {
         fprintf(stderr, "(no Quirk stack frames recorded)\n");
     }
-    // Restore default handler and re-raise so the process exits with the
-    // correct status and any debugger/core dump still fires normally.
     signal(sig, SIG_DFL);
     raise(sig);
 }
@@ -124,12 +126,27 @@ char* Sys_srcline(const char* filename, int target_line) {
 ShadowFrame quirk_shadow_stack[1024];
 int quirk_shadow_sp = 0;
 
-void quirk_push_frame(const char* func, const char* file) {
-    if (quirk_shadow_sp < 1024) {
-        quirk_shadow_stack[quirk_shadow_sp].func_name = func;
-        quirk_shadow_stack[quirk_shadow_sp].file_name = file;
-        quirk_shadow_sp++;
+void quirk_push_frame(const char* func, const char* file, int line) {
+    if (quirk_shadow_sp >= 1024) {
+        // Stack overflow — print trace and abort with a clear message.
+        fprintf(stderr, "\nQuirk runtime error: stack overflow\n");
+        fprintf(stderr, "Traceback (most recent call last):\n");
+        for (int i = 0; i < quirk_shadow_sp; i++) {
+            const char* fn = quirk_shadow_stack[i].func_name ? quirk_shadow_stack[i].func_name : "?";
+            const char* fl = quirk_shadow_stack[i].file_name ? quirk_shadow_stack[i].file_name : "?";
+            int ln = quirk_shadow_stack[i].line;
+            if (ln > 0)
+                fprintf(stderr, "  [%d] %s  (%s:%d)\n", i, fn, fl, ln);
+            else
+                fprintf(stderr, "  [%d] %s  (%s)\n", i, fn, fl);
+        }
+        fprintf(stderr, "  ... (attempting to call: %s)\n", func ? func : "?");
+        abort();
     }
+    quirk_shadow_stack[quirk_shadow_sp].func_name = func;
+    quirk_shadow_stack[quirk_shadow_sp].file_name = file;
+    quirk_shadow_stack[quirk_shadow_sp].line      = line;
+    quirk_shadow_sp++;
 }
 
 void quirk_pop_frame() {
@@ -148,7 +165,11 @@ String* Sys_shadow_frame(int index) {
     char buf[512];
     const char* fn = quirk_shadow_stack[index].func_name ? quirk_shadow_stack[index].func_name : "?";
     const char* fl = quirk_shadow_stack[index].file_name ? quirk_shadow_stack[index].file_name : "?";
-    snprintf(buf, sizeof(buf), "%s (%s)", fn, fl);
+    int ln = quirk_shadow_stack[index].line;
+    if (ln > 0)
+        snprintf(buf, sizeof(buf), "%s (%s:%d)", fn, fl, ln);
+    else
+        snprintf(buf, sizeof(buf), "%s (%s)", fn, fl);
     return make_String(buf);
 }
 

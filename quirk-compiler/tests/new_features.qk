@@ -1,0 +1,40 @@
+from typing.collections.map use { Map }
+
+define main() {
+    // Test for k, v in map
+    m := {"name": "Alice", "city": "Paris"}
+    for k, v in m {
+        print(k + " -> " + v)
+    }
+
+    // Test `in` and `not in` for Map
+    if "name" in m {
+        print("name found in map")
+    }
+    if "age" not in m {
+        print("age not in map")
+    }
+
+    // Test `in` and `not in` for List
+    nums := [10, 20, 30]
+    if 99 not in nums {
+        print("99 not in list")
+    }
+    if 10 in nums {
+        print("10 in list")
+    }
+
+    // Test null coalescing
+    x := null
+    result := x ?? "default"
+    print("null ?? default: " + result)
+
+    // Test `?:` ternary with explicit parens for clarity
+    val := 11
+    label := (val > 10)? "big" : "small"
+    print("ternary: " + label)
+
+    // Test Python-style ternary: val if cond else other
+    greeting := "hello" if val > 0 else "goodbye"
+    print("py-ternary: " + greeting)
+}

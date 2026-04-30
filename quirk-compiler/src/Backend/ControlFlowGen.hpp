@@ -128,7 +128,9 @@ class ControlFlowGen {
             StructType* st = cast<StructType>(iterable->getType()->getPointerElementType());
             std::string structName = st->getName().str();
 
-            Function* iterFunc = resolveFunc(structName + "___iter");
+            bool isPair = !node->varName2.empty();
+            Function* iterFunc = isPair ? resolveFunc(structName + "___iter_pairs") : nullptr;
+            if (!iterFunc) iterFunc = resolveFunc(structName + "___iter");
             if (!iterFunc) iterFunc = resolveFunc(structName + "__iter");
             if (!iterFunc) { std::cerr << "Error: Struct '" << structName << "' does not implement __iter()." << std::endl; exit(1); }
 
@@ -157,6 +159,14 @@ class ControlFlowGen {
 
             Value* item = Builder.CreateCall(nextFunc, {iteratorObj}, "item");
             varGen->defineLocalVariable(node->varName, item);
+
+            if (isPair) {
+                Function* curValFunc = resolveFunc(iterName + "___current_value");
+                if (curValFunc) {
+                    Value* val = Builder.CreateCall(curValFunc, {iteratorObj}, "pair_val");
+                    varGen->defineLocalVariable(node->varName2, val);
+                }
+            }
 
             breakStack.push_back(afterBB);
             continueStack.push_back(condBB);

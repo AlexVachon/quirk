@@ -93,6 +93,8 @@ static bool canStartTernaryExpr(TokenType t) {
 
 int getPrecedence(TokenType type) {
     switch (type) {
+        case TokenType::IF:
+            return 2;
         case TokenType::NULL_COALESCE:
             return 3;
         case TokenType::OR:
@@ -334,10 +336,33 @@ std::unique_ptr<Node> Parser::parseExpression(int min_precedence) {
         int next_prec = getPrecedence(type);
         if (type == TokenType::LPAREN)
             next_prec = 50;
+        // `not in` compound operator: same precedence as `in`
+        if (type == TokenType::NOT && pos + 1 < (int)tokens.size() && tokens[pos + 1].type == TokenType::IN)
+            next_prec = 10;
+        // Python-style ternary `val if cond else other`: only infix on same line
+        if (type == TokenType::IF && pos > 0 && tokens[pos].line != tokens[pos - 1].line)
+            next_prec = 0;
         if (next_prec <= min_precedence)
             break;
 
         Token opToken = advance();
+
+        if (opToken.type == TokenType::NOT) {
+            // `not in` — consume the `in` and build BinaryOpNode("not in", ...)
+            consume(TokenType::IN, "Expected 'in' after 'not'");
+            auto right = parseExpression(next_prec);
+            left = std::make_unique<BinaryOpNode>("not in", std::move(left), std::move(right));
+            continue;
+        }
+
+        if (opToken.type == TokenType::IF) {
+            // Python-style ternary: val if cond else other
+            auto cond = parseExpression(0);
+            consume(TokenType::ELSE, "Expected 'else' in ternary expression");
+            auto other = parseExpression(0);
+            left = std::make_unique<TernaryNode>(std::move(cond), std::move(left), std::move(other));
+            continue;
+        }
 
         if (opToken.type == TokenType::DOT || opToken.type == TokenType::QUESTION_DOT) {
             Token member = advance();
@@ -610,8 +635,14 @@ std::unique_ptr<Node> Parser::parseFor() {
     consume(TokenType::FOR, "Expected 'for'");
     bool isRef = match(TokenType::REF);
     std::string varName = advance().value;
+    std::string varName2;
+    if (peek().type == TokenType::COMMA) {
+        advance(); // consume ','
+        varName2 = advance().value;
+    }
     consume(TokenType::IN, "Expected 'in'");
     auto node = std::make_unique<ForNode>(varName, isRef, parseExpression(0));
+    node->varName2 = varName2;
     consume(TokenType::LBRACE, "Expected '{'");
     while (peek().type != TokenType::RBRACE && !isAtEnd())
         node->body.push_back(parseStatement());

@@ -401,6 +401,7 @@ class WhileNode : public Node {
 class ForNode : public Node {
    public:
     std::string varName;
+    std::string varName2; // optional second variable for pair iteration (k, v in map)
     bool isRef;
     std::unique_ptr<Node> iterable;
     std::vector<std::unique_ptr<Node>> body;

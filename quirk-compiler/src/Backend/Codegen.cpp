@@ -2427,11 +2427,11 @@ Value* LLVMCodegen::handleExpression(Node* node) {
         }
         // ── end `is` ─────────────────────────────────────────────────────────
 
-        // ── `elem in list` ───────────────────────────────────────────────────
-        if (binOp->op == "in") {
+        // ── `elem in collection` ─────────────────────────────────────────────
+        if (binOp->op == "in" || binOp->op == "not in") {
             Value* elem = handleExpression(binOp->left.get());
-            Value* list = handleExpression(binOp->right.get());
-            if (!elem || !list) return ConstantInt::getFalse(Context);
+            Value* coll = handleExpression(binOp->right.get());
+            if (!elem || !coll) return ConstantInt::getFalse(Context);
 
             Type* i8PtrTy = Type::getInt8PtrTy(Context);
             Value* elemI8 = elem->getType() == i8PtrTy
@@ -2440,21 +2440,76 @@ Value* LLVMCodegen::handleExpression(Node* node) {
                     ? Builder.CreateBitCast(elem, i8PtrTy)
                     : Builder.CreateIntToPtr(elem, i8PtrTy));
 
-            Value* listI8 = list->getType() == i8PtrTy
-                ? list
-                : Builder.CreateBitCast(list, i8PtrTy);
+            Value* result = nullptr;
 
-            Function* containsFn = TheModule->getFunction("Core_Collections_List_List_contains");
-            if (!containsFn) {
-                FunctionType* ft = FunctionType::get(
-                    Type::getInt32Ty(Context), {i8PtrTy, i8PtrTy}, false);
-                containsFn = Function::Create(ft, Function::ExternalLinkage,
-                    "Core_Collections_List_List_contains", TheModule.get());
+            // Determine collection type and dispatch accordingly
+            bool isMap = false, isString = false;
+            if (coll->getType()->isPointerTy() && coll->getType()->getPointerElementType()->isStructTy()) {
+                std::string sname = cast<StructType>(coll->getType()->getPointerElementType())->getName().str();
+                if (sname.find("Map") != std::string::npos) isMap = true;
+            } else if (coll->getType()->isPointerTy() && coll->getType()->getPointerElementType()->isIntegerTy(8)) {
+                isString = true;
             }
-            Value* result = Builder.CreateCall(containsFn, {listI8, elemI8}, "in_result");
-            return Builder.CreateICmpNE(result, ConstantInt::get(Type::getInt32Ty(Context), 0), "in_bool");
+
+            if (isMap) {
+                // `key in map` → Map.has(map, key_str)
+                // elem should be a String*; if it's i8* wrap it
+                Value* keyStr = elem;
+                if (StructTypes.count("String")) {
+                    Type* strPtrTy = PointerType::getUnqual(StructTypes["String"]);
+                    if (elem->getType() != strPtrTy) {
+                        Function* opaqueToStr = TheModule->getFunction("quirk_opaque_to_string");
+                        if (!opaqueToStr) {
+                            FunctionType* ft = FunctionType::get(strPtrTy, {i8PtrTy}, false);
+                            opaqueToStr = Function::Create(ft, Function::ExternalLinkage, "quirk_opaque_to_string", TheModule.get());
+                        }
+                        Value* asI8 = elem->getType() == i8PtrTy ? elem : Builder.CreateBitCast(elem, i8PtrTy);
+                        keyStr = Builder.CreateCall(opaqueToStr, {asI8}, "key_str");
+                    }
+                }
+                Function* hasFn = TheModule->getFunction("Core_Collections_Map_Map_has");
+                if (!hasFn) {
+                    Type* mapPtrTy = coll->getType();
+                    Type* strPtrTy = StructTypes.count("String") ? (Type*)PointerType::getUnqual(StructTypes["String"]) : i8PtrTy;
+                    FunctionType* ft = FunctionType::get(Type::getInt32Ty(Context), {mapPtrTy, strPtrTy}, false);
+                    hasFn = Function::Create(ft, Function::ExternalLinkage, "Core_Collections_Map_Map_has", TheModule.get());
+                }
+                result = Builder.CreateCall(hasFn, {coll, keyStr}, "in_result");
+            } else if (isString) {
+                // `sub in str` → String.contains via strstr check
+                // Build both as String* then call Core_String_String_contains
+                Value* collStr = coll; // already i8* (char*)
+                std::vector<Value*> args = {collStr};
+                Value* strObj = structGen->allocateAndInit("String", args);
+                Function* containsFn = TheModule->getFunction("Core_String_String_contains");
+                if (!containsFn) {
+                    Type* strPtrTy = PointerType::getUnqual(StructTypes["String"]);
+                    FunctionType* ft = FunctionType::get(Type::getInt32Ty(Context), {strPtrTy, strPtrTy}, false);
+                    containsFn = Function::Create(ft, Function::ExternalLinkage, "Core_String_String_contains", TheModule.get());
+                }
+                // elem must be a String* too
+                Value* elemStr = elemI8;
+                if (StructTypes.count("String")) {
+                    std::vector<Value*> eargs = {elemI8};
+                    elemStr = structGen->allocateAndInit("String", eargs);
+                }
+                result = Builder.CreateCall(containsFn, {strObj, elemStr}, "in_result");
+            } else {
+                // Default: List.contains
+                Value* collI8 = coll->getType() == i8PtrTy ? coll : Builder.CreateBitCast(coll, i8PtrTy);
+                Function* containsFn = TheModule->getFunction("Core_Collections_List_List_contains");
+                if (!containsFn) {
+                    FunctionType* ft = FunctionType::get(Type::getInt32Ty(Context), {i8PtrTy, i8PtrTy}, false);
+                    containsFn = Function::Create(ft, Function::ExternalLinkage, "Core_Collections_List_List_contains", TheModule.get());
+                }
+                result = Builder.CreateCall(containsFn, {collI8, elemI8}, "in_result");
+            }
+
+            Value* boolResult = Builder.CreateICmpNE(result, ConstantInt::get(Type::getInt32Ty(Context), 0), "in_bool");
+            if (binOp->op == "not in") boolResult = Builder.CreateNot(boolResult, "not_in_bool");
+            return boolResult;
         }
-        // ── end `in` ─────────────────────────────────────────────────────────
+        // ── end `in` / `not in` ──────────────────────────────────────────────
 
         // ── `expr as TypeName` ───────────────────────────────────────────────
         if (binOp->op == "as") {

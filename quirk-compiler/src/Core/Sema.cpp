@@ -473,6 +473,7 @@ void Sema::checkFor(ForNode *node)
 
     enterScope();
     defineVariable(node->varName, itemType);
+    if (!node->varName2.empty()) defineVariable(node->varName2, "Any", false, true);
     for (auto &s : node->body)
         checkStatement(s.get());
     exitScope();
@@ -605,7 +606,7 @@ std::string Sema::checkBinaryOp(BinaryOpNode *node)
         return "unknown";
     }
 
-    if (node->op == "in")
+    if (node->op == "in" || node->op == "not in")
     {
         checkExpression(node->left.get());
         checkExpression(node->right.get());

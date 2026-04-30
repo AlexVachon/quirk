@@ -6,6 +6,9 @@
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Verifier.h"
+#include "llvm/IR/LegacyPassManager.h"
+#include "llvm/Transforms/IPO/PassManagerBuilder.h"
+#include "llvm/Transforms/IPO.h"
 
 #include <functional>
 #include <iostream>
@@ -29,7 +32,8 @@
 using namespace llvm;
 
 class LLVMCodegen {
-    LLVMContext Context;
+    std::unique_ptr<LLVMContext> pCtx;  // heap-allocated so ownership can be transferred to JIT
+    LLVMContext& Context;
     std::unique_ptr<Module> TheModule;
     IRBuilder<> Builder;
 
@@ -97,7 +101,7 @@ class LLVMCodegen {
         exit(1);
     }
 
-    LLVMCodegen() : Builder(Context) {
+    LLVMCodegen() : pCtx(std::make_unique<LLVMContext>()), Context(*pCtx), Builder(Context) {
         TheModule = std::make_unique<Module>("QuirkCompiler", Context);
         typeGen = std::make_unique<TypeGen>(Context, StructTypes);
         flowGen = std::make_unique<ControlFlowGen>(Context, TheModule.get(), Builder);
@@ -110,7 +114,21 @@ class LLVMCodegen {
         mathGen = std::make_unique<MathGen>(Context, Builder);
     }
 
-    void compile(const std::vector<std::unique_ptr<Node>>& nodes, raw_ostream& out = errs()) {
+   private:
+    // ── run LLVM O2 passes on the current module ────────────────────────────
+    void runOptimizations() {
+        if (verbose) std::cerr << "[Codegen] running O2 passes\n";
+        legacy::PassManager PM;
+        PassManagerBuilder PMB;
+        PMB.OptLevel  = 2;
+        PMB.SizeLevel = 0;
+        PMB.Inliner   = createFunctionInliningPass(PMB.OptLevel, PMB.SizeLevel, false);
+        PMB.populateModulePassManager(PM);
+        PM.run(*TheModule);
+    }
+
+    // ── private: build IR from AST (no optimization, no emit) ──────────────
+    void buildIR(const std::vector<std::unique_ptr<Node>>& nodes) {
         if (verbose) std::cerr << "[Codegen] compile() started — " << nodes.size() << " top-level node(s)\n";
         builtinGen->Initialize();
 
@@ -457,14 +475,33 @@ class LLVMCodegen {
             }
         }
 
-        // --- NEW: Pop 'main' from the shadow stack! ---
-        FunctionCallee popFrame = TheModule->getOrInsertFunction("quirk_pop_frame", Type::getVoidTy(Context));
-        Builder.CreateCall(popFrame);
-        // ----------------------------------------------
-        
-        if (!Builder.GetInsertBlock()->getTerminator()) Builder.CreateRet(ConstantInt::get(Type::getInt32Ty(Context), 0));
-        if (verbose) std::cerr << "[Codegen] compile() finished — emitting IR\n";
+        // Pop 'main' from the shadow stack and emit fallthrough return, but only if
+        // the current block doesn't already have a terminator (explicit return 0 already
+        // popped the frame and emitted ret via ReturnNode handling).
+        if (!Builder.GetInsertBlock()->getTerminator()) {
+            FunctionCallee popFrame = TheModule->getOrInsertFunction("quirk_pop_frame", Type::getVoidTy(Context));
+            Builder.CreateCall(popFrame);
+            Builder.CreateRet(ConstantInt::get(Type::getInt32Ty(Context), 0));
+        }
+        if (verbose) std::cerr << "[Codegen] buildIR() done\n";
+    }
+
+   public:
+    // Compile to IR file (used by --emit-ir and --compile-only)
+    void compile(const std::vector<std::unique_ptr<Node>>& nodes, raw_ostream& out = errs()) {
+        buildIR(nodes);
+        runOptimizations();
+        if (verbose) std::cerr << "[Codegen] emitting IR\n";
         TheModule->print(out, nullptr);
+    }
+
+    // Build + optimize, then transfer module ownership to the caller (for JIT use).
+    // The codegen object must not be used after this call.
+    std::pair<std::unique_ptr<Module>, std::unique_ptr<LLVMContext>>
+    compileAndRelease(const std::vector<std::unique_ptr<Node>>& nodes) {
+        buildIR(nodes);
+        runOptimizations();
+        return { std::move(TheModule), std::move(pCtx) };
     }
 
     void compileFunction(FunctionNode* node) {
@@ -1108,8 +1145,6 @@ class LLVMCodegen {
             };
             if (objPtr && listFunctionalMethods.count(member->memberName) &&
                 typeName.find("List") != std::string::npos && !call->args.empty()) {
-                Type* i8PtrTy   = Type::getInt8PtrTy(Context);
-                Type* listPtrTy = objPtr->getType();
                 StructType* callTy = StructTypes["Callable"];
                 Type* callPtrTy = PointerType::getUnqual(callTy);
 
@@ -1484,19 +1519,7 @@ class LLVMCodegen {
                     else if (argVal->getType()->isIntegerTy() && expectedType->isPointerTy())
                         argVal = Builder.CreateIntToPtr(argVal, expectedType);
                     else if (argVal->getType()->isPointerTy() && expectedType->isPointerTy()) {
-                        // When passing String* where i8* (raw char*) is expected, extract
-                        // the buffer field instead of bitcasting — avoids heuristic false positives.
-                        auto* argElem = argVal->getType()->getPointerElementType();
-                        if (argElem->isStructTy() &&
-                            cast<StructType>(argElem)->getName() == "String" &&
-                            expectedType->getPointerElementType()->isIntegerTy(8)) {
-                            auto* strTy = cast<StructType>(argElem);
-                            Value* bufGEP = Builder.CreateGEP(strTy, argVal,
-                                {Builder.getInt32(0), Builder.getInt32(0)});
-                            argVal = Builder.CreateLoad(expectedType, bufGEP);
-                        } else {
-                            argVal = Builder.CreateBitCast(argVal, expectedType);
-                        }
+                        argVal = Builder.CreateBitCast(argVal, expectedType);
                     }
                     else if (argVal->getType()->isIntegerTy() && expectedType->isDoubleTy())
                         argVal = Builder.CreateSIToFP(argVal, expectedType);
@@ -2291,7 +2314,6 @@ Value* LLVMCodegen::handleExpression(Node* node) {
 
             Type* srcTy = src->getType();
             Type* i32Ty = Type::getInt32Ty(Context);
-            Type* i1Ty  = Type::getInt1Ty(Context);
             Type* i8Ty  = Type::getInt8Ty(Context);
             Type* dblTy = Type::getDoubleTy(Context);
 

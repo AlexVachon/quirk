@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <limits.h>
 #include <stdint.h>
+#include <signal.h>
 #include <gc.h>
 
 #ifdef _WIN32
@@ -38,9 +39,40 @@
 static int quirk_argc = 0;
 static char** quirk_argv = NULL;
 
+// Print the Quirk shadow-stack trace and abort cleanly on fatal signals.
+static void quirk_crash_handler(int sig) {
+    const char* signame = (sig == SIGSEGV) ? "SIGSEGV (null dereference or bad memory access)"
+                        : (sig == SIGABRT) ? "SIGABRT (abort / assertion failure)"
+                        : (sig == SIGBUS)  ? "SIGBUS (bus error)"
+                        : (sig == SIGFPE)  ? "SIGFPE (arithmetic error)"
+                        :                    "fatal signal";
+    fprintf(stderr, "\nQuirk runtime error: %s\n", signame);
+    if (quirk_shadow_sp > 0) {
+        fprintf(stderr, "Traceback (most recent call last):\n");
+        for (int i = 0; i < quirk_shadow_sp; i++) {
+            const char* fn = quirk_shadow_stack[i].func_name ? quirk_shadow_stack[i].func_name : "?";
+            const char* fl = quirk_shadow_stack[i].file_name ? quirk_shadow_stack[i].file_name : "?";
+            fprintf(stderr, "  [%d] %s  (%s)\n", i, fn, fl);
+        }
+    } else {
+        fprintf(stderr, "(no Quirk stack frames recorded)\n");
+    }
+    // Restore default handler and re-raise so the process exits with the
+    // correct status and any debugger/core dump still fires normally.
+    signal(sig, SIG_DFL);
+    raise(sig);
+}
+
 void Sys_init(int argc, char** argv) {
     quirk_argc = argc;
     quirk_argv = argv;
+    // Install crash handler for common fatal signals.
+    // Boehm GC installs its own SIGSEGV handler for heap probing — it saves and
+    // restores the previous handler, so our handler fires for genuine crashes only.
+    signal(SIGSEGV, quirk_crash_handler);
+    signal(SIGABRT, quirk_crash_handler);
+    signal(SIGBUS,  quirk_crash_handler);
+    signal(SIGFPE,  quirk_crash_handler);
     #ifdef _WIN32
     WSADATA wsaData;
     WSAStartup(MAKEWORD(2, 2), &wsaData);

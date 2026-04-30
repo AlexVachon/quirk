@@ -1,5 +1,10 @@
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Support/TargetSelect.h"
+#include "llvm/IR/Verifier.h"
+#include "llvm/ExecutionEngine/Orc/LLJIT.h"
+#include "llvm/ExecutionEngine/Orc/ExecutionUtils.h"
+#include "llvm/ExecutionEngine/Orc/ThreadSafeModule.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -453,17 +458,24 @@ int main(int argc, char* argv[]) {
     // =======================================================
     log.debug("Starting Code Generation...");
 
-    // IR goes to /tmp for -r (throwaway), or next to source for --emit-ir
-    std::string irPath;
-    if (opts.runImmediate && !opts.emitIR) {
-        irPath = "/tmp/quirk_" + baseName + ".ll";
-    } else if (opts.emitIR) {
-        irPath = baseDir + "/" + baseName + ".ll";
-    } else {
-        irPath = "/tmp/quirk_" + baseName + ".ll";
+    // Resolve runtime.so path (needed by both emit-ir and JIT paths)
+    std::string runtimePath = "./bin/runtime.so";
+    {
+        const char* envHome = std::getenv("QUIRK_HOME");
+        if (envHome) {
+            std::string venvRuntime = std::string(envHome) + "/bin/runtime.so";
+            if (fs::exists(venvRuntime)) runtimePath = venvRuntime;
+        }
     }
 
-    {
+    // =======================================================
+    // 6a. EMIT IR (--emit-ir or --compile-only)
+    // =======================================================
+    if (opts.emitIR || !opts.runImmediate) {
+        std::string irPath = opts.emitIR
+            ? (baseDir + "/" + baseName + ".ll")
+            : ("/tmp/quirk_" + baseName + ".ll");
+
         std::error_code EC;
         raw_fd_ostream dest(irPath, EC, sys::fs::OF_None);
         if (EC) {
@@ -471,65 +483,102 @@ int main(int argc, char* argv[]) {
                       << "': " << EC.message() << std::endl;
             return 1;
         }
-
         LLVMCodegen codegen;
         codegen.setVerbose(opts.verbose);
         codegen.setSourceMap(sourceMap);
         codegen.compile(ast, dest);
         dest.flush();
+
+        if (opts.emitIR) {
+            log.debug("LLVM IR written to " + irPath);
+            return 0;
+        }
     }
 
-    if (opts.emitIR)
-        log.debug("LLVM IR written to " + irPath);
-
     // =======================================================
-    // 6. COMPILE + RUN (if -r)
+    // 6b. JIT COMPILE + RUN (runImmediate, no subprocess)
     // =======================================================
-    if (opts.runImmediate) {
-        std::string objPath = "/tmp/quirk_" + baseName + ".o";
-        std::string binPath = "/tmp/quirk_" + baseName;
+    if (opts.runImmediate && !opts.emitIR) {
+        llvm::InitializeNativeTarget();
+        llvm::InitializeNativeTargetAsmPrinter();
+        llvm::InitializeNativeTargetAsmParser();
 
-        // Resolve runtime.so
-        std::string runtimePath = "./bin/runtime.so";
-        const char* envHome = std::getenv("QUIRK_HOME");
-        if (envHome) {
-            std::string venvRuntime = std::string(envHome) + "/bin/runtime.so";
-            if (fs::exists(venvRuntime))
-                runtimePath = venvRuntime;
+        // Load libgc explicitly with RTLD_GLOBAL so GC_malloc is visible to the JIT.
+        // runtime.so depends on libgc but loads it RTLD_LOCAL; the JIT needs it globally.
+        for (const char* gcLib : {"libgc.so.1", "libgc.so"}) {
+            std::string errMsg;
+            if (!llvm::sys::DynamicLibrary::LoadLibraryPermanently(gcLib, &errMsg)) break;
         }
-        std::string runtimeDir = fs::path(runtimePath).parent_path().string();
-        if (runtimeDir.empty()) runtimeDir = ".";
 
-        // Step 1: IR -> object file
-        std::string llcCmd = "llc-14 -filetype=obj -relocation-model=pic "
-                             + irPath + " -o " + objPath;
-        log.debug("Running: " + llcCmd);
-        if (system(llcCmd.c_str()) != 0) {
-            std::cerr << "Error: llc failed to compile IR." << std::endl;
+        // Build IR + run O2 passes, get ownership of the module
+        LLVMCodegen codegen;
+        codegen.setVerbose(opts.verbose);
+        codegen.setSourceMap(sourceMap);
+        auto [module, ctx] = codegen.compileAndRelease(ast);
+
+        // Catch malformed IR early (e.g. missing terminators, type mismatches)
+        // before the JIT tries to compile it and produces a cryptic crash.
+        {
+            std::string verifyErrors;
+            llvm::raw_string_ostream verifyStream(verifyErrors);
+            if (llvm::verifyModule(*module, &verifyStream)) {
+                std::cerr << "Internal compiler error: malformed IR\n"
+                          << verifyStream.str() << std::endl;
+                return 1;
+            }
+        }
+
+        // Create LLJIT instance
+        auto jitOrErr = llvm::orc::LLJITBuilder().create();
+        if (!jitOrErr) {
+            std::cerr << "Error: failed to create JIT: "
+                      << llvm::toString(jitOrErr.takeError()) << std::endl;
+            return 1;
+        }
+        auto& JIT = *jitOrErr;
+        auto& JD  = JIT->getMainJITDylib();
+
+        // Expose current-process symbols (printf, malloc, etc.)
+        {
+            auto genOrErr = llvm::orc::DynamicLibrarySearchGenerator::GetForCurrentProcess(
+                JIT->getDataLayout().getGlobalPrefix());
+            if (!genOrErr) {
+                std::cerr << "Error: failed to create process symbol generator: "
+                          << llvm::toString(genOrErr.takeError()) << std::endl;
+                return 1;
+            }
+            JD.addGenerator(std::move(*genOrErr));
+        }
+
+        // Load runtime.so — provides all Core_* and quirk_* symbols
+        {
+            auto genOrErr = llvm::orc::DynamicLibrarySearchGenerator::Load(
+                runtimePath.c_str(), JIT->getDataLayout().getGlobalPrefix());
+            if (!genOrErr) {
+                std::cerr << "Error: could not load runtime.so (" << runtimePath << "): "
+                          << llvm::toString(genOrErr.takeError()) << std::endl;
+                return 1;
+            }
+            JD.addGenerator(std::move(*genOrErr));
+        }
+
+        // Add the compiled module
+        if (auto err = JIT->addIRModule(
+                llvm::orc::ThreadSafeModule(std::move(module), std::move(ctx)))) {
+            std::cerr << "Error: JIT addIRModule failed: "
+                      << llvm::toString(std::move(err)) << std::endl;
             return 1;
         }
 
-        // Step 2: object + runtime.so -> binary
-        std::string linkCmd = "gcc " + objPath + " " + runtimePath
-                            + " -Wl,-rpath," + runtimeDir
-                            + " -lgc -lm -o " + binPath;
-        log.debug("Running: " + linkCmd);
-        if (system(linkCmd.c_str()) != 0) {
-            std::cerr << "Error: gcc failed to link." << std::endl;
+        // Resolve and call main(argc, argv)
+        auto mainSym = JIT->lookup("main");
+        if (!mainSym) {
+            std::cerr << "Error: JIT could not find 'main': "
+                      << llvm::toString(mainSym.takeError()) << std::endl;
             return 1;
         }
-
-        // Step 3: run
-        log.debug("Executing: " + binPath);
-        int ret = system(binPath.c_str());
-
-        // Step 4: clean up /tmp artifacts unless --emit-ir was also passed
-        if (!opts.emitIR) {
-            fs::remove(irPath);
-            fs::remove(objPath);
-        }
-        fs::remove(binPath);
-
+        auto mainFn = (int(*)(int, char**))mainSym->getAddress();
+        int ret = mainFn(argc, argv);
         if (ret != 0) {
             std::cerr << "Error: Program exited with code " << ret << std::endl;
             return ret;

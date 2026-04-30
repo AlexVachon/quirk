@@ -43,6 +43,19 @@ class MathGen {
     Value* generateBinaryOp(std::string op, Value* L, Value* R) {
         if (!L || !R) return nullptr;
 
+        // Unbox i8* (Any-boxed integer/double) for arithmetic and numeric comparisons.
+        // This handles `for x in list` / list comprehension variables that arrive as void*.
+        bool isNumericOp = (op=="+"||op=="-"||op=="*"||op=="/"||op==">"||op=="<"||op==">="||op=="<=");
+        if (isNumericOp) {
+            Type* i8p = Type::getInt8PtrTy(Context);
+            bool Lptr = L->getType() == i8p;
+            bool Rptr = R->getType() == i8p;
+            bool Lnum = L->getType()->isIntegerTy() || L->getType()->isDoubleTy();
+            bool Rnum = R->getType()->isIntegerTy() || R->getType()->isDoubleTy();
+            if (Lptr && (Rnum || Rptr)) L = Builder.CreatePtrToInt(L, Type::getInt32Ty(Context), "unbox_l");
+            if (Rptr && (Lnum || Lptr)) R = Builder.CreatePtrToInt(R, Type::getInt32Ty(Context), "unbox_r");
+        }
+
         bool isDouble = L->getType()->isDoubleTy() || R->getType()->isDoubleTy();
 
         if (isDouble) {
@@ -59,7 +72,8 @@ class MathGen {
             if (op == "==") return Builder.CreateFCmpOEQ(L, R, "f_eq");
             if (op == "!=") return Builder.CreateFCmpONE(L, R, "f_ne");
         } else {
-            if (L->getType() != R->getType()) {
+            if (L->getType() != R->getType() &&
+                L->getType()->isIntegerTy() && R->getType()->isIntegerTy()) {
                 if (L->getType()->getIntegerBitWidth() < R->getType()->getIntegerBitWidth())
                     L = Builder.CreateIntCast(L, R->getType(), true);
                 else

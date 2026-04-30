@@ -41,36 +41,39 @@ std::vector<std::unique_ptr<Node>> Parser::parse() {
     std::vector<std::unique_ptr<Node>> nodes;
     while (!isAtEnd()) {
         TokenType type = peek().type;
-        if (type == TokenType::DEFINE || type == TokenType::INIT ||
-            type == TokenType::EXTERN) {
-            nodes.push_back(parseFunction());
-
-            for (auto& extra : extraNodes)
-                nodes.push_back(std::move(extra));
-            extraNodes.clear();
-
-        } else if (type == TokenType::ENUM) {
-            nodes.push_back(parseEnum());
-        } else if (type == TokenType::STRUCT) {
-            nodes.push_back(parseStruct());
-            for (auto& extra : extraNodes)
-                nodes.push_back(std::move(extra));
-            extraNodes.clear();
-        } else if (type == TokenType::EXTEND) {
-            advance();
-            std::string targetStruct = advance().value;
-            consume(TokenType::LBRACE, "Expected '{'");
-            while (peek().type != TokenType::RBRACE && !isAtEnd()) {
-                auto func = parseFunction();
-                func->cls = targetStruct;
-                nodes.push_back(std::move(func));
+        try {
+            if (type == TokenType::DEFINE || type == TokenType::INIT ||
+                type == TokenType::EXTERN) {
+                nodes.push_back(parseFunction());
+                for (auto& extra : extraNodes)
+                    nodes.push_back(std::move(extra));
+                extraNodes.clear();
+            } else if (type == TokenType::ENUM) {
+                nodes.push_back(parseEnum());
+            } else if (type == TokenType::STRUCT) {
+                nodes.push_back(parseStruct());
+                for (auto& extra : extraNodes)
+                    nodes.push_back(std::move(extra));
+                extraNodes.clear();
+            } else if (type == TokenType::EXTEND) {
+                advance();
+                std::string targetStruct = advance().value;
+                consume(TokenType::LBRACE, "Expected '{'");
+                while (peek().type != TokenType::RBRACE && !isAtEnd()) {
+                    auto func = parseFunction();
+                    func->cls = targetStruct;
+                    nodes.push_back(std::move(func));
+                }
+                consume(TokenType::RBRACE, "Expected '}'");
+            } else {
+                nodes.push_back(parseStatement());
+                for (auto& extra : extraNodes)
+                    nodes.push_back(std::move(extra));
+                extraNodes.clear();
             }
-            consume(TokenType::RBRACE, "Expected '}'");
-        } else {
-            nodes.push_back(parseStatement());
-            for (auto& extra : extraNodes)
-                nodes.push_back(std::move(extra));
+        } catch (ParseError&) {
             extraNodes.clear();
+            sync();
         }
     }
     return nodes;
@@ -159,29 +162,110 @@ std::unique_ptr<Node> Parser::parseExpression(int min_precedence) {
         left = std::make_unique<BinaryOpNode>("-", std::move(zero),
                                               std::move(operand));
     } else if (t.type == TokenType::LBRACKET) {
-        std::vector<std::unique_ptr<Node>> elements;
-        if (peek().type != TokenType::RBRACKET) {
-            do {
-                elements.push_back(parseExpression(0));
-            } while (match(TokenType::COMMA));
+        if (peek().type == TokenType::RBRACKET) {
+            advance();
+            left = std::make_unique<ListLiteralNode>(std::vector<std::unique_ptr<Node>>{});
+        } else {
+            auto firstExpr = parseExpression(0);
+            if (peek().type == TokenType::FOR) {
+                // List comprehension: [expr for var in iterable (where cond)]
+                advance(); // consume 'for'
+                std::string varName = advance().value;
+                std::string varName2;
+                if (peek().type == TokenType::COMMA) { advance(); varName2 = advance().value; }
+                consume(TokenType::IN, "Expected 'in' in list comprehension");
+                auto iterable = parseExpression(0);
+                std::unique_ptr<Node> condition;
+                if (peek().type == TokenType::WHERE) {
+                    advance();
+                    condition = parseExpression(0);
+                }
+                consume(TokenType::RBRACKET, "Expected ']' after list comprehension");
+                auto comp = std::make_unique<ListComprehensionNode>();
+                comp->expr      = std::move(firstExpr);
+                comp->varName   = varName;
+                comp->varName2  = varName2;
+                comp->iterable  = std::move(iterable);
+                comp->condition = std::move(condition);
+                comp->line = t.line; comp->col = t.col; comp->filePath = filePath;
+                left = std::move(comp);
+            } else {
+                std::vector<std::unique_ptr<Node>> elements;
+                elements.push_back(std::move(firstExpr));
+                while (match(TokenType::COMMA))
+                    elements.push_back(parseExpression(0));
+                consume(TokenType::RBRACKET, "Expected ']' after list elements");
+                left = std::make_unique<ListLiteralNode>(std::move(elements));
+            }
         }
-        consume(TokenType::RBRACKET, "Expected ']' after list elements");
-        left = std::make_unique<ListLiteralNode>(std::move(elements));
     } else if (t.type == TokenType::LBRACE) {
-        auto node = std::make_unique<MapLiteralNode>();
-
         if (peek().type == TokenType::RBRACE) {
             advance();
+            left = std::make_unique<MapLiteralNode>();
         } else {
-            do {
-                auto key = parseExpression(0);
+            auto keyExpr = parseExpression(0);
+            // Set-style comprehension: {expr for var in iterable (where cond)} → produces a List
+            if (peek().type == TokenType::FOR) {
+                advance(); // consume 'for'
+                std::string varName = advance().value;
+                std::string varName2;
+                if (peek().type == TokenType::COMMA) { advance(); varName2 = advance().value; }
+                consume(TokenType::IN, "Expected 'in' in comprehension");
+                auto iterable = parseExpression(0);
+                std::unique_ptr<Node> condition;
+                if (peek().type == TokenType::WHERE) {
+                    advance();
+                    condition = parseExpression(0);
+                }
+                consume(TokenType::RBRACE, "Expected '}' after comprehension");
+                auto comp = std::make_unique<ListComprehensionNode>();
+                comp->expr      = std::move(keyExpr);
+                comp->varName   = varName;
+                comp->varName2  = varName2;
+                comp->iterable  = std::move(iterable);
+                comp->condition = std::move(condition);
+                comp->line = t.line; comp->col = t.col; comp->filePath = filePath;
+                left = std::move(comp);
+            } else {
                 consume(TokenType::COLON, "Expected ':' after map key");
-                auto value = parseExpression(0);
-                node->elements.push_back({std::move(key), std::move(value)});
-            } while (match(TokenType::COMMA));
-            consume(TokenType::RBRACE, "Expected '}' after map literal");
+                auto valExpr = parseExpression(0);
+                if (peek().type == TokenType::FOR) {
+                    // Map comprehension: {key: val for var in iterable (where cond)}
+                    advance(); // consume 'for'
+                    std::string varName = advance().value;
+                    std::string varName2;
+                    if (peek().type == TokenType::COMMA) { advance(); varName2 = advance().value; }
+                    consume(TokenType::IN, "Expected 'in' in map comprehension");
+                    auto iterable = parseExpression(0);
+                    std::unique_ptr<Node> condition;
+                    if (peek().type == TokenType::WHERE) {
+                        advance();
+                        condition = parseExpression(0);
+                    }
+                    consume(TokenType::RBRACE, "Expected '}' after map comprehension");
+                    auto comp = std::make_unique<MapComprehensionNode>();
+                    comp->keyExpr   = std::move(keyExpr);
+                    comp->valExpr   = std::move(valExpr);
+                    comp->varName   = varName;
+                    comp->varName2  = varName2;
+                    comp->iterable  = std::move(iterable);
+                    comp->condition = std::move(condition);
+                    comp->line = t.line; comp->col = t.col; comp->filePath = filePath;
+                    left = std::move(comp);
+                } else {
+                    auto node = std::make_unique<MapLiteralNode>();
+                    node->elements.push_back({std::move(keyExpr), std::move(valExpr)});
+                    while (match(TokenType::COMMA)) {
+                        auto k = parseExpression(0);
+                        consume(TokenType::COLON, "Expected ':' after map key");
+                        auto v = parseExpression(0);
+                        node->elements.push_back({std::move(k), std::move(v)});
+                    }
+                    consume(TokenType::RBRACE, "Expected '}' after map literal");
+                    left = std::move(node);
+                }
+            }
         }
-        left = std::move(node);
     } else if (t.type == TokenType::LPAREN) {
         if (peek().type == TokenType::RPAREN) {
             // Empty tuple: ()
@@ -308,16 +392,16 @@ std::unique_ptr<Node> Parser::parseExpression(int min_precedence) {
             while (peek().type != TokenType::RPAREN && !isAtEnd()) {
                 std::string argName = "";
                 if (peek().type == TokenType::IDENTIFIER &&
-                    tokens[pos + 1].type == TokenType::COLON) {
+                    tokens[pos + 1].type == TokenType::ASSIGN) {
                     argName = advance().value;
-                    advance();
+                    advance(); // consume '='
                 }
-                
+
                 Arg newArg;
                 newArg.name = argName;
                 newArg.value = parseExpression(0);
                 call->args.push_back(std::move(newArg));
-                
+
                 if (peek().type == TokenType::COMMA)
                     advance();
             }
@@ -363,6 +447,12 @@ std::unique_ptr<Node> Parser::parseStatement() {
     TokenType type = peek().type;
     int currentLine = peek().line;
 
+    if (type == TokenType::CONST) {
+        advance(); // consume 'const'
+        auto decl = parseVarDecl();
+        decl->isConst = true;
+        return decl;
+    }
     if (type == TokenType::USE)
         return parseUse();
     if (type == TokenType::FROM)
@@ -381,8 +471,6 @@ std::unique_ptr<Node> Parser::parseStatement() {
         return parseMatch();
     if (type == TokenType::THROW) 
         return parseThrow();
-    if (type == TokenType::TRIGGER)
-        return parseTrigger();
     if (type == TokenType::BREAK) {
         advance();
         return std::make_unique<BreakNode>();
@@ -724,16 +812,16 @@ std::unique_ptr<CallNode> Parser::parseCall() {
         std::string argName = "";
 
         if (peek().type == TokenType::IDENTIFIER &&
-            tokens[pos + 1].type == TokenType::COLON) {
+            tokens[pos + 1].type == TokenType::ASSIGN) {
             argName = advance().value;
-            advance();
+            advance(); // consume '='
         }
 
         Arg newArg;
         newArg.name = argName;
         newArg.value = parseExpression(0);
         node->args.push_back(std::move(newArg));
-        
+
         if (peek().type == TokenType::COMMA)
             advance();
     }
@@ -1064,12 +1152,7 @@ std::unique_ptr<Node> Parser::parseMapLiteral() {
 }
 
 void Parser::reportError(const std::string& message, const Token& token) {
-    std::cerr << "\033[1;31m[ERROR]\033[0m " << message << "\n";
-    if (!filePath.empty())
-        std::cerr << " --> " << filePath << ":" << token.line << ":" << token.col << "\n";
-    else
-        std::cerr << " --> line " << token.line << ":" << token.col << "\n";
-
+    // Extract the source line for display in flushErrors()
     size_t lineStart = 0;
     int currentLine = 1;
     for (size_t i = 0; i < source.length(); i++) {
@@ -1080,14 +1163,35 @@ void Parser::reportError(const std::string& message, const Token& token) {
     if (lineEnd == std::string::npos) lineEnd = source.length();
     std::string lineCode = source.substr(lineStart, lineEnd - lineStart);
 
-    std::string ln = std::to_string(token.line);
-    int caretOffset = (token.col > 1) ? token.col - 1 : 0;
-    std::cerr << std::string(ln.size(), ' ') << " |\n";
-    std::cerr << ln << " | " << lineCode << "\n";
-    std::cerr << std::string(ln.size(), ' ') << " | "
-              << std::string(caretOffset, ' ')
-              << "\033[1;33m^--- here\033[0m\n\n";
-    exit(1);
+    errors.push_back({message, filePath, lineCode, token.line, token.col});
+    throw ParseError{};
+}
+
+void Parser::flushErrors() const {
+    for (const auto& e : errors) {
+        std::cerr << "\033[1;31m[ERROR]\033[0m " << e.msg << "\n";
+        if (!e.filePath.empty())
+            std::cerr << " --> " << e.filePath << ":" << e.line << ":" << e.col << "\n";
+        std::string ln = std::to_string(e.line);
+        int caretOffset = (e.col > 1) ? e.col - 1 : 0;
+        std::cerr << std::string(ln.size(), ' ') << " |\n";
+        std::cerr << ln << " | " << e.lineCode << "\n";
+        std::cerr << std::string(ln.size(), ' ') << " | "
+                  << std::string(caretOffset, ' ')
+                  << "\033[1;33m^--- here\033[0m\n\n";
+    }
+}
+
+void Parser::sync() {
+    while (!isAtEnd()) {
+        TokenType t = peek().type;
+        if (t == TokenType::DEFINE || t == TokenType::STRUCT ||
+            t == TokenType::ENUM   || t == TokenType::USE    ||
+            t == TokenType::FROM   || t == TokenType::EXTEND ||
+            t == TokenType::INIT)
+            return;
+        advance();
+    }
 }
 
 std::unique_ptr<Node> Parser::parseTry() {
@@ -1219,67 +1323,3 @@ std::unique_ptr<Node> Parser::parseThrow() {
     return node;
 }
 
-std::unique_ptr<Node> Parser::parseTrigger() {
-    consume(TokenType::TRIGGER, "Expected 'trigger'");
-    
-    if (peek().type != TokenType::IDENTIFIER) {
-        reportError("Expected variable name after 'trigger'", peek());
-    }
-    
-    std::string varName = advance().value;
-    while (match(TokenType::DOT)) {
-        if (peek().type != TokenType::IDENTIFIER) {
-            reportError("Expected property name after '.'", peek());
-        }
-        varName += "." + advance().value;
-    }
-
-    auto lambda = std::make_unique<FunctionNode>();
-    static int triggerCount = 0;
-    
-    std::string safeVarName = varName;
-    std::replace(safeVarName.begin(), safeVarName.end(), '.', '_');
-    
-    std::string safeHandlerName = "__quirk_trigger_" + safeVarName + "_" + std::to_string(triggerCount++);
-    lambda->name = safeHandlerName;
-
-    std::string newParamName = "it";
-    std::string oldParamName = "was";
-
-    if (match(TokenType::LPAREN)) {
-        newParamName = advance().value; 
-        if (match(TokenType::COMMA)) {
-            oldParamName = advance().value; 
-        }
-        consume(TokenType::RPAREN, "Expected ')' after trigger parameters");
-    }
-
-    size_t dotPos = varName.find('.');
-    if (dotPos != std::string::npos) {
-        Parameter objParam;
-        objParam.name = varName.substr(0, dotPos);
-        objParam.type = "Any"; 
-        lambda->parameters.push_back(std::move(objParam));
-    }
-
-    Parameter pNew;
-    pNew.name = newParamName;
-    pNew.type = "Any"; 
-    lambda->parameters.push_back(std::move(pNew)); 
-
-    Parameter pOld;
-    pOld.name = oldParamName;
-    pOld.type = "Any"; 
-    lambda->parameters.push_back(std::move(pOld));
-
-    consume(TokenType::LBRACE, "Expected '{'");
-    while (peek().type != TokenType::RBRACE && !isAtEnd()) {
-        lambda->body.push_back(parseStatement());
-    }
-    consume(TokenType::RBRACE, "Expected '}'");
-
-    FunctionNode* rawLambda = lambda.get();
-    extraNodes.push_back(std::move(lambda));
-
-    return std::make_unique<TriggerNode>(varName, safeHandlerName, rawLambda);
-}

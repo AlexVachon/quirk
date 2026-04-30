@@ -1043,7 +1043,8 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
             ['in'],      ['as'],      ['del'],
             ['true'],    ['false'],   ['null'],
             ['and'],     ['or'],      ['not'],
-            ['trigger'], ['catch'],   ['super'],
+            ['const',    'const ${1:name} := ${2:value}',                             'Declare a constant variable'],
+            ['catch'],   ['super'],
             ['fn',       'fn(${1:x}) => ${2:x}',                                    'Lambda expression'],
         ];
         for (const [kw, snippet, doc] of keywords) {

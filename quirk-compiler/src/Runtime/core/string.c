@@ -9,6 +9,7 @@
 // (included here so append_any / append_formatted can call it)
 String* Core_Primitives_Any_to_string(Any* a);
 double Core_Primitives_Any_to_float(Any* a);
+extern void quirk_throw_exception(const char* type_name, const char* message);
 
 #define MAX_SMALL_INT 0xFFFFF
 
@@ -276,6 +277,20 @@ String* Core_String_String___repr(String* self) {
     char* raw = (char*)GC_malloc(len + 1);
     snprintf(raw, len + 1, "\"%s\"", self->buffer);
     return make_String(raw);
+}
+
+int Core_String_String___get(String* self, int index) {
+    if (!self || !self->buffer) {
+        quirk_throw_exception("IndexError", "string index on null string");
+    }
+    if (index < 0) index += self->length;
+    if (index < 0 || index >= self->length) {
+        char buf[128];
+        snprintf(buf, sizeof(buf),
+                 "string index %d out of range (length: %d)", index, self->length);
+        quirk_throw_exception("IndexError", buf);
+    }
+    return (int)(unsigned char)self->buffer[index];
 }
 
 // ==========================================

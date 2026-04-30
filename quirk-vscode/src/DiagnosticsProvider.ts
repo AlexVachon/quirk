@@ -4,7 +4,7 @@ const KEYWORDS = new Set([
     'define', 'struct', 'if', 'else', 'elif', 'while', 'for', 'in',
     'return', 'break', 'continue', 'use', 'from', 'with', 'as',
     'extern', 'true', 'false', 'null', 'del', 'init', 'def',
-    'trigger', 'try', 'catch', 'throw', 'finally', 'and', 'or', 'not', 'super', 'enum',
+    'const', 'ref', 'try', 'catch', 'throw', 'finally', 'and', 'or', 'not', 'super', 'enum',
     'match', 'case', '_', 'where', 'is',
     'fn'
 ]);
@@ -256,33 +256,39 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
             }
         }
 
-        // Reset scope if we enter a lambda trigger
-        const triggerMatch = /^\s*trigger\s+[a-zA-Z0-9_.]+(?:\s*\(([^)]*)\))?/.exec(maskedLine);
-        if (triggerMatch) {
-            locals = new Set<string>();
-            currentFuncDepth = braceDepth;
-            
-            const paramsStr = triggerMatch[1];
-            if (paramsStr) {
-                paramsStr.split(',').forEach(p => {
-                    const pName = p.trim();
-                    if (pName) {
-                        locals.add(pName);
-                        const startIdx = originalLine.indexOf(pName, triggerMatch.index);
-                        declarations.set(`${i}_${pName}`, new vscode.Range(i, startIdx, i, startIdx + pName.length));
-                    }
-                });
-            } else {
-                locals.add('it');
-                locals.add('was');
-            }
-        }
-
         // Allow declaration tracking inside a function body OR at the top level (braceDepth === 0).
         // braceDepth > 0 outside a function means we're inside a struct body — skip to avoid
         // treating type-annotated fields like `data: Any` as variable declarations.
         const isInsideFunc = currentFuncDepth !== -1;
         const isTopLevel = braceDepth === 0;
+
+        // Collect named argument names: `ident =` patterns at paren-depth > 0.
+        // These are keyword arguments to function calls, not variable declarations.
+        const namedArgNames = new Set<string>();
+        {
+            let pd = 0;
+            for (let ci = 0; ci < maskedLine.length; ci++) {
+                const ch = maskedLine[ci];
+                if (ch === '(') { pd++; }
+                else if (ch === ')') { pd--; }
+                else if (pd > 0) {
+                    const m = /^([a-zA-Z_]\w*)\s*=(?![=>])/.exec(maskedLine.slice(ci));
+                    if (m) { namedArgNames.add(m[1]); }
+                }
+            }
+        }
+
+        // Collect comprehension variable names from ALL `for var1 (,var2) in` patterns on the line.
+        // These are defined by the for-clause and are valid identifiers throughout the expression.
+        const compVarNames = new Set<string>();
+        {
+            const cvRe = /\bfor\s+(?:ref\s+)?([a-zA-Z_]\w*)(?:\s*,\s*([a-zA-Z_]\w*))?\s+in\b/g;
+            let cvm;
+            while ((cvm = cvRe.exec(maskedLine)) !== null) {
+                compVarNames.add(cvm[1]);
+                if (cvm[2]) compVarNames.add(cvm[2]);
+            }
+        }
 
         if (isInsideFunc || isTopLevel) {
             // Parenthesized tuple destructuring: (x, y) := expr
@@ -314,7 +320,7 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
             const assignMatch = /(?<!\.)\b([a-zA-Z_]\w*)\s*(?::\s*([a-zA-Z0-9_.?]+))?\s*(?::=|=(?!>)|\+=|-=|\*=|\/=)/.exec(maskedLine);
             if (assignMatch && !parenDestructMatch && !bareDestructMatch) {
                 const vName = assignMatch[1];
-                if (!locals.has(vName) && !KEYWORDS.has(vName) && !BUILTINS.has(vName)) {
+                if (!namedArgNames.has(vName) && !locals.has(vName) && !KEYWORDS.has(vName) && !BUILTINS.has(vName)) {
                     locals.add(vName);
                     const startIdx = originalLine.indexOf(vName);
                     declarations.set(`${i}_${vName}`, new vscode.Range(i, startIdx, i, startIdx + vName.length));
@@ -367,7 +373,7 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
                 }
             }
 
-            const forMatch = /\bfor\s+(?:ref\s+)?([a-zA-Z_]\w*)\s+in\s+([a-zA-Z0-9_"'\[]+)/.exec(maskedLine);
+            const forMatch = /\bfor\s+(?:ref\s+)?([a-zA-Z_]\w*)(?:\s*,\s*([a-zA-Z_]\w*))?\s+in\s+([a-zA-Z0-9_"'\[]+)/.exec(maskedLine);
             if (forMatch) {
                 const vName = forMatch[1];
                 if (!locals.has(vName)) {
@@ -375,8 +381,16 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
                     const startIdx = originalLine.indexOf(vName, forMatch.index);
                     declarations.set(`${i}_${vName}`, new vscode.Range(i, startIdx, i, startIdx + vName.length));
                 }
+                if (forMatch[2]) {
+                    const vName2 = forMatch[2];
+                    if (!locals.has(vName2)) {
+                        locals.add(vName2);
+                        const startIdx2 = originalLine.indexOf(vName2, forMatch.index + forMatch[1].length);
+                        declarations.set(`${i}_${vName2}`, new vscode.Range(i, startIdx2, i, startIdx2 + vName2.length));
+                    }
+                }
                 // Infer element type from the iterable
-                const iterable = forMatch[2];
+                const iterable = forMatch[3];
                 if (iterable.startsWith('"') || iterable.startsWith("'")) {
                     localTypes.set(vName, 'Char');
                 } else {
@@ -422,6 +436,15 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
         while ((match = identRegex.exec(maskedLine)) !== null) {
             const ident = match[1];
             if (KEYWORDS.has(ident) || BUILTINS.has(ident)) continue;
+            if (namedArgNames.has(ident)) continue; // named argument — not a variable reference
+            if (compVarNames.has(ident)) {
+                if (!locals.has(ident)) locals.add(ident);
+                usages.add(ident);
+                for (let k = i; k >= 0; k--) {
+                    if (declarations.has(`${k}_${ident}`)) { usages.add(`${k}_${ident}`); break; }
+                }
+                continue;
+            }
 
             // Prevent struct properties like "file: String" from triggering a warning
             const restOfLine = maskedLine.substring(match.index + ident.length);

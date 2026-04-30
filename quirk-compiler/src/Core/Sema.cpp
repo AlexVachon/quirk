@@ -6,34 +6,22 @@
 
 std::string Sema::currentClass = "";
 
-[[noreturn]] void Sema::fatalError(const std::string& msg, int line, int col,
-                                    const std::string& filePath) {
+// Shared formatting helper — prints one error to stderr.
+static void printSemaError(const std::string& msg, int line, int col,
+                           const std::string& path,
+                           const std::map<std::string, std::string>& sourceMap) {
     std::cerr << "\033[1;31m[ERROR]\033[0m " << msg << "\n";
-
-    // Fallback to lastNode if no explicit location given
-    if (line <= 0 && lastNode && lastNode->line > 0) {
-        line     = lastNode->line;
-        col      = lastNode->col;
-    }
-    std::string path = (!filePath.empty())           ? filePath
-                       : (lastNode && !lastNode->filePath.empty()) ? lastNode->filePath
-                       : currentFilePath;
-
     if (line > 0) {
         std::cerr << " --> ";
         if (!path.empty()) std::cerr << path << ":";
         std::cerr << line;
         if (col > 0) std::cerr << ":" << col;
         std::cerr << "\n";
-
         if (!path.empty() && sourceMap.count(path)) {
             const std::string& src = sourceMap.at(path);
-            int cur = 1;
-            std::string lineText;
+            int cur = 1; std::string lineText;
             std::istringstream ss(src);
-            while (std::getline(ss, lineText)) {
-                if (cur++ == line) break;
-            }
+            while (std::getline(ss, lineText)) { if (cur++ == line) break; }
             std::string ln = std::to_string(line);
             std::cerr << std::string(ln.size(), ' ') << " |\n";
             std::cerr << ln << " | " << lineText << "\n";
@@ -43,7 +31,37 @@ std::string Sema::currentClass = "";
                       << "\033[1;33m^--- here\033[0m\n\n";
         }
     }
+}
+
+[[noreturn]] void Sema::fatalError(const std::string& msg, int line, int col,
+                                    const std::string& filePath) {
+    if (line <= 0 && lastNode && lastNode->line > 0) {
+        line = lastNode->line; col = lastNode->col;
+    }
+    std::string path = (!filePath.empty())                          ? filePath
+                     : (lastNode && !lastNode->filePath.empty()) ? lastNode->filePath
+                     : currentFilePath;
+    // Flush any previously accumulated errors first, then print this one and exit
+    flushErrors();
+    printSemaError(msg, line, col, path, sourceMap);
     exit(1);
+}
+
+void Sema::reportError(const std::string& msg, int line, int col,
+                       const std::string& filePath) {
+    if (line <= 0 && lastNode && lastNode->line > 0) {
+        line = lastNode->line; col = lastNode->col;
+    }
+    std::string path = (!filePath.empty())                          ? filePath
+                     : (lastNode && !lastNode->filePath.empty()) ? lastNode->filePath
+                     : currentFilePath;
+    errors.push_back({msg, path, line, col});
+}
+
+void Sema::flushErrors() {
+    for (auto& e : errors)
+        printSemaError(e.msg, e.line, e.col, e.filePath, sourceMap);
+    errors.clear();
 }
 
 bool Sema::analyze(const std::vector<std::unique_ptr<Node>> &nodes)
@@ -135,6 +153,10 @@ bool Sema::analyze(const std::vector<std::unique_ptr<Node>> &nodes)
         }
     }
     exitScope();
+    if (!errors.empty()) {
+        flushErrors();
+        return false;
+    }
     return true;
 }
 
@@ -156,12 +178,13 @@ void Sema::checkUse(UseNode *node)
     }
     else
     {
-        std::string alias = node->moduleName;
-        size_t lastDot = alias.rfind('.'); 
-        if (lastDot == std::string::npos)
-            lastDot = alias.rfind('/');
-        if (lastDot != std::string::npos)
-            alias = alias.substr(lastDot + 1);
+        std::string alias = node->alias;
+        if (alias.empty()) {
+            alias = node->moduleName;
+            size_t lastDot = alias.rfind('.');
+            if (lastDot == std::string::npos) lastDot = alias.rfind('/');
+            if (lastDot != std::string::npos) alias = alias.substr(lastDot + 1);
+        }
 
         defineVariable(alias, "MODULE$" + node->moduleName);
 
@@ -203,11 +226,9 @@ void Sema::checkFunction(FunctionNode *f)
     enterScope();
 
     if (!f->cls.empty() && !f->isStatic)
-        defineVariable("self", f->cls);
+        defineVariable("self", f->cls, false, true);
     for (const auto &param : f->parameters)
-    {
-        defineVariable(param.name, param.type);
-    }
+        defineVariable(param.name, param.type.empty() ? "Any" : param.type, false, true);
 
     if (f->whereClause)
         checkExpression(f->whereClause.get());
@@ -242,7 +263,41 @@ void Sema::checkFunction(FunctionNode *f)
 void Sema::checkVarDecl(VarDeclNode *node)
 {
     lastNode = node;
+
+    // Const mutation check: direct rebind AND index/member mutation on a const binding.
+    if (node->op == "=" || node->op == "+=" || node->op == "-=" ||
+        node->op == "*=" || node->op == "/=") {
+        // Extract the root variable name from whatever LHS shape we have:
+        //   m = ...          → LiteralNode("m")
+        //   m["k"] = ...     → BinaryOpNode("[]", LiteralNode("m"), ...)
+        //   m.field = ...    → MemberAccessNode(LiteralNode("m"), ...)
+        std::string rootVar;
+        if (auto lit = dynamic_cast<LiteralNode *>(node->lhs.get())) {
+            rootVar = lit->value;
+        } else if (auto bin = dynamic_cast<BinaryOpNode *>(node->lhs.get())) {
+            if (bin->op == "[]")
+                if (auto lit = dynamic_cast<LiteralNode *>(bin->left.get()))
+                    rootVar = lit->value;
+        } else if (auto mem = dynamic_cast<MemberAccessNode *>(node->lhs.get())) {
+            if (auto lit = dynamic_cast<LiteralNode *>(mem->object.get()))
+                rootVar = lit->value;
+        }
+        if (!rootVar.empty()) {
+            for (int i = (int)scopeStack.size() - 1; i >= 0; i--) {
+                if (scopeStack[i].count(rootVar)) {
+                    if (scopeStack[i][rootVar].isConst)
+                        fatalError("cannot mutate const variable '" + rootVar + "'",
+                                   node->line, node->col, node->filePath);
+                    break;
+                }
+            }
+        }
+    }
+
     std::string exprType = checkExpression(node->expression.get());
+
+    // A node is a declaration if it uses ':=' OR if it has a type annotation (e.g. `x: Type = val`)
+    bool isDecl = (node->op == ":=") || !node->typeAnnotation.empty();
 
     if (auto tup = dynamic_cast<TupleLiteralNode *>(node->lhs.get()))
     {
@@ -254,9 +309,20 @@ void Sema::checkVarDecl(VarDeclNode *node)
     }
     else if (auto lit = dynamic_cast<LiteralNode *>(node->lhs.get()))
     {
-        std::string finalType =
-            node->typeAnnotation.empty() ? exprType : node->typeAnnotation;
-        defineVariable(lit->value, finalType);
+        // Check if variable already exists in any scope
+        bool alreadyDefined = false;
+        for (int i = (int)scopeStack.size() - 1; i >= 0; i--) {
+            if (scopeStack[i].count(lit->value)) { alreadyDefined = true; break; }
+        }
+
+        if (isDecl || !alreadyDefined) {
+            std::string finalType =
+                node->typeAnnotation.empty() ? exprType : node->typeAnnotation;
+            defineVariable(lit->value, finalType, node->isConst);
+        } else {
+            // Reassignment — mark the existing binding as used
+            resolveVariable(lit->value);
+        }
     }
     else if (auto member = dynamic_cast<MemberAccessNode *>(node->lhs.get()))
     {
@@ -332,41 +398,8 @@ void Sema::checkStatement(Node *node)
                 fatalError("can only throw struct objects, got '" + type + "'",
                            th->line, 0, th->filePath);
         }
+        if (th->cause) checkExpression(th->cause.get());
         // bare throw (nullptr expression): re-raises current exception — no type check needed
-    }
-    else if (auto tr = dynamic_cast<TriggerNode*>(node)) {
-        std::string varType;
-        std::string objType; // Store the object type
-        
-        size_t dotPos = tr->varName.find('.');
-        if (dotPos != std::string::npos) {
-            std::string objName = tr->varName.substr(0, dotPos);
-            std::string propName = tr->varName.substr(dotPos + 1);
-            
-            objType = resolveVariable(objName);
-            varType = resolveMember(objType, propName);
-            
-            if (varType == "unknown")
-                fatalError("cannot trigger on unknown member '" + tr->varName + "'",
-                           tr->line, tr->col, tr->filePath);
-        } else {
-            varType = resolveVariable(tr->varName);
-        }
-
-        // --- NEW: Update all 3 parameter types ---
-        if (tr->handlerNode) {
-            auto& params = tr->handlerNode->parameters;
-            if (dotPos != std::string::npos && params.size() >= 3) {
-                // [0] = Object Context, [1] = New Value, [2] = Old Value
-                params[0].type = objType;
-                params[1].type = varType;
-                params[2].type = varType;
-            } else if (params.size() >= 2) {
-                // Local Variable: [0] = New Value, [1] = Old Value
-                params[0].type = varType;
-                params[1].type = varType;
-            }
-        }
     }
     else if (auto r = dynamic_cast<ReturnNode *>(node))
         checkReturn(r);
@@ -376,17 +409,18 @@ void Sema::checkIf(IfNode *node)
 {
     lastNode = node;
     std::string condType = checkExpression(node->condition.get());
-    if (condType != "Bool")
-        fatalError("'if' condition must be 'Bool', got '" + condType + "'",
-                   node->line, node->col, node->filePath);
+    if (condType != "Bool" && condType != "unknown")
+        reportError("'if' condition must be 'Bool', got '" + condType + "'",
+                    node->line, node->col, node->filePath);
     enterScope();
     for (auto &s : node->thenBranch)
         checkStatement(s.get());
     exitScope();
     for (auto &b : node->elIfBranches)
     {
-        if (checkExpression(b.condition.get()) != "Bool")
-            fatalError("'elif' condition must be 'Bool'", node->line, node->col, node->filePath);
+        std::string elifType = checkExpression(b.condition.get());
+        if (elifType != "Bool" && elifType != "unknown")
+            reportError("'elif' condition must be 'Bool'", node->line, node->col, node->filePath);
         enterScope();
         for (auto &s : b.body)
             checkStatement(s.get());
@@ -404,8 +438,9 @@ void Sema::checkIf(IfNode *node)
 void Sema::checkWhile(WhileNode *node)
 {
     lastNode = node;
-    if (checkExpression(node->condition.get()) != "Bool")
-        fatalError("'while' condition must be 'Bool'", node->line, node->col, node->filePath);
+    std::string wCondType = checkExpression(node->condition.get());
+    if (wCondType != "Bool" && wCondType != "unknown")
+        reportError("'while' condition must be 'Bool'", node->line, node->col, node->filePath);
     enterScope();
     for (auto &s : node->body)
         checkStatement(s.get());
@@ -459,17 +494,40 @@ std::string Sema::checkExpression(Node *node)
         return checkListLiteral(arr);
     if (auto map = dynamic_cast<MapLiteralNode *>(node))
         return checkMapLiteral(map);
+    if (auto comp = dynamic_cast<ListComprehensionNode *>(node)) {
+        checkExpression(comp->iterable.get());
+        enterScope();
+        defineVariable(comp->varName, "Any", false, true);
+        if (!comp->varName2.empty()) defineVariable(comp->varName2, "Any", false, true);
+        if (comp->condition) checkExpression(comp->condition.get());
+        checkExpression(comp->expr.get());
+        exitScope();
+        return "List";
+    }
+    if (auto comp = dynamic_cast<MapComprehensionNode *>(node)) {
+        checkExpression(comp->iterable.get());
+        enterScope();
+        defineVariable(comp->varName, "Any", false, true);
+        if (!comp->varName2.empty()) defineVariable(comp->varName2, "Any", false, true);
+        if (comp->condition) checkExpression(comp->condition.get());
+        checkExpression(comp->keyExpr.get());
+        checkExpression(comp->valExpr.get());
+        exitScope();
+        return "Map";
+    }
     if (auto tup = dynamic_cast<TupleLiteralNode *>(node)) {
         for (auto& elem : tup->elements) checkExpression(elem.get());
         return "Tuple";
     }
     if (auto lambda = dynamic_cast<LambdaNode *>(node)) {
-        // Infer return type by type-checking the body with params in scope
         enterScope();
         for (const auto& p : lambda->params)
-            if (!p.type.empty()) defineVariable(p.name, p.type);
-        if (lambda->isExpression && lambda->exprBody)
+            defineVariable(p.name, p.type.empty() ? "Any" : p.type, false, true);
+        if (lambda->isExpression && lambda->exprBody) {
             lambda->inferredReturnType = checkExpression(lambda->exprBody.get());
+        } else {
+            for (auto& s : lambda->stmtBody) checkStatement(s.get());
+        }
         exitScope();
         return "Callable";
     }
@@ -770,6 +828,9 @@ std::string Sema::checkCall(CallNode *node)
             return structRegistry[currentClass]->parents[0];
         }
 
+        // Always check all argument expressions so variables inside them are marked used
+        for (auto& a : node->args) checkExpression(a.value.get());
+
         // Positional constructor call: Foo(...) where Foo is a known struct.
         // Validate argument count against __init (self already stripped by parser).
         if (structRegistry.count(l->value)) {
@@ -793,18 +854,19 @@ std::string Sema::checkCall(CallNode *node)
 
         // --- THE FIX: Handle Module Constructor Calls (e.g. io.File) ---
         if (objType.rfind("MODULE$", 0) == 0) {
+            for (auto& a : node->args) checkExpression(a.value.get());
             std::string funcName = m->memberName;
-            
+
             // 1. Is it a Struct Constructor?
             if (structRegistry.count(funcName)) {
                 return funcName;
             }
-            
+
             // 2. Is it a standard Module Function?
             if (methodRegistry[""].count(funcName)) {
                 return methodRegistry[""][funcName]->returnType;
             }
-            
+
             return "void";
         }
         // ---------------------------------------------------------------
@@ -880,7 +942,7 @@ std::string Sema::checkCall(CallNode *node)
         if (bmIt != builtinMethods.end()) {
             auto mIt = bmIt->second.find(m->memberName);
             if (mIt != bmIt->second.end()) {
-                // Skip arg type-checking for builtins — their params aren't in the registry.
+                for (auto& a : node->args) checkExpression(a.value.get());
                 return mIt->second;
             }
         }
@@ -990,23 +1052,25 @@ bool Sema::inheritsFromException(const std::string& typeName, const std::string&
 void Sema::enterScope() { scopeStack.push_back({}); }
 void Sema::exitScope()
 {
-    if (!scopeStack.empty())
-        scopeStack.pop_back();
+    if (scopeStack.empty()) return;
+    scopeStack.pop_back();
 }
 
-void Sema::defineVariable(const std::string &name, const std::string &type)
+void Sema::defineVariable(const std::string &name, const std::string &type, bool isConst, bool isParam)
 {
     if (scopeStack.empty())
         enterScope();
-    scopeStack.back()[name] = type;
+    scopeStack.back()[name] = VarInfo{type, isConst, false, isParam, currentFilePath};
 }
 
 std::string Sema::resolveVariable(const std::string &name)
 {
     // 1. Check local scopes first
     for (int i = scopeStack.size() - 1; i >= 0; i--)
-        if (scopeStack[i].count(name))
-            return scopeStack[i][name];
+        if (scopeStack[i].count(name)) {
+            scopeStack[i][name].used = true;
+            return scopeStack[i][name].type;
+        }
 
     // 2. Check Global Module Aliases
     if (globalModuleAliases.count(name)) {
@@ -1035,6 +1099,8 @@ std::string Sema::resolveVariable(const std::string &name)
     // Builtins
     if (name == "print" || name == "printf" || name == "free" || name == "exit")
         return "void";
+    if (name == "type")
+        return "String";
     if (name == "char_at")
         return "Char";
     if (name == "set_char_at")
@@ -1063,7 +1129,8 @@ std::string Sema::resolveVariable(const std::string &name)
         }
     }
 
-    fatalError("undefined variable or function '" + name + "'");
+    reportError("undefined variable or function '" + name + "'");
+    return "unknown";  // allow analysis to continue
 }
 
 std::string Sema::resolveMember(const std::string &sName, const std::string &mName)

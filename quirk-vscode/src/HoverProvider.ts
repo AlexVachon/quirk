@@ -31,7 +31,7 @@ export class QuirkHoverProvider implements vscode.HoverProvider {
             'elif':     '**`elif`** — else-if branch.',
             'else':     '**`else`** — fallback branch.',
             'with':     '**`with`** — context-managed block (auto-close).\n\n```quirk\nwith File("f.txt", "r") as f { ... }\n```',
-            'trigger':  '**`trigger`** — register an event handler.',
+            'const':    '**`const`** — declare a constant (immutable) variable.\n\n```quirk\nconst PI := 3.14159\n```',
             'super':    '**`super`** — reference the parent struct.\n\n```quirk\nsuper().__init("message")\n```',
             'self':     '**`self`** — reference the current struct instance.',
             'true':     '**`true`** — boolean literal `true`',
@@ -130,15 +130,16 @@ export class QuirkHoverProvider implements vscode.HoverProvider {
                     md.appendMarkdown(`**Module** \`${word}\`\n\n*${relPath}*\n`);
 
                     // Forward scan for opening --- ... closing ---
+                    // Skip blank lines, comments, and import lines (from/use) before the block.
                     const docLines: string[] = [];
                     let inDocBlock = false;
-                    for (let i = 0; i < Math.min(targetDoc.lineCount, 40); i++) {
+                    for (let i = 0; i < Math.min(targetDoc.lineCount, 60); i++) {
                         const t = targetDoc.lineAt(i).text.trim();
                         if (!inDocBlock) {
                             if (t === '---') {
                                 inDocBlock = true;
-                            } else if (t !== '' && !t.startsWith('//')) {
-                                break; // non-blank line before --- → no file docstring
+                            } else if (t !== '' && !t.startsWith('//') && !t.startsWith('from ') && !t.startsWith('use ')) {
+                                break; // non-blank, non-import line before --- → no file docstring
                             }
                         } else {
                             if (t === '---') { break; } // closing ---

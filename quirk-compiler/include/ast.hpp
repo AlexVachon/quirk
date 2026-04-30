@@ -194,6 +194,7 @@ class VarDeclNode : public Node {
     std::unique_ptr<Node> expression;
     std::string op;
     std::string typeAnnotation;
+    bool isConst = false;
 
     VarDeclNode(std::unique_ptr<Node> left,
                 std::unique_ptr<Node> expr,
@@ -319,6 +320,35 @@ struct MapLiteralNode : public Node {
             pair.second->print(indent + 4);
         }
         std::cout << space << "}" << std::endl;
+    }
+};
+
+struct ListComprehensionNode : public Node {
+    std::unique_ptr<Node> expr;
+    std::string varName;
+    std::string varName2; // optional second var for pair iteration: for k, v in iterable
+    std::unique_ptr<Node> iterable;
+    std::unique_ptr<Node> condition; // nullable — the 'where' clause
+
+    void print(int indent) const override {
+        std::string sp(indent, ' ');
+        std::string vars = varName2.empty() ? varName : varName + ", " + varName2;
+        std::cout << sp << "ListComprehension: [expr for " << vars << " in ...]" << std::endl;
+    }
+};
+
+struct MapComprehensionNode : public Node {
+    std::unique_ptr<Node> keyExpr;
+    std::unique_ptr<Node> valExpr;
+    std::string varName;
+    std::string varName2; // optional second var for pair iteration: for k, v in iterable
+    std::unique_ptr<Node> iterable;
+    std::unique_ptr<Node> condition; // nullable
+
+    void print(int indent) const override {
+        std::string sp(indent, ' ');
+        std::string vars = varName2.empty() ? varName : varName + ", " + varName2;
+        std::cout << sp << "MapComprehension: {k: v for " << vars << " in ...}" << std::endl;
     }
 };
 
@@ -468,21 +498,6 @@ class ContinueNode : public Node {
     }
 };
 
-class TriggerNode : public Node {
-   public:
-    std::string varName;
-    std::string handlerName;
-    
-    FunctionNode* handlerNode; 
-
-    TriggerNode(std::string var, std::string handler, FunctionNode* fn) 
-        : varName(var), handlerName(handler), handlerNode(fn) {}
-
-    void print(int indent) const override {
-        std::string space(indent, ' ');
-        std::cout << space << "Trigger on '" << varName << "' -> " << handlerName << std::endl;
-    }
-};
 
 struct LambdaParam {
     std::string name;

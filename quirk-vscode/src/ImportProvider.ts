@@ -48,8 +48,19 @@ export class QuirkDefinitionProvider implements vscode.DefinitionProvider {
 
         const symbol = document.getText(range);
 
-        // Whether the word is immediately after a dot — member access, not an alias reference
-        const isMemberAccess = range.start.character > 0 && lineText.charAt(range.start.character - 1) === '.';
+        // Whether the word is immediately after a dot — member access, not an alias reference.
+        // Exception: a dotted module path like `typing.collections.map` in a use/from line
+        // has dots between segments but is NOT member access.
+        let isMemberAccess = range.start.character > 0 && lineText.charAt(range.start.character - 1) === '.';
+        if (isMemberAccess) {
+            const importPathMatch = /^\s*(?:use|from)\s+([.a-zA-Z0-9_/]+)/.exec(lineText);
+            if (importPathMatch) {
+                const pathStart = lineText.indexOf(importPathMatch[1], importPathMatch.index);
+                if (range.start.character >= pathStart && range.end.character <= pathStart + importPathMatch[1].length) {
+                    isMemberAccess = false;
+                }
+            }
+        }
 
         // =========================================================
         // 0. SUPER() METHOD CALL

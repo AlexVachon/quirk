@@ -3,6 +3,8 @@
 #include <string.h>
 #include "../types.h"
 
+extern String* quirk_opaque_to_string(void* val);
+
 #define INITIAL_CAPACITY 8
 #define LOAD_FACTOR 0.75
 
@@ -230,29 +232,23 @@ String* Core_Collections_Map_Map___str(Map* self) {
         // Value: try to get a printable form via Any_to_string if it is an Any*,
         // otherwise fall back to raw pointer address.
         // For now we emit key: <value> pairs where value is shown as a string if possible.
-        const char* v = "(?)";
-        // Rough approximation: if the stored pointer looks like a C string
-        // (i.e. the first byte is printable ASCII and not a struct field tag),
-        // print it directly.
-        char* stored = (char*)self->entries[i].value;
-        char vbuf[64];
-        if (stored && (unsigned char)stored[0] >= 32 && (unsigned char)stored[0] < 127) {
-            v = stored;
-        } else if (!stored) {
-            v = "null";
-        } else {
-            snprintf(vbuf, sizeof(vbuf), "<ptr:%p>", (void*)stored);
-            v = vbuf;
-        }
+        String* vs = quirk_opaque_to_string(self->entries[i].value);
+        const char* vstr = (vs && vs->buffer) ? vs->buffer : "null";
+        // tagged integer (IntToPtr) → no quotes; heap pointer (String*/Any*) → quotes
+        int is_int_val = self->entries[i].value &&
+                         (uintptr_t)self->entries[i].value <= 0xFFFFFFFFUL;
 
-        int needed = (first ? 0 : 2) + 1 + strlen(k) + 3 + strlen(v) + 1;
+        int vquote = !is_int_val;
+        int needed = (first ? 0 : 2) + 1 + strlen(k) + 3 + (vquote ? 2 : 0) + strlen(vstr) + 1;
         while (len + needed + 2 >= cap) { cap *= 2; buf = (char*)realloc(buf, cap); }
 
         if (!first) { buf[len++] = ','; buf[len++] = ' '; }
         buf[len++] = '"';
         strcpy(buf + len, k); len += strlen(k);
         buf[len++] = '"'; buf[len++] = ':'; buf[len++] = ' ';
-        strcpy(buf + len, v); len += strlen(v);
+        if (vquote) buf[len++] = '"';
+        strcpy(buf + len, vstr); len += strlen(vstr);
+        if (vquote) buf[len++] = '"';
         first = 0;
     }
     buf[len++] = '}';
@@ -294,6 +290,49 @@ String* Core_Collections_Map_MapIterator___next(MapIterator* self) {
 MapIterator* Core_Collections_Map_Map___iter(Map* self) {
     MapIterator* iter = (MapIterator*)malloc(sizeof(MapIterator));
     Core_Collections_Map_MapIterator___init(iter, self);
+    return iter;
+}
+
+// ==========================================
+//  MAP PAIR ITERATOR (for k, v in map)
+// ==========================================
+
+static void MapPairIterator__init(MapPairIterator* self, Map* m) {
+    self->map_ref = m;
+    self->idx = 0;
+    self->current_value = NULL;
+}
+
+int Core_Collections_Map_MapPairIterator___has_next(MapPairIterator* self) {
+    if (!self || !self->map_ref) return 0;
+    while (self->idx < self->map_ref->capacity &&
+           !self->map_ref->entries[self->idx].is_occupied) {
+        self->idx++;
+    }
+    return self->idx < self->map_ref->capacity;
+}
+
+String* Core_Collections_Map_MapPairIterator___next(MapPairIterator* self) {
+    if (!self || !self->map_ref) { self->current_value = NULL; return make_String(""); }
+    while (self->idx < self->map_ref->capacity &&
+           !self->map_ref->entries[self->idx].is_occupied) {
+        self->idx++;
+    }
+    if (self->idx >= self->map_ref->capacity) { self->current_value = NULL; return make_String(""); }
+    MapEntry* entry = &self->map_ref->entries[self->idx];
+    self->current_value = entry->value;
+    const char* key = entry->key;
+    self->idx++;
+    return make_String(key ? key : "");
+}
+
+void* Core_Collections_Map_MapPairIterator___current_value(MapPairIterator* self) {
+    return self ? self->current_value : NULL;
+}
+
+MapPairIterator* Core_Collections_Map_Map___iter_pairs(Map* self) {
+    MapPairIterator* iter = (MapPairIterator*)malloc(sizeof(MapPairIterator));
+    MapPairIterator__init(iter, self);
     return iter;
 }
 

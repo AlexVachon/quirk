@@ -145,6 +145,24 @@ void Core_Collections_List_List___set(List* self, int index, void* item) {
     self->data[index] = item;
 }
 
+List* Core_Collections_List_List_slice(List* self, int start, int end) {
+    if (!self) return NULL;
+    int len = self->size;
+    if (start < 0) start += len;
+    if (end   < 0) end   += len;
+    if (start < 0) start = 0;
+    if (end > len) end = len;
+    List* out = (List*)GC_malloc(sizeof(List));
+    out->size = 0;
+    out->capacity = (end > start) ? end - start : 0;
+    out->data = out->capacity > 0
+        ? (void**)GC_malloc(sizeof(void*) * out->capacity)
+        : NULL;
+    for (int i = start; i < end; i++)
+        out->data[out->size++] = self->data[i];
+    return out;
+}
+
 // ==========================================
 //  STRING REPRESENTATION
 // ==========================================

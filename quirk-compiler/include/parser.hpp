@@ -5,21 +5,31 @@
 #include "lexer.hpp"
 #include "ast.hpp"
 
+// Thrown by reportError; caught in parse() to recover at top-level boundaries.
+struct ParseError {};
+
 class Parser {
-    const std::vector<Token>& tokens; 
+    const std::vector<Token>& tokens;
     const std::string& source;
     std::string filePath;
     int pos = 0;
     int lambdaCount = 0;
-    
-    std::vector<std::unique_ptr<Node>> extraNodes; 
 
-    [[noreturn]] void reportError(const std::string& message, const Token& token);
+    std::vector<std::unique_ptr<Node>> extraNodes;
+
+    struct ErrorRecord { std::string msg, filePath, lineCode; int line, col; };
+    std::vector<ErrorRecord> errors;
+
+    void reportError(const std::string& message, const Token& token); // records + throws ParseError
+    void sync(); // advance to next top-level sync point
 
 public:
     Parser(const std::vector<Token>& tokens, const std::string& source, const std::string& filePath = "unknown_file");
 
     std::vector<std::unique_ptr<Node>> parse();
+
+    bool hasErrors() const { return !errors.empty(); }
+    void flushErrors() const;
 
 private:
     Token peek() const;
@@ -42,7 +52,6 @@ private:
     std::unique_ptr<Node> parseWith();
     std::unique_ptr<Node> parseTry();
     std::unique_ptr<Node> parseThrow();
-    std::unique_ptr<Node> parseTrigger();
     std::unique_ptr<Node> parseMatch();
     
     // Definition parsing

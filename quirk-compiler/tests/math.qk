@@ -6,9 +6,9 @@ Description of the function.
 ---
 define main() -> void {
     process_link("https://example.com")
-    process_link("https://example.com", ssl: true)
-    process_link(timeout: 60, url:"https://example.com")
-    greeting(msg:"Hello from math.qk")
+    process_link("https://example.com", ssl = true)
+    process_link(timeout = 60, url = "https://example.com")
+    greeting(msg = "Hello from math.qk")
 }
 
 ---

@@ -9,6 +9,16 @@ struct MapIterator {
     extern define __next(self) -> String
 }
 
+struct MapPairIterator {
+    map_ref: Map
+    idx: Int
+    current_value: Any
+
+    extern define __has_next(self) -> Bool
+    extern define __next(self) -> String
+    extern define __current_value(self) -> Any
+}
+
 ---
 A hash map (dictionary) that associates `String` keys with values of any type.
 Insertion order is not guaranteed. All keys must be `String`.
@@ -90,6 +100,7 @@ struct Map {
     extern define __set(self, key: String, value: Any) -> void
     extern define __str(self) -> String
     extern define __iter(self) -> MapIterator
+    extern define __iter_pairs(self) -> MapPairIterator
 
     ---
     Calls `cb` for each key-value pair.

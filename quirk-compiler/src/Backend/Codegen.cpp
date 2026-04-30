@@ -68,7 +68,6 @@ class LLVMCodegen {
    public:
     static std::string currentCodegenClass;
     std::map<std::string, std::string> activeModuleAliases;
-    std::map<std::string, std::string> activeTriggers;
     std::map<std::string, std::string> callableReturnTypes; // varName → inferred return type
     std::set<std::string> externBoolReturnFunctions;       // LLVM names widened i1→i32 for C ABI
 
@@ -1097,8 +1096,16 @@ class LLVMCodegen {
                     objPtr = Builder.CreateLoad(objPtr->getType()->getPointerElementType(), objPtr);
                 }
                 if (objPtr->getType()->isPointerTy() && objPtr->getType()->getPointerElementType()->isIntegerTy(8)) {
-                    std::vector<Value*> ctorArgs = {objPtr};
-                    objPtr = structGen->allocateAndInit("String", ctorArgs);
+                    // i8* is a boxed list element (String* or tagged int cast to void*); unbox via quirk_opaque_to_string
+                    Function* opaqueToStr = TheModule->getFunction("quirk_opaque_to_string");
+                    if (!opaqueToStr) {
+                        Type* retTy = StructTypes.count("String")
+                            ? (Type*)PointerType::getUnqual(StructTypes["String"])
+                            : (Type*)Type::getInt8PtrTy(Context);
+                        FunctionType* ft = FunctionType::get(retTy, {Type::getInt8PtrTy(Context)}, false);
+                        opaqueToStr = Function::Create(ft, Function::ExternalLinkage, "quirk_opaque_to_string", TheModule.get());
+                    }
+                    objPtr = Builder.CreateCall(opaqueToStr, {objPtr}, "deboxed_str");
                 }
 
                 if (objPtr->getType()->isIntegerTy(1)) typeName = "Bool";
@@ -1589,7 +1596,6 @@ class LLVMCodegen {
             if (dynamic_cast<TryCatchNode*>(node))   return "TryCatch";
             if (dynamic_cast<MatchNode*>(node))       return "Match";
             if (dynamic_cast<WithNode*>(node))       return "With";
-            if (dynamic_cast<TriggerNode*>(node))    return "Trigger";
             if (dynamic_cast<UseNode*>(node))        return "Use";
             return "Unknown";
         };
@@ -1650,9 +1656,6 @@ class LLVMCodegen {
                 StructTypes,
                 [this](const std::string& s, std::vector<Value*>& v) { return this->structGen->allocateAndInit(s, v); }
             );
-        }
-        else if (auto tr = dynamic_cast<TriggerNode*>(node)) {
-            activeTriggers[tr->varName] = tr->handlerName;
         }
         else if (auto ret = dynamic_cast<ReturnNode*>(node)) {
             // 1. Evaluate the expression FIRST while the shadow stack frame is still valid.
@@ -1827,27 +1830,6 @@ class LLVMCodegen {
                 }
             }
 
-            if (activeTriggers.count(lhs->value)) {
-                Function* hook = TheModule->getFunction(activeTriggers[lhs->value]);
-                if (hook) {
-                    Value* argVal = val;
-                    Type* expectedType = hook->getFunctionType()->getParamType(0);
-                    if (argVal->getType() != expectedType) {
-                        if (argVal->getType()->isIntegerTy() && expectedType->isPointerTy()) argVal = Builder.CreateIntToPtr(argVal, expectedType);
-                        else if (argVal->getType()->isPointerTy() && expectedType->isPointerTy()) argVal = Builder.CreateBitCast(argVal, expectedType);
-                    }
-                    
-                    Value* argWasVal = wasVal;
-                    Type* expectedWasType = hook->getFunctionType()->getParamType(1);
-                    if (argWasVal->getType() != expectedWasType) {
-                        if (argWasVal->getType()->isIntegerTy() && expectedWasType->isPointerTy()) argWasVal = Builder.CreateIntToPtr(argWasVal, expectedWasType);
-                        else if (argWasVal->getType()->isPointerTy() && expectedWasType->isPointerTy()) argWasVal = Builder.CreateBitCast(argWasVal, expectedWasType);
-                    }
-                    
-                    Builder.CreateCall(hook, {argVal, argWasVal});
-                }
-            }
-        
         } else if (auto member = dynamic_cast<MemberAccessNode*>(vdecl->lhs.get())) {
             Value* objPtr = handleExpression(member->object.get());
             if (objPtr->getType()->isPointerTy() && objPtr->getType()->getPointerElementType()->isPointerTy())
@@ -1886,41 +1868,6 @@ class LLVMCodegen {
                 
                 Builder.CreateStore(val, memberPtr); 
 
-                if (auto objLit = dynamic_cast<LiteralNode*>(member->object.get())) {
-                    std::string fullPath = objLit->value + "." + member->memberName;
-                    
-                    if (activeTriggers.count(fullPath)) {
-                        Function* hook = TheModule->getFunction(activeTriggers[fullPath]);
-                        if (hook) {
-                            std::vector<Value*> callArgs;
-                            
-                            if (hook->arg_size() == 3) {
-                                Value* callObj = objPtr;
-                                Type* expectedObjTy = hook->getFunctionType()->getParamType(0);
-                                if (callObj->getType() != expectedObjTy) callObj = Builder.CreateBitCast(callObj, expectedObjTy);
-                                callArgs.push_back(callObj);
-                            }
-
-                            Value* argVal = val;
-                            Type* expectedType = hook->getFunctionType()->getParamType(hook->arg_size() - 2);
-                            if (argVal->getType() != expectedType) {
-                                if (argVal->getType()->isIntegerTy() && expectedType->isPointerTy()) argVal = Builder.CreateIntToPtr(argVal, expectedType);
-                                else if (argVal->getType()->isPointerTy() && expectedType->isPointerTy()) argVal = Builder.CreateBitCast(argVal, expectedType);
-                            }
-                            callArgs.push_back(argVal);
-
-                            Value* argWasVal = wasVal;
-                            Type* expectedWasType = hook->getFunctionType()->getParamType(hook->arg_size() - 1);
-                            if (argWasVal->getType() != expectedWasType) {
-                                if (argWasVal->getType()->isIntegerTy() && expectedWasType->isPointerTy()) argWasVal = Builder.CreateIntToPtr(argWasVal, expectedWasType);
-                                else if (argWasVal->getType()->isPointerTy() && expectedWasType->isPointerTy()) argWasVal = Builder.CreateBitCast(argWasVal, expectedWasType);
-                            }
-                            callArgs.push_back(argWasVal);
-
-                            Builder.CreateCall(hook, callArgs);
-                        }
-                    }
-                }
             }
         } else if (auto binOp = dynamic_cast<BinaryOpNode*>(vdecl->lhs.get())) {
             // ... (keep your existing Array [] assignment logic here)
@@ -2144,6 +2091,200 @@ class LLVMCodegen {
             [this, parentFunc](Node* n) { this->handleStatement(n, parentFunc); });
     }
 
+    // --- List Comprehension: [expr for var in iterable (where cond)] ---
+    Value* generateListComprehension(ListComprehensionNode* comp) {
+        Function* parentFunc = Builder.GetInsertBlock()->getParent();
+
+        // 1. Create an empty result list.
+        std::vector<Value*> noArgs;
+        Value* resultList = structGen->allocateAndInit("List", noArgs);
+        if (!resultList) return nullptr;
+
+        Function* appendFunc = TheModule->getFunction("Core_Collections_List_List_append");
+        if (!appendFunc) return resultList;
+
+        // 2. Evaluate the iterable and get its iterator.
+        Value* iterable = handleExpression(comp->iterable.get());
+        if (!iterable) return resultList;
+        if (iterable->getType()->isPointerTy() &&
+            iterable->getType()->getPointerElementType()->isPointerTy())
+            iterable = Builder.CreateLoad(iterable->getType()->getPointerElementType(), iterable);
+
+        if (!iterable->getType()->isPointerTy() ||
+            !iterable->getType()->getPointerElementType()->isStructTy())
+            return resultList;
+
+        StructType* st = cast<StructType>(iterable->getType()->getPointerElementType());
+        std::string structName = st->getName().str();
+
+        auto resolveF = [&](const std::string& n) -> Function* {
+            Function* f = TheModule->getFunction(n);
+            if (!f && functionDeclarations.count(n)) {
+                const auto& ln = functionDeclarations[n]->linkageName;
+                if (!ln.empty()) f = TheModule->getFunction(ln);
+            }
+            return f;
+        };
+
+        bool isPair = !comp->varName2.empty();
+        Function* iterFunc = isPair ? resolveF(structName + "___iter_pairs") : nullptr;
+        if (!iterFunc) iterFunc = resolveF(structName + "___iter");
+        if (!iterFunc) iterFunc = resolveF(structName + "__iter");
+        if (!iterFunc) return resultList;
+
+        Value* iteratorObj = Builder.CreateCall(iterFunc, {iterable}, "comp_iter");
+        StructType* iterST = cast<StructType>(iteratorObj->getType()->getPointerElementType());
+        std::string iterName = iterST->getName().str();
+
+        Function* hasNextFunc = resolveF(iterName + "___has_next");
+        if (!hasNextFunc) hasNextFunc = resolveF(iterName + "__has_next");
+        Function* nextFunc = resolveF(iterName + "___next");
+        if (!nextFunc) nextFunc = resolveF(iterName + "__next");
+        Function* curValFunc = isPair ? resolveF(iterName + "___current_value") : nullptr;
+        if (!hasNextFunc || !nextFunc) return resultList;
+
+        // 3. Loop: cond → body → back
+        BasicBlock* condBB  = BasicBlock::Create(Context, "lcomp_cond",  parentFunc);
+        BasicBlock* bodyBB  = BasicBlock::Create(Context, "lcomp_body",  parentFunc);
+        BasicBlock* afterBB = BasicBlock::Create(Context, "lcomp_after", parentFunc);
+
+        Builder.CreateBr(condBB);
+        Builder.SetInsertPoint(condBB);
+        Value* hasNext = Builder.CreateCall(hasNextFunc, {iteratorObj});
+        Builder.CreateCondBr(flowGen->toBool(hasNext), bodyBB, afterBB);
+
+        Builder.SetInsertPoint(bodyBB);
+        Value* item = Builder.CreateCall(nextFunc, {iteratorObj}, "comp_item");
+        varGen->defineLocalVariable(comp->varName, item);
+        if (isPair && curValFunc) {
+            Value* val = Builder.CreateCall(curValFunc, {iteratorObj}, "comp_val");
+            varGen->defineLocalVariable(comp->varName2, val);
+        }
+
+        // 4. Optional where filter.
+        if (comp->condition) {
+            BasicBlock* appendBB = BasicBlock::Create(Context, "lcomp_append", parentFunc);
+            Value* cond = handleExpression(comp->condition.get());
+            Builder.CreateCondBr(flowGen->toBool(cond), appendBB, condBB);
+            Builder.SetInsertPoint(appendBB);
+        }
+
+        // 5. Evaluate element and append.
+        Value* elem = handleExpression(comp->expr.get());
+        if (elem) {
+            Type* voidPtr = Type::getInt8PtrTy(Context);
+            Value* boxed = elem;
+            if (elem->getType()->isIntegerTy()) boxed = Builder.CreateIntToPtr(elem, voidPtr);
+            else if (elem->getType() != voidPtr) boxed = Builder.CreateBitCast(elem, voidPtr);
+            Builder.CreateCall(appendFunc, {resultList, boxed});
+        }
+        Builder.CreateBr(condBB);
+        Builder.SetInsertPoint(afterBB);
+        return resultList;
+    }
+
+    // --- Map Comprehension: {key: val for var in iterable (where cond)} ---
+    Value* generateMapComprehension(MapComprehensionNode* comp) {
+        Function* parentFunc = Builder.GetInsertBlock()->getParent();
+
+        // 1. Create empty map.
+        std::vector<Value*> noArgs;
+        Value* resultMap = structGen->allocateAndInit("Map", noArgs);
+        if (!resultMap) return nullptr;
+
+        Function* putFunc = TheModule->getFunction("Core_Collections_Map_Map_put");
+        if (!putFunc) return resultMap;
+
+        // 2. Evaluate iterable and get iterator.
+        Value* iterable = handleExpression(comp->iterable.get());
+        if (!iterable) return resultMap;
+        if (iterable->getType()->isPointerTy() &&
+            iterable->getType()->getPointerElementType()->isPointerTy())
+            iterable = Builder.CreateLoad(iterable->getType()->getPointerElementType(), iterable);
+
+        if (!iterable->getType()->isPointerTy() ||
+            !iterable->getType()->getPointerElementType()->isStructTy())
+            return resultMap;
+
+        StructType* st = cast<StructType>(iterable->getType()->getPointerElementType());
+        std::string structName = st->getName().str();
+
+        auto resolveF = [&](const std::string& n) -> Function* {
+            Function* f = TheModule->getFunction(n);
+            if (!f && functionDeclarations.count(n)) {
+                const auto& ln = functionDeclarations[n]->linkageName;
+                if (!ln.empty()) f = TheModule->getFunction(ln);
+            }
+            return f;
+        };
+
+        bool isPair = !comp->varName2.empty();
+        Function* iterFunc = isPair ? resolveF(structName + "___iter_pairs") : nullptr;
+        if (!iterFunc) iterFunc = resolveF(structName + "___iter");
+        if (!iterFunc) iterFunc = resolveF(structName + "__iter");
+        if (!iterFunc) return resultMap;
+
+        Value* iteratorObj = Builder.CreateCall(iterFunc, {iterable}, "mcomp_iter");
+        StructType* iterST = cast<StructType>(iteratorObj->getType()->getPointerElementType());
+        std::string iterName = iterST->getName().str();
+
+        Function* hasNextFunc = resolveF(iterName + "___has_next");
+        if (!hasNextFunc) hasNextFunc = resolveF(iterName + "__has_next");
+        Function* nextFunc = resolveF(iterName + "___next");
+        if (!nextFunc) nextFunc = resolveF(iterName + "__next");
+        Function* curValFunc = isPair ? resolveF(iterName + "___current_value") : nullptr;
+        if (!hasNextFunc || !nextFunc) return resultMap;
+
+        BasicBlock* condBB  = BasicBlock::Create(Context, "mcomp_cond",  parentFunc);
+        BasicBlock* bodyBB  = BasicBlock::Create(Context, "mcomp_body",  parentFunc);
+        BasicBlock* afterBB = BasicBlock::Create(Context, "mcomp_after", parentFunc);
+
+        Builder.CreateBr(condBB);
+        Builder.SetInsertPoint(condBB);
+        Value* hasNext = Builder.CreateCall(hasNextFunc, {iteratorObj});
+        Builder.CreateCondBr(flowGen->toBool(hasNext), bodyBB, afterBB);
+
+        Builder.SetInsertPoint(bodyBB);
+        Value* item = Builder.CreateCall(nextFunc, {iteratorObj}, "mcomp_item");
+        varGen->defineLocalVariable(comp->varName, item);
+        if (isPair && curValFunc) {
+            Value* val = Builder.CreateCall(curValFunc, {iteratorObj}, "mcomp_val");
+            varGen->defineLocalVariable(comp->varName2, val);
+        }
+
+        if (comp->condition) {
+            BasicBlock* putBB = BasicBlock::Create(Context, "mcomp_put", parentFunc);
+            Value* cond = handleExpression(comp->condition.get());
+            Builder.CreateCondBr(flowGen->toBool(cond), putBB, condBB);
+            Builder.SetInsertPoint(putBB);
+        }
+
+        Value* keyVal = handleExpression(comp->keyExpr.get());
+        Value* valVal = handleExpression(comp->valExpr.get());
+        if (keyVal && valVal) {
+            // Key must be a String* — unbox via quirk_opaque_to_string if it arrives as i8*
+            if (keyVal->getType()->isPointerTy() &&
+                keyVal->getType()->getPointerElementType()->isIntegerTy(8)) {
+                Function* opaqueToStr = TheModule->getFunction("quirk_opaque_to_string");
+                if (!opaqueToStr) {
+                    Type* retTy = StructTypes.count("String")
+                        ? (Type*)PointerType::getUnqual(StructTypes["String"])
+                        : (Type*)Type::getInt8PtrTy(Context);
+                    FunctionType* ft = FunctionType::get(retTy, {Type::getInt8PtrTy(Context)}, false);
+                    opaqueToStr = Function::Create(ft, Function::ExternalLinkage, "quirk_opaque_to_string", TheModule.get());
+                }
+                keyVal = Builder.CreateCall(opaqueToStr, {keyVal}, "mcomp_key_str");
+            }
+            Type* voidPtr = Type::getInt8PtrTy(Context);
+            if (valVal->getType()->isIntegerTy()) valVal = Builder.CreateIntToPtr(valVal, voidPtr);
+            else if (valVal->getType() != voidPtr) valVal = Builder.CreateBitCast(valVal, voidPtr);
+            Builder.CreateCall(putFunc, {resultMap, keyVal, valVal});
+        }
+        Builder.CreateBr(condBB);
+        Builder.SetInsertPoint(afterBB);
+        return resultMap;
+    }
+
     Value* handleConstructor(ConstructorNode* node) {
         if (verbose) std::cerr << "[Codegen]     handleConstructor\n";
         return structGen->generateConstructor(node, [this](Node* n) { return this->handleExpression(n); });
@@ -2221,6 +2362,8 @@ Value* LLVMCodegen::handleExpression(Node* node) {
 
     if (auto arr = dynamic_cast<ListLiteralNode*>(node)) return structGen->generateListLiteral(arr, [this](Node* n) { return this->handleExpression(n); });
     if (auto mapLit = dynamic_cast<MapLiteralNode*>(node)) return structGen->generateMapLiteral(mapLit, [this](Node* n) { return this->handleExpression(n); });
+    if (auto comp = dynamic_cast<ListComprehensionNode*>(node)) return generateListComprehension(comp);
+    if (auto comp = dynamic_cast<MapComprehensionNode*>(node)) return generateMapComprehension(comp);
     if (auto tup = dynamic_cast<TupleLiteralNode*>(node)) return structGen->generateTupleLiteral(tup,
         [this](Node* n) { return this->handleExpression(n); },
         [this](Value* v) { return this->emitBox(v); });
@@ -2421,6 +2564,23 @@ Value* LLVMCodegen::handleExpression(Node* node) {
                         }
                         return Builder.CreateCall(func, {L, R});
                     }
+                }
+            }
+            // String character indexing: call Core_String_String___get for bounds checking
+            if (L->getType()->isPointerTy()) {
+                Type* elem = L->getType()->getPointerElementType();
+                bool isStrStruct = elem->isStructTy() &&
+                    cast<StructType>(elem)->getName().contains("String");
+                if (isStrStruct) {
+                    Type* i32Ty = Type::getInt32Ty(Context);
+                    Type* strPtrTy = L->getType();
+                    FunctionCallee getFn = TheModule->getOrInsertFunction(
+                        "Core_String_String___get",
+                        i32Ty, strPtrTy, i32Ty);
+                    Value* idx = R;
+                    if (!idx->getType()->isIntegerTy(32))
+                        idx = Builder.CreateIntCast(idx, i32Ty, true);
+                    return Builder.CreateCall(getFn, {L, idx}, "char_at");
                 }
             }
             if (L->getType()->isPointerTy() && L->getType()->getPointerElementType()->isIntegerTy(8)) {
@@ -2717,13 +2877,20 @@ Value* LLVMCodegen::handleExpression(Node* node) {
         Value* objVal = handleExpression(sl->object.get());
         if (!objVal) return nullptr;
 
-        Type* i32Ty  = Type::getInt32Ty(Context);
-        StructType* strTy = StructTypes.count("String") ? StructTypes["String"] : nullptr;
-        if (!strTy) strTy = StructType::create(Context, {Type::getInt8PtrTy(Context), i32Ty}, "String");
-        Type* strPtrTy = PointerType::getUnqual(strTy);
+        Type* i32Ty    = Type::getInt32Ty(Context);
+        Type* i8PtrTy  = Type::getInt8PtrTy(Context);
 
-        if (objVal->getType() != strPtrTy)
-            objVal = Builder.CreateBitCast(objVal, strPtrTy);
+        // Determine object type: String or List
+        bool isListSlice = false;
+        if (objVal->getType()->isPointerTy()) {
+            Type* pointee = objVal->getType()->getPointerElementType();
+            if (pointee->isStructTy()) {
+                StringRef name = cast<StructType>(pointee)->getName();
+                if (name.contains("List") || name == "List") isListSlice = true;
+            }
+        }
+        // Also check if the sema type was List via the object expression type
+        // (fallback: if object holds a List*, treat as list)
 
         Value* startVal = sl->start
             ? handleExpression(sl->start.get())
@@ -2732,24 +2899,61 @@ Value* LLVMCodegen::handleExpression(Node* node) {
         if (!startVal->getType()->isIntegerTy(32))
             startVal = Builder.CreateIntCast(startVal, i32Ty, true);
 
-        // Omitted end: load length from String struct field 1
-        Value* endVal;
-        if (sl->end) {
-            endVal = handleExpression(sl->end.get());
-            if (!endVal) return nullptr;
-            if (!endVal->getType()->isIntegerTy(32))
-                endVal = Builder.CreateIntCast(endVal, i32Ty, true);
+        if (isListSlice) {
+            // List slice: Core_Collections_List_List_slice(List*, start, end)
+            // end==-1 is handled by passing size; use INT_MIN (-2147483648) as "no end"
+            // Actually: just pass -1 and let runtime clamp (end<0 → end+=size → size-1).
+            // Better: use the List size field. List struct: {void** data, int size, int cap}
+            StructType* listTy = StructTypes.count("List") ? StructTypes["List"] : nullptr;
+            Type* listPtrTy = listTy ? (Type*)PointerType::getUnqual(listTy) : i8PtrTy;
+            if (objVal->getType() != listPtrTy)
+                objVal = Builder.CreateBitCast(objVal, listPtrTy);
+
+            Value* endVal;
+            if (sl->end) {
+                endVal = handleExpression(sl->end.get());
+                if (!endVal) return nullptr;
+                if (!endVal->getType()->isIntegerTy(32))
+                    endVal = Builder.CreateIntCast(endVal, i32Ty, true);
+            } else if (listTy) {
+                // Load size field (index 1 in {void**, int, int})
+                Value* sizePtr = Builder.CreateGEP(listTy, objVal,
+                    {ConstantInt::get(i32Ty, 0), ConstantInt::get(i32Ty, 1)}, "list_sizeptr");
+                endVal = Builder.CreateLoad(i32Ty, sizePtr, "list_size");
+            } else {
+                endVal = ConstantInt::getSigned(i32Ty, -1);
+            }
+
+            FunctionCallee sliceFn = TheModule->getOrInsertFunction(
+                "Core_Collections_List_List_slice",
+                listPtrTy, listPtrTy, i32Ty, i32Ty);
+            return Builder.CreateCall(sliceFn, {objVal, startVal, endVal}, "list_slice");
+
         } else {
-            Value* lenPtr = Builder.CreateGEP(strTy, objVal,
-                {ConstantInt::get(i32Ty, 0), ConstantInt::get(i32Ty, 1)}, "str_lenptr");
-            endVal = Builder.CreateLoad(i32Ty, lenPtr, "str_len");
+            // String slice: Core_String_String_substring(String*, start, end)
+            StructType* strTy = StructTypes.count("String") ? StructTypes["String"] : nullptr;
+            if (!strTy) strTy = StructType::create(Context, {i8PtrTy, i32Ty}, "String");
+            Type* strPtrTy = PointerType::getUnqual(strTy);
+            if (objVal->getType() != strPtrTy)
+                objVal = Builder.CreateBitCast(objVal, strPtrTy);
+
+            Value* endVal;
+            if (sl->end) {
+                endVal = handleExpression(sl->end.get());
+                if (!endVal) return nullptr;
+                if (!endVal->getType()->isIntegerTy(32))
+                    endVal = Builder.CreateIntCast(endVal, i32Ty, true);
+            } else {
+                Value* lenPtr = Builder.CreateGEP(strTy, objVal,
+                    {ConstantInt::get(i32Ty, 0), ConstantInt::get(i32Ty, 1)}, "str_lenptr");
+                endVal = Builder.CreateLoad(i32Ty, lenPtr, "str_len");
+            }
+
+            FunctionCallee substringFn = TheModule->getOrInsertFunction(
+                "Core_String_String_substring",
+                strPtrTy, strPtrTy, i32Ty, i32Ty);
+            return Builder.CreateCall(substringFn, {objVal, startVal, endVal}, "slice");
         }
-
-        FunctionCallee substringFn = TheModule->getOrInsertFunction(
-            "Core_String_String_substring",
-            strPtrTy, strPtrTy, i32Ty, i32Ty);
-
-        return Builder.CreateCall(substringFn, {objVal, startVal, endVal}, "slice");
     }
 
     return nullptr;

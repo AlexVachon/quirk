@@ -314,6 +314,11 @@ std::vector<std::unique_ptr<Node>> processFile(const std::string& filePath,
     auto tokens = lexer.tokenize();
     Parser parser(tokens, source, filePath);
     auto nodes = parser.parse();
+    if (parser.hasErrors()) {
+        parser.flushErrors();
+        std::cerr << "Compilation failed." << std::endl;
+        exit(1);
+    }
 
     std::string currentModule = isMainFile ? "main" : getModuleName(filePath);
     std::vector<std::unique_ptr<Node>> allNodes;
@@ -463,6 +468,7 @@ int main(int argc, char* argv[]) {
 
     Sema sema;
     sema.setSourceMap(sourceMap);
+    sema.setUserFile(fs::absolute(opts.inputFile).string());
     if (!sema.analyze(ast)) {
         std::cerr << "Compilation failed." << std::endl;
         return 1;

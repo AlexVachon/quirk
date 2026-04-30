@@ -37,4 +37,7 @@ define main() {
     for name in names {
         print("Item: " + name) 
     }
+
+    new_names := [name.upper() for name in names]
+    print("New Names: ${new_names}")
 }

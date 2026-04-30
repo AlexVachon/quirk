@@ -32,7 +32,6 @@ enum class TokenType {
     WITH,
     AS,
     IS,
-    TRIGGER,
     ENUM,
     MATCH,
     CASE,

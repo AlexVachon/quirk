@@ -48,6 +48,12 @@ typedef struct {
 } MapIterator;
 
 typedef struct {
+    Map* map_ref;
+    int idx;
+    void* current_value;
+} MapPairIterator;
+
+typedef struct {
     void* handle;
     int is_open;
 } File;

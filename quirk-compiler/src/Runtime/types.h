@@ -40,16 +40,19 @@ typedef struct {
     MapEntry* entries;
     int capacity;
     int size;
+    char** key_order;      // insertion-order key list
+    int order_size;
+    int order_capacity;
 } Map;
 
 typedef struct {
     Map* map_ref;
-    int idx;
+    int idx;  // index into key_order
 } MapIterator;
 
 typedef struct {
     Map* map_ref;
-    int idx;
+    int idx;  // index into key_order
     void* current_value;
 } MapPairIterator;
 

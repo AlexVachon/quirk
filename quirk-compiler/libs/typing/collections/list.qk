@@ -2,8 +2,8 @@ from typing.string use { String }
 from typing.callable use { Callable }
 
 struct ListIterator {
-    list_ref: List
-    idx: Int
+    _list_ref: List
+    _idx: Int
 
     extern define __init(self, l: List)
     extern define __has_next(self) -> Bool
@@ -22,9 +22,9 @@ print(nums[0])          // 1
 doubled := nums.map(fn(x: Int) => x * 2)
 ---
 struct List {
-    data: Any
-    size: Int
-    capacity: Int
+    _data: Any
+    _size: Int
+    _capacity: Int
 
     extern define __init(self)
 

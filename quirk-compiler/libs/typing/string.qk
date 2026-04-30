@@ -2,8 +2,8 @@ from typing.collections.list use { List }
 from .char use { Char }
 
 struct StringIterator {
-    str_ref: String
-    idx: Int
+    _str_ref: String
+    _idx: Int
 
     extern define __init(self, s: String)
     extern define __has_next(self) -> Bool
@@ -23,8 +23,8 @@ parts := s.split(", ")
 print(parts.length())       // 2
 ---
 struct String {
-    buffer: Any
-    length: Int
+    _buffer: Any
+    _length: Int
 
     extern define __init(self, raw: Any = "")
     extern define __del(self)
@@ -160,7 +160,7 @@ struct String {
     Returns `true` if the string has zero characters.
     @returns: Bool
     ---
-    define is_empty(self) -> Bool { return self.length == 0 }
+    define is_empty(self) -> Bool { return self._length == 0 }
 }
 
 extern define _float_to_str(val: Double) -> String

@@ -17,8 +17,8 @@ nested := ((1, 2), "outer")
 print(nested[1])        // "outer"
 ---
 struct Tuple {
-    data: Any
-    size: Int
+    _data: Any
+    _size: Int
 
     ---
     Returns the element at the given index.

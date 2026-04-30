@@ -4,8 +4,8 @@ A handler for reading and writing to the OS file system.
 Supports Context Managers (with blocks) for automatic closure.
 ---
 struct File {
-    handle: Any
-    is_open: Int
+    _handle: Any
+    is_open: Bool
 
     extern define __init(self, path: String, mode: String) -> void
 
@@ -26,8 +26,8 @@ struct File {
 }
 
 struct FileIterator {
-    file_ref: File
-    current_line: String
+    _file_ref: File
+    _current_line: String
 
     extern define __has_next(self) -> Bool
     extern define __next(self) -> String

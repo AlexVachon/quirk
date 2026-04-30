@@ -213,7 +213,7 @@ class BuiltinGen {
                     structName = structName.substr(0, dotPos);
 
                 if (structName == "String") {
-                    Value* bufPtr = structGen->getMemberPtr(val, "buffer");
+                    Value* bufPtr = structGen->getMemberPtr(val, "_buffer");
                     if (bufPtr) {
                         Value* cStr = Builder.CreateLoad(Type::getInt8PtrTy(Context), bufPtr);
                         Value* fmt = Builder.CreateGlobalStringPtr("%s\n");

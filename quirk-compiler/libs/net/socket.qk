@@ -6,19 +6,19 @@ from typing.string use { String }
 from typing.exceptions.types use { SocketError }
 
 struct Socket {
-    fd: Int
+    _fd: Int
     host: String = "127.0.0.1"
     port: Int = 8080
     is_open: Bool = false
 
-    define __init(self, _fd: Int = -1) -> void {
-        if _fd == -1 {
-            self.fd := socket()
+    define __init(self, initial_fd: Int = -1) -> void {
+        if initial_fd == -1 {
+            self._fd := socket()
         } else {
-            self.fd := _fd
+            self._fd := initial_fd
         }
-        
-        if self.fd < 0 {
+
+        if self._fd < 0 {
             throw SocketError("Failed to create socket descriptor")
         }
         self.is_open = true
@@ -27,21 +27,21 @@ struct Socket {
     define bind(self, host: String, port: Int) -> void {
         self.host = host
         self.port = port
-        res := bind(self.fd, host, port)
+        res := bind(self._fd, host, port)
         if res < 0 {
             throw SocketError("Failed to bind to " + host + ":" + port.str())
         }
     }
 
     define listen(self, backlog: Int = 5) -> void {
-        res := listen(self.fd, backlog)
+        res := listen(self._fd, backlog)
         if res < 0 {
             throw SocketError("Failed to listen on socket")
         }
     }
 
     define accept(self) -> Socket {
-        client_fd := accept(self.fd)
+        client_fd := accept(self._fd)
         if client_fd < 0 {
             throw SocketError("Failed to accept incoming connection")
         }
@@ -49,7 +49,7 @@ struct Socket {
     }
 
     define connect(self, host: String, port: Int) -> void {
-        res := connect(self.fd, host, port)
+        res := connect(self._fd, host, port)
         if res < 0 {
             throw SocketError("Could not connect to " + host + ":" + port.str())
         }
@@ -57,16 +57,16 @@ struct Socket {
     }
 
     define send(self, data: String) -> Int {
-        return send(self.fd, data)
+        return send(self._fd, data)
     }
 
     define recv(self, size: Int = 1024) -> String {
-        return recv(self.fd, size)
+        return recv(self._fd, size)
     }
 
     define close(self) -> void {
         if self.is_open {
-            close(self.fd)
+            close(self._fd)
             self.is_open = false
         }
     }

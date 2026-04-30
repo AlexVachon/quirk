@@ -1146,11 +1146,11 @@ std::string Sema::resolveMember(const std::string &sName, const std::string &mNa
     // Built-in C-runtime struct fields (from types.h) with no Quirk-side declarations.
     // str.length, list.size etc. used as bare properties resolve correctly to "Int".
     static const std::map<std::string, std::map<std::string, std::string>> builtinFields = {
-        {"String", {{"length", "Int"}, {"buffer", "Any"}}},
-        {"List",   {{"size",   "Int"}, {"capacity", "Int"}}},
-        {"Map",    {{"size",   "Int"}, {"capacity", "Int"}}},
-        {"Tuple",  {{"size", "Int"}}},
-        {"File",   {{"is_open","Bool"}}},
+        {"String", {{"_length", "Int"}, {"_buffer", "Any"}}},
+        {"List",   {{"_size",   "Int"}, {"_capacity", "Int"}}},
+        {"Map",    {{"_size",   "Int"}, {"_capacity", "Int"}}},
+        {"Tuple",  {{"_size", "Int"}}},
+        {"File",   {{"_handle", "Any"}, {"is_open", "Bool"}}},
         {"Any",    {{"tag",    "Int"}, {"ival", "Int"}, {"dval", "Double"}}},
     };
     auto bIt = builtinFields.find(sName);

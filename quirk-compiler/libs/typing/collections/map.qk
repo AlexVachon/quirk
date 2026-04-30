@@ -1,8 +1,8 @@
 from typing.string use { String }
 
 struct MapIterator {
-    map_ref: Map
-    idx: Int
+    _map_ref: Map
+    _idx: Int
 
     extern define __init(self, m: Map)
     extern define __has_next(self) -> Bool
@@ -10,9 +10,9 @@ struct MapIterator {
 }
 
 struct MapPairIterator {
-    map_ref: Map
-    idx: Int
-    current_value: Any
+    _map_ref: Map
+    _idx: Int
+    _current_value: Any
 
     extern define __has_next(self) -> Bool
     extern define __next(self) -> String
@@ -33,9 +33,12 @@ m.remove("age")
 print(m.length())       // 1
 ---
 struct Map {
-    entries: Any
-    capacity: Int
-    size: Int
+    _entries: Any
+    _capacity: Int
+    _size: Int
+    _key_order: Any
+    _order_size: Int
+    _order_capacity: Int
 
     extern define __init(self)
     extern define __del(self) -> void

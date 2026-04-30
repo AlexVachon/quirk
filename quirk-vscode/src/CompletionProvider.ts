@@ -907,9 +907,9 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
                         currentDocstring = [];
                     }
 
-                    // Field:  name: Type
+                    // Field:  name: Type  (skip _-prefixed private/internal fields)
                     const fieldMatch = /^\s*([a-zA-Z0-9_]+)\s*:\s*([a-zA-Z0-9_]+)/.exec(line);
-                    if (fieldMatch && !line.includes('(') && !line.includes('return') && !line.includes('=')) {
+                    if (fieldMatch && !line.includes('(') && !line.includes('return') && !line.includes('=') && !fieldMatch[1].startsWith('_')) {
                         addCompletion(fieldMatch[1], vscode.CompletionItemKind.Field, currentDocstring, undefined, fieldMatch[2]);
                         currentDocstring = [];
                         continue;

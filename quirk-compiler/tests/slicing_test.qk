@@ -1,0 +1,38 @@
+define main() {
+    print("--- String Slicing Tests ---")
+
+    s := "Hello, World!"
+
+    // Basic start:end
+    print("s[0:5]   -> " + s[0:5])    // Hello
+    print("s[7:12]  -> " + s[7:12])   // World
+
+    // Omit end: slice to end of string
+    print("s[7:]    -> " + s[7:])     // World!
+
+    // Omit start: slice from beginning
+    print("s[:5]    -> " + s[:5])     // Hello
+
+    // Single character range
+    print("s[0:1]   -> " + s[0:1])   // H
+
+    // Full copy
+    print("s[0:]    -> " + s[0:])    // Hello, World!
+
+    print("\n--- Slice on Variables ---")
+    lang := "Quirk Programming Language"
+
+    word := lang[0:5]
+    print("First word: " + word)      // Quirk
+
+    rest := lang[6:]
+    print("After first word: " + rest) // Programming Language
+
+    print("\n--- Slicing Loop ---")
+    alphabet := "ABCDEFGHIJ"
+    i := 0
+    while i < 10 {
+        print(alphabet[i:i+1])
+        i := i + 1
+    }
+}

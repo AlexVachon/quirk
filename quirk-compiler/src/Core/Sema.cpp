@@ -35,7 +35,7 @@ std::string Sema::currentClass = "";
                 if (cur++ == line) break;
             }
             std::string ln = std::to_string(line);
-            std::cerr << "   |\n";
+            std::cerr << std::string(ln.size(), ' ') << " |\n";
             std::cerr << ln << " | " << lineText << "\n";
             int off = (col > 1) ? col - 1 : 0;
             std::cerr << std::string(ln.size(), ' ') << " | "
@@ -485,11 +485,22 @@ std::string Sema::checkExpression(Node *node)
         if (strip(thenType) == strip(elseType)) return strip(thenType);
         return thenType;
     }
+    if (auto sl = dynamic_cast<SliceNode*>(node)) {
+        lastNode = sl;
+        std::string objType = checkExpression(sl->object.get());
+        if (sl->start) checkExpression(sl->start.get());
+        if (sl->end)   checkExpression(sl->end.get());
+        if (objType == "String") return "String";
+        if (objType == "List")   return "List";
+        fatalError("slice '[:]' not supported on type '" + objType + "'",
+                   sl->line, sl->col, sl->filePath);
+    }
     return "unknown";
 }
 
 std::string Sema::checkLiteral(LiteralNode *node)
 {
+    lastNode = node;
     if (std::isdigit(node->value[0]))
         return (node->value.find('.') != std::string::npos) ? "Double" : "Int";
     if (node->value[0] == '"')
@@ -505,6 +516,7 @@ std::string Sema::checkLiteral(LiteralNode *node)
 
 std::string Sema::checkBinaryOp(BinaryOpNode *node)
 {
+    lastNode = node;
     if (node->op == "not")
     {
         std::string t = checkExpression(node->left.get());
@@ -649,6 +661,7 @@ std::string Sema::checkBinaryOp(BinaryOpNode *node)
 
 std::string Sema::checkMemberAccess(MemberAccessNode *node)
 {
+    lastNode = node;
     // Enum variant access: Direction.North
     if (auto lit = dynamic_cast<LiteralNode*>(node->object.get())) {
         if (enumRegistry.count(lit->value)) {
@@ -731,6 +744,7 @@ void Sema::checkInitArgCount(const std::string& name, FunctionNode* init,
 
 std::string Sema::checkConstructor(ConstructorNode *node)
 {
+    lastNode = node;
     if (!structRegistry.count(node->structName)) return "unknown";
 
     std::string initName = node->structName + "__init";
@@ -745,6 +759,7 @@ std::string Sema::checkConstructor(ConstructorNode *node)
 
 std::string Sema::checkCall(CallNode *node)
 {
+    lastNode = node;
     if (auto l = dynamic_cast<LiteralNode *>(node->callee.get())) {
         if (l->value == "super") {
             if (currentClass.empty())
@@ -917,6 +932,7 @@ std::string Sema::checkCall(CallNode *node)
 
 std::string Sema::checkListLiteral(ListLiteralNode *node)
 {
+    lastNode = node;
     if (!structRegistry.count("List"))
         fatalError("'List' type not available — is core loaded?", node->line, node->col, node->filePath);
     for (auto &elem : node->elements)
@@ -926,6 +942,7 @@ std::string Sema::checkListLiteral(ListLiteralNode *node)
 
 std::string Sema::checkMapLiteral(MapLiteralNode *node)
 {
+    lastNode = node;
     if (!structRegistry.count("Map"))
         fatalError("'Map' type not available — is core loaded?", node->line, node->col, node->filePath);
     for (auto &pair : node->elements)

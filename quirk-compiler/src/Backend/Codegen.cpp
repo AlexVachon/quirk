@@ -79,23 +79,28 @@ class LLVMCodegen {
     [[noreturn]] void fatalError(const std::string& msg, int line, int col) {
         std::cerr << "\033[1;31m[ERROR]\033[0m " << msg << "\n";
 
-        if (line > 0 && !currentFilePath.empty() && sourceMap.count(currentFilePath)) {
-            const std::string& src = sourceMap.at(currentFilePath);
-            std::cerr << " --> " << currentFilePath << ":" << line << ":" << col << "\n\n";
+        if (line > 0) {
+            if (!currentFilePath.empty())
+                std::cerr << " --> " << currentFilePath << ":" << line << ":" << col << "\n";
+            else
+                std::cerr << " --> line " << line << ":" << col << "\n";
 
-            // Extract the requested line from the source
-            int cur = 1;
-            std::string lineText;
-            std::istringstream ss(src);
-            while (std::getline(ss, lineText)) {
-                if (cur++ == line) break;
+            if (!currentFilePath.empty() && sourceMap.count(currentFilePath)) {
+                const std::string& src = sourceMap.at(currentFilePath);
+                int cur = 1;
+                std::string lineText;
+                std::istringstream ss(src);
+                while (std::getline(ss, lineText)) {
+                    if (cur++ == line) break;
+                }
+                std::string ln = std::to_string(line);
+                int caretOff = (col > 1) ? col - 1 : 0;
+                std::cerr << std::string(ln.size(), ' ') << " |\n";
+                std::cerr << ln << " | " << lineText << "\n";
+                std::cerr << std::string(ln.size(), ' ') << " | "
+                          << std::string(caretOff, ' ')
+                          << "\033[1;33m^--- here\033[0m\n\n";
             }
-
-            std::cerr << "    " << lineText << "\n";
-            int caretOff = (col > 0) ? col - 1 : 0;
-            std::cerr << "    " << std::string(caretOff, ' ') << "\033[1;33m^--- Here\033[0m\n\n";
-        } else if (line > 0) {
-            std::cerr << " --> line " << line << ", col " << col << "\n\n";
         }
 
         exit(1);
@@ -2706,6 +2711,45 @@ Value* LLVMCodegen::handleExpression(Node* node) {
         phi->addIncoming(thenVal, thenEndBB);
         phi->addIncoming(elseVal, elseEndBB);
         return phi;
+    }
+
+    if (auto sl = dynamic_cast<SliceNode*>(node)) {
+        Value* objVal = handleExpression(sl->object.get());
+        if (!objVal) return nullptr;
+
+        Type* i32Ty  = Type::getInt32Ty(Context);
+        StructType* strTy = StructTypes.count("String") ? StructTypes["String"] : nullptr;
+        if (!strTy) strTy = StructType::create(Context, {Type::getInt8PtrTy(Context), i32Ty}, "String");
+        Type* strPtrTy = PointerType::getUnqual(strTy);
+
+        if (objVal->getType() != strPtrTy)
+            objVal = Builder.CreateBitCast(objVal, strPtrTy);
+
+        Value* startVal = sl->start
+            ? handleExpression(sl->start.get())
+            : ConstantInt::get(i32Ty, 0);
+        if (!startVal) return nullptr;
+        if (!startVal->getType()->isIntegerTy(32))
+            startVal = Builder.CreateIntCast(startVal, i32Ty, true);
+
+        // Omitted end: load length from String struct field 1
+        Value* endVal;
+        if (sl->end) {
+            endVal = handleExpression(sl->end.get());
+            if (!endVal) return nullptr;
+            if (!endVal->getType()->isIntegerTy(32))
+                endVal = Builder.CreateIntCast(endVal, i32Ty, true);
+        } else {
+            Value* lenPtr = Builder.CreateGEP(strTy, objVal,
+                {ConstantInt::get(i32Ty, 0), ConstantInt::get(i32Ty, 1)}, "str_lenptr");
+            endVal = Builder.CreateLoad(i32Ty, lenPtr, "str_len");
+        }
+
+        FunctionCallee substringFn = TheModule->getOrInsertFunction(
+            "Core_String_String_substring",
+            strPtrTy, strPtrTy, i32Ty, i32Ty);
+
+        return Builder.CreateCall(substringFn, {objVal, startVal, endVal}, "slice");
     }
 
     return nullptr;

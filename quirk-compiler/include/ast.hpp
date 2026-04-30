@@ -557,6 +557,25 @@ class MatchNode : public Node {
     }
 };
 
+class SliceNode : public Node {
+   public:
+    std::unique_ptr<Node> object;
+    std::unique_ptr<Node> start;  // nullptr means 0
+    std::unique_ptr<Node> end;    // nullptr means length
+
+    SliceNode(std::unique_ptr<Node> obj, std::unique_ptr<Node> s, std::unique_ptr<Node> e)
+        : object(std::move(obj)), start(std::move(s)), end(std::move(e)) {}
+
+    void print(int indent) const override {
+        std::string sp(indent, ' ');
+        std::cout << sp << "Slice[\n";
+        object->print(indent + 2);
+        std::cout << sp << "  start: "; if (start) start->print(0); else std::cout << "0\n";
+        std::cout << sp << "  end:   "; if (end)   end->print(0);   else std::cout << "len\n";
+        std::cout << sp << "]\n";
+    }
+};
+
 class TernaryNode : public Node {
    public:
     std::unique_ptr<Node> condition;

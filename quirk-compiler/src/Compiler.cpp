@@ -38,6 +38,7 @@ struct CompilerOptions {
     bool verbose      = false;
     bool emitIR       = false;
     bool emitAST      = false;
+    bool checkOnly    = false; // --check: lex + parse + sema only, no codegen
 };
 
 // ==========================================================
@@ -353,6 +354,7 @@ void printUsage() {
               << "\n"
               << "Options:\n"
               << "  --compile-only      Compile only, do not run\n"
+              << "  --check             Type-check only (no codegen)\n"
               << "  -o <file>           Compile to native binary\n"
               << "  -v                  Verbose: show debug output\n"
               << "  --emit-ir           Write LLVM IR to <file>.ll\n"
@@ -376,6 +378,7 @@ int main(int argc, char* argv[]) {
         std::string arg = argv[i];
         if      (arg == "-h" || arg == "--help") { printUsage(); return 0; }
         else if (arg == "--compile-only") opts.runImmediate = false;
+        else if (arg == "--check")        { opts.checkOnly = true; opts.runImmediate = false; }
         else if (arg == "-v")             opts.verbose      = true;
         else if (arg == "--emit-ir")      opts.emitIR       = true;
         else if (arg == "--emit-ast")     opts.emitAST      = true;
@@ -463,6 +466,11 @@ int main(int argc, char* argv[]) {
     if (!sema.analyze(ast)) {
         std::cerr << "Compilation failed." << std::endl;
         return 1;
+    }
+
+    if (opts.checkOnly) {
+        std::cout << opts.inputFile << ": OK\n";
+        return 0;
     }
 
     // =======================================================

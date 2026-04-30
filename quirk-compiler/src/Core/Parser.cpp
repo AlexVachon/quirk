@@ -237,6 +237,13 @@ std::unique_ptr<Node> Parser::parseExpression(int min_precedence) {
         reportError("Unexpected token: " + t.value, t);
     }
 
+    // Stamp position onto every primary node so sema can show source context in errors.
+    if (left && left->line == 0) {
+        left->line     = t.line;
+        left->col      = t.col;
+        left->filePath = filePath;
+    }
+
     // 2. Infix Loop
     while (!isAtEnd()) {
         TokenType type = peek().type;
@@ -251,15 +258,39 @@ std::unique_ptr<Node> Parser::parseExpression(int min_precedence) {
         if (opToken.type == TokenType::DOT || opToken.type == TokenType::QUESTION_DOT) {
             Token member = advance();
             auto memberNode = std::make_unique<MemberAccessNode>(std::move(left), member.value);
-            memberNode->line = member.line;
-            memberNode->col  = member.col;
+            memberNode->line     = member.line;
+            memberNode->col      = member.col;
+            memberNode->filePath = filePath;
             memberNode->isSafeAccess = (opToken.type == TokenType::QUESTION_DOT);
             left = std::move(memberNode);
         } else if (opToken.type == TokenType::LBRACKET) {
-            auto indexExpr = parseExpression(0);
-            consume(TokenType::RBRACKET, "Expected ']'");
-            left = std::make_unique<BinaryOpNode>("[]", std::move(left),
-                                                  std::move(indexExpr));
+            // Slice: s[start:end], s[:end], s[start:]
+            if (peek().type == TokenType::COLON) {
+                advance(); // consume ':'
+                std::unique_ptr<Node> endExpr;
+                if (peek().type != TokenType::RBRACKET)
+                    endExpr = parseExpression(0);
+                consume(TokenType::RBRACKET, "Expected ']'");
+                auto sl = std::make_unique<SliceNode>(std::move(left), nullptr, std::move(endExpr));
+                sl->line = opToken.line; sl->col = opToken.col; sl->filePath = filePath;
+                left = std::move(sl);
+            } else {
+                auto indexExpr = parseExpression(0);
+                if (peek().type == TokenType::COLON) {
+                    advance(); // consume ':'
+                    std::unique_ptr<Node> endExpr;
+                    if (peek().type != TokenType::RBRACKET)
+                        endExpr = parseExpression(0);
+                    consume(TokenType::RBRACKET, "Expected ']'");
+                    auto sl = std::make_unique<SliceNode>(std::move(left), std::move(indexExpr), std::move(endExpr));
+                    sl->line = opToken.line; sl->col = opToken.col; sl->filePath = filePath;
+                    left = std::move(sl);
+                } else {
+                    consume(TokenType::RBRACKET, "Expected ']'");
+                    left = std::make_unique<BinaryOpNode>("[]", std::move(left),
+                                                          std::move(indexExpr));
+                }
+            }
         } else if (opToken.type == TokenType::LPAREN) {
             if (dynamic_cast<LiteralNode*>(left.get())) {
                 if (peek().type == TokenType::IDENTIFIER &&
@@ -271,8 +302,9 @@ std::unique_ptr<Node> Parser::parseExpression(int min_precedence) {
                 }
             }
             auto call = std::make_unique<CallNode>(std::move(left));
-            call->line = opToken.line;
-            call->col  = opToken.col;
+            call->line     = opToken.line;
+            call->col      = opToken.col;
+            call->filePath = filePath;
             while (peek().type != TokenType::RPAREN && !isAtEnd()) {
                 std::string argName = "";
                 if (peek().type == TokenType::IDENTIFIER &&
@@ -315,8 +347,12 @@ std::unique_ptr<Node> Parser::parseExpression(int min_precedence) {
             }
         } else {
             auto right = parseExpression(next_prec);
-            left = std::make_unique<BinaryOpNode>(
+            auto binOp = std::make_unique<BinaryOpNode>(
                 opToken.value, std::move(left), std::move(right));
+            binOp->line = opToken.line;
+            binOp->col  = opToken.col;
+            binOp->filePath = filePath;
+            left = std::move(binOp);
         }
     }
     return left;
@@ -1028,25 +1064,29 @@ std::unique_ptr<Node> Parser::parseMapLiteral() {
 }
 
 void Parser::reportError(const std::string& message, const Token& token) {
-    std::cerr << "\033[1;31m[ERROR]\033[0m " << message
-              << " at line " << token.line << ", col " << token.col << ":\n\n";
+    std::cerr << "\033[1;31m[ERROR]\033[0m " << message << "\n";
+    if (!filePath.empty())
+        std::cerr << " --> " << filePath << ":" << token.line << ":" << token.col << "\n";
+    else
+        std::cerr << " --> line " << token.line << ":" << token.col << "\n";
+
     size_t lineStart = 0;
     int currentLine = 1;
     for (size_t i = 0; i < source.length(); i++) {
-        if (currentLine == token.line) {
-            lineStart = i;
-            break;
-        }
-        if (source[i] == '\n')
-            currentLine++;
+        if (currentLine == token.line) { lineStart = i; break; }
+        if (source[i] == '\n') currentLine++;
     }
     size_t lineEnd = source.find('\n', lineStart);
-    if (lineEnd == std::string::npos)
-        lineEnd = source.length();
+    if (lineEnd == std::string::npos) lineEnd = source.length();
     std::string lineCode = source.substr(lineStart, lineEnd - lineStart);
-    std::cerr << "    " << lineCode << "\n";
-    int caretOffset = (token.col > 0) ? token.col - 1 : 0;
-    std::cerr << "    " << std::string(caretOffset, ' ') << "\033[1;33m^--- Here\033[0m\n\n";
+
+    std::string ln = std::to_string(token.line);
+    int caretOffset = (token.col > 1) ? token.col - 1 : 0;
+    std::cerr << std::string(ln.size(), ' ') << " |\n";
+    std::cerr << ln << " | " << lineCode << "\n";
+    std::cerr << std::string(ln.size(), ' ') << " | "
+              << std::string(caretOffset, ' ')
+              << "\033[1;33m^--- here\033[0m\n\n";
     exit(1);
 }
 

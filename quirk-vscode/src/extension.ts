@@ -12,6 +12,7 @@ import { QuirkQuickFixProvider } from './QuickFixProvider';
 import { QuirkRenameProvider } from './RenameProvider';
 import { QuirkReferenceProvider } from './ReferenceProvider';
 import { QuirkDocumentFormattingEditProvider } from './FormatterProvider';
+import { updateDeadCode } from './DeadCodeProvider';
 
 function findCompiler(): string | undefined {
     const config = vscode.workspace.getConfiguration('quirk');
@@ -44,6 +45,22 @@ export function activate(context: vscode.ExtensionContext) {
     const quirkDiagnostics = vscode.languages.createDiagnosticCollection("quirk");
     context.subscriptions.push(quirkDiagnostics);
     subscribeToDocumentChanges(context, quirkDiagnostics);
+
+    // --- DEAD CODE HIGHLIGHTING ---
+    if (vscode.window.activeTextEditor) {
+        updateDeadCode(vscode.window.activeTextEditor);
+    }
+    context.subscriptions.push(
+        vscode.window.onDidChangeActiveTextEditor(editor => {
+            if (editor) updateDeadCode(editor);
+        }),
+        vscode.workspace.onDidChangeTextDocument(event => {
+            const editor = vscode.window.activeTextEditor;
+            if (editor && event.document === editor.document) {
+                updateDeadCode(editor);
+            }
+        })
+    );
 
     // --- RUN FILE COMMAND ---
     context.subscriptions.push(

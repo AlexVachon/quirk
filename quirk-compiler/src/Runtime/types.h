@@ -77,6 +77,11 @@ typedef struct {
     int size;
 } Tuple;
 
+typedef struct {
+    Tuple* tuple_ref;
+    int idx;
+} TupleIterator;
+
 // ===================================================
 //  Any — Tagged Union for dynamic typing
 //

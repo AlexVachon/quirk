@@ -929,7 +929,10 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
 
                         // Build snippet from params, skipping 'self'
                         const params = rawParams.split(',').map(p => p.trim()).filter(p => p && p !== 'self');
-                        const snippetArgs = params.map((p, i) => `\${${i + 1}:${p.split(':')[0].trim()}}`).join(', ');
+                        const snippetArgs = params.map((p, i) => {
+                            const name = p.split(':')[0].trim().replace(/^\.\.\./, '');
+                            return `\${${i + 1}:${name}}`;
+                        }).join(', ');
                         const insertText = `${methodName}(${snippetArgs})$0`;
 
                         addCompletion(

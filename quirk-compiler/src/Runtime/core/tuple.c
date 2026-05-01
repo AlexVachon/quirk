@@ -19,6 +19,32 @@ void quirk_tuple_set(Tuple* t, int i, void* val) {
     t->data[i] = val;
 }
 
+// ===== ITERATOR =====
+
+void Core_Collections_Tuple_TupleIterator___init(TupleIterator* self, Tuple* t) {
+    self->tuple_ref = t;
+    self->idx = 0;
+}
+
+int Core_Collections_Tuple_TupleIterator___has_next(TupleIterator* self) {
+    if (!self || !self->tuple_ref) return 0;
+    return self->idx < self->tuple_ref->size;
+}
+
+void* Core_Collections_Tuple_TupleIterator___next(TupleIterator* self) {
+    void* val = self->tuple_ref->data[self->idx];
+    self->idx++;
+    return val;
+}
+
+TupleIterator* Core_Collections_Tuple_Tuple___iter(Tuple* self) {
+    TupleIterator* iter = (TupleIterator*)malloc(sizeof(TupleIterator));
+    Core_Collections_Tuple_TupleIterator___init(iter, self);
+    return iter;
+}
+
+// ===== ELEMENT ACCESS =====
+
 void* Core_Collections_Tuple_Tuple___get(Tuple* t, int i) {
     if (!t || i < 0 || i >= t->size) return NULL;
     return t->data[i];

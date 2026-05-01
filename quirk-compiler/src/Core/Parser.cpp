@@ -300,9 +300,15 @@ std::unique_ptr<Node> Parser::parseExpression(int min_precedence) {
         consume(TokenType::LPAREN, "Expected '(' after 'fn'");
         while (peek().type != TokenType::RPAREN && !isAtEnd()) {
             LambdaParam p;
+            if (peek().type == TokenType::ELLIPSIS) {
+                advance();
+                p.isVariadic = true;
+            }
             p.name = advance().value;
             if (match(TokenType::COLON))
                 p.type = advance().value;
+            if (p.isVariadic && p.type.empty())
+                p.type = "List";
             lambda->params.push_back(std::move(p));
             if (!match(TokenType::COMMA)) break;
         }
@@ -799,10 +805,11 @@ std::unique_ptr<FunctionNode> Parser::parseFunction() {
             }
         }
 
-        if (param.isVariadic && param.type != "List") {
-            reportError("Variadic argument must be typed as List (found '" +
-                            param.type + "')",
-                        peek());
+        if (param.isVariadic) {
+            if (param.type.empty())
+                param.type = "List";  // default type for ...args
+            else if (param.type != "List")
+                reportError("Variadic argument must be typed as List (found '" + param.type + "')", peek());
         }
 
         if (match(TokenType::ASSIGN)) {

@@ -16,6 +16,15 @@ x, y := coords          // destructuring
 nested := ((1, 2), "outer")
 print(nested[1])        // "outer"
 ---
+struct TupleIterator {
+    _tuple_ref: Any
+    _idx: Int
+
+    extern define __init(self, t: Tuple) -> void
+    extern define __has_next(self) -> Bool
+    extern define __next(self) -> Any
+}
+
 struct Tuple {
     _data: Any
     _size: Int
@@ -39,4 +48,10 @@ struct Tuple {
     @returns: Int — element count
     ---
     extern define length(self) -> Int
+
+    ---
+    Returns an iterator over the elements of this tuple.
+    @returns: TupleIterator
+    ---
+    extern define __iter(self) -> TupleIterator
 }

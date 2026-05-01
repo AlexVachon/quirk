@@ -1,0 +1,27 @@
+define log(prefix: String, sep: String = " ", ...parts) -> void {
+    result := prefix
+    for p in parts {
+        result = result + sep + p
+    }
+    print(result)
+}
+
+define main() {
+    log("Items:", " | ", "apple", "banana", "cherry")
+    log(prefix = ">>", "hello", "world")
+    log("Values:", sep = ", ", "a", "b", "c")
+
+    l := [(1, 2), (3, 4), (5, 6), (7, 8, 9, 10)]
+    l.each(
+        fn(x: Tuple) {
+            sum := 0
+            for i in x {
+                sum += i
+            }
+            print(sum)
+        }
+    )
+    x, y, z := 1
+    print(x)
+    print(y)
+}

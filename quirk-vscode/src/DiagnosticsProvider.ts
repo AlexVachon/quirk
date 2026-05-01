@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { getDeadLines } from './DeadCodeProvider';
 
 const KEYWORDS = new Set([
     'define', 'struct', 'if', 'else', 'elif', 'while', 'for', 'in',
@@ -97,6 +98,7 @@ function maskLine(line: string): string {
 export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: vscode.DiagnosticCollection): void {
     if (doc.languageId !== 'quirk') return;
 
+    const deadLines = getDeadLines(doc);
     const diagnostics: vscode.Diagnostic[] = [];
     const text = doc.getText();
     const lines = text.split(/\r?\n/);
@@ -243,7 +245,7 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
             
             const isExtern = maskedLine.includes('extern');
             const paramsStr = funcMatch[1];
-            const paramMatches = [...paramsStr.matchAll(/\b([a-zA-Z_]\w*)\s*(?::\s*[a-zA-Z_][\w.?]*)?(?::|$|,)/g)];
+            const paramMatches = [...paramsStr.matchAll(/(?:\.\.\.)?([a-zA-Z_]\w*)\s*(?::\s*[a-zA-Z_][\w.?]*)?(?:,|$)/g)];
             for (const pm of paramMatches) {
                 const pName = pm[1];
                 locals.add(pName);
@@ -464,7 +466,7 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
                         break;
                     }
                 }
-            } else {
+            } else if (!deadLines.has(i)) {
                 diagnostics.push(new vscode.Diagnostic(range, `'${ident}' is not defined.`, vscode.DiagnosticSeverity.Warning));
             }
         }
@@ -482,12 +484,14 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
     // PASS 3: Generate "Unused" Diagnostics 
     // ==========================================
     declarations.forEach((range, key) => {
-        // Only warn on unused LOCAL variables. 
+        // Only warn on unused LOCAL variables.
         if (/^\d+_/.test(key) && !usages.has(key)) {
             const cleanKey = key.replace(/^\d+_/, '');
 
-            // --- NEW: Ignore variables prefixed with an underscore ---
             if (cleanKey.startsWith('_')) return;
+
+            // Suppress warnings for declarations on dead code lines
+            if (deadLines.has(range.start.line)) return;
 
             const diagnostic = new vscode.Diagnostic(
                 range,

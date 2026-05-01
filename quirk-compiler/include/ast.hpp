@@ -503,6 +503,7 @@ class ContinueNode : public Node {
 struct LambdaParam {
     std::string name;
     std::string type; // empty = untyped
+    bool isVariadic = false;
 };
 
 class LambdaNode : public Node {

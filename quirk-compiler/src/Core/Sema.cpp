@@ -521,15 +521,25 @@ std::string Sema::checkExpression(Node *node)
         return "Tuple";
     }
     if (auto lambda = dynamic_cast<LambdaNode *>(node)) {
+        FunctionNode* savedFn = currentFunctionNode;
+        FunctionNode lambdaStub;
+        lambdaStub.name = "<lambda>";
+        lambdaStub.returnType = "auto";
+        currentFunctionNode = &lambdaStub;
         enterScope();
-        for (const auto& p : lambda->params)
-            defineVariable(p.name, p.type.empty() ? "Any" : p.type, false, true);
+        for (const auto& p : lambda->params) {
+            std::string t = p.isVariadic ? "List" : (p.type.empty() ? "Any" : p.type);
+            defineVariable(p.name, t, false, true);
+        }
         if (lambda->isExpression && lambda->exprBody) {
             lambda->inferredReturnType = checkExpression(lambda->exprBody.get());
         } else {
             for (auto& s : lambda->stmtBody) checkStatement(s.get());
+            if (!lambdaStub.returnType.empty() && lambdaStub.returnType != "auto" && lambdaStub.returnType != "void")
+                lambda->inferredReturnType = lambdaStub.returnType;
         }
         exitScope();
+        currentFunctionNode = savedFn;
         return "Callable";
     }
     if (auto tern = dynamic_cast<TernaryNode*>(node)) {

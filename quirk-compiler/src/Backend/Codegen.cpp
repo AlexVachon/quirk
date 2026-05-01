@@ -69,6 +69,7 @@ class LLVMCodegen {
     static std::string currentCodegenClass;
     std::map<std::string, std::string> activeModuleAliases;
     std::map<std::string, std::string> callableReturnTypes; // varName → inferred return type
+    std::map<std::string, int> variadicCallableStart;       // varName → first variadic arg index (-1 = not variadic)
     std::set<std::string> externBoolReturnFunctions;       // LLVM names widened i1→i32 for C ABI
 
     void setVerbose(bool v) { verbose = v; }
@@ -990,6 +991,17 @@ class LLVMCodegen {
                     if (st == StructTypes["Callable"]) {
                         std::vector<Value*> argVals;
                         for (auto& a : call->args) argVals.push_back(handleExpression(a.value.get()));
+
+                        // Bundle variadic tail into a List if this lambda is variadic
+                        int varStart = variadicCallableStart.count(lit->value)
+                                       ? variadicCallableStart.at(lit->value) : -1;
+                        if (varStart >= 0 && (int)argVals.size() > varStart) {
+                            std::vector<Value*> tail(argVals.begin() + varStart, argVals.end());
+                            argVals.erase(argVals.begin() + varStart, argVals.end());
+                            Value* bundled = structGen->createListFromValues(tail);
+                            argVals.push_back(bundled);
+                        }
+
                         Value* raw = emitCallableCall(val, argVals);
                         // Unbox the result based on the tracked return type
                         std::string retType = callableReturnTypes.count(lit->value)
@@ -1462,9 +1474,11 @@ class LLVMCodegen {
         std::vector<Value*> variadicBundle;
 
         size_t positionalIdx = offset;
+        bool hasSeenNamedArg = false;
 
         for (const auto& arg : astArgs) {
             if (!arg.name.empty()) {
+                hasSeenNamedArg = true;
                 bool found = false;
                 if (funcNode) {
                     for (size_t i = offset; i < requiredFixedCount; ++i) {
@@ -1479,12 +1493,18 @@ class LLVMCodegen {
                 }
                 if (!found) return;
             } else {
-                while (positionalIdx < requiredFixedCount && matchedArgs[positionalIdx] != nullptr) positionalIdx++;
-                if (positionalIdx < requiredFixedCount) {
-                    matchedArgs[positionalIdx] = handleExpression(arg.value.get());
-                    positionalIdx++;
-                } else {
+                // Positional args appearing after a named arg go straight to variadic,
+                // so that log(prefix=">>", "a", "b") puts "a","b" into ...parts, not sep.
+                if (isVariadic && hasSeenNamedArg) {
                     variadicBundle.push_back(handleExpression(arg.value.get()));
+                } else {
+                    while (positionalIdx < requiredFixedCount && matchedArgs[positionalIdx] != nullptr) positionalIdx++;
+                    if (positionalIdx < requiredFixedCount) {
+                        matchedArgs[positionalIdx] = handleExpression(arg.value.get());
+                        positionalIdx++;
+                    } else {
+                        variadicBundle.push_back(handleExpression(arg.value.get()));
+                    }
                 }
             }
         }
@@ -1694,6 +1714,10 @@ class LLVMCodegen {
                             retVal = structGen->allocateAndInit("String", sArgs);
                         }
                     }
+                    // Returning from a lambda (i8* return): box the value
+                    else if (expectedType == Type::getInt8PtrTy(Context)) {
+                        retVal = boxToVoidPtr(retVal);
+                    }
                 }
                 Builder.CreateRet(retVal);
             } else {
@@ -1707,11 +1731,16 @@ class LLVMCodegen {
         if (auto lhs = dynamic_cast<LiteralNode*>(vdecl->lhs.get()))
             if (verbose) std::cerr << "[Codegen]     handleVarDecl: " << lhs->value << " (op: " << vdecl->op << ")\n";
 
-        // Track Callable return types for direct lambda invocation
+        // Track Callable return types and variadic info for direct lambda invocation
         if (auto lambda = dynamic_cast<LambdaNode*>(vdecl->expression.get())) {
-            if (!lambda->inferredReturnType.empty()) {
-                if (auto lhsLit = dynamic_cast<LiteralNode*>(vdecl->lhs.get()))
+            if (auto lhsLit = dynamic_cast<LiteralNode*>(vdecl->lhs.get())) {
+                if (!lambda->inferredReturnType.empty())
                     callableReturnTypes[lhsLit->value] = lambda->inferredReturnType;
+                int varStart = -1;
+                for (int pi = 0; pi < (int)lambda->params.size(); pi++) {
+                    if (lambda->params[pi].isVariadic) { varStart = pi; break; }
+                }
+                variadicCallableStart[lhsLit->value] = varStart;
             }
         }
 
@@ -1719,26 +1748,35 @@ class LLVMCodegen {
         if (!val || val->getType()->isVoidTy()) return;
 
         // Tuple destructuring: (a, b) := tuple_expr
+        // Multi-assign broadcast: a, b, c := value  (assigns same value to all)
         if (auto* tupLhs = dynamic_cast<TupleLiteralNode*>(vdecl->lhs.get())) {
+            bool isTupleRhs = val->getType()->isPointerTy() && StructTypes.count("Tuple") &&
+                              val->getType()->getPointerElementType() == StructTypes["Tuple"];
+
+            if (!isTupleRhs) {
+                // Broadcast: assign the same value to every LHS variable
+                for (auto& elem : tupLhs->elements) {
+                    auto* nameNode = dynamic_cast<LiteralNode*>(elem.get());
+                    if (!nameNode) continue;
+                    if (!varGen->exists(nameNode->value)) varGen->defineLocalVariable(nameNode->value, val);
+                    else varGen->updateLocalVariable(nameNode->value, val);
+                }
+                return;
+            }
+
             Function* getFn = TheModule->getFunction("Core_Collections_Tuple_Tuple___get");
-            if (!getFn && StructTypes.count("Tuple")) {
+            if (!getFn) {
                 Type* tuplePtrTy = PointerType::getUnqual(StructTypes["Tuple"]);
                 FunctionType* ft = FunctionType::get(Type::getInt8PtrTy(Context),
                     {tuplePtrTy, Type::getInt32Ty(Context)}, false);
                 getFn = Function::Create(ft, Function::ExternalLinkage, "Core_Collections_Tuple_Tuple___get", TheModule.get());
             }
             if (getFn) {
-                // Ensure val is Tuple*
-                Value* tuplePtr = val;
-                if (StructTypes.count("Tuple") &&
-                    (!tuplePtr->getType()->isPointerTy() ||
-                     tuplePtr->getType()->getPointerElementType() != StructTypes["Tuple"]))
-                    tuplePtr = Builder.CreateBitCast(tuplePtr, PointerType::getUnqual(StructTypes["Tuple"]));
                 for (int i = 0; i < (int)tupLhs->elements.size(); i++) {
                     auto* nameNode = dynamic_cast<LiteralNode*>(tupLhs->elements[i].get());
                     if (!nameNode) continue;
                     Value* elem = Builder.CreateCall(getFn,
-                        {tuplePtr, ConstantInt::get(Type::getInt32Ty(Context), i)});
+                        {val, ConstantInt::get(Type::getInt32Ty(Context), i)});
                     if (!varGen->exists(nameNode->value)) varGen->defineLocalVariable(nameNode->value, elem);
                     else varGen->updateLocalVariable(nameNode->value, elem);
                 }
@@ -2366,7 +2404,7 @@ Value* LLVMCodegen::handleExpression(Node* node) {
     if (auto comp = dynamic_cast<MapComprehensionNode*>(node)) return generateMapComprehension(comp);
     if (auto tup = dynamic_cast<TupleLiteralNode*>(node)) return structGen->generateTupleLiteral(tup,
         [this](Node* n) { return this->handleExpression(n); },
-        [this](Value* v) { return this->emitBox(v); });
+        [this](Value* v) { return this->boxToVoidPtr(v); });
 
     if (auto binOp = dynamic_cast<BinaryOpNode*>(node)) {
         if (binOp->op == "not") return mathGen->generateNot(handleExpression(binOp->left.get()));

@@ -158,7 +158,32 @@ class ControlFlowGen {
             if (!nextFunc) { std::cerr << "Error: Iterator '" << iterName << "' missing __next()." << std::endl; exit(1); }
 
             Value* item = Builder.CreateCall(nextFunc, {iteratorObj}, "item");
-            varGen->defineLocalVariable(node->varName, item);
+
+            if (!node->destructureVars.empty()) {
+                // Tuple destructuring: for (a, b) in items
+                Function* getFn = TheModule->getFunction("Core_Collections_Tuple_Tuple___get");
+                if (!getFn) {
+                    Type* i8p = Type::getInt8PtrTy(Context);
+                    FunctionType* ft = FunctionType::get(i8p, {i8p, Type::getInt32Ty(Context)}, false);
+                    getFn = Function::Create(ft, Function::ExternalLinkage,
+                                             "Core_Collections_Tuple_Tuple___get", TheModule);
+                }
+                // Cast item to the type Tuple___get actually expects as its first arg
+                Value* tupleArg = item;
+                if (!getFn->arg_empty()) {
+                    Type* expectedTy = getFn->getFunctionType()->getParamType(0);
+                    if (tupleArg->getType() != expectedTy)
+                        tupleArg = Builder.CreateBitCast(tupleArg, expectedTy);
+                }
+                for (int di = 0; di < (int)node->destructureVars.size(); di++) {
+                    Value* elem = Builder.CreateCall(getFn,
+                        {tupleArg, ConstantInt::get(Type::getInt32Ty(Context), di)},
+                        node->destructureVars[di]);
+                    varGen->defineLocalVariable(node->destructureVars[di], elem);
+                }
+            } else {
+                varGen->defineLocalVariable(node->varName, item);
+            }
 
             if (isPair) {
                 Function* curValFunc = resolveFunc(iterName + "___current_value");
@@ -439,7 +464,8 @@ class ControlFlowGen {
 
     void generateMatch(MatchNode* node, Function* parentFunc,
                        std::function<Value*(Node*)> exprHandler,
-                       std::function<void(Node*)> stmtHandler) {
+                       std::function<void(Node*)> stmtHandler,
+                       std::function<void(const std::string&, Value*)> bindHook = nullptr) {
         Value* scrutVal = exprHandler(node->scrutinee.get());
         if (!scrutVal) return;
 
@@ -454,6 +480,41 @@ class ControlFlowGen {
 
             if (arm.isWildcard) {
                 Builder.CreateBr(bodyBB);
+            } else if (arm.isTypeMatch) {
+                // Type-match: `case TypeName =>` / `case T1 | T2 as x =>`
+                // Emit: isinstance(scrutinee_as_i8*, type_name_String*) for each type
+                Type* i8PtrTy = Type::getInt8PtrTy(Context);
+                Value* scrutI8 = scrutVal->getType()->isPointerTy()
+                    ? Builder.CreateBitCast(scrutVal, i8PtrTy)
+                    : Builder.CreateIntToPtr(scrutVal, i8PtrTy);
+
+                Function* makeStrFn = TheModule->getFunction("make_String");
+                if (!makeStrFn) {
+                    FunctionType* ft = FunctionType::get(i8PtrTy, {i8PtrTy}, false);
+                    makeStrFn = Function::Create(ft, Function::ExternalLinkage, "make_String", TheModule);
+                }
+                Function* isinstanceFn = TheModule->getFunction("Core_Primitives_Quirk_isinstance");
+                if (!isinstanceFn) {
+                    FunctionType* ft = FunctionType::get(Type::getInt32Ty(Context), {i8PtrTy, i8PtrTy}, false);
+                    isinstanceFn = Function::Create(ft, Function::ExternalLinkage, "Core_Primitives_Quirk_isinstance", TheModule);
+                }
+
+                Value* cond = nullptr;
+                for (auto& typeName : arm.typeNames) {
+                    Constant* cstr = Builder.CreateGlobalStringPtr(typeName, "type_name_cstr");
+                    Value* typeStr = Builder.CreateCall(makeStrFn, {cstr}, "type_str");
+                    Value* res = Builder.CreateCall(isinstanceFn, {scrutI8, typeStr}, "isinstance_res");
+                    Value* eq = Builder.CreateICmpNE(res, ConstantInt::get(Type::getInt32Ty(Context), 0), "type_match");
+                    cond = cond ? Builder.CreateOr(cond, eq, "type_or") : eq;
+                }
+                if (!cond) cond = ConstantInt::getFalse(Context);
+                Builder.CreateCondBr(cond, bodyBB, nextBB);
+
+                Builder.SetInsertPoint(bodyBB);
+                // Bind the scrutinee to `bindName` if present
+                if (!arm.bindName.empty() && bindHook) {
+                    bindHook(arm.bindName, scrutVal);
+                }
             } else {
                 // OR together equality checks for all patterns in this arm
                 Value* cond = nullptr;
@@ -466,7 +527,8 @@ class ControlFlowGen {
                 Builder.CreateCondBr(cond, bodyBB, nextBB);
             }
 
-            Builder.SetInsertPoint(bodyBB);
+            if (!arm.isTypeMatch)
+                Builder.SetInsertPoint(bodyBB);
             for (auto& stmt : arm.body) stmtHandler(stmt.get());
             if (!Builder.GetInsertBlock()->getTerminator())
                 Builder.CreateBr(mergeBB);

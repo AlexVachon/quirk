@@ -72,6 +72,14 @@
           }
         },
         {
+          "match": "\\b(type)\\s+([a-zA-Z_]\\w*)\\s*(=)",
+          "captures": {
+            "1": { "name": "keyword.other.quirk" },
+            "2": { "name": "entity.name.type.alias.quirk" },
+            "3": { "name": "keyword.operator.assignment.quirk" }
+          }
+        },
+        {
           "match": "\\b(extern)\\b",
           "name": "storage.modifier.quirk"
         }
@@ -81,7 +89,7 @@
       "patterns": [
         {
           "name": "keyword.control.quirk",
-          "match": "\\b(if|else|elif|while|for|in|return|break|continue|with|as|try|catch|throw|finally|from|match|case|where|is|not|and|or)\\b"
+          "match": "\\b(if|else|elif|while|for|in|return|break|continue|with|as|try|catch|throw|finally|from|match|case|where|is|not|and|or|nonlocal|global)\\b"
         },
         {
           "name": "keyword.other.wildcard.quirk",
@@ -93,7 +101,7 @@
         },
         {
           "name": "keyword.other.quirk",
-          "match": "\\b(del|const|ref)\\b"
+          "match": "\\b(del|const|ref|type)\\b"
         },
         {
           "name": "constant.language.quirk",
@@ -121,7 +129,7 @@
         },
         {
           "name": "support.type.object.quirk",
-          "match": "\\b(Char|List|String|Map|Int|Double|Bool|File|Callable|Tuple)\\b"
+          "match": "\\b(Char|List|String|Map|Int|Double|Bool|File|Callable|Tuple|Set|Queue)\\b"
         }
       ]
     },
@@ -259,6 +267,14 @@
         {
           "name": "keyword.operator.logical.quirk",
           "match": "\\b(and|or|not)\\b"
+        },
+        {
+          "name": "keyword.operator.range.quirk",
+          "match": "\\.\\."
+        },
+        {
+          "name": "keyword.operator.spread.quirk",
+          "match": "\\.\\.\\."
         },
         {
           "name": "storage.type.function.arrow.quirk",

@@ -163,6 +163,9 @@ Token Lexer::nextToken()
         if (ident == "fn")       return {TokenType::FN,         ident, startLine, startCol};
         if (ident == "where")    return {TokenType::WHERE,      ident, startLine, startCol};
         if (ident == "const")    return {TokenType::CONST,      ident, startLine, startCol};
+        if (ident == "type")     return {TokenType::TYPE_KW,    ident, startLine, startCol};
+        if (ident == "nonlocal") return {TokenType::NONLOCAL,   ident, startLine, startCol};
+        if (ident == "global")   return {TokenType::GLOBAL,     ident, startLine, startCol};
         return {TokenType::IDENTIFIER, ident, startLine, startCol};
     }
 
@@ -197,10 +200,15 @@ Token Lexer::nextToken()
         advance(); advance();
         return {TokenType::QUESTION_DOT, "?.", startLine, startCol};
     }
-    // Ellipsis '...' must be checked before single DOT
+    // Ellipsis '...' must be checked before '..' and single DOT
     if (c == '.' && peek(1) == '.' && peek(2) == '.') {
         advance(); advance(); advance();
         return {TokenType::ELLIPSIS, "...", startLine, startCol};
+    }
+    // Range operator '..' (two dots, not three)
+    if (c == '.' && peek(1) == '.' && peek(2) != '.') {
+        advance(); advance();
+        return {TokenType::DOTDOT, "..", startLine, startCol};
     }
     if (c == ':' && peek(1) == '=') {
         advance(); advance();

@@ -7,7 +7,7 @@ const KEYWORDS = new Set([
     'extern', 'true', 'false', 'null', 'del', 'init', 'def',
     'const', 'ref', 'try', 'catch', 'throw', 'finally', 'and', 'or', 'not', 'super', 'enum',
     'match', 'case', '_', 'where', 'is',
-    'fn'
+    'fn', 'nonlocal', 'global'
 ]);
 
 const BUILTINS = new Set([
@@ -186,6 +186,10 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
             });
         }
 
+        // Type alias: type Name = T — register as global so usage doesn't warn "not defined"
+        const typeAliasMatch1 = /^\s*type\s+([a-zA-Z_]\w*)\s*=/.exec(cleanLine);
+        if (typeAliasMatch1) { fileGlobals.add(typeAliasMatch1[1]); continue; }
+
         match = /^\s*(?:extern\s+)?(?:struct|define|def|init)\s+([a-zA-Z_]\w*)/.exec(cleanLine);
         if (match) {
             const name = match[1];
@@ -290,9 +294,34 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
                 compVarNames.add(cvm[1]);
                 if (cvm[2]) compVarNames.add(cvm[2]);
             }
+            // Also capture parenthesized for-destructuring: for (n, s) in
+            const cvParenRe = /\bfor\s+\(([^)]+)\)\s+in\b/g;
+            let cvpm;
+            while ((cvpm = cvParenRe.exec(maskedLine)) !== null) {
+                cvpm[1].split(',').forEach(part => {
+                    const vn = part.trim();
+                    if (vn && /^[a-zA-Z_]\w*$/.test(vn)) compVarNames.add(vn);
+                });
+            }
         }
 
+        // Type alias lines don't declare runtime variables — skip assignment matching
+        const isTypeAliasLine = /^\s*type\s+[a-zA-Z_]\w*\s*=/.test(maskedLine);
+
         if (isInsideFunc || isTopLevel) {
+            // Parenthesized for-destructuring: for (n, s) in pairs
+            const forParenDestructMatch = /\bfor\s+\(([^)]+)\)\s+in\b/.exec(maskedLine);
+            if (forParenDestructMatch) {
+                forParenDestructMatch[1].split(',').forEach(part => {
+                    const vName = part.trim();
+                    if (vName && /^[a-zA-Z_]\w*$/.test(vName) && !locals.has(vName) && !KEYWORDS.has(vName) && !BUILTINS.has(vName)) {
+                        locals.add(vName);
+                        const startIdx = originalLine.indexOf(vName, forParenDestructMatch.index);
+                        declarations.set(`${i}_${vName}`, new vscode.Range(i, startIdx, i, startIdx + vName.length));
+                    }
+                });
+            }
+
             // Parenthesized tuple destructuring: (x, y) := expr
             const parenDestructMatch = /^\s*\(\s*([a-zA-Z_]\w*(?:\s*,\s*[a-zA-Z_]\w*)*)\s*\)\s*:=/.exec(maskedLine);
             if (parenDestructMatch) {
@@ -319,7 +348,7 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
                 });
             }
 
-            const assignMatch = /(?<!\.)\b([a-zA-Z_]\w*)\s*(?::\s*([a-zA-Z0-9_.?]+))?\s*(?::=|=(?!>)|\+=|-=|\*=|\/=)/.exec(maskedLine);
+            const assignMatch = !isTypeAliasLine ? /(?<!\.)\b([a-zA-Z_]\w*)\s*(?::\s*([a-zA-Z0-9_.?]+))?\s*(?::=|=(?!>)|\+=|-=|\*=|\/=)/.exec(maskedLine) : null;
             if (assignMatch && !parenDestructMatch && !bareDestructMatch) {
                 const vName = assignMatch[1];
                 if (!namedArgNames.has(vName) && !locals.has(vName) && !KEYWORDS.has(vName) && !BUILTINS.has(vName)) {
@@ -423,6 +452,21 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
                         locals.add(pName);
                     }
                 });
+            }
+        }
+
+        // Spread usage: ...varName counts as a reference (identRegex misses it due to dot lookbehind)
+        {
+            const spreadRe = /\.\.\.([a-zA-Z_]\w*)/g;
+            let sm;
+            while ((sm = spreadRe.exec(maskedLine)) !== null) {
+                const ident = sm[1];
+                if (!KEYWORDS.has(ident) && !BUILTINS.has(ident)) {
+                    usages.add(ident);
+                    for (let k = i; k >= 0; k--) {
+                        if (declarations.has(`${k}_${ident}`)) { usages.add(`${k}_${ident}`); break; }
+                    }
+                }
             }
         }
 

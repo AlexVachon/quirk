@@ -27,6 +27,8 @@ static void* __gc_calloc(size_t n, size_t s) {
 #include "core/map.c"
 #include "core/any.c"
 #include "core/tuple.c"
+#include "core/set.c"
+#include "core/queue.c"
 #include "core/callable.c"
 #include "core/exceptions.c"
 

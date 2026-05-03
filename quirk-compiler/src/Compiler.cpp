@@ -226,7 +226,7 @@ std::string resolveImportPath(const std::string& moduleName, const std::string& 
         fs::path candidateFile = baseDir / (subPath + ".qk");
         if (fs::exists(candidateFile)) return candidateFile.string();
 
-        fs::path candidateInit = baseDir / subPath / "__init.qk";
+        fs::path candidateInit = baseDir / subPath / "index.qk";
         if (fs::exists(candidateInit)) return candidateInit.string();
 
         return "";
@@ -238,7 +238,7 @@ std::string resolveImportPath(const std::string& moduleName, const std::string& 
 
     std::vector<std::string> variants = {
         relPath + ".qk",
-        relPath + "/__init.qk"
+        relPath + "/index.qk"
     };
 
     for (const auto& root : getSearchPaths()) {

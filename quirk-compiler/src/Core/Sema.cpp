@@ -382,13 +382,24 @@ void Sema::checkStatement(Node *node)
 
         for (auto& s : t->finallyBlock) checkStatement(s.get());
     }
+    else if (auto ta = dynamic_cast<TypeAliasNode*>(node)) {
+        typeAliases[ta->name] = ta->target;
+        defineVariable(ta->name, "Type");
+    }
     else if (auto m = dynamic_cast<MatchNode*>(node)) {
         checkExpression(m->scrutinee.get());
         for (auto& arm : m->arms) {
-            for (auto& pat : arm.patterns) checkExpression(pat.get());
-            enterScope();
-            for (auto& s : arm.body) checkStatement(s.get());
-            exitScope();
+            if (arm.isTypeMatch) {
+                enterScope();
+                if (!arm.bindName.empty()) defineVariable(arm.bindName, arm.typeNames[0], false, true);
+                for (auto& s : arm.body) checkStatement(s.get());
+                exitScope();
+            } else {
+                for (auto& pat : arm.patterns) checkExpression(pat.get());
+                enterScope();
+                for (auto& s : arm.body) checkStatement(s.get());
+                exitScope();
+            }
         }
     }
     else if (auto th = dynamic_cast<ThrowNode*>(node)) {
@@ -403,6 +414,13 @@ void Sema::checkStatement(Node *node)
     }
     else if (auto r = dynamic_cast<ReturnNode *>(node))
         checkReturn(r);
+    else if (auto nl = dynamic_cast<NonlocalNode*>(node)) {
+        // Mark nonlocal vars as known so references inside closures type-check cleanly.
+        for (const auto& v : nl->vars)
+            defineVariable(v, "Any", false, true);
+    }
+    else if (dynamic_cast<BreakNode*>(node)) { /* no-op */ }
+    else if (dynamic_cast<ContinueNode*>(node)) { /* no-op */ }
 }
 
 void Sema::checkIf(IfNode *node)
@@ -474,6 +492,8 @@ void Sema::checkFor(ForNode *node)
     enterScope();
     defineVariable(node->varName, itemType);
     if (!node->varName2.empty()) defineVariable(node->varName2, "Any", false, true);
+    for (const auto& dv : node->destructureVars)
+        defineVariable(dv, "Any", false, true);
     for (auto &s : node->body)
         checkStatement(s.get());
     exitScope();
@@ -495,6 +515,10 @@ std::string Sema::checkExpression(Node *node)
         return checkListLiteral(arr);
     if (auto map = dynamic_cast<MapLiteralNode *>(node))
         return checkMapLiteral(map);
+    if (auto s = dynamic_cast<SetLiteralNode *>(node)) {
+        for (auto& e : s->elements) checkExpression(e.get());
+        return "Set";
+    }
     if (auto comp = dynamic_cast<ListComprehensionNode *>(node)) {
         checkExpression(comp->iterable.get());
         enterScope();

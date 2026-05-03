@@ -74,7 +74,7 @@ struct List {
     Sets the element at the given index.
     @param index: Int — zero-based position
     @param item: Any — the new value
-    @throws IndexError — if index is out of bounds
+    @throws IndexError if index is out of bounds
     ---
     extern define __set(self, index: Int, item: Any) -> void
 

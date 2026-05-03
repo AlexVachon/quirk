@@ -64,7 +64,8 @@ class Sema {
     std::map<std::string, std::map<std::string, FunctionNode*>> methodRegistry;
     struct VarInfo { std::string type; bool isConst = false; bool used = false; bool isParam = false; std::string filePath; };
     std::vector<std::map<std::string, VarInfo>> scopeStack;
-    std::map<std::string, std::string> globalModuleAliases; // Add this
+    std::map<std::string, std::string> globalModuleAliases;
+    std::map<std::string, std::string> typeAliases; // name → resolved type
 
     bool isCompatibleTypes(const std::string &expected, const std::string &actual);
     bool inheritsFromException(const std::string& typeName, const std::string& baseType = "Exception");

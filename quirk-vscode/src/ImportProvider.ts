@@ -3,7 +3,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 
 const PRELUDE_MODULES = [
-    'typing/__init.qk',
+    'typing/index.qk',
     'typing/string.qk',
     'typing/int.qk',
     'typing/double.qk',
@@ -12,12 +12,12 @@ const PRELUDE_MODULES = [
     'typing/callable.qk',
     'typing/serializable.qk',
     'typing/exceptions/base.qk',
-    'typing/exceptions/__init.qk',
+    'typing/exceptions/index.qk',
     'typing/exceptions/types.qk',
     'typing/collections/list.qk',
     'typing/collections/map.qk',
     'typing/collections/tuple.qk',
-    'sys/__init.qk'
+    'sys/index.qk'
 ];
 
 export class QuirkDefinitionProvider implements vscode.DefinitionProvider {
@@ -183,11 +183,12 @@ export class QuirkDefinitionProvider implements vscode.DefinitionProvider {
     // =========================================================
 
     private findLocalDefinition(document: vscode.TextDocument, position: vscode.Position, symbol: string): vscode.Location | null {
-        const assignRe    = new RegExp(`^\\s*${symbol}\\b\\s*(?::\\s*[A-Za-z0-9_.]+\\s*)?(?:=|:=)`);
-        const forRe       = new RegExp(`\\bfor\\s+(?:ref\\s+)?${symbol}\\s+in\\b`);
-        const withAsRe    = new RegExp(`\\bwith\\b.*\\bas\\s+${symbol}\\b`);
-        const catchRe     = new RegExp(`\\bcatch\\s*\\(\\s*${symbol}\\s*:`);
-        const funcDefRe   = /^\s*(?:extern\s+)?(?:define|def|init)\s+[a-zA-Z0-9_]+\s*\(([^)]*)\)/;
+        const assignRe          = new RegExp(`^\\s*${symbol}\\b\\s*(?::\\s*[A-Za-z0-9_.]+\\s*)?(?:=|:=)`);
+        const forRe             = new RegExp(`\\bfor\\s+(?:ref\\s+)?${symbol}\\s+in\\b`);
+        const forParenDestructRe= new RegExp(`\\bfor\\s+\\([^)]*\\b${symbol}\\b[^)]*\\)\\s+in\\b`);
+        const withAsRe          = new RegExp(`\\bwith\\b.*\\bas\\s+${symbol}\\b`);
+        const catchRe           = new RegExp(`\\bcatch\\s*\\(\\s*${symbol}\\s*:`);
+        const funcDefRe         = /^\s*(?:extern\s+)?(?:define|def|init)\s+[a-zA-Z0-9_]+\s*\(([^)]*)\)/;
 
         for (let i = position.line; i >= 0; i--) {
             const rawLine  = document.lineAt(i).text;
@@ -197,7 +198,12 @@ export class QuirkDefinitionProvider implements vscode.DefinitionProvider {
                 return new vscode.Location(document.uri, new vscode.Position(i, rawLine.indexOf(symbol)));
             }
 
-            let m = forRe.exec(trimmed);
+            let m = forParenDestructRe.exec(trimmed);
+            if (m) {
+                return new vscode.Location(document.uri, new vscode.Position(i, rawLine.indexOf(symbol, m.index)));
+            }
+
+            m = forRe.exec(trimmed);
             if (m) {
                 return new vscode.Location(document.uri, new vscode.Position(i, rawLine.indexOf(symbol, m.index)));
             }
@@ -543,9 +549,11 @@ export class QuirkDefinitionProvider implements vscode.DefinitionProvider {
         const relPath = modulePath.replace(/\./g, '/');
         for (const root of this.getSearchRoots(projectRoot)) {
             const v1 = path.join(root, relPath + '.qk');
-            const v2 = path.join(root, relPath, '__init.qk');
+            const v2 = path.join(root, relPath, 'index.qk');
+            const v3 = path.join(root, relPath, '__init.qk');
             if (fs.existsSync(v1)) return v1;
             if (fs.existsSync(v2)) return v2;
+            if (fs.existsSync(v3)) return v3;
         }
         return null;
     }
@@ -557,9 +565,11 @@ export class QuirkDefinitionProvider implements vscode.DefinitionProvider {
         for (let i = 1; i < m[1].length; i++) searchDir = path.dirname(searchDir);
         const subPath = m[2].replace(/\./g, '/');
         const v1 = path.join(searchDir, subPath + '.qk');
-        const v2 = path.join(searchDir, subPath, '__init.qk');
+        const v2 = path.join(searchDir, subPath, 'index.qk');
+        const v3 = path.join(searchDir, subPath, '__init.qk');
         if (fs.existsSync(v1)) return v1;
         if (fs.existsSync(v2)) return v2;
+        if (fs.existsSync(v3)) return v3;
         return null;
     }
 

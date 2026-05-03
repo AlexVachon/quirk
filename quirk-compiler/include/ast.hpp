@@ -220,6 +220,7 @@ class VarDeclNode : public Node {
 struct Arg {
     std::string name;
     std::unique_ptr<Node> value;
+    bool isSpread = false; // true for ...expr spread argument
 };
 
 class CallNode : public Node {
@@ -323,6 +324,25 @@ struct MapLiteralNode : public Node {
     }
 };
 
+struct SetLiteralNode : public Node {
+    std::vector<std::unique_ptr<Node>> elements;
+
+    void print(int indent) const override {
+        std::string sp(indent, ' ');
+        std::cout << sp << "SetLiteral: {" << elements.size() << " elems}" << std::endl;
+    }
+};
+
+struct TypeAliasNode : public Node {
+    std::string name;
+    std::string target; // target type name
+
+    void print(int indent) const override {
+        std::string sp(indent, ' ');
+        std::cout << sp << "TypeAlias: " << name << " = " << target << std::endl;
+    }
+};
+
 struct ListComprehensionNode : public Node {
     std::unique_ptr<Node> expr;
     std::string varName;
@@ -402,6 +422,7 @@ class ForNode : public Node {
    public:
     std::string varName;
     std::string varName2; // optional second variable for pair iteration (k, v in map)
+    std::vector<std::string> destructureVars; // for (a, b) in tupleList
     bool isRef;
     std::unique_ptr<Node> iterable;
     std::vector<std::unique_ptr<Node>> body;
@@ -544,6 +565,9 @@ class EnumNode : public Node {
 struct MatchArm {
     std::vector<std::unique_ptr<Node>> patterns;  // expressions; empty when isWildcard
     bool isWildcard = false;
+    bool isTypeMatch = false;        // true for `case Int =>` type-dispatch
+    std::vector<std::string> typeNames; // types to match when isTypeMatch
+    std::string bindName;            // optional `case Int as x =>` binding
     std::vector<std::unique_ptr<Node>> body;
 };
 
@@ -611,6 +635,35 @@ class TernaryNode : public Node {
         std::cout << space << "  :\n";
         elseExpr->print(indent + 2);
         std::cout << space << ")\n";
+    }
+};
+
+// Range literal: start..end  (used in `for x in 0..10`)
+struct RangeLiteralNode : public Node {
+    std::unique_ptr<Node> start;
+    std::unique_ptr<Node> end;
+
+    void print(int indent) const override {
+        std::string sp(indent, ' ');
+        std::cout << sp << "Range(\n";
+        start->print(indent + 2);
+        std::cout << sp << "  ..\n";
+        end->print(indent + 2);
+        std::cout << sp << ")\n";
+    }
+};
+
+// nonlocal x, y  — marks variables as shared mutable cells with enclosing scope
+struct NonlocalNode : public Node {
+    std::vector<std::string> vars;
+    bool isGlobal = false; // true for `global x` (currently a no-op)
+
+    void print(int indent) const override {
+        std::string sp(indent, ' ');
+        std::cout << sp << (isGlobal ? "Global" : "Nonlocal") << ": ";
+        for (size_t i = 0; i < vars.size(); i++)
+            std::cout << vars[i] << (i + 1 < vars.size() ? ", " : "");
+        std::cout << "\n";
     }
 };
 

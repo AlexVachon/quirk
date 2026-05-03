@@ -82,6 +82,40 @@ typedef struct {
     int idx;
 } TupleIterator;
 
+typedef struct {
+    char* key;       // string representation used for hashing/equality
+    void* value;     // original boxed value
+    int is_occupied;
+    int is_deleted;
+} SetEntry;
+
+typedef struct {
+    SetEntry* entries;
+    int capacity;
+    int size;
+    char** key_order;   // insertion-order
+    int order_size;
+    int order_capacity;
+} Set;
+
+typedef struct {
+    Set* set_ref;
+    int idx;
+} SetIterator;
+
+typedef struct {
+    void** data;
+    int head;       // index of front element
+    int tail;       // index past last element
+    int capacity;
+    int size;
+} Queue;
+
+typedef struct {
+    Queue* queue_ref;
+    int pos;        // current iteration index (0-based)
+} QueueIterator;
+
 // ===================================================
 //  Any — Tagged Union for dynamic typing
 //

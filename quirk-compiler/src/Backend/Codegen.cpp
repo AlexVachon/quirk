@@ -477,7 +477,8 @@ class LLVMCodegen {
                 if (func->name == "main") {
                     for (const auto& stmt : func->body) handleStatement(stmt.get(), mainFunc);
                 }
-            } else if (!dynamic_cast<StructNode*>(node.get()) && !dynamic_cast<FunctionNode*>(node.get())) {
+            } else if (!dynamic_cast<StructNode*>(node.get()) && !dynamic_cast<FunctionNode*>(node.get()) &&
+                       !dynamic_cast<TypeAliasNode*>(node.get())) {
                  handleStatement(node.get(), mainFunc);
             }
         }
@@ -783,13 +784,26 @@ class LLVMCodegen {
         collectFreeVars(node, captureNames);
 
         // Resolve current values of captured variables
+        // For nonlocal (cell-boxed) vars, capture the raw cell i8* so the lambda shares mutation.
         std::vector<Value*> captureValues;
         std::vector<Type*>  captureTypes;
+        std::vector<bool>   captureIsCell;
+        Type* i8PtrTy_ = Type::getInt8PtrTy(Context);
         for (const auto& name : captureNames) {
-            Value* val = varGen->resolveVariable(name);
-            if (val) {
-                captureValues.push_back(val);
-                captureTypes.push_back(val->getType());
+            if (varGen->isNonlocal(name)) {
+                Value* cellPtr = varGen->getCellPtr(name);
+                if (cellPtr) {
+                    captureValues.push_back(cellPtr);
+                    captureTypes.push_back(i8PtrTy_);
+                    captureIsCell.push_back(true);
+                }
+            } else {
+                Value* val = varGen->resolveVariable(name);
+                if (val) {
+                    captureValues.push_back(val);
+                    captureTypes.push_back(val->getType());
+                    captureIsCell.push_back(false);
+                }
             }
         }
 
@@ -810,8 +824,9 @@ class LLVMCodegen {
         BasicBlock* entryBB = BasicBlock::Create(Context, "entry", lambdaFn);
 
         // Save outer state
-        auto savedVars      = varGen->snapshot();
-        BasicBlock* savedBB = Builder.GetInsertBlock();
+        auto savedVars       = varGen->snapshot();
+        auto savedNonlocal   = varGen->snapshotNonlocal();
+        BasicBlock* savedBB  = Builder.GetInsertBlock();
         std::string savedClass = currentCodegenClass;
 
         // Switch into the lambda function
@@ -830,7 +845,12 @@ class LLVMCodegen {
                 Value* fieldPtr = Builder.CreateStructGEP(
                     envType, envPtr, (unsigned)i, captureNames[i] + "_ptr");
                 Value* loaded = Builder.CreateLoad(captureTypes[i], fieldPtr, captureNames[i]);
-                varGen->defineArgument(captureNames[i], loaded);
+                if (i < captureIsCell.size() && captureIsCell[i]) {
+                    // Restore nonlocal cell — lambda shares the heap cell with the outer scope
+                    varGen->defineNonlocalCell(captureNames[i], loaded);
+                } else {
+                    varGen->defineArgument(captureNames[i], loaded);
+                }
             }
         }
 
@@ -855,9 +875,9 @@ class LLVMCodegen {
                 Builder.CreateRet(ConstantPointerNull::get(cast<PointerType>(i8PtrTy)));
         }
 
-        // Restore outer state
+        // Restore outer state (including nonlocal cell metadata)
         Builder.SetInsertPoint(savedBB);
-        varGen->restore(savedVars);
+        varGen->restoreWithNonlocal(savedVars, savedNonlocal);
         currentCodegenClass = savedClass;
 
         // 7. Allocate env struct and store captured values
@@ -1476,7 +1496,28 @@ class LLVMCodegen {
         size_t positionalIdx = offset;
         bool hasSeenNamedArg = false;
 
+        // Check for a single spread arg `...list` targeting a variadic function
+        // In this case pass the list directly as the variadic List parameter.
+        bool usedSpreadDirect = false;
+        if (isVariadic && astArgs.size() == 1 && astArgs[0].isSpread) {
+            Value* spreadList = handleExpression(astArgs[0].value.get());
+            if (spreadList) {
+                // Fill any fixed args before the variadic slot with nullptr (no positional args)
+                for (size_t i = offset; i < requiredFixedCount; i++)
+                    finalArgs.push_back(Constant::getNullValue(func->getFunctionType()->getParamType(i)));
+                finalArgs.push_back(spreadList);
+                usedSpreadDirect = true;
+            }
+        }
+        if (usedSpreadDirect) return;
+
         for (const auto& arg : astArgs) {
+            if (arg.isSpread) {
+                // Spread into variadic bundle: treat the list as individual elements
+                // For now just push the whole list value (it IS a List already)
+                variadicBundle.push_back(handleExpression(arg.value.get()));
+                continue;
+            }
             if (!arg.name.empty()) {
                 hasSeenNamedArg = true;
                 bool found = false;
@@ -1622,6 +1663,32 @@ class LLVMCodegen {
         if (verbose) std::cerr << "[Codegen]   handleStatement: " << nodeTypeName() << "\n";
 
         if (auto u = dynamic_cast<UseNode*>(node)) handleUse(u);
+        else if (auto nl = dynamic_cast<NonlocalNode*>(node)) {
+            if (!nl->isGlobal) {
+                // For each declared nonlocal var: box current value and move it to a GC heap cell.
+                // Both this scope and any lambda that captures it will share the cell pointer.
+                FunctionCallee gcMallocFn = TheModule->getOrInsertFunction(
+                    "GC_malloc", Type::getInt8PtrTy(Context), Type::getInt64Ty(Context));
+                for (const auto& varName : nl->vars) {
+                    if (!varGen->exists(varName)) continue;
+                    if (varGen->isNonlocal(varName)) continue; // already a heap cell
+                    Value* curVal = varGen->resolveVariable(varName);
+                    if (!curVal) continue;
+                    // Box to i8*
+                    Value* boxed = boxToVoidPtr(curVal);
+                    // Allocate a single-pointer cell (8 bytes)
+                    Value* cell = Builder.CreateCall(gcMallocFn,
+                        {ConstantInt::get(Type::getInt64Ty(Context), 8)}, varName + "_cell");
+                    // Store boxed value into the cell
+                    Value* cellI8pp = Builder.CreateBitCast(cell,
+                        PointerType::getUnqual(Type::getInt8PtrTy(Context)));
+                    Builder.CreateStore(boxed, cellI8pp);
+                    // Register as nonlocal cell — replaces the existing variable binding
+                    varGen->defineNonlocalCell(varName, cell);
+                }
+            }
+            // global: no-op for now (module-level mutable globals not yet supported)
+        }
         else if (auto vdecl = dynamic_cast<VarDeclNode*>(node)) handleVarDecl(vdecl);
         else if (auto call = dynamic_cast<CallNode*>(node)) handleCall(call);
         else if (auto i = dynamic_cast<IfNode*>(node)) handleIf(i, parentFunc);
@@ -1643,17 +1710,64 @@ class LLVMCodegen {
             }
         }
         else if (auto f = dynamic_cast<ForNode*>(node)) {
+            // Special-case: range literal iterable → emit a simple counter loop
+            if (auto* range = dynamic_cast<RangeLiteralNode*>(f->iterable.get())) {
+                Value* startV = handleExpression(range->start.get());
+                Value* endV   = handleExpression(range->end.get());
+                if (!startV || !endV) return;
+                auto toI32 = [&](Value* v) -> Value* {
+                    if (v->getType()->isIntegerTy(32)) return v;
+                    if (v->getType()->isIntegerTy()) return Builder.CreateSExt(v, Type::getInt32Ty(Context));
+                    if (v->getType()->isPointerTy()) return Builder.CreatePtrToInt(v, Type::getInt32Ty(Context));
+                    return v;
+                };
+                startV = toI32(startV); endV = toI32(endV);
+
+                // Allocate loop counter
+                Function* curFn = Builder.GetInsertBlock()->getParent();
+                IRBuilder<> entryB(&curFn->getEntryBlock(), curFn->getEntryBlock().begin());
+                Value* counterSlot = entryB.CreateAlloca(Type::getInt32Ty(Context), nullptr, f->varName + "_range");
+                Builder.CreateStore(startV, counterSlot);
+
+                BasicBlock* condBB  = BasicBlock::Create(Context, "range_cond",  curFn);
+                BasicBlock* bodyBB  = BasicBlock::Create(Context, "range_body",  curFn);
+                BasicBlock* afterBB = BasicBlock::Create(Context, "range_after", curFn);
+
+                flowGen->breakStack.push_back(afterBB);
+                flowGen->continueStack.push_back(condBB);
+
+                Builder.CreateBr(condBB);
+                Builder.SetInsertPoint(condBB);
+                Value* counter = Builder.CreateLoad(Type::getInt32Ty(Context), counterSlot, f->varName);
+                Value* cmp = Builder.CreateICmpSLT(counter, endV, "range_cmp");
+                Builder.CreateCondBr(cmp, bodyBB, afterBB);
+
+                Builder.SetInsertPoint(bodyBB);
+                varGen->defineLocalVariable(f->varName, counter);
+                for (auto& stmt : f->body) handleStatement(stmt.get(), curFn);
+                if (!Builder.GetInsertBlock()->getTerminator()) {
+                    Value* next = Builder.CreateAdd(
+                        Builder.CreateLoad(Type::getInt32Ty(Context), counterSlot),
+                        ConstantInt::get(Type::getInt32Ty(Context), 1), "range_next");
+                    Builder.CreateStore(next, counterSlot);
+                    Builder.CreateBr(condBB);
+                }
+
+                flowGen->breakStack.pop_back();
+                flowGen->continueStack.pop_back();
+
+                Builder.SetInsertPoint(afterBB);
+                return;
+            }
+
             flowGen->generateFor(
                 f, parentFunc,
                 [this](Node* n) { return this->handleExpression(n); },
                 [this](const std::string& s, std::vector<Value*>& v) { return this->structGen->allocateAndInit(s, v); },
                 [this, parentFunc](Node* n) { this->handleStatement(n, parentFunc); },
                 varGen.get(),
-                // Linkage-aware resolver: tries module first, then functionDeclarations
                 [this](const std::string& shortName) -> Function* {
-                    // Try the short name first (for Quirk-defined iterators)
                     if (Function* f = TheModule->getFunction(shortName)) return f;
-                    // Try functionDeclarations linkageName fallback
                     if (functionDeclarations.count(shortName)) {
                         const std::string& ln = functionDeclarations[shortName]->linkageName;
                         if (!ln.empty()) return TheModule->getFunction(ln);
@@ -1668,7 +1782,8 @@ class LLVMCodegen {
         else if (auto mt = dynamic_cast<MatchNode*>(node)) {
             flowGen->generateMatch(mt, parentFunc,
                 [this](Node* n) { return this->handleExpression(n); },
-                [this, parentFunc](Node* n) { this->handleStatement(n, parentFunc); });
+                [this, parentFunc](Node* n) { this->handleStatement(n, parentFunc); },
+                [this](const std::string& name, Value* val) { varGen->defineLocalVariable(name, val); });
         }
         else if (auto th = dynamic_cast<ThrowNode*>(node)) {
             flowGen->generateThrow(th, parentFunc, 
@@ -2399,12 +2514,16 @@ Value* LLVMCodegen::handleExpression(Node* node) {
     }
 
     if (auto arr = dynamic_cast<ListLiteralNode*>(node)) return structGen->generateListLiteral(arr, [this](Node* n) { return this->handleExpression(n); });
+    if (auto setLit = dynamic_cast<SetLiteralNode*>(node)) return structGen->generateSetLiteral(setLit, [this](Node* n) { return this->handleExpression(n); });
     if (auto mapLit = dynamic_cast<MapLiteralNode*>(node)) return structGen->generateMapLiteral(mapLit, [this](Node* n) { return this->handleExpression(n); });
     if (auto comp = dynamic_cast<ListComprehensionNode*>(node)) return generateListComprehension(comp);
     if (auto comp = dynamic_cast<MapComprehensionNode*>(node)) return generateMapComprehension(comp);
     if (auto tup = dynamic_cast<TupleLiteralNode*>(node)) return structGen->generateTupleLiteral(tup,
         [this](Node* n) { return this->handleExpression(n); },
         [this](Value* v) { return this->boxToVoidPtr(v); });
+
+    // RangeLiteralNode in non-for-loop expression context is not supported directly
+    if (dynamic_cast<RangeLiteralNode*>(node)) return nullptr;
 
     if (auto binOp = dynamic_cast<BinaryOpNode*>(node)) {
         if (binOp->op == "not") return mathGen->generateNot(handleExpression(binOp->left.get()));
@@ -2481,15 +2600,24 @@ Value* LLVMCodegen::handleExpression(Node* node) {
             Value* result = nullptr;
 
             // Determine collection type and dispatch accordingly
-            bool isMap = false, isString = false;
+            bool isMap = false, isSet = false, isString = false;
             if (coll->getType()->isPointerTy() && coll->getType()->getPointerElementType()->isStructTy()) {
                 std::string sname = cast<StructType>(coll->getType()->getPointerElementType())->getName().str();
-                if (sname.find("Map") != std::string::npos) isMap = true;
+                if (sname.find("Set") != std::string::npos) isSet = true;
+                else if (sname.find("Map") != std::string::npos) isMap = true;
             } else if (coll->getType()->isPointerTy() && coll->getType()->getPointerElementType()->isIntegerTy(8)) {
                 isString = true;
             }
 
-            if (isMap) {
+            if (isSet) {
+                // `elem in set` → Set.has(set, elem_i8)
+                Function* hasFn = TheModule->getFunction("Core_Collections_Set_Set_has");
+                if (!hasFn) {
+                    FunctionType* ft = FunctionType::get(Type::getInt32Ty(Context), {coll->getType(), i8PtrTy}, false);
+                    hasFn = Function::Create(ft, Function::ExternalLinkage, "Core_Collections_Set_Set_has", TheModule.get());
+                }
+                result = Builder.CreateCall(hasFn, {coll, elemI8}, "in_result");
+            } else if (isMap) {
                 // `key in map` → Map.has(map, key_str)
                 // elem should be a String*; if it's i8* wrap it
                 Value* keyStr = elem;
@@ -2619,6 +2747,36 @@ Value* LLVMCodegen::handleExpression(Node* node) {
         Value* R = handleExpression(binOp->right.get());
         if (!L || !R) return nullptr;
 
+        // Operator overloading: check for magic methods on the left operand struct
+        if (L->getType()->isPointerTy() &&
+            L->getType()->getPointerElementType()->isStructTy()) {
+            StructType* st = cast<StructType>(L->getType()->getPointerElementType());
+            std::string sName = st->getName().str();
+            if (sName.find("struct.") == 0) sName = sName.substr(7);
+            static const std::map<std::string, std::string> opMethods = {
+                {"+",  "___add"}, {"-",  "___sub"}, {"*",  "___mul"}, {"/",  "___div"},
+                {"==", "___eq"},  {"!=", "___ne"},  {"<",  "___lt"},  {">",  "___gt"},
+                {"<=", "___le"},  {">=", "___ge"},
+            };
+            auto it = opMethods.find(binOp->op);
+            if (it != opMethods.end()) {
+                Function* magicFn = TheModule->getFunction(sName + it->second);
+                if (magicFn && magicFn->arg_size() >= 2) {
+                    Value* rArg = R;
+                    Type* expectedTy = magicFn->getFunctionType()->getParamType(1);
+                    if (rArg->getType() != expectedTy) {
+                        if (rArg->getType()->isPointerTy() && expectedTy->isPointerTy())
+                            rArg = Builder.CreateBitCast(rArg, expectedTy);
+                        else if (rArg->getType()->isIntegerTy() && expectedTy->isIntegerTy())
+                            rArg = Builder.CreateIntCast(rArg, expectedTy, true);
+                        else if (rArg->getType()->isIntegerTy() && expectedTy->isPointerTy())
+                            rArg = Builder.CreateIntToPtr(rArg, expectedTy);
+                    }
+                    return Builder.CreateCall(magicFn, {L, rArg}, "op_result");
+                }
+            }
+        }
+
         if (binOp->op == "[]") {
             // ... (Keep existing [] logic exactly as is) ...
             if (L->getType()->isPointerTy() && L->getType()->getPointerElementType()->isStructTy()) {
@@ -2694,7 +2852,15 @@ Value* LLVMCodegen::handleExpression(Node* node) {
                 return false;
             };
 
-            if (isStringType(L) || isStringType(R)) {
+            // Don't trigger string concat when an opaque i8* is mixed with a plain numeric type —
+            // that case should go through arithmetic unboxing (e.g. nonlocal cell values).
+            bool lOpaque = L->getType()->isPointerTy() && L->getType()->getPointerElementType()->isIntegerTy(8);
+            bool rOpaque = R->getType()->isPointerTy() && R->getType()->getPointerElementType()->isIntegerTy(8);
+            bool lNum = L->getType()->isIntegerTy() || L->getType()->isDoubleTy();
+            bool rNum = R->getType()->isIntegerTy() || R->getType()->isDoubleTy();
+            bool suppressString = (lOpaque && rNum) || (rOpaque && lNum);
+
+            if (!suppressString && (isStringType(L) || isStringType(R))) {
                 auto makeString = [&](Value* val) -> Value* {
                     Type* ty = val->getType();
                     // 1. Already a String Struct

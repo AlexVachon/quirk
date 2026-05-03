@@ -140,6 +140,50 @@
         "description": "For-in loop"
     },
 
+    "For Range Loop": {
+        "prefix": "forr",
+        "body": [
+            "for ${1:i} in ${2:0}..${3:10} {",
+            "\t$0",
+            "}"
+        ],
+        "description": "For loop over a range (e.g. 0..10)"
+    },
+
+    "For Destructuring Loop": {
+        "prefix": "ford",
+        "body": [
+            "for (${1:k}, ${2:v}) in ${3:items} {",
+            "\t$0",
+            "}"
+        ],
+        "description": "For loop with tuple destructuring"
+    },
+
+    "Nonlocal": {
+        "prefix": "nonlocal",
+        "body": "nonlocal ${1:variable}",
+        "description": "Capture a variable by reference in a closure"
+    },
+
+    "Type Alias": {
+        "prefix": "type",
+        "body": "type ${1:Alias} = ${2:Type}",
+        "description": "Declare a type alias"
+    },
+
+    "Variadic Function": {
+        "prefix": "defv",
+        "body": [
+            "define ${1:name}(*${2:args}) -> ${3:void} {",
+            "\tfor ${4:item} in ${2:args} {",
+            "\t\t$0",
+            "\t}",
+            "}"
+        ],
+        "description": "Define a variadic function (*args)"
+    },
+
     "While Loop": {
         "prefix": "while",
         "body": [

@@ -196,8 +196,18 @@ static int _is_pow2_cap(int v) {
 }
 
 int Core_Primitives_Quirk_isinstance(void* val, String* type_str) {
-    if (!val || !type_str || !type_str->buffer) return 0;
+    if (!type_str || !type_str->buffer) return 0;
     const char* t = type_str->buffer;
+
+    // Tagged integer: values <= 0xFFFFFFFF are IntToPtr-encoded ints (not real pointers)
+    uintptr_t uval = (uintptr_t)val;
+    if (uval <= 0xFFFFFFFFUL) {
+        // Bool is stored as 0 or 1; Int covers all values in this range
+        if (strcmp(t, "Bool") == 0) return uval == 0 || uval == 1;
+        return strcmp(t, "Int") == 0;
+    }
+
+    if (!val) return strcmp(t, "Null") == 0;
 
     // Any* check (tag 0-10, inclusive of ANY_CALLABLE)
     int32_t first_i32 = *((int32_t*)val);
@@ -234,8 +244,27 @@ int Core_Primitives_Quirk_isinstance(void* val, String* type_str) {
         return _is_pow2_cap(cap) && size >= 0 && size <= cap;
     }
 
-    // For user-defined struct types and ISerializable, we cannot determine
-    // the type without RTTI. Return 0 (unknown).
+    // Set*: [entries ptr @0][cap i32 @8][size i32 @12]
+    if (strcmp(t, "Set") == 0) {
+        int32_t cap  = *((int32_t*)((char*)val + 8));
+        int32_t size = *((int32_t*)((char*)val + 12));
+        return _is_pow2_cap(cap) && size >= 0 && size <= cap;
+    }
+
+    // Queue*: [data ptr @0][head i32 @8][tail i32 @12][cap i32 @16]
+    if (strcmp(t, "Queue") == 0) {
+        int32_t cap  = *((int32_t*)((char*)val + 16));
+        int32_t size = *((int32_t*)((char*)val + 20));
+        return _is_pow2_cap(cap) && size >= 0 && size <= cap;
+    }
+
+    // Tuple*: [data ptr @0][len i32 @8]
+    if (strcmp(t, "Tuple") == 0) {
+        int32_t len = *((int32_t*)((char*)val + 8));
+        return len >= 0 && len <= 1024;
+    }
+
+    // For user-defined struct types without RTTI: return 0 (unknown).
     return 0;
 }
 

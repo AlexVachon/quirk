@@ -236,7 +236,7 @@ class StructGen {
                 }
             }
         } else {
-            std::cerr << "[DEBUG] StructGen::allocateAndInit fallback - About to GEP fields manually\n";
+            // No __init found — directly GEP-assign each field (normal path for plain user-defined structs).
             // For vtable-eligible structs __type_id is field 0; skip it here and store below.
             bool hasTypeId = typeIdMap.count(name) && structLayouts.count(name) &&
                              !structLayouts[name].empty() && structLayouts[name][0] == "__type_id";
@@ -418,6 +418,25 @@ class StructGen {
         Builder.CreateStore(ConstantInt::get(Type::getInt32Ty(Context), cap), capPtr);
 
         return listObj;
+    }
+
+    Value* generateSetLiteral(SetLiteralNode* node, std::function<Value*(Node*)> exprHandler) {
+        std::vector<Value*> emptyArgs;
+        Value* setObj = allocateAndInit("Set", emptyArgs);
+        if (!setObj) return nullptr;
+
+        Function* addFunc = TheModule->getFunction("Core_Collections_Set_Set_add");
+        if (!addFunc) return setObj;
+
+        Type* i8PtrTy = Type::getInt8PtrTy(Context);
+        for (auto& elem : node->elements) {
+            Value* v = exprHandler(elem.get());
+            if (!v) continue;
+            if (v->getType()->isIntegerTy()) v = Builder.CreateIntToPtr(v, i8PtrTy);
+            else if (v->getType()->isPointerTy() && v->getType() != i8PtrTy) v = Builder.CreateBitCast(v, i8PtrTy);
+            Builder.CreateCall(addFunc, {setObj, v});
+        }
+        return setObj;
     }
 
     Value* generateMapLiteral(MapLiteralNode* node, std::function<Value*(Node*)> exprHandler) {

@@ -36,6 +36,7 @@ enum class TokenType {
     MATCH,
     CASE,
     WHERE,
+    TYPE_KW,
 
     // Literals
     IDENTIFIER,
@@ -86,10 +87,14 @@ enum class TokenType {
 
     ELLIPSIS,
     TRIPLE_MINUS,
+    DOTDOT,          // ..  (range)
 
     QUESTION,        // ?
     QUESTION_DOT,    // ?.
     NULL_COALESCE,   // ??
+
+    NONLOCAL,        // nonlocal keyword
+    GLOBAL,          // global keyword
 
     // Special
     EOF_TOKEN,

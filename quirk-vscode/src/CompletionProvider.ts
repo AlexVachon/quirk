@@ -1027,6 +1027,7 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
         // ---- Keywords with block snippets ----
         const keywords: [string, string?, string?][] = [
             ['define',   'define ${1:name}(${2:args}) -> ${3:void} {\n\t$0\n}',   'Define a function'],
+            ['defv',     'define ${1:name}(*${2:args}) -> ${3:void} {\n\t$0\n}',  'Define a variadic function (*args)'],
             ['struct',   'struct ${1:Name} {\n\t${2:field}: ${3:Type}\n}',         'Define a struct'],
             ['enum', 'enum ${1:Name} {\n\t${2:Variant1}\n\t${3:Variant2}\n}', 'Define an enum'],
             ['if',       'if ${1:condition} {\n\t$0\n}',                           'If statement'],
@@ -1034,6 +1035,8 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
             ['elif',     'elif ${1:condition} {\n\t$0\n}',                         'Else-if branch'],
             ['while',    'while ${1:condition} {\n\t$0\n}',                        'While loop'],
             ['for',      'for ${1:item} in ${2:iterable} {\n\t$0\n}',             'For-in loop'],
+            ['forr',     'for ${1:i} in ${2:0}..${3:10} {\n\t$0\n}',            'For loop over a range'],
+            ['ford',     'for (${1:k}, ${2:v}) in ${3:items} {\n\t$0\n}',       'For loop with tuple destructuring'],
             ['try',      'try {\n\t$0\n} catch (${1:e}: ${2:Exception}) {\n\t\n}','Try-catch block'],
             ['throw',    'throw ${1:Exception}("${2:message}")',                   'Throw an exception'],
             ['match',    'match ${1:value} {\n\tcase ${2:pattern} => $0\n\tcase _ => \n}', 'Match statement'],
@@ -1049,6 +1052,9 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
             ['const',    'const ${1:name} := ${2:value}',                             'Declare a constant variable'],
             ['catch'],   ['super'],
             ['fn',       'fn(${1:x}) => ${2:x}',                                    'Lambda expression'],
+            ['nonlocal', 'nonlocal ${1:variable}',                                  'Capture a variable by reference in a closure'],
+            ['global',   'global ${1:variable}',                                    'Reference a module-level variable'],
+            ['type',     'type ${1:Alias} = ${2:Type}',                             'Declare a type alias'],
         ];
         for (const [kw, snippet, doc] of keywords) {
             addItem(kw, vscode.CompletionItemKind.Keyword, 'keyword', snippet, doc);
@@ -1070,6 +1076,8 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
             ['File',      'Built-in File type'],
             ['Any',       'Dynamic Any type'],
             ['Tuple',     'Immutable fixed-size sequence — (a, b, c)'],
+            ['Set',       'Unordered collection of unique values'],
+            ['Queue',     'First-in first-out sequence'],
             ['Callable',  'Lambda / function value (produced by fn(...) => ...)'],
             ['void',      'No return value'],
             ['Exception',           'Base exception class'],

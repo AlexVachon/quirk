@@ -55,6 +55,20 @@ std::vector<std::unique_ptr<Node>> Parser::parse() {
                 for (auto& extra : extraNodes)
                     nodes.push_back(std::move(extra));
                 extraNodes.clear();
+            } else if (type == TokenType::TYPE_KW) {
+                advance(); // consume 'type'
+                std::string aliasName = advance().value;
+                consume(TokenType::ASSIGN, "Expected '=' after type alias name");
+                // Collect the target type (may include | for unions)
+                std::string target = advance().value;
+                while (peek().type == TokenType::PIPE) {
+                    advance(); // consume '|'
+                    target += "|" + advance().value;
+                }
+                auto node = std::make_unique<TypeAliasNode>();
+                node->name = aliasName;
+                node->target = target;
+                nodes.push_back(std::move(node));
             } else if (type == TokenType::EXTEND) {
                 advance();
                 std::string targetStruct = advance().value;
@@ -116,6 +130,8 @@ int getPrecedence(TokenType type) {
         case TokenType::STAR:
         case TokenType::SLASH:
             return 30;
+        case TokenType::DOTDOT:
+            return 4; // range: binds loosely so `1+2..5+3` works as (1+2)..(5+3)
         case TokenType::AS:
             return 35;
         case TokenType::DOT:
@@ -228,30 +244,25 @@ std::unique_ptr<Node> Parser::parseExpression(int min_precedence) {
                 comp->condition = std::move(condition);
                 comp->line = t.line; comp->col = t.col; comp->filePath = filePath;
                 left = std::move(comp);
-            } else {
-                consume(TokenType::COLON, "Expected ':' after map key");
+            } else if (peek().type == TokenType::COLON) {
+                // Map literal: {key: val, ...}
+                advance(); // consume ':'
                 auto valExpr = parseExpression(0);
                 if (peek().type == TokenType::FOR) {
-                    // Map comprehension: {key: val for var in iterable (where cond)}
-                    advance(); // consume 'for'
+                    // Map comprehension: {key: val for var in iterable}
+                    advance();
                     std::string varName = advance().value;
                     std::string varName2;
                     if (peek().type == TokenType::COMMA) { advance(); varName2 = advance().value; }
                     consume(TokenType::IN, "Expected 'in' in map comprehension");
                     auto iterable = parseExpression(0);
                     std::unique_ptr<Node> condition;
-                    if (peek().type == TokenType::WHERE) {
-                        advance();
-                        condition = parseExpression(0);
-                    }
+                    if (peek().type == TokenType::WHERE) { advance(); condition = parseExpression(0); }
                     consume(TokenType::RBRACE, "Expected '}' after map comprehension");
                     auto comp = std::make_unique<MapComprehensionNode>();
-                    comp->keyExpr   = std::move(keyExpr);
-                    comp->valExpr   = std::move(valExpr);
-                    comp->varName   = varName;
-                    comp->varName2  = varName2;
-                    comp->iterable  = std::move(iterable);
-                    comp->condition = std::move(condition);
+                    comp->keyExpr = std::move(keyExpr); comp->valExpr = std::move(valExpr);
+                    comp->varName = varName; comp->varName2 = varName2;
+                    comp->iterable = std::move(iterable); comp->condition = std::move(condition);
                     comp->line = t.line; comp->col = t.col; comp->filePath = filePath;
                     left = std::move(comp);
                 } else {
@@ -266,6 +277,17 @@ std::unique_ptr<Node> Parser::parseExpression(int min_precedence) {
                     consume(TokenType::RBRACE, "Expected '}' after map literal");
                     left = std::move(node);
                 }
+            } else {
+                // Set literal: {val, val, ...}
+                auto node = std::make_unique<SetLiteralNode>();
+                node->elements.push_back(std::move(keyExpr));
+                node->line = t.line; node->col = t.col; node->filePath = filePath;
+                while (match(TokenType::COMMA)) {
+                    if (peek().type == TokenType::RBRACE) break; // trailing comma
+                    node->elements.push_back(parseExpression(0));
+                }
+                consume(TokenType::RBRACE, "Expected '}' after set literal");
+                left = std::move(node);
             }
         }
     } else if (t.type == TokenType::LPAREN) {
@@ -422,7 +444,12 @@ std::unique_ptr<Node> Parser::parseExpression(int min_precedence) {
             call->filePath = filePath;
             while (peek().type != TokenType::RPAREN && !isAtEnd()) {
                 std::string argName = "";
-                if (peek().type == TokenType::IDENTIFIER &&
+                bool isSpread = false;
+
+                if (peek().type == TokenType::ELLIPSIS) {
+                    advance(); // consume '...'
+                    isSpread = true;
+                } else if (peek().type == TokenType::IDENTIFIER &&
                     tokens[pos + 1].type == TokenType::ASSIGN) {
                     argName = advance().value;
                     advance(); // consume '='
@@ -430,6 +457,7 @@ std::unique_ptr<Node> Parser::parseExpression(int min_precedence) {
 
                 Arg newArg;
                 newArg.name = argName;
+                newArg.isSpread = isSpread;
                 newArg.value = parseExpression(0);
                 call->args.push_back(std::move(newArg));
 
@@ -444,6 +472,14 @@ std::unique_ptr<Node> Parser::parseExpression(int min_precedence) {
             Token typeName = advance();
             auto typeNode = std::make_unique<LiteralNode>(typeName.value);
             left = std::make_unique<BinaryOpNode>("is", std::move(left), std::move(typeNode));
+        } else if (opToken.type == TokenType::DOTDOT) {
+            // Range literal: start..end
+            auto right = parseExpression(next_prec);
+            auto range = std::make_unique<RangeLiteralNode>();
+            range->start = std::move(left);
+            range->end   = std::move(right);
+            range->line = opToken.line; range->col = opToken.col; range->filePath = filePath;
+            left = std::move(range);
         } else if (opToken.type == TokenType::AS) {
             // `val as TypeName` — type cast; RHS is the target type name
             Token typeName = advance();
@@ -478,6 +514,18 @@ std::unique_ptr<Node> Parser::parseStatement() {
     TokenType type = peek().type;
     int currentLine = peek().line;
 
+    if (type == TokenType::NONLOCAL || type == TokenType::GLOBAL) {
+        bool isGlobal = (type == TokenType::GLOBAL);
+        advance(); // consume 'nonlocal' or 'global'
+        auto node = std::make_unique<NonlocalNode>();
+        node->isGlobal = isGlobal;
+        node->vars.push_back(advance().value);
+        while (peek().type == TokenType::COMMA) {
+            advance(); // consume ','
+            node->vars.push_back(advance().value);
+        }
+        return node;
+    }
     if (type == TokenType::CONST) {
         advance(); // consume 'const'
         auto decl = parseVarDecl();
@@ -640,15 +688,31 @@ std::unique_ptr<Node> Parser::parseWhile() {
 std::unique_ptr<Node> Parser::parseFor() {
     consume(TokenType::FOR, "Expected 'for'");
     bool isRef = match(TokenType::REF);
-    std::string varName = advance().value;
-    std::string varName2;
-    if (peek().type == TokenType::COMMA) {
-        advance(); // consume ','
-        varName2 = advance().value;
+
+    std::vector<std::string> destructureVars;
+    std::string varName, varName2;
+
+    if (peek().type == TokenType::LPAREN) {
+        // for (a, b) in items — tuple destructuring
+        advance(); // consume '('
+        while (peek().type != TokenType::RPAREN && !isAtEnd()) {
+            destructureVars.push_back(advance().value);
+            if (!match(TokenType::COMMA)) break;
+        }
+        consume(TokenType::RPAREN, "Expected ')' after destructure variables");
+        varName = "__for_item"; // synthetic iteration variable
+    } else {
+        varName = advance().value;
+        if (peek().type == TokenType::COMMA) {
+            advance(); // consume ','
+            varName2 = advance().value;
+        }
     }
+
     consume(TokenType::IN, "Expected 'in'");
     auto node = std::make_unique<ForNode>(varName, isRef, parseExpression(0));
     node->varName2 = varName2;
+    node->destructureVars = destructureVars;
     consume(TokenType::LBRACE, "Expected '{'");
     while (peek().type != TokenType::RBRACE && !isAtEnd())
         node->body.push_back(parseStatement());
@@ -659,7 +723,7 @@ std::unique_ptr<Node> Parser::parseFor() {
 // Computes the full hierarchical module prefix from this->filePath.
 // libs/core/string.qk           -> "Core_String"
 // libs/core/collections/list.qk -> "Core_Collections_List"
-// libs/sys/__init.qk            -> "Sys"
+// libs/sys/index.qk             -> "Sys"
 // userfile.qk                   -> "Userfile"
 std::string Parser::computeModulePrefix() const {
     std::string p = this->filePath;
@@ -685,12 +749,12 @@ std::string Parser::computeModulePrefix() const {
     auto libsIt = std::find(parts.begin(), parts.end(), "libs");
     if (libsIt != parts.end()) {
         parts.erase(parts.begin(), libsIt + 1);   // drop everything up to and including "libs"
-        if (!parts.empty() && parts.back() == "__init")
-            parts.pop_back();                      // drop trailing "__init"
+        if (!parts.empty() && parts.back() == "index")
+            parts.pop_back();                      // drop trailing "index"
     } else {
         // User file — just use the filename as a single-component prefix
         std::string last = parts.empty() ? "" : parts.back();
-        if (last == "__init" && parts.size() > 1) last = parts[parts.size() - 2];
+        if (last == "index" && parts.size() > 1) last = parts[parts.size() - 2];
         parts = { last };
     }
 
@@ -755,7 +819,7 @@ std::unique_ptr<FunctionNode> Parser::parseFunction() {
     //   libs/core/primitives.qk       -> modulePrefix = "Core_Primitives"
     //   libs/core/collections/list.qk -> modulePrefix = "Core_Collections_List"
     //   libs/core/collections/map.qk  -> modulePrefix = "Core_Collections_Map"
-    //   libs/sys/__init.qk            -> modulePrefix = "Sys"
+    //   libs/sys/index.qk             -> modulePrefix = "Sys"
     //   libs/io/file.qk               -> modulePrefix = "Io_File"
     //   userfile.qk  (non-libs)       -> modulePrefix = "Userfile"
     //
@@ -779,7 +843,7 @@ std::unique_ptr<FunctionNode> Parser::parseFunction() {
     while (peek().type != TokenType::RPAREN && !isAtEnd()) {
         Parameter param;
 
-        if (peek().type == TokenType::ELLIPSIS) {
+        if (peek().type == TokenType::ELLIPSIS || peek().type == TokenType::STAR) {
             advance();
             param.isVariadic = true;
         }
@@ -848,8 +912,12 @@ std::unique_ptr<CallNode> Parser::parseCall() {
     consume(TokenType::LPAREN, "Expected '('");
     while (peek().type != TokenType::RPAREN && !isAtEnd()) {
         std::string argName = "";
+        bool isSpread = false;
 
-        if (peek().type == TokenType::IDENTIFIER &&
+        if (peek().type == TokenType::ELLIPSIS) {
+            advance(); // consume '...'
+            isSpread = true;
+        } else if (peek().type == TokenType::IDENTIFIER &&
             tokens[pos + 1].type == TokenType::ASSIGN) {
             argName = advance().value;
             advance(); // consume '='
@@ -857,6 +925,7 @@ std::unique_ptr<CallNode> Parser::parseCall() {
 
         Arg newArg;
         newArg.name = argName;
+        newArg.isSpread = isSpread;
         newArg.value = parseExpression(0);
         node->args.push_back(std::move(newArg));
 
@@ -1302,18 +1371,50 @@ std::unique_ptr<Node> Parser::parseMatch() {
         MatchArm arm;
 
         // Parse comma-separated patterns; _ is the wildcard
-        do {
-            if (peek().type == TokenType::IDENTIFIER && peek().value == "_") {
-                advance();
-                arm.isWildcard = true;
-                break;  // nothing further to parse for patterns
-            }
-            arm.patterns.push_back(parseExpression(2));  // prec=2: allows member access, not comma
-        } while (match(TokenType::COMMA));
+        // Type-match: `case TypeName =>` or `case TypeName as var =>`
+        // Detect: identifier starts with uppercase and next token is =>, |, as, comma, or {
+        auto isTypeName = [&](const Token& tok) -> bool {
+            if (tok.type != TokenType::IDENTIFIER) return false;
+            if (tok.value.empty() || !std::isupper((unsigned char)tok.value[0])) return false;
+            // Peek ahead: must be followed by =>, {, |, as, comma, or RBRACE (not '(' or operators)
+            int ahead = pos + 1; // one past the peeked token
+            TokenType nx = tokens[ahead].type;
+            return nx == TokenType::FAT_ARROW || nx == TokenType::LBRACE ||
+                   nx == TokenType::PIPE     || nx == TokenType::AS    ||
+                   nx == TokenType::COMMA    || nx == TokenType::RBRACE;
+        };
 
-        // Body: `=> stmt` (single statement) or `{ stmts }` (block)
+        if (peek().type == TokenType::IDENTIFIER && peek().value == "_") {
+            advance();
+            arm.isWildcard = true;
+        } else if (isTypeName(peek())) {
+            arm.isTypeMatch = true;
+            arm.typeNames.push_back(advance().value);
+            while (peek().type == TokenType::PIPE) {
+                advance(); // consume '|'
+                arm.typeNames.push_back(advance().value);
+            }
+            if (peek().type == TokenType::AS) {
+                advance(); // consume 'as'
+                arm.bindName = advance().value;
+            }
+        } else {
+            do {
+                arm.patterns.push_back(parseExpression(2));
+            } while (match(TokenType::COMMA));
+        }
+
+        // Body: `=> stmt`, `=> { stmts }` (block after arrow), or `{ stmts }` (block only)
         if (match(TokenType::FAT_ARROW)) {
-            arm.body.push_back(parseStatement());
+            if (peek().type == TokenType::LBRACE) {
+                // `=> { stmts }` — treat { } as a block, not a map literal
+                advance(); // consume '{'
+                while (peek().type != TokenType::RBRACE && !isAtEnd())
+                    arm.body.push_back(parseStatement());
+                consume(TokenType::RBRACE, "Expected '}'");
+            } else {
+                arm.body.push_back(parseStatement());
+            }
         } else {
             consume(TokenType::LBRACE, "Expected '=>' or '{' after case pattern");
             while (peek().type != TokenType::RBRACE && !isAtEnd())

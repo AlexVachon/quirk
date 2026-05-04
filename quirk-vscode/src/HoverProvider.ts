@@ -19,7 +19,10 @@ export class QuirkHoverProvider implements vscode.HoverProvider {
             'use':      '**`use`** — import a module.\n\n```quirk\nuse sys\n```',
             'from':     '**`from`** — destructuring import.\n\n```quirk\nfrom net.http use { request }\n```',
             'define':   '**`define`** — declare a function.\n\n```quirk\ndefine greet(name: String) -> void { ... }\n```',
-            'struct':   '**`struct`** — declare a data structure.\n\n```quirk\nstruct Point { x: Int  y: Int }\n```',
+            'struct':    '**`struct`** — declare a data structure.\n\n```quirk\nstruct Point { x: Int  y: Int }\n```',
+            'interface': '**`interface`** — declare an interface (abstract contract).\n\n```quirk\ninterface Printable {\n    define __str(self) -> String\n}\n```',
+            'enum':      '**`enum`** — declare an enumeration.\n\n```quirk\nenum Direction { North South East West }\n```',
+            'where':     '**`where`** — generic type constraint.\n\n```quirk\ndefine max[T](a: T, b: T) -> T where T: Comparable { ... }\n```',
             'try':      '**`try`** — begin an exception-safe block.',
             'catch':    '**`catch`** — handle a thrown exception.\n\n```quirk\ncatch (e: Exception) { print(e.message) }\n```',
             'throw':    '**`throw`** — raise an exception. Bare `throw` re-raises the current exception.\n\n```quirk\nthrow TypeError("Expected Int")\n```',
@@ -92,8 +95,16 @@ export class QuirkHoverProvider implements vscode.HoverProvider {
 
         // ---- Built-in struct types — read docstrings live from the .qk lib files ----
         const builtinStructTypes = new Set([
+            // Primitive types
             'String', 'Int', 'Double', 'Bool', 'Char',
-            'List', 'Map', 'Tuple', 'Callable', 'File',
+            // Collections
+            'List', 'Map', 'Tuple', 'Set', 'Queue', 'Callable', 'File',
+            // Typing interfaces
+            'Printable', 'Equatable', 'Comparable', 'Hashable',
+            'Parseable', 'Sizeable', 'Iterable', 'Iterator', 'Representable', 'Primitive',
+            // Iterator types
+            'ListIterator', 'MapIterator', 'MapPairIterator', 'TupleIterator', 'SetIterator', 'QueueIterator', 'StringIterator',
+            // Exceptions
             'Exception', 'TypeError', 'ValueError', 'IndexError', 'KeyError',
             'IOError', 'FileNotFoundError', 'RuntimeError', 'NotImplementedError',
             'SocketError', 'ZeroDivisionError', 'AssertionError', 'NullError', 'WhereConditionError',
@@ -177,6 +188,12 @@ export class QuirkHoverProvider implements vscode.HoverProvider {
                     const t = rawLine.trim();
                     if (!readingDocBlock) {
                         if (t === '---') { readingDocBlock = true; }
+                        else if (t.startsWith('---') && t.endsWith('---') && t.length > 6) {
+                            // Inline single-line docstring: --- text ---
+                            docstring.unshift(t.slice(3, -3).trim());
+                            docBlockOpenLine = lineNum; // treat as self-contained, don't steal module doc
+                            break;
+                        }
                         else if (t !== '') { break; }
                     } else {
                         if (t === '---') { docBlockOpenLine = lineNum; break; }
@@ -206,7 +223,7 @@ export class QuirkHoverProvider implements vscode.HoverProvider {
                 }
 
                 // For variable hovers (not define/struct lines) show inferred type
-                const isDefLine = /^\s*(?:extern\s+)?(?:define|def|init|struct|enum)\b/.test(defLine);
+                const isDefLine = /^\s*(?:extern\s+)?(?:define|def|init|struct|enum|interface)\b/.test(defLine);
                 if (!isDefLine) {
                     const inferredType = _sharedFormatter.inferTypeOfVariable(document, position, word);
                     if (inferredType) {

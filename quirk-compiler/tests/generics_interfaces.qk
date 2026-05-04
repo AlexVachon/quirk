@@ -1,15 +1,13 @@
 // === Interfaces ===
 
-interface Printable {
-    define __str(self) -> String
-}
+from typing use { Printable, Comparable, Primitive }
 
-interface Comparable {
-    define __lt(self, other: Self) -> Bool
-    define __eq(self, other: Self) -> Bool
-}
-
+---
+Extends `Printable` with a richer human-readable description.
+Useful for debug output or structured logging.
+---
 interface Describable : Printable {
+    --- Returns a detailed description of this value. ---
     define describe(self) -> String
 }
 
@@ -63,7 +61,7 @@ print("b1 == b2:", b1.__eq(b2))
 
 // === Generic structs ===
 
-struct Stack[T] {
+struct Stack[T] where T: Primitive {
     items: List[T]
 
     define __init(self) -> void {

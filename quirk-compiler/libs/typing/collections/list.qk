@@ -1,7 +1,12 @@
-from typing.string use { String }
+from typing.primitives.string use { String }
 from typing.callable use { Callable }
+from typing.interfaces.printable use { Printable }
+from typing.interfaces.representable use { Representable }
+from typing.interfaces.sizeable use { Sizeable }
+from typing.interfaces.iterable use { Iterable }
+from typing.interfaces.iterator use { Iterator }
 
-struct ListIterator {
+struct ListIterator : Iterator {
     _list_ref: List
     _idx: Int
 
@@ -21,7 +26,7 @@ print(nums.length())    // 4
 print(nums[0])          // 1
 doubled := nums.map(fn(x: Int) => x * 2)
 ---
-struct List {
+struct List : Printable, Representable, Sizeable, Iterable {
     _data: Any
     _size: Int
     _capacity: Int

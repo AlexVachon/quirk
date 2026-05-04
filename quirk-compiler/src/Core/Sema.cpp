@@ -180,7 +180,7 @@ bool Sema::analyze(const std::vector<std::unique_ptr<Node>> &nodes)
                             "generic constraint '" + bound + "' is a concrete type, not an interface. "
                             "Use an interface or remove the constraint and use '" + bound + "' directly.",
                             s->line, s->col, s->filePath);
-                    } else if (!interfaceRegistry.count(bound) && bound != "Any") {
+                    } else if (!interfaceRegistry.count(bound) && bound != "Any" && bound != "Primitive") {
                         reportWarning(
                             "generic constraint '" + bound + "' is not a known interface.",
                             s->line, s->col, s->filePath);
@@ -226,7 +226,8 @@ void Sema::checkUse(UseNode *node)
     {
         for (const auto &item : node->filterList)
         {
-            bool found = structRegistry.count(item) || methodRegistry[""].count(item);
+            bool found = structRegistry.count(item) || methodRegistry[""].count(item)
+                      || interfaceRegistry.count(item) || enumRegistry.count(item);
             if (!found)
                 fatalError("module '" + node->moduleName + "' does not export symbol '" + item + "'",
                            node->line, node->col, node->filePath);
@@ -330,7 +331,7 @@ void Sema::checkFunction(FunctionNode *f)
                     "generic constraint '" + bound + "' is a concrete type, not an interface. "
                     "Use an interface or remove the constraint and use '" + bound + "' directly.",
                     f->line, f->col, f->filePath);
-            } else if (!interfaceRegistry.count(bound) && bound != "Any") {
+            } else if (!interfaceRegistry.count(bound) && bound != "Any" && bound != "Primitive") {
                 reportWarning(
                     "generic constraint '" + bound + "' is not a known interface.",
                     f->line, f->col, f->filePath);

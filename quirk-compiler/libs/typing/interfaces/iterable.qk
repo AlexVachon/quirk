@@ -1,0 +1,17 @@
+from .iterator use { Iterator }
+
+---
+Implemented by types that can be traversed with a `for` loop.
+`String`, `List`, `Map`, `Set`, `Queue`, and `Tuple` all implement `Iterable`.
+
+@example
+define print_all[T](col: T) where T: Iterable {
+    for item in col {
+        print(item)
+    }
+}
+---
+interface Iterable {
+    --- Returns an iterator over the elements of this collection. ---
+    define __iter(self) -> Iterator
+}

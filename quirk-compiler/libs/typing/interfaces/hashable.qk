@@ -1,0 +1,25 @@
+from .equatable use { Equatable }
+
+---
+Implemented by types that can produce a stable integer hash of their value.
+Required for use as keys in `Map` or elements in `Set`.
+Any `Hashable` type must also be `Equatable`: two equal values must hash identically.
+
+@example
+struct Point : Hashable {
+    x: Int
+    y: Int
+
+    define __eq(self, other: Point) -> Bool {
+        return self.x == other.x and self.y == other.y
+    }
+
+    define __hash(self) -> Int {
+        return self.x * 31 + self.y
+    }
+}
+---
+interface Hashable : Equatable {
+    --- Returns a stable integer hash of this value. ---
+    define __hash(self) -> Int
+}

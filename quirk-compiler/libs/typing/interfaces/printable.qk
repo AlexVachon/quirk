@@ -1,0 +1,23 @@
+---
+Implemented by types that have a human-readable string representation.
+Any struct implementing `Printable` can be passed directly to `print()`.
+
+@example
+struct Point : Printable {
+    x: Int
+    y: Int
+
+    define __str(self) -> String {
+        return "(" + self.x + ", " + self.y + ")"
+    }
+}
+
+p := Point(3, 4)
+print(p)   // (3, 4)
+---
+interface Printable {
+    ---
+    Returns a human-readable string representation of this value.
+    ---
+    define __str(self) -> String
+}

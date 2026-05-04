@@ -1,6 +1,10 @@
-from typing.string use { String }
+from typing.primitives.string use { String }
+from typing.interfaces.printable use { Printable }
+from typing.interfaces.sizeable use { Sizeable }
+from typing.interfaces.iterable use { Iterable }
+from typing.interfaces.iterator use { Iterator }
 
-struct SetIterator {
+struct SetIterator : Iterator {
     _set_ref: Set
     _idx: Int
 
@@ -21,7 +25,7 @@ s.remove(2)
 print(s.size())      // 3
 for v in s { print(v) }
 ---
-struct Set {
+struct Set : Printable, Sizeable, Iterable {
     _entries: Any
     _capacity: Int
     _size: Int
@@ -56,6 +60,7 @@ struct Set {
     @returns: Int
     ---
     extern define size(self) -> Int
+    define length(self) -> Int { return self.size() }
 
     ---
     Returns `true` if the set has no elements.

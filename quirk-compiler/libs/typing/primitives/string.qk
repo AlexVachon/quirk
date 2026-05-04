@@ -1,7 +1,13 @@
 from typing.collections.list use { List }
-from .char use { Char }
+from typing.primitives.char use { Char }
+from typing.interfaces.primitive use { Primitive }
+from typing.interfaces.comparable use { Comparable }
+from typing.interfaces.sizeable use { Sizeable }
+from typing.interfaces.iterable use { Iterable }
+from typing.interfaces.iterator use { Iterator }
+from typing.interfaces.representable use { Representable }
 
-struct StringIterator {
+struct StringIterator : Iterator {
     _str_ref: String
     _idx: Int
 
@@ -22,7 +28,7 @@ print(s.contains("world")) // true
 parts := s.split(", ")
 print(parts.length())       // 2
 ---
-struct String {
+struct String : Primitive, Comparable, Sizeable, Iterable, Representable {
     _buffer: Any
     _length: Int
 
@@ -31,6 +37,7 @@ struct String {
 
     extern define __add(self, other: String) -> String
     extern define __eq(self, other: String) -> Bool
+    extern define __lt(self, other: String) -> Bool
     extern define __iter(self) -> StringIterator
     extern define __str(self) -> String
     extern define __repr(self) -> String
@@ -160,6 +167,7 @@ struct String {
     Returns `true` if the string has zero characters.
     @returns: Bool
     ---
+    extern define length(self) -> Int
     define is_empty(self) -> Bool { return self._length == 0 }
 }
 

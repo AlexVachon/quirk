@@ -1,0 +1,20 @@
+---
+Protocol for types that produce values one at a time.
+All built-in collection iterators implement `Iterator`.
+Enables the `for` loop and any code that calls `__has_next` / `__next` directly.
+
+@example
+define collect[T](it: Iterator) -> List {
+    result := []
+    while it.__has_next() {
+        result.append(it.__next())
+    }
+    return result
+}
+---
+interface Iterator {
+    --- Returns true if there are more elements to yield. ---
+    define __has_next(self) -> Bool
+    --- Returns the next element and advances the iterator. ---
+    define __next(self) -> Any
+}

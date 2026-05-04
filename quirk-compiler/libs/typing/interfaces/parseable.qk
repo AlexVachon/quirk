@@ -1,0 +1,18 @@
+---
+Implemented by types that can be constructed from a string representation.
+Pairs naturally with `Printable` — a round-trip of `parse(val.str())` should
+return the original value.
+
+@example
+n := Int.parse("42")     // 42
+d := Double.parse("3.14") // 3.14
+b := Bool.parse("true")   // true
+---
+interface Parseable {
+    ---
+    Parses `s` and returns the corresponding value.
+    @param s: String — the string to parse
+    @throws ValueError — if `s` is not a valid representation
+    ---
+    define parse(s: String) -> Self
+}

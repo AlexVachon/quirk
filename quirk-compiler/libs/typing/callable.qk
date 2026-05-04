@@ -1,4 +1,4 @@
-from typing.string use { String }
+from typing.primitives.string use { String }
 
 ---
 A first-class function value produced by a lambda expression (`fn(...) => ...`).

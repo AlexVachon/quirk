@@ -1,4 +1,4 @@
-from typing.string use { String }
+from typing.primitives.string use { String }
 from typing.collections.map use { Map }
 from typing.exceptions.types use { ValueError }
 from net.socket use { Socket }

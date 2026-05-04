@@ -19,10 +19,10 @@ print(json.dumps(m))            // {"name":"Alice","age":30}
 data: Map = json.loads('{"x":1,"y":true}')
 print(data.get("x"))            // 1
 ---
-from typing.string use { String }
+from typing.primitives.string use { String }
 from typing.collections.map use { Map }
 from typing.collections.list use { List }
-from typing.serializable use { ISerializable }
+from typing.interfaces.serializable use { ISerializable }
 from io.file use { File }
 
 // ── C-backed entry points (libs/encoding/json.c) ─────────────────────

@@ -1,6 +1,10 @@
-from typing.string use { String }
+from typing.primitives.string use { String }
+from typing.interfaces.printable use { Printable }
+from typing.interfaces.sizeable use { Sizeable }
+from typing.interfaces.iterable use { Iterable }
+from typing.interfaces.iterator use { Iterator }
 
-struct QueueIterator {
+struct QueueIterator : Iterator {
     _queue_ref: Queue
     _pos: Int
 
@@ -22,7 +26,7 @@ print(q.pop_front())  // 0
 print(q.peek_front()) // 1
 print(q.size())       // 2
 ---
-struct Queue {
+struct Queue : Printable, Sizeable, Iterable {
     _data: Any
     _head: Int
     _tail: Int
@@ -73,6 +77,7 @@ struct Queue {
     @returns: Int
     ---
     extern define size(self) -> Int
+    define length(self) -> Int { return self.size() }
 
     ---
     Returns `true` if the queue is empty.

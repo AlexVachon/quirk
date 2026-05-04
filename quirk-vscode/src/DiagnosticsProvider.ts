@@ -14,6 +14,10 @@ const BUILTINS = new Set([
     'print', 'printf', 'type', 'exit', 'Char', 'String', 'List', 'Map',
     'File', 'Int', 'Double', 'Bool', 'Any', 'void', 'Callable', 'Tuple',
     'Self',  // type placeholder in interface methods
+    'Printable', 'Equatable', 'Comparable', 'Hashable',
+    'Parseable', 'Sizeable', 'Iterable', 'Iterator', 'Representable', 'Primitive', // built-in typing interfaces
+    'ListIterator', 'MapIterator', 'MapPairIterator', 'TupleIterator', 'SetIterator', 'QueueIterator', 'StringIterator',
+    'Set', 'Queue',
     'true', 'false', 'null',
     'Exception', 'TypeError', 'ValueError', 'IndexError', 'KeyError',
     'IOError', 'FileNotFoundError', 'RuntimeError', 'NotImplementedError',
@@ -107,7 +111,10 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
     const declarations = new Map<string, vscode.Range>();
     const usages = new Set<string>();
     const fileGlobals = new Set<string>();
-    const interfaceNames = new Set<string>(); // names declared with `interface`
+    const interfaceNames = new Set<string>([
+        'Any', 'Printable', 'Equatable', 'Comparable', 'Hashable',
+        'Parseable', 'Sizeable', 'Iterable', 'Iterator', 'Representable', 'Primitive',
+    ]); // built-ins + names declared with `interface`
     const structNames = new Set<string>();    // names declared with `struct`
 
     let inDocBlock = false;
@@ -121,7 +128,9 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
 
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
-        if (line.trim() === '---') { inDocBlock = !inDocBlock; continue; }
+        const trimmed = line.trim();
+        if (trimmed === '---') { inDocBlock = !inDocBlock; continue; }
+        if (trimmed.startsWith('---') && trimmed.endsWith('---') && trimmed !== '---') continue;
         if (inDocBlock) continue;
 
         const cleanLine = maskLine(line);
@@ -236,7 +245,9 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
 
     for (let i = 0; i < lines.length; i++) {
         const originalLine = lines[i];
-        if (originalLine.trim() === '---') { inDocBlock = !inDocBlock; continue; }
+        const trimmedOrig = originalLine.trim();
+        if (trimmedOrig === '---') { inDocBlock = !inDocBlock; continue; }
+        if (trimmedOrig.startsWith('---') && trimmedOrig.endsWith('---') && trimmedOrig !== '---') continue;
         if (inDocBlock) continue;
 
         let maskedLine = maskLine(originalLine);

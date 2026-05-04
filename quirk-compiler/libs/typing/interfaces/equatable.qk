@@ -1,0 +1,19 @@
+---
+Implemented by types that support equality comparison.
+All types that implement `Comparable` or `Hashable` extend `Equatable`.
+
+@example
+struct Color : Equatable {
+    r: Int
+    g: Int
+    b: Int
+
+    define __eq(self, other: Color) -> Bool {
+        return self.r == other.r and self.g == other.g and self.b == other.b
+    }
+}
+---
+interface Equatable {
+    --- Returns true if this value is equal to `other`. ---
+    define __eq(self, other: Self) -> Bool
+}

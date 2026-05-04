@@ -1,4 +1,7 @@
-from typing.string use { String }
+from typing.primitives.string use { String }
+from typing.interfaces.primitive use { Primitive }
+from typing.interfaces.comparable use { Comparable }
+from typing.interfaces.parseable use { Parseable }
 
 ---
 32-bit signed integer.
@@ -10,13 +13,15 @@ print(n.str())       // "42"
 print(n.is_even())   // true
 print(n.pow(2))      // 1764
 ---
-struct Int {
+struct Int : Primitive, Comparable, Parseable {
     ---
     Returns the string representation of this integer.
     @returns: String
     ---
     extern define str(self) -> String
     extern define __str(self) -> String
+    extern define __eq(self, other: Int) -> Bool
+    extern define __lt(self, other: Int) -> Bool
 
     extern define to_float(self) -> Double
 

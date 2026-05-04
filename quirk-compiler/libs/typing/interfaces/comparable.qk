@@ -1,0 +1,24 @@
+from .equatable use { Equatable }
+
+---
+Implemented by types that support ordering and equality comparisons.
+Required for use in sorted collections, binary search, and generic
+functions that need to compare values.
+
+@example
+struct Temperature : Comparable {
+    degrees: Double
+
+    define __lt(self, other: Temperature) -> Bool {
+        return self.degrees < other.degrees
+    }
+
+    define __eq(self, other: Temperature) -> Bool {
+        return self.degrees == other.degrees
+    }
+}
+---
+interface Comparable : Equatable {
+    --- Returns true if this value is strictly less than `other`. ---
+    define __lt(self, other: Self) -> Bool
+}

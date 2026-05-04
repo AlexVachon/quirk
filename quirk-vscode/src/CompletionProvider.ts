@@ -903,6 +903,12 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
                     }
                     if (inDocBlock) { currentDocstring.push(trimmed); continue; }
 
+                    // Inline single-line docstring: --- text ---
+                    if (trimmed.startsWith('---') && trimmed.endsWith('---') && trimmed.length > 6) {
+                        currentDocstring = [trimmed.slice(3, -3).trim()];
+                        continue;
+                    }
+
                     if (trimmed !== '' && !trimmed.startsWith('//') && !/^\s*(?:extern\s+)?(?:define|def|init)/.test(line)) {
                         currentDocstring = [];
                     }
@@ -1028,8 +1034,9 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
         const keywords: [string, string?, string?][] = [
             ['define',   'define ${1:name}(${2:args}) -> ${3:void} {\n\t$0\n}',   'Define a function'],
             ['defv',     'define ${1:name}(*${2:args}) -> ${3:void} {\n\t$0\n}',  'Define a variadic function (*args)'],
-            ['struct',   'struct ${1:Name} {\n\t${2:field}: ${3:Type}\n}',         'Define a struct'],
-            ['enum', 'enum ${1:Name} {\n\t${2:Variant1}\n\t${3:Variant2}\n}', 'Define an enum'],
+            ['struct',    'struct ${1:Name} {\n\t${2:field}: ${3:Type}\n}',              'Define a struct'],
+            ['interface', 'interface ${1:Name} {\n\t$0\n}',                           'Define an interface'],
+            ['enum',      'enum ${1:Name} {\n\t${2:Variant1}\n\t${3:Variant2}\n}',    'Define an enum'],
             ['if',       'if ${1:condition} {\n\t$0\n}',                           'If statement'],
             ['else',     'else {\n\t$0\n}',                                        'Else block'],
             ['elif',     'elif ${1:condition} {\n\t$0\n}',                         'Else-if branch'],
@@ -1094,6 +1101,17 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
             ['NullError',           'Null value dereferenced'],
             ['SocketError',         'Socket or network failure'],
             ['WhereConditionError', 'where precondition violated'],
+            // Typing interfaces
+            ['Printable',    'interface: implement `__str` for print() support'],
+            ['Equatable',    'interface: implement `__eq` for equality checks'],
+            ['Comparable',   'interface: extends Equatable; implement `__lt` for ordering'],
+            ['Hashable',     'interface: extends Equatable; implement `__hash` for use in maps/sets'],
+            ['Parseable',    'interface: implement `parse` to construct from a String'],
+            ['Sizeable',     'interface: implement `length` to report element count'],
+            ['Iterable',     'interface: implement `__iter` to support for-in loops'],
+            ['Iterator',     'interface: implement `__has_next` and `__next` for iteration'],
+            ['Representable','interface: implement `__repr` for developer-facing string representation'],
+            ['Primitive',    'marker interface for primitive types (Int, Double, Bool, Char, String)'],
         ];
         for (const [name, doc, snippet] of builtins) {
             addItem(name, vscode.CompletionItemKind.Class, 'built-in', snippet, doc);
@@ -1118,14 +1136,20 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
             }
         }
 
-        // ---- This-file definitions (functions & structs) ----
-        const defRegex = /^\s*(?:extern\s+)?(?:define|def|init|struct)\s+([a-zA-Z0-9_]+)\s*(?:\(([^)]*)\))?(?:\s*->\s*([a-zA-Z0-9_]+))?/gm;
+        // ---- This-file definitions (functions, structs, enums, interfaces) ----
+        const defRegex = /^\s*(?:extern\s+)?(?:define|def|init|struct|enum|interface)\s+([a-zA-Z0-9_]+)\s*(?:\(([^)]*)\))?(?:\s*->\s*([a-zA-Z0-9_]+))?/gm;
         while ((match = defRegex.exec(fullText)) !== null) {
-            const isStruct = /\bstruct\b/.test(match[0]);
+            const isStruct    = /\bstruct\b/.test(match[0]);
+            const isEnum      = /\benum\b/.test(match[0]);
+            const isInterface = /\binterface\b/.test(match[0]);
             const name = match[1];
             if (name === 'main') continue;
             if (isStruct) {
                 addItem(name, vscode.CompletionItemKind.Struct, 'struct', `${name}($0)`);
+            } else if (isEnum) {
+                addItem(name, vscode.CompletionItemKind.Enum, 'enum');
+            } else if (isInterface) {
+                addItem(name, vscode.CompletionItemKind.Interface, 'interface');
             } else {
                 const rawParams = (match[2] || '').split(',').map(p => p.trim()).filter(p => p && p !== 'self');
                 const retType = match[3] || 'void';
@@ -1231,24 +1255,36 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
                 }
                 if (inDocBlock) { currentDocstring.push(trimmed); continue; }
 
-                if (trimmed !== '' && !trimmed.startsWith('//') && !/^\s*(?:extern\s+)?(?:struct|define|def|init)/.test(line)) {
+                // Inline single-line docstring: --- text ---
+                if (trimmed.startsWith('---') && trimmed.endsWith('---') && trimmed.length > 6) {
+                    currentDocstring = [trimmed.slice(3, -3).trim()];
+                    continue;
+                }
+
+                if (trimmed !== '' && !trimmed.startsWith('//') && !/^\s*(?:extern\s+)?(?:struct|define|def|init|enum|interface)/.test(line)) {
                     currentDocstring = [];
                 }
 
-                const defMatch = /^\s*(?:extern\s+)?(?:struct|define|def|init)\s+([a-zA-Z0-9_]+)\s*(?:\(([^)]*)\))?(?:\s*->\s*([a-zA-Z0-9_]+))?/.exec(line);
+                const defMatch = /^\s*(?:extern\s+)?(?:struct|define|def|init|enum|interface)\s+([a-zA-Z0-9_]+)\s*(?:\(([^)]*)\))?(?:\s*->\s*([a-zA-Z0-9_]+))?/.exec(line);
                 if (defMatch) {
                     const name = defMatch[1];
                     if (name === 'init' || name === 'main' || name.startsWith('_')) continue;
 
-                    const isStruct = /\bstruct\b/.test(line.trimStart());
+                    const isStruct    = /\bstruct\b/.test(line.trimStart());
+                    const isEnum      = /\benum\b/.test(line.trimStart());
+                    const isInterface = /\binterface\b/.test(line.trimStart());
                     const rawParams = (defMatch[2] || '').split(',').map(p => p.trim()).filter(p => p && p !== 'self');
                     const retType = defMatch[3];
 
-                    const item = new vscode.CompletionItem(name, isStruct ? vscode.CompletionItemKind.Struct : vscode.CompletionItemKind.Function);
+                    const kind = isStruct    ? vscode.CompletionItemKind.Struct
+                               : isEnum      ? vscode.CompletionItemKind.Enum
+                               : isInterface ? vscode.CompletionItemKind.Interface
+                               :               vscode.CompletionItemKind.Function;
+                    const item = new vscode.CompletionItem(name, kind);
                     item.sortText = '2_' + name;
                     if (retType) item.detail = `→ ${retType}`;
 
-                    if (!isStruct) {
+                    if (!isStruct && !isEnum && !isInterface) {
                         const snippetArgs = rawParams.map((p, i) => `\${${i + 1}:${p.split(':')[0].trim()}}`).join(', ');
                         item.insertText = new vscode.SnippetString(`${name}(${snippetArgs})$0`);
                     }
@@ -1420,8 +1456,8 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
         if (!content) return null;
 
         const lines = content.split(/\r?\n/);
-        // Find the `struct TypeName` line
-        const structLineIdx = lines.findIndex(l => new RegExp(`^\\s*struct\\s+${typeName}\\b`).test(l));
+        // Find the `struct` or `interface` TypeName line
+        const structLineIdx = lines.findIndex(l => new RegExp(`^\\s*(?:struct|interface)\\s+${typeName}\\b`).test(l));
         if (structLineIdx < 0) return null;
 
         // Backward scan for the closing --- of the docstring above

@@ -1,4 +1,8 @@
-from typing.string use { String }
+from typing.primitives.string use { String }
+from typing.interfaces.printable use { Printable }
+from typing.interfaces.sizeable use { Sizeable }
+from typing.interfaces.iterable use { Iterable }
+from typing.interfaces.iterator use { Iterator }
 
 ---
 An immutable, fixed-size ordered sequence of heterogeneous values.
@@ -16,7 +20,7 @@ x, y := coords          // destructuring
 nested := ((1, 2), "outer")
 print(nested[1])        // "outer"
 ---
-struct TupleIterator {
+struct TupleIterator : Iterator {
     _tuple_ref: Any
     _idx: Int
 
@@ -25,7 +29,7 @@ struct TupleIterator {
     extern define __next(self) -> Any
 }
 
-struct Tuple {
+struct Tuple : Printable, Sizeable, Iterable {
     _data: Any
     _size: Int
 

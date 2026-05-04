@@ -1,6 +1,10 @@
-from typing.string use { String }
+from typing.primitives.string use { String }
+from typing.interfaces.printable use { Printable }
+from typing.interfaces.sizeable use { Sizeable }
+from typing.interfaces.iterable use { Iterable }
+from typing.interfaces.iterator use { Iterator }
 
-struct MapIterator {
+struct MapIterator : Iterator {
     _map_ref: Map
     _idx: Int
 
@@ -9,7 +13,7 @@ struct MapIterator {
     extern define __next(self) -> String
 }
 
-struct MapPairIterator {
+struct MapPairIterator : Iterator {
     _map_ref: Map
     _idx: Int
     _current_value: Any
@@ -32,7 +36,7 @@ print(m.has("age"))     // true
 m.remove("age")
 print(m.length())       // 1
 ---
-struct Map {
+struct Map : Printable, Sizeable, Iterable {
     _entries: Any
     _capacity: Int
     _size: Int

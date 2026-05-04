@@ -2,7 +2,7 @@ from . use {
     socket, bind, listen, accept,
     connect, send, recv, close
 }
-from typing.string use { String }
+from typing.primitives.string use { String }
 from typing.exceptions.types use { SocketError }
 
 struct Socket {

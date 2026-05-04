@@ -4,19 +4,37 @@ import * as fs from 'fs';
 
 const PRELUDE_MODULES = [
     'typing/index.qk',
-    'typing/string.qk',
-    'typing/int.qk',
-    'typing/double.qk',
-    'typing/bool.qk',
-    'typing/char.qk',
-    'typing/callable.qk',
-    'typing/serializable.qk',
-    'typing/exceptions/base.qk',
-    'typing/exceptions/index.qk',
-    'typing/exceptions/types.qk',
+    // primitives
+    'typing/primitives/index.qk',
+    'typing/primitives/string.qk',
+    'typing/primitives/int.qk',
+    'typing/primitives/double.qk',
+    'typing/primitives/bool.qk',
+    'typing/primitives/char.qk',
+    // interfaces
+    'typing/interfaces/index.qk',
+    'typing/interfaces/printable.qk',
+    'typing/interfaces/equatable.qk',
+    'typing/interfaces/comparable.qk',
+    'typing/interfaces/hashable.qk',
+    'typing/interfaces/parseable.qk',
+    'typing/interfaces/sizeable.qk',
+    'typing/interfaces/iterable.qk',
+    'typing/interfaces/iterator.qk',
+    'typing/interfaces/representable.qk',
+    'typing/interfaces/primitive.qk',
+    'typing/interfaces/serializable.qk',
+    // collections
     'typing/collections/list.qk',
     'typing/collections/map.qk',
     'typing/collections/tuple.qk',
+    'typing/collections/set.qk',
+    'typing/collections/queue.qk',
+    // other
+    'typing/callable.qk',
+    'typing/exceptions/base.qk',
+    'typing/exceptions/index.qk',
+    'typing/exceptions/types.qk',
     'sys/index.qk'
 ];
 
@@ -285,7 +303,7 @@ export class QuirkDefinitionProvider implements vscode.DefinitionProvider {
     private findMemberInStructBody(filePath: string, structName: string, member: string): vscode.Location | null {
         const content = this.getFileContent(filePath);
         const lines = content.split(/\r?\n/);
-        const structRe = new RegExp(`^\\s*struct\\s+${structName}\\b`);
+        const structRe = new RegExp(`^\\s*(?:struct|interface)\\s+${structName}\\b`);
         const memberRe = new RegExp(
             `(?:(?:extern\\s+)?(?:define|def|init)\\s+${member}\\b)` +
             `|(?:^\\s*${member}\\s*:(?!=))`
@@ -323,7 +341,7 @@ export class QuirkDefinitionProvider implements vscode.DefinitionProvider {
         if (!content) return null;
         const lines = content.split(/\r?\n/);
 
-        const defRe = new RegExp(`^\\s*(?:extern\\s+)?(?:struct|define|def|init|enum)\\s+${symbol}\\b`);
+        const defRe = new RegExp(`^\\s*(?:extern\\s+)?(?:struct|define|def|init|enum|interface)\\s+${symbol}\\b`);
         for (let i = 0; i < lines.length; i++) {
             if (defRe.test(lines[i])) {
                 return new vscode.Location(vscode.Uri.file(filePath), new vscode.Position(i, Math.max(0, lines[i].indexOf(symbol))));
@@ -403,7 +421,7 @@ export class QuirkDefinitionProvider implements vscode.DefinitionProvider {
     private findEnclosingDefinition(document: vscode.TextDocument, position: vscode.Position): vscode.Location | null {
         for (let i = position.line; i < document.lineCount; i++) {
             const line = document.lineAt(i).text;
-            const m = /^\s*(?:extern\s+)?(?:struct|define|def|init|enum)\s+([a-zA-Z_]\w*)/.exec(line);
+            const m = /^\s*(?:extern\s+)?(?:struct|define|def|init|enum|interface)\s+([a-zA-Z_]\w*)/.exec(line);
             if (m) {
                 return new vscode.Location(document.uri, new vscode.Position(i, line.indexOf(m[1])));
             }

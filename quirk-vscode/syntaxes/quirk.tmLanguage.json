@@ -80,6 +80,23 @@
           }
         },
         {
+          "match": "\\b(interface)\\s+([a-zA-Z_]\\w*)",
+          "captures": {
+            "1": { "name": "storage.type.interface.quirk" },
+            "2": { "name": "entity.name.type.interface.quirk" }
+          }
+        },
+        {
+          "match": "\\b(struct|define|init)\\s+([a-zA-Z_]\\w*)\\s*(\\[)([^\\]]*)(\\])",
+          "captures": {
+            "1": { "name": "storage.type.quirk" },
+            "2": { "name": "entity.name.function.definition.quirk" },
+            "3": { "name": "punctuation.definition.typeparams.begin.quirk" },
+            "4": { "name": "entity.name.type.parameter.quirk" },
+            "5": { "name": "punctuation.definition.typeparams.end.quirk" }
+          }
+        },
+        {
           "match": "\\b(extern)\\b",
           "name": "storage.modifier.quirk"
         }
@@ -129,7 +146,7 @@
         },
         {
           "name": "support.type.object.quirk",
-          "match": "\\b(Char|List|String|Map|Int|Double|Bool|File|Callable|Tuple|Set|Queue)\\b"
+          "match": "\\b(Char|List|String|Map|Int|Double|Bool|File|Callable|Tuple|Set|Queue|Self)\\b"
         }
       ]
     },

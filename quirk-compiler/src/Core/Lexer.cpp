@@ -164,8 +164,9 @@ Token Lexer::nextToken()
         if (ident == "where")    return {TokenType::WHERE,      ident, startLine, startCol};
         if (ident == "const")    return {TokenType::CONST,      ident, startLine, startCol};
         if (ident == "type")     return {TokenType::TYPE_KW,    ident, startLine, startCol};
-        if (ident == "nonlocal") return {TokenType::NONLOCAL,   ident, startLine, startCol};
-        if (ident == "global")   return {TokenType::GLOBAL,     ident, startLine, startCol};
+        if (ident == "nonlocal")  return {TokenType::NONLOCAL,   ident, startLine, startCol};
+        if (ident == "global")    return {TokenType::GLOBAL,     ident, startLine, startCol};
+        if (ident == "interface") return {TokenType::INTERFACE,  ident, startLine, startCol};
         return {TokenType::IDENTIFIER, ident, startLine, startCol};
     }
 
@@ -285,6 +286,7 @@ Token Lexer::nextToken()
     case '/':  return {TokenType::SLASH,      "/", startLine, startCol};
     case '=':  return {TokenType::ASSIGN,     "=", startLine, startCol};
     case '.':  return {TokenType::DOT,        ".", startLine, startCol};
+    case '&':  return {TokenType::AMPERSAND,  "&", startLine, startCol};
     case '|':  return {TokenType::PIPE,       "|", startLine, startCol};
     case '?':  return {TokenType::QUESTION,   "?", startLine, startCol};
     default:   return {TokenType::ERROR, std::string(1, c), startLine, startCol};

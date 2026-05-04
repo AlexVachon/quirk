@@ -28,6 +28,13 @@ class StructGen {
     void setBuiltinGen(BuiltinGen* bg) { builtinGen = bg; }
     void setHierarchy(std::map<std::string, std::vector<std::string>>* h) { structHierarchy = h; }
 
+    // Returns PointerType::getUnqual(String struct), or i8* if String not yet defined.
+    Type* getStringPtrType() {
+        if (StructTypes.count("String"))
+            return PointerType::getUnqual(StructTypes.at("String"));
+        return Type::getInt8PtrTy(Context);
+    }
+
     void registerStructLayout(const std::string& name, const std::vector<std::string>& fields) {
         structLayouts[name] = fields;
     }

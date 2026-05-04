@@ -38,7 +38,11 @@ class Sema {
 
     struct ErrorRecord { std::string msg, filePath; int line, col; };
     std::vector<ErrorRecord> errors;
-    void flushErrors();  // print all accumulated errors
+    std::vector<ErrorRecord> warnings;
+    void flushErrors();    // print all accumulated errors
+    void flushWarnings();  // print all accumulated warnings
+    void reportWarning(const std::string& msg, int line = 0, int col = 0,
+                       const std::string& filePath = "");
 
     [[noreturn]] void fatalError(const std::string& msg, int line = 0, int col = 0,
                                  const std::string& filePath = "");
@@ -61,6 +65,7 @@ class Sema {
     std::map<std::string, Symbol> globalSymbols;
     std::map<std::string, StructNode*> structRegistry;
     std::map<std::string, EnumNode*> enumRegistry;
+    std::map<std::string, InterfaceNode*> interfaceRegistry;
     std::map<std::string, std::map<std::string, FunctionNode*>> methodRegistry;
     struct VarInfo { std::string type; bool isConst = false; bool used = false; bool isParam = false; std::string filePath; };
     std::vector<std::map<std::string, VarInfo>> scopeStack;
@@ -68,7 +73,12 @@ class Sema {
     std::map<std::string, std::string> typeAliases; // name → resolved type
 
     bool isCompatibleTypes(const std::string &expected, const std::string &actual);
+    bool isGenericParam(const std::string &t) const;
     bool inheritsFromException(const std::string& typeName, const std::string& baseType = "Exception");
+    void checkInterfaceConformance(StructNode* s, InterfaceNode* iface);
+
+    // Active generic type params while checking a function/struct body
+    std::set<std::string> activeTypeParams;
     
     // (Keep rest of the class unchanged)
     void enterScope();

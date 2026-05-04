@@ -69,6 +69,26 @@ String* quirk_opaque_to_string(void* val) {
     return (s->buffer) ? s : make_String("null");
 }
 
+// Unbox an opaque i8* / Any* / tagged-int to a C boolean (0 or 1).
+// Used by toBool() for Callable return values and any opaque condition.
+int32_t quirk_any_as_bool(void* val) {
+    if (!val) return 0;
+    uintptr_t uval = (uintptr_t)val;
+    if (uval <= 0xFFFFFFFFUL) return uval != 0;  // tagged int: 0 = false
+    int32_t possible_tag = *(int32_t*)val;
+    if (possible_tag >= ANY_INT && possible_tag <= ANY_NULL) {
+        Any* a = (Any*)val;
+        switch (a->tag) {
+            case ANY_BOOL:   return a->ival != 0;
+            case ANY_INT:    return a->ival != 0;
+            case ANY_DOUBLE: return a->dval != 0.0;
+            case ANY_NULL:   return 0;
+            default:         return a->ptr != NULL;
+        }
+    }
+    return 1;  // non-null non-Any pointer = truthy
+}
+
 // Print a boxed opaque value (i8* returned from Any-typed methods like map.get).
 void quirk_print_opaque(void* val) {
     String* s = quirk_opaque_to_string(val);

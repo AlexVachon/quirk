@@ -80,7 +80,7 @@ for (n, s) in pairs {
 }
 
 // === Spread operator ===
-define sum_all(*nums) {
+define sum_all(...nums) {
     total := 0
     for x in nums {
         total = total + x
@@ -95,6 +95,9 @@ print("Spread sum:", sum_all(...args))
 counter := 0
 nonlocal counter
 
+---
+Small increment function
+---
 increment := fn() {
     counter = counter + 1
 }

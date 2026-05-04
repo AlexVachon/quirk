@@ -55,9 +55,16 @@ private:
     std::unique_ptr<Node> parseMatch();
     
     // Definition parsing
-    std::unique_ptr<FunctionNode> parseFunction();
+    std::unique_ptr<FunctionNode> parseFunction(bool allowAbstract = false);
     std::unique_ptr<StructNode> parseStruct();
+    // Parse: where T: Interface1 & Interface2, U: Interface3
+    std::map<std::string, std::vector<std::string>> parseGenericWhere(const std::vector<std::string>& typeParams);
     std::unique_ptr<EnumNode> parseEnum();
+    std::unique_ptr<InterfaceNode> parseInterface();
+
+    // Type annotation helper: reads "Type" or "Type[T, U]" or "T|U" into a string
+    std::string parseTypeString();
+    bool isGenericArgList() const; // lookahead: is [ ahead a type-arg list?
     
     // Helpers
     std::unique_ptr<CallNode> parseCall();

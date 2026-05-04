@@ -69,6 +69,8 @@ std::vector<std::unique_ptr<Node>> Parser::parse() {
                 node->name = aliasName;
                 node->target = target;
                 nodes.push_back(std::move(node));
+            } else if (type == TokenType::INTERFACE) {
+                nodes.push_back(parseInterface());
             } else if (type == TokenType::EXTEND) {
                 advance();
                 std::string targetStruct = advance().value;
@@ -168,7 +170,7 @@ std::unique_ptr<Node> Parser::parseExpression(int min_precedence) {
         left = std::make_unique<LiteralNode>("null");
     } else if (t.type == TokenType::SUPER) {
         left = std::make_unique<LiteralNode>("super");
-    }else if (t.type == TokenType::IDENTIFIER) {
+    } else if (t.type == TokenType::IDENTIFIER || t.type == TokenType::TYPE_KW) {
         left = std::make_unique<LiteralNode>(t.value);
     } else if (t.type == TokenType::NOT) {
         auto operand = parseExpression(0);
@@ -780,7 +782,7 @@ std::string Parser::computeModulePrefix() const {
     return result;
 }
 
-std::unique_ptr<FunctionNode> Parser::parseFunction() {
+std::unique_ptr<FunctionNode> Parser::parseFunction(bool allowAbstract) {
     bool isExtern = false;
     if (peek().type == TokenType::EXTERN) {
         advance();
@@ -796,6 +798,7 @@ std::unique_ptr<FunctionNode> Parser::parseFunction() {
     }
 
     std::string name;
+    Token nameTokFn = peek();
     if (isInit) {
         name = "init";
     } else {
@@ -808,8 +811,19 @@ std::unique_ptr<FunctionNode> Parser::parseFunction() {
     }
 
     auto node = std::make_unique<FunctionNode>();
+    node->line = nameTokFn.line; node->col = nameTokFn.col; node->filePath = filePath;
     node->name = name;
     node->isExtern = isExtern;
+
+    // Generic type params: define map[T, U](...)
+    if (peek().type == TokenType::LBRACKET) {
+        advance(); // consume '['
+        while (peek().type != TokenType::RBRACKET && !isAtEnd()) {
+            node->typeParams.push_back(advance().value);
+            if (peek().type == TokenType::COMMA) advance();
+        }
+        consume(TokenType::RBRACKET, "Expected ']' after type parameters");
+    }
 
     // --- AUTOMATIC FFI MANGLING ---
     // Derives the full hierarchical module prefix from this->filePath.
@@ -843,7 +857,7 @@ std::unique_ptr<FunctionNode> Parser::parseFunction() {
     while (peek().type != TokenType::RPAREN && !isAtEnd()) {
         Parameter param;
 
-        if (peek().type == TokenType::ELLIPSIS || peek().type == TokenType::STAR) {
+        if (peek().type == TokenType::ELLIPSIS) {
             advance();
             param.isVariadic = true;
         }
@@ -861,12 +875,7 @@ std::unique_ptr<FunctionNode> Parser::parseFunction() {
                 advance();
                 param.isRef = true;
             }
-            param.type = advance().value;
-            if (peek().type == TokenType::QUESTION) { advance(); param.type += "?"; }
-            while (peek().type == TokenType::PIPE) {
-                advance();
-                param.type += "|" + advance().value;
-            }
+            param.type = parseTypeString();
         }
 
         if (param.isVariadic) {
@@ -886,18 +895,31 @@ std::unique_ptr<FunctionNode> Parser::parseFunction() {
     }
     consume(TokenType::RPAREN, "Expected ')'");
     if (match(TokenType::ARROW)) {
-        node->returnType = advance().value;
-        if (peek().type == TokenType::QUESTION) { advance(); node->returnType += "?"; }
+        node->returnType = parseTypeString();
     }
     if (isExtern)
         return node;
 
     if (peek().type == TokenType::WHERE) {
         advance();
-        node->whereClause = parseExpression(0);
+        // Generic constraint form: where T: Interface — first token is a known type param
+        if (!node->typeParams.empty() &&
+            peek().type == TokenType::IDENTIFIER &&
+            std::find(node->typeParams.begin(), node->typeParams.end(), peek().value) != node->typeParams.end()) {
+            node->genericConstraints = parseGenericWhere(node->typeParams);
+        } else {
+            node->whereClause = parseExpression(0);
+        }
     }
 
-    consume(TokenType::LBRACE, "Expected '{'");
+    if (peek().type != TokenType::LBRACE) {
+        if (allowAbstract) {
+            node->isAbstract = true;
+            return node;
+        }
+        reportError("Expected '{' to open function body", peek());
+    }
+    advance(); // consume '{'
     while (peek().type != TokenType::RBRACE && !isAtEnd())
         node->body.push_back(parseStatement());
     consume(TokenType::RBRACE, "Expected '}'");
@@ -973,12 +995,30 @@ std::unique_ptr<ConstructorNode> Parser::parseConstructor() {
 std::unique_ptr<StructNode> Parser::parseStruct() {
     consume(TokenType::STRUCT, "Expected 'struct'");
     auto node = std::make_unique<StructNode>();
+    Token nameTokSt = peek();
     node->name = advance().value;
+    node->line = nameTokSt.line; node->col = nameTokSt.col; node->filePath = filePath;
+
+    // Generic type params: struct Stack[T]
+    if (peek().type == TokenType::LBRACKET) {
+        advance(); // consume '['
+        while (peek().type != TokenType::RBRACKET && !isAtEnd()) {
+            node->typeParams.push_back(advance().value);
+            if (peek().type == TokenType::COMMA) advance();
+        }
+        consume(TokenType::RBRACKET, "Expected ']' after type parameters");
+    }
 
     if (match(TokenType::COLON)) {
         do {
             node->parents.push_back(advance().value);
         } while (match(TokenType::COMMA));
+    }
+
+    // Generic constraints: struct Foo[T] where T: Comparable (after inheritance clause)
+    if (!node->typeParams.empty() && peek().type == TokenType::WHERE) {
+        advance();
+        node->genericConstraints = parseGenericWhere(node->typeParams);
     }
 
     consume(TokenType::LBRACE, "Expected '{'");
@@ -1054,7 +1094,7 @@ std::unique_ptr<StructNode> Parser::parseStruct() {
                 node->fields.push_back({fName, iType, std::move(val)});
             } else {
                 consume(TokenType::COLON, "Expected ':'");
-                std::string fType = advance().value;
+                std::string fType = parseTypeString();
                 node->fields.push_back({fName, fType, nullptr});
 
                 // --- NEW: Parse default property values ---
@@ -1457,8 +1497,109 @@ std::unique_ptr<Node> Parser::parseThrow() {
     }
     
     auto node = std::make_unique<ThrowNode>(std::move(expr), std::move(causeExpr), lineNum);
-    node->moduleName = this->filePath; 
-    
+    node->moduleName = this->filePath;
+
     return node;
+}
+
+// =========================================================
+// GENERICS + INTERFACES
+// =========================================================
+
+bool Parser::isGenericArgList() const {
+    // Lookahead from current pos (which must be LBRACKET).
+    // Returns true if tokens form: [ IDENTIFIER (COMMA IDENTIFIER)* ]
+    // with no literals or operators inside — unambiguously a type-arg list.
+    int i = pos + 1;
+    int n = (int)tokens.size();
+    if (i >= n || tokens[pos].type != TokenType::LBRACKET) return false;
+    while (i < n && tokens[i].type != TokenType::RBRACKET) {
+        if (tokens[i].type == TokenType::IDENTIFIER) { i++; }
+        else if (tokens[i].type == TokenType::COMMA)  { i++; }
+        else return false; // literal, operator, etc. — not a type-arg list
+    }
+    return i < n; // found closing ]
+}
+
+std::string Parser::parseTypeString() {
+    std::string t = advance().value; // base type identifier
+    if (peek().type == TokenType::QUESTION) { advance(); t += "?"; }
+    // Generic args: List[T]  or  Map[K, V]  — only when [ contains only identifiers
+    if (peek().type == TokenType::LBRACKET && isGenericArgList()) {
+        advance(); // consume '['
+        t += "[";
+        bool first = true;
+        while (peek().type != TokenType::RBRACKET && !isAtEnd()) {
+            if (!first) { consume(TokenType::COMMA, "Expected ','"); t += ", "; }
+            first = false;
+            t += parseTypeString();
+        }
+        consume(TokenType::RBRACKET, "Expected ']' after type arguments");
+        t += "]";
+    }
+    // Union types: T | U
+    while (peek().type == TokenType::PIPE) {
+        advance();
+        t += "|" + advance().value;
+    }
+    return t;
+}
+
+std::unique_ptr<InterfaceNode> Parser::parseInterface() {
+    consume(TokenType::INTERFACE, "Expected 'interface'");
+    auto node = std::make_unique<InterfaceNode>();
+    node->name = advance().value;
+    node->line = tokens[pos - 1].line;
+    node->col  = tokens[pos - 1].col;
+    node->filePath = filePath;
+    node->moduleName = computeModulePrefix();
+
+    // Optional interface inheritance: interface Comparable : Equatable
+    if (match(TokenType::COLON)) {
+        do {
+            node->extends.push_back(advance().value);
+        } while (match(TokenType::COMMA));
+    }
+
+    consume(TokenType::LBRACE, "Expected '{' after interface name");
+    while (peek().type != TokenType::RBRACE && !isAtEnd()) {
+        if (peek().type == TokenType::DEFINE) {
+            auto sig = parseFunction(/*allowAbstract=*/true);
+            sig->cls = node->name;
+            // Strip leading 'self' param — same convention as struct methods
+            if (!sig->parameters.empty() && sig->parameters[0].name == "self")
+                sig->parameters.erase(sig->parameters.begin());
+            sig->isStatic = false;
+            sig->name = node->name + "_" + sig->name;
+            sig->linkageName = sig->name;
+            node->methods.push_back(std::move(sig));
+        } else {
+            reportError("Expected 'define' inside interface body", peek());
+            advance(); // recover
+        }
+    }
+    consume(TokenType::RBRACE, "Expected '}' to close interface");
+    return node;
+}
+
+// Parse: T: Interface1 & Interface2, U: Interface3
+// Called after `where` has already been consumed and the first token is a known type param.
+std::map<std::string, std::vector<std::string>> Parser::parseGenericWhere(const std::vector<std::string>& typeParams) {
+    std::map<std::string, std::vector<std::string>> constraints;
+    while (true) {
+        if (peek().type != TokenType::IDENTIFIER) break;
+        std::string typeVar = advance().value;
+        consume(TokenType::COLON, "Expected ':' after type parameter in where clause");
+        std::vector<std::string> ifaces;
+        ifaces.push_back(parseTypeString());
+        while (peek().type == TokenType::AMPERSAND) {
+            advance();
+            ifaces.push_back(parseTypeString());
+        }
+        constraints[typeVar] = std::move(ifaces);
+        if (peek().type != TokenType::COMMA) break;
+        advance(); // consume ','
+    }
+    return constraints;
 }
 

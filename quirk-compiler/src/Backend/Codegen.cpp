@@ -478,7 +478,8 @@ class LLVMCodegen {
                     for (const auto& stmt : func->body) handleStatement(stmt.get(), mainFunc);
                 }
             } else if (!dynamic_cast<StructNode*>(node.get()) && !dynamic_cast<FunctionNode*>(node.get()) &&
-                       !dynamic_cast<TypeAliasNode*>(node.get())) {
+                       !dynamic_cast<TypeAliasNode*>(node.get()) &&
+                       !dynamic_cast<InterfaceNode*>(node.get())) {
                  handleStatement(node.get(), mainFunc);
             }
         }
@@ -708,8 +709,41 @@ class LLVMCodegen {
             return ConstantPointerNull::get(cast<PointerType>(i8PtrTy));
         if (val->getType() == i8PtrTy)
             return val;
-        if (val->getType()->isPointerTy())
+        if (val->getType()->isPointerTy()) {
+            // Auto-call __str on user-defined structs so print(obj) works like print(obj.__str())
+            Type* pointee = val->getType()->getPointerElementType();
+            if (pointee->isStructTy()) {
+                std::string sName = cast<StructType>(pointee)->getName().str();
+                if (sName.find("struct.") == 0) sName = sName.substr(7);
+                // Only auto-str user-defined structs (not List, String, Map, Callable, etc.)
+                static const std::set<std::string> builtinStructs = {
+                    "String", "List", "Map", "Set", "Queue", "Callable", "Tuple",
+                    "Type", "Any", "Exception", "ListIterator", "File"
+                };
+                if (!builtinStructs.count(sName) && !sName.empty()) {
+                    Function* strFn = TheModule->getFunction(sName + "___str");
+                    if (!strFn) strFn = TheModule->getFunction(sName + "__str");
+                    if (strFn) {
+                        Value* strVal = Builder.CreateCall(strFn, {val}, sName + "_str");
+                        return Builder.CreateBitCast(strVal, i8PtrTy);
+                    }
+                }
+            }
             return Builder.CreateBitCast(val, i8PtrTy);
+        }
+        // i1 booleans: box as Any_Bool so quirk_opaque_to_string returns "true"/"false"
+        if (val->getType()->isIntegerTy(1)) {
+            Function* boxBool = TheModule->getFunction("Core_Primitives_Any_box_bool");
+            if (!boxBool) {
+                FunctionType* ft = FunctionType::get(
+                    Type::getInt8PtrTy(Context),
+                    {Type::getInt32Ty(Context)}, false);
+                boxBool = Function::Create(ft, Function::ExternalLinkage,
+                                           "Core_Primitives_Any_box_bool", TheModule.get());
+            }
+            Value* ext = Builder.CreateZExt(val, Type::getInt32Ty(Context));
+            return Builder.CreateCall(boxBool, {ext});
+        }
         if (val->getType()->isIntegerTy())
             return Builder.CreateIntToPtr(val, i8PtrTy);
         if (val->getType()->isDoubleTy()) {
@@ -967,7 +1001,11 @@ class LLVMCodegen {
             // ----------------------------------
             
             if (builtinGen->isBuiltin(lit->value)) {
-                return builtinGen->handleBuiltin(lit->value, call, [this](Node* n) { return this->handleExpression(n); });
+                // User-defined function with the same name overrides the builtin
+                Function* override = resolveFunction(lit->value, currentCodegenClass);
+                if (!override)
+                    return builtinGen->handleBuiltin(lit->value, call, [this](Node* n) { return this->handleExpression(n); });
+                // Fall through to normal function dispatch below
             }
 
             if (StructTypes.count(lit->value)) {
@@ -1485,9 +1523,26 @@ class LLVMCodegen {
     void processCallArgs(Function* func, const std::vector<Arg>& astArgs, std::vector<Value*>& finalArgs, size_t offset) {
         std::string funcName = func->getName().str();
         FunctionNode* funcNode = functionDeclarations[funcName];
-        
+
         bool isVariadic = variadicFunctions.count(funcName);
         size_t fixedArgCount = func->arg_size();
+
+        // Find which LLVM param index is the variadic List slot.
+        // Use fixedArgCount as a sentinel meaning "no variadic slot" for non-variadic functions.
+        size_t variadicSlot = fixedArgCount;  // sentinel: out-of-range
+        if (isVariadic) {
+            // Default: last param (backward-compat for functions where *args is last).
+            variadicSlot = fixedArgCount > 0 ? fixedArgCount - 1 : 0;
+            if (funcNode) {
+                size_t astOffset = offset;
+                for (size_t pi = 0; pi < funcNode->parameters.size(); pi++) {
+                    if (funcNode->parameters[pi].isVariadic) {
+                        variadicSlot = pi + astOffset;
+                        break;
+                    }
+                }
+            }
+        }
         size_t requiredFixedCount = isVariadic ? (fixedArgCount - 1) : fixedArgCount;
 
         std::vector<Value*> matchedArgs(fixedArgCount, nullptr);
@@ -1522,7 +1577,8 @@ class LLVMCodegen {
                 hasSeenNamedArg = true;
                 bool found = false;
                 if (funcNode) {
-                    for (size_t i = offset; i < requiredFixedCount; ++i) {
+                    for (size_t i = offset; i < fixedArgCount; ++i) {
+                        if (i == variadicSlot) continue;  // skip the variadic List slot
                         size_t paramIdx = i - offset;
                         if (paramIdx < funcNode->parameters.size() && funcNode->parameters[paramIdx].name == arg.name) {
                             if (matchedArgs[i] != nullptr) return;
@@ -1534,13 +1590,15 @@ class LLVMCodegen {
                 }
                 if (!found) return;
             } else {
-                // Positional args appearing after a named arg go straight to variadic,
-                // so that log(prefix=">>", "a", "b") puts "a","b" into ...parts, not sep.
+                // Positional args fill fixed slots that appear BEFORE variadicSlot in the
+                // parameter list; everything else (including overflow) goes to the bundle.
+                // This mirrors Python semantics: def f(*args, sep=" ") — all positional → *args.
                 if (isVariadic && hasSeenNamedArg) {
                     variadicBundle.push_back(handleExpression(arg.value.get()));
                 } else {
-                    while (positionalIdx < requiredFixedCount && matchedArgs[positionalIdx] != nullptr) positionalIdx++;
-                    if (positionalIdx < requiredFixedCount) {
+                    while (positionalIdx < variadicSlot && matchedArgs[positionalIdx] != nullptr)
+                        positionalIdx++;
+                    if (positionalIdx < variadicSlot) {
                         matchedArgs[positionalIdx] = handleExpression(arg.value.get());
                         positionalIdx++;
                     } else {
@@ -1550,78 +1608,21 @@ class LLVMCodegen {
             }
         }
 
-        for (size_t i = offset; i < fixedArgCount; i++) {
-            size_t astIdx = i - offset;
-            Value* argVal = matchedArgs[i];
-
-            if (!argVal && funcNode && astIdx < funcNode->parameters.size() && funcNode->parameters[astIdx].defaultValue) {
-                argVal = handleExpression(funcNode->parameters[astIdx].defaultValue.get());
-            }
-
-            if (!argVal && i < requiredFixedCount) return;
-
-            if (argVal) {
-                Type* expectedType = func->getFunctionType()->getParamType(i);
-
-                // Auto-box to Any* when function expects it
-                if (expectedType->isPointerTy() && expectedType->getPointerElementType()->isStructTy()) {
-                    std::string pName = cast<StructType>(expectedType->getPointerElementType())->getName().str();
-                    if (pName == "Any" || pName == "struct.Any") {
-                        argVal = emitBox(argVal);
-                        if (argVal->getType() != expectedType)
-                            argVal = Builder.CreateBitCast(argVal, expectedType);
-                        finalArgs.push_back(argVal);
-                        continue;
-                    }
-                }
-
-                if (argVal->getType()->isIntegerTy(1) && expectedType->isIntegerTy(32)) {
-                    argVal = Builder.CreateZExt(argVal, Type::getInt32Ty(Context));
-                }
-
-                if (argVal->getType()->isPointerTy() &&
-                    argVal->getType()->getPointerElementType()->isIntegerTy(8) &&
-                    expectedType->isPointerTy() &&
-                    expectedType->getPointerElementType()->isStructTy()) {
-                    
-                    StructType* st = cast<StructType>(expectedType->getPointerElementType());
-                    
-                    if (st->getName() == "String") {
-                        argVal = Builder.CreateBitCast(argVal, expectedType);
-                    }
-                }
-                else if (argVal->getType() != expectedType) {
-                    if (argVal->getType()->isIntegerTy() && expectedType->isIntegerTy())
-                        argVal = Builder.CreateIntCast(argVal, expectedType, true);
-                    else if (argVal->getType()->isIntegerTy() && expectedType->isPointerTy())
-                        argVal = Builder.CreateIntToPtr(argVal, expectedType);
-                    else if (argVal->getType()->isPointerTy() && expectedType->isPointerTy()) {
-                        argVal = Builder.CreateBitCast(argVal, expectedType);
-                    }
-                    else if (argVal->getType()->isIntegerTy() && expectedType->isDoubleTy())
-                        argVal = Builder.CreateSIToFP(argVal, expectedType);
-                }
-                finalArgs.push_back(argVal);
-            }
-        }
-
+        // Build the variadic List now so we can place it at the correct slot position.
+        Value* variadicList = nullptr;
         if (isVariadic) {
             std::vector<Value*> castedVariadic;
             for (Value* vArg : variadicBundle) {
-                // --- FIX: Convert Objects to Strings before passing to Variadic Functions ---
                 Type* ty = vArg->getType();
                 if (ty->isPointerTy() && ty->getPointerElementType()->isStructTy()) {
                     StructType* st = cast<StructType>(ty->getPointerElementType());
-                    // If it's not already a String, call __str()
                     if (st->getName().str().find("String") == std::string::npos) {
                         std::string sName = st->getName().str();
                         if (sName.find("struct.") == 0) sName = sName.substr(7);
-                        
                         Function* strFunc = TheModule->getFunction(sName + "___str");
                         if (strFunc) {
                             vArg = Builder.CreateCall(strFunc, {vArg});
-                            // Ensure the result is treated as a String Object (pointer), not raw i8*
-                            if (vArg->getType()->isPointerTy() && 
+                            if (vArg->getType()->isPointerTy() &&
                                 vArg->getType()->getPointerElementType()->isIntegerTy(8)) {
                                 std::vector<Value*> boxArgs = {vArg};
                                 vArg = structGen->allocateAndInit("String", boxArgs);
@@ -1629,14 +1630,68 @@ class LLVMCodegen {
                         }
                     }
                 }
-                // ---------------------------------------------------------------------------
-
-                if (vArg->getType()->isIntegerTy()) vArg = Builder.CreateIntToPtr(vArg, Type::getInt8PtrTy(Context));
+                if (vArg->getType()->isIntegerTy(1)) vArg = boxToVoidPtr(vArg);
+                else if (vArg->getType()->isIntegerTy()) vArg = Builder.CreateIntToPtr(vArg, Type::getInt8PtrTy(Context));
                 else if (!vArg->getType()->isPointerTy()) vArg = Builder.CreateBitCast(vArg, Type::getInt8PtrTy(Context));
                 castedVariadic.push_back(vArg);
             }
-            Value* listObj = structGen->createListFromValues(castedVariadic);
-            finalArgs.push_back(listObj);
+            variadicList = structGen->createListFromValues(castedVariadic);
+        }
+
+        // Emit each LLVM param slot in order (offset..fixedArgCount).
+        // The variadic slot gets the pre-built List; other slots get matched/default values.
+        for (size_t i = offset; i < fixedArgCount; i++) {
+            if (isVariadic && i == variadicSlot) {
+                finalArgs.push_back(variadicList);
+                continue;
+            }
+
+            size_t astIdx = i - offset;
+            Value* argVal = matchedArgs[i];
+
+            if (!argVal && funcNode && astIdx < funcNode->parameters.size() && funcNode->parameters[astIdx].defaultValue) {
+                argVal = handleExpression(funcNode->parameters[astIdx].defaultValue.get());
+            }
+
+            if (!argVal) return;  // required arg missing
+
+            Type* expectedType = func->getFunctionType()->getParamType(i);
+
+            // Auto-box to Any* when function expects it
+            if (expectedType->isPointerTy() && expectedType->getPointerElementType()->isStructTy()) {
+                std::string pName = cast<StructType>(expectedType->getPointerElementType())->getName().str();
+                if (pName == "Any" || pName == "struct.Any") {
+                    argVal = emitBox(argVal);
+                    if (argVal->getType() != expectedType)
+                        argVal = Builder.CreateBitCast(argVal, expectedType);
+                    finalArgs.push_back(argVal);
+                    continue;
+                }
+            }
+
+            if (argVal->getType()->isIntegerTy(1) && expectedType->isIntegerTy(32)) {
+                argVal = Builder.CreateZExt(argVal, Type::getInt32Ty(Context));
+            }
+
+            if (argVal->getType()->isPointerTy() &&
+                argVal->getType()->getPointerElementType()->isIntegerTy(8) &&
+                expectedType->isPointerTy() &&
+                expectedType->getPointerElementType()->isStructTy()) {
+                StructType* st = cast<StructType>(expectedType->getPointerElementType());
+                if (st->getName() == "String") {
+                    argVal = Builder.CreateBitCast(argVal, expectedType);
+                }
+            } else if (argVal->getType() != expectedType) {
+                if (argVal->getType()->isIntegerTy() && expectedType->isIntegerTy())
+                    argVal = Builder.CreateIntCast(argVal, expectedType, true);
+                else if (argVal->getType()->isIntegerTy() && expectedType->isPointerTy())
+                    argVal = Builder.CreateIntToPtr(argVal, expectedType);
+                else if (argVal->getType()->isPointerTy() && expectedType->isPointerTy())
+                    argVal = Builder.CreateBitCast(argVal, expectedType);
+                else if (argVal->getType()->isIntegerTy() && expectedType->isDoubleTy())
+                    argVal = Builder.CreateSIToFP(argVal, expectedType);
+            }
+            finalArgs.push_back(argVal);
         }
     }
     

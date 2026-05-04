@@ -48,6 +48,7 @@ enum class TokenType {
     FALSE,
     QUIRK_NULL,
     PIPE,
+    AMPERSAND,
 
     TRY, CATCH, THROW, FINALLY,
 
@@ -95,6 +96,7 @@ enum class TokenType {
 
     NONLOCAL,        // nonlocal keyword
     GLOBAL,          // global keyword
+    INTERFACE,       // interface keyword
 
     // Special
     EOF_TOKEN,

@@ -6,6 +6,12 @@
 
 std::string Sema::currentClass = "";
 
+// Strip generic type args: "List[T]" -> "List", "Map[K, V]" -> "Map", "Int" -> "Int"
+static std::string baseType(const std::string& t) {
+    auto pos = t.find('[');
+    return pos != std::string::npos ? t.substr(0, pos) : t;
+}
+
 // Shared formatting helper — prints one error to stderr.
 static void printSemaError(const std::string& msg, int line, int col,
                            const std::string& path,
@@ -64,6 +70,24 @@ void Sema::flushErrors() {
     errors.clear();
 }
 
+void Sema::reportWarning(const std::string& msg, int line, int col,
+                         const std::string& filePath) {
+    if (line <= 0 && lastNode && lastNode->line > 0) {
+        line = lastNode->line; col = lastNode->col;
+    }
+    std::string path = (!filePath.empty())                             ? filePath
+                     : (lastNode && !lastNode->filePath.empty()) ? lastNode->filePath
+                     : currentFilePath;
+    warnings.push_back({msg, path, line, col});
+}
+
+void Sema::flushWarnings() {
+    for (auto& w : warnings)
+        std::cerr << "\033[1;33m[WARNING]\033[0m " << w.msg
+                  << "\n --> " << w.filePath << ":" << w.line << ":" << w.col << "\n";
+    warnings.clear();
+}
+
 bool Sema::analyze(const std::vector<std::unique_ptr<Node>> &nodes)
 {
     if (scopeStack.empty())
@@ -94,12 +118,16 @@ bool Sema::analyze(const std::vector<std::unique_ptr<Node>> &nodes)
     if (!structRegistry.count("Type")) structRegistry["Type"] = &builtinTypeNode;
 
 
-    // Pass 1: Register Structs and Signatures
+    // Pass 1: Register Structs, Interfaces, and Signatures
     for (const auto &node : nodes)
     {
         if (auto s = dynamic_cast<StructNode *>(node.get()))
         {
             structRegistry[s->name] = s;
+        }
+        else if (auto iface = dynamic_cast<InterfaceNode*>(node.get()))
+        {
+            interfaceRegistry[iface->name] = iface;
         }
         else if (auto f = dynamic_cast<FunctionNode *>(node.get()))
         {
@@ -127,15 +155,39 @@ bool Sema::analyze(const std::vector<std::unique_ptr<Node>> &nodes)
             moduleVisibility[mod].visibleModules.insert("typing");
         }
 
-        // --- NEW: Validate Inheritance Tree for Structs ---
+        // Validate inheritance tree and interface conformance for structs
         if (auto s = dynamic_cast<StructNode*>(node.get())) {
+            std::vector<std::string> structParents;
             for (const std::string& parentName : s->parents) {
-                if (!structRegistry.count(parentName))
+                if (interfaceRegistry.count(parentName)) {
+                    // It's an interface — record conformance and check it
+                    s->interfaces.push_back(parentName);
+                    checkInterfaceConformance(s, interfaceRegistry[parentName]);
+                } else if (!structRegistry.count(parentName)) {
                     fatalError("struct '" + s->name + "' inherits from undefined type '" + parentName + "'",
                                s->line, s->col, s->filePath);
+                } else {
+                    structParents.push_back(parentName);
+                }
+            }
+            s->parents = structParents; // keep only struct parents (not interfaces)
+
+            // Validate generic where constraints: each bound must name an interface, not a struct
+            for (const auto& [typeVar, bounds] : s->genericConstraints) {
+                for (const auto& bound : bounds) {
+                    if (structRegistry.count(bound) && !interfaceRegistry.count(bound)) {
+                        reportWarning(
+                            "generic constraint '" + bound + "' is a concrete type, not an interface. "
+                            "Use an interface or remove the constraint and use '" + bound + "' directly.",
+                            s->line, s->col, s->filePath);
+                    } else if (!interfaceRegistry.count(bound) && bound != "Any") {
+                        reportWarning(
+                            "generic constraint '" + bound + "' is not a known interface.",
+                            s->line, s->col, s->filePath);
+                    }
+                }
             }
         }
-        // --------------------------------------------------
 
         if (!node->filePath.empty()) currentFilePath = node->filePath;
 
@@ -147,12 +199,17 @@ bool Sema::analyze(const std::vector<std::unique_ptr<Node>> &nodes)
         {
             checkUse(use);
         }
+        else if (dynamic_cast<InterfaceNode*>(node.get()))
+        {
+            // Interface declarations are compile-time only — no body to check
+        }
         else if (!dynamic_cast<StructNode *>(node.get()))
         {
             checkStatement(node.get());
         }
     }
     exitScope();
+    if (!warnings.empty()) flushWarnings();
     if (!errors.empty()) {
         flushErrors();
         return false;
@@ -214,14 +271,72 @@ bool Sema::isVisible(const std::string &name, const std::string &symbolModule, c
     return false;
 }
 
+void Sema::checkInterfaceConformance(StructNode* s, InterfaceNode* iface) {
+    for (const auto& method : iface->methods) {
+        // method->name is already mangled as "InterfaceName_methodName"
+        // For the struct, the method would be "StructName_methodName"
+        std::string rawName = method->name;
+        // Strip the interface prefix to get the raw method name
+        if (rawName.size() > iface->name.size() + 1)
+            rawName = rawName.substr(iface->name.size() + 1);
+        std::string structMethodName = s->name + "_" + rawName;
+
+        bool found = methodRegistry.count(s->name) &&
+                     methodRegistry[s->name].count(structMethodName);
+        if (!found) {
+            reportError("struct '" + s->name + "' does not implement interface method '" +
+                        rawName + "' (required by '" + iface->name + "')",
+                        s->line, s->col, s->filePath);
+        }
+    }
+    // Also check inherited interface methods
+    for (const auto& ext : iface->extends) {
+        if (interfaceRegistry.count(ext))
+            checkInterfaceConformance(s, interfaceRegistry[ext]);
+    }
+}
+
 void Sema::checkFunction(FunctionNode *f)
 {
+    // Abstract interface method signatures have no body to check
+    if (f->isAbstract) return;
+
     std::string prevClass = currentClass;
     FunctionNode *prevFunc = currentFunctionNode;
 
     currentClass = f->cls;
     currentFunctionNode = f;
     if (!f->filePath.empty()) currentFilePath = f->filePath;
+
+    // Push generic type params as type aliases for "Any" so that annotations
+    // like `item: T` and `-> T` are accepted without "unknown type" errors.
+    std::vector<std::string> pushedParams;
+    auto pushTypeParam = [&](const std::string& tp) {
+        if (!typeAliases.count(tp)) {
+            typeAliases[tp] = "Any";
+            pushedParams.push_back(tp);
+        }
+    };
+    for (const auto& tp : f->typeParams) pushTypeParam(tp);
+    // Also push the enclosing struct's type params (e.g. T in struct Stack[T])
+    if (!f->cls.empty() && structRegistry.count(f->cls))
+        for (const auto& tp : structRegistry[f->cls]->typeParams) pushTypeParam(tp);
+
+    // Validate generic where constraints: each bound must name an interface, not a struct
+    for (const auto& [typeVar, bounds] : f->genericConstraints) {
+        for (const auto& bound : bounds) {
+            if (structRegistry.count(bound) && !interfaceRegistry.count(bound)) {
+                reportWarning(
+                    "generic constraint '" + bound + "' is a concrete type, not an interface. "
+                    "Use an interface or remove the constraint and use '" + bound + "' directly.",
+                    f->line, f->col, f->filePath);
+            } else if (!interfaceRegistry.count(bound) && bound != "Any") {
+                reportWarning(
+                    "generic constraint '" + bound + "' is not a known interface.",
+                    f->line, f->col, f->filePath);
+            }
+        }
+    }
 
     enterScope();
 
@@ -256,6 +371,11 @@ void Sema::checkFunction(FunctionNode *f)
     }
 
     exitScope();
+
+    // Remove generic type param aliases we pushed
+    for (const auto& tp : pushedParams)
+        typeAliases.erase(tp);
+
     currentClass = prevClass;
     currentFunctionNode = prevFunc;
 }
@@ -427,7 +547,7 @@ void Sema::checkIf(IfNode *node)
 {
     lastNode = node;
     std::string condType = checkExpression(node->condition.get());
-    if (condType != "Bool" && condType != "unknown")
+    if (condType != "Bool" && condType != "unknown" && condType != "Any")
         reportError("'if' condition must be 'Bool', got '" + condType + "'",
                     node->line, node->col, node->filePath);
     enterScope();
@@ -457,7 +577,7 @@ void Sema::checkWhile(WhileNode *node)
 {
     lastNode = node;
     std::string wCondType = checkExpression(node->condition.get());
-    if (wCondType != "Bool" && wCondType != "unknown")
+    if (wCondType != "Bool" && wCondType != "unknown" && wCondType != "Any")
         reportError("'while' condition must be 'Bool'", node->line, node->col, node->filePath);
     enterScope();
     for (auto &s : node->body)
@@ -664,6 +784,7 @@ std::string Sema::checkBinaryOp(BinaryOpNode *node)
     // Array Access
     if (node->op == "[]")
     {
+        lType = baseType(lType); // strip generic args: "List[T]" -> "List"
         if (structRegistry.count(lType))
         {
             std::string funcName = lType + "___get";
@@ -769,8 +890,9 @@ std::string Sema::checkMemberAccess(MemberAccessNode *node)
     }
 
     std::string objType = checkExpression(node->object.get());
-    // Strip Optional marker before method lookup
+    // Strip Optional marker and generic type args before method lookup
     if (!objType.empty() && objType.back() == '?') objType.pop_back();
+    objType = baseType(objType);
 
     // Magic attributes
     if (node->memberName == "__name")   return "String";
@@ -878,14 +1000,20 @@ std::string Sema::checkCall(CallNode *node)
             return l->value;
         }
 
-        return resolveVariable(l->value);
+        {
+            std::string vtype = resolveVariable(l->value);
+            // Calling a Callable variable or a generic-param value — return Any
+            if (vtype == "Callable" || isGenericParam(vtype)) return "Any";
+            return vtype;
+        }
     }
 
     if (auto m = dynamic_cast<MemberAccessNode *>(node->callee.get()))
     {
         std::string objType = checkExpression(m->object.get());
-        // Strip Optional marker before method lookup (e.g. "String?" -> "String")
+        // Strip Optional marker and generic type args before method lookup
         if (!objType.empty() && objType.back() == '?') objType.pop_back();
+        objType = baseType(objType);
 
         // --- THE FIX: Handle Module Constructor Calls (e.g. io.File) ---
         if (objType.rfind("MODULE$", 0) == 0) {
@@ -962,7 +1090,6 @@ std::string Sema::checkCall(CallNode *node)
                 {"get",        "Any"},
                 {"length",     "Int"},
                 {"append",     "void"},
-                {"push",       "void"},
                 {"pop",        "Any"},
                 {"join",       "String"},
             }},
@@ -1054,9 +1181,26 @@ std::string Sema::checkMapLiteral(MapLiteralNode *node)
 }
 
 
+// Primitive/builtin type names that are always "known"
+static bool isKnownType(const std::string& t) {
+    static const std::set<std::string> known = {
+        "Int","Double","Bool","Char","String","Any","void","List","Map","Tuple",
+        "Set","Queue","File","Callable","auto","unknown",
+        "int","double","bool","char","string","cstring",
+        "Null","null"
+    };
+    return known.count(t) > 0;
+}
+
+bool Sema::isGenericParam(const std::string& t) const {
+    if (typeAliases.count(t) && typeAliases.at(t) == "Any") return true;
+    return !isKnownType(t) && !structRegistry.count(t) && !enumRegistry.count(t);
+}
+
 bool Sema::isCompatibleTypes(const std::string &expected, const std::string &actual)
 {
     if (expected == actual) return true;
+    if (isGenericParam(expected) || isGenericParam(actual)) return true;
     if (enumRegistry.count(expected) || enumRegistry.count(actual)) return true;
     if (expected == "Any" || actual == "Any") return true;
     if (expected == "Null" || actual == "Null") return true;
@@ -1132,9 +1276,10 @@ std::string Sema::resolveVariable(const std::string &name)
     }
 
     // Builtins
-    if (name == "print" || name == "printf" || name == "free" || name == "exit")
+    if (name == "print" || name == "printf" || name == "free" || name == "exit"
+        || name == "write" || name == "writeln")
         return "void";
-    if (name == "type")
+    if (name == "type" || name == "str")
         return "String";
     if (name == "char_at")
         return "Char";
@@ -1170,8 +1315,11 @@ std::string Sema::resolveVariable(const std::string &name)
 
 std::string Sema::resolveMember(const std::string &sName, const std::string &mName)
 {
+    // Strip generic type args before lookup: "List[T]" -> "List"
+    const std::string sBase = baseType(sName);
+
     // Tuple numeric index access: t.0, t.1, ...
-    if (sName == "Tuple" && !mName.empty()) {
+    if (sBase == "Tuple" && !mName.empty()) {
         bool isNumeric = true;
         for (char c : mName) if (!std::isdigit((unsigned char)c)) { isNumeric = false; break; }
         if (isNumeric) return "Any";
@@ -1187,19 +1335,19 @@ std::string Sema::resolveMember(const std::string &sName, const std::string &mNa
         {"File",   {{"_handle", "Any"}, {"is_open", "Bool"}}},
         {"Any",    {{"tag",    "Int"}, {"ival", "Int"}, {"dval", "Double"}}},
     };
-    auto bIt = builtinFields.find(sName);
+    auto bIt = builtinFields.find(sBase);
     if (bIt != builtinFields.end()) {
         auto fIt = bIt->second.find(mName);
         if (fIt != bIt->second.end()) return fIt->second;
     }
 
-    std::string lookupName = sName;
-    
-    if (sName == "int") lookupName = "Int";
-    else if (sName == "double") lookupName = "Double";
-    else if (sName == "bool") lookupName = "Bool";
-    else if (sName == "char") lookupName = "Char";
-    else if (sName == "string" || sName == "cstring") lookupName = "String";
+    std::string lookupName = sBase;
+
+    if (sBase == "int") lookupName = "Int";
+    else if (sBase == "double") lookupName = "Double";
+    else if (sBase == "bool") lookupName = "Bool";
+    else if (sBase == "char") lookupName = "Char";
+    else if (sBase == "string" || sBase == "cstring") lookupName = "String";
 
     if (!structRegistry.count(lookupName))
         return "unknown";
@@ -1251,6 +1399,13 @@ void Sema::checkReturn(ReturnNode *node)
 {
     std::string actual = node->expression ? checkExpression(node->expression.get()) : "void";
     std::string &target = currentFunctionNode->returnType;
+
+    // If the declared return type is a generic type param (e.g. "T"), treat it as "Any"
+    // for the purpose of compatibility checking (type erasure).
+    if (typeAliases.count(target)) {
+        const std::string resolved = typeAliases[target];
+        if (resolved == "Any") return; // any return value satisfies a generic return type
+    }
 
     // Infer return type from first return statement when no annotation given
     if (target == "auto" || target.empty())

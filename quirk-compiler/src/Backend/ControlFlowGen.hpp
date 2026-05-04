@@ -23,9 +23,9 @@ class ControlFlowGen {
         if (!v) return ConstantInt::getFalse(Context);
         if (v->getType()->isIntegerTy(1)) return v;
         if (v->getType()->isPointerTy()) {
-            // Prefer __bool magic method on structs
             Type* elTy = v->getType()->getPointerElementType();
             if (elTy->isStructTy()) {
+                // Prefer __bool magic method on structs
                 std::string sName = cast<StructType>(elTy)->getName().str();
                 if (sName.find("struct.") == 0) sName = sName.substr(7);
                 Function* boolFunc = TheModule->getFunction(sName + "___bool");
@@ -35,6 +35,31 @@ class ControlFlowGen {
                         if (F.getName().endswith(suffix)) { boolFunc = &F; break; }
                 }
                 if (boolFunc) return Builder.CreateCall(boolFunc, {v}, "obj_bool");
+                // Any* — may be a boxed Bool; use quirk_any_as_bool to unbox properly
+                if (sName == "Any") {
+                    Function* fn = TheModule->getFunction("quirk_any_as_bool");
+                    if (!fn) {
+                        FunctionType* ft = FunctionType::get(Type::getInt32Ty(Context),
+                            {Type::getInt8PtrTy(Context)}, false);
+                        fn = Function::Create(ft, Function::ExternalLinkage,
+                                              "quirk_any_as_bool", TheModule);
+                    }
+                    Value* casted = Builder.CreateBitCast(v, Type::getInt8PtrTy(Context));
+                    Value* result = Builder.CreateCall(fn, {casted}, "any_bool");
+                    return Builder.CreateICmpNE(result, ConstantInt::get(Type::getInt32Ty(Context), 0));
+                }
+            }
+            // i8* opaque — may be a tagged int or boxed Any; use quirk_any_as_bool
+            if (elTy->isIntegerTy(8)) {
+                Function* fn = TheModule->getFunction("quirk_any_as_bool");
+                if (!fn) {
+                    FunctionType* ft = FunctionType::get(Type::getInt32Ty(Context),
+                        {Type::getInt8PtrTy(Context)}, false);
+                    fn = Function::Create(ft, Function::ExternalLinkage,
+                                          "quirk_any_as_bool", TheModule);
+                }
+                Value* result = Builder.CreateCall(fn, {v}, "opaque_bool");
+                return Builder.CreateICmpNE(result, ConstantInt::get(Type::getInt32Ty(Context), 0));
             }
             return Builder.CreateICmpNE(v, Constant::getNullValue(v->getType()), "ptr_bool");
         }

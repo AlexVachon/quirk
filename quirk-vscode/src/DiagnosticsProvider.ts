@@ -7,12 +7,13 @@ const KEYWORDS = new Set([
     'extern', 'true', 'false', 'null', 'del', 'init', 'def',
     'const', 'ref', 'try', 'catch', 'throw', 'finally', 'and', 'or', 'not', 'super', 'enum',
     'match', 'case', '_', 'where', 'is',
-    'fn', 'nonlocal', 'global'
+    'fn', 'nonlocal', 'global', 'interface'
 ]);
 
 const BUILTINS = new Set([
     'print', 'printf', 'type', 'exit', 'Char', 'String', 'List', 'Map',
     'File', 'Int', 'Double', 'Bool', 'Any', 'void', 'Callable', 'Tuple',
+    'Self',  // type placeholder in interface methods
     'true', 'false', 'null',
     'Exception', 'TypeError', 'ValueError', 'IndexError', 'KeyError',
     'IOError', 'FileNotFoundError', 'RuntimeError', 'NotImplementedError',
@@ -106,6 +107,8 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
     const declarations = new Map<string, vscode.Range>();
     const usages = new Set<string>();
     const fileGlobals = new Set<string>();
+    const interfaceNames = new Set<string>(); // names declared with `interface`
+    const structNames = new Set<string>();    // names declared with `struct`
 
     let inDocBlock = false;
 
@@ -190,10 +193,23 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
         const typeAliasMatch1 = /^\s*type\s+([a-zA-Z_]\w*)\s*=/.exec(cleanLine);
         if (typeAliasMatch1) { fileGlobals.add(typeAliasMatch1[1]); continue; }
 
+        // Interface declaration: register the name + collect type params from extends clause
+        const ifaceMatch = /^\s*interface\s+([a-zA-Z_]\w*)/.exec(cleanLine);
+        if (ifaceMatch) { fileGlobals.add(ifaceMatch[1]); interfaceNames.add(ifaceMatch[1]); continue; }
+
         match = /^\s*(?:extern\s+)?(?:struct|define|def|init)\s+([a-zA-Z_]\w*)/.exec(cleanLine);
         if (match) {
             const name = match[1];
             fileGlobals.add(name);
+            if (/^\s*(?:extern\s+)?struct\b/.test(cleanLine)) structNames.add(name);
+            // Collect generic type params [T, U] so they're not flagged as "not defined"
+            const typeParamMatch = /^\s*(?:extern\s+)?(?:struct|define|def|init)\s+[a-zA-Z_]\w*\s*\[([^\]]+)\]/.exec(cleanLine);
+            if (typeParamMatch) {
+                typeParamMatch[1].split(',').forEach(tp => {
+                    const t = tp.trim();
+                    if (t) fileGlobals.add(t);
+                });
+            }
             if (name !== 'main' && !name.startsWith('__')) {
                 const startIdx = cleanLine.indexOf(name, match.index);
                 declarations.set(name, new vscode.Range(i, startIdx, i, startIdx + name.length));
@@ -239,23 +255,36 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
         const openBraces = (maskedLine.match(/\{/g) || []).length;
         const closeBraces = (maskedLine.match(/\}/g) || []).length;
 
-        // Reset scope if we enter a new function
-        const funcMatch = /^\s*(?:extern\s+)?(?:define|def|init)\s+[a-zA-Z_]\w*\s*\(([^)]*)\)/.exec(maskedLine);
+        // Reset scope if we enter a new function (optional [T, U] generic params before `(`)
+        const funcMatch = /^\s*(?:extern\s+)?(?:define|def|init)\s+[a-zA-Z_]\w*\s*(?:\[[^\]]*\]\s*)?\(([^)]*)\)/.exec(maskedLine);
         if (funcMatch) {
             locals = new Set<string>();
             if (!maskedLine.includes('extern')) {
                 currentFuncDepth = braceDepth;
             }
-            
+
+            // Seed locals with generic type params [T, U] so they're valid inside body
+            const typeParamBlock = /^\s*(?:extern\s+)?(?:define|def|init)\s+[a-zA-Z_]\w*\s*\[([^\]]*)\]/.exec(maskedLine);
+            if (typeParamBlock) {
+                typeParamBlock[1].split(',').forEach(tp => {
+                    const t = tp.trim();
+                    if (t) locals.add(t);
+                });
+            }
+
             const isExtern = maskedLine.includes('extern');
+            // Bodyless signatures (interface methods, forward decls) have no { on the line.
+            // Params of bodyless functions are never "used" in Quirk source — don't track them.
+            const isBodyless = !maskedLine.includes('{');
             const paramsStr = funcMatch[1];
-            const paramMatches = [...paramsStr.matchAll(/(?:\.\.\.)?([a-zA-Z_]\w*)\s*(?::\s*[a-zA-Z_][\w.?]*)?(?:,|$)/g)];
+            // Type annotation allows generic params: List[T], Map[K, V], etc.
+            const paramMatches = [...paramsStr.matchAll(/(?:\.\.\.)?([a-zA-Z_]\w*)\s*(?::\s*[a-zA-Z_][\w.?]*(?:\[[^\]]*\])?)?(?:,|$)/g)];
             for (const pm of paramMatches) {
                 const pName = pm[1];
                 locals.add(pName);
 
-                // extern define params are implemented in C — never "used" in Quirk source
-                if (!isExtern && pName !== 'self' && !BUILTINS.has(pName)) {
+                // extern define and bodyless signatures are implemented outside Quirk source
+                if (!isExtern && !isBodyless && pName !== 'self' && !BUILTINS.has(pName)) {
                     const startIdx = originalLine.indexOf(pName, funcMatch.index);
                     declarations.set(`${i}_${pName}`, new vscode.Range(i, startIdx, i, startIdx + pName.length));
                 }
@@ -452,6 +481,32 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
                         locals.add(pName);
                     }
                 });
+            }
+        }
+
+        // where-clause generic constraint check: warn if bound is a concrete struct, not an interface
+        if (/^\s*(?:extern\s+)?(?:define|def|struct)\b/.test(maskedLine)) {
+            const whereIdx = maskedLine.indexOf(' where ');
+            if (whereIdx !== -1) {
+                const whereClause = maskedLine.slice(whereIdx + 7);
+                const constraintRe = /[a-zA-Z_]\w*\s*:\s*([a-zA-Z_]\w*(?:\s*&\s*[a-zA-Z_]\w*)*)/g;
+                let cm;
+                while ((cm = constraintRe.exec(whereClause)) !== null) {
+                    const bounds = cm[1].split(/\s*&\s*/);
+                    for (const b of bounds) {
+                        const bound = b.trim();
+                        if (structNames.has(bound) && !interfaceNames.has(bound)) {
+                            const boundIdx = originalLine.indexOf(bound, whereIdx);
+                            if (boundIdx !== -1) {
+                                diagnostics.push(new vscode.Diagnostic(
+                                    new vscode.Range(i, boundIdx, i, boundIdx + bound.length),
+                                    `'${bound}' is a concrete type, not an interface. Generic constraints should be interfaces.`,
+                                    vscode.DiagnosticSeverity.Warning
+                                ));
+                            }
+                        }
+                    }
+                }
             }
         }
 

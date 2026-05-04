@@ -2,6 +2,7 @@
 #define AST_HPP
 
 #include <iostream>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -75,9 +76,13 @@ class FunctionNode : public Node {
 
     bool isExtern = false;
     bool isStatic = false;
+    bool isAbstract = false;             // true for interface method signatures (no body)
 
     std::string linkageName;
     std::unique_ptr<Node> whereClause;
+    std::vector<std::string> typeParams; // generic type params, e.g. ["T", "U"]
+    // where T: Interface1 & Interface2 — maps type param name → required interfaces
+    std::map<std::string, std::vector<std::string>> genericConstraints;
 
 
     void print(int indent) const override {
@@ -129,7 +134,10 @@ class StructField {
 class StructNode : public Node {
    public:
     std::string name;
-    std::vector<std::string> parents;
+    std::vector<std::string> parents;      // struct inheritance chain
+    std::vector<std::string> interfaces;   // interface conformances (populated by Sema)
+    std::vector<std::string> typeParams;   // generic type params, e.g. ["T"]
+    std::map<std::string, std::vector<std::string>> genericConstraints; // where T: Interface
     std::vector<StructField> fields;
 
     void print(int indent) const override {
@@ -650,6 +658,27 @@ struct RangeLiteralNode : public Node {
         std::cout << sp << "  ..\n";
         end->print(indent + 2);
         std::cout << sp << ")\n";
+    }
+};
+
+// interface Printable { define __str(self) -> String }
+class InterfaceNode : public Node {
+   public:
+    std::string name;
+    std::vector<std::string> extends;                        // other interfaces this extends
+    std::vector<std::unique_ptr<FunctionNode>> methods;      // abstract method signatures
+
+    void print(int indent) const override {
+        std::string sp(indent, ' ');
+        std::cout << sp << "Interface: " << name;
+        if (!extends.empty()) {
+            std::cout << " : ";
+            for (size_t i = 0; i < extends.size(); i++)
+                std::cout << extends[i] << (i + 1 < extends.size() ? ", " : "");
+        }
+        std::cout << " {" << std::endl;
+        for (const auto& m : methods) m->print(indent + 2);
+        std::cout << sp << "}" << std::endl;
     }
 };
 

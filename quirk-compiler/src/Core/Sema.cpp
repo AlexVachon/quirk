@@ -361,14 +361,16 @@ void Sema::checkFunction(FunctionNode *f)
     {
         // No return statement found — default to void
         f->returnType = "void";
-        if (!f->cls.empty() && methodRegistry[f->cls].count(f->name))
-            methodRegistry[f->cls][f->name]->returnType = "void";
+        auto clsIt = methodRegistry.find(f->cls);
+        if (!f->cls.empty() && clsIt != methodRegistry.end() && clsIt->second.count(f->name))
+            clsIt->second[f->name]->returnType = "void";
     }
     else if (!f->cls.empty() && f->returnType != "void")
     {
         // Sync inferred return type back to registry (handles duplicate parsing)
-        if (methodRegistry[f->cls].count(f->name))
-            methodRegistry[f->cls][f->name]->returnType = f->returnType;
+        auto clsIt = methodRegistry.find(f->cls);
+        if (clsIt != methodRegistry.end() && clsIt->second.count(f->name))
+            clsIt->second[f->name]->returnType = f->returnType;
     }
 
     exitScope();
@@ -598,15 +600,14 @@ void Sema::checkFor(ForNode *node)
     else if (structRegistry.count(iterType))
     {
         std::string iterMethod = iterType + "___iter";
-        if (methodRegistry[iterType].count(iterMethod))
+        auto mit = methodRegistry.find(iterType);
+        if (mit != methodRegistry.end() && mit->second.count(iterMethod))
         {
-            std::string iterStruct =
-                methodRegistry[iterType][iterMethod]->returnType;
+            std::string iterStruct = mit->second.at(iterMethod)->returnType;
             std::string nextMethod = iterStruct + "___next";
-            if (methodRegistry[iterStruct].count(nextMethod))
-            {
-                itemType = methodRegistry[iterStruct][nextMethod]->returnType;
-            }
+            auto mit2 = methodRegistry.find(iterStruct);
+            if (mit2 != methodRegistry.end() && mit2->second.count(nextMethod))
+                itemType = mit2->second.at(nextMethod)->returnType;
         }
     }
 
@@ -830,16 +831,17 @@ std::string Sema::checkBinaryOp(BinaryOpNode *node)
 
         if (!magic.empty())
         {
-            // For !=, fall back to __eq if __ne is not defined
-            std::string funcName = lType + "_" + magic;
-            if (!methodRegistry[lType].count(funcName) && node->op == "!=")
-                funcName = lType + "_" + "__eq";
-
-            if (methodRegistry[lType].count(funcName))
-            {
-                static const std::set<std::string> boolOps = {"==","!=","<","<=",">",">="};
-                if (boolOps.count(node->op)) return "Bool";
-                return methodRegistry[lType][funcName]->returnType;
+            auto mit = methodRegistry.find(lType);
+            if (mit != methodRegistry.end()) {
+                std::string funcName = lType + "_" + magic;
+                if (!mit->second.count(funcName) && node->op == "!=")
+                    funcName = lType + "___eq";
+                auto fit = mit->second.find(funcName);
+                if (fit != mit->second.end()) {
+                    static const std::set<std::string> boolOps = {"==","!=","<","<=",">",">="};
+                    if (boolOps.count(node->op)) return "Bool";
+                    return fit->second->returnType;
+                }
             }
         }
     }
@@ -902,13 +904,12 @@ std::string Sema::checkMemberAccess(MemberAccessNode *node)
 
     if (objType.rfind("MODULE$", 0) == 0)
     {
-        std::string modName = objType.substr(7); 
-        std::string funcName = node->memberName;
-
-        if (methodRegistry[""].count(funcName))
-        {
-            return methodRegistry[""][funcName]->returnType;
-        }
+        std::string modName = objType.substr(7);
+        const std::string& funcName = node->memberName;
+        auto& globals = methodRegistry[""];
+        auto fit = globals.find(funcName);
+        if (fit != globals.end())
+            return fit->second->returnType;
         fatalError("module '" + modName + "' has no function '" + funcName + "'",
                    node->line, node->col, node->filePath);
     }
@@ -1112,43 +1113,38 @@ std::string Sema::checkCall(CallNode *node)
 
         if (structRegistry.count(objType))
         {
-            std::function<std::string(const std::string&)> searchMethod = [&](const std::string& currentType) -> std::string {
-                if (!structRegistry.count(currentType)) return "";
-                
+            auto searchMethod = [&](const std::string& currentType, auto& self) -> std::string {
+                auto sIt = structRegistry.find(currentType);
+                if (sIt == structRegistry.end()) return "";
+
                 std::string funcName = currentType + "_" + m->memberName;
-                if (methodRegistry[currentType].count(funcName)) {
-                    FunctionNode *func = methodRegistry[currentType][funcName];
-
-                    // Validate argument types against parameters.
-                    // Note: 'self' is already stripped from func->parameters by the parser
-                    // (Parser.cpp erases parameters[0] when name == "self"), so no offset needed.
-                    // Stop early if we hit a variadic parameter — the remaining args are
-                    // bundled into a List at codegen time.
-                    for (size_t i = 0; i < node->args.size() && i < func->parameters.size(); ++i) {
-                        if (func->parameters[i].isVariadic) break;
-
-                        std::string argType = checkExpression(node->args[i].value.get());
-                        const std::string &paramType = func->parameters[i].type;
-                        if (!isCompatibleTypes(paramType, argType))
-                            fatalError("argument " + std::to_string(i + 1) + " of '" + funcName +
-                                       "' expected '" + paramType + "' but got '" + argType + "'",
-                                       node->line, node->col, node->filePath);
+                auto clsIt = methodRegistry.find(currentType);
+                if (clsIt != methodRegistry.end()) {
+                    auto fIt = clsIt->second.find(funcName);
+                    if (fIt != clsIt->second.end()) {
+                        FunctionNode* func = fIt->second;
+                        for (size_t i = 0; i < node->args.size() && i < func->parameters.size(); ++i) {
+                            if (func->parameters[i].isVariadic) break;
+                            std::string argType = checkExpression(node->args[i].value.get());
+                            const std::string& paramType = func->parameters[i].type;
+                            if (!isCompatibleTypes(paramType, argType))
+                                fatalError("argument " + std::to_string(i + 1) + " of '" + funcName +
+                                           "' expected '" + paramType + "' but got '" + argType + "'",
+                                           node->line, node->col, node->filePath);
+                        }
+                        const std::string& ret = func->returnType;
+                        return (ret.empty() || ret == "auto") ? std::string("Any") : ret;
                     }
-
-                    std::string ret = func->returnType;
-                    if (ret.empty() || ret == "auto") return "Any";
-                    return ret;
                 }
-                
-                for (const std::string& parent : structRegistry[currentType]->parents) {
-                    std::string res = searchMethod(parent);
+
+                for (const std::string& parent : sIt->second->parents) {
+                    std::string res = self(parent, self);
                     if (!res.empty()) return res;
                 }
-                
                 return "";
             };
 
-            std::string retType = searchMethod(objType);
+            std::string retType = searchMethod(objType, searchMethod);
             if (!retType.empty()) return retType;
         }
     }
@@ -1303,10 +1299,13 @@ std::string Sema::resolveVariable(const std::string &name)
     if (!currentClass.empty())
     {
         std::string staticName = currentClass + "_" + name;
-        if (methodRegistry[currentClass].count(staticName))
-        {
-            std::string ret = methodRegistry[currentClass][staticName]->returnType;
-            return ret.empty() ? "void" : ret;
+        auto clsIt = methodRegistry.find(currentClass);
+        if (clsIt != methodRegistry.end()) {
+            auto fit = clsIt->second.find(staticName);
+            if (fit != clsIt->second.end()) {
+                const std::string& ret = fit->second->returnType;
+                return ret.empty() ? "void" : ret;
+            }
         }
     }
 
@@ -1353,29 +1352,27 @@ std::string Sema::resolveMember(const std::string &sName, const std::string &mNa
     if (!structRegistry.count(lookupName))
         return "unknown";
 
-    std::function<std::string(const std::string&)> searchMember = [&](const std::string& currentType) -> std::string {
-        if (!structRegistry.count(currentType)) return "unknown";
-        
-        StructNode* st = structRegistry[currentType];
-        
-        for (const auto &f : st->fields) {
+    auto searchMember = [&](const std::string& currentType, auto& self) -> std::string {
+        auto sIt = structRegistry.find(currentType);
+        if (sIt == structRegistry.end()) return "unknown";
+        StructNode* st = sIt->second;
+
+        for (const auto& f : st->fields)
             if (f.name == mName) return f.type;
-        }
-        
+
         std::string funcName = currentType + "_" + mName;
-        if (methodRegistry[currentType].count(funcName)) {
+        auto clsIt = methodRegistry.find(currentType);
+        if (clsIt != methodRegistry.end() && clsIt->second.count(funcName))
             return "method";
-        }
-        
+
         for (const std::string& parentName : st->parents) {
-            std::string res = searchMember(parentName);
+            std::string res = self(parentName, self);
             if (res != "unknown") return res;
         }
-        
         return "unknown";
     };
 
-    return searchMember(lookupName);
+    return searchMember(lookupName, searchMember);
 }
 
 void Sema::checkWith(WithNode *node)

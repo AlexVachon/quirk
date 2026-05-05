@@ -764,6 +764,12 @@ std::string Parser::computeModulePrefix() const {
     for (auto& part : parts)
         if (part == "typing") part = "core";
 
+    // Strip the extra "primitives" directory level introduced by the typing/primitives/ subdir.
+    // typing/primitives/string.qk → [core, primitives, string] → [core, string] → Core_String
+    // typing/primitives/int.qk    → [core, primitives, int]    → [core, int]   → Core_Primitives (below)
+    if (parts.size() >= 3 && parts[0] == "core" && parts[1] == "primitives")
+        parts.erase(parts.begin() + 1);
+
     // Normalize split primitive files back to "primitives" so the C runtime symbols match.
     // typing/int.qk, typing/double.qk, typing/bool.qk, typing/char.qk all live under
     // core/primitives.c in the runtime.

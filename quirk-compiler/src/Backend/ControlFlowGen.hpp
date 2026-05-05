@@ -595,9 +595,11 @@ private:
             if (sName.find("struct.") == 0) sName = sName.substr(7);
             Function* eqFn = TheModule->getFunction(sName + "___eq");
             if (!eqFn) {
-                std::string suffix = "___eq";
+                // Scan for a function whose name contains the struct-specific pattern,
+                // e.g. "Core_String_String___eq". Avoids picking up Char___eq for String.
+                std::string target = sName + "___eq";
                 for (auto& F : *TheModule)
-                    if (F.getName().endswith(suffix)) { eqFn = &F; break; }
+                    if (F.getName().contains(target)) { eqFn = &F; break; }
             }
             if (eqFn) {
                 // Ensure R has the same type as L (both String* for example)

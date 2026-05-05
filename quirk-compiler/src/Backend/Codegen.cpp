@@ -178,16 +178,12 @@ class LLVMCodegen {
             // We must NOT add __type_id to those, or the C ABI would break.
             // String, StringIterator, List, Map, Char, etc. all have extern __init.
             std::set<std::string> externOnly = {"Type", "Callable", "Tuple"};
+            // Single pass: collect extern-init classes (avoids O(structs × functions) scan).
             for (const auto& n : nodes) {
-                if (auto s = dynamic_cast<StructNode*>(n.get())) {
-                    for (const auto& n2 : nodes) {
-                        if (auto f = dynamic_cast<FunctionNode*>(n2.get())) {
-                            if (f->cls == s->name && f->isExtern &&
-                                f->name.find("__init") != std::string::npos) {
-                                externOnly.insert(s->name);
-                                break;
-                            }
-                        }
+                if (auto f = dynamic_cast<FunctionNode*>(n.get())) {
+                    if (!f->cls.empty() && f->isExtern &&
+                        f->name.find("__init") != std::string::npos) {
+                        externOnly.insert(f->cls);
                     }
                 }
             }
@@ -199,21 +195,21 @@ class LLVMCodegen {
 
             // Recursively check: struct is vtable-eligible iff it and all ancestors
             // are not in externOnly and are not "Exception".
-            std::function<bool(const std::string&, std::set<std::string>&)> eligible =
-                [&](const std::string& name, std::set<std::string>& vis) -> bool {
-                    if (vis.count(name)) return true;
-                    vis.insert(name);
-                    if (externOnly.count(name) || name == "Exception") return false;
-                    if (astH.count(name))
-                        for (const auto& p : astH[name])
-                            if (!eligible(p, vis)) return false;
-                    return true;
-                };
+            auto eligible = [&](const std::string& name, std::set<std::string>& vis, auto& self) -> bool {
+                if (vis.count(name)) return true;
+                vis.insert(name);
+                if (externOnly.count(name) || name == "Exception") return false;
+                auto it = astH.find(name);
+                if (it != astH.end())
+                    for (const auto& p : it->second)
+                        if (!self(p, vis, self)) return false;
+                return true;
+            };
 
             for (const auto& n : nodes) {
                 if (auto s = dynamic_cast<StructNode*>(n.get())) {
                     std::set<std::string> vis;
-                    if (eligible(s->name, vis)) vtableEligible.insert(s->name);
+                    if (eligible(s->name, vis, eligible)) vtableEligible.insert(s->name);
                 }
             }
 
@@ -224,6 +220,12 @@ class LLVMCodegen {
                     if (vtableEligible.count(s->name)) structTypeIds[s->name] = nextId++;
         }
         // ---------------------------------
+
+        // Pre-build name→StructNode* index so extractFields doesn't scan all nodes per parent.
+        std::unordered_map<std::string, StructNode*> structNodeMap;
+        for (const auto& node : nodes)
+            if (auto s = dynamic_cast<StructNode*>(node.get()))
+                structNodeMap[s->name] = s;
 
         if (verbose) std::cerr << "[Codegen] Pass 2: Filling struct bodies and resolving inheritance\n";
         for (const auto& node : nodes) {
@@ -238,14 +240,9 @@ class LLVMCodegen {
 
                 auto extractFields = [&](StructNode* sn, std::vector<Type*>& types, std::vector<std::string>& names, auto& extractRef) -> void {
                     for (const std::string& parentName : sn->parents) {
-                        for (const auto& searchNode : nodes) {
-                            if (auto ps = dynamic_cast<StructNode*>(searchNode.get())) {
-                                if (ps->name == parentName) {
-                                    extractRef(ps, types, names, extractRef); 
-                                    break;
-                                }
-                            }
-                        }
+                        auto it = structNodeMap.find(parentName);
+                        if (it != structNodeMap.end())
+                            extractRef(it->second, types, names, extractRef);
                     }
                     for (const auto& field : sn->fields) {
                         Type* t = typeGen->getLLVMType(field.type);
@@ -370,19 +367,21 @@ class LLVMCodegen {
                 std::string rawMethod = methodSuffix(funcName, cls);
                 if (rawMethod.empty()) continue;
 
-                std::function<void(const std::string&)> checkAncestor = [&](const std::string& parent) {
+                auto checkAncestor = [&](const std::string& parent, auto& self) -> void {
                     if (!vtableEligible.count(parent)) return;
                     std::string parentFn = (rawMethod.size() >= 2 && rawMethod[0] == '_' && rawMethod[1] == '_')
-                        ? parent + rawMethod        // e.g. "Shape__init"
-                        : parent + "_" + rawMethod; // e.g. "Shape_area"
+                        ? parent + rawMethod
+                        : parent + "_" + rawMethod;
                     if (functionDeclarations.count(parentFn))
                         overrideMap[parent][rawMethod].push_back({cls, structTypeIds[cls]});
-                    if (structHierarchy.count(parent))
-                        for (const auto& gp : structHierarchy[parent]) checkAncestor(gp);
+                    auto hit = structHierarchy.find(parent);
+                    if (hit != structHierarchy.end())
+                        for (const auto& gp : hit->second) self(gp, self);
                 };
 
-                if (structHierarchy.count(cls))
-                    for (const auto& parent : structHierarchy[cls]) checkAncestor(parent);
+                auto hit = structHierarchy.find(cls);
+                if (hit != structHierarchy.end())
+                    for (const auto& parent : hit->second) checkAncestor(parent, checkAncestor);
             }
         }
         // -------------------------------------------
@@ -643,14 +642,15 @@ class LLVMCodegen {
             // that calling super().__init() doesn't silently overwrite the type.
             bool isInitMethod = node->name.find("__init") != std::string::npos && !node->cls.empty();
             if (isInitMethod && StructTypes.count("Exception") && StructTypes.count("String")) {
-                std::function<bool(const std::string&)> inheritsException = [&](const std::string& c) -> bool {
+                auto inheritsException = [&](const std::string& c, auto& self) -> bool {
                     if (c == "Exception") return true;
-                    if (structHierarchy.count(c))
-                        for (const auto& p : structHierarchy.at(c))
-                            if (inheritsException(p)) return true;
+                    auto it = structHierarchy.find(c);
+                    if (it != structHierarchy.end())
+                        for (const auto& p : it->second)
+                            if (self(p, self)) return true;
                     return false;
                 };
-                if (inheritsException(node->cls)) {
+                if (inheritsException(node->cls, inheritsException)) {
                     Value* selfVal = &*F->arg_begin();
                     Value* excPtr  = Builder.CreateBitCast(selfVal, PointerType::getUnqual(StructTypes["Exception"]));
                     Value* typeFieldPtr = Builder.CreateStructGEP(StructTypes["Exception"], excPtr, 0);
@@ -1276,26 +1276,25 @@ class LLVMCodegen {
             // Walk inheritance chain for inherited methods (user-defined parents only;
             // extern parents are resolved via resolveFunction below).
             if (!func && structHierarchy.count(typeName)) {
-                std::function<Function*(const std::string&)> searchHierarchy = [&](const std::string& currentType) -> Function* {
-                    if (structHierarchy.count(currentType)) {
-                        for (const std::string& parentName : structHierarchy[currentType]) {
-                            Function* foundFunc = TheModule->getFunction(parentName + "_" + member->memberName);
-                            if (!foundFunc) foundFunc = TheModule->getFunction(parentName + "___" + member->memberName);
-                            // Also check via resolveFunction for extern parent methods
-                            if (!foundFunc) foundFunc = resolveFunction(parentName + "_"   + member->memberName);
-                            if (!foundFunc) foundFunc = resolveFunction(parentName + "___" + member->memberName);
-                            if (!foundFunc && member->memberName == "__init") {
-                                foundFunc = resolveFunction(parentName + "__init");
-                                if (!foundFunc) foundFunc = resolveFunction(parentName + "___init");
-                            }
-                            if (foundFunc) return foundFunc;
-                            foundFunc = searchHierarchy(parentName);
-                            if (foundFunc) return foundFunc;
+                auto searchHierarchy = [&](const std::string& currentType, auto& self) -> Function* {
+                    auto hit = structHierarchy.find(currentType);
+                    if (hit == structHierarchy.end()) return nullptr;
+                    for (const std::string& parentName : hit->second) {
+                        Function* foundFunc = TheModule->getFunction(parentName + "_" + member->memberName);
+                        if (!foundFunc) foundFunc = TheModule->getFunction(parentName + "___" + member->memberName);
+                        if (!foundFunc) foundFunc = resolveFunction(parentName + "_"   + member->memberName);
+                        if (!foundFunc) foundFunc = resolveFunction(parentName + "___" + member->memberName);
+                        if (!foundFunc && member->memberName == "__init") {
+                            foundFunc = resolveFunction(parentName + "__init");
+                            if (!foundFunc) foundFunc = resolveFunction(parentName + "___init");
                         }
+                        if (foundFunc) return foundFunc;
+                        foundFunc = self(parentName, self);
+                        if (foundFunc) return foundFunc;
                     }
                     return nullptr;
                 };
-                func = searchHierarchy(typeName);
+                func = searchHierarchy(typeName, searchHierarchy);
             }
 
             // --- LINKAGE NAME FALLBACK ---
@@ -3005,8 +3004,12 @@ Value* LLVMCodegen::handleExpression(Node* node) {
 
                 auto resolveFunc = [&](const std::string& suffix) -> Function* {
                     Function* f = TheModule->getFunction(sName + "___" + suffix.substr(2));
-                    if (!f) for (auto& F : *TheModule)
-                        if (F.getName().endswith("___" + suffix.substr(2))) { f = &F; break; }
+                    if (!f) {
+                        // Search for struct-specific match to avoid picking up wrong type's method.
+                        std::string target = sName + "___" + suffix.substr(2);
+                        for (auto& F : *TheModule)
+                            if (F.getName().contains(target)) { f = &F; break; }
+                    }
                     return f;
                 };
 

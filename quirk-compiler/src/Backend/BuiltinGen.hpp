@@ -75,9 +75,10 @@ class BuiltinGen {
         Function::Create(FunctionType::get(Type::getDoubleTy(Context), {anyPtrTy}, false), Function::ExternalLinkage, "Core_Primitives_Any_to_float", TheModule);
         Function::Create(FunctionType::get(i32Ty,    {anyPtrTy, anyPtrTy}, false), Function::ExternalLinkage, "Core_Primitives_Any_isinstance", TheModule);
 
-        // Bool → String conversion used by print
-        auto strPtrTy = Type::getInt8PtrTy(Context); // String* treated as i8* until we have StructTypes
-        Function::Create(FunctionType::get(strPtrTy, {i32Ty}, false), Function::ExternalLinkage, "Core_Primitives_Bool_str", TheModule);
+        // Core_Primitives_Bool_str is intentionally NOT pre-declared here.
+        // Pass 3 declares it with the correct %String* return type from bool.qk's extern.
+        // Pre-declaring with i8* causes a type conflict that makes all Bool→String calls return i8*.
+        auto strPtrTy = Type::getInt8PtrTy(Context);
         Function::Create(FunctionType::get(i32Ty, {strPtrTy, strPtrTy}, false), Function::ExternalLinkage, "Core_Primitives_Quirk_isinstance", TheModule);
     }
 

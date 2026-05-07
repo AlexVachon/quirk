@@ -361,16 +361,12 @@ void Sema::checkFunction(FunctionNode *f)
     {
         // No return statement found — default to void
         f->returnType = "void";
-        auto clsIt = methodRegistry.find(f->cls);
-        if (!f->cls.empty() && clsIt != methodRegistry.end() && clsIt->second.count(f->name))
-            clsIt->second[f->name]->returnType = "void";
+        if (auto* m = findMethod(f->cls, f->name)) m->returnType = "void";
     }
     else if (!f->cls.empty() && f->returnType != "void")
     {
         // Sync inferred return type back to registry (handles duplicate parsing)
-        auto clsIt = methodRegistry.find(f->cls);
-        if (clsIt != methodRegistry.end() && clsIt->second.count(f->name))
-            clsIt->second[f->name]->returnType = f->returnType;
+        if (auto* m = findMethod(f->cls, f->name)) m->returnType = f->returnType;
     }
 
     exitScope();
@@ -599,15 +595,10 @@ void Sema::checkFor(ForNode *node)
         itemType = "String";
     else if (structRegistry.count(iterType))
     {
-        std::string iterMethod = iterType + "___iter";
-        auto mit = methodRegistry.find(iterType);
-        if (mit != methodRegistry.end() && mit->second.count(iterMethod))
-        {
-            std::string iterStruct = mit->second.at(iterMethod)->returnType;
-            std::string nextMethod = iterStruct + "___next";
-            auto mit2 = methodRegistry.find(iterStruct);
-            if (mit2 != methodRegistry.end() && mit2->second.count(nextMethod))
-                itemType = mit2->second.at(nextMethod)->returnType;
+        if (auto* iterFn = findMethod(iterType, iterType + "___iter")) {
+            const std::string& iterStruct = iterFn->returnType;
+            if (auto* nextFn = findMethod(iterStruct, iterStruct + "___next"))
+                itemType = nextFn->returnType;
         }
     }
 
@@ -831,17 +822,13 @@ std::string Sema::checkBinaryOp(BinaryOpNode *node)
 
         if (!magic.empty())
         {
-            auto mit = methodRegistry.find(lType);
-            if (mit != methodRegistry.end()) {
-                std::string funcName = lType + "_" + magic;
-                if (!mit->second.count(funcName) && node->op == "!=")
-                    funcName = lType + "___eq";
-                auto fit = mit->second.find(funcName);
-                if (fit != mit->second.end()) {
-                    static const std::set<std::string> boolOps = {"==","!=","<","<=",">",">="};
-                    if (boolOps.count(node->op)) return "Bool";
-                    return fit->second->returnType;
-                }
+            FunctionNode* fn = findMethod(lType, lType + "_" + magic);
+            // For !=, fall back to __eq if __ne is not defined
+            if (!fn && node->op == "!=") fn = findMethod(lType, lType + "___eq");
+            if (fn) {
+                static const std::set<std::string> boolOps = {"==","!=","<","<=",">",">="};
+                if (boolOps.count(node->op)) return "Bool";
+                return fn->returnType;
             }
         }
     }
@@ -906,10 +893,8 @@ std::string Sema::checkMemberAccess(MemberAccessNode *node)
     {
         std::string modName = objType.substr(7);
         const std::string& funcName = node->memberName;
-        auto& globals = methodRegistry[""];
-        auto fit = globals.find(funcName);
-        if (fit != globals.end())
-            return fit->second->returnType;
+        if (auto* fn = findMethod("", funcName))
+            return fn->returnType;
         fatalError("module '" + modName + "' has no function '" + funcName + "'",
                    node->line, node->col, node->filePath);
     }
@@ -919,9 +904,8 @@ std::string Sema::checkMemberAccess(MemberAccessNode *node)
         fatalError("'" + objType + "' has no member '" + node->memberName + "'",
                    node->line, node->col, node->filePath);
     if (type == "method") {
-        std::string mfName = objType + "_" + node->memberName;
-        if (methodRegistry[objType].count(mfName)) {
-            std::string ret = methodRegistry[objType][mfName]->returnType;
+        if (auto* fn = findMethod(objType, objType + "_" + node->memberName)) {
+            const std::string& ret = fn->returnType;
             if (ret.empty() || ret == "auto") return "Any";
             return ret;
         }
@@ -1118,23 +1102,18 @@ std::string Sema::checkCall(CallNode *node)
                 if (sIt == structRegistry.end()) return "";
 
                 std::string funcName = currentType + "_" + m->memberName;
-                auto clsIt = methodRegistry.find(currentType);
-                if (clsIt != methodRegistry.end()) {
-                    auto fIt = clsIt->second.find(funcName);
-                    if (fIt != clsIt->second.end()) {
-                        FunctionNode* func = fIt->second;
-                        for (size_t i = 0; i < node->args.size() && i < func->parameters.size(); ++i) {
-                            if (func->parameters[i].isVariadic) break;
-                            std::string argType = checkExpression(node->args[i].value.get());
-                            const std::string& paramType = func->parameters[i].type;
-                            if (!isCompatibleTypes(paramType, argType))
-                                fatalError("argument " + std::to_string(i + 1) + " of '" + funcName +
-                                           "' expected '" + paramType + "' but got '" + argType + "'",
-                                           node->line, node->col, node->filePath);
-                        }
-                        const std::string& ret = func->returnType;
-                        return (ret.empty() || ret == "auto") ? std::string("Any") : ret;
+                if (FunctionNode* func = findMethod(currentType, funcName)) {
+                    for (size_t i = 0; i < node->args.size() && i < func->parameters.size(); ++i) {
+                        if (func->parameters[i].isVariadic) break;
+                        std::string argType = checkExpression(node->args[i].value.get());
+                        const std::string& paramType = func->parameters[i].type;
+                        if (!isCompatibleTypes(paramType, argType))
+                            fatalError("argument " + std::to_string(i + 1) + " of '" + funcName +
+                                       "' expected '" + paramType + "' but got '" + argType + "'",
+                                       node->line, node->col, node->filePath);
                     }
+                    const std::string& ret = func->returnType;
+                    return (ret.empty() || ret == "auto") ? std::string("Any") : ret;
                 }
 
                 for (const std::string& parent : sIt->second->parents) {
@@ -1298,14 +1277,9 @@ std::string Sema::resolveVariable(const std::string &name)
 
     if (!currentClass.empty())
     {
-        std::string staticName = currentClass + "_" + name;
-        auto clsIt = methodRegistry.find(currentClass);
-        if (clsIt != methodRegistry.end()) {
-            auto fit = clsIt->second.find(staticName);
-            if (fit != clsIt->second.end()) {
-                const std::string& ret = fit->second->returnType;
-                return ret.empty() ? "void" : ret;
-            }
+        if (auto* fn = findMethod(currentClass, currentClass + "_" + name)) {
+            const std::string& ret = fn->returnType;
+            return ret.empty() ? "void" : ret;
         }
     }
 
@@ -1360,9 +1334,7 @@ std::string Sema::resolveMember(const std::string &sName, const std::string &mNa
         for (const auto& f : st->fields)
             if (f.name == mName) return f.type;
 
-        std::string funcName = currentType + "_" + mName;
-        auto clsIt = methodRegistry.find(currentType);
-        if (clsIt != methodRegistry.end() && clsIt->second.count(funcName))
+        if (findMethod(currentType, currentType + "_" + mName))
             return "method";
 
         for (const std::string& parentName : st->parents) {
@@ -1382,8 +1354,8 @@ void Sema::checkWith(WithNode *node)
     if (!structRegistry.count(resType))
         fatalError("'with' resource must be a struct, got '" + resType + "'",
                    node->line, node->col, node->filePath);
-    if (!methodRegistry[resType].count(resType + "___enter") ||
-        !methodRegistry[resType].count(resType + "___exit"))
+    if (!findMethod(resType, resType + "___enter") ||
+        !findMethod(resType, resType + "___exit"))
         fatalError("'" + resType + "' must implement __enter and __exit for use in 'with'",
                    node->line, node->col, node->filePath);
     enterScope();

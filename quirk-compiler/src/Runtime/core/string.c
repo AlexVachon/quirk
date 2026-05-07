@@ -1072,6 +1072,7 @@ String* Core_String_String_format_list(String* self, List* args) {
 String* Core_String_String_format(String* self, List* args) {
     return Core_String_String_format_list(self, args);
 }
+
 int Core_String_String_length(String* self) {
     if (!self) return 0;
     return self->length;

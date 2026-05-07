@@ -67,6 +67,12 @@ class Sema {
     std::map<std::string, EnumNode*> enumRegistry;
     std::map<std::string, InterfaceNode*> interfaceRegistry;
     std::map<std::string, std::map<std::string, FunctionNode*>> methodRegistry;
+    FunctionNode* findMethod(const std::string& cls, const std::string& name) {
+        auto cit = methodRegistry.find(cls);
+        if (cit == methodRegistry.end()) return nullptr;
+        auto fit = cit->second.find(name);
+        return fit == cit->second.end() ? nullptr : fit->second;
+    }
     struct VarInfo { std::string type; bool isConst = false; bool used = false; bool isParam = false; std::string filePath; };
     std::vector<std::map<std::string, VarInfo>> scopeStack;
     std::map<std::string, std::string> globalModuleAliases;

@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { maskLine } from './utils/maskLine';
 
 export class QuirkRenameProvider implements vscode.RenameProvider {
 
@@ -73,7 +74,7 @@ export class QuirkRenameProvider implements vscode.RenameProvider {
                 // For locals, skip lines outside the enclosing function scope
                 if (isLocal && !this.isLineInSameScope(document, position, i)) continue;
 
-                const maskedLine = this.maskLine(line);
+                const maskedLine = maskLine(line);
                 const regex = new RegExp(`\\b${escapeRegex(oldName)}\\b`, 'g');
                 let match: RegExpExecArray | null;
 
@@ -124,39 +125,6 @@ export class QuirkRenameProvider implements vscode.RenameProvider {
         return -1;
     }
 
-    private maskLine(line: string): string {
-        let masked = "";
-        let inString = false;
-        let quoteChar = '';
-        let inInterpolation = false;
-        let braceDepth = 0;
-
-        for (let j = 0; j < line.length; j++) {
-            const char = line[j];
-            const next = line[j + 1];
-
-            if (!inString) {
-                if (char === '/' && next === '/') { masked += ' '.repeat(line.length - j); break; }
-                if (char === '"' || char === "'") { inString = true; quoteChar = char; masked += ' '; }
-                else { masked += char; }
-            } else {
-                if (!inInterpolation) {
-                    if (char === '\\') { masked += '  '; j++; }
-                    else if (char === '$' && next === '{') { inInterpolation = true; braceDepth = 1; masked += '  '; j++; }
-                    else if (char === quoteChar) { inString = false; quoteChar = ''; masked += ' '; }
-                    else { masked += ' '; }
-                } else {
-                    if (char === '{') { braceDepth++; masked += char; }
-                    else if (char === '}') {
-                        braceDepth--;
-                        if (braceDepth === 0) { inInterpolation = false; masked += ' '; }
-                        else { masked += char; }
-                    } else { masked += char; }
-                }
-            }
-        }
-        return masked;
-    }
 }
 
 function escapeRegex(s: string): string {

@@ -178,7 +178,6 @@ class LLVMCodegen {
             // We must NOT add __type_id to those, or the C ABI would break.
             // String, StringIterator, List, Map, Char, etc. all have extern __init.
             std::set<std::string> externOnly = {"Type", "Callable", "Tuple"};
-            // Single pass: collect extern-init classes (avoids O(structs × functions) scan).
             for (const auto& n : nodes) {
                 if (auto f = dynamic_cast<FunctionNode*>(n.get())) {
                     if (!f->cls.empty() && f->isExtern &&
@@ -221,7 +220,6 @@ class LLVMCodegen {
         }
         // ---------------------------------
 
-        // Pre-build name→StructNode* index so extractFields doesn't scan all nodes per parent.
         std::unordered_map<std::string, StructNode*> structNodeMap;
         for (const auto& node : nodes)
             if (auto s = dynamic_cast<StructNode*>(node.get()))

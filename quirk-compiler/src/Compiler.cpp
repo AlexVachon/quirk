@@ -377,10 +377,18 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Parse CLI flags
+    // Parse CLI flags. Anything after the input file (the first non-`-` arg)
+    // is forwarded to the user script via sys.argv() — same convention as
+    // python/node: `quirk [compiler-flags] script.qk [script-args...]`.
     CompilerOptions opts;
+    std::vector<std::string> scriptArgs;
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
+        if (!opts.inputFile.empty()) {
+            // Already seen script — everything else is the script's own argv.
+            scriptArgs.push_back(arg);
+            continue;
+        }
         if      (arg == "-h" || arg == "--help") { printUsage(); return 0; }
         else if (arg == "--compile-only") opts.runImmediate = false;
         else if (arg == "--check")        { opts.checkOnly = true; opts.runImmediate = false; }
@@ -652,7 +660,12 @@ int main(int argc, char* argv[]) {
             return 1;
         }
         auto mainFn = (int(*)(int, char**))mainSym->getAddress();
-        int ret = mainFn(argc, argv);
+        // Build the argv visible to the running script: [scriptPath, ...scriptArgs]
+        // — argv[0] is the source file path; scriptArgs is everything after.
+        std::vector<char*> scriptArgv;
+        scriptArgv.push_back(const_cast<char*>(opts.inputFile.c_str()));
+        for (auto& a : scriptArgs) scriptArgv.push_back(const_cast<char*>(a.c_str()));
+        int ret = mainFn((int)scriptArgv.size(), scriptArgv.data());
         if (ret != 0) {
             std::cerr << "Error: Program exited with code " << ret << std::endl;
             return ret;

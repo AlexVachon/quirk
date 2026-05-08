@@ -43,7 +43,8 @@ const PRELUDE_MODULES = [
     'time/index.qk',
     'regex/index.qk',
     'test/index.qk',
-    'crypto/index.qk'
+    'crypto/index.qk',
+    'argparse/index.qk'
 ];
 
 export class QuirkDefinitionProvider implements vscode.DefinitionProvider {

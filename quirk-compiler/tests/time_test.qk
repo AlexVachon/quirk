@@ -1,0 +1,63 @@
+use time
+
+define main() -> void {
+    print("=== now / utc_now ===")
+    local := time.now()
+    utc := time.utc_now()
+    print("local: ${local.iso()}")
+    print("utc:   ${utc.iso()}")
+    print("epoch matches: ${local.epoch == utc.epoch}")
+
+    print("=== components ===")
+    print("year=${local.year} month=${local.month} day=${local.day}")
+    print("h=${local.hour} m=${local.minute} s=${local.second}")
+    print("weekday=${local.weekday}")
+
+    print("=== arithmetic ===")
+    next_week := local.add_days(7)
+    diff := next_week.diff_seconds(local)
+    print("+7d diff = ${diff} seconds (expected 604800)")
+    print("is_after:  ${next_week.is_after(local)}")
+    print("is_before: ${local.is_before(next_week)}")
+
+    next_minute := local.add_minutes(1)
+    print("+1min diff = ${next_minute.diff_seconds(local)} (expected 60)")
+
+    next_hour := local.add_hours(1)
+    print("+1h diff = ${next_hour.diff_seconds(local)} (expected 3600)")
+
+    print("=== make / utc_make ===")
+    epoch_zero := time.utc_make(1970, 1, 1, 0, 0, 0)
+    print("1970-01-01 epoch: ${epoch_zero.epoch} (expected 0)")
+    print("1970-01-01 iso:   ${epoch_zero.iso()}")
+
+    xmas := time.utc_make(2024, 12, 25, 9, 30, 0)
+    print("Christmas iso: ${xmas.iso()}")
+    print("year=${xmas.year} month=${xmas.month} day=${xmas.day}")
+
+    print("=== from_iso round trip ===")
+    src := "2026-01-15T12:34:56Z"
+    parsed := time.from_iso(src)
+    print("parsed: ${parsed.iso()}")
+    print("round-trip match: ${parsed.iso() == src}")
+
+    print("=== format ===")
+    spec := "%Y-%m-%d"
+    iso_date := xmas.format(spec)
+    print("format Y-m-d: ${iso_date}")
+
+    print("=== from_unix ===")
+    fixed := time.utc_from_unix(1577836800)
+    print("epoch 1577836800 = ${fixed.iso()}")  // 2020-01-01 UTC
+
+    print("=== comparison ===")
+    a := time.utc_make(2024, 1, 1, 0, 0, 0)
+    b := time.utc_make(2025, 1, 1, 0, 0, 0)
+    print("a == a: ${a == a}")
+    print("a == b: ${a == b}")
+    print("a < b:  ${a < b}")
+    print("b < a:  ${b < a}")
+    print("a != b: ${a != b}")
+
+    print("Done.")
+}

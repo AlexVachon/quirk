@@ -2843,7 +2843,18 @@ Value* LLVMCodegen::handleExpression(Node* node) {
                         else if (rArg->getType()->isIntegerTy() && expectedTy->isPointerTy())
                             rArg = Builder.CreateIntToPtr(rArg, expectedTy);
                     }
-                    return Builder.CreateCall(magicFn, {L, rArg}, "op_result");
+                    Value* res = Builder.CreateCall(magicFn, {L, rArg}, "op_result");
+                    // Comparison ops are typed Bool at the Quirk level. Extern
+                    // implementations widen the C ABI return to i32, so truncate
+                    // back to i1 — otherwise the result boxes as ANY_INT and
+                    // prints as 0/1 instead of true/false.
+                    static const std::set<std::string> cmpOps = {"==","!=","<","<=",">",">="};
+                    if (cmpOps.count(binOp->op) && res->getType()->isIntegerTy() &&
+                        !res->getType()->isIntegerTy(1)) {
+                        res = Builder.CreateICmpNE(
+                            res, ConstantInt::get(res->getType(), 0), "cmp_to_bool");
+                    }
+                    return res;
                 }
             }
         }
@@ -3045,6 +3056,12 @@ Value* LLVMCodegen::handleExpression(Node* node) {
                         // on i32 1 yields -2; we want 0/1, so compare to 0.
                         result = Builder.CreateICmpEQ(
                             result, ConstantInt::get(result->getType(), 0), "cmp_ne");
+                    } else if (result->getType()->isIntegerTy() &&
+                               !result->getType()->isIntegerTy(1)) {
+                        // Truncate widened i32 Bool to i1 so the result is
+                        // typed Bool — matters for boxing/printing.
+                        result = Builder.CreateICmpNE(
+                            result, ConstantInt::get(result->getType(), 0), "cmp_to_bool");
                     }
                     return result;
                 }

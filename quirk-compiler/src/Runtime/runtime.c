@@ -36,6 +36,7 @@ static void* __gc_calloc(size_t n, size_t s) {
 #include "libs/sys.c"
 #include "libs/net.c"
 #include "libs/math.c"
+#include "libs/fs.c"
 
 #include "libs/encoding/json.c"
 #include "libs/encoding/base64.c"

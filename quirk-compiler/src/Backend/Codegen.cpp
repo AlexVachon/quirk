@@ -3040,7 +3040,12 @@ Value* LLVMCodegen::handleExpression(Node* node) {
                 }
                 if (opFunc) {
                     Value* result = Builder.CreateCall(opFunc, {L, R}, "cmp_result");
-                    if (negated) result = Builder.CreateNot(result, "cmp_ne");
+                    if (negated) {
+                        // __eq returns i32 (Bool widened for C ABI). CreateNot
+                        // on i32 1 yields -2; we want 0/1, so compare to 0.
+                        result = Builder.CreateICmpEQ(
+                            result, ConstantInt::get(result->getType(), 0), "cmp_ne");
+                    }
                     return result;
                 }
             }

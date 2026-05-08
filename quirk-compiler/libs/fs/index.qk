@@ -1,0 +1,246 @@
+---
+File system operations beyond opening/reading a single file.
+
+Path inspection:
+  `fs.exists(p)` — anything (file/dir/symlink) at p
+  `fs.is_file(p)` / `fs.is_dir(p)`
+  `fs.size(p)` — bytes (-1 if not stat-able)
+  `fs.mtime(p)` — last-modified, Unix epoch seconds (-1 on failure)
+
+Path manipulation (pure-Quirk, no I/O):
+  `fs.join(a, b)`        — combines two path segments with the OS separator
+  `fs.basename(p)`       — final component
+  `fs.dirname(p)`        — everything before the final component
+  `fs.extname(p)`        — extension including the dot, or ""
+  `fs.split_ext(p)`      — (stem, ext) tuple
+
+Mutation:
+  `fs.mkdir(p, parents=false)` — create directory, optionally with intermediates
+  `fs.rmdir(p)`                — remove an empty directory
+  `fs.remove(p)`               — delete a file
+  `fs.rename(from, to)`        — move / rename
+
+Listing & navigation:
+  `fs.list_dir(p)`  — non-recursive list of entries (no `.` / `..`)
+  `fs.cwd()`        — current working directory
+  `fs.chdir(p)`     — change current directory
+
+@example
+if not fs.is_dir("build") {
+    fs.mkdir("build")
+}
+for entry in fs.list_dir(".") {
+    if fs.is_file(entry) {
+        print(entry, "->", fs.size(entry), "bytes")
+    }
+}
+---
+from typing.primitives.string use { String }
+from typing.collections.list use { List }
+from typing.exceptions.types use { IOError }
+
+// ===== Path inspection (extern, hits stat) =====
+
+--- True if anything (file, directory, symlink) exists at `path`. ---
+extern define exists(path: String) -> Bool
+
+--- True only if `path` is a regular file. ---
+extern define is_file(path: String) -> Bool
+
+--- True only if `path` is a directory. ---
+extern define is_dir(path: String) -> Bool
+
+--- File size in bytes. Returns -1 if `path` doesn't exist or stat fails. ---
+extern define size(path: String) -> Int
+
+--- Last-modified time as Unix epoch seconds. -1 on failure. ---
+extern define mtime(path: String) -> Int
+
+// ===== Mutation =====
+
+---
+Create the directory at `path`. Returns 0 on success, -1 on failure.
+@param parents If true, also creates any missing intermediate directories
+              (like `mkdir -p`) and treats "already exists" as success.
+---
+extern define mkdir_raw(path: String, parents: Int) -> Int
+
+---
+Create a directory.
+@param parents If true, intermediate directories are also created and an
+              existing directory is not an error (`mkdir -p` semantics).
+@throws IOError on failure.
+---
+define mkdir(path: String, parents: Bool = false) -> void {
+    flag := 0
+    if parents { flag = 1 }
+    if mkdir_raw(path, flag) != 0 {
+        throw IOError("fs.mkdir failed for '" + path + "'")
+    }
+}
+
+---
+Remove an empty directory. @throws IOError on failure (incl. non-empty dir).
+---
+extern define rmdir_raw(path: String) -> Int
+define rmdir(path: String) -> void {
+    if rmdir_raw(path) != 0 {
+        throw IOError("fs.rmdir failed for '" + path + "'")
+    }
+}
+
+---
+Delete a file. @throws IOError on failure.
+---
+extern define remove_raw(path: String) -> Int
+define remove(path: String) -> void {
+    if remove_raw(path) != 0 {
+        throw IOError("fs.remove failed for '" + path + "'")
+    }
+}
+
+---
+Rename / move from one path to another. Atomic on the same filesystem.
+@throws IOError on failure.
+---
+extern define rename_raw(src: String, dst: String) -> Int
+define rename(src: String, dst: String) -> void {
+    if rename_raw(src, dst) != 0 {
+        throw IOError("fs.rename '" + src + "' -> '" + dst + "' failed")
+    }
+}
+
+// ===== Listing & navigation =====
+
+---
+List the immediate entries of directory `path` as a List<String>.
+Excludes `.` and `..`. Returns an empty List if the path doesn't exist
+or isn't a directory.
+@example
+for name in fs.list_dir(".") { print(name) }
+---
+extern define list_dir(path: String) -> List
+
+--- Current working directory as a String. ---
+extern define cwd() -> String
+
+---
+Change current working directory. @throws IOError on failure.
+---
+extern define chdir_raw(path: String) -> Int
+define chdir(path: String) -> void {
+    if chdir_raw(path) != 0 {
+        throw IOError("fs.chdir failed for '" + path + "'")
+    }
+}
+
+// ===== Path manipulation (pure Quirk, no I/O) =====
+
+---
+Join two path components with `/`. Avoids double-slashes when `a` already
+ends with one. (Forward slashes work on Windows in modern paths.)
+@example fs.join("/etc", "hosts")  // "/etc/hosts"
+---
+define join(a: String, b: String) -> String {
+    if a.length() == 0 { return b }
+    if b.length() == 0 { return a }
+    last := a.substring(a.length() - 1, a.length())
+    if last == "/" or last == "\\" {
+        return a + b
+    }
+    return a + "/" + b
+}
+
+---
+Final component of `path` — strips any trailing slash and returns the
+last segment. `"a/b/c.txt"` → `"c.txt"`; `"/etc/"` → `"etc"`.
+---
+define basename(path: String) -> String {
+    if path.length() == 0 { return "" }
+    // Strip trailing slashes (but keep "/" itself).
+    end := path.length()
+    while end > 1 {
+        last := path.substring(end - 1, end)
+        if last != "/" and last != "\\" {
+            break
+        }
+        end = end - 1
+    }
+    trimmed := path.substring(0, end)
+    // Find rightmost separator.
+    slash := trimmed.length() - 1
+    while slash >= 0 {
+        c := trimmed.substring(slash, slash + 1)
+        if c == "/" or c == "\\" {
+            return trimmed.substring(slash + 1, trimmed.length())
+        }
+        slash = slash - 1
+    }
+    return trimmed
+}
+
+---
+Everything before the final path component. `"a/b/c.txt"` → `"a/b"`.
+Returns "" if the path has no separators.
+---
+define dirname(path: String) -> String {
+    end := path.length()
+    while end > 1 {
+        last := path.substring(end - 1, end)
+        if last != "/" and last != "\\" {
+            break
+        }
+        end = end - 1
+    }
+    slash := end - 1
+    while slash >= 0 {
+        c := path.substring(slash, slash + 1)
+        if c == "/" or c == "\\" {
+            if slash == 0 { return path.substring(0, 1) }
+            return path.substring(0, slash)
+        }
+        slash = slash - 1
+    }
+    return ""
+}
+
+---
+File extension including the leading dot (`".txt"`), or "" when there
+is none. A leading dot in the basename (e.g. `.gitignore`) is NOT an
+extension — it's the filename.
+---
+define extname(path: String) -> String {
+    name := basename(path)
+    if name.length() == 0 { return "" }
+    // Skip leading dot (hidden files like .gitignore have no extension).
+    start := 0
+    while start < name.length() {
+        c := name.substring(start, start + 1)
+        if c != "." {
+            break
+        }
+        start = start + 1
+    }
+    i := name.length() - 1
+    while i >= start {
+        c := name.substring(i, i + 1)
+        if c == "." {
+            return name.substring(i, name.length())
+        }
+        i = i - 1
+    }
+    return ""
+}
+
+---
+Splits `path` into `(stem, ext)`.
+`"foo.tar.gz"` → `("foo.tar", ".gz")`. `"README"` → `("README", "")`.
+---
+define split_ext(path: String) -> Tuple {
+    ext := extname(path)
+    if ext.length() == 0 {
+        return (path, "")
+    }
+    stem := path.substring(0, path.length() - ext.length())
+    return (stem, ext)
+}

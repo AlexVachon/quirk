@@ -126,8 +126,13 @@ static void append_formatted(char** buf,
     }
 
     switch (a->tag) {
+        case ANY_BOOL: {
+            // Always print "true"/"false". Numeric format specifiers (%d, %x)
+            // are intentionally ignored — Bools have a textual canonical form.
+            buffer_append(buf, cap, len, a->ival ? "true" : "false");
+            break;
+        }
         case ANY_INT:
-        case ANY_BOOL:
         case ANY_CHAR: {
             if (fmt_spec && strlen(fmt_spec) > 0) {
                 snprintf(format_string, 32, "%%%s", fmt_spec);

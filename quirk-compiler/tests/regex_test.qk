@@ -1,6 +1,5 @@
 use regex
-
-type Match = regex.Match
+from regex use { Match }
 
 define main() -> void {
     print("=== test ===")

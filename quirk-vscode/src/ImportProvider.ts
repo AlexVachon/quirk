@@ -41,7 +41,8 @@ const PRELUDE_MODULES = [
     'math/vectors.qk',
     'fs/index.qk',
     'time/index.qk',
-    'regex/index.qk'
+    'regex/index.qk',
+    'test/index.qk'
 ];
 
 export class QuirkDefinitionProvider implements vscode.DefinitionProvider {

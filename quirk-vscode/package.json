@@ -75,6 +75,18 @@
         }
       }
     },
+    "configurationDefaults": {
+      "[quirk]": {
+        "editor.quickSuggestions": {
+          "other": "on",
+          "comments": "off",
+          "strings": "off"
+        },
+        "editor.suggestOnTriggerCharacters": true,
+        "editor.acceptSuggestionOnEnter": "on",
+        "editor.wordBasedSuggestions": "currentDocument"
+      }
+    },
     "problemMatchers": [
       {
         "name": "quirk",

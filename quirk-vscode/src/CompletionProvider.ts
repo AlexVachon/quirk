@@ -14,6 +14,8 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
     private fileCache = new Map<string, CachedFile>();
     private searchRootsCache: string[] | null = null;
     private searchRootsCacheKey = '';
+    private stdlibModulesCache: Array<{ alias: string; modulePath: string }> | null = null;
+    private stdlibModulesCacheKey = '';
 
     constructor(outputChannel: vscode.OutputChannel) {
         this.outputChannel = outputChannel;
@@ -1158,8 +1160,18 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
             }
         }
 
-        // ---- Symbols from imported modules ----
+        // ---- Module aliases and imported symbols ----
+        // `use X[.Y]` / `use X as Z`  → adds the alias as a Module completion.
+        // `from X use { a, b }`       → adds a, b as items (but not X itself).
         const projectRoot = this.findProjectRoot(document.uri.fsPath);
+        const importedModulePaths = new Set<string>();
+        const useRegex = /^\s*use\s+([.a-zA-Z0-9_/]+)(?:\s+as\s+([a-zA-Z_][a-zA-Z0-9_]*))?/gm;
+        while ((match = useRegex.exec(fullText)) !== null) {
+            const modulePath = match[1];
+            importedModulePaths.add(modulePath);
+            const alias = match[2] || modulePath.split(/[./]/).pop()!;
+            addItem(alias, vscode.CompletionItemKind.Module, `module (${modulePath})`);
+        }
         const importRegex = /^\s*(?:use|from)\s+([.a-zA-Z0-9_/]+)/gm;
         while ((match = importRegex.exec(fullText)) !== null) {
             const modulePath = match[1];
@@ -1171,6 +1183,20 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
                     }
                 });
             }
+        }
+
+        // ---- Auto-import suggestions for stdlib modules not yet imported ----
+        // Selecting one of these inserts the alias at the cursor AND prepends
+        // `use <module>` at the top of the file via additionalTextEdits.
+        const insertPos = this.findImportInsertPosition(document);
+        for (const m of this.getAvailableStdlibModules(projectRoot)) {
+            if (importedModulePaths.has(m.modulePath) || seen.has(m.alias)) continue;
+            seen.add(m.alias);
+            const item = new vscode.CompletionItem(m.alias, vscode.CompletionItemKind.Module);
+            item.detail = `auto-import: use ${m.modulePath}`;
+            item.sortText = '4_' + m.alias;  // after locally-defined and imported names
+            item.additionalTextEdits = [vscode.TextEdit.insert(insertPos, `use ${m.modulePath}\n`)];
+            items.push(item);
         }
 
         // ---- Magic methods (only when cursor is directly inside a struct body) ----
@@ -1300,10 +1326,15 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
                 }
             }
 
-            // Follow re-exports:  from x use { y, z }
+            // Follow re-exports — only relative imports (`from .x use {...}`) are
+            // treated as re-exports of the package's public surface (the typing/
+            // index.qk pattern). Absolute imports (`from io.file use { File }`) are
+            // internal use; surfacing them as members of the importing module would
+            // leak names like `console.File` to outside callers.
             const reExportRegex = /from\s+([.a-zA-Z0-9_/]+)\s+use\s+\{([^}]*)\}/g;
             let match: RegExpExecArray | null;
             while ((match = reExportRegex.exec(content)) !== null) {
+                if (!match[1].startsWith('.')) continue;
                 const targetFile = this.resolvePath(projectRoot, filePath, match[1]);
                 if (targetFile && fs.existsSync(targetFile)) {
                     const valid = new Set(match[2].split(',').map(s => s.trim()));
@@ -1355,7 +1386,7 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
             if (fs.existsSync(targetDir) && fs.lstatSync(targetDir).isDirectory()) {
                 try {
                     for (const f of fs.readdirSync(targetDir)) {
-                        if (f.startsWith('.') || f === '__init.qk') continue;
+                        if (f.startsWith('.') || f === '__init.qk' || f === 'index.qk') continue;
                         let name = f, kind = vscode.CompletionItemKind.Folder;
                         const fullPath = path.join(targetDir, f);
                         if (!fs.lstatSync(fullPath).isDirectory()) {
@@ -1394,6 +1425,7 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
             for (let i = 1; i < dotCount; i++) searchDir = path.dirname(searchDir);
             const targetBase = subPath ? path.join(searchDir, subPath) : searchDir;
             if (fs.existsSync(targetBase + '.qk')) return targetBase + '.qk';
+            if (fs.existsSync(path.join(targetBase, 'index.qk'))) return path.join(targetBase, 'index.qk');
             if (fs.existsSync(path.join(targetBase, '__init.qk'))) return path.join(targetBase, '__init.qk');
             return null;
         }
@@ -1402,6 +1434,7 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
         const relPath = modulePath.replace(/\./g, '/');
         for (const root of searchRoots) {
             if (fs.existsSync(path.join(root, relPath + '.qk'))) return path.join(root, relPath + '.qk');
+            if (fs.existsSync(path.join(root, relPath, 'index.qk'))) return path.join(root, relPath, 'index.qk');
             if (fs.existsSync(path.join(root, relPath, '__init.qk'))) return path.join(root, relPath, '__init.qk');
         }
         return null;
@@ -1433,6 +1466,71 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
         this.searchRootsCache = roots;
         this.searchRootsCacheKey = cacheKey;
         return roots;
+    }
+
+    // Lists every importable stdlib/library module reachable from this project's
+    // search roots. Surfaces modules as `use <path>` completions even before the
+    // user has imported them — selecting a suggestion auto-inserts the `use` line.
+    // `typing/*` is omitted: it's the implicit prelude, no `use typing` needed.
+    private getAvailableStdlibModules(projectRoot: string): Array<{ alias: string; modulePath: string }> {
+        const cacheKey = projectRoot + '|' + (process.env['QUIRK_HOME'] || '');
+        if (this.stdlibModulesCache && this.stdlibModulesCacheKey === cacheKey) {
+            return this.stdlibModulesCache;
+        }
+        const modules: Array<{ alias: string; modulePath: string }> = [];
+        const seen = new Set<string>();
+        const add = (alias: string, modulePath: string) => {
+            if (seen.has(modulePath)) return;
+            seen.add(modulePath);
+            modules.push({ alias, modulePath });
+        };
+
+        for (const root of this.getSearchRoots(projectRoot)) {
+            if (!fs.existsSync(root) || !fs.lstatSync(root).isDirectory()) continue;
+            try {
+                for (const entry of fs.readdirSync(root)) {
+                    if (entry.startsWith('.') || entry === 'typing') continue;
+                    const fullPath = path.join(root, entry);
+                    const stat = fs.lstatSync(fullPath);
+                    if (stat.isDirectory()) {
+                        // Package: <root>/<entry>/index.qk → `use entry`
+                        if (fs.existsSync(path.join(fullPath, 'index.qk'))) add(entry, entry);
+                        // Sub-modules: <root>/<entry>/<sub>.qk → `use entry.sub`
+                        try {
+                            for (const sub of fs.readdirSync(fullPath)) {
+                                if (sub.startsWith('.') || sub === 'index.qk' || sub === '__init.qk' || !sub.endsWith('.qk')) continue;
+                                const subAlias = sub.slice(0, -3);
+                                add(subAlias, `${entry}.${subAlias}`);
+                            }
+                        } catch { }
+                    } else if (entry.endsWith('.qk')) {
+                        const alias = entry.slice(0, -3);
+                        add(alias, alias);
+                    }
+                }
+            } catch { }
+        }
+
+        this.stdlibModulesCache = modules;
+        this.stdlibModulesCacheKey = cacheKey;
+        return modules;
+    }
+
+    // Returns the position where a new `use <module>` line should be inserted —
+    // immediately after the last contiguous import line at the top of the file,
+    // or at line 0 if there are none.
+    private findImportInsertPosition(document: vscode.TextDocument): vscode.Position {
+        let lastImportLine = -1;
+        for (let i = 0; i < document.lineCount; i++) {
+            const text = document.lineAt(i).text;
+            const trimmed = text.trim();
+            if (/^\s*(?:use|from)\s/.test(text)) {
+                lastImportLine = i;
+            } else if (trimmed !== '' && !trimmed.startsWith('//')) {
+                break;
+            }
+        }
+        return new vscode.Position(lastImportLine + 1, 0);
     }
 
     public findProjectRoot(currentFile: string): string {

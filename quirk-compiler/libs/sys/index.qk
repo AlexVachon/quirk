@@ -31,6 +31,23 @@ extern define backtrace_frame(index: Int) -> String
 extern define stdin() -> File
 extern define stdout() -> File
 extern define stderr() -> File
+extern define isatty(f: File) -> Bool
+extern define ansi(name: String) -> String
+
+// Terminal extras (used by console.qk; safe to call even when stdout is piped).
+extern define terminal_cols() -> Int
+extern define terminal_rows() -> Int
+extern define read_password() -> String
+extern define read_key() -> Int
+extern define now_ms() -> Int
+
+// Module-state helpers — Quirk lacks persistent module-level mutable state,
+// so console.qk's group/time features are backed by these C-side slots.
+extern define group_depth_get() -> Int
+extern define group_depth_inc() -> void
+extern define group_depth_dec() -> void
+extern define timer_start(label: String) -> void
+extern define timer_end(label: String) -> Int
 
 extern define srcline(filename: Any, line: Int) -> Any
 

@@ -306,6 +306,10 @@
     "comments": {
       "patterns": [
         {
+          "name": "comment.line.documentation.quirk",
+          "match": "^\\s*---.*?---\\s*$"
+        },
+        {
           "name": "comment.block.documentation.quirk",
           "begin": "^\\s*---\\s*$",
           "end": "^\\s*---\\s*$"

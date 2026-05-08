@@ -680,11 +680,30 @@ class LLVMCodegen {
         for (size_t i = 0; i < raw.size(); i++) {
             if (raw[i] == '\\' && i + 1 < raw.size()) {
                 switch (raw[i + 1]) {
-                    case 'n': res += '\n'; break;
-                    case 't': res += '\t'; break;
-                    case 'r': res += '\r'; break;
+                    case 'n':  res += '\n'; break;
+                    case 't':  res += '\t'; break;
+                    case 'r':  res += '\r'; break;
+                    case 'a':  res += '\a'; break;
+                    case 'b':  res += '\b'; break;
+                    case 'f':  res += '\f'; break;
+                    case 'v':  res += '\v'; break;
                     case '\\': res += '\\'; break;
-                    case '"': res += '\"'; break;
+                    case '"':  res += '\"'; break;
+                    case '\'': res += '\''; break;
+                    case 'x': {
+                        // \xNN — 2 hex digits (e.g. \x1b for ESC)
+                        auto isHex = [](char c) {
+                            return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+                        };
+                        if (i + 3 < raw.size() && isHex(raw[i + 2]) && isHex(raw[i + 3])) {
+                            char buf[3] = { raw[i + 2], raw[i + 3], '\0' };
+                            res += (char)std::strtol(buf, nullptr, 16);
+                            i += 2;  // consume the two hex digits in addition to the i++ below
+                        } else {
+                            res += raw[i]; res += raw[i + 1];
+                        }
+                        break;
+                    }
                     default: res += raw[i]; res += raw[i + 1];
                 }
                 i++;

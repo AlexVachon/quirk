@@ -1,0 +1,483 @@
+---
+Interactive console output and input — the canonical way to write to and
+read from the terminal in Quirk.
+
+Output:
+  `console.log(...args)`     — write to stdout, args joined by space + newline
+  `console.put(msg)`         — write to stdout, NO trailing newline
+  `console.info(...args)`    — informational message (cyan when on a TTY)
+  `console.warn(...args)`    — warning to stderr (yellow when on a TTY)
+  `console.error(...args)`   — error to stderr (red when on a TTY)
+  `console.debug(...args)`   — debug to stderr (gray when on a TTY)
+  `console.dir(value)`       — pretty-dump a value (pairs, depth)
+
+Direct color helpers (stdout, single arg):
+  `console.green/red/yellow/cyan/blue/gray/bold(msg)`
+
+Indented logging (state-aware, like JS console.group):
+  `console.group(label)`     — print label, indent following lines by 2 spaces
+  `console.group_end()`      — close one indent level
+
+Timers (named monotonic):
+  `console.time(label)`      — record a start timestamp
+  `console.time_end(label)`  — log elapsed ms since start, clears the timer
+
+Input:
+  `console.input(prompt="")` — print prompt, read one line from stdin
+  `console.input_int(prompt)` / `input_float(prompt)` — typed input with retry
+  `console.password(prompt)` — read a line with echo disabled
+  `console.confirm(prompt, default=true)` — y/n prompt with default
+  `console.read_key()`       — read ONE keypress (no Enter); returns Int code
+  `console.select(prompt, options)` — interactive arrow-key menu
+
+Cursor / screen:
+  `console.clear()`          — clear the terminal screen
+  `console.clear_line()`     — clear the current line and move cursor to col 0
+  `console.size()`           — `(cols, rows)` of the terminal as a Tuple
+  `console.cols()` / `console.rows()` — individual dimensions
+
+Misc:
+  `console.assert(cond, msg)` — print "Assertion failed: msg" to stderr if !cond
+  `console.beep()`            — terminal bell (\a)
+  `console.progress(current, total, label="")` — render a one-line progress bar
+
+Color codes are emitted only when the relevant stream is a terminal AND the
+`NO_COLOR` environment variable is not set (https://no-color.org).
+
+@example
+console.log("Hello,", name, "you are", age, "years old")
+if console.confirm("Continue?", default: false) {
+    console.green("Proceeding!")
+}
+console.time("build")
+build()
+console.time_end("build")
+---
+from typing.primitives.string use { String }
+from typing.collections.list use { List }
+from io.file use { File }
+from sys use {
+    stdout, stderr, stdin, isatty, ansi, getenv,
+    terminal_cols, terminal_rows, read_password, read_key, now_ms,
+    group_depth_get, group_depth_inc, group_depth_dec,
+    timer_start, timer_end
+}
+
+// Honors the NO_COLOR convention (https://no-color.org). When the env var is
+// set to anything non-empty, color codes are suppressed even on a TTY.
+define _no_color() -> Bool {
+    return getenv("NO_COLOR").length() > 0
+}
+
+define _should_color(stream: File, color: String) -> Bool {
+    return isatty(stream) and color.length() > 0 and not _no_color()
+}
+
+define _indent_str() -> String {
+    d := group_depth_get()
+    return "  ".repeat(d)
+}
+
+// Writes args (joined by single spaces) to `stream`, optionally wrapped in
+// the named ANSI color when the stream is a terminal, then a trailing newline.
+define _emit_args(stream: File, color: String, args: List) -> void {
+    has_color := _should_color(stream, color)
+    if has_color {
+        stream.write(ansi(color))
+    }
+    msg := _indent_str()
+    sep := ""
+    for item in args {
+        msg = msg + sep + item
+        sep = " "
+    }
+    stream.write(msg)
+    if has_color {
+        stream.write(ansi("reset"))
+    }
+    stream.write("\n")
+}
+
+// Single-string variant (assert, color helpers, group label).
+define _emit_str(stream: File, color: String, msg: String) -> void {
+    has_color := _should_color(stream, color)
+    if has_color {
+        stream.write(ansi(color))
+    }
+    stream.write(_indent_str() + msg)
+    if has_color {
+        stream.write(ansi("reset"))
+    }
+    stream.write("\n")
+}
+
+// ===== Output =====
+
+define log(...args: List) -> void   { _emit_args(stdout(), "",       args) }
+define info(...args: List) -> void  { _emit_args(stdout(), "cyan",   args) }
+define warn(...args: List) -> void  { _emit_args(stderr(), "yellow", args) }
+define error(...args: List) -> void { _emit_args(stderr(), "red",    args) }
+define debug(...args: List) -> void { _emit_args(stderr(), "gray",   args) }
+
+---
+Write `msg` to stdout WITHOUT a trailing newline.
+@example
+console.put("Loading")
+for i in 0..3 { console.put(".") }
+console.log("done")
+---
+define put(msg: Any) -> void {
+    out := stdout()
+    out.write("" + msg)
+}
+
+---
+Pretty-dump a value with newlines and indentation. Mirrors JS console.dir —
+useful when `log` (single-line) hides structure.
+---
+define dir(value: Any) -> void {
+    out := stdout()
+    out.write(_indent_str() + ("" + value) + "\n")
+}
+
+// ===== Input =====
+
+define input(prompt: String = "") -> String {
+    if prompt.length() > 0 {
+        out := stdout()
+        out.write(prompt)
+    }
+    in_stream := stdin()
+    return in_stream.read_line()
+}
+
+---
+Read a line from stdin with echo disabled. Useful for password prompts.
+A newline is echoed automatically after the user presses Enter so the next
+output starts on a fresh line.
+---
+define password(prompt: String = "") -> String {
+    if prompt.length() > 0 {
+        out := stdout()
+        out.write(prompt)
+    }
+    return read_password()
+}
+
+---
+Yes/no prompt with a default answer. Pressing Enter uses the default.
+@example
+if console.confirm("Continue?", default: false) { ... }
+---
+define confirm(prompt: String, default: Bool = true) -> Bool {
+    suffix := " [Y/n]: "
+    if not default {
+        suffix = " [y/N]: "
+    }
+    while true {
+        out := stdout()
+        out.write(prompt + suffix)
+        in_stream := stdin()
+        ans := in_stream.read_line().trim().lower()
+        if ans == "" {
+            return default
+        }
+        if ans == "y" or ans == "yes" {
+            return true
+        }
+        if ans == "n" or ans == "no" {
+            return false
+        }
+    }
+    return default
+}
+
+---
+Prompt for an Int, retrying until the user enters a valid number.
+@example
+age := console.input_int("Your age: ")
+---
+define input_int(prompt: String = "") -> Int {
+    while true {
+        s := input(prompt).trim()
+        try {
+            return s.to_int()
+        } catch (_e: Exception) {
+            error("Not a valid integer: '${s}'")
+        }
+    }
+    return 0
+}
+
+---
+Prompt for a Double, retrying until the user enters a valid number.
+---
+define input_float(prompt: String = "") -> Double {
+    while true {
+        s := input(prompt).trim()
+        try {
+            return s.to_float()
+        } catch (_e: Exception) {
+            error("Not a valid number: '${s}'")
+        }
+    }
+    return 0.0
+}
+
+// ===== Cursor / screen =====
+
+---
+Clear the terminal screen.
+---
+define clear() -> void {
+    out := stdout()
+    if isatty(out) {
+        out.write(ansi("clear"))
+    }
+}
+
+---
+Erase the current line and move the cursor to column 0.
+Pairs with `put` for in-place updates (progress bars, spinners).
+---
+define clear_line() -> void {
+    out := stdout()
+    if isatty(out) {
+        out.write("\r\x1b[2K")
+    }
+}
+
+---
+Terminal dimensions as `(cols, rows)`. Falls back to (80, 24) when stdout
+is not a TTY or the syscall fails. Use `tuple[0]` and `tuple[1]` to access.
+---
+define size() -> Tuple {
+    return (terminal_cols(), terminal_rows())
+}
+
+define cols() -> Int { return terminal_cols() }
+define rows() -> Int { return terminal_rows() }
+
+// ===== Indented logging (group / group_end) =====
+
+---
+Start an indented log group. Subsequent log/info/warn/etc. calls are indented
+2 spaces per group level. Pair with `group_end()` to close.
+@example
+console.group("Build")
+console.log("step 1")
+console.log("step 2")
+console.group_end()
+---
+define group(label: String) -> void {
+    _emit_str(stdout(), "bold", label)
+    group_depth_inc()
+}
+
+define group_end() -> void {
+    group_depth_dec()
+}
+
+// ===== Timers =====
+
+---
+Start a named timer.
+---
+define time(label: String) -> void {
+    timer_start(label)
+}
+
+---
+Stop a named timer and log the elapsed milliseconds.
+@example
+console.time("fetch")
+data := http.get("http://example.com")
+console.time_end("fetch")  // logs: fetch: 123 ms
+---
+define time_end(label: String) -> void {
+    elapsed := timer_end(label)
+    if elapsed < 0 {
+        warn("console.time_end: no timer named '${label}'")
+        return
+    }
+    info(label + ": " + elapsed.str() + " ms")
+}
+
+// ===== Misc =====
+
+define assert(cond: Bool, msg: String) -> void {
+    if not cond {
+        _emit_str(stderr(), "red", "Assertion failed: " + msg)
+    }
+}
+
+define beep() -> void {
+    out := stdout()
+    out.write("\a")
+}
+
+---
+Render a one-line progress bar using `\r` to overwrite. Width auto-fits the
+terminal (or 40 chars when not a TTY). Caller is responsible for printing a
+newline after the final update (or call `console.log("")` to advance).
+
+@example
+for i in 0..101 {
+    console.progress(i, 100, "Building")
+    sys.sleep(20)
+}
+console.log("")  // newline after final bar
+---
+define progress(current: Int, total: Int, label: String = "") -> void {
+    out := stdout()
+    if not isatty(out) {
+        return
+    }
+    if total <= 0 {
+        total = 1
+    }
+    if current < 0 { current = 0 }
+    if current > total { current = total }
+
+    width := terminal_cols() - 20
+    if label.length() > 0 {
+        width = width - label.length() - 1
+    }
+    if width < 10 { width = 10 }
+
+    pct := (current * 100) / total
+    filled := (current * width) / total
+
+    bar := ""
+    i := 0
+    while i < filled {
+        bar = bar + "█"
+        i = i + 1
+    }
+    while i < width {
+        bar = bar + "░"
+        i = i + 1
+    }
+
+    line := "\r"
+    if label.length() > 0 {
+        line = line + label + " "
+    }
+    line = line + bar + " " + pct.str() + "%"
+    out.write(line)
+}
+
+// ===== Direct color helpers =====
+
+define green(msg: Any)  -> void { _emit_str(stdout(), "green",  "" + msg) }
+define red(msg: Any)    -> void { _emit_str(stdout(), "red",    "" + msg) }
+define yellow(msg: Any) -> void { _emit_str(stdout(), "yellow", "" + msg) }
+define cyan(msg: Any)   -> void { _emit_str(stdout(), "cyan",   "" + msg) }
+define blue(msg: Any)   -> void { _emit_str(stdout(), "blue",   "" + msg) }
+define gray(msg: Any)   -> void { _emit_str(stdout(), "gray",   "" + msg) }
+define bold(msg: Any)   -> void { _emit_str(stdout(), "bold",   "" + msg) }
+
+// ===== Interactive selection =====
+
+// Renders the option list with the current selection highlighted. Used by
+// `select` to redraw on every keypress. Module-level so it captures nothing.
+define _select_draw(options: List, selected: Int) -> void {
+    out := stdout()
+    n := options.length()
+    color_ok := isatty(out) and not _no_color()
+    i := 0
+    while i < n {
+        line := "  "
+        if i == selected {
+            line = "▶ "
+        }
+        line = line + ("" + options.get(i))
+        if i == selected and color_ok {
+            line = ansi("cyan") + line + ansi("reset")
+        }
+        out.write(line + "\n")
+        i = i + 1
+    }
+}
+
+---
+Render an arrow-key menu and return the selected option string. Up/Down or
+j/k navigate; Enter accepts; q/Esc cancels (returns the empty string).
+Falls back to a numeric prompt when stdin is not a TTY.
+
+@example
+choice := console.select("Pick a fruit", ["apple", "banana", "cherry"])
+console.log("You chose:", choice)
+---
+define select(prompt: String, options: List) -> String {
+    n := options.length()
+    if n == 0 {
+        return ""
+    }
+    in_stream := stdin()
+    out := stdout()
+
+    if not isatty(out) or not isatty(in_stream) {
+        // Fallback: numeric prompt
+        out.write(prompt + "\n")
+        i := 0
+        while i < n {
+            out.write("  ${i + 1}) ${options.get(i)}\n")
+            i = i + 1
+        }
+        idx := input_int("> ")
+        if idx < 1 or idx > n { return "" }
+        return "" + options.get(idx - 1)
+    }
+
+    selected := 0
+    out.write(prompt + "\n")
+    _select_draw(options, selected)
+
+    while true {
+        k := read_key()
+        moved := false
+
+        // k / Up
+        if k == 107 {
+            if selected > 0 { selected = selected - 1 }
+            moved = true
+        } elif k == 106 {
+            // j / Down
+            if selected < n - 1 { selected = selected + 1 }
+            moved = true
+        } elif k == 27 {
+            // ESC sequence: arrow keys are ESC '[' 'A'/'B'
+            k2 := read_key()
+            if k2 == 91 {
+                k3 := read_key()
+                if k3 == 65 {
+                    if selected > 0 { selected = selected - 1 }
+                    moved = true
+                } elif k3 == 66 {
+                    if selected < n - 1 { selected = selected + 1 }
+                    moved = true
+                } else {
+                    return ""
+                }
+            } else {
+                return ""
+            }
+        } elif k == 113 {
+            // q — cancel
+            return ""
+        } elif k == 13 or k == 10 {
+            // Enter
+            out.write("\n")
+            return "" + options.get(selected)
+        }
+
+        if moved {
+            // Move cursor up n lines, clear from there to end of screen, redraw
+            out.write("\x1b[" + n.str() + "A")
+            out.write("\r\x1b[J")
+            _select_draw(options, selected)
+        }
+    }
+    return ""
+}

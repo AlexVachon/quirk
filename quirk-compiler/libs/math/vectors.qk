@@ -1,52 +1,85 @@
+---
+2D and 3D vectors with operator overloading. Add, subtract, scalar-multiply,
+and (for `Vector2`) take dot products.
+
+@example
+a := Vector2(1.0, 2.0)
+b := Vector2(3.0, 4.0)
+print(a + b)        // v(4, 6)
+print(a.dot(b))     // 11.0
+---
+
+---
+A 2D vector with `Double` components and operator overloading for
+`+`, `-`, and scalar `*`.
+---
 struct Vector2 {
     x: Double
     y: Double
 
+    --- Construct a Vector2 from two Doubles. ---
     define __init(self, x: Double, y: Double) -> void {
         self.x = x
         self.y = y
     }
 
+    --- Compact human-readable form: `v(x, y)`. ---
     define __str(self) -> String {
         return "v(" + self.x + ", " + self.y + ")"
     }
 
+    --- Developer-readable form: `Vector2 { x: ..., y: ... }`. ---
     define __repr(self) -> String {
         return "Vector2 { x: " + self.x + ", y: " + self.y + " }"
     }
 
+    --- Componentwise addition: `a + b`. ---
     define __add(self, other: Vector2) -> Vector2 {
         return Vector2(self.x + other.x, self.y + other.y)
     }
 
+    --- Componentwise subtraction: `a - b`. ---
     define __sub(self, other: Vector2) -> Vector2 {
         return Vector2(self.x - other.x, self.y - other.y)
     }
 
+    --- Scalar multiplication: `v * s` scales each component. ---
     define __mul(self, scalar: Double) -> Vector2 {
         return Vector2(self.x * scalar, self.y * scalar)
     }
 
+    ---
+    Dot product: `a · b = a.x*b.x + a.y*b.y`. Useful for projections,
+    angle calculations (`cos θ = dot(a, b) / (|a| * |b|)`), and detecting
+    orthogonality (dot == 0).
+    ---
     define dot(self, other: Vector2) -> Double {
         return (self.x * other.x) + (self.y * other.y)
     }
 }
 
+---
+A 3D vector with `Double` components. Currently supports `+` only —
+extend with `__sub`, `__mul`, `dot`, `cross` as needed.
+---
 struct Vector3 {
     x: Double
     y: Double
     z: Double
 
+    --- Construct a Vector3 from three Doubles. ---
     define __init(self, x: Double, y: Double, z: Double) -> void {
         self.x = x
         self.y = y
         self.z = z
     }
 
+    --- Compact human-readable form: `Vec3(x, y, z)`. ---
     define __str(self) -> String {
         return "Vec3(" + self.x + ", " + self.y + ", " + self.z + ")"
     }
 
+    --- Componentwise addition: `a + b`. ---
     define __add(self, other: Vector3) -> Vector3 {
         return Vector3(self.x + other.x, self.y + other.y, self.z + other.z)
     }

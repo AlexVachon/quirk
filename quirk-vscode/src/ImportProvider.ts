@@ -36,7 +36,9 @@ const PRELUDE_MODULES = [
     'typing/exceptions/index.qk',
     'typing/exceptions/types.qk',
     'sys/index.qk',
-    'console/index.qk'
+    'console/index.qk',
+    'math/index.qk',
+    'math/vectors.qk'
 ];
 
 export class QuirkDefinitionProvider implements vscode.DefinitionProvider {

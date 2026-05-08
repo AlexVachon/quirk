@@ -1,7 +1,22 @@
 ---
-Encodes and decodes data using the Base64 alphabet.
-Used for safely transporting binary data over text protocols.
+Base64 encoding and decoding — for transporting binary data through
+text-only channels (HTTP headers, JSON strings, email bodies, etc).
+
+Standard alphabet (RFC 4648), `=` padding.
+
+@example
+encoded := base64.encode("hello")        // "aGVsbG8="
+decoded := base64.decode("aGVsbG8=")     // "hello"
 ---
 
+---
+Encode `data` to a Base64 String. Output length is roughly 4/3 of input,
+rounded up to a multiple of 4 with `=` padding.
+---
 extern define encode(data: String) -> String
+
+---
+Decode a Base64 String back to the original. Tolerant of whitespace and
+missing padding; returns "" on malformed input.
+---
 extern define decode(data: String) -> String

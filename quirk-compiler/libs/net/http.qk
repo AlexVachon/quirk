@@ -1,14 +1,45 @@
+---
+A minimal HTTP/1.1 client over the raw `Socket` primitives.
+
+Supports plain HTTP only — `https://` URLs will fail because there is no
+TLS in the runtime yet.
+
+Public API:
+  `http.get(url)`          — GET request
+  `http.post(url, data)`   — POST request with raw body
+  `http.delete(url)`       — DELETE request
+  `http.request(method, url, data="")` — generic form
+
+Each call returns a `Response`.
+
+@example
+resp := http.get("http://example.com")
+if resp.ok {
+    print(resp.status_code)            // 200
+    print(resp.headers.get("Server"))  // "nginx"
+    print(resp.text)
+}
+---
 from typing.primitives.string use { String }
 from typing.collections.map use { Map }
 from typing.exceptions.types use { ValueError }
 from net.socket use { Socket }
 
+---
+HTTP response.
+  `status_code`  — numeric status (200, 404, ...).
+  `headers`      — Map of header name → value (header names are
+                   case-preserved as the server returned them).
+  `text`         — decoded response body (chunked encoding handled).
+  `ok`           — true iff `200 <= status_code < 300`.
+---
 struct Response {
     status_code: Int
     headers: Map
     text: String
     ok: Bool
 
+    --- Construct a Response. Sets `ok` based on the status code range. ---
     define __init(self, status: Int, body: String, headers: Map) -> void {
         self.status_code = status
         self.text = body
@@ -16,6 +47,7 @@ struct Response {
         self.ok = (status >= 200) and (status < 300)
     }
 
+    --- Compact form: `<Response [200]>`. ---
     define __str(self) -> String {
         return "<Response [${self.status_code.str()}]>"
     }
@@ -106,6 +138,13 @@ define _decode_chunked(body: String) -> String {
     return result
 }
 
+---
+Send an HTTP request. The lower-level form behind `get`/`post`/`delete`.
+@param method HTTP verb (GET, POST, DELETE, PUT, ...) — case-insensitive.
+@param url Full URL starting with `http://`. HTTPS is not supported.
+@param data Request body (empty for GET/DELETE).
+@returns A `Response` with status code, headers, and body.
+---
 define request(method: String, url: String, data: String = "") -> Response {
     url_parts := _parse_url(url)
     host: String = url_parts.get("host")
@@ -167,14 +206,26 @@ define request(method: String, url: String, data: String = "") -> Response {
     }
 }
 
+---
+HTTP GET. Convenience for `request("GET", url)`.
+@example resp := http.get("http://example.com")
+---
 define get(url: String) -> Response {
     return request("GET", url)
 }
 
+---
+HTTP POST. The body is sent as-is (no automatic Content-Type header —
+add it via a custom request if needed).
+@example resp := http.post("http://api/echo", "name=Quirk")
+---
 define post(url: String, data: String) -> Response {
     return request("POST", url, data)
 }
 
+---
+HTTP DELETE.
+---
 define delete(url: String) -> Response {
     return request("DELETE", url)
 }

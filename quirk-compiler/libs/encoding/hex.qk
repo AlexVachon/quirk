@@ -1,7 +1,23 @@
 ---
-Encode and decodes data using hexadecimal (Base16).
-Used for viewing raw bytes and cryptographic hashes.
+Hexadecimal (Base16) encoding and decoding — for displaying raw bytes,
+cryptographic hashes, or any binary blob in a human-readable form.
+
+Output is lowercase. Decoding accepts either case.
+
+@example
+hex.encode("Hi!")          // "486921"
+hex.decode("486921")       // "Hi!"
+hex.decode("DEADBEEF")     // 4 raw bytes (case-insensitive)
 ---
 
+---
+Encode each byte of `data` as two lowercase hex digits.
+Output length is exactly `2 * data.length()`.
+---
 extern define encode(data: String) -> String
+
+---
+Decode a hex String back to its original bytes. Accepts mixed case.
+Returns "" if the input length is odd or contains non-hex characters.
+---
 extern define decode(data: String) -> String

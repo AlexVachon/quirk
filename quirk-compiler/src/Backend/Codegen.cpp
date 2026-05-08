@@ -1898,6 +1898,10 @@ class LLVMCodegen {
                         if (sName == "String") {
                             std::vector<Value*> sArgs = {retVal};
                             retVal = structGen->allocateAndInit("String", sArgs);
+                        } else if (isa<ConstantPointerNull>(retVal)) {
+                            // `return null` from a struct-returning function:
+                            // bitcast the null to the expected struct pointer.
+                            retVal = ConstantPointerNull::get(cast<PointerType>(expectedType));
                         }
                     }
                     // Returning from a lambda (i8* return): box the value
@@ -2817,6 +2821,29 @@ Value* LLVMCodegen::handleExpression(Node* node) {
         Value* L = handleExpression(binOp->left.get());
         Value* R = handleExpression(binOp->right.get());
         if (!L || !R) return nullptr;
+
+        // Normalize `expr == null` / `expr != null` for any pointer type.
+        // `null` evaluates as a typeless `i8*` ConstantPointerNull; without
+        // this fixup, the magic-method dispatch fails (no `Match___eq`) and
+        // the math fallback ICmps mismatched pointer types.
+        if (binOp->op == "==" || binOp->op == "!=") {
+            auto isNullPtr = [](Value* v) {
+                return isa<ConstantPointerNull>(v);
+            };
+            if (isNullPtr(R) && L->getType()->isPointerTy() && L->getType() != R->getType()) {
+                R = ConstantPointerNull::get(cast<PointerType>(L->getType()));
+            } else if (isNullPtr(L) && R->getType()->isPointerTy() && L->getType() != R->getType()) {
+                L = ConstantPointerNull::get(cast<PointerType>(R->getType()));
+            }
+            // Both null-pointer comparisons now resolve via the math fallback
+            // ICmpEQ/ICmpNE on matching pointer types.
+            if (isNullPtr(L) || isNullPtr(R)) {
+                if (binOp->op == "==")
+                    return Builder.CreateICmpEQ(L, R, "ptr_eq_null");
+                else
+                    return Builder.CreateICmpNE(L, R, "ptr_ne_null");
+            }
+        }
 
         // Operator overloading: check for magic methods on the left operand struct
         if (L->getType()->isPointerTy() &&

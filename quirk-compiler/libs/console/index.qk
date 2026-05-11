@@ -120,13 +120,21 @@ define error(...args: List) -> void { _emit_args(stderr(), "red",    args) }
 define debug(...args: List) -> void { _emit_args(stderr(), "gray",   args) }
 
 ---
-Write `msg` to stdout WITHOUT a trailing newline.
+Write `msg` to stdout WITHOUT a trailing newline. Available as both
+`console.put` and `console.write` (the latter shadows the top-level
+`write` builtin only in the `console.` namespace).
 @example
 console.put("Loading")
 for i in 0..3 { console.put(".") }
 console.log("done")
 ---
 define put(msg: Any) -> void {
+    out := stdout()
+    out.write("" + msg)
+}
+
+--- Alias for `console.put`. ---
+define write(msg: Any) -> void {
     out := stdout()
     out.write("" + msg)
 }

@@ -851,7 +851,19 @@ std::unique_ptr<FunctionNode> Parser::parseFunction(bool allowAbstract) {
     //   e.g. Core_String_String_to_float, Core_Collections_List_List_append
     std::string modulePrefix = computeModulePrefix();
 
-    if (isExtern) {
+    // Library functions whose name collides with a top-level Quirk builtin
+    // (`print`, `write`, `type`, ...) get a module-prefixed linkage name so
+    // codegen can route `csv.write(...)` to the user's library function
+    // without being shadowed by the builtin in the global namespace.
+    // User scripts and non-colliding library names keep bare linkage so
+    // JIT can find `main` and existing lookups remain unchanged.
+    bool collidesWithBuiltin = (name == "print" || name == "printf"
+        || name == "type" || name == "str" || name == "write"
+        || name == "writeln" || name == "exit" || name == "malloc"
+        || name == "free");
+    bool isLibFunction = filePath.find("libs/") != std::string::npos
+                      || filePath.find("libs\\") != std::string::npos;
+    if (isExtern || (isLibFunction && collidesWithBuiltin)) {
         node->linkageName = modulePrefix + "_" + name;
     } else {
         node->linkageName = name;

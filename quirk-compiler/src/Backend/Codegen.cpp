@@ -41,6 +41,11 @@ class LLVMCodegen {
 
     std::map<std::string, bool> variadicFunctions;
     std::map<std::string, FunctionNode*> functionDeclarations;
+    // (moduleName, funcName) → FunctionNode*  — populated alongside
+    // functionDeclarations so `csv.write(...)` can resolve to Csv_write
+    // even when another module also defines a top-level `write`. The bare-
+    // name map can only hold one entry per name; this disambiguates.
+    std::map<std::pair<std::string, std::string>, FunctionNode*> moduleFunctionIndex;
     std::map<std::string, StructType*> StructTypes;
 
     std::map<std::string, std::vector<std::string>> structHierarchy;
@@ -278,6 +283,25 @@ class LLVMCodegen {
         for (const auto& node : nodes) {
             if (auto func = dynamic_cast<FunctionNode*>(node.get())) {
                 functionDeclarations[func->name] = func;
+                // Also key by linkageName so processCallArgs (which looks up
+                // via the LLVM name = linkage name) can find the FunctionNode
+                // for default-arg filling on library functions.
+                if (!func->linkageName.empty() && func->linkageName != func->name) {
+                    functionDeclarations[func->linkageName] = func;
+                }
+                if (!func->moduleName.empty() && func->cls.empty()) {
+                    moduleFunctionIndex[{func->moduleName, func->name}] = func;
+                    // Module names from file paths end in ".index" for
+                    // foo/index.qk packages, but `use foo` aliases to "foo".
+                    // Index under the trimmed form too so the lookup matches.
+                    std::string trimmed = func->moduleName;
+                    const std::string idx = ".index";
+                    if (trimmed.size() > idx.size() &&
+                        trimmed.compare(trimmed.size() - idx.size(), idx.size(), idx) == 0) {
+                        trimmed = trimmed.substr(0, trimmed.size() - idx.size());
+                        moduleFunctionIndex[{trimmed, func->name}] = func;
+                    }
+                }
 
                 // --- NEW: Register variadic functions (params declared as ...name: List) ---
                 // We check if any parameter name starts with "..." which is how the parser
@@ -291,7 +315,16 @@ class LLVMCodegen {
                 }
                 // --------------------------------------------------------------------------
                 
-                if (func->name == "main" || builtinGen->isBuiltin(func->name)) continue;
+                // Skip Pass 3 registration for `main` and for top-level user
+                // functions that would shadow a hard builtin (`print`, `write`,
+                // `type`, ...). A function counts as user-toplevel only when
+                // `linkageName == name` — module-prefixed library functions
+                // (e.g. `Csv_write` for `csv.write`) get a distinct linkage
+                // name during parsing and ARE registered, so libraries can
+                // freely use builtin-shaped names.
+                if (func->name == "main") continue;
+                if (builtinGen->isBuiltin(func->name) && func->cls.empty()
+                    && func->linkageName == func->name) continue;
                 if (verbose) std::cerr << "[Codegen]   Declaring prototype: " << func->name << "\n";
                 Type* retTy = typeGen->getFunctionReturnType(func->returnType);
                 bool retIsBool = func->isExtern && retTy->isIntegerTy(1);
@@ -1109,8 +1142,19 @@ class LLVMCodegen {
                         for (auto& a : call->args) args.push_back(handleExpression(a.value.get()));
                         return structGen->allocateAndInit(memberName, args);
                     }
-                    
-                    Function* func = resolveFunction(memberName);
+
+                    // Disambiguate via the module index first — if `csv.write`
+                    // and `audio.write` both exist, the bare-name lookup picks
+                    // whichever was registered last. Module-keyed lookup picks
+                    // the right one.
+                    Function* func = nullptr;
+                    const std::string& modName = activeModuleAliases[lit->value];
+                    auto mit = moduleFunctionIndex.find({modName, memberName});
+                    if (mit != moduleFunctionIndex.end()) {
+                        const std::string& ln = mit->second->linkageName;
+                        func = TheModule->getFunction(ln.empty() ? memberName : ln);
+                    }
+                    if (!func) func = resolveFunction(memberName);
                     if (!func)
                         fatalError("Unknown function '" + memberName + "'", member->line, member->col);
                     return generateGlobalCall(func, call);

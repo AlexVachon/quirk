@@ -47,50 +47,56 @@ define _value_eq(actual: Any, expected: Any) -> Bool {
     return a == b
 }
 
+// Combine the message with an optional `msg` extra into a final error string.
+define _with_msg(line: String, msg: String) -> String {
+    if msg.length() > 0 { return line + " -- " + msg }
+    return line
+}
+
 ---
 Asserts `actual == expected` by value. For primitive types and anything
 with a `__str` method this matches stringified equality; for arbitrary
 struct refs it amounts to pointer identity.
 ---
-define assert_eq(actual: Any, expected: Any) -> void {
+define assert_eq(actual: Any, expected: Any, msg: String = "") -> void {
     if _value_eq(actual, expected) { return }
-    throw AssertionError("assert_eq failed: expected ${expected}, got ${actual}")
+    throw AssertionError(_with_msg("assert_eq failed: expected ${expected}, got ${actual}", msg))
 }
 
 --- Asserts `actual != expected` by value. ---
-define assert_ne(actual: Any, expected: Any) -> void {
+define assert_ne(actual: Any, expected: Any, msg: String = "") -> void {
     if _value_eq(actual, expected) == false { return }
-    throw AssertionError("assert_ne failed: both values are ${actual}")
+    throw AssertionError(_with_msg("assert_ne failed: both values are ${actual}", msg))
 }
 
 --- Asserts `cond` is true. ---
-define assert_true(cond: Bool) -> void {
+define assert_true(cond: Bool, msg: String = "") -> void {
     if cond { return }
-    throw AssertionError("assert_true failed: condition was false")
+    throw AssertionError(_with_msg("assert_true failed: condition was false", msg))
 }
 
 --- Asserts `cond` is false. ---
-define assert_false(cond: Bool) -> void {
+define assert_false(cond: Bool, msg: String = "") -> void {
     if cond == false { return }
-    throw AssertionError("assert_false failed: condition was true")
+    throw AssertionError(_with_msg("assert_false failed: condition was true", msg))
 }
 
 ---
 Asserts `actual` and `expected` differ by at most `tolerance`. Use for
 Doubles where exact equality is fragile.
 ---
-define assert_approx(actual: Double, expected: Double, tolerance: Double) -> void {
+define assert_approx(actual: Double, expected: Double, tolerance: Double = 0.0001, msg: String = "") -> void {
     diff := actual - expected
     if diff < 0.0 { diff = -diff }
     if diff <= tolerance { return }
-    throw AssertionError("assert_approx failed: |${actual} - ${expected}| = ${diff} > ${tolerance}")
+    throw AssertionError(_with_msg("assert_approx failed: |${actual} - ${expected}| = ${diff} > ${tolerance}", msg))
 }
 
 ---
-Asserts `cb` throws an exception of type `expected_type`. Pass an empty
-String for `expected_type` to accept any exception.
+Asserts `cb` throws an exception. If `expected_type` is non-empty, the
+thrown exception's type must match (e.g. `"ValueError"`).
 ---
-define assert_throws(cb: Callable, expected_type: String) -> void {
+define assert_throws(cb: Callable, expected_type: String = "", msg: String = "") -> void {
     threw := false
     actual_type := ""
     try {
@@ -100,26 +106,26 @@ define assert_throws(cb: Callable, expected_type: String) -> void {
         actual_type = e.type
     }
     if threw == false {
-        throw AssertionError("assert_throws failed: expected ${expected_type} but no exception was thrown")
+        throw AssertionError(_with_msg("assert_throws failed: expected ${expected_type} but no exception was thrown", msg))
     }
     if expected_type.length() == 0 { return }
     if actual_type == expected_type { return }
-    throw AssertionError("assert_throws failed: expected ${expected_type}, got ${actual_type}")
+    throw AssertionError(_with_msg("assert_throws failed: expected ${expected_type}, got ${actual_type}", msg))
 }
 
 ---
 Asserts `haystack` contains `needle` (substring for Strings, element for
 Lists, or anything else with a `.contains` method).
 ---
-define assert_contains(haystack: Any, needle: Any) -> void {
+define assert_contains(haystack: Any, needle: Any, msg: String = "") -> void {
     found := false
     try {
         found = haystack.contains(needle)
     } catch (_e: Exception) {
-        throw AssertionError("assert_contains: haystack does not support .contains")
+        throw AssertionError(_with_msg("assert_contains: haystack does not support .contains", msg))
     }
     if found { return }
-    throw AssertionError("assert_contains failed: '${haystack}' does not contain '${needle}'")
+    throw AssertionError(_with_msg("assert_contains failed: '${haystack}' does not contain '${needle}'", msg))
 }
 
 // ───────────────────────── TestCase / runner ─────────────────────────

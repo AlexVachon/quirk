@@ -24,6 +24,7 @@ from typing.primitives.string use { String }
 from typing.collections.map use { Map }
 from typing.exceptions.types use { ValueError }
 from net.socket use { Socket }
+use url
 
 ---
 HTTP response.
@@ -53,37 +54,11 @@ struct Response {
     }
 }
 
-define _parse_url(url: String) -> Map {
-    res := Map()
-    clean_url := url
-    if url.startswith("http://") {
-        clean_url = url.substring(7, url.length())
-    }
-    res.put("port", "80")
-    res.put("path", "/")
-    slash_idx := clean_url.find("/")
-    host_part := clean_url
-    if slash_idx != -1 {
-        host_part = clean_url.substring(0, slash_idx)
-        path := clean_url.substring(slash_idx, clean_url.length())
-        res.put("path", path)
-    }
-    colon_idx := host_part.find(":")
-    if colon_idx != -1 {
-        res.put("host", host_part.substring(0, colon_idx))
-        port_str := host_part.substring(colon_idx + 1, host_part.length())
-        res.put("port", port_str)
-    } else {
-        res.put("host", host_part)
-    }
-    return res
-}
-
-define _hex_to_int(hex: String) -> Int {
+define _hex_to_int(s: String) -> Int {
     result := 0
     i := 0
-    while i < hex.length() {
-        c := hex.substring(i, i + 1).lower()
+    while i < s.length() {
+        c := s.substring(i, i + 1).lower()
         digit := 0
         if c == "0" { digit = 0 }
         elif c == "1" { digit = 1 }
@@ -145,12 +120,13 @@ Send an HTTP request. The lower-level form behind `get`/`post`/`delete`.
 @param data Request body (empty for GET/DELETE).
 @returns A `Response` with status code, headers, and body.
 ---
-define request(method: String, url: String, data: String = "") -> Response {
-    url_parts := _parse_url(url)
-    host: String = url_parts.get("host")
-    path: String = url_parts.get("path")
-    port_str: String = url_parts.get("port")
-    port := port_str.to_int()
+define request(method: String, target: String, data: String = "") -> Response {
+    u := url.parse(target)
+    host := u.host
+    path := u.path
+    if path.length() == 0 { path = "/" }
+    port := u.port
+    if port == 0 { port = 80 }
 
     with Socket() as s {
         s.connect(host, port)
@@ -210,8 +186,8 @@ define request(method: String, url: String, data: String = "") -> Response {
 HTTP GET. Convenience for `request("GET", url)`.
 @example resp := http.get("http://example.com")
 ---
-define get(url: String) -> Response {
-    return request("GET", url)
+define get(target: String) -> Response {
+    return request("GET", target)
 }
 
 ---
@@ -219,13 +195,13 @@ HTTP POST. The body is sent as-is (no automatic Content-Type header —
 add it via a custom request if needed).
 @example resp := http.post("http://api/echo", "name=Quirk")
 ---
-define post(url: String, data: String) -> Response {
-    return request("POST", url, data)
+define post(target: String, data: String) -> Response {
+    return request("POST", target, data)
 }
 
 ---
 HTTP DELETE.
 ---
-define delete(url: String) -> Response {
-    return request("DELETE", url)
+define delete(target: String) -> Response {
+    return request("DELETE", target)
 }

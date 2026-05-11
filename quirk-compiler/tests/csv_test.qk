@@ -1,0 +1,147 @@
+use csv
+use test
+from test use { TestCase }
+use console
+
+define main() -> void {
+    // ───── parse: basic ─────
+    t1 := TestCase("parse simple 2x2", fn() {
+        rows := csv.parse("a,b\nc,d")
+        test.assert_eq(rows.length(), 2)
+        r0: List = rows.get(0)
+        r1: List = rows.get(1)
+        test.assert_eq(r0.length(), 2)
+        test.assert_eq(r1.length(), 2)
+        test.assert_eq(r0.get(0), "a")
+        test.assert_eq(r0.get(1), "b")
+        test.assert_eq(r1.get(0), "c")
+        test.assert_eq(r1.get(1), "d")
+    })
+
+    t2 := TestCase("parse handles trailing newline", fn() {
+        rows := csv.parse("a,b\nc,d\n")
+        test.assert_eq(rows.length(), 2)
+    })
+
+    t3 := TestCase("parse handles CRLF line endings", fn() {
+        rows := csv.parse("a,b\r\nc,d")
+        test.assert_eq(rows.length(), 2)
+        r1: List = rows.get(1)
+        test.assert_eq(r1.get(1), "d")
+    })
+
+    t4 := TestCase("parse empty input is empty list", fn() {
+        rows := csv.parse("")
+        test.assert_eq(rows.length(), 0)
+    })
+
+    // ───── parse: quoted fields ─────
+    t5 := TestCase("quoted field with embedded comma", fn() {
+        rows := csv.parse("a,\"x,y\",c")
+        r: List = rows.get(0)
+        test.assert_eq(r.length(), 3)
+        test.assert_eq(r.get(1), "x,y")
+    })
+
+    t6 := TestCase("quoted field with embedded newline", fn() {
+        rows := csv.parse("\"line\nbreak\",b")
+        test.assert_eq(rows.length(), 1)
+        r: List = rows.get(0)
+        test.assert_eq(r.get(0), "line\nbreak")
+    })
+
+    t7 := TestCase("escaped quote inside quoted field", fn() {
+        rows := csv.parse("\"a\"\"b\",c")
+        r: List = rows.get(0)
+        test.assert_eq(r.get(0), "a\"b")
+    })
+
+    t8 := TestCase("trailing empty field", fn() {
+        rows := csv.parse("a,b,")
+        r: List = rows.get(0)
+        test.assert_eq(r.length(), 3)
+        test.assert_eq(r.get(2), "")
+    })
+
+    // ───── parse_dicts ─────
+    t9 := TestCase("parse_dicts uses first row as keys", fn() {
+        ds := csv.parse_dicts("name,age\nAlice,30\nBob,25")
+        test.assert_eq(ds.length(), 2)
+        d0: Map = ds.get(0)
+        d1: Map = ds.get(1)
+        test.assert_eq(d0.get("name"), "Alice")
+        test.assert_eq(d0.get("age"),  "30")
+        test.assert_eq(d1.get("name"), "Bob")
+    })
+
+    t10 := TestCase("parse_dicts on empty header-only is empty", fn() {
+        ds := csv.parse_dicts("name,age")
+        test.assert_eq(ds.length(), 0)
+    })
+
+    // ───── dump ─────
+    t11 := TestCase("dump basic", fn() {
+        text := csv.write([["a", "b"], ["c", "d"]])
+        test.assert_eq(text, "a,b\r\nc,d")
+    })
+
+    t12 := TestCase("dump quotes fields with comma", fn() {
+        text := csv.write([["a,b", "c"]])
+        test.assert_eq(text, "\"a,b\",c")
+    })
+
+    t13 := TestCase("dump quotes fields with newline", fn() {
+        text := csv.write([["a\nb", "c"]])
+        test.assert_eq(text, "\"a\nb\",c")
+    })
+
+    t14 := TestCase("dump escapes internal quotes", fn() {
+        text := csv.write([["a\"b"]])
+        test.assert_eq(text, "\"a\"\"b\"")
+    })
+
+    t15 := TestCase("dump preserves order in plain rows", fn() {
+        text := csv.write([["1", "2"], ["3", "4"], ["5", "6"]])
+        test.assert_eq(text, "1,2\r\n3,4\r\n5,6")
+    })
+
+    // ───── round-trip ─────
+    t16 := TestCase("parse(dump(rows)) is identity for simple data", fn() {
+        original := [["name", "age"], ["Alice", "30"], ["Bob", "25"]]
+        text := csv.write(original)
+        rows := csv.parse(text)
+        test.assert_eq(rows.length(), 3)
+        r1: List = rows.get(1)
+        test.assert_eq(r1.get(0), "Alice")
+        test.assert_eq(r1.get(1), "30")
+    })
+
+    t17 := TestCase("round-trip preserves quoted contents", fn() {
+        original := [["with, comma", "with\"quote"]]
+        text := csv.write(original)
+        rows := csv.parse(text)
+        r: List = rows.get(0)
+        test.assert_eq(r.get(0), "with, comma")
+        test.assert_eq(r.get(1), "with\"quote")
+    })
+
+    // ───── delimiter ─────
+    t18 := TestCase("custom tab delimiter", fn() {
+        rows := csv.parse("a\tb\nc\td", "\t")
+        r: List = rows.get(0)
+        test.assert_eq(r.get(0), "a")
+        test.assert_eq(r.get(1), "b")
+    })
+
+    fails := test.run_all([
+        t1, t2, t3, t4, t5, t6, t7, t8,
+        t9, t10, t11, t12, t13, t14, t15,
+        t16, t17, t18
+    ])
+
+    if fails == 0 {
+        console.bold("csv: all checks passed.")
+    } else {
+        console.red("csv: ${fails} failed.")
+    }
+}

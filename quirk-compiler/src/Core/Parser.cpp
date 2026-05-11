@@ -747,12 +747,37 @@ std::string Parser::computeModulePrefix() const {
     }
     if (!seg.empty() && seg != "." && seg != "..") parts.push_back(seg);
 
-    // Find "libs" anywhere in the path (handles ./libs/... or /abs/path/libs/...)
-    auto libsIt = std::find(parts.begin(), parts.end(), "libs");
-    if (libsIt != parts.end()) {
-        parts.erase(parts.begin(), libsIt + 1);   // drop everything up to and including "libs"
+    // Strip everything up to and including the stdlib-root marker. We
+    // recognize THREE layouts:
+    //   .../libs/<module>/...               (dev tree)
+    //   .../lib/quirk/<module>/...          (installed / venv via QUIRK_HOME)
+    //   .../packages/<module>/...           (3rd-party packages)
+    // All three should produce the same prefix for the same module, so a
+    // stdlib resolved through any of them gets the same `Core_String_*`
+    // linkage names.
+    auto findRoot = [&](const std::string& a, const std::string& b = "") -> std::vector<std::string>::iterator {
+        for (auto it = parts.begin(); it != parts.end(); ++it) {
+            if (*it == a && (b.empty() || (it + 1 != parts.end() && *(it + 1) == b)))
+                return it;
+        }
+        return parts.end();
+    };
+    auto libsIt     = findRoot("libs");
+    auto libQuirkIt = findRoot("lib", "quirk");
+    auto packagesIt = findRoot("packages");
+
+    // Pick the deepest match (the rightmost root marker in the path) so a
+    // venv layout `lib/quirk/packages/foo` still resolves under `packages`.
+    auto rootIt = parts.end();
+    int rootSkip = 0;
+    if (libsIt     != parts.end() && (rootIt == parts.end() || libsIt > rootIt))         { rootIt = libsIt;     rootSkip = 1; }
+    if (libQuirkIt != parts.end() && (rootIt == parts.end() || libQuirkIt > rootIt))     { rootIt = libQuirkIt; rootSkip = 2; }
+    if (packagesIt != parts.end() && (rootIt == parts.end() || packagesIt > rootIt))     { rootIt = packagesIt; rootSkip = 1; }
+
+    if (rootIt != parts.end()) {
+        parts.erase(parts.begin(), rootIt + rootSkip);
         if (!parts.empty() && parts.back() == "index")
-            parts.pop_back();                      // drop trailing "index"
+            parts.pop_back();
     } else {
         // User file — just use the filename as a single-component prefix
         std::string last = parts.empty() ? "" : parts.back();
@@ -862,7 +887,11 @@ std::unique_ptr<FunctionNode> Parser::parseFunction(bool allowAbstract) {
         || name == "writeln" || name == "exit" || name == "malloc"
         || name == "free");
     bool isLibFunction = filePath.find("libs/") != std::string::npos
-                      || filePath.find("libs\\") != std::string::npos;
+                      || filePath.find("libs\\") != std::string::npos
+                      || filePath.find("lib/quirk/") != std::string::npos
+                      || filePath.find("lib\\quirk\\") != std::string::npos
+                      || filePath.find("packages/") != std::string::npos
+                      || filePath.find("packages\\") != std::string::npos;
     if (isExtern || (isLibFunction && collidesWithBuiltin)) {
         node->linkageName = modulePrefix + "_" + name;
     } else {

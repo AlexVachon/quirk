@@ -18,6 +18,9 @@
 #include <set>
 #include <sstream>
 #include <vector>
+#include <unistd.h>
+
+#include "PackageManager.hpp"
 
 #include "lexer.hpp"
 #include "parser.hpp"
@@ -355,15 +358,25 @@ std::vector<std::unique_ptr<Node>> processFile(const std::string& filePath,
 // ==========================================================
 
 void printUsage() {
-    std::cout << "Usage: quirk [options] <file.qk>\n"
+    std::cout << "Usage: quirk [options] <file.qk> [script-args...]\n"
               << "\n"
-              << "Options:\n"
+              << "Run options:\n"
               << "  --compile-only      Compile only, do not run\n"
               << "  --check             Type-check only (no codegen)\n"
               << "  -o <file>           Compile to native binary\n"
               << "  -v                  Verbose: show debug output\n"
               << "  --emit-ir           Write LLVM IR to <file>.ll\n"
               << "  --emit-ast          Write AST dump to <file>.ast.log\n"
+              << "\n"
+              << "Package management:\n"
+              << "  quirk install [-r <file>] [pkg ...]   install dependencies\n"
+              << "  quirk upgrade [pkg ...]               bump to latest versions\n"
+              << "  quirk remove <pkg> [pkg ...]          uninstall packages\n"
+              << "  quirk list (or `packages`, `-p`)      show installed packages\n"
+              << "  quirk show <pkg>                      package details\n"
+              << "  quirk init                            scaffold quirk.toml\n"
+              << "  quirk venv <name>                     create an isolated env\n"
+              << "  quirk --version                       print Quirk version\n"
               << std::endl;
 }
 
@@ -376,6 +389,13 @@ int main(int argc, char* argv[]) {
         printUsage();
         return 1;
     }
+
+    // Package-manager subcommand dispatch: `quirk install / upgrade / remove
+    // / list / show / init / version`, plus `--version` and `-p|--packages`
+    // shortcuts. Returns true when it handled the invocation; otherwise we
+    // fall through to the normal script-run path below.
+    int pmRc = 0;
+    if (qpm::dispatch(argc, argv, pmRc)) return pmRc;
 
     // Parse CLI flags. Anything after the input file (the first non-`-` arg)
     // is forwarded to the user script via sys.argv() — same convention as
@@ -492,14 +512,24 @@ int main(int argc, char* argv[]) {
     // =======================================================
     log.debug("Starting Code Generation...");
 
-    // Resolve runtime.so path (needed by both emit-ir and JIT paths)
-    std::string runtimePath = "./bin/runtime.so";
+    // Resolve runtime.so path: prefer the one next to the binary itself
+    // (works from any CWD and from inside a venv), then $QUIRK_HOME/bin/,
+    // then a CWD-relative fallback for legacy dev invocations.
+    std::string runtimePath;
     {
+        char buf[4096];
+        ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+        if (n > 0) {
+            buf[n] = '\0';
+            fs::path next = fs::path(buf).parent_path() / "runtime.so";
+            if (fs::exists(next)) runtimePath = next.string();
+        }
         const char* envHome = std::getenv("QUIRK_HOME");
         if (envHome) {
             std::string venvRuntime = std::string(envHome) + "/bin/runtime.so";
             if (fs::exists(venvRuntime)) runtimePath = venvRuntime;
         }
+        if (runtimePath.empty()) runtimePath = "./bin/runtime.so";
     }
 
     // =======================================================

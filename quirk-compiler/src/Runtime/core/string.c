@@ -200,7 +200,10 @@ void Core_String_String___init(String* self, char* raw) {
         self->buffer = strdup(temp);
         return;
     }
-    if (!raw) {
+    if (!raw || raw[0] == '\0') {
+        // Empty literal "" — short-circuit before the Any-tag heuristic below.
+        // Reading 4 bytes past a 1-byte zeroinitializer is UB and intermittently
+        // picks up adjacent memory that happens to look like a valid AnyTag.
         self->length = 0;
         self->buffer = strdup("");
         return;
@@ -265,6 +268,22 @@ String* Core_String_String___add(String* self, String* other) {
     return make_String_taking_ownership(raw);
 }
 
+String* Core_String_String_append(String* self, String* other) {
+    self = quirk_ensure_string(self);
+    other = quirk_ensure_string(other);
+    if (!self) self = make_String("");
+    if (!other) other = make_String("");
+    int new_len = self->length + other->length;
+    char* raw = (char*)malloc(new_len + 1);
+    if (!raw) return NULL;
+    if (self->buffer && self->length > 0)
+        memcpy(raw, self->buffer, self->length);
+    if (other->buffer && other->length > 0)
+        memcpy(raw + self->length, other->buffer, other->length);
+    raw[new_len] = '\0';
+    return make_String_taking_ownership(raw);
+}
+
 int Core_String_String___eq(String* self, String* other) {
     if (!self || !other)
         return self == other;
@@ -313,12 +332,14 @@ int Core_String_StringIterator___has_next(StringIterator* self) {
     return self->idx < self->str_ref->length;
 }
 
-char Core_String_StringIterator___next(StringIterator* self) {
-    if (!self || !self->str_ref)
-        return '\0';
+String* Core_String_StringIterator___next(StringIterator* self) {
+    if (!self || !self->str_ref) return make_String("");
     char c = self->str_ref->buffer[self->idx];
     self->idx++;
-    return c;
+    char* raw = (char*)malloc(2);
+    raw[0] = c;
+    raw[1] = '\0';
+    return make_String_taking_ownership(raw);
 }
 
 StringIterator* Core_String_String___iter(String* self) {
@@ -815,6 +836,32 @@ int Core_String_String_is_digit(String* self) {
         if (!isdigit((unsigned char)self->buffer[i]))
             return 0;
     return 1;
+}
+
+int Core_String_String_is_upper(String* self) {
+    if (!self || self->length == 0) return 0;
+    int saw_letter = 0;
+    for (int i = 0; i < self->length; i++) {
+        unsigned char c = (unsigned char)self->buffer[i];
+        if (isalpha(c)) {
+            saw_letter = 1;
+            if (!isupper(c)) return 0;
+        }
+    }
+    return saw_letter;
+}
+
+int Core_String_String_is_lower(String* self) {
+    if (!self || self->length == 0) return 0;
+    int saw_letter = 0;
+    for (int i = 0; i < self->length; i++) {
+        unsigned char c = (unsigned char)self->buffer[i];
+        if (isalpha(c)) {
+            saw_letter = 1;
+            if (!islower(c)) return 0;
+        }
+    }
+    return saw_letter;
 }
 
 int Core_String_String_is_alpha(String* self) {

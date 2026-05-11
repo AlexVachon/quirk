@@ -1,5 +1,4 @@
 from typing.collections.list use { List }
-from typing.primitives.char use { Char }
 from typing.interfaces.primitive use { Primitive }
 from typing.interfaces.comparable use { Comparable }
 from typing.interfaces.sizeable use { Sizeable }
@@ -13,7 +12,7 @@ struct StringIterator : Iterator {
 
     extern define __init(self, s: String)
     extern define __has_next(self) -> Bool
-    extern define __next(self) -> Char
+    extern define __next(self) -> String
 }
 
 ---
@@ -79,6 +78,14 @@ struct String : Primitive, Comparable, Sizeable, Iterable, Representable {
     ---
     extern define substring(self, start: Int, end: Int) -> String
 
+    ---
+    Return a new string with `other` appended to the end.
+    @example  "hi".append('!')   // "hi!"
+    @param other: String
+    @returns: String
+    ---
+    extern define append(self, other: String) -> String
+
     extern define upper(self) -> String
     extern define lower(self) -> String
     extern define title(self) -> String
@@ -132,6 +139,8 @@ struct String : Primitive, Comparable, Sizeable, Iterable, Representable {
     extern define is_alpha(self) -> Bool
     extern define is_digit(self) -> Bool
     extern define is_space(self) -> Bool
+    extern define is_upper(self) -> Bool
+    extern define is_lower(self) -> Bool
 
     ---
     Parses the string as an integer.
@@ -148,7 +157,6 @@ struct String : Primitive, Comparable, Sizeable, Iterable, Representable {
     extern define to_float(self) -> Double
 
     extern define to_bool(self) -> Bool
-    extern define to_char(self) -> Char
 
     ---
     Splits on newlines and returns each line as a list element.

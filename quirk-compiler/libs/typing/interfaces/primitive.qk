@@ -4,7 +4,7 @@ from .comparable use { Comparable }
 ---
 Base interface for primitive value types.
 
-All built-in scalar types (`Int`, `Double`, `Bool`, `Char`, `String`) implement
+All built-in scalar types (`Int`, `Double`, `Bool`, `String`) implement
 `Primitive`. Extends both `Printable` and `Comparable`, so any `where T: Primitive`
 constraint guarantees string conversion (`__str`) and ordering (`__lt`, `__eq`).
 

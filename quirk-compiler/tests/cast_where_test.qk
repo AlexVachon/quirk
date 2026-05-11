@@ -27,11 +27,9 @@ define main() -> void {
     flag2: Bool = 42 as Bool
     print(flag2)
 
-    c: Char = 65 as Char
+    // Char type was removed — single quotes now produce length-1 Strings.
+    c: String = "A"
     print(c)
-
-    ci: Int = c as Int
-    print(ci)
 
     print("--- where clause ---")
 

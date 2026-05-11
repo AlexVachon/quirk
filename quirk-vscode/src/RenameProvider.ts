@@ -7,7 +7,7 @@ export class QuirkRenameProvider implements vscode.RenameProvider {
         'define', 'struct', 'if', 'else', 'elif', 'while', 'for', 'in',
         'return', 'break', 'continue', 'use', 'from', 'with', 'as',
         'extern', 'true', 'false', 'null', 'del', 'init', 'def', 'extend',
-        'print', 'exit', 'Char', 'String', 'List', 'Map', 'File', 'Int',
+        'print', 'exit', 'String', 'List', 'Map', 'File', 'Int',
         'Double', 'Bool', 'Any', 'void', 'self', 'super',
         'and', 'or', 'not', 'try', 'catch', 'throw', 'trigger',
     ]);

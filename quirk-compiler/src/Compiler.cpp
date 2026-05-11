@@ -235,6 +235,15 @@ std::string resolveImportPath(const std::string& moduleName, const std::string& 
         return "";
     }
 
+    // Self-resolution: if the importing file lives inside a project whose
+    // quirk.toml declares `name = <moduleName>`, resolve to that project's
+    // own entry point. Wins over the standard search paths so that local
+    // edits aren't shadowed by an installed copy of the same package.
+    if (!relativeTo.empty()) {
+        std::string selfPath = qpm::resolve_self_package(moduleName, relativeTo);
+        if (!selfPath.empty()) return selfPath;
+    }
+
     // Absolute imports
     std::string relPath = moduleName;
     std::replace(relPath.begin(), relPath.end(), '.', '/');
@@ -261,6 +270,12 @@ std::string resolveImportPath(const std::string& moduleName, const std::string& 
 std::set<std::string> loadedModules;
 
 std::string getModuleName(const std::string& path) {
+    // If the file lives in a manifest-rooted project, the package name from
+    // quirk.toml wins. Lets `slug/src/index.qk` and `slug/tests/foo.qk` both
+    // report module "slug" — same as if it were already installed.
+    std::string pkg = qpm::project_name_for_file(path);
+    if (!pkg.empty()) return pkg;
+
     std::string mod = path;
 
     if (mod.find("./") == 0) mod = mod.substr(2);

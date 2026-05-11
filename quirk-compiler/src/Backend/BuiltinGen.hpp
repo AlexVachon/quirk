@@ -289,7 +289,6 @@ class BuiltinGen {
 
         // Primitive LLVM types — known statically
         if (llvmType->isIntegerTy(1))  return makeTypeString("Bool");
-        if (llvmType->isIntegerTy(8))  return makeTypeString("Char");
         if (llvmType->isIntegerTy())   return makeTypeString("Int");
         if (llvmType->isDoubleTy())    return makeTypeString("Double");
         return makeTypeString("Unknown");

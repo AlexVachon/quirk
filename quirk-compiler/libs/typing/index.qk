@@ -1,5 +1,5 @@
 from .primitives use {
-    Int, Double, Bool, Char,
+    Int, Double, Bool,
     String, StringIterator
 }
 

@@ -590,7 +590,7 @@ void Sema::checkFor(ForNode *node)
     std::string itemType = "Any";
 
     if (iterType == "String")
-        itemType = "Char";
+        itemType = "String";    // iterating a String yields length-1 Strings
     else if (iterType == "File")
         itemType = "String";
     else if (structRegistry.count(iterType))
@@ -709,10 +709,8 @@ std::string Sema::checkLiteral(LiteralNode *node)
     lastNode = node;
     if (std::isdigit(node->value[0]))
         return (node->value.find('.') != std::string::npos) ? "Double" : "Int";
-    if (node->value[0] == '"')
-        return "String";
-    if (node->value[0] == '\'') // <-- ADD THIS
-        return "Char";          // <-- ADD THIS
+    if (node->value[0] == '"' || node->value[0] == '\'')
+        return "String";        // 'x' and "x" both produce length-1 strings
     if (node->value == "true" || node->value == "false")
         return "Bool";
     if (node->value == "null")
@@ -800,7 +798,7 @@ std::string Sema::checkBinaryOp(BinaryOpNode *node)
             fatalError("array index must be 'Int', got '" + rType + "'",
                        node->line, node->col, node->filePath);
         if (lType == "Any" || lType == "String")
-            return (lType == "String") ? "Char" : "Any";
+            return (lType == "String") ? "String" : "Any";
         fatalError("type '" + lType + "' does not support indexing with '[]'",
                    node->line, node->col, node->filePath);
     }
@@ -1023,8 +1021,7 @@ std::string Sema::checkCall(CallNode *node)
         if (objType == "int") objType = "Int";
         else if (objType == "double") objType = "Double";
         else if (objType == "bool") objType = "Bool";
-        else if (objType == "char") objType = "Char";
-        else if (objType == "cstring" || objType == "string") objType = "String";
+        else if (objType == "cstring" || objType == "string" || objType == "char") objType = "String";
 
         // Builtin method return types for core primitives.
         // These are defined in Quirk's core library files which may not always
@@ -1036,9 +1033,13 @@ std::string Sema::checkCall(CallNode *node)
                 {"to_float",   "Double"},
                 {"to_double",  "Double"},
                 {"to_bool",    "Bool"},
-                {"to_char",    "Char"},
                 {"lower",      "String"},
                 {"upper",      "String"},
+                {"is_alpha",   "Bool"},
+                {"is_digit",   "Bool"},
+                {"is_space",   "Bool"},
+                {"is_upper",   "Bool"},
+                {"is_lower",   "Bool"},
                 {"trim",       "String"},
                 {"strip",      "String"},
                 {"split",      "List"},
@@ -1049,6 +1050,7 @@ std::string Sema::checkCall(CallNode *node)
                 {"endswith",   "Bool"},
                 {"replace",    "String"},
                 {"substring",  "String"},
+                {"append",     "String"},
                 {"str",        "String"},
                 {"format",     "String"},
             }},
@@ -1066,11 +1068,6 @@ std::string Sema::checkCall(CallNode *node)
             {"Bool", {
                 {"str",        "String"},
                 {"parse",      "Bool"},
-            }},
-            {"Char", {
-                {"str",        "String"},
-                {"to_int",     "Int"},
-                {"parse",      "Char"},
             }},
             {"List", {
                 {"get",        "Any"},
@@ -1258,7 +1255,7 @@ std::string Sema::resolveVariable(const std::string &name)
     if (name == "type" || name == "str")
         return "String";
     if (name == "char_at")
-        return "Char";
+        return "String";
     if (name == "set_char_at")
         return "void";
     if (name == "malloc" || name == "realloc")

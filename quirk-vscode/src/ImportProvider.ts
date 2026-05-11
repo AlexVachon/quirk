@@ -10,7 +10,6 @@ const PRELUDE_MODULES = [
     'typing/primitives/int.qk',
     'typing/primitives/double.qk',
     'typing/primitives/bool.qk',
-    'typing/primitives/char.qk',
     // interfaces
     'typing/interfaces/index.qk',
     'typing/interfaces/printable.qk',

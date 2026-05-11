@@ -12,7 +12,7 @@ const KEYWORDS = new Set([
 ]);
 
 const BUILTINS = new Set([
-    'print', 'printf', 'type', 'exit', 'Char', 'String', 'List', 'Map',
+    'print', 'printf', 'type', 'exit', 'String', 'List', 'Map',
     'File', 'Int', 'Double', 'Bool', 'Any', 'void', 'Callable', 'Tuple',
     'Self',  // type placeholder in interface methods
     'Printable', 'Equatable', 'Comparable', 'Hashable',
@@ -331,7 +331,7 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
                     else if (/^\d+\.\d/.test(rhs))                   { localTypes.set(vName, 'Double'); }
                     else if (/^\d/.test(rhs))                        { localTypes.set(vName, 'Int'); }
                     else if (/^(?:true|false)\b/.test(rhs))          { localTypes.set(vName, 'Bool'); }
-                    else if (rhs.startsWith("'"))                    { localTypes.set(vName, 'Char'); }
+                    else if (rhs.startsWith("'"))                    { localTypes.set(vName, 'String'); }
                     else if (rhs.startsWith('['))                     { localTypes.set(vName, 'List'); }
                     else if (rhs.startsWith('{'))                    { localTypes.set(vName, 'Map'); }
                     else if (rhs.startsWith('('))                    { localTypes.set(vName, 'Tuple'); }
@@ -344,7 +344,7 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
                                 const methodReturnTypes: Record<string, Record<string, string>> = {
                                     String: { upper:'String', lower:'String', trim:'String', replace:'String',
                                               split:'List', lines:'List', to_int:'Int', to_float:'Double',
-                                              to_bool:'Bool', to_char:'Char', find:'Int', count:'Int',
+                                              to_bool:'Bool', find:'Int', count:'Int',
                                               contains:'Bool', startswith:'Bool', endswith:'Bool', distance:'Int',
                                               substring:'String', join:'String', reverse:'String', encode:'String' },
                                     List:   { join:'String', find:'Any', any:'Bool', all:'Bool', get:'Any' },
@@ -388,10 +388,10 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
                 // Infer element type from the iterable
                 const iterable = forMatch[3];
                 if (iterable.startsWith('"') || iterable.startsWith("'")) {
-                    localTypes.set(vName, 'Char');
+                    localTypes.set(vName, 'String');
                 } else {
                     const iterType = localTypes.get(iterable);
-                    if (iterType === 'String') localTypes.set(vName, 'Char');
+                    if (iterType === 'String') localTypes.set(vName, 'String');
                     else if (iterType === 'List') localTypes.set(vName, 'Any');
                 }
             }

@@ -3,6 +3,7 @@
 #include <map>
 #include <set>
 #include "parser.hpp"
+#include "../PackageManager.hpp"
 
 Parser::Parser(const std::vector<Token>& tokens, const std::string& source, const std::string& filePath)
     : tokens(tokens), source(source), filePath(filePath) {}
@@ -728,6 +729,17 @@ std::unique_ptr<Node> Parser::parseFor() {
 // libs/sys/index.qk             -> "Sys"
 // userfile.qk                   -> "Userfile"
 std::string Parser::computeModulePrefix() const {
+    // First check: does this file live inside a manifest-rooted project?
+    // If so, the package's declared `name` drives the linkage prefix —
+    // same as if the package were already installed under packages/<name>/.
+    // Lets `slug/src/index.qk` emit `Slug_*` linkage names directly.
+    std::string pkgName = qpm::project_name_for_file(this->filePath);
+    if (!pkgName.empty()) {
+        std::string prefix = pkgName;
+        if (!prefix.empty()) prefix[0] = (char)std::toupper((unsigned char)prefix[0]);
+        return prefix;
+    }
+
     std::string p = this->filePath;
     if (p.size() >= 3 && p.substr(p.size() - 3) == ".qk")
         p = p.substr(0, p.size() - 3);

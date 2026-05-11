@@ -152,6 +152,61 @@ static int sh(const std::string& cmd, bool quiet = false) {
     return std::system(cmd.c_str());
 }
 
+// Walk up from `start` looking for the nearest `quirk.toml`. Returns the
+// directory containing it, or empty if none is found before the filesystem
+// root. `start` can be a file or directory path.
+static fs::path find_project_root(fs::path start) {
+    std::error_code ec;
+    fs::path p = fs::absolute(start, ec);
+    if (ec) return {};
+    if (fs::is_regular_file(p)) p = p.parent_path();
+    while (!p.empty()) {
+        if (fs::exists(p / "quirk.toml")) return p;
+        fs::path parent = p.parent_path();
+        if (parent == p) break;
+        p = parent;
+    }
+    return {};
+}
+
+// For a given source file, return the package name declared in the nearest
+// ancestor `quirk.toml`, or empty if none. Used so that `use slug` from
+// inside the slug project resolves to its own src/, and so functions defined
+// in slug/src/index.qk get `Slug_*` linkage names without needing the file
+// to live under libs/ or packages/.
+static std::string project_name_for_file(const std::string& filePath) {
+    fs::path root = find_project_root(filePath);
+    if (root.empty()) return "";
+    Manifest m;
+    if (!read_manifest((root / "quirk.toml").string(), m)) return "";
+    return m.name;
+}
+
+// Resolve a `use <name>` to a file inside a project rooted at a `quirk.toml`
+// whose `name = <name>`. Walks up from `relativeTo` to find that manifest,
+// then probes the conventional entry-point layouts. Returns empty if no
+// match. Lets a library import itself from anywhere inside its own repo
+// — the in-tree equivalent of `pip install -e .`.
+static std::string resolve_self_package(const std::string& moduleName,
+                                        const std::string& relativeTo) {
+    if (relativeTo.empty() || moduleName.empty()) return "";
+    fs::path root = find_project_root(relativeTo);
+    if (root.empty()) return "";
+    Manifest m;
+    if (!read_manifest((root / "quirk.toml").string(), m)) return "";
+    if (m.name != moduleName) return "";
+
+    for (const fs::path& candidate : {
+            root / "src" / "index.qk",
+            root / "src" / (moduleName + ".qk"),
+            root / (moduleName + ".qk"),
+            root / moduleName / "index.qk",
+         }) {
+        if (fs::exists(candidate)) return candidate.string();
+    }
+    return "";
+}
+
 // Get the current resolved revision of a checked-out repo.
 static std::string git_head(const fs::path& dir) {
     std::string cmd = "git -C \"" + dir.string() + "\" rev-parse HEAD 2>/dev/null";

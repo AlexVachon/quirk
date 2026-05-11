@@ -23,7 +23,6 @@ public:
             return getLLVMType(typeName.substr(0, typeName.size() - 1));
         if (typeName == "int" || typeName == "Int") return Type::getInt32Ty(Context);
         if (typeName == "bool" || typeName == "Bool") return Type::getInt1Ty(Context);
-        if (typeName == "char" || typeName == "Char") return Type::getInt8Ty(Context);
         if (typeName == "double" || typeName == "Double") return Type::getDoubleTy(Context);
         if (typeName == "void") return Type::getVoidTy(Context);
 

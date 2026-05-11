@@ -80,7 +80,7 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
         if (indexAccessMatch) {
             const containerVar = indexAccessMatch[1];
             const containerType = this.inferTypeOfVariable(document, position, containerVar);
-            if (containerType === 'String') return this.provideObjectMemberCompletions(document, position, '', 'Char');
+            if (containerType === 'String') return this.provideObjectMemberCompletions(document, position, '', 'String');
             if (containerType === 'List') {
                 const elemType = this.inferElementType(document, position, containerVar);
                 if (elemType) return this.provideObjectMemberCompletions(document, position, '', elemType);
@@ -449,7 +449,7 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
         const lines = textBeforeCursor.split(/\r?\n/).reverse();
 
         // Built-in type names used as static namespaces: Int.parse(), Double.parse(), etc.
-        const primitiveTypes = new Set(['Int', 'Double', 'Bool', 'Char', 'String', 'List', 'Map']);
+        const primitiveTypes = new Set(['Int', 'Double', 'Bool', 'String', 'List', 'Map']);
         if (primitiveTypes.has(variableName)) return variableName;
 
         // self → look up the enclosing struct definition
@@ -492,8 +492,8 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
             // x := true / false  → Bool
             if (new RegExp(`\\b${esc}\\s*(?::=|=)\\s*(?:true|false)\\b`).test(line)) return 'Bool';
 
-            // x := 'a'  → Char literal
-            if (new RegExp(`\\b${esc}\\s*(?::=|=)\\s*'`).test(line)) return 'Char';
+            // x := 'a'  → length-1 String
+            if (new RegExp(`\\b${esc}\\s*(?::=|=)\\s*'`).test(line)) return 'String';
 
             // x := something.map(...) / .filter(...) / .keys() / .values()  → List
             const chainedMatch = new RegExp(`\\b${esc}\\s*:=\\s*.+\\.(${[...listReturnMethods].join('|')})\\s*\\(`).exec(line);
@@ -552,9 +552,9 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
             const forMatch = new RegExp(`\\bfor\\s+(?:ref\\s+)?${esc}\\s+in\\s+([a-zA-Z0-9_"'\\[]+)`).exec(line);
             if (forMatch) {
                 const iterable = forMatch[1];
-                if (iterable.startsWith('"') || iterable.startsWith("'")) return 'Char'; // string literal → Char elements
+                if (iterable.startsWith('"') || iterable.startsWith("'")) return 'String'; // string literal → length-1 String elements
                 const iterType = this.inferTypeOfVariable(document, position, iterable);
-                if (iterType === 'String') return 'Char';
+                if (iterType === 'String') return 'String';
                 if (iterType === 'List') {
                     const elemType = this.inferElementType(document, position, iterable);
                     if (elemType) return elemType;
@@ -603,7 +603,7 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
             if (/^\d+\.\d/.test(firstElem))      return 'Double';
             if (/^\d/.test(firstElem))            return 'Int';
             if (/^(true|false)$/.test(firstElem)) return 'Bool';
-            if (/^'.'$/.test(firstElem))          return 'Char';
+            if (/^'.'$/.test(firstElem))          return 'String';
 
             // SomeType(...) constructor
             const ctorMatch = /^([A-Z][a-zA-Z0-9_]*)\s*\(/.exec(firstElem);
@@ -631,10 +631,10 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
                 format: 'String', format_map: 'String', format_list: 'String',
                 split: 'List', lines: 'List',
                 find: 'Int', index: 'Int', count: 'Int', distance: 'Int',
-                to_int: 'Int', to_float: 'Double', to_bool: 'Bool', to_char: 'Char',
+                to_int: 'Int', to_float: 'Double', to_bool: 'Bool',
                 startswith: 'Bool', endswith: 'Bool', contains: 'Bool', is_alpha: 'Bool',
-                is_digit: 'Bool', is_space: 'Bool', is_empty: 'Bool',
-                str: 'String', __str: 'String',
+                is_digit: 'Bool', is_space: 'Bool', is_upper: 'Bool', is_lower: 'Bool', is_empty: 'Bool',
+                append: 'String', str: 'String', __str: 'String',
             },
             List: {
                 map: 'List', filter: 'List', find: 'Any',
@@ -665,13 +665,6 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
             Bool: {
                 str: 'String', __str: 'String',
                 parse: 'Bool',
-            },
-            Char: {
-                str: 'String', __str: 'String',
-                is_upper: 'Bool', is_lower: 'Bool',
-                is_digit: 'Bool', is_alpha: 'Bool', is_space: 'Bool',
-                to_upper: 'Char', to_lower: 'Char',
-                parse: 'Char',
             },
             Tuple: {
                 length: 'Int',

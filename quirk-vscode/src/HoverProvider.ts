@@ -96,7 +96,7 @@ export class QuirkHoverProvider implements vscode.HoverProvider {
         // ---- Built-in struct types — read docstrings live from the .qk lib files ----
         const builtinStructTypes = new Set([
             // Primitive types
-            'String', 'Int', 'Double', 'Bool', 'Char',
+            'String', 'Int', 'Double', 'Bool',
             // Collections
             'List', 'Map', 'Tuple', 'Set', 'Queue', 'Callable', 'File',
             // Typing interfaces

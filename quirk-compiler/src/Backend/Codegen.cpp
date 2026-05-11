@@ -2624,9 +2624,11 @@ Value* LLVMCodegen::handleExpression(Node* node) {
         }
 
         if (lit->value.size() >= 2 && lit->value.front() == '\'') {
-            std::string unescaped = unescapeString(lit->value.substr(1, lit->value.size() - 2));
-            char c = unescaped.empty() ? '\0' : unescaped[0];
-            return ConstantInt::get(Type::getInt8Ty(Context), c);
+            // Single-quoted literals are 1-char Strings (Char type is gone).
+            std::string rawStr = unescapeString(lit->value.substr(1, lit->value.size() - 2));
+            Value* rawPtr = Builder.CreateGlobalStringPtr(rawStr);
+            std::vector<Value*> args = {rawPtr};
+            return structGen->allocateAndInit("String", args);
         }
 
         if (varGen->exists(lit->value)) return varGen->resolveVariable(lit->value);
@@ -2825,10 +2827,6 @@ Value* LLVMCodegen::handleExpression(Node* node) {
                 if (srcTy->isIntegerTy())   return Builder.CreateICmpNE(src, ConstantInt::get(srcTy, 0), "cast_bool");
                 if (srcTy->isDoubleTy())    return Builder.CreateFCmpONE(src, ConstantFP::get(dblTy, 0.0), "cast_bool");
                 if (srcTy->isPointerTy())   return Builder.CreateICmpNE(src, Constant::getNullValue(srcTy), "cast_bool");
-            }
-            if (targetType == "Char") {
-                if (srcTy->isIntegerTy(8))  return src;
-                if (srcTy->isIntegerTy())   return Builder.CreateTrunc(src, i8Ty, "cast_char");
             }
             if (targetType == "String") {
                 // Int/Bool/Double → String via runtime str helpers

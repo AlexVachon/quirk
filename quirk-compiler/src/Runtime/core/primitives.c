@@ -93,8 +93,8 @@ int Core_Primitives_Char_is_digit(char self) { return isdigit((unsigned char)sel
 int Core_Primitives_Char_is_alpha(char self) { return isalpha((unsigned char)self) != 0; }
 int Core_Primitives_Char_is_space(char self) { return isspace((unsigned char)self) != 0; }
 
-char Core_Primitives_Char_to_upper(char self) { return toupper((unsigned char)self); }
-char Core_Primitives_Char_to_lower(char self) { return tolower((unsigned char)self); }
+char Core_Primitives_Char_upper(char self) { return toupper((unsigned char)self); }
+char Core_Primitives_Char_lower(char self) { return tolower((unsigned char)self); }
 
 // ==========================================
 //  PARSE METHODS (static — no self)

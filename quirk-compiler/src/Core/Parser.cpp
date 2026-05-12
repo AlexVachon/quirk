@@ -41,6 +41,12 @@ void Parser::consume(TokenType type, const std::string& message) {
 std::vector<std::unique_ptr<Node>> Parser::parse() {
     std::vector<std::unique_ptr<Node>> nodes;
     while (!isAtEnd()) {
+        // Stray semicolons act as empty statement separators — lets one-liners
+        // like `a := 1; print(a)` work (matching Python's same-line statement
+        // separator). The Lexer emits SEMICOLON tokens; the Parser is
+        // newline-driven otherwise, so we just eat them here.
+        while (peek().type == TokenType::SEMICOLON) advance();
+        if (isAtEnd()) break;
         TokenType type = peek().type;
         try {
             if (type == TokenType::DEFINE || type == TokenType::INIT ||
@@ -514,6 +520,9 @@ std::unique_ptr<Node> Parser::parseExpression(int min_precedence) {
 
 // --- Statement & Control Flow ---
 std::unique_ptr<Node> Parser::parseStatement() {
+    // Skip any leading `;` — they act as empty statement separators, so a
+    // line like `a := 1; b := 2` parses two statements without complaint.
+    while (peek().type == TokenType::SEMICOLON) advance();
     TokenType type = peek().type;
     int currentLine = peek().line;
 

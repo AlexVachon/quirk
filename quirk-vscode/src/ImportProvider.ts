@@ -43,9 +43,6 @@ export function resolveModulePath(projectRoot: string, currentFile: string, modu
             path.join(root, relPath, '__init.qk'),
             path.join(root, relPath, 'src', 'index.qk'),
             path.join(root, relPath, 'src', relPath + '.qk'),
-            // Versioned install: pkg/current → <version>/
-            path.join(root, relPath, 'current', 'src', 'index.qk'),
-            path.join(root, relPath, 'current', 'src', relPath + '.qk'),
         ]) if (fs.existsSync(c)) return c;
     }
     return null;
@@ -671,9 +668,6 @@ export class QuirkDefinitionProvider implements vscode.DefinitionProvider {
                 path.join(root, relPath, '__init.qk'),
                 path.join(root, relPath, 'src', 'index.qk'),
                 path.join(root, relPath, 'src', relPath + '.qk'),
-                // Versioned install: pkg/current → <version>/
-                path.join(root, relPath, 'current', 'src', 'index.qk'),
-                path.join(root, relPath, 'current', 'src', relPath + '.qk'),
             ];
             for (const c of candidates) if (fs.existsSync(c)) return c;
         }

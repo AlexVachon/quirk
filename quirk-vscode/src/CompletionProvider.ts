@@ -1459,9 +1459,6 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
                 path.join(root, relPath, '__init.qk'),
                 path.join(root, relPath, 'src', 'index.qk'),
                 path.join(root, relPath, 'src', relPath + '.qk'),
-                // Versioned install: pkg/current → <version>/
-                path.join(root, relPath, 'current', 'src', 'index.qk'),
-                path.join(root, relPath, 'current', 'src', relPath + '.qk'),
             ];
             for (const c of candidates) if (fs.existsSync(c)) return c;
         }
@@ -1532,17 +1529,16 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
             try {
                 for (const entry of fs.readdirSync(root)) {
                     if (entry.startsWith('.') || entry === 'typing' || BUCKET_NAMES.has(entry)) continue;
+                    if (entry.endsWith('.dist-info')) continue;        // metadata sidecars
                     const fullPath = path.join(root, entry);
                     let isDir = false;
                     try { isDir = fs.statSync(fullPath).isDirectory(); } catch { }
                     if (isDir) {
-                        // Package — stdlib layout (`<entry>/index.qk`),
-                        // package layout (`<entry>/src/index.qk`),
-                        // or versioned (`<entry>/current/src/index.qk`).
+                        // Package — stdlib layout (`<entry>/index.qk`) or
+                        // package layout (`<entry>/src/index.qk`).
                         if (fs.existsSync(path.join(fullPath, 'index.qk')) ||
                             fs.existsSync(path.join(fullPath, 'src', 'index.qk')) ||
-                            fs.existsSync(path.join(fullPath, 'src', entry + '.qk')) ||
-                            fs.existsSync(path.join(fullPath, 'current', 'src', 'index.qk'))) {
+                            fs.existsSync(path.join(fullPath, 'src', entry + '.qk'))) {
                             add(entry, entry);
                         }
                         // Sub-modules: <root>/<entry>/<sub>.qk → `use entry.sub`

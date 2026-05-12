@@ -1,4 +1,5 @@
 *.log
+.vscode/settings.json
 quirk-compiler/.venv/
 *.ll
 quirk-compiler/vcpkg_installed

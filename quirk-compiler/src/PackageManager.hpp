@@ -511,30 +511,138 @@ static bool is_local_path(const std::string& spec) {
     return fs::is_directory(spec, ec);
 }
 
-// Read the active version from <pkg>/current (a symlink to <version>/).
-// Returns empty if the package isn't a versioned install (e.g. legacy
-// layout where <pkg>/ is itself the install root).
-static std::string read_current_version(const fs::path& pkgPath) {
-    fs::path link = pkgPath / "current";
+// ----------------------------- Layout (Option B) ---------------------------
+// Active installs are flat in `packages/`:
+//   packages/<name>/                 ← active code (one version per package)
+//   packages/<name>-<ver>.dist-info/ ← metadata sidecar (Name/Version/Installer)
+//
+// All versions ever fetched live in a cross-project cache:
+//   ~/.quirk/cache/<name>-<ver>/
+//
+// `quirk install <name>@<ver>` checks the cache first; missing versions are
+// downloaded (git) or copied (local path) into the cache once, then linked
+// into packages/.
+
+static fs::path cache_dir() {
+    const char* h = std::getenv("HOME");
+    if (!h) return {};
+    fs::path c = fs::path(h) / ".quirk" / "cache";
     std::error_code ec;
-    if (!fs::is_symlink(link)) return "";
-    auto tgt = fs::read_symlink(link, ec);
-    if (ec) return "";
-    return tgt.filename().string();
+    fs::create_directories(c, ec);
+    return c;
 }
 
-// List installed versions of a package (subdirs that look like versions).
-static std::vector<std::string> list_installed_versions(const fs::path& pkgPath) {
-    std::vector<std::string> versions;
-    if (!fs::is_directory(pkgPath)) return versions;
-    for (auto& v : fs::directory_iterator(pkgPath)) {
-        std::string name = v.path().filename().string();
-        if (name.empty() || name[0] == '.' || name == "current") continue;
-        if (!fs::is_directory(v.path()) && !fs::is_symlink(v.path())) continue;
-        versions.push_back(name);
+static fs::path cache_entry(const std::string& name, const std::string& version) {
+    fs::path c = cache_dir();
+    if (c.empty()) return {};
+    return c / (name + "-" + version);
+}
+
+// dist-info dir for an active install. Lives next to `<name>/` in packages/.
+static fs::path dist_info_dir(const fs::path& pkgRoot, const std::string& name,
+                              const std::string& version) {
+    return pkgRoot / (name + "-" + version + ".dist-info");
+}
+
+// Locate the .dist-info for a name (matches `<name>-*.dist-info`). Returns
+// the first match or an empty path. The active version is the unique sidecar.
+static fs::path find_dist_info(const fs::path& pkgRoot, const std::string& name) {
+    if (!fs::is_directory(pkgRoot)) return {};
+    std::string prefix = name + "-";
+    for (auto& e : fs::directory_iterator(pkgRoot)) {
+        std::string fn = e.path().filename().string();
+        if (fn.size() > prefix.size() + 10
+            && fn.rfind(prefix, 0) == 0
+            && fn.size() > 10
+            && fn.substr(fn.size() - 10) == ".dist-info") {
+            return e.path();
+        }
     }
-    std::sort(versions.begin(), versions.end());
-    return versions;
+    return {};
+}
+
+// Read the active version of a package by inspecting its dist-info name.
+// Returns "" if the package is not installed in `pkgRoot`.
+static std::string read_current_version(const fs::path& pkgRoot, const std::string& name) {
+    fs::path d = find_dist_info(pkgRoot, name);
+    if (d.empty()) return "";
+    std::string fn = d.filename().string();
+    std::string prefix = name + "-";
+    return fn.substr(prefix.size(), fn.size() - prefix.size() - 10); // strip prefix + .dist-info
+}
+
+// Convenience overload kept for the older callsites: caller passes pkgPath
+// = <pkgRoot>/<name>, we infer name from its filename.
+static std::string read_current_version(const fs::path& pkgPath) {
+    return read_current_version(pkgPath.parent_path(), pkgPath.filename().string());
+}
+
+// All cached versions of <name> as a sorted vector.
+static std::vector<std::string> list_cached_versions(const std::string& name) {
+    std::vector<std::string> out;
+    fs::path c = cache_dir();
+    if (c.empty() || !fs::is_directory(c)) return out;
+    std::string prefix = name + "-";
+    for (auto& e : fs::directory_iterator(c)) {
+        std::string fn = e.path().filename().string();
+        if (fn.rfind(prefix, 0) == 0 && (fs::is_directory(e.path()) || fs::is_symlink(e.path()))) {
+            out.push_back(fn.substr(prefix.size()));
+        }
+    }
+    std::sort(out.begin(), out.end(), [](const std::string& a, const std::string& b){
+        return compare_versions(a, b) < 0;
+    });
+    return out;
+}
+
+// Legacy helper still used elsewhere — list "installed versions" now means
+// "cached versions" since active installs are single-version.
+static std::vector<std::string> list_installed_versions(const fs::path& pkgPath) {
+    return list_cached_versions(pkgPath.filename().string());
+}
+
+// Pick the highest cached version of <name> matching `range`. Empty string
+// if no cached version matches.
+static std::string pick_cached_version(const std::string& name, const std::string& range) {
+    std::string best;
+    for (auto& v : list_cached_versions(name)) {
+        if (!version_satisfies(v, range)) continue;
+        if (best.empty() || compare_versions(v, best) > 0) best = v;
+    }
+    return best;
+}
+
+// Write the metadata sidecar.
+static void write_dist_info(const fs::path& pkgRoot, const Manifest& m, bool editable) {
+    fs::path d = dist_info_dir(pkgRoot, m.name, m.version);
+    fs::create_directories(d);
+    std::ofstream out(d / "METADATA");
+    out << "Name: "      << m.name    << "\n"
+        << "Version: "   << m.version << "\n";
+    if (!m.description.empty()) out << "Summary: " << m.description << "\n";
+    if (!m.author.empty())      out << "Author: "  << m.author      << "\n";
+    if (!m.license.empty())     out << "License: " << m.license     << "\n";
+    out << "Installer: quirk\n";
+    if (editable) out << "Editable: true\n";
+    for (auto& dep : m.deps) out << "Requires: " << dep.first << " (" << dep.second << ")\n";
+}
+
+// Remove any existing dist-info sidecar(s) for <name> in pkgRoot. Used
+// before writing a new one so we never end up with two sidecars.
+static void clear_dist_info(const fs::path& pkgRoot, const std::string& name) {
+    if (!fs::is_directory(pkgRoot)) return;
+    std::string prefix = name + "-";
+    std::vector<fs::path> toRemove;
+    for (auto& e : fs::directory_iterator(pkgRoot)) {
+        std::string fn = e.path().filename().string();
+        if (fn.size() > prefix.size() + 10
+            && fn.rfind(prefix, 0) == 0
+            && fn.size() > 10
+            && fn.substr(fn.size() - 10) == ".dist-info") {
+            toRemove.push_back(e.path());
+        }
+    }
+    for (auto& p : toRemove) fs::remove_all(p);
 }
 
 // Repoint <pkg>/current → <version>/. Used both by fresh installs and by
@@ -576,6 +684,35 @@ static std::string pick_installed_version(const fs::path& pkgDir, const std::str
 //
 // If `pinVersion` is non-empty, the source's manifest version must match;
 // otherwise we install the source's declared version.
+// Internal: replace packages/<name>/ with content from the cache entry.
+// Strategy: copy (snapshot) so re-installs don't suffer from cache mutation.
+// Returns 0 on success, non-zero on failure.
+static int materialize_from_cache(const fs::path& cachePath, const fs::path& pkgRoot,
+                                  const Manifest& m, bool editable) {
+    fs::path target = pkgRoot / m.name;
+    std::error_code ec;
+    if (fs::exists(target) || fs::is_symlink(target)) fs::remove_all(target);
+
+    if (editable) {
+        // Editable installs symlink the *source*, not the cache.
+        // (Caller passes cachePath = source path in that case.)
+        fs::create_directory_symlink(cachePath, target, ec);
+    } else {
+        fs::copy(cachePath, target,
+                 fs::copy_options::recursive | fs::copy_options::copy_symlinks, ec);
+        if (!ec) fs::remove_all(target / ".git");
+    }
+    if (ec) {
+        std::cerr << "install: failed to install " << target.string()
+                  << ": " << ec.message() << "\n";
+        fs::remove_all(target);
+        return 1;
+    }
+    clear_dist_info(pkgRoot, m.name);
+    write_dist_info(pkgRoot, m, editable);
+    return 0;
+}
+
 static int install_local(const std::string& path_spec, bool editable,
                          const std::string& pinVersion = "") {
     fs::path src = path_spec;
@@ -597,17 +734,20 @@ static int install_local(const std::string& path_spec, bool editable,
     if (m.version.empty()) m.version = "0.0.0";
 
     fs::path pkgRoot = package_install_dir();
-    fs::path pkgDir  = pkgRoot / m.name;
-    fs::create_directories(pkgDir);
+    fs::create_directories(pkgRoot);
 
-    // Fast-path: a pin (exact or range) that matches an already-installed
-    // version — just repoint `current` and skip the copy. Skipped when editable
-    // is set, since the user wants the source freshly resymlinked.
+    // Fast-path: a pin matches something we already have cached. No re-fetch,
+    // just materialize from the cache. Editable always re-symlinks from source.
     if (!pinVersion.empty() && !editable) {
-        std::string existing = pick_installed_version(pkgDir, pinVersion);
-        if (!existing.empty()) {
-            if (set_current_version(pkgDir, existing) != 0) return 1;
-            std::cout << "  ✓ " << m.name << " " << existing << " (switched, already installed)\n";
+        std::string cached = pick_cached_version(m.name, pinVersion);
+        if (!cached.empty()) {
+            Manifest mCached;
+            fs::path entry = cache_entry(m.name, cached);
+            if (entry.empty() || !read_manifest((entry / "quirk.toml").string(), mCached)) {
+                mCached.name = m.name; mCached.version = cached;
+            }
+            if (materialize_from_cache(entry, pkgRoot, mCached, false) != 0) return 1;
+            std::cout << "  ✓ " << m.name << " " << cached << " (from cache)\n";
             return 0;
         }
     }
@@ -618,32 +758,30 @@ static int install_local(const std::string& path_spec, bool editable,
         return 1;
     }
 
-    fs::path versionDir = pkgDir / m.version;
-    if (fs::exists(versionDir) || fs::is_symlink(versionDir)) fs::remove_all(versionDir);
-
-    if (editable) {
-        fs::create_directory_symlink(src, versionDir, ec);
-        if (ec) {
-            std::cerr << "install: failed to symlink " << versionDir.string()
-                      << ": " << ec.message() << "\n";
-            return 1;
+    // Populate the cache for this (name, version) if missing. Editable skips
+    // the cache (it'd be a symlink to the source — pointless to cache).
+    if (!editable) {
+        fs::path entry = cache_entry(m.name, m.version);
+        if (!entry.empty() && !fs::exists(entry)) {
+            fs::create_directories(entry.parent_path());
+            fs::copy(src, entry,
+                     fs::copy_options::recursive | fs::copy_options::copy_symlinks, ec);
+            if (ec) {
+                std::cerr << "install: failed to cache " << src.string() << " → "
+                          << entry.string() << ": " << ec.message() << "\n";
+                fs::remove_all(entry);
+                return 1;
+            }
+            fs::remove_all(entry / ".git");
         }
+        if (materialize_from_cache(entry, pkgRoot, m, false) != 0) return 1;
+        std::cout << "  ✓ " << m.name << " " << m.version
+                  << " (snapshot from " << src.string() << ")\n";
     } else {
-        fs::copy(src, versionDir,
-                 fs::copy_options::recursive | fs::copy_options::copy_symlinks, ec);
-        if (ec) {
-            std::cerr << "install: failed to copy " << src.string() << " → "
-                      << versionDir.string() << ": " << ec.message() << "\n";
-            fs::remove_all(versionDir);
-            return 1;
-        }
-        fs::remove_all(versionDir / ".git");
+        if (materialize_from_cache(src, pkgRoot, m, true) != 0) return 1;
+        std::cout << "  ✓ " << m.name << " " << m.version
+                  << " (editable from " << src.string() << ")\n";
     }
-
-    if (set_current_version(pkgDir, m.version) != 0) return 1;
-
-    std::cout << "  ✓ " << m.name << " " << m.version
-              << (editable ? " (editable from " : " (snapshot from ") << src.string() << ")\n";
     return 0;
 }
 
@@ -667,21 +805,26 @@ static int install_one(const std::string& spec_str, bool quiet, bool editable = 
     if (is_local_path(pathPart)) return install_local(pathPart, editable, pinVersion);
 
     // Bare-name switch: `quirk install <name>@<range>` with no path/URL.
-    // Only works if the package is already installed — picks the highest
-    // installed version satisfying the range and repoints `current`.
+    // Picks the highest cached version satisfying the range and swaps the
+    // active install in `packages/<name>/`.
     if (!isPathLike && !looksLikeGitSpec && !pinVersion.empty()) {
-        fs::path pkgDir = package_install_dir() / pathPart;
-        if (fs::is_directory(pkgDir)) {
-            std::string chosen = pick_installed_version(pkgDir, pinVersion);
-            if (chosen.empty()) {
-                std::cerr << "install: no installed version of '" << pathPart
-                          << "' satisfies '" << pinVersion << "'\n";
-                return 1;
-            }
-            if (set_current_version(pkgDir, chosen) != 0) return 1;
-            std::cout << "  ✓ " << pathPart << " " << chosen << " (switched)\n";
-            return 0;
+        std::string chosen = pick_cached_version(pathPart, pinVersion);
+        if (chosen.empty()) {
+            std::cerr << "install: no cached version of '" << pathPart
+                      << "' satisfies '" << pinVersion << "'\n";
+            std::cerr << "  (`quirk cache list " << pathPart << "` to see what's cached)\n";
+            return 1;
         }
+        fs::path entry = cache_entry(pathPart, chosen);
+        Manifest m;
+        if (!read_manifest((entry / "quirk.toml").string(), m)) {
+            m.name = pathPart; m.version = chosen;
+        }
+        fs::path pkgRoot = package_install_dir();
+        fs::create_directories(pkgRoot);
+        if (materialize_from_cache(entry, pkgRoot, m, false) != 0) return 1;
+        std::cout << "  ✓ " << pathPart << " " << chosen << " (from cache)\n";
+        return 0;
     }
 
     PkgSpec spec = parse_spec(spec_str);
@@ -794,49 +937,19 @@ static int cmd_remove(const std::vector<std::string>& names) {
     bool haveManifest = fs::exists("quirk.toml") && read_manifest("quirk.toml", projMan);
     fs::path pkgRoot = package_install_dir();
     for (auto& nv : names) {
-        // <name>@<version> drops just that version; bare name drops everything.
+        // <name>@<version> drops only that cached version; bare name uninstalls
+        // the active code + dist-info (cache untouched — use `quirk cache clean`).
         std::string n = nv, ver;
         auto at = nv.find('@');
         if (at != std::string::npos) { n = nv.substr(0, at); ver = nv.substr(at + 1); }
-        fs::path pkgDir = pkgRoot / n;
-        if (!fs::exists(pkgDir)) {
-            std::cerr << "  ! " << n << " not installed\n";
-            continue;
-        }
+
         if (ver.empty()) {
-            fs::remove_all(pkgDir);
-            std::cout << "  ✓ removed " << n << " (all versions)\n";
-            if (haveManifest) {
-                auto it = projMan.deps.begin();
-                while (it != projMan.deps.end()) {
-                    if (it->first == n) it = projMan.deps.erase(it);
-                    else                 ++it;
-                }
-            }
-            continue;
-        }
-        // Version-specific removal
-        fs::path versionDir = pkgDir / ver;
-        if (!fs::exists(versionDir)) {
-            std::cerr << "  ! " << n << "@" << ver << " not installed\n";
-            continue;
-        }
-        std::string active = read_current_version(pkgDir);
-        fs::remove_all(versionDir);
-        std::cout << "  ✓ removed " << n << "@" << ver << "\n";
-        // If we just removed the active version, repoint `current` to the
-        // highest remaining version (or remove the symlink if none left).
-        if (active == ver) {
-            std::string next = pick_installed_version(pkgDir, "");
-            fs::path link = pkgDir / "current";
-            std::error_code ec;
-            if (fs::exists(link) || fs::is_symlink(link)) fs::remove(link);
-            if (!next.empty()) {
-                fs::create_directory_symlink(next, link, ec);
-                std::cout << "    current → " << next << "\n";
-            } else {
-                fs::remove_all(pkgDir);
-                std::cout << "    (no versions left; removed " << n << ")\n";
+            fs::path code = pkgRoot / n;
+            bool hadCode = fs::exists(code) || fs::is_symlink(code);
+            fs::remove_all(code);
+            clear_dist_info(pkgRoot, n);
+            if (hadCode || !find_dist_info(pkgRoot, n).empty()) {
+                std::cout << "  ✓ removed " << n << "\n";
                 if (haveManifest) {
                     auto it = projMan.deps.begin();
                     while (it != projMan.deps.end()) {
@@ -844,7 +957,26 @@ static int cmd_remove(const std::vector<std::string>& names) {
                         else                 ++it;
                     }
                 }
+            } else {
+                std::cerr << "  ! " << n << " not installed\n";
             }
+            continue;
+        }
+
+        // Drop one cached version. Doesn't touch the active install unless
+        // that's the version being removed.
+        fs::path entry = cache_entry(n, ver);
+        if (!fs::exists(entry)) {
+            std::cerr << "  ! " << n << "@" << ver << " not cached\n";
+        } else {
+            fs::remove_all(entry);
+            std::cout << "  ✓ removed cache: " << n << "@" << ver << "\n";
+        }
+        // If this was the active version, drop the active install too.
+        if (read_current_version(pkgRoot, n) == ver) {
+            fs::remove_all(pkgRoot / n);
+            clear_dist_info(pkgRoot, n);
+            std::cout << "    (was active; uninstalled)\n";
         }
     }
     if (haveManifest) write_manifest("quirk.toml", projMan);
@@ -867,23 +999,26 @@ static int cmd_upgrade(const std::vector<std::string>& names) {
         if (!picked(d.first)) continue;
         std::cout << "Upgrading " << d.first << "...\n";
 
-        // Local install: just repoint `current` to the highest installed
-        // version. Nothing to re-fetch.
+        // Local install: pick the highest cached version and materialize it.
         bool isLocal = !d.second.empty()
             && (d.second[0] == '/' || d.second[0] == '~' || d.second[0] == '.');
         if (isLocal) {
-            fs::path pkgDir = pkgRoot / d.first;
-            std::string best = pick_installed_version(pkgDir, "");
-            std::string active = read_current_version(pkgDir);
+            std::string best = pick_cached_version(d.first, "");
+            std::string active = read_current_version(pkgRoot, d.first);
             if (best.empty()) {
-                std::cerr << "  ! " << d.first << " not installed locally\n";
+                std::cerr << "  ! " << d.first << " not cached\n";
                 continue;
             }
             if (best == active) {
                 std::cout << "  · " << d.first << " already at " << best << "\n";
                 continue;
             }
-            if (set_current_version(pkgDir, best) != 0) continue;
+            fs::path entry = cache_entry(d.first, best);
+            Manifest mC;
+            if (!read_manifest((entry / "quirk.toml").string(), mC)) {
+                mC.name = d.first; mC.version = best;
+            }
+            if (materialize_from_cache(entry, pkgRoot, mC, false) != 0) continue;
             std::cout << "  ✓ " << d.first << " " << active << " → " << best << "\n";
             continue;
         }
@@ -905,23 +1040,25 @@ static int cmd_list() {
         std::cout << "No packages installed (no " << pkgDir.string() << "/ directory).\n";
         return 0;
     }
-    struct Row { std::string name, active; std::vector<std::string> all; };
+    struct Row { std::string name, version; std::vector<std::string> cached; };
     std::vector<Row> rows;
     for (auto& entry : fs::directory_iterator(pkgDir)) {
-        if (!entry.is_directory()) continue;
-        std::string name = entry.path().filename().string();
-        if (name.empty() || name[0] == '.') continue;
+        std::string fn = entry.path().filename().string();
+        if (fn.empty() || fn[0] == '.') continue;
+        // Skip dist-info dirs; we use them as the index instead.
+        if (fn.size() > 10 && fn.substr(fn.size() - 10) == ".dist-info") continue;
+        if (!fs::is_directory(entry.path()) && !fs::is_symlink(entry.path())) continue;
         Row r;
-        r.name   = name;
-        r.active = read_current_version(entry.path());
-        r.all    = list_installed_versions(entry.path());
-        if (r.active.empty()) {
-            // Legacy single-version install — read manifest directly
+        r.name    = fn;
+        r.version = read_current_version(pkgDir, fn);
+        if (r.version.empty()) {
+            // Fallback: read manifest directly (handles installs without dist-info)
             Manifest m;
             if (read_manifest((entry.path() / "quirk.toml").string(), m) && !m.version.empty())
-                r.active = m.version;
-            else r.active = "?";
+                r.version = m.version;
+            else r.version = "?";
         }
+        r.cached = list_cached_versions(fn);
         rows.push_back(std::move(r));
     }
     if (rows.empty()) {
@@ -934,12 +1071,12 @@ static int cmd_list() {
     for (auto& r : rows) {
         std::cout << "  " << r.name;
         for (size_t i = r.name.size(); i < pad + 2; i++) std::cout << ' ';
-        std::cout << r.active;
-        if (r.all.size() > 1) {
-            std::cout << "  (also: ";
+        std::cout << r.version;
+        if (r.cached.size() > 1) {
+            std::cout << "  (cached: ";
             bool first = true;
-            for (auto& v : r.all) {
-                if (v == r.active) continue;
+            for (auto& v : r.cached) {
+                if (v == r.version) continue;
                 if (!first) std::cout << ", ";
                 std::cout << v; first = false;
             }
@@ -955,17 +1092,14 @@ static int cmd_show(const std::vector<std::string>& args) {
         std::cerr << "show: need a package name\n";
         return 1;
     }
-    fs::path p = package_install_dir() / args[0];
+    fs::path pkgRoot = package_install_dir();
+    fs::path p = pkgRoot / args[0];
     if (!fs::exists(p)) {
         std::cerr << args[0] << ": not installed\n";
         return 1;
     }
-    // Read manifest from current/ for versioned installs, else top-level (legacy).
-    fs::path manifestPath = (fs::is_symlink(p / "current"))
-        ? (p / "current" / "quirk.toml")
-        : (p / "quirk.toml");
     Manifest m;
-    if (!read_manifest(manifestPath.string(), m)) {
+    if (!read_manifest((p / "quirk.toml").string(), m)) {
         std::cout << args[0] << " (installed; no manifest)\n";
         return 0;
     }
@@ -978,17 +1112,92 @@ static int cmd_show(const std::vector<std::string>& args) {
         std::cout << "deps:\n";
         for (auto& d : m.deps) std::cout << "  " << d.first << " = " << d.second << "\n";
     }
-    auto vs = list_installed_versions(p);
-    if (vs.size() > 1) {
-        std::cout << "installed versions: ";
-        for (size_t i = 0; i < vs.size(); i++) {
+    auto cached = list_cached_versions(args[0]);
+    if (cached.size() > 1) {
+        std::cout << "cached versions: ";
+        for (size_t i = 0; i < cached.size(); i++) {
             if (i) std::cout << ", ";
-            std::cout << vs[i];
-            if (vs[i] == m.version) std::cout << " (active)";
+            std::cout << cached[i];
+            if (cached[i] == m.version) std::cout << " (active)";
         }
         std::cout << "\n";
     }
     return 0;
+}
+
+// `quirk cache <subcommand>` — manage the cross-project version cache.
+static int cmd_cache(const std::vector<std::string>& args) {
+    fs::path cdir = cache_dir();
+    std::string sub = args.empty() ? "list" : args[0];
+
+    if (sub == "list") {
+        // `quirk cache list [pkg]` — show cached versions overall or filter to one pkg
+        std::string filter = args.size() > 1 ? args[1] : "";
+        if (!fs::is_directory(cdir)) {
+            std::cout << "Cache empty.\n";
+            return 0;
+        }
+        std::map<std::string, std::vector<std::string>> byPkg;
+        for (auto& e : fs::directory_iterator(cdir)) {
+            std::string fn = e.path().filename().string();
+            auto dash = fn.find_last_of('-');
+            if (dash == std::string::npos) continue;
+            std::string n = fn.substr(0, dash);
+            std::string v = fn.substr(dash + 1);
+            if (!filter.empty() && n != filter) continue;
+            byPkg[n].push_back(v);
+        }
+        if (byPkg.empty()) {
+            std::cout << (filter.empty() ? "Cache empty." : ("No cached versions for '" + filter + "'.")) << "\n";
+            return 0;
+        }
+        for (auto& kv : byPkg) {
+            std::sort(kv.second.begin(), kv.second.end(), [](const std::string& a, const std::string& b){
+                return compare_versions(a, b) < 0;
+            });
+            std::cout << kv.first << ":";
+            for (auto& v : kv.second) std::cout << " " << v;
+            std::cout << "\n";
+        }
+        return 0;
+    }
+    if (sub == "clean") {
+        // `quirk cache clean [pkg[@ver]]` — wipe cache (filtered).
+        if (!fs::is_directory(cdir)) { std::cout << "Cache empty.\n"; return 0; }
+        if (args.size() < 2) {
+            // Wipe everything
+            for (auto& e : fs::directory_iterator(cdir)) fs::remove_all(e.path());
+            std::cout << "Cache cleared.\n";
+            return 0;
+        }
+        std::string target = args[1];
+        std::string n = target, v;
+        auto at = target.find('@');
+        if (at != std::string::npos) { n = target.substr(0, at); v = target.substr(at + 1); }
+        int removed = 0;
+        for (auto& e : fs::directory_iterator(cdir)) {
+            std::string fn = e.path().filename().string();
+            auto dash = fn.find_last_of('-');
+            if (dash == std::string::npos) continue;
+            std::string en = fn.substr(0, dash);
+            std::string ev = fn.substr(dash + 1);
+            if (en != n) continue;
+            if (!v.empty() && ev != v) continue;
+            fs::remove_all(e.path());
+            removed++;
+        }
+        std::cout << "Removed " << removed << " cache entries.\n";
+        return 0;
+    }
+    if (sub == "dir") {
+        std::cout << cdir.string() << "\n";
+        return 0;
+    }
+    std::cerr << "cache: unknown subcommand '" << sub << "'\n";
+    std::cerr << "  usage: quirk cache list [<pkg>]\n";
+    std::cerr << "         quirk cache clean [<pkg>[@<ver>]]\n";
+    std::cerr << "         quirk cache dir\n";
+    return 1;
 }
 
 static int cmd_version() {
@@ -1096,19 +1305,19 @@ static int cmd_deps() {
     }
     bool any = false;
     for (auto& entry : fs::directory_iterator(pkgDir)) {
-        if (!entry.is_directory()) continue;
-        std::string name = entry.path().filename().string();
-        if (name.empty() || name[0] == '.') continue;
-        std::string ver = read_current_version(entry.path());
+        std::string fn = entry.path().filename().string();
+        if (fn.empty() || fn[0] == '.') continue;
+        if (fn.size() > 10 && fn.substr(fn.size() - 10) == ".dist-info") continue;
+        if (!fs::is_directory(entry.path()) && !fs::is_symlink(entry.path())) continue;
+        std::string ver = read_current_version(pkgDir, fn);
         if (ver.empty()) {
-            // Legacy single-version layout — read manifest at top level.
             Manifest m;
             if (read_manifest((entry.path() / "quirk.toml").string(), m))
                 ver = m.version.empty() ? "0.0.0" : m.version;
             else
                 ver = "0.0.0";
         }
-        std::cout << name << " = \"" << ver << "\"\n";
+        std::cout << fn << " = \"" << ver << "\"\n";
         any = true;
     }
     if (!any) std::cout << "# (no packages installed)\n";
@@ -1237,6 +1446,13 @@ static std::string help_for(const std::string& cmd) {
         return "quirk env\n"
                "    Dump resolution context: QUIRK_HOME, install dir, stdlib,\n"
                "    user-global dir. Use to debug \"why isn't this resolving?\"\n";
+    if (cmd == "cache")
+        return "quirk cache list [<pkg>]\n"
+               "    List versions cached at ~/.quirk/cache/ (cross-project).\n"
+               "quirk cache clean [<pkg>[@<ver>]]\n"
+               "    Drop the whole cache, all versions of one package, or one version.\n"
+               "quirk cache dir\n"
+               "    Print the cache root path.\n";
     if (cmd == "init")
         return "quirk init\n"
                "    Scaffold a quirk.toml in the current directory.\n";
@@ -1292,6 +1508,8 @@ static void print_pm_help() {
         "  quirk list                             list installed packages (alias: -p)\n"
         "  quirk show <pkg>                       detailed package info\n"
         "  quirk deps                             print deps in installable form\n"
+        "  quirk cache list [<pkg>]               list cached versions (cross-project)\n"
+        "  quirk cache clean [<pkg>[@<ver>]]      drop cache entries\n"
         "\n"
         "Misc:\n"
         "  quirk help [command]                   show help (per-command)\n"
@@ -1306,7 +1524,7 @@ static bool is_subcommand(const std::string& arg) {
     return arg == "install" || arg == "upgrade" || arg == "remove" ||
            arg == "uninstall" || arg == "list" || arg == "packages" ||
            arg == "show" || arg == "init" || arg == "version" ||
-           arg == "venv" ||
+           arg == "venv" || arg == "cache" ||
            arg == "run" || arg == "eval" || arg == "module" ||
            arg == "deps" || arg == "env" || arg == "new" || arg == "help";
 }
@@ -1383,6 +1601,7 @@ static bool dispatch(int& argc, char** argv, int& outRc) {
     else if (first == "module")      outRc = cmd_module(rest);
     else if (first == "deps")        outRc = cmd_deps();
     else if (first == "env")         outRc = cmd_env();
+    else if (first == "cache")       outRc = cmd_cache(rest);
     else if (first == "help")        outRc = cmd_help(rest);
     else { print_pm_help(); outRc = 1; }
     return true;

@@ -271,8 +271,6 @@ std::string resolveImportPath(const std::string& moduleName, const std::string& 
         relPath + "/index.qk",
         relPath + "/src/index.qk",                       // package layout: pkg/src/index.qk
         relPath + "/src/" + relPath + ".qk",
-        relPath + "/current/src/index.qk",               // versioned: pkg/current → <version>/
-        relPath + "/current/src/" + relPath + ".qk",
     };
 
     for (const auto& root : getSearchPaths()) {

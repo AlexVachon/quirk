@@ -986,6 +986,32 @@ std::string Sema::checkCall(CallNode *node)
 
         {
             std::string vtype = resolveVariable(l->value);
+
+            // Hard error: bare call into a module that was imported with `use X`
+            // but NOT explicitly named via `from X use { name }`. Forbids:
+            //     use slug; slug(base)          // ← error
+            // while still allowing the two valid forms:
+            //     use slug; slug.slug(base)     // dotted access
+            //     from slug use { slug }; slug(base)
+            if (vtype.rfind("MODULE$", 0) == 0) {
+                std::string ctxMod = currentFunctionNode ? currentFunctionNode->moduleName : "main";
+                bool explicitlyImported = moduleVisibility.count(ctxMod)
+                    && moduleVisibility[ctxMod].visibleSymbols.count(l->value);
+                if (!explicitlyImported) {
+                    std::string mod = vtype.substr(7);
+                    std::replace(mod.begin(), mod.end(), '/', '.');
+                    fatalError(
+                        "cannot call module '" + mod + "' directly. Use '" + mod + "." + l->value
+                        + "(...)' or import the function with 'from " + mod + " use { " + l->value + " }'",
+                        node->line, node->col, node->filePath);
+                }
+                // Explicitly imported AND module-aliased — prefer the function.
+                if (methodRegistry[""].count(l->value)) {
+                    auto* f = methodRegistry[""][l->value];
+                    return f->returnType.empty() ? "void" : f->returnType;
+                }
+            }
+
             // Calling a Callable variable or a generic-param value — return Any
             if (vtype == "Callable" || isGenericParam(vtype)) return "Any";
             return vtype;

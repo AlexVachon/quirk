@@ -729,17 +729,6 @@ std::unique_ptr<Node> Parser::parseFor() {
 // libs/sys/index.qk             -> "Sys"
 // userfile.qk                   -> "Userfile"
 std::string Parser::computeModulePrefix() const {
-    // First check: does this file live inside a manifest-rooted project?
-    // If so, the package's declared `name` drives the linkage prefix —
-    // same as if the package were already installed under packages/<name>/.
-    // Lets `slug/src/index.qk` emit `Slug_*` linkage names directly.
-    std::string pkgName = qpm::project_name_for_file(this->filePath);
-    if (!pkgName.empty()) {
-        std::string prefix = pkgName;
-        if (!prefix.empty()) prefix[0] = (char)std::toupper((unsigned char)prefix[0]);
-        return prefix;
-    }
-
     std::string p = this->filePath;
     if (p.size() >= 3 && p.substr(p.size() - 3) == ".qk")
         p = p.substr(0, p.size() - 3);
@@ -788,10 +777,24 @@ std::string Parser::computeModulePrefix() const {
 
     if (rootIt != parts.end()) {
         parts.erase(parts.begin(), rootIt + rootSkip);
+        // Venv layout adds a `stdlib/` or `packages/` bucket after lib/quirk.
+        // Strip it so stdlib paths still produce `Core_*` linkage names.
+        if (!parts.empty() && (parts.front() == "stdlib" || parts.front() == "packages"))
+            parts.erase(parts.begin());
         if (!parts.empty() && parts.back() == "index")
             parts.pop_back();
     } else {
-        // User file — just use the filename as a single-component prefix
+        // No standard layout marker in the path. Fall back to the manifest:
+        // if the file lives inside a project rooted at `quirk.toml`, the
+        // declared `name` drives the linkage prefix (lets a library's own
+        // `src/index.qk` emit `MyLib_*` linkage names without being
+        // installed). Otherwise, use the bare filename as a one-component
+        // prefix — that's the user-script case.
+        std::string pkgName = qpm::project_name_for_file(this->filePath);
+        if (!pkgName.empty()) {
+            if (!pkgName.empty()) pkgName[0] = (char)std::toupper((unsigned char)pkgName[0]);
+            return pkgName;
+        }
         std::string last = parts.empty() ? "" : parts.back();
         if (last == "index" && parts.size() > 1) last = parts[parts.size() - 2];
         parts = { last };

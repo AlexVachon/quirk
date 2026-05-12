@@ -13,6 +13,7 @@ import { QuirkRenameProvider } from './RenameProvider';
 import { QuirkReferenceProvider } from './ReferenceProvider';
 import { QuirkDocumentFormattingEditProvider } from './FormatterProvider';
 import { updateDeadCode } from './DeadCodeProvider';
+import { registerInterpreterPicker } from './InterpreterProvider';
 
 interface CompilerLookup {
     /** The command/path to run. Always usable; may be the literal 'quirk' as a last-resort fallback. */
@@ -84,6 +85,10 @@ export function activate(context: vscode.ExtensionContext) {
     logChannel.appendLine("=== Quirk Extension Activated ===");
 
     warnIfCompilerMissing(findCompiler(), logChannel);
+
+    // Interpreter picker — Python-extension-style status bar + QuickPick to
+    // switch between venvs, dev tree, env, or system install.
+    registerInterpreterPicker(context);
 
     const selector = { language: 'quirk', scheme: 'file' };
 

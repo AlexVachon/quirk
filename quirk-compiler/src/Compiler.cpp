@@ -189,12 +189,30 @@ public:
 std::vector<std::string> getSearchPaths() {
     std::vector<std::string> paths;
 
+    // Project-local installs win — matches pip's project-takes-precedence
+    // behavior and means `quirk install -e <path>` works even when
+    // QUIRK_HOME points at a venv or dev tree elsewhere.
+    paths.push_back("./packages/");
+
     const char* envHome = std::getenv("QUIRK_HOME");
+    bool isVenv = false;
     if (envHome) {
         std::string venvBase = std::string(envHome);
         paths.push_back(venvBase + "/lib/quirk/packages/");
-        paths.push_back(venvBase + "/lib/quirk/");
+        paths.push_back(venvBase + "/lib/quirk/stdlib/");  // new layout
+        paths.push_back(venvBase + "/lib/quirk/");         // legacy / dev install
         paths.push_back(venvBase + "/libs/");
+        // Distinguish a real venv from a dev-tree QUIRK_HOME: only the former
+        // has bin/activate. Venvs *isolate* — they don't see user-global.
+        isVenv = fs::exists(fs::path(venvBase) / "bin" / "activate");
+    }
+
+    // User-global installs — `pip install --user` / `cargo install` equivalent.
+    // Skipped when a venv is active so the venv stays a closed world.
+    if (!isVenv) {
+        if (const char* home = std::getenv("HOME")) {
+            paths.push_back(std::string(home) + "/.quirk/packages/");
+        }
     }
 
     paths.push_back("./libs/");
@@ -250,7 +268,11 @@ std::string resolveImportPath(const std::string& moduleName, const std::string& 
 
     std::vector<std::string> variants = {
         relPath + ".qk",
-        relPath + "/index.qk"
+        relPath + "/index.qk",
+        relPath + "/src/index.qk",                       // package layout: pkg/src/index.qk
+        relPath + "/src/" + relPath + ".qk",
+        relPath + "/current/src/index.qk",               // versioned: pkg/current → <version>/
+        relPath + "/current/src/" + relPath + ".qk",
     };
 
     for (const auto& root : getSearchPaths()) {
@@ -270,11 +292,18 @@ std::string resolveImportPath(const std::string& moduleName, const std::string& 
 std::set<std::string> loadedModules;
 
 std::string getModuleName(const std::string& path) {
-    // If the file lives in a manifest-rooted project, the package name from
-    // quirk.toml wins. Lets `slug/src/index.qk` and `slug/tests/foo.qk` both
-    // report module "slug" — same as if it were already installed.
-    std::string pkg = qpm::project_name_for_file(path);
-    if (!pkg.empty()) return pkg;
+    // Fall back to the manifest's `name` ONLY if the path has no standard
+    // layout marker. Otherwise the path-based stripping below handles it.
+    // This prevents stdlib files reached through `<venv>/lib/quirk/` from
+    // picking up the venv's own quirk.toml as their module name.
+    bool hasLayoutMarker =
+        path.find("/libs/") != std::string::npos ||
+        path.find("/lib/quirk/") != std::string::npos ||
+        path.find("/packages/") != std::string::npos;
+    if (!hasLayoutMarker) {
+        std::string pkg = qpm::project_name_for_file(path);
+        if (!pkg.empty()) return pkg;
+    }
 
     std::string mod = path;
 
@@ -285,14 +314,17 @@ std::string getModuleName(const std::string& path) {
 
     const char* envHome = std::getenv("QUIRK_HOME");
     if (envHome) {
-        std::string base     = std::string(envHome);
-        std::string venvPkg  = base + "/lib/quirk/packages/";
-        std::string venvCore = base + "/lib/quirk/";
-        std::string venvLibs = base + "/libs/";   // local dev layout: $QUIRK_HOME/libs/
+        std::string base       = std::string(envHome);
+        std::string venvPkg    = base + "/lib/quirk/packages/";
+        std::string venvStdlib = base + "/lib/quirk/stdlib/";   // new venv layout
+        std::string venvCore   = base + "/lib/quirk/";          // legacy + dev install
+        std::string venvLibs   = base + "/libs/";               // local dev layout
 
         size_t pos;
         if ((pos = mod.find(venvPkg)) != std::string::npos)
             mod = mod.substr(pos + venvPkg.length());
+        else if ((pos = mod.find(venvStdlib)) != std::string::npos)
+            mod = mod.substr(pos + venvStdlib.length());
         else if ((pos = mod.find(venvCore)) != std::string::npos)
             mod = mod.substr(pos + venvCore.length());
         else if ((pos = mod.find(venvLibs)) != std::string::npos)

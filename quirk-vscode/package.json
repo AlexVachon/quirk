@@ -41,6 +41,10 @@
         "command": "quirk.runFile",
         "title": "Quirk: Run File",
         "icon": "$(play)"
+      },
+      {
+        "command": "quirk.selectInterpreter",
+        "title": "Quirk: Select Interpreter"
       }
     ],
     "keybindings": [

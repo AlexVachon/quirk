@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { getDeadLines } from './DeadCodeProvider';
 import { maskLine } from './utils/maskLine';
+import { resolveModulePath, findProjectRootFor, resolveQuirkHome } from './ImportProvider';
 
 const KEYWORDS = new Set([
     'define', 'struct', 'if', 'else', 'elif', 'while', 'for', 'in',
@@ -33,9 +34,32 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
     const text = doc.getText();
     const lines = text.split(/\r?\n/);
 
+    // Import resolution context — cached for the whole pass over the file.
+    const docPath = doc.uri.fsPath;
+    const projectRootForImports = findProjectRootFor(docPath);
+    const homeForImports = resolveQuirkHome(projectRootForImports);
+    const reportUnresolvedImport = (lineIdx: number, line: string, modulePath: string) => {
+        if (resolveModulePath(projectRootForImports, docPath, modulePath)) return;
+        const pos = line.indexOf(modulePath);
+        if (pos < 0) return;
+        const range = new vscode.Range(lineIdx, pos, lineIdx, pos + modulePath.length);
+        const hint = homeForImports
+            ? ` (checked QUIRK_HOME=${homeForImports})`
+            : ` (no venv detected — activate one or run \`quirk install\`)`;
+        diagnostics.push(new vscode.Diagnostic(
+            range,
+            `Cannot resolve module '${modulePath}'${hint}`,
+            vscode.DiagnosticSeverity.Warning,
+        ));
+    };
+
     const declarations = new Map<string, vscode.Range>();
     const usages = new Set<string>();
     const fileGlobals = new Set<string>();
+    // Module aliases brought into scope by `use X` (allow `X.foo(...)` only).
+    const useAliases = new Set<string>();
+    // Symbols brought in by `from X use { a, b }` (allow bare `a(...)`).
+    const explicitImports = new Set<string>();
     const interfaceNames = new Set<string>([
         'Any', 'Printable', 'Equatable', 'Comparable', 'Hashable',
         'Parseable', 'Sizeable', 'Iterable', 'Iterator', 'Representable', 'Primitive',
@@ -67,7 +91,7 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
                 if (symbolsMatch) {
                     symbolsMatch[1].split(',').forEach(s => {
                         const trimmed = s.trim();
-                        if (trimmed) fileGlobals.add(trimmed);
+                        if (trimmed) { fileGlobals.add(trimmed); explicitImports.add(trimmed); }
                     });
                 }
                 isReadingImport = false;
@@ -102,24 +126,31 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
         if (/^\s*from\s+.*use\s+\{/.test(cleanLine) && !cleanLine.includes('}')) {
             isReadingImport = true;
             multiLineImport = cleanLine;
+            const fromMatch = /^\s*from\s+([.a-zA-Z0-9_/]+)/.exec(cleanLine);
+            if (fromMatch) reportUnresolvedImport(i, line, fromMatch[1]);
             continue;
         }
+
+        // Single-line `from X use { ... }` — validate the module path
+        const fromInlineMatch = /^\s*from\s+([.a-zA-Z0-9_/]+)\s+(?:use|as)\b/.exec(cleanLine);
+        if (fromInlineMatch) reportUnresolvedImport(i, line, fromInlineMatch[1]);
 
         let match = /^\s*use\s+([.a-zA-Z0-9_/]+)/.exec(cleanLine);
         if (match) {
             const alias = match[1].split(/[\.\/]/).pop();
-            if (alias) fileGlobals.add(alias);
+            if (alias) { fileGlobals.add(alias); useAliases.add(alias); }
+            reportUnresolvedImport(i, line, match[1]);
         }
 
         // from .path as alias — register the alias as a known global
         const fromAsMatch = /^\s*from\s+[.a-zA-Z0-9_/]+\s+as\s+([a-zA-Z_]\w*)/.exec(cleanLine);
-        if (fromAsMatch) fileGlobals.add(fromAsMatch[1]);
+        if (fromAsMatch) { fileGlobals.add(fromAsMatch[1]); useAliases.add(fromAsMatch[1]); }
 
         match = /^\s*from\s+[.a-zA-Z0-9_/]+\s+use\s+\{([^}]*)\}/.exec(cleanLine);
         if (match) {
             match[1].split(',').forEach(s => {
                 const trimmed = s.trim();
-                if (trimmed) fileGlobals.add(trimmed);
+                if (trimmed) { fileGlobals.add(trimmed); explicitImports.add(trimmed); }
             });
         }
 
@@ -486,6 +517,18 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
             // Prevent struct properties like "file: String" from triggering a warning
             const restOfLine = maskedLine.substring(match.index + ident.length);
             if (restOfLineColonRe.test(restOfLine)) continue;
+
+            // Strict-import warning: calling `name(...)` where `name` is only
+            // imported as a module via `use X` and not explicitly via
+            // `from X use { name }`. Mirrors the compiler's hard error.
+            if (useAliases.has(ident) && !explicitImports.has(ident) && /^\s*\(/.test(restOfLine)) {
+                const range = new vscode.Range(i, match.index, i, match.index + ident.length);
+                diagnostics.push(new vscode.Diagnostic(
+                    range,
+                    `Cannot call module '${ident}' directly. Use '${ident}.foo(...)' or import explicitly with 'from ${ident} use { ${ident} }'.`,
+                    vscode.DiagnosticSeverity.Warning,
+                ));
+            }
 
             const range = new vscode.Range(i, match.index, i, match.index + ident.length);
 

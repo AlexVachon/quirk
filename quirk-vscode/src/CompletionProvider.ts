@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
+import { resolveQuirkHome } from './ImportProvider';
 
 const FILE_CACHE_TTL_MS = 5000;
 
@@ -1165,13 +1166,18 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
             const alias = match[2] || modulePath.split(/[./]/).pop()!;
             addItem(alias, vscode.CompletionItemKind.Module, `module (${modulePath})`);
         }
-        const importRegex = /^\s*(?:use|from)\s+([.a-zA-Z0-9_/]+)/gm;
-        while ((match = importRegex.exec(fullText)) !== null) {
+        // Only `from X use { a, b }` brings bare names into scope. `use X`
+        // alone exposes X as a module (handled above) — the compiler rejects
+        // a bare `name()` reference into a module-only import, so surfacing
+        // those names as bare completions would mislead the user.
+        const fromImportRegex = /^\s*from\s+([.a-zA-Z0-9_/]+)\s+use\s+\{([^}]*)\}/gm;
+        while ((match = fromImportRegex.exec(fullText)) !== null) {
             const modulePath = match[1];
+            const named = new Set(match[2].split(',').map(s => s.trim()).filter(Boolean));
             const filePath = this.resolvePath(projectRoot, document.uri.fsPath, modulePath);
             if (filePath) {
                 this.scanFileForExports(projectRoot, filePath).forEach(exp => {
-                    if (typeof exp.label === 'string') {
+                    if (typeof exp.label === 'string' && named.has(exp.label)) {
                         addItem(exp.label, exp.kind || vscode.CompletionItemKind.Reference, `from ${modulePath}`);
                     }
                 });
@@ -1243,7 +1249,17 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
         const projectRoot = this.findProjectRoot(document.uri.fsPath);
         const filePath = this.resolvePath(projectRoot, document.uri.fsPath, modulePath);
         if (!filePath) return [];
-        return this.scanFileForExports(projectRoot, filePath);
+        // Inside `from X use { ... }` we only want the bare name, not the
+        // function-call snippet. Strip insertText so VSCode falls back to
+        // the label.
+        return this.scanFileForExports(projectRoot, filePath).map(item => {
+            const clone = new vscode.CompletionItem(item.label, item.kind);
+            clone.detail = item.detail;
+            clone.documentation = item.documentation;
+            clone.sortText = item.sortText;
+            clone.tags = item.tags;
+            return clone;
+        });
     }
 
     private provideMemberCompletions(document: vscode.TextDocument, modulePath: string): vscode.CompletionItem[] {
@@ -1373,16 +1389,27 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
             }
         }
 
+        // `stdlib/` and `packages/` are bucket directories inside a venv —
+        // they hold modules but are not themselves importable.
+        const BUCKETS = new Set(['stdlib', 'packages']);
+        // Symlink-aware directory check: installed packages live as symlinks,
+        // so lstat would say "not a directory" and skip them. Use stat which
+        // follows the link.
+        const isDirSafely = (p: string): boolean => {
+            try { return fs.statSync(p).isDirectory(); } catch { return false; }
+        };
         const completions: vscode.CompletionItem[] = [];
         for (const root of searchRoots) {
             const targetDir = searchDirRel ? path.join(root, searchDirRel) : root;
-            if (fs.existsSync(targetDir) && fs.lstatSync(targetDir).isDirectory()) {
+            if (fs.existsSync(targetDir) && isDirSafely(targetDir)) {
                 try {
                     for (const f of fs.readdirSync(targetDir)) {
                         if (f.startsWith('.') || f === '__init.qk' || f === 'index.qk') continue;
+                        // Skip bucket dirs only at the top level (no subpath yet).
+                        if (!searchDirRel && BUCKETS.has(f)) continue;
                         let name = f, kind = vscode.CompletionItemKind.Folder;
                         const fullPath = path.join(targetDir, f);
-                        if (!fs.lstatSync(fullPath).isDirectory()) {
+                        if (!isDirSafely(fullPath)) {
                             if (!f.endsWith('.qk')) continue;
                             name = f.substring(0, f.length - 3);
                             kind = vscode.CompletionItemKind.Module;
@@ -1426,25 +1453,42 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
         const searchRoots = this.getSearchRoots(projectRoot);
         const relPath = modulePath.replace(/\./g, '/');
         for (const root of searchRoots) {
-            if (fs.existsSync(path.join(root, relPath + '.qk'))) return path.join(root, relPath + '.qk');
-            if (fs.existsSync(path.join(root, relPath, 'index.qk'))) return path.join(root, relPath, 'index.qk');
-            if (fs.existsSync(path.join(root, relPath, '__init.qk'))) return path.join(root, relPath, '__init.qk');
+            const candidates = [
+                path.join(root, relPath + '.qk'),
+                path.join(root, relPath, 'index.qk'),
+                path.join(root, relPath, '__init.qk'),
+                path.join(root, relPath, 'src', 'index.qk'),
+                path.join(root, relPath, 'src', relPath + '.qk'),
+                // Versioned install: pkg/current → <version>/
+                path.join(root, relPath, 'current', 'src', 'index.qk'),
+                path.join(root, relPath, 'current', 'src', relPath + '.qk'),
+            ];
+            for (const c of candidates) if (fs.existsSync(c)) return c;
         }
         return null;
     }
 
     private getSearchRoots(projectRoot: string): string[] {
-        const cacheKey = projectRoot + '|' + (process.env['QUIRK_HOME'] || '');
+        const home = resolveQuirkHome(projectRoot);
+        const cacheKey = projectRoot + '|' + (home || '');
         if (this.searchRootsCache && this.searchRootsCacheKey === cacheKey) {
             return this.searchRootsCache;
         }
 
         const roots: string[] = [];
-        if (process.env['QUIRK_HOME']) {
+        // Project-local packages win (matches the compiler's resolver order).
+        roots.push(path.join(projectRoot, 'packages'));
+        const isVenv = !!home && fs.existsSync(path.join(home, 'bin', 'activate'));
+        if (home) {
             roots.push(
-                path.join(process.env['QUIRK_HOME'], 'lib', 'quirk', 'packages'),
-                path.join(process.env['QUIRK_HOME'], 'lib', 'quirk')
+                path.join(home, 'lib', 'quirk', 'packages'),
+                path.join(home, 'lib', 'quirk', 'stdlib'),
+                path.join(home, 'lib', 'quirk')
             );
+        }
+        // User-global packages — skipped when a venv is active.
+        if (!isVenv && process.env['HOME']) {
+            roots.push(path.join(process.env['HOME'], '.quirk', 'packages'));
         }
         try {
             for (const item of fs.readdirSync(projectRoot)) {
@@ -1466,7 +1510,7 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
     // user has imported them — selecting a suggestion auto-inserts the `use` line.
     // `typing/*` is omitted: it's the implicit prelude, no `use typing` needed.
     private getAvailableStdlibModules(projectRoot: string): Array<{ alias: string; modulePath: string }> {
-        const cacheKey = projectRoot + '|' + (process.env['QUIRK_HOME'] || '');
+        const cacheKey = projectRoot + '|' + (resolveQuirkHome(projectRoot) || '');
         if (this.stdlibModulesCache && this.stdlibModulesCacheKey === cacheKey) {
             return this.stdlibModulesCache;
         }
@@ -1478,16 +1522,29 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
             modules.push({ alias, modulePath });
         };
 
+        // `packages/` and `stdlib/` are bucket directories that hold modules,
+        // not modules themselves. Skip them so we don't surface bogus
+        // `packages.slug` / `stdlib.console` import paths in completions.
+        const BUCKET_NAMES = new Set(['packages', 'stdlib']);
         for (const root of this.getSearchRoots(projectRoot)) {
-            if (!fs.existsSync(root) || !fs.lstatSync(root).isDirectory()) continue;
+            if (!fs.existsSync(root)) continue;
+            try { if (!fs.statSync(root).isDirectory()) continue; } catch { continue; }
             try {
                 for (const entry of fs.readdirSync(root)) {
-                    if (entry.startsWith('.') || entry === 'typing') continue;
+                    if (entry.startsWith('.') || entry === 'typing' || BUCKET_NAMES.has(entry)) continue;
                     const fullPath = path.join(root, entry);
-                    const stat = fs.lstatSync(fullPath);
-                    if (stat.isDirectory()) {
-                        // Package: <root>/<entry>/index.qk → `use entry`
-                        if (fs.existsSync(path.join(fullPath, 'index.qk'))) add(entry, entry);
+                    let isDir = false;
+                    try { isDir = fs.statSync(fullPath).isDirectory(); } catch { }
+                    if (isDir) {
+                        // Package — stdlib layout (`<entry>/index.qk`),
+                        // package layout (`<entry>/src/index.qk`),
+                        // or versioned (`<entry>/current/src/index.qk`).
+                        if (fs.existsSync(path.join(fullPath, 'index.qk')) ||
+                            fs.existsSync(path.join(fullPath, 'src', 'index.qk')) ||
+                            fs.existsSync(path.join(fullPath, 'src', entry + '.qk')) ||
+                            fs.existsSync(path.join(fullPath, 'current', 'src', 'index.qk'))) {
+                            add(entry, entry);
+                        }
                         // Sub-modules: <root>/<entry>/<sub>.qk → `use entry.sub`
                         try {
                             for (const sub of fs.readdirSync(fullPath)) {
@@ -1530,7 +1587,9 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
         let currentDir = path.dirname(currentFile);
         const stopAt = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(currentFile))?.uri.fsPath || "/";
         while (currentDir.length >= stopAt.length) {
-            if (fs.existsSync(path.join(currentDir, 'Makefile')) || fs.existsSync(path.join(currentDir, 'libs'))) return currentDir;
+            if (fs.existsSync(path.join(currentDir, 'quirk.toml')) ||
+                fs.existsSync(path.join(currentDir, 'Makefile')) ||
+                fs.existsSync(path.join(currentDir, 'libs'))) return currentDir;
             const parent = path.dirname(currentDir);
             if (parent === currentDir) break;
             currentDir = parent;

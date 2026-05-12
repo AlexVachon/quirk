@@ -1470,6 +1470,12 @@ static std::string help_for(const std::string& cmd) {
     if (cmd == "help")
         return "quirk help [command]\n"
                "    Show overall help, or the help text for one command.\n";
+    if (cmd == "pkg")
+        return "quirk pkg <subcommand> [args...]\n"
+               "    Group prefix for package operations:\n"
+               "      install, upgrade, remove, list, show, deps, cache.\n"
+               "    All also accepted without the `pkg` prefix; the `pkg`\n"
+               "    form is the explicit, documented one.\n";
     return "";
 }
 
@@ -1490,43 +1496,47 @@ static void print_pm_help() {
         "Quirk — language toolchain & package manager\n"
         "\n"
         "Run code:\n"
-        "  quirk run <file.qk> [args...]          run a Quirk script\n"
-        "  quirk eval \"<code>\"                    run a one-liner (alias: -c)\n"
-        "  quirk module <name>                    invoke an installed module's main()\n"
-        "                                         (alias: -m)\n"
+        "  quirk run <file.qk> [args...]              run a Quirk script\n"
+        "  quirk eval \"<code>\"                        run a one-liner (alias: -c)\n"
+        "  quirk module <name>                        invoke a module's main() (alias: -m)\n"
         "\n"
         "Project / environment:\n"
-        "  quirk new <name>                       scaffold a new package\n"
-        "  quirk init                             write a quirk.toml here\n"
-        "  quirk venv <name>                      create an isolated environment\n"
-        "  quirk env                              print resolution context\n"
+        "  quirk new <name>                           scaffold a new package\n"
+        "  quirk init                                 write a quirk.toml here\n"
+        "  quirk venv <name>                          create an isolated environment\n"
+        "  quirk env                                  print resolution context\n"
         "\n"
-        "Packages:\n"
-        "  quirk install [-e] [-r <file>] [pkg ...]   install dependencies\n"
-        "  quirk upgrade [pkg ...]                bump installed versions\n"
-        "  quirk remove <pkg>[@<ver>] ...         uninstall a package or version\n"
-        "  quirk list                             list installed packages (alias: -p)\n"
-        "  quirk show <pkg>                       detailed package info\n"
-        "  quirk deps                             print deps in installable form\n"
-        "  quirk cache list [<pkg>]               list cached versions (cross-project)\n"
-        "  quirk cache clean [<pkg>[@<ver>]]      drop cache entries\n"
+        "Packages (`quirk pkg <subcommand>` or flat — both work):\n"
+        "  quirk pkg install [-e] [-r <file>] [spec ...]   install dependencies\n"
+        "  quirk pkg upgrade [pkg ...]                bump installed versions\n"
+        "  quirk pkg remove  <pkg>[@<ver>] ...        uninstall a package or version\n"
+        "  quirk pkg list                             list installed packages (alias: -p)\n"
+        "  quirk pkg show    <pkg>                    detailed package info\n"
+        "  quirk pkg deps                             print deps in installable form\n"
+        "  quirk pkg cache   list|clean|dir           manage the cross-project cache\n"
         "\n"
         "Misc:\n"
-        "  quirk help [command]                   show help (per-command)\n"
-        "  quirk version (or --version)           print quirk version\n"
+        "  quirk help [command]                       show help (per-command)\n"
+        "  quirk version (or --version)               print quirk version\n"
         "\n"
         "Specs:  github.com/owner/repo[@ref]   (git: ref is a tag/branch/SHA)\n"
         "        ./path/to/lib[@<version>]    (local; @<version> can be a range)\n";
 }
 
-// True if `arg` is a recognized subcommand verb (and not a path).
-static bool is_subcommand(const std::string& arg) {
+// Subcommands the package-manager group accepts (`quirk pkg <sub>`).
+static bool is_pkg_subcommand(const std::string& arg) {
     return arg == "install" || arg == "upgrade" || arg == "remove" ||
            arg == "uninstall" || arg == "list" || arg == "packages" ||
-           arg == "show" || arg == "init" || arg == "version" ||
-           arg == "venv" || arg == "cache" ||
+           arg == "show" || arg == "deps" || arg == "cache";
+}
+
+// Top-level subcommand verbs (and not a path).
+static bool is_subcommand(const std::string& arg) {
+    return is_pkg_subcommand(arg) ||
+           arg == "pkg" ||
+           arg == "init" || arg == "version" || arg == "venv" ||
            arg == "run" || arg == "eval" || arg == "module" ||
-           arg == "deps" || arg == "env" || arg == "new" || arg == "help";
+           arg == "env" || arg == "new" || arg == "help";
 }
 
 // Drop argv[1] (a verb) and shift everything left. argc decreases by 1.
@@ -1586,23 +1596,51 @@ static bool dispatch(int& argc, char** argv, int& outRc) {
     std::vector<std::string> rest;
     for (int i = 2; i < argc; i++) rest.emplace_back(argv[i]);
 
-    if (first == "install")          outRc = cmd_install(rest);
-    else if (first == "upgrade")     outRc = cmd_upgrade(rest);
-    else if (first == "remove" ||
-             first == "uninstall")   outRc = cmd_remove(rest);
-    else if (first == "list" ||
-             first == "packages")    outRc = cmd_list();
-    else if (first == "show")        outRc = cmd_show(rest);
-    else if (first == "init")        outRc = cmd_init();
-    else if (first == "new")         outRc = cmd_new(rest);
-    else if (first == "venv")        outRc = cmd_venv(rest);
-    else if (first == "version")     outRc = cmd_version();
-    else if (first == "eval")        outRc = cmd_eval(rest);
-    else if (first == "module")      outRc = cmd_module(rest);
-    else if (first == "deps")        outRc = cmd_deps();
-    else if (first == "env")         outRc = cmd_env();
-    else if (first == "cache")       outRc = cmd_cache(rest);
-    else if (first == "help")        outRc = cmd_help(rest);
+    // `quirk pkg <subcommand>` — re-target the dispatch so the rest works
+    // the same as the flat form (kept for back-compat: `quirk install ...`).
+    std::string verb = first;
+    std::vector<std::string> verbArgs = rest;
+    if (verb == "pkg") {
+        if (rest.empty() || rest[0] == "help" || rest[0] == "--help" || rest[0] == "-h") {
+            std::cout <<
+                "Package management:\n"
+                "  quirk pkg install [-e] [-r <file>] [spec ...]\n"
+                "  quirk pkg upgrade [pkg ...]\n"
+                "  quirk pkg remove <pkg>[@<ver>] ...\n"
+                "  quirk pkg list                       (alias: -p)\n"
+                "  quirk pkg show <pkg>\n"
+                "  quirk pkg deps\n"
+                "  quirk pkg cache list|clean|dir\n"
+                "\n"
+                "All commands also work without the `pkg` prefix, e.g.\n"
+                "`quirk install slug` is the same as `quirk pkg install slug`.\n";
+            outRc = 0; return true;
+        }
+        if (!is_pkg_subcommand(rest[0])) {
+            std::cerr << "pkg: unknown subcommand '" << rest[0] << "'\n";
+            outRc = 1; return true;
+        }
+        verb = rest[0];
+        verbArgs.assign(rest.begin() + 1, rest.end());
+    }
+
+    if (verb == "install")           outRc = cmd_install(verbArgs);
+    else if (verb == "upgrade")      outRc = cmd_upgrade(verbArgs);
+    else if (verb == "remove" ||
+             verb == "uninstall")    outRc = cmd_remove(verbArgs);
+    else if (verb == "list" ||
+             verb == "packages")     outRc = cmd_list();
+    else if (verb == "show")         outRc = cmd_show(verbArgs);
+    else if (verb == "init")         outRc = cmd_init();
+    else if (verb == "new")          outRc = cmd_new(verbArgs);
+    else if (verb == "venv")         outRc = cmd_venv(verbArgs);
+    else if (verb == "version")      outRc = cmd_version();
+    else if (verb == "eval")         outRc = cmd_eval(verbArgs);
+    else if (verb == "module")       outRc = cmd_module(verbArgs);
+    else if (verb == "deps")         outRc = cmd_deps();
+    else if (verb == "env")          outRc = cmd_env();
+    else if (verb == "cache")        outRc = cmd_cache(verbArgs);
+    else if (verb == "help")         outRc = cmd_help(verbArgs);
     else { print_pm_help(); outRc = 1; }
     return true;
 }

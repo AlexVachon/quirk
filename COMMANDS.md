@@ -13,12 +13,13 @@ The `quirk` binary is both the compiler/runner and the package manager. This pag
 | [`quirk init`](#quirk-init) | — | Write a `quirk.toml` in the current dir |
 | [`quirk venv <name>`](#quirk-venv) | — | Create an isolated environment |
 | [`quirk env`](#quirk-env) | — | Show the active resolution context |
-| [`quirk install`](#quirk-install) | — | Install dependencies |
-| [`quirk upgrade`](#quirk-upgrade) | — | Bump installed versions |
-| [`quirk remove <pkg>`](#quirk-remove) | `uninstall` | Uninstall a package or one version |
-| [`quirk list`](#quirk-list) | `packages`, `-p` | List installed packages |
-| [`quirk show <pkg>`](#quirk-show) | — | Detailed info on one package |
-| [`quirk deps`](#quirk-deps) | — | Print installed packages in deps format |
+| [`quirk pkg install`](#quirk-install) | flat: `quirk install` | Install dependencies |
+| [`quirk pkg upgrade`](#quirk-upgrade) | flat: `quirk upgrade` | Bump installed versions |
+| [`quirk pkg remove <pkg>`](#quirk-remove) | flat: `quirk remove`, `uninstall` | Uninstall a package or one version |
+| [`quirk pkg list`](#quirk-list) | flat: `quirk list`, `packages`, `-p` | List installed packages |
+| [`quirk pkg show <pkg>`](#quirk-show) | flat: `quirk show` | Detailed info on one package |
+| [`quirk pkg deps`](#quirk-deps) | flat: `quirk deps` | Print installed packages in deps format |
+| [`quirk pkg cache`](#quirk-pkg-cache) | flat: `quirk cache` | Manage the cross-project version cache |
 | [`quirk help [cmd]`](#quirk-help) | `--help`, `-h` | Show overall or per-command help |
 | [`quirk version`](#quirk-version) | `--version` | Print the compiler version |
 

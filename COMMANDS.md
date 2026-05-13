@@ -16,10 +16,12 @@ The `quirk` binary is both the compiler/runner and the package manager. This pag
 | [`quirk pkg install`](#quirk-install) | flat: `quirk install` | Install dependencies |
 | [`quirk pkg upgrade`](#quirk-upgrade) | flat: `quirk upgrade` | Bump installed versions |
 | [`quirk pkg remove <pkg>`](#quirk-remove) | flat: `quirk remove`, `uninstall` | Uninstall a package or one version |
-| [`quirk pkg list`](#quirk-list) | flat: `quirk list`, `packages`, `-p` | List installed packages |
+| [`quirk pkg list`](#quirk-list) | `quirk pkg -l`, `--list`, `-p`, flat: `quirk list`, `packages` | List installed packages |
 | [`quirk pkg show <pkg>`](#quirk-show) | flat: `quirk show` | Detailed info on one package |
 | [`quirk pkg deps`](#quirk-deps) | flat: `quirk deps` | Print installed packages in deps format |
-| [`quirk pkg cache`](#quirk-pkg-cache) | flat: `quirk cache` | Manage the cross-project version cache |
+| [`quirk pkg cache`](#quirk-pkg-cache) | `quirk pkg cache -l`/`--list`, flat: `quirk cache` | Manage the cross-project version cache |
+| [`quirk pkg registry`](#quirk-pkg-registry) | `quirk pkg registry -l`/`--list`, flat: `quirk registry` | Manage name → URL mappings |
+| [`quirk run --list`](#quirk-run) | `quirk run -l` | List named scripts from `[scripts]` |
 | [`quirk help [cmd]`](#quirk-help) | `--help`, `-h` | Show overall or per-command help |
 | [`quirk version`](#quirk-version) | `--version` | Print the compiler version |
 

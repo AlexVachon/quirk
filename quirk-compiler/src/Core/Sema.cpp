@@ -1076,7 +1076,6 @@ std::string Sema::checkCall(CallNode *node)
                 {"endswith",   "Bool"},
                 {"replace",    "String"},
                 {"substring",  "String"},
-                {"append",     "String"},
                 {"str",        "String"},
                 {"format",     "String"},
             }},

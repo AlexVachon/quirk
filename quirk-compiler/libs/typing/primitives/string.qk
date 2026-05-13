@@ -78,14 +78,6 @@ struct String : Primitive, Comparable, Sizeable, Iterable, Representable {
     ---
     extern define substring(self, start: Int, end: Int) -> String
 
-    ---
-    Return a new string with `other` appended to the end.
-    @example  "hi".append('!')   // "hi!"
-    @param other: String
-    @returns: String
-    ---
-    extern define append(self, other: String) -> String
-
     extern define upper(self) -> String
     extern define lower(self) -> String
     extern define title(self) -> String

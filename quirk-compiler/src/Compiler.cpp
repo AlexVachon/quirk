@@ -278,6 +278,17 @@ std::string resolveImportPath(const std::string& moduleName, const std::string& 
             fs::path fullPath = fs::path(root) / variant;
             if (fs::exists(fullPath)) return fullPath.string();
         }
+        // Fall back to the package's manifest `entry` field if present.
+        // Lets a package override the default entry-point conventions.
+        fs::path pkgDir = fs::path(root) / relPath;
+        if (fs::exists(pkgDir / "quirk.toml")) {
+            qpm::Manifest m;
+            if (qpm::read_manifest((pkgDir / "quirk.toml").string(), m)
+                && !m.entry.empty()) {
+                fs::path entryPath = pkgDir / m.entry;
+                if (fs::exists(entryPath)) return entryPath.string();
+            }
+        }
     }
 
     return "";

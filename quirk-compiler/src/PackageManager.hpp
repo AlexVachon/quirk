@@ -37,6 +37,11 @@
 #include <system_error>
 #include <unistd.h>
 #include <sys/wait.h>
+#include <sys/stat.h>
+#include <chrono>
+#include <set>
+#include <map>
+#include <regex>
 
 namespace qpm {
 
@@ -58,8 +63,14 @@ struct Manifest {
     std::string description;
     std::string author;
     std::string license;
+    std::string repository;        // git URL where this package lives
+    std::string homepage;          // optional documentation/landing URL
+    std::string entry;             // optional entry point override (relative path)
+    std::string quirk_version;     // compiler version constraint (e.g. ">=0.2.0")
     // deps[name] = "github.com/foo/bar@v0.1.0"
     std::vector<std::pair<std::string, std::string>> deps;
+    std::vector<std::pair<std::string, std::string>> dev_deps;
+    std::vector<std::pair<std::string, std::string>> scripts;  // name → command
 };
 
 static std::string trim(std::string s) {
@@ -92,13 +103,21 @@ static bool read_manifest(const std::string& path, Manifest& out) {
         std::string key = trim(t.substr(0, eq));
         std::string val = unquote(trim(t.substr(eq + 1)));
         if (section.empty()) {
-            if      (key == "name")        out.name = val;
-            else if (key == "version")     out.version = val;
-            else if (key == "description") out.description = val;
-            else if (key == "author")      out.author = val;
-            else if (key == "license")     out.license = val;
+            if      (key == "name")          out.name = val;
+            else if (key == "version")       out.version = val;
+            else if (key == "description")   out.description = val;
+            else if (key == "author")        out.author = val;
+            else if (key == "license")       out.license = val;
+            else if (key == "repository")    out.repository = val;
+            else if (key == "homepage")      out.homepage = val;
+            else if (key == "entry")         out.entry = val;
+            else if (key == "quirk-version") out.quirk_version = val;
         } else if (section == "deps") {
             out.deps.emplace_back(key, val);
+        } else if (section == "dev-deps") {
+            out.dev_deps.emplace_back(key, val);
+        } else if (section == "scripts") {
+            out.scripts.emplace_back(key, val);
         }
     }
     return true;
@@ -106,13 +125,25 @@ static bool read_manifest(const std::string& path, Manifest& out) {
 
 static void write_manifest(const std::string& path, const Manifest& m) {
     std::ofstream out(path);
-    out << "name        = \"" << m.name << "\"\n";
-    out << "version     = \"" << m.version << "\"\n";
-    if (!m.description.empty()) out << "description = \"" << m.description << "\"\n";
-    if (!m.author.empty())      out << "author      = \"" << m.author << "\"\n";
-    if (!m.license.empty())     out << "license     = \"" << m.license << "\"\n";
+    out << "name          = \"" << m.name << "\"\n";
+    out << "version       = \"" << m.version << "\"\n";
+    if (!m.description.empty())   out << "description   = \"" << m.description   << "\"\n";
+    if (!m.author.empty())        out << "author        = \"" << m.author        << "\"\n";
+    if (!m.license.empty())       out << "license       = \"" << m.license       << "\"\n";
+    if (!m.repository.empty())    out << "repository    = \"" << m.repository    << "\"\n";
+    if (!m.homepage.empty())      out << "homepage      = \"" << m.homepage      << "\"\n";
+    if (!m.entry.empty())         out << "entry         = \"" << m.entry         << "\"\n";
+    if (!m.quirk_version.empty()) out << "quirk-version = \"" << m.quirk_version << "\"\n";
     out << "\n[deps]\n";
     for (auto& d : m.deps) out << d.first << " = \"" << d.second << "\"\n";
+    if (!m.dev_deps.empty()) {
+        out << "\n[dev-deps]\n";
+        for (auto& d : m.dev_deps) out << d.first << " = \"" << d.second << "\"\n";
+    }
+    if (!m.scripts.empty()) {
+        out << "\n[scripts]\n";
+        for (auto& s : m.scripts) out << s.first << " = \"" << s.second << "\"\n";
+    }
 }
 
 // Parse a package spec like "github.com/foo/bar@v0.1.0" into (url, ref, name).
@@ -450,18 +481,81 @@ static int cmd_venv(const std::vector<std::string>& args) {
     return 0;
 }
 
-static int cmd_init() {
+// Prompt the user with an optional default. Empty input keeps the default.
+// `--yes`/`-y` callers bypass this entirely.
+static std::string prompt_default(const std::string& label, const std::string& def) {
+    std::cout << label;
+    if (!def.empty()) std::cout << " (" << def << ")";
+    std::cout << ": ";
+    std::cout.flush();
+    std::string line;
+    if (!std::getline(std::cin, line)) return def;
+    while (!line.empty() && (line.back() == '\r' || line.back() == ' ' || line.back() == '\t'))
+        line.pop_back();
+    return line.empty() ? def : line;
+}
+
+// Best-effort guess at the user's name/email from `git config`. Returns
+// "Name <email>" or empty if either is missing.
+static std::string guess_author() {
+    auto run = [](const std::string& cmd) -> std::string {
+        FILE* p = popen(cmd.c_str(), "r");
+        if (!p) return "";
+        char buf[256]; std::string out;
+        while (fgets(buf, sizeof(buf), p)) out += buf;
+        pclose(p);
+        return trim(out);
+    };
+    std::string name  = run("git config --get user.name 2>/dev/null");
+    std::string email = run("git config --get user.email 2>/dev/null");
+    if (name.empty() && email.empty()) return "";
+    if (email.empty()) return name;
+    if (name.empty())  return email;
+    return name + " <" + email + ">";
+}
+
+// Best-effort guess at the repository URL from `git remote`.
+static std::string guess_repo() {
+    FILE* p = popen("git remote get-url origin 2>/dev/null", "r");
+    if (!p) return "";
+    char buf[512]; std::string out;
+    while (fgets(buf, sizeof(buf), p)) out += buf;
+    pclose(p);
+    return trim(out);
+}
+
+static int cmd_init(const std::vector<std::string>& args = {}) {
     fs::path mf = "quirk.toml";
     if (fs::exists(mf)) {
         std::cerr << "quirk.toml already exists.\n";
         return 1;
     }
+
+    bool yes = false;
+    for (auto& a : args) if (a == "-y" || a == "--yes") yes = true;
+
     Manifest m;
-    m.name = fs::current_path().filename().string();
-    m.version = "0.1.0";
-    m.license = "MIT";
+    m.name        = fs::current_path().filename().string();
+    m.version     = "0.1.0";
+    m.license     = "MIT";
+    m.author      = guess_author();
+    m.repository  = guess_repo();
+
+    if (!yes) {
+        std::cout << "This walks you through creating a quirk.toml.\n"
+                  << "Press Enter to accept the (default) for each field.\n"
+                  << "Use `quirk init -y` to skip the prompts.\n\n";
+        m.name        = prompt_default("name",         m.name);
+        m.version     = prompt_default("version",      m.version);
+        m.description = prompt_default("description",  m.description);
+        m.author      = prompt_default("author",       m.author);
+        m.license     = prompt_default("license",      m.license);
+        m.repository  = prompt_default("repository",   m.repository);
+        m.homepage    = prompt_default("homepage",     m.homepage);
+        m.entry       = prompt_default("entry point",  m.entry);
+    }
     write_manifest(mf.string(), m);
-    std::cout << "Created quirk.toml for project '" << m.name << "'.\n";
+    std::cout << "\nCreated quirk.toml for project '" << m.name << "'.\n";
     return 0;
 }
 
@@ -522,6 +616,379 @@ static bool is_local_path(const std::string& spec) {
 // `quirk install <name>@<ver>` checks the cache first; missing versions are
 // downloaded (git) or copied (local path) into the cache once, then linked
 // into packages/.
+
+// ----------------------------- Registry / aliases --------------------------
+// `quirk pkg install <name>` resolves <name> via two sources, in order:
+//   1. ~/.quirk/aliases.toml         — user-local name → URL mappings
+//   2. ~/.quirk/registry-cache.toml  — fetched from the central registry
+//
+// Both files use the same format: one `name = "url[@ref]"` per line.
+//
+// Local aliases let users define short names without any infrastructure.
+// The central registry is optional and is fetched via `quirk pkg registry
+// update`. The default registry URL can be overridden in ~/.quirk/config.toml.
+
+static constexpr const char* DEFAULT_REGISTRY_URL =
+    "https://raw.githubusercontent.com/quirk-pkg/registry/main/index.toml";
+
+static fs::path quirk_home_dir() {
+    const char* h = std::getenv("HOME");
+    if (!h) return {};
+    fs::path q = fs::path(h) / ".quirk";
+    std::error_code ec;
+    fs::create_directories(q, ec);
+    return q;
+}
+
+static fs::path aliases_path()        { return quirk_home_dir() / "aliases.toml"; }
+static fs::path registry_cache_path() { return quirk_home_dir() / "registry-cache.toml"; }
+static fs::path config_path()         { return quirk_home_dir() / "config.toml"; }
+
+// Tiny TOML kv reader: `key = "value"` lines, sections ignored.
+static std::map<std::string, std::string> read_kv_file(const fs::path& path) {
+    std::map<std::string, std::string> out;
+    std::ifstream in(path);
+    if (!in) return out;
+    std::string line;
+    while (std::getline(in, line)) {
+        std::string t = trim(line);
+        if (t.empty() || t[0] == '#' || t.front() == '[') continue;
+        size_t eq = t.find('=');
+        if (eq == std::string::npos) continue;
+        out[trim(t.substr(0, eq))] = unquote(trim(t.substr(eq + 1)));
+    }
+    return out;
+}
+
+static void write_kv_file(const fs::path& path, const std::map<std::string, std::string>& kv,
+                          const std::string& header = "") {
+    std::ofstream out(path);
+    if (!header.empty()) out << "# " << header << "\n\n";
+    for (auto& kv2 : kv) out << kv2.first << " = \"" << kv2.second << "\"\n";
+}
+
+// Accept short forms for registry URLs and expand to a fetchable raw URL:
+//   github.com/owner/repo               → https://raw.githubusercontent.com/owner/repo/main/index.toml
+//   github.com/owner/repo@branch        → ...same with @branch on the path
+//   github.com/owner/repo/path/file.toml → ...with that path appended
+//   AlexVachon/quirk-registry           → github.com/AlexVachon/quirk-registry → expanded
+// Fully-qualified URLs (anything with `://`) pass through unchanged.
+static std::string expand_registry_url(const std::string& raw) {
+    if (raw.empty()) return raw;
+    if (raw.find("://") != std::string::npos) return raw;
+
+    // `owner/repo` (no slashes inside) — assume GitHub.
+    std::string body = raw;
+    if (body.find("github.com/") != 0 && body.find('/') != std::string::npos
+        && body.find('/') == body.rfind('/')) {
+        body = "github.com/" + body;
+    }
+    if (body.rfind("github.com/", 0) != 0) {
+        // Not a recognized shorthand; pass through.
+        return raw;
+    }
+
+    std::string rest = body.substr(11);           // strip "github.com/"
+    std::string branch = "main";
+    auto at = rest.find('@');
+    if (at != std::string::npos) {
+        branch = rest.substr(at + 1);
+        rest   = rest.substr(0, at);
+    }
+
+    // owner/repo               → owner/repo/<branch>/index.toml
+    // owner/repo/path/to.toml  → owner/repo/<branch>/path/to.toml
+    size_t slash1 = rest.find('/');
+    size_t slash2 = (slash1 != std::string::npos) ? rest.find('/', slash1 + 1) : std::string::npos;
+    std::string path = (slash2 == std::string::npos) ? "/index.toml"
+                                                     : "/" + rest.substr(slash2 + 1);
+    std::string ownerRepo = (slash2 == std::string::npos) ? rest : rest.substr(0, slash2);
+    return "https://raw.githubusercontent.com/" + ownerRepo + "/" + branch + path;
+}
+
+// Resolved registry URL — user override in ~/.quirk/config.toml, else default.
+static std::string resolve_registry_url() {
+    auto cfg = read_kv_file(config_path());
+    auto it = cfg.find("registry");
+    if (it != cfg.end()) return expand_registry_url(it->second);
+    return expand_registry_url(DEFAULT_REGISTRY_URL);
+}
+
+// Look up <name> in user aliases first, then the cached registry.
+// Returns the URL/spec the user should install, or empty if not found.
+static std::string registry_lookup(const std::string& name) {
+    auto aliases = read_kv_file(aliases_path());
+    auto it = aliases.find(name);
+    if (it != aliases.end()) return it->second;
+    auto cache = read_kv_file(registry_cache_path());
+    it = cache.find(name);
+    if (it != cache.end()) return it->second;
+    return "";
+}
+
+// Forward decl: cache_dir() is defined further down, but tag-discovery
+// helpers below need the path.
+static fs::path cache_dir();
+
+// ----------------------- Lockfile (quirk.lock) -------------------------
+// Records the exact source + commit each package resolved to, so a second
+// machine installing from the same manifest gets bit-identical results.
+
+struct LockEntry {
+    std::string name;
+    std::string version;
+    std::string source;   // verbatim spec the user/manifest wrote
+    std::string commit;   // git SHA, empty for non-git installs
+    bool operator==(const LockEntry& o) const {
+        return name == o.name && version == o.version
+            && source == o.source && commit == o.commit;
+    }
+    bool operator!=(const LockEntry& o) const { return !(*this == o); }
+};
+
+// Read quirk.lock as a name-indexed map. Returns empty if no lock or unparseable.
+static std::map<std::string, LockEntry> read_lockfile(const fs::path& path) {
+    std::map<std::string, LockEntry> out;
+    std::ifstream in(path);
+    if (!in) return out;
+    LockEntry cur;
+    bool inPkg = false;
+    auto flush = [&]() {
+        if (inPkg && !cur.name.empty()) out[cur.name] = cur;
+        cur = LockEntry{};
+        inPkg = false;
+    };
+    std::string line;
+    while (std::getline(in, line)) {
+        std::string t = trim(line);
+        if (t.empty() || t[0] == '#') continue;
+        if (t == "[[package]]") { flush(); inPkg = true; continue; }
+        size_t eq = t.find('=');
+        if (eq == std::string::npos) continue;
+        std::string k = trim(t.substr(0, eq));
+        std::string v = unquote(trim(t.substr(eq + 1)));
+        if (!inPkg) continue;   // ignore top-level keys (e.g. `version = 1`)
+        if      (k == "name")    cur.name    = v;
+        else if (k == "version") cur.version = v;
+        else if (k == "source")  cur.source  = v;
+        else if (k == "commit")  cur.commit  = v;
+    }
+    flush();
+    return out;
+}
+
+static void write_lockfile(const fs::path& path,
+                           const std::map<std::string, LockEntry>& entries) {
+    std::ofstream out(path);
+    out << "# quirk.lock — generated by `quirk pkg install`. Do not edit.\n"
+        << "version = 1\n\n";
+    // Stable order: sorted by name. std::map is already sorted.
+    for (auto& kv : entries) {
+        auto& e = kv.second;
+        out << "[[package]]\n"
+            << "name    = \"" << e.name    << "\"\n"
+            << "version = \"" << e.version << "\"\n"
+            << "source  = \"" << e.source  << "\"\n";
+        if (!e.commit.empty())
+            out << "commit  = \"" << e.commit << "\"\n";
+        out << "\n";
+    }
+}
+
+// ----------------------- Tag discovery & tarball install ---------------
+// For GitHub URLs we can:
+//   - List versions: `git ls-remote --tags <url>` (or GitHub API)
+//   - Download a specific version's source as a tarball — no git clone,
+//     no .git directory, no full history. Much faster.
+// Non-GitHub URLs fall through to the existing git-clone path.
+
+// Parse "github.com/owner/repo[.git]" out of an arbitrary spec URL.
+// Returns "owner/repo" or empty string if it isn't a GitHub URL.
+static std::string github_owner_repo(const std::string& url) {
+    std::string s = url;
+    auto p = s.find("://"); if (p != std::string::npos) s = s.substr(p + 3);
+    // SSH form: git@github.com:owner/repo.git → strip prefix + replace ':'
+    if (s.rfind("git@github.com:", 0) == 0) {
+        s = "github.com/" + s.substr(15);
+    }
+    if (s.rfind("github.com/", 0) != 0) return "";
+    s = s.substr(11);
+    if (s.size() > 4 && s.substr(s.size() - 4) == ".git")
+        s = s.substr(0, s.size() - 4);
+    // Strip trailing slashes / fragments
+    auto q = s.find_first_of(" \t?#");
+    if (q != std::string::npos) s = s.substr(0, q);
+    // Must look like owner/repo
+    auto slash = s.find('/');
+    if (slash == std::string::npos) return "";
+    return s;
+}
+
+static bool is_github_url(const std::string& url) {
+    return !github_owner_repo(url).empty();
+}
+
+// Per-URL tag-list cache file. Sanitized owner-repo as filename.
+static fs::path tags_cache_path(const std::string& ownerRepo) {
+    fs::path c = cache_dir();
+    if (c.empty()) return {};
+    fs::path dir = c / "_tags";
+    std::error_code ec;
+    fs::create_directories(dir, ec);
+    std::string fn = ownerRepo;
+    for (char& ch : fn) if (ch == '/') ch = '-';
+    return dir / (fn + ".tags");
+}
+
+// Run `git ls-remote --tags <url>` and return sorted tag names (semver-desc).
+// Caches the result for 24h.
+static std::vector<std::string> discover_tags(const std::string& gitUrl, bool forceRefresh = false) {
+    std::vector<std::string> tags;
+    std::string ownerRepo = github_owner_repo(gitUrl);
+    if (ownerRepo.empty()) {
+        // Non-GitHub: still works, just no separate cache file (use a sanitized URL)
+        std::string sane = gitUrl;
+        for (char& c : sane) if (c == '/' || c == ':') c = '-';
+        ownerRepo = sane;
+    }
+    fs::path cache = tags_cache_path(ownerRepo);
+
+    // Use cached list if fresh enough (24h). Simple `stat`-based check.
+    if (!forceRefresh && !cache.empty() && fs::exists(cache)) {
+        struct stat st;
+        if (::stat(cache.c_str(), &st) == 0) {
+            auto now = ::time(nullptr);
+            if (now - st.st_mtime < 24 * 60 * 60) {
+                std::ifstream in(cache);
+                std::string line;
+                while (std::getline(in, line)) {
+                    if (!line.empty()) tags.push_back(line);
+                }
+                return tags;
+            }
+        }
+    }
+
+    // Run `git ls-remote --tags --refs <url>` and parse `<sha>\trefs/tags/<name>`.
+    std::string url = gitUrl;
+    if (url.find("://") == std::string::npos && url.rfind("git@", 0) != 0) {
+        url = "https://" + url;
+        if (url.size() < 4 || url.substr(url.size() - 4) != ".git") url += ".git";
+    }
+    std::string cmd = "git ls-remote --tags --refs \"" + url + "\" 2>/dev/null";
+    FILE* p = popen(cmd.c_str(), "r");
+    if (!p) return tags;
+    char buf[1024];
+    while (fgets(buf, sizeof(buf), p)) {
+        std::string line(buf);
+        auto tab = line.find('\t');
+        if (tab == std::string::npos) continue;
+        std::string ref = line.substr(tab + 1);
+        const std::string marker = "refs/tags/";
+        auto m = ref.find(marker);
+        if (m == std::string::npos) continue;
+        std::string tag = ref.substr(m + marker.size());
+        while (!tag.empty() && (tag.back() == '\n' || tag.back() == '\r')) tag.pop_back();
+        if (!tag.empty()) tags.push_back(tag);
+    }
+    pclose(p);
+
+    // Sort latest-first using version comparison (strip leading `v`).
+    std::sort(tags.begin(), tags.end(), [](const std::string& a, const std::string& b) {
+        auto strip = [](std::string s) { return (!s.empty() && s[0] == 'v') ? s.substr(1) : s; };
+        return compare_versions(strip(a), strip(b)) > 0;
+    });
+
+    // Cache the result.
+    if (!cache.empty()) {
+        std::ofstream out(cache);
+        for (auto& t : tags) out << t << "\n";
+    }
+    return tags;
+}
+
+// Try the GitHub codeload tarball for a single exact ref. Returns 0 on
+// success. Wrapped by `download_github_tarball` which retries with/without
+// the `v` prefix.
+static int try_codeload_tarball(const std::string& ownerRepo, const std::string& ref,
+                                const fs::path& target, bool quiet) {
+    // codeload accepts both refs/tags/X and bare refs (resolves to tag or branch).
+    std::string url = "https://codeload.github.com/" + ownerRepo + "/tar.gz/"
+                    + (ref.empty() ? "HEAD" : ref);
+    fs::path tmpTar = fs::temp_directory_path()
+        / ("quirk_dl_" + std::to_string(getpid()) + ".tar.gz");
+    fs::path extractDir = fs::temp_directory_path()
+        / ("quirk_x_"  + std::to_string(getpid()));
+    std::error_code ec;
+    fs::remove_all(extractDir, ec);
+    fs::create_directories(extractDir, ec);
+
+    // Always silence curl — its 404 is normal when probing tag-name variants
+    // (e.g. "1.0.0" vs "v1.0.0"). Caller decides what to do on failure.
+    std::string curl = "curl -fsSL \"" + url + "\" -o \"" + tmpTar.string() + "\" 2>/dev/null";
+    if (std::system(curl.c_str()) != 0) {
+        fs::remove(tmpTar, ec);
+        return 1;
+    }
+    std::string tar = "tar -xzf \"" + tmpTar.string()
+                    + "\" -C \"" + extractDir.string() + "\"";
+    if (quiet) tar += " 2>/dev/null";
+    if (std::system(tar.c_str()) != 0) {
+        fs::remove(tmpTar, ec);
+        fs::remove_all(extractDir, ec);
+        return 1;
+    }
+
+    // The tar contains a single `<repo>-<ref>/` directory. Move it to target.
+    fs::path inner;
+    for (auto& e : fs::directory_iterator(extractDir)) {
+        if (e.is_directory()) { inner = e.path(); break; }
+    }
+    if (inner.empty()) {
+        fs::remove(tmpTar, ec);
+        fs::remove_all(extractDir, ec);
+        return 1;
+    }
+    fs::remove_all(target, ec);
+    fs::create_directories(target.parent_path(), ec);
+    fs::rename(inner, target, ec);
+    if (ec) {
+        // Cross-device — copy + remove.
+        fs::copy(inner, target,
+                 fs::copy_options::recursive | fs::copy_options::copy_symlinks, ec);
+        fs::remove_all(inner);
+    }
+    fs::remove(tmpTar, ec);
+    fs::remove_all(extractDir, ec);
+    return 0;
+}
+
+// Download a tarball, being lenient about the `v` prefix. Git-tag convention
+// is `v1.0.0`, but users habitually type `1.0.0` in install commands (and
+// some communities skip the prefix entirely). We try the user's input first,
+// then the other form. On success, `actualRef` is set to whichever form
+// worked (useful for messages).
+static int download_github_tarball(const std::string& ownerRepo, const std::string& ref,
+                                   const fs::path& target, bool quiet,
+                                   std::string* actualRef = nullptr) {
+    if (try_codeload_tarball(ownerRepo, ref, target, quiet) == 0) {
+        if (actualRef) *actualRef = ref;
+        return 0;
+    }
+    // Retry with the opposite v-prefix variant when the ref looks version-like.
+    if (!ref.empty()) {
+        std::string alt;
+        if (std::isdigit((unsigned char)ref[0])) alt = "v" + ref;
+        else if (ref[0] == 'v' && ref.size() > 1
+                 && std::isdigit((unsigned char)ref[1])) alt = ref.substr(1);
+        if (!alt.empty()
+            && try_codeload_tarball(ownerRepo, alt, target, quiet) == 0) {
+            if (actualRef) *actualRef = alt;
+            return 0;
+        }
+    }
+    return 1;
+}
 
 static fs::path cache_dir() {
     const char* h = std::getenv("HOME");
@@ -612,16 +1079,22 @@ static std::string pick_cached_version(const std::string& name, const std::strin
     return best;
 }
 
-// Write the metadata sidecar.
-static void write_dist_info(const fs::path& pkgRoot, const Manifest& m, bool editable) {
+// Write the metadata sidecar. `commit` is the cloned commit SHA (empty for
+// non-git installs).
+static void write_dist_info(const fs::path& pkgRoot, const Manifest& m, bool editable,
+                            const std::string& commit = "") {
     fs::path d = dist_info_dir(pkgRoot, m.name, m.version);
     fs::create_directories(d);
     std::ofstream out(d / "METADATA");
     out << "Name: "      << m.name    << "\n"
         << "Version: "   << m.version << "\n";
-    if (!m.description.empty()) out << "Summary: " << m.description << "\n";
-    if (!m.author.empty())      out << "Author: "  << m.author      << "\n";
-    if (!m.license.empty())     out << "License: " << m.license     << "\n";
+    if (!m.description.empty())   out << "Summary: "        << m.description   << "\n";
+    if (!m.author.empty())        out << "Author: "         << m.author        << "\n";
+    if (!m.license.empty())       out << "License: "        << m.license       << "\n";
+    if (!m.repository.empty())    out << "Repository: "     << m.repository    << "\n";
+    if (!m.homepage.empty())      out << "Homepage: "       << m.homepage      << "\n";
+    if (!m.quirk_version.empty()) out << "Requires-Quirk: " << m.quirk_version << "\n";
+    if (!commit.empty())          out << "Commit: "         << commit          << "\n";
     out << "Installer: quirk\n";
     if (editable) out << "Editable: true\n";
     for (auto& dep : m.deps) out << "Requires: " << dep.first << " (" << dep.second << ")\n";
@@ -684,11 +1157,22 @@ static std::string pick_installed_version(const fs::path& pkgDir, const std::str
 //
 // If `pinVersion` is non-empty, the source's manifest version must match;
 // otherwise we install the source's declared version.
+// Reject the install if the package declares a `quirk-version` constraint
+// the running compiler doesn't satisfy. Empty constraint = no opinion.
+static int check_quirk_version(const Manifest& m) {
+    if (m.quirk_version.empty()) return 0;
+    if (version_satisfies(QUIRK_VERSION, m.quirk_version)) return 0;
+    std::cerr << "install: " << m.name << " requires quirk " << m.quirk_version
+              << " (running " << QUIRK_VERSION << ")\n";
+    return 1;
+}
+
 // Internal: replace packages/<name>/ with content from the cache entry.
 // Strategy: copy (snapshot) so re-installs don't suffer from cache mutation.
 // Returns 0 on success, non-zero on failure.
 static int materialize_from_cache(const fs::path& cachePath, const fs::path& pkgRoot,
-                                  const Manifest& m, bool editable) {
+                                  const Manifest& m, bool editable,
+                                  const std::string& commit = "") {
     fs::path target = pkgRoot / m.name;
     std::error_code ec;
     if (fs::exists(target) || fs::is_symlink(target)) fs::remove_all(target);
@@ -709,12 +1193,13 @@ static int materialize_from_cache(const fs::path& cachePath, const fs::path& pkg
         return 1;
     }
     clear_dist_info(pkgRoot, m.name);
-    write_dist_info(pkgRoot, m, editable);
+    write_dist_info(pkgRoot, m, editable, commit);
     return 0;
 }
 
 static int install_local(const std::string& path_spec, bool editable,
-                         const std::string& pinVersion = "") {
+                         const std::string& pinVersion = "",
+                         LockEntry* outLock = nullptr) {
     fs::path src = path_spec;
     if (!path_spec.empty() && path_spec[0] == '~') {
         const char* home = std::getenv("HOME");
@@ -732,6 +1217,7 @@ static int install_local(const std::string& path_spec, bool editable,
         return 1;
     }
     if (m.version.empty()) m.version = "0.0.0";
+    if (check_quirk_version(m) != 0) return 1;
 
     fs::path pkgRoot = package_install_dir();
     fs::create_directories(pkgRoot);
@@ -748,6 +1234,7 @@ static int install_local(const std::string& path_spec, bool editable,
             }
             if (materialize_from_cache(entry, pkgRoot, mCached, false) != 0) return 1;
             std::cout << "  ✓ " << m.name << " " << cached << " (from cache)\n";
+            if (outLock) *outLock = {m.name, cached, path_spec, ""};
             return 0;
         }
     }
@@ -782,10 +1269,12 @@ static int install_local(const std::string& path_spec, bool editable,
         std::cout << "  ✓ " << m.name << " " << m.version
                   << " (editable from " << src.string() << ")\n";
     }
+    if (outLock) *outLock = {m.name, m.version, path_spec, ""};
     return 0;
 }
 
-static int install_one(const std::string& spec_str, bool quiet, bool editable = false) {
+static int install_one(const std::string& spec_str, bool quiet, bool editable = false,
+                       LockEntry* outLock = nullptr) {
     // Split off `@<version>` from a local path or bare-name spec (git URLs
     // are handled by parse_spec below). A leading `~/`, `./`, or `/` marks a
     // path; otherwise we'll see if it's a bare package name below.
@@ -802,60 +1291,204 @@ static int install_one(const std::string& spec_str, bool quiet, bool editable = 
             pinVersion = spec_str.substr(at + 1);
         }
     }
-    if (is_local_path(pathPart)) return install_local(pathPart, editable, pinVersion);
+    if (is_local_path(pathPart)) return install_local(pathPart, editable, pinVersion, outLock);
 
-    // Bare-name switch: `quirk install <name>@<range>` with no path/URL.
-    // Picks the highest cached version satisfying the range and swaps the
-    // active install in `packages/<name>/`.
-    if (!isPathLike && !looksLikeGitSpec && !pinVersion.empty()) {
-        std::string chosen = pick_cached_version(pathPart, pinVersion);
-        if (chosen.empty()) {
-            std::cerr << "install: no cached version of '" << pathPart
-                      << "' satisfies '" << pinVersion << "'\n";
-            std::cerr << "  (`quirk cache list " << pathPart << "` to see what's cached)\n";
+    // Bare-name install: `quirk install <name>[@<range>]`.
+    // Two-step resolution:
+    //   1. If a pin is given AND we have a matching cached version, switch
+    //      (instant; same as before — no network).
+    //   2. Otherwise, look the name up via aliases / registry and recurse
+    //      with the resolved URL spec.
+    if (!isPathLike && !looksLikeGitSpec) {
+        if (!pinVersion.empty()) {
+            std::string chosen = pick_cached_version(pathPart, pinVersion);
+            if (!chosen.empty()) {
+                fs::path entry = cache_entry(pathPart, chosen);
+                Manifest m;
+                if (!read_manifest((entry / "quirk.toml").string(), m)) {
+                    m.name = pathPart; m.version = chosen;
+                }
+                fs::path pkgRoot = package_install_dir();
+                fs::create_directories(pkgRoot);
+                if (materialize_from_cache(entry, pkgRoot, m, false) != 0) return 1;
+                std::cout << "  ✓ " << pathPart << " " << chosen << " (from cache)\n";
+                if (outLock) *outLock = {pathPart, chosen, spec_str, ""};
+                return 0;
+            }
+        }
+        // Try the registry / aliases.
+        std::string resolved = registry_lookup(pathPart);
+        if (!resolved.empty()) {
+            // User pin > registry default pin. Strip any `@…` already on the
+            // resolved URL and replace it with the user's pin if they gave one.
+            std::string full = resolved;
+            if (!pinVersion.empty()) {
+                auto at = full.find('@');
+                if (at != std::string::npos) full = full.substr(0, at);
+                full += "@" + pinVersion;
+            }
+            int rc = install_one(full, quiet, editable, outLock);
+            // Preserve the original short-name spec in the lock entry.
+            if (rc == 0 && outLock) outLock->source = spec_str;
+            return rc;
+        }
+        if (!pinVersion.empty()) {
+            std::cerr << "install: '" << pathPart << "' not in registry or cache\n";
+            std::cerr << "  (`quirk pkg cache list " << pathPart << "` to see what's cached;\n";
+            std::cerr << "   `quirk pkg registry add " << pathPart << " <url>` to register a name)\n";
             return 1;
         }
-        fs::path entry = cache_entry(pathPart, chosen);
-        Manifest m;
-        if (!read_manifest((entry / "quirk.toml").string(), m)) {
-            m.name = pathPart; m.version = chosen;
-        }
-        fs::path pkgRoot = package_install_dir();
-        fs::create_directories(pkgRoot);
-        if (materialize_from_cache(entry, pkgRoot, m, false) != 0) return 1;
-        std::cout << "  ✓ " << pathPart << " " << chosen << " (from cache)\n";
-        return 0;
+        std::cerr << "install: '" << pathPart << "' is not a known package\n";
+        std::cerr << "  Register it:  quirk pkg registry add " << pathPart << " github.com/owner/repo\n";
+        std::cerr << "  Or use a URL: quirk pkg install github.com/owner/repo\n";
+        return 1;
     }
 
     PkgSpec spec = parse_spec(spec_str);
     fs::path pkgRoot = package_install_dir();
     fs::create_directories(pkgRoot);
-    fs::path target = pkgRoot / spec.name;
 
-    if (fs::exists(target)) {
-        std::cout << "  · " << spec.name << " already installed (skipping)\n";
-        return 0;
+    // If the user gave a range/version spec but no explicit ref, resolve
+    // against the published tags (so `slug@'>=0.1,<1.0'` picks the highest
+    // matching tag without us having to clone).
+    std::string ownerRepo = github_owner_repo(spec.url);
+    if (!ownerRepo.empty()
+        && !spec.ref.empty()
+        && spec.ref.find_first_of("=<>!,") != std::string::npos) {
+        std::vector<std::string> tags = discover_tags(spec.url);
+        std::string best;
+        for (auto& t : tags) {
+            std::string stripped = (!t.empty() && t[0] == 'v') ? t.substr(1) : t;
+            if (!version_satisfies(stripped, spec.ref)) continue;
+            if (best.empty()
+                || compare_versions(stripped[0]=='v'?stripped.substr(1):stripped,
+                                    best[0]=='v'?best.substr(1):best) > 0) {
+                best = t;
+            }
+        }
+        if (best.empty()) {
+            std::cerr << "install: no tag of " << spec.url
+                      << " satisfies '" << spec.ref << "'\n";
+            std::cerr << "  Available tags:";
+            for (size_t i = 0; i < tags.size() && i < 8; i++)
+                std::cerr << " " << tags[i];
+            if (tags.size() > 8) std::cerr << " …";
+            std::cerr << "\n";
+            return 1;
+        }
+        spec.ref = best;
     }
-    std::string cmd = "git clone --depth 1";
-    if (!spec.ref.empty()) cmd += " --branch \"" + spec.ref + "\"";
-    cmd += " \"" + spec.url + "\" \"" + target.string() + "\"";
-    if (quiet) cmd += " 2>/dev/null";
-    int rc = sh(cmd, quiet);
-    if (rc != 0) {
-        std::cerr << "  ✗ failed to install " << spec.name << "\n";
-        fs::remove_all(target);
-        return rc;
+
+    // Tarball-first download for GitHub URLs (faster, no git required at
+    // runtime, no .git dir to strip). Falls back to `git clone` otherwise.
+    fs::path tmp = fs::temp_directory_path()
+        / ("quirk_dl_" + spec.name + "_" + std::to_string(getpid()));
+    std::error_code ec;
+    fs::remove_all(tmp, ec);
+
+    std::cout << "  ↓ " << spec.name
+              << (spec.ref.empty() ? "" : " " + spec.ref)
+              << " (" << spec.url << ")\n";
+
+    bool usedTarball = false;
+    if (!ownerRepo.empty()) {
+        std::string actual;
+        if (download_github_tarball(ownerRepo, spec.ref, tmp, quiet, &actual) == 0) {
+            usedTarball = true;
+            spec.ref = actual;     // canonicalize for the success message
+        } else if (!spec.ref.empty()) {
+            std::cerr << "  ✗ tarball download failed (does tag/branch '"
+                      << spec.ref << "' exist?)\n";
+            std::cerr << "    (try `quirk pkg versions " << ownerRepo
+                      << "` to see what's published)\n";
+            return 1;
+        }
+        // If no ref and tarball failed, fall through to git clone.
     }
-    fs::remove_all(target / ".git");  // strip vcs metadata for cleanliness
-    std::cout << "  ✓ " << spec.name << (spec.ref.empty() ? "" : " (" + spec.ref + ")") << "\n";
+    if (!usedTarball) {
+        auto run_clone = [&](const std::string& ref) -> int {
+            std::string cmd = "git -c advice.detachedHead=false clone --quiet --depth 1";
+            if (!ref.empty()) cmd += " --branch \"" + ref + "\"";
+            cmd += " \"" + spec.url + "\" \"" + tmp.string() + "\"";
+            cmd += " 2>/dev/null";
+            return std::system(cmd.c_str());
+        };
+        int rc = run_clone(spec.ref);
+        if (rc != 0 && !spec.ref.empty()) {
+            std::error_code ec; fs::remove_all(tmp, ec);
+            // Retry with the opposite v-prefix variant for version-like refs.
+            std::string alt;
+            if (std::isdigit((unsigned char)spec.ref[0])) alt = "v" + spec.ref;
+            else if (spec.ref[0] == 'v' && spec.ref.size() > 1
+                     && std::isdigit((unsigned char)spec.ref[1])) alt = spec.ref.substr(1);
+            if (!alt.empty() && run_clone(alt) == 0) {
+                spec.ref = alt;
+                rc = 0;
+            }
+        }
+        if (rc != 0) {
+            std::cerr << "  ✗ failed to clone " << spec.name << "\n";
+            fs::remove_all(tmp);
+            return rc;
+        }
+    }
+    Manifest m;
+    if (!read_manifest((tmp / "quirk.toml").string(), m) || m.name.empty()) {
+        std::cerr << "  ✗ " << spec.name << ": cloned repo has no quirk.toml (or missing `name =`)\n";
+        fs::remove_all(tmp);
+        return 1;
+    }
+    if (m.version.empty()) m.version = "0.0.0";
+    if (check_quirk_version(m) != 0) { fs::remove_all(tmp); return 1; }
+
+    // Capture the commit SHA before stripping `.git/` (tarball downloads
+    // don't have a .git, so commit stays empty for those).
+    std::string commit = usedTarball ? "" : git_head(tmp);
+    fs::remove_all(tmp / ".git");
+
+    // Populate cache for (name, version) if missing; otherwise drop the
+    // fresh clone and use what we already cached.
+    fs::path entry = cache_entry(m.name, m.version);
+    if (entry.empty()) {
+        std::cerr << "install: cannot determine cache directory (HOME unset?)\n";
+        fs::remove_all(tmp);
+        return 1;
+    }
+    if (!fs::exists(entry)) {
+        fs::create_directories(entry.parent_path());
+        fs::rename(tmp, entry, ec);
+        if (ec) {
+            // rename failed (likely cross-device); fall back to copy.
+            fs::copy(tmp, entry,
+                     fs::copy_options::recursive | fs::copy_options::copy_symlinks, ec);
+            fs::remove_all(tmp);
+            if (ec) {
+                std::cerr << "install: failed to cache " << spec.name << ": "
+                          << ec.message() << "\n";
+                return 1;
+            }
+        }
+    } else {
+        fs::remove_all(tmp);
+    }
+
+    if (materialize_from_cache(entry, pkgRoot, m, false, commit) != 0) return 1;
+    std::cout << "  ✓ " << m.name << " " << m.version;
+    if (!commit.empty()) std::cout << " (" << commit.substr(0, 7) << ")";
+    std::cout << "\n";
+    if (outLock) *outLock = {m.name, m.version, spec_str, commit};
     return 0;
 }
 
 static int cmd_install(const std::vector<std::string>& args) {
-    // Parse flags: -r/--read <file>, -e/--editable <path>, or positional pkg specs.
+    // Parse flags: -r/--read <file>, -e/--editable <path>, --dev, --frozen,
+    // --no-lock, or positional pkg specs.
     std::string manifestFile;
     std::vector<std::string> specs;
     std::set<std::string> editableSpecs;     // paths marked with -e
+    bool includeDevDeps = false;
+    bool frozen = false;
+    bool noLock = false;
     for (size_t i = 0; i < args.size(); i++) {
         if (args[i] == "-r" || args[i] == "--read") {
             if (i + 1 >= args.size()) {
@@ -871,7 +1504,10 @@ static int cmd_install(const std::vector<std::string>& args) {
             const std::string& p = args[++i];
             specs.push_back(p);
             editableSpecs.insert(p);
-        } else {
+        } else if (args[i] == "--dev")        includeDevDeps = true;
+        else if (args[i] == "--frozen")       frozen   = true;
+        else if (args[i] == "--no-lock")      noLock   = true;
+        else {
             specs.push_back(args[i]);
         }
     }
@@ -879,19 +1515,75 @@ static int cmd_install(const std::vector<std::string>& args) {
     // No args → install everything in ./quirk.toml's [deps].
     if (specs.empty() && manifestFile.empty()) manifestFile = "quirk.toml";
 
+    fs::path lockPath = fs::path(manifestFile.empty() ? "quirk.toml" : manifestFile)
+                            .parent_path() / "quirk.lock";
+    auto lock = read_lockfile(lockPath);
+    auto originalLock = lock;
+    bool hadLockfile = !lock.empty() || fs::exists(lockPath);
+
+    auto install_with_lock = [&](const std::string& spec, bool editable) -> int {
+        LockEntry e;
+        int rc = install_one(spec, false, editable, &e);
+        if (rc == 0 && !e.name.empty()) lock[e.name] = e;
+        return rc;
+    };
+
+    // Map name → lock entry for fast "do we have a reproducible target?" check.
+    auto try_locked = [&](const std::string& name, const std::string& declSpec) -> int {
+        auto it = lock.find(name);
+        if (it == lock.end()) return -1;   // not in lock
+        // Source must match exactly — otherwise the manifest changed and we
+        // need a fresh resolution.
+        if (it->second.source != declSpec) return -1;
+        // Install at the locked commit (or version if non-git).
+        std::string pin = it->second.commit.empty() ? it->second.version : it->second.commit;
+        // Build a spec the install path understands. For URL specs append @<pin>.
+        std::string lockedSpec = declSpec;
+        auto at = lockedSpec.find('@');
+        if (at != std::string::npos) lockedSpec = lockedSpec.substr(0, at);
+        lockedSpec += "@" + pin;
+        return install_one(lockedSpec, false, false, nullptr);
+    };
+
     if (!manifestFile.empty()) {
         Manifest m;
         if (!read_manifest(manifestFile, m)) {
             std::cerr << "install: cannot read manifest '" << manifestFile << "'\n";
             return 1;
         }
-        if (m.deps.empty()) {
-            std::cout << "No dependencies declared in " << manifestFile << ".\n";
+        size_t total = m.deps.size() + (includeDevDeps ? m.dev_deps.size() : 0);
+        if (total == 0) {
+            std::cout << "No dependencies declared in " << manifestFile;
+            if (!includeDevDeps && !m.dev_deps.empty())
+                std::cout << " (use --dev to include " << m.dev_deps.size() << " dev-deps)";
+            std::cout << ".\n";
             return 0;
         }
-        std::cout << "Installing " << m.deps.size() << " package(s) from " << manifestFile << ":\n";
+        // --frozen: require an existing lockfile that matches every manifest dep.
+        if (frozen) {
+            if (!hadLockfile) {
+                std::cerr << "install: --frozen requires an existing quirk.lock\n";
+                return 1;
+            }
+            for (auto& d : m.deps) {
+                auto it = lock.find(d.first);
+                if (it == lock.end() || it->second.source != d.second) {
+                    std::cerr << "install: --frozen: lockfile is out of date for '"
+                              << d.first << "'\n";
+                    return 1;
+                }
+            }
+        }
+        std::cout << "Installing " << total << " package(s) from " << manifestFile << ":\n";
         for (auto& d : m.deps) {
-            install_one(d.second, false);
+            if (hadLockfile && try_locked(d.first, d.second) == 0) continue;
+            install_with_lock(d.second, false);
+        }
+        if (includeDevDeps) {
+            for (auto& d : m.dev_deps) {
+                if (hadLockfile && try_locked(d.first, d.second) == 0) continue;
+                install_with_lock(d.second, false);
+            }
         }
     }
 
@@ -901,12 +1593,9 @@ static int cmd_install(const std::vector<std::string>& args) {
     bool dirty = false;
     for (auto& s : specs) {
         bool editable = editableSpecs.count(s) > 0;
-        if (install_one(s, false, editable) != 0) continue;
+        if (install_with_lock(s, editable) != 0) continue;
         if (!haveManifest) continue;
 
-        // Local path: use the manifest name and store the absolute path so
-        // future `quirk install` rebuilds the install from the right location.
-        // Otherwise: parse the git spec for its inferred name.
         std::string name, stored;
         if (is_local_path(s)) {
             Manifest lm;
@@ -925,6 +1614,13 @@ static int cmd_install(const std::vector<std::string>& args) {
         dirty = true;
     }
     if (dirty) write_manifest("quirk.toml", projMan);
+
+    // Write the updated lockfile (skip when --no-lock, or if nothing changed).
+    if (!noLock && !lock.empty() && lock != originalLock) {
+        write_lockfile(lockPath, lock);
+        std::cout << "\nWrote " << lockPath.string() << " ("
+                  << lock.size() << " package" << (lock.size() == 1 ? "" : "s") << ").\n";
+    }
     return 0;
 }
 
@@ -1106,8 +1802,24 @@ static int cmd_show(const std::vector<std::string>& args) {
     std::cout << "name:        " << m.name << "\n";
     std::cout << "version:     " << m.version << "\n";
     if (!m.description.empty()) std::cout << "description: " << m.description << "\n";
-    if (!m.author.empty())      std::cout << "author:      " << m.author << "\n";
-    if (!m.license.empty())     std::cout << "license:     " << m.license << "\n";
+    if (!m.author.empty())      std::cout << "author:      " << m.author      << "\n";
+    if (!m.license.empty())     std::cout << "license:     " << m.license     << "\n";
+    if (!m.repository.empty())  std::cout << "repository:  " << m.repository  << "\n";
+    if (!m.homepage.empty())    std::cout << "homepage:    " << m.homepage    << "\n";
+
+    // Pull commit SHA from the dist-info if available.
+    fs::path di = find_dist_info(pkgRoot, args[0]);
+    if (!di.empty()) {
+        std::ifstream meta(di / "METADATA");
+        std::string line;
+        while (std::getline(meta, line)) {
+            if (line.rfind("Commit: ", 0) == 0) {
+                std::cout << "commit:      " << line.substr(8) << "\n";
+                break;
+            }
+        }
+    }
+
     if (!m.deps.empty()) {
         std::cout << "deps:\n";
         for (auto& d : m.deps) std::cout << "  " << d.first << " = " << d.second << "\n";
@@ -1125,10 +1837,800 @@ static int cmd_show(const std::vector<std::string>& args) {
     return 0;
 }
 
+// Absolute path to the running quirk binary — used when we need to re-invoke
+// ourselves (eval, module, check).
+static std::string self_binary() {
+    char buf[4096];
+    ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    if (n > 0) { buf[n] = '\0'; return buf; }
+    return "quirk";
+}
+
+// ---- Package validation -----------------------------------------------
+// Pre-flight checks before registering. Returns the number of errors found
+// (warnings don't count). All findings are printed to stdout/stderr with
+// a status glyph: ✓ pass, ⚠ warn, ✗ error.
+
+struct CheckFinding {
+    enum Level { OK, WARN, ERROR } level;
+    std::string message;
+    std::string hint;
+};
+
+// Run shell command, capture stdout. Returns trimmed output.
+static std::string capture(const std::string& cmd) {
+    FILE* p = popen((cmd + " 2>/dev/null").c_str(), "r");
+    if (!p) return "";
+    char buf[1024]; std::string out;
+    while (fgets(buf, sizeof(buf), p)) out += buf;
+    pclose(p);
+    return trim(out);
+}
+
+static bool valid_pkg_name(const std::string& n) {
+    if (n.empty()) return false;
+    for (char c : n) {
+        if (!(std::isalnum((unsigned char)c) || c == '-' || c == '_')) return false;
+    }
+    return true;
+}
+
+// Run all package checks on the current directory's package. Reads files
+// directly so it works regardless of whether the package is installed.
+static std::vector<CheckFinding> validate_package(const Manifest& m) {
+    std::vector<CheckFinding> out;
+    auto add = [&](CheckFinding::Level lvl, std::string msg, std::string hint = "") {
+        out.push_back({lvl, std::move(msg), std::move(hint)});
+    };
+
+    // --- Manifest fields ------------------------------------------------
+    if (m.name.empty())         add(CheckFinding::ERROR, "manifest is missing `name`");
+    else if (!valid_pkg_name(m.name))
+        add(CheckFinding::ERROR, "name '" + m.name + "' has invalid characters",
+            "use only [a-zA-Z0-9_-]");
+    else add(CheckFinding::OK, "name = \"" + m.name + "\"");
+
+    if (m.version.empty())      add(CheckFinding::ERROR, "manifest is missing `version`");
+    else                         add(CheckFinding::OK, "version = \"" + m.version + "\"");
+
+    if (m.repository.empty())   add(CheckFinding::ERROR, "manifest is missing `repository`",
+                                     "add `repository = \"github.com/<owner>/<repo>\"`");
+    else                         add(CheckFinding::OK, "repository = \"" + m.repository + "\"");
+
+    if (m.description.empty())  add(CheckFinding::WARN, "no `description` set",
+                                     "users see this in `quirk pkg show`");
+    if (m.license.empty())      add(CheckFinding::WARN, "no `license` set",
+                                     "common choices: MIT, Apache-2.0, BSD-3-Clause");
+    if (m.quirk_version.empty())
+        add(CheckFinding::WARN, "no `quirk-version` constraint",
+            "add `quirk-version = \">=0.2.0\"` to guard against compiler-version drift");
+
+    // --- Entry point ----------------------------------------------------
+    std::string entryRel = m.entry.empty() ? "src/index.qk" : m.entry;
+    fs::path entry = entryRel;
+    if (!fs::exists(entry))
+        add(CheckFinding::ERROR, "entry point not found: " + entryRel,
+            m.entry.empty() ? "create src/index.qk or set `entry = ...`" : "");
+    else add(CheckFinding::OK, "entry point: " + entryRel);
+
+    // --- tests/ directory -----------------------------------------------
+    if (!fs::is_directory("tests"))
+        add(CheckFinding::WARN, "no tests/ directory",
+            "even one tests/sanity.qk catches regressions");
+
+    // --- .gitignore -----------------------------------------------------
+    {
+        std::ifstream gi(".gitignore");
+        std::string line; bool packagesIgnored = false;
+        while (gi && std::getline(gi, line)) {
+            std::string t = trim(line);
+            if (t == "packages/" || t == "packages" || t == "/packages") {
+                packagesIgnored = true; break;
+            }
+        }
+        if (!gi)
+            add(CheckFinding::WARN, ".gitignore missing",
+                "add one ignoring packages/ and .venv/");
+        else if (!packagesIgnored)
+            add(CheckFinding::WARN, ".gitignore doesn't exclude `packages/`",
+                "consumers' installed deps would otherwise get committed");
+    }
+
+    // --- Git state ------------------------------------------------------
+    if (fs::is_directory(".git")) {
+        std::string status = capture("git status --porcelain");
+        if (!status.empty())
+            add(CheckFinding::WARN, "working tree is dirty",
+                "commit or stash before tagging a release");
+
+        std::string remote = capture("git remote get-url origin");
+        if (!remote.empty() && !m.repository.empty()) {
+            // Normalize both sides for comparison
+            auto norm = [](std::string s) {
+                auto p = s.find("://"); if (p != std::string::npos) s = s.substr(p + 3);
+                if (s.rfind("git@", 0) == 0) {
+                    auto colon = s.find(':');
+                    if (colon != std::string::npos) s = s.substr(4) /* drop git@ */, s.replace(s.find(':'), 1, "/");
+                }
+                if (s.size() > 4 && s.substr(s.size() - 4) == ".git") s.resize(s.size() - 4);
+                return s;
+            };
+            if (norm(remote) != norm(m.repository))
+                add(CheckFinding::WARN, "git remote 'origin' (" + remote
+                    + ") differs from manifest `repository`",
+                    "either fix the manifest or update the remote");
+        }
+
+        std::string tags = capture("git tag --sort=-v:refname");
+        if (tags.empty())
+            add(CheckFinding::WARN, "no git tags",
+                "tag a release: `git tag v" + m.version + " && git push --tags`");
+        else {
+            std::string latest = tags.substr(0, tags.find('\n'));
+            std::string stripped = latest;
+            if (!stripped.empty() && stripped[0] == 'v') stripped = stripped.substr(1);
+            if (stripped != m.version)
+                add(CheckFinding::WARN, "latest git tag (" + latest
+                    + ") doesn't match manifest version (" + m.version + ")",
+                    "tag a release: `git tag v" + m.version + " && git push --tags`");
+        }
+    } else {
+        add(CheckFinding::WARN, "not a git repo",
+            "run `git init` so users can install via URL");
+    }
+
+    // --- Compile check on the entry --------------------------------------
+    if (fs::exists(entry)) {
+        std::string cmd = "\"" + self_binary() + "\" --check \"" + entry.string() + "\" 2>&1";
+        FILE* p = popen(cmd.c_str(), "r");
+        std::string output;
+        char buf[2048];
+        while (p && fgets(buf, sizeof(buf), p)) output += buf;
+        int rc = p ? pclose(p) : -1;
+        if (rc == 0) add(CheckFinding::OK, "type-check passed (" + entryRel + ")");
+        else {
+            std::string firstLine = output.substr(0, output.find('\n'));
+            add(CheckFinding::ERROR, "type-check failed",
+                firstLine.empty() ? "" : "first error: " + firstLine);
+        }
+    }
+    return out;
+}
+
+// Print findings in a uniform way, return error count.
+static int print_findings(const std::vector<CheckFinding>& fs) {
+    int errors = 0, warns = 0, oks = 0;
+    for (auto& f : fs) {
+        const char* glyph = f.level == CheckFinding::ERROR ? "✗"
+                          : f.level == CheckFinding::WARN  ? "⚠" : "✓";
+        std::ostream& out = (f.level == CheckFinding::ERROR) ? std::cerr : std::cout;
+        out << "  " << glyph << " " << f.message << "\n";
+        if (!f.hint.empty()) out << "      → " << f.hint << "\n";
+        if (f.level == CheckFinding::ERROR) errors++;
+        else if (f.level == CheckFinding::WARN) warns++;
+        else oks++;
+    }
+    std::cout << "\n  " << oks << " ok, " << warns << " warning(s), "
+              << errors << " error(s)\n";
+    return errors;
+}
+
+// `quirk pkg check` — validate ./quirk.toml and the package layout without
+// registering. Pure read-only diagnostic, safe to run any time.
+static int cmd_check(const std::vector<std::string>&) {
+    Manifest m;
+    if (!read_manifest("quirk.toml", m)) {
+        std::cerr << "check: no ./quirk.toml here\n";
+        return 1;
+    }
+    std::cout << "Checking " << (m.name.empty() ? std::string("(unnamed)") : m.name)
+              << " " << m.version << "\n\n";
+    auto findings = validate_package(m);
+    int errs = print_findings(findings);
+    return errs > 0 ? 1 : 0;
+}
+
+// Bump one component of a semver-ish version string. Drops any pre-release
+// or build suffix. Unknown component falls back to patch.
+static std::string bump_version(const std::string& version, const std::string& part) {
+    auto v = parse_version(version);                  // [major, minor, patch]
+    if      (part == "major") { v[0]++; v[1] = 0; v[2] = 0; }
+    else if (part == "minor") {          v[1]++; v[2] = 0; }
+    else                       {                  v[2]++;     }   // default: patch
+    return std::to_string(v[0]) + "." + std::to_string(v[1]) + "." + std::to_string(v[2]);
+}
+
+// Rewrite `version = "..."` in a manifest file in place. Doesn't touch
+// anything else (preserves comments / formatting around it). If no version
+// line exists, appends one near the top.
+static int rewrite_manifest_version(const fs::path& path, const std::string& newVersion) {
+    std::ifstream in(path);
+    if (!in) return 1;
+    std::string content((std::istreambuf_iterator<char>(in)),
+                         std::istreambuf_iterator<char>());
+    in.close();
+
+    // Replace the first line that starts with `version` (optional whitespace).
+    std::regex versionLine(R"((^|\n)([ \t]*version[ \t]*=[ \t]*)\"[^\"]*\")");
+    if (std::regex_search(content, versionLine)) {
+        content = std::regex_replace(content, versionLine,
+                                     "$1$2\"" + newVersion + "\"",
+                                     std::regex_constants::format_first_only);
+    } else {
+        // No version line — prepend one.
+        content = "version = \"" + newVersion + "\"\n" + content;
+    }
+    std::ofstream out(path);
+    out << content;
+    return 0;
+}
+
+// `quirk pkg release [--bump patch|minor|major] [--no-push]` — validate,
+// tag the current `version` from quirk.toml as `vX.Y.Z`, and push.
+static int cmd_release(const std::vector<std::string>& args) {
+    std::string bumpPart;
+    bool push = true;
+    for (size_t i = 0; i < args.size(); i++) {
+        if (args[i] == "--bump") {
+            if (i + 1 >= args.size()) {
+                std::cerr << "release: --bump requires patch|minor|major\n";
+                return 1;
+            }
+            bumpPart = args[++i];
+            if (bumpPart != "patch" && bumpPart != "minor" && bumpPart != "major") {
+                std::cerr << "release: --bump must be one of: patch, minor, major\n";
+                return 1;
+            }
+        } else if (args[i] == "--no-push") {
+            push = false;
+        } else {
+            std::cerr << "release: unknown flag '" << args[i] << "'\n";
+            return 1;
+        }
+    }
+
+    if (!fs::exists("quirk.toml")) {
+        std::cerr << "release: no ./quirk.toml here\n";
+        return 1;
+    }
+    if (!fs::is_directory(".git")) {
+        std::cerr << "release: not a git repo (run `git init` first)\n";
+        return 1;
+    }
+
+    // Bump manifest version + commit, if --bump given.
+    if (!bumpPart.empty()) {
+        Manifest cur;
+        if (!read_manifest("quirk.toml", cur) || cur.version.empty()) {
+            std::cerr << "release: can't read current `version` from quirk.toml\n";
+            return 1;
+        }
+        std::string next = bump_version(cur.version, bumpPart);
+        std::cout << "Bumping " << cur.version << " → " << next << "\n";
+        if (rewrite_manifest_version("quirk.toml", next) != 0) return 1;
+        std::string cmd = "git add quirk.toml && git commit -m \"release v"
+                       + next + "\" 2>&1";
+        if (std::system(cmd.c_str()) != 0) {
+            std::cerr << "release: failed to commit version bump\n";
+            return 1;
+        }
+    }
+
+    // Read (possibly just-bumped) manifest.
+    Manifest m;
+    if (!read_manifest("quirk.toml", m) || m.version.empty()) {
+        std::cerr << "release: invalid quirk.toml\n";
+        return 1;
+    }
+
+    // Run the validation pipeline first.
+    std::cout << "\nValidating " << m.name << " " << m.version << "\n\n";
+    auto findings = validate_package(m);
+    int errors = print_findings(findings);
+    if (errors > 0) {
+        std::cerr << "\nRelease aborted: fix the error(s) above first.\n";
+        return 1;
+    }
+    std::cout << "\n";
+
+    // Refuse if working tree is dirty (unless we just bumped, in which case
+    // we committed cleanly).
+    std::string status = capture("git status --porcelain");
+    if (!status.empty()) {
+        std::cerr << "release: working tree is dirty — commit or stash first\n";
+        std::cerr << status << "\n";
+        return 1;
+    }
+
+    std::string tag = "v" + m.version;
+
+    // Refuse if the tag already exists.
+    std::string existing = capture("git tag -l " + tag);
+    if (!existing.empty()) {
+        std::cerr << "release: tag '" << tag << "' already exists\n";
+        std::cerr << "  Bump the version with --bump or delete the old tag:\n";
+        std::cerr << "    git tag -d " << tag << " && git push origin :refs/tags/" << tag << "\n";
+        return 1;
+    }
+
+    // Tag the current HEAD.
+    std::string cmd = "git tag " + tag + " 2>&1";
+    if (std::system(cmd.c_str()) != 0) {
+        std::cerr << "release: failed to create tag\n";
+        return 1;
+    }
+    std::cout << "  ✓ tagged " << tag << "\n";
+
+    if (push) {
+        std::cout << "  ↑ pushing...\n";
+        // Push the commit (if any) and the new tag.
+        std::string p1 = "git push 2>&1";
+        std::system(p1.c_str());
+        std::string p2 = "git push origin " + tag + " 2>&1";
+        if (std::system(p2.c_str()) != 0) {
+            std::cerr << "release: pushed tag locally but `git push origin "
+                      << tag << "` failed\n";
+            return 1;
+        }
+        std::cout << "  ✓ pushed " << tag << " to origin\n";
+    } else {
+        std::cout << "  (skipped push — run `git push origin " << tag << "` when ready)\n";
+    }
+
+    std::cout << "\nReleased " << m.name << " " << tag << ".\n";
+    if (!m.repository.empty()) {
+        std::cout << "  Install with: quirk pkg install " << m.name << "@" << tag << "\n";
+    }
+    return 0;
+}
+
+// `quirk pkg versions <name>` — list every published version of a package
+// by querying its git tags (via `git ls-remote`, cached 24h).
+static int cmd_versions(const std::vector<std::string>& args) {
+    if (args.empty()) {
+        std::cerr << "versions: need a package name or URL\n";
+        return 1;
+    }
+    std::string spec = args[0];
+    bool refresh = false;
+    for (size_t i = 1; i < args.size(); i++) {
+        if (args[i] == "--refresh") refresh = true;
+    }
+
+    // Resolve a bare name through the registry/aliases first.
+    std::string url;
+    if (spec.find('/') == std::string::npos
+        && spec.find("://") == std::string::npos) {
+        std::string resolved = registry_lookup(spec);
+        if (resolved.empty()) {
+            std::cerr << "versions: '" << spec << "' not in registry / aliases\n";
+            return 1;
+        }
+        // Strip any @<default-ref> from the registry entry.
+        auto at = resolved.find('@');
+        url = (at == std::string::npos) ? resolved : resolved.substr(0, at);
+    } else {
+        url = spec;
+        auto at = url.find('@');
+        if (at != std::string::npos) url = url.substr(0, at);
+    }
+
+    auto tags = discover_tags(url, refresh);
+    if (tags.empty()) {
+        std::cout << "No tagged versions for " << url << ".\n";
+        std::cout << "  (HEAD of default branch is the only installable target.)\n";
+        return 0;
+    }
+    // Mark cached/active versions.
+    std::string pkgName = spec;
+    if (pkgName.find('/') != std::string::npos)
+        pkgName = pkgName.substr(pkgName.find_last_of('/') + 1);
+    auto cached = list_cached_versions(pkgName);
+    std::set<std::string> cachedSet(cached.begin(), cached.end());
+    std::string active = read_current_version(package_install_dir(), pkgName);
+
+    std::cout << tags.size() << " published version(s) of " << url << ":\n";
+    for (auto& t : tags) {
+        std::string v = (!t.empty() && t[0] == 'v') ? t.substr(1) : t;
+        std::cout << "  " << t;
+        if (cachedSet.count(v))    std::cout << "  [cached]";
+        if (v == active)           std::cout << "  [active]";
+        std::cout << "\n";
+    }
+    return 0;
+}
+
+// `quirk pkg register [<alias>]` — register THIS project under a name,
+// reading the manifest's `name` and `repository` fields. Lets a package
+// author do one command from inside their repo and have it findable by
+// short name everywhere else.
+static int cmd_register(const std::vector<std::string>& args) {
+    Manifest m;
+    if (!read_manifest("quirk.toml", m) || m.name.empty()) {
+        std::cerr << "register: no ./quirk.toml here (or missing `name =`)\n";
+        std::cerr << "  Run `quirk init` first.\n";
+        return 1;
+    }
+
+    // Allow `--skip-checks` for power users / CI that already validated.
+    bool skipChecks = false;
+    std::vector<std::string> aliasArgs;
+    for (auto& a : args) {
+        if (a == "--skip-checks") skipChecks = true;
+        else aliasArgs.push_back(a);
+    }
+
+    if (!skipChecks) {
+        std::cout << "Validating " << m.name << " " << m.version << "\n\n";
+        auto findings = validate_package(m);
+        int errs = print_findings(findings);
+        if (errs > 0) {
+            std::cerr << "\nRegister aborted: fix the error(s) above first.\n";
+            std::cerr << "(Override with --skip-checks if you really know what you're doing.)\n";
+            return 1;
+        }
+        std::cout << "\n";
+    }
+
+    if (m.repository.empty()) {
+        std::cerr << "register: ./quirk.toml has no `repository = ...` field\n";
+        std::cerr << "  Add e.g.   repository = \"github.com/<you>/" << m.name << "\"   to your manifest first.\n";
+        return 1;
+    }
+
+    // Normalize repo: strip leading https:// and trailing .git for the alias
+    // value — `install_one`'s git path accepts both forms anyway.
+    std::string repo = m.repository;
+    auto colon = repo.find("://");
+    if (colon != std::string::npos) repo = repo.substr(colon + 3);
+    if (repo.size() > 4 && repo.substr(repo.size() - 4) == ".git")
+        repo = repo.substr(0, repo.size() - 4);
+
+    std::string alias = aliasArgs.empty() ? m.name : aliasArgs[0];
+    auto aliases = read_kv_file(aliases_path());
+    auto existing = aliases.find(alias);
+    if (existing != aliases.end() && existing->second != repo) {
+        std::cerr << "register: '" << alias << "' is already registered to "
+                  << existing->second << "\n";
+        std::cerr << "  Override:  quirk pkg registry add " << alias << " " << repo << "\n";
+        return 1;
+    }
+    aliases[alias] = repo;
+    write_kv_file(aliases_path(), aliases,
+                  "Quirk package aliases. `name = \"github.com/owner/repo\"`");
+    std::cout << "Registered: " << alias << " → " << repo << "\n";
+    std::cout << "  Others can now run:  quirk pkg install " << alias << "\n";
+    return 0;
+}
+
+// ----------------------- Advisories (security audit) ------------------
+// Registry hosts a flat `advisories.toml` of known-bad versions. Local cache
+// at ~/.quirk/advisories-cache.toml with a 24h TTL. `quirk pkg audit` reads
+// quirk.lock and reports any matches.
+
+struct Advisory {
+    std::string id;            // QSA-####
+    std::string package;       // affected package name
+    std::string versions;      // semver range (e.g. "<0.2.0,>=0.1.0")
+    std::string severity;      // "low" | "moderate" | "high" | "critical"
+    std::string title;
+    std::string description;
+    std::string fix;
+    std::string url;
+};
+
+static fs::path advisories_cache_path() {
+    fs::path q = quirk_home_dir();
+    return q.empty() ? fs::path{} : q / "advisories-cache.toml";
+}
+
+// Derive an advisory-index URL from the registry URL. Convention: same repo,
+// `advisories.toml` instead of `index.toml`.
+static std::string resolve_advisories_url() {
+    std::string idx = resolve_registry_url();
+    auto pos = idx.rfind("index.toml");
+    if (pos != std::string::npos) return idx.substr(0, pos) + "advisories.toml";
+    return idx + "/advisories.toml";
+}
+
+static std::vector<Advisory> read_advisories(const fs::path& path) {
+    std::vector<Advisory> out;
+    std::ifstream in(path);
+    if (!in) return out;
+    Advisory cur;
+    bool inAdv = false;
+    auto flush = [&]() {
+        if (inAdv && !cur.package.empty()) out.push_back(cur);
+        cur = Advisory{};
+        inAdv = false;
+    };
+    std::string line;
+    while (std::getline(in, line)) {
+        std::string t = trim(line);
+        if (t.empty() || t[0] == '#') continue;
+        if (t == "[[advisory]]") { flush(); inAdv = true; continue; }
+        if (!inAdv) continue;
+        size_t eq = t.find('=');
+        if (eq == std::string::npos) continue;
+        std::string k = trim(t.substr(0, eq));
+        std::string v = unquote(trim(t.substr(eq + 1)));
+        if      (k == "id")          cur.id          = v;
+        else if (k == "package")     cur.package     = v;
+        else if (k == "versions")    cur.versions    = v;
+        else if (k == "severity")    cur.severity    = v;
+        else if (k == "title")       cur.title       = v;
+        else if (k == "description") cur.description = v;
+        else if (k == "fix")         cur.fix         = v;
+        else if (k == "url")         cur.url         = v;
+    }
+    flush();
+    return out;
+}
+
+// Pull the latest advisory list. Uses the local cache if fresh (24h).
+static int fetch_advisories(bool forceRefresh, bool quiet = false) {
+    fs::path cache = advisories_cache_path();
+    if (cache.empty()) return 1;
+    if (!forceRefresh && fs::exists(cache)) {
+        struct stat st;
+        if (::stat(cache.c_str(), &st) == 0
+            && ::time(nullptr) - st.st_mtime < 24 * 60 * 60) {
+            return 0;  // cache is fresh
+        }
+    }
+    std::string url = resolve_advisories_url();
+    if (!quiet) std::cout << "Fetching advisories from " << url << "...\n";
+    fs::path tmp = cache.string() + ".tmp";
+    std::string cmd = "curl -fsSL \"" + url + "\" -o \"" + tmp.string() + "\" 2>/dev/null";
+    int rc = std::system(cmd.c_str());
+    if (rc != 0) {
+        if (!quiet) std::cerr << "audit: couldn't fetch advisories (network down?)\n"
+                              << "  Continuing with the cached list (may be stale).\n";
+        std::error_code ec; fs::remove(tmp, ec);
+        return 0;   // soft-fail: keep old cache
+    }
+    std::error_code ec;
+    fs::rename(tmp, cache, ec);
+    return 0;
+}
+
+// Severity → numeric for sorting / exit codes.
+static int severity_rank(const std::string& s) {
+    if (s == "critical") return 4;
+    if (s == "high")     return 3;
+    if (s == "moderate") return 2;
+    if (s == "low")      return 1;
+    return 0;
+}
+
+// `quirk pkg audit` — check installed deps against the advisory list.
+static int cmd_audit(const std::vector<std::string>& args) {
+    bool refresh = false;
+    std::string minSeverity;     // empty = report all
+    for (size_t i = 0; i < args.size(); i++) {
+        if (args[i] == "--refresh") refresh = true;
+        else if (args[i] == "--severity") {
+            if (i + 1 >= args.size()) {
+                std::cerr << "audit: --severity requires a level (low|moderate|high|critical)\n";
+                return 1;
+            }
+            minSeverity = args[++i];
+        }
+    }
+
+    fetch_advisories(refresh);
+    auto advisories = read_advisories(advisories_cache_path());
+    if (advisories.empty()) {
+        std::cout << "audit: no advisories available "
+                  << "(empty cache or registry has no advisories.toml)\n";
+        return 0;
+    }
+
+    // Build a name → version map of what's installed in this project.
+    // Prefer quirk.lock (more precise); fall back to scanning packages/.
+    std::map<std::string, std::string> installed;
+    auto lock = read_lockfile("quirk.lock");
+    if (!lock.empty()) {
+        for (auto& [name, e] : lock) installed[name] = e.version;
+    } else {
+        fs::path pkgRoot = package_install_dir();
+        if (fs::is_directory(pkgRoot)) {
+            for (auto& entry : fs::directory_iterator(pkgRoot)) {
+                std::string fn = entry.path().filename().string();
+                if (fn.empty() || fn[0] == '.') continue;
+                if (fn.size() > 10 && fn.substr(fn.size() - 10) == ".dist-info") continue;
+                Manifest m;
+                if (read_manifest((entry.path() / "quirk.toml").string(), m) && !m.version.empty())
+                    installed[fn] = m.version;
+            }
+        }
+    }
+
+    if (installed.empty()) {
+        std::cout << "audit: no installed packages to check.\n";
+        return 0;
+    }
+
+    // Match.
+    std::vector<Advisory> hits;
+    int minRank = minSeverity.empty() ? 0 : severity_rank(minSeverity);
+    for (auto& adv : advisories) {
+        auto it = installed.find(adv.package);
+        if (it == installed.end()) continue;
+        if (!version_satisfies(it->second, adv.versions)) continue;
+        if (severity_rank(adv.severity) < minRank) continue;
+        hits.push_back(adv);
+    }
+
+    std::cout << "Audited " << installed.size() << " package(s) against "
+              << advisories.size() << " advisor" << (advisories.size() == 1 ? "y" : "ies") << ".\n";
+    if (hits.empty()) {
+        std::cout << "\nNo known issues.\n";
+        return 0;
+    }
+
+    // Sort hits by severity desc, then by name.
+    std::sort(hits.begin(), hits.end(), [](const Advisory& a, const Advisory& b) {
+        int ra = severity_rank(a.severity), rb = severity_rank(b.severity);
+        if (ra != rb) return ra > rb;
+        return a.package < b.package;
+    });
+
+    std::cout << "\n" << hits.size() << " issue(s) found:\n\n";
+    for (auto& a : hits) {
+        const char* glyph = severity_rank(a.severity) >= 3 ? "✗" : "⚠";
+        std::cout << "  " << glyph << " [" << (a.severity.empty() ? "?" : a.severity)
+                  << "] " << a.package << " " << installed[a.package]
+                  << "  (" << a.id << ")\n";
+        if (!a.title.empty())    std::cout << "      " << a.title << "\n";
+        if (!a.versions.empty()) std::cout << "      vulnerable: " << a.versions << "\n";
+        if (!a.fix.empty())      std::cout << "      fix:        " << a.fix << "\n";
+        if (!a.url.empty())      std::cout << "      ref:        " << a.url << "\n";
+        std::cout << "\n";
+    }
+    return 1;
+}
+
+// `quirk pkg registry <subcommand>` — manage name → URL mappings so users
+// can `quirk pkg install <name>` instead of typing full git URLs.
+static int cmd_registry(const std::vector<std::string>& args) {
+    std::string sub = args.empty() ? "list" : args[0];
+    if (sub == "-l" || sub == "--list") sub = "list";
+
+    if (sub == "list") {
+        auto aliases  = read_kv_file(aliases_path());
+        auto registry = read_kv_file(registry_cache_path());
+        if (aliases.empty() && registry.empty()) {
+            std::cout << "No registered names.\n"
+                      << "  add one:    quirk pkg registry add <name> <url>\n"
+                      << "  fetch idx:  quirk pkg registry update\n";
+            return 0;
+        }
+        auto printRows = [](const std::string& title, const std::map<std::string, std::string>& m) {
+            if (m.empty()) return;
+            std::cout << title << ":\n";
+            size_t pad = 0;
+            for (auto& kv : m) if (kv.first.size() > pad) pad = kv.first.size();
+            for (auto& kv : m) {
+                std::cout << "  " << kv.first;
+                for (size_t i = kv.first.size(); i < pad + 2; i++) std::cout << ' ';
+                std::cout << kv.second << "\n";
+            }
+        };
+        printRows("Local aliases (~/.quirk/aliases.toml)", aliases);
+        if (!aliases.empty() && !registry.empty()) std::cout << "\n";
+        printRows("Registry (~/.quirk/registry-cache.toml)", registry);
+        return 0;
+    }
+
+    if (sub == "search") {
+        if (args.size() < 2) {
+            std::cerr << "registry search: need a query string\n";
+            return 1;
+        }
+        const std::string& q = args[1];
+        auto check = [&](const std::map<std::string, std::string>& m) {
+            for (auto& kv : m) {
+                if (kv.first.find(q)  != std::string::npos
+                 || kv.second.find(q) != std::string::npos) {
+                    std::cout << "  " << kv.first << "  " << kv.second << "\n";
+                }
+            }
+        };
+        check(read_kv_file(aliases_path()));
+        check(read_kv_file(registry_cache_path()));
+        return 0;
+    }
+
+    if (sub == "add") {
+        if (args.size() < 3) {
+            std::cerr << "registry add: usage `quirk pkg registry add <name> <url>`\n";
+            return 1;
+        }
+        auto aliases = read_kv_file(aliases_path());
+        aliases[args[1]] = args[2];
+        write_kv_file(aliases_path(), aliases,
+                      "Quirk package aliases. `name = \"github.com/owner/repo\"`");
+        std::cout << "Added: " << args[1] << " → " << args[2] << "\n";
+        return 0;
+    }
+
+    if (sub == "remove") {
+        if (args.size() < 2) {
+            std::cerr << "registry remove: need a name\n";
+            return 1;
+        }
+        auto aliases = read_kv_file(aliases_path());
+        auto it = aliases.find(args[1]);
+        if (it == aliases.end()) {
+            std::cerr << "registry remove: '" << args[1] << "' not found in local aliases\n";
+            return 1;
+        }
+        aliases.erase(it);
+        write_kv_file(aliases_path(), aliases,
+                      "Quirk package aliases. `name = \"github.com/owner/repo\"`");
+        std::cout << "Removed: " << args[1] << "\n";
+        return 0;
+    }
+
+    if (sub == "update") {
+        std::string url = resolve_registry_url();
+        std::cout << "Fetching registry index from " << url << "...\n";
+        fs::path tmp = registry_cache_path().string() + ".tmp";
+        std::string cmd = "curl -fsSL \"" + url + "\" -o \"" + tmp.string() + "\"";
+        int rc = std::system(cmd.c_str());
+        if (rc != 0) {
+            std::cerr << "registry update: fetch failed (curl rc=" << rc << ")\n";
+            std::cerr << "  Local aliases (`registry add`) still work.\n";
+            fs::remove(tmp);
+            return 1;
+        }
+        std::error_code ec;
+        fs::rename(tmp, registry_cache_path(), ec);
+        auto kv = read_kv_file(registry_cache_path());
+        std::cout << "  ✓ registry cached (" << kv.size() << " packages)\n";
+        return 0;
+    }
+
+    if (sub == "url") {
+        // Print or set the configured registry URL. Accepts short forms
+        // like `github.com/owner/repo` or just `owner/repo`; we store the
+        // user's input verbatim and expand at fetch time so the config file
+        // stays readable.
+        if (args.size() == 1) {
+            auto cfg = read_kv_file(config_path());
+            auto it = cfg.find("registry");
+            std::string raw = (it != cfg.end()) ? it->second : std::string(DEFAULT_REGISTRY_URL);
+            std::string full = expand_registry_url(raw);
+            std::cout << raw << "\n";
+            if (full != raw) std::cout << "  → " << full << "\n";
+            return 0;
+        }
+        auto cfg = read_kv_file(config_path());
+        cfg["registry"] = args[1];
+        write_kv_file(config_path(), cfg, "Quirk config");
+        std::string full = expand_registry_url(args[1]);
+        std::cout << "Registry: " << args[1];
+        if (full != args[1]) std::cout << "\n      → " << full;
+        std::cout << "\n";
+        return 0;
+    }
+
+    std::cerr << "registry: unknown subcommand '" << sub << "'\n";
+    std::cerr << "  usage: quirk pkg registry list\n";
+    std::cerr << "         quirk pkg registry search <query>\n";
+    std::cerr << "         quirk pkg registry add <name> <url>\n";
+    std::cerr << "         quirk pkg registry remove <name>\n";
+    std::cerr << "         quirk pkg registry update\n";
+    std::cerr << "         quirk pkg registry url [<url>]\n";
+    return 1;
+}
+
 // `quirk cache <subcommand>` — manage the cross-project version cache.
 static int cmd_cache(const std::vector<std::string>& args) {
     fs::path cdir = cache_dir();
     std::string sub = args.empty() ? "list" : args[0];
+    if (sub == "-l" || sub == "--list") sub = "list";
 
     if (sub == "list") {
         // `quirk cache list [pkg]` — show cached versions overall or filter to one pkg
@@ -1205,15 +2707,6 @@ static int cmd_version() {
     return 0;
 }
 
-// Absolute path to the running quirk binary — used when we need to re-invoke
-// ourselves (eval, module).
-static std::string self_binary() {
-    char buf[4096];
-    ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
-    if (n > 0) { buf[n] = '\0'; return buf; }
-    return "quirk";
-}
-
 // `quirk eval "<code>"` — wrap the code in `define main() { ... }` and run it.
 // We write a temp file and re-exec ourselves so the normal compile path runs.
 static int cmd_eval(const std::vector<std::string>& args) {
@@ -1271,6 +2764,50 @@ static fs::path locate_module_file(const std::string& name) {
         }
     }
     return {};
+}
+
+// `quirk script <name>` — run a named script from `./quirk.toml [scripts]`.
+// Each script is a shell command; we hand it to the shell verbatim so users
+// can chain commands. Extra args appended after the command.
+static int cmd_script(const std::vector<std::string>& args) {
+    if (args.empty()) {
+        // List available scripts when called with no args.
+        Manifest pm;
+        if (!read_manifest("quirk.toml", pm) || pm.scripts.empty()) {
+            std::cerr << "script: no scripts defined in ./quirk.toml\n";
+            std::cerr << "  add a [scripts] block: e.g.   test = \"quirk run tests/all.qk\"\n";
+            return 1;
+        }
+        std::cout << "Scripts in ./quirk.toml:\n";
+        size_t pad = 0;
+        for (auto& s : pm.scripts) if (s.first.size() > pad) pad = s.first.size();
+        for (auto& s : pm.scripts) {
+            std::cout << "  " << s.first;
+            for (size_t i = s.first.size(); i < pad + 2; i++) std::cout << ' ';
+            std::cout << s.second << "\n";
+        }
+        return 0;
+    }
+    Manifest pm;
+    if (!read_manifest("quirk.toml", pm)) {
+        std::cerr << "script: no quirk.toml here\n";
+        return 1;
+    }
+    const std::string& name = args[0];
+    for (auto& s : pm.scripts) {
+        if (s.first != name) continue;
+        std::string cmd = s.second;
+        for (size_t i = 1; i < args.size(); i++) cmd += " \"" + args[i] + "\"";
+        int rc = std::system(cmd.c_str());
+        return WIFEXITED(rc) ? WEXITSTATUS(rc) : 1;
+    }
+    std::cerr << "script: '" << name << "' not found in ./quirk.toml [scripts]\n";
+    if (!pm.scripts.empty()) {
+        std::cerr << "  available:";
+        for (auto& s : pm.scripts) std::cerr << " " << s.first;
+        std::cerr << "\n";
+    }
+    return 1;
 }
 
 // `quirk module <name> [args...]` — locate the module's entry file and run
@@ -1417,14 +2954,19 @@ static std::string help_for(const std::string& cmd) {
                "    Import the named module and call its `main()`.\n"
                "    Short form: quirk -m <name>\n";
     if (cmd == "install")
-        return "quirk install [-r <file>] [-e <path>] [pkg ...]\n"
+        return "quirk install [-r <file>] [-e <path>] [--dev] [--frozen] [--no-lock] [pkg ...]\n"
                "    Install dependencies. Specs can be:\n"
-               "      github.com/owner/repo[@ref]    git package\n"
-               "      <path>                          local snapshot\n"
-               "      <path>@<version>                pinned local\n"
-               "      <name>@<range>                  switch installed version\n"
-               "    -e <path>  editable (symlink) install\n"
-               "    -r <file>  read deps from a manifest\n";
+               "      <name>[@<range>]                resolved via registry\n"
+               "      github.com/owner/repo[@ref]    direct git URL\n"
+               "      <path>[@<version>]              local directory\n"
+               "    -e <path>   editable (symlink) install\n"
+               "    -r <file>   read deps from a manifest\n"
+               "    --dev       also install [dev-deps]\n"
+               "    --frozen    fail if quirk.lock is missing or out of date (CI)\n"
+               "    --no-lock   don't read or write quirk.lock\n"
+               "\n"
+               "  quirk.lock is generated on first install and used on subsequent\n"
+               "  runs to install the exact same versions across machines.\n";
     if (cmd == "upgrade")
         return "quirk upgrade [pkg ...]\n"
                "    Bump packages to the latest installed version (local) or\n"
@@ -1447,15 +2989,63 @@ static std::string help_for(const std::string& cmd) {
                "    Dump resolution context: QUIRK_HOME, install dir, stdlib,\n"
                "    user-global dir. Use to debug \"why isn't this resolving?\"\n";
     if (cmd == "cache")
-        return "quirk cache list [<pkg>]\n"
+        return "quirk pkg cache list [<pkg>]\n"
                "    List versions cached at ~/.quirk/cache/ (cross-project).\n"
-               "quirk cache clean [<pkg>[@<ver>]]\n"
+               "quirk pkg cache clean [<pkg>[@<ver>]]\n"
                "    Drop the whole cache, all versions of one package, or one version.\n"
-               "quirk cache dir\n"
+               "quirk pkg cache dir\n"
                "    Print the cache root path.\n";
+    if (cmd == "registry")
+        return "quirk pkg registry list\n"
+               "    Show known names (local aliases + cached registry).\n"
+               "quirk pkg registry search <query>\n"
+               "    Find a package by name or URL substring.\n"
+               "quirk pkg registry add <name> <url>\n"
+               "    Define a local alias so `quirk install <name>` works.\n"
+               "quirk pkg registry remove <name>\n"
+               "    Drop a local alias.\n"
+               "quirk pkg registry update\n"
+               "    Fetch the central registry index (cached at\n"
+               "    ~/.quirk/registry-cache.toml).\n"
+               "quirk pkg registry url [<url>]\n"
+               "    Show or set the registry URL (~/.quirk/config.toml).\n";
     if (cmd == "init")
-        return "quirk init\n"
-               "    Scaffold a quirk.toml in the current directory.\n";
+        return "quirk init [-y]\n"
+               "    Scaffold a quirk.toml in the current directory by prompting\n"
+               "    for each field. Use -y / --yes to skip the prompts and accept\n"
+               "    sensible defaults (dir name, MIT, git config for author/repo).\n";
+    if (cmd == "register")
+        return "quirk pkg register [<alias>] [--skip-checks]\n"
+               "    Register THIS project under a short name so others can\n"
+               "    `quirk pkg install <alias>`. Reads `name` and `repository`\n"
+               "    from ./quirk.toml. With no <alias>, uses the manifest name.\n"
+               "    Runs `quirk pkg check` first; --skip-checks bypasses it.\n";
+    if (cmd == "check")
+        return "quirk pkg check\n"
+               "    Validate ./quirk.toml + package layout. Reports manifest\n"
+               "    issues, missing files, dirty git state, and runs a\n"
+               "    type-check on the entry point.\n"
+               "    Same checks run automatically before `quirk pkg register`.\n";
+    if (cmd == "versions")
+        return "quirk pkg versions <name|url> [--refresh]\n"
+               "    List every published version (git tag) of a package.\n"
+               "    Cached locally for 24h; --refresh re-queries the remote.\n"
+               "    Tags marked [cached] are already in ~/.quirk/cache;\n"
+               "    [active] is the one currently installed in this venv.\n";
+    if (cmd == "release")
+        return "quirk pkg release [--bump patch|minor|major] [--no-push]\n"
+               "    Tag the current `version` in ./quirk.toml as `vX.Y.Z` and push.\n"
+               "    Runs `quirk pkg check` first; refuses to tag if the working\n"
+               "    tree is dirty or the tag already exists.\n"
+               "    --bump <part>  bumps the version (and commits the bump) before tagging.\n"
+               "    --no-push      tag locally, don't push.\n";
+    if (cmd == "audit")
+        return "quirk pkg audit [--refresh] [--severity low|moderate|high|critical]\n"
+               "    Check installed packages against the registry's advisory list.\n"
+               "    Reads quirk.lock if present (precise versions), else scans\n"
+               "    packages/. Exit code 1 if any matching advisory is found.\n"
+               "    --refresh   re-fetch the advisory list (default: 24h cache)\n"
+               "    --severity  only report at or above this severity\n";
     if (cmd == "new")
         return "quirk new <name>\n"
                "    Scaffold a new package: <name>/quirk.toml, src/index.qk,\n"
@@ -1476,6 +3066,11 @@ static std::string help_for(const std::string& cmd) {
                "      install, upgrade, remove, list, show, deps, cache.\n"
                "    All also accepted without the `pkg` prefix; the `pkg`\n"
                "    form is the explicit, documented one.\n";
+    if (cmd == "script")
+        return "quirk script [<name>] [args...]\n"
+               "    Run a named script from ./quirk.toml [scripts].\n"
+               "    With no args: list available scripts.\n"
+               "    `quirk run <name>` also works as long as <name> isn't a path.\n";
     return "";
 }
 
@@ -1497,6 +3092,7 @@ static void print_pm_help() {
         "\n"
         "Run code:\n"
         "  quirk run <file.qk> [args...]              run a Quirk script\n"
+        "  quirk run <script>                         run a script from [scripts] (alias: quirk script <name>)\n"
         "  quirk eval \"<code>\"                        run a one-liner (alias: -c)\n"
         "  quirk module <name>                        invoke a module's main() (alias: -m)\n"
         "\n"
@@ -1513,7 +3109,8 @@ static void print_pm_help() {
         "  quirk pkg list                             list installed packages (alias: -p)\n"
         "  quirk pkg show    <pkg>                    detailed package info\n"
         "  quirk pkg deps                             print deps in installable form\n"
-        "  quirk pkg cache   list|clean|dir           manage the cross-project cache\n"
+        "  quirk pkg cache    list|clean|dir          manage the cross-project cache\n"
+        "  quirk pkg registry list|search|add|...     name → URL mappings\n"
         "\n"
         "Misc:\n"
         "  quirk help [command]                       show help (per-command)\n"
@@ -1527,7 +3124,9 @@ static void print_pm_help() {
 static bool is_pkg_subcommand(const std::string& arg) {
     return arg == "install" || arg == "upgrade" || arg == "remove" ||
            arg == "uninstall" || arg == "list" || arg == "packages" ||
-           arg == "show" || arg == "deps" || arg == "cache";
+           arg == "show" || arg == "deps" || arg == "cache" ||
+           arg == "registry" || arg == "register" || arg == "check" ||
+           arg == "versions" || arg == "release" || arg == "audit";
 }
 
 // Top-level subcommand verbs (and not a path).
@@ -1536,7 +3135,8 @@ static bool is_subcommand(const std::string& arg) {
            arg == "pkg" ||
            arg == "init" || arg == "version" || arg == "venv" ||
            arg == "run" || arg == "eval" || arg == "module" ||
-           arg == "env" || arg == "new" || arg == "help";
+           arg == "env" || arg == "new" || arg == "help" ||
+           arg == "script";
 }
 
 // Drop argv[1] (a verb) and shift everything left. argc decreases by 1.
@@ -1584,10 +3184,25 @@ static bool dispatch(int& argc, char** argv, int& outRc) {
     if (!is_subcommand(first)) return false;
 
     // `quirk run <file>` — strip the verb and let main() take over.
+    // If <file> isn't a path that exists, fall through to a script lookup
+    // in ./quirk.toml so `quirk run test` works for a named script.
     if (first == "run") {
         if (argc < 3) {
-            std::cerr << "run: need a filename\n";
+            std::cerr << "run: need a filename or script name\n";
             outRc = 1; return true;
+        }
+        std::string target = argv[2];
+        // Shortcut: `quirk run -l` / `quirk run --list` lists named scripts.
+        if (target == "-l" || target == "--list") {
+            outRc = cmd_script({});
+            return true;
+        }
+        if (!fs::exists(target) && target.find('/') == std::string::npos
+                                && target.find('.') == std::string::npos) {
+            std::vector<std::string> sa;
+            for (int i = 2; i < argc; i++) sa.emplace_back(argv[i]);
+            outRc = cmd_script(sa);
+            return true;
         }
         shift_argv(argc, argv);
         return false;
@@ -1604,24 +3219,39 @@ static bool dispatch(int& argc, char** argv, int& outRc) {
         if (rest.empty() || rest[0] == "help" || rest[0] == "--help" || rest[0] == "-h") {
             std::cout <<
                 "Package management:\n"
-                "  quirk pkg install [-e] [-r <file>] [spec ...]\n"
+                "  quirk pkg install [-e] [-r <file>] [--dev] [spec ...]\n"
                 "  quirk pkg upgrade [pkg ...]\n"
                 "  quirk pkg remove <pkg>[@<ver>] ...\n"
-                "  quirk pkg list                       (alias: -p)\n"
+                "  quirk pkg list                              (alias: -l, --list, -p)\n"
                 "  quirk pkg show <pkg>\n"
+                "  quirk pkg versions <name>                   (alias: -l on a name)\n"
                 "  quirk pkg deps\n"
-                "  quirk pkg cache list|clean|dir\n"
+                "  quirk pkg audit\n"
+                "  quirk pkg cache    list|clean|dir\n"
+                "  quirk pkg registry list|search|add|remove|update|url\n"
+                "  quirk pkg register [<alias>]                register this project for `install <alias>`\n"
+                "  quirk pkg release  [--bump patch|minor|major]   tag + push\n"
+                "\n"
+                "Specs can be:\n"
+                "  <name>[@<ver>]                  resolved via registry/aliases\n"
+                "  github.com/owner/repo[@<ref>]   direct git URL\n"
+                "  <path>[@<ver>]                  local directory (snapshot)\n"
                 "\n"
                 "All commands also work without the `pkg` prefix, e.g.\n"
                 "`quirk install slug` is the same as `quirk pkg install slug`.\n";
             outRc = 0; return true;
         }
-        if (!is_pkg_subcommand(rest[0])) {
+        // Shortcut: `quirk pkg -l` / `quirk pkg --list` == `quirk pkg list`.
+        if (rest[0] == "-l" || rest[0] == "--list") {
+            verb = "list";
+            verbArgs.clear();
+        } else if (!is_pkg_subcommand(rest[0])) {
             std::cerr << "pkg: unknown subcommand '" << rest[0] << "'\n";
             outRc = 1; return true;
+        } else {
+            verb = rest[0];
+            verbArgs.assign(rest.begin() + 1, rest.end());
         }
-        verb = rest[0];
-        verbArgs.assign(rest.begin() + 1, rest.end());
     }
 
     if (verb == "install")           outRc = cmd_install(verbArgs);
@@ -1631,7 +3261,7 @@ static bool dispatch(int& argc, char** argv, int& outRc) {
     else if (verb == "list" ||
              verb == "packages")     outRc = cmd_list();
     else if (verb == "show")         outRc = cmd_show(verbArgs);
-    else if (verb == "init")         outRc = cmd_init();
+    else if (verb == "init")         outRc = cmd_init(verbArgs);
     else if (verb == "new")          outRc = cmd_new(verbArgs);
     else if (verb == "venv")         outRc = cmd_venv(verbArgs);
     else if (verb == "version")      outRc = cmd_version();
@@ -1640,6 +3270,13 @@ static bool dispatch(int& argc, char** argv, int& outRc) {
     else if (verb == "deps")         outRc = cmd_deps();
     else if (verb == "env")          outRc = cmd_env();
     else if (verb == "cache")        outRc = cmd_cache(verbArgs);
+    else if (verb == "registry")     outRc = cmd_registry(verbArgs);
+    else if (verb == "register")     outRc = cmd_register(verbArgs);
+    else if (verb == "check")        outRc = cmd_check(verbArgs);
+    else if (verb == "versions")     outRc = cmd_versions(verbArgs);
+    else if (verb == "release")      outRc = cmd_release(verbArgs);
+    else if (verb == "audit")        outRc = cmd_audit(verbArgs);
+    else if (verb == "script")       outRc = cmd_script(verbArgs);
     else if (verb == "help")         outRc = cmd_help(verbArgs);
     else { print_pm_help(); outRc = 1; }
     return true;

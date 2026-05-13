@@ -268,22 +268,6 @@ String* Core_String_String___add(String* self, String* other) {
     return make_String_taking_ownership(raw);
 }
 
-String* Core_String_String_append(String* self, String* other) {
-    self = quirk_ensure_string(self);
-    other = quirk_ensure_string(other);
-    if (!self) self = make_String("");
-    if (!other) other = make_String("");
-    int new_len = self->length + other->length;
-    char* raw = (char*)malloc(new_len + 1);
-    if (!raw) return NULL;
-    if (self->buffer && self->length > 0)
-        memcpy(raw, self->buffer, self->length);
-    if (other->buffer && other->length > 0)
-        memcpy(raw + self->length, other->buffer, other->length);
-    raw[new_len] = '\0';
-    return make_String_taking_ownership(raw);
-}
-
 int Core_String_String___eq(String* self, String* other) {
     if (!self || !other)
         return self == other;

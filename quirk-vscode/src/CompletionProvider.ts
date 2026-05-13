@@ -635,7 +635,7 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
                 to_int: 'Int', to_float: 'Double', to_bool: 'Bool',
                 startswith: 'Bool', endswith: 'Bool', contains: 'Bool', is_alpha: 'Bool',
                 is_digit: 'Bool', is_space: 'Bool', is_upper: 'Bool', is_lower: 'Bool', is_empty: 'Bool',
-                append: 'String', str: 'String', __str: 'String',
+                str: 'String', __str: 'String',
             },
             List: {
                 map: 'List', filter: 'List', find: 'Any',

@@ -183,15 +183,17 @@ export class QuirkHoverProvider implements vscode.HoverProvider {
                 let lineNum = def.range.start.line - 1;
                 let readingDocBlock = false;
                 let docBlockOpenLine = -1;
+                let docBlockCloseLine = -1;
                 while (lineNum >= 0) {
                     const rawLine = targetDoc.lineAt(lineNum).text;
                     const t = rawLine.trim();
                     if (!readingDocBlock) {
-                        if (t === '---') { readingDocBlock = true; }
+                        if (t === '---') { readingDocBlock = true; docBlockCloseLine = lineNum; }
                         else if (t.startsWith('---') && t.endsWith('---') && t.length > 6) {
                             // Inline single-line docstring: --- text ---
                             docstring.unshift(t.slice(3, -3).trim());
-                            docBlockOpenLine = lineNum; // treat as self-contained, don't steal module doc
+                            docBlockOpenLine = lineNum;
+                            docBlockCloseLine = lineNum;
                             break;
                         }
                         else if (t !== '') { break; }
@@ -202,12 +204,20 @@ export class QuirkHoverProvider implements vscode.HoverProvider {
                     lineNum--;
                 }
 
-                // If the opening --- has only blank lines before it, this is a
-                // module-level docstring, not a function docstring — don't steal it.
+                // Module-doc heuristic: a docstring is the *module's* doc only
+                // when (a) nothing non-blank precedes its opening `---`, AND
+                // (b) there's a blank-line gap between its closing `---` and
+                // the definition. Without the gap, the block is touching the
+                // definition and belongs to it — even when it sits at the
+                // very top of the file.
                 if (docBlockOpenLine >= 0) {
-                    let isModuleDoc = true;
-                    for (let j = 0; j < docBlockOpenLine; j++) {
-                        if (targetDoc.lineAt(j).text.trim() !== '') { isModuleDoc = false; break; }
+                    const hasGap = docBlockCloseLine >= 0
+                        && docBlockCloseLine < def.range.start.line - 1;
+                    let isModuleDoc = hasGap;
+                    if (isModuleDoc) {
+                        for (let j = 0; j < docBlockOpenLine; j++) {
+                            if (targetDoc.lineAt(j).text.trim() !== '') { isModuleDoc = false; break; }
+                        }
                     }
                     if (isModuleDoc) docstring.length = 0;
                 }

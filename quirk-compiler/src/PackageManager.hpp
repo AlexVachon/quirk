@@ -39,6 +39,9 @@
 #include <sys/wait.h>
 #include <sys/stat.h>
 #include <chrono>
+#include <ctime>
+#include <cctype>
+#include <functional>
 #include <set>
 #include <map>
 #include <regex>
@@ -48,6 +51,94 @@ namespace qpm {
 constexpr const char* QUIRK_VERSION = "0.2.0";
 
 namespace fs = std::filesystem;
+
+// ---------------------- Logging ------------------------------------------
+//
+// One small helper used by every PM command. Three knobs:
+//   - color:   ANSI escapes on when stdout is a TTY and $NO_COLOR is unset
+//   - verbose: extra detail (URLs, paths, cache locations, timings)
+//   - quiet:   only emit `warn`/`err`
+//
+// Use `log::step("Resolving", "slug 1.0.1")` for cargo-style action lines,
+// `log::ok/warn/err` for the trailing per-package marker.
+//
+namespace log {
+
+inline bool& verbose_flag() { static bool v = false; return v; }
+inline bool& quiet_flag()   { static bool q = false; return q; }
+
+inline bool stdout_is_tty() {
+    static int cached = -1;
+    if (cached < 0) cached = ::isatty(STDOUT_FILENO) ? 1 : 0;
+    return cached == 1;
+}
+inline bool color_enabled() {
+    static int cached = -1;
+    if (cached < 0) {
+        const char* nc = std::getenv("NO_COLOR");
+        const char* fc = std::getenv("FORCE_COLOR");
+        bool forced = fc && *fc && std::string(fc) != "0";
+        if      (forced)        cached = 1;
+        else if (nc && *nc)     cached = 0;
+        else                    cached = stdout_is_tty() ? 1 : 0;
+    }
+    return cached == 1;
+}
+
+inline const char* RESET()   { return color_enabled() ? "\x1b[0m"  : ""; }
+inline const char* BOLD()    { return color_enabled() ? "\x1b[1m"  : ""; }
+inline const char* DIM()     { return color_enabled() ? "\x1b[2m"  : ""; }
+inline const char* GREEN()   { return color_enabled() ? "\x1b[32m" : ""; }
+inline const char* YELLOW()  { return color_enabled() ? "\x1b[33m" : ""; }
+inline const char* RED()     { return color_enabled() ? "\x1b[31m" : ""; }
+inline const char* CYAN()    { return color_enabled() ? "\x1b[36m" : ""; }
+inline const char* BLUE()    { return color_enabled() ? "\x1b[34m" : ""; }
+
+// `step("Resolving", "slug 1.0.1")` →  "    Resolving slug 1.0.1"
+// 12-char right-aligned verb pad matches Cargo, so multiple step lines stack
+// neatly: the verbs form a tidy left column and the targets line up.
+inline void step(const std::string& verb, const std::string& msg) {
+    if (quiet_flag()) return;
+    int pad = 12 - static_cast<int>(verb.size());
+    if (pad < 0) pad = 0;
+    std::cout << std::string(pad, ' ')
+              << GREEN() << BOLD() << verb << RESET()
+              << " " << msg << "\n";
+}
+
+inline void ok(const std::string& msg) {
+    if (quiet_flag()) return;
+    std::cout << "  " << GREEN() << "✓" << RESET() << " " << msg << "\n";
+}
+inline void warn(const std::string& msg) {
+    std::cerr << "  " << YELLOW() << "⚠" << RESET() << " " << msg << "\n";
+}
+inline void err(const std::string& msg) {
+    std::cerr << "  " << RED() << "✗" << RESET() << " " << msg << "\n";
+}
+inline void note(const std::string& msg) {
+    if (quiet_flag()) return;
+    std::cout << "  " << DIM() << "·" << RESET() << " " << msg << "\n";
+}
+inline void download(const std::string& msg) {
+    if (quiet_flag()) return;
+    std::cout << "  " << CYAN() << "↓" << RESET() << " " << msg << "\n";
+}
+
+// Diagnostic detail; only printed when `-v` was passed.
+inline void v(const std::string& msg) {
+    if (!verbose_flag() || quiet_flag()) return;
+    std::cout << "    " << DIM() << msg << RESET() << "\n";
+}
+
+inline std::string dim(const std::string& s) {
+    return std::string(DIM()) + s + RESET();
+}
+inline std::string bold(const std::string& s) {
+    return std::string(BOLD()) + s + RESET();
+}
+
+}  // namespace log
 
 // ---------------------- Tiny TOML-ish manifest parser ----------------------
 // Supports:
@@ -383,21 +474,39 @@ static fs::path find_quirk_binary() {
 static const char* activate_template() {
     return
         "# Source this from bash/zsh: `source <venv>/bin/activate`\n"
-        "if [ -n \"${_OLD_QUIRK_HOME+x}\" ]; then\n"
-        "    echo 'A Quirk env is already active — run `deactivate` first.' >&2\n"
-        "    return 1 2>/dev/null || exit 1\n"
-        "fi\n"
+        "#\n"
+        "# Sets QUIRK_HOME + VIRTUAL_ENV, prepends bin/ to PATH, prefixes PS1,\n"
+        "# and exposes `deactivate` to undo it all. Re-activating from inside\n"
+        "# another Quirk venv silently switches (the inner overrides the outer\n"
+        "# without nesting state — mirrors `python -m venv`).\n"
         "\n"
         "_VENV_SCRIPT=\"${BASH_SOURCE[0]:-${(%):-%x}}\"\n"
         "_VENV_DIR=\"$(cd \"$(dirname \"$_VENV_SCRIPT\")/..\" && pwd)\"\n"
+        "\n"
+        "# If a Quirk venv is already active, switch cleanly instead of stacking.\n"
+        "if [ -n \"${_OLD_QUIRK_HOME+x}\" ] && type deactivate >/dev/null 2>&1; then\n"
+        "    if [ \"$QUIRK_HOME\" = \"$_VENV_DIR\" ]; then\n"
+        "        unset _VENV_SCRIPT _VENV_DIR\n"
+        "        return 0 2>/dev/null || exit 0\n"
+        "    fi\n"
+        "    # deactivate() unsets _VENV_DIR — stash it across the call.\n"
+        "    _NEW_VENV_DIR=\"$_VENV_DIR\"\n"
+        "    deactivate >/dev/null 2>&1\n"
+        "    _VENV_DIR=\"$_NEW_VENV_DIR\"\n"
+        "    unset _NEW_VENV_DIR\n"
+        "fi\n"
         "\n"
         "export _OLD_QUIRK_HOME=\"${QUIRK_HOME-__UNSET__}\"\n"
         "export _OLD_PATH=\"$PATH\"\n"
         "export _OLD_PS1=\"${PS1-}\"\n"
         "\n"
         "export QUIRK_HOME=\"$_VENV_DIR\"\n"
+        "export VIRTUAL_ENV=\"$_VENV_DIR\"     # conventional; tools like Starship pick this up\n"
         "export PATH=\"$_VENV_DIR/bin:$PATH\"\n"
-        "export PS1=\"(quirk:$(basename \"$_VENV_DIR\")) $PS1\"\n"
+        "if [ -z \"${QUIRK_VENV_DISABLE_PROMPT-}\" ]; then\n"
+        "    export PS1=\"(quirk:$(basename \"$_VENV_DIR\")) $PS1\"\n"
+        "fi\n"
+        "hash -r 2>/dev/null              # drop cached command lookups\n"
         "\n"
         "deactivate() {\n"
         "    if [ \"$_OLD_QUIRK_HOME\" = \"__UNSET__\" ]; then\n"
@@ -405,80 +514,302 @@ static const char* activate_template() {
         "    else\n"
         "        export QUIRK_HOME=\"$_OLD_QUIRK_HOME\"\n"
         "    fi\n"
+        "    unset VIRTUAL_ENV\n"
         "    export PATH=\"$_OLD_PATH\"\n"
         "    export PS1=\"$_OLD_PS1\"\n"
+        "    hash -r 2>/dev/null\n"
         "    unset _OLD_QUIRK_HOME _OLD_PATH _OLD_PS1 _VENV_DIR _VENV_SCRIPT\n"
         "    unset -f deactivate\n"
         "}\n";
 }
 
-static int cmd_venv(const std::vector<std::string>& args) {
-    if (args.empty()) {
-        std::cerr << "venv: need a directory name (e.g. `quirk venv myenv`)\n";
-        return 1;
-    }
-    fs::path venvDir = args[0];
-    if (fs::exists(venvDir)) {
-        std::cerr << "venv: '" << venvDir.string() << "' already exists\n";
-        return 1;
-    }
+// Write the venv's metadata file. Modeled on Python's pyvenv.cfg: a tiny
+// k=v file that records who created the venv, when, and what it linked to.
+// Read by `quirk env`, `quirk venv info`, and `quirk venv repair`.
+static void write_venv_cfg(const fs::path& venvDir,
+                           const fs::path& stdlib, const fs::path& binPath) {
+    auto now = std::chrono::system_clock::now();
+    std::time_t t = std::chrono::system_clock::to_time_t(now);
+    char buf[64];
+    std::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%S", std::gmtime(&t));
 
-    fs::path stdlib = find_system_stdlib();
-    if (stdlib.empty()) {
-        std::cerr << "venv: cannot locate the Quirk standard library on this system\n";
-        std::cerr << "      (tried $QUIRK_HOME, sibling-of-binary, /usr/local/lib/quirk)\n";
-        return 1;
+    std::ofstream cfg(venvDir / "quirk-env.cfg");
+    cfg << "# Quirk virtual environment — created by `quirk venv`.\n"
+        << "# Inspect with `quirk env` or `quirk venv info`.\n"
+        << "version = "        << QUIRK_VERSION << "\n"
+        << "created = "        << buf << "Z\n"
+        << "stdlib  = "        << fs::absolute(stdlib).string() << "\n"
+        << "binary  = "        << (binPath.empty() ? "(unknown)" : fs::absolute(binPath).string()) << "\n";
+}
+
+// Parse the cfg back as a map. Tolerates blank lines, comments, and unknown
+// keys (forward-compat).
+static std::map<std::string, std::string> read_venv_cfg(const fs::path& venvDir) {
+    std::map<std::string, std::string> out;
+    std::ifstream in(venvDir / "quirk-env.cfg");
+    if (!in) return out;
+    std::string line;
+    while (std::getline(in, line)) {
+        auto pos = line.find('#');
+        if (pos != std::string::npos) line.erase(pos);
+        auto eq = line.find('=');
+        if (eq == std::string::npos) continue;
+        std::string k = line.substr(0, eq), v = line.substr(eq + 1);
+        auto trim = [](std::string& s) {
+            while (!s.empty() && std::isspace((unsigned char)s.front())) s.erase(s.begin());
+            while (!s.empty() && std::isspace((unsigned char)s.back()))  s.pop_back();
+        };
+        trim(k); trim(v);
+        if (!k.empty()) out[k] = v;
     }
-    fs::path binPath = find_quirk_binary();
+    return out;
+}
 
-    // Build the venv layout:
-    //   <venv>/lib/quirk/stdlib/<mod>   → symlinks to system stdlib modules
-    //   <venv>/lib/quirk/packages/<pkg> → user-installed packages
-    // The two-bucket split keeps stdlib (frozen at venv-creation time) visually
-    // separate from installed packages (mutated by `quirk install`).
-    fs::create_directories(venvDir / "bin");
-    fs::create_directories(venvDir / "lib" / "quirk" / "packages");
-    fs::create_directories(venvDir / "lib" / "quirk" / "stdlib");
-
-    int linked = 0;
+// Link/relink stdlib modules into the venv. Skips entries that already exist
+// (idempotent — safe to re-run for `quirk venv repair`). Returns the number
+// of links newly created (not the total).
+static int link_stdlib(const fs::path& venvDir, const fs::path& stdlib) {
+    fs::path target = venvDir / "lib" / "quirk" / "stdlib";
+    fs::create_directories(target);
+    int created = 0;
     for (auto& entry : fs::directory_iterator(stdlib)) {
         if (!entry.is_directory()) continue;
         std::string name = entry.path().filename().string();
         if (name.empty() || name[0] == '.' || name == "packages") continue;
-        fs::path linkPath = venvDir / "lib" / "quirk" / "stdlib" / name;
+        fs::path linkPath = target / name;
         std::error_code ec;
+        if (fs::exists(linkPath) || fs::is_symlink(linkPath)) continue;
         fs::create_symlink(fs::absolute(entry.path()), linkPath, ec);
-        if (!ec) linked++;
+        if (!ec) created++;
+    }
+    return created;
+}
+
+// Internal: build the venv layout under `venvDir`. Used by `cmd_venv_new` and
+// `cmd_venv_repair`. `repair` is true when called to fix an existing venv
+// (won't overwrite the activate script unless missing).
+static int build_venv(const fs::path& venvDir, bool repair) {
+    fs::path stdlib = find_system_stdlib();
+    if (stdlib.empty()) {
+        log::err("cannot locate the Quirk standard library on this system");
+        std::cerr << "    " << log::dim("(tried $QUIRK_HOME, sibling-of-binary, /usr/local/lib/quirk)") << "\n";
+        return 1;
+    }
+    fs::path binPath = find_quirk_binary();
+
+    fs::create_directories(venvDir / "bin");
+    fs::create_directories(venvDir / "lib" / "quirk" / "packages");
+    fs::create_directories(venvDir / "lib" / "quirk" / "stdlib");
+
+    int linked = link_stdlib(venvDir, stdlib);
+
+    // Symlink the compiler + runtime. On repair, replace stale symlinks so the
+    // venv tracks whichever quirk binary is running now.
+    auto link_bin = [&](const fs::path& from, const fs::path& to) {
+        std::error_code ec;
+        if (fs::is_symlink(to) || fs::exists(to)) fs::remove(to, ec);
+        fs::create_symlink(fs::absolute(from), to, ec);
+    };
+    if (!binPath.empty()) {
+        link_bin(binPath, venvDir / "bin" / "quirk");
+        fs::path rt = binPath.parent_path() / "runtime.so";
+        if (fs::exists(rt)) link_bin(rt, venvDir / "bin" / "runtime.so");
     }
 
-    // Symlink the running compiler so `<venv>/bin/quirk` resolves; also
-    // symlink the runtime.so that lives next to it so the JIT can find it.
-    if (!binPath.empty()) {
-        std::error_code ec;
-        fs::create_symlink(fs::absolute(binPath), venvDir / "bin" / "quirk", ec);
-        fs::path rt = binPath.parent_path() / "runtime.so";
-        if (fs::exists(rt)) {
-            fs::create_symlink(fs::absolute(rt), venvDir / "bin" / "runtime.so", ec);
+    // Always (re)write the activate script — it's small and may have changed
+    // between compiler versions.
+    {
+        std::ofstream activate(venvDir / "bin" / "activate");
+        activate << activate_template();
+    }
+
+    // .gitignore so the venv is auto-ignored if added to a repo without one.
+    if (!fs::exists(venvDir / ".gitignore")) {
+        std::ofstream gi(venvDir / ".gitignore");
+        gi << "*\n";  // mirror python -m venv: ignore everything inside
+    }
+
+    // Cfg always rewritten (records *current* compiler version + paths).
+    write_venv_cfg(venvDir, stdlib, binPath);
+
+    log::ok(std::string(repair ? "repaired" : "created") + " " + venvDir.string()
+            + log::dim("  (" + std::to_string(linked) + " new stdlib link(s))"));
+    return 0;
+}
+
+// `quirk venv new <name>` — create a new venv.
+static int cmd_venv_new(const std::vector<std::string>& args) {
+    if (args.empty()) {
+        log::err("need a directory name (e.g. `quirk venv .venv`)");
+        return 1;
+    }
+    fs::path venvDir = args[0];
+    if (fs::exists(venvDir)) {
+        log::err("'" + venvDir.string() + "' already exists");
+        std::cerr << "    " << log::dim("use `quirk venv repair " + venvDir.string()
+                                        + "` to fix symlinks in place") << "\n";
+        return 1;
+    }
+    if (build_venv(venvDir, /*repair=*/false) != 0) return 1;
+    std::cout << "Activate with:\n"
+              << "    " << log::bold("source " + venvDir.string() + "/bin/activate") << "\n";
+    return 0;
+}
+
+// `quirk venv repair [<path>]` — recreate symlinks + cfg in an existing venv.
+// Useful after upgrading the compiler or moving the venv.
+static int cmd_venv_repair(const std::vector<std::string>& args) {
+    fs::path venvDir = args.empty() ? fs::path(".venv") : fs::path(args[0]);
+    if (!fs::is_directory(venvDir)) {
+        log::err("'" + venvDir.string() + "' is not a directory");
+        return 1;
+    }
+    // Sanity-check: this should look like a venv (or about to be).
+    if (!fs::exists(venvDir / "bin") && !fs::exists(venvDir / "lib" / "quirk")) {
+        log::err("'" + venvDir.string() + "' doesn't look like a Quirk venv");
+        std::cerr << "    " << log::dim("(no bin/ or lib/quirk/ — use `quirk venv new` to create it)") << "\n";
+        return 1;
+    }
+    return build_venv(venvDir, /*repair=*/true);
+}
+
+// `quirk venv info [<path>]` — dump the cfg + a few derived stats.
+static int cmd_venv_info(const std::vector<std::string>& args) {
+    fs::path venvDir;
+    if (!args.empty()) venvDir = args[0];
+    else if (const char* h = std::getenv("QUIRK_HOME"); h && fs::exists(fs::path(h) / "bin" / "activate"))
+        venvDir = h;
+    else if (fs::is_directory(".venv")) venvDir = ".venv";
+    else {
+        log::err("no venv path given and no active venv");
+        std::cerr << "    " << log::dim("usage: quirk venv info <path>") << "\n";
+        return 1;
+    }
+    venvDir = fs::absolute(venvDir);
+    if (!fs::exists(venvDir / "bin" / "activate")) {
+        log::err("'" + venvDir.string() + "' is not a Quirk venv");
+        return 1;
+    }
+    auto cfg = read_venv_cfg(venvDir);
+
+    auto kv = [](const std::string& k, const std::string& v) {
+        std::cout << log::dim(k + std::string(12 - k.size(), ' ')) << v << "\n";
+    };
+    kv("path:",     venvDir.string());
+    kv("created:",  cfg.count("created") ? cfg["created"] : log::dim("(unknown — pre-cfg venv; run `quirk venv repair`)"));
+    kv("compiler:", cfg.count("version") ? cfg["version"] : log::dim("(unknown)"));
+    kv("stdlib:",   cfg.count("stdlib")  ? cfg["stdlib"]  : log::dim("(unknown)"));
+    kv("binary:",   cfg.count("binary")  ? cfg["binary"]  : log::dim("(unknown)"));
+
+    // Health check: are the symlinks still alive?
+    fs::path qkBin = venvDir / "bin" / "quirk";
+    std::string binStatus;
+    if (!fs::is_symlink(qkBin))             binStatus = std::string(log::YELLOW()) + "missing" + log::RESET();
+    else if (!fs::exists(qkBin))            binStatus = std::string(log::RED()) + "broken (target gone)" + log::RESET();
+    else                                    binStatus = std::string(log::GREEN()) + "ok" + log::RESET();
+    kv("bin/quirk:", binStatus);
+
+    // Count stdlib + package symlinks.
+    int stdlibCount = 0, brokenStdlib = 0;
+    if (fs::is_directory(venvDir / "lib" / "quirk" / "stdlib")) {
+        for (auto& e : fs::directory_iterator(venvDir / "lib" / "quirk" / "stdlib")) {
+            stdlibCount++;
+            if (fs::is_symlink(e.path()) && !fs::exists(e.path())) brokenStdlib++;
         }
     }
+    int pkgCount = 0;
+    if (fs::is_directory(venvDir / "lib" / "quirk" / "packages")) {
+        for (auto& e : fs::directory_iterator(venvDir / "lib" / "quirk" / "packages")) {
+            std::string fn = e.path().filename().string();
+            if (fn.empty() || fn[0] == '.') continue;
+            if (fn.size() > 10 && fn.substr(fn.size() - 10) == ".dist-info") continue;
+            pkgCount++;
+        }
+    }
+    std::string sl = std::to_string(stdlibCount) + " linked";
+    if (brokenStdlib > 0) sl += std::string(log::RED()) + " (" + std::to_string(brokenStdlib) + " broken)" + log::RESET();
+    kv("stdlib mods:", sl);
+    kv("packages:", std::to_string(pkgCount) + " installed");
 
-    // activate script (bash-compatible; zsh-compatible via the BASH_SOURCE
-    // fallback in the template).
-    std::ofstream activate(venvDir / "bin" / "activate");
-    activate << activate_template();
-    activate.close();
-
-    // Starter manifest.
-    Manifest m;
-    m.name = fs::path(args[0]).filename().string();
-    m.version = "0.1.0";
-    write_manifest((venvDir / "quirk.toml").string(), m);
-
-    std::cout << "Created Quirk venv '" << venvDir.string() << "' with "
-              << linked << " stdlib module(s) linked.\n"
-              << "Activate it with:\n"
-              << "    source " << venvDir.string() << "/bin/activate\n";
+    if (brokenStdlib > 0 || (fs::is_symlink(qkBin) && !fs::exists(qkBin))) {
+        std::cout << "\n" << log::dim("Run `quirk venv repair " + venvDir.string()
+                                      + "` to fix broken symlinks.") << "\n";
+    }
     return 0;
+}
+
+// `quirk venv list` — find venvs under cwd (up to 3 levels deep), one per line.
+static int cmd_venv_list() {
+    auto looks_like_venv = [](const fs::path& p) {
+        return fs::exists(p / "bin" / "activate")
+            && (fs::is_directory(p / "lib" / "quirk") || fs::is_symlink(p / "bin" / "quirk"));
+    };
+    std::vector<fs::path> hits;
+    std::function<void(const fs::path&, int)> walk = [&](const fs::path& root, int depth) {
+        if (depth > 3) return;
+        std::error_code ec;
+        for (auto& e : fs::directory_iterator(root, ec)) {
+            if (ec) return;
+            if (!e.is_directory(ec)) continue;
+            std::string fn = e.path().filename().string();
+            if (fn.empty() || fn == "node_modules" || fn == "packages") continue;
+            // Hidden dirs only descended if they're themselves venv candidates
+            // (i.e. .venv/) — saves us from grovelling through .git etc.
+            if (fn[0] == '.' && !looks_like_venv(e.path())) continue;
+            if (looks_like_venv(e.path())) {
+                hits.push_back(fs::relative(e.path(), fs::current_path()));
+                continue;          // don't descend into a venv
+            }
+            walk(e.path(), depth + 1);
+        }
+    };
+    walk(fs::current_path(), 0);
+
+    if (hits.empty()) {
+        std::cout << "No venvs found under " << fs::current_path().string() << "\n";
+        return 0;
+    }
+    const char* active = std::getenv("QUIRK_HOME");
+    std::string activeAbs;
+    if (active && fs::exists(fs::path(active) / "bin" / "activate"))
+        activeAbs = fs::absolute(active).string();
+
+    std::cout << log::bold(std::to_string(hits.size()) + " venv(s) under " + fs::current_path().string()) << ":\n";
+    for (auto& h : hits) {
+        std::string mark = "  ";
+        if (!activeAbs.empty() && fs::absolute(h).string() == activeAbs) {
+            mark = std::string("  ") + log::GREEN() + "*" + log::RESET() + " ";
+        }
+        auto cfg = read_venv_cfg(h);
+        std::cout << mark << h.string();
+        if (cfg.count("version")) std::cout << log::dim("  (compiler " + cfg["version"] + ")");
+        std::cout << "\n";
+    }
+    return 0;
+}
+
+// Top-level `quirk venv ...` dispatch — subcommands or back-compat bare name.
+static int cmd_venv(const std::vector<std::string>& args) {
+    if (args.empty() || args[0] == "help" || args[0] == "--help" || args[0] == "-h") {
+        std::cout <<
+            "Virtual environments:\n"
+            "  quirk venv new <path>          create a new venv\n"
+            "  quirk venv list                find venvs under cwd          (alias: -l, --list)\n"
+            "  quirk venv info [<path>]       show metadata + symlink health\n"
+            "  quirk venv repair [<path>]     re-link stdlib/binary, refresh cfg\n"
+            "  quirk venv <path>              shorthand for `venv new <path>`\n"
+            "\n"
+            "Activate with `source <path>/bin/activate`; deactivate with `deactivate`.\n";
+        return 0;
+    }
+    const std::string& sub = args[0];
+    std::vector<std::string> tail(args.begin() + 1, args.end());
+    if (sub == "list" || sub == "-l" || sub == "--list") return cmd_venv_list();
+    if (sub == "info")                                  return cmd_venv_info(tail);
+    if (sub == "repair")                                return cmd_venv_repair(tail);
+    if (sub == "new")                                   return cmd_venv_new(tail);
+    // Back-compat: `quirk venv <path>` ≡ `quirk venv new <path>`.
+    return cmd_venv_new(args);
 }
 
 // Prompt the user with an optional default. Empty input keeps the default.
@@ -1167,6 +1498,31 @@ static int check_quirk_version(const Manifest& m) {
     return 1;
 }
 
+// Dev-only top-level entries we strip from installed packages. The cache
+// keeps a faithful mirror; this filter only runs at install-into-packages/
+// time. Editable installs aren't filtered (they're symlinks to source).
+static bool is_dev_only_entry(const std::string& name) {
+    return name == "tests" || name == "test" ||
+           name == ".git"  || name == ".github" ||
+           name == ".vscode" || name == ".idea";
+}
+
+// Copy <src> → <dst> recursively, skipping dev-only entries at the top level.
+static std::error_code copy_pruned(const fs::path& src, const fs::path& dst) {
+    std::error_code ec;
+    fs::create_directories(dst, ec);
+    if (ec) return ec;
+    for (auto& e : fs::directory_iterator(src, ec)) {
+        if (ec) return ec;
+        std::string n = e.path().filename().string();
+        if (is_dev_only_entry(n)) continue;
+        fs::copy(e.path(), dst / n,
+                 fs::copy_options::recursive | fs::copy_options::copy_symlinks, ec);
+        if (ec) return ec;
+    }
+    return ec;
+}
+
 // Internal: replace packages/<name>/ with content from the cache entry.
 // Strategy: copy (snapshot) so re-installs don't suffer from cache mutation.
 // Returns 0 on success, non-zero on failure.
@@ -1182,13 +1538,10 @@ static int materialize_from_cache(const fs::path& cachePath, const fs::path& pkg
         // (Caller passes cachePath = source path in that case.)
         fs::create_directory_symlink(cachePath, target, ec);
     } else {
-        fs::copy(cachePath, target,
-                 fs::copy_options::recursive | fs::copy_options::copy_symlinks, ec);
-        if (!ec) fs::remove_all(target / ".git");
+        ec = copy_pruned(cachePath, target);
     }
     if (ec) {
-        std::cerr << "install: failed to install " << target.string()
-                  << ": " << ec.message() << "\n";
+        log::err("failed to install " + target.string() + ": " + ec.message());
         fs::remove_all(target);
         return 1;
     }
@@ -1208,12 +1561,12 @@ static int install_local(const std::string& path_spec, bool editable,
     std::error_code ec;
     src = fs::absolute(src, ec);
     if (ec || !fs::is_directory(src)) {
-        std::cerr << "install: '" << path_spec << "' is not a directory\n";
+        log::err("'" + path_spec + "' is not a directory");
         return 1;
     }
     Manifest m;
     if (!read_manifest((src / "quirk.toml").string(), m) || m.name.empty()) {
-        std::cerr << "install: no quirk.toml (or missing `name =`) in " << src.string() << "\n";
+        log::err("no quirk.toml (or missing `name =`) in " + src.string());
         return 1;
     }
     if (m.version.empty()) m.version = "0.0.0";
@@ -1232,16 +1585,17 @@ static int install_local(const std::string& path_spec, bool editable,
             if (entry.empty() || !read_manifest((entry / "quirk.toml").string(), mCached)) {
                 mCached.name = m.name; mCached.version = cached;
             }
+            log::v("cache hit: " + entry.string());
             if (materialize_from_cache(entry, pkgRoot, mCached, false) != 0) return 1;
-            std::cout << "  ✓ " << m.name << " " << cached << " (from cache)\n";
+            log::ok(m.name + " " + cached + log::dim(" (from cache)"));
             if (outLock) *outLock = {m.name, cached, path_spec, ""};
             return 0;
         }
     }
 
     if (!pinVersion.empty() && !version_satisfies(m.version, pinVersion)) {
-        std::cerr << "install: requested " << m.name << "@" << pinVersion
-                  << " but source declares version " << m.version << "\n";
+        log::err("requested " + m.name + "@" + pinVersion
+                 + " but source declares version " + m.version);
         return 1;
     }
 
@@ -1251,23 +1605,24 @@ static int install_local(const std::string& path_spec, bool editable,
         fs::path entry = cache_entry(m.name, m.version);
         if (!entry.empty() && !fs::exists(entry)) {
             fs::create_directories(entry.parent_path());
+            log::v("caching " + src.string() + " → " + entry.string());
             fs::copy(src, entry,
                      fs::copy_options::recursive | fs::copy_options::copy_symlinks, ec);
             if (ec) {
-                std::cerr << "install: failed to cache " << src.string() << " → "
-                          << entry.string() << ": " << ec.message() << "\n";
+                log::err("failed to cache " + src.string() + " → " + entry.string()
+                         + ": " + ec.message());
                 fs::remove_all(entry);
                 return 1;
             }
             fs::remove_all(entry / ".git");
+        } else {
+            log::v("cache already has " + m.name + "-" + m.version);
         }
         if (materialize_from_cache(entry, pkgRoot, m, false) != 0) return 1;
-        std::cout << "  ✓ " << m.name << " " << m.version
-                  << " (snapshot from " << src.string() << ")\n";
+        log::ok(m.name + " " + m.version + log::dim(" (snapshot from " + src.string() + ")"));
     } else {
         if (materialize_from_cache(src, pkgRoot, m, true) != 0) return 1;
-        std::cout << "  ✓ " << m.name << " " << m.version
-                  << " (editable from " << src.string() << ")\n";
+        log::ok(m.name + " " + m.version + log::dim(" (editable from " + src.string() + ")"));
     }
     if (outLock) *outLock = {m.name, m.version, path_spec, ""};
     return 0;
@@ -1310,15 +1665,18 @@ static int install_one(const std::string& spec_str, bool quiet, bool editable = 
                 }
                 fs::path pkgRoot = package_install_dir();
                 fs::create_directories(pkgRoot);
+                log::v("cache hit: " + entry.string());
                 if (materialize_from_cache(entry, pkgRoot, m, false) != 0) return 1;
-                std::cout << "  ✓ " << pathPart << " " << chosen << " (from cache)\n";
+                log::ok(pathPart + " " + chosen + log::dim(" (from cache)"));
                 if (outLock) *outLock = {pathPart, chosen, spec_str, ""};
                 return 0;
             }
         }
         // Try the registry / aliases.
+        log::v("registry lookup: " + pathPart);
         std::string resolved = registry_lookup(pathPart);
         if (!resolved.empty()) {
+            log::v("resolved → " + resolved);
             // User pin > registry default pin. Strip any `@…` already on the
             // resolved URL and replace it with the user's pin if they gave one.
             std::string full = resolved;
@@ -1333,14 +1691,17 @@ static int install_one(const std::string& spec_str, bool quiet, bool editable = 
             return rc;
         }
         if (!pinVersion.empty()) {
-            std::cerr << "install: '" << pathPart << "' not in registry or cache\n";
-            std::cerr << "  (`quirk pkg cache list " << pathPart << "` to see what's cached;\n";
-            std::cerr << "   `quirk pkg registry add " << pathPart << " <url>` to register a name)\n";
+            log::err(pathPart + " not in registry or cache");
+            std::cerr << "    " << log::dim("hint: `quirk pkg cache list " + pathPart
+                                            + "` shows what's cached") << "\n";
+            std::cerr << "    " << log::dim("hint: `quirk pkg registry add " + pathPart
+                                            + " <url>` registers a name") << "\n";
             return 1;
         }
-        std::cerr << "install: '" << pathPart << "' is not a known package\n";
-        std::cerr << "  Register it:  quirk pkg registry add " << pathPart << " github.com/owner/repo\n";
-        std::cerr << "  Or use a URL: quirk pkg install github.com/owner/repo\n";
+        log::err(pathPart + " is not a known package");
+        std::cerr << "    " << log::dim("hint: `quirk pkg registry add " + pathPart
+                                        + " github.com/owner/repo`") << "\n";
+        std::cerr << "    " << log::dim("hint: or `quirk pkg install github.com/owner/repo`") << "\n";
         return 1;
     }
 
@@ -1355,7 +1716,9 @@ static int install_one(const std::string& spec_str, bool quiet, bool editable = 
     if (!ownerRepo.empty()
         && !spec.ref.empty()
         && spec.ref.find_first_of("=<>!,") != std::string::npos) {
+        log::step("Resolving", spec.name + log::dim("  " + spec.ref + "  → tag listing"));
         std::vector<std::string> tags = discover_tags(spec.url);
+        log::v(std::to_string(tags.size()) + " tag(s) discovered for " + spec.url);
         std::string best;
         for (auto& t : tags) {
             std::string stripped = (!t.empty() && t[0] == 'v') ? t.substr(1) : t;
@@ -1367,15 +1730,15 @@ static int install_one(const std::string& spec_str, bool quiet, bool editable = 
             }
         }
         if (best.empty()) {
-            std::cerr << "install: no tag of " << spec.url
-                      << " satisfies '" << spec.ref << "'\n";
-            std::cerr << "  Available tags:";
+            log::err(std::string("no tag of ") + spec.url + " satisfies '" + spec.ref + "'");
+            std::cerr << "    " << log::dim("available:");
             for (size_t i = 0; i < tags.size() && i < 8; i++)
                 std::cerr << " " << tags[i];
             if (tags.size() > 8) std::cerr << " …";
             std::cerr << "\n";
             return 1;
         }
+        log::v("selected " + best + " (highest matching tag)");
         spec.ref = best;
     }
 
@@ -1386,9 +1749,9 @@ static int install_one(const std::string& spec_str, bool quiet, bool editable = 
     std::error_code ec;
     fs::remove_all(tmp, ec);
 
-    std::cout << "  ↓ " << spec.name
-              << (spec.ref.empty() ? "" : " " + spec.ref)
-              << " (" << spec.url << ")\n";
+    log::step("Downloading",
+              spec.name + (spec.ref.empty() ? "" : " " + spec.ref)
+              + log::dim("  " + spec.url));
 
     bool usedTarball = false;
     if (!ownerRepo.empty()) {
@@ -1396,16 +1759,18 @@ static int install_one(const std::string& spec_str, bool quiet, bool editable = 
         if (download_github_tarball(ownerRepo, spec.ref, tmp, quiet, &actual) == 0) {
             usedTarball = true;
             spec.ref = actual;     // canonicalize for the success message
+            log::v("tarball: codeload.github.com/" + ownerRepo + "/tar.gz/" + actual);
         } else if (!spec.ref.empty()) {
-            std::cerr << "  ✗ tarball download failed (does tag/branch '"
-                      << spec.ref << "' exist?)\n";
-            std::cerr << "    (try `quirk pkg versions " << ownerRepo
-                      << "` to see what's published)\n";
+            log::err(std::string("tarball download failed (does tag/branch '")
+                     + spec.ref + "' exist?)");
+            std::cerr << "    " << log::dim("hint: `quirk pkg versions " + ownerRepo
+                                            + "` shows what's published") << "\n";
             return 1;
         }
         // If no ref and tarball failed, fall through to git clone.
     }
     if (!usedTarball) {
+        log::v("falling back to `git clone` for " + spec.url);
         auto run_clone = [&](const std::string& ref) -> int {
             std::string cmd = "git -c advice.detachedHead=false clone --quiet --depth 1";
             if (!ref.empty()) cmd += " --branch \"" + ref + "\"";
@@ -1427,14 +1792,14 @@ static int install_one(const std::string& spec_str, bool quiet, bool editable = 
             }
         }
         if (rc != 0) {
-            std::cerr << "  ✗ failed to clone " << spec.name << "\n";
+            log::err("failed to clone " + spec.name);
             fs::remove_all(tmp);
             return rc;
         }
     }
     Manifest m;
     if (!read_manifest((tmp / "quirk.toml").string(), m) || m.name.empty()) {
-        std::cerr << "  ✗ " << spec.name << ": cloned repo has no quirk.toml (or missing `name =`)\n";
+        log::err(spec.name + ": cloned repo has no quirk.toml (or missing `name =`)");
         fs::remove_all(tmp);
         return 1;
     }
@@ -1456,6 +1821,7 @@ static int install_one(const std::string& spec_str, bool quiet, bool editable = 
     }
     if (!fs::exists(entry)) {
         fs::create_directories(entry.parent_path());
+        log::v("caching to " + entry.string());
         fs::rename(tmp, entry, ec);
         if (ec) {
             // rename failed (likely cross-device); fall back to copy.
@@ -1463,19 +1829,20 @@ static int install_one(const std::string& spec_str, bool quiet, bool editable = 
                      fs::copy_options::recursive | fs::copy_options::copy_symlinks, ec);
             fs::remove_all(tmp);
             if (ec) {
-                std::cerr << "install: failed to cache " << spec.name << ": "
-                          << ec.message() << "\n";
+                log::err("failed to cache " + spec.name + ": " + ec.message());
                 return 1;
             }
         }
     } else {
+        log::v("cache already has " + m.name + "-" + m.version);
         fs::remove_all(tmp);
     }
 
+    log::v("materializing into " + (pkgRoot / m.name).string());
     if (materialize_from_cache(entry, pkgRoot, m, false, commit) != 0) return 1;
-    std::cout << "  ✓ " << m.name << " " << m.version;
-    if (!commit.empty()) std::cout << " (" << commit.substr(0, 7) << ")";
-    std::cout << "\n";
+    std::string okMsg = m.name + " " + m.version;
+    if (!commit.empty()) okMsg += log::dim(" (" + commit.substr(0, 7) + ")");
+    log::ok(okMsg);
     if (outLock) *outLock = {m.name, m.version, spec_str, commit};
     return 0;
 }
@@ -1545,44 +1912,48 @@ static int cmd_install(const std::vector<std::string>& args) {
         return install_one(lockedSpec, false, false, nullptr);
     };
 
+    auto t0 = std::chrono::steady_clock::now();
+    size_t okCount = 0, failCount = 0;
+    auto tally = [&](int rc) { (rc == 0 ? okCount : failCount)++; };
+
     if (!manifestFile.empty()) {
         Manifest m;
         if (!read_manifest(manifestFile, m)) {
-            std::cerr << "install: cannot read manifest '" << manifestFile << "'\n";
+            log::err("cannot read manifest '" + manifestFile + "'");
             return 1;
         }
         size_t total = m.deps.size() + (includeDevDeps ? m.dev_deps.size() : 0);
         if (total == 0) {
-            std::cout << "No dependencies declared in " << manifestFile;
+            std::string msg = "no dependencies declared in " + manifestFile;
             if (!includeDevDeps && !m.dev_deps.empty())
-                std::cout << " (use --dev to include " << m.dev_deps.size() << " dev-deps)";
-            std::cout << ".\n";
+                msg += " (use --dev to include " + std::to_string(m.dev_deps.size()) + " dev-deps)";
+            log::note(msg);
             return 0;
         }
         // --frozen: require an existing lockfile that matches every manifest dep.
         if (frozen) {
             if (!hadLockfile) {
-                std::cerr << "install: --frozen requires an existing quirk.lock\n";
+                log::err("--frozen requires an existing quirk.lock");
                 return 1;
             }
             for (auto& d : m.deps) {
                 auto it = lock.find(d.first);
                 if (it == lock.end() || it->second.source != d.second) {
-                    std::cerr << "install: --frozen: lockfile is out of date for '"
-                              << d.first << "'\n";
+                    log::err("--frozen: lockfile is out of date for '" + d.first + "'");
                     return 1;
                 }
             }
         }
-        std::cout << "Installing " << total << " package(s) from " << manifestFile << ":\n";
+        log::step("Installing", std::to_string(total) + " package(s) "
+                  + log::dim("from " + manifestFile));
         for (auto& d : m.deps) {
-            if (hadLockfile && try_locked(d.first, d.second) == 0) continue;
-            install_with_lock(d.second, false);
+            if (hadLockfile && try_locked(d.first, d.second) == 0) { okCount++; continue; }
+            tally(install_with_lock(d.second, false));
         }
         if (includeDevDeps) {
             for (auto& d : m.dev_deps) {
-                if (hadLockfile && try_locked(d.first, d.second) == 0) continue;
-                install_with_lock(d.second, false);
+                if (hadLockfile && try_locked(d.first, d.second) == 0) { okCount++; continue; }
+                tally(install_with_lock(d.second, false));
             }
         }
     }
@@ -1593,7 +1964,9 @@ static int cmd_install(const std::vector<std::string>& args) {
     bool dirty = false;
     for (auto& s : specs) {
         bool editable = editableSpecs.count(s) > 0;
-        if (install_with_lock(s, editable) != 0) continue;
+        int rc = install_with_lock(s, editable);
+        tally(rc);
+        if (rc != 0) continue;
         if (!haveManifest) continue;
 
         std::string name, stored;
@@ -1618,10 +1991,23 @@ static int cmd_install(const std::vector<std::string>& args) {
     // Write the updated lockfile (skip when --no-lock, or if nothing changed).
     if (!noLock && !lock.empty() && lock != originalLock) {
         write_lockfile(lockPath, lock);
-        std::cout << "\nWrote " << lockPath.string() << " ("
-                  << lock.size() << " package" << (lock.size() == 1 ? "" : "s") << ").\n";
+        log::v("wrote " + lockPath.string() + " (" + std::to_string(lock.size()) + " entries)");
     }
-    return 0;
+
+    // Final summary — one line, cargo-style.
+    if (!log::quiet_flag() && (okCount + failCount) > 0) {
+        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                      std::chrono::steady_clock::now() - t0).count();
+        std::string elapsed = ms < 1000
+            ? std::to_string(ms) + "ms"
+            : std::to_string(ms / 1000) + "." + std::to_string((ms / 100) % 10) + "s";
+        std::ostringstream tail;
+        tail << okCount << " installed";
+        if (failCount > 0) tail << ", " << failCount << " failed";
+        tail << " " << log::dim("in " + elapsed);
+        log::step("Finished", tail.str());
+    }
+    return failCount > 0 ? 1 : 0;
 }
 
 static int cmd_remove(const std::vector<std::string>& names) {
@@ -1642,10 +2028,11 @@ static int cmd_remove(const std::vector<std::string>& names) {
         if (ver.empty()) {
             fs::path code = pkgRoot / n;
             bool hadCode = fs::exists(code) || fs::is_symlink(code);
+            log::v("removing " + code.string());
             fs::remove_all(code);
             clear_dist_info(pkgRoot, n);
             if (hadCode || !find_dist_info(pkgRoot, n).empty()) {
-                std::cout << "  ✓ removed " << n << "\n";
+                log::ok("removed " + n);
                 if (haveManifest) {
                     auto it = projMan.deps.begin();
                     while (it != projMan.deps.end()) {
@@ -1654,7 +2041,7 @@ static int cmd_remove(const std::vector<std::string>& names) {
                     }
                 }
             } else {
-                std::cerr << "  ! " << n << " not installed\n";
+                log::warn(n + " not installed");
             }
             continue;
         }
@@ -1663,16 +2050,17 @@ static int cmd_remove(const std::vector<std::string>& names) {
         // that's the version being removed.
         fs::path entry = cache_entry(n, ver);
         if (!fs::exists(entry)) {
-            std::cerr << "  ! " << n << "@" << ver << " not cached\n";
+            log::warn(n + "@" + ver + " not cached");
         } else {
+            log::v("removing " + entry.string());
             fs::remove_all(entry);
-            std::cout << "  ✓ removed cache: " << n << "@" << ver << "\n";
+            log::ok("removed cache: " + n + "@" + ver);
         }
         // If this was the active version, drop the active install too.
         if (read_current_version(pkgRoot, n) == ver) {
             fs::remove_all(pkgRoot / n);
             clear_dist_info(pkgRoot, n);
-            std::cout << "    (was active; uninstalled)\n";
+            log::note(log::dim("(was active; uninstalled)"));
         }
     }
     if (haveManifest) write_manifest("quirk.toml", projMan);
@@ -1693,7 +2081,7 @@ static int cmd_upgrade(const std::vector<std::string>& names) {
     fs::path pkgRoot = package_install_dir();
     for (auto& d : projMan.deps) {
         if (!picked(d.first)) continue;
-        std::cout << "Upgrading " << d.first << "...\n";
+        log::step("Upgrading", d.first);
 
         // Local install: pick the highest cached version and materialize it.
         bool isLocal = !d.second.empty()
@@ -1702,11 +2090,11 @@ static int cmd_upgrade(const std::vector<std::string>& names) {
             std::string best = pick_cached_version(d.first, "");
             std::string active = read_current_version(pkgRoot, d.first);
             if (best.empty()) {
-                std::cerr << "  ! " << d.first << " not cached\n";
+                log::warn(d.first + " not cached");
                 continue;
             }
             if (best == active) {
-                std::cout << "  · " << d.first << " already at " << best << "\n";
+                log::note(d.first + log::dim(" already at " + best));
                 continue;
             }
             fs::path entry = cache_entry(d.first, best);
@@ -1715,7 +2103,7 @@ static int cmd_upgrade(const std::vector<std::string>& names) {
                 mC.name = d.first; mC.version = best;
             }
             if (materialize_from_cache(entry, pkgRoot, mC, false) != 0) continue;
-            std::cout << "  ✓ " << d.first << " " << active << " → " << best << "\n";
+            log::ok(d.first + " " + active + log::dim(" → ") + best);
             continue;
         }
 
@@ -1763,20 +2151,22 @@ static int cmd_list() {
     }
     size_t pad = 0;
     for (auto& r : rows) if (r.name.size() > pad) pad = r.name.size();
-    std::cout << rows.size() << " package(s) installed:\n";
+    std::cout << log::bold(std::to_string(rows.size()) + " package(s) installed") << ":\n";
     for (auto& r : rows) {
         std::cout << "  " << r.name;
         for (size_t i = r.name.size(); i < pad + 2; i++) std::cout << ' ';
-        std::cout << r.version;
+        std::cout << log::GREEN() << r.version << log::RESET();
         if (r.cached.size() > 1) {
-            std::cout << "  (cached: ";
+            std::ostringstream extras;
+            extras << "  (cached: ";
             bool first = true;
             for (auto& v : r.cached) {
                 if (v == r.version) continue;
-                if (!first) std::cout << ", ";
-                std::cout << v; first = false;
+                if (!first) extras << ", ";
+                extras << v; first = false;
             }
-            std::cout << ")";
+            extras << ")";
+            std::cout << log::dim(extras.str());
         }
         std::cout << "\n";
     }
@@ -1799,13 +2189,16 @@ static int cmd_show(const std::vector<std::string>& args) {
         std::cout << args[0] << " (installed; no manifest)\n";
         return 0;
     }
-    std::cout << "name:        " << m.name << "\n";
-    std::cout << "version:     " << m.version << "\n";
-    if (!m.description.empty()) std::cout << "description: " << m.description << "\n";
-    if (!m.author.empty())      std::cout << "author:      " << m.author      << "\n";
-    if (!m.license.empty())     std::cout << "license:     " << m.license     << "\n";
-    if (!m.repository.empty())  std::cout << "repository:  " << m.repository  << "\n";
-    if (!m.homepage.empty())    std::cout << "homepage:    " << m.homepage    << "\n";
+    auto kv = [](const std::string& k, const std::string& v) {
+        std::cout << log::dim(k + std::string(13 - k.size(), ' ')) << v << "\n";
+    };
+    kv("name:",    log::bold(m.name));
+    kv("version:", std::string(log::GREEN()) + m.version + log::RESET());
+    if (!m.description.empty()) kv("description:", m.description);
+    if (!m.author.empty())      kv("author:",      m.author);
+    if (!m.license.empty())     kv("license:",     m.license);
+    if (!m.repository.empty())  kv("repository:",  m.repository);
+    if (!m.homepage.empty())    kv("homepage:",    m.homepage);
 
     // Pull commit SHA from the dist-info if available.
     fs::path di = find_dist_info(pkgRoot, args[0]);
@@ -1814,23 +2207,23 @@ static int cmd_show(const std::vector<std::string>& args) {
         std::string line;
         while (std::getline(meta, line)) {
             if (line.rfind("Commit: ", 0) == 0) {
-                std::cout << "commit:      " << line.substr(8) << "\n";
+                kv("commit:", line.substr(8));
                 break;
             }
         }
     }
 
     if (!m.deps.empty()) {
-        std::cout << "deps:\n";
+        std::cout << log::dim("deps:") << "\n";
         for (auto& d : m.deps) std::cout << "  " << d.first << " = " << d.second << "\n";
     }
     auto cached = list_cached_versions(args[0]);
     if (cached.size() > 1) {
-        std::cout << "cached versions: ";
+        std::cout << log::dim("cached versions: ");
         for (size_t i = 0; i < cached.size(); i++) {
             if (i) std::cout << ", ";
             std::cout << cached[i];
-            if (cached[i] == m.version) std::cout << " (active)";
+            if (cached[i] == m.version) std::cout << " " << log::GREEN() << "(active)" << log::RESET();
         }
         std::cout << "\n";
     }
@@ -2865,17 +3258,37 @@ static int cmd_deps() {
 static int cmd_env() {
     const char* envHome = std::getenv("QUIRK_HOME");
     bool isVenv = envHome && fs::exists(fs::path(envHome) / "bin" / "activate");
-    std::cout << "quirk:           " << self_binary() << "\n";
-    std::cout << "version:         " << QUIRK_VERSION << "\n";
-    std::cout << "QUIRK_HOME:      " << (envHome ? envHome : "(unset)") << "\n";
-    std::cout << "in venv:         " << (isVenv ? "yes" : "no") << "\n";
+    auto kv = [](const std::string& k, const std::string& v) {
+        std::cout << log::dim(k + std::string(16 - k.size(), ' ')) << v << "\n";
+    };
+    kv("quirk:",      self_binary());
+    kv("version:",    QUIRK_VERSION);
+    kv("QUIRK_HOME:", envHome ? envHome : log::dim("(unset)"));
+    kv("in venv:",    isVenv ? (std::string(log::GREEN()) + "yes" + log::RESET())
+                              : (std::string(log::dim("no"))));
+
+    // If activated, surface the venv's metadata inline — saves a separate
+    // `quirk venv info` call for the common case.
+    if (isVenv) {
+        auto cfg = read_venv_cfg(envHome);
+        if (cfg.count("created"))  kv("  created:",  cfg["created"]);
+        if (cfg.count("version"))  kv("  built by:", cfg["version"]);
+        bool versionMismatch = cfg.count("version") && cfg["version"] != QUIRK_VERSION;
+        if (versionMismatch) {
+            std::cout << "    " << log::YELLOW() << "⚠ this venv was created by compiler "
+                      << cfg["version"] << ", but you're running " << QUIRK_VERSION << log::RESET() << "\n"
+                      << "    " << log::dim("→ run `quirk venv repair` to refresh it") << "\n";
+        }
+    }
+
     fs::path proj = find_project_root(fs::current_path());
-    std::cout << "project root:    " << (proj.empty() ? "(none)" : proj.string()) << "\n";
-    std::cout << "install dir:     " << package_install_dir().string() << "\n";
+    kv("project root:", proj.empty() ? log::dim("(none)") : proj.string());
+    kv("install dir:",  package_install_dir().string());
     fs::path stdlib = find_system_stdlib();
-    std::cout << "stdlib:          " << (stdlib.empty() ? "(not found)" : stdlib.string()) << "\n";
-    std::cout << "user-global:     " << (std::getenv("HOME")
-        ? std::string(std::getenv("HOME")) + "/.quirk/packages" : "(no $HOME)") << "\n";
+    kv("stdlib:",       stdlib.empty() ? log::dim("(not found)") : stdlib.string());
+    kv("user-global:",  std::getenv("HOME")
+        ? std::string(std::getenv("HOME")) + "/.quirk/packages"
+        : log::dim("(no $HOME)"));
     return 0;
 }
 
@@ -3051,9 +3464,15 @@ static std::string help_for(const std::string& cmd) {
                "    Scaffold a new package: <name>/quirk.toml, src/index.qk,\n"
                "    tests/, .gitignore.\n";
     if (cmd == "venv")
-        return "quirk venv <name>\n"
-               "    Create an isolated environment at ./<name>/. Activate with\n"
-               "    `source <name>/bin/activate`.\n";
+        return "quirk venv <path>                            create a venv (= `venv new`)\n"
+               "quirk venv new <path>                        create a venv at <path>\n"
+               "quirk venv list                              find venvs under cwd (alias: -l, --list)\n"
+               "quirk venv info [<path>]                     print cfg + symlink health\n"
+               "quirk venv repair [<path>]                   relink stdlib/binary, refresh cfg\n"
+               "    Activate with `source <path>/bin/activate`, deactivate with `deactivate`.\n"
+               "    Each venv records the compiler version that built it; `quirk env` warns\n"
+               "    when an activated venv was built by a different compiler — run `repair`\n"
+               "    after upgrading.\n";
     if (cmd == "version" || cmd == "--version")
         return "quirk version\n"
                "    Print the Quirk compiler version.\n";
@@ -3099,8 +3518,8 @@ static void print_pm_help() {
         "Project / environment:\n"
         "  quirk new <name>                           scaffold a new package\n"
         "  quirk init                                 write a quirk.toml here\n"
-        "  quirk venv <name>                          create an isolated environment\n"
-        "  quirk env                                  print resolution context\n"
+        "  quirk venv <path>                          create a venv (subcmds: new|list|info|repair)\n"
+        "  quirk env                                  print resolution context (warns on stale venv)\n"
         "\n"
         "Packages (`quirk pkg <subcommand>` or flat — both work):\n"
         "  quirk pkg install [-e] [-r <file>] [spec ...]   install dependencies\n"
@@ -3211,6 +3630,19 @@ static bool dispatch(int& argc, char** argv, int& outRc) {
     std::vector<std::string> rest;
     for (int i = 2; i < argc; i++) rest.emplace_back(argv[i]);
 
+    // Pull `--verbose` / `--quiet` / `-q` out of the args before subcommands
+    // see them — they're global to every PM verb. (`-v` is taken: it means
+    // `--version` when alone, and the compiler's own verbose otherwise.)
+    {
+        std::vector<std::string> filtered;
+        for (auto& a : rest) {
+            if (a == "--verbose")            log::verbose_flag() = true;
+            else if (a == "--quiet" || a == "-q") log::quiet_flag()   = true;
+            else                             filtered.push_back(a);
+        }
+        rest.swap(filtered);
+    }
+
     // `quirk pkg <subcommand>` — re-target the dispatch so the rest works
     // the same as the flat form (kept for back-compat: `quirk install ...`).
     std::string verb = first;
@@ -3236,6 +3668,11 @@ static bool dispatch(int& argc, char** argv, int& outRc) {
                 "  <name>[@<ver>]                  resolved via registry/aliases\n"
                 "  github.com/owner/repo[@<ref>]   direct git URL\n"
                 "  <path>[@<ver>]                  local directory (snapshot)\n"
+                "\n"
+                "Global flags (any pkg command):\n"
+                "  --verbose                 extra detail (URLs, paths, cache hits)\n"
+                "  --quiet, -q               suppress per-step output; errors only\n"
+                "  NO_COLOR / FORCE_COLOR    env vars override color auto-detection\n"
                 "\n"
                 "All commands also work without the `pkg` prefix, e.g.\n"
                 "`quirk install slug` is the same as `quirk pkg install slug`.\n";

@@ -13,14 +13,14 @@ The `quirk` binary is both the compiler/runner and the package manager. This pag
 | [`quirk init`](#quirk-init) | — | Write a `quirk.toml` in the current dir |
 | [`quirk venv <name>`](#quirk-venv) | — | Create an isolated environment |
 | [`quirk env`](#quirk-env) | — | Show the active resolution context |
-| [`quirk pkg install`](#quirk-install) | flat: `quirk install` | Install dependencies |
-| [`quirk pkg upgrade`](#quirk-upgrade) | flat: `quirk upgrade` | Bump installed versions |
-| [`quirk pkg remove <pkg>`](#quirk-remove) | flat: `quirk remove`, `uninstall` | Uninstall a package or one version |
-| [`quirk pkg list`](#quirk-list) | `quirk pkg -l`, `--list`, `-p`, flat: `quirk list`, `packages` | List installed packages |
-| [`quirk pkg show <pkg>`](#quirk-show) | flat: `quirk show` | Detailed info on one package |
-| [`quirk pkg deps`](#quirk-deps) | flat: `quirk deps` | Print installed packages in deps format |
-| [`quirk pkg cache`](#quirk-pkg-cache) | `quirk pkg cache -l`/`--list`, flat: `quirk cache` | Manage the cross-project version cache |
-| [`quirk pkg registry`](#quirk-pkg-registry) | `quirk pkg registry -l`/`--list`, flat: `quirk registry` | Manage name → URL mappings |
+| [`quirk i <spec>`](#quirk-install) | `quirk add`, `install`, `pkg install` | Install dependencies |
+| [`quirk up [pkg ...]`](#quirk-upgrade) | `upgrade`, `pkg upgrade` | Bump installed versions |
+| [`quirk rm <pkg>`](#quirk-remove) | `un`, `uninstall`, `remove`, `pkg remove` | Uninstall a package or one version |
+| [`quirk ls`](#quirk-list) | `list`, `packages`, `-p`, `pkg -l`/`--list` | List installed packages |
+| [`quirk show <pkg>`](#quirk-show) | `pkg show` | Detailed info on one package |
+| [`quirk deps`](#quirk-deps) | `pkg deps` | Print installed packages in deps format |
+| [`quirk cache`](#quirk-pkg-cache) | `pkg cache`, `cache -l`/`--list` | Manage the cross-project version cache |
+| [`quirk registry`](#quirk-pkg-registry) | `pkg registry`, `registry -l`/`--list` | Manage name → URL mappings |
 | [`quirk run --list`](#quirk-run) | `quirk run -l` | List named scripts from `[scripts]` |
 | [`quirk help [cmd]`](#quirk-help) | `--help`, `-h` | Show overall or per-command help |
 | [`quirk version`](#quirk-version) | `--version` | Print the compiler version |

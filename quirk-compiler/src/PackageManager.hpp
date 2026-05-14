@@ -936,6 +936,38 @@ static bool is_local_path(const std::string& spec) {
     return fs::is_directory(spec, ec);
 }
 
+// Split a spec into its package name (no @version, no path/git noise).
+// Used by transitive resolution to dedup before doing any network work.
+// Empty return = couldn't determine cheaply (caller should fall through
+// to a real install and let `install_one` figure out the canonical name).
+static std::string preview_name(const std::string& spec) {
+    if (spec.empty()) return "";
+    // Strip an @<version> suffix — but only when @ isn't part of an
+    // ssh URL like `git@github.com:...` (which we don't currently support,
+    // but cheap defensive code).
+    std::string body = spec;
+    auto at = body.find('@');
+    if (at != std::string::npos && body.find("://") == std::string::npos
+        && body.compare(0, 4, "git@") != 0) {
+        body = body.substr(0, at);
+    }
+    if (is_local_path(body)) {
+        // Read the local manifest's `name` if we can — that's authoritative.
+        std::error_code ec;
+        fs::path abs = fs::absolute(body, ec);
+        Manifest m;
+        if (!ec && read_manifest((abs / "quirk.toml").string(), m) && !m.name.empty())
+            return m.name;
+        // Fallback to the directory's basename.
+        return fs::path(body).filename().string();
+    }
+    // Bare name (no slash, no protocol) — that IS the name.
+    if (body.find('/') == std::string::npos && body.find("://") == std::string::npos)
+        return body;
+    // Looks git-like: defer to parse_spec.
+    return parse_spec(spec).name;
+}
+
 // ----------------------------- Layout (Option B) ---------------------------
 // Active installs are flat in `packages/`:
 //   packages/<name>/                 ← active code (one version per package)
@@ -1524,26 +1556,48 @@ static std::error_code copy_pruned(const fs::path& src, const fs::path& dst) {
 }
 
 // Internal: replace packages/<name>/ with content from the cache entry.
-// Strategy: copy (snapshot) so re-installs don't suffer from cache mutation.
-// Returns 0 on success, non-zero on failure.
+//
+// Atomicity: a copy that fails partway used to leave the user without their
+// old version AND with a half-written new one. We now stage to a sibling
+// `.<name>.__staging.<pid>/` and only swap into place once the copy
+// completes. The window where `target` doesn't exist is now the single
+// `rename(2)` call, not the duration of the copy.
+//
+// On crash mid-copy, leftover staging dirs are reclaimed by `remove_all` on
+// the next install of the same package (we re-prep an empty staging path).
 static int materialize_from_cache(const fs::path& cachePath, const fs::path& pkgRoot,
                                   const Manifest& m, bool editable,
                                   const std::string& commit = "") {
-    fs::path target = pkgRoot / m.name;
+    fs::path target  = pkgRoot / m.name;
+    fs::path staging = pkgRoot / ("." + m.name + ".__staging." + std::to_string(getpid()));
     std::error_code ec;
-    if (fs::exists(target) || fs::is_symlink(target)) fs::remove_all(target);
+    fs::remove_all(staging, ec);   // clear any debris from a prior aborted run
 
     if (editable) {
-        // Editable installs symlink the *source*, not the cache.
-        // (Caller passes cachePath = source path in that case.)
+        // Editable installs symlink the *source*, not the cache. No copy →
+        // nothing to stage; just replace the target directly.
+        if (fs::exists(target) || fs::is_symlink(target)) fs::remove_all(target);
         fs::create_directory_symlink(cachePath, target, ec);
+        if (ec) {
+            log::err("failed to install " + target.string() + ": " + ec.message());
+            return 1;
+        }
     } else {
-        ec = copy_pruned(cachePath, target);
-    }
-    if (ec) {
-        log::err("failed to install " + target.string() + ": " + ec.message());
-        fs::remove_all(target);
-        return 1;
+        // Copy into staging first; the old target stays intact while we work.
+        ec = copy_pruned(cachePath, staging);
+        if (ec) {
+            log::err("failed to stage " + m.name + ": " + ec.message());
+            fs::remove_all(staging);
+            return 1;
+        }
+        // Atomic swap: only at this single instant is `target` gone.
+        if (fs::exists(target) || fs::is_symlink(target)) fs::remove_all(target);
+        fs::rename(staging, target, ec);
+        if (ec) {
+            log::err("failed to swap " + m.name + " into place: " + ec.message());
+            fs::remove_all(staging);
+            return 1;
+        }
     }
     clear_dist_info(pkgRoot, m.name);
     write_dist_info(pkgRoot, m, editable, commit);
@@ -1847,75 +1901,153 @@ static int install_one(const std::string& spec_str, bool quiet, bool editable = 
     return 0;
 }
 
+// Does an installed `version` satisfy the @<pin> appended to a spec?
+// Used for transitive conflict checks — we cheap-compare a new constraint
+// against an already-resolved version without re-installing.
+static bool pin_matches_version(const std::string& pin, const std::string& version) {
+    if (pin.empty()) return true;
+    if (pin.find_first_of("=<>!,") != std::string::npos)
+        return version_satisfies(version, pin);
+    // Literal version-or-tag (v1.0.0 vs 1.0.0): strip the `v`.
+    std::string p = (!pin.empty() && pin[0] == 'v') ? pin.substr(1) : pin;
+    std::string v = (!version.empty() && version[0] == 'v') ? version.substr(1) : version;
+    return p == v;
+}
+
+// Pull the `@<pin>` part off the *end* of a spec (after the last `@` that
+// isn't part of `://` or `git@`). Returns empty if there's no pin.
+static std::string pin_of_spec(const std::string& spec) {
+    if (spec.empty()) return "";
+    // Skip a possible ssh-style `git@host:path` prefix.
+    size_t startAt = 0;
+    if (spec.compare(0, 4, "git@") == 0) startAt = 4;
+    // Skip past `scheme://`.
+    auto scheme = spec.find("://", startAt);
+    if (scheme != std::string::npos) startAt = scheme + 3;
+    auto at = spec.find('@', startAt);
+    if (at == std::string::npos) return "";
+    return spec.substr(at + 1);
+}
+
 static int cmd_install(const std::vector<std::string>& args) {
-    // Parse flags: -r/--read <file>, -e/--editable <path>, --dev, --frozen,
-    // --no-lock, or positional pkg specs.
+    // ---- Argument parsing ------------------------------------------------
+    // Recognized flags: -r/--read <file>, -e/--editable <path>, --dev,
+    // --frozen, --no-lock. Anything else is a positional package spec.
     std::string manifestFile;
     std::vector<std::string> specs;
-    std::set<std::string> editableSpecs;     // paths marked with -e
+    std::set<std::string> editableSpecs;
     bool includeDevDeps = false;
     bool frozen = false;
     bool noLock = false;
     for (size_t i = 0; i < args.size(); i++) {
         if (args[i] == "-r" || args[i] == "--read") {
-            if (i + 1 >= args.size()) {
-                std::cerr << "install: -r requires a filename\n";
-                return 1;
-            }
+            if (i + 1 >= args.size()) { std::cerr << "install: -r requires a filename\n"; return 1; }
             manifestFile = args[++i];
         } else if (args[i] == "-e" || args[i] == "--editable") {
-            if (i + 1 >= args.size()) {
-                std::cerr << "install: -e requires a local path\n";
-                return 1;
-            }
+            if (i + 1 >= args.size()) { std::cerr << "install: -e requires a local path\n"; return 1; }
             const std::string& p = args[++i];
             specs.push_back(p);
             editableSpecs.insert(p);
-        } else if (args[i] == "--dev")        includeDevDeps = true;
-        else if (args[i] == "--frozen")       frozen   = true;
-        else if (args[i] == "--no-lock")      noLock   = true;
-        else {
-            specs.push_back(args[i]);
-        }
+        } else if (args[i] == "--dev")    includeDevDeps = true;
+        else if (args[i] == "--frozen")   frozen = true;
+        else if (args[i] == "--no-lock")  noLock = true;
+        else                              specs.push_back(args[i]);
     }
-
-    // No args → install everything in ./quirk.toml's [deps].
     if (specs.empty() && manifestFile.empty()) manifestFile = "quirk.toml";
 
     fs::path lockPath = fs::path(manifestFile.empty() ? "quirk.toml" : manifestFile)
                             .parent_path() / "quirk.lock";
-    auto lock = read_lockfile(lockPath);
+    auto lock         = read_lockfile(lockPath);
     auto originalLock = lock;
-    bool hadLockfile = !lock.empty() || fs::exists(lockPath);
+    bool hadLockfile  = !lock.empty() || fs::exists(lockPath);
 
-    auto install_with_lock = [&](const std::string& spec, bool editable) -> int {
+    // ---- BFS resolver state ----------------------------------------------
+    // `processed[name] = (version, source-spec-used)` for every package
+    // we've finished installing in this run. Used for (a) dedup — each name
+    // is installed exactly once, and (b) conflict detection — if a later
+    // queued spec pins a version the already-installed one doesn't match.
+    std::map<std::string, std::pair<std::string, std::string>> processed;
+    struct Pending { std::string spec; std::string via; bool editable; };
+    std::vector<Pending> queue;
+    auto enqueue = [&](const std::string& s, const std::string& via, bool ed) {
+        queue.push_back({s, via, ed});
+    };
+
+    // Materialize one queued spec. Sets processed/lock on success; queues
+    // the installed package's manifest [deps] for further processing.
+    // Returns 0 on success, 1 on failure, 2 if skipped (already processed).
+    auto install_pending = [&](const Pending& p) -> int {
+        std::string name = preview_name(p.spec);
+
+        // (a) Dedup + conflict: have we already resolved this name?
+        if (!name.empty()) {
+            auto it = processed.find(name);
+            if (it != processed.end()) {
+                std::string pin = pin_of_spec(p.spec);
+                if (!pin.empty() && !pin_matches_version(pin, it->second.first)) {
+                    log::err("conflicting constraint on " + name
+                             + ": " + it->second.first + " (already selected)"
+                             + " doesn't satisfy '" + pin + "'"
+                             + (p.via.empty() ? "" : " " + log::dim("(via " + p.via + ")")));
+                    return 1;
+                }
+                return 2;  // already done, no work to do
+            }
+        }
+
+        // (b) --frozen: every package must be present in the lockfile.
+        if (frozen && !name.empty() && !lock.count(name)) {
+            log::err("--frozen: '" + name + "' not in quirk.lock"
+                     + (p.via.empty() ? "" : log::dim(" (via " + p.via + ")")));
+            return 1;
+        }
+
+        // (c) Lockfile fast-path: if we know `name` and it's locked, install
+        // at the pinned version. This is what makes `--frozen` reproducible
+        // and gives the rest of the run a stable target.
+        if (!name.empty() && lock.count(name)) {
+            const LockEntry& le = lock[name];
+            std::string src = le.source;
+            auto at = src.find('@');
+            if (at != std::string::npos) src = src.substr(0, at);
+            std::string pin = le.commit.empty() ? le.version : le.commit;
+            std::string lockedSpec = src + "@" + pin;
+            LockEntry e;
+            if (install_one(lockedSpec, false, p.editable, &e) == 0) {
+                processed[e.name] = {e.version, lockedSpec};
+                lock[e.name] = e;
+                // Recurse into the installed package's deps.
+                fs::path pkgDir = package_install_dir() / e.name;
+                Manifest installed;
+                if (read_manifest((pkgDir / "quirk.toml").string(), installed)) {
+                    for (auto& dep : installed.deps) enqueue(dep.second, e.name, false);
+                }
+                return 0;
+            }
+            if (frozen) {
+                log::err("--frozen: failed to install " + name + " at locked pin " + pin);
+                return 1;
+            }
+            log::warn(name + ": locked version no longer installable, re-resolving");
+        }
+
+        // (d) Fresh install (no lock, or lock fast-path fell through).
         LockEntry e;
-        int rc = install_one(spec, false, editable, &e);
-        if (rc == 0 && !e.name.empty()) lock[e.name] = e;
-        return rc;
+        int rc = install_one(p.spec, false, p.editable, &e);
+        if (rc != 0) return 1;
+        processed[e.name] = {e.version, p.spec};
+        lock[e.name] = e;
+        fs::path pkgDir = package_install_dir() / e.name;
+        Manifest installed;
+        if (read_manifest((pkgDir / "quirk.toml").string(), installed)) {
+            for (auto& dep : installed.deps) enqueue(dep.second, e.name, false);
+        }
+        return 0;
     };
 
-    // Map name → lock entry for fast "do we have a reproducible target?" check.
-    auto try_locked = [&](const std::string& name, const std::string& declSpec) -> int {
-        auto it = lock.find(name);
-        if (it == lock.end()) return -1;   // not in lock
-        // Source must match exactly — otherwise the manifest changed and we
-        // need a fresh resolution.
-        if (it->second.source != declSpec) return -1;
-        // Install at the locked commit (or version if non-git).
-        std::string pin = it->second.commit.empty() ? it->second.version : it->second.commit;
-        // Build a spec the install path understands. For URL specs append @<pin>.
-        std::string lockedSpec = declSpec;
-        auto at = lockedSpec.find('@');
-        if (at != std::string::npos) lockedSpec = lockedSpec.substr(0, at);
-        lockedSpec += "@" + pin;
-        return install_one(lockedSpec, false, false, nullptr);
-    };
-
+    // ---- Seed the queue --------------------------------------------------
     auto t0 = std::chrono::steady_clock::now();
-    size_t okCount = 0, failCount = 0;
-    auto tally = [&](int rc) { (rc == 0 ? okCount : failCount)++; };
-
+    size_t directCount = 0;
     if (!manifestFile.empty()) {
         Manifest m;
         if (!read_manifest(manifestFile, m)) {
@@ -1930,71 +2062,59 @@ static int cmd_install(const std::vector<std::string>& args) {
             log::note(msg);
             return 0;
         }
-        // --frozen: require an existing lockfile that matches every manifest dep.
-        if (frozen) {
-            if (!hadLockfile) {
-                log::err("--frozen requires an existing quirk.lock");
-                return 1;
-            }
-            for (auto& d : m.deps) {
-                auto it = lock.find(d.first);
-                if (it == lock.end() || it->second.source != d.second) {
-                    log::err("--frozen: lockfile is out of date for '" + d.first + "'");
-                    return 1;
-                }
-            }
+        if (frozen && !hadLockfile) {
+            log::err("--frozen requires an existing quirk.lock");
+            return 1;
         }
         log::step("Installing", std::to_string(total) + " package(s) "
                   + log::dim("from " + manifestFile));
-        for (auto& d : m.deps) {
-            if (hadLockfile && try_locked(d.first, d.second) == 0) { okCount++; continue; }
-            tally(install_with_lock(d.second, false));
-        }
-        if (includeDevDeps) {
-            for (auto& d : m.dev_deps) {
-                if (hadLockfile && try_locked(d.first, d.second) == 0) { okCount++; continue; }
-                tally(install_with_lock(d.second, false));
-            }
-        }
+        for (auto& d : m.deps)     { enqueue(d.second, "", false); directCount++; }
+        if (includeDevDeps) for (auto& d : m.dev_deps) { enqueue(d.second, "", false); directCount++; }
+    }
+    for (auto& s : specs) { enqueue(s, "", editableSpecs.count(s) > 0); directCount++; }
+
+    // ---- Drain the queue (BFS-ish; insertion order doesn't matter much) --
+    size_t okCount = 0, failCount = 0;
+    while (!queue.empty()) {
+        Pending p = queue.back(); queue.pop_back();
+        int rc = install_pending(p);
+        if      (rc == 0) okCount++;
+        else if (rc == 1) failCount++;
+        // rc == 2 = silently dedup'd; don't tally
     }
 
-    // Positional specs: install and (when in a project) add to manifest.
+    // ---- Project manifest: append newly-installed positional specs -------
     Manifest projMan;
     bool haveManifest = fs::exists("quirk.toml") && read_manifest("quirk.toml", projMan);
-    bool dirty = false;
-    for (auto& s : specs) {
-        bool editable = editableSpecs.count(s) > 0;
-        int rc = install_with_lock(s, editable);
-        tally(rc);
-        if (rc != 0) continue;
-        if (!haveManifest) continue;
-
-        std::string name, stored;
-        if (is_local_path(s)) {
-            Manifest lm;
-            std::error_code ec;
-            fs::path abs = fs::absolute(s, ec);
-            if (ec || !read_manifest((abs / "quirk.toml").string(), lm) || lm.name.empty()) continue;
-            name = lm.name;
-            stored = abs.string();
-        } else {
-            name = parse_spec(s).name;
-            stored = s;
+    if (haveManifest) {
+        bool dirty = false;
+        for (auto& s : specs) {
+            std::string name = preview_name(s);
+            if (name.empty() || !processed.count(name)) continue;
+            std::string stored;
+            if (is_local_path(s)) {
+                std::error_code ec;
+                fs::path abs = fs::absolute(s, ec);
+                stored = ec ? s : abs.string();
+            } else {
+                stored = s;
+            }
+            bool found = false;
+            for (auto& d : projMan.deps)
+                if (d.first == name) { d.second = stored; found = true; break; }
+            if (!found) projMan.deps.emplace_back(name, stored);
+            dirty = true;
         }
-        bool found = false;
-        for (auto& d : projMan.deps) if (d.first == name) { d.second = stored; found = true; break; }
-        if (!found) projMan.deps.emplace_back(name, stored);
-        dirty = true;
+        if (dirty) write_manifest("quirk.toml", projMan);
     }
-    if (dirty) write_manifest("quirk.toml", projMan);
 
-    // Write the updated lockfile (skip when --no-lock, or if nothing changed).
+    // ---- Lockfile --------------------------------------------------------
     if (!noLock && !lock.empty() && lock != originalLock) {
         write_lockfile(lockPath, lock);
         log::v("wrote " + lockPath.string() + " (" + std::to_string(lock.size()) + " entries)");
     }
 
-    // Final summary — one line, cargo-style.
+    // ---- Summary --------------------------------------------------------
     if (!log::quiet_flag() && (okCount + failCount) > 0) {
         auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                       std::chrono::steady_clock::now() - t0).count();
@@ -2003,11 +2123,100 @@ static int cmd_install(const std::vector<std::string>& args) {
             : std::to_string(ms / 1000) + "." + std::to_string((ms / 100) % 10) + "s";
         std::ostringstream tail;
         tail << okCount << " installed";
-        if (failCount > 0) tail << ", " << failCount << " failed";
+        size_t transitive = okCount > directCount ? okCount - directCount : 0;
+        if (transitive > 0) tail << " (" << transitive << " transitive)";
+        if (failCount > 0)  tail << ", " << failCount << " failed";
         tail << " " << log::dim("in " + elapsed);
         log::step("Finished", tail.str());
     }
     return failCount > 0 ? 1 : 0;
+}
+
+// `quirk sync` — one-command bootstrap for a fresh `git clone`. Creates a
+// `.venv/` if missing, installs every dep declared by `quirk.toml` (frozen
+// against `quirk.lock` when one exists), and prints the activation hint.
+//
+// Re-running is idempotent: existing venv is reused, lock entries that
+// already match what's installed are no-ops.
+static int cmd_sync(const std::vector<std::string>& args) {
+    bool noVenv = false;
+    bool includeDevDeps = false;
+    for (auto& a : args) {
+        if (a == "--no-venv")               noVenv = true;
+        else if (a == "--dev")              includeDevDeps = true;
+        else if (a == "--help" || a == "-h") {
+            std::cout <<
+                "quirk sync [--no-venv] [--dev]\n"
+                "    Bootstrap a Quirk project for a fresh clone:\n"
+                "      1. create ./.venv (unless --no-venv)\n"
+                "      2. install every dep from quirk.toml at locked versions\n"
+                "      3. print the `source .venv/bin/activate` hint\n"
+                "    --no-venv   install into ./packages/ instead of a venv\n"
+                "    --dev       also install [dev-deps] (CI / contributors)\n";
+            return 0;
+        }
+        else { log::err("sync: unknown flag '" + a + "'"); return 1; }
+    }
+
+    if (!fs::exists("quirk.toml")) {
+        log::err("no quirk.toml here — nothing to sync");
+        std::cerr << "    " << log::dim("(cd into your project root, or run `quirk new <name>`)") << "\n";
+        return 1;
+    }
+
+    // Pick the venv. If one is already activated, respect it. Otherwise
+    // default to ./.venv (which we create on demand).
+    fs::path venvDir;
+    bool alreadyActive = false;
+    bool createdVenv  = false;
+    if (is_active_venv()) {
+        venvDir = std::getenv("QUIRK_HOME");
+        alreadyActive = true;
+    } else if (!noVenv) {
+        venvDir = fs::absolute(".venv");
+        if (!fs::exists(venvDir)) {
+            log::step("Creating", "venv at " + log::dim(".venv/"));
+            if (build_venv(venvDir, /*repair=*/false) != 0) return 1;
+            createdVenv = true;
+        } else {
+            log::v("reusing existing .venv");
+        }
+    }
+
+    // Temporarily point QUIRK_HOME at the venv so `package_install_dir()`
+    // routes the install into it. The user hasn't activated yet (and may
+    // not — they could just want sync to do the work), but the install
+    // should still land in the venv.
+    std::string savedHome;
+    bool hadSavedHome = false;
+    if (!venvDir.empty() && !alreadyActive) {
+        if (const char* h = std::getenv("QUIRK_HOME")) { savedHome = h; hadSavedHome = true; }
+        setenv("QUIRK_HOME", venvDir.c_str(), 1);
+    }
+
+    bool hasLock = fs::exists("quirk.lock");
+    std::vector<std::string> installArgs;
+    if (hasLock) installArgs.push_back("--frozen");
+    if (includeDevDeps) installArgs.push_back("--dev");
+    int rc = cmd_install(installArgs);
+
+    // Restore the prior env exactly.
+    if (!venvDir.empty() && !alreadyActive) {
+        if (hadSavedHome) setenv("QUIRK_HOME", savedHome.c_str(), 1);
+        else              unsetenv("QUIRK_HOME");
+    }
+
+    if (rc != 0) return rc;
+
+    // Final hint. Skip when the user is already activated (they don't need it).
+    if (!alreadyActive && !venvDir.empty()) {
+        std::string label = createdVenv ? "Activate the venv with:"
+                                        : "To use the venv, run:";
+        std::cout << "\n" << label << "\n"
+                  << "    " << log::bold("source " + fs::relative(venvDir).string()
+                                         + "/bin/activate") << "\n";
+    }
+    return 0;
 }
 
 static int cmd_remove(const std::vector<std::string>& names) {
@@ -3351,10 +3560,16 @@ static int cmd_new(const std::vector<std::string>& args) {
 
 // Forward declaration so cmd_help can describe the full set of commands.
 static void print_pm_help();
+// Defined below in the dispatch section; used by help_for() to normalize
+// short verb aliases (i/add/rm/un/up/ls) before matching.
+static std::string canonicalize_verb(const std::string& v);
 
 // Per-command help text. Returns empty string if `cmd` isn't recognized,
 // in which case cmd_help falls back to the top-level summary.
-static std::string help_for(const std::string& cmd) {
+static std::string help_for(const std::string& cmdIn) {
+    // Accept short aliases (`quirk help i`, `quirk help rm`, …) by mapping
+    // to the canonical verb name.
+    const std::string cmd = canonicalize_verb(cmdIn);
     if (cmd == "run")
         return "quirk run <file.qk> [args...]\n"
                "    Run a Quirk script. Equivalent to `quirk <file.qk>`.\n";
@@ -3368,6 +3583,7 @@ static std::string help_for(const std::string& cmd) {
                "    Short form: quirk -m <name>\n";
     if (cmd == "install")
         return "quirk install [-r <file>] [-e <path>] [--dev] [--frozen] [--no-lock] [pkg ...]\n"
+               "    Short aliases: quirk i, quirk add\n"
                "    Install dependencies. Specs can be:\n"
                "      <name>[@<range>]                resolved via registry\n"
                "      github.com/owner/repo[@ref]    direct git URL\n"
@@ -3382,14 +3598,17 @@ static std::string help_for(const std::string& cmd) {
                "  runs to install the exact same versions across machines.\n";
     if (cmd == "upgrade")
         return "quirk upgrade [pkg ...]\n"
+               "    Short alias: quirk up\n"
                "    Bump packages to the latest installed version (local) or\n"
                "    re-clone HEAD (git).\n";
     if (cmd == "remove" || cmd == "uninstall")
         return "quirk remove <pkg>[@<version>] ...\n"
+               "    Short aliases: quirk rm, quirk un, quirk uninstall\n"
                "    Remove a package, or a specific version of it.\n";
     if (cmd == "list" || cmd == "packages")
         return "quirk list\n"
-               "    Print installed packages with versions. Also: quirk -p\n";
+               "    Short aliases: quirk ls, quirk -p, quirk packages\n"
+               "    Print installed packages with versions.\n";
     if (cmd == "show")
         return "quirk show <pkg>\n"
                "    Print the manifest of an installed package.\n";
@@ -3401,6 +3620,13 @@ static std::string help_for(const std::string& cmd) {
         return "quirk env\n"
                "    Dump resolution context: QUIRK_HOME, install dir, stdlib,\n"
                "    user-global dir. Use to debug \"why isn't this resolving?\"\n";
+    if (cmd == "sync")
+        return "quirk sync [--no-venv] [--dev]\n"
+               "    Bootstrap a clone: create ./.venv if missing, install every\n"
+               "    dep from quirk.toml at the versions pinned in quirk.lock,\n"
+               "    then print how to activate.\n"
+               "    --no-venv  install into ./packages/ instead of a venv\n"
+               "    --dev      also install [dev-deps]\n";
     if (cmd == "cache")
         return "quirk pkg cache list [<pkg>]\n"
                "    List versions cached at ~/.quirk/cache/ (cross-project).\n"
@@ -3518,18 +3744,19 @@ static void print_pm_help() {
         "Project / environment:\n"
         "  quirk new <name>                           scaffold a new package\n"
         "  quirk init                                 write a quirk.toml here\n"
+        "  quirk sync                                 bootstrap a clone: venv + frozen install\n"
         "  quirk venv <path>                          create a venv (subcmds: new|list|info|repair)\n"
         "  quirk env                                  print resolution context (warns on stale venv)\n"
         "\n"
-        "Packages (`quirk pkg <subcommand>` or flat — both work):\n"
-        "  quirk pkg install [-e] [-r <file>] [spec ...]   install dependencies\n"
-        "  quirk pkg upgrade [pkg ...]                bump installed versions\n"
-        "  quirk pkg remove  <pkg>[@<ver>] ...        uninstall a package or version\n"
-        "  quirk pkg list                             list installed packages (alias: -p)\n"
-        "  quirk pkg show    <pkg>                    detailed package info\n"
-        "  quirk pkg deps                             print deps in installable form\n"
-        "  quirk pkg cache    list|clean|dir          manage the cross-project cache\n"
-        "  quirk pkg registry list|search|add|...     name → URL mappings\n"
+        "Packages (short forms shown; long forms work too — see `quirk pkg --help`):\n"
+        "  quirk i, add <spec>                        install (alias of `pkg install`)\n"
+        "  quirk up [pkg ...]                         upgrade installed versions\n"
+        "  quirk rm  <pkg>[@<ver>] ...                remove a package or version\n"
+        "  quirk ls                                   list installed packages\n"
+        "  quirk show <pkg>                           detailed package info\n"
+        "  quirk deps                                 print deps in installable form\n"
+        "  quirk cache    list|clean|dir              manage the cross-project cache\n"
+        "  quirk registry list|search|add|...         name → URL mappings\n"
         "\n"
         "Misc:\n"
         "  quirk help [command]                       show help (per-command)\n"
@@ -3539,13 +3766,32 @@ static void print_pm_help() {
         "        ./path/to/lib[@<version>]    (local; @<version> can be a range)\n";
 }
 
+// Map a short verb to its canonical name. npm/cargo-style aliases so users
+// can type `quirk i slug` instead of `quirk install slug`. Identity for
+// anything that isn't an alias. Always run on the verb string *before*
+// is_subcommand/is_pkg_subcommand and the dispatch chain.
+static std::string canonicalize_verb(const std::string& v) {
+    static const std::map<std::string, std::string> aliases = {
+        {"i",         "install"},   // npm i
+        {"add",       "install"},   // cargo add / uv add — friendlier verb
+        {"rm",        "remove"},    // Unix-y
+        {"un",        "remove"},    // npm un
+        {"uninstall", "remove"},
+        {"up",        "upgrade"},   // npm up
+        {"ls",        "list"},      // Unix / npm ls
+    };
+    auto it = aliases.find(v);
+    return it != aliases.end() ? it->second : v;
+}
+
 // Subcommands the package-manager group accepts (`quirk pkg <sub>`).
 static bool is_pkg_subcommand(const std::string& arg) {
-    return arg == "install" || arg == "upgrade" || arg == "remove" ||
-           arg == "uninstall" || arg == "list" || arg == "packages" ||
-           arg == "show" || arg == "deps" || arg == "cache" ||
-           arg == "registry" || arg == "register" || arg == "check" ||
-           arg == "versions" || arg == "release" || arg == "audit";
+    std::string c = canonicalize_verb(arg);
+    return c == "install" || c == "upgrade" || c == "remove" ||
+           c == "list" || c == "packages" ||
+           c == "show" || c == "deps" || c == "cache" ||
+           c == "registry" || c == "register" || c == "check" ||
+           c == "versions" || c == "release" || c == "audit";
 }
 
 // Top-level subcommand verbs (and not a path).
@@ -3555,7 +3801,7 @@ static bool is_subcommand(const std::string& arg) {
            arg == "init" || arg == "version" || arg == "venv" ||
            arg == "run" || arg == "eval" || arg == "module" ||
            arg == "env" || arg == "new" || arg == "help" ||
-           arg == "script";
+           arg == "script" || arg == "sync";
 }
 
 // Drop argv[1] (a verb) and shift everything left. argc decreases by 1.
@@ -3645,24 +3891,26 @@ static bool dispatch(int& argc, char** argv, int& outRc) {
 
     // `quirk pkg <subcommand>` — re-target the dispatch so the rest works
     // the same as the flat form (kept for back-compat: `quirk install ...`).
-    std::string verb = first;
+    // Canonicalize short aliases (i/add/rm/un/up/ls) up-front so the rest
+    // of the dispatch only needs to know about canonical verbs.
+    std::string verb = canonicalize_verb(first);
     std::vector<std::string> verbArgs = rest;
     if (verb == "pkg") {
         if (rest.empty() || rest[0] == "help" || rest[0] == "--help" || rest[0] == "-h") {
             std::cout <<
-                "Package management:\n"
-                "  quirk pkg install [-e] [-r <file>] [--dev] [spec ...]\n"
-                "  quirk pkg upgrade [pkg ...]\n"
-                "  quirk pkg remove <pkg>[@<ver>] ...\n"
-                "  quirk pkg list                              (alias: -l, --list, -p)\n"
-                "  quirk pkg show <pkg>\n"
-                "  quirk pkg versions <name>                   (alias: -l on a name)\n"
-                "  quirk pkg deps\n"
-                "  quirk pkg audit\n"
-                "  quirk pkg cache    list|clean|dir\n"
-                "  quirk pkg registry list|search|add|remove|update|url\n"
-                "  quirk pkg register [<alias>]                register this project for `install <alias>`\n"
-                "  quirk pkg release  [--bump patch|minor|major]   tag + push\n"
+                "Package management — short forms in the left column, long forms on the right:\n"
+                "  i, add        install [spec ...]            (aliases: install)\n"
+                "  up            upgrade [pkg ...]             (aliases: upgrade)\n"
+                "  rm, un        remove <pkg>[@<ver>] ...      (aliases: remove, uninstall)\n"
+                "  ls            list                          (aliases: list, -l, --list, -p)\n"
+                "  show <pkg>    detailed package info\n"
+                "  versions <name>   list every published tag  (alias: -l on a name)\n"
+                "  deps          print deps in installable form\n"
+                "  audit         check installed pkgs against advisories\n"
+                "  cache         list|clean|dir                cross-project cache\n"
+                "  registry      list|search|add|remove|update|url\n"
+                "  register      register this project for short-name install\n"
+                "  release       [--bump patch|minor|major]    tag + push\n"
                 "\n"
                 "Specs can be:\n"
                 "  <name>[@<ver>]                  resolved via registry/aliases\n"
@@ -3674,8 +3922,8 @@ static bool dispatch(int& argc, char** argv, int& outRc) {
                 "  --quiet, -q               suppress per-step output; errors only\n"
                 "  NO_COLOR / FORCE_COLOR    env vars override color auto-detection\n"
                 "\n"
-                "All commands also work without the `pkg` prefix, e.g.\n"
-                "`quirk install slug` is the same as `quirk pkg install slug`.\n";
+                "Every verb also works flat (no `pkg` prefix), e.g.\n"
+                "`quirk i slug` ≡ `quirk install slug` ≡ `quirk pkg install slug`.\n";
             outRc = 0; return true;
         }
         // Shortcut: `quirk pkg -l` / `quirk pkg --list` == `quirk pkg list`.
@@ -3686,7 +3934,7 @@ static bool dispatch(int& argc, char** argv, int& outRc) {
             std::cerr << "pkg: unknown subcommand '" << rest[0] << "'\n";
             outRc = 1; return true;
         } else {
-            verb = rest[0];
+            verb = canonicalize_verb(rest[0]);
             verbArgs.assign(rest.begin() + 1, rest.end());
         }
     }
@@ -3714,6 +3962,7 @@ static bool dispatch(int& argc, char** argv, int& outRc) {
     else if (verb == "release")      outRc = cmd_release(verbArgs);
     else if (verb == "audit")        outRc = cmd_audit(verbArgs);
     else if (verb == "script")       outRc = cmd_script(verbArgs);
+    else if (verb == "sync")         outRc = cmd_sync(verbArgs);
     else if (verb == "help")         outRc = cmd_help(verbArgs);
     else { print_pm_help(); outRc = 1; }
     return true;

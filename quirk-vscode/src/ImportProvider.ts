@@ -135,12 +135,6 @@ const PRELUDE_MODULES = [
 ];
 
 export class QuirkDefinitionProvider implements vscode.DefinitionProvider {
-    private outputChannel: vscode.OutputChannel;
-
-    constructor(outputChannel: vscode.OutputChannel) {
-        this.outputChannel = outputChannel;
-    }
-
     public provideDefinition(
         document: vscode.TextDocument,
         position: vscode.Position,
@@ -525,18 +519,6 @@ export class QuirkDefinitionProvider implements vscode.DefinitionProvider {
             if (i > position.line && line.trim() === '---') break;
         }
         return null;
-    }
-
-    /** Returns the line index of the opening `---` of a docblock immediately before defLine, or -1. */
-    private findPrecedingDocstring(lines: string[], defLine: number): number {
-        let i = defLine - 1;
-        while (i >= 0 && lines[i].trim() === '') i--;
-        if (i >= 0 && lines[i].trim() === '---') {
-            i--;
-            while (i >= 0 && lines[i].trim() !== '---') i--;
-            return i >= 0 ? i : -1;
-        }
-        return -1;
     }
 
     // =========================================================

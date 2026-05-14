@@ -2808,7 +2808,6 @@ Value* LLVMCodegen::handleExpression(Node* node) {
 
             Type* srcTy = src->getType();
             Type* i32Ty = Type::getInt32Ty(Context);
-            Type* i8Ty  = Type::getInt8Ty(Context);
             Type* dblTy = Type::getDoubleTy(Context);
 
             if (targetType == "Double" || targetType == "Float") {

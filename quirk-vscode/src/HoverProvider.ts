@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { QuirkCompletionProvider } from './CompletionProvider';
 
-const _sharedFormatter = new QuirkCompletionProvider({ appendLine: () => {} } as any);
+const _sharedFormatter = new QuirkCompletionProvider();
 
 export class QuirkHoverProvider implements vscode.HoverProvider {
     public async provideHover(

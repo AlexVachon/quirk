@@ -151,11 +151,11 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
         vscode.languages.registerDefinitionProvider(
             { scheme: 'file', language: 'quirk' },
-            new QuirkDefinitionProvider(logChannel)
+            new QuirkDefinitionProvider()
         ),
         vscode.languages.registerCompletionItemProvider(
             selector,
-            new QuirkCompletionProvider(logChannel),
+            new QuirkCompletionProvider(),
             '.', '{', ','
         ),
         vscode.languages.registerHoverProvider(selector, new QuirkHoverProvider()),

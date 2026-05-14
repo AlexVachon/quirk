@@ -3,6 +3,6 @@ version = 1
 
 [[package]]
 name    = "slug"
-version = "1.0.0"
-source  = "slug@1.0.0"
+version = "1.0.1"
+source  = "/home/alex/code/quirk-test-lib/slug"
 

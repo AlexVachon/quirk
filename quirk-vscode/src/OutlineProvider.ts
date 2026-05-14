@@ -10,7 +10,6 @@ export class QuirkDocumentSymbolProvider implements vscode.DocumentSymbolProvide
         const lines = document.getText().split(/\r?\n/);
 
         let currentStruct: vscode.DocumentSymbol | null = null;
-        let structStartLine = -1;
         let braceDepth = 0;
         let inDocBlock = false;
 
@@ -32,7 +31,6 @@ export class QuirkDocumentSymbolProvider implements vscode.DocumentSymbolProvide
                 // Extend the struct range to include its closing brace
                 currentStruct.range = new vscode.Range(currentStruct.range.start, new vscode.Position(i, line.length));
                 currentStruct = null;
-                structStartLine = -1;
             }
 
             // ---- Struct definition ----
@@ -50,7 +48,6 @@ export class QuirkDocumentSymbolProvider implements vscode.DocumentSymbolProvide
                     new vscode.Range(i, 0, i, line.length),   // will be extended when closed
                     new vscode.Range(i, selStart, i, selStart + name.length)
                 );
-                structStartLine = i;
                 symbols.push(currentStruct);
                 continue;
             }

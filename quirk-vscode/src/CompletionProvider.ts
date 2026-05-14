@@ -11,16 +11,11 @@ interface CachedFile {
 }
 
 export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
-    private outputChannel: vscode.OutputChannel;
     private fileCache = new Map<string, CachedFile>();
     private searchRootsCache: string[] | null = null;
     private searchRootsCacheKey = '';
     private stdlibModulesCache: Array<{ alias: string; modulePath: string }> | null = null;
     private stdlibModulesCacheKey = '';
-
-    constructor(outputChannel: vscode.OutputChannel) {
-        this.outputChannel = outputChannel;
-    }
 
     private readFile(filePath: string): string | null {
         const now = Date.now();

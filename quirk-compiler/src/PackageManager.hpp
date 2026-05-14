@@ -269,12 +269,6 @@ static PkgSpec parse_spec(const std::string& raw) {
     return s;
 }
 
-// Run a shell command, return exit status. Echoes the command at -v level.
-static int sh(const std::string& cmd, bool quiet = false) {
-    if (!quiet) std::cerr << "$ " << cmd << "\n";
-    return std::system(cmd.c_str());
-}
-
 // ---------------------- Semver-lite parsing + matching --------------------
 // Parse "1.2.3" / "1.2" / "1" into a 3-element vector, missing components 0.
 // Anything after a `-` or `+` is treated as pre-release/build metadata and
@@ -536,10 +530,11 @@ static void write_venv_cfg(const fs::path& venvDir,
     std::ofstream cfg(venvDir / "quirk-env.cfg");
     cfg << "# Quirk virtual environment — created by `quirk venv`.\n"
         << "# Inspect with `quirk env` or `quirk venv info`.\n"
-        << "version = "        << QUIRK_VERSION << "\n"
-        << "created = "        << buf << "Z\n"
-        << "stdlib  = "        << fs::absolute(stdlib).string() << "\n"
-        << "binary  = "        << (binPath.empty() ? "(unknown)" : fs::absolute(binPath).string()) << "\n";
+        << "version        = " << QUIRK_VERSION << "\n"
+        << "stdlib-version = " << QUIRK_VERSION << "\n"  // coupled today; explicit for forward-compat
+        << "created        = " << buf << "Z\n"
+        << "stdlib         = " << fs::absolute(stdlib).string() << "\n"
+        << "binary         = " << (binPath.empty() ? "(unknown)" : fs::absolute(binPath).string()) << "\n";
 }
 
 // Parse the cfg back as a map. Tolerates blank lines, comments, and unknown
@@ -698,6 +693,9 @@ static int cmd_venv_info(const std::vector<std::string>& args) {
     kv("path:",     venvDir.string());
     kv("created:",  cfg.count("created") ? cfg["created"] : log::dim("(unknown — pre-cfg venv; run `quirk venv repair`)"));
     kv("compiler:", cfg.count("version") ? cfg["version"] : log::dim("(unknown)"));
+    kv("stdlib v:", cfg.count("stdlib-version") ? cfg["stdlib-version"]
+                  : cfg.count("version")        ? cfg["version"] + log::dim("  (coupled to compiler)")
+                  : log::dim("(unknown)"));
     kv("stdlib:",   cfg.count("stdlib")  ? cfg["stdlib"]  : log::dim("(unknown)"));
     kv("binary:",   cfg.count("binary")  ? cfg["binary"]  : log::dim("(unknown)"));
 
@@ -1187,10 +1185,6 @@ static std::string github_owner_repo(const std::string& url) {
     return s;
 }
 
-static bool is_github_url(const std::string& url) {
-    return !github_owner_repo(url).empty();
-}
-
 // Per-URL tag-list cache file. Sanitized owner-repo as filename.
 static fs::path tags_cache_path(const std::string& ownerRepo) {
     fs::path c = cache_dir();
@@ -1401,12 +1395,6 @@ static std::string read_current_version(const fs::path& pkgRoot, const std::stri
     return fn.substr(prefix.size(), fn.size() - prefix.size() - 10); // strip prefix + .dist-info
 }
 
-// Convenience overload kept for the older callsites: caller passes pkgPath
-// = <pkgRoot>/<name>, we infer name from its filename.
-static std::string read_current_version(const fs::path& pkgPath) {
-    return read_current_version(pkgPath.parent_path(), pkgPath.filename().string());
-}
-
 // All cached versions of <name> as a sorted vector.
 static std::vector<std::string> list_cached_versions(const std::string& name) {
     std::vector<std::string> out;
@@ -1423,12 +1411,6 @@ static std::vector<std::string> list_cached_versions(const std::string& name) {
         return compare_versions(a, b) < 0;
     });
     return out;
-}
-
-// Legacy helper still used elsewhere — list "installed versions" now means
-// "cached versions" since active installs are single-version.
-static std::vector<std::string> list_installed_versions(const fs::path& pkgPath) {
-    return list_cached_versions(pkgPath.filename().string());
 }
 
 // Pick the highest cached version of <name> matching `range`. Empty string
@@ -1481,45 +1463,6 @@ static void clear_dist_info(const fs::path& pkgRoot, const std::string& name) {
     for (auto& p : toRemove) fs::remove_all(p);
 }
 
-// Repoint <pkg>/current → <version>/. Used both by fresh installs and by
-// version-switch operations.
-static int set_current_version(const fs::path& pkgDir, const std::string& version) {
-    fs::path link = pkgDir / "current";
-    std::error_code ec;
-    if (fs::exists(link) || fs::is_symlink(link)) fs::remove(link);
-    fs::create_directory_symlink(version, link, ec);
-    if (ec) {
-        std::cerr << "install: failed to update 'current' symlink: " << ec.message() << "\n";
-        return 1;
-    }
-    return 0;
-}
-
-// Of the already-installed versions of `pkgDir`, return the highest one that
-// satisfies `range`. Empty string if none.
-static std::string pick_installed_version(const fs::path& pkgDir, const std::string& range) {
-    std::string best;
-    if (!fs::is_directory(pkgDir)) return best;
-    for (auto& v : fs::directory_iterator(pkgDir)) {
-        std::string name = v.path().filename().string();
-        if (name.empty() || name[0] == '.' || name == "current") continue;
-        if (!fs::is_directory(v.path()) && !fs::is_symlink(v.path())) continue;
-        if (!version_satisfies(name, range)) continue;
-        if (best.empty() || compare_versions(name, best) > 0) best = name;
-    }
-    return best;
-}
-
-// Local install of a package. Versioned layout:
-//   packages/<name>/<version>/   ← actual install
-//   packages/<name>/current      ← symlink to active version
-//
-// Two modes:
-//   editable=true   → <version>/ is a symlink to the source (live edits)
-//   editable=false  → <version>/ is a recursive copy (snapshot)
-//
-// If `pinVersion` is non-empty, the source's manifest version must match;
-// otherwise we install the source's declared version.
 // Reject the install if the package declares a `quirk-version` constraint
 // the running compiler doesn't satisfy. Empty constraint = no opinion.
 static int check_quirk_version(const Manifest& m) {
@@ -3495,10 +3438,90 @@ static int cmd_env() {
     kv("install dir:",  package_install_dir().string());
     fs::path stdlib = find_system_stdlib();
     kv("stdlib:",       stdlib.empty() ? log::dim("(not found)") : stdlib.string());
+    kv("stdlib v:",     std::string(QUIRK_VERSION)
+                      + log::dim("  (bundled with compiler — `quirk stdlib` to inspect)"));
     kv("user-global:",  std::getenv("HOME")
         ? std::string(std::getenv("HOME")) + "/.quirk/packages"
         : log::dim("(no $HOME)"));
     return 0;
+}
+
+// `quirk stdlib` introspection. Stdlib version is coupled to the compiler
+// today (one number for both), but we expose it through a dedicated verb so
+// users can ask "what stdlib am I using and where is it" without grepping
+// `quirk env`. Future-proofs the surface if we ever split the two.
+//
+// Subcommands:
+//   quirk stdlib                  → list (default)
+//   quirk stdlib version          → print version
+//   quirk stdlib path             → print root path
+//   quirk stdlib list             → list modules
+//   quirk stdlib show <mod>       → list files inside a module
+static int cmd_stdlib(const std::vector<std::string>& args) {
+    fs::path stdlib = find_system_stdlib();
+
+    std::string sub = args.empty() ? "list" : args[0];
+    if (sub == "-l" || sub == "--list") sub = "list";
+
+    if (sub == "version") {
+        std::cout << QUIRK_VERSION << "\n";
+        return 0;
+    }
+    if (sub == "path") {
+        if (stdlib.empty()) { log::err("stdlib not found on this system"); return 1; }
+        std::cout << stdlib.string() << "\n";
+        return 0;
+    }
+    if (sub == "list") {
+        if (stdlib.empty()) { log::err("stdlib not found on this system"); return 1; }
+        std::vector<std::string> mods;
+        for (auto& e : fs::directory_iterator(stdlib)) {
+            if (!e.is_directory()) continue;
+            std::string n = e.path().filename().string();
+            if (n.empty() || n[0] == '.' || n == "packages") continue;
+            mods.push_back(n);
+        }
+        std::sort(mods.begin(), mods.end());
+        std::cout << log::bold(std::to_string(mods.size()) + " stdlib module(s)")
+                  << log::dim(" — " + stdlib.string() + "  (bundled with quirk " + QUIRK_VERSION + ")") << "\n";
+        size_t pad = 0;
+        for (auto& m : mods) if (m.size() > pad) pad = m.size();
+        for (auto& m : mods) {
+            // Count .qk files for a quick "size" hint.
+            int files = 0;
+            for (auto& e : fs::recursive_directory_iterator(stdlib / m)) {
+                if (e.is_regular_file() && e.path().extension() == ".qk") files++;
+            }
+            std::cout << "  " << m;
+            for (size_t i = m.size(); i < pad + 2; i++) std::cout << ' ';
+            std::cout << log::dim(std::to_string(files) + " file" + (files == 1 ? "" : "s")) << "\n";
+        }
+        return 0;
+    }
+    if (sub == "show") {
+        if (args.size() < 2) { log::err("stdlib show: need a module name"); return 1; }
+        if (stdlib.empty()) { log::err("stdlib not found on this system"); return 1; }
+        const std::string& mod = args[1];
+        fs::path modPath = stdlib / mod;
+        if (!fs::is_directory(modPath)) {
+            log::err("stdlib has no module '" + mod + "'");
+            std::cerr << "    " << log::dim("(`quirk stdlib list` shows what's available)") << "\n";
+            return 1;
+        }
+        std::cout << log::bold(mod) << log::dim("  " + modPath.string()) << "\n";
+        std::vector<fs::path> files;
+        for (auto& e : fs::recursive_directory_iterator(modPath)) {
+            if (e.is_regular_file() && e.path().extension() == ".qk")
+                files.push_back(fs::relative(e.path(), modPath));
+        }
+        std::sort(files.begin(), files.end());
+        for (auto& f : files) std::cout << "  " << f.string() << "\n";
+        return 0;
+    }
+
+    std::cerr << "stdlib: unknown subcommand '" << sub << "'\n"
+              << "    usage: quirk stdlib [version|path|list|show <mod>]\n";
+    return 1;
 }
 
 // `quirk new <name>` — scaffold a new package: directory, quirk.toml, src/,
@@ -3627,6 +3650,15 @@ static std::string help_for(const std::string& cmdIn) {
                "    then print how to activate.\n"
                "    --no-venv  install into ./packages/ instead of a venv\n"
                "    --dev      also install [dev-deps]\n";
+    if (cmd == "stdlib")
+        return "quirk stdlib [version | path | list | show <mod>]\n"
+               "    Introspect the bundled standard library.\n"
+               "      version    print the stdlib version (= compiler version)\n"
+               "      path       print the stdlib root directory\n"
+               "      list       list modules with file counts (default)\n"
+               "      show <m>   list .qk files inside module <m>\n"
+               "    The stdlib ships with the compiler; to upgrade it, upgrade\n"
+               "    the compiler. See `quirk env` for stdlib path resolution.\n";
     if (cmd == "cache")
         return "quirk pkg cache list [<pkg>]\n"
                "    List versions cached at ~/.quirk/cache/ (cross-project).\n"
@@ -3747,6 +3779,7 @@ static void print_pm_help() {
         "  quirk sync                                 bootstrap a clone: venv + frozen install\n"
         "  quirk venv <path>                          create a venv (subcmds: new|list|info|repair)\n"
         "  quirk env                                  print resolution context (warns on stale venv)\n"
+        "  quirk stdlib                               introspect the bundled standard library\n"
         "\n"
         "Packages (short forms shown; long forms work too — see `quirk pkg --help`):\n"
         "  quirk i, add <spec>                        install (alias of `pkg install`)\n"
@@ -3801,7 +3834,7 @@ static bool is_subcommand(const std::string& arg) {
            arg == "init" || arg == "version" || arg == "venv" ||
            arg == "run" || arg == "eval" || arg == "module" ||
            arg == "env" || arg == "new" || arg == "help" ||
-           arg == "script" || arg == "sync";
+           arg == "script" || arg == "sync" || arg == "stdlib";
 }
 
 // Drop argv[1] (a verb) and shift everything left. argc decreases by 1.
@@ -3963,6 +3996,7 @@ static bool dispatch(int& argc, char** argv, int& outRc) {
     else if (verb == "audit")        outRc = cmd_audit(verbArgs);
     else if (verb == "script")       outRc = cmd_script(verbArgs);
     else if (verb == "sync")         outRc = cmd_sync(verbArgs);
+    else if (verb == "stdlib")       outRc = cmd_stdlib(verbArgs);
     else if (verb == "help")         outRc = cmd_help(verbArgs);
     else { print_pm_help(); outRc = 1; }
     return true;

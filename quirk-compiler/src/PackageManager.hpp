@@ -2866,6 +2866,458 @@ static int cmd_fmt(const std::vector<std::string>& args) {
     return 0;
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// `quirk repl` — interactive shell.
+//
+// Maintains an in-memory session:
+//   • `preamble`   — top-level declarations (use, define, struct, enum, type).
+//                    Persists across every input.
+//   • `state`      — variable bindings from `x := ...` lines. Re-evaluated
+//                    on every input so later lines can reference them.
+//   • current line — the expression or statement just typed. Run once.
+//
+// Each turn writes `<preamble>\n<state>\n<wrapper(current)>` to a temp file
+// and execs the compiler on it via popen(). Slow per command (~100ms) but
+// correct, and crucially insulates the REPL from JIT/codegen state leakage.
+//
+// Special commands:
+//   :help / :h          show shortcuts
+//   :quit / :q / Ctrl-D leave
+//   :reset              wipe preamble + state
+//   :state              show current session
+// ─────────────────────────────────────────────────────────────────────────
+
+// Net brace+paren balance for a line, ignoring strings and `//` comments.
+// Used to detect "the user's input is incomplete, prompt for continuation."
+static int repl_brace_balance(const std::string& line) {
+    int depth = 0;
+    bool inStr = false;
+    for (size_t i = 0; i < line.size(); i++) {
+        char c = line[i];
+        if (!inStr && c == '/' && i + 1 < line.size() && line[i + 1] == '/') break;
+        if (c == '"' && (i == 0 || line[i - 1] != '\\')) { inStr = !inStr; continue; }
+        if (inStr) continue;
+        if (c == '{' || c == '(' || c == '[') depth++;
+        else if (c == '}' || c == ')' || c == ']') depth--;
+    }
+    return depth;
+}
+
+// Classify a top-of-statement line by its first non-whitespace token. The
+// REPL routes definitions to the preamble, `x := ...` bindings to the
+// session state, statement-shaped lines (`print(x)`, `for ... { }`) get
+// executed as-is, and value-bearing expressions are wrapped in `print(...)`
+// so they display.
+enum class ReplKind { Definition, Binding, Statement, Expression, Empty };
+static ReplKind repl_classify(const std::string& src) {
+    // Skip leading whitespace.
+    size_t i = 0;
+    while (i < src.size() && (src[i] == ' ' || src[i] == '\t' || src[i] == '\n')) i++;
+    if (i >= src.size()) return ReplKind::Empty;
+
+    // Top-level declarations.
+    static const std::vector<std::string> defWords = {
+        "define ", "struct ", "enum ",   "use ",
+        "from ",   "type ",   "extern ", "interface ",
+        "extend ",
+    };
+    for (auto& w : defWords)
+        if (src.compare(i, w.size(), w) == 0) return ReplKind::Definition;
+
+    // Statement-shaped keywords: re-running their first invocation is fine.
+    static const std::vector<std::string> stmtWords = {
+        "if ", "while ", "for ", "match ", "try ", "throw ",
+        "return ", "break", "continue", "del ", "nonlocal ", "global ",
+        "print(", "printf(", "write(", "writeln(",
+    };
+    for (auto& w : stmtWords)
+        if (src.compare(i, w.size(), w) == 0) return ReplKind::Statement;
+
+    // Assignment of any kind — declaration (`:=`) or reassignment (`=`,
+    // `+=`, `-=`, …). All of them must persist in the session state so
+    // later lines see the updated value.
+    size_t eol = src.find('\n', i);
+    if (eol == std::string::npos) eol = src.size();
+    std::string firstLine = src.substr(i, eol - i);
+    if (firstLine.find(":=") != std::string::npos) return ReplKind::Binding;
+    if (firstLine.find("+=") != std::string::npos
+     || firstLine.find("-=") != std::string::npos
+     || firstLine.find("*=") != std::string::npos
+     || firstLine.find("/=") != std::string::npos
+     || firstLine.find("%=") != std::string::npos) return ReplKind::Binding;
+    // Plain `x = expr` (single `=`, not part of `==`, `=>`, `<=`, `>=`, `!=`, `:=`).
+    for (size_t j = 0; j + 1 < firstLine.size(); j++) {
+        if (firstLine[j] != '=') continue;
+        char nxt = firstLine[j + 1];
+        char prv = j > 0 ? firstLine[j - 1] : '\0';
+        if (nxt == '=' || nxt == '>') continue;
+        if (prv == '!' || prv == '<' || prv == '>' || prv == ':' || prv == '=') continue;
+        // Inside a string literal? cheap check — count quotes before this `=`.
+        size_t quotes = 0;
+        for (size_t k = 0; k < j; k++) if (firstLine[k] == '"') quotes++;
+        if (quotes % 2 == 1) continue;
+        return ReplKind::Binding;
+    }
+
+    return ReplKind::Expression;
+}
+
+// Drive one REPL turn: compose the program, write it, exec the compiler,
+// stream output back. Returns 0 on success (we keep going either way —
+// the REPL only exits on :quit or EOF).
+static int repl_run_program(const std::string& fullProgram, const fs::path& tmp) {
+    {
+        std::ofstream out(tmp);
+        out << fullProgram;
+    }
+    // Use the running quirk binary so we don't depend on PATH.
+    std::string cmd = self_binary() + " " + tmp.string() + " 2>&1";
+    FILE* p = popen(cmd.c_str(), "r");
+    if (!p) { log::err("repl: failed to spawn compiler"); return 1; }
+    char buf[4096];
+    while (size_t n = fread(buf, 1, sizeof(buf), p)) std::cout.write(buf, n);
+    int rc = pclose(p);
+    std::cout.flush();
+    return rc == 0 ? 0 : 1;
+}
+
+static int cmd_repl(const std::vector<std::string>& args) {
+    for (auto& a : args) {
+        if (a == "--help" || a == "-h") {
+            std::cout <<
+                "quirk repl\n"
+                "    Interactive Quirk shell. Type expressions to evaluate them;\n"
+                "    type definitions to add them to the session.\n"
+                "      :help / :h     show this message\n"
+                "      :quit / :q     exit (or Ctrl-D)\n"
+                "      :reset         clear the session\n"
+                "      :state         show the current session program\n";
+            return 0;
+        }
+    }
+
+    std::cout << log::bold("Quirk REPL") << " " << QUIRK_VERSION
+              << log::dim("  — :help for shortcuts, :quit to exit") << "\n";
+
+    fs::path tmp = fs::temp_directory_path() / ("quirk_repl_" + std::to_string(getpid()) + ".qk");
+    std::vector<std::string> preamble;     // top-level decls (define, struct, ...)
+    std::vector<std::string> state;        // `x := ...` lines (re-evaluated each turn)
+
+    std::string carry;                     // unfinished multi-line input
+    bool active = true;
+    while (active) {
+        // Prompt: `>>> ` fresh, `... ` continuation.
+        std::cout << (carry.empty() ? log::CYAN() : log::DIM()) << (carry.empty() ? ">>> " : "... ") << log::RESET();
+        std::cout.flush();
+        std::string line;
+        if (!std::getline(std::cin, line)) { std::cout << "\n"; break; }
+
+        // ── Meta commands (only at top level, not mid-multi-line) ──────
+        if (carry.empty() && !line.empty() && line[0] == ':') {
+            std::string cmd = line.substr(1);
+            // Strip trailing whitespace from the command.
+            while (!cmd.empty() && (cmd.back() == ' ' || cmd.back() == '\t' || cmd.back() == '\r'))
+                cmd.pop_back();
+            if (cmd == "quit" || cmd == "q") break;
+            if (cmd == "help" || cmd == "h") {
+                std::cout <<
+                    "  :quit / :q     exit the REPL\n"
+                    "  :reset         clear session preamble + state\n"
+                    "  :state         print the assembled program\n"
+                    "  :help / :h     this list\n";
+                continue;
+            }
+            if (cmd == "reset") {
+                preamble.clear(); state.clear();
+                log::note("session cleared");
+                continue;
+            }
+            if (cmd == "state") {
+                std::cout << log::dim("// preamble:\n");
+                for (auto& p : preamble) std::cout << p << "\n";
+                std::cout << log::dim("// state:\n");
+                for (auto& s : state) std::cout << s << "\n";
+                continue;
+            }
+            log::warn("unknown command ':" + cmd + "' — try :help");
+            continue;
+        }
+
+        // Accumulate multi-line input until braces balance.
+        carry += (carry.empty() ? "" : "\n") + line;
+        int depth = repl_brace_balance(carry);
+        if (depth > 0) continue;          // still inside an open block
+        if (depth < 0) { log::warn("unbalanced bracket — discarded"); carry.clear(); continue; }
+
+        // Empty line — drop and reprompt.
+        std::string toEval = std::move(carry);
+        carry.clear();
+        bool blank = true;
+        for (char c : toEval) if (c != ' ' && c != '\t' && c != '\n') { blank = false; break; }
+        if (blank) continue;
+
+        ReplKind kind = repl_classify(toEval);
+
+        // ── Compose the program for this turn ──────────────────────────
+        std::ostringstream program;
+        for (auto& p : preamble) program << p << "\n";
+        if (kind == ReplKind::Definition) {
+            program << toEval << "\n";
+            // Minimal main so the compiler has an entry point.
+            program << "define main() -> void {\n";
+            for (auto& s : state) program << "    " << s << "\n";
+            program << "}\n";
+        } else {
+            program << "define main() -> void {\n";
+            for (auto& s : state) program << "    " << s << "\n";
+            if (kind == ReplKind::Binding || kind == ReplKind::Statement) {
+                // Bindings + statement-shaped lines (print/if/for/...) run as-is.
+                program << "    " << toEval << "\n";
+            } else { // Expression — wrap in print() so the value shows up.
+                program << "    print(" << toEval << ")\n";
+            }
+            program << "}\n";
+        }
+
+        int rc = repl_run_program(program.str(), tmp);
+
+        // Only commit to session state if the run succeeded — keeps the
+        // session from accumulating broken lines.
+        if (rc == 0) {
+            if (kind == ReplKind::Definition) preamble.push_back(toEval);
+            else if (kind == ReplKind::Binding) state.push_back(toEval);
+        }
+    }
+
+    std::error_code ec; fs::remove(tmp, ec);
+    return 0;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// `quirk test` — discover and run *_test.qk files.
+//
+// Walks the given directory (or `./tests` by default) for files matching
+// `*_test.qk`, invokes `<self> run <file>` on each, and parses the test
+// framework's "N passed" / "N failed" summary out of stdout. A file is a
+// failure if it exited non-zero, or its summary reports any failures, or
+// it produced no summary at all (likely a crash or test file with no
+// `test.run_all(...)` call).
+//
+// Exit code: 0 if every file's summary is fully green, 1 otherwise.
+// ─────────────────────────────────────────────────────────────────────────
+
+struct TestFileResult {
+    std::string file;
+    int passed = 0;
+    int failed = 0;
+    int exitCode = 0;
+    bool sawSummary = false;
+    std::string tail;     // last lines of output for diagnostic display
+};
+
+// Run one test file: spawn `<self> run <file>` and parse the framework's
+// summary. The framework prints either "N passed" (success) or
+// "M failed, N passed (of T)" (failure). We scan stdout for both shapes
+// to support repeated runs (some test files invoke run_all more than once).
+static TestFileResult run_one_test_file(const fs::path& file) {
+    TestFileResult r;
+    r.file = file.string();
+    std::string cmd = "\"" + self_binary() + "\" run \"" + file.string() + "\" 2>&1";
+    FILE* pipe = popen(cmd.c_str(), "r");
+    if (!pipe) { r.failed = 1; r.exitCode = -1; return r; }
+    std::string out;
+    char buf[4096];
+    while (fgets(buf, sizeof(buf), pipe)) out += buf;
+    int rc = pclose(pipe);
+    r.exitCode = WIFEXITED(rc) ? WEXITSTATUS(rc) : -1;
+
+    // Parse every "N passed" and "M failed, N passed" line. Multiple
+    // summaries in one file are summed.
+    std::istringstream iss(out);
+    std::string line;
+    std::vector<std::string> lines;
+    while (std::getline(iss, line)) {
+        lines.push_back(line);
+
+        // Strip ANSI escapes so "\x1b[32m12 passed\x1b[0m" matches.
+        std::string stripped;
+        for (size_t i = 0; i < line.size(); i++) {
+            if (line[i] == '\x1b' && i + 1 < line.size() && line[i + 1] == '[') {
+                while (i < line.size() && line[i] != 'm') i++;
+                continue;
+            }
+            stripped += line[i];
+        }
+
+        // "M failed, N passed (of T)"
+        size_t fpos = stripped.find(" failed, ");
+        if (fpos != std::string::npos) {
+            try {
+                size_t mstart = fpos;
+                while (mstart > 0 && std::isdigit(static_cast<unsigned char>(stripped[mstart - 1]))) mstart--;
+                int f = std::stoi(stripped.substr(mstart, fpos - mstart));
+                size_t ppos = stripped.find(" passed", fpos);
+                if (ppos != std::string::npos) {
+                    size_t pstart = ppos;
+                    while (pstart > 0 && std::isdigit(static_cast<unsigned char>(stripped[pstart - 1]))) pstart--;
+                    int p = std::stoi(stripped.substr(pstart, ppos - pstart));
+                    r.failed += f;
+                    r.passed += p;
+                    r.sawSummary = true;
+                    continue;
+                }
+            } catch (...) {}
+        }
+
+        // "N passed" — bare success line, only if no leading "failed" word.
+        size_t ppos = stripped.find(" passed");
+        if (ppos != std::string::npos && stripped.find("failed") == std::string::npos) {
+            try {
+                size_t pstart = ppos;
+                while (pstart > 0 && std::isdigit(static_cast<unsigned char>(stripped[pstart - 1]))) pstart--;
+                if (pstart < ppos) {
+                    int p = std::stoi(stripped.substr(pstart, ppos - pstart));
+                    r.passed += p;
+                    r.sawSummary = true;
+                }
+            } catch (...) {}
+        }
+    }
+
+    // Keep the last ~15 lines for the tail diagnostic on failure.
+    size_t start = lines.size() > 15 ? lines.size() - 15 : 0;
+    for (size_t i = start; i < lines.size(); i++) r.tail += lines[i] + "\n";
+    return r;
+}
+
+static int cmd_test(const std::vector<std::string>& args) {
+    std::vector<std::string> roots;
+    bool verbose = false;
+    for (auto& a : args) {
+        if (a == "--help" || a == "-h") {
+            std::cout <<
+                "quirk test [-v] [<path>...]\n"
+                "    Discover *_test.qk files and run them with the test framework.\n"
+                "    Default path is ./tests if it exists, else the current directory.\n"
+                "    -v / --verbose   print each file's full output\n";
+            return 0;
+        }
+        if (a == "-v" || a == "--verbose") { verbose = true; continue; }
+        if (!a.empty() && a[0] == '-') {
+            log::err("test: unknown flag '" + a + "'");
+            return 1;
+        }
+        roots.push_back(a);
+    }
+
+    if (roots.empty()) {
+        std::error_code ec;
+        if (fs::is_directory("tests", ec)) roots.push_back("tests");
+        else                                roots.push_back(".");
+    }
+
+    // Collect *_test.qk files from each root (file paths pass through verbatim).
+    std::vector<fs::path> files;
+    for (auto& r : roots) {
+        std::error_code ec;
+        if (fs::is_regular_file(r, ec)) { files.emplace_back(r); continue; }
+        if (!fs::is_directory(r, ec)) {
+            log::err("test: not a file or directory: '" + r + "'");
+            return 1;
+        }
+        for (auto it = fs::recursive_directory_iterator(r, ec);
+             it != fs::recursive_directory_iterator() && !ec;
+             it.increment(ec)) {
+            const auto& e = *it;
+            std::string fn = e.path().filename().string();
+            if (e.is_directory(ec) && (fn == "packages" || fn == ".venv" ||
+                                       fn == ".git"     || fn == "node_modules")) {
+                it.disable_recursion_pending();
+                continue;
+            }
+            if (e.is_regular_file(ec)
+                && e.path().extension() == ".qk"
+                && fn.size() >= 8
+                && fn.compare(fn.size() - 8, 8, "_test.qk") == 0) {
+                files.push_back(e.path());
+            }
+        }
+    }
+    std::sort(files.begin(), files.end());
+
+    if (files.empty()) {
+        log::note("no *_test.qk files found");
+        return 0;
+    }
+
+    std::cout << log::bold("Running ") << files.size() << " test file(s)\n\n";
+
+    int totalPassed = 0, totalFailed = 0, filesOk = 0, filesFail = 0;
+    std::vector<TestFileResult> failures;
+    for (auto& f : files) {
+        // Print the in-progress marker only on a TTY; piped output would
+        // show both the "…" and final lines, which is noisy.
+        bool tty = log::stdout_is_tty();
+        if (tty) std::cout << log::dim("  …") << " " << f.string() << std::flush;
+        auto res = run_one_test_file(f);
+        totalPassed += res.passed;
+        totalFailed += res.failed;
+        bool fileGreen = res.sawSummary && res.failed == 0 && res.exitCode == 0;
+
+        // Erase the in-progress line so the final status glyph stands alone.
+        if (tty) std::cout << "\r\x1b[2K";
+        if (fileGreen) {
+            filesOk++;
+            std::cout << "  " << log::GREEN() << "✓" << log::RESET() << " "
+                      << f.string() << "  "
+                      << log::dim("(" + std::to_string(res.passed) + " passed)") << "\n";
+        } else {
+            filesFail++;
+            failures.push_back(res);
+            std::cout << "  " << log::RED() << "✗" << log::RESET() << " "
+                      << f.string();
+            if (res.sawSummary)
+                std::cout << "  " << log::dim("(" + std::to_string(res.failed)
+                                              + " failed, "
+                                              + std::to_string(res.passed)
+                                              + " passed)");
+            else if (res.exitCode != 0)
+                std::cout << "  " << log::dim("(crashed; exit " + std::to_string(res.exitCode) + ")");
+            else
+                std::cout << "  " << log::dim("(no summary line)");
+            std::cout << "\n";
+        }
+
+        if (verbose) {
+            std::cout << log::dim("─── output ───") << "\n" << res.tail
+                      << log::dim("──────────────") << "\n";
+        }
+    }
+
+    std::cout << "\n";
+    if (filesFail > 0) {
+        std::cout << log::bold("Failures:") << "\n";
+        for (auto& res : failures) {
+            std::cout << log::RED() << "  " << res.file << log::RESET() << "\n";
+            // Indent the captured tail.
+            std::istringstream iss(res.tail);
+            std::string line;
+            while (std::getline(iss, line)) std::cout << "      " << line << "\n";
+            std::cout << "\n";
+        }
+    }
+
+    std::cout << log::bold("Summary: ")
+              << log::GREEN() << filesOk << " ok" << log::RESET()
+              << ", "
+              << (filesFail > 0 ? log::RED() : log::DIM())
+              << filesFail << " failed" << log::RESET()
+              << log::dim("  · ")
+              << totalPassed << " passed / " << totalFailed << " failed (cases)\n";
+
+    return filesFail == 0 ? 0 : 1;
+}
+
 // `quirk pkg check` — validate ./quirk.toml and the package layout without
 // registering. Pure read-only diagnostic, safe to run any time.
 static int cmd_check(const std::vector<std::string>&) {
@@ -3965,6 +4417,17 @@ static std::string help_for(const std::string& cmdIn) {
                "      show <m>   list .qk files inside module <m>\n"
                "    The stdlib ships with the compiler; to upgrade it, upgrade\n"
                "    the compiler. See `quirk env` for stdlib path resolution.\n";
+    if (cmd == "repl")
+        return "quirk repl\n"
+               "    Start an interactive Quirk shell. Expressions are evaluated\n"
+               "    and printed; `x := ...` bindings persist across lines;\n"
+               "    `define`/`struct`/`use` declarations accumulate in the session.\n"
+               "    Multi-line input is detected via brace balance — keep typing\n"
+               "    until braces close. Meta commands:\n"
+               "      :quit / :q     exit\n"
+               "      :reset         wipe the session\n"
+               "      :state         print the assembled program\n"
+               "      :help / :h     this list\n";
     if (cmd == "fmt")
         return "quirk fmt [--check|--stdout] [file ...]\n"
                "    Reformat Quirk source to a canonical style: 4-space indents\n"
@@ -4097,6 +4560,7 @@ static void print_pm_help() {
         "  quirk env                                  print resolution context (warns on stale venv)\n"
         "  quirk stdlib                               introspect the bundled standard library\n"
         "  quirk fmt [--check] [file ...]             reformat source to canonical style\n"
+        "  quirk repl                                 interactive shell — try snippets, inspect values\n"
         "\n"
         "Packages (short forms shown; long forms work too — see `quirk pkg --help`):\n"
         "  quirk i, add <spec>                        install (alias of `pkg install`)\n"
@@ -4151,7 +4615,8 @@ static bool is_subcommand(const std::string& arg) {
            arg == "init" || arg == "version" || arg == "venv" ||
            arg == "run" || arg == "eval" || arg == "module" ||
            arg == "env" || arg == "new" || arg == "help" ||
-           arg == "script" || arg == "sync" || arg == "stdlib" || arg == "fmt";
+           arg == "script" || arg == "sync" || arg == "stdlib" || arg == "fmt" ||
+           arg == "repl" || arg == "test";
 }
 
 // Drop argv[1] (a verb) and shift everything left. argc decreases by 1.
@@ -4314,6 +4779,8 @@ static bool dispatch(int& argc, char** argv, int& outRc) {
     else if (verb == "script")       outRc = cmd_script(verbArgs);
     else if (verb == "sync")         outRc = cmd_sync(verbArgs);
     else if (verb == "fmt")          outRc = cmd_fmt(verbArgs);
+    else if (verb == "repl")         outRc = cmd_repl(verbArgs);
+    else if (verb == "test")         outRc = cmd_test(verbArgs);
     else if (verb == "stdlib")       outRc = cmd_stdlib(verbArgs);
     else if (verb == "help")         outRc = cmd_help(verbArgs);
     else { print_pm_help(); outRc = 1; }

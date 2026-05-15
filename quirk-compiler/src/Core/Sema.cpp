@@ -542,6 +542,34 @@ void Sema::checkStatement(Node *node)
     else if (dynamic_cast<ContinueNode*>(node)) { /* no-op */ }
 }
 
+// Walk an if-condition collecting (varName, typeName) pairs from `x is T`
+// checks joined by `and`. Pairs are applied as shadowed bindings in the
+// then-branch scope so member access / method lookup on `x` inside the
+// block resolves against `T`. We skip `or` joins (either side could hold),
+// and skip negations.
+static void collectNarrowings(Node* cond, std::vector<std::pair<std::string,std::string>>& out) {
+    if (!cond) return;
+    if (auto* bin = dynamic_cast<BinaryOpNode*>(cond)) {
+        if (bin->op == "and") {
+            collectNarrowings(bin->left.get(), out);
+            collectNarrowings(bin->right.get(), out);
+            return;
+        }
+        if (bin->op == "is") {
+            auto* lhs = dynamic_cast<LiteralNode*>(bin->left.get());
+            auto* rhs = dynamic_cast<LiteralNode*>(bin->right.get());
+            if (lhs && rhs && !lhs->value.empty() && !rhs->value.empty()) {
+                char c0 = lhs->value[0];
+                // LHS must look like an identifier, not a literal value.
+                if (!std::isdigit(static_cast<unsigned char>(c0)) && c0 != '"' && c0 != '\''
+                    && lhs->value != "true" && lhs->value != "false" && lhs->value != "null") {
+                    out.emplace_back(lhs->value, rhs->value);
+                }
+            }
+        }
+    }
+}
+
 void Sema::checkIf(IfNode *node)
 {
     lastNode = node;
@@ -550,6 +578,11 @@ void Sema::checkIf(IfNode *node)
         reportError("'if' condition must be 'Bool', got '" + condType + "'",
                     node->line, node->col, node->filePath);
     enterScope();
+    {
+        std::vector<std::pair<std::string,std::string>> narrowings;
+        collectNarrowings(node->condition.get(), narrowings);
+        for (auto& [var, type] : narrowings) defineVariable(var, type, false, false);
+    }
     for (auto &s : node->thenBranch)
         checkStatement(s.get());
     exitScope();
@@ -559,6 +592,11 @@ void Sema::checkIf(IfNode *node)
         if (elifType != "Bool" && elifType != "unknown")
             reportError("'elif' condition must be 'Bool'", node->line, node->col, node->filePath);
         enterScope();
+        {
+            std::vector<std::pair<std::string,std::string>> narrowings;
+            collectNarrowings(b.condition.get(), narrowings);
+            for (auto& [var, type] : narrowings) defineVariable(var, type, false, false);
+        }
         for (auto &s : b.body)
             checkStatement(s.get());
         exitScope();

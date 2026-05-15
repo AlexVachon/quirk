@@ -21,15 +21,15 @@ define test_string_match() -> void {
     lang := "Quirk"
     match lang {
         case "Python" => print("snake")
-        case "Quirk"  => print("quirky!")
-        case _        => print("unknown language")
+        case "Quirk" => print("quirky!")
+        case _ => print("unknown language")
     }
 }
 
 define test_bool_match() -> void {
     flag := true
     match flag {
-        case true  => print("yes")
+        case true => print("yes")
         case false => print("no")
     }
 }
@@ -37,9 +37,9 @@ define test_bool_match() -> void {
 define test_enum_match() -> void {
     c := Color.Green
     match c {
-        case Color.Red   => print("red")
+        case Color.Red => print("red")
         case Color.Green => print("green")
-        case Color.Blue  => print("blue")
+        case Color.Blue => print("blue")
     }
 }
 
@@ -57,8 +57,8 @@ define test_multi_value_arm() -> void {
     day := 6
     match day {
         case 1, 2, 3, 4, 5 => print("weekday")
-        case 6, 7           => print("weekend")
-        case _              => print("invalid day")
+        case 6, 7 => print("weekend")
+        case _ => print("invalid day")
     }
 }
 

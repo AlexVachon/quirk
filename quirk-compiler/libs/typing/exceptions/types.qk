@@ -41,7 +41,7 @@ struct ValueError : Exception {
 Raised when a list or string index is out of range.
 Inherits from ValueError.
 
-@note 
+@note
 - The runtime throws this automatically on invalid list access.
 - Negative indices are supported: -1 refers to the last element.
 
@@ -63,7 +63,7 @@ struct IndexError : ValueError {
 Raised when a map key does not exist.
 Inherits from ValueError.
 
-@note 
+@note
 - The runtime throws this automatically on missing key access.
 - Use map.has(key) to check before accessing if you want to avoid the exception.
 
@@ -191,7 +191,7 @@ struct ZeroDivisionError : Exception {
 }
 
 ---
-Raised when an assertion fails. 
+Raised when an assertion fails.
 Use this to enforce invariants or preconditions in your code.
 
 @note Prefer specific exception types (ValueError, NullError, etc.) in library code so callers can catch them precisely.

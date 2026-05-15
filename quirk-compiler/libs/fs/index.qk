@@ -146,9 +146,9 @@ define join(a: String, b: String) -> String {
     if b.length() == 0 { return a }
     last := a.substring(a.length() - 1, a.length())
     if last == "/" or last == "\\" {
-        return a + b
-    }
-    return a + "/" + b
+    return a + b
+}
+return a + "/" + b
 }
 
 ---
@@ -162,21 +162,21 @@ define basename(path: String) -> String {
     while end > 1 {
         last := path.substring(end - 1, end)
         if last != "/" and last != "\\" {
-            break
-        }
-        end = end - 1
+        break
     }
-    trimmed := path.substring(0, end)
-    // Find rightmost separator.
-    slash := trimmed.length() - 1
-    while slash >= 0 {
-        c := trimmed.substring(slash, slash + 1)
-        if c == "/" or c == "\\" {
-            return trimmed.substring(slash + 1, trimmed.length())
-        }
-        slash = slash - 1
-    }
-    return trimmed
+    end = end - 1
+}
+trimmed := path.substring(0, end)
+// Find rightmost separator.
+slash := trimmed.length() - 1
+while slash >= 0 {
+    c := trimmed.substring(slash, slash + 1)
+    if c == "/" or c == "\\" {
+    return trimmed.substring(slash + 1, trimmed.length())
+}
+slash = slash - 1
+}
+return trimmed
 }
 
 ---
@@ -188,20 +188,20 @@ define dirname(path: String) -> String {
     while end > 1 {
         last := path.substring(end - 1, end)
         if last != "/" and last != "\\" {
-            break
-        }
-        end = end - 1
+        break
     }
-    slash := end - 1
-    while slash >= 0 {
-        c := path.substring(slash, slash + 1)
-        if c == "/" or c == "\\" {
-            if slash == 0 { return path.substring(0, 1) }
-            return path.substring(0, slash)
-        }
-        slash = slash - 1
-    }
-    return ""
+    end = end - 1
+}
+slash := end - 1
+while slash >= 0 {
+    c := path.substring(slash, slash + 1)
+    if c == "/" or c == "\\" {
+    if slash == 0 { return path.substring(0, 1) }
+    return path.substring(0, slash)
+}
+slash = slash - 1
+}
+return ""
 }
 
 ---

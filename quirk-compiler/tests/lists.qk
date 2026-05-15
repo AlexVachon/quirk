@@ -12,15 +12,15 @@ define main() {
 
     // 2. Access & Setting
     print("Item at index 1: " + l[1])
-    
+
     l[1] := 99
     print("Modified at index 1: " + l[1])
-    
+
     print("New Content: " + l)
 
     // 3. Popping
     val := l.pop()
-    
+
     print("Popped value: " + type(val))
     print("Length after pop: " + l.length())
 
@@ -32,10 +32,10 @@ define main() {
 
     // 5. String List & Iteration
     print("\n--- String List Iteration ---")
-    names := ["Alice", "Bob", "Charlie"] 
-    
+    names := ["Alice", "Bob", "Charlie"]
+
     for name in names {
-        print("Item: " + name) 
+        print("Item: " + name)
     }
 
     new_names := [name.upper() for name in names]

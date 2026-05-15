@@ -93,7 +93,7 @@ define test_bare_throw() -> void {
         try {
             throw AssertionError("original message")
         } catch (e: AssertionError) {
-            throw   // bare rethrow
+            throw // bare rethrow
         }
     } catch (e: AssertionError) {
         msg = e.message
@@ -160,7 +160,7 @@ define test_index_error() -> void {
 // ============================================================
 
 define test_key_error() -> void {
-    m := {"x": 1, "y": 2}
+    m := { "x": 1, "y": 2}
 
     try {
         _ := m["missing"]
@@ -196,7 +196,7 @@ define test_inheritance_catch() -> void {
 
     // KeyError caught as ValueError
     try {
-        m := {"a": 1}
+        m := { "a": 1}
         _ := m["b"]
     } catch (e: ValueError) {
         pass("KeyError caught as ValueError: " + e.message)

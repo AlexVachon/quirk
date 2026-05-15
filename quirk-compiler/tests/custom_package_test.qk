@@ -13,7 +13,7 @@ define main() -> void {
         test.assert_eq(sbase, "hello-world-123")
     })
     fails := test.run_all([t1])
-    
+
     if fails > 0 {
         console.error("Tests failed for ${base} -> ${sbase}")
     } else {

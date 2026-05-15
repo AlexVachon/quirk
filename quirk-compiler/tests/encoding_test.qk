@@ -26,10 +26,10 @@ define main() {
     print("--- dumps (Map) ---")
     m := Map()
     m.put("name", "Alice")
-    m.put("age", "30")          // emitted as 30
-    m.put("active", "true")     // emitted as true
-    m.put("score", "98.6")       // emitted as 98.6
-    m.put("nickname", "null")   // emitted as null
+    m.put("age", "30") // emitted as 30
+    m.put("active", "true") // emitted as true
+    m.put("score", "98.6") // emitted as 98.6
+    m.put("nickname", "null") // emitted as null
     print(json.dumps(m))
     // {"name":"Alice","age":30,"active":true,"score":98.6,"nickname":null}
 
@@ -54,9 +54,9 @@ define main() {
 
     // --- dumps: plain String ---
     print("\n--- dumps (String) ---")
-    print(json.dumps("hello"))      // "hello"
-    print(json.dumps("42"))         // 42
-    print(json.dumps("true"))       // true
+    print(json.dumps("hello")) // "hello"
+    print(json.dumps("42")) // 42
+    print(json.dumps("true")) // true
     print(json.dumps("say \"hi\"")) // "say \"hi\""
 
 
@@ -64,9 +64,9 @@ define main() {
     print("\n--- loads ---")
     raw := "{\"product\":\"Quirk\",\"version\":\"1.0\",\"stable\":true}"
     data: Map = json.loads(raw)
-    print(data.get("product"))   // Quirk
-    print(data.get("version"))   // 1.0
-    print(data.get("stable"))    // true
+    print(data.get("product")) // Quirk
+    print(data.get("version")) // 1.0
+    print(data.get("stable")) // true
 
 
     // --- round-trip ---
@@ -93,9 +93,9 @@ define main() {
 
     with File("/tmp/config.json", "r") as f {
         loaded: Map = json.load(f)
-        print(loaded.get("host"))   // localhost
-        print(loaded.get("port"))   // 8080
-        print(loaded.get("debug"))  // true
+        print(loaded.get("host")) // localhost
+        print(loaded.get("port")) // 8080
+        print(loaded.get("debug")) // true
     }
 
 

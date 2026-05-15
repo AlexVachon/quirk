@@ -21,7 +21,7 @@ struct Animal {
     sound: String
 
     define __init(self, name: String, sound: String) -> void {
-        self.name  = name
+        self.name = name
         self.sound = sound
     }
 
@@ -172,42 +172,42 @@ define main() {
 
     // ── 1. User-defined parent ──────────────────
     d := Dog("Rex", "Labrador")
-    print(d.speak())            // Rex says Woof
-    print(d.describe())         // Animal: Rex (Labrador)
-    print(d.name)               // Rex
-    print(d.breed)              // Labrador
+    print(d.speak()) // Rex says Woof
+    print(d.describe()) // Animal: Rex (Labrador)
+    print(d.name) // Rex
+    print(d.breed) // Labrador
 
     // ── 2. Extern parent (String) ───────────────
     t := Tag("hello")
-    print(t.wrapped())          // <HELLO>
-    print(type(t))              // Tag
-    print(t.length)             // 5
+    print(t.wrapped()) // <HELLO>
+    print(type(t)) // Tag
+    print(t.length) // 5
 
     ps := PrefixedString("world", "msg")
-    print(ps.get())             // msg: WORLD
-    print(ps.length)            // 5
+    print(ps.get()) // msg: WORLD
+    print(ps.length) // 5
 
     // ── 3. Deep inheritance ─────────────────────
     ec := ElectricCar(200, "Tesla", 500)
-    print(ec.info())            // speed=200 brand=Tesla range=500km
-    print(ec.speed)             // 200
-    print(ec.brand)             // Tesla
-    print(ec.range_km)          // 500
+    print(ec.info()) // speed=200 brand=Tesla range=500km
+    print(ec.speed) // 200
+    print(ec.brand) // Tesla
+    print(ec.range_km) // 500
 
     // ── 4. Override + super ─────────────────────
     sq := Square("red", 4)
-    print(sq.area())            // 16
+    print(sq.area()) // 16
     // sq.label() calls Shape.label() (via super), which calls self.area() via
     // virtual dispatch → resolves to Square.area() (returns 16).
-    print(sq.label())           // Shape[red] area=16 side=4
-    print(sq.color)             // red
+    print(sq.label()) // Shape[red] area=16 side=4
+    print(sq.color) // red
 
     // ── 5. Exception subclass ───────────────────
     try {
         throw NetworkError("example.com", "connection refused")
     } catch (e: NetworkError) {
-        print(e.message)        // Cannot reach 'example.com': connection refused
-        print(e.type)           // NetworkError
+        print(e.message) // Cannot reach 'example.com': connection refused
+        print(e.type) // NetworkError
     }
 
     print("All super() tests passed")

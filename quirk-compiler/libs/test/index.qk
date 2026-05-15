@@ -87,7 +87,7 @@ Doubles where exact equality is fragile.
 ---
 define assert_approx(actual: Double, expected: Double, tolerance: Double = 0.0001, msg: String = "") -> void {
     diff := actual - expected
-    if diff < 0.0 { diff = -diff }
+    if diff < 0.0 { diff = - diff }
     if diff <= tolerance { return }
     throw AssertionError(_with_msg("assert_approx failed: |${actual} - ${expected}| = ${diff} > ${tolerance}", msg))
 }

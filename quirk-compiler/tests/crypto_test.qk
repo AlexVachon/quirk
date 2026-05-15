@@ -8,8 +8,8 @@ use console
 
 define main() -> void {
     // Hash reference values for the input "hello".
-    md5_hello    := "5d41402abc4b2a76b9719d911017c592"
-    sha1_hello   := "aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d"
+    md5_hello := "5d41402abc4b2a76b9719d911017c592"
+    sha1_hello := "aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d"
     sha256_hello := "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
 
     t1 := TestCase("md5('hello')", fn() {
@@ -23,8 +23,8 @@ define main() -> void {
     })
     t4 := TestCase("sha256('') is the empty-string hash", fn() {
         test.assert_eq(
-            crypto.sha256(""),
-            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        crypto.sha256(""),
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         )
     })
     t5 := TestCase("sha512 produces 128 hex chars", fn() {
@@ -34,8 +34,8 @@ define main() -> void {
     // HMAC-SHA256 reference: HMAC("key", "msg") = ...
     t6 := TestCase("hmac_sha256 deterministic", fn() {
         test.assert_eq(
-            crypto.hmac_sha256("key", "msg"),
-            "2d93cbc1be167bcb1637a4a23cbff01a7878f0c50ee833954ea5221bb1b8c628"
+        crypto.hmac_sha256("key", "msg"),
+        "2d93cbc1be167bcb1637a4a23cbff01a7878f0c50ee833954ea5221bb1b8c628"
         )
     })
     t7 := TestCase("hmac changes with the key", fn() {

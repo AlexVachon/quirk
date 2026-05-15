@@ -12,19 +12,19 @@ define main() -> void {
     // Bind each TestCase to a variable: the parser doesn't currently
     // accept multiple `TestCase(name, fn() { ... })` literals comma-
     // separated inside an inline list.
-    p_eq_int  := TestCase("assert_eq Int",      fn() { test.assert_eq(2 + 2, 4) })
-    p_eq_str  := TestCase("assert_eq String",   fn() { test.assert_eq("a" + "b", "ab") })
-    p_ne      := TestCase("assert_ne",          fn() { test.assert_ne(1, 2) })
-    p_true    := TestCase("assert_true",        fn() { test.assert_true(5 > 3) })
-    p_false   := TestCase("assert_false",       fn() { test.assert_false(5 < 3) })
-    p_approx  := TestCase("assert_approx",      fn() { test.assert_approx(0.1 + 0.2, 0.3, 0.0001) })
-    p_thr_any := TestCase("assert_throws any",  fn() {
+    p_eq_int := TestCase("assert_eq Int", fn() { test.assert_eq(2 + 2, 4) })
+    p_eq_str := TestCase("assert_eq String", fn() { test.assert_eq("a" + "b", "ab") })
+    p_ne := TestCase("assert_ne", fn() { test.assert_ne(1, 2) })
+    p_true := TestCase("assert_true", fn() { test.assert_true(5 > 3) })
+    p_false := TestCase("assert_false", fn() { test.assert_false(5 < 3) })
+    p_approx := TestCase("assert_approx", fn() { test.assert_approx(0.1 + 0.2, 0.3, 0.0001) })
+    p_thr_any := TestCase("assert_throws any", fn() {
         test.assert_throws(fn() { throw ValueError("oops") }, "")
     })
     p_thr_typ := TestCase("assert_throws typed", fn() {
         test.assert_throws(fn() { throw ValueError("oops") }, "ValueError")
     })
-    p_cont    := TestCase("assert_contains String", fn() {
+    p_cont := TestCase("assert_contains String", fn() {
         test.assert_contains("hello world", "world")
     })
 
@@ -43,22 +43,22 @@ define main() -> void {
     print("")
     print("--- negative cases (assertions throw on bad input) ---")
 
-    n_eq    := TestCase("assert_eq throws on mismatch", fn() {
+    n_eq := TestCase("assert_eq throws on mismatch", fn() {
         test.assert_throws(fn() { test.assert_eq(1, 2) }, "AssertionError")
     })
-    n_ne    := TestCase("assert_ne throws on equal", fn() {
+    n_ne := TestCase("assert_ne throws on equal", fn() {
         test.assert_throws(fn() { test.assert_ne(1, 1) }, "AssertionError")
     })
-    n_true  := TestCase("assert_true throws on false", fn() {
+    n_true := TestCase("assert_true throws on false", fn() {
         test.assert_throws(fn() { test.assert_true(false) }, "AssertionError")
     })
-    n_no    := TestCase("assert_throws fails when no exception", fn() {
+    n_no := TestCase("assert_throws fails when no exception", fn() {
         test.assert_throws(fn() { test.assert_throws(fn() { 1 + 1 }, "") }, "AssertionError")
     })
     n_wrong := TestCase("assert_throws fails on wrong type", fn() {
         test.assert_throws(
-            fn() { test.assert_throws(fn() { throw ValueError("v") }, "TypeError") },
-            "AssertionError"
+        fn() { test.assert_throws(fn() { throw ValueError("v") }, "TypeError") },
+        "AssertionError"
         )
     })
 
@@ -74,9 +74,9 @@ define main() -> void {
     print("")
     print("--- intentional failures (expect 2 reds + summary) ---")
 
-    f_pass := TestCase("passing test",          fn() { test.assert_eq(1, 1) })
-    f_fail := TestCase("intentional fail",      fn() { test.assert_eq(1, 2) })
-    f_oops := TestCase("intentional uncaught",  fn() { throw ValueError("boom") })
+    f_pass := TestCase("passing test", fn() { test.assert_eq(1, 1) })
+    f_fail := TestCase("intentional fail", fn() { test.assert_eq(1, 2) })
+    f_oops := TestCase("intentional uncaught", fn() { throw ValueError("boom") })
 
     fails3 := test.run_all([f_pass, f_fail, f_oops])
 

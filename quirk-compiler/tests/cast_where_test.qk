@@ -37,7 +37,7 @@ define main() -> void {
     print(divide(9, 3))
 
     try {
-        print(clamp_positive(5))   
+        print(clamp_positive(5))
     } catch (e: WhereConditionError) {
         print("The number must be positive - ${e}")
     }

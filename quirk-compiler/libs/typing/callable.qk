@@ -13,7 +13,7 @@ evens := [1, 2, 3, 4].filter(fn(x: Int) => x % 2 == 0)
 struct Callable {
     ---
     String representation of this callable.
-    @returns: 
+    @returns:
         String — always `"<Callable>"`
     ---
     extern define __str(self) -> String

@@ -70,7 +70,7 @@ define main() -> void {
         d0: Map = ds.get(0)
         d1: Map = ds.get(1)
         test.assert_eq(d0.get("name"), "Alice")
-        test.assert_eq(d0.get("age"),  "30")
+        test.assert_eq(d0.get("age"), "30")
         test.assert_eq(d1.get("name"), "Bob")
     })
 

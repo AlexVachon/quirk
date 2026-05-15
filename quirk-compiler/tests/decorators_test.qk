@@ -65,7 +65,7 @@ define call_counter(f: Callable) -> Callable {
     nonlocal count
     return fn(x: Int) -> Int => {
         count = count + 1
-        f(x)         // exercise the inner; discard its result
+        f(x) // exercise the inner; discard its result
         return count
     }
 }

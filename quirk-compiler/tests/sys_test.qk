@@ -3,7 +3,7 @@ use sys
 
 define main() {
     print("1. Writing to a file...")
-    
+
     with io.File("test_output.txt", "w") as f {
         f.write("Hello from Quirk!\n")
         f.write("This file was generated using the new io.file module.\n")
@@ -16,7 +16,7 @@ define main() {
         print(content)
         print("---------------------")
     }
-    
+
     print("3. Testing Standard Streams...")
     stderr := sys.stderr()
     stderr.write(">>> This is a direct write to the C stderr stream!\n")

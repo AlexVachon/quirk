@@ -113,11 +113,11 @@ define _emit_str(stream: File, color: String, msg: String) -> void {
 
 // ===== Output =====
 
-define log(...args: List) -> void   { _emit_args(stdout(), "",       args) }
-define info(...args: List) -> void  { _emit_args(stdout(), "cyan",   args) }
-define warn(...args: List) -> void  { _emit_args(stderr(), "yellow", args) }
-define error(...args: List) -> void { _emit_args(stderr(), "red",    args) }
-define debug(...args: List) -> void { _emit_args(stderr(), "gray",   args) }
+define log(...args: List) -> void { _emit_args(stdout(), "", args) }
+define info(...args: List) -> void { _emit_args(stdout(), "cyan", args) }
+define warn(...args: List) -> void { _emit_args(stderr(), "yellow", args) }
+define error(...args: List) -> void { _emit_args(stderr(), "red", args) }
+define debug(...args: List) -> void { _emit_args(stderr(), "gray", args) }
 
 ---
 Write `msg` to stdout WITHOUT a trailing newline. Available as both
@@ -377,13 +377,13 @@ define progress(current: Int, total: Int, label: String = "") -> void {
 
 // ===== Direct color helpers =====
 
-define green(msg: Any)  -> void { _emit_str(stdout(), "green",  "" + msg) }
-define red(msg: Any)    -> void { _emit_str(stdout(), "red",    "" + msg) }
+define green(msg: Any) -> void { _emit_str(stdout(), "green", "" + msg) }
+define red(msg: Any) -> void { _emit_str(stdout(), "red", "" + msg) }
 define yellow(msg: Any) -> void { _emit_str(stdout(), "yellow", "" + msg) }
-define cyan(msg: Any)   -> void { _emit_str(stdout(), "cyan",   "" + msg) }
-define blue(msg: Any)   -> void { _emit_str(stdout(), "blue",   "" + msg) }
-define gray(msg: Any)   -> void { _emit_str(stdout(), "gray",   "" + msg) }
-define bold(msg: Any)   -> void { _emit_str(stdout(), "bold",   "" + msg) }
+define cyan(msg: Any) -> void { _emit_str(stdout(), "cyan", "" + msg) }
+define blue(msg: Any) -> void { _emit_str(stdout(), "blue", "" + msg) }
+define gray(msg: Any) -> void { _emit_str(stdout(), "gray", "" + msg) }
+define bold(msg: Any) -> void { _emit_str(stdout(), "bold", "" + msg) }
 
 // ===== Interactive selection =====
 

@@ -96,28 +96,28 @@ Snapshot of a moment in time. Construct via `time.now()`, `time.from_unix(s)`,
 or `time.from_iso(s)` rather than calling `__init` directly.
 ---
 struct DateTime {
-    epoch: Int        // Unix seconds (negative for pre-1970)
+    epoch: Int // Unix seconds (negative for pre-1970)
     year: Int
-    month: Int        // 1-12
-    day: Int          // 1-31
-    hour: Int         // 0-23
-    minute: Int       // 0-59
-    second: Int       // 0-60
-    weekday: Int      // 0=Sunday
+    month: Int // 1-12
+    day: Int // 1-31
+    hour: Int // 0-23
+    minute: Int // 0-59
+    second: Int // 0-60
+    weekday: Int // 0=Sunday
     is_utc: Bool
 
     define __init(self, epoch: Int, utc: Bool) -> void {
         flag := 0
         if utc { flag = 1 }
-        self.epoch   = epoch
-        self.year    = year(epoch, flag)
-        self.month   = month(epoch, flag)
-        self.day     = day(epoch, flag)
-        self.hour    = hour(epoch, flag)
-        self.minute  = minute(epoch, flag)
-        self.second  = second(epoch, flag)
+        self.epoch = epoch
+        self.year = year(epoch, flag)
+        self.month = month(epoch, flag)
+        self.day = day(epoch, flag)
+        self.hour = hour(epoch, flag)
+        self.minute = minute(epoch, flag)
+        self.second = second(epoch, flag)
         self.weekday = weekday(epoch, flag)
-        self.is_utc  = utc
+        self.is_utc = utc
     }
 
     --- ISO-8601 representation. ---
@@ -146,8 +146,8 @@ struct DateTime {
     }
 
     define add_minutes(self, n: Int) -> DateTime { return self.add_seconds(n * 60) }
-    define add_hours(self, n: Int) -> DateTime   { return self.add_seconds(n * 3600) }
-    define add_days(self, n: Int) -> DateTime    { return self.add_seconds(n * 86400) }
+    define add_hours(self, n: Int) -> DateTime { return self.add_seconds(n * 3600) }
+    define add_days(self, n: Int) -> DateTime { return self.add_seconds(n * 86400) }
 
     --- `self - other` in seconds. Negative if `self` is earlier. ---
     define diff_seconds(self, other: DateTime) -> Int {
@@ -155,7 +155,7 @@ struct DateTime {
     }
 
     define is_before(self, other: DateTime) -> Bool { return self.epoch < other.epoch }
-    define is_after(self, other: DateTime) -> Bool  { return self.epoch > other.epoch }
+    define is_after(self, other: DateTime) -> Bool { return self.epoch > other.epoch }
 
     --- Default str: ISO-8601. ---
     define __str(self) -> String {

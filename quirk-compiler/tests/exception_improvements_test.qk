@@ -31,7 +31,7 @@ define test_finally_after_catch() -> void {
 }
 
 // ---- Test 3: bare throw re-raises from catch ----
-define test_rethrow() -> void{
+define test_rethrow() -> void {
     try {
         try {
             throw AppError("inner")

@@ -5,7 +5,7 @@ t: Tuple := (1, "hello", true)
 print(t)
 
 // Single-element tuple (trailing comma)
-s := (42,)
+s := (42, )
 print(s)
 
 // Empty tuple

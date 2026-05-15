@@ -48,13 +48,13 @@ use sys
 // ArgSpec describes one declared argument. The Parser keeps them in a List
 // so help output preserves declaration order.
 struct ArgSpec {
-    name: String        // canonical key (also the long flag name without "--")
-    short: String       // single-letter flag (or "")
+    name: String
+    short: String
     help: String
-    default_str: String // default value as String (used for flags too: "true"/"false")
-    is_flag: Bool       // true → boolean, accepts no value
-    is_positional: Bool // true → consumed in declaration order from leftover args
-    required: Bool      // true → parse() errors if absent
+    default_str: String
+    is_flag: Bool
+    is_positional: Bool
+    required: Bool
 
     define __init(self, name: String, short: String, help: String, default_str: String, is_flag: Bool, is_positional: Bool, required: Bool) -> void {
         self.name = name
@@ -100,7 +100,7 @@ struct Parser {
         self.specs.append(ArgSpec(long, short, help, "", false, false, true))
     }
 
-    // Find a spec by long name. Returns null if not found.
+    --- Find a spec by long name. Returns null if not found. ---
     define _find_long(self, long: String) -> ArgSpec {
         i := 0
         while i < self.specs.length() {
@@ -111,7 +111,7 @@ struct Parser {
         return null
     }
 
-    // Find a spec by short name. Returns null if not found.
+    --- Find a spec by short name. Returns null if not found. ---
     define _find_short(self, short: String) -> ArgSpec {
         if short.length() == 0 { return null }
         i := 0
@@ -128,9 +128,8 @@ struct Parser {
     or `-h` is seen.
     ---
     define print_help(self) -> void {
-        // Header
         line := "Usage: " + self.prog_name
-        // Add positional placeholders to usage line
+
         i := 0
         while i < self.specs.length() {
             s: ArgSpec = self.specs.get(i)
@@ -146,7 +145,6 @@ struct Parser {
             print(self.description)
         }
 
-        // Positionals section
         has_positional := false
         i = 0
         while i < self.specs.length() {
@@ -167,7 +165,6 @@ struct Parser {
             }
         }
 
-        // Options section
         print("")
         print("Options:")
         print("  -h, --help        show this help and exit")
@@ -322,13 +319,11 @@ struct Parser {
             i = i + 1
         }
 
-        // Check required args were provided
         i = 0
         while i < self.specs.length() {
             s: ArgSpec = self.specs.get(i)
             if s.required {
                 if s.is_positional {
-                    // Positional was filled iff its slot is < positional_idx
                     seen := 0
                     j := 0
                     my_slot := -1

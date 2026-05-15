@@ -1,4 +1,4 @@
-use sys 
+use sys
 
 struct ProcessError : Exception {
     define __init(self, process_name: String, message: String) -> void {

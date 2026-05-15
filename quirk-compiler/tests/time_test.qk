@@ -48,7 +48,7 @@ define main() -> void {
 
     print("=== from_unix ===")
     fixed := time.utc_from_unix(1577836800)
-    print("epoch 1577836800 = ${fixed.iso()}")  // 2020-01-01 UTC
+    print("epoch 1577836800 = ${fixed.iso()}") // 2020-01-01 UTC
 
     print("=== comparison ===")
     a := time.utc_make(2024, 1, 1, 0, 0, 0)

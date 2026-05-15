@@ -42,16 +42,16 @@ define main() {
 
     // ID Formatting
     id := "42"
-    print("ID: " + id.zfill(5))      // Output: ID: 00042
+    print("ID: " + id.zfill(5)) // Output: ID: 00042
 
     // Table Alignment
     col1 := "Name".ljust(10, " ")
     col2 := "Price".rjust(8, " ")
-    print(col1 + "|" + col2)         // Output: Name      |   Price
-    
+    print(col1 + "|" + col2) // Output: Name      |   Price
+
     val1 := "Apple".ljust(10, ".")
     val2 := "$1.50".rjust(8, ".")
-    print(val1 + "|" + val2)         // Output: Apple.....|...$1.50
+    print(val1 + "|" + val2) // Output: Apple.....|...$1.50
 
     // Readable checks
     if "Team".contains("ea") {
@@ -60,25 +60,25 @@ define main() {
 
     s_num := "123"
     s_pi := "3.14159"
-    
+
     // Explicitly converting strings to numbers
-    total := s_num.to_int() + 10     // 133
-    area := s_pi.to_float() * 2.0    // 6.28...
+    total := s_num.to_int() + 10 // 133
+    area := s_pi.to_float() * 2.0 // 6.28...
     print("true".to_bool().str()) // convert string -> boolean -> string
-    
+
     print("Parsed: ${total}, ${area}")
-    
+
     // 2. Fuzzy Matching
     word := "kitten"
     typo := "sitting"
     dist := word.distance(typo)
-    
+
     print("Edits needed to turn $word into ${typo}: ${dist}") // Output: 3
 
     // 3. Line Processing
     config := "name=Quirk\nversion=1.0\r\nstatus=active"
     lines := config.lines()
-    
+
     // Using your new 'format_list' implicitly via $lines
     print("Config lines: ${lines}")
 

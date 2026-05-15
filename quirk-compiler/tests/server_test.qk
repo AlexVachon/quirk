@@ -19,11 +19,11 @@ define main() -> void {
                 print("Received Request:\n ${req}")
 
                 response := "HTTP/1.1 200 OK\r\n" +
-                            "Content-Type: text/plain\r\n" +
-                            "Content-Length: 13\r\n" +
-                            "\r\n" +
-                            "Hello, World!"
-                
+                "Content-Type: text/plain\r\n" +
+                "Content-Length: 13\r\n" +
+                "\r\n" +
+                "Hello, World!"
+
                 client.send(response)
                 print("Response sent!")
             }

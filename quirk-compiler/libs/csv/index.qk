@@ -159,14 +159,16 @@ define parse_dicts(text: String, delim: String = ",") -> List {
 
 // ───────────────────────── Writing ─────────────────────────
 
-// Wraps `field` in quotes and doubles internal quotes IF it contains
-// the delimiter, a quote, or a newline. Otherwise returns it unchanged.
+---
+Wraps `field` in quotes and doubles internal quotes IF it contains
+the delimiter, a quote, or a newline. Otherwise returns it unchanged.
+---
 define _quote_if_needed(field: String, delim: String) -> String {
     needs := false
-    if field.contains(delim)  { needs = true }
-    if field.contains("\"")  { needs = true }
-    if field.contains("\n")   { needs = true }
-    if field.contains("\r")   { needs = true }
+    if field.contains(delim) { needs = true }
+    if field.contains("\"") { needs = true }
+    if field.contains("\n") { needs = true }
+    if field.contains("\r") { needs = true }
     if needs == false { return field }
     return "\"" + field.replace("\"", "\"\"") + "\""
 }

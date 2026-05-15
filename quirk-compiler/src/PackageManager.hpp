@@ -2560,6 +2560,312 @@ static int print_findings(const std::vector<CheckFinding>& fs) {
     return errors;
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// `quirk fmt` — code formatter. Mirrors the VS Code FormatterProvider so the
+// CLI and the editor produce identical output. Operates line-by-line with
+// awareness of:
+//   • brace depth → indentation (4 spaces / level)
+//   • string literals → preserved verbatim
+//   • `//` comments → preserved verbatim
+//   • `---` docstring blocks → contents untouched, only re-indented
+// And applies operator/separator spacing rules to non-string, non-comment
+// regions. The formatter is safe by design — it doesn't reorder, wrap, or
+// re-bracket; it only fixes whitespace.
+// ─────────────────────────────────────────────────────────────────────────
+
+// Apply the per-token spacing rules to a chunk of code (already stripped
+// of string literals and trailing comments). Used by fmt_one_line.
+static std::string fmt_apply_spacing(std::string text) {
+    static const std::regex reComma     (R"(,\s*)");
+    // Multi-char operators must come BEFORE the single-char ones so they
+    // win the alternation: compound assigns (`+=`, `-=`, `*=`, `/=`, `%=`)
+    // before `+`/`-`/`*`/`/`/`%`; `->` before `-`; `==`/`!=`/`<=`/`>=`
+    // before single-char comparison operators. Without these, `i += 1`
+    // becomes `i + = 1` — a syntax error.
+    static const std::regex reOps       (R"(\s*(:=|\+=|-=|\*=|/=|%=|->|==|!=|<=|>=|\+|-|\*|/)\s*)");
+    static const std::regex reColon     (R"(:(?!=)\s*)");
+    // Don't insert space inside an empty `{}` (Map literal). The lookahead
+    // `(?!\s*\})` only matches `{` when something other than `}` follows.
+    static const std::regex reBrace     (R"(\s*\{(?!\s*\})\s*)");
+    static const std::regex reDoubleSpc (R"( +)");
+    // Unary-minus fixup: when ` - <digit>` follows an operator, `(`, `[`,
+    // or `,`, the `-` is the sign of a numeric literal — drop the space
+    // between `-` and the digit. So `x = - 5` → `x = -5`, `foo(-1, -2)`
+    // stays unmangled. Binary uses (`a - b`) aren't touched because their
+    // left context is a word character, not an operator.
+    static const std::regex reUnaryMinus(
+        R"(([\(\[,=+\-*/%<>!]|:=|->|==|!=|<=|>=) - (\d))");
+    // After unary fixup, `( -5` becomes `( -5`. Collapse the leftover space
+    // after `(`/`[` so we get `(-5)` / `[-1, -2]` — canonical form.
+    static const std::regex reOpenUnary(R"(([\(\[]) -(\d))");
+    text = std::regex_replace(text, reComma,  ", ");
+    text = std::regex_replace(text, reOps,    " $1 ");
+    text = std::regex_replace(text, reColon,  ": ");
+    text = std::regex_replace(text, reBrace,  " { ");
+    text = std::regex_replace(text, reDoubleSpc, " ");
+    text = std::regex_replace(text, reUnaryMinus, "$1 -$2");
+    text = std::regex_replace(text, reOpenUnary,  "$1-$2");
+    // Deliberately *don't* trim trailing whitespace here. This function is
+    // called whenever we flush a code segment, including right before a
+    // string literal — e.g. `: ` flushed before `"Alice"` must keep its
+    // trailing space, otherwise `{ "name": "Alice" }` becomes `..":"Alice".
+    // Whole-line trimming happens in fmt_source (top of the per-line loop).
+    return text;
+}
+
+// Format the spacing of a single line. Walks character-by-character so we
+// can identify string literals and comments without touching them; spacing
+// rules run only on the "code" segments between strings/comments.
+static std::string fmt_one_line(const std::string& line) {
+    std::string out;
+    std::string buffer;
+    bool inString = false;
+    for (size_t i = 0; i < line.size(); i++) {
+        char c = line[i];
+        // Toggle string state on unescaped `"`.
+        if (c == '"' && (i == 0 || line[i - 1] != '\\')) {
+            if (!inString) {
+                out += fmt_apply_spacing(buffer);
+                buffer.clear();
+                inString = true;
+                out += '"';
+                continue;
+            } else {
+                out += buffer + '"';
+                buffer.clear();
+                inString = false;
+                continue;
+            }
+        }
+        if (inString) {
+            buffer += c;
+        } else {
+            // Stop formatting at a line comment — emit it verbatim.
+            if (c == '/' && i + 1 < line.size() && line[i + 1] == '/') {
+                out += fmt_apply_spacing(buffer);
+                if (!out.empty() && out.back() != ' ') out += ' ';
+                out += line.substr(i);
+                buffer.clear();
+                return out;
+            }
+            buffer += c;
+        }
+    }
+    if (!buffer.empty()) out += inString ? buffer : fmt_apply_spacing(buffer);
+    // Final whole-line trim: the ` { ` spacing rule appends a trailing space
+    // when `{` ends a line (block opening). Strip leading/trailing whitespace
+    // on the assembled formatted line; indentation is reapplied by the caller.
+    size_t s = 0, e = out.size();
+    while (s < e && (out[s] == ' ' || out[s] == '\t')) s++;
+    while (e > s && (out[e - 1] == ' ' || out[e - 1] == '\t')) e--;
+    return out.substr(s, e - s);
+}
+
+// Net brace-depth change for this line — `+1` per `{`/`[` outside a string
+// or comment, `-1` per `}`/`]`. Used to track indentation for the NEXT line.
+static int fmt_indent_delta(const std::string& line) {
+    int change = 0;
+    bool inString = false;
+    for (size_t i = 0; i < line.size(); i++) {
+        char c = line[i];
+        if (!inString && c == '/' && i + 1 < line.size() && line[i + 1] == '/') break;
+        if (c == '"' && (i == 0 || line[i - 1] != '\\')) { inString = !inString; continue; }
+        if (inString) continue;
+        if (c == '{' || c == '[') change++;
+        else if (c == '}' || c == ']') change--;
+    }
+    return change;
+}
+
+// Reformat an entire source string. Returns the canonical form.
+static std::string fmt_source(const std::string& src) {
+    std::vector<std::string> lines;
+    {
+        std::string cur;
+        for (char c : src) {
+            if (c == '\n') { lines.push_back(std::move(cur)); cur.clear(); }
+            else if (c != '\r') cur += c;
+        }
+        if (!cur.empty()) lines.push_back(std::move(cur));
+    }
+
+    int indent = 0;
+    bool inDocBlock = false;
+    std::string out;
+    out.reserve(src.size());
+
+    for (auto& raw : lines) {
+        // Trim trailing whitespace before any analysis.
+        std::string line = raw;
+        while (!line.empty() && (line.back() == ' ' || line.back() == '\t')) line.pop_back();
+
+        // Trimmed view for keyword detection.
+        size_t s = 0;
+        while (s < line.size() && (line[s] == ' ' || line[s] == '\t')) s++;
+        std::string trimmed = line.substr(s);
+
+        if (trimmed.empty()) { out += '\n'; continue; }
+
+        // Toggle docstring block state on bare `---`.
+        if (trimmed == "---") {
+            inDocBlock = !inDocBlock;
+            for (int k = 0; k < indent * 4; k++) out += ' ';
+            out += "---\n";
+            continue;
+        }
+
+        // Inline single-line docstring `--- text ---` — preserve the whole
+        // line verbatim modulo indentation. Otherwise the `-` operator-
+        // spacing rule would mangle the leading/trailing `---` into ` - - -`.
+        // Requires `length >= 7` so we don't match `------` lines (still a
+        // bare separator) and the start/end markers can't overlap.
+        if (trimmed.size() >= 7
+            && trimmed.compare(0, 3, "---") == 0
+            && trimmed.compare(trimmed.size() - 3, 3, "---") == 0) {
+            for (int k = 0; k < indent * 4; k++) out += ' ';
+            out += trimmed;
+            out += '\n';
+            continue;
+        }
+
+        // Inside a docstring: preserve the line verbatim modulo trailing
+        // whitespace (already trimmed). Don't re-indent docstring content.
+        if (inDocBlock) { out += line; out += '\n'; continue; }
+
+        // Lines opening with `}`/`]`/`else`/`elif` dedent themselves first.
+        int currentIndent = indent;
+        if (!trimmed.empty()
+            && (trimmed[0] == '}' || trimmed[0] == ']'
+                || trimmed.rfind("else", 0) == 0
+                || trimmed.rfind("elif", 0) == 0))
+            currentIndent = std::max(0, currentIndent - 1);
+
+        std::string formatted = fmt_one_line(trimmed);
+
+        for (int k = 0; k < currentIndent * 4; k++) out += ' ';
+        out += formatted;
+        out += '\n';
+
+        indent += fmt_indent_delta(formatted);
+        if (indent < 0) indent = 0;
+    }
+
+    // Ensure exactly one trailing newline — but leave a fully-empty file
+    // alone (don't inject a newline into a 0-byte file).
+    while (out.size() >= 2 && out[out.size() - 1] == '\n' && out[out.size() - 2] == '\n')
+        out.pop_back();
+    if (!out.empty() && out.back() != '\n') out += '\n';
+    return out;
+}
+
+// `quirk fmt [--check|--stdout] <file>...`
+//   no flag   → format each file in place (no-op if already formatted)
+//   --check   → exit 1 if any file would change (prints names); useful in CI
+//   --stdout  → print formatted output to stdout, don't write back
+static int cmd_fmt(const std::vector<std::string>& args) {
+    bool checkOnly = false;
+    bool toStdout  = false;
+    std::vector<std::string> files;
+    for (auto& a : args) {
+        if (a == "--check")       checkOnly = true;
+        else if (a == "--stdout") toStdout  = true;
+        else if (a == "--help" || a == "-h") {
+            std::cout <<
+                "quirk fmt [--check|--stdout] <file>...\n"
+                "    Reformat Quirk source files to a canonical style.\n"
+                "    --check    exit 1 if any file would change, list them\n"
+                "    --stdout   print formatted output, don't modify files\n"
+                "    With no files, formats every .qk under the current directory.\n";
+            return 0;
+        }
+        else if (a[0] == '-') {
+            log::err("fmt: unknown flag '" + a + "'");
+            return 1;
+        }
+        else files.push_back(a);
+    }
+
+    // Walk a directory tree for .qk files, skipping the obvious noise dirs.
+    // Used both for `quirk fmt` with no args (root = ".") and for directory
+    // arguments like `quirk fmt libs/`.
+    auto collectQkFiles = [](const fs::path& root, std::vector<std::string>& out) {
+        std::error_code ec;
+        for (auto it = fs::recursive_directory_iterator(root, ec);
+             it != fs::recursive_directory_iterator() && !ec;
+             it.increment(ec)) {
+            const auto& e = *it;
+            std::string fn = e.path().filename().string();
+            if (e.is_directory(ec) && (fn == "packages" || fn == ".venv" ||
+                                       fn == ".git"     || fn == "node_modules")) {
+                it.disable_recursion_pending();
+                continue;
+            }
+            if (e.is_regular_file(ec) && e.path().extension() == ".qk")
+                out.push_back(e.path().string());
+        }
+    };
+
+    // Expand any directory arguments into their contained .qk files.
+    // `quirk fmt libs/` now does the obvious thing instead of trying to
+    // write to a directory.
+    std::vector<std::string> expanded;
+    for (auto& f : files) {
+        std::error_code ec;
+        if (fs::is_directory(f, ec)) collectQkFiles(f, expanded);
+        else                          expanded.push_back(f);
+    }
+    files = std::move(expanded);
+
+    // No files (and no args) → walk cwd.
+    if (files.empty()) {
+        if (args.empty() || (args.size() == 1 && (args[0] == "--check" || args[0] == "--stdout")))
+            collectQkFiles(".", files);
+    }
+
+    if (files.empty()) {
+        log::note("no files to format");
+        return 0;
+    }
+
+    int wouldChange = 0;
+    int changed     = 0;
+    for (auto& f : files) {
+        std::ifstream in(f);
+        if (!in) { log::err("cannot read " + f); return 1; }
+        std::stringstream buf; buf << in.rdbuf();
+        std::string orig = buf.str();
+        std::string out  = fmt_source(orig);
+
+        if (toStdout) { std::cout << out; continue; }
+        if (out == orig) continue;
+
+        if (checkOnly) {
+            std::cout << "would format: " << f << "\n";
+            wouldChange++;
+            continue;
+        }
+        std::ofstream wf(f);
+        if (!wf) { log::err("cannot write " + f); return 1; }
+        wf << out;
+        changed++;
+        log::ok(f);
+    }
+
+    if (checkOnly) {
+        if (wouldChange > 0) {
+            std::cerr << wouldChange << " file(s) would be reformatted.\n";
+            return 1;
+        }
+        log::note("all files already formatted");
+        return 0;
+    }
+    if (!toStdout) {
+        if (changed == 0) log::note("all files already formatted");
+        else              log::step("Formatted", std::to_string(changed) + " file(s)");
+    }
+    return 0;
+}
+
 // `quirk pkg check` — validate ./quirk.toml and the package layout without
 // registering. Pure read-only diagnostic, safe to run any time.
 static int cmd_check(const std::vector<std::string>&) {
@@ -3659,6 +3965,16 @@ static std::string help_for(const std::string& cmdIn) {
                "      show <m>   list .qk files inside module <m>\n"
                "    The stdlib ships with the compiler; to upgrade it, upgrade\n"
                "    the compiler. See `quirk env` for stdlib path resolution.\n";
+    if (cmd == "fmt")
+        return "quirk fmt [--check|--stdout] [file ...]\n"
+               "    Reformat Quirk source to a canonical style: 4-space indents\n"
+               "    tracked from brace depth, single space around binary operators,\n"
+               "    `, ` after commas, one trailing newline, no trailing whitespace.\n"
+               "    String literals and `//` comments are preserved verbatim.\n"
+               "    With no files, formats every .qk under the current directory.\n"
+               "      --check    exit 1 if any file would change, list them (CI)\n"
+               "      --stdout   print formatted output, don't modify files\n"
+               "    Same rules as the VS Code formatter — CLI and editor agree.\n";
     if (cmd == "cache")
         return "quirk pkg cache list [<pkg>]\n"
                "    List versions cached at ~/.quirk/cache/ (cross-project).\n"
@@ -3780,6 +4096,7 @@ static void print_pm_help() {
         "  quirk venv <path>                          create a venv (subcmds: new|list|info|repair)\n"
         "  quirk env                                  print resolution context (warns on stale venv)\n"
         "  quirk stdlib                               introspect the bundled standard library\n"
+        "  quirk fmt [--check] [file ...]             reformat source to canonical style\n"
         "\n"
         "Packages (short forms shown; long forms work too — see `quirk pkg --help`):\n"
         "  quirk i, add <spec>                        install (alias of `pkg install`)\n"
@@ -3834,7 +4151,7 @@ static bool is_subcommand(const std::string& arg) {
            arg == "init" || arg == "version" || arg == "venv" ||
            arg == "run" || arg == "eval" || arg == "module" ||
            arg == "env" || arg == "new" || arg == "help" ||
-           arg == "script" || arg == "sync" || arg == "stdlib";
+           arg == "script" || arg == "sync" || arg == "stdlib" || arg == "fmt";
 }
 
 // Drop argv[1] (a verb) and shift everything left. argc decreases by 1.
@@ -3996,6 +4313,7 @@ static bool dispatch(int& argc, char** argv, int& outRc) {
     else if (verb == "audit")        outRc = cmd_audit(verbArgs);
     else if (verb == "script")       outRc = cmd_script(verbArgs);
     else if (verb == "sync")         outRc = cmd_sync(verbArgs);
+    else if (verb == "fmt")          outRc = cmd_fmt(verbArgs);
     else if (verb == "stdlib")       outRc = cmd_stdlib(verbArgs);
     else if (verb == "help")         outRc = cmd_help(verbArgs);
     else { print_pm_help(); outRc = 1; }

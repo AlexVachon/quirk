@@ -30,13 +30,13 @@ from math.vectors use { Vector2, Vector3 }
 // All trig functions take and return radians (use `math.tau / 360` for degrees).
 
 --- Sine of `x` (in radians). ---
-extern define sin(x: Double)  -> Double
+extern define sin(x: Double) -> Double
 
 --- Cosine of `x` (in radians). ---
-extern define cos(x: Double)  -> Double
+extern define cos(x: Double) -> Double
 
 --- Tangent of `x` (in radians). Undefined at `pi/2 + k*pi`. ---
-extern define tan(x: Double)  -> Double
+extern define tan(x: Double) -> Double
 
 --- Arc sine — inverse of `sin`. Returns radians in `[-pi/2, pi/2]`. NaN if `|x| > 1`. ---
 extern define asin(x: Double) -> Double
@@ -66,13 +66,13 @@ extern define tanh(x: Double) -> Double
 // ===== Exponential / logarithmic =====
 
 --- `e ** x`. ---
-extern define exp(x: Double)   -> Double
+extern define exp(x: Double) -> Double
 
 --- Natural logarithm (base e). NaN if `x < 0`, `-inf` at 0. ---
-extern define log(x: Double)   -> Double
+extern define log(x: Double) -> Double
 
 --- Base-2 logarithm. ---
-extern define log2(x: Double)  -> Double
+extern define log2(x: Double) -> Double
 
 --- Base-10 logarithm. ---
 extern define log10(x: Double) -> Double
@@ -97,7 +97,7 @@ extern define cbrt(x: Double) -> Double
 extern define floor(x: Double) -> Double
 
 --- Smallest integer ≥ x, returned as Double. `ceil(2.1) == 3.0`. ---
-extern define ceil(x: Double)  -> Double
+extern define ceil(x: Double) -> Double
 
 --- Round to nearest integer (half-away-from-zero). `round(2.5) == 3.0`. ---
 extern define round(x: Double) -> Double
@@ -111,7 +111,7 @@ extern define trunc(x: Double) -> Double
 Floating-point remainder of `a / b` with the sign of `a`.
 @example math.fmod(10.0, 3.0)  // 1.0
 ---
-extern define fmod(a: Double, b: Double)  -> Double
+extern define fmod(a: Double, b: Double) -> Double
 
 ---
 Euclidean distance from origin: `sqrt(x*x + y*y)` without intermediate overflow.
@@ -123,16 +123,16 @@ extern define hypot(x: Double, y: Double) -> Double
 // arithmetic generics yet. Use `abs_f` / `sign_f` for Doubles.
 
 --- Absolute value of an Int. Use `abs_f` for Doubles. ---
-extern define abs(x: Int)         -> Int
+extern define abs(x: Int) -> Int
 
 --- Absolute value of a Double. (Wrapped by `abs_f` for naming symmetry.) ---
-extern define fabs(x: Double)     -> Double
+extern define fabs(x: Double) -> Double
 
 --- Signum of an Int: -1 (negative), 0, or +1 (positive). Wrapped by `sign_i`. ---
-extern define sign_int(x: Int)    -> Int
+extern define sign_int(x: Int) -> Int
 
 --- Signum of a Double: -1.0, 0.0, or +1.0. Returns 0 for NaN. ---
-extern define sign(x: Double)     -> Double
+extern define sign(x: Double) -> Double
 
 ---
 Absolute value of a Double. (`abs` is the Int version.)
@@ -147,13 +147,13 @@ define sign_i(x: Int) -> Int { return sign_int(x) }
 // ===== Predicates =====
 
 --- True if `x` is NaN (Not-a-Number). ---
-extern define is_nan(x: Double)    -> Bool
+extern define is_nan(x: Double) -> Bool
 
 --- True if `x` is finite (not `inf`, `-inf`, or NaN). ---
 extern define is_finite(x: Double) -> Bool
 
 --- True if `x` is `+inf` or `-inf`. ---
-extern define is_inf(x: Double)    -> Bool
+extern define is_inf(x: Double) -> Bool
 
 // ===== Constants — exposed as 0-arg functions because Quirk doesn't yet
 //        support module-level value declarations from extern. =====

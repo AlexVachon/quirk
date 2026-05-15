@@ -5,7 +5,7 @@ use math
 
 define approx(a: Double, b: Double, tol: Double) -> Bool {
     d := a - b
-    if d < 0.0 { d = -d }
+    if d < 0.0 { d = - d }
     return d < tol
 }
 

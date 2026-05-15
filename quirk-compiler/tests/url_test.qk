@@ -29,11 +29,11 @@ define main() -> void {
     // ───── parse: full URL ─────
     t7 := TestCase("parse full URL with all components", fn() {
         u := url.parse("https://api.example.com:8443/v1/users?id=42#bio")
-        test.assert_eq(u.scheme,   "https")
-        test.assert_eq(u.host,     "api.example.com")
-        test.assert_eq(u.port,     8443)
-        test.assert_eq(u.path,     "/v1/users")
-        test.assert_eq(u.query,    "id=42")
+        test.assert_eq(u.scheme, "https")
+        test.assert_eq(u.host, "api.example.com")
+        test.assert_eq(u.port, 8443)
+        test.assert_eq(u.path, "/v1/users")
+        test.assert_eq(u.query, "id=42")
         test.assert_eq(u.fragment, "bio")
     })
     t8 := TestCase("parse URL without port", fn() {
@@ -49,17 +49,17 @@ define main() -> void {
     })
     t10 := TestCase("parse URL with query but no fragment", fn() {
         u := url.parse("http://x.com/a?b=c")
-        test.assert_eq(u.query,    "b=c")
+        test.assert_eq(u.query, "b=c")
         test.assert_eq(u.fragment, "")
     })
     t11 := TestCase("parse URL with fragment but no query", fn() {
         u := url.parse("http://x.com/a#top")
-        test.assert_eq(u.query,    "")
+        test.assert_eq(u.query, "")
         test.assert_eq(u.fragment, "top")
     })
     t12 := TestCase("parse URL with multiple ? in fragment is ok", fn() {
         u := url.parse("http://x.com/a?q=1#sec?nested")
-        test.assert_eq(u.query,    "q=1")
+        test.assert_eq(u.query, "q=1")
         test.assert_eq(u.fragment, "sec?nested")
     })
 
@@ -77,12 +77,12 @@ define main() -> void {
     t15 := TestCase("parse_query decodes percent-escapes", fn() {
         q := url.parse_query("name=Alice%20Smith&age=30")
         test.assert_eq(q.get("name"), "Alice Smith")
-        test.assert_eq(q.get("age"),  "30")
+        test.assert_eq(q.get("age"), "30")
     })
     t16 := TestCase("parse_query handles bare key (no =)", fn() {
         q := url.parse_query("flag&n=1")
         test.assert_eq(q.get("flag"), "")
-        test.assert_eq(q.get("n"),    "1")
+        test.assert_eq(q.get("n"), "1")
     })
     t17 := TestCase("parse_query strips leading ?", fn() {
         q := url.parse_query("?a=1")

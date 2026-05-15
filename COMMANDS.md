@@ -13,6 +13,7 @@ The `quirk` binary is both the compiler/runner and the package manager. This pag
 | [`quirk init`](#quirk-init) | — | Write a `quirk.toml` in the current dir |
 | [`quirk venv <name>`](#quirk-venv) | — | Create an isolated environment |
 | [`quirk env`](#quirk-env) | — | Show the active resolution context |
+| [`quirk fmt [files]`](#quirk-fmt) | `--check`, `--stdout` | Reformat source files to canonical style |
 | [`quirk i <spec>`](#quirk-install) | `quirk add`, `install`, `pkg install` | Install dependencies |
 | [`quirk up [pkg ...]`](#quirk-upgrade) | `upgrade`, `pkg upgrade` | Bump installed versions |
 | [`quirk rm <pkg>`](#quirk-remove) | `un`, `uninstall`, `remove`, `pkg remove` | Uninstall a package or one version |
@@ -177,6 +178,39 @@ install dir:     /home/alex/proj/.venv/lib/quirk/packages
 stdlib:          /usr/local/lib/quirk
 user-global:     /home/alex/.quirk/packages
 ```
+
+---
+
+### `quirk fmt`
+
+Synopsis: `quirk fmt [--check|--stdout] [<file> ...]`
+
+Reformat Quirk source files to a canonical style. Operates in place by default; with no files, walks the current directory and formats every `.qk` (skipping `packages/`, `.venv/`, `.git/`).
+
+The formatter applies these rules:
+
+- **Indentation**: 4 spaces per level, derived from `{` / `[` brace depth (strings and comments are ignored when counting).
+- **Operator spacing**: single space around `:=`, `->`, `==`, `!=`, `<=`, `>=`, `+`, `-`, `*`, `/`. One space after `:` (but not before, and not for `:=`).
+- **Separator spacing**: one space after `,`, none before.
+- **Brace spacing**: one space before `{` (and around, when on the same line).
+- **Trailing whitespace** is stripped; the file ends with exactly one newline.
+- **Docstrings** (`---` blocks) are re-indented but their contents are preserved verbatim.
+- **String literals** and `//` comments are never touched.
+
+Safe by design: the formatter only changes whitespace. It never reorders code, wraps long lines, or rebrackets expressions. Same rules as the VS Code formatter, so the CLI and editor produce identical output.
+
+Flags:
+- `--check`: don't modify files; exit `1` if any file would change, list them. Useful in CI.
+- `--stdout`: print formatted output instead of writing back.
+
+```bash
+quirk fmt                            # format every .qk under cwd
+quirk fmt src/index.qk               # format one file (in place)
+quirk fmt --check tests/             # CI gate — fails on un-formatted code
+quirk fmt --stdout messy.qk | less   # preview without writing
+```
+
+`quirk fmt` is idempotent: running it on already-formatted code is a no-op.
 
 ---
 

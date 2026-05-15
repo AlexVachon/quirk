@@ -4,18 +4,39 @@ import * as path from 'path';
 import { resolveQuirkHome } from './ImportProvider';
 
 const FILE_CACHE_TTL_MS = 5000;
+const EXISTS_CACHE_TTL_MS = 2000;
 
 interface CachedFile {
     content: string;
     ts: number;
 }
 
+interface CachedExists {
+    exists: boolean;
+    ts: number;
+}
+
 export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
     private fileCache = new Map<string, CachedFile>();
+    // Path-existence cache. `resolvePath` and `resolveImportPathFromAlias`
+    // call fs.existsSync up to ~5×N times per import (where N is the number
+    // of search roots), and each completion request can issue several
+    // resolves. Cache for 2s — short enough to pick up genuine filesystem
+    // changes, long enough to absorb a burst of keystroke-driven calls.
+    private existsCache = new Map<string, CachedExists>();
     private searchRootsCache: string[] | null = null;
     private searchRootsCacheKey = '';
     private stdlibModulesCache: Array<{ alias: string; modulePath: string }> | null = null;
     private stdlibModulesCacheKey = '';
+
+    private fileExists(filePath: string): boolean {
+        const now = Date.now();
+        const cached = this.existsCache.get(filePath);
+        if (cached && now - cached.ts < EXISTS_CACHE_TTL_MS) return cached.exists;
+        const exists = fs.existsSync(filePath);
+        this.existsCache.set(filePath, { exists, ts: now });
+        return exists;
+    }
 
     private readFile(filePath: string): string | null {
         const now = Date.now();
@@ -442,7 +463,7 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
         variableName: string
     ): string | null {
         const textBeforeCursor = document.getText(new vscode.Range(new vscode.Position(0, 0), position));
-        const lines = textBeforeCursor.split(/\r?\n/).reverse();
+        const lines = textBeforeCursor.split(/\r?\n/);
 
         // Built-in type names used as static namespaces: Int.parse(), Double.parse(), etc.
         const primitiveTypes = new Set(['Int', 'Double', 'Bool', 'String', 'List', 'Map']);
@@ -450,7 +471,8 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
 
         // self → look up the enclosing struct definition
         if (variableName === 'self') {
-            for (const line of lines) {
+            for (let i = lines.length - 1; i >= 0; i--) {
+                const line = lines[i];
                 let m = /\bstruct\s+([a-zA-Z0-9_]+)/.exec(line)
                     || /\bextend\s+([a-zA-Z0-9_]+)/.exec(line)
                     || /(?:define|def|init)\s+([A-Z][a-zA-Z0-9_]*)_/.exec(line);
@@ -458,45 +480,59 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
             }
         }
 
-        // Methods that return List regardless of receiver type
-        const listReturnMethods = new Set(['map', 'filter', 'keys', 'values']);
+        // ── Compile the per-variable regex set ONCE up front ──────────────
+        // Previously each of ~17 patterns was rebuilt per line via
+        // `new RegExp(...)`, recompiling thousands of regexes on every
+        // keystroke for a 500-line file. Now: escape the name once, compile
+        // each pattern once, reuse across every line in the backward scan.
+        const esc = variableName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const listReturnMethods = 'map|filter|keys|values';
+
+        const reCast       = new RegExp(`\\b${esc}\\s*(?::=|=)\\s*.+?\\bas\\s+([A-Z][a-zA-Z0-9_]*)\\s*$`);
+        const reList       = new RegExp(`\\b${esc}\\s*(?::=|=)\\s*\\[`);
+        const reMap        = new RegExp(`\\b${esc}\\s*(?::=|=)\\s*\\{`);
+        const reStr        = new RegExp(`\\b${esc}\\s*(?::=|=)\\s*"`);
+        const reDouble     = new RegExp(`\\b${esc}\\s*(?::=|=)\\s*\\d+\\.\\d`);
+        const reInt        = new RegExp(`\\b${esc}\\s*(?::=|=)\\s*\\d`);
+        const reBool       = new RegExp(`\\b${esc}\\s*(?::=|=)\\s*(?:true|false)\\b`);
+        const reChar       = new RegExp(`\\b${esc}\\s*(?::=|=)\\s*'`);
+        const reChained    = new RegExp(`\\b${esc}\\s*:=\\s*.+\\.(${listReturnMethods})\\s*\\(`);
+        const reMethodCall = new RegExp(`\\b${esc}\\s*:=\\s*([a-zA-Z0-9_]+)\\.([a-zA-Z0-9_]+)\\s*\\(`);
+        const reFuncCall   = new RegExp(`\\b${esc}\\s*:=\\s*([a-z][a-zA-Z0-9_]*)\\s*\\(`);
+        const reConcat     = new RegExp(`\\b${esc}\\s*:=\\s*(.+)\\+(.+)`);
+        const reArith      = new RegExp(`\\b${esc}\\s*:=\\s*([a-zA-Z0-9_]+)\\s*[+\\-*\\/]`);
+        const reTernary    = new RegExp(`\\b${esc}\\s*:=\\s*.+\\?\\s*([a-zA-Z0-9_"'\`[{]+)`);
+        const reLambdaPar  = new RegExp(`\\bfn\\s*\\([^)]*\\b${esc}\\s*:\\s*([A-Za-z0-9_]+)`);
+        const reForLoop    = new RegExp(`\\bfor\\s+(?:ref\\s+)?${esc}\\s+in\\s+([a-zA-Z0-9_"'\\[]+)`);
+        const reCatchPar   = new RegExp(`\\bcatch\\s*\\(\\s*${esc}\\s*:\\s*([A-Za-z0-9_]+)`);
+        const reTypeCall   = new RegExp(`\\b${esc}\\s*:=\\s*(?:[a-zA-Z0-9_]+\\.)?([A-Z][A-Za-z0-9_]+)\\s*\\(`);
+        const reAnnot      = new RegExp(`\\b${esc}\\s*:\\s*(?:[a-zA-Z0-9_]+\\.)?([A-Za-z0-9_]+)`);
+        const reAlias      = new RegExp(`\\b${esc}\\s*:=\\s*(?:[a-zA-Z0-9_]+\\.)?([A-Za-z0-9_]+)$`);
 
         const projectRoot = this.findProjectRoot(document.uri.fsPath);
 
-        for (const line of lines) {
-            const esc = variableName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        // Iterate backward by index (closest-declaration-wins). Avoids the
+        // O(n) `.reverse()` allocation that the previous version did.
+        for (let i = lines.length - 1; i >= 0; i--) {
+            const line = lines[i];
 
             // x := expr as TypeName  — explicit cast overrides any inferred type
-            const castMatch = new RegExp(`\\b${esc}\\s*(?::=|=)\\s*.+?\\bas\\s+([A-Z][a-zA-Z0-9_]*)\\s*$`).exec(line);
+            const castMatch = reCast.exec(line);
             if (castMatch) return castMatch[1];
 
-            // x := [...]  or  x = [...]  → List literal
-            if (new RegExp(`\\b${esc}\\s*(?::=|=)\\s*\\[`).test(line)) return 'List';
-
-            // x := { or x = {  → Map literal
-            if (new RegExp(`\\b${esc}\\s*(?::=|=)\\s*\\{`).test(line)) return 'Map';
-
-            // x := "..."  or  x = "..."  → String literal
-            if (new RegExp(`\\b${esc}\\s*(?::=|=)\\s*"`).test(line)) return 'String';
-
-            // x := 3.14  → Double literal (must come before Int check)
-            if (new RegExp(`\\b${esc}\\s*(?::=|=)\\s*\\d+\\.\\d`).test(line)) return 'Double';
-
-            // x := 42  → Int literal
-            if (new RegExp(`\\b${esc}\\s*(?::=|=)\\s*\\d`).test(line)) return 'Int';
-
-            // x := true / false  → Bool
-            if (new RegExp(`\\b${esc}\\s*(?::=|=)\\s*(?:true|false)\\b`).test(line)) return 'Bool';
-
-            // x := 'a'  → length-1 String
-            if (new RegExp(`\\b${esc}\\s*(?::=|=)\\s*'`).test(line)) return 'String';
+            if (reList.test(line))   return 'List';
+            if (reMap.test(line))    return 'Map';
+            if (reStr.test(line))    return 'String';
+            if (reDouble.test(line)) return 'Double';
+            if (reInt.test(line))    return 'Int';
+            if (reBool.test(line))   return 'Bool';
+            if (reChar.test(line))   return 'String';
 
             // x := something.map(...) / .filter(...) / .keys() / .values()  → List
-            const chainedMatch = new RegExp(`\\b${esc}\\s*:=\\s*.+\\.(${[...listReturnMethods].join('|')})\\s*\\(`).exec(line);
-            if (chainedMatch) return 'List';
+            if (reChained.test(line)) return 'List';
 
             // x := receiver.method(...)  → look up method return type
-            const methodCallMatch = new RegExp(`\\b${esc}\\s*:=\\s*([a-zA-Z0-9_]+)\\.([a-zA-Z0-9_]+)\\s*\\(`).exec(line);
+            const methodCallMatch = reMethodCall.exec(line);
             if (methodCallMatch) {
                 const receiverName = methodCallMatch[1];
                 const methodName   = methodCallMatch[2];
@@ -508,18 +544,18 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
             }
 
             // x := someFunc(...)  → look up function return type
-            const funcCallMatch = new RegExp(`\\b${esc}\\s*:=\\s*([a-z][a-zA-Z0-9_]*)\\s*\\(`).exec(line);
+            const funcCallMatch = reFuncCall.exec(line);
             if (funcCallMatch) {
                 const ret = this.inferFunctionReturnType(projectRoot, document, funcCallMatch[1]);
                 if (ret) return ret;
             }
 
-            // x := expr + expr  — if either side contains a string literal or "+" with a known String, result is String
-            const concatMatch = new RegExp(`\\b${esc}\\s*:=\\s*(.+)\\+(.+)`).exec(line);
+            // x := expr + expr  — if either side contains a string literal, result is String
+            const concatMatch = reConcat.exec(line);
             if (concatMatch && (/"/.test(concatMatch[1]) || /"/.test(concatMatch[2]))) return 'String';
 
             // x := a + b  — if a has a known numeric type, propagate it (Double wins over Int)
-            const arithMatch = new RegExp(`\\b${esc}\\s*:=\\s*([a-zA-Z0-9_]+)\\s*[+\\-*\\/]`).exec(line);
+            const arithMatch = reArith.exec(line);
             if (arithMatch) {
                 const lhsType = this.inferTypeOfVariable(document, position, arithMatch[1]);
                 if (lhsType === 'Double') return 'Double';
@@ -527,7 +563,7 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
             }
 
             // x := condition? thenExpr : elseExpr  — use the then-branch type
-            const ternaryMatch = new RegExp(`\\b${esc}\\s*:=\\s*.+\\?\\s*([a-zA-Z0-9_"'\`[{]+)`).exec(line);
+            const ternaryMatch = reTernary.exec(line);
             if (ternaryMatch) {
                 const thenToken = ternaryMatch[1];
                 if (thenToken.startsWith('"')) return 'String';
@@ -541,14 +577,14 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
             }
 
             // lambda param:  fn(varName: Type)  or  fn(varName: Type, ...)
-            const lambdaParamMatch = new RegExp(`\\bfn\\s*\\([^)]*\\b${esc}\\s*:\\s*([A-Za-z0-9_]+)`).exec(line);
+            const lambdaParamMatch = reLambdaPar.exec(line);
             if (lambdaParamMatch) return lambdaParamMatch[1];
 
             // for varName in iterable  → infer element type from iterable
-            const forMatch = new RegExp(`\\bfor\\s+(?:ref\\s+)?${esc}\\s+in\\s+([a-zA-Z0-9_"'\\[]+)`).exec(line);
+            const forMatch = reForLoop.exec(line);
             if (forMatch) {
                 const iterable = forMatch[1];
-                if (iterable.startsWith('"') || iterable.startsWith("'")) return 'String'; // string literal → length-1 String elements
+                if (iterable.startsWith('"') || iterable.startsWith("'")) return 'String';
                 const iterType = this.inferTypeOfVariable(document, position, iterable);
                 if (iterType === 'String') return 'String';
                 if (iterType === 'List') {
@@ -558,19 +594,19 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
             }
 
             // catch (varName: ExceptionType)  → ExceptionType
-            const catchParamMatch = new RegExp(`\\bcatch\\s*\\(\\s*${esc}\\s*:\\s*([A-Za-z0-9_]+)`).exec(line);
+            const catchParamMatch = reCatchPar.exec(line);
             if (catchParamMatch) return catchParamMatch[1];
 
             // x := SomeType(...)
-            let match = new RegExp(`\\b${esc}\\s*:=\\s*(?:[a-zA-Z0-9_]+\\.)?([A-Z][A-Za-z0-9_]+)\\s*\\(`).exec(line);
+            let match = reTypeCall.exec(line);
             if (match) return match[1];
 
             // x: SomeType  or  x: SomeType =
-            match = new RegExp(`\\b${esc}\\s*:\\s*(?:[a-zA-Z0-9_]+\\.)?([A-Za-z0-9_]+)`).exec(line);
+            match = reAnnot.exec(line);
             if (match) return match[1];
 
             // x := someIdentifier  (catch-all, might be a constructor alias)
-            match = new RegExp(`\\b${esc}\\s*:=\\s*(?:[a-zA-Z0-9_]+\\.)?([A-Za-z0-9_]+)$`).exec(line);
+            match = reAlias.exec(line);
             if (match) return match[1];
         }
 
@@ -583,10 +619,14 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
     //      items := []               → null (unknown)
     private inferElementType(document: vscode.TextDocument, position: vscode.Position, varName: string): string | null {
         const textBefore = document.getText(new vscode.Range(new vscode.Position(0, 0), position));
+        const lines = textBefore.split(/\r?\n/);
         const esc = varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        // Compile the per-variable list-init pattern ONCE; iterate lines
+        // backward by index to avoid the .reverse() allocation.
+        const reList = new RegExp(`\\b${esc}\\s*(?::=|=)\\s*\\[([^\\]]*)\\]`);
 
-        for (const line of textBefore.split(/\r?\n/).reverse()) {
-            const listMatch = new RegExp(`\\b${esc}\\s*(?::=|=)\\s*\\[([^\\]]*)\\]`).exec(line);
+        for (let i = lines.length - 1; i >= 0; i--) {
+            const listMatch = reList.exec(lines[i]);
             if (!listMatch) continue;
 
             const content = listMatch[1].trim();
@@ -1424,7 +1464,13 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
     // =========================================================
 
     private resolveImportPathFromAlias(document: vscode.TextDocument, alias: string): string | null {
-        for (const line of document.getText().split(/\r?\n/)) {
+        // Use document.lineAt(i) instead of splitting the whole text — no
+        // copy of the line array. `use` statements normally cluster at the
+        // top of the file, but we don't guarantee that, so scan the whole
+        // document (cheaply, via the document's line index).
+        const lineCount = document.lineCount;
+        for (let i = 0; i < lineCount; i++) {
+            const line = document.lineAt(i).text;
             const useMatch = /^\s*use\s+([.a-zA-Z0-9_/]+)/.exec(line);
             if (useMatch && useMatch[1].split(/[\.\/]/).pop() === alias) return useMatch[1];
         }
@@ -1439,9 +1485,12 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
             let searchDir = path.dirname(currentFile);
             for (let i = 1; i < dotCount; i++) searchDir = path.dirname(searchDir);
             const targetBase = subPath ? path.join(searchDir, subPath) : searchDir;
-            if (fs.existsSync(targetBase + '.qk')) return targetBase + '.qk';
-            if (fs.existsSync(path.join(targetBase, 'index.qk'))) return path.join(targetBase, 'index.qk');
-            if (fs.existsSync(path.join(targetBase, '__init.qk'))) return path.join(targetBase, '__init.qk');
+            const cand1 = targetBase + '.qk';
+            if (this.fileExists(cand1)) return cand1;
+            const cand2 = path.join(targetBase, 'index.qk');
+            if (this.fileExists(cand2)) return cand2;
+            const cand3 = path.join(targetBase, '__init.qk');
+            if (this.fileExists(cand3)) return cand3;
             return null;
         }
 
@@ -1455,7 +1504,7 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
                 path.join(root, relPath, 'src', 'index.qk'),
                 path.join(root, relPath, 'src', relPath + '.qk'),
             ];
-            for (const c of candidates) if (fs.existsSync(c)) return c;
+            for (const c of candidates) if (this.fileExists(c)) return c;
         }
         return null;
     }

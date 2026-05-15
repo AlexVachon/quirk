@@ -54,6 +54,32 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
     };
 
     const declarations = new Map<string, vscode.Range>();
+    // Parallel index: for each declared identifier, a sorted-ascending list
+    // of line numbers where it's declared. Lets the usage-tracking pass find
+    // the nearest predecessor declaration via binary search in O(log K)
+    // instead of an O(N) backward line scan per identifier reference.
+    const declarationLinesByName = new Map<string, number[]>();
+    const recordDeclaration = (name: string, line: number, range: vscode.Range) => {
+        declarations.set(`${line}_${name}`, range);
+        let arr = declarationLinesByName.get(name);
+        if (!arr) { arr = []; declarationLinesByName.set(name, arr); }
+        // Pass-1 walks lines in ascending order so the array stays sorted
+        // without an explicit insertion sort.
+        if (arr.length === 0 || arr[arr.length - 1] < line) arr.push(line);
+    };
+    // Find the largest declared line `<= usageLine` for `name`, or -1.
+    const nearestDeclLine = (name: string, usageLine: number): number => {
+        const arr = declarationLinesByName.get(name);
+        if (!arr || arr.length === 0) return -1;
+        // Binary search for rightmost entry <= usageLine
+        let lo = 0, hi = arr.length - 1, best = -1;
+        while (lo <= hi) {
+            const mid = (lo + hi) >> 1;
+            if (arr[mid] <= usageLine) { best = arr[mid]; lo = mid + 1; }
+            else hi = mid - 1;
+        }
+        return best;
+    };
     const usages = new Set<string>();
     const fileGlobals = new Set<string>();
     // Module aliases brought into scope by `use X` (allow `X.foo(...)` only).
@@ -275,7 +301,7 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
                 // extern define and bodyless signatures are implemented outside Quirk source
                 if (!isExtern && !isBodyless && pName !== 'self' && !BUILTINS.has(pName)) {
                     const startIdx = originalLine.indexOf(pName, funcMatch.index);
-                    declarations.set(`${i}_${pName}`, new vscode.Range(i, startIdx, i, startIdx + pName.length));
+                    recordDeclaration(pName, i, new vscode.Range(i, startIdx, i, startIdx + pName.length));
                 }
             }
         }
@@ -335,7 +361,7 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
                     if (vName && /^[a-zA-Z_]\w*$/.test(vName) && !locals.has(vName) && !KEYWORDS.has(vName) && !BUILTINS.has(vName)) {
                         locals.add(vName);
                         const startIdx = originalLine.indexOf(vName, forParenDestructMatch.index);
-                        declarations.set(`${i}_${vName}`, new vscode.Range(i, startIdx, i, startIdx + vName.length));
+                        recordDeclaration(vName, i, new vscode.Range(i, startIdx, i, startIdx + vName.length));
                     }
                 });
             }
@@ -348,7 +374,7 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
                     if (vName && !locals.has(vName) && !KEYWORDS.has(vName) && !BUILTINS.has(vName)) {
                         locals.add(vName);
                         const startIdx = originalLine.indexOf(vName);
-                        declarations.set(`${i}_${vName}`, new vscode.Range(i, startIdx, i, startIdx + vName.length));
+                        recordDeclaration(vName, i, new vscode.Range(i, startIdx, i, startIdx + vName.length));
                     }
                 });
             }
@@ -361,7 +387,7 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
                     if (vName && !locals.has(vName) && !KEYWORDS.has(vName) && !BUILTINS.has(vName)) {
                         locals.add(vName);
                         const startIdx = originalLine.indexOf(vName);
-                        declarations.set(`${i}_${vName}`, new vscode.Range(i, startIdx, i, startIdx + vName.length));
+                        recordDeclaration(vName, i, new vscode.Range(i, startIdx, i, startIdx + vName.length));
                     }
                 });
             }
@@ -372,7 +398,7 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
                 if (!namedArgNames.has(vName) && !locals.has(vName) && !KEYWORDS.has(vName) && !BUILTINS.has(vName)) {
                     locals.add(vName);
                     const startIdx = originalLine.indexOf(vName);
-                    declarations.set(`${i}_${vName}`, new vscode.Range(i, startIdx, i, startIdx + vName.length));
+                    recordDeclaration(vName, i, new vscode.Range(i, startIdx, i, startIdx + vName.length));
                 }
                 // Infer type from explicit annotation or RHS
                 if (!localTypes.has(vName)) {
@@ -418,7 +444,7 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
                 if (!locals.has(vName)) {
                     locals.add(vName);
                     const startIdx = originalLine.indexOf(vName, withMatch.index + 4);
-                    declarations.set(`${i}_${vName}`, new vscode.Range(i, startIdx, i, startIdx + vName.length));
+                    recordDeclaration(vName, i, new vscode.Range(i, startIdx, i, startIdx + vName.length));
                 }
             }
 
@@ -428,14 +454,14 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
                 if (!locals.has(vName)) {
                     locals.add(vName);
                     const startIdx = originalLine.indexOf(vName, forMatch.index);
-                    declarations.set(`${i}_${vName}`, new vscode.Range(i, startIdx, i, startIdx + vName.length));
+                    recordDeclaration(vName, i, new vscode.Range(i, startIdx, i, startIdx + vName.length));
                 }
                 if (forMatch[2]) {
                     const vName2 = forMatch[2];
                     if (!locals.has(vName2)) {
                         locals.add(vName2);
                         const startIdx2 = originalLine.indexOf(vName2, forMatch.index + forMatch[1].length);
-                        declarations.set(`${i}_${vName2}`, new vscode.Range(i, startIdx2, i, startIdx2 + vName2.length));
+                        recordDeclaration(vName2, i, new vscode.Range(i, startIdx2, i, startIdx2 + vName2.length));
                     }
                 }
                 // Infer element type from the iterable
@@ -455,7 +481,7 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
                 if (!locals.has(vName)) {
                     locals.add(vName);
                     const startIdx = originalLine.indexOf(vName, catchMatch.index);
-                    declarations.set(`${i}_${vName}`, new vscode.Range(i, startIdx, i, startIdx + vName.length));
+                    recordDeclaration(vName, i, new vscode.Range(i, startIdx, i, startIdx + vName.length));
                 }
                 localTypes.set(vName, catchMatch[2]); // e: WhereConditionError → WhereConditionError
             }
@@ -507,9 +533,8 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
                 const ident = sm[1];
                 if (!KEYWORDS.has(ident) && !BUILTINS.has(ident)) {
                     usages.add(ident);
-                    for (let k = i; k >= 0; k--) {
-                        if (declarations.has(`${k}_${ident}`)) { usages.add(`${k}_${ident}`); break; }
-                    }
+                    const k = nearestDeclLine(ident, i);
+                    if (k !== -1) usages.add(`${k}_${ident}`);
                 }
             }
         }
@@ -530,9 +555,8 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
             if (compVarNames.has(ident)) {
                 if (!locals.has(ident)) locals.add(ident);
                 usages.add(ident);
-                for (let k = i; k >= 0; k--) {
-                    if (declarations.has(`${k}_${ident}`)) { usages.add(`${k}_${ident}`); break; }
-                }
+                const k = nearestDeclLine(ident, i);
+                if (k !== -1) usages.add(`${k}_${ident}`);
                 continue;
             }
 
@@ -559,13 +583,9 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
             }
 
             if (locals.has(ident) || fileGlobals.has(ident)) {
-                usages.add(ident); 
-                for (let k = i; k >= 0; k--) {
-                    if (declarations.has(`${k}_${ident}`)) {
-                        usages.add(`${k}_${ident}`);  
-                        break;
-                    }
-                }
+                usages.add(ident);
+                const k = nearestDeclLine(ident, i);
+                if (k !== -1) usages.add(`${k}_${ident}`);
             } else if (!deadLines.has(i)) {
                 diagnostics.push(new vscode.Diagnostic(range, `'${ident}' is not defined.`, vscode.DiagnosticSeverity.Warning));
             }

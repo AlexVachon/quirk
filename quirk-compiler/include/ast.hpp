@@ -84,6 +84,20 @@ class FunctionNode : public Node {
     // where T: Interface1 & Interface2 — maps type param name → required interfaces
     std::map<std::string, std::vector<std::string>> genericConstraints;
 
+    // Python-style decorators: `@a` or `@a(args)` lines stacked above the
+    // `define` line. Stored bottom-up in source order; applied top-down at
+    // codegen time so `@a \n @b \n define f` produces `f := a(b(f__inner))`.
+    std::vector<std::unique_ptr<Node>> decorators;
+
+    // True when this FunctionNode is the *wrapper* synthesized by the parser
+    // for a decorated function. The wrapper's body is built specially by
+    // Codegen: it lazily evaluates `decoratorChainExpr` once, caches the
+    // resulting Callable in a module-internal global, then dispatches through
+    // that cached Callable on every call. Lets stateful decorators (e.g.
+    // `@cached`, `@retry`) keep state across invocations.
+    bool isDecoratorWrapper = false;
+    std::unique_ptr<Node> decoratorChainExpr;  // e.g. `a(b(foo__inner__))`
+
 
     void print(int indent) const override {
         std::string space(indent, ' ');
@@ -541,6 +555,7 @@ class LambdaNode : public Node {
     std::unique_ptr<Node> exprBody;                    // set for fn(x) => expr
     std::vector<std::unique_ptr<Node>> stmtBody;       // set for fn(x) { stmts }
     bool isExpression = true;
+    std::string declaredReturnType;                    // user-annotated `fn(x) -> T`; empty if omitted
     std::string inferredReturnType;                    // set by Sema; empty = opaque i8*
 
     void print(int indent) const override {

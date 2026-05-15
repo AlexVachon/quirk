@@ -8,6 +8,9 @@
 #include "llvm/IR/Verifier.h"
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/Transforms/IPO/PassManagerBuilder.h"
+#include "llvm/Transforms/Utils.h"
+#include "llvm/Transforms/Scalar.h"
+#include "llvm/Transforms/InstCombine/InstCombine.h"
 #include "llvm/Transforms/IPO.h"
 
 #include <functional>
@@ -38,6 +41,9 @@ class LLVMCodegen {
     IRBuilder<> Builder;
 
     bool verbose = false;
+    // LLVM optimization level (0..3). Default 1 — runs the minimal pass set
+    // the JIT needs for correctness. See `runOptimizations` for details.
+    int  optLevel = 1;
 
     std::map<std::string, bool> variadicFunctions;
     std::map<std::string, FunctionNode*> functionDeclarations;
@@ -77,7 +83,14 @@ class LLVMCodegen {
     std::map<std::string, int> variadicCallableStart;       // varName → first variadic arg index (-1 = not variadic)
     std::set<std::string> externBoolReturnFunctions;       // LLVM names widened i1→i32 for C ABI
 
+    // Cache: function name → synthesized `i8*(i8* env, i8*…)` thunk Function*.
+    // One thunk per function, reused on every "function-as-value" reference
+    // (passing a function name where a Callable is expected, storing it in a
+    // variable, returning it). See getOrCreateFunctionThunk().
+    std::map<std::string, Function*> functionThunkCache;
+
     void setVerbose(bool v) { verbose = v; }
+    void setOptLevel(int o) { optLevel = (o < 0 ? 0 : o > 3 ? 3 : o); }
 
     void setSourceMap(const std::map<std::string, std::string>& sm) { sourceMap = sm; }
 
@@ -125,12 +138,52 @@ class LLVMCodegen {
     }
 
    private:
-    // ── run LLVM O2 passes on the current module ────────────────────────────
+    // ── run LLVM passes on the current module at the configured opt level ──
+    //
+    // Opt levels:
+    //   -O0  → no passes. Currently unsafe: codegen emits "loose" IR that
+    //          depends on at least the mem2reg/instcombine cleanup to be
+    //          executable. Kept for future codegen rewrites.
+    //   -O1  → minimal correctness pass pipeline (DEFAULT) — mem2reg + early
+    //          CSE + instcombine + simplifycfg + DCE. Fixes the IR patterns
+    //          the JIT needs without paying for full inlining/loop-opts/etc.
+    //          Roughly 3-5× faster than O2 on short-running programs.
+    //   -O2/3→ full LLVM pass pipeline. Slower compile, faster runtime —
+    //          worth it for compute-heavy code (`--release`).
     void runOptimizations() {
-        if (verbose) std::cerr << "[Codegen] running O2 passes\n";
+        if (optLevel <= 0) {
+            if (verbose) std::cerr << "[Codegen] skipping optimization passes (-O0)\n";
+            return;
+        }
         legacy::PassManager PM;
+        legacy::FunctionPassManager FPM(TheModule.get());
+
+        if (optLevel == 1) {
+            if (verbose) std::cerr << "[Codegen] running minimal O1 passes\n";
+            // Order is significant. SROA breaks aggregate allocas into
+            // scalar pieces and resolves the i8*↔struct* type mismatches
+            // our codegen leaves around. mem2reg promotes the resulting
+            // scalar allocas to SSA. instcombine+simplifycfg+DCE clean up.
+            // A second instcombine pass after CFG simplification catches
+            // dead patterns the first pass exposed.
+            FPM.add(createSROAPass());
+            FPM.add(createPromoteMemoryToRegisterPass());  // mem2reg
+            FPM.add(createEarlyCSEPass(/*UseMemorySSA=*/false));
+            FPM.add(createInstructionCombiningPass());     // instcombine
+            FPM.add(createCFGSimplificationPass());        // simplifycfg
+            FPM.add(createInstructionCombiningPass());     // catch newly-folded
+            FPM.add(createDeadCodeEliminationPass());      // dce
+            FPM.doInitialization();
+            for (auto& F : *TheModule) {
+                if (!F.isDeclaration()) FPM.run(F);
+            }
+            FPM.doFinalization();
+            return;
+        }
+
+        if (verbose) std::cerr << "[Codegen] running O" << optLevel << " passes\n";
         PassManagerBuilder PMB;
-        PMB.OptLevel  = 2;
+        PMB.OptLevel  = optLevel;
         PMB.SizeLevel = 0;
         PMB.Inliner   = createFunctionInliningPass(PMB.OptLevel, PMB.SizeLevel, false);
         PMB.populateModulePassManager(PM);
@@ -651,15 +704,128 @@ class LLVMCodegen {
         // ---------------------------------
 
         // --- NEW: INJECT SHADOW STACK PUSH ---
-        FunctionCallee pushFrame = TheModule->getOrInsertFunction("quirk_push_frame",
-            Type::getVoidTy(Context), Type::getInt8PtrTy(Context), Type::getInt8PtrTy(Context),
-            Type::getInt32Ty(Context));
+        // Skipped for decorator wrappers: they're synthetic dispatchers, not
+        // user-visible call sites. The wrapped function (and any decorator
+        // lambdas in the chain) already push their own frames, so tracebacks
+        // are unaffected. Removing this saves two extern calls per decorated
+        // invocation — measurably hot on tight decorator loops.
+        if (!node->isDecoratorWrapper) {
+            FunctionCallee pushFrame = TheModule->getOrInsertFunction("quirk_push_frame",
+                Type::getVoidTy(Context), Type::getInt8PtrTy(Context), Type::getInt8PtrTy(Context),
+                Type::getInt32Ty(Context));
 
-        Value* funcNameVal = Builder.CreateGlobalStringPtr(node->name);
-        Value* fileNameVal = Builder.CreateGlobalStringPtr(node->moduleName);
-        Value* lineNumVal  = ConstantInt::get(Type::getInt32Ty(Context), node->line);
-        Builder.CreateCall(pushFrame, {funcNameVal, fileNameVal, lineNumVal});
+            Value* funcNameVal = Builder.CreateGlobalStringPtr(node->name);
+            Value* fileNameVal = Builder.CreateGlobalStringPtr(node->moduleName);
+            Value* lineNumVal  = ConstantInt::get(Type::getInt32Ty(Context), node->line);
+            Builder.CreateCall(pushFrame, {funcNameVal, fileNameVal, lineNumVal});
+        }
         // -------------------------------------
+
+        // ── Decorator wrapper: lazy-init + cached dispatch ───────────────────
+        // For `@dec define foo(args) {...}`, the parser produced this wrapper
+        // function with `isDecoratorWrapper = true` and stashed the chain
+        // expression (`dec(foo__inner__)`) in `decoratorChainExpr`. Emit:
+        //
+        //   @foo__wrapper = internal global Callable* null
+        //
+        //   define foo(args):
+        //     entry:
+        //       %cached = load Callable*, @foo__wrapper
+        //       %null   = icmp eq Callable* %cached, null
+        //       br %null, label %init, label %ready
+        //     init:
+        //       %fresh = <evaluate decoratorChainExpr — yields Callable*>
+        //       store %fresh, @foo__wrapper
+        //       br label %ready
+        //     ready:
+        //       %wrapper = load Callable*, @foo__wrapper
+        //       <boxed args>
+        //       %raw = call %wrapper(boxed args...)
+        //       <unbox %raw to returnType>
+        //       ret <result>
+        //
+        // The chain runs exactly once over the program's lifetime — captures
+        // in stateful decorators (`@cached`, `@retry`) persist across calls.
+        if (node->isDecoratorWrapper && node->decoratorChainExpr) {
+            StructType* callableTy = StructTypes["Callable"];
+            Type* callablePtrTy   = PointerType::getUnqual(callableTy);
+            Type* i8PtrTy         = Type::getInt8PtrTy(Context);
+
+            // Module-internal global, one per wrapper. Name keyed on the
+            // function so collisions can't happen across files.
+            std::string gName = "__qd_wrap_" + (node->linkageName.empty() ? node->name : node->linkageName);
+            GlobalVariable* gv = TheModule->getNamedGlobal(gName);
+            if (!gv) {
+                gv = new GlobalVariable(*TheModule, callablePtrTy, /*isConstant=*/false,
+                                        GlobalValue::InternalLinkage,
+                                        ConstantPointerNull::get(cast<PointerType>(callablePtrTy)),
+                                        gName);
+            }
+
+            BasicBlock* initBB  = BasicBlock::Create(Context, "dec_init",  F);
+            BasicBlock* readyBB = BasicBlock::Create(Context, "dec_ready", F);
+
+            // Entry block — branch on cache state.
+            Value* cached = Builder.CreateLoad(callablePtrTy, gv, "dec_cached");
+            Value* isNull = Builder.CreateICmpEQ(cached,
+                ConstantPointerNull::get(cast<PointerType>(callablePtrTy)), "dec_uninit");
+            Builder.CreateCondBr(isNull, initBB, readyBB);
+
+            // Init block — evaluate the decorator chain once and cache.
+            Builder.SetInsertPoint(initBB);
+            Value* freshCallable = handleExpression(node->decoratorChainExpr.get());
+            if (!freshCallable) {
+                fatalError("decorator chain produced no value for '" + node->name + "'",
+                           node->line, node->col);
+            }
+            // The chain's outermost value might come back as i8* (when the
+            // final decorator returns a Callable through the Callable ABI).
+            // Cast back to Callable* before storing.
+            if (freshCallable->getType() == i8PtrTy) {
+                freshCallable = Builder.CreateBitCast(freshCallable, callablePtrTy, "dec_cast");
+            }
+            Builder.CreateStore(freshCallable, gv);
+            Builder.CreateBr(readyBB);
+
+            // Ready block — dispatch through the cached wrapper.
+            Builder.SetInsertPoint(readyBB);
+            Value* wrapper = Builder.CreateLoad(callablePtrTy, gv, "dec_wrapper");
+            std::vector<Value*> argVals;
+            for (auto& p : node->parameters) {
+                if (Value* v = varGen->resolveVariable(p.name)) argVals.push_back(v);
+            }
+            Value* raw = emitCallableCall(wrapper, argVals);
+
+            // Unbox the i8* result back to whatever the wrapper claims to
+            // return. Same policy as the in-line Callable-variable dispatch.
+            // No pop_frame here — we skipped the wrapper's push, so the
+            // shadow-stack is unchanged across this dispatcher.
+            Value* unboxed = raw;
+            const std::string& rt = node->returnType;
+            if (rt == "void") {
+                Builder.CreateRetVoid();
+                currentCodegenClass = prevClass;
+                if (prevBB) Builder.SetInsertPoint(prevBB);
+                return;
+            }
+            if (rt == "Int" || rt == "Int32") {
+                unboxed = Builder.CreatePtrToInt(raw, Type::getInt32Ty(Context), "dec_int");
+            } else if (rt == "Bool") {
+                unboxed = Builder.CreateICmpNE(raw,
+                    ConstantPointerNull::get(cast<PointerType>(raw->getType())), "dec_bool");
+            } else if (rt == "Double" || rt == "Float") {
+                Value* asInt = Builder.CreatePtrToInt(raw, Type::getInt64Ty(Context));
+                unboxed = Builder.CreateBitCast(asInt, Type::getDoubleTy(Context), "dec_dbl");
+            } else if (!rt.empty() && StructTypes.count(rt)) {
+                unboxed = Builder.CreateBitCast(raw,
+                    PointerType::getUnqual(StructTypes[rt]), "dec_struct");
+            }
+            Builder.CreateRet(unboxed);
+
+            currentCodegenClass = prevClass;
+            if (prevBB) Builder.SetInsertPoint(prevBB);
+            return;
+        }
 
         for (const auto& stmt : node->body) {
             handleStatement(stmt.get(), F);
@@ -816,6 +982,84 @@ class LLVMCodegen {
         if (!type.empty() && StructTypes.count(type))
             return Builder.CreateBitCast(raw, PointerType::getUnqual(StructTypes[type]));
         return raw; // pass through as i8*
+    }
+
+    // Generate (or fetch from cache) a `i8*(i8* env, i8*…)` thunk that wraps
+    // a user-defined function in the Callable ABI: unbox each i8* arg to its
+    // declared type, call the real function, box the return back to i8*.
+    //
+    // The thunk lets `define`d functions be used as first-class Callable
+    // values — passed as args, stored in variables, returned. The env pointer
+    // is unused (always null) because user-defined functions have no captures.
+    //
+    // Returns the thunk Function*; the caller allocates the wrapping Callable
+    // struct {thunk, null} at the use site.
+    Function* getOrCreateFunctionThunk(const std::string& fnName) {
+        if (functionThunkCache.count(fnName)) return functionThunkCache[fnName];
+        if (!functionDeclarations.count(fnName)) return nullptr;
+        FunctionNode* funcNode = functionDeclarations[fnName];
+        Function* realFn = resolveFunction(fnName, currentCodegenClass);
+        if (!realFn) return nullptr;
+        Type* i8PtrTy = Type::getInt8PtrTy(Context);
+
+        std::vector<Type*> thunkParamTypes = {i8PtrTy}; // env (unused)
+        for (size_t i = 0; i < funcNode->parameters.size(); i++)
+            thunkParamTypes.push_back(i8PtrTy);
+        FunctionType* thunkTy = FunctionType::get(i8PtrTy, thunkParamTypes, false);
+        Function* thunk = Function::Create(
+            thunkTy, Function::InternalLinkage,
+            fnName + "__cb_thunk", TheModule.get());
+
+        // Stash current insert point — we'll restore after writing the thunk body.
+        BasicBlock* savedBB = Builder.GetInsertBlock();
+        BasicBlock* entryBB = BasicBlock::Create(Context, "entry", thunk);
+        Builder.SetInsertPoint(entryBB);
+
+        // Unbox each arg according to its declared parameter type.
+        std::vector<Value*> realArgs;
+        auto argIt = thunk->arg_begin();
+        ++argIt; // skip env
+        for (size_t i = 0; i < funcNode->parameters.size(); i++, ++argIt) {
+            Value* raw = &*argIt;
+            raw->setName(funcNode->parameters[i].name);
+            realArgs.push_back(unboxLambdaParam(raw, funcNode->parameters[i].type));
+        }
+
+        // Call the real function and box the result back to i8*.
+        Value* result = Builder.CreateCall(realFn, realArgs);
+        if (funcNode->returnType == "void") {
+            Builder.CreateRet(ConstantPointerNull::get(cast<PointerType>(i8PtrTy)));
+        } else {
+            Builder.CreateRet(boxToVoidPtr(result));
+        }
+
+        if (savedBB) Builder.SetInsertPoint(savedBB);
+        functionThunkCache[fnName] = thunk;
+        return thunk;
+    }
+
+    // Allocate a Callable struct {thunk, null} pointing at the function `fnName`.
+    // The struct is freshly allocated at every use site (cheap — 16 bytes).
+    // Returns nullptr if `fnName` isn't a known user-defined function.
+    Value* emitFunctionAsCallable(const std::string& fnName) {
+        Function* thunk = getOrCreateFunctionThunk(fnName);
+        if (!thunk) return nullptr;
+        Type* i8PtrTy = Type::getInt8PtrTy(Context);
+        StructType* callableTy = StructTypes["Callable"];
+
+        FunctionCallee gcMallocFn = TheModule->getOrInsertFunction(
+            "GC_malloc", i8PtrTy, Type::getInt64Ty(Context));
+        uint64_t callSz = TheModule->getDataLayout().getTypeAllocSize(callableTy);
+        Value* raw = Builder.CreateCall(
+            gcMallocFn, {ConstantInt::get(Type::getInt64Ty(Context), callSz)},
+            fnName + "_callable");
+        Value* callablePtr = Builder.CreateBitCast(raw, PointerType::getUnqual(callableTy));
+
+        Value* fnField  = Builder.CreateStructGEP(callableTy, callablePtr, 0);
+        Value* envField = Builder.CreateStructGEP(callableTy, callablePtr, 1);
+        Builder.CreateStore(Builder.CreateBitCast(thunk, i8PtrTy), fnField);
+        Builder.CreateStore(ConstantPointerNull::get(cast<PointerType>(i8PtrTy)), envField);
+        return callablePtr;
     }
 
     // Collect free variable names referenced in the lambda body
@@ -1548,6 +1792,33 @@ class LLVMCodegen {
                 return Builder.CreateTrunc(result, Type::getInt1Ty(Context));
             return result;
         }
+
+        // Fallback: callee is an arbitrary expression that hopefully evaluates
+        // to a Callable. Handles the `<expr>(args)` case where <expr> is itself
+        // a call (e.g. `wrap(double)(5)`), a member access yielding a Callable,
+        // or anything else producing a Callable* at runtime.
+        if (Value* calleeVal = handleExpression(call->callee.get())) {
+            Type* i8PtrTy = Type::getInt8PtrTy(Context);
+            // A Callable returned from another Callable call comes back boxed
+            // as `i8*` (the Callable ABI returns i8*). Bitcast to Callable*
+            // so we can dispatch. Without this, `make_adder()(id_fn)(5)` —
+            // where the middle call returns a Callable — silently no-ops.
+            if (calleeVal->getType() == i8PtrTy && StructTypes.count("Callable")) {
+                calleeVal = Builder.CreateBitCast(
+                    calleeVal,
+                    PointerType::getUnqual(StructTypes["Callable"]),
+                    "boxed_callable");
+            }
+            if (calleeVal->getType()->isPointerTy()
+             && calleeVal->getType()->getPointerElementType()->isStructTy()) {
+                StructType* st = cast<StructType>(calleeVal->getType()->getPointerElementType());
+                if (st == StructTypes["Callable"]) {
+                    std::vector<Value*> argVals;
+                    for (auto& a : call->args) argVals.push_back(handleExpression(a.value.get()));
+                    return emitCallableCall(calleeVal, argVals);
+                }
+            }
+        }
         return nullptr;
     }
     
@@ -1946,7 +2217,25 @@ class LLVMCodegen {
                             // `return null` from a struct-returning function:
                             // bitcast the null to the expected struct pointer.
                             retVal = ConstantPointerNull::get(cast<PointerType>(expectedType));
+                        } else if (sName != "Callable") {
+                            // i8* (boxed) → struct*: bitcast (Callable handled
+                            // by the boxToVoidPtr branch below for symmetry).
+                            retVal = Builder.CreateBitCast(retVal, expectedType);
                         }
+                    }
+                    // i8* boxed result (from a Callable call) → unbox to a
+                    // primitive scalar. Without this, `return f(x)` from a
+                    // function declared `-> Int` produces an IR type mismatch.
+                    else if (retVal->getType()->isPointerTy()
+                          && retVal->getType()->getPointerElementType()->isIntegerTy(8)
+                          && expectedType->isIntegerTy()) {
+                        retVal = Builder.CreatePtrToInt(retVal, expectedType, "ret_unbox_int");
+                    }
+                    else if (retVal->getType()->isPointerTy()
+                          && retVal->getType()->getPointerElementType()->isIntegerTy(8)
+                          && expectedType->isDoubleTy()) {
+                        Value* asInt = Builder.CreatePtrToInt(retVal, Type::getInt64Ty(Context));
+                        retVal = Builder.CreateBitCast(asInt, expectedType, "ret_unbox_dbl");
                     }
                     // Returning from a lambda (i8* return): box the value
                     else if (expectedType == Type::getInt8PtrTy(Context)) {
@@ -2632,6 +2921,13 @@ Value* LLVMCodegen::handleExpression(Node* node) {
         }
 
         if (varGen->exists(lit->value)) return varGen->resolveVariable(lit->value);
+
+        // Function name in a value context (not a direct call) — synthesize
+        // a Callable wrapper on the fly. Lets users pass `define`d functions
+        // as Callable args, store them in variables, return them, etc.
+        if (functionDeclarations.count(lit->value)) {
+            if (Value* cb = emitFunctionAsCallable(lit->value)) return cb;
+        }
     }
 
     if (auto arr = dynamic_cast<ListLiteralNode*>(node)) return structGen->generateListLiteral(arr, [this](Node* n) { return this->handleExpression(n); });

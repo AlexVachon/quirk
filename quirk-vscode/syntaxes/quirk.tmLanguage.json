@@ -4,6 +4,7 @@
   "patterns": [
     { "include": "#comments" },
     { "include": "#imports" },
+    { "include": "#decorators" },
     { "include": "#definitions" },
     { "include": "#keywords" },
     { "include": "#strings" },
@@ -20,6 +21,18 @@
     { "include": "#variables" }
   ],
   "repository": {
+    "decorators": {
+      "patterns": [
+        {
+          "comment": "@decorator lines applied to a `define`. The `@` is scoped as punctuation (themes render it in a muted/gray tone) so the focal point is the decorator name. Matches Python's default highlighting convention in VS Code Dark+, Monokai, and One Dark. Any `(args)` after the name is left for normal expression parsing.",
+          "match": "^\\s*(@)([a-zA-Z_]\\w*(?:\\.[a-zA-Z_]\\w*)*)",
+          "captures": {
+            "1": { "name": "punctuation.definition.decorator.quirk" },
+            "2": { "name": "entity.name.function.decorator.quirk" }
+          }
+        }
+      ]
+    },
     "imports": {
       "patterns": [
         {

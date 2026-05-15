@@ -994,9 +994,13 @@ std::string Sema::checkCall(CallNode *node)
             //     use slug; slug.slug(base)     // dotted access
             //     from slug use { slug }; slug(base)
             if (vtype.rfind("MODULE$", 0) == 0) {
-                std::string ctxMod = currentFunctionNode ? currentFunctionNode->moduleName : "main";
-                bool explicitlyImported = moduleVisibility.count(ctxMod)
-                    && moduleVisibility[ctxMod].visibleSymbols.count(l->value);
+                const std::string& ctxMod = currentFunctionNode ? currentFunctionNode->moduleName : "main";
+                // Single map lookup instead of count+[] (each was O(log n)).
+                bool explicitlyImported = false;
+                auto mvIt = moduleVisibility.find(ctxMod);
+                if (mvIt != moduleVisibility.end()) {
+                    explicitlyImported = mvIt->second.visibleSymbols.count(l->value) > 0;
+                }
                 if (!explicitlyImported) {
                     std::string mod = vtype.substr(7);
                     std::replace(mod.begin(), mod.end(), '/', '.');
@@ -1006,9 +1010,9 @@ std::string Sema::checkCall(CallNode *node)
                         node->line, node->col, node->filePath);
                 }
                 // Explicitly imported AND module-aliased — prefer the function.
-                if (methodRegistry[""].count(l->value)) {
-                    auto* f = methodRegistry[""][l->value];
-                    return f->returnType.empty() ? "void" : f->returnType;
+                auto fnIt = methodRegistry[""].find(l->value);
+                if (fnIt != methodRegistry[""].end()) {
+                    return fnIt->second->returnType.empty() ? "void" : fnIt->second->returnType;
                 }
             }
 
@@ -1149,6 +1153,21 @@ std::string Sema::checkCall(CallNode *node)
             if (!retType.empty()) return retType;
         }
     }
+    // Last resort: the callee is some other expression form, e.g. a chained
+    // call like `dec(foo)(arg)` produced by decorator desugaring. Type-check
+    // the callee; if it yields a Callable, treat the call's return type as
+    // `Any` (same policy as calling a Callable variable above). Restricted
+    // to callees we haven't already classified to avoid re-entering the
+    // MemberAccess/Literal paths and changing existing error reporting.
+    if (!dynamic_cast<LiteralNode*>(node->callee.get())
+     && !dynamic_cast<MemberAccessNode*>(node->callee.get())) {
+        for (auto& a : node->args) checkExpression(a.value.get());
+        std::string calleeTy = checkExpression(node->callee.get());
+        // Calling something whose type is `Callable` or `Any` produces an
+        // unknown (Any) value. Calling something of any other concrete type
+        // is a type error elsewhere; here we just bail out as void.
+        if (calleeTy == "Callable" || calleeTy == "Any") return "Any";
+    }
     return "void";
 }
 
@@ -1242,17 +1261,20 @@ void Sema::defineVariable(const std::string &name, const std::string &type, bool
 
 std::string Sema::resolveVariable(const std::string &name)
 {
-    // 1. Check local scopes first
-    for (int i = scopeStack.size() - 1; i >= 0; i--)
-        if (scopeStack[i].count(name)) {
-            scopeStack[i][name].used = true;
-            return scopeStack[i][name].type;
+    // 1. Check local scopes first.
+    // Single find() per scope avoids the double-lookup (count + [] pattern)
+    // — resolveVariable is hit on every identifier reference, so this is hot.
+    for (int i = scopeStack.size() - 1; i >= 0; i--) {
+        auto it = scopeStack[i].find(name);
+        if (it != scopeStack[i].end()) {
+            it->second.used = true;
+            return it->second.type;
         }
+    }
 
     // 2. Check Global Module Aliases
-    if (globalModuleAliases.count(name)) {
-        return globalModuleAliases[name];
-    }
+    auto gmaIt = globalModuleAliases.find(name);
+    if (gmaIt != globalModuleAliases.end()) return gmaIt->second;
 
     std::string contextModule = currentFunctionNode ? currentFunctionNode->moduleName : "main";
 

@@ -197,6 +197,17 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
     // Robust brace-depth tracking replaces the buggy 'inStruct' regex logic
     let braceDepth = 0;
     let currentFuncDepth = -1;
+    // Stack of outer (locals, funcDepth) pairs — pushed when we enter a
+    // nested `define` inside another function body so the inner define's
+    // params don't clobber the outer scope's locals. Popped when the inner
+    // function's braces close. Without this, code like
+    //     define main() {
+    //         t1 := ...
+    //         define helper() { ... }
+    //         t2 := ...        // would falsely warn "t1 not defined"
+    //     }
+    // breaks scope tracking because we reset `locals` on every funcMatch.
+    const scopeStack: { locals: Set<string>; depth: number }[] = [];
     let inMultiLineImport = false;
 
     for (let i = 0; i < lines.length; i++) {
@@ -223,8 +234,19 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
         const closeBraces = (maskedLine.match(/\}/g) || []).length;
 
         // Reset scope if we enter a new function (optional [T, U] generic params before `(`)
-        const funcMatch = /^\s*(?:extern\s+)?(?:define|def|init)\s+[a-zA-Z_]\w*\s*(?:\[[^\]]*\]\s*)?\(([^)]*)\)/.exec(maskedLine);
+        const funcMatch = /^\s*(?:extern\s+)?(?:define|def|init)\s+([a-zA-Z_]\w*)\s*(?:\[[^\]]*\]\s*)?\(([^)]*)\)/.exec(maskedLine);
         if (funcMatch) {
+            // Nested define inside another function body: the inner define
+            // desugars to a local Callable binding (`name := fn(...) {...}`),
+            // so its NAME is visible to the outer scope. Stash the outer
+            // (locals, funcDepth) so we can restore them when the inner
+            // body closes; meanwhile expose the inner function's name to
+            // the outer scope's locals.
+            if (currentFuncDepth !== -1 && !maskedLine.includes('extern')) {
+                const innerName = funcMatch[1];
+                locals.add(innerName);
+                scopeStack.push({ locals, depth: currentFuncDepth });
+            }
             locals = new Set<string>();
             if (!maskedLine.includes('extern')) {
                 currentFuncDepth = braceDepth;
@@ -243,7 +265,7 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
             // Bodyless signatures (interface methods, forward decls) have no { on the line.
             // Params of bodyless functions are never "used" in Quirk source — don't track them.
             const isBodyless = !maskedLine.includes('{');
-            const paramsStr = funcMatch[1];
+            const paramsStr = funcMatch[2];
             // Type annotation allows generic params: List[T], Map[K, V], etc.
             const paramMatches = [...paramsStr.matchAll(/(?:\.\.\.)?([a-zA-Z_]\w*)\s*(?::\s*[a-zA-Z_][\w.?]*(?:\[[^\]]*\])?)?(?:,|$)/g)];
             for (const pm of paramMatches) {
@@ -552,9 +574,18 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
         // Adjust scope level
         braceDepth += openBraces - closeBraces;
         
-        // If we drop back down to the brace level where the function started, we have exited the function body
+        // If we drop back down to the brace level where the function started,
+        // we have exited the function body. Pop the outer scope if one was
+        // stashed (i.e. this was a nested define inside another function);
+        // otherwise return to "no function" state.
         if (currentFuncDepth !== -1 && braceDepth <= currentFuncDepth && closeBraces > 0) {
-            currentFuncDepth = -1;
+            const outer = scopeStack.pop();
+            if (outer) {
+                locals             = outer.locals;
+                currentFuncDepth   = outer.depth;
+            } else {
+                currentFuncDepth   = -1;
+            }
         }
     }
 

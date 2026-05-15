@@ -280,6 +280,7 @@ Token Lexer::nextToken()
     case ':':  return {TokenType::COLON,      ":", startLine, startCol};
     case ';':  return {TokenType::SEMICOLON,  ";", startLine, startCol};
     case ',':  return {TokenType::COMMA,      ",", startLine, startCol};
+    case '@':  return {TokenType::AT,         "@", startLine, startCol};
     case '+':  return {TokenType::PLUS,       "+", startLine, startCol};
     case '-':  return {TokenType::MINUS,      "-", startLine, startCol};
     case '*':  return {TokenType::STAR,       "*", startLine, startCol};

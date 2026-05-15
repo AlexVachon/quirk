@@ -71,6 +71,7 @@ enum class TokenType {
     COLON,
     SEMICOLON,
     COMMA,
+    AT,
     PLUS,
     MINUS,
     STAR,

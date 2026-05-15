@@ -171,7 +171,35 @@ export class QuirkHoverProvider implements vscode.HoverProvider {
                 // FUNCTION / STRUCT / VARIABLE HOVER
                 // =====================================================
                 const signature = defLine.split('{')[0].trim();
-                md.appendCodeblock(signature, 'quirk');
+
+                // Backward scan for `@decorator` lines stacked above the
+                // definition. Stops on the first non-decorator non-blank line
+                // (or a `---` docstring boundary, which the docstring scanner
+                // handles separately below). Decorators are prepended to the
+                // signature code block in source order so hovers read like
+                // the file:
+                //   @cached
+                //   @logged
+                //   define square(x: Int) -> Int
+                const decoratorLines: string[] = [];
+                {
+                    let dLine = def.range.start.line - 1;
+                    const decRe = /^\s*(@[a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)*(?:\s*\([^)]*\))?)\s*$/;
+                    while (dLine >= 0) {
+                        const t = targetDoc.lineAt(dLine).text;
+                        const trimmed = t.trim();
+                        if (trimmed === '') { dLine--; continue; }
+                        const m = decRe.exec(t);
+                        if (!m) break;
+                        decoratorLines.unshift(m[1]);
+                        dLine--;
+                    }
+                }
+
+                const codeBlock = decoratorLines.length
+                    ? decoratorLines.join('\n') + '\n' + signature
+                    : signature;
+                md.appendCodeblock(codeBlock, 'quirk');
 
                 if (def.uri.fsPath !== document.uri.fsPath) {
                     const relPath = vscode.workspace.asRelativePath(def.uri);
@@ -184,10 +212,15 @@ export class QuirkHoverProvider implements vscode.HoverProvider {
                 let readingDocBlock = false;
                 let docBlockOpenLine = -1;
                 let docBlockCloseLine = -1;
+                const decRe = /^\s*@[a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)*(?:\s*\([^)]*\))?\s*$/;
                 while (lineNum >= 0) {
                     const rawLine = targetDoc.lineAt(lineNum).text;
                     const t = rawLine.trim();
                     if (!readingDocBlock) {
+                        // Skip decorator lines between the def and a potential
+                        // docstring above them — they're shown in the codeblock
+                        // header by the decorator scan above, not in the doc.
+                        if (decRe.test(rawLine)) { lineNum--; continue; }
                         if (t === '---') { readingDocBlock = true; docBlockCloseLine = lineNum; }
                         else if (t.startsWith('---') && t.endsWith('---') && t.length > 6) {
                             // Inline single-line docstring: --- text ---
@@ -211,8 +244,18 @@ export class QuirkHoverProvider implements vscode.HoverProvider {
                 // definition and belongs to it — even when it sits at the
                 // very top of the file.
                 if (docBlockOpenLine >= 0) {
-                    const hasGap = docBlockCloseLine >= 0
-                        && docBlockCloseLine < def.range.start.line - 1;
+                    // "Gap" = non-blank non-decorator content between the
+                    // closing `---` and the definition. Decorators stacked
+                    // above the def don't count as a gap — the doc still
+                    // belongs to the decorated function.
+                    let hasGap = false;
+                    for (let k = docBlockCloseLine + 1; k < def.range.start.line; k++) {
+                        const ln = targetDoc.lineAt(k).text;
+                        const tr = ln.trim();
+                        if (tr === '' || decRe.test(ln)) continue;
+                        hasGap = true;
+                        break;
+                    }
                     let isModuleDoc = hasGap;
                     if (isModuleDoc) {
                         for (let j = 0; j < docBlockOpenLine; j++) {

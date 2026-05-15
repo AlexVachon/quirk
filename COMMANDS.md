@@ -35,6 +35,10 @@ The `quirk` binary is both the compiler/runner and the package manager. This pag
 | `--compile-only` | Compile + emit IR but don't run |
 | `--emit-ir` | Write LLVM IR to `<basename>.ll` |
 | `--emit-ast` | Write AST dump to `<basename>.ast.log` |
+| `-O0` / `-O1` / `-O2` / `-O3` | LLVM optimization level (default `-O2`) |
+| `--release` | Alias for `-O2` (kept for parity with future O3 modes) |
+
+**Optimization defaults.** Quirk currently defaults to `-O2`. The IR the codegen emits is "loose" — it depends on the O2 pass pipeline (`mem2reg`, `instcombine`, `dce`) to be safe at the JIT level. Lowering below O2 segfaults some programs today; a future codegen cleanup will let `-O0` be a safe fast-iteration mode.
 
 Anything after the script path is forwarded as script `argv`:
 

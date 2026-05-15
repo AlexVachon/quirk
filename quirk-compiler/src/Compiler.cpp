@@ -42,6 +42,13 @@ struct CompilerOptions {
     bool emitIR       = false;
     bool emitAST      = false;
     bool checkOnly    = false; // --check: lex + parse + sema only, no codegen
+    // LLVM optimization level. Default 1 — runs the minimal correctness
+    // pass set (mem2reg + EarlyCSE + instcombine + simplifycfg + DCE) which
+    // the JIT needs to execute our codegen's "loose" IR safely. O2 adds
+    // inlining + loop opts + a longer pipeline; meaningful only for compute-
+    // heavy code (`--release`). O0 is unsafe today and segfaults a chunk of
+    // the suite; reserved for future codegen rewrites.
+    int  optLevel     = 1;
 };
 
 // ==========================================================
@@ -186,42 +193,50 @@ public:
 //  IMPORT RESOLUTION
 // ==========================================================
 
-std::vector<std::string> getSearchPaths() {
-    std::vector<std::string> paths;
+// Per-process cache. The search paths depend only on QUIRK_HOME, HOME, and
+// whether QUIRK_HOME contains bin/activate — all stable for the lifetime of
+// one compiler invocation. `resolveImportPath()` is hit once per import,
+// stdlib loading hits this hundreds of times, so caching saves a meaningful
+// amount of allocation + string concat + fs::exists checks.
+static std::vector<std::string>& getSearchPaths() {
+    static std::vector<std::string> paths = []() {
+        std::vector<std::string> p;
+        p.reserve(8);
 
-    // Project-local installs win — matches pip's project-takes-precedence
-    // behavior and means `quirk install -e <path>` works even when
-    // QUIRK_HOME points at a venv or dev tree elsewhere.
-    paths.push_back("./packages/");
+        // Project-local installs win — matches pip's project-takes-precedence
+        // behavior and means `quirk install -e <path>` works even when
+        // QUIRK_HOME points at a venv or dev tree elsewhere.
+        p.push_back("./packages/");
 
-    const char* envHome = std::getenv("QUIRK_HOME");
-    bool isVenv = false;
-    if (envHome) {
-        std::string venvBase = std::string(envHome);
-        paths.push_back(venvBase + "/lib/quirk/packages/");
-        paths.push_back(venvBase + "/lib/quirk/stdlib/");  // new layout
-        paths.push_back(venvBase + "/lib/quirk/");         // legacy / dev install
-        paths.push_back(venvBase + "/libs/");
-        // Distinguish a real venv from a dev-tree QUIRK_HOME: only the former
-        // has bin/activate. Venvs *isolate* — they don't see user-global.
-        isVenv = fs::exists(fs::path(venvBase) / "bin" / "activate");
-    }
-
-    // User-global installs — `pip install --user` / `cargo install` equivalent.
-    // Skipped when a venv is active so the venv stays a closed world.
-    if (!isVenv) {
-        if (const char* home = std::getenv("HOME")) {
-            paths.push_back(std::string(home) + "/.quirk/packages/");
+        const char* envHome = std::getenv("QUIRK_HOME");
+        bool isVenv = false;
+        if (envHome) {
+            std::string venvBase = envHome;
+            p.push_back(venvBase + "/lib/quirk/packages/");
+            p.push_back(venvBase + "/lib/quirk/stdlib/");  // new layout
+            p.push_back(venvBase + "/lib/quirk/");         // legacy / dev install
+            p.push_back(venvBase + "/libs/");
+            // Distinguish a real venv from a dev-tree QUIRK_HOME: only the former
+            // has bin/activate. Venvs *isolate* — they don't see user-global.
+            isVenv = fs::exists(fs::path(venvBase) / "bin" / "activate");
         }
-    }
 
-    paths.push_back("./libs/");
+        // User-global installs — `pip install --user` / `cargo install` equivalent.
+        // Skipped when a venv is active so the venv stays a closed world.
+        if (!isVenv) {
+            if (const char* home = std::getenv("HOME")) {
+                p.push_back(std::string(home) + "/.quirk/packages/");
+            }
+        }
 
-    if (!envHome) {
-        paths.push_back("/usr/local/lib/quirk/packages/");
-        paths.push_back("/usr/local/lib/quirk/");
-    }
+        p.push_back("./libs/");
 
+        if (!envHome) {
+            p.push_back("/usr/local/lib/quirk/packages/");
+            p.push_back("/usr/local/lib/quirk/");
+        }
+        return p;
+    }();
     return paths;
 }
 
@@ -471,6 +486,12 @@ int main(int argc, char* argv[]) {
         else if (arg == "-v")             opts.verbose      = true;
         else if (arg == "--emit-ir")      opts.emitIR       = true;
         else if (arg == "--emit-ast")     opts.emitAST      = true;
+        else if (arg == "--release")      opts.optLevel     = 2;
+        else if (arg == "--debug")        opts.optLevel     = 0;  // default, kept for parity
+        else if (arg == "-O0")            opts.optLevel     = 0;
+        else if (arg == "-O1")            opts.optLevel     = 1;
+        else if (arg == "-O2")            opts.optLevel     = 2;
+        else if (arg == "-O3")            opts.optLevel     = 3;
         else if (arg == "-o") {
             if (++i >= argc) { std::cerr << "Error: -o requires a filename\n"; return 1; }
             opts.outputFile    = argv[i];
@@ -605,6 +626,7 @@ int main(int argc, char* argv[]) {
         }
         LLVMCodegen codegen;
         codegen.setVerbose(opts.verbose);
+        codegen.setOptLevel(opts.optLevel);
         codegen.setSourceMap(sourceMap);
         codegen.compile(ast, dest);
         dest.flush();
@@ -635,6 +657,7 @@ int main(int argc, char* argv[]) {
             }
             LLVMCodegen codegen;
             codegen.setVerbose(opts.verbose);
+            codegen.setOptLevel(opts.optLevel);
             codegen.setSourceMap(sourceMap);
             codegen.compile(ast, irDest);
         }
@@ -681,6 +704,7 @@ int main(int argc, char* argv[]) {
         // Build IR + run O2 passes, get ownership of the module
         LLVMCodegen codegen;
         codegen.setVerbose(opts.verbose);
+        codegen.setOptLevel(opts.optLevel);
         codegen.setSourceMap(sourceMap);
         auto [module, ctx] = codegen.compileAndRelease(ast);
 

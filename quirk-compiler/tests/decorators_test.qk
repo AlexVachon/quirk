@@ -1,0 +1,177 @@
+// Decorator tests — exercises the full @decorator pipeline:
+//   - bare `@dec`
+//   - parametric `@dec(args)` (decorator factories)
+//   - stacked decorators (applied innermost-first, like Python)
+//   - void-returning decorated functions
+//   - stateful decorators (`@cached`) — the wrapped Callable is cached
+//     in a module-internal global so closure state survives across calls
+//
+// The framework's TestCase bodies use lambdas, which require everything
+// here to also work when the decorated functions are called from inside
+// a nested closure context.
+
+use console
+
+use test
+from test use { TestCase }
+
+// ──────────────────────────────────────────────────────────────────────
+// Decorators under test
+// ──────────────────────────────────────────────────────────────────────
+
+// Bare: add 100 to every result.
+define add100(f: Callable) -> Callable {
+    return fn(x: Int) => f(x) + 100
+}
+
+// Bare: add 10 to every result.
+define add10(f: Callable) -> Callable {
+    return fn(x: Int) => f(x) + 10
+}
+
+---
+Parametric (decorator factory): `multiply(3)` returns a decorator that
+multiplies every result by 3.
+---
+define multiply(k: Int) -> Callable {
+    return fn(f: Callable) {
+        return fn(x: Int) => f(x) * k
+    }
+}
+
+---
+Stateful: classic memoizing decorator. With Phase 5b's module-global
+cache, the closure's `cache` Map persists across every call to the
+decorated function — exactly what we're proving here.
+---
+define cached(f: Callable) -> Callable {
+    cache := Map()
+    return fn(x: Int) -> Int => {
+        key := x.str()
+        if cache.has(key) { return cache[key] }
+        r := f(x)
+        cache[key] = r
+        return r
+    }
+}
+
+// A stateful decorator: counts how many times it was invoked. Captures a
+// `count` local in the decorator that's bumped on every call. Returns the
+// current count regardless of what the wrapped function did — what matters
+// here is that `count` persists across calls (only true if the wrapped
+// Callable is built once and cached).
+define call_counter(f: Callable) -> Callable {
+    count := 0
+    nonlocal count
+    return fn(x: Int) -> Int => {
+        count = count + 1
+        f(x)         // exercise the inner; discard its result
+        return count
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Decorated functions
+// ──────────────────────────────────────────────────────────────────────
+
+@add100
+define identity_plus_100(x: Int) -> Int { return x }
+
+@add100
+@add10
+define identity_stacked(x: Int) -> Int { return x }
+
+@multiply(3)
+define identity_x3(x: Int) -> Int { return x }
+
+@multiply(2)
+@add100
+define identity_double_plus_100(x: Int) -> Int { return x }
+
+@cached
+define square(x: Int) -> Int {
+    return x * x
+}
+
+@call_counter
+define identity_counted(x: Int) -> Int { return x }
+
+@multiply(2)
+define noop_void() -> void {
+    return
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Tests
+// ──────────────────────────────────────────────────────────────────────
+
+define main() -> void {
+    t1 := TestCase("bare @add100", fn() {
+        test.assert_eq(identity_plus_100(5), 105)
+        test.assert_eq(identity_plus_100(0), 100)
+    })
+
+    // Stacked: innermost first. `@add100 @add10 def id` → add100(add10(id)).
+    //   id_stacked(5) = ((5) + 10) + 100 = 115. Nested `define` here is
+    //   sugar for `assert_t2 := fn() { ... }`; pass the name without `()`
+    //   so TestCase gets the Callable, not its (void) return.
+    define assert_t2() {
+        test.assert_eq(identity_stacked(5), 115)
+        test.assert_eq(identity_stacked(0), 110)
+    }
+    t2 := TestCase("stacked @add100 @add10", assert_t2)
+
+    // Parametric: factory returns the decorator.
+    t3 := TestCase("parametric @multiply(3)", fn() {
+        test.assert_eq(identity_x3(5), 15)
+        test.assert_eq(identity_x3(10), 30)
+    })
+
+    // Mixed: parametric outermost, bare innermost.
+    //   double_plus_100(5) = (5 + 100) * 2 = 210
+    t4 := TestCase("parametric over bare", fn() {
+        test.assert_eq(identity_double_plus_100(5), 210)
+        test.assert_eq(identity_double_plus_100(0), 200)
+    })
+
+    // @cached: returns must be consistent across repeat calls. If caching
+    // were broken (decorator chain recomputed per call), each invocation
+    // would build a fresh Map and the values would still be correct — so
+    // this test alone can't prove caching. Pair it with @accumulate below,
+    // which only produces the expected sequence if its captured `total`
+    // survives across calls.
+    t5 := TestCase("@cached returns consistent values", fn() {
+        test.assert_eq(square(5), 25)
+        test.assert_eq(square(5), 25)
+        test.assert_eq(square(7), 49)
+        test.assert_eq(square(7), 49)
+        test.assert_eq(square(5), 25)
+    })
+
+    // @call_counter: captured `count` increments on every call. The wrapper
+    // must be built exactly once and reused — otherwise `count` resets to 0
+    // every invocation and we'd see 1, 1, 1 instead of 1, 2, 3. This is the
+    // load-bearing test for Phase 5b's module-global cache.
+    t6 := TestCase("captured state survives across calls", fn() {
+        test.assert_eq(identity_counted(99), 1)
+        test.assert_eq(identity_counted(99), 2)
+        test.assert_eq(identity_counted(99), 3)
+        test.assert_eq(identity_counted(42), 4)
+    })
+
+    // Void-returning decorated function compiles + runs without crashing.
+    // (The wrapper applies @multiply(2) over the void inner; the result
+    // value is discarded, but the dispatch must not segfault.)
+    t7 := TestCase("decorator on void function", fn() {
+        noop_void()
+        noop_void()
+        test.assert_true(true)
+    })
+
+    fails := test.run_all([t1, t2, t3, t4, t5, t6, t7])
+    if fails > 0 {
+        console.error("decorator tests failed (" + fails.str() + ")")
+    } else {
+        console.info("all decorator tests passed")
+    }
+}

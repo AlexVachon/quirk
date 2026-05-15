@@ -47,11 +47,109 @@ std::vector<std::unique_ptr<Node>> Parser::parse() {
         // newline-driven otherwise, so we just eat them here.
         while (peek().type == TokenType::SEMICOLON) advance();
         if (isAtEnd()) break;
+
+        // Decorator lines: `@expr` (zero or more) attach to the next `define`.
+        // The expression after `@` is a normal expression — bare name, member
+        // access, or call — terminated by EOL or the next `@`/`define`.
+        std::vector<std::unique_ptr<Node>> pendingDecorators;
+        try {
+            while (peek().type == TokenType::AT) {
+                Token at = advance();
+                auto dec = parseExpression(0);
+                if (!dec) {
+                    reportError("Expected expression after '@'", at);
+                }
+                pendingDecorators.push_back(std::move(dec));
+                while (peek().type == TokenType::SEMICOLON) advance();
+            }
+            if (!pendingDecorators.empty()) {
+                // Decorators must be followed by a `define` (or `extern define`).
+                TokenType nxt = peek().type;
+                if (nxt != TokenType::DEFINE && nxt != TokenType::EXTERN) {
+                    reportError("Decorators must precede a `define` (found "
+                                + peek().value + ")", peek());
+                }
+            }
+        } catch (ParseError&) {
+            pendingDecorators.clear();
+            sync();
+            continue;
+        }
+
         TokenType type = peek().type;
         try {
             if (type == TokenType::DEFINE || type == TokenType::INIT ||
                 type == TokenType::EXTERN) {
-                nodes.push_back(parseFunction());
+                auto fn = parseFunction();
+                fn->decorators = std::move(pendingDecorators);
+                if (!fn->decorators.empty()) {
+                    // ─── Decorator rewriting ───────────────────────────────
+                    // `@a @b define f(x: T) -> R { body }` desugars to
+                    //   define f__inner__(x: T) -> R { body }
+                    //   define f(x: T) -> R { return a(b(f__inner__))(x) }
+                    //
+                    // Decorators apply innermost-first (bottom-up): the LAST
+                    // decorator in source order wraps the inner function, then
+                    // each earlier decorator wraps that. Mirrors Python.
+                    //
+                    // Cost: the decorator chain is re-evaluated on every call.
+                    // That's correct for stateless decorators (@logged, @timed)
+                    // but resets per-call state in stateful ones (@cached).
+                    // A future Phase 5b can cache the wrapped Callable in a
+                    // module-level global initialized at startup.
+                    std::string innerName = fn->name + "__inner__";
+
+                    // 1. Inner function: same signature + body, renamed.
+                    auto inner = std::make_unique<FunctionNode>();
+                    inner->name       = innerName;
+                    inner->cls        = fn->cls;
+                    inner->returnType = fn->returnType;
+                    inner->isExtern   = fn->isExtern;
+                    inner->isStatic   = fn->isStatic;
+                    inner->isAbstract = fn->isAbstract;
+                    inner->linkageName = "";  // let codegen mangle from name
+                    inner->parameters = std::move(fn->parameters);
+                    inner->body       = std::move(fn->body);
+
+                    // 2. Rebuild wrapper's parameter list (same names/types,
+                    // no default values — those live on the inner).
+                    std::vector<Parameter> wrapperParams;
+                    for (auto& p : inner->parameters) {
+                        Parameter q;
+                        q.name = p.name;
+                        q.type = p.type;
+                        q.isRef = p.isRef;
+                        q.isVariadic = p.isVariadic;
+                        wrapperParams.push_back(std::move(q));
+                    }
+                    fn->parameters = std::move(wrapperParams);
+
+                    // 3. Build the decorator chain: innermost is a reference to
+                    // <innerName>, then each decorator (in reverse source
+                    // order) wraps the prior chain. Result: `a(b(c(inner)))`.
+                    std::unique_ptr<Node> chain = std::make_unique<LiteralNode>(innerName);
+                    for (auto it = fn->decorators.rbegin();
+                              it != fn->decorators.rend(); ++it) {
+                        auto callExpr = std::make_unique<CallNode>(std::move(*it));
+                        Arg argEntry;
+                        argEntry.value = std::move(chain);
+                        callExpr->args.push_back(std::move(argEntry));
+                        chain = std::move(callExpr);
+                    }
+                    fn->decorators.clear();
+
+                    // 4. Mark the wrapper and stash the chain expression for
+                    // Codegen. The wrapper's *body* is left empty — Codegen
+                    // synthesizes a lazy-init + cached-dispatch IR sequence
+                    // around a module-internal Callable* global. That keeps
+                    // stateful decorators (`@cached`) working across calls.
+                    fn->body.clear();
+                    fn->isDecoratorWrapper = true;
+                    fn->decoratorChainExpr = std::move(chain);
+
+                    nodes.push_back(std::move(inner));
+                }
+                nodes.push_back(std::move(fn));
                 for (auto& extra : extraNodes)
                     nodes.push_back(std::move(extra));
                 extraNodes.clear();
@@ -344,10 +442,34 @@ std::unique_ptr<Node> Parser::parseExpression(int min_precedence) {
             if (!match(TokenType::COMMA)) break;
         }
         consume(TokenType::RPAREN, "Expected ')' after lambda params");
+
+        // Optional `-> ReturnType` annotation between params and body.
+        // Sema overwrites `inferredReturnType`, so we stash the annotation
+        // in `declaredReturnType` for future type-check use.
+        if (peek().type == TokenType::ARROW) {
+            advance(); // consume `->`
+            if (peek().type != TokenType::IDENTIFIER) {
+                reportError("Expected return type after '->' in lambda", peek());
+            }
+            lambda->declaredReturnType = advance().value;
+        }
+
+        // Body: `=> expr`, `=> { stmts }`, or `{ stmts }`. The `=> { ... }`
+        // form looks like a block but parseExpression would otherwise try to
+        // read it as a set/map literal — peek ahead and route to the stmt
+        // body instead.
         if (peek().type == TokenType::FAT_ARROW) {
             advance();
-            lambda->isExpression = true;
-            lambda->exprBody = parseExpression(0);
+            if (peek().type == TokenType::LBRACE) {
+                advance(); // consume `{`
+                lambda->isExpression = false;
+                while (peek().type != TokenType::RBRACE && !isAtEnd())
+                    lambda->stmtBody.push_back(parseStatement());
+                consume(TokenType::RBRACE, "Expected '}' to close lambda body");
+            } else {
+                lambda->isExpression = true;
+                lambda->exprBody = parseExpression(0);
+            }
         } else {
             consume(TokenType::LBRACE, "Expected '=>' or '{' after lambda params");
             lambda->isExpression = false;
@@ -542,6 +664,34 @@ std::unique_ptr<Node> Parser::parseStatement() {
         advance(); // consume 'const'
         auto decl = parseVarDecl();
         decl->isConst = true;
+        return decl;
+    }
+    // Nested `define` inside a function body — desugar to a local Callable
+    // binding (`name := fn(args) -> Ret { body }`). Captures the enclosing
+    // scope automatically via the lambda's free-var collection, which is
+    // what users expect when they write Python-style nested defs.
+    if (type == TokenType::DEFINE) {
+        auto fn = parseFunction();
+        auto lambda = std::make_unique<LambdaNode>();
+        lambda->isExpression       = false;
+        lambda->declaredReturnType = fn->returnType;
+        for (auto& p : fn->parameters) {
+            LambdaParam lp;
+            lp.name       = p.name;
+            lp.type       = p.type;
+            lp.isVariadic = p.isVariadic;
+            lambda->params.push_back(std::move(lp));
+        }
+        lambda->stmtBody = std::move(fn->body);
+        lambda->line = fn->line;
+        lambda->col  = fn->col;
+
+        auto lhs  = std::make_unique<LiteralNode>(fn->name);
+        lhs->line = fn->line;
+        lhs->col  = fn->col;
+        auto decl = std::make_unique<VarDeclNode>(std::move(lhs), std::move(lambda), ":=", "");
+        decl->line = fn->line;
+        decl->col  = fn->col;
         return decl;
     }
     if (type == TokenType::USE)
@@ -900,24 +1050,27 @@ std::unique_ptr<FunctionNode> Parser::parseFunction(bool allowAbstract) {
     //   e.g. Core_String_String_to_float, Core_Collections_List_List_append
     std::string modulePrefix = computeModulePrefix();
 
-    // Library functions whose name collides with a top-level Quirk builtin
-    // (`print`, `write`, `type`, ...) get a module-prefixed linkage name so
-    // codegen can route `csv.write(...)` to the user's library function
-    // without being shadowed by the builtin in the global namespace.
-    // User scripts and non-colliding library names keep bare linkage so
-    // JIT can find `main` and existing lookups remain unchanged.
-    bool collidesWithBuiltin = (name == "print" || name == "printf"
-        || name == "type" || name == "str" || name == "write"
-        || name == "writeln" || name == "exit" || name == "malloc"
-        || name == "free");
+    // Library functions ALWAYS get a module-prefixed linkage name. User
+    // scripts (main module + user files) keep bare linkage so the JIT can
+    // find `main` and existing lookups don't change.
+    //
+    // Top-level library functions use the `<mp>$<name>` form so they can't
+    // collide with struct-method linkage `<structName>_<methodName>` —
+    // before this, a top-level `define test` in regex/index.qk and the
+    // method `Regex.test` both wanted `Regex_test`. The `$` separator is
+    // legal in LLVM identifiers but never produced by anything else here.
+    // Extern declarations stay on `<mp>_<name>` because their linkage has
+    // to match the C runtime symbol they bind to.
     bool isLibFunction = filePath.find("libs/") != std::string::npos
                       || filePath.find("libs\\") != std::string::npos
                       || filePath.find("lib/quirk/") != std::string::npos
                       || filePath.find("lib\\quirk\\") != std::string::npos
                       || filePath.find("packages/") != std::string::npos
                       || filePath.find("packages\\") != std::string::npos;
-    if (isExtern || (isLibFunction && collidesWithBuiltin)) {
+    if (isExtern) {
         node->linkageName = modulePrefix + "_" + name;
+    } else if (isLibFunction) {
+        node->linkageName = modulePrefix + "$" + name;
     } else {
         node->linkageName = name;
     }

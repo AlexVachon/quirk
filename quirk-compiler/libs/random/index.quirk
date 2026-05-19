@@ -1,0 +1,123 @@
+---
+Pseudo-random number generation backed by xoshiro256**.
+
+The stream is auto-seeded from `time + pid` at startup, so every program
+run gets different values. Call `seed(n)` if you need reproducibility
+(tests, simulations replay).
+
+Public API:
+  `random.random()`               — Double in [0.0, 1.0)
+  `random.randint(lo, hi)`        — Int in [lo, hi]   (inclusive)
+  `random.uniform(lo, hi)`        — Double in [lo, hi)
+  `random.bool()`                 — random Bool
+  `random.choice(list)`           — random element from a List
+  `random.shuffle(list)`          — in-place Fisher-Yates shuffle
+  `random.sample(list, k)`        — k distinct elements
+  `random.seed(n)`                — re-seed the global stream
+
+@example
+use random
+print(random.randint(1, 6))           // simulated die roll
+deck := [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+random.shuffle(deck)
+print(deck)                            // shuffled in place
+hand := random.sample(deck, 3)         // three distinct picks
+---
+from typing.primitives.string use { String }
+from typing.collections.list use { List }
+
+// ── C-backed entry points (libs/random.c) ─────────────────────────────
+
+--- Re-seed the global RNG. Same `n` => same stream of values. ---
+extern define seed(n: Int) -> void
+
+--- Internal: returns a Double in [0.0, 1.0). Prefer `random()` below. ---
+extern define _next_double() -> Double
+
+--- Internal: inclusive `[lo, hi]`. Used by `randint` and `choice`. ---
+extern define _next_int(lo: Int, hi: Int) -> Int
+
+--- Pick a random element from a non-empty list. Returns null if empty. ---
+extern define choice(items: List) -> Any
+
+--- In-place Fisher-Yates shuffle. Returns the same list. ---
+extern define shuffle(items: List) -> List
+
+
+// ── Quirk-side wrappers ───────────────────────────────────────────────
+
+---
+Uniform double in `[0.0, 1.0)`. The fundamental float-valued primitive
+— all higher-level Double helpers build on this.
+
+@example
+if random.random() < 0.5 { print("heads") }
+---
+define random() -> Double {
+    return _next_double()
+}
+
+---
+Inclusive integer in `[lo, hi]`. Matches Python's `random.randint`.
+Order of arguments doesn't matter — the runtime swaps if `hi < lo`.
+
+@example
+die := random.randint(1, 6)
+---
+define randint(lo: Int, hi: Int) -> Int {
+    return _next_int(lo, hi)
+}
+
+---
+Uniform Double in `[lo, hi)`. Useful for sampling continuous ranges
+(positions, weights, etc.).
+
+@example
+angle := random.uniform(0.0, 6.28318)
+---
+define uniform(lo: Double, hi: Double) -> Double {
+    return lo + (hi - lo) * random()
+}
+
+---
+True or False with 50/50 odds. One-liner around `_next_int(0, 1)`; the
+sugar pays off because it reads better at call sites (`if random.bool()`).
+---
+define bool() -> Bool {
+    return _next_int(0, 1) == 1
+}
+
+---
+Return `k` distinct elements drawn from `items`. Throws if `k > items.length()`.
+Implemented as a partial Fisher-Yates over a copy so the caller's list
+isn't disturbed. O(k) work in the average case.
+
+@example
+deck := [1,2,3,4,5,6,7,8,9,10]
+hand := random.sample(deck, 5)
+---
+define sample(items: List, k: Int) -> List {
+    n := items.length()
+    if k < 0 or k > n {
+        throw ValueError("sample size must be in [0, items.length()]")
+    }
+    // Copy so we can mutate without touching the caller's list.
+    pool := List()
+    i := 0
+    while i < n {
+        pool.append(items.get(i))
+        i = i + 1
+    }
+    out := List()
+    j := 0
+    while j < k {
+        idx := _next_int(j, n - 1)
+        // swap pool[j] and pool[idx], then take pool[j]
+        tmp := pool.get(j)
+        pool.set(j, pool.get(idx))
+        pool.set(idx, tmp)
+        out.append(pool.get(j))
+        j = j + 1
+    }
+    return out
+}

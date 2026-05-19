@@ -40,14 +40,18 @@ static void* __gc_calloc(size_t n, size_t s) {
 #include "libs/time.c"
 #include "libs/regex.c"
 #include "libs/crypto.c"
+#include "libs/random.c"
 
 #include "libs/encoding/json.c"
 #include "libs/encoding/base64.c"
 #include "libs/encoding/hex.c"
 
+extern void Random_init(void);
+
 void QuirkRuntime_init(int argc, char** argv) {
     GC_INIT();             // <--- USE MACRO: Handles stack base detection automatically
     Sys_init(argc, argv);
+    Random_init();          // seed the RNG from time+pid so each run differs
 }
 
 // Convert a boxed opaque value to String*.

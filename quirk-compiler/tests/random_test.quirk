@@ -1,0 +1,142 @@
+// random library — xoshiro256** backed. Tests assert properties that
+// hold regardless of the auto-seed (ranges, set membership, distinct-
+// element guarantees) plus reproducibility under explicit seeding.
+
+use console
+use random
+
+use test
+from test use { TestCase }
+
+define main() -> void {
+
+    t_random_range := TestCase("random() returns Double in [0.0, 1.0)", fn() {
+        i := 0
+        ok := true
+        while i < 200 {
+            v := random.random()
+            if v < 0.0 or v >= 1.0 { ok = false }
+            i = i + 1
+        }
+        test.assert_true(ok)
+    })
+
+    t_randint_inclusive := TestCase("randint(lo, hi) stays in [lo, hi]", fn() {
+        i := 0
+        ok := true
+        while i < 500 {
+            n := random.randint(1, 6)
+            if n < 1 or n > 6 { ok = false }
+            i = i + 1
+        }
+        test.assert_true(ok)
+    })
+
+    t_randint_negative := TestCase("randint accepts negative bounds", fn() {
+        i := 0
+        ok := true
+        while i < 200 {
+            n := random.randint(-10, -5)
+            if n < -10 or n > -5 { ok = false }
+            i = i + 1
+        }
+        test.assert_true(ok)
+    })
+
+    t_uniform_range := TestCase("uniform(lo, hi) stays in [lo, hi)", fn() {
+        i := 0
+        ok := true
+        while i < 200 {
+            v := random.uniform(2.0, 5.0)
+            if v < 2.0 or v >= 5.0 { ok = false }
+            i = i + 1
+        }
+        test.assert_true(ok)
+    })
+
+    t_bool := TestCase("bool() returns a mix of true and false", fn() {
+        seen_true := false
+        seen_false := false
+        i := 0
+        while i < 200 {
+            b := random.bool()
+            if b { seen_true = true } else { seen_false = true }
+            i = i + 1
+        }
+        // 200 flips, P(all same) ≈ 6e-61 — safe to assert both appear.
+        test.assert_true(seen_true)
+        test.assert_true(seen_false)
+    })
+
+    t_choice := TestCase("choice() returns one of the input elements", fn() {
+        items := [10, 20, 30, 40, 50]
+        i := 0
+        ok := true
+        while i < 100 {
+            pick := random.choice(items)
+            // pick must be one of the values. Stringify so the
+            // value-equality matches the Quirk Any-comparison semantics.
+            s := "" + pick
+            if s != "10" and s != "20" and s != "30" and s != "40" and s != "50" {
+                ok = false
+            }
+            i = i + 1
+        }
+        test.assert_true(ok)
+    })
+
+    t_shuffle_preserves := TestCase("shuffle is a permutation (size + sum preserved)", fn() {
+        items := [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        original_sum := 0
+        i := 0
+        while i < items.length() {
+            original_sum = original_sum + items.get(i)
+            i = i + 1
+        }
+        random.shuffle(items)
+        test.assert_eq(items.length(), 10)
+        new_sum := 0
+        j := 0
+        while j < items.length() {
+            new_sum = new_sum + items.get(j)
+            j = j + 1
+        }
+        test.assert_eq(new_sum, original_sum)
+    })
+
+    t_sample_distinct := TestCase("sample(k) returns k distinct elements", fn() {
+        items := [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        picks := random.sample(items, 5)
+        test.assert_eq(picks.length(), 5)
+        // Stuff into a Set via string keys to count distincts.
+        seen := Map()
+        i := 0
+        while i < picks.length() {
+            seen.put("" + picks.get(i), true)
+            i = i + 1
+        }
+        test.assert_eq(seen.length(), 5)
+    })
+
+    t_seed_reproducible := TestCase("seed() makes the stream reproducible", fn() {
+        random.seed(42)
+        a := random.randint(0, 1000000)
+        b := random.randint(0, 1000000)
+        c := random.randint(0, 1000000)
+        random.seed(42)
+        test.assert_eq(random.randint(0, 1000000), a)
+        test.assert_eq(random.randint(0, 1000000), b)
+        test.assert_eq(random.randint(0, 1000000), c)
+    })
+
+    fails := test.run_all([
+        t_random_range, t_randint_inclusive, t_randint_negative,
+        t_uniform_range, t_bool, t_choice,
+        t_shuffle_preserves, t_sample_distinct, t_seed_reproducible
+    ])
+    if fails > 0 {
+        console.error("random tests failed (" + fails.str() + ")")
+    } else {
+        console.info("all random tests passed")
+    }
+}

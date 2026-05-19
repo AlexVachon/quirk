@@ -65,6 +65,7 @@ class MathGen {
             if (op == "-")  return Builder.CreateFSub(L, R, "f_sub");
             if (op == "*")  return Builder.CreateFMul(L, R, "f_mul");
             if (op == "/")  return Builder.CreateFDiv(L, R, "f_div");
+            if (op == "%")  return Builder.CreateFRem(L, R, "f_mod");
             if (op == ">")  return Builder.CreateFCmpOGT(L, R, "f_gt");
             if (op == "<")  return Builder.CreateFCmpOLT(L, R, "f_lt");
             if (op == ">=") return Builder.CreateFCmpOGE(L, R, "f_ge");
@@ -83,6 +84,7 @@ class MathGen {
             if (op == "-")  return Builder.CreateSub(L, R, "i_sub");
             if (op == "*")  return Builder.CreateMul(L, R, "i_mul");
             if (op == "/")  return Builder.CreateSDiv(L, R, "i_div");
+            if (op == "%")  return Builder.CreateSRem(L, R, "i_mod");
             if (op == ">")  return Builder.CreateICmpSGT(L, R, "i_gt");
             if (op == "<")  return Builder.CreateICmpSLT(L, R, "i_lt");
             if (op == ">=") return Builder.CreateICmpSGE(L, R, "i_ge");

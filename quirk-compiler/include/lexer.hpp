@@ -76,6 +76,7 @@ enum class TokenType {
     MINUS,
     STAR,
     SLASH,
+    PERCENT,         // %  (modulo)
     GREATER,
     LESS,
     GREATER_EQUAL,
@@ -86,6 +87,7 @@ enum class TokenType {
     PLUS_ASSIGN,
     STAR_ASSIGN,
     SLASH_ASSIGN,
+    PERCENT_ASSIGN,  // %=
 
     ELLIPSIS,
     TRIPLE_MINUS,

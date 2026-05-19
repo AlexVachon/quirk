@@ -2392,6 +2392,7 @@ class LLVMCodegen {
             if (op == "-=") return mathGen->generateBinaryOp("-", wasVal, newVal);
             if (op == "*=") return mathGen->generateBinaryOp("*", wasVal, newVal);
             if (op == "/=") return mathGen->generateBinaryOp("/", wasVal, newVal);
+            if (op == "%=") return mathGen->generateBinaryOp("%", wasVal, newVal);
             return newVal;
         };
         // -------------------------------------------------------------------------------

@@ -511,11 +511,23 @@ void Sema::checkStatement(Node *node)
             if (arm.isTypeMatch) {
                 enterScope();
                 if (!arm.bindName.empty()) defineVariable(arm.bindName, arm.typeNames[0], false, true);
+                if (arm.guard) checkExpression(arm.guard.get());
                 for (auto& s : arm.body) checkStatement(s.get());
                 exitScope();
             } else {
                 for (auto& pat : arm.patterns) checkExpression(pat.get());
                 enterScope();
+                // Wildcard-with-bind (`case x`) makes `x` visible in both
+                // the guard and the body. Same pattern as `as x` above.
+                if (arm.isWildcard && !arm.bindName.empty()) {
+                    defineVariable(arm.bindName, "Any", false, true);
+                }
+                // Tuple destructure (`case (a, b)`): each name is bound to
+                // the corresponding tuple slot at codegen time.
+                for (auto& n : arm.bindNames) {
+                    defineVariable(n, "Any", false, true);
+                }
+                if (arm.guard) checkExpression(arm.guard.get());
                 for (auto& s : arm.body) checkStatement(s.get());
                 exitScope();
             }
@@ -849,6 +861,7 @@ std::string Sema::checkBinaryOp(BinaryOpNode *node)
         else if (node->op == "-")  magic = "__sub";
         else if (node->op == "*")  magic = "__mul";
         else if (node->op == "/")  magic = "__div";
+        else if (node->op == "%")  magic = "__mod";
         else if (node->op == "==") magic = "__eq";
         else if (node->op == "!=") magic = "__ne";
         else if (node->op == "<")  magic = "__lt";
@@ -878,7 +891,7 @@ std::string Sema::checkBinaryOp(BinaryOpNode *node)
             return "Double";
         return "Int";
     }
-    if (node->op == "-" || node->op == "*" || node->op == "/")
+    if (node->op == "-" || node->op == "*" || node->op == "/" || node->op == "%")
     {
         if (lType == "Double" || rType == "Double")
             return "Double";

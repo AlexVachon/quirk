@@ -236,6 +236,7 @@ int getPrecedence(TokenType type) {
             return 20;
         case TokenType::STAR:
         case TokenType::SLASH:
+        case TokenType::PERCENT:
             return 30;
         case TokenType::DOTDOT:
             return 4; // range: binds loosely so `1+2..5+3` works as (1+2)..(5+3)
@@ -791,8 +792,9 @@ std::unique_ptr<Node> Parser::parseStatement() {
                 balance--;
             if (balance == 0 &&
                 (t == TokenType::ASSIGN_INIT || t == TokenType::ASSIGN ||
-                 t == TokenType::MINUS_ASSIGN || t == TokenType::PLUS_ASSIGN || 
-                 t == TokenType::STAR_ASSIGN || t == TokenType::SLASH_ASSIGN)) {
+                 t == TokenType::MINUS_ASSIGN || t == TokenType::PLUS_ASSIGN ||
+                 t == TokenType::STAR_ASSIGN || t == TokenType::SLASH_ASSIGN ||
+                 t == TokenType::PERCENT_ASSIGN)) {
                 isAssignment = true;
                 break;
             }
@@ -1676,6 +1678,58 @@ std::unique_ptr<Node> Parser::parseMatch() {
             do {
                 arm.patterns.push_back(parseExpression(2));
             } while (match(TokenType::COMMA));
+            // Single bare lowercase identifier: `case x` — interpret as a
+            // binding wildcard rather than equality against a named value.
+            // This is the standard pattern-matching shape from Python /
+            // Rust / OCaml and what users reach for when writing guards
+            // like `case x if x > 0 =>`. UPPERCASE identifiers already go
+            // through the type-match branch above; comma-separated
+            // patterns stay as value-equality lists.
+            if (arm.patterns.size() == 1) {
+                if (auto lit = dynamic_cast<LiteralNode*>(arm.patterns[0].get())) {
+                    const std::string& v = lit->value;
+                    if (!v.empty() && (std::isalpha((unsigned char)v[0]) || v[0] == '_')
+                        && std::islower((unsigned char)v[0])
+                        && v != "true" && v != "false" && v != "null") {
+                        arm.isWildcard = true;
+                        arm.bindName = v;
+                        arm.patterns.clear();
+                    }
+                }
+                // Tuple destructure: `case (a, b) =>` — recognise a single
+                // tuple-literal pattern whose elements are all lowercase
+                // identifiers as a positional binding form. Each element
+                // is bound to the corresponding scrutinee tuple slot.
+                else if (auto tup = dynamic_cast<TupleLiteralNode*>(arm.patterns[0].get())) {
+                    bool allBindings = !tup->elements.empty();
+                    std::vector<std::string> names;
+                    for (auto& elem : tup->elements) {
+                        auto* lit = dynamic_cast<LiteralNode*>(elem.get());
+                        if (!lit) { allBindings = false; break; }
+                        const std::string& v = lit->value;
+                        if (v.empty() || !(std::isalpha((unsigned char)v[0]) || v[0] == '_')) {
+                            allBindings = false; break;
+                        }
+                        if (!std::islower((unsigned char)v[0])
+                            && v[0] != '_') { allBindings = false; break; }
+                        names.push_back(v);
+                    }
+                    if (allBindings) {
+                        arm.isWildcard = true;
+                        arm.bindNames = std::move(names);
+                        arm.patterns.clear();
+                    }
+                }
+            }
+        }
+
+        // Optional guard: `case x if x > 0 =>`. The guard is parsed at
+        // precedence 0 — anything goes — but it stops at `=>` because the
+        // FAT_ARROW token has no infix meaning. Reusing TokenType::IF
+        // works here because it can't appear at this position outside of
+        // a guard.
+        if (match(TokenType::IF)) {
+            arm.guard = parseExpression(0);
         }
 
         // Body: `=> stmt`, `=> { stmts }` (block after arrow), or `{ stmts }` (block only)

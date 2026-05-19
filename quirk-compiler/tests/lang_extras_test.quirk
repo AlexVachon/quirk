@@ -1,0 +1,144 @@
+// Round of small language extras: modulo `%`, hex/binary integer literals,
+// triple-quoted strings, match guards, and tuple destructuring in match.
+// `finally` was already implemented; the test for it lives in this file
+// alongside the rest so a future regression on any of these is one run away.
+
+use console
+use test
+from test use { TestCase }
+
+define main() -> void {
+
+    // ─── 1. Modulo `%` ────────────────────────────────────────────────
+    t_mod_basic := TestCase("`%` on Ints does remainder", fn() {
+        test.assert_eq(10 % 3, 1)
+        test.assert_eq(20 % 5, 0)
+        test.assert_eq(7 % 4, 3)
+    })
+
+    t_mod_assign := TestCase("`%=` compound-assigns the remainder back", fn() {
+        a := 100
+        a %= 7
+        test.assert_eq(a, 2)
+    })
+
+    t_mod_evenodd := TestCase("`%` works in an even/odd guard", fn() {
+        n := 17
+        is_odd := n % 2 != 0
+        test.assert_true(is_odd)
+    })
+
+    // ─── 2. Hex / binary integer literals ─────────────────────────────
+    t_hex := TestCase("hex literals decode to the right decimal", fn() {
+        test.assert_eq(0xFF, 255)
+        test.assert_eq(0xCAFE, 51966)
+        test.assert_eq(0x0, 0)
+    })
+
+    t_bin := TestCase("binary literals decode to the right decimal", fn() {
+        test.assert_eq(0b0, 0)
+        test.assert_eq(0b1010, 10)
+        test.assert_eq(0b11111111, 255)
+    })
+
+    // ─── 3. Triple-quoted strings ─────────────────────────────────────
+    t_triple_basic := TestCase("triple-quoted strings span multiple lines", fn() {
+        s := """line one
+line two
+line three"""
+        test.assert_true(s.contains("line one"))
+        test.assert_true(s.contains("line three"))
+    })
+
+    t_triple_interp := TestCase("interpolation works across newlines", fn() {
+        name := "Alice"
+        s := """Hello, ${name}!
+Welcome."""
+        test.assert_true(s.contains("Hello, Alice!"))
+        test.assert_true(s.contains("Welcome."))
+    })
+
+    // ─── 4. Match guards ──────────────────────────────────────────────
+    t_guard_simple := TestCase("`case x if cond =>` runs only when guard is true", fn() {
+        n := 12
+        result := ""
+        match n {
+            case x if x < 0 => result = "neg"
+            case 0          => result = "zero"
+            case x if x % 2 == 0 => result = "even"
+            case _          => result = "odd"
+        }
+        test.assert_eq(result, "even")
+    })
+
+    t_guard_falls_through := TestCase("false guard falls through to next arm", fn() {
+        n := 3
+        result := ""
+        match n {
+            case x if x % 2 == 0 => result = "even"
+            case x if x > 0      => result = "positive odd"
+            case _               => result = "other"
+        }
+        test.assert_eq(result, "positive odd")
+    })
+
+    // ─── 5. Tuple destructuring in match ──────────────────────────────
+    t_tuple_destruct := TestCase("`case (a, b) =>` binds tuple elements", fn() {
+        pair := (10, "hello")
+        result := ""
+        match pair {
+            case (a, b) => result = "" + a + "/" + b
+        }
+        test.assert_eq(result, "10/hello")
+    })
+
+    t_tuple_destruct_guarded := TestCase("tuple destructure + guard cooperate", fn() {
+        point := (3, 3)
+        result := ""
+        match point {
+            case (x, y) if x == y => result = "diagonal"
+            case (x, y)           => result = "off-diagonal"
+        }
+        test.assert_eq(result, "diagonal")
+    })
+
+    // ─── 6. `finally` block (already shipped, regression coverage) ────
+    t_finally_after_catch := TestCase("finally runs after a caught exception", fn() {
+        log := List()
+        try {
+            log.append("try")
+            throw Exception("boom")
+        } catch (_e: Exception) {
+            log.append("catch")
+        } finally {
+            log.append("finally")
+        }
+        test.assert_eq(log.length(), 3)
+        test.assert_eq("" + log.get(2), "finally")
+    })
+
+    t_finally_after_clean := TestCase("finally runs when no exception was thrown", fn() {
+        log := List()
+        try {
+            log.append("try")
+        } finally {
+            log.append("finally")
+        }
+        test.assert_eq(log.length(), 2)
+        test.assert_eq("" + log.get(1), "finally")
+    })
+
+    fails := test.run_all([
+        t_mod_basic, t_mod_assign, t_mod_evenodd,
+        t_hex, t_bin,
+        t_triple_basic, t_triple_interp,
+        t_guard_simple, t_guard_falls_through,
+        t_tuple_destruct, t_tuple_destruct_guarded,
+        t_finally_after_catch, t_finally_after_clean
+    ])
+    if fails > 0 {
+        console.error("language extras failed (" + fails.str() + ")")
+    } else {
+        console.info("all language extras passed")
+    }
+}

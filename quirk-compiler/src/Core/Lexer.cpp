@@ -173,6 +173,31 @@ Token Lexer::nextToken()
     // 4. Handle Numbers
     if (isdigit(c))
     {
+        // Hex literal: 0xFF, 0xCafe — converted to a decimal string token
+        // so the rest of the pipeline (Sema, Codegen) doesn't need to know
+        // about the base. Keep the loop tight; bail to decimal scanning if
+        // the leading `0x`/`0b` is followed by no valid digits.
+        if (peek() == '0' && (peek(1) == 'x' || peek(1) == 'X')) {
+            advance(); advance(); // consume "0x"
+            std::string hex;
+            auto isHex = [](char ch) {
+                return (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F');
+            };
+            while (isHex(peek())) hex += advance();
+            if (hex.empty()) return {TokenType::ERROR, "0x", startLine, startCol};
+            long long v = std::stoll(hex, nullptr, 16);
+            return {TokenType::INT_LITERAL, std::to_string(v), startLine, startCol};
+        }
+        // Binary literal: 0b1010 — same decimal-normalisation strategy.
+        if (peek() == '0' && (peek(1) == 'b' || peek(1) == 'B')) {
+            advance(); advance(); // consume "0b"
+            std::string bin;
+            while (peek() == '0' || peek() == '1') bin += advance();
+            if (bin.empty()) return {TokenType::ERROR, "0b", startLine, startCol};
+            long long v = std::stoll(bin, nullptr, 2);
+            return {TokenType::INT_LITERAL, std::to_string(v), startLine, startCol};
+        }
+
         std::string num;
         while (isdigit(peek()))
             num += advance();
@@ -243,6 +268,10 @@ Token Lexer::nextToken()
         advance(); advance();
         return {TokenType::SLASH_ASSIGN, "/=", startLine, startCol};
     }
+    if (c == '%' && peek(1) == '=') {
+        advance(); advance();
+        return {TokenType::PERCENT_ASSIGN, "%=", startLine, startCol};
+    }
 
     // 6. Comments
     if (c == '/' && peek(1) == '/') {
@@ -285,6 +314,7 @@ Token Lexer::nextToken()
     case '-':  return {TokenType::MINUS,      "-", startLine, startCol};
     case '*':  return {TokenType::STAR,       "*", startLine, startCol};
     case '/':  return {TokenType::SLASH,      "/", startLine, startCol};
+    case '%':  return {TokenType::PERCENT,    "%", startLine, startCol};
     case '=':  return {TokenType::ASSIGN,     "=", startLine, startCol};
     case '.':  return {TokenType::DOT,        ".", startLine, startCol};
     case '&':  return {TokenType::AMPERSAND,  "&", startLine, startCol};
@@ -307,11 +337,29 @@ void Lexer::tokenizeString()
     char quoteType = peek();
     advance(); // Skip opening quote
 
+    // Triple-quoted string: `"""..."""` or `'''...'''`. Reads as a single
+    // String literal that spans multiple lines and treats newlines as
+    // content. Interpolation (`${expr}`) still works inside. Terminated by
+    // a matching triple-quote sequence.
+    bool tripleQuoted = (peek() == quoteType && peek(1) == quoteType);
+    if (tripleQuoted) {
+        advance(); advance(); // consume the remaining two quote chars
+    }
+
     std::vector<std::string> args;
     std::string format_builder = "";
 
-    // Read until we hit the SAME quote type
-    while (pos < src.length() && peek() != quoteType)
+    // Read until we hit the closing delimiter. For triple-quoted strings,
+    // that's a `"""` (or `'''`) sequence; for normal strings, a single
+    // matching quote.
+    auto atTerminator = [&]() -> bool {
+        if (pos >= src.length()) return false;
+        if (peek() != quoteType) return false;
+        if (!tripleQuoted) return true;
+        return peek(1) == quoteType && peek(2) == quoteType;
+    };
+
+    while (pos < src.length() && !atTerminator())
     {
         char c = peek();
 
@@ -420,8 +468,13 @@ void Lexer::tokenizeString()
         }
     }
 
-    if (peek() == quoteType)
+    if (tripleQuoted) {
+        // Consume the closing triple-quote (three chars). atTerminator()
+        // already verified all three are present before exiting the loop.
+        if (peek() == quoteType) { advance(); advance(); advance(); }
+    } else if (peek() == quoteType) {
         advance(); // Skip closing quote
+    }
 
 
     // Exactly 1 char and no interpolation? It's a C-style Char!

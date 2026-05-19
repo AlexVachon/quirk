@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { getDeadLines } from './DeadCodeProvider';
-import { maskLine } from './utils/maskLine';
+import { maskLine, maskLineWithState, TripleState } from './utils/maskLine';
 import { resolveModulePath, findProjectRootFor, resolveQuirkHome } from './ImportProvider';
 
 const KEYWORDS = new Set([
@@ -103,6 +103,10 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
     // Track brace depth so the top-level VarDecl detector below only
     // promotes names declared at module scope (depth 0) into fileGlobals.
     let pass1Depth = 0;
+    // Track whether we're currently inside a `"""..."""` block. State
+    // threads across lines so identifiers buried in multi-line string
+    // content don't leak out as undefined-variable warnings.
+    let pass1Triple: TripleState = { active: false, quote: '' };
 
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
@@ -111,7 +115,9 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
         if (trimmed.startsWith('---') && trimmed.endsWith('---') && trimmed !== '---') continue;
         if (inDocBlock) continue;
 
-        const cleanLine = maskLine(line);
+        const ms = maskLineWithState(line, pass1Triple);
+        pass1Triple = ms.state;
+        const cleanLine = ms.masked;
         const lineStartDepth = pass1Depth;
         for (const c of cleanLine) {
             if (c === '{') pass1Depth++;
@@ -257,6 +263,9 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
     // breaks scope tracking because we reset `locals` on every funcMatch.
     const scopeStack: { locals: Set<string>; depth: number }[] = [];
     let inMultiLineImport = false;
+    // Same TripleState pattern as Pass 1, run on each line of Pass 2 to
+    // hide triple-quoted content from the identifier scanner.
+    let pass2Triple: TripleState = { active: false, quote: '' };
 
     for (let i = 0; i < lines.length; i++) {
         const originalLine = lines[i];
@@ -265,7 +274,9 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
         if (trimmedOrig.startsWith('---') && trimmedOrig.endsWith('---') && trimmedOrig !== '---') continue;
         if (inDocBlock) continue;
 
-        let maskedLine = maskLine(originalLine);
+        const ms2 = maskLineWithState(originalLine, pass2Triple);
+        pass2Triple = ms2.state;
+        let maskedLine = ms2.masked;
         if (maskedLine.trim() === '') continue;
 
         // Skip import lines, tracking multi-line { } blocks so their braces don't skew braceDepth
@@ -526,6 +537,29 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
                     if (pName && /^[a-zA-Z_]\w*$/.test(pName)) {
                         locals.add(pName);
                     }
+                });
+            }
+
+            // Match-arm bindings introduced by `case x =>`, `case x if …`,
+            // or `case (a, b) =>` (tuple destructure). These names live for
+            // the rest of the arm — registering them as locals keeps the
+            // guard expression and body free of phantom "not defined" warnings.
+            // Single lowercase identifier:
+            const caseBindRe = /\bcase\s+([a-z_]\w*)\s*(?:if\b|=>|\{)/g;
+            let cbm;
+            while ((cbm = caseBindRe.exec(maskedLine)) !== null) {
+                const n = cbm[1];
+                if (KEYWORDS.has(n) || BUILTINS.has(n)) continue;
+                if (n === '_' || n === 'true' || n === 'false' || n === 'null') continue;
+                locals.add(n);
+            }
+            // Tuple destructure:
+            const caseTupleRe = /\bcase\s*\(([^)]+)\)\s*(?:if\b|=>|\{)/g;
+            let ctm;
+            while ((ctm = caseTupleRe.exec(maskedLine)) !== null) {
+                ctm[1].split(',').forEach(part => {
+                    const n = part.trim();
+                    if (n && /^[a-z_]\w*$/.test(n) && !KEYWORDS.has(n)) locals.add(n);
                 });
             }
         }

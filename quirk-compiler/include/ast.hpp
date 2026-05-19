@@ -591,6 +591,14 @@ struct MatchArm {
     bool isTypeMatch = false;        // true for `case Int =>` type-dispatch
     std::vector<std::string> typeNames; // types to match when isTypeMatch
     std::string bindName;            // optional `case Int as x =>` binding
+    // Tuple destructure: `case (a, b) =>` rewrites to a wildcard arm with
+    // bindNames = ["a", "b"]. Each name is bound to the corresponding
+    // element of the scrutinee tuple at codegen time. Empty when not a
+    // tuple-destructure arm.
+    std::vector<std::string> bindNames;
+    // Optional `if cond` guard. The arm fires only if the pattern matches
+    // AND `guard` evaluates truthy. Lets `case x if x > 0 => …` work.
+    std::unique_ptr<Node> guard;
     std::vector<std::unique_ptr<Node>> body;
 };
 

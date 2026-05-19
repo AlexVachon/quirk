@@ -502,9 +502,48 @@ class ControlFlowGen {
             BasicBlock* nextBB = (i + 1 < node->arms.size())
                                  ? BasicBlock::Create(Context, "case_next")
                                  : mergeBB;
+            // With a guard, the pattern check lands in a guard block that
+            // re-checks the condition before falling through to the body.
+            // Without a guard, the pattern check goes straight to the body.
+            BasicBlock* guardBB = arm.guard
+                ? BasicBlock::Create(Context, "case_guard", parentFunc)
+                : nullptr;
+            BasicBlock* matchTargetBB = guardBB ? guardBB : bodyBB;
 
             if (arm.isWildcard) {
-                Builder.CreateBr(bodyBB);
+                Builder.CreateBr(matchTargetBB);
+                Builder.SetInsertPoint(matchTargetBB);
+                // Wildcard arms can carry a binding name (`case x` rewrites
+                // to wildcard+bind). Emit the bind here so guards and the
+                // body both see the scrutinee under that name.
+                if (!arm.bindName.empty() && bindHook) {
+                    bindHook(arm.bindName, scrutVal);
+                }
+                // Tuple destructure: `case (a, b)` was rewritten to a
+                // wildcard with bindNames=[a,b]. Pull each element out of
+                // the scrutinee Tuple via Core_Collections_Tuple_Tuple___get(idx).
+                // Pass scrutVal at its native type so we match whatever
+                // signature the rest of Codegen already declared for the
+                // runtime helper.
+                if (!arm.bindNames.empty() && bindHook) {
+                    Function* getFn = TheModule->getFunction("Core_Collections_Tuple_Tuple___get");
+                    if (!getFn) {
+                        FunctionType* ft = FunctionType::get(Type::getInt8PtrTy(Context),
+                            {scrutVal->getType(), Type::getInt32Ty(Context)}, false);
+                        getFn = Function::Create(ft, Function::ExternalLinkage,
+                            "Core_Collections_Tuple_Tuple___get", TheModule);
+                    }
+                    Value* tupArg = scrutVal;
+                    Type* paramTy = getFn->getFunctionType()->getParamType(0);
+                    if (tupArg->getType() != paramTy && tupArg->getType()->isPointerTy() && paramTy->isPointerTy())
+                        tupArg = Builder.CreateBitCast(tupArg, paramTy);
+                    for (size_t bi = 0; bi < arm.bindNames.size(); bi++) {
+                        Value* elem = Builder.CreateCall(getFn,
+                            {tupArg, ConstantInt::get(Type::getInt32Ty(Context), (int)bi)},
+                            arm.bindNames[bi]);
+                        bindHook(arm.bindNames[bi], elem);
+                    }
+                }
             } else if (arm.isTypeMatch) {
                 // Type-match: `case TypeName =>` / `case T1 | T2 as x =>`
                 // Emit: isinstance(scrutinee_as_i8*, type_name_String*) for each type
@@ -533,10 +572,12 @@ class ControlFlowGen {
                     cond = cond ? Builder.CreateOr(cond, eq, "type_or") : eq;
                 }
                 if (!cond) cond = ConstantInt::getFalse(Context);
-                Builder.CreateCondBr(cond, bodyBB, nextBB);
+                Builder.CreateCondBr(cond, matchTargetBB, nextBB);
 
-                Builder.SetInsertPoint(bodyBB);
-                // Bind the scrutinee to `bindName` if present
+                Builder.SetInsertPoint(matchTargetBB);
+                // Bind the scrutinee to `bindName` if present — must happen
+                // before the guard so a guard like `case T as x if x > 0`
+                // can see `x`.
                 if (!arm.bindName.empty() && bindHook) {
                     bindHook(arm.bindName, scrutVal);
                 }
@@ -549,11 +590,19 @@ class ControlFlowGen {
                     cond = cond ? Builder.CreateOr(cond, eq, "match_or") : eq;
                 }
                 if (!cond) cond = ConstantInt::getFalse(Context);
-                Builder.CreateCondBr(cond, bodyBB, nextBB);
+                Builder.CreateCondBr(cond, matchTargetBB, nextBB);
             }
 
-            if (!arm.isTypeMatch)
-                Builder.SetInsertPoint(bodyBB);
+            // If there's a guard, evaluate it now (bindings are in scope)
+            // and skip to the next arm when it's false.
+            if (guardBB) {
+                Builder.SetInsertPoint(guardBB);
+                Value* gv = exprHandler(arm.guard.get());
+                Value* gb = toBool(gv);
+                Builder.CreateCondBr(gb, bodyBB, nextBB);
+            }
+
+            Builder.SetInsertPoint(bodyBB);
             for (auto& stmt : arm.body) stmtHandler(stmt.get());
             if (!Builder.GetInsertBlock()->getTerminator())
                 Builder.CreateBr(mergeBB);

@@ -1,0 +1,72 @@
+// http client improvements — custom headers, query params, post_json,
+// redirect following. Uses httpbin.org for the test endpoints (well-known
+// stable echo server). These tests need network; skip them in offline CI.
+
+use console
+use net.http
+use encoding.json
+use test
+from test use { TestCase }
+
+define main() -> void {
+
+    t_custom_headers := TestCase("custom headers reach the server", fn() {
+        // httpbin.org/headers echoes back the headers it received as JSON
+        // under the "headers" key.
+        h := Map()
+        h.put("X-Quirk-Token", "secret123")
+        h.put("Accept", "application/json")
+        resp := http.get("http://httpbin.org/headers", h, Map())
+        test.assert_true(resp.ok)
+        test.assert_true(resp.text.contains("X-Quirk-Token"))
+        test.assert_true(resp.text.contains("secret123"))
+    })
+
+    t_query_params := TestCase("params get percent-encoded into query string", fn() {
+        // httpbin.org/get echoes back the parsed args.
+        p := Map()
+        p.put("q", "hello world")
+        p.put("count", "3")
+        resp := http.get("http://httpbin.org/get", Map(), p)
+        test.assert_true(resp.ok)
+        // httpbin echoes args under "args" — the wire format had %20, but
+        // the server decoded it; we assert on the decoded value so the
+        // test stays meaningful even if httpbin re-renders the URL.
+        test.assert_true(resp.text.contains("\"q\""))
+        test.assert_true(resp.text.contains("hello world"))
+        test.assert_true(resp.text.contains("\"count\""))
+    })
+
+    t_post_json := TestCase("post_json sets Content-Type and sends body", fn() {
+        // httpbin.org/post echoes both the parsed JSON body and headers.
+        body := Map()
+        body.put("name", "Quirk")
+        body.put("kind", "language")
+        resp := http.post_json("http://httpbin.org/post", body)
+        test.assert_true(resp.ok)
+        test.assert_true(resp.text.contains("\"Quirk\""))
+        test.assert_true(resp.text.contains("application/json"))
+    })
+
+    t_redirect := TestCase("follow_redirects=true chases 302", fn() {
+        // httpbin.org/redirect/2 sends two 302s before landing on /get.
+        resp := http.get("http://httpbin.org/redirect/2")
+        // After redirects, final status must be 200 (the /get endpoint).
+        test.assert_eq(resp.status_code, 200)
+    })
+
+    t_no_redirect := TestCase("follow_redirects=false stops at 302", fn() {
+        // Same endpoint but we opt out — should see the first 3xx directly.
+        resp := http.request("GET", "http://httpbin.org/redirect/1", "", Map(), Map(), false)
+        test.assert_true(resp.status_code >= 300 and resp.status_code < 400)
+        loc := resp.headers.get("Location")
+        test.assert_true(loc.length() > 0)
+    })
+
+    fails := test.run_all([t_custom_headers, t_query_params, t_post_json, t_redirect, t_no_redirect])
+    if fails > 0 {
+        console.error("http client tests failed (" + fails.str() + ")")
+    } else {
+        console.info("all http client tests passed")
+    }
+}

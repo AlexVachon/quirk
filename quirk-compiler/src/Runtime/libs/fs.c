@@ -24,9 +24,9 @@
 #endif
 
 // ---------------------------------------------------------------------------
-//  Filesystem runtime functions exported to libs/fs/index.qk.
+//  Filesystem runtime functions exported to libs/fs/index.quirk.
 //  Naming: Fs_<name>  (matches `linkageName = "Fs_<name>"` from
-//  Parser::computeModulePrefix for libs/fs/index.qk).
+//  Parser::computeModulePrefix for libs/fs/index.quirk).
 //
 //  Design notes:
 //    - All char* paths from Quirk arrive as `String*`; we extract via

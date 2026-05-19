@@ -234,14 +234,14 @@ File* Sys_stdout() { return make_stream_file(stdout); }
 File* Sys_stderr() { return make_stream_file(stderr); }
 
 // Returns 1 if the given Quirk File wraps a terminal (interactive), 0 otherwise.
-// Used by console.qk to decide whether to emit ANSI color codes.
+// Used by console.quirk to decide whether to emit ANSI color codes.
 int Sys_isatty(File* f) {
     if (!f || !f->handle) return 0;
     return isatty(fileno((FILE*)f->handle)) ? 1 : 0;
 }
 
 // Returns the ANSI SGR sequence for the named color/effect.
-// The Quirk lexer doesn't decode \x1b/\033, so console.qk goes through
+// The Quirk lexer doesn't decode \x1b/\033, so console.quirk goes through
 // this helper rather than embedding the escape byte in source files.
 String* Sys_ansi(String* name) {
     if (!name || !name->buffer) return make_String("");
@@ -383,7 +383,7 @@ void Sys_sleep(int ms) {
 
 // ---------------------------------------------------------------------------
 //  Module-level state helpers (group depth, named timers).
-//  Quirk doesn't currently support module-level mutable state in `.qk` files
+//  Quirk doesn't currently support module-level mutable state in `.quirk` files
 //  — these C-side static slots stand in for that until the language gains it.
 // ---------------------------------------------------------------------------
 

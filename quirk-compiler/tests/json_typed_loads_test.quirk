@@ -1,0 +1,82 @@
+// Typed json.loads — proves primitives come back as real Int/Double/Bool/null,
+// not as Strings. Before this change every numeric or boolean field forced
+// callers to do `Int.parse(m.get("age"))` by hand.
+
+use console
+use encoding.json
+use test
+from test use { TestCase }
+
+define main() -> void {
+    raw := "{\"age\":30,\"pi\":3.14,\"active\":true,\"deleted\":false,\"parent\":null,\"name\":\"Alice\"}"
+
+    t_int := TestCase("Int comes back as Int", fn() {
+        data: Map = json.loads(raw)
+        // If `age` were still a String, this addition would either fail to
+        // type-check or concatenate; getting back 31 proves it's a real Int.
+        age := data.get("age")
+        test.assert_eq(age, 30)
+        test.assert_eq("" + age, "30")
+    })
+
+    t_double := TestCase("Double comes back as Double", fn() {
+        data: Map = json.loads(raw)
+        pi := data.get("pi")
+        // Stringified form is the round-tripped numeric, not the quoted form.
+        s := "" + pi
+        test.assert_true(s.startswith("3.14"))
+    })
+
+    t_bool := TestCase("Bool comes back as Bool", fn() {
+        data: Map = json.loads(raw)
+        active  := data.get("active")
+        deleted := data.get("deleted")
+        // assert_eq compares stringified forms — "true" / "false" prove Bool tag.
+        test.assert_eq("" + active,  "true")
+        test.assert_eq("" + deleted, "false")
+    })
+
+    t_null := TestCase("null comes back as null", fn() {
+        data: Map = json.loads(raw)
+        v := data.get("parent")
+        // Stringified ANY_NULL is the literal "null".
+        test.assert_eq("" + v, "null")
+    })
+
+    t_string := TestCase("String stays a String", fn() {
+        data: Map = json.loads(raw)
+        n: String = data.get("name")
+        test.assert_eq(n, "Alice")
+        test.assert_eq(n.length(), 5)
+    })
+
+    t_array := TestCase("array of typed primitives", fn() {
+        items: List = json.loads("[1, 2.5, true, null, \"x\"]")
+        test.assert_eq(items.length(), 5)
+        test.assert_eq("" + items.get(0), "1")
+        s := "" + items.get(1)
+        test.assert_true(s.startswith("2.5"))
+        test.assert_eq("" + items.get(2), "true")
+        test.assert_eq("" + items.get(3), "null")
+        test.assert_eq("" + items.get(4), "x")
+    })
+
+    t_round_trip := TestCase("round-trip: dumps preserves types from loads", fn() {
+        // Parse → re-dump → real JSON keywords, not quoted strings. The
+        // serializer already understands Any tags, so the typed loads
+        // output round-trips cleanly through dumps.
+        data: Map = json.loads("{\"n\":42,\"ok\":true,\"x\":null}")
+        out := json.dumps(data)
+        // Order of map iteration isn't guaranteed; just check each fragment.
+        test.assert_true(out.contains("\"n\":42"))
+        test.assert_true(out.contains("\"ok\":true"))
+        test.assert_true(out.contains("\"x\":null"))
+    })
+
+    fails := test.run_all([t_int, t_double, t_bool, t_null, t_string, t_array, t_round_trip])
+    if fails > 0 {
+        console.error("typed json.loads tests failed (" + fails.str() + ")")
+    } else {
+        console.info("all typed json.loads tests passed")
+    }
+}

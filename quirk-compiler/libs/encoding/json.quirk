@@ -29,30 +29,59 @@ from io.file use { File }
 // dumps: fully dispatched in C — handles Map, List, Any, raw strings
 extern define dumps(val: Any) -> String
 
+// Low-level pretty-print: `indent` spaces per nesting level. Use
+// `dumps_pretty(val, indent=2)` below for the friendlier API.
+extern define dumps_indent(val: Any, indent: Int) -> String
+
 // parse: returns the parsed value as Any (Map, List, or raw String)
 extern define parse(s: String) -> Any
+
+---
+Pretty-print `val` with `indent` spaces per nesting level. Indented JSON
+is much easier to read for config files and debug output; pass `indent=4`
+for a more spacious layout.
+
+@example
+m := Map()
+m.put("name", "Alice")
+m.put("scores", [98, 87, 92])
+print(json.dumps_pretty(m))
+// {
+//   "name": "Alice",
+//   "scores": [
+//     98,
+//     87,
+//     92
+//   ]
+// }
+---
+define dumps_pretty(val: Any, indent: Int = 2) -> String {
+    return dumps_indent(val, indent)
+}
 
 // ======================================================================
 // loads — friendly alias for parse (matches Python naming)
 // ======================================================================
 
 ---
-Parse a JSON string and return the corresponding Quirk value.
+Parse a JSON string and return the corresponding Quirk value with
+real types — no manual coercion required.
 
-  JSON object  → `Map`   (keys are String, values are raw strings/numbers)
-  JSON array   → `List`  (elements are raw strings/numbers)
+  JSON object  → `Map`     (String keys, mixed-type values)
+  JSON array   → `List`    (mixed-type elements)
   JSON string  → `String`
-  JSON number  → `String` (e.g. `"42"`)
-  JSON boolean → `String` (`"true"` or `"false"`)
-  JSON null    → `String` (`"null"`)
+  JSON number  → `Int` (no decimal/exponent) or `Double`
+  JSON boolean → `Bool`
+  JSON null    → null
 
 @param s  A valid JSON string.
-@returns  A Map, List, or String.
+@returns  A Map, List, String, or boxed primitive.
 
 @example
-data: Map = json.loads('{"name":"Alice","age":30}')
-print(data.get("name"))   // Alice
-print(data.get("age"))    // 30
+data: Map = json.loads('{"name":"Alice","age":30,"active":true}')
+print(data.get("name"))     // Alice  (String)
+print(data.get("age"))      // 30     (Int — usable in arithmetic)
+print(data.get("active"))   // true   (Bool)
 ---
 define loads(s: String) -> Any {
     return parse(s)

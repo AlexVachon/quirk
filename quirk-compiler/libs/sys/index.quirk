@@ -201,7 +201,7 @@ extern define now_ms() -> Int
 
 // ────────────────────── Module-state helpers ──────────────────────
 // Quirk doesn't yet support persistent module-level mutable state, so
-// console.qk's `group`/`time` features lean on these C-side slots.
+// console.quirk's `group`/`time` features lean on these C-side slots.
 // Most users won't call these directly.
 
 ---

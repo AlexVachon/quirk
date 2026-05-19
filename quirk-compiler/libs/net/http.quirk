@@ -1,0 +1,347 @@
+---
+A minimal HTTP/1.1 client over the raw `Socket` primitives.
+
+Supports plain HTTP only — `https://` URLs will fail because there is no
+TLS in the runtime yet.
+
+Public API:
+  `http.get(url, headers=, params=)`         — GET request
+  `http.post(url, data, headers=)`           — POST request with raw body
+  `http.post_json(url, body, headers=)`      — POST a Map/List/struct as JSON
+  `http.delete(url, headers=)`               — DELETE request
+  `http.request(method, url, data="", ...)`  — generic form
+
+Each call returns a `Response`.
+
+@example
+resp := http.get("http://example.com", headers: { "Accept": "text/html" })
+if resp.ok {
+    print(resp.status_code)            // 200
+    print(resp.headers.get("Server"))  // "nginx"
+    print(resp.text)
+}
+
+@example
+resp := http.post_json("http://api/echo", { "name": "Quirk" })
+---
+from typing.primitives.string use { String }
+from typing.collections.map use { Map }
+from typing.exceptions.types use { ValueError }
+from net.socket use { Socket }
+use url
+from url use { URL }
+use encoding.json
+
+---
+HTTP response.
+  `status_code`  — numeric status (200, 404, ...).
+  `headers`      — Map of header name → value (header names are
+                   case-preserved as the server returned them).
+  `text`         — decoded response body (chunked encoding handled).
+  `ok`           — true iff `200 <= status_code < 300`.
+---
+struct Response {
+    status_code: Int
+    headers: Map
+    text: String
+    ok: Bool
+
+    --- Construct a Response. Sets `ok` based on the status code range. ---
+    define __init(self, status: Int, body: String, headers: Map) -> void {
+        self.status_code = status
+        self.text = body
+        self.headers = headers
+        self.ok = (status >= 200) and (status < 300)
+    }
+
+    --- Compact form: `<Response [200]>`. ---
+    define __str(self) -> String {
+        return "<Response [${self.status_code.str()}]>"
+    }
+}
+
+define _hex_to_int(s: String) -> Int {
+    result := 0
+    i := 0
+    while i < s.length() {
+        c := s.substring(i, i + 1).lower()
+        digit := 0
+        if c == "0" { digit = 0 }
+    elif c == "1" { digit = 1 }
+    elif c == "2" { digit = 2 }
+    elif c == "3" { digit = 3 }
+    elif c == "4" { digit = 4 }
+    elif c == "5" { digit = 5 }
+    elif c == "6" { digit = 6 }
+    elif c == "7" { digit = 7 }
+    elif c == "8" { digit = 8 }
+    elif c == "9" { digit = 9 }
+    elif c == "a" { digit = 10 }
+    elif c == "b" { digit = 11 }
+    elif c == "c" { digit = 12 }
+    elif c == "d" { digit = 13 }
+    elif c == "e" { digit = 14 }
+    elif c == "f" { digit = 15 }
+        result = result * 16 + digit
+        i = i + 1
+    }
+    return result
+}
+
+define _decode_chunked(body: String) -> String {
+    result := ""
+    remaining := body
+    while remaining.length() > 0 {
+        crlf := remaining.find("\r\n")
+        if crlf == -1 {
+            break
+        }
+        size_str := remaining.substring(0, crlf).trim()
+        if size_str.length() == 0 {
+            break
+        }
+        chunk_size := _hex_to_int(size_str)
+        if chunk_size == 0 {
+            break
+        }
+        data_start := crlf + 2
+        data_end := data_start + chunk_size
+        if data_end > remaining.length() {
+            data_end = remaining.length()
+        }
+        result += remaining.substring(data_start, data_end)
+        next := data_end + 2
+        if next > remaining.length() {
+            break
+        }
+        remaining = remaining.substring(next, remaining.length())
+    }
+    return result
+}
+
+// Build the path-with-query-string portion of the request line by merging
+// any caller-supplied `params` map into the URL's existing query. Empty
+// params returns the original `path` unchanged. The result is whatever
+// goes after the verb in `GET <here> HTTP/1.1`.
+define _path_with_query(parsed_path: String, parsed_query: String, params: Map) -> String {
+    extra := ""
+    if params.length() > 0 {
+        extra = url.build_query(params)
+    }
+    if parsed_query.length() == 0 and extra.length() == 0 {
+        return parsed_path
+    }
+    if parsed_query.length() > 0 and extra.length() > 0 {
+        return parsed_path + "?" + parsed_query + "&" + extra
+    }
+    if parsed_query.length() > 0 {
+        return parsed_path + "?" + parsed_query
+    }
+    return parsed_path + "?" + extra
+}
+
+// Lowercase a Map's keys into a fresh Map. We use this to make caller-
+// supplied header maps case-insensitive when checking for duplicates of
+// the defaults (Host, User-Agent, Content-Length, Connection).
+define _lowercase_keys(m: Map) -> Map {
+    out := Map()
+    keys := m.keys()
+    i := 0
+    while i < keys.length() {
+        k: String = keys.get(i)
+        out.put(k.lower(), m.get(k))
+        i = i + 1
+    }
+    return out
+}
+
+// Status codes that signal a redirect. 303 forces GET on the next hop;
+// 307/308 preserve the original method+body. 301/302 are technically
+// supposed to preserve method too, but most clients follow the Fielding
+// convention of switching to GET on POST — we do the same.
+define _is_redirect(code: Int) -> Bool {
+    return code == 301 or code == 302 or code == 303 or code == 307 or code == 308
+}
+
+---
+Send a single HTTP request and return the response. Lower-level form
+behind `get`/`post`/`delete`/`post_json`.
+
+@param method HTTP verb (GET, POST, DELETE, PUT, ...) — case-insensitive.
+@param target Full URL starting with `http://`. HTTPS is not supported.
+@param data Request body — pass "" for GET/DELETE.
+@param headers Extra headers to send (case-preserved). Caller-supplied
+       Host / User-Agent / Connection / Content-Length override the defaults.
+@param params Query-string parameters; merged into the URL's existing
+       query and percent-encoded via `url.build_query`.
+@param follow_redirects When true (the default), 3xx responses are
+       followed automatically up to 5 hops. Set to false if you want to
+       inspect or short-circuit the redirect yourself.
+@returns The final `Response`.
+---
+define request(method: String, target: String, data: String = "", headers: Map = Map(), params: Map = Map(), follow_redirects: Bool = true) -> Response {
+    return _request_with_depth(method, target, data, headers, params, follow_redirects, 0)
+}
+
+// Internal entry point with a hop counter — `request` exposes a clean
+// signature but every recursive redirect step bumps `depth`. Bounded at
+// 5 to match curl's default and avoid infinite loops on misbehaving
+// servers (Location: header pointing back at itself).
+define _request_with_depth(method: String, target: String, data: String, headers: Map, params: Map, follow_redirects: Bool, depth: Int) -> Response {
+    u: URL = url.parse(target)
+    host := u.host
+    path := u.path
+    if path.length() == 0 { path = "/" }
+    port := u.port
+    if port == 0 { port = 80 }
+
+    full_path := _path_with_query(path, u.query, params)
+    upper := method.upper()
+
+    with Socket() as s {
+        s.connect(host, port)
+
+        // Build the request line + default headers, then merge caller
+        // headers on top (caller wins for everything except internal
+        // mechanics like Content-Length which has to match the body).
+        req := upper + " " + full_path + " HTTP/1.1\r\n"
+        seen := _lowercase_keys(headers)
+        if seen.has("host") == false {
+            req += "Host: " + host + "\r\n"
+        }
+        if seen.has("user-agent") == false {
+            req += "User-Agent: Quirk/1.0\r\n"
+        }
+        if seen.has("connection") == false {
+            req += "Connection: close\r\n"
+        }
+        if data.length() > 0 and seen.has("content-length") == false {
+            req += "Content-Length: " + data.length().str() + "\r\n"
+        }
+        // Append caller-supplied headers verbatim.
+        hkeys := headers.keys()
+        hi := 0
+        while hi < hkeys.length() {
+            k: String = hkeys.get(hi)
+            v: String = headers.get(k)
+            req += k + ": " + v + "\r\n"
+            hi = hi + 1
+        }
+        req += "\r\n" + data
+        s.send(req)
+
+        chunks := List()
+        while true {
+            chunk := s.recv(4096)
+            if chunk.length() == 0 { break }
+            chunks.append(chunk)
+        }
+        raw_response := "".join(chunks)
+        header_end := raw_response.find("\r\n\r\n")
+        if header_end == -1 {
+            return Response(500, "", Map())
+        }
+        headers_raw := raw_response.substring(0, header_end)
+        raw_body := raw_response.substring(header_end + 4, raw_response.length())
+        body := raw_body
+        if headers_raw.lower().contains("transfer-encoding: chunked") {
+            body = _decode_chunked(raw_body)
+        }
+        lines := headers_raw.split("\r\n")
+        status_line: String = lines.get(0)
+        status_parts := status_line.split(" ")
+        status_code := 0
+        if status_parts.length() > 1 {
+            code_str: String = status_parts.get(1)
+            status_code = code_str.to_int()
+        }
+        headers_map := Map()
+        i := 1
+        while i < lines.length() {
+            line: String = lines.get(i)
+            split_idx := line.find(":")
+            if split_idx != -1 {
+                key := line.substring(0, split_idx).trim()
+                val := line.substring(split_idx + 1, line.length()).trim()
+                headers_map.put(key, val)
+            }
+            i = i + 1
+        }
+
+        // Redirect chain. Stop at depth=5 to match curl's default and
+        // avoid pathological loops. 303 (and POST → 301/302 by
+        // convention) switches the next hop to GET with no body.
+        if follow_redirects and _is_redirect(status_code) and depth < 5 {
+            location: String = headers_map.get("Location")
+            if location.length() == 0 {
+                location = headers_map.get("location")
+            }
+            if location.length() > 0 {
+                next_method := upper
+                next_body := data
+                if status_code == 303 or ((status_code == 301 or status_code == 302) and upper == "POST") {
+                    next_method = "GET"
+                    next_body = ""
+                }
+                // Resolve relative Location values against the original
+                // URL. RFC 7231 §7.1.2 allows the server to return either
+                // an absolute URI or a relative ref; httpbin returns the
+                // latter for /redirect/N.
+                next_url := location
+                if location.startswith("/") {
+                    next_url = "http://" + host + ":" + port.str() + location
+                } elif location.startswith("http://") == false and location.startswith("https://") == false {
+                    next_url = "http://" + host + ":" + port.str() + "/" + location
+                }
+                return _request_with_depth(next_method, next_url, next_body,
+                                            headers, Map(), follow_redirects, depth + 1)
+            }
+        }
+
+        return Response(status_code, body, headers_map)
+    }
+}
+
+---
+HTTP GET.
+@param headers Extra request headers (optional).
+@param params Query-string parameters merged into the URL (optional).
+@example resp := http.get("http://example.com")
+@example resp := http.get("http://api/search", params: { "q": "quirk" })
+---
+define get(target: String, headers: Map = Map(), params: Map = Map()) -> Response {
+    return request("GET", target, "", headers, params, true)
+}
+
+---
+HTTP POST with a raw body. The body is sent as-is — set the matching
+`Content-Type` in `headers` if it isn't `application/octet-stream`.
+@example resp := http.post("http://api/echo", "name=Quirk")
+@example resp := http.post(url, "raw", headers: { "Content-Type": "text/plain" })
+---
+define post(target: String, data: String, headers: Map = Map()) -> Response {
+    return request("POST", target, data, headers, Map(), true)
+}
+
+---
+POST a value as JSON. Serializes `body` via `json.dumps` and sets
+`Content-Type: application/json` unless the caller already supplied one.
+Accepts anything `json.dumps` does: Map, List, ISerializable structs, or
+a String.
+@example resp := http.post_json("http://api/users", { "name": "Quirk" })
+---
+define post_json(target: String, body: Any, headers: Map = Map()) -> Response {
+    seen := _lowercase_keys(headers)
+    if seen.has("content-type") == false {
+        headers.put("Content-Type", "application/json")
+    }
+    return request("POST", target, json.dumps(body), headers, Map(), true)
+}
+
+---
+HTTP DELETE.
+@example resp := http.delete("http://api/users/42")
+---
+define delete(target: String, headers: Map = Map()) -> Response {
+    return request("DELETE", target, "", headers, Map(), true)
+}

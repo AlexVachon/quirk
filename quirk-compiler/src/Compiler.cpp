@@ -259,10 +259,10 @@ std::string resolveImportPath(const std::string& moduleName, const std::string& 
 
         std::string subPath = moduleName.substr(dotCount);
 
-        fs::path candidateFile = baseDir / (subPath + ".qk");
+        fs::path candidateFile = baseDir / (subPath + ".quirk");
         if (fs::exists(candidateFile)) return candidateFile.string();
 
-        fs::path candidateInit = baseDir / subPath / "index.qk";
+        fs::path candidateInit = baseDir / subPath / "index.quirk";
         if (fs::exists(candidateInit)) return candidateInit.string();
 
         return "";
@@ -282,10 +282,10 @@ std::string resolveImportPath(const std::string& moduleName, const std::string& 
     std::replace(relPath.begin(), relPath.end(), '.', '/');
 
     std::vector<std::string> variants = {
-        relPath + ".qk",
-        relPath + "/index.qk",
-        relPath + "/src/index.qk",                       // package layout: pkg/src/index.qk
-        relPath + "/src/" + relPath + ".qk",
+        relPath + ".quirk",
+        relPath + "/index.quirk",
+        relPath + "/src/index.quirk",                       // package layout: pkg/src/index.quirk
+        relPath + "/src/" + relPath + ".quirk",
     };
 
     for (const auto& root : getSearchPaths()) {
@@ -429,7 +429,7 @@ std::vector<std::unique_ptr<Node>> processFile(const std::string& filePath,
 // ==========================================================
 
 void printUsage() {
-    std::cout << "Usage: quirk [options] <file.qk> [script-args...]\n"
+    std::cout << "Usage: quirk [options] <file.quirk> [script-args...]\n"
               << "\n"
               << "Run options:\n"
               << "  --compile-only      Compile only, do not run\n"
@@ -470,7 +470,7 @@ int main(int argc, char* argv[]) {
 
     // Parse CLI flags. Anything after the input file (the first non-`-` arg)
     // is forwarded to the user script via sys.argv() — same convention as
-    // python/node: `quirk [compiler-flags] script.qk [script-args...]`.
+    // python/node: `quirk [compiler-flags] script.quirk [script-args...]`.
     CompilerOptions opts;
     std::vector<std::string> scriptArgs;
     for (int i = 1; i < argc; ++i) {
@@ -511,7 +511,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Derive base name for output files (e.g. "tests/strings.qk" -> "strings")
+    // Derive base name for output files (e.g. "tests/strings.quirk" -> "strings")
     fs::path inputPath(opts.inputFile);
     std::string baseName = inputPath.stem().string();    // "strings"
     std::string baseDir  = inputPath.parent_path().string();

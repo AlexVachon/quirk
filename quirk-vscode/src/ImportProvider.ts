@@ -4,7 +4,7 @@ import * as fs from 'fs';
 
 // Standalone module-path resolver used by DiagnosticsProvider too.
 // Mirrors the compiler's order: project-local packages first, then venv, then
-// stdlib. Returns the resolved .qk file path, or null if nothing matches.
+// stdlib. Returns the resolved .quirk file path, or null if nothing matches.
 export function resolveModulePath(projectRoot: string, currentFile: string, modulePath: string): string | null {
     if (modulePath.startsWith('.')) {
         const m = /^(\.+)(.*)$/.exec(modulePath);
@@ -13,9 +13,9 @@ export function resolveModulePath(projectRoot: string, currentFile: string, modu
         for (let i = 1; i < m[1].length; i++) searchDir = path.dirname(searchDir);
         const subPath = m[2].replace(/\./g, '/');
         for (const c of [
-            path.join(searchDir, subPath + '.qk'),
-            path.join(searchDir, subPath, 'index.qk'),
-            path.join(searchDir, subPath, '__init.qk'),
+            path.join(searchDir, subPath + '.quirk'),
+            path.join(searchDir, subPath, 'index.quirk'),
+            path.join(searchDir, subPath, '__init.quirk'),
         ]) if (fs.existsSync(c)) return c;
         return null;
     }
@@ -38,11 +38,11 @@ export function resolveModulePath(projectRoot: string, currentFile: string, modu
     roots.push(path.join(projectRoot, 'libs'), path.join(projectRoot, 'src'));
     for (const root of roots) {
         for (const c of [
-            path.join(root, relPath + '.qk'),
-            path.join(root, relPath, 'index.qk'),
-            path.join(root, relPath, '__init.qk'),
-            path.join(root, relPath, 'src', 'index.qk'),
-            path.join(root, relPath, 'src', relPath + '.qk'),
+            path.join(root, relPath + '.quirk'),
+            path.join(root, relPath, 'index.quirk'),
+            path.join(root, relPath, '__init.quirk'),
+            path.join(root, relPath, 'src', 'index.quirk'),
+            path.join(root, relPath, 'src', relPath + '.quirk'),
         ]) if (fs.existsSync(c)) return c;
     }
     return null;
@@ -89,49 +89,49 @@ export function resolveQuirkHome(projectRoot?: string): string | undefined {
 }
 
 const PRELUDE_MODULES = [
-    'typing/index.qk',
+    'typing/index.quirk',
     // primitives
-    'typing/primitives/index.qk',
-    'typing/primitives/string.qk',
-    'typing/primitives/int.qk',
-    'typing/primitives/double.qk',
-    'typing/primitives/bool.qk',
+    'typing/primitives/index.quirk',
+    'typing/primitives/string.quirk',
+    'typing/primitives/int.quirk',
+    'typing/primitives/double.quirk',
+    'typing/primitives/bool.quirk',
     // interfaces
-    'typing/interfaces/index.qk',
-    'typing/interfaces/printable.qk',
-    'typing/interfaces/equatable.qk',
-    'typing/interfaces/comparable.qk',
-    'typing/interfaces/hashable.qk',
-    'typing/interfaces/parseable.qk',
-    'typing/interfaces/sizeable.qk',
-    'typing/interfaces/iterable.qk',
-    'typing/interfaces/iterator.qk',
-    'typing/interfaces/representable.qk',
-    'typing/interfaces/primitive.qk',
-    'typing/interfaces/serializable.qk',
+    'typing/interfaces/index.quirk',
+    'typing/interfaces/printable.quirk',
+    'typing/interfaces/equatable.quirk',
+    'typing/interfaces/comparable.quirk',
+    'typing/interfaces/hashable.quirk',
+    'typing/interfaces/parseable.quirk',
+    'typing/interfaces/sizeable.quirk',
+    'typing/interfaces/iterable.quirk',
+    'typing/interfaces/iterator.quirk',
+    'typing/interfaces/representable.quirk',
+    'typing/interfaces/primitive.quirk',
+    'typing/interfaces/serializable.quirk',
     // collections
-    'typing/collections/list.qk',
-    'typing/collections/map.qk',
-    'typing/collections/tuple.qk',
-    'typing/collections/set.qk',
-    'typing/collections/queue.qk',
+    'typing/collections/list.quirk',
+    'typing/collections/map.quirk',
+    'typing/collections/tuple.quirk',
+    'typing/collections/set.quirk',
+    'typing/collections/queue.quirk',
     // other
-    'typing/callable.qk',
-    'typing/exceptions/base.qk',
-    'typing/exceptions/index.qk',
-    'typing/exceptions/types.qk',
-    'sys/index.qk',
-    'console/index.qk',
-    'math/index.qk',
-    'math/vectors.qk',
-    'fs/index.qk',
-    'time/index.qk',
-    'regex/index.qk',
-    'test/index.qk',
-    'crypto/index.qk',
-    'argparse/index.qk',
-    'url/index.qk',
-    'csv/index.qk'
+    'typing/callable.quirk',
+    'typing/exceptions/base.quirk',
+    'typing/exceptions/index.quirk',
+    'typing/exceptions/types.quirk',
+    'sys/index.quirk',
+    'console/index.quirk',
+    'math/index.quirk',
+    'math/vectors.quirk',
+    'fs/index.quirk',
+    'time/index.quirk',
+    'regex/index.quirk',
+    'test/index.quirk',
+    'crypto/index.quirk',
+    'argparse/index.quirk',
+    'url/index.quirk',
+    'csv/index.quirk'
 ];
 
 export class QuirkDefinitionProvider implements vscode.DefinitionProvider {
@@ -645,11 +645,11 @@ export class QuirkDefinitionProvider implements vscode.DefinitionProvider {
         const relPath = modulePath.replace(/\./g, '/');
         for (const root of this.getSearchRoots(projectRoot)) {
             const candidates = [
-                path.join(root, relPath + '.qk'),
-                path.join(root, relPath, 'index.qk'),
-                path.join(root, relPath, '__init.qk'),
-                path.join(root, relPath, 'src', 'index.qk'),
-                path.join(root, relPath, 'src', relPath + '.qk'),
+                path.join(root, relPath + '.quirk'),
+                path.join(root, relPath, 'index.quirk'),
+                path.join(root, relPath, '__init.quirk'),
+                path.join(root, relPath, 'src', 'index.quirk'),
+                path.join(root, relPath, 'src', relPath + '.quirk'),
             ];
             for (const c of candidates) if (fs.existsSync(c)) return c;
         }
@@ -662,9 +662,9 @@ export class QuirkDefinitionProvider implements vscode.DefinitionProvider {
         let searchDir = path.dirname(currentFile);
         for (let i = 1; i < m[1].length; i++) searchDir = path.dirname(searchDir);
         const subPath = m[2].replace(/\./g, '/');
-        const v1 = path.join(searchDir, subPath + '.qk');
-        const v2 = path.join(searchDir, subPath, 'index.qk');
-        const v3 = path.join(searchDir, subPath, '__init.qk');
+        const v1 = path.join(searchDir, subPath + '.quirk');
+        const v2 = path.join(searchDir, subPath, 'index.quirk');
+        const v3 = path.join(searchDir, subPath, '__init.quirk');
         if (fs.existsSync(v1)) return v1;
         if (fs.existsSync(v2)) return v2;
         if (fs.existsSync(v3)) return v3;

@@ -12,9 +12,9 @@
 #endif
 
 // ---------------------------------------------------------------------------
-//  Time runtime functions exported to libs/time/index.qk.
+//  Time runtime functions exported to libs/time/index.quirk.
 //  Naming: Time_<name>  (matches `linkageName = "Time_<name>"` from
-//  Parser::computeModulePrefix for libs/time/index.qk).
+//  Parser::computeModulePrefix for libs/time/index.quirk).
 //
 //  All epoch values are Unix seconds (signed). Quirk Int is 32-bit so the
 //  representable range runs out in 2038 (Y2038); fixing that requires

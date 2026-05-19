@@ -1,5 +1,5 @@
 ---
-TCP socket — an OO wrapper over the raw fd-based primitives in `net/index.qk`.
+TCP socket — an OO wrapper over the raw fd-based primitives in `net/index.quirk`.
 Throws `SocketError` on any underlying syscall failure. Supports the `with`
 statement for automatic close.
 

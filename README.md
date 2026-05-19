@@ -1,7 +1,7 @@
-# Quirk (.qk) Language Reference
+# Quirk (.quirk) Language Reference
 
 **Version:** 2.0  
-**Extension:** `.qk`  
+**Extension:** `.quirk`  
 **Runtime:** LLVM JIT + native binary output
 
 Quirk is a compiled, statically-typed language with Python-like syntax, struct-based OOP, first-class functions, and a rich standard library. It compiles to native code via LLVM and uses the Boehm GC for memory management.
@@ -53,7 +53,7 @@ print(greet("Quirk"))
 ```
 
 ```bash
-./bin/quirk hello.qk
+./bin/quirk hello.quirk
 ```
 
 ---
@@ -1201,19 +1201,19 @@ print(v)
 
 ```bash
 # Run immediately (JIT)
-./bin/quirk program.qk
+./bin/quirk program.quirk
 
 # Emit LLVM IR
-./bin/quirk --emit-ir program.qk
+./bin/quirk --emit-ir program.quirk
 
 # Compile to native binary
-./bin/quirk -o output program.qk
+./bin/quirk -o output program.quirk
 
 # Verbose compilation output
-./bin/quirk -v program.qk
+./bin/quirk -v program.quirk
 
 # Dump AST
-./bin/quirk --emit-ast program.qk
+./bin/quirk --emit-ast program.quirk
 ```
 
 ### Building the Compiler

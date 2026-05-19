@@ -7,6 +7,15 @@ extern void* GC_malloc(size_t);
 extern String* make_String(const char* raw);
 extern String* make_String_taking_ownership(char* raw);
 
+// Any* boxing helpers from core/any.c — used to give JSON primitives their
+// real Quirk types on the way out of loads(). Without these, every numeric
+// or boolean field would come back as a String, forcing callers to do
+// Int.parse(m.get("age")) by hand.
+extern Any* Core_Primitives_Any_box_int(int32_t v);
+extern Any* Core_Primitives_Any_box_double(double v);
+extern Any* Core_Primitives_Any_box_bool(int32_t v);
+extern Any* Core_Primitives_Any_box_null(void);
+
 // Forward Declaration
 void* Encoding_Json__parse_value(const char** cursor);
 
@@ -30,19 +39,25 @@ static String* Json__parse_raw_string(const char** cursor) {
     return make_String_taking_ownership(buf);
 }
 
-// Returns a String* so quirk_opaque_to_string and Json__serialize_any can detect it
-static String* Json__parse_raw_number(const char** cursor) {
+// Parse a JSON number into a typed Any* — Int if it has no decimal/exponent,
+// Double otherwise. Failure to parse yields ANY_INT 0; the cursor is still
+// advanced past the malformed run so the outer parser doesn't loop.
+static Any* Json__parse_number(const char** cursor) {
     const char* start = *cursor;
+    int is_float = 0;
     if (**cursor == '-') (*cursor)++;
     while (isdigit(**cursor) || **cursor == '.' || **cursor == 'e' ||
            **cursor == 'E' || **cursor == '+' || **cursor == '-') {
+        if (**cursor == '.' || **cursor == 'e' || **cursor == 'E') is_float = 1;
         (*cursor)++;
     }
     int len = *cursor - start;
-    char* buf = (char*)GC_malloc(len + 1);
-    strncpy(buf, start, len);
-    buf[len] = '\0';
-    return make_String_taking_ownership(buf);
+    char tmp[64];
+    if (len >= (int)sizeof(tmp)) len = sizeof(tmp) - 1;
+    memcpy(tmp, start, len);
+    tmp[len] = '\0';
+    if (is_float) return Core_Primitives_Any_box_double(strtod(tmp, NULL));
+    return Core_Primitives_Any_box_int((int32_t)strtol(tmp, NULL, 10));
 }
 
 Map* Encoding_Json__parse_object(const char** cursor) {
@@ -119,13 +134,15 @@ void* Encoding_Json__parse_value(const char** cursor) {
     if (**cursor == '"') return Json__parse_raw_string(cursor);
     if (**cursor == '{') return Encoding_Json__parse_object(cursor);
     if (**cursor == '[') return Encoding_Json__parse_array(cursor);
-    if (isdigit(**cursor) || **cursor == '-') return Json__parse_raw_number(cursor);
-    
-    if (strncmp(*cursor, "true", 4) == 0)  { *cursor += 4; return make_String("true"); }
-    if (strncmp(*cursor, "false", 5) == 0) { *cursor += 5; return make_String("false"); }
-    if (strncmp(*cursor, "null", 4) == 0)  { *cursor += 4; return make_String("null"); }
-    
-    (*cursor)++; 
+    if (isdigit(**cursor) || **cursor == '-') return Json__parse_number(cursor);
+
+    // Booleans and null become real Any* values so callers get typed
+    // results without an Int.parse / String.eq dance.
+    if (strncmp(*cursor, "true", 4) == 0)  { *cursor += 4; return Core_Primitives_Any_box_bool(1); }
+    if (strncmp(*cursor, "false", 5) == 0) { *cursor += 5; return Core_Primitives_Any_box_bool(0); }
+    if (strncmp(*cursor, "null", 4) == 0)  { *cursor += 4; return Core_Primitives_Any_box_null(); }
+
+    (*cursor)++;
     return NULL;
 }
 
@@ -140,10 +157,26 @@ void* Encoding_Json_parse(String* json_str) {
 //  Bool, Null, and ISerializable structs recursively.
 // ===================================================
 
-// Forward declarations
-static void Json__serialize_any(void* val, AnyTag hint, char** buf, int* cap, int* len);
+// Forward declarations.
+// `indent` is the per-level width in spaces. 0 means compact (no
+// newlines / no spacing); >0 means pretty-print, with `depth` tracking
+// the current nesting level.
+static void Json__serialize_any(void* val, AnyTag hint, char** buf, int* cap, int* len, int indent, int depth);
 static void Json__buf_append(char** buf, int* cap, int* len, const char* s);
 static void Json__buf_append_escaped(char** buf, int* cap, int* len, const char* s);
+
+static void Json__buf_newline_indent(char** buf, int* cap, int* len, int indent, int depth) {
+    if (indent <= 0) return;
+    int spaces = indent * depth;
+    int needed = *len + 1 + spaces + 1;
+    if (needed >= *cap) {
+        while (needed >= *cap) *cap *= 2;
+        *buf = (char*)realloc(*buf, *cap);
+    }
+    (*buf)[(*len)++] = '\n';
+    for (int i = 0; i < spaces; i++) (*buf)[(*len)++] = ' ';
+    (*buf)[*len] = '\0';
+}
 
 static void Json__buf_ensure(char** buf, int* cap, int needed) {
     while (needed >= *cap) *cap *= 2;
@@ -182,30 +215,34 @@ static void Json__buf_append_escaped(char** buf, int* cap, int* len, const char*
     Json__buf_append_char(buf, cap, len, '"');
 }
 
-static void Json__serialize_map(Map* map, char** buf, int* cap, int* len) {
+static void Json__serialize_map(Map* map, char** buf, int* cap, int* len, int indent, int depth) {
     Json__buf_append_char(buf, cap, len, '{');
     int first = 1;
     for (int i = 0; i < map->capacity; i++) {
         if (!map->entries[i].is_occupied) continue;
         if (!first) Json__buf_append_char(buf, cap, len, ',');
+        Json__buf_newline_indent(buf, cap, len, indent, depth + 1);
         first = 0;
-        // Key — always a string
         Json__buf_append_escaped(buf, cap, len, map->entries[i].key);
         Json__buf_append_char(buf, cap, len, ':');
-        // Value — stored as void*, could be anything
-        // Since map values don't carry AnyTag, we use ANY_PTR as hint
-        // and let the heuristic in Json__serialize_any figure it out.
-        Json__serialize_any(map->entries[i].value, ANY_PTR, buf, cap, len);
+        if (indent > 0) Json__buf_append_char(buf, cap, len, ' ');
+        // Value — stored as void*, could be anything. Since map values
+        // don't carry an AnyTag, dispatch via ANY_PTR and let the
+        // heuristic in Json__serialize_any figure it out.
+        Json__serialize_any(map->entries[i].value, ANY_PTR, buf, cap, len, indent, depth + 1);
     }
+    if (!first) Json__buf_newline_indent(buf, cap, len, indent, depth);
     Json__buf_append_char(buf, cap, len, '}');
 }
 
-static void Json__serialize_list(List* list, char** buf, int* cap, int* len) {
+static void Json__serialize_list(List* list, char** buf, int* cap, int* len, int indent, int depth) {
     Json__buf_append_char(buf, cap, len, '[');
     for (int i = 0; i < list->size; i++) {
         if (i > 0) Json__buf_append_char(buf, cap, len, ',');
-        Json__serialize_any(list->data[i], ANY_PTR, buf, cap, len);
+        Json__buf_newline_indent(buf, cap, len, indent, depth + 1);
+        Json__serialize_any(list->data[i], ANY_PTR, buf, cap, len, indent, depth + 1);
     }
+    if (list->size > 0) Json__buf_newline_indent(buf, cap, len, indent, depth);
     Json__buf_append_char(buf, cap, len, ']');
 }
 
@@ -217,7 +254,7 @@ static void Json__serialize_list(List* list, char** buf, int* cap, int* len) {
 //   - Map* / List*      → structural check via size/capacity fields
 //   - Otherwise         → treat as raw C-string (the json.c parser always
 //                         stores string/number values as char* directly)
-static void Json__serialize_any(void* val, AnyTag hint, char** buf, int* cap, int* len) {
+static void Json__serialize_any(void* val, AnyTag hint, char** buf, int* cap, int* len, int indent, int depth) {
     if (!val) { Json__buf_append(buf, cap, len, "null"); return; }
 
     // If we have an explicit Any* (hint == ANY_INT etc.), dispatch directly.
@@ -233,8 +270,8 @@ static void Json__serialize_any(void* val, AnyTag hint, char** buf, int* cap, in
                 Json__buf_append(buf, cap, len, cb); return;
             }
             case ANY_STRING: Json__buf_append_escaped(buf, cap, len, a->ptr ? ((String*)a->ptr)->buffer : NULL); return;
-            case ANY_LIST:   Json__serialize_list((List*)a->ptr, buf, cap, len); return;
-            case ANY_MAP:    Json__serialize_map((Map*)a->ptr, buf, cap, len); return;
+            case ANY_LIST:   Json__serialize_list((List*)a->ptr, buf, cap, len, indent, depth); return;
+            case ANY_MAP:    Json__serialize_map((Map*)a->ptr, buf, cap, len, indent, depth); return;
             case ANY_NULL:   Json__buf_append(buf, cap, len, "null"); return;
             default: break;
         }
@@ -282,7 +319,7 @@ static void Json__serialize_any(void* val, AnyTag hint, char** buf, int* cap, in
         int32_t possible_tag = *((int32_t*)val);
         if (possible_tag >= ANY_INT && possible_tag <= ANY_NULL) {
             Any* a = (Any*)val;
-            Json__serialize_any(val, (AnyTag)a->tag, buf, cap, len);
+            Json__serialize_any(val, (AnyTag)a->tag, buf, cap, len, indent, depth);
             return;
         }
     }
@@ -321,7 +358,7 @@ static void Json__serialize_any(void* val, AnyTag hint, char** buf, int* cap, in
         if (map_cap >= 8 && (map_cap & (map_cap-1)) == 0 &&
             map_size >= 0 && map_size <= map_cap &&
             (is_occupied_0 == 0 || is_occupied_0 == 1)) {
-            Json__serialize_map((Map*)val, buf, cap, len);
+            Json__serialize_map((Map*)val, buf, cap, len, indent, depth);
             return;
         }
     }
@@ -333,7 +370,7 @@ static void Json__serialize_any(void* val, AnyTag hint, char** buf, int* cap, in
         int32_t list_cap  = *((int32_t*)((char*)val + 12));
         if (list_cap >= 1 && list_cap <= 65536 &&
             list_size >= 0 && list_size <= list_cap) {
-            Json__serialize_list((List*)val, buf, cap, len);
+            Json__serialize_list((List*)val, buf, cap, len, indent, depth);
             return;
         }
     }
@@ -362,18 +399,18 @@ String* Encoding_Json_serialize_any(Any* val) {
     int cap = 256, len = 0;
     char* buf = (char*)malloc(cap);
     buf[0] = '\0';
-    Json__serialize_any(val, (AnyTag)val->tag, &buf, &cap, &len);
+    Json__serialize_any(val, (AnyTag)val->tag, &buf, &cap, &len, 0, 0);
     String* _r = make_String(buf); free(buf); return _r;
 }
 
 // Serialize a Map* directly to a JSON object string.
-// This is what Quirk's core/json.qk calls for map_to_json().
+// This is what Quirk's core/json.quirk calls for map_to_json().
 String* Encoding_Json_map_to_json(Map* map) {
     if (!map) return make_String("null");
     int cap = 256, len = 0;
     char* buf = (char*)malloc(cap);
     buf[0] = '\0';
-    Json__serialize_map(map, &buf, &cap, &len);
+    Json__serialize_map(map, &buf, &cap, &len, 0, 0);
     String* _r = make_String(buf); free(buf); return _r;
 }
 
@@ -383,7 +420,7 @@ String* Encoding_Json_list_to_json(List* list) {
     int cap = 256, len = 0;
     char* buf = (char*)malloc(cap);
     buf[0] = '\0';
-    Json__serialize_list(list, &buf, &cap, &len);
+    Json__serialize_list(list, &buf, &cap, &len, 0, 0);
     String* _r = make_String(buf); free(buf); return _r;
 }
 // ===================================================
@@ -404,12 +441,26 @@ String* Encoding_Json_dumps(void* val) {
     int cap = 512, len = 0;
     char* buf = (char*)malloc(cap);
     buf[0] = '\0';
-    Json__serialize_any(val, ANY_PTR, &buf, &cap, &len);
+    Json__serialize_any(val, ANY_PTR, &buf, &cap, &len, 0, 0);
+    String* _r = make_String(buf); free(buf); return _r;
+}
+
+// Pretty-print variant: emits newlines and `indent` spaces per nesting
+// level. `indent <= 0` falls back to compact output (matches dumps).
+// Quirk's dumps() wrapper picks this entry when the caller passes
+// `pretty: true` or a non-zero `indent`.
+String* Encoding_Json_dumps_indent(void* val, int32_t indent) {
+    if (!val) return make_String("null");
+    if (indent < 0) indent = 0;
+    int cap = 512, len = 0;
+    char* buf = (char*)malloc(cap);
+    buf[0] = '\0';
+    Json__serialize_any(val, ANY_PTR, &buf, &cap, &len, (int)indent, 0);
     String* _r = make_String(buf); free(buf); return _r;
 }
 
 // ===================================================
-//  SYMBOL ALIASES — old IR / json.qk extern compatibility
+//  SYMBOL ALIASES — old IR / json.quirk extern compatibility
 // ===================================================
 String* Encoding_Json__json_serialize_map(Map* map)   { return Encoding_Json_map_to_json(map); }
 String* Encoding_Json__json_serialize_list(List* list) { return Encoding_Json_list_to_json(list); }

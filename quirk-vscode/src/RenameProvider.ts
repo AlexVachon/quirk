@@ -47,12 +47,12 @@ export class QuirkRenameProvider implements vscode.RenameProvider {
         const isLocal = this.isLocalSymbol(document, position, oldName);
 
         // Locals: rename only within the enclosing function in the current file
-        // Globals: rename across all .qk files in the workspace
+        // Globals: rename across all .quirk files in the workspace
         let filesToSearch: vscode.Uri[];
         if (isLocal) {
             filesToSearch = [document.uri];
         } else {
-            filesToSearch = await vscode.workspace.findFiles('**/*.qk', '**/node_modules/**');
+            filesToSearch = await vscode.workspace.findFiles('**/*.quirk', '**/node_modules/**');
         }
 
         for (const uri of filesToSearch) {

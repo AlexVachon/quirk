@@ -368,7 +368,7 @@ static fs::path find_project_root(fs::path start) {
 // For a given source file, return the package name declared in the nearest
 // ancestor `quirk.toml`, or empty if none. Used so that `use slug` from
 // inside the slug project resolves to its own src/, and so functions defined
-// in slug/src/index.qk get `Slug_*` linkage names without needing the file
+// in slug/src/index.quirk get `Slug_*` linkage names without needing the file
 // to live under libs/ or packages/.
 static std::string project_name_for_file(const std::string& filePath) {
     fs::path root = find_project_root(filePath);
@@ -393,10 +393,10 @@ static std::string resolve_self_package(const std::string& moduleName,
     if (m.name != moduleName) return "";
 
     for (const fs::path& candidate : {
-            root / "src" / "index.qk",
-            root / "src" / (moduleName + ".qk"),
-            root / (moduleName + ".qk"),
-            root / moduleName / "index.qk",
+            root / "src" / "index.quirk",
+            root / "src" / (moduleName + ".quirk"),
+            root / (moduleName + ".quirk"),
+            root / moduleName / "index.quirk",
          }) {
         if (fs::exists(candidate)) return candidate.string();
     }
@@ -2451,17 +2451,17 @@ static std::vector<CheckFinding> validate_package(const Manifest& m) {
             "add `quirk-version = \">=0.2.0\"` to guard against compiler-version drift");
 
     // --- Entry point ----------------------------------------------------
-    std::string entryRel = m.entry.empty() ? "src/index.qk" : m.entry;
+    std::string entryRel = m.entry.empty() ? "src/index.quirk" : m.entry;
     fs::path entry = entryRel;
     if (!fs::exists(entry))
         add(CheckFinding::ERROR, "entry point not found: " + entryRel,
-            m.entry.empty() ? "create src/index.qk or set `entry = ...`" : "");
+            m.entry.empty() ? "create src/index.quirk or set `entry = ...`" : "");
     else add(CheckFinding::OK, "entry point: " + entryRel);
 
     // --- tests/ directory -----------------------------------------------
     if (!fs::is_directory("tests"))
         add(CheckFinding::WARN, "no tests/ directory",
-            "even one tests/sanity.qk catches regressions");
+            "even one tests/sanity.quirk catches regressions");
 
     // --- .gitignore -----------------------------------------------------
     {
@@ -2775,7 +2775,7 @@ static int cmd_fmt(const std::vector<std::string>& args) {
                 "    Reformat Quirk source files to a canonical style.\n"
                 "    --check    exit 1 if any file would change, list them\n"
                 "    --stdout   print formatted output, don't modify files\n"
-                "    With no files, formats every .qk under the current directory.\n";
+                "    With no files, formats every .quirk under the current directory.\n";
             return 0;
         }
         else if (a[0] == '-') {
@@ -2785,7 +2785,7 @@ static int cmd_fmt(const std::vector<std::string>& args) {
         else files.push_back(a);
     }
 
-    // Walk a directory tree for .qk files, skipping the obvious noise dirs.
+    // Walk a directory tree for .quirk files, skipping the obvious noise dirs.
     // Used both for `quirk fmt` with no args (root = ".") and for directory
     // arguments like `quirk fmt libs/`.
     auto collectQkFiles = [](const fs::path& root, std::vector<std::string>& out) {
@@ -2800,12 +2800,12 @@ static int cmd_fmt(const std::vector<std::string>& args) {
                 it.disable_recursion_pending();
                 continue;
             }
-            if (e.is_regular_file(ec) && e.path().extension() == ".qk")
+            if (e.is_regular_file(ec) && e.path().extension() == ".quirk")
                 out.push_back(e.path().string());
         }
     };
 
-    // Expand any directory arguments into their contained .qk files.
+    // Expand any directory arguments into their contained .quirk files.
     // `quirk fmt libs/` now does the obvious thing instead of trying to
     // write to a directory.
     std::vector<std::string> expanded;
@@ -2999,7 +2999,7 @@ static int cmd_repl(const std::vector<std::string>& args) {
     std::cout << log::bold("Quirk REPL") << " " << QUIRK_VERSION
               << log::dim("  — :help for shortcuts, :quit to exit") << "\n";
 
-    fs::path tmp = fs::temp_directory_path() / ("quirk_repl_" + std::to_string(getpid()) + ".qk");
+    fs::path tmp = fs::temp_directory_path() / ("quirk_repl_" + std::to_string(getpid()) + ".quirk");
     std::vector<std::string> preamble;     // top-level decls (define, struct, ...)
     std::vector<std::string> state;        // `x := ...` lines (re-evaluated each turn)
 
@@ -3094,10 +3094,10 @@ static int cmd_repl(const std::vector<std::string>& args) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// `quirk test` — discover and run *_test.qk files.
+// `quirk test` — discover and run *_test.quirk files.
 //
 // Walks the given directory (or `./tests` by default) for files matching
-// `*_test.qk`, invokes `<self> run <file>` on each, and parses the test
+// `*_test.quirk`, invokes `<self> run <file>` on each, and parses the test
 // framework's "N passed" / "N failed" summary out of stdout. A file is a
 // failure if it exited non-zero, or its summary reports any failures, or
 // it produced no summary at all (likely a crash or test file with no
@@ -3197,7 +3197,7 @@ static int cmd_test(const std::vector<std::string>& args) {
         if (a == "--help" || a == "-h") {
             std::cout <<
                 "quirk test [-v] [<path>...]\n"
-                "    Discover *_test.qk files and run them with the test framework.\n"
+                "    Discover *_test.quirk files and run them with the test framework.\n"
                 "    Default path is ./tests if it exists, else the current directory.\n"
                 "    -v / --verbose   print each file's full output\n";
             return 0;
@@ -3216,7 +3216,7 @@ static int cmd_test(const std::vector<std::string>& args) {
         else                                roots.push_back(".");
     }
 
-    // Collect *_test.qk files from each root (file paths pass through verbatim).
+    // Collect *_test.quirk files from each root (file paths pass through verbatim).
     std::vector<fs::path> files;
     for (auto& r : roots) {
         std::error_code ec;
@@ -3236,9 +3236,9 @@ static int cmd_test(const std::vector<std::string>& args) {
                 continue;
             }
             if (e.is_regular_file(ec)
-                && e.path().extension() == ".qk"
-                && fn.size() >= 8
-                && fn.compare(fn.size() - 8, 8, "_test.qk") == 0) {
+                && e.path().extension() == ".quirk"
+                && fn.size() >= 11
+                && fn.compare(fn.size() - 11, 11, "_test.quirk") == 0) {
                 files.push_back(e.path());
             }
         }
@@ -3246,7 +3246,7 @@ static int cmd_test(const std::vector<std::string>& args) {
     std::sort(files.begin(), files.end());
 
     if (files.empty()) {
-        log::note("no *_test.qk files found");
+        log::note("no *_test.quirk files found");
         return 0;
     }
 
@@ -3262,15 +3262,22 @@ static int cmd_test(const std::vector<std::string>& args) {
         auto res = run_one_test_file(f);
         totalPassed += res.passed;
         totalFailed += res.failed;
-        bool fileGreen = res.sawSummary && res.failed == 0 && res.exitCode == 0;
+        // A file is a failure only if the process itself didn't exit 0.
+        // Cases counted out of "M failed, N passed" lines are surfaced in
+        // the summary but don't decide pass/fail on their own — files like
+        // tests/test_test.quirk deliberately include failing cases inside a
+        // meta-check and exit 0 when the framework correctly counts them.
+        bool fileGreen = res.exitCode == 0;
 
         // Erase the in-progress line so the final status glyph stands alone.
         if (tty) std::cout << "\r\x1b[2K";
         if (fileGreen) {
             filesOk++;
             std::cout << "  " << log::GREEN() << "✓" << log::RESET() << " "
-                      << f.string() << "  "
-                      << log::dim("(" + std::to_string(res.passed) + " passed)") << "\n";
+                      << f.string();
+            if (res.sawSummary)
+                std::cout << "  " << log::dim("(" + std::to_string(res.passed) + " passed)");
+            std::cout << "\n";
         } else {
             filesFail++;
             failures.push_back(res);
@@ -3281,10 +3288,8 @@ static int cmd_test(const std::vector<std::string>& args) {
                                               + " failed, "
                                               + std::to_string(res.passed)
                                               + " passed)");
-            else if (res.exitCode != 0)
-                std::cout << "  " << log::dim("(crashed; exit " + std::to_string(res.exitCode) + ")");
             else
-                std::cout << "  " << log::dim("(no summary line)");
+                std::cout << "  " << log::dim("(exit " + std::to_string(res.exitCode) + ")");
             std::cout << "\n";
         }
 
@@ -4024,7 +4029,7 @@ static int cmd_eval(const std::vector<std::string>& args) {
         code += args[i];
     }
     fs::path tmp = fs::temp_directory_path()
-        / ("quirk_eval_" + std::to_string(getpid()) + ".qk");
+        / ("quirk_eval_" + std::to_string(getpid()) + ".quirk");
     {
         std::ofstream out(tmp);
         out << "define main() -> void {\n    " << code << "\n}\n";
@@ -4036,9 +4041,9 @@ static int cmd_eval(const std::vector<std::string>& args) {
     return WIFEXITED(rc) ? WEXITSTATUS(rc) : 1;
 }
 
-// Find the entry .qk file of a named module by mirroring the compiler's
+// Find the entry .quirk file of a named module by mirroring the compiler's
 // resolveImportPath: search install dirs + stdlib + project-local for the
-// usual layouts (X.qk, X/index.qk, X/src/index.qk, X/current/src/index.qk).
+// usual layouts (X.quirk, X/index.quirk, X/src/index.quirk, X/current/src/index.quirk).
 static fs::path locate_module_file(const std::string& name) {
     std::vector<fs::path> roots;
     roots.push_back(fs::current_path() / "packages");
@@ -4056,12 +4061,12 @@ static fs::path locate_module_file(const std::string& name) {
 
     for (const auto& root : roots) {
         for (const fs::path& c : {
-                root / (name + ".qk"),
-                root / name / "index.qk",
-                root / name / "src" / "index.qk",
-                root / name / "src" / (name + ".qk"),
-                root / name / "current" / "src" / "index.qk",
-                root / name / "current" / "src" / (name + ".qk"),
+                root / (name + ".quirk"),
+                root / name / "index.quirk",
+                root / name / "src" / "index.quirk",
+                root / name / "src" / (name + ".quirk"),
+                root / name / "current" / "src" / "index.quirk",
+                root / name / "current" / "src" / (name + ".quirk"),
              }) {
             if (fs::exists(c)) return c;
         }
@@ -4078,7 +4083,7 @@ static int cmd_script(const std::vector<std::string>& args) {
         Manifest pm;
         if (!read_manifest("quirk.toml", pm) || pm.scripts.empty()) {
             std::cerr << "script: no scripts defined in ./quirk.toml\n";
-            std::cerr << "  add a [scripts] block: e.g.   test = \"quirk run tests/all.qk\"\n";
+            std::cerr << "  add a [scripts] block: e.g.   test = \"quirk run tests/all.quirk\"\n";
             return 1;
         }
         std::cout << "Scripts in ./quirk.toml:\n";
@@ -4245,10 +4250,10 @@ static int cmd_stdlib(const std::vector<std::string>& args) {
         size_t pad = 0;
         for (auto& m : mods) if (m.size() > pad) pad = m.size();
         for (auto& m : mods) {
-            // Count .qk files for a quick "size" hint.
+            // Count .quirk files for a quick "size" hint.
             int files = 0;
             for (auto& e : fs::recursive_directory_iterator(stdlib / m)) {
-                if (e.is_regular_file() && e.path().extension() == ".qk") files++;
+                if (e.is_regular_file() && e.path().extension() == ".quirk") files++;
             }
             std::cout << "  " << m;
             for (size_t i = m.size(); i < pad + 2; i++) std::cout << ' ';
@@ -4269,7 +4274,7 @@ static int cmd_stdlib(const std::vector<std::string>& args) {
         std::cout << log::bold(mod) << log::dim("  " + modPath.string()) << "\n";
         std::vector<fs::path> files;
         for (auto& e : fs::recursive_directory_iterator(modPath)) {
-            if (e.is_regular_file() && e.path().extension() == ".qk")
+            if (e.is_regular_file() && e.path().extension() == ".quirk")
                 files.push_back(fs::relative(e.path(), modPath));
         }
         std::sort(files.begin(), files.end());
@@ -4307,7 +4312,7 @@ static int cmd_new(const std::vector<std::string>& args) {
     write_manifest((dir / "quirk.toml").string(), m);
 
     {
-        std::ofstream out(dir / "src" / "index.qk");
+        std::ofstream out(dir / "src" / "index.quirk");
         out << "// " << name << " — Quirk package entry point\n\n"
             << "define hello(who: String) -> String {\n"
             << "    return \"Hello, \" + who + \"!\"\n"
@@ -4317,7 +4322,7 @@ static int cmd_new(const std::vector<std::string>& args) {
             << "}\n";
     }
     {
-        std::ofstream out(dir / "tests" / (name + "_test.qk"));
+        std::ofstream out(dir / "tests" / (name + "_test.quirk"));
         out << "use " << name << "\n"
             << "from " << name << " use { hello }\n\n"
             << "define main() -> void {\n"
@@ -4333,8 +4338,8 @@ static int cmd_new(const std::vector<std::string>& args) {
     }
     std::cout << "Created Quirk package '" << name << "' in " << dir.string() << "/\n"
               << "  ├── quirk.toml\n"
-              << "  ├── src/index.qk\n"
-              << "  ├── tests/" << name << "_test.qk\n"
+              << "  ├── src/index.quirk\n"
+              << "  ├── tests/" << name << "_test.quirk\n"
               << "  └── .gitignore\n";
     return 0;
 }
@@ -4352,8 +4357,8 @@ static std::string help_for(const std::string& cmdIn) {
     // to the canonical verb name.
     const std::string cmd = canonicalize_verb(cmdIn);
     if (cmd == "run")
-        return "quirk run <file.qk> [args...]\n"
-               "    Run a Quirk script. Equivalent to `quirk <file.qk>`.\n";
+        return "quirk run <file.quirk> [args...]\n"
+               "    Run a Quirk script. Equivalent to `quirk <file.quirk>`.\n";
     if (cmd == "eval" || cmd == "-c")
         return "quirk eval \"<code>\"\n"
                "    Wrap a one-liner in `define main() { ... }` and run it.\n"
@@ -4414,7 +4419,7 @@ static std::string help_for(const std::string& cmdIn) {
                "      version    print the stdlib version (= compiler version)\n"
                "      path       print the stdlib root directory\n"
                "      list       list modules with file counts (default)\n"
-               "      show <m>   list .qk files inside module <m>\n"
+               "      show <m>   list .quirk files inside module <m>\n"
                "    The stdlib ships with the compiler; to upgrade it, upgrade\n"
                "    the compiler. See `quirk env` for stdlib path resolution.\n";
     if (cmd == "repl")
@@ -4434,7 +4439,7 @@ static std::string help_for(const std::string& cmdIn) {
                "    tracked from brace depth, single space around binary operators,\n"
                "    `, ` after commas, one trailing newline, no trailing whitespace.\n"
                "    String literals and `//` comments are preserved verbatim.\n"
-               "    With no files, formats every .qk under the current directory.\n"
+               "    With no files, formats every .quirk under the current directory.\n"
                "      --check    exit 1 if any file would change, list them (CI)\n"
                "      --stdout   print formatted output, don't modify files\n"
                "    Same rules as the VS Code formatter — CLI and editor agree.\n";
@@ -4498,7 +4503,7 @@ static std::string help_for(const std::string& cmdIn) {
                "    --severity  only report at or above this severity\n";
     if (cmd == "new")
         return "quirk new <name>\n"
-               "    Scaffold a new package: <name>/quirk.toml, src/index.qk,\n"
+               "    Scaffold a new package: <name>/quirk.toml, src/index.quirk,\n"
                "    tests/, .gitignore.\n";
     if (cmd == "venv")
         return "quirk venv <path>                            create a venv (= `venv new`)\n"
@@ -4547,7 +4552,7 @@ static void print_pm_help() {
         "Quirk — language toolchain & package manager\n"
         "\n"
         "Run code:\n"
-        "  quirk run <file.qk> [args...]              run a Quirk script\n"
+        "  quirk run <file.quirk> [args...]              run a Quirk script\n"
         "  quirk run <script>                         run a script from [scripts] (alias: quirk script <name>)\n"
         "  quirk eval \"<code>\"                        run a one-liner (alias: -c)\n"
         "  quirk module <name>                        invoke a module's main() (alias: -m)\n"

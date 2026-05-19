@@ -76,7 +76,7 @@ class BuiltinGen {
         Function::Create(FunctionType::get(i32Ty,    {anyPtrTy, anyPtrTy}, false), Function::ExternalLinkage, "Core_Primitives_Any_isinstance", TheModule);
 
         // Core_Primitives_Bool_str is intentionally NOT pre-declared here.
-        // Pass 3 declares it with the correct %String* return type from bool.qk's extern.
+        // Pass 3 declares it with the correct %String* return type from bool.quirk's extern.
         // Pre-declaring with i8* causes a type conflict that makes all Bool→String calls return i8*.
         auto strPtrTy = Type::getInt8PtrTy(Context);
         Function::Create(FunctionType::get(i32Ty, {strPtrTy, strPtrTy}, false), Function::ExternalLinkage, "Core_Primitives_Quirk_isinstance", TheModule);

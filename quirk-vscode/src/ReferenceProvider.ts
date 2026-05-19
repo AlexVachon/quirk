@@ -33,7 +33,7 @@ export class QuirkReferenceProvider implements vscode.ReferenceProvider {
         if (isLocal) {
             filesToSearch = [document.uri];
         } else {
-            filesToSearch = await vscode.workspace.findFiles('**/*.qk', '**/node_modules/**');
+            filesToSearch = await vscode.workspace.findFiles('**/*.quirk', '**/node_modules/**');
         }
 
         const locations: vscode.Location[] = [];

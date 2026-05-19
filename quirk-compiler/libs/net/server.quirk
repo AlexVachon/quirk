@@ -1,0 +1,276 @@
+---
+A minimal HTTP/1.1 server over `net.Socket`.
+
+Hides the hand-rolled accept-loop / request-parsing / response-formatting
+that every server otherwise has to write. Plain HTTP only — no TLS.
+
+Public API:
+  `Server()`                                       — construct
+  `server.listen(host, port, handler)`             — block forever, dispatch
+  `Request { method, path, query, headers, body }` — what the handler sees
+  Handler returns `net.http.Response` — status + body + headers.
+
+@example
+use net.server
+from net.server use { Server, Request }
+from net.http use { Response }
+
+define hello(req: Request) -> Response {
+    if req.path == "/healthz" { return Response(200, "ok", Map()) }
+    body := "Hello " + req.method + " " + req.path
+    return Response(200, body, Map())
+}
+
+define main() -> void {
+    Server().listen("127.0.0.1", 8080, hello)
+}
+---
+from typing.primitives.string use { String }
+from typing.collections.map use { Map }
+from typing.collections.list use { List }
+from typing.callable use { Callable }
+from typing.exceptions.types use { SocketError }
+from net.socket use { Socket }
+from net.http use { Response }
+use url
+
+---
+A parsed incoming HTTP request — what `Server` hands to your handler.
+
+  `method`   — uppercase verb (`GET`, `POST`, …).
+  `path`     — request path with query stripped (e.g. `/users/42`).
+  `query`    — Map of query-string params (parsed via `url.parse_query`).
+  `headers`  — Map of header name → value (case-preserved as received).
+  `body`     — request body for POST/PUT, "" otherwise.
+---
+struct Request {
+    method: String
+    path: String
+    query: Map
+    headers: Map
+    body: String
+
+    define __init(self, method: String, path: String, query: Map, headers: Map, body: String) -> void {
+        self.method = method
+        self.path = path
+        self.query = query
+        self.headers = headers
+        self.body = body
+    }
+
+    --- Compact form: `<Request GET /path>`. ---
+    define __str(self) -> String {
+        return "<Request " + self.method + " " + self.path + ">"
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Wire-format helpers
+// ──────────────────────────────────────────────────────────────────────
+
+// Read until we've seen \r\n\r\n (end of header block) or the peer
+// closed. Returns the raw text received. Content-Length-driven body
+// reads happen separately in _read_body.
+define _read_headers(client: Socket) -> String {
+    buf := ""
+    while buf.find("\r\n\r\n") == -1 {
+        chunk := client.recv(4096)
+        if chunk.length() == 0 { break }
+        buf += chunk
+    }
+    return buf
+}
+
+// Read exactly `n` bytes of body — accumulating across recv() calls in
+// case the OS hands us a short read. `already` is whatever bytes after
+// the header terminator were already pulled in by _read_headers.
+define _read_body(client: Socket, already: String, n: Int) -> String {
+    body := already
+    while body.length() < n {
+        chunk := client.recv(4096)
+        if chunk.length() == 0 { break }
+        body += chunk
+    }
+    if body.length() > n {
+        body = body.substring(0, n)
+    }
+    return body
+}
+
+// Parse "<header_block>\r\n\r\n<body_start>" into (method, full_path,
+// headers, body_start). On a malformed request, returns method="" so
+// the caller can short-circuit with a 400.
+define _parse_request(raw: String) -> Request {
+    sep := raw.find("\r\n\r\n")
+    head := raw
+    body_start := ""
+    if sep != -1 {
+        head = raw.substring(0, sep)
+        body_start = raw.substring(sep + 4, raw.length())
+    }
+    lines := head.split("\r\n")
+    if lines.length() == 0 {
+        return Request("", "", Map(), Map(), "")
+    }
+    request_line: String = lines.get(0)
+    parts := request_line.split(" ")
+    if parts.length() < 2 {
+        return Request("", "", Map(), Map(), "")
+    }
+    method: String = parts.get(0)
+    full_path: String = parts.get(1)
+
+    // Split off the query string, parse it via the url lib.
+    path := full_path
+    query := Map()
+    q_pos := full_path.find("?")
+    if q_pos != -1 {
+        path = full_path.substring(0, q_pos)
+        query = url.parse_query(full_path.substring(q_pos + 1, full_path.length()))
+    }
+
+    headers := Map()
+    i := 1
+    while i < lines.length() {
+        line: String = lines.get(i)
+        colon := line.find(":")
+        if colon != -1 {
+            k := line.substring(0, colon).trim()
+            v := line.substring(colon + 1, line.length()).trim()
+            headers.put(k, v)
+        }
+        i = i + 1
+    }
+
+    return Request(method.upper(), path, query, headers, body_start)
+}
+
+// Case-insensitive header lookup that also normalises the "missing"
+// shape. Quirk's `Map.get` returns the null Any on miss, which stringifies
+// to the 4-char literal "null" — so a naive `.length()` check would
+// happily pass it to `to_int()` and crash. Walk the keys instead.
+define _header_lookup(headers: Map, name: String) -> String {
+    target := name.lower()
+    keys := headers.keys()
+    i := 0
+    while i < keys.length() {
+        k: String = keys.get(i)
+        if k.lower() == target {
+            v: String = headers.get(k)
+            return v
+        }
+        i = i + 1
+    }
+    return ""
+}
+
+// Standard reason phrase for the most common status codes. Falls back to
+// "OK" for unknown values — clients don't actually parse the reason
+// phrase, so this is informational only.
+define _reason_for(code: Int) -> String {
+    if code == 200 { return "OK" }
+    if code == 201 { return "Created" }
+    if code == 204 { return "No Content" }
+    if code == 301 { return "Moved Permanently" }
+    if code == 302 { return "Found" }
+    if code == 304 { return "Not Modified" }
+    if code == 400 { return "Bad Request" }
+    if code == 401 { return "Unauthorized" }
+    if code == 403 { return "Forbidden" }
+    if code == 404 { return "Not Found" }
+    if code == 405 { return "Method Not Allowed" }
+    if code == 500 { return "Internal Server Error" }
+    if code == 502 { return "Bad Gateway" }
+    if code == 503 { return "Service Unavailable" }
+    return "OK"
+}
+
+// Serialize a Response into the HTTP/1.1 wire format. Always sets
+// Content-Length to the body length and Connection: close (we use
+// one-shot connections for simplicity). Caller-supplied headers are
+// appended verbatim; clashes with the auto-set ones leave both in the
+// output, which is harmless for our case.
+define _format_response(resp: Response) -> String {
+    code_str := resp.status_code.str()
+    reason := _reason_for(resp.status_code)
+    out := "HTTP/1.1 " + code_str + " " + reason + "\r\n"
+    out += "Content-Length: " + resp.text.length().str() + "\r\n"
+    out += "Connection: close\r\n"
+    keys := resp.headers.keys()
+    i := 0
+    while i < keys.length() {
+        k: String = keys.get(i)
+        v: String = resp.headers.get(k)
+        out += k + ": " + v + "\r\n"
+        i = i + 1
+    }
+    out += "\r\n" + resp.text
+    return out
+}
+
+---
+A simple HTTP/1.1 server. Holds the listener socket and an exit flag so
+`stop()` can break the accept-loop from another thread once Quirk gains
+that ability — for now `listen` runs forever.
+---
+struct Server {
+    _running: Bool = false
+
+    define __init(self) -> void {
+        self._running = false
+    }
+
+    ---
+    Block forever, accepting connections on `host:port` and dispatching
+    each parsed `Request` to `handler`. The handler returns a `Response`
+    which is sent back and the connection is closed.
+
+    Exceptions raised by the handler are caught and converted to a plain
+    500 — they don't take the server down.
+
+    @example
+    Server().listen("0.0.0.0", 8080, fn(req: Request) -> Response {
+        return Response(200, "hi", Map())
+    })
+    ---
+    define listen(self, host: String, port: Int, handler: Callable) -> void {
+        with Socket() as listener {
+            listener.bind(host, port)
+            listener.listen(16)
+            self._running = true
+            while self._running {
+                with listener.accept() as client {
+                    raw := _read_headers(client)
+                    req := _parse_request(raw)
+                    if req.method.length() == 0 {
+                        client.send(_format_response(Response(400, "bad request", Map())))
+                    } else {
+                        // If there's a Content-Length, fetch the rest of
+                        // the body. _read_headers may already have pulled
+                        // some of it past the separator.
+                        cl_str := _header_lookup(req.headers, "Content-Length")
+                        if cl_str.length() > 0 {
+                            n := cl_str.to_int()
+                            if n > req.body.length() {
+                                full := _read_body(client, req.body, n)
+                                req.body = full
+                            }
+                        }
+                        resp: Response = Response(500, "", Map())
+                        try {
+                            resp = handler(req)
+                        } catch (e: Exception) {
+                            resp = Response(500, "handler error: " + e.message, Map())
+                        }
+                        client.send(_format_response(resp))
+                    }
+                }
+            }
+        }
+    }
+
+    --- Stop the accept-loop on the next iteration. ---
+    define stop(self) -> void {
+        self._running = false
+    }
+}

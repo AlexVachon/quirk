@@ -69,8 +69,8 @@ cmake --build build -j$(nproc)
 
 # 3. Verify
 ./bin/quirk --version
-echo 'define main() { print("Hello, Quirk!") }' > /tmp/hi.qk
-./bin/quirk /tmp/hi.qk
+echo 'define main() { print("Hello, Quirk!") }' > /tmp/hi.quirk
+./bin/quirk /tmp/hi.quirk
 # Hello, Quirk!
 ```
 
@@ -109,8 +109,8 @@ No `QUIRK_HOME` needed in this case — Quirk falls back to `/usr/local/lib/quir
 ```bash
 quirk --version                          # quirk 0.2.0
 quirk --help                             # full command reference
-echo 'define main() { print("ok") }' | tee /tmp/x.qk
-quirk /tmp/x.qk                          # ok
+echo 'define main() { print("ok") }' | tee /tmp/x.quirk
+quirk /tmp/x.quirk                          # ok
 ```
 
 If you see `Error: could not load runtime.so`, the `quirk` binary couldn't find `runtime.so` next to itself. Make sure they're in the same directory (or that `$QUIRK_HOME/bin/runtime.so` exists).

@@ -10,9 +10,9 @@
 #include "../types.h"
 
 // ---------------------------------------------------------------------------
-//  Cryptographic helpers exported to libs/crypto/index.qk.
+//  Cryptographic helpers exported to libs/crypto/index.quirk.
 //  Naming: Crypto_<name>  (matches `linkageName = "Crypto_<name>"` from
-//  Parser::computeModulePrefix for libs/crypto/index.qk).
+//  Parser::computeModulePrefix for libs/crypto/index.quirk).
 //
 //  Uses OpenSSL's libcrypto (linked via CMake) for correctness and speed.
 //  All hash functions take a String, return the digest as a lowercase hex

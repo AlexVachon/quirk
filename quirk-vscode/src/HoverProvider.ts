@@ -48,7 +48,7 @@ export class QuirkHoverProvider implements vscode.HoverProvider {
         }
 
         // ---- Magic method descriptions — used as fallback only, not an early return ----
-        // Priority: specific docstring from the .qk file > generic description below.
+        // Priority: specific docstring from the .quirk file > generic description below.
         const magicHovers: Record<string, string> = {
             '__init':     '**`__init`** — constructor, called when the struct is instantiated.\n\n```quirk\ndefine __init(self, message: String) -> void { ... }\n```',
             '__del':      '**`__del`** — destructor, called when the struct instance is destroyed.',
@@ -93,7 +93,7 @@ export class QuirkHoverProvider implements vscode.HoverProvider {
             return new vscode.Hover(md);
         }
 
-        // ---- Built-in struct types — read docstrings live from the .qk lib files ----
+        // ---- Built-in struct types — read docstrings live from the .quirk lib files ----
         const builtinStructTypes = new Set([
             // Primitive types
             'String', 'Int', 'Double', 'Bool',

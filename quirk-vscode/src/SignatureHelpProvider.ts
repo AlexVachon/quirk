@@ -20,7 +20,7 @@ export class QuirkSignatureHelpProvider implements vscode.SignatureHelpProvider 
         // Count commas, but skip commas inside nested parentheses
         const activeParameter = this.countArgs(argsString) - 1;
 
-        // Builtin functions — no .qk source, so provide signature directly
+        // Builtin functions — no .quirk source, so provide signature directly
         const builtinSignatures: Record<string, { sig: string; params: string[]; doc: string }> = {
             print:  { sig: 'print(value)',       params: ['value'],      doc: 'Print a value to stdout followed by a newline.' },
             printf: { sig: 'printf(fmt, ...)',   params: ['fmt', '...'], doc: 'Formatted print using C-style format strings.' },

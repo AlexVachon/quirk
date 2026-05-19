@@ -1,0 +1,90 @@
+// Pretty-print dumps — proves indented output, custom indent widths,
+// nested layout, and parity between compact and pretty modes (same
+// content, different whitespace).
+
+use console
+use encoding.json
+use test
+from test use { TestCase }
+
+define main() -> void {
+
+    t_basic := TestCase("basic indent=2", fn() {
+        m := Map()
+        m.put("name", "Alice")
+        out := json.dumps_pretty(m)
+        // Indented with newline after `{` and 2 spaces before the key.
+        test.assert_true(out.contains("{\n  \"name\":"))
+        test.assert_true(out.contains("\n}"))
+        // ': ' (colon + space) between key and value in pretty mode.
+        test.assert_true(out.contains(": \"Alice\""))
+    })
+
+    t_indent_width := TestCase("custom indent width", fn() {
+        m := Map()
+        m.put("x", "1")
+        out := json.dumps_pretty(m, 4)
+        // 4 spaces, not 2.
+        test.assert_true(out.contains("{\n    \"x\":"))
+    })
+
+    t_nested := TestCase("nested objects keep their depth", fn() {
+        inner := Map()
+        inner.put("port", "8080")
+        outer := Map()
+        outer.put("db", inner)
+        out := json.dumps_pretty(outer)
+        // Outer key at depth 1 (2 spaces), inner key at depth 2 (4 spaces).
+        test.assert_true(out.contains("  \"db\":"))
+        test.assert_true(out.contains("    \"port\":"))
+    })
+
+    t_arrays := TestCase("arrays indent their elements", fn() {
+        items := List()
+        items.append("a")
+        items.append("b")
+        out := json.dumps_pretty(items)
+        test.assert_true(out.contains("[\n  \"a\""))
+        test.assert_true(out.contains(",\n  \"b\""))
+        test.assert_true(out.contains("\n]"))
+    })
+
+    t_empty := TestCase("empty containers stay flat", fn() {
+        // Empty {} and [] shouldn't carry an unnecessary newline inside.
+        empty_map := Map()
+        empty_list := List()
+        test.assert_eq(json.dumps_pretty(empty_map), "{}")
+        test.assert_eq(json.dumps_pretty(empty_list), "[]")
+    })
+
+    t_compact_unchanged := TestCase("dumps() compact path unchanged", fn() {
+        // The original compact API must not regress — no newlines, no
+        // space after `:`.
+        m := Map()
+        m.put("k", "v")
+        out := json.dumps(m)
+        test.assert_eq(out, "{\"k\":\"v\"}")
+    })
+
+    t_round_trip := TestCase("pretty output round-trips through loads", fn() {
+        // Indented JSON is still valid JSON — loads should ignore the
+        // whitespace and reconstruct the same structure. We build the
+        // source via loads (parser auto-boxes typed primitives into the
+        // Map) rather than .put(true) directly, because user-supplied
+        // raw primitives going into a void*-slotted Map isn't currently
+        // boxed by the compiler.
+        m: Map = json.loads("{\"flag\":true,\"n\":7}")
+        pretty := json.dumps_pretty(m)
+        recovered: Map = json.loads(pretty)
+        test.assert_eq("" + recovered.get("flag"), "true")
+        test.assert_eq("" + recovered.get("n"), "7")
+    })
+
+    fails := test.run_all([t_basic, t_indent_width, t_nested, t_arrays,
+                            t_empty, t_compact_unchanged, t_round_trip])
+    if fails > 0 {
+        console.error("pretty-print tests failed (" + fails.str() + ")")
+    } else {
+        console.info("all pretty-print tests passed")
+    }
+}

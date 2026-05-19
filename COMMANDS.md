@@ -44,8 +44,8 @@ The `quirk` binary is both the compiler/runner and the package manager. This pag
 Anything after the script path is forwarded as script `argv`:
 
 ```bash
-quirk run script.qk --thing 1 -- foo bar
-# script sees argv == ["script.qk", "--thing", "1", "--", "foo", "bar"]
+quirk run script.quirk --thing 1 -- foo bar
+# script sees argv == ["script.quirk", "--thing", "1", "--", "foo", "bar"]
 ```
 
 ---
@@ -54,14 +54,14 @@ quirk run script.qk --thing 1 -- foo bar
 
 ### `quirk run`
 
-Synopsis: `quirk run <file.qk> [args...]`
+Synopsis: `quirk run <file.quirk> [args...]`
 
-Run a Quirk script. Equivalent to `quirk <file.qk>` (the bare form is preserved for backwards-compat — `run` is the explicit verb). Use this when the filename could be confused with a subcommand (e.g. you have a file literally named `install.qk`).
+Run a Quirk script. Equivalent to `quirk <file.quirk>` (the bare form is preserved for backwards-compat — `run` is the explicit verb). Use this when the filename could be confused with a subcommand (e.g. you have a file literally named `install.quirk`).
 
 ```bash
-quirk run examples/hello.qk
-quirk run -v tests/parser_test.qk
-quirk run --check src/index.qk
+quirk run examples/hello.quirk
+quirk run -v tests/parser_test.quirk
+quirk run --check src/index.quirk
 ```
 
 ### `quirk eval`
@@ -79,13 +79,13 @@ quirk -c 'use math; print(math.sqrt(2.0))'
 Notes:
 
 - Imports work (`use math`, `use slug`, etc.).
-- Multi-line code is supported but bash quoting can get tricky — for anything substantial, write a temp `.qk` file.
+- Multi-line code is supported but bash quoting can get tricky — for anything substantial, write a temp `.quirk` file.
 
 ### `quirk module`
 
 Synopsis: `quirk module <name> [args...]` &nbsp;·&nbsp; alias: `quirk -m <name> [args...]`
 
-Resolve `<name>` to its `src/index.qk` (or the appropriate entry point — see [resolution order](#resolution-order)) and run it directly. The module is expected to define `main()`; if it doesn't, the compiler errors.
+Resolve `<name>` to its `src/index.quirk` (or the appropriate entry point — see [resolution order](#resolution-order)) and run it directly. The module is expected to define `main()`; if it doesn't, the compiler errors.
 
 ```bash
 quirk module my-lib
@@ -108,16 +108,16 @@ Scaffold a new Quirk package:
 <name>/
 ├── quirk.toml
 ├── src/
-│   └── index.qk        # define main() { print(hello("world")) }
+│   └── index.quirk        # define main() { print(hello("world")) }
 ├── tests/
-│   └── <name>_test.qk
+│   └── <name>_test.quirk
 └── .gitignore
 ```
 
 ```bash
 quirk new my-lib
 cd my-lib
-quirk run src/index.qk
+quirk run src/index.quirk
 # Hello, world!
 ```
 
@@ -185,7 +185,7 @@ user-global:     /home/alex/.quirk/packages
 
 Synopsis: `quirk fmt [--check|--stdout] [<file> ...]`
 
-Reformat Quirk source files to a canonical style. Operates in place by default; with no files, walks the current directory and formats every `.qk` (skipping `packages/`, `.venv/`, `.git/`).
+Reformat Quirk source files to a canonical style. Operates in place by default; with no files, walks the current directory and formats every `.quirk` (skipping `packages/`, `.venv/`, `.git/`).
 
 The formatter applies these rules:
 
@@ -204,10 +204,10 @@ Flags:
 - `--stdout`: print formatted output instead of writing back.
 
 ```bash
-quirk fmt                            # format every .qk under cwd
-quirk fmt src/index.qk               # format one file (in place)
+quirk fmt                            # format every .quirk under cwd
+quirk fmt src/index.quirk               # format one file (in place)
 quirk fmt --check tests/             # CI gate — fails on un-formatted code
-quirk fmt --stdout messy.qk | less   # preview without writing
+quirk fmt --stdout messy.quirk | less   # preview without writing
 ```
 
 `quirk fmt` is idempotent: running it on already-formatted code is a no-op.
@@ -278,13 +278,13 @@ Each install lives under `packages/<name>/<version>/`, with a `current` symlink 
 packages/slug/
 ├── 0.1.0/
 │   ├── quirk.toml
-│   └── src/index.qk
+│   └── src/index.quirk
 ├── 0.2.0/
 │   └── ...
 └── current → 0.2.0
 ```
 
-The compiler resolves `use slug` via `packages/slug/current/src/index.qk`.
+The compiler resolves `use slug` via `packages/slug/current/src/index.quirk`.
 
 ### `quirk upgrade`
 
@@ -430,13 +430,13 @@ When you write `use foo` in a script, the compiler searches in order:
 Within a search root, the compiler tries these layouts:
 
 ```
-<root>/foo.qk
-<root>/foo/index.qk
-<root>/foo/__init.qk
-<root>/foo/src/index.qk
-<root>/foo/src/foo.qk
-<root>/foo/current/src/index.qk     ← versioned install
-<root>/foo/current/src/foo.qk
+<root>/foo.quirk
+<root>/foo/index.quirk
+<root>/foo/__init.quirk
+<root>/foo/src/index.quirk
+<root>/foo/src/foo.quirk
+<root>/foo/current/src/index.quirk     ← versioned install
+<root>/foo/current/src/foo.quirk
 ```
 
 Project-local installs always win, which lets you shadow a global install for a single project.

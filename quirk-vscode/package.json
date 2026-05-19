@@ -15,7 +15,7 @@
       {
         "id": "quirk",
         "aliases": ["Quirk", "quirk"],
-        "extensions": [".qk"],
+        "extensions": [".quirk"],
         "configuration": "./language-configuration.json",
         "icon": {
           "light": "./icons/icon.svg",
@@ -118,7 +118,7 @@
         "properties": {
           "file": {
             "type": "string",
-            "description": "The .qk file to compile and run."
+            "description": "The .quirk file to compile and run."
           }
         }
       }

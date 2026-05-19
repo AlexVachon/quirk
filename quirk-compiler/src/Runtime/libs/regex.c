@@ -8,9 +8,9 @@
 extern void quirk_throw_exception(const char* type_name, const char* message);
 
 // ---------------------------------------------------------------------------
-//  Regex runtime (POSIX ERE) exported to libs/regex/index.qk.
+//  Regex runtime (POSIX ERE) exported to libs/regex/index.quirk.
 //  Naming: Regex_<name>  (matches `linkageName = "Regex_<name>"` from
-//  Parser::computeModulePrefix for libs/regex/index.qk).
+//  Parser::computeModulePrefix for libs/regex/index.quirk).
 //
 //  Compiled patterns are returned to Quirk as opaque Any* handles. Quirk
 //  stores them in a `Regex` struct's `_handle` field and forwards them to

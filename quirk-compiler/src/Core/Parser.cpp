@@ -883,14 +883,14 @@ std::unique_ptr<Node> Parser::parseFor() {
 }
 
 // Computes the full hierarchical module prefix from this->filePath.
-// libs/core/string.qk           -> "Core_String"
-// libs/core/collections/list.qk -> "Core_Collections_List"
-// libs/sys/index.qk             -> "Sys"
-// userfile.qk                   -> "Userfile"
+// libs/core/string.quirk           -> "Core_String"
+// libs/core/collections/list.quirk -> "Core_Collections_List"
+// libs/sys/index.quirk             -> "Sys"
+// userfile.quirk                   -> "Userfile"
 std::string Parser::computeModulePrefix() const {
     std::string p = this->filePath;
-    if (p.size() >= 3 && p.substr(p.size() - 3) == ".qk")
-        p = p.substr(0, p.size() - 3);
+    if (p.size() >= 6 && p.substr(p.size() - 6) == ".quirk")
+        p = p.substr(0, p.size() - 6);
     for (char& c : p) if (c == '\\') c = '/';
 
     std::vector<std::string> parts;
@@ -946,7 +946,7 @@ std::string Parser::computeModulePrefix() const {
         // No standard layout marker in the path. Fall back to the manifest:
         // if the file lives inside a project rooted at `quirk.toml`, the
         // declared `name` drives the linkage prefix (lets a library's own
-        // `src/index.qk` emit `MyLib_*` linkage names without being
+        // `src/index.quirk` emit `MyLib_*` linkage names without being
         // installed). Otherwise, use the bare filename as a one-component
         // prefix — that's the user-script case.
         std::string pkgName = qpm::project_name_for_file(this->filePath);
@@ -959,7 +959,7 @@ std::string Parser::computeModulePrefix() const {
         parts = { last };
     }
 
-    // Normalize "typing" → "core" so libs/typing/string.qk still emits Core_String_* linkage names.
+    // Normalize "typing" → "core" so libs/typing/string.quirk still emits Core_String_* linkage names.
     for (auto& part : parts)
         if (part == "typing") part = "core";
 
@@ -969,7 +969,7 @@ std::string Parser::computeModulePrefix() const {
         parts.erase(parts.begin() + 1);
 
     // Normalize split primitive files back to "primitives" so the C runtime symbols match.
-    // typing/int.qk, typing/double.qk, typing/bool.qk, typing/char.qk all live under
+    // typing/int.quirk, typing/double.quirk, typing/bool.quirk, typing/char.quirk all live under
     // core/primitives.c in the runtime.
     for (auto& part : parts)
         if (part == "int" || part == "double" || part == "bool" || part == "char")
@@ -1033,13 +1033,13 @@ std::unique_ptr<FunctionNode> Parser::parseFunction(bool allowAbstract) {
     // Derives the full hierarchical module prefix from this->filePath.
     //
     // Naming convention (Option B — struct name always included):
-    //   libs/core/string.qk           -> modulePrefix = "Core_String"
-    //   libs/core/primitives.qk       -> modulePrefix = "Core_Primitives"
-    //   libs/core/collections/list.qk -> modulePrefix = "Core_Collections_List"
-    //   libs/core/collections/map.qk  -> modulePrefix = "Core_Collections_Map"
-    //   libs/sys/index.qk             -> modulePrefix = "Sys"
-    //   libs/io/file.qk               -> modulePrefix = "Io_File"
-    //   userfile.qk  (non-libs)       -> modulePrefix = "Userfile"
+    //   libs/core/string.quirk           -> modulePrefix = "Core_String"
+    //   libs/core/primitives.quirk       -> modulePrefix = "Core_Primitives"
+    //   libs/core/collections/list.quirk -> modulePrefix = "Core_Collections_List"
+    //   libs/core/collections/map.quirk  -> modulePrefix = "Core_Collections_Map"
+    //   libs/sys/index.quirk             -> modulePrefix = "Sys"
+    //   libs/io/file.quirk               -> modulePrefix = "Io_File"
+    //   userfile.quirk  (non-libs)       -> modulePrefix = "Userfile"
     //
     // Global extern:  linkageName = modulePrefix + "_" + name
     //   e.g. extern define float_to_str  ->  "Core_String_float_to_str"
@@ -1056,7 +1056,7 @@ std::unique_ptr<FunctionNode> Parser::parseFunction(bool allowAbstract) {
     //
     // Top-level library functions use the `<mp>$<name>` form so they can't
     // collide with struct-method linkage `<structName>_<methodName>` —
-    // before this, a top-level `define test` in regex/index.qk and the
+    // before this, a top-level `define test` in regex/index.quirk and the
     // method `Regex.test` both wanted `Regex_test`. The `$` separator is
     // legal in LLVM identifiers but never produced by anything else here.
     // Extern declarations stay on `<mp>_<name>` because their linkage has
@@ -1272,7 +1272,7 @@ std::unique_ptr<StructNode> Parser::parseStruct() {
             // Save raw method name BEFORE func->name gets the struct prefix prepended.
             // For extern methods we reconstruct:
             //   linkageName = modulePrefix + "_" + structName + "_" + rawMethodName
-            // e.g. extern define to_float in struct String in libs/core/string.qk
+            // e.g. extern define to_float in struct String in libs/core/string.quirk
             //   -> "Core_String" + "_" + "String" + "_" + "to_float"
             //   -> "Core_String_String_to_float"
             std::string rawMethodName = func->name; // e.g. "to_float", "__add", "__init"

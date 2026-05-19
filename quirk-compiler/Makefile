@@ -74,6 +74,6 @@ clean:
 
 # Quick smoke: compile and run a test file
 test: all
-	./$(TARGET) tests/encoding_test.qk
+	./$(TARGET) tests/encoding_test.quirk
 
 .PHONY: all clean test

@@ -3,9 +3,9 @@
 #include "../types.h"
 
 // ---------------------------------------------------------------------------
-//  Math runtime functions exported to libs/math/index.qk.
+//  Math runtime functions exported to libs/math/index.quirk.
 //  Naming: every symbol is prefixed Math_ to match `linkageName = "Math_<name>"`
-//  produced by Parser::computeModulePrefix for libs/math/index.qk.
+//  produced by Parser::computeModulePrefix for libs/math/index.quirk.
 // ---------------------------------------------------------------------------
 
 // --- Trigonometry (radians) ---

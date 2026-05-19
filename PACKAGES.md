@@ -25,28 +25,28 @@ quirk init                          # writes quirk.toml
 quirk install github.com/foo/pretty@v0.1.0
 #   ✓ pretty
 
-cat > main.qk <<'EOF'
+cat > main.quirk <<'EOF'
 use pretty
 define main() {
     print(pretty.format({"name": "Alice", "tags": [1, 2, 3]}))
 }
 EOF
-quirk main.qk
+quirk main.quirk
 ```
 
 Layout after the install:
 
 ```
 my-app/
-├── main.qk
+├── main.quirk
 ├── quirk.toml          ← lists `pretty = "github.com/foo/pretty@v0.1.0"`
 └── packages/
     └── pretty/
-        ├── src/index.qk
+        ├── src/index.quirk
         └── quirk.toml
 ```
 
-The compiler's resolver finds `use pretty` at `packages/pretty/src/index.qk` automatically.
+The compiler's resolver finds `use pretty` at `packages/pretty/src/index.quirk` automatically.
 
 ### Package specs
 
@@ -98,7 +98,7 @@ source myenv/bin/activate
 1 package(s) installed:
   pretty   0.1.0
 
-(quirk:myenv) $ quirk myscript.qk   # resolves pretty from the venv
+(quirk:myenv) $ quirk myscript.quirk   # resolves pretty from the venv
 (quirk:myenv) $ deactivate
 ```
 
@@ -134,15 +134,15 @@ myenv/
 my-lib/
 ├── quirk.toml           # required: name, version, [deps]
 ├── src/
-│   └── index.qk         # module entry point — `use my-lib` resolves here
+│   └── index.quirk         # module entry point — `use my-lib` resolves here
 └── tests/
-    └── my_lib_test.qk   # optional; run with `quirk tests/*.qk`
+    └── my_lib_test.quirk   # optional; run with `quirk tests/*.quirk`
 ```
 
 The compiler resolves `use my-lib` to either:
 
-- `<root>/my-lib.qk` (single-file package), OR
-- `<root>/my-lib/index.qk` (directory package — preferred for anything non-trivial)
+- `<root>/my-lib.quirk` (single-file package), OR
+- `<root>/my-lib/index.quirk` (directory package — preferred for anything non-trivial)
 
 Use the directory form when you want multiple files (`src/`, `tests/`, etc).
 
@@ -171,9 +171,9 @@ The format is a TOML subset:
 
 - **Name** matches the import users will write: `name = "pretty"` ↔ `use pretty`.
 - **Version** is a semver-ish string. The package manager doesn't yet do semver resolution — pinning is by exact tag.
-- **Entry point** is `src/index.qk`. Re-export the public API from there:
+- **Entry point** is `src/index.quirk`. Re-export the public API from there:
   ```quirk
-  // src/index.qk
+  // src/index.quirk
   from .formatters use { format, format_short }
   from .types     use { PrettyOptions }
   ```
@@ -187,7 +187,7 @@ Before publishing, develop the library in-place by symlinking it into a project'
 mkdir -p test-project/packages
 ln -s ~/code/my-lib test-project/packages/my-lib
 cd test-project
-quirk main.qk             # imports my-lib straight from the working copy
+quirk main.quirk             # imports my-lib straight from the working copy
 ```
 
 This skips the install/publish cycle while iterating.
@@ -209,7 +209,7 @@ That's it — there's no central registry. The package spec IS the source locati
 ### Testing your library
 
 ```bash
-quirk tests/my_lib_test.qk
+quirk tests/my_lib_test.quirk
 ```
 
 Use the `test` stdlib module for a structured runner:

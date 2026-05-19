@@ -211,7 +211,7 @@ class LLVMCodegen {
         if (!StructTypes.count("Type")) StructTypes["Type"] = StructType::create(Context, "struct.Type");
         // Built-in Callable struct (for lambdas)
         // Body must be { i8*, i8* } (fn ptr + env ptr) — pre-fill before Pass 2 so it is
-        // never overwritten from the .qk field list (emitCallableCall depends on these GEP offsets).
+        // never overwritten from the .quirk field list (emitCallableCall depends on these GEP offsets).
         if (!StructTypes.count("Callable")) StructTypes["Callable"] = StructType::create(Context, "struct.Callable");
         if (StructTypes["Callable"]->isOpaque()) {
             Type* i8PtrTy = Type::getInt8PtrTy(Context);
@@ -345,7 +345,7 @@ class LLVMCodegen {
                 if (!func->moduleName.empty() && func->cls.empty()) {
                     moduleFunctionIndex[{func->moduleName, func->name}] = func;
                     // Module names from file paths end in ".index" for
-                    // foo/index.qk packages, but `use foo` aliases to "foo".
+                    // foo/index.quirk packages, but `use foo` aliases to "foo".
                     // Index under the trimmed form too so the lookup matches.
                     std::string trimmed = func->moduleName;
                     const std::string idx = ".index";
@@ -418,7 +418,7 @@ class LLVMCodegen {
                 // ------------------------------------------------------------------------
 
                 // Populate structInitMap so StructGen can find renamed extern __init.
-                // e.g. String__init in libs/core/string.qk -> "Core_String_String___init"
+                // e.g. String__init in libs/core/string.quirk -> "Core_String_String___init"
                 if (func->isExtern && !func->cls.empty() &&
                     func->name.find("__init") != std::string::npos) {
                     structGen->registerStructInit(func->cls, llvmName);
@@ -1529,7 +1529,7 @@ class LLVMCodegen {
 
             // --- Lambda-aware List functional methods ---
             // These are handled via normal function resolution (the methods are declared
-            // as extern in list.qk so resolveFunction returns the correct linkage name).
+            // as extern in list.quirk so resolveFunction returns the correct linkage name).
             // We only intercept here to evaluate the Callable* argument correctly.
             static const std::set<std::string> listFunctionalMethods = {
                 "map", "filter", "each", "reduce", "any", "all", "find"

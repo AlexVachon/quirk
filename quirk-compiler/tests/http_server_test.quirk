@@ -1,0 +1,99 @@
+// net.server — unit tests for the parsing and response-formatting
+// helpers. A full end-to-end accept-loop test would need cross-process
+// orchestration plus a working struct-through-Callable return value;
+// the latter has a known wart in the current compiler (returning a
+// struct from a Callable can lose its type). We test the surface that's
+// stable: parse the wire format, build the wire format.
+
+use console
+use net.server
+from net.server use {
+    Request,
+    _parse_request, _read_headers, _read_body,
+    _header_lookup, _reason_for, _format_response
+}
+from net.http use { Response }
+use test
+from test use { TestCase }
+
+define main() -> void {
+
+    t_parse_get := TestCase("parse a basic GET request", fn() {
+        raw := "GET /users HTTP/1.1\r\nHost: example.com\r\nAccept: text/html\r\n\r\n"
+        req := _parse_request(raw)
+        test.assert_eq(req.method, "GET")
+        test.assert_eq(req.path, "/users")
+        test.assert_eq(req.headers.length(), 2)
+        test.assert_eq("" + req.headers.get("Host"), "example.com")
+    })
+
+    t_parse_query := TestCase("parse splits query string into map", fn() {
+        raw := "GET /search?q=hello&page=2 HTTP/1.1\r\nHost: x\r\n\r\n"
+        req := _parse_request(raw)
+        test.assert_eq(req.path, "/search")
+        test.assert_eq("" + req.query.get("q"), "hello")
+        test.assert_eq("" + req.query.get("page"), "2")
+    })
+
+    t_parse_post_body := TestCase("parse preserves body after header terminator", fn() {
+        raw := "POST /sum HTTP/1.1\r\nHost: x\r\nContent-Length: 7\r\n\r\na=3&b=4"
+        req := _parse_request(raw)
+        test.assert_eq(req.method, "POST")
+        test.assert_eq(req.body, "a=3&b=4")
+    })
+
+    t_parse_bad := TestCase("parse returns empty method on malformed request line", fn() {
+        // Single token on the request line — no path, no version.
+        raw := "GARBAGE\r\nHost: x\r\n\r\n"
+        req := _parse_request(raw)
+        test.assert_eq(req.method, "")
+    })
+
+    t_header_lookup := TestCase("header lookup is case-insensitive and miss-safe", fn() {
+        h := Map()
+        h.put("Content-Type", "application/json")
+        test.assert_eq(_header_lookup(h, "content-type"), "application/json")
+        test.assert_eq(_header_lookup(h, "Content-Type"), "application/json")
+        // A miss returns "" — not the "null" string that .get would
+        // stringify to, which would crash .to_int() downstream.
+        test.assert_eq(_header_lookup(h, "X-Missing"), "")
+    })
+
+    t_reason := TestCase("reason phrase mapping covers common codes", fn() {
+        test.assert_eq(_reason_for(200), "OK")
+        test.assert_eq(_reason_for(404), "Not Found")
+        test.assert_eq(_reason_for(500), "Internal Server Error")
+        // Unknown codes fall back to "OK" (informational only).
+        test.assert_eq(_reason_for(418), "OK")
+    })
+
+    t_format := TestCase("format_response emits valid HTTP/1.1 wire format", fn() {
+        resp := Response(200, "hi", Map())
+        wire := _format_response(resp)
+        // Status line.
+        test.assert_true(wire.startswith("HTTP/1.1 200 OK\r\n"))
+        // Body length tracked accurately.
+        test.assert_true(wire.contains("Content-Length: 2\r\n"))
+        // Body comes after the terminator, unaltered.
+        test.assert_true(wire.endswith("\r\n\r\nhi"))
+    })
+
+    t_format_custom := TestCase("custom response headers pass through", fn() {
+        h := Map()
+        h.put("X-App", "quirk")
+        resp := Response(201, "{}", h)
+        wire := _format_response(resp)
+        test.assert_true(wire.startswith("HTTP/1.1 201 Created\r\n"))
+        test.assert_true(wire.contains("X-App: quirk\r\n"))
+        test.assert_true(wire.endswith("\r\n\r\n{}"))
+    })
+
+    fails := test.run_all([t_parse_get, t_parse_query, t_parse_post_body,
+                            t_parse_bad, t_header_lookup, t_reason,
+                            t_format, t_format_custom])
+    if fails > 0 {
+        console.error("http server tests failed (" + fails.str() + ")")
+    } else {
+        console.info("all http server tests passed")
+    }
+}

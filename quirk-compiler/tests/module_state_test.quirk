@@ -1,0 +1,81 @@
+// Module-level mutable state — top-level `name := value` declarations
+// become LLVM GlobalVariables that every function in the module shares,
+// not per-function allocas. Until this landed, a top-level `counter := 0`
+// only lived as a local in `main`; other functions assigning to `counter`
+// silently created their own shadow.
+
+use console
+use test
+from test use { TestCase }
+
+// ─── Globals under test ──────────────────────────────────────────────
+counter := 0
+greeting := "hello"
+hits := 0
+
+define bump() -> void {
+    counter = counter + 1
+    hits = hits + 1
+}
+
+define set_greeting(g: String) -> void {
+    greeting = g
+}
+
+define current_greeting() -> String {
+    return greeting
+}
+
+// Mid-file globals work too — declaration order is just source order.
+multiplier := 10
+
+define scaled() -> Int {
+    return counter * multiplier
+}
+
+// ─── Tests ───────────────────────────────────────────────────────────
+define main() -> void {
+    t_initial := TestCase("globals start at their initial value", fn() {
+        test.assert_eq(counter, 0)
+        test.assert_eq(greeting, "hello")
+        test.assert_eq(multiplier, 10)
+    })
+
+    t_write_from_fn := TestCase("a function can mutate a global", fn() {
+        // Reset to a known starting point so this test is order-independent.
+        counter = 0
+        bump()
+        bump()
+        bump()
+        test.assert_eq(counter, 3)
+    })
+
+    t_string_global := TestCase("String globals reassign via `=`", fn() {
+        set_greeting("hola")
+        test.assert_eq(current_greeting(), "hola")
+        set_greeting("hello")  // restore
+    })
+
+    t_cross_fn_visibility := TestCase("two functions share the same global", fn() {
+        counter = 0
+        hits = 0
+        bump()  // counter+=1, hits+=1
+        bump()  // counter+=1, hits+=1
+        test.assert_eq(counter, 2)
+        test.assert_eq(hits, 2)
+    })
+
+    t_compose_globals := TestCase("functions can compose multiple globals", fn() {
+        counter = 5
+        // scaled() reads both counter and multiplier.
+        test.assert_eq(scaled(), 50)
+    })
+
+    fails := test.run_all([t_initial, t_write_from_fn, t_string_global,
+                            t_cross_fn_visibility, t_compose_globals])
+    if fails > 0 {
+        console.error("module state tests failed (" + fails.str() + ")")
+    } else {
+        console.info("all module state tests passed")
+    }
+}

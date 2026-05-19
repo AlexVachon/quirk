@@ -70,6 +70,23 @@ export function maskLine(line: string): string {
                         } else {
                             masked += char;
                         }
+                    } else if ((char === ':' || char === '%' || char === '|') && braceDepth === 1) {
+                        // Format-spec separator inside `${expr : fmt}` (or
+                        // legacy `${expr % fmt}` / `${expr | fmt}`). Everything
+                        // from here to the closing `}` is a format string,
+                        // not code — blank it so `${n:x}` doesn't flag `x`
+                        // as an undefined identifier.
+                        while (j < line.length) {
+                            const c = line[j];
+                            if (c === '}') {
+                                braceDepth = 0;
+                                inInterpolation = false;
+                                masked += ' ';
+                                break;
+                            }
+                            masked += ' ';
+                            j++;
+                        }
                     } else {
                         masked += char;
                     }

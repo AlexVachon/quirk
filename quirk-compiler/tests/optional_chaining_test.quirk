@@ -1,0 +1,81 @@
+// Optional chaining (?.) — short-circuit member access when the LHS is null
+// instead of crashing. Pairs with `??` for "use this if null" defaults.
+
+use console
+use test
+from test use { TestCase }
+
+struct Profile {
+    name: String
+    age: Int
+
+    define __init(self, n: String, a: Int) -> void {
+        self.name = n
+        self.age = a
+    }
+
+    define greet(self) -> String { return "hi " + self.name }
+}
+
+struct User {
+    profile: Profile
+
+    define __init(self, p: Profile) -> void { self.profile = p }
+}
+
+define main() -> void {
+
+    t_method_present := TestCase("?. method call on non-null returns the value", fn() {
+        p := Profile("Alice", 30)
+        test.assert_eq(p?.greet(), "hi Alice")
+    })
+
+    t_method_null := TestCase("?. method call on null short-circuits to null (no crash)", fn() {
+        p: Profile = null
+        // The result is "null-of-return-type" — for String* return that's a
+        // null pointer; we just need to prove the call didn't segfault.
+        result := p?.greet()
+        test.assert_true(result == null)
+    })
+
+    t_field_present := TestCase("?. field access on non-null returns the field", fn() {
+        p := Profile("Bob", 25)
+        test.assert_eq(p?.name, "Bob")
+    })
+
+    t_field_null := TestCase("?. field access on null returns null (no crash)", fn() {
+        p: Profile = null
+        result := p?.name
+        test.assert_true(result == null)
+    })
+
+    t_chained_present := TestCase("?. chained on present values walks deep", fn() {
+        u := User(Profile("Carol", 40))
+        // Without ?. this would still work; the point is it COMPILES and
+        // doesn't change behavior when all hops are non-null.
+        test.assert_eq(u?.profile?.name, "Carol")
+    })
+
+    t_chained_null := TestCase("?. chained stops at the first null", fn() {
+        u := User(null)
+        // u is non-null; u.profile is null. Without ?. on .name this segfaults.
+        result := u?.profile?.name
+        test.assert_true(result == null)
+    })
+
+    t_coalesce_fallback := TestCase("?. composes with ?? for defaults", fn() {
+        p: Profile = null
+        // null ?? "Unknown" → "Unknown". Tests the standard pattern.
+        name := p?.name ?? "Unknown"
+        test.assert_eq(name, "Unknown")
+    })
+
+    fails := test.run_all([t_method_present, t_method_null, t_field_present,
+                            t_field_null, t_chained_present, t_chained_null,
+                            t_coalesce_fallback])
+    if fails > 0 {
+        console.error("optional chaining tests failed (" + fails.str() + ")")
+    } else {
+        console.info("all optional chaining tests passed")
+    }
+}

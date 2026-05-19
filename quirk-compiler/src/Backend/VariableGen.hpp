@@ -18,6 +18,12 @@ class VariableGen {
     // The cell itself is a GC_malloc(8) block holding one i8* value.
     std::set<std::string> nonlocalVars;
 
+    // Module-level mutable state. Survives `clear()` between functions so
+    // every function in the module can see the same storage. Maps name →
+    // the LLVM GlobalVariable, which is treated like a pointer-to-slot
+    // analogous to the per-function allocas in NamedValues.
+    std::map<std::string, GlobalVariable*> globalVars;
+
    public:
     VariableGen(LLVMContext& ctx, IRBuilder<>& build)
         : Context(ctx), Builder(build) {}
@@ -25,6 +31,20 @@ class VariableGen {
     void clear() {
         NamedValues.clear();
         nonlocalVars.clear();
+        // globalVars intentionally preserved — it's module-scoped state.
+    }
+
+    // Register a top-level variable backed by an LLVM GlobalVariable.
+    // Reads/writes from any function will route through this storage.
+    void defineGlobal(const std::string& name, GlobalVariable* gv) {
+        globalVars[name] = gv;
+    }
+    bool isGlobal(const std::string& name) const {
+        return globalVars.count(name) > 0;
+    }
+    GlobalVariable* getGlobal(const std::string& name) const {
+        auto it = globalVars.find(name);
+        return it == globalVars.end() ? nullptr : it->second;
     }
 
     // Register a function argument (e.g., 'self', 'x')
@@ -58,6 +78,22 @@ class VariableGen {
 
     // Handle 'x = 20' (Reassignment)
     void updateLocalVariable(const std::string& name, Value* val) {
+        // Module-level global: write through the GlobalVariable. Check
+        // before locals because a top-level name may have been re-bound in
+        // an inner scope as a Callable (lambdas in main do this); we want
+        // assignments to flow back to the canonical module slot.
+        if (globalVars.count(name)) {
+            GlobalVariable* gv = globalVars[name];
+            Type* gvTy = gv->getValueType();
+            if (val->getType() != gvTy) {
+                if (val->getType()->isPointerTy() && gvTy->isPointerTy()) {
+                    val = Builder.CreateBitCast(val, gvTy, name + "_gcast");
+                }
+            }
+            Builder.CreateStore(val, gv);
+            return;
+        }
+
         // Nonlocal: store through the heap cell
         if (nonlocalVars.count(name)) {
             Value* slot = NamedValues[name];
@@ -93,8 +129,16 @@ class VariableGen {
     }
 
     Value* resolveVariable(const std::string& name) {
-        if (NamedValues.find(name) == NamedValues.end())
+        // Locals win over globals — a function parameter named `x` shadows
+        // a module global `x`. Same precedence as most languages.
+        if (NamedValues.find(name) == NamedValues.end()) {
+            // Fall back to the module-level slot if there's one.
+            auto git = globalVars.find(name);
+            if (git != globalVars.end()) {
+                return Builder.CreateLoad(git->second->getValueType(), git->second, name.c_str());
+            }
             return nullptr;
+        }
 
         Value* slot = NamedValues[name];
 
@@ -116,7 +160,9 @@ class VariableGen {
         return slot;
     }
 
-    bool exists(const std::string& name) { return NamedValues.count(name); }
+    bool exists(const std::string& name) {
+        return NamedValues.count(name) || globalVars.count(name);
+    }
     bool isNonlocal(const std::string& name) const { return nonlocalVars.count(name) > 0; }
 
     // Register a nonlocal variable backed by a GC heap cell.

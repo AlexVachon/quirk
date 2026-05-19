@@ -299,9 +299,16 @@ std::unique_ptr<Node> Parser::parseExpression(int min_precedence) {
                 std::string varName2;
                 if (peek().type == TokenType::COMMA) { advance(); varName2 = advance().value; }
                 consume(TokenType::IN, "Expected 'in' in list comprehension");
-                auto iterable = parseExpression(0);
+                // Parse the iterable at precedence 3 so a trailing `if`
+                // (precedence 2) is left for the filter clause rather than
+                // being eaten by the ternary-style `expr if cond else …`
+                // operator. Anything tighter (`==`, `+`, `.`) still binds.
+                auto iterable = parseExpression(3);
                 std::unique_ptr<Node> condition;
-                if (peek().type == TokenType::WHERE) {
+                // Both `where` and `if` introduce the filter clause —
+                // `where` was original, `if` matches Python and reads more
+                // naturally inside `[…]`.
+                if (peek().type == TokenType::WHERE || peek().type == TokenType::IF) {
                     advance();
                     condition = parseExpression(0);
                 }
@@ -362,9 +369,13 @@ std::unique_ptr<Node> Parser::parseExpression(int min_precedence) {
                     std::string varName2;
                     if (peek().type == TokenType::COMMA) { advance(); varName2 = advance().value; }
                     consume(TokenType::IN, "Expected 'in' in map comprehension");
-                    auto iterable = parseExpression(0);
+                    // See list-comprehension counterpart above for the
+                    // precedence-3 rationale (keeps a trailing `if` for us).
+                    auto iterable = parseExpression(3);
                     std::unique_ptr<Node> condition;
-                    if (peek().type == TokenType::WHERE) { advance(); condition = parseExpression(0); }
+                    if (peek().type == TokenType::WHERE || peek().type == TokenType::IF) {
+                        advance(); condition = parseExpression(0);
+                    }
                     consume(TokenType::RBRACE, "Expected '}' after map comprehension");
                     auto comp = std::make_unique<MapComprehensionNode>();
                     comp->keyExpr = std::move(keyExpr); comp->valExpr = std::move(valExpr);

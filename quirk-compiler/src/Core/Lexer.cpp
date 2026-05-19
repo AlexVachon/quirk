@@ -333,23 +333,41 @@ void Lexer::tokenizeString()
         {
             advance(); // Skip '$'
 
-            // Case A: ${expression % fmt}
+            // Case A: ${expression : fmt}   (or `%`/`|` as legacy separators)
             if (peek() == '{')
             {
                 advance(); // Skip '{'
                 std::string expr = "";
                 std::string fmt = "";
                 bool readingFmt = false;
+                // Track bracket / paren / quote depth so a `:` inside a
+                // slice (`arr[0:5]`) or string literal stays inside the
+                // expression rather than triggering the format-spec switch.
+                int depth = 0;
+                char quoteCh = 0;
 
                 // Read until '}'
                 while (pos < src.length() && peek() != '}')
                 {
-                    // Check for Modulo/Format separator '%' or Pipe '|'
-                    if (!readingFmt && (peek() == '%' || peek() == '|'))
-                    {
-                        readingFmt = true;
-                        advance();
-                        continue;
+                    char ch = peek();
+                    if (!readingFmt) {
+                        if (quoteCh == 0 && (ch == '"' || ch == '\'')) { quoteCh = ch; expr += advance(); continue; }
+                        if (quoteCh != 0) {
+                            if (ch == '\\' && pos + 1 < src.length()) { expr += advance(); expr += advance(); continue; }
+                            if (ch == quoteCh) quoteCh = 0;
+                            expr += advance();
+                            continue;
+                        }
+                        if (ch == '(' || ch == '[') { depth++; expr += advance(); continue; }
+                        if (ch == ')' || ch == ']') { depth--; expr += advance(); continue; }
+                        // Format separator: `%`/`|` (legacy), or `:` at
+                        // top-level brace depth (Python-style).
+                        if (depth == 0 && (ch == '%' || ch == '|' || ch == ':'))
+                        {
+                            readingFmt = true;
+                            advance();
+                            continue;
+                        }
                     }
 
                     if (readingFmt)

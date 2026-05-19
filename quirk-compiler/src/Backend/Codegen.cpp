@@ -78,6 +78,11 @@ class LLVMCodegen {
 
    public:
     static std::string currentCodegenClass;
+    // True while emitting code for a top-level statement at module scope
+    // (i.e. inside the prologue of `main` for a module's free statements).
+    // When set, `handleVarDecl` materialises module-level vars as LLVM
+    // GlobalVariables so they're visible from other functions.
+    bool inModuleScope = false;
     std::map<std::string, std::string> activeModuleAliases;
     std::map<std::string, std::string> callableReturnTypes; // varName → inferred return type
     std::map<std::string, int> variadicCallableStart;       // varName → first variadic arg index (-1 = not variadic)
@@ -517,23 +522,22 @@ class LLVMCodegen {
             }
         }
 
-        if (verbose) std::cerr << "[Codegen] Pass 4: Compiling function bodies\n";
-        for (const auto& node : nodes) {
-            if (!node->filePath.empty()) currentFilePath = node->filePath;
-            if (auto func = dynamic_cast<FunctionNode*>(node.get())) {
-                if (func->name != "main") compileFunction(func);
-            }
-        }
+        // We used to compile non-main function bodies (Pass 4) *before* main,
+        // but that left top-level `counter := 0` style declarations invisible
+        // to those bodies — the global wasn't registered yet. Emitting main
+        // first lets it create the GlobalVariables (via `inModuleScope` in
+        // handleVarDecl) so subsequent function bodies see them through
+        // varGen's globalVars fallback. `clear()` preserves globalVars.
 
         FunctionType* mainType = FunctionType::get(
-            Type::getInt32Ty(Context), 
-            {Type::getInt32Ty(Context), Type::getInt8PtrTy(Context)->getPointerTo()}, 
+            Type::getInt32Ty(Context),
+            {Type::getInt32Ty(Context), Type::getInt8PtrTy(Context)->getPointerTo()},
             false
         );
         Function* mainFunc = Function::Create(mainType, Function::ExternalLinkage, "main", TheModule.get());
         Builder.SetInsertPoint(BasicBlock::Create(Context, "entry", mainFunc));
-        
-        if (verbose) std::cerr << "[Codegen] Pass 5: Compiling 'main' body\n";
+
+        if (verbose) std::cerr << "[Codegen] Pass 4: Compiling 'main' body (creates module globals first)\n";
         varGen->clear();  // avoid variable table leaking from last compiled function into main
         Value* argc = mainFunc->getArg(0);
         Value* argv = mainFunc->getArg(1);
@@ -563,7 +567,12 @@ class LLVMCodegen {
             } else if (!dynamic_cast<StructNode*>(node.get()) && !dynamic_cast<FunctionNode*>(node.get()) &&
                        !dynamic_cast<TypeAliasNode*>(node.get()) &&
                        !dynamic_cast<InterfaceNode*>(node.get())) {
-                 handleStatement(node.get(), mainFunc);
+                // Free top-level statements are emitted into main's prologue
+                // and treated as module-scope: a top-level VarDecl becomes a
+                // GlobalVariable so other functions see the same storage.
+                inModuleScope = true;
+                handleStatement(node.get(), mainFunc);
+                inModuleScope = false;
             }
         }
 
@@ -575,6 +584,19 @@ class LLVMCodegen {
             Builder.CreateCall(popFrame);
             Builder.CreateRet(ConstantInt::get(Type::getInt32Ty(Context), 0));
         }
+
+        // Pass 5: compile non-main function bodies LAST. By now main has run
+        // through any top-level VarDecls and registered the resulting
+        // GlobalVariables with varGen, so these bodies can resolve module-
+        // scope names via the globals fallback.
+        if (verbose) std::cerr << "[Codegen] Pass 5: Compiling non-main function bodies\n";
+        for (const auto& node : nodes) {
+            if (!node->filePath.empty()) currentFilePath = node->filePath;
+            if (auto func = dynamic_cast<FunctionNode*>(node.get())) {
+                if (func->name != "main") compileFunction(func);
+            }
+        }
+
         if (verbose) std::cerr << "[Codegen] buildIR() done\n";
     }
 
@@ -1076,6 +1098,11 @@ class LLVMCodegen {
                 if (name[0] == '"' || name[0] == '\'') return;
                 if (name == "true" || name == "false" || name == "null" || name == "super") return;
                 if (paramSet.count(name) || seen.count(name)) return;
+                // Module-level globals are NOT captured — the lambda reads
+                // and writes them directly through their GlobalVariable so
+                // every invocation sees the current value. Capturing them
+                // here would snapshot the value at lambda-creation time.
+                if (varGen->isGlobal(name)) return;
                 if (varGen->exists(name)) { seen.insert(name); freeVars.push_back(name); }
                 return;
             }
@@ -2379,8 +2406,24 @@ class LLVMCodegen {
                 val = applyCompoundAssignment(vdecl->op, wasVal, val);
             }
 
-            if (!varGen->exists(lhs->value)) varGen->defineLocalVariable(lhs->value, val);
-            else varGen->updateLocalVariable(lhs->value, val);
+            // Module-scope declaration: materialise the binding as an LLVM
+            // GlobalVariable so every function (not just main) can see it.
+            // We only create one on the *first* definition; subsequent
+            // `=` assignments in this scope route through updateLocalVariable
+            // which now knows how to write through to the global.
+            if (inModuleScope && !varGen->exists(lhs->value)) {
+                Type* gvTy = val->getType();
+                Constant* initVal = Constant::getNullValue(gvTy);
+                GlobalVariable* gv = new GlobalVariable(
+                    *TheModule, gvTy, /*isConstant=*/false,
+                    GlobalValue::InternalLinkage, initVal, lhs->value);
+                Builder.CreateStore(val, gv);
+                varGen->defineGlobal(lhs->value, gv);
+            } else if (!varGen->exists(lhs->value)) {
+                varGen->defineLocalVariable(lhs->value, val);
+            } else {
+                varGen->updateLocalVariable(lhs->value, val);
+            }
 
             // Track enum type for .str() calls
             if (auto* rhsMember = dynamic_cast<MemberAccessNode*>(vdecl->expression.get())) {
@@ -3528,7 +3571,7 @@ Value* LLVMCodegen::handleExpression(Node* node) {
         }
 
         // --- FIX 2: Enable Member Access on Any (Assume String) ---
-        if (objPtr && objPtr->getType()->isPointerTy() && 
+        if (objPtr && objPtr->getType()->isPointerTy() &&
             objPtr->getType()->getPointerElementType()->isIntegerTy(8)) {
             // It's Any (i8*). Cast it to String* so we can find members like .to_int()
             if (StructTypes.count("String")) {
@@ -3536,7 +3579,35 @@ Value* LLVMCodegen::handleExpression(Node* node) {
             }
         }
         // ----------------------------------------------------------
-        
+
+        // Safe field access: obj?.field — emit a null-branch so a null obj
+        // produces null-of-field-type instead of a segfault. Mirrors the
+        // safe-call path above for obj?.method().
+        if (member->isSafeAccess && objPtr && objPtr->getType()->isPointerTy()) {
+            Function* parentFunc = Builder.GetInsertBlock()->getParent();
+            BasicBlock* preBB    = Builder.GetInsertBlock();
+            BasicBlock* doReadBB = BasicBlock::Create(Context, "safe_field", parentFunc);
+            BasicBlock* afterBB  = BasicBlock::Create(Context, "safe_field_after");
+            Builder.CreateCondBr(
+                Builder.CreateICmpEQ(objPtr, Constant::getNullValue(objPtr->getType()), "safe_field_isnull"),
+                afterBB, doReadBB);
+
+            Builder.SetInsertPoint(doReadBB);
+            Value* val = structGen->generateMemberAccess(objPtr, member->memberName);
+            BasicBlock* readEndBB = Builder.GetInsertBlock();
+            if (!readEndBB->getTerminator()) Builder.CreateBr(afterBB);
+
+            parentFunc->getBasicBlockList().push_back(afterBB);
+            Builder.SetInsertPoint(afterBB);
+            if (val && !val->getType()->isVoidTy()) {
+                PHINode* phi = Builder.CreatePHI(val->getType(), 2, "safe_field_result");
+                phi->addIncoming(Constant::getNullValue(val->getType()), preBB);
+                phi->addIncoming(val, readEndBB);
+                return phi;
+            }
+            return nullptr;
+        }
+
         return structGen->generateMemberAccess(objPtr, member->memberName);
     }
 

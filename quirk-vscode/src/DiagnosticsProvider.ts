@@ -100,6 +100,9 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
     let multiLineImport = "";
     let isReadingImport = false;
     let isReadingEnum = false;
+    // Track brace depth so the top-level VarDecl detector below only
+    // promotes names declared at module scope (depth 0) into fileGlobals.
+    let pass1Depth = 0;
 
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
@@ -109,6 +112,11 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
         if (inDocBlock) continue;
 
         const cleanLine = maskLine(line);
+        const lineStartDepth = pass1Depth;
+        for (const c of cleanLine) {
+            if (c === '{') pass1Depth++;
+            else if (c === '}') pass1Depth--;
+        }
 
         if (isReadingImport) {
             multiLineImport += " " + cleanLine;
@@ -187,6 +195,20 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
         // Interface declaration: register the name + collect type params from extends clause
         const ifaceMatch = /^\s*interface\s+([a-zA-Z_]\w*)/.exec(cleanLine);
         if (ifaceMatch) { fileGlobals.add(ifaceMatch[1]); interfaceNames.add(ifaceMatch[1]); continue; }
+
+        // Top-level mutable state: `counter := 0`, `name: Type = value`
+        // at brace depth 0 becomes a module-level GlobalVariable and is
+        // visible from every function. Only promote when the line starts
+        // at module scope — inside a function body these are locals.
+        if (lineStartDepth === 0) {
+            const topLevelDeclMatch = /^\s*([a-zA-Z_]\w*)\s*(?::\s*[a-zA-Z_][\w\[\], ]*)?\s*:?=/.exec(cleanLine);
+            if (topLevelDeclMatch) {
+                const name = topLevelDeclMatch[1];
+                if (!KEYWORDS.has(name) && !cleanLine.trimStart().startsWith('return')) {
+                    fileGlobals.add(name);
+                }
+            }
+        }
 
         match = /^\s*(?:extern\s+)?(?:struct|define|def|init)\s+([a-zA-Z_]\w*)/.exec(cleanLine);
         if (match) {
@@ -395,7 +417,16 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
             const assignMatch = !isTypeAliasLine ? /(?<!\.)\b([a-zA-Z_]\w*)\s*(?::\s*([a-zA-Z0-9_.?]+))?\s*(?::=|=(?!>)|\+=|-=|\*=|\/=)/.exec(maskedLine) : null;
             if (assignMatch && !parenDestructMatch && !bareDestructMatch) {
                 const vName = assignMatch[1];
-                if (!namedArgNames.has(vName) && !locals.has(vName) && !KEYWORDS.has(vName) && !BUILTINS.has(vName)) {
+                // If `name` is already a module-level global, this is a
+                // reassignment (`counter = counter + 1`), not a fresh
+                // declaration. Without this guard the global's original
+                // declaration is flagged as "unused" because every read
+                // gets attributed to the newly-recorded local at this line.
+                const assignOp = assignMatch[0].includes(':=') ? ':=' : '=';
+                const isReassignmentOfGlobal = assignOp === '=' && fileGlobals.has(vName);
+                if (!isReassignmentOfGlobal &&
+                    !namedArgNames.has(vName) && !locals.has(vName) &&
+                    !KEYWORDS.has(vName) && !BUILTINS.has(vName)) {
                     locals.add(vName);
                     const startIdx = originalLine.indexOf(vName);
                     recordDeclaration(vName, i, new vscode.Range(i, startIdx, i, startIdx + vName.length));

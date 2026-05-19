@@ -1,0 +1,56 @@
+// Interpolation format specs — `${expr:fmt}` (Python style) and `${expr % fmt}`
+// (Quirk's original) both work. The colon variant is the one most callers
+// reach for; the `%`/`|` variants are still accepted for back-compat.
+
+use console
+use test
+from test use { TestCase }
+
+define main() -> void {
+
+    t_float_precision := TestCase("Double with `:.2f` rounds to 2 decimals", fn() {
+        pi := 3.14159
+        s := "${pi:.2f}"
+        test.assert_eq(s, "3.14")
+    })
+
+    t_int_padded := TestCase("Int with `:04d` zero-pads to width 4", fn() {
+        n := 42
+        s := "${n:04d}"
+        test.assert_eq(s, "0042")
+    })
+
+    t_int_hex := TestCase("Int with `:x` renders as lowercase hex", fn() {
+        n := 255
+        s := "${n:x}"
+        test.assert_eq(s, "ff")
+    })
+
+    t_legacy_percent := TestCase("legacy percent-separator still works", fn() {
+        pi := 3.14159
+        s := "${pi % .2f}"
+        test.assert_eq(s, "3.14")
+    })
+
+    t_plain_interp := TestCase("no format spec leaves the value as-is", fn() {
+        n := 7
+        s := "n=${n}"
+        test.assert_eq(s, "n=7")
+    })
+
+    t_slice_in_interp := TestCase("`:` inside a slice stays inside the expr", fn() {
+        // The `:` between `1:3` is a slice separator, not a format spec —
+        // the lexer tracks bracket depth so it only flips on a top-level `:`.
+        arr := [10, 20, 30, 40]
+        s := "got=${arr[1:3]}"
+        test.assert_eq(s, "got=[20, 30]")
+    })
+
+    fails := test.run_all([t_float_precision, t_int_padded, t_int_hex,
+                            t_legacy_percent, t_plain_interp, t_slice_in_interp])
+    if fails > 0 {
+        console.error("fstring format spec tests failed (" + fails.str() + ")")
+    } else {
+        console.info("all fstring format spec tests passed")
+    }
+}

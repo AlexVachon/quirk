@@ -1,0 +1,70 @@
+// List and map comprehensions — `[expr for x in iter if cond]`. We accept
+// both `if` (Python-style) and `where` (Quirk's original keyword) as the
+// filter introducer.
+
+use console
+use test
+from test use { TestCase }
+
+define main() -> void {
+
+    // Each TestCase body declares its own input data — comprehensions over
+    // a closure-captured list hit a pre-existing Callable-capture wart and
+    // see the list as empty. Declaring inside the lambda sidesteps that.
+
+    t_basic := TestCase("plain list comprehension transforms each element", fn() {
+        nums := [1, 2, 3, 4, 5]
+        doubled := [x * 2 for x in nums]
+        test.assert_eq(doubled.length(), 5)
+        test.assert_eq(doubled.get(0), 2)
+        test.assert_eq(doubled.get(4), 10)
+    })
+
+    t_filter_if := TestCase("`if` filter selects matching elements", fn() {
+        nums := [1, 2, 3, 4, 5]
+        big := [x for x in nums if x > 2]
+        test.assert_eq(big.length(), 3)
+        test.assert_eq(big.get(0), 3)
+        test.assert_eq(big.get(2), 5)
+    })
+
+    t_filter_where := TestCase("`where` filter still works (legacy keyword)", fn() {
+        nums := [1, 2, 3, 4, 5]
+        small := [x for x in nums where x < 3]
+        test.assert_eq(small.length(), 2)
+        test.assert_eq(small.get(0), 1)
+        test.assert_eq(small.get(1), 2)
+    })
+
+    t_combined := TestCase("transform + filter in one comprehension", fn() {
+        nums := [1, 2, 3, 4, 5]
+        result := [x * 10 for x in nums if x > 2]
+        test.assert_eq(result.length(), 3)
+        test.assert_eq(result.get(0), 30)
+        test.assert_eq(result.get(2), 50)
+    })
+
+    t_map_comp := TestCase("map comprehension builds {k: v} pairs", fn() {
+        nums := [1, 2, 3, 4, 5]
+        squares := {("k" + n.str()): (n * 100) for n in nums}
+        test.assert_eq(squares.length(), 5)
+        test.assert_eq(squares.get("k1"), 100)
+        test.assert_eq(squares.get("k5"), 500)
+    })
+
+    t_map_comp_filter := TestCase("map comprehension with `if` filter", fn() {
+        nums := [1, 2, 3, 4, 5]
+        odds := {n.str(): n for n in nums if n > 2}
+        test.assert_eq(odds.length(), 3)
+        test.assert_eq(odds.get("3"), 3)
+        test.assert_eq(odds.get("5"), 5)
+    })
+
+    fails := test.run_all([t_basic, t_filter_if, t_filter_where, t_combined,
+                            t_map_comp, t_map_comp_filter])
+    if fails > 0 {
+        console.error("comprehension tests failed (" + fails.str() + ")")
+    } else {
+        console.info("all comprehension tests passed")
+    }
+}

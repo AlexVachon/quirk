@@ -1,0 +1,17 @@
+<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Containment ring. Suggests a hadron enclosing its quarks. Outline only so the
+       icon stays light on both bright and dark VSCode themes. -->
+  <circle cx="64" cy="64" r="58" stroke="#475569" stroke-width="4" fill="none" />
+
+  <!-- Bonds between the three quarks. -->
+  <g stroke="#475569" stroke-width="5" stroke-linecap="round">
+    <line x1="64" y1="38" x2="38" y2="90" />
+    <line x1="64" y1="38" x2="90" y2="90" />
+    <line x1="38" y1="90" x2="90" y2="90" />
+  </g>
+
+  <!-- Three quarks. Palette: two cool indigo tones + one cyan accent. -->
+  <circle cx="64" cy="38" r="16" fill="#818CF8" />
+  <circle cx="38" cy="90" r="16" fill="#6366F1" />
+  <circle cx="90" cy="90" r="16" fill="#06B6D4" />
+</svg>

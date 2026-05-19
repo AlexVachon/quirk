@@ -1,0 +1,71 @@
+from ...sys use { srcline }
+
+define _format_cause(prev: Exception) -> String {
+    code := String(srcline(prev.file._buffer, prev.line))
+    return "Traceback (most recent call last):\n" +
+    prev.traceback +
+    "  File \"" + prev.file + "\", line " + prev.line.str() + ", in " + prev.callee + "\n" +
+    "    " + code + "\n" +
+    prev.type + ": " + prev.message + "\n\n" +
+    "During handling of the above exception, another exception occurred:\n\n"
+}
+
+define _format_traceback(e: Exception) -> String {
+    code := String(srcline(e.file._buffer, e.line))
+    header: String = ""
+    if not e.cause_trace.is_empty() {
+        header = e.cause_trace
+    }
+    return header +
+    "Traceback (most recent call last):\n" +
+    e.traceback +
+    "  File \"" + e.file + "\", line " + e.line.str() + ", in " + e.callee + "\n" +
+    "    " + code + "\n" +
+    e.type + ": " + e.message
+}
+
+---
+Base class for all exceptions in Quirk.
+Catch this type to handle any exception regardless of its specific kind.
+
+Fields: message, type, file, line, traceback, cause_trace
+
+@note Prefer catching a specific subclass (ValueError, IOError, etc.) over
+catching Exception directly, so unrelated errors are not silently swallowed.
+
+@warning Catching Exception will also catch RuntimeError, NullError, and all
+other built-in exceptions — use with care in broad catch blocks.
+
+@example:
+try {
+    throw ValueError("bad input")
+} catch (e: Exception) {
+    print(e.type + ": " + e.message)
+}
+---
+struct Exception {
+    type: String
+    message: String
+    file: String = ""
+    line: Int = 0
+    callee: String = ""
+    traceback: String = ""
+    cause_trace: String = ""
+
+    define __init(self, message: String) -> void {
+        self.message = message
+    }
+
+    define __str(self) -> String {
+        return self.type + ": " + self.message
+    }
+
+    define with_cause(self, previous: Exception) -> Exception {
+        self.cause_trace = _format_cause(previous)
+        return self
+    }
+
+    define print_traceback(self) -> void {
+        print(_format_traceback(self))
+    }
+}

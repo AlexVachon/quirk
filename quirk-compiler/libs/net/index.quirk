@@ -1,0 +1,67 @@
+---
+Network entry point. Re-exports the high-level `Socket` struct and exposes
+the low-level POSIX-style socket primitives that `Socket` is built on.
+
+Most users want `from net.socket use { Socket }` for the OO wrapper, or
+`use net.http` for the HTTP client. The free functions here (`socket`,
+`bind`, `listen`, ...) are thin wrappers over the C socket API and are
+mostly useful for implementing custom protocols.
+
+@example
+with Socket() as s {
+    s.connect("example.com", 80)
+    s.send("GET / HTTP/1.0\r\n\r\n")
+    print(s.recv(4096))
+}
+---
+use .http
+from .socket use {
+    Socket
+}
+
+---
+Create a new TCP/IPv4 socket. Returns the OS file descriptor as an Int,
+or a negative value on error.
+---
+extern define socket() -> Int
+
+---
+Bind socket `fd` to `host:port`. Returns 0 on success, negative on error.
+@example bind(fd, "0.0.0.0", 8080)
+---
+extern define bind(fd: Int, host: String, port: Int) -> Int
+
+---
+Mark `fd` as a listening socket with the given pending-connection backlog.
+Must be called after `bind`. Returns 0 on success.
+---
+extern define listen(fd: Int, backlog: Int) -> Int
+
+---
+Block until a client connects to listening socket `fd`, returning the new
+client socket's fd. Negative on error.
+---
+extern define accept(fd: Int) -> Int
+
+---
+Connect socket `fd` to a remote `host:port`. Returns 0 on success.
+@example connect(fd, "example.com", 80)
+---
+extern define connect(fd: Int, host: String, port: Int) -> Int
+
+---
+Send `data` over socket `fd`. Returns the number of bytes sent (may be
+less than `data.length()` for partial sends).
+---
+extern define send(fd: Int, data: String) -> Int
+
+---
+Read up to `size` bytes from socket `fd`. Returns the data received as
+a String. An empty string indicates the peer closed the connection.
+---
+extern define recv(fd: Int, size: Int) -> String
+
+---
+Close socket `fd`, releasing the OS resource.
+---
+extern define close(fd: Int) -> void

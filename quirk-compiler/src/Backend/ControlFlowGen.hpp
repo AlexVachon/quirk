@@ -23,9 +23,9 @@ class ControlFlowGen {
         if (!v) return ConstantInt::getFalse(Context);
         if (v->getType()->isIntegerTy(1)) return v;
         if (v->getType()->isPointerTy()) {
-            // Prefer __bool magic method on structs
             Type* elTy = v->getType()->getPointerElementType();
             if (elTy->isStructTy()) {
+                // Prefer __bool magic method on structs
                 std::string sName = cast<StructType>(elTy)->getName().str();
                 if (sName.find("struct.") == 0) sName = sName.substr(7);
                 Function* boolFunc = TheModule->getFunction(sName + "___bool");
@@ -35,6 +35,31 @@ class ControlFlowGen {
                         if (F.getName().endswith(suffix)) { boolFunc = &F; break; }
                 }
                 if (boolFunc) return Builder.CreateCall(boolFunc, {v}, "obj_bool");
+                // Any* — may be a boxed Bool; use quirk_any_as_bool to unbox properly
+                if (sName == "Any") {
+                    Function* fn = TheModule->getFunction("quirk_any_as_bool");
+                    if (!fn) {
+                        FunctionType* ft = FunctionType::get(Type::getInt32Ty(Context),
+                            {Type::getInt8PtrTy(Context)}, false);
+                        fn = Function::Create(ft, Function::ExternalLinkage,
+                                              "quirk_any_as_bool", TheModule);
+                    }
+                    Value* casted = Builder.CreateBitCast(v, Type::getInt8PtrTy(Context));
+                    Value* result = Builder.CreateCall(fn, {casted}, "any_bool");
+                    return Builder.CreateICmpNE(result, ConstantInt::get(Type::getInt32Ty(Context), 0));
+                }
+            }
+            // i8* opaque — may be a tagged int or boxed Any; use quirk_any_as_bool
+            if (elTy->isIntegerTy(8)) {
+                Function* fn = TheModule->getFunction("quirk_any_as_bool");
+                if (!fn) {
+                    FunctionType* ft = FunctionType::get(Type::getInt32Ty(Context),
+                        {Type::getInt8PtrTy(Context)}, false);
+                    fn = Function::Create(ft, Function::ExternalLinkage,
+                                          "quirk_any_as_bool", TheModule);
+                }
+                Value* result = Builder.CreateCall(fn, {v}, "opaque_bool");
+                return Builder.CreateICmpNE(result, ConstantInt::get(Type::getInt32Ty(Context), 0));
             }
             return Builder.CreateICmpNE(v, Constant::getNullValue(v->getType()), "ptr_bool");
         }
@@ -128,7 +153,9 @@ class ControlFlowGen {
             StructType* st = cast<StructType>(iterable->getType()->getPointerElementType());
             std::string structName = st->getName().str();
 
-            Function* iterFunc = resolveFunc(structName + "___iter");
+            bool isPair = !node->varName2.empty();
+            Function* iterFunc = isPair ? resolveFunc(structName + "___iter_pairs") : nullptr;
+            if (!iterFunc) iterFunc = resolveFunc(structName + "___iter");
             if (!iterFunc) iterFunc = resolveFunc(structName + "__iter");
             if (!iterFunc) { std::cerr << "Error: Struct '" << structName << "' does not implement __iter()." << std::endl; exit(1); }
 
@@ -156,7 +183,40 @@ class ControlFlowGen {
             if (!nextFunc) { std::cerr << "Error: Iterator '" << iterName << "' missing __next()." << std::endl; exit(1); }
 
             Value* item = Builder.CreateCall(nextFunc, {iteratorObj}, "item");
-            varGen->defineLocalVariable(node->varName, item);
+
+            if (!node->destructureVars.empty()) {
+                // Tuple destructuring: for (a, b) in items
+                Function* getFn = TheModule->getFunction("Core_Collections_Tuple_Tuple___get");
+                if (!getFn) {
+                    Type* i8p = Type::getInt8PtrTy(Context);
+                    FunctionType* ft = FunctionType::get(i8p, {i8p, Type::getInt32Ty(Context)}, false);
+                    getFn = Function::Create(ft, Function::ExternalLinkage,
+                                             "Core_Collections_Tuple_Tuple___get", TheModule);
+                }
+                // Cast item to the type Tuple___get actually expects as its first arg
+                Value* tupleArg = item;
+                if (!getFn->arg_empty()) {
+                    Type* expectedTy = getFn->getFunctionType()->getParamType(0);
+                    if (tupleArg->getType() != expectedTy)
+                        tupleArg = Builder.CreateBitCast(tupleArg, expectedTy);
+                }
+                for (int di = 0; di < (int)node->destructureVars.size(); di++) {
+                    Value* elem = Builder.CreateCall(getFn,
+                        {tupleArg, ConstantInt::get(Type::getInt32Ty(Context), di)},
+                        node->destructureVars[di]);
+                    varGen->defineLocalVariable(node->destructureVars[di], elem);
+                }
+            } else {
+                varGen->defineLocalVariable(node->varName, item);
+            }
+
+            if (isPair) {
+                Function* curValFunc = resolveFunc(iterName + "___current_value");
+                if (curValFunc) {
+                    Value* val = Builder.CreateCall(curValFunc, {iteratorObj}, "pair_val");
+                    varGen->defineLocalVariable(node->varName2, val);
+                }
+            }
 
             breakStack.push_back(afterBB);
             continueStack.push_back(condBB);
@@ -429,7 +489,8 @@ class ControlFlowGen {
 
     void generateMatch(MatchNode* node, Function* parentFunc,
                        std::function<Value*(Node*)> exprHandler,
-                       std::function<void(Node*)> stmtHandler) {
+                       std::function<void(Node*)> stmtHandler,
+                       std::function<void(const std::string&, Value*)> bindHook = nullptr) {
         Value* scrutVal = exprHandler(node->scrutinee.get());
         if (!scrutVal) return;
 
@@ -444,6 +505,41 @@ class ControlFlowGen {
 
             if (arm.isWildcard) {
                 Builder.CreateBr(bodyBB);
+            } else if (arm.isTypeMatch) {
+                // Type-match: `case TypeName =>` / `case T1 | T2 as x =>`
+                // Emit: isinstance(scrutinee_as_i8*, type_name_String*) for each type
+                Type* i8PtrTy = Type::getInt8PtrTy(Context);
+                Value* scrutI8 = scrutVal->getType()->isPointerTy()
+                    ? Builder.CreateBitCast(scrutVal, i8PtrTy)
+                    : Builder.CreateIntToPtr(scrutVal, i8PtrTy);
+
+                Function* makeStrFn = TheModule->getFunction("make_String");
+                if (!makeStrFn) {
+                    FunctionType* ft = FunctionType::get(i8PtrTy, {i8PtrTy}, false);
+                    makeStrFn = Function::Create(ft, Function::ExternalLinkage, "make_String", TheModule);
+                }
+                Function* isinstanceFn = TheModule->getFunction("Core_Primitives_Quirk_isinstance");
+                if (!isinstanceFn) {
+                    FunctionType* ft = FunctionType::get(Type::getInt32Ty(Context), {i8PtrTy, i8PtrTy}, false);
+                    isinstanceFn = Function::Create(ft, Function::ExternalLinkage, "Core_Primitives_Quirk_isinstance", TheModule);
+                }
+
+                Value* cond = nullptr;
+                for (auto& typeName : arm.typeNames) {
+                    Constant* cstr = Builder.CreateGlobalStringPtr(typeName, "type_name_cstr");
+                    Value* typeStr = Builder.CreateCall(makeStrFn, {cstr}, "type_str");
+                    Value* res = Builder.CreateCall(isinstanceFn, {scrutI8, typeStr}, "isinstance_res");
+                    Value* eq = Builder.CreateICmpNE(res, ConstantInt::get(Type::getInt32Ty(Context), 0), "type_match");
+                    cond = cond ? Builder.CreateOr(cond, eq, "type_or") : eq;
+                }
+                if (!cond) cond = ConstantInt::getFalse(Context);
+                Builder.CreateCondBr(cond, bodyBB, nextBB);
+
+                Builder.SetInsertPoint(bodyBB);
+                // Bind the scrutinee to `bindName` if present
+                if (!arm.bindName.empty() && bindHook) {
+                    bindHook(arm.bindName, scrutVal);
+                }
             } else {
                 // OR together equality checks for all patterns in this arm
                 Value* cond = nullptr;
@@ -456,7 +552,8 @@ class ControlFlowGen {
                 Builder.CreateCondBr(cond, bodyBB, nextBB);
             }
 
-            Builder.SetInsertPoint(bodyBB);
+            if (!arm.isTypeMatch)
+                Builder.SetInsertPoint(bodyBB);
             for (auto& stmt : arm.body) stmtHandler(stmt.get());
             if (!Builder.GetInsertBlock()->getTerminator())
                 Builder.CreateBr(mergeBB);
@@ -498,9 +595,11 @@ private:
             if (sName.find("struct.") == 0) sName = sName.substr(7);
             Function* eqFn = TheModule->getFunction(sName + "___eq");
             if (!eqFn) {
-                std::string suffix = "___eq";
+                // Scan for a function whose name contains the struct-specific pattern,
+                // e.g. "Core_String_String___eq". Avoids picking up Char___eq for String.
+                std::string target = sName + "___eq";
                 for (auto& F : *TheModule)
-                    if (F.getName().endswith(suffix)) { eqFn = &F; break; }
+                    if (F.getName().contains(target)) { eqFn = &F; break; }
             }
             if (eqFn) {
                 // Ensure R has the same type as L (both String* for example)

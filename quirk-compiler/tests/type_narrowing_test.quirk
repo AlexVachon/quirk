@@ -1,0 +1,58 @@
+// Type narrowing tests — when `x` has a wide type (Any / union) and
+// the code branches on `if x is T`, Sema should treat `x` as `T` inside
+// the then-branch so methods on `T` resolve cleanly.
+
+use console
+use test
+from test use { TestCase }
+
+// Helper that returns either a String or an Int based on the input flag —
+// the static return type is Any so callers must narrow before using methods
+// that are specific to one variant.
+define maybe_string_or_int(make_string: Bool) -> Any {
+    if make_string { return "hello world" }
+    return 42
+}
+
+define main() -> void {
+    // ── Test 1: narrowing on a String variant lets us call String methods ──
+    t1 := TestCase("narrow Any to String", fn() {
+        v := maybe_string_or_int(true)
+        if v is String {
+            // Inside this branch Sema treats v as String — `.length()` resolves
+            // even though the declared type is Any.
+            test.assert_eq(v.length(), 11)
+        } else {
+            test.assert_true(false) // unreachable
+        }
+    })
+
+    // ── Test 2: narrowing on the Int variant lets us call Int methods ─────
+    t2 := TestCase("narrow Any to Int", fn() {
+        v := maybe_string_or_int(false)
+        if v is Int {
+            // Int has .str()
+            test.assert_eq(v.str(), "42")
+        } else {
+            test.assert_true(false)
+        }
+    })
+
+    // ── Test 3: `and`-chained narrowings ──────────────────────────────────
+    t3 := TestCase("narrow through `and`", fn() {
+        a := maybe_string_or_int(true)
+        b := maybe_string_or_int(false)
+        if a is String and b is Int {
+            test.assert_eq(a.length() + b, 11 + 42)
+        } else {
+            test.assert_true(false)
+        }
+    })
+
+    fails := test.run_all([t1, t2, t3])
+    if fails > 0 {
+        console.error("type narrowing tests failed (" + fails.str() + ")")
+    } else {
+        console.info("all type narrowing tests passed")
+    }
+}

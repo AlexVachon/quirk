@@ -1,0 +1,259 @@
+---
+RFC 4180-style comma-separated-values reader and writer.
+
+Handles quoted fields with embedded commas, double-quote escaping (`""`),
+and CRLF or LF line endings. The default delimiter is `","` — pass any
+single-character String to use TSV (`"\t"`), pipe-separated, etc.
+
+Pure Quirk: no runtime dependencies.
+
+API:
+  `csv.parse(text, delim=",")`        → `List<List<String>>`
+  `csv.parse_dicts(text, delim=",")`  → `List<Map<String,String>>` (first row is header)
+  `csv.write(records, delim=",")`      → CSV String
+  `csv.write_dicts(records, delim=",")` → CSV String with header row
+  `csv.read_file(path, delim=",")`     → `List<List<String>>` (file convenience)
+  `csv.write_file(path, records, delim=",")`
+
+@example
+text := "name,age\nAlice,30\nBob,25"
+rows := csv.parse_dicts(text)
+for row in rows {
+    print("${row.get('name')} is ${row.get('age')}")
+}
+---
+from typing.primitives.string use { String }
+from typing.collections.list use { List }
+from typing.collections.map use { Map }
+from io.file use { File }
+
+// ───────────────────────── Parsing ─────────────────────────
+
+---
+Parse `text` into a `List<List<String>>` — each outer item is a record,
+each inner item is a field. Empty input returns an empty list.
+
+Field rules (RFC 4180):
+  - Fields are delimited by `delim` (default `,`).
+  - Records end at LF or CRLF.
+  - A field can be wrapped in `"..."`. Inside such a field:
+      - the delimiter and newlines are taken literally
+      - a literal quote is written as `""`
+  - Trailing newline at the very end is ignored (no empty extra record).
+---
+define parse(text: String, delim: String = ",") -> List {
+    rows := []
+    if text.length() == 0 { return rows }
+
+    n := text.length()
+    i := 0
+    field := ""
+    row := []
+    in_quotes := false
+
+    while i < n {
+        c := text.substring(i, i + 1)
+
+        if in_quotes {
+            if c == "\"" {
+                // Lookahead for `""` escape — emit a single quote, stay quoted.
+                if i + 1 < n {
+                    nxt := text.substring(i + 1, i + 2)
+                    if nxt == "\"" {
+                        field = field + "\""
+                        i = i + 2
+                        continue
+                    }
+                }
+                in_quotes = false
+                i = i + 1
+                continue
+            }
+            field = field + c
+            i = i + 1
+            continue
+        }
+
+        // Not in quotes
+        if c == delim {
+            row.append(field)
+            field = ""
+            i = i + 1
+            continue
+        }
+
+        if c == "\n" {
+            row.append(field)
+            rows.append(row)
+            row = []
+            field = ""
+            i = i + 1
+            continue
+        }
+
+        if c == "\r" {
+            // Treat \r\n as one record terminator; bare \r as the same.
+            row.append(field)
+            rows.append(row)
+            row = []
+            field = ""
+            i = i + 1
+            if i < n {
+                nxt := text.substring(i, i + 1)
+                if nxt == "\n" { i = i + 1 }
+            }
+            continue
+        }
+
+        if c == "\"" and field.length() == 0 {
+            in_quotes = true
+            i = i + 1
+            continue
+        }
+
+        field = field + c
+        i = i + 1
+    }
+
+    // Final field/row (no trailing newline case).
+    if field.length() > 0 or row.length() > 0 {
+        row.append(field)
+        rows.append(row)
+    }
+
+    return rows
+}
+
+---
+Parse `text` taking the first row as a header, returning a
+`List<Map<String,String>>`. Each record's keys come from the header row;
+missing trailing fields map to the empty String.
+---
+define parse_dicts(text: String, delim: String = ",") -> List {
+    rows := parse(text, delim)
+    out := []
+    if rows.length() == 0 { return out }
+
+    header: List = rows.get(0)
+    h_count := header.length()
+
+    i := 1
+    while i < rows.length() {
+        row: List = rows.get(i)
+        m := Map()
+        j := 0
+        while j < h_count {
+            key: String = header.get(j)
+            val := ""
+            if j < row.length() {
+                val = row.get(j)
+            }
+            m.put(key, val)
+            j = j + 1
+        }
+        out.append(m)
+        i = i + 1
+    }
+    return out
+}
+
+// ───────────────────────── Writing ─────────────────────────
+
+---
+Wraps `field` in quotes and doubles internal quotes IF it contains
+the delimiter, a quote, or a newline. Otherwise returns it unchanged.
+---
+define _quote_if_needed(field: String, delim: String) -> String {
+    needs := false
+    if field.contains(delim) { needs = true }
+    if field.contains("\"") { needs = true }
+    if field.contains("\n") { needs = true }
+    if field.contains("\r") { needs = true }
+    if needs == false { return field }
+    return "\"" + field.replace("\"", "\"\"") + "\""
+}
+
+---
+Serialize `records` (a `List<List<String>>`) into a CSV String.
+Each record is one line; lines are joined with CRLF per RFC 4180.
+---
+// Internal serializer — bare `write(...)` inside this module otherwise
+// dispatches to the top-level `write` builtin (writes to stdout, returns
+// void). Public `write` and `write_dicts` both delegate here.
+define _serialize(records: List, delim: String) -> String {
+    parts := []
+    i := 0
+    while i < records.length() {
+        row: List = records.get(i)
+        cells := []
+        j := 0
+        while j < row.length() {
+            cell: String = row.get(j)
+            cells.append(_quote_if_needed(cell, delim))
+            j = j + 1
+        }
+        parts.append(delim.join(cells))
+        i = i + 1
+    }
+    return "\r\n".join(parts)
+}
+
+define write(records: List, delim: String = ",") -> String {
+    return _serialize(records, delim)
+}
+
+---
+Serialize a `List<Map<String,String>>` with a header row drawn from the
+keys of the first record. Records with missing keys emit empty fields.
+Returns the empty String for an empty input.
+---
+define write_dicts(records: List, delim: String = ",") -> String {
+    if records.length() == 0 { return "" }
+
+    first: Map = records.get(0)
+    header_keys: List = first.keys()
+
+    out_rows := []
+    out_rows.append(header_keys)
+
+    i := 0
+    while i < records.length() {
+        row: Map = records.get(i)
+        cells := []
+        j := 0
+        while j < header_keys.length() {
+            k: String = header_keys.get(j)
+            v := ""
+            if row.has(k) {
+                v = row.get(k)
+            }
+            cells.append(v)
+            j = j + 1
+        }
+        out_rows.append(cells)
+        i = i + 1
+    }
+    return _serialize(out_rows, delim)
+}
+
+// ───────────────────────── File convenience ─────────────────────────
+
+---
+Read `path` as CSV and parse. Returns `List<List<String>>`.
+---
+define read_file(path: String, delim: String = ",") -> List {
+    with File(path, "r") as f {
+        return parse(f.read(), delim)
+    }
+    return []
+}
+
+---
+Write `records` to `path` as CSV.
+---
+define write_file(path: String, records: List, delim: String = ",") -> void {
+    text := _serialize(records, delim)
+    with File(path, "w") as f {
+        f.write(text)
+    }
+}

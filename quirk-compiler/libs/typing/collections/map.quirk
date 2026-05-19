@@ -1,0 +1,132 @@
+from typing.primitives.string use { String }
+from typing.interfaces.printable use { Printable }
+from typing.interfaces.sizeable use { Sizeable }
+from typing.interfaces.iterable use { Iterable }
+from typing.interfaces.iterator use { Iterator }
+
+struct MapIterator : Iterator {
+    _map_ref: Map
+    _idx: Int
+
+    extern define __init(self, m: Map)
+    extern define __has_next(self) -> Bool
+    extern define __next(self) -> String
+}
+
+struct MapPairIterator : Iterator {
+    _map_ref: Map
+    _idx: Int
+    _current_value: Any
+
+    extern define __has_next(self) -> Bool
+    extern define __next(self) -> String
+    extern define __current_value(self) -> Any
+}
+
+---
+A hash map (dictionary) that associates `String` keys with values of any type.
+Insertion order is not guaranteed. All keys must be `String`.
+
+@example:
+m := {}
+m.put("name", "Alice")
+m.put("age", 30)
+print(m.get("name"))    // "Alice"
+print(m.has("age"))     // true
+m.remove("age")
+print(m.length())       // 1
+---
+struct Map : Printable, Sizeable, Iterable {
+    _entries: Any
+    _capacity: Int
+    _size: Int
+    _key_order: Any
+    _order_size: Int
+    _order_capacity: Int
+
+    extern define __init(self)
+    extern define __del(self) -> void
+
+    ---
+    Inserts or updates a key-value pair.
+    @param key: String — the key
+    @param value: Any — the value to associate
+    ---
+    extern define put(self, key: String, value: Any) -> void
+
+    ---
+    Returns the value for the given key, or `null` if not found.
+    @param key: String — the key to look up
+    @returns: Any — the associated value, or `null`
+    ---
+    extern define get(self, key: String) -> Any
+
+    ---
+    Returns `true` if the key exists in the map.
+    @param key: String
+    @returns: Bool
+    ---
+    extern define has(self, key: String) -> Bool
+
+    ---
+    Removes the entry with the given key. Does nothing if the key is absent.
+    @param key: String
+    ---
+    extern define remove(self, key: String) -> void
+
+    ---
+    Returns the number of key-value pairs.
+    @returns: Int
+    ---
+    extern define length(self) -> Int
+
+    ---
+    Returns all keys as a `List` of `String`.
+    @returns: List
+    ---
+    extern define keys(self) -> List
+
+    ---
+    Returns all values as a `List`.
+    @returns: List
+    ---
+    extern define values(self) -> List
+
+    ---
+    Removes all entries from the map.
+    ---
+    extern define clear(self) -> void
+
+    ---
+    Returns `true` if the map has no entries.
+    @returns: Bool
+    ---
+    define is_empty(self) -> Bool { return self.length() == 0 }
+
+    extern define __get(self, key: String) -> Any
+    extern define __set(self, key: String, value: Any) -> void
+    extern define __str(self) -> String
+    extern define __iter(self) -> MapIterator
+    extern define __iter_pairs(self) -> MapPairIterator
+
+    ---
+    Calls `cb` for each key-value pair.
+    @param cb: Callable — `fn(key: String, value: Any)`
+
+    @example:
+    m.each(fn(k: String, v: Any) => print(k + ": " + v))
+    ---
+    extern define each(self, cb: Callable) -> void
+
+    ---
+    Calls `cb` for each value only.
+    @param cb: Callable — `fn(value: Any)`
+    ---
+    extern define each_value(self, cb: Callable) -> void
+
+    ---
+    Calls `cb` for each key only.
+    @param cb: Callable — `fn(key: String)`
+    ---
+    extern define each_key(self, cb: Callable) -> void
+}

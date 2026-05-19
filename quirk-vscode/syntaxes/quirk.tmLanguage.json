@@ -4,6 +4,7 @@
   "patterns": [
     { "include": "#comments" },
     { "include": "#imports" },
+    { "include": "#decorators" },
     { "include": "#definitions" },
     { "include": "#keywords" },
     { "include": "#strings" },
@@ -14,11 +15,24 @@
     { "include": "#enum-access" },
     { "include": "#method-calls" },
     { "include": "#functions" },
+    { "include": "#keyword-arguments" },
     { "include": "#operators" },
     { "include": "#properties" },
     { "include": "#variables" }
   ],
   "repository": {
+    "decorators": {
+      "patterns": [
+        {
+          "comment": "@decorator lines applied to a `define`. The `@` is scoped as punctuation (themes render it in a muted/gray tone) so the focal point is the decorator name. Matches Python's default highlighting convention in VS Code Dark+, Monokai, and One Dark. Any `(args)` after the name is left for normal expression parsing.",
+          "match": "^\\s*(@)([a-zA-Z_]\\w*(?:\\.[a-zA-Z_]\\w*)*)",
+          "captures": {
+            "1": { "name": "punctuation.definition.decorator.quirk" },
+            "2": { "name": "entity.name.function.decorator.quirk" }
+          }
+        }
+      ]
+    },
     "imports": {
       "patterns": [
         {
@@ -27,6 +41,15 @@
             "1": { "name": "keyword.control.import.quirk" },
             "2": { "name": "entity.name.namespace.quirk" },
             "3": { "name": "keyword.control.import.quirk" }
+          }
+        },
+        {
+          "match": "\\b(from)\\s+([a-zA-Z0-9_./]+)\\s+(as)\\s+([a-zA-Z_]\\w*)\\b",
+          "captures": {
+            "1": { "name": "keyword.control.import.quirk" },
+            "2": { "name": "entity.name.namespace.quirk" },
+            "3": { "name": "keyword.control.import.quirk" },
+            "4": { "name": "entity.name.namespace.alias.quirk" }
           }
         },
         {
@@ -62,6 +85,31 @@
           }
         },
         {
+          "match": "\\b(type)\\s+([a-zA-Z_]\\w*)\\s*(=)",
+          "captures": {
+            "1": { "name": "keyword.other.quirk" },
+            "2": { "name": "entity.name.type.alias.quirk" },
+            "3": { "name": "keyword.operator.assignment.quirk" }
+          }
+        },
+        {
+          "match": "\\b(interface)\\s+([a-zA-Z_]\\w*)",
+          "captures": {
+            "1": { "name": "storage.type.interface.quirk" },
+            "2": { "name": "entity.name.type.interface.quirk" }
+          }
+        },
+        {
+          "match": "\\b(struct|define|init)\\s+([a-zA-Z_]\\w*)\\s*(\\[)([^\\]]*)(\\])",
+          "captures": {
+            "1": { "name": "storage.type.quirk" },
+            "2": { "name": "entity.name.function.definition.quirk" },
+            "3": { "name": "punctuation.definition.typeparams.begin.quirk" },
+            "4": { "name": "entity.name.type.parameter.quirk" },
+            "5": { "name": "punctuation.definition.typeparams.end.quirk" }
+          }
+        },
+        {
           "match": "\\b(extern)\\b",
           "name": "storage.modifier.quirk"
         }
@@ -71,7 +119,7 @@
       "patterns": [
         {
           "name": "keyword.control.quirk",
-          "match": "\\b(if|else|elif|while|for|in|return|break|continue|with|as|trigger|try|catch|throw|finally|from|match|case)\\b"
+          "match": "\\b(if|else|elif|while|for|in|return|break|continue|with|as|try|catch|throw|finally|from|match|case|where|is|not|and|or|nonlocal|global)\\b"
         },
         {
           "name": "keyword.other.wildcard.quirk",
@@ -83,7 +131,7 @@
         },
         {
           "name": "keyword.other.quirk",
-          "match": "\\b(del)\\b"
+          "match": "\\b(del|const|ref|type)\\b"
         },
         {
           "name": "constant.language.quirk",
@@ -99,7 +147,7 @@
       "patterns": [
         {
           "name": "support.class.exception.quirk",
-          "match": "\\b(Exception|TypeError|ValueError|IndexError|KeyError|IOError|FileNotFoundError|RuntimeError|NotImplementedError|ZeroDivisionError|AssertionError|NullError|SocketError)\\b"
+          "match": "\\b(Exception|TypeError|ValueError|IndexError|KeyError|IOError|FileNotFoundError|RuntimeError|NotImplementedError|ZeroDivisionError|AssertionError|NullError|SocketError|WhereConditionError)\\b"
         }
       ]
     },
@@ -111,7 +159,7 @@
         },
         {
           "name": "support.type.object.quirk",
-          "match": "\\b(Char|List|String|Map|Int|Double|Bool|File|Callable)\\b"
+          "match": "\\b(Char|List|String|Map|Int|Double|Bool|File|Callable|Tuple|Set|Queue|Self)\\b"
         }
       ]
     },
@@ -220,6 +268,18 @@
         }
       ]
     },
+    "keyword-arguments": {
+      "patterns": [
+        {
+          "comment": "Named/keyword argument: func(name = value) — ident directly before = (not :=, ==, =>)",
+          "match": "(?<![.\\[])\\b([a-zA-Z_]\\w*)\\s*(=)(?![=>])",
+          "captures": {
+            "1": { "name": "variable.parameter.quirk" },
+            "2": { "name": "keyword.operator.assignment.quirk" }
+          }
+        }
+      ]
+    },
     "operators": {
       "patterns": [
         {
@@ -239,6 +299,14 @@
           "match": "\\b(and|or|not)\\b"
         },
         {
+          "name": "keyword.operator.range.quirk",
+          "match": "\\.\\."
+        },
+        {
+          "name": "keyword.operator.spread.quirk",
+          "match": "\\.\\.\\."
+        },
+        {
           "name": "storage.type.function.arrow.quirk",
           "match": "->"
         },
@@ -250,6 +318,10 @@
     },
     "comments": {
       "patterns": [
+        {
+          "name": "comment.line.documentation.quirk",
+          "match": "^\\s*---.*?---\\s*$"
+        },
         {
           "name": "comment.block.documentation.quirk",
           "begin": "^\\s*---\\s*$",

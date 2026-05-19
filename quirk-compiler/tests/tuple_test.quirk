@@ -1,0 +1,35 @@
+// Tuple feature tests
+
+// Basic tuple creation and print
+t: Tuple := (1, "hello", true)
+print(t)
+
+// Single-element tuple (trailing comma)
+s := (42, )
+print(s)
+
+// Empty tuple
+e := ()
+print(e)
+print(type(e))
+
+// Index access
+coords := (10, 20)
+print(coords[0])
+print(coords[1])
+
+// Length
+print(coords.length())
+
+// Destructuring
+x, y := coords
+print("Value of x: ${x}")
+print("Value of y: ${y}")
+
+// Nested values
+mixed := (3.14, "world", 99)
+print(mixed[2])
+
+// Tuple in a tuple
+nested := ((1, 2), "outer")
+print(nested[1])

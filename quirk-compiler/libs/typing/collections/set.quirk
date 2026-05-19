@@ -1,0 +1,99 @@
+from typing.primitives.string use { String }
+from typing.interfaces.printable use { Printable }
+from typing.interfaces.sizeable use { Sizeable }
+from typing.interfaces.iterable use { Iterable }
+from typing.interfaces.iterator use { Iterator }
+
+struct SetIterator : Iterator {
+    _set_ref: Set
+    _idx: Int
+
+    extern define __init(self, s: Set) -> void
+    extern define __has_next(self) -> Bool
+    extern define __next(self) -> Any
+}
+
+---
+An unordered collection of unique values. Insertion order is preserved for
+iteration. Values are compared by their string representation.
+
+@example:
+s := {1, 2, 3}
+s.add(4)
+print(s.has(2))      // true
+s.remove(2)
+print(s.size())      // 3
+for v in s { print(v) }
+---
+struct Set : Printable, Sizeable, Iterable {
+    _entries: Any
+    _capacity: Int
+    _size: Int
+    _key_order: Any
+    _order_size: Int
+    _order_capacity: Int
+
+    extern define __init(self) -> void
+    extern define __del(self) -> void
+
+    ---
+    Adds a value to the set. Does nothing if already present.
+    @param val: Any
+    ---
+    extern define add(self, val: Any) -> void
+
+    ---
+    Removes a value from the set. Does nothing if absent.
+    @param val: Any
+    ---
+    extern define remove(self, val: Any) -> void
+
+    ---
+    Returns `true` if the value is in the set.
+    @param val: Any
+    @returns: Bool
+    ---
+    extern define has(self, val: Any) -> Bool
+
+    ---
+    Returns the number of elements.
+    @returns: Int
+    ---
+    extern define size(self) -> Int
+    define length(self) -> Int { return self.size() }
+
+    ---
+    Returns `true` if the set has no elements.
+    @returns: Bool
+    ---
+    extern define is_empty(self) -> Bool
+
+    ---
+    Removes all elements.
+    ---
+    extern define clear(self) -> void
+
+    ---
+    Returns a new set containing all elements from both sets.
+    @param other: Set
+    @returns: Set
+    ---
+    extern define union(self, other: Set) -> Set
+
+    ---
+    Returns a new set containing only elements present in both sets.
+    @param other: Set
+    @returns: Set
+    ---
+    extern define intersection(self, other: Set) -> Set
+
+    ---
+    Returns a new set with elements in this set that are not in `other`.
+    @param other: Set
+    @returns: Set
+    ---
+    extern define difference(self, other: Set) -> Set
+
+    extern define __iter(self) -> SetIterator
+    extern define __str(self) -> String
+}

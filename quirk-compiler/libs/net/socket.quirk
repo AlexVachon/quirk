@@ -1,0 +1,145 @@
+---
+TCP socket — an OO wrapper over the raw fd-based primitives in `net/index.quirk`.
+Throws `SocketError` on any underlying syscall failure. Supports the `with`
+statement for automatic close.
+
+@example
+// Server
+with Socket() as listener {
+    listener.bind("0.0.0.0", 8080)
+    listener.listen()
+    while true {
+        with listener.accept() as client {
+            req := client.recv()
+            client.send("HTTP/1.1 200 OK\r\n\r\nhello")
+        }
+    }
+}
+
+// Client
+with Socket() as s {
+    s.connect("example.com", 80)
+    s.send("GET / HTTP/1.0\r\n\r\n")
+    print(s.recv(4096))
+}
+---
+from . use {
+    socket, bind, listen, accept,
+    connect, send, recv, close
+}
+from typing.primitives.string use { String }
+from typing.exceptions.types use { SocketError }
+
+---
+TCP socket. Wraps an OS file descriptor and provides high-level
+`bind`/`listen`/`accept`/`connect`/`send`/`recv`/`close` operations.
+All failure modes raise `SocketError`.
+---
+struct Socket {
+    _fd: Int
+    host: String = "127.0.0.1"
+    port: Int = 8080
+    is_open: Bool = false
+
+    ---
+    Create a new socket. Pass `initial_fd` only when wrapping a fd you
+    already own (e.g. inside `accept`). The default `-1` allocates a fresh
+    socket via the OS.
+    @throws SocketError if the OS could not provide a socket fd.
+    ---
+    define __init(self, initial_fd: Int = -1) -> void {
+        if initial_fd == -1 {
+            self._fd := socket()
+        } else {
+            self._fd := initial_fd
+        }
+
+        if self._fd < 0 {
+            throw SocketError("Failed to create socket descriptor")
+        }
+        self.is_open = true
+    }
+
+    ---
+    Bind this socket to `host:port`. Use `"0.0.0.0"` to listen on all
+    interfaces, or `"127.0.0.1"` for loopback only.
+    @throws SocketError on bind failure (port in use, permission denied, ...).
+    ---
+    define bind(self, host: String, port: Int) -> void {
+        self.host = host
+        self.port = port
+        res := bind(self._fd, host, port)
+        if res < 0 {
+            throw SocketError("Failed to bind to " + host + ":" + port.str())
+        }
+    }
+
+    ---
+    Mark this socket as listening for incoming connections. Must follow `bind`.
+    @param backlog Pending-connection queue size (default 5).
+    ---
+    define listen(self, backlog: Int = 5) -> void {
+        res := listen(self._fd, backlog)
+        if res < 0 {
+            throw SocketError("Failed to listen on socket")
+        }
+    }
+
+    ---
+    Block until a client connects, then return a new Socket wrapping that
+    client's fd. The returned socket should be closed when done (or use
+    `with`).
+    @throws SocketError if the accept syscall fails.
+    ---
+    define accept(self) -> Socket {
+        client_fd := accept(self._fd)
+        if client_fd < 0 {
+            throw SocketError("Failed to accept incoming connection")
+        }
+        return Socket(client_fd)
+    }
+
+    ---
+    Connect this socket to a remote `host:port`.
+    @throws SocketError on connect failure (DNS, refused, timeout, ...).
+    ---
+    define connect(self, host: String, port: Int) -> void {
+        res := connect(self._fd, host, port)
+        if res < 0 {
+            throw SocketError("Could not connect to " + host + ":" + port.str())
+        }
+        self.is_open = true
+    }
+
+    ---
+    Send `data` over the socket. Returns the number of bytes actually sent —
+    callers should retry on short writes for large payloads.
+    ---
+    define send(self, data: String) -> Int {
+        return send(self._fd, data)
+    }
+
+    ---
+    Receive up to `size` bytes. Returns "" when the peer has closed the
+    connection. Default buffer is 1024 bytes.
+    ---
+    define recv(self, size: Int = 1024) -> String {
+        return recv(self._fd, size)
+    }
+
+    ---
+    Close the socket. Idempotent — calling close twice is a no-op.
+    ---
+    define close(self) -> void {
+        if self.is_open {
+            close(self._fd)
+            self.is_open = false
+        }
+    }
+
+    --- `with` enter — returns the Socket itself. ---
+    define __enter(self) -> Socket { return self }
+
+    --- `with` exit — closes the socket. ---
+    define __exit(self) -> void { self.close() }
+}

@@ -1,0 +1,250 @@
+from .base use { Exception }
+
+---
+Raised when an operation is applied to an object of the wrong type.
+Use this when a function receives an argument whose type is incompatible
+with the expected type.
+
+@note Prefer ValueError when the type is correct but the value is invalid.
+
+@example:
+define require_int(n: Any) -> void {
+    if n.type != "Int" {
+        throw TypeError("Expected Int, got " + n.type)
+    }
+}
+---
+struct TypeError : Exception {
+    define __init(self, message: String) -> void {
+        super().__init(message)
+    }
+}
+
+---
+Raised when an argument has the right type but an unacceptable value.
+Parent of IndexError and KeyError — catch ValueError to handle both.
+
+@example:
+define set_age(age: Int) -> void {
+    if age < 0 {
+        throw ValueError("Age cannot be negative: " + age.str())
+    }
+}
+---
+struct ValueError : Exception {
+    define __init(self, message: String) -> void {
+        super().__init(message)
+    }
+}
+
+---
+Raised when a list or string index is out of range.
+Inherits from ValueError.
+
+@note
+- The runtime throws this automatically on invalid list access.
+- Negative indices are supported: -1 refers to the last element.
+
+@example:
+items := [1, 2, 3]
+try {
+    _ := items[10]
+} catch (e: IndexError) {
+    print("Out of bounds: " + e.message)
+}
+---
+struct IndexError : ValueError {
+    define __init(self, message: String) -> void {
+        super().__init(message)
+    }
+}
+
+---
+Raised when a map key does not exist.
+Inherits from ValueError.
+
+@note
+- The runtime throws this automatically on missing key access.
+- Use map.has(key) to check before accessing if you want to avoid the exception.
+
+@example:
+m := {"a": 1}
+try {
+    _ := m["missing"]
+} catch (e: KeyError) {
+    print("No such key: " + e.message)
+}
+---
+struct KeyError : ValueError {
+    define __init(self, message: String) -> void {
+        super().__init(message)
+    }
+}
+
+---
+Raised for file and I/O operation failures such as permission errors,
+read/write failures, or other OS-level I/O problems.
+Parent of FileNotFoundError.
+
+@example:
+try {
+    f := File("output.log", "w")
+} catch (e: IOError) {
+    print("I/O failed: " + e.message)
+}
+---
+struct IOError : Exception {
+    define __init(self, message: String) -> void {
+        super().__init(message)
+    }
+}
+
+---
+Raised when a file or directory cannot be found at the given path.
+Inherits from IOError.
+
+@note Catch IOError instead if you want to handle all I/O failures together.
+
+@example:
+try {
+    f := File("config.json", "r")
+} catch (e: FileNotFoundError) {
+    print("Missing file: " + e.message)
+}
+---
+struct FileNotFoundError : IOError {
+    define __init(self, message: String) -> void {
+        super().__init(message)
+    }
+}
+
+---
+Raised for generic runtime errors that don't fit a more specific category.
+Parent of NotImplementedError and NullError.
+
+@warning Avoid throwing RuntimeError directly when a more specific subclass applies.
+
+@example:
+define run(mode: String) -> void {
+    if mode != "fast" and mode != "slow" {
+        throw RuntimeError("Unknown mode: " + mode)
+    }
+}
+---
+struct RuntimeError : Exception {
+    define __init(self, message: String) -> void {
+        super().__init(message)
+    }
+}
+
+---
+Raised when a method that must be overridden is called without a concrete implementation.
+Inherits from RuntimeError.
+
+@note Use this as a sentinel in base struct methods to enforce that substructs override them.
+
+@example:
+struct Animal {
+    define speak(self) -> void {
+        throw NotImplementedError("speak() must be overridden")
+    }
+}
+---
+struct NotImplementedError : RuntimeError {
+    define __init(self, message: String) -> void {
+        super().__init(message)
+    }
+}
+
+---
+Raised for socket and network operation failures such as connection
+refused, timeout, or DNS resolution errors.
+
+@example:
+try {
+    conn := Socket.connect("localhost", 8080)
+} catch (e: SocketError) {
+    print("Connection failed: " + e.message)
+}
+---
+struct SocketError : Exception {
+    define __init(self, message: String) -> void {
+        super().__init(message)
+    }
+}
+
+---
+Raised when division or modulo by zero is attempted.
+
+@example:
+define divide(a: Int, b: Int) -> Int {
+    if b == 0 {
+        throw ZeroDivisionError("Cannot divide " + a.str() + " by zero")
+    }
+    return a / b
+}
+---
+struct ZeroDivisionError : Exception {
+    define __init(self, message: String) -> void {
+        super().__init(message)
+    }
+}
+
+---
+Raised when an assertion fails.
+Use this to enforce invariants or preconditions in your code.
+
+@note Prefer specific exception types (ValueError, NullError, etc.) in library code so callers can catch them precisely.
+
+@example:
+define assert_positive(n: Int) -> void {
+    if n <= 0 {
+        throw AssertionError("Expected positive, got " + n.str())
+    }
+}
+---
+struct AssertionError : Exception {
+    define __init(self, message: String) -> void {
+        super().__init(message)
+    }
+}
+
+---
+Raised when a null value is accessed where a non-null value is required. Inherits from RuntimeError.
+
+@note Check for null explicitly before accessing fields or calling methods on optional values.
+
+@example:
+define get_name(user: Any) -> String {
+    if user == null {
+        throw NullError("user must not be null")
+    }
+    return user.name
+}
+---
+struct NullError : RuntimeError {
+    define __init(self, message: String) -> void {
+        super().__init(message)
+    }
+}
+
+---
+Raised when a function's `where` precondition is violated at runtime.
+Inherits from RuntimeError.
+
+@example:
+define sqrt(x: Double) -> Double where x >= 0.0 {
+    return x
+}
+
+try {
+    sqrt(-1.0)
+} catch (e: WhereConditionError) {
+    print("Precondition failed: " + e.message)
+}
+---
+struct WhereConditionError : RuntimeError {
+    define __init(self, message: String) -> void {
+        super().__init(message)
+    }
+}

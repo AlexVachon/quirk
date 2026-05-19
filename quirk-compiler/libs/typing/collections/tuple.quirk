@@ -1,0 +1,62 @@
+from typing.primitives.string use { String }
+from typing.interfaces.printable use { Printable }
+from typing.interfaces.sizeable use { Sizeable }
+from typing.interfaces.iterable use { Iterable }
+from typing.interfaces.iterator use { Iterator }
+
+
+struct TupleIterator : Iterator {
+    _tuple_ref: Any
+    _idx: Int
+
+    extern define __init(self, t: Tuple) -> void
+    extern define __has_next(self) -> Bool
+    extern define __next(self) -> Any
+}
+
+---
+An immutable, fixed-size ordered sequence of heterogeneous values.
+Tuples are created with parenthesis syntax and support index access,
+`length()`, and destructuring assignment.
+
+A trailing comma is required for single-element tuples: `(x,)`.
+An empty tuple is written as `()`.
+
+@example:
+coords := (10, 20)
+print(coords[0])        // 10
+print(coords.length())  // 2
+x, y := coords          // destructuring
+nested := ((1, 2), "outer")
+print(nested[1])        // "outer"
+---
+struct Tuple : Printable, Sizeable, Iterable {
+    _data: Any
+    _size: Int
+
+    ---
+    Returns the element at the given index.
+    @param index: Int — zero-based position
+    @returns: Any — the element at that index
+    @throws IndexError — if index is out of bounds
+    ---
+    extern define __get(self, index: Int) -> Any
+
+    ---
+    Returns a human-readable string representation of this tuple.
+    @returns: String — e.g. `"(1, hello, true)"`
+    ---
+    extern define __str(self) -> String
+
+    ---
+    Returns the number of elements in this tuple.
+    @returns: Int — element count
+    ---
+    extern define length(self) -> Int
+
+    ---
+    Returns an iterator over the elements of this tuple.
+    @returns: TupleIterator
+    ---
+    extern define __iter(self) -> TupleIterator
+}

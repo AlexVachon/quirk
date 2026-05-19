@@ -1,0 +1,83 @@
+enum Color {
+    Red
+    Green
+    Blue
+}
+
+define test_int_match() -> void {
+    x := 2
+    match x {
+        case 1 => print("one")
+        case 2, 3 => print("two or three")
+        case 4 {
+            doubled := x * 2
+            print("four, doubled: ${doubled}")
+        }
+        case _ => print("other")
+    }
+}
+
+define test_string_match() -> void {
+    lang := "Quirk"
+    match lang {
+        case "Python" => print("snake")
+        case "Quirk" => print("quirky!")
+        case _ => print("unknown language")
+    }
+}
+
+define test_bool_match() -> void {
+    flag := true
+    match flag {
+        case true => print("yes")
+        case false => print("no")
+    }
+}
+
+define test_enum_match() -> void {
+    c := Color.Green
+    match c {
+        case Color.Red => print("red")
+        case Color.Green => print("green")
+        case Color.Blue => print("blue")
+    }
+}
+
+define test_wildcard_only() -> void {
+    val := 99
+    match val {
+        case 1 => print("one")
+        case _ {
+            print("caught wildcard: ${val}")
+        }
+    }
+}
+
+define test_multi_value_arm() -> void {
+    day := 6
+    match day {
+        case 1, 2, 3, 4, 5 => print("weekday")
+        case 6, 7 => print("weekend")
+        case _ => print("invalid day")
+    }
+}
+
+define main() -> void {
+    print("--- int match ---")
+    test_int_match()
+
+    print("--- string match ---")
+    test_string_match()
+
+    print("--- bool match ---")
+    test_bool_match()
+
+    print("--- enum match ---")
+    test_enum_match()
+
+    print("--- wildcard ---")
+    test_wildcard_only()
+
+    print("--- multi-value arm ---")
+    test_multi_value_arm()
+}

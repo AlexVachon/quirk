@@ -1,0 +1,43 @@
+define main() {
+    print("--- List Tests ---")
+
+    // 1. Initialization & Appending
+    l := []
+    l.append(10)
+    l.append(20)
+    l.append(30)
+
+    print("Length (should be 3): " + l.length())
+    print("Content: " + l)
+
+    // 2. Access & Setting
+    print("Item at index 1: " + l[1])
+
+    l[1] := 99
+    print("Modified at index 1: " + l[1])
+
+    print("New Content: " + l)
+
+    // 3. Popping
+    val := l.pop()
+
+    print("Popped value: " + type(val))
+    print("Length after pop: " + l.length())
+
+    // 4. Clearing & Empty Check
+    print("Is empty? " + l.is_empty())
+    l.clear()
+    print("Cleared. Is empty? " + l.is_empty())
+    print("Length after clear: " + l.length())
+
+    // 5. String List & Iteration
+    print("\n--- String List Iteration ---")
+    names := ["Alice", "Bob", "Charlie"]
+
+    for name in names {
+        print("Item: " + name)
+    }
+
+    new_names := [name.upper() for name in names]
+    print("New Names: ${new_names}")
+}

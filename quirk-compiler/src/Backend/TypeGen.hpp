@@ -16,29 +16,33 @@ public:
         : Context(ctx), StructTypes(structs) {}
 
     Type* getLLVMType(const std::string& typeName) {
+        // Untyped parameter → generic void pointer (i8*)
+        if (typeName.empty()) return Type::getInt8PtrTy(Context);
         // Strip Optional marker — "String?" and "String" resolve identically
-        if (!typeName.empty() && typeName.back() == '?')
+        if (typeName.back() == '?')
             return getLLVMType(typeName.substr(0, typeName.size() - 1));
         if (typeName == "int" || typeName == "Int") return Type::getInt32Ty(Context);
         if (typeName == "bool" || typeName == "Bool") return Type::getInt1Ty(Context);
-        if (typeName == "char" || typeName == "Char") return Type::getInt8Ty(Context);
         if (typeName == "double" || typeName == "Double") return Type::getDoubleTy(Context);
         if (typeName == "void") return Type::getVoidTy(Context);
 
         if (typeName == "ptr" || typeName == "cstring" || typeName == "string" || typeName == "Any" || typeName == "any")
             return Type::getInt8PtrTy(Context);
 
+        // Strip generic type parameters: "List[T]" → "List", "Map[K,V]" → "Map"
+        auto bracketPos = typeName.find('[');
+        if (bracketPos != std::string::npos)
+            return getLLVMType(typeName.substr(0, bracketPos));
+
         // Handle Structs (including String!)
         if (StructTypes.count(typeName)) {
             return PointerType::getUnqual(StructTypes[typeName]);
-        } else {
-            // Forward declaration: create an opaque struct type
-            StructType* opaqueStruct = StructType::create(Context, typeName);
-            StructTypes[typeName] = opaqueStruct;
-            return PointerType::getUnqual(opaqueStruct);
         }
 
-        return Type::getInt32Ty(Context);
+        // Unknown type — could be a generic param (T, U) or an unresolved extern.
+        // All user-defined structs are pre-registered in Pass 1, so anything still
+        // unknown here is treated as type-erased Any (i8*).
+        return Type::getInt8PtrTy(Context);
     }
 
     Type* getFunctionReturnType(const std::string& retType) {

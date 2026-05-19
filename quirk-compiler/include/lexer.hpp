@@ -32,10 +32,11 @@ enum class TokenType {
     WITH,
     AS,
     IS,
-    TRIGGER,
     ENUM,
     MATCH,
     CASE,
+    WHERE,
+    TYPE_KW,
 
     // Literals
     IDENTIFIER,
@@ -47,6 +48,7 @@ enum class TokenType {
     FALSE,
     QUIRK_NULL,
     PIPE,
+    AMPERSAND,
 
     TRY, CATCH, THROW, FINALLY,
 
@@ -69,6 +71,7 @@ enum class TokenType {
     COLON,
     SEMICOLON,
     COMMA,
+    AT,
     PLUS,
     MINUS,
     STAR,
@@ -86,10 +89,15 @@ enum class TokenType {
 
     ELLIPSIS,
     TRIPLE_MINUS,
+    DOTDOT,          // ..  (range)
 
     QUESTION,        // ?
     QUESTION_DOT,    // ?.
     NULL_COALESCE,   // ??
+
+    NONLOCAL,        // nonlocal keyword
+    GLOBAL,          // global keyword
+    INTERFACE,       // interface keyword
 
     // Special
     EOF_TOKEN,

@@ -40,13 +40,19 @@ int Net_bind(int sockfd, String* host, int port) {
     struct sockaddr_in serv_addr;
     memset(&serv_addr, 0, sizeof(serv_addr));
     serv_addr.sin_family = AF_INET;
-    
+
     char* safe_host = make_safe_cstr(host);
-    
-    serv_addr.sin_addr.s_addr = (safe_host && strlen(safe_host) > 0) 
-                                ? inet_addr(safe_host) 
+
+    serv_addr.sin_addr.s_addr = (safe_host && strlen(safe_host) > 0)
+                                ? inet_addr(safe_host)
                                 : INADDR_ANY;
     serv_addr.sin_port = htons(port);
+
+    // Allow rebinding while a previous socket on this port is in
+    // TIME_WAIT — the standard server-restart case. Without this every
+    // test run would have to wait ~60s before the port frees.
+    int one = 1;
+    setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
 
     return bind(sockfd, (struct sockaddr *) &serv_addr, sizeof(serv_addr));
 }

@@ -1,0 +1,51 @@
+from typing.primitives.string use { String }
+from typing.interfaces.primitive use { Primitive }
+from typing.interfaces.comparable use { Comparable }
+from typing.interfaces.parseable use { Parseable }
+
+---
+32-bit signed integer.
+Supports arithmetic operators (`+`, `-`, `*`, `/`, `%`, `**`) and comparisons.
+
+@example:
+n := 42
+print(n.str())       // "42"
+print(n.is_even())   // true
+print(n.pow(2))      // 1764
+---
+struct Int : Primitive, Comparable, Parseable {
+    ---
+    Returns the string representation of this integer.
+    @returns: String
+    ---
+    extern define str(self) -> String
+    extern define __str(self) -> String
+    extern define __eq(self, other: Int) -> Bool
+    extern define __lt(self, other: Int) -> Bool
+
+    extern define to_float(self) -> Double
+
+    ---
+    Returns the absolute value.
+    @returns: Int
+    ---
+    extern define abs(self) -> Int
+
+    ---
+    Returns `self` raised to the power `exp`.
+    @param exp: Int — exponent (must be ≥ 0)
+    @returns: Int
+    ---
+    extern define pow(self, exp: Int) -> Int
+
+    extern define is_even(self) -> Bool
+    extern define is_odd(self) -> Bool
+
+    ---
+    Parses a string as an integer.
+    @param s: String
+    @returns: Int
+    @throws ValueError — if `s` is not a valid integer
+    ---
+    extern define parse(s: String) -> Int
+}

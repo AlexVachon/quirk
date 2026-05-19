@@ -1,0 +1,29 @@
+from typing.collections.map use { Map }
+
+define main() {
+    // Test Map Literal
+    const m := { "name": "Alice", "city": "Paris", "age": 30}
+
+    print("Name: " + m.get("name"))
+    print("City: " + m["city"])
+    print("Age: " + m["age"])
+    // m["gender"] = "female"
+    // print("Gender: ${m['gender']}")
+
+    // Test Empty Map
+    empty_map := {}
+    print("Empty size: " + empty_map.length())
+
+    map_struct := Map()
+    map_struct.put("language", "Quirk")
+    print("Language: " + map_struct.get("language"))
+
+    keys := { d for d in m}
+    print("Keys: ${keys}")
+
+    inverted := { v: k for k, v in m}
+    print("Inverted: ${inverted}")
+
+    upper_map := { k.upper(): v for k, v in m}
+    print("Upper map: ${upper_map}")
+}

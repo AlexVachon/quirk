@@ -1,0 +1,59 @@
+use console
+use sys
+
+define main() -> void {
+    console.log("=== log / put / dir ===")
+    console.log("variadic:", "a", "b", 42)
+    console.put("Loading")
+    sys.sleep(100)
+    console.put(".")
+    sys.sleep(100)
+    console.put(".")
+    console.clear_line()
+    console.log("Loaded!")
+    console.dir([1, 2, 3])
+
+    console.log("=== group ===")
+    console.group("Build")
+    console.log("step 1")
+    console.group("Compile")
+    console.log("running gcc")
+    console.log("running ld")
+    console.group_end()
+    console.log("step 2")
+    console.group_end()
+    console.log("after groups (depth 0)")
+
+    console.log("=== timers ===")
+    console.time("sleep_test")
+    sys.sleep(120)
+    console.time_end("sleep_test")
+
+    console.log("=== terminal size ===")
+    sz := console.size()
+    console.log("cols=${sz[0]} rows=${sz[1]}")
+
+    console.log("=== colors / levels ===")
+    console.info("Info message")
+    console.warn("Warning message")
+    console.error("Error message")
+    console.debug("Debug message")
+    console.green("Green helper")
+    console.red("Red helper")
+    console.bold("Bold helper")
+
+    console.log("=== assert ===")
+    console.assert(true, "should not print")
+    console.assert(false, "this assertion fires")
+
+    console.log("=== progress ===")
+    i := 0
+    while i <= 10 {
+        console.progress(i, 10, "Working")
+        sys.sleep(40)
+        i = i + 1
+    }
+    console.log("")
+
+    console.log("Done.")
+}

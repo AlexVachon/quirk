@@ -157,11 +157,16 @@ Token Lexer::nextToken()
         if (ident == "finally")  return {TokenType::FINALLY,    ident, startLine, startCol};
         if (ident == "break")    return {TokenType::BREAK,      ident, startLine, startCol};
         if (ident == "continue") return {TokenType::CONTINUE,   ident, startLine, startCol};
-        if (ident == "trigger")  return {TokenType::TRIGGER,    ident, startLine, startCol};
         if (ident == "enum")     return {TokenType::ENUM,       ident, startLine, startCol};
         if (ident == "match")    return {TokenType::MATCH,      ident, startLine, startCol};
         if (ident == "case")     return {TokenType::CASE,       ident, startLine, startCol};
         if (ident == "fn")       return {TokenType::FN,         ident, startLine, startCol};
+        if (ident == "where")    return {TokenType::WHERE,      ident, startLine, startCol};
+        if (ident == "const")    return {TokenType::CONST,      ident, startLine, startCol};
+        if (ident == "type")     return {TokenType::TYPE_KW,    ident, startLine, startCol};
+        if (ident == "nonlocal")  return {TokenType::NONLOCAL,   ident, startLine, startCol};
+        if (ident == "global")    return {TokenType::GLOBAL,     ident, startLine, startCol};
+        if (ident == "interface") return {TokenType::INTERFACE,  ident, startLine, startCol};
         return {TokenType::IDENTIFIER, ident, startLine, startCol};
     }
 
@@ -196,10 +201,15 @@ Token Lexer::nextToken()
         advance(); advance();
         return {TokenType::QUESTION_DOT, "?.", startLine, startCol};
     }
-    // Ellipsis '...' must be checked before single DOT
+    // Ellipsis '...' must be checked before '..' and single DOT
     if (c == '.' && peek(1) == '.' && peek(2) == '.') {
         advance(); advance(); advance();
         return {TokenType::ELLIPSIS, "...", startLine, startCol};
+    }
+    // Range operator '..' (two dots, not three)
+    if (c == '.' && peek(1) == '.' && peek(2) != '.') {
+        advance(); advance();
+        return {TokenType::DOTDOT, "..", startLine, startCol};
     }
     if (c == ':' && peek(1) == '=') {
         advance(); advance();
@@ -270,12 +280,14 @@ Token Lexer::nextToken()
     case ':':  return {TokenType::COLON,      ":", startLine, startCol};
     case ';':  return {TokenType::SEMICOLON,  ";", startLine, startCol};
     case ',':  return {TokenType::COMMA,      ",", startLine, startCol};
+    case '@':  return {TokenType::AT,         "@", startLine, startCol};
     case '+':  return {TokenType::PLUS,       "+", startLine, startCol};
     case '-':  return {TokenType::MINUS,      "-", startLine, startCol};
     case '*':  return {TokenType::STAR,       "*", startLine, startCol};
     case '/':  return {TokenType::SLASH,      "/", startLine, startCol};
     case '=':  return {TokenType::ASSIGN,     "=", startLine, startCol};
     case '.':  return {TokenType::DOT,        ".", startLine, startCol};
+    case '&':  return {TokenType::AMPERSAND,  "&", startLine, startCol};
     case '|':  return {TokenType::PIPE,       "|", startLine, startCol};
     case '?':  return {TokenType::QUESTION,   "?", startLine, startCol};
     default:   return {TokenType::ERROR, std::string(1, c), startLine, startCol};

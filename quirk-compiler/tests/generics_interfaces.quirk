@@ -1,0 +1,158 @@
+// === Interfaces ===
+
+from typing use { Printable, Comparable, Primitive }
+
+---
+Extends `Printable` with a richer human-readable description.
+Useful for debug output or structured logging.
+---
+interface Describable : Printable {
+    --- Returns a detailed description of this value. ---
+    define describe(self) -> String
+}
+
+// === Struct implementing an interface ===
+
+struct Animal : Printable {
+    name: String
+    sound: String
+
+    define __init(self, name: String, sound: String) -> void {
+        self.name = name
+        self.sound = sound
+    }
+
+    define __str(self) -> String {
+        return self.name + " says " + self.sound
+    }
+}
+
+a := Animal("Cat", "meow")
+print("Animal str:", a)
+
+// === Struct implementing multiple interfaces ===
+
+struct Box : Printable, Comparable {
+    value: Int
+
+    define __init(self, value: Int) -> void {
+        self.value = value
+    }
+
+    define __str(self) -> String {
+        return "Box(" + self.value + ")"
+    }
+
+    define __lt(self, other: Box) -> Bool {
+        return self.value < other.value
+    }
+
+    define __eq(self, other: Box) -> Bool {
+        return self.value == other.value
+    }
+}
+
+b1 := Box(10)
+b2 := Box(20)
+print("b1:", b1)
+print("b2:", b2)
+print("b1 < b2:", b1.__lt(b2))
+print("b1 == b2:", b1.__eq(b2))
+
+// === Generic structs ===
+
+struct Stack[T] where T: Primitive {
+    items: List[T]
+
+    define __init(self) -> void {
+        self.items = []
+    }
+
+    define push(self, item: T) -> void {
+        self.items.append(item)
+    }
+
+    define pop(self) -> T {
+        return self.items.pop()
+    }
+
+    define peek(self) -> T {
+        return self.items[self.items.length() - 1]
+    }
+
+    define size(self) -> Int {
+        return self.items.length()
+    }
+
+    define is_empty(self) -> Bool {
+        return self.items.length() == 0
+    }
+}
+
+s := Stack()
+s.push(1)
+s.push(2)
+s.push(3)
+print("Stack size:", s.size())
+print("Stack peek:", s.peek())
+print("Stack pop:", s.pop())
+print("Stack size after pop:", s.size())
+
+// === Generic functions ===
+
+define map[T, U](items: List[T], f: Callable) -> List[U] {
+    result := []
+    for item in items {
+        result.append(f(item))
+    }
+    return result
+}
+
+define filter[T](items: List[T], pred: Callable) -> List[T] where T: Comparable {
+    result := []
+    for item in items {
+        if pred(item) {
+            result.append(item)
+        }
+    }
+    return result
+}
+
+define identity[T](x: T) -> T where T: Comparable {
+    return x
+}
+
+nums := [1, 2, 3, 4, 5]
+doubled := map(nums, fn(x) => x * 2)
+print("Doubled count:", doubled.length())
+
+evens := filter(nums, fn(x) => x > 2)
+print("Evens count:", evens.length())
+
+print("Identity 42:", identity(42))
+print("Identity hello:", identity("hello"))
+
+// === Generic struct implementing an interface ===
+
+struct Wrapper[T] : Printable where T: Printable {
+    value: T
+
+    define __init(self, value: T) -> void {
+        self.value = value
+    }
+
+    define __str(self) -> String {
+        return "Wrapper(" + self.value + ")"
+    }
+
+    define get(self) -> T {
+        return self.value
+    }
+}
+
+w := Wrapper(99)
+print("Wrapper str:", w)
+print("Wrapper get:", w.get())
+
+w2 := Wrapper("quirk")
+print("Wrapper str2:", w2)

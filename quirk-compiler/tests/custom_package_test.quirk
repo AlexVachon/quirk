@@ -1,0 +1,22 @@
+use console
+
+use test
+from test use { TestCase }
+
+from slug use { slug }
+
+define main() -> void {
+    base := "Hello, world! 123"
+    sbase := slug(base)
+
+    t1 := TestCase("Testing custom package 'slug'", fn() {
+        test.assert_eq(sbase, "hello-world-123")
+    })
+    fails := test.run_all([t1])
+
+    if fails > 0 {
+        console.error("Tests failed for ${base} -> ${sbase}")
+    } else {
+        console.info("Tests passed for ${base} -> ${sbase}")
+    }
+}

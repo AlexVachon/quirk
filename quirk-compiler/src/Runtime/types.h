@@ -40,12 +40,21 @@ typedef struct {
     MapEntry* entries;
     int capacity;
     int size;
+    char** key_order;      // insertion-order key list
+    int order_size;
+    int order_capacity;
 } Map;
 
 typedef struct {
     Map* map_ref;
-    int idx;
+    int idx;  // index into key_order
 } MapIterator;
+
+typedef struct {
+    Map* map_ref;
+    int idx;  // index into key_order
+    void* current_value;
+} MapPairIterator;
 
 typedef struct {
     void* handle;
@@ -55,12 +64,57 @@ typedef struct {
 typedef struct {
     const char* func_name;
     const char* file_name;
+    int         line;
 } ShadowFrame;
 
 typedef struct {
     void* fn;   // i8* (*fn)(i8* env, i8* arg0, ...)
     void* env;  // captured variable struct, may be NULL
 } Callable;
+
+typedef struct {
+    void** data;
+    int size;
+} Tuple;
+
+typedef struct {
+    Tuple* tuple_ref;
+    int idx;
+} TupleIterator;
+
+typedef struct {
+    char* key;       // string representation used for hashing/equality
+    void* value;     // original boxed value
+    int is_occupied;
+    int is_deleted;
+} SetEntry;
+
+typedef struct {
+    SetEntry* entries;
+    int capacity;
+    int size;
+    char** key_order;   // insertion-order
+    int order_size;
+    int order_capacity;
+} Set;
+
+typedef struct {
+    Set* set_ref;
+    int idx;
+} SetIterator;
+
+typedef struct {
+    void** data;
+    int head;       // index of front element
+    int tail;       // index past last element
+    int capacity;
+    int size;
+} Queue;
+
+typedef struct {
+    Queue* queue_ref;
+    int pos;        // current iteration index (0-based)
+} QueueIterator;
 
 // ===================================================
 //  Any — Tagged Union for dynamic typing
@@ -77,8 +131,10 @@ typedef enum {
     ANY_STRING = 4,   // ptr  holds String*
     ANY_LIST   = 5,   // ptr  holds List*
     ANY_MAP    = 6,   // ptr  holds Map*
-    ANY_PTR    = 7,   // ptr  holds arbitrary struct*
-    ANY_NULL   = 8,   // no value
+    ANY_PTR      = 7,   // ptr  holds arbitrary struct*
+    ANY_NULL     = 8,   // no value
+    ANY_TUPLE    = 9,   // ptr  holds Tuple*
+    ANY_CALLABLE = 10,  // ptr  holds Callable*
 } AnyTag;
 
 typedef struct {

@@ -1,0 +1,40 @@
+from typing.primitives.string use { String }
+from typing.interfaces.primitive use { Primitive }
+from typing.interfaces.comparable use { Comparable }
+from typing.interfaces.parseable use { Parseable }
+
+---
+64-bit IEEE 754 floating-point number.
+
+@example:
+x := 3.14
+print(x.ceil())    // 4.0
+print(x.str())     // "3.14"
+---
+struct Double : Primitive, Comparable, Parseable {
+    extern define str(self) -> String
+    extern define __str(self) -> String
+    extern define __eq(self, other: Double) -> Bool
+    extern define __lt(self, other: Double) -> Bool
+    extern define to_int(self) -> Int
+
+    extern define abs(self) -> Double
+    extern define ceil(self) -> Double
+    extern define floor(self) -> Double
+    extern define round(self) -> Double
+
+    ---
+    Returns the square root.
+    @returns: Double
+    @throws ValueError — if the value is negative
+    ---
+    extern define sqrt(self) -> Double
+
+    ---
+    Parses a string as a floating-point number.
+    @param s: String
+    @returns: Double
+    @throws ValueError — if `s` is not a valid number
+    ---
+    extern define parse(s: String) -> Double
+}

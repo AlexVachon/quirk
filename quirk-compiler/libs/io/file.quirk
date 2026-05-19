@@ -1,0 +1,93 @@
+---
+File I/O — reading from and writing to the OS file system. Supports the
+`with` statement for automatic close.
+
+Modes (passed to `__init`):
+  `"r"`  — read text (default)
+  `"w"`  — write text, truncate existing
+  `"a"`  — append text
+  `"r+"` — read & write
+  `"rb"`/`"wb"` — binary variants
+
+@example
+with File("notes.txt", "r") as f {
+    print(f.read())
+}
+
+with File("out.txt", "w") as f {
+    f.write("hello\n")
+}
+---
+
+---
+A handle for reading and writing to the OS file system.
+Supports the `with` statement for automatic close on scope exit.
+
+Use `sys.stdin()`, `sys.stdout()`, `sys.stderr()` to wrap the standard
+streams as Files (those wrappers ignore `close()`).
+---
+struct File {
+    _handle: Any
+    is_open: Bool
+
+    ---
+    Open `path` in the requested `mode`. Sets `is_open` based on whether the
+    underlying `fopen` succeeded — check it before reading.
+    @param path File path (absolute or relative to cwd).
+    @param mode Standard fopen-style mode string.
+    ---
+    extern define __init(self, path: String, mode: String) -> void
+
+    ---
+    Read the entire file into a String. Returns "" on error or empty file.
+    @returns The file contents as a String.
+    ---
+    extern define read(self) -> String
+
+    ---
+    Read one line from the file. The trailing `\n` is stripped.
+    Returns the empty string at EOF; check both for empty content and EOF
+    by comparing against `""` plus a separate `is_open` check if needed.
+    Maximum line length is 2048 characters.
+    ---
+    extern define read_line(self) -> String
+
+    ---
+    Write `data` to the file at the current position and flush immediately.
+    No newline is appended — include `\n` in `data` if you want one.
+    ---
+    extern define write(self, data: String) -> void
+
+    ---
+    Close the file handle. Standard streams (`stdin`/`stdout`/`stderr`)
+    are protected from being closed.
+    ---
+    extern define close(self) -> void
+
+    // --- CONTEXT MANAGER SUPPORT ---
+
+    --- `with` enter — returns the File itself. ---
+    define __enter(self) -> File {
+        return self
+    }
+
+    --- `with` exit — closes the file. ---
+    define __exit(self) -> void {
+        self.close()
+    }
+}
+
+---
+Iterator over a file's lines. Produced by `for line in file { ... }`.
+Each `__next` call reads one line via `File.read_line`.
+---
+struct FileIterator {
+    _file_ref: File
+    _current_line: String
+
+    --- True if more lines remain. ---
+    extern define __has_next(self) -> Bool
+
+    --- Returns the next line; trailing newline stripped. ---
+    extern define __next(self) -> String
+}

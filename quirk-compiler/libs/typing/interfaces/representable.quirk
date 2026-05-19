@@ -1,0 +1,18 @@
+---
+Implemented by types that have a developer-facing debug representation,
+distinct from the human-readable `__str`. Used by the REPL and logging tools.
+
+@example
+struct Token : Representable {
+    kind: String
+    value: String
+
+    define __repr(self) -> String {
+        return "Token(" + self.kind + ", " + self.value + ")"
+    }
+}
+---
+interface Representable {
+    --- Returns a developer-readable debug representation of this value. ---
+    define __repr(self) -> String
+}

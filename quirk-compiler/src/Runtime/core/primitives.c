@@ -1,8 +1,11 @@
 #include "../types.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <math.h>
 #include <ctype.h>
+
+extern void quirk_throw_exception(const char* type_name, const char* message);
 
 // ==========================================
 //  INTEGER METHODS
@@ -90,5 +93,75 @@ int Core_Primitives_Char_is_digit(char self) { return isdigit((unsigned char)sel
 int Core_Primitives_Char_is_alpha(char self) { return isalpha((unsigned char)self) != 0; }
 int Core_Primitives_Char_is_space(char self) { return isspace((unsigned char)self) != 0; }
 
-char Core_Primitives_Char_to_upper(char self) { return toupper((unsigned char)self); }
-char Core_Primitives_Char_to_lower(char self) { return tolower((unsigned char)self); }
+char Core_Primitives_Char_upper(char self) { return toupper((unsigned char)self); }
+char Core_Primitives_Char_lower(char self) { return tolower((unsigned char)self); }
+
+// ==========================================
+//  PARSE METHODS (static — no self)
+// ==========================================
+
+int Core_Primitives_Int_parse(String* s) {
+    if (!s || !s->buffer || s->length == 0) {
+        quirk_throw_exception("ValueError", "cannot parse empty string as Int");
+        return 0;
+    }
+    char* end;
+    long val = strtol(s->buffer, &end, 10);
+    if (end == s->buffer || *end != '\0') {
+        char msg[256];
+        snprintf(msg, sizeof(msg), "invalid literal for Int: '%s'", s->buffer);
+        quirk_throw_exception("ValueError", msg);
+        return 0;
+    }
+    return (int)val;
+}
+
+double Core_Primitives_Double_parse(String* s) {
+    if (!s || !s->buffer || s->length == 0) {
+        quirk_throw_exception("ValueError", "cannot parse empty string as Double");
+        return 0.0;
+    }
+    char* end;
+    double val = strtod(s->buffer, &end);
+    if (end == s->buffer || *end != '\0') {
+        char msg[256];
+        snprintf(msg, sizeof(msg), "invalid literal for Double: '%s'", s->buffer);
+        quirk_throw_exception("ValueError", msg);
+        return 0.0;
+    }
+    return val;
+}
+
+int8_t Core_Primitives_Bool_parse(String* s) {
+    if (!s || !s->buffer) {
+        quirk_throw_exception("ValueError", "cannot parse null as Bool");
+        return 0;
+    }
+    if (strcmp(s->buffer, "true") == 0)  return 1;
+    if (strcmp(s->buffer, "false") == 0) return 0;
+    char msg[256];
+    snprintf(msg, sizeof(msg),
+             "invalid literal for Bool: '%s' (expected 'true' or 'false')", s->buffer);
+    quirk_throw_exception("ValueError", msg);
+    return 0;
+}
+
+char Core_Primitives_Char_parse(String* s) {
+    if (!s || !s->buffer || s->length == 0) {
+        quirk_throw_exception("ValueError", "cannot parse empty string as Char");
+        return '\0';
+    }
+    if (s->length != 1) {
+        char msg[256];
+        snprintf(msg, sizeof(msg),
+                 "invalid literal for Char: expected single character, got '%s'", s->buffer);
+        quirk_throw_exception("ValueError", msg);
+        return '\0';
+    }
+    return s->buffer[0];
+}
+
+String* Core_Primitives_Int___str(int self)    { return Core_Primitives_Int_str(self); }
+String* Core_Primitives_Double___str(double self) { return Core_Primitives_Double_str(self); }
+String* Core_Primitives_Bool___str(int self)   { return Core_Primitives_Bool_str(self); }
+String* Core_Primitives_Char___str(char self)  { return Core_Primitives_Char_str(self); }

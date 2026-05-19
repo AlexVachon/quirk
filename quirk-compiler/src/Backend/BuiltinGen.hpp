@@ -74,17 +74,224 @@ class BuiltinGen {
         Function::Create(FunctionType::get(i32Ty,    {anyPtrTy},  false), Function::ExternalLinkage, "Core_Primitives_Any_to_int",    TheModule);
         Function::Create(FunctionType::get(Type::getDoubleTy(Context), {anyPtrTy}, false), Function::ExternalLinkage, "Core_Primitives_Any_to_float", TheModule);
         Function::Create(FunctionType::get(i32Ty,    {anyPtrTy, anyPtrTy}, false), Function::ExternalLinkage, "Core_Primitives_Any_isinstance", TheModule);
+
+        // Core_Primitives_Bool_str is intentionally NOT pre-declared here.
+        // Pass 3 declares it with the correct %String* return type from bool.quirk's extern.
+        // Pre-declaring with i8* causes a type conflict that makes all Bool→String calls return i8*.
+        auto strPtrTy = Type::getInt8PtrTy(Context);
+        Function::Create(FunctionType::get(i32Ty, {strPtrTy, strPtrTy}, false), Function::ExternalLinkage, "Core_Primitives_Quirk_isinstance", TheModule);
     }
 
     bool isBuiltin(const std::string& name) {
-        return name == "print" || name == "printf" || name == "malloc" || name == "free";
+        return name == "print" || name == "printf" || name == "malloc" || name == "free"
+            || name == "type" || name == "str" || name == "write" || name == "writeln";
     }
 
     Value* handleBuiltin(const std::string& name, CallNode* call,
                          std::function<Value*(Node*)> exprHandler) {
         if (name == "print")   return generatePrint(call, exprHandler);
         if (name == "printf")  return generatePrintf(call, exprHandler);
+        if (name == "type")    return generateType(call, exprHandler);
+        if (name == "str")     return generateStr(call, exprHandler);
+        if (name == "write")   return generateWrite(call, exprHandler, false);
+        if (name == "writeln") return generateWrite(call, exprHandler, true);
         return nullptr;
+    }
+
+    // Convert an already-evaluated LLVM Value* to a String*.
+    // Shared by str(), write(), and the struct branch of generatePrint.
+    Value* valueToString(Value* val) {
+        if (!val) return nullptr;
+        Type* ty = val->getType();
+
+        if (ty->isPointerTy()) {
+            Type* elem = ty->getPointerElementType();
+            if (elem->isStructTy()) {
+                StructType* st = cast<StructType>(elem);
+                std::string sName = st->getName().str();
+                if (sName.find("struct.") == 0) sName = sName.substr(7);
+                size_t dotPos = sName.find('.');
+                if (dotPos != std::string::npos && std::isdigit(sName[dotPos + 1]))
+                    sName = sName.substr(0, dotPos);
+
+                if (sName == "String") return val;
+                if (sName == "Any") {
+                    Function* fn = TheModule->getFunction("Core_Primitives_Any_to_string");
+                    if (fn) return Builder.CreateCall(fn, {val});
+                }
+                // User-defined struct — call its __str
+                Value* result = structGen->generateStrCall(val, sName);
+                if (result) return result;
+                // No __str: return "<TypeName>"
+                Value* raw = Builder.CreateGlobalStringPtr("<" + sName + ">");
+                return structGen->allocateAndInit("String", {raw});
+            }
+            // i8* opaque — tagged int or boxed Any; quirk_opaque_to_string always
+            // returns String* in memory even though its C declaration says void*.
+            // Bitcast the i8* result to String* so the caller can access _buffer.
+            if (elem->isIntegerTy(8)) {
+                Function* fn = TheModule->getFunction("quirk_opaque_to_string");
+                if (!fn) {
+                    FunctionType* ft = FunctionType::get(
+                        Type::getInt8PtrTy(Context),
+                        {Type::getInt8PtrTy(Context)}, false);
+                    fn = Function::Create(ft, Function::ExternalLinkage,
+                                          "quirk_opaque_to_string", TheModule);
+                }
+                Value* raw = Builder.CreateCall(fn, {val});
+                Type* strPtrTy = structGen->getStringPtrType();
+                if (strPtrTy != Type::getInt8PtrTy(Context))
+                    return Builder.CreateBitCast(raw, strPtrTy);
+                return raw;
+            }
+        }
+
+        if (ty->isIntegerTy(1)) {
+            Value* raw = Builder.CreateSelect(val,
+                Builder.CreateGlobalStringPtr("true"),
+                Builder.CreateGlobalStringPtr("false"));
+            return structGen->allocateAndInit("String", {raw});
+        }
+        if (ty->isIntegerTy(8)) {
+            Function* fn = TheModule->getFunction("Core_Primitives_Char_str");
+            if (fn) {
+                Value* r = Builder.CreateCall(fn, {val});
+                if (r->getType()->isPointerTy() &&
+                    r->getType()->getPointerElementType()->isIntegerTy(8))
+                    return structGen->allocateAndInit("String", {r});
+                return r;
+            }
+        }
+        if (ty->isIntegerTy()) {
+            Function* fn = TheModule->getFunction("Core_Primitives_Int_str");
+            if (fn) {
+                Value* r = Builder.CreateCall(fn, {val});
+                if (r->getType()->isPointerTy() &&
+                    r->getType()->getPointerElementType()->isIntegerTy(8))
+                    return structGen->allocateAndInit("String", {r});
+                return r;
+            }
+            // Fallback: sprintf into a temp buffer
+            Value* raw = Builder.CreateGlobalStringPtr("<int>");
+            return structGen->allocateAndInit("String", {raw});
+        }
+        if (ty->isDoubleTy()) {
+            Function* fn = TheModule->getFunction("Core_Primitives_Double_str");
+            if (fn) {
+                Value* r = Builder.CreateCall(fn, {val});
+                if (r->getType()->isPointerTy() &&
+                    r->getType()->getPointerElementType()->isIntegerTy(8))
+                    return structGen->allocateAndInit("String", {r});
+                return r;
+            }
+        }
+        Value* raw = Builder.CreateGlobalStringPtr("<unknown>");
+        return structGen->allocateAndInit("String", {raw});
+    }
+
+    // str(x) -> String  — first-class Any-to-string conversion
+    Value* generateStr(CallNode* call, std::function<Value*(Node*)> exprHandler) {
+        if (call->args.empty()) {
+            Value* empty = Builder.CreateGlobalStringPtr("");
+            return structGen->allocateAndInit("String", {empty});
+        }
+        Value* val = exprHandler(call->args[0].value.get());
+        return valueToString(val);
+    }
+
+    // write(x) / writeln(x) — print without/with trailing newline
+    Value* generateWrite(CallNode* call, std::function<Value*(Node*)> exprHandler, bool newline) {
+        Function* printfFunc = TheModule->getFunction("printf");
+        if (!printfFunc) return nullptr;
+
+        for (auto& arg : call->args) {
+            Value* val = exprHandler(arg.value.get());
+            if (!val) continue;
+
+            Type* ty = val->getType();
+            Value* fmtStr = Builder.CreateGlobalStringPtr(newline ? "%s\n" : "%s");
+            Value* fmtInt = Builder.CreateGlobalStringPtr(newline ? "%d\n" : "%d");
+            Value* fmtFlt = Builder.CreateGlobalStringPtr(newline ? "%f\n" : "%f");
+
+            if (ty->isIntegerTy(1)) {
+                Value* s = Builder.CreateSelect(val,
+                    Builder.CreateGlobalStringPtr(newline ? "true\n" : "true"),
+                    Builder.CreateGlobalStringPtr(newline ? "false\n" : "false"));
+                Builder.CreateCall(printfFunc, {Builder.CreateGlobalStringPtr("%s"), s});
+            } else if (ty->isIntegerTy(8)) {
+                Builder.CreateCall(printfFunc, {Builder.CreateGlobalStringPtr(newline ? "%c\n" : "%c"), val});
+            } else if (ty->isIntegerTy()) {
+                Builder.CreateCall(printfFunc, {fmtInt, val});
+            } else if (ty->isDoubleTy()) {
+                Builder.CreateCall(printfFunc, {fmtFlt, val});
+            } else {
+                // Anything else: convert to String then print the buffer
+                Value* strObj = valueToString(val);
+                if (strObj && strObj->getType()->isPointerTy() &&
+                    strObj->getType()->getPointerElementType()->isStructTy()) {
+                    Value* bufPtr = structGen->getMemberPtr(strObj, "_buffer");
+                    if (bufPtr) {
+                        Value* cStr = Builder.CreateLoad(Type::getInt8PtrTy(Context), bufPtr);
+                        Builder.CreateCall(printfFunc, {fmtStr, cStr});
+                    }
+                } else if (strObj && strObj->getType()->isPointerTy() &&
+                           strObj->getType()->getPointerElementType()->isIntegerTy(8)) {
+                    Builder.CreateCall(printfFunc, {fmtStr, strObj});
+                }
+            }
+        }
+        return nullptr;
+    }
+
+    Value* generateType(CallNode* call, std::function<Value*(Node*)> exprHandler) {
+        if (call->args.empty()) return nullptr;
+        Value* val = exprHandler(call->args[0].value.get());
+        if (!val) return nullptr;
+
+        Type* llvmType = val->getType();
+
+        auto makeTypeString = [&](const std::string& name) -> Value* {
+            Value* raw = Builder.CreateGlobalStringPtr(name);
+            std::vector<Value*> args = {raw};
+            return structGen->allocateAndInit("String", args);
+        };
+
+        // Pointer types: struct*, Any*, i8*
+        if (llvmType->isPointerTy()) {
+            Type* elem = llvmType->getPointerElementType();
+            if (elem->isStructTy()) {
+                StructType* st = cast<StructType>(elem);
+                std::string structName = st->getName().str();
+                if (structName.find("struct.") == 0) structName = structName.substr(7);
+                size_t dotPos = structName.find('.');
+                if (dotPos != std::string::npos && std::isdigit(structName[dotPos + 1]))
+                    structName = structName.substr(0, dotPos);
+
+                if (structName == "Any") {
+                    // Runtime dispatch via the Any tag
+                    Function* getType = TheModule->getFunction("Core_Primitives_Any_get_type");
+                    if (getType) return Builder.CreateCall(getType, {val});
+                }
+                return makeTypeString(structName);
+            }
+            // i8* opaque — may be a tagged integer or boxed Any*; use the safe helper
+            // that checks the pointer value before dereferencing (avoids segfault on tagged ints).
+            Function* opaqueGetType = TheModule->getFunction("quirk_opaque_get_type");
+            if (!opaqueGetType) {
+                Type* retTy = TheModule->getFunction("Core_Primitives_Any_get_type")
+                    ? TheModule->getFunction("Core_Primitives_Any_get_type")->getReturnType()
+                    : (Type*)Type::getInt8PtrTy(Context);
+                FunctionType* ft = FunctionType::get(retTy, {Type::getInt8PtrTy(Context)}, false);
+                opaqueGetType = Function::Create(ft, Function::ExternalLinkage, "quirk_opaque_get_type", TheModule);
+            }
+            return Builder.CreateCall(opaqueGetType, {val});
+        }
+
+        // Primitive LLVM types — known statically
+        if (llvmType->isIntegerTy(1))  return makeTypeString("Bool");
+        if (llvmType->isIntegerTy())   return makeTypeString("Int");
+        if (llvmType->isDoubleTy())    return makeTypeString("Double");
+        return makeTypeString("Unknown");
     }
 
     Value* generatePrintf(CallNode* call, std::function<Value*(Node*)> exprHandler) {
@@ -160,7 +367,7 @@ class BuiltinGen {
                     structName = structName.substr(0, dotPos);
 
                 if (structName == "String") {
-                    Value* bufPtr = structGen->getMemberPtr(val, "buffer");
+                    Value* bufPtr = structGen->getMemberPtr(val, "_buffer");
                     if (bufPtr) {
                         Value* cStr = Builder.CreateLoad(Type::getInt8PtrTy(Context), bufPtr);
                         Value* fmt = Builder.CreateGlobalStringPtr("%s\n");
@@ -170,7 +377,7 @@ class BuiltinGen {
                     Function* anyStr = TheModule->getFunction("Core_Primitives_Any_to_string");
                     if (anyStr) {
                         Value* strObj = Builder.CreateCall(anyStr, {val});
-                        Value* bufPtr = structGen->getMemberPtr(strObj, "buffer");
+                        Value* bufPtr = structGen->getMemberPtr(strObj, "_buffer");
                         if (bufPtr) {
                             Value* cStr = Builder.CreateLoad(Type::getInt8PtrTy(Context), bufPtr);
                             Value* fmt = Builder.CreateGlobalStringPtr("%s\n");
@@ -182,7 +389,7 @@ class BuiltinGen {
                     if (strObj) {
                         if (strObj->getType()->isPointerTy() &&
                             strObj->getType()->getPointerElementType()->isStructTy()) {
-                            Value* bufPtr = structGen->getMemberPtr(strObj, "buffer");
+                            Value* bufPtr = structGen->getMemberPtr(strObj, "_buffer");
                             if (bufPtr) {
                                 Value* cStr = Builder.CreateLoad(Type::getInt8PtrTy(Context), bufPtr);
                                 Value* fmt = Builder.CreateGlobalStringPtr("%s\n");
@@ -193,6 +400,21 @@ class BuiltinGen {
                             Value* fmt = Builder.CreateGlobalStringPtr("%s\n");
                             Builder.CreateCall(printfFunc, {fmt, strObj});
                         }
+                    } else if (structGen->inheritsFrom(structName, "String")) {
+                        // String subclass with no __str override — read the String buffer directly.
+                        // The layout is identical to String (no __type_id since String is
+                        // extern-backed), so bitcasting to String* is safe.
+                        StructType* strTy = StructType::getTypeByName(Context, "String");
+                        if (!strTy) strTy = StructType::getTypeByName(Context, "struct.String");
+                        if (strTy) {
+                            Value* asStr = Builder.CreateBitCast(val, PointerType::getUnqual(strTy));
+                            Value* bufPtr = structGen->getMemberPtr(asStr, "buffer");
+                            if (bufPtr) {
+                                Value* cStr = Builder.CreateLoad(Type::getInt8PtrTy(Context), bufPtr);
+                                Value* fmt = Builder.CreateGlobalStringPtr("%s\n");
+                                Builder.CreateCall(printfFunc, {fmt, cStr});
+                            }
+                        }
                     } else {
                         Value* fmt = Builder.CreateGlobalStringPtr("<%s at %p>\n");
                         Value* nameVal = Builder.CreateGlobalStringPtr(structName);
@@ -201,16 +423,11 @@ class BuiltinGen {
                 }
             } else if (type->isIntegerTy()) {
                 if (type->getIntegerBitWidth() == 1) {
-                    Function* boolStrFunc = TheModule->getFunction("Core_Primitives_Bool_str");
-                    if (boolStrFunc) {
-                        Value* strObj = Builder.CreateCall(boolStrFunc, {val});
-                        Value* bufPtr = structGen->getMemberPtr(strObj, "buffer");
-                        if (bufPtr) {
-                            Value* cStr = Builder.CreateLoad(Type::getInt8PtrTy(Context), bufPtr);
-                            Value* fmt = Builder.CreateGlobalStringPtr("%s\n");
-                            Builder.CreateCall(printfFunc, {fmt, cStr});
-                        }
-                    }
+                    Value* trueStr  = Builder.CreateGlobalStringPtr("true");
+                    Value* falseStr = Builder.CreateGlobalStringPtr("false");
+                    Value* str = Builder.CreateSelect(val, trueStr, falseStr, "bool_str");
+                    Value* fmt = Builder.CreateGlobalStringPtr("%s\n");
+                    Builder.CreateCall(printfFunc, {fmt, str});
                 } else if (type->getIntegerBitWidth() == 8) {
                     Value* fmt = Builder.CreateGlobalStringPtr("%c\n");
                     Builder.CreateCall(printfFunc, {fmt, val});

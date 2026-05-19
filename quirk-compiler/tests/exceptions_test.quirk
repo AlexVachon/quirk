@@ -1,0 +1,28 @@
+use sys
+
+struct ProcessError : Exception {
+    define __init(self, process_name: String, message: String) -> void {
+        super().__init("Process '" + process_name + "' failed: " + message)
+        self.type = "ProcessError"
+    }
+}
+
+define throw_error(msg: String) -> void {
+    throw TypeError("msg should be String")
+}
+
+define main() -> void {
+    try {
+        try {
+            throw_error("This is message")
+        } catch (e: TypeError) {
+            // USING THE NEW 'from' KEYWORD IN AST!
+            throw ProcessError("Nginx", "Port 80 is already in use") from e
+        }
+    } catch (e: ProcessError) {
+        // Explicitly print the traceback of the original cause (TypeError) using the new 'cause_trace' field
+        e.print_traceback()
+    } catch (e: Exception) {
+        print("Caught generic exception: " + e.message)
+    }
+}

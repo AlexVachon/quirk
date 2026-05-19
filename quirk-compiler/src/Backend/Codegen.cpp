@@ -6,6 +6,12 @@
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Verifier.h"
+#include "llvm/IR/LegacyPassManager.h"
+#include "llvm/Transforms/IPO/PassManagerBuilder.h"
+#include "llvm/Transforms/Utils.h"
+#include "llvm/Transforms/Scalar.h"
+#include "llvm/Transforms/InstCombine/InstCombine.h"
+#include "llvm/Transforms/IPO.h"
 
 #include <functional>
 #include <iostream>
@@ -29,17 +35,32 @@
 using namespace llvm;
 
 class LLVMCodegen {
-    LLVMContext Context;
+    std::unique_ptr<LLVMContext> pCtx;  // heap-allocated so ownership can be transferred to JIT
+    LLVMContext& Context;
     std::unique_ptr<Module> TheModule;
     IRBuilder<> Builder;
 
     bool verbose = false;
+    // LLVM optimization level (0..3). Default 1 — runs the minimal pass set
+    // the JIT needs for correctness. See `runOptimizations` for details.
+    int  optLevel = 1;
 
     std::map<std::string, bool> variadicFunctions;
     std::map<std::string, FunctionNode*> functionDeclarations;
+    // (moduleName, funcName) → FunctionNode*  — populated alongside
+    // functionDeclarations so `csv.write(...)` can resolve to Csv_write
+    // even when another module also defines a top-level `write`. The bare-
+    // name map can only hold one entry per name; this disambiguates.
+    std::map<std::pair<std::string, std::string>, FunctionNode*> moduleFunctionIndex;
     std::map<std::string, StructType*> StructTypes;
 
     std::map<std::string, std::vector<std::string>> structHierarchy;
+
+    // Virtual dispatch tables
+    std::set<std::string> vtableEligible;   // structs that get __type_id at field 0
+    std::map<std::string, int> structTypeIds; // struct name → unique runtime type ID
+    // overrideMap[parentType][methodName] = [(childType, childTypeId), ...]
+    std::map<std::string, std::map<std::string, std::vector<std::pair<std::string,int>>>> overrideMap;
 
     std::map<std::string, std::vector<std::string>> enumVariants;  // name -> ordered variants
     std::map<std::string, std::string> varEnumTypes;               // varName -> enum type name
@@ -58,39 +79,52 @@ class LLVMCodegen {
    public:
     static std::string currentCodegenClass;
     std::map<std::string, std::string> activeModuleAliases;
-    std::map<std::string, std::string> activeTriggers;
     std::map<std::string, std::string> callableReturnTypes; // varName → inferred return type
+    std::map<std::string, int> variadicCallableStart;       // varName → first variadic arg index (-1 = not variadic)
+    std::set<std::string> externBoolReturnFunctions;       // LLVM names widened i1→i32 for C ABI
+
+    // Cache: function name → synthesized `i8*(i8* env, i8*…)` thunk Function*.
+    // One thunk per function, reused on every "function-as-value" reference
+    // (passing a function name where a Callable is expected, storing it in a
+    // variable, returning it). See getOrCreateFunctionThunk().
+    std::map<std::string, Function*> functionThunkCache;
 
     void setVerbose(bool v) { verbose = v; }
+    void setOptLevel(int o) { optLevel = (o < 0 ? 0 : o > 3 ? 3 : o); }
 
     void setSourceMap(const std::map<std::string, std::string>& sm) { sourceMap = sm; }
 
     [[noreturn]] void fatalError(const std::string& msg, int line, int col) {
         std::cerr << "\033[1;31m[ERROR]\033[0m " << msg << "\n";
 
-        if (line > 0 && !currentFilePath.empty() && sourceMap.count(currentFilePath)) {
-            const std::string& src = sourceMap.at(currentFilePath);
-            std::cerr << " --> " << currentFilePath << ":" << line << ":" << col << "\n\n";
+        if (line > 0) {
+            if (!currentFilePath.empty())
+                std::cerr << " --> " << currentFilePath << ":" << line << ":" << col << "\n";
+            else
+                std::cerr << " --> line " << line << ":" << col << "\n";
 
-            // Extract the requested line from the source
-            int cur = 1;
-            std::string lineText;
-            std::istringstream ss(src);
-            while (std::getline(ss, lineText)) {
-                if (cur++ == line) break;
+            if (!currentFilePath.empty() && sourceMap.count(currentFilePath)) {
+                const std::string& src = sourceMap.at(currentFilePath);
+                int cur = 1;
+                std::string lineText;
+                std::istringstream ss(src);
+                while (std::getline(ss, lineText)) {
+                    if (cur++ == line) break;
+                }
+                std::string ln = std::to_string(line);
+                int caretOff = (col > 1) ? col - 1 : 0;
+                std::cerr << std::string(ln.size(), ' ') << " |\n";
+                std::cerr << ln << " | " << lineText << "\n";
+                std::cerr << std::string(ln.size(), ' ') << " | "
+                          << std::string(caretOff, ' ')
+                          << "\033[1;33m^--- here\033[0m\n\n";
             }
-
-            std::cerr << "    " << lineText << "\n";
-            int caretOff = (col > 0) ? col - 1 : 0;
-            std::cerr << "    " << std::string(caretOff, ' ') << "\033[1;33m^--- Here\033[0m\n\n";
-        } else if (line > 0) {
-            std::cerr << " --> line " << line << ", col " << col << "\n\n";
         }
 
         exit(1);
     }
 
-    LLVMCodegen() : Builder(Context) {
+    LLVMCodegen() : pCtx(std::make_unique<LLVMContext>()), Context(*pCtx), Builder(Context) {
         TheModule = std::make_unique<Module>("QuirkCompiler", Context);
         typeGen = std::make_unique<TypeGen>(Context, StructTypes);
         flowGen = std::make_unique<ControlFlowGen>(Context, TheModule.get(), Builder);
@@ -103,7 +137,61 @@ class LLVMCodegen {
         mathGen = std::make_unique<MathGen>(Context, Builder);
     }
 
-    void compile(const std::vector<std::unique_ptr<Node>>& nodes, raw_ostream& out = errs()) {
+   private:
+    // ── run LLVM passes on the current module at the configured opt level ──
+    //
+    // Opt levels:
+    //   -O0  → no passes. Currently unsafe: codegen emits "loose" IR that
+    //          depends on at least the mem2reg/instcombine cleanup to be
+    //          executable. Kept for future codegen rewrites.
+    //   -O1  → minimal correctness pass pipeline (DEFAULT) — mem2reg + early
+    //          CSE + instcombine + simplifycfg + DCE. Fixes the IR patterns
+    //          the JIT needs without paying for full inlining/loop-opts/etc.
+    //          Roughly 3-5× faster than O2 on short-running programs.
+    //   -O2/3→ full LLVM pass pipeline. Slower compile, faster runtime —
+    //          worth it for compute-heavy code (`--release`).
+    void runOptimizations() {
+        if (optLevel <= 0) {
+            if (verbose) std::cerr << "[Codegen] skipping optimization passes (-O0)\n";
+            return;
+        }
+        legacy::PassManager PM;
+        legacy::FunctionPassManager FPM(TheModule.get());
+
+        if (optLevel == 1) {
+            if (verbose) std::cerr << "[Codegen] running minimal O1 passes\n";
+            // Order is significant. SROA breaks aggregate allocas into
+            // scalar pieces and resolves the i8*↔struct* type mismatches
+            // our codegen leaves around. mem2reg promotes the resulting
+            // scalar allocas to SSA. instcombine+simplifycfg+DCE clean up.
+            // A second instcombine pass after CFG simplification catches
+            // dead patterns the first pass exposed.
+            FPM.add(createSROAPass());
+            FPM.add(createPromoteMemoryToRegisterPass());  // mem2reg
+            FPM.add(createEarlyCSEPass(/*UseMemorySSA=*/false));
+            FPM.add(createInstructionCombiningPass());     // instcombine
+            FPM.add(createCFGSimplificationPass());        // simplifycfg
+            FPM.add(createInstructionCombiningPass());     // catch newly-folded
+            FPM.add(createDeadCodeEliminationPass());      // dce
+            FPM.doInitialization();
+            for (auto& F : *TheModule) {
+                if (!F.isDeclaration()) FPM.run(F);
+            }
+            FPM.doFinalization();
+            return;
+        }
+
+        if (verbose) std::cerr << "[Codegen] running O" << optLevel << " passes\n";
+        PassManagerBuilder PMB;
+        PMB.OptLevel  = optLevel;
+        PMB.SizeLevel = 0;
+        PMB.Inliner   = createFunctionInliningPass(PMB.OptLevel, PMB.SizeLevel, false);
+        PMB.populateModulePassManager(PM);
+        PM.run(*TheModule);
+    }
+
+    // ── private: build IR from AST (no optimization, no emit) ──────────────
+    void buildIR(const std::vector<std::unique_ptr<Node>>& nodes) {
         if (verbose) std::cerr << "[Codegen] compile() started — " << nodes.size() << " top-level node(s)\n";
         builtinGen->Initialize();
 
@@ -122,7 +210,14 @@ class LLVMCodegen {
         // Built-in Type struct (for self.__class)
         if (!StructTypes.count("Type")) StructTypes["Type"] = StructType::create(Context, "struct.Type");
         // Built-in Callable struct (for lambdas)
+        // Body must be { i8*, i8* } (fn ptr + env ptr) — pre-fill before Pass 2 so it is
+        // never overwritten from the .quirk field list (emitCallableCall depends on these GEP offsets).
         if (!StructTypes.count("Callable")) StructTypes["Callable"] = StructType::create(Context, "struct.Callable");
+        if (StructTypes["Callable"]->isOpaque()) {
+            Type* i8PtrTy = Type::getInt8PtrTy(Context);
+            StructTypes["Callable"]->setBody({i8PtrTy, i8PtrTy});
+            structGen->registerStructLayout("Callable", {"fn", "env"});
+        }
 
         // Pass 1b: Register enum variant lists (body generation deferred to after Pass 3)
         for (const auto& node : nodes) {
@@ -130,6 +225,63 @@ class LLVMCodegen {
                 enumVariants[e->name] = e->variants;
             }
         }
+
+        // --- Virtual dispatch pre-scan ---
+        // Determine which structs get __type_id (vtable-eligible):
+        //   - Has at least one user-defined (non-extern) method with a body
+        //   - Does NOT inherit from any all-extern struct (String, List, etc.) or Exception
+        // "Callable" and "Type" are built-in special structs, always excluded.
+        {
+            // Structs whose __init is extern are C-backed (memory layout defined by C runtime).
+            // We must NOT add __type_id to those, or the C ABI would break.
+            // String, StringIterator, List, Map, Char, etc. all have extern __init.
+            std::set<std::string> externOnly = {"Type", "Callable", "Tuple"};
+            for (const auto& n : nodes) {
+                if (auto f = dynamic_cast<FunctionNode*>(n.get())) {
+                    if (!f->cls.empty() && f->isExtern &&
+                        f->name.find("__init") != std::string::npos) {
+                        externOnly.insert(f->cls);
+                    }
+                }
+            }
+
+            // Preliminary hierarchy from AST parents (structHierarchy built during Pass 2)
+            std::map<std::string, std::vector<std::string>> astH;
+            for (const auto& n : nodes)
+                if (auto s = dynamic_cast<StructNode*>(n.get())) astH[s->name] = s->parents;
+
+            // Recursively check: struct is vtable-eligible iff it and all ancestors
+            // are not in externOnly and are not "Exception".
+            auto eligible = [&](const std::string& name, std::set<std::string>& vis, auto& self) -> bool {
+                if (vis.count(name)) return true;
+                vis.insert(name);
+                if (externOnly.count(name) || name == "Exception") return false;
+                auto it = astH.find(name);
+                if (it != astH.end())
+                    for (const auto& p : it->second)
+                        if (!self(p, vis, self)) return false;
+                return true;
+            };
+
+            for (const auto& n : nodes) {
+                if (auto s = dynamic_cast<StructNode*>(n.get())) {
+                    std::set<std::string> vis;
+                    if (eligible(s->name, vis, eligible)) vtableEligible.insert(s->name);
+                }
+            }
+
+            // Assign unique type IDs (1-based; 0 = no type / extern)
+            int nextId = 1;
+            for (const auto& n : nodes)
+                if (auto s = dynamic_cast<StructNode*>(n.get()))
+                    if (vtableEligible.count(s->name)) structTypeIds[s->name] = nextId++;
+        }
+        // ---------------------------------
+
+        std::unordered_map<std::string, StructNode*> structNodeMap;
+        for (const auto& node : nodes)
+            if (auto s = dynamic_cast<StructNode*>(node.get()))
+                structNodeMap[s->name] = s;
 
         if (verbose) std::cerr << "[Codegen] Pass 2: Filling struct bodies and resolving inheritance\n";
         for (const auto& node : nodes) {
@@ -144,14 +296,9 @@ class LLVMCodegen {
 
                 auto extractFields = [&](StructNode* sn, std::vector<Type*>& types, std::vector<std::string>& names, auto& extractRef) -> void {
                     for (const std::string& parentName : sn->parents) {
-                        for (const auto& searchNode : nodes) {
-                            if (auto ps = dynamic_cast<StructNode*>(searchNode.get())) {
-                                if (ps->name == parentName) {
-                                    extractRef(ps, types, names, extractRef); 
-                                    break;
-                                }
-                            }
-                        }
+                        auto it = structNodeMap.find(parentName);
+                        if (it != structNodeMap.end())
+                            extractRef(it->second, types, names, extractRef);
                     }
                     for (const auto& field : sn->fields) {
                         Type* t = typeGen->getLLVMType(field.type);
@@ -161,9 +308,17 @@ class LLVMCodegen {
                     }
                 };
 
-                structHierarchy[s->name] = s->parents; 
+                structHierarchy[s->name] = s->parents;
                 structGen->setHierarchy(&structHierarchy);
+                typeExtensions->setHierarchy(&structHierarchy, &StructTypes);
                 extractFields(s, elementTypes, fieldNames, extractFields);
+
+                // Prepend __type_id (i32) as field 0 for vtable-eligible structs.
+                // This provides the runtime type tag needed for virtual dispatch.
+                if (vtableEligible.count(s->name)) {
+                    elementTypes.insert(elementTypes.begin(), Type::getInt32Ty(Context));
+                    fieldNames.insert(fieldNames.begin(), "__type_id");
+                }
 
                 st->setBody(elementTypes);
                 structGen->registerStructLayout(s->name, fieldNames);
@@ -176,17 +331,30 @@ class LLVMCodegen {
             StructTypes["Type"]->setBody({strPtrTy, strPtrTy});
             structGen->registerStructLayout("Type", {"name", "parent"});
         }
-        // Fill built-in Callable struct body: { i8* fn, i8* env }
-        if (StructTypes.count("Callable") && StructTypes["Callable"]->isOpaque()) {
-            Type* i8PtrTy = Type::getInt8PtrTy(Context);
-            StructTypes["Callable"]->setBody({i8PtrTy, i8PtrTy});
-            structGen->registerStructLayout("Callable", {"fn", "env"});
-        }
 
         if (verbose) std::cerr << "[Codegen] Pass 3: Declaring function prototypes\n";
         for (const auto& node : nodes) {
             if (auto func = dynamic_cast<FunctionNode*>(node.get())) {
                 functionDeclarations[func->name] = func;
+                // Also key by linkageName so processCallArgs (which looks up
+                // via the LLVM name = linkage name) can find the FunctionNode
+                // for default-arg filling on library functions.
+                if (!func->linkageName.empty() && func->linkageName != func->name) {
+                    functionDeclarations[func->linkageName] = func;
+                }
+                if (!func->moduleName.empty() && func->cls.empty()) {
+                    moduleFunctionIndex[{func->moduleName, func->name}] = func;
+                    // Module names from file paths end in ".index" for
+                    // foo/index.quirk packages, but `use foo` aliases to "foo".
+                    // Index under the trimmed form too so the lookup matches.
+                    std::string trimmed = func->moduleName;
+                    const std::string idx = ".index";
+                    if (trimmed.size() > idx.size() &&
+                        trimmed.compare(trimmed.size() - idx.size(), idx.size(), idx) == 0) {
+                        trimmed = trimmed.substr(0, trimmed.size() - idx.size());
+                        moduleFunctionIndex[{trimmed, func->name}] = func;
+                    }
+                }
 
                 // --- NEW: Register variadic functions (params declared as ...name: List) ---
                 // We check if any parameter name starts with "..." which is how the parser
@@ -200,15 +368,30 @@ class LLVMCodegen {
                 }
                 // --------------------------------------------------------------------------
                 
-                if (func->name == "main" || builtinGen->isBuiltin(func->name)) continue;
+                // Skip Pass 3 registration for `main` and for top-level user
+                // functions that would shadow a hard builtin (`print`, `write`,
+                // `type`, ...). A function counts as user-toplevel only when
+                // `linkageName == name` — module-prefixed library functions
+                // (e.g. `Csv_write` for `csv.write`) get a distinct linkage
+                // name during parsing and ARE registered, so libraries can
+                // freely use builtin-shaped names.
+                if (func->name == "main") continue;
+                if (builtinGen->isBuiltin(func->name) && func->cls.empty()
+                    && func->linkageName == func->name) continue;
                 if (verbose) std::cerr << "[Codegen]   Declaring prototype: " << func->name << "\n";
                 Type* retTy = typeGen->getFunctionReturnType(func->returnType);
+                bool retIsBool = func->isExtern && retTy->isIntegerTy(1);
                 // C ABI: Bool return values are int (i32), not i1.
                 // Widen i1 return types for extern functions to avoid truncation.
-                if (func->isExtern && retTy->isIntegerTy(1))
-                    retTy = Type::getInt32Ty(Context);
+                if (retIsBool) retTy = Type::getInt32Ty(Context);
                 std::vector<Type*> argTypes;
-                if (!func->cls.empty() && !func->isStatic) argTypes.push_back(typeGen->getLLVMType(func->cls));
+                if (!func->cls.empty() && !func->isStatic) {
+                    Type* selfTy = typeGen->getLLVMType(func->cls);
+                    // C ABI: Bool self is passed as int (i32), not i1.
+                    if (func->isExtern && selfTy && selfTy->isIntegerTy(1))
+                        selfTy = Type::getInt32Ty(Context);
+                    argTypes.push_back(selfTy);
+                }
                 for (const auto& param : func->parameters) {
                     Type* t = typeGen->getLLVMType(param.type);
                     // C ABI: Bool params are passed as int (i32), not i1.
@@ -218,10 +401,11 @@ class LLVMCodegen {
                     argTypes.push_back(t);
                 }
                 FunctionType* FT = FunctionType::get(retTy, argTypes, false);
-                
+
                 // --- NEW: LINKAGE NAME INJECTION ---
                 std::string llvmName = func->linkageName.empty() ? func->name : func->linkageName;
                 Function::Create(FT, Function::ExternalLinkage, llvmName, TheModule.get());
+                if (retIsBool) externBoolReturnFunctions.insert(llvmName);
 
                 // --- NEW: Also register variadic functions by their LLVM linkage name ---
                 // processCallArgs looks up by func->getName().str() which returns the LLVM
@@ -234,13 +418,57 @@ class LLVMCodegen {
                 // ------------------------------------------------------------------------
 
                 // Populate structInitMap so StructGen can find renamed extern __init.
-                // e.g. String__init in libs/core/string.qk -> "Core_String_String___init"
+                // e.g. String__init in libs/core/string.quirk -> "Core_String_String___init"
                 if (func->isExtern && !func->cls.empty() &&
                     func->name.find("__init") != std::string::npos) {
                     structGen->registerStructInit(func->cls, llvmName);
                 }
             }
         }
+
+        // --- Post-Pass-3: Virtual dispatch setup ---
+        // Register type IDs with StructGen so allocateAndInit can stamp __type_id.
+        for (const auto& [name, id] : structTypeIds)
+            structGen->registerTypeId(name, id);
+
+        // Build overrideMap: for each user-defined method in a vtable-eligible struct,
+        // find ancestor structs that also define that method and record the override.
+        {
+            // Extract raw method name from full funcName and its cls prefix.
+            auto methodSuffix = [](const std::string& fn, const std::string& cls) -> std::string {
+                if (fn.size() <= cls.size()) return "";
+                std::string s = fn.substr(cls.size());
+                // "__init", "__str", etc.: suffix starts with "__"
+                if (s.size() >= 2 && s[0] == '_' && s[1] == '_') return s;
+                // regular methods: "ClassName_method" → strip the leading "_"
+                if (!s.empty() && s[0] == '_') return s.substr(1);
+                return "";
+            };
+
+            for (const auto& [funcName, funcNode] : functionDeclarations) {
+                const std::string& cls = funcNode->cls;
+                if (cls.empty() || !vtableEligible.count(cls) || funcNode->isExtern) continue;
+                std::string rawMethod = methodSuffix(funcName, cls);
+                if (rawMethod.empty()) continue;
+
+                auto checkAncestor = [&](const std::string& parent, auto& self) -> void {
+                    if (!vtableEligible.count(parent)) return;
+                    std::string parentFn = (rawMethod.size() >= 2 && rawMethod[0] == '_' && rawMethod[1] == '_')
+                        ? parent + rawMethod
+                        : parent + "_" + rawMethod;
+                    if (functionDeclarations.count(parentFn))
+                        overrideMap[parent][rawMethod].push_back({cls, structTypeIds[cls]});
+                    auto hit = structHierarchy.find(parent);
+                    if (hit != structHierarchy.end())
+                        for (const auto& gp : hit->second) self(gp, self);
+                };
+
+                auto hit = structHierarchy.find(cls);
+                if (hit != structHierarchy.end())
+                    for (const auto& parent : hit->second) checkAncestor(parent, checkAncestor);
+            }
+        }
+        // -------------------------------------------
 
         // Pass 3b: Generate __EnumName_str(i32)->String* helpers
         // Runs after Pass 3 so String's body and __init prototype are both declared.
@@ -317,11 +545,13 @@ class LLVMCodegen {
 
         // --- NEW: Push 'main' to the shadow stack! ---
         FunctionCallee pushFrame = TheModule->getOrInsertFunction("quirk_push_frame",
-            Type::getVoidTy(Context), Type::getInt8PtrTy(Context), Type::getInt8PtrTy(Context));
-        
+            Type::getVoidTy(Context), Type::getInt8PtrTy(Context), Type::getInt8PtrTy(Context),
+            Type::getInt32Ty(Context));
+
         Value* mainFuncName = Builder.CreateGlobalStringPtr("main");
-        Value* mainFileName = Builder.CreateGlobalStringPtr("main"); 
-        Builder.CreateCall(pushFrame, {mainFuncName, mainFileName});
+        Value* mainFileName = Builder.CreateGlobalStringPtr("main");
+        Builder.CreateCall(pushFrame, {mainFuncName, mainFileName,
+            ConstantInt::get(Type::getInt32Ty(Context), 0)});
         // ---------------------------------------------
         
         for (const auto& node : nodes) {
@@ -330,19 +560,40 @@ class LLVMCodegen {
                 if (func->name == "main") {
                     for (const auto& stmt : func->body) handleStatement(stmt.get(), mainFunc);
                 }
-            } else if (!dynamic_cast<StructNode*>(node.get()) && !dynamic_cast<FunctionNode*>(node.get())) {
+            } else if (!dynamic_cast<StructNode*>(node.get()) && !dynamic_cast<FunctionNode*>(node.get()) &&
+                       !dynamic_cast<TypeAliasNode*>(node.get()) &&
+                       !dynamic_cast<InterfaceNode*>(node.get())) {
                  handleStatement(node.get(), mainFunc);
             }
         }
 
-        // --- NEW: Pop 'main' from the shadow stack! ---
-        FunctionCallee popFrame = TheModule->getOrInsertFunction("quirk_pop_frame", Type::getVoidTy(Context));
-        Builder.CreateCall(popFrame);
-        // ----------------------------------------------
-        
-        if (!Builder.GetInsertBlock()->getTerminator()) Builder.CreateRet(ConstantInt::get(Type::getInt32Ty(Context), 0));
-        if (verbose) std::cerr << "[Codegen] compile() finished — emitting IR\n";
+        // Pop 'main' from the shadow stack and emit fallthrough return, but only if
+        // the current block doesn't already have a terminator (explicit return 0 already
+        // popped the frame and emitted ret via ReturnNode handling).
+        if (!Builder.GetInsertBlock()->getTerminator()) {
+            FunctionCallee popFrame = TheModule->getOrInsertFunction("quirk_pop_frame", Type::getVoidTy(Context));
+            Builder.CreateCall(popFrame);
+            Builder.CreateRet(ConstantInt::get(Type::getInt32Ty(Context), 0));
+        }
+        if (verbose) std::cerr << "[Codegen] buildIR() done\n";
+    }
+
+   public:
+    // Compile to IR file (used by --emit-ir and --compile-only)
+    void compile(const std::vector<std::unique_ptr<Node>>& nodes, raw_ostream& out = errs()) {
+        buildIR(nodes);
+        runOptimizations();
+        if (verbose) std::cerr << "[Codegen] emitting IR\n";
         TheModule->print(out, nullptr);
+    }
+
+    // Build + optimize, then transfer module ownership to the caller (for JIT use).
+    // The codegen object must not be used after this call.
+    std::pair<std::unique_ptr<Module>, std::unique_ptr<LLVMContext>>
+    compileAndRelease(const std::vector<std::unique_ptr<Node>>& nodes) {
+        buildIR(nodes);
+        runOptimizations();
+        return { std::move(TheModule), std::move(pCtx) };
     }
 
     void compileFunction(FunctionNode* node) {
@@ -386,14 +637,195 @@ class LLVMCodegen {
             varGen->defineArgument(argName, &*argIt);
         }
 
+        // --- where clause guard ---
+        if (node->whereClause) {
+            Value* cond = handleExpression(node->whereClause.get());
+            if (cond) {
+                Value* condBool;
+                if (cond->getType()->isIntegerTy(1))
+                    condBool = cond;
+                else if (cond->getType()->isIntegerTy())
+                    condBool = Builder.CreateICmpNE(cond, ConstantInt::get(cond->getType(), 0), "where_cond");
+                else
+                    condBool = cond;
+
+                BasicBlock* failBB = BasicBlock::Create(Context, "where_fail", F);
+                BasicBlock* passBB = BasicBlock::Create(Context, "where_pass", F);
+                Builder.CreateCondBr(condBool, passBB, failBB);
+
+                Builder.SetInsertPoint(failBB);
+                // Throw WhereConditionError — same sequence as generateThrow
+                std::string errMsg = "where clause violated in '" + node->name + "'";
+                Value* rawMsg = Builder.CreateGlobalStringPtr(errMsg);
+                std::vector<Value*> msgArgs = {rawMsg};
+                Value* strObj = structGen->allocateAndInit("String", msgArgs);
+                std::vector<Value*> excArgs = {strObj};
+                Value* excObj = structGen->allocateAndInit("WhereConditionError", excArgs);
+
+                if (StructTypes.count("Exception")) {
+                    Type* baseExcTy = PointerType::getUnqual(StructTypes["Exception"]);
+                    Value* baseExc  = Builder.CreateBitCast(excObj, baseExcTy);
+                    Value* filePtr  = Builder.CreateStructGEP(StructTypes["Exception"], baseExc, 2);
+                    Value* rawFile  = Builder.CreateGlobalStringPtr(node->moduleName.empty() ? "unknown" : node->moduleName);
+                    std::vector<Value*> fileArgs = {rawFile};
+                    Builder.CreateStore(structGen->allocateAndInit("String", fileArgs), filePtr);
+                    Value* calleePtr = Builder.CreateStructGEP(StructTypes["Exception"], baseExc, 4);
+                    Value* rawCallee = Builder.CreateGlobalStringPtr(node->name);
+                    std::vector<Value*> calleeArgs = {rawCallee};
+                    Builder.CreateStore(structGen->allocateAndInit("String", calleeArgs), calleePtr);
+                }
+
+                Value* rawExc = Builder.CreateBitCast(excObj, Type::getInt8PtrTy(Context));
+                FunctionCallee captureFn = TheModule->getOrInsertFunction(
+                    "quirk_capture_traceback",
+                    FunctionType::get(Type::getVoidTy(Context), {Type::getInt8PtrTy(Context)}, false));
+                Builder.CreateCall(captureFn, {rawExc});
+                Builder.CreateCall(TheModule->getFunction("quirk_set_exception"), {rawExc});
+
+                Value* depth    = Builder.CreateCall(TheModule->getFunction("quirk_get_try_depth"));
+                Value* hasCatch = Builder.CreateICmpSGE(depth, ConstantInt::get(Type::getInt32Ty(Context), 0));
+                BasicBlock* jumpBB  = BasicBlock::Create(Context, "where_longjmp", F);
+                BasicBlock* crashBB = BasicBlock::Create(Context, "where_crash",   F);
+                Builder.CreateCondBr(hasCatch, jumpBB, crashBB);
+
+                Builder.SetInsertPoint(jumpBB);
+                Value* activeBuf = Builder.CreateCall(TheModule->getFunction("quirk_get_current_jmp_buf"));
+                Builder.CreateCall(TheModule->getFunction("quirk_pop_try"));
+                Builder.CreateCall(TheModule->getFunction("longjmp"),
+                                   {activeBuf, ConstantInt::get(Type::getInt32Ty(Context), 1)});
+                Builder.CreateUnreachable();
+
+                Builder.SetInsertPoint(crashBB);
+                flowGen->emitUnhandledException(StructTypes);
+
+                Builder.SetInsertPoint(passBB);
+            }
+        }
+        // ---------------------------------
+
         // --- NEW: INJECT SHADOW STACK PUSH ---
-        FunctionCallee pushFrame = TheModule->getOrInsertFunction("quirk_push_frame",
-            Type::getVoidTy(Context), Type::getInt8PtrTy(Context), Type::getInt8PtrTy(Context));
-        
-        Value* funcNameVal = Builder.CreateGlobalStringPtr(node->name);
-        Value* fileNameVal = Builder.CreateGlobalStringPtr(node->moduleName);
-        Builder.CreateCall(pushFrame, {funcNameVal, fileNameVal});
+        // Skipped for decorator wrappers: they're synthetic dispatchers, not
+        // user-visible call sites. The wrapped function (and any decorator
+        // lambdas in the chain) already push their own frames, so tracebacks
+        // are unaffected. Removing this saves two extern calls per decorated
+        // invocation — measurably hot on tight decorator loops.
+        if (!node->isDecoratorWrapper) {
+            FunctionCallee pushFrame = TheModule->getOrInsertFunction("quirk_push_frame",
+                Type::getVoidTy(Context), Type::getInt8PtrTy(Context), Type::getInt8PtrTy(Context),
+                Type::getInt32Ty(Context));
+
+            Value* funcNameVal = Builder.CreateGlobalStringPtr(node->name);
+            Value* fileNameVal = Builder.CreateGlobalStringPtr(node->moduleName);
+            Value* lineNumVal  = ConstantInt::get(Type::getInt32Ty(Context), node->line);
+            Builder.CreateCall(pushFrame, {funcNameVal, fileNameVal, lineNumVal});
+        }
         // -------------------------------------
+
+        // ── Decorator wrapper: lazy-init + cached dispatch ───────────────────
+        // For `@dec define foo(args) {...}`, the parser produced this wrapper
+        // function with `isDecoratorWrapper = true` and stashed the chain
+        // expression (`dec(foo__inner__)`) in `decoratorChainExpr`. Emit:
+        //
+        //   @foo__wrapper = internal global Callable* null
+        //
+        //   define foo(args):
+        //     entry:
+        //       %cached = load Callable*, @foo__wrapper
+        //       %null   = icmp eq Callable* %cached, null
+        //       br %null, label %init, label %ready
+        //     init:
+        //       %fresh = <evaluate decoratorChainExpr — yields Callable*>
+        //       store %fresh, @foo__wrapper
+        //       br label %ready
+        //     ready:
+        //       %wrapper = load Callable*, @foo__wrapper
+        //       <boxed args>
+        //       %raw = call %wrapper(boxed args...)
+        //       <unbox %raw to returnType>
+        //       ret <result>
+        //
+        // The chain runs exactly once over the program's lifetime — captures
+        // in stateful decorators (`@cached`, `@retry`) persist across calls.
+        if (node->isDecoratorWrapper && node->decoratorChainExpr) {
+            StructType* callableTy = StructTypes["Callable"];
+            Type* callablePtrTy   = PointerType::getUnqual(callableTy);
+            Type* i8PtrTy         = Type::getInt8PtrTy(Context);
+
+            // Module-internal global, one per wrapper. Name keyed on the
+            // function so collisions can't happen across files.
+            std::string gName = "__qd_wrap_" + (node->linkageName.empty() ? node->name : node->linkageName);
+            GlobalVariable* gv = TheModule->getNamedGlobal(gName);
+            if (!gv) {
+                gv = new GlobalVariable(*TheModule, callablePtrTy, /*isConstant=*/false,
+                                        GlobalValue::InternalLinkage,
+                                        ConstantPointerNull::get(cast<PointerType>(callablePtrTy)),
+                                        gName);
+            }
+
+            BasicBlock* initBB  = BasicBlock::Create(Context, "dec_init",  F);
+            BasicBlock* readyBB = BasicBlock::Create(Context, "dec_ready", F);
+
+            // Entry block — branch on cache state.
+            Value* cached = Builder.CreateLoad(callablePtrTy, gv, "dec_cached");
+            Value* isNull = Builder.CreateICmpEQ(cached,
+                ConstantPointerNull::get(cast<PointerType>(callablePtrTy)), "dec_uninit");
+            Builder.CreateCondBr(isNull, initBB, readyBB);
+
+            // Init block — evaluate the decorator chain once and cache.
+            Builder.SetInsertPoint(initBB);
+            Value* freshCallable = handleExpression(node->decoratorChainExpr.get());
+            if (!freshCallable) {
+                fatalError("decorator chain produced no value for '" + node->name + "'",
+                           node->line, node->col);
+            }
+            // The chain's outermost value might come back as i8* (when the
+            // final decorator returns a Callable through the Callable ABI).
+            // Cast back to Callable* before storing.
+            if (freshCallable->getType() == i8PtrTy) {
+                freshCallable = Builder.CreateBitCast(freshCallable, callablePtrTy, "dec_cast");
+            }
+            Builder.CreateStore(freshCallable, gv);
+            Builder.CreateBr(readyBB);
+
+            // Ready block — dispatch through the cached wrapper.
+            Builder.SetInsertPoint(readyBB);
+            Value* wrapper = Builder.CreateLoad(callablePtrTy, gv, "dec_wrapper");
+            std::vector<Value*> argVals;
+            for (auto& p : node->parameters) {
+                if (Value* v = varGen->resolveVariable(p.name)) argVals.push_back(v);
+            }
+            Value* raw = emitCallableCall(wrapper, argVals);
+
+            // Unbox the i8* result back to whatever the wrapper claims to
+            // return. Same policy as the in-line Callable-variable dispatch.
+            // No pop_frame here — we skipped the wrapper's push, so the
+            // shadow-stack is unchanged across this dispatcher.
+            Value* unboxed = raw;
+            const std::string& rt = node->returnType;
+            if (rt == "void") {
+                Builder.CreateRetVoid();
+                currentCodegenClass = prevClass;
+                if (prevBB) Builder.SetInsertPoint(prevBB);
+                return;
+            }
+            if (rt == "Int" || rt == "Int32") {
+                unboxed = Builder.CreatePtrToInt(raw, Type::getInt32Ty(Context), "dec_int");
+            } else if (rt == "Bool") {
+                unboxed = Builder.CreateICmpNE(raw,
+                    ConstantPointerNull::get(cast<PointerType>(raw->getType())), "dec_bool");
+            } else if (rt == "Double" || rt == "Float") {
+                Value* asInt = Builder.CreatePtrToInt(raw, Type::getInt64Ty(Context));
+                unboxed = Builder.CreateBitCast(asInt, Type::getDoubleTy(Context), "dec_dbl");
+            } else if (!rt.empty() && StructTypes.count(rt)) {
+                unboxed = Builder.CreateBitCast(raw,
+                    PointerType::getUnqual(StructTypes[rt]), "dec_struct");
+            }
+            Builder.CreateRet(unboxed);
+
+            currentCodegenClass = prevClass;
+            if (prevBB) Builder.SetInsertPoint(prevBB);
+            return;
+        }
 
         for (const auto& stmt : node->body) {
             handleStatement(stmt.get(), F);
@@ -407,14 +839,15 @@ class LLVMCodegen {
             // that calling super().__init() doesn't silently overwrite the type.
             bool isInitMethod = node->name.find("__init") != std::string::npos && !node->cls.empty();
             if (isInitMethod && StructTypes.count("Exception") && StructTypes.count("String")) {
-                std::function<bool(const std::string&)> inheritsException = [&](const std::string& c) -> bool {
+                auto inheritsException = [&](const std::string& c, auto& self) -> bool {
                     if (c == "Exception") return true;
-                    if (structHierarchy.count(c))
-                        for (const auto& p : structHierarchy.at(c))
-                            if (inheritsException(p)) return true;
+                    auto it = structHierarchy.find(c);
+                    if (it != structHierarchy.end())
+                        for (const auto& p : it->second)
+                            if (self(p, self)) return true;
                     return false;
                 };
-                if (inheritsException(node->cls)) {
+                if (inheritsException(node->cls, inheritsException)) {
                     Value* selfVal = &*F->arg_begin();
                     Value* excPtr  = Builder.CreateBitCast(selfVal, PointerType::getUnqual(StructTypes["Exception"]));
                     Value* typeFieldPtr = Builder.CreateStructGEP(StructTypes["Exception"], excPtr, 0);
@@ -446,11 +879,30 @@ class LLVMCodegen {
         for (size_t i = 0; i < raw.size(); i++) {
             if (raw[i] == '\\' && i + 1 < raw.size()) {
                 switch (raw[i + 1]) {
-                    case 'n': res += '\n'; break;
-                    case 't': res += '\t'; break;
-                    case 'r': res += '\r'; break;
+                    case 'n':  res += '\n'; break;
+                    case 't':  res += '\t'; break;
+                    case 'r':  res += '\r'; break;
+                    case 'a':  res += '\a'; break;
+                    case 'b':  res += '\b'; break;
+                    case 'f':  res += '\f'; break;
+                    case 'v':  res += '\v'; break;
                     case '\\': res += '\\'; break;
-                    case '"': res += '\"'; break;
+                    case '"':  res += '\"'; break;
+                    case '\'': res += '\''; break;
+                    case 'x': {
+                        // \xNN — 2 hex digits (e.g. \x1b for ESC)
+                        auto isHex = [](char c) {
+                            return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+                        };
+                        if (i + 3 < raw.size() && isHex(raw[i + 2]) && isHex(raw[i + 3])) {
+                            char buf[3] = { raw[i + 2], raw[i + 3], '\0' };
+                            res += (char)std::strtol(buf, nullptr, 16);
+                            i += 2;  // consume the two hex digits in addition to the i++ below
+                        } else {
+                            res += raw[i]; res += raw[i + 1];
+                        }
+                        break;
+                    }
                     default: res += raw[i]; res += raw[i + 1];
                 }
                 i++;
@@ -473,8 +925,41 @@ class LLVMCodegen {
             return ConstantPointerNull::get(cast<PointerType>(i8PtrTy));
         if (val->getType() == i8PtrTy)
             return val;
-        if (val->getType()->isPointerTy())
+        if (val->getType()->isPointerTy()) {
+            // Auto-call __str on user-defined structs so print(obj) works like print(obj.__str())
+            Type* pointee = val->getType()->getPointerElementType();
+            if (pointee->isStructTy()) {
+                std::string sName = cast<StructType>(pointee)->getName().str();
+                if (sName.find("struct.") == 0) sName = sName.substr(7);
+                // Only auto-str user-defined structs (not List, String, Map, Callable, etc.)
+                static const std::set<std::string> builtinStructs = {
+                    "String", "List", "Map", "Set", "Queue", "Callable", "Tuple",
+                    "Type", "Any", "Exception", "ListIterator", "File"
+                };
+                if (!builtinStructs.count(sName) && !sName.empty()) {
+                    Function* strFn = TheModule->getFunction(sName + "___str");
+                    if (!strFn) strFn = TheModule->getFunction(sName + "__str");
+                    if (strFn) {
+                        Value* strVal = Builder.CreateCall(strFn, {val}, sName + "_str");
+                        return Builder.CreateBitCast(strVal, i8PtrTy);
+                    }
+                }
+            }
             return Builder.CreateBitCast(val, i8PtrTy);
+        }
+        // i1 booleans: box as Any_Bool so quirk_opaque_to_string returns "true"/"false"
+        if (val->getType()->isIntegerTy(1)) {
+            Function* boxBool = TheModule->getFunction("Core_Primitives_Any_box_bool");
+            if (!boxBool) {
+                FunctionType* ft = FunctionType::get(
+                    Type::getInt8PtrTy(Context),
+                    {Type::getInt32Ty(Context)}, false);
+                boxBool = Function::Create(ft, Function::ExternalLinkage,
+                                           "Core_Primitives_Any_box_bool", TheModule.get());
+            }
+            Value* ext = Builder.CreateZExt(val, Type::getInt32Ty(Context));
+            return Builder.CreateCall(boxBool, {ext});
+        }
         if (val->getType()->isIntegerTy())
             return Builder.CreateIntToPtr(val, i8PtrTy);
         if (val->getType()->isDoubleTy()) {
@@ -497,6 +982,84 @@ class LLVMCodegen {
         if (!type.empty() && StructTypes.count(type))
             return Builder.CreateBitCast(raw, PointerType::getUnqual(StructTypes[type]));
         return raw; // pass through as i8*
+    }
+
+    // Generate (or fetch from cache) a `i8*(i8* env, i8*…)` thunk that wraps
+    // a user-defined function in the Callable ABI: unbox each i8* arg to its
+    // declared type, call the real function, box the return back to i8*.
+    //
+    // The thunk lets `define`d functions be used as first-class Callable
+    // values — passed as args, stored in variables, returned. The env pointer
+    // is unused (always null) because user-defined functions have no captures.
+    //
+    // Returns the thunk Function*; the caller allocates the wrapping Callable
+    // struct {thunk, null} at the use site.
+    Function* getOrCreateFunctionThunk(const std::string& fnName) {
+        if (functionThunkCache.count(fnName)) return functionThunkCache[fnName];
+        if (!functionDeclarations.count(fnName)) return nullptr;
+        FunctionNode* funcNode = functionDeclarations[fnName];
+        Function* realFn = resolveFunction(fnName, currentCodegenClass);
+        if (!realFn) return nullptr;
+        Type* i8PtrTy = Type::getInt8PtrTy(Context);
+
+        std::vector<Type*> thunkParamTypes = {i8PtrTy}; // env (unused)
+        for (size_t i = 0; i < funcNode->parameters.size(); i++)
+            thunkParamTypes.push_back(i8PtrTy);
+        FunctionType* thunkTy = FunctionType::get(i8PtrTy, thunkParamTypes, false);
+        Function* thunk = Function::Create(
+            thunkTy, Function::InternalLinkage,
+            fnName + "__cb_thunk", TheModule.get());
+
+        // Stash current insert point — we'll restore after writing the thunk body.
+        BasicBlock* savedBB = Builder.GetInsertBlock();
+        BasicBlock* entryBB = BasicBlock::Create(Context, "entry", thunk);
+        Builder.SetInsertPoint(entryBB);
+
+        // Unbox each arg according to its declared parameter type.
+        std::vector<Value*> realArgs;
+        auto argIt = thunk->arg_begin();
+        ++argIt; // skip env
+        for (size_t i = 0; i < funcNode->parameters.size(); i++, ++argIt) {
+            Value* raw = &*argIt;
+            raw->setName(funcNode->parameters[i].name);
+            realArgs.push_back(unboxLambdaParam(raw, funcNode->parameters[i].type));
+        }
+
+        // Call the real function and box the result back to i8*.
+        Value* result = Builder.CreateCall(realFn, realArgs);
+        if (funcNode->returnType == "void") {
+            Builder.CreateRet(ConstantPointerNull::get(cast<PointerType>(i8PtrTy)));
+        } else {
+            Builder.CreateRet(boxToVoidPtr(result));
+        }
+
+        if (savedBB) Builder.SetInsertPoint(savedBB);
+        functionThunkCache[fnName] = thunk;
+        return thunk;
+    }
+
+    // Allocate a Callable struct {thunk, null} pointing at the function `fnName`.
+    // The struct is freshly allocated at every use site (cheap — 16 bytes).
+    // Returns nullptr if `fnName` isn't a known user-defined function.
+    Value* emitFunctionAsCallable(const std::string& fnName) {
+        Function* thunk = getOrCreateFunctionThunk(fnName);
+        if (!thunk) return nullptr;
+        Type* i8PtrTy = Type::getInt8PtrTy(Context);
+        StructType* callableTy = StructTypes["Callable"];
+
+        FunctionCallee gcMallocFn = TheModule->getOrInsertFunction(
+            "GC_malloc", i8PtrTy, Type::getInt64Ty(Context));
+        uint64_t callSz = TheModule->getDataLayout().getTypeAllocSize(callableTy);
+        Value* raw = Builder.CreateCall(
+            gcMallocFn, {ConstantInt::get(Type::getInt64Ty(Context), callSz)},
+            fnName + "_callable");
+        Value* callablePtr = Builder.CreateBitCast(raw, PointerType::getUnqual(callableTy));
+
+        Value* fnField  = Builder.CreateStructGEP(callableTy, callablePtr, 0);
+        Value* envField = Builder.CreateStructGEP(callableTy, callablePtr, 1);
+        Builder.CreateStore(Builder.CreateBitCast(thunk, i8PtrTy), fnField);
+        Builder.CreateStore(ConstantPointerNull::get(cast<PointerType>(i8PtrTy)), envField);
+        return callablePtr;
     }
 
     // Collect free variable names referenced in the lambda body
@@ -549,13 +1112,26 @@ class LLVMCodegen {
         collectFreeVars(node, captureNames);
 
         // Resolve current values of captured variables
+        // For nonlocal (cell-boxed) vars, capture the raw cell i8* so the lambda shares mutation.
         std::vector<Value*> captureValues;
         std::vector<Type*>  captureTypes;
+        std::vector<bool>   captureIsCell;
+        Type* i8PtrTy_ = Type::getInt8PtrTy(Context);
         for (const auto& name : captureNames) {
-            Value* val = varGen->resolveVariable(name);
-            if (val) {
-                captureValues.push_back(val);
-                captureTypes.push_back(val->getType());
+            if (varGen->isNonlocal(name)) {
+                Value* cellPtr = varGen->getCellPtr(name);
+                if (cellPtr) {
+                    captureValues.push_back(cellPtr);
+                    captureTypes.push_back(i8PtrTy_);
+                    captureIsCell.push_back(true);
+                }
+            } else {
+                Value* val = varGen->resolveVariable(name);
+                if (val) {
+                    captureValues.push_back(val);
+                    captureTypes.push_back(val->getType());
+                    captureIsCell.push_back(false);
+                }
             }
         }
 
@@ -576,8 +1152,9 @@ class LLVMCodegen {
         BasicBlock* entryBB = BasicBlock::Create(Context, "entry", lambdaFn);
 
         // Save outer state
-        auto savedVars      = varGen->snapshot();
-        BasicBlock* savedBB = Builder.GetInsertBlock();
+        auto savedVars       = varGen->snapshot();
+        auto savedNonlocal   = varGen->snapshotNonlocal();
+        BasicBlock* savedBB  = Builder.GetInsertBlock();
         std::string savedClass = currentCodegenClass;
 
         // Switch into the lambda function
@@ -596,7 +1173,12 @@ class LLVMCodegen {
                 Value* fieldPtr = Builder.CreateStructGEP(
                     envType, envPtr, (unsigned)i, captureNames[i] + "_ptr");
                 Value* loaded = Builder.CreateLoad(captureTypes[i], fieldPtr, captureNames[i]);
-                varGen->defineArgument(captureNames[i], loaded);
+                if (i < captureIsCell.size() && captureIsCell[i]) {
+                    // Restore nonlocal cell — lambda shares the heap cell with the outer scope
+                    varGen->defineNonlocalCell(captureNames[i], loaded);
+                } else {
+                    varGen->defineArgument(captureNames[i], loaded);
+                }
             }
         }
 
@@ -621,9 +1203,9 @@ class LLVMCodegen {
                 Builder.CreateRet(ConstantPointerNull::get(cast<PointerType>(i8PtrTy)));
         }
 
-        // Restore outer state
+        // Restore outer state (including nonlocal cell metadata)
         Builder.SetInsertPoint(savedBB);
-        varGen->restore(savedVars);
+        varGen->restoreWithNonlocal(savedVars, savedNonlocal);
         currentCodegenClass = savedClass;
 
         // 7. Allocate env struct and store captured values
@@ -685,7 +1267,11 @@ class LLVMCodegen {
     }
 
     void handleUse(UseNode* node) {
-        if (node->filterList.empty()) {
+        if (!node->alias.empty()) {
+            // Explicit alias: from .path as alias
+            activeModuleAliases[node->alias] = node->moduleName;
+        } else if (node->filterList.empty()) {
+            // Derive alias from last path component
             std::string alias = node->moduleName;
             size_t lastDot = alias.rfind('.');
             if (lastDot == std::string::npos) lastDot = alias.rfind('/');
@@ -709,7 +1295,11 @@ class LLVMCodegen {
             // ----------------------------------
             
             if (builtinGen->isBuiltin(lit->value)) {
-                return builtinGen->handleBuiltin(lit->value, call, [this](Node* n) { return this->handleExpression(n); });
+                // User-defined function with the same name overrides the builtin
+                Function* override = resolveFunction(lit->value, currentCodegenClass);
+                if (!override)
+                    return builtinGen->handleBuiltin(lit->value, call, [this](Node* n) { return this->handleExpression(n); });
+                // Fall through to normal function dispatch below
             }
 
             if (StructTypes.count(lit->value)) {
@@ -753,6 +1343,17 @@ class LLVMCodegen {
                     if (st == StructTypes["Callable"]) {
                         std::vector<Value*> argVals;
                         for (auto& a : call->args) argVals.push_back(handleExpression(a.value.get()));
+
+                        // Bundle variadic tail into a List if this lambda is variadic
+                        int varStart = variadicCallableStart.count(lit->value)
+                                       ? variadicCallableStart.at(lit->value) : -1;
+                        if (varStart >= 0 && (int)argVals.size() > varStart) {
+                            std::vector<Value*> tail(argVals.begin() + varStart, argVals.end());
+                            argVals.erase(argVals.begin() + varStart, argVals.end());
+                            Value* bundled = structGen->createListFromValues(tail);
+                            argVals.push_back(bundled);
+                        }
+
                         Value* raw = emitCallableCall(val, argVals);
                         // Unbox the result based on the tracked return type
                         std::string retType = callableReturnTypes.count(lit->value)
@@ -785,8 +1386,19 @@ class LLVMCodegen {
                         for (auto& a : call->args) args.push_back(handleExpression(a.value.get()));
                         return structGen->allocateAndInit(memberName, args);
                     }
-                    
-                    Function* func = resolveFunction(memberName);
+
+                    // Disambiguate via the module index first — if `csv.write`
+                    // and `audio.write` both exist, the bare-name lookup picks
+                    // whichever was registered last. Module-keyed lookup picks
+                    // the right one.
+                    Function* func = nullptr;
+                    const std::string& modName = activeModuleAliases[lit->value];
+                    auto mit = moduleFunctionIndex.find({modName, memberName});
+                    if (mit != moduleFunctionIndex.end()) {
+                        const std::string& ln = mit->second->linkageName;
+                        func = TheModule->getFunction(ln.empty() ? memberName : ln);
+                    }
+                    if (!func) func = resolveFunction(memberName);
                     if (!func)
                         fatalError("Unknown function '" + memberName + "'", member->line, member->col);
                     return generateGlobalCall(func, call);
@@ -859,8 +1471,16 @@ class LLVMCodegen {
                     objPtr = Builder.CreateLoad(objPtr->getType()->getPointerElementType(), objPtr);
                 }
                 if (objPtr->getType()->isPointerTy() && objPtr->getType()->getPointerElementType()->isIntegerTy(8)) {
-                    std::vector<Value*> ctorArgs = {objPtr};
-                    objPtr = structGen->allocateAndInit("String", ctorArgs);
+                    // i8* is a boxed list element (String* or tagged int cast to void*); unbox via quirk_opaque_to_string
+                    Function* opaqueToStr = TheModule->getFunction("quirk_opaque_to_string");
+                    if (!opaqueToStr) {
+                        Type* retTy = StructTypes.count("String")
+                            ? (Type*)PointerType::getUnqual(StructTypes["String"])
+                            : (Type*)Type::getInt8PtrTy(Context);
+                        FunctionType* ft = FunctionType::get(retTy, {Type::getInt8PtrTy(Context)}, false);
+                        opaqueToStr = Function::Create(ft, Function::ExternalLinkage, "quirk_opaque_to_string", TheModule.get());
+                    }
+                    objPtr = Builder.CreateCall(opaqueToStr, {objPtr}, "deboxed_str");
                 }
 
                 if (objPtr->getType()->isIntegerTy(1)) typeName = "Bool";
@@ -909,15 +1529,13 @@ class LLVMCodegen {
 
             // --- Lambda-aware List functional methods ---
             // These are handled via normal function resolution (the methods are declared
-            // as extern in list.qk so resolveFunction returns the correct linkage name).
+            // as extern in list.quirk so resolveFunction returns the correct linkage name).
             // We only intercept here to evaluate the Callable* argument correctly.
             static const std::set<std::string> listFunctionalMethods = {
                 "map", "filter", "each", "reduce", "any", "all", "find"
             };
             if (objPtr && listFunctionalMethods.count(member->memberName) &&
                 typeName.find("List") != std::string::npos && !call->args.empty()) {
-                Type* i8PtrTy   = Type::getInt8PtrTy(Context);
-                Type* listPtrTy = objPtr->getType();
                 StructType* callTy = StructTypes["Callable"];
                 Type* callPtrTy = PointerType::getUnqual(callTy);
 
@@ -950,27 +1568,38 @@ class LLVMCodegen {
             // Fallback: try triple-underscore operator convention (e.g. List___get, Map___get)
             if (!func) func = TheModule->getFunction(typeName + "___" + member->memberName);
 
-            // --- NEW: Constructor Fallback ---
-            // Allows explicitly calling .__init() on a super object
+            // Constructor fallback: super().__init(v)
+            // Parser stores __init under "TypeName__init" (no separator), while
+            // the general method-dispatch path produces "TypeName___init" (with _).
+            // resolveFunction consults functionDeclarations + linkageName so it
+            // correctly reaches extern implementations like Core_String_String___init.
             if (!func && member->memberName == "__init") {
-                func = TheModule->getFunction(typeName + "__init");
+                func = resolveFunction(typeName + "__init");   // user-defined parent path
+                if (!func) func = resolveFunction(typeName + "___init"); // extern parent fallback
             }
-            // ---------------------------------
 
+            // Walk inheritance chain for inherited methods (user-defined parents only;
+            // extern parents are resolved via resolveFunction below).
             if (!func && structHierarchy.count(typeName)) {
-                std::function<Function*(const std::string&)> searchHierarchy = [&](const std::string& currentType) -> Function* {
-                    if (structHierarchy.count(currentType)) {
-                        for (const std::string& parentName : structHierarchy[currentType]) {
-                            Function* foundFunc = TheModule->getFunction(parentName + "_" + member->memberName);
-                            if (!foundFunc) foundFunc = TheModule->getFunction(parentName + "___" + member->memberName);
-                            if (foundFunc) return foundFunc;
-                            foundFunc = searchHierarchy(parentName);
-                            if (foundFunc) return foundFunc;
+                auto searchHierarchy = [&](const std::string& currentType, auto& self) -> Function* {
+                    auto hit = structHierarchy.find(currentType);
+                    if (hit == structHierarchy.end()) return nullptr;
+                    for (const std::string& parentName : hit->second) {
+                        Function* foundFunc = TheModule->getFunction(parentName + "_" + member->memberName);
+                        if (!foundFunc) foundFunc = TheModule->getFunction(parentName + "___" + member->memberName);
+                        if (!foundFunc) foundFunc = resolveFunction(parentName + "_"   + member->memberName);
+                        if (!foundFunc) foundFunc = resolveFunction(parentName + "___" + member->memberName);
+                        if (!foundFunc && member->memberName == "__init") {
+                            foundFunc = resolveFunction(parentName + "__init");
+                            if (!foundFunc) foundFunc = resolveFunction(parentName + "___init");
                         }
+                        if (foundFunc) return foundFunc;
+                        foundFunc = self(parentName, self);
+                        if (foundFunc) return foundFunc;
                     }
                     return nullptr;
                 };
-                func = searchHierarchy(typeName);
+                func = searchHierarchy(typeName, searchHierarchy);
             }
 
             // --- LINKAGE NAME FALLBACK ---
@@ -1025,6 +1654,119 @@ class LLVMCodegen {
                            member->line, member->col);
             }
 
+            // --- VIRTUAL DISPATCH ---
+            // When a method is overridden in a subclass and the receiver is a vtable-eligible
+            // struct, generate a switch on __type_id (field 0) instead of a direct call.
+            // super() calls are always static — skip dispatch for those.
+            {
+                bool isSuperCall = false;
+                if (auto callExpr = dynamic_cast<CallNode*>(member->object.get()))
+                    if (auto lit2 = dynamic_cast<LiteralNode*>(callExpr->callee.get()))
+                        isSuperCall = (lit2->value == "super");
+
+                if (!isSuperCall && objPtr &&
+                    vtableEligible.count(typeName) &&
+                    overrideMap.count(typeName) &&
+                    overrideMap[typeName].count(member->memberName)) {
+
+                    const auto& overrides = overrideMap[typeName][member->memberName];
+
+                    // Pre-evaluate non-self arguments once before the switch.
+                    std::vector<Value*> rawArgs;
+                    for (const auto& cArg : call->args)
+                        rawArgs.push_back(handleExpression(cArg.value.get()));
+
+                    // Load __type_id from field 0 of the receiver.
+                    StructType* recvST = cast<StructType>(objPtr->getType()->getPointerElementType());
+                    Value* tidPtr = Builder.CreateStructGEP(recvST, objPtr, 0, "tid_ptr");
+                    Value* tid    = Builder.CreateLoad(Type::getInt32Ty(Context), tidPtr, "tid");
+
+                    Function* curFn   = Builder.GetInsertBlock()->getParent();
+                    Type*     retTy   = func->getReturnType();
+                    bool      isVoid  = retTy->isVoidTy();
+
+                    BasicBlock* defaultBB = BasicBlock::Create(Context, "vd_def", curFn);
+                    BasicBlock* mergeBB   = BasicBlock::Create(Context, "vd_merge", curFn);
+                    SwitchInst* sw = Builder.CreateSwitch(tid, defaultBB, (unsigned)overrides.size());
+
+                    std::vector<std::pair<BasicBlock*, Value*>> phiInputs;
+
+                    // Helper to coerce a pre-computed arg to the expected LLVM type.
+                    auto coerce = [&](Value* v, Type* expected) -> Value* {
+                        if (v->getType() == expected) return v;
+                        if (v->getType()->isPointerTy() && expected->isPointerTy())
+                            return Builder.CreateBitCast(v, expected);
+                        if (v->getType()->isIntegerTy() && expected->isIntegerTy())
+                            return Builder.CreateIntCast(v, expected, true);
+                        if (v->getType()->isIntegerTy() && expected->isDoubleTy())
+                            return Builder.CreateSIToFP(v, expected);
+                        return v;
+                    };
+
+                    for (const auto& [subName, subId] : overrides) {
+                        const std::string& mn = member->memberName;
+                        std::string subFnName = (mn.size() >= 2 && mn[0] == '_' && mn[1] == '_')
+                            ? subName + mn : subName + "_" + mn;
+                        Function* subFn = TheModule->getFunction(subFnName);
+                        if (!subFn) subFn = resolveFunction(subFnName);
+                        if (!subFn) continue;
+
+                        BasicBlock* caseBB = BasicBlock::Create(Context, "vd_" + subName, curFn);
+                        sw->addCase(ConstantInt::get(Type::getInt32Ty(Context), subId), caseBB);
+                        Builder.SetInsertPoint(caseBB);
+
+                        Value* castSelf = objPtr;
+                        if (StructTypes.count(subName)) {
+                            Type* subPtrTy = PointerType::getUnqual(StructTypes[subName]);
+                            if (castSelf->getType() != subPtrTy)
+                                castSelf = Builder.CreateBitCast(castSelf, subPtrTy, "as_" + subName);
+                        }
+                        std::vector<Value*> subArgs = {castSelf};
+                        for (size_t i = 0; i < rawArgs.size(); i++) {
+                            size_t pi = i + 1;
+                            subArgs.push_back(pi < subFn->arg_size()
+                                ? coerce(rawArgs[i], subFn->getFunctionType()->getParamType(pi))
+                                : rawArgs[i]);
+                        }
+                        Value* subResult = Builder.CreateCall(subFn, subArgs, isVoid ? "" : "vd_r");
+                        Builder.CreateBr(mergeBB);
+                        if (!isVoid) phiInputs.push_back({caseBB, subResult});
+                    }
+
+                    // Default: static dispatch to the statically resolved method.
+                    Builder.SetInsertPoint(defaultBB);
+                    Value* defSelf = objPtr;
+                    if (func->arg_size() > 0) {
+                        Type* expSelf = func->getFunctionType()->getParamType(0);
+                        if (defSelf->getType() != expSelf &&
+                            defSelf->getType()->isPointerTy() && expSelf->isPointerTy())
+                            defSelf = Builder.CreateBitCast(defSelf, expSelf, "as_parent");
+                    }
+                    std::vector<Value*> defArgs = {defSelf};
+                    for (size_t i = 0; i < rawArgs.size(); i++) {
+                        size_t pi = i + 1;
+                        defArgs.push_back(pi < func->arg_size()
+                            ? coerce(rawArgs[i], func->getFunctionType()->getParamType(pi))
+                            : rawArgs[i]);
+                    }
+                    Value* defResult = Builder.CreateCall(func, defArgs, isVoid ? "" : "vd_def_r");
+                    Builder.CreateBr(mergeBB);
+
+                    Builder.SetInsertPoint(mergeBB);
+                    if (!isVoid) {
+                        PHINode* phi = Builder.CreatePHI(retTy, (unsigned)(phiInputs.size() + 1), "vd_phi");
+                        for (auto& [bb, v] : phiInputs) phi->addIncoming(v, bb);
+                        phi->addIncoming(defResult, defaultBB);
+                        if (phi->getType()->isIntegerTy(32) &&
+                            externBoolReturnFunctions.count(func->getName().str()))
+                            return Builder.CreateTrunc(phi, Type::getInt1Ty(Context));
+                        return phi;
+                    }
+                    return nullptr;
+                }
+            }
+            // --- END VIRTUAL DISPATCH ---
+
             std::vector<Value*> args;
             if (objPtr) {
                 // --- FIX: Safely cast 'self' to the parent class type if calling an inherited method ---
@@ -1033,14 +1775,49 @@ class LLVMCodegen {
                     if (objPtr->getType() != expectedSelfType) {
                         if (objPtr->getType()->isPointerTy() && expectedSelfType->isPointerTy()) {
                             objPtr = Builder.CreateBitCast(objPtr, expectedSelfType);
+                        } else if (objPtr->getType()->isIntegerTy(1) && expectedSelfType->isIntegerTy(32)) {
+                            // Bool self widening: C ABI passes Bool as int (i32)
+                            objPtr = Builder.CreateZExt(objPtr, expectedSelfType);
                         }
                     }
                 }
                 args.push_back(objPtr);
             }
-            
+
             processCallArgs(func, call->args, args, (objPtr ? 1 : 0));
-            return Builder.CreateCall(func, args);
+            Value* result = Builder.CreateCall(func, args);
+            // Extern Bool-returning methods are widened to i32 for C ABI — truncate back to i1.
+            if (result->getType()->isIntegerTy(32) &&
+                externBoolReturnFunctions.count(func->getName().str()))
+                return Builder.CreateTrunc(result, Type::getInt1Ty(Context));
+            return result;
+        }
+
+        // Fallback: callee is an arbitrary expression that hopefully evaluates
+        // to a Callable. Handles the `<expr>(args)` case where <expr> is itself
+        // a call (e.g. `wrap(double)(5)`), a member access yielding a Callable,
+        // or anything else producing a Callable* at runtime.
+        if (Value* calleeVal = handleExpression(call->callee.get())) {
+            Type* i8PtrTy = Type::getInt8PtrTy(Context);
+            // A Callable returned from another Callable call comes back boxed
+            // as `i8*` (the Callable ABI returns i8*). Bitcast to Callable*
+            // so we can dispatch. Without this, `make_adder()(id_fn)(5)` —
+            // where the middle call returns a Callable — silently no-ops.
+            if (calleeVal->getType() == i8PtrTy && StructTypes.count("Callable")) {
+                calleeVal = Builder.CreateBitCast(
+                    calleeVal,
+                    PointerType::getUnqual(StructTypes["Callable"]),
+                    "boxed_callable");
+            }
+            if (calleeVal->getType()->isPointerTy()
+             && calleeVal->getType()->getPointerElementType()->isStructTy()) {
+                StructType* st = cast<StructType>(calleeVal->getType()->getPointerElementType());
+                if (st == StructTypes["Callable"]) {
+                    std::vector<Value*> argVals;
+                    for (auto& a : call->args) argVals.push_back(handleExpression(a.value.get()));
+                    return emitCallableCall(calleeVal, argVals);
+                }
+            }
         }
         return nullptr;
     }
@@ -1048,7 +1825,13 @@ class LLVMCodegen {
     Value* generateGlobalCall(Function* func, CallNode* call) {
         std::vector<Value*> finalArgs;
         processCallArgs(func, call->args, finalArgs, 0);
-        return Builder.CreateCall(func, finalArgs);
+        Value* result = Builder.CreateCall(func, finalArgs);
+        // Extern Bool-returning functions are widened to i32 for C ABI.
+        // Truncate back to i1 so the rest of codegen (print, comparisons, etc.) sees Bool.
+        if (result->getType()->isIntegerTy(32) &&
+            externBoolReturnFunctions.count(func->getName().str()))
+            return Builder.CreateTrunc(result, Type::getInt1Ty(Context));
+        return result;
     }
 
     // Resolves a Quirk function name to an LLVM Function*, consulting
@@ -1071,21 +1854,62 @@ class LLVMCodegen {
     void processCallArgs(Function* func, const std::vector<Arg>& astArgs, std::vector<Value*>& finalArgs, size_t offset) {
         std::string funcName = func->getName().str();
         FunctionNode* funcNode = functionDeclarations[funcName];
-        
+
         bool isVariadic = variadicFunctions.count(funcName);
         size_t fixedArgCount = func->arg_size();
+
+        // Find which LLVM param index is the variadic List slot.
+        // Use fixedArgCount as a sentinel meaning "no variadic slot" for non-variadic functions.
+        size_t variadicSlot = fixedArgCount;  // sentinel: out-of-range
+        if (isVariadic) {
+            // Default: last param (backward-compat for functions where *args is last).
+            variadicSlot = fixedArgCount > 0 ? fixedArgCount - 1 : 0;
+            if (funcNode) {
+                size_t astOffset = offset;
+                for (size_t pi = 0; pi < funcNode->parameters.size(); pi++) {
+                    if (funcNode->parameters[pi].isVariadic) {
+                        variadicSlot = pi + astOffset;
+                        break;
+                    }
+                }
+            }
+        }
         size_t requiredFixedCount = isVariadic ? (fixedArgCount - 1) : fixedArgCount;
 
         std::vector<Value*> matchedArgs(fixedArgCount, nullptr);
         std::vector<Value*> variadicBundle;
 
         size_t positionalIdx = offset;
+        bool hasSeenNamedArg = false;
+
+        // Check for a single spread arg `...list` targeting a variadic function
+        // In this case pass the list directly as the variadic List parameter.
+        bool usedSpreadDirect = false;
+        if (isVariadic && astArgs.size() == 1 && astArgs[0].isSpread) {
+            Value* spreadList = handleExpression(astArgs[0].value.get());
+            if (spreadList) {
+                // Fill any fixed args before the variadic slot with nullptr (no positional args)
+                for (size_t i = offset; i < requiredFixedCount; i++)
+                    finalArgs.push_back(Constant::getNullValue(func->getFunctionType()->getParamType(i)));
+                finalArgs.push_back(spreadList);
+                usedSpreadDirect = true;
+            }
+        }
+        if (usedSpreadDirect) return;
 
         for (const auto& arg : astArgs) {
+            if (arg.isSpread) {
+                // Spread into variadic bundle: treat the list as individual elements
+                // For now just push the whole list value (it IS a List already)
+                variadicBundle.push_back(handleExpression(arg.value.get()));
+                continue;
+            }
             if (!arg.name.empty()) {
+                hasSeenNamedArg = true;
                 bool found = false;
                 if (funcNode) {
-                    for (size_t i = offset; i < requiredFixedCount; ++i) {
+                    for (size_t i = offset; i < fixedArgCount; ++i) {
+                        if (i == variadicSlot) continue;  // skip the variadic List slot
                         size_t paramIdx = i - offset;
                         if (paramIdx < funcNode->parameters.size() && funcNode->parameters[paramIdx].name == arg.name) {
                             if (matchedArgs[i] != nullptr) return;
@@ -1097,87 +1921,39 @@ class LLVMCodegen {
                 }
                 if (!found) return;
             } else {
-                while (positionalIdx < requiredFixedCount && matchedArgs[positionalIdx] != nullptr) positionalIdx++;
-                if (positionalIdx < requiredFixedCount) {
-                    matchedArgs[positionalIdx] = handleExpression(arg.value.get());
-                    positionalIdx++;
-                } else {
+                // Positional args fill fixed slots that appear BEFORE variadicSlot in the
+                // parameter list; everything else (including overflow) goes to the bundle.
+                // This mirrors Python semantics: def f(*args, sep=" ") — all positional → *args.
+                if (isVariadic && hasSeenNamedArg) {
                     variadicBundle.push_back(handleExpression(arg.value.get()));
+                } else {
+                    while (positionalIdx < variadicSlot && matchedArgs[positionalIdx] != nullptr)
+                        positionalIdx++;
+                    if (positionalIdx < variadicSlot) {
+                        matchedArgs[positionalIdx] = handleExpression(arg.value.get());
+                        positionalIdx++;
+                    } else {
+                        variadicBundle.push_back(handleExpression(arg.value.get()));
+                    }
                 }
             }
         }
 
-        for (size_t i = offset; i < fixedArgCount; i++) {
-            size_t astIdx = i - offset;
-            Value* argVal = matchedArgs[i];
-
-            if (!argVal && funcNode && astIdx < funcNode->parameters.size() && funcNode->parameters[astIdx].defaultValue) {
-                argVal = handleExpression(funcNode->parameters[astIdx].defaultValue.get());
-            }
-
-            if (!argVal && i < requiredFixedCount) return;
-
-            if (argVal) {
-                Type* expectedType = func->getFunctionType()->getParamType(i);
-
-                // Auto-box to Any* when function expects it
-                if (expectedType->isPointerTy() && expectedType->getPointerElementType()->isStructTy()) {
-                    std::string pName = cast<StructType>(expectedType->getPointerElementType())->getName().str();
-                    if (pName == "Any" || pName == "struct.Any") {
-                        argVal = emitBox(argVal);
-                        if (argVal->getType() != expectedType)
-                            argVal = Builder.CreateBitCast(argVal, expectedType);
-                        finalArgs.push_back(argVal);
-                        continue;
-                    }
-                }
-
-                if (argVal->getType()->isIntegerTy(1) && expectedType->isIntegerTy(32)) {
-                    argVal = Builder.CreateZExt(argVal, Type::getInt32Ty(Context));
-                }
-
-                if (argVal->getType()->isPointerTy() &&
-                    argVal->getType()->getPointerElementType()->isIntegerTy(8) &&
-                    expectedType->isPointerTy() &&
-                    expectedType->getPointerElementType()->isStructTy()) {
-                    
-                    StructType* st = cast<StructType>(expectedType->getPointerElementType());
-                    
-                    if (st->getName() == "String") {
-                        argVal = Builder.CreateBitCast(argVal, expectedType);
-                    }
-                }
-                else if (argVal->getType() != expectedType) {
-                    if (argVal->getType()->isIntegerTy() && expectedType->isIntegerTy())
-                        argVal = Builder.CreateIntCast(argVal, expectedType, true);
-                    else if (argVal->getType()->isIntegerTy() && expectedType->isPointerTy())
-                        argVal = Builder.CreateIntToPtr(argVal, expectedType);
-                    else if (argVal->getType()->isPointerTy() && expectedType->isPointerTy())
-                        argVal = Builder.CreateBitCast(argVal, expectedType);
-                    else if (argVal->getType()->isIntegerTy() && expectedType->isDoubleTy())
-                        argVal = Builder.CreateSIToFP(argVal, expectedType);
-                }
-                finalArgs.push_back(argVal);
-            }
-        }
-
+        // Build the variadic List now so we can place it at the correct slot position.
+        Value* variadicList = nullptr;
         if (isVariadic) {
             std::vector<Value*> castedVariadic;
             for (Value* vArg : variadicBundle) {
-                // --- FIX: Convert Objects to Strings before passing to Variadic Functions ---
                 Type* ty = vArg->getType();
                 if (ty->isPointerTy() && ty->getPointerElementType()->isStructTy()) {
                     StructType* st = cast<StructType>(ty->getPointerElementType());
-                    // If it's not already a String, call __str()
                     if (st->getName().str().find("String") == std::string::npos) {
                         std::string sName = st->getName().str();
                         if (sName.find("struct.") == 0) sName = sName.substr(7);
-                        
                         Function* strFunc = TheModule->getFunction(sName + "___str");
                         if (strFunc) {
                             vArg = Builder.CreateCall(strFunc, {vArg});
-                            // Ensure the result is treated as a String Object (pointer), not raw i8*
-                            if (vArg->getType()->isPointerTy() && 
+                            if (vArg->getType()->isPointerTy() &&
                                 vArg->getType()->getPointerElementType()->isIntegerTy(8)) {
                                 std::vector<Value*> boxArgs = {vArg};
                                 vArg = structGen->allocateAndInit("String", boxArgs);
@@ -1185,14 +1961,68 @@ class LLVMCodegen {
                         }
                     }
                 }
-                // ---------------------------------------------------------------------------
-
-                if (vArg->getType()->isIntegerTy()) vArg = Builder.CreateIntToPtr(vArg, Type::getInt8PtrTy(Context));
+                if (vArg->getType()->isIntegerTy(1)) vArg = boxToVoidPtr(vArg);
+                else if (vArg->getType()->isIntegerTy()) vArg = Builder.CreateIntToPtr(vArg, Type::getInt8PtrTy(Context));
                 else if (!vArg->getType()->isPointerTy()) vArg = Builder.CreateBitCast(vArg, Type::getInt8PtrTy(Context));
                 castedVariadic.push_back(vArg);
             }
-            Value* listObj = structGen->createListFromValues(castedVariadic);
-            finalArgs.push_back(listObj);
+            variadicList = structGen->createListFromValues(castedVariadic);
+        }
+
+        // Emit each LLVM param slot in order (offset..fixedArgCount).
+        // The variadic slot gets the pre-built List; other slots get matched/default values.
+        for (size_t i = offset; i < fixedArgCount; i++) {
+            if (isVariadic && i == variadicSlot) {
+                finalArgs.push_back(variadicList);
+                continue;
+            }
+
+            size_t astIdx = i - offset;
+            Value* argVal = matchedArgs[i];
+
+            if (!argVal && funcNode && astIdx < funcNode->parameters.size() && funcNode->parameters[astIdx].defaultValue) {
+                argVal = handleExpression(funcNode->parameters[astIdx].defaultValue.get());
+            }
+
+            if (!argVal) return;  // required arg missing
+
+            Type* expectedType = func->getFunctionType()->getParamType(i);
+
+            // Auto-box to Any* when function expects it
+            if (expectedType->isPointerTy() && expectedType->getPointerElementType()->isStructTy()) {
+                std::string pName = cast<StructType>(expectedType->getPointerElementType())->getName().str();
+                if (pName == "Any" || pName == "struct.Any") {
+                    argVal = emitBox(argVal);
+                    if (argVal->getType() != expectedType)
+                        argVal = Builder.CreateBitCast(argVal, expectedType);
+                    finalArgs.push_back(argVal);
+                    continue;
+                }
+            }
+
+            if (argVal->getType()->isIntegerTy(1) && expectedType->isIntegerTy(32)) {
+                argVal = Builder.CreateZExt(argVal, Type::getInt32Ty(Context));
+            }
+
+            if (argVal->getType()->isPointerTy() &&
+                argVal->getType()->getPointerElementType()->isIntegerTy(8) &&
+                expectedType->isPointerTy() &&
+                expectedType->getPointerElementType()->isStructTy()) {
+                StructType* st = cast<StructType>(expectedType->getPointerElementType());
+                if (st->getName() == "String") {
+                    argVal = Builder.CreateBitCast(argVal, expectedType);
+                }
+            } else if (argVal->getType() != expectedType) {
+                if (argVal->getType()->isIntegerTy() && expectedType->isIntegerTy())
+                    argVal = Builder.CreateIntCast(argVal, expectedType, true);
+                else if (argVal->getType()->isIntegerTy() && expectedType->isPointerTy())
+                    argVal = Builder.CreateIntToPtr(argVal, expectedType);
+                else if (argVal->getType()->isPointerTy() && expectedType->isPointerTy())
+                    argVal = Builder.CreateBitCast(argVal, expectedType);
+                else if (argVal->getType()->isIntegerTy() && expectedType->isDoubleTy())
+                    argVal = Builder.CreateSIToFP(argVal, expectedType);
+            }
+            finalArgs.push_back(argVal);
         }
     }
     
@@ -1213,13 +2043,38 @@ class LLVMCodegen {
             if (dynamic_cast<TryCatchNode*>(node))   return "TryCatch";
             if (dynamic_cast<MatchNode*>(node))       return "Match";
             if (dynamic_cast<WithNode*>(node))       return "With";
-            if (dynamic_cast<TriggerNode*>(node))    return "Trigger";
             if (dynamic_cast<UseNode*>(node))        return "Use";
             return "Unknown";
         };
         if (verbose) std::cerr << "[Codegen]   handleStatement: " << nodeTypeName() << "\n";
 
         if (auto u = dynamic_cast<UseNode*>(node)) handleUse(u);
+        else if (auto nl = dynamic_cast<NonlocalNode*>(node)) {
+            if (!nl->isGlobal) {
+                // For each declared nonlocal var: box current value and move it to a GC heap cell.
+                // Both this scope and any lambda that captures it will share the cell pointer.
+                FunctionCallee gcMallocFn = TheModule->getOrInsertFunction(
+                    "GC_malloc", Type::getInt8PtrTy(Context), Type::getInt64Ty(Context));
+                for (const auto& varName : nl->vars) {
+                    if (!varGen->exists(varName)) continue;
+                    if (varGen->isNonlocal(varName)) continue; // already a heap cell
+                    Value* curVal = varGen->resolveVariable(varName);
+                    if (!curVal) continue;
+                    // Box to i8*
+                    Value* boxed = boxToVoidPtr(curVal);
+                    // Allocate a single-pointer cell (8 bytes)
+                    Value* cell = Builder.CreateCall(gcMallocFn,
+                        {ConstantInt::get(Type::getInt64Ty(Context), 8)}, varName + "_cell");
+                    // Store boxed value into the cell
+                    Value* cellI8pp = Builder.CreateBitCast(cell,
+                        PointerType::getUnqual(Type::getInt8PtrTy(Context)));
+                    Builder.CreateStore(boxed, cellI8pp);
+                    // Register as nonlocal cell — replaces the existing variable binding
+                    varGen->defineNonlocalCell(varName, cell);
+                }
+            }
+            // global: no-op for now (module-level mutable globals not yet supported)
+        }
         else if (auto vdecl = dynamic_cast<VarDeclNode*>(node)) handleVarDecl(vdecl);
         else if (auto call = dynamic_cast<CallNode*>(node)) handleCall(call);
         else if (auto i = dynamic_cast<IfNode*>(node)) handleIf(i, parentFunc);
@@ -1241,17 +2096,64 @@ class LLVMCodegen {
             }
         }
         else if (auto f = dynamic_cast<ForNode*>(node)) {
+            // Special-case: range literal iterable → emit a simple counter loop
+            if (auto* range = dynamic_cast<RangeLiteralNode*>(f->iterable.get())) {
+                Value* startV = handleExpression(range->start.get());
+                Value* endV   = handleExpression(range->end.get());
+                if (!startV || !endV) return;
+                auto toI32 = [&](Value* v) -> Value* {
+                    if (v->getType()->isIntegerTy(32)) return v;
+                    if (v->getType()->isIntegerTy()) return Builder.CreateSExt(v, Type::getInt32Ty(Context));
+                    if (v->getType()->isPointerTy()) return Builder.CreatePtrToInt(v, Type::getInt32Ty(Context));
+                    return v;
+                };
+                startV = toI32(startV); endV = toI32(endV);
+
+                // Allocate loop counter
+                Function* curFn = Builder.GetInsertBlock()->getParent();
+                IRBuilder<> entryB(&curFn->getEntryBlock(), curFn->getEntryBlock().begin());
+                Value* counterSlot = entryB.CreateAlloca(Type::getInt32Ty(Context), nullptr, f->varName + "_range");
+                Builder.CreateStore(startV, counterSlot);
+
+                BasicBlock* condBB  = BasicBlock::Create(Context, "range_cond",  curFn);
+                BasicBlock* bodyBB  = BasicBlock::Create(Context, "range_body",  curFn);
+                BasicBlock* afterBB = BasicBlock::Create(Context, "range_after", curFn);
+
+                flowGen->breakStack.push_back(afterBB);
+                flowGen->continueStack.push_back(condBB);
+
+                Builder.CreateBr(condBB);
+                Builder.SetInsertPoint(condBB);
+                Value* counter = Builder.CreateLoad(Type::getInt32Ty(Context), counterSlot, f->varName);
+                Value* cmp = Builder.CreateICmpSLT(counter, endV, "range_cmp");
+                Builder.CreateCondBr(cmp, bodyBB, afterBB);
+
+                Builder.SetInsertPoint(bodyBB);
+                varGen->defineLocalVariable(f->varName, counter);
+                for (auto& stmt : f->body) handleStatement(stmt.get(), curFn);
+                if (!Builder.GetInsertBlock()->getTerminator()) {
+                    Value* next = Builder.CreateAdd(
+                        Builder.CreateLoad(Type::getInt32Ty(Context), counterSlot),
+                        ConstantInt::get(Type::getInt32Ty(Context), 1), "range_next");
+                    Builder.CreateStore(next, counterSlot);
+                    Builder.CreateBr(condBB);
+                }
+
+                flowGen->breakStack.pop_back();
+                flowGen->continueStack.pop_back();
+
+                Builder.SetInsertPoint(afterBB);
+                return;
+            }
+
             flowGen->generateFor(
                 f, parentFunc,
                 [this](Node* n) { return this->handleExpression(n); },
                 [this](const std::string& s, std::vector<Value*>& v) { return this->structGen->allocateAndInit(s, v); },
                 [this, parentFunc](Node* n) { this->handleStatement(n, parentFunc); },
                 varGen.get(),
-                // Linkage-aware resolver: tries module first, then functionDeclarations
                 [this](const std::string& shortName) -> Function* {
-                    // Try the short name first (for Quirk-defined iterators)
                     if (Function* f = TheModule->getFunction(shortName)) return f;
-                    // Try functionDeclarations linkageName fallback
                     if (functionDeclarations.count(shortName)) {
                         const std::string& ln = functionDeclarations[shortName]->linkageName;
                         if (!ln.empty()) return TheModule->getFunction(ln);
@@ -1266,7 +2168,8 @@ class LLVMCodegen {
         else if (auto mt = dynamic_cast<MatchNode*>(node)) {
             flowGen->generateMatch(mt, parentFunc,
                 [this](Node* n) { return this->handleExpression(n); },
-                [this, parentFunc](Node* n) { this->handleStatement(n, parentFunc); });
+                [this, parentFunc](Node* n) { this->handleStatement(n, parentFunc); },
+                [this](const std::string& name, Value* val) { varGen->defineLocalVariable(name, val); });
         }
         else if (auto th = dynamic_cast<ThrowNode*>(node)) {
             flowGen->generateThrow(th, parentFunc, 
@@ -1274,9 +2177,6 @@ class LLVMCodegen {
                 StructTypes,
                 [this](const std::string& s, std::vector<Value*>& v) { return this->structGen->allocateAndInit(s, v); }
             );
-        }
-        else if (auto tr = dynamic_cast<TriggerNode*>(node)) {
-            activeTriggers[tr->varName] = tr->handlerName;
         }
         else if (auto ret = dynamic_cast<ReturnNode*>(node)) {
             // 1. Evaluate the expression FIRST while the shadow stack frame is still valid.
@@ -1313,7 +2213,33 @@ class LLVMCodegen {
                         if (sName == "String") {
                             std::vector<Value*> sArgs = {retVal};
                             retVal = structGen->allocateAndInit("String", sArgs);
+                        } else if (isa<ConstantPointerNull>(retVal)) {
+                            // `return null` from a struct-returning function:
+                            // bitcast the null to the expected struct pointer.
+                            retVal = ConstantPointerNull::get(cast<PointerType>(expectedType));
+                        } else if (sName != "Callable") {
+                            // i8* (boxed) → struct*: bitcast (Callable handled
+                            // by the boxToVoidPtr branch below for symmetry).
+                            retVal = Builder.CreateBitCast(retVal, expectedType);
                         }
+                    }
+                    // i8* boxed result (from a Callable call) → unbox to a
+                    // primitive scalar. Without this, `return f(x)` from a
+                    // function declared `-> Int` produces an IR type mismatch.
+                    else if (retVal->getType()->isPointerTy()
+                          && retVal->getType()->getPointerElementType()->isIntegerTy(8)
+                          && expectedType->isIntegerTy()) {
+                        retVal = Builder.CreatePtrToInt(retVal, expectedType, "ret_unbox_int");
+                    }
+                    else if (retVal->getType()->isPointerTy()
+                          && retVal->getType()->getPointerElementType()->isIntegerTy(8)
+                          && expectedType->isDoubleTy()) {
+                        Value* asInt = Builder.CreatePtrToInt(retVal, Type::getInt64Ty(Context));
+                        retVal = Builder.CreateBitCast(asInt, expectedType, "ret_unbox_dbl");
+                    }
+                    // Returning from a lambda (i8* return): box the value
+                    else if (expectedType == Type::getInt8PtrTy(Context)) {
+                        retVal = boxToVoidPtr(retVal);
                     }
                 }
                 Builder.CreateRet(retVal);
@@ -1328,16 +2254,58 @@ class LLVMCodegen {
         if (auto lhs = dynamic_cast<LiteralNode*>(vdecl->lhs.get()))
             if (verbose) std::cerr << "[Codegen]     handleVarDecl: " << lhs->value << " (op: " << vdecl->op << ")\n";
 
-        // Track Callable return types for direct lambda invocation
+        // Track Callable return types and variadic info for direct lambda invocation
         if (auto lambda = dynamic_cast<LambdaNode*>(vdecl->expression.get())) {
-            if (!lambda->inferredReturnType.empty()) {
-                if (auto lhsLit = dynamic_cast<LiteralNode*>(vdecl->lhs.get()))
+            if (auto lhsLit = dynamic_cast<LiteralNode*>(vdecl->lhs.get())) {
+                if (!lambda->inferredReturnType.empty())
                     callableReturnTypes[lhsLit->value] = lambda->inferredReturnType;
+                int varStart = -1;
+                for (int pi = 0; pi < (int)lambda->params.size(); pi++) {
+                    if (lambda->params[pi].isVariadic) { varStart = pi; break; }
+                }
+                variadicCallableStart[lhsLit->value] = varStart;
             }
         }
 
         Value* val = handleExpression(vdecl->expression.get());
         if (!val || val->getType()->isVoidTy()) return;
+
+        // Tuple destructuring: (a, b) := tuple_expr
+        // Multi-assign broadcast: a, b, c := value  (assigns same value to all)
+        if (auto* tupLhs = dynamic_cast<TupleLiteralNode*>(vdecl->lhs.get())) {
+            bool isTupleRhs = val->getType()->isPointerTy() && StructTypes.count("Tuple") &&
+                              val->getType()->getPointerElementType() == StructTypes["Tuple"];
+
+            if (!isTupleRhs) {
+                // Broadcast: assign the same value to every LHS variable
+                for (auto& elem : tupLhs->elements) {
+                    auto* nameNode = dynamic_cast<LiteralNode*>(elem.get());
+                    if (!nameNode) continue;
+                    if (!varGen->exists(nameNode->value)) varGen->defineLocalVariable(nameNode->value, val);
+                    else varGen->updateLocalVariable(nameNode->value, val);
+                }
+                return;
+            }
+
+            Function* getFn = TheModule->getFunction("Core_Collections_Tuple_Tuple___get");
+            if (!getFn) {
+                Type* tuplePtrTy = PointerType::getUnqual(StructTypes["Tuple"]);
+                FunctionType* ft = FunctionType::get(Type::getInt8PtrTy(Context),
+                    {tuplePtrTy, Type::getInt32Ty(Context)}, false);
+                getFn = Function::Create(ft, Function::ExternalLinkage, "Core_Collections_Tuple_Tuple___get", TheModule.get());
+            }
+            if (getFn) {
+                for (int i = 0; i < (int)tupLhs->elements.size(); i++) {
+                    auto* nameNode = dynamic_cast<LiteralNode*>(tupLhs->elements[i].get());
+                    if (!nameNode) continue;
+                    Value* elem = Builder.CreateCall(getFn,
+                        {val, ConstantInt::get(Type::getInt32Ty(Context), i)});
+                    if (!varGen->exists(nameNode->value)) varGen->defineLocalVariable(nameNode->value, elem);
+                    else varGen->updateLocalVariable(nameNode->value, elem);
+                }
+            }
+            return;
+        }
 
         if (!vdecl->typeAnnotation.empty()) {
             // Target type is explicitly Any — box the value
@@ -1423,27 +2391,6 @@ class LLVMCodegen {
                 }
             }
 
-            if (activeTriggers.count(lhs->value)) {
-                Function* hook = TheModule->getFunction(activeTriggers[lhs->value]);
-                if (hook) {
-                    Value* argVal = val;
-                    Type* expectedType = hook->getFunctionType()->getParamType(0);
-                    if (argVal->getType() != expectedType) {
-                        if (argVal->getType()->isIntegerTy() && expectedType->isPointerTy()) argVal = Builder.CreateIntToPtr(argVal, expectedType);
-                        else if (argVal->getType()->isPointerTy() && expectedType->isPointerTy()) argVal = Builder.CreateBitCast(argVal, expectedType);
-                    }
-                    
-                    Value* argWasVal = wasVal;
-                    Type* expectedWasType = hook->getFunctionType()->getParamType(1);
-                    if (argWasVal->getType() != expectedWasType) {
-                        if (argWasVal->getType()->isIntegerTy() && expectedWasType->isPointerTy()) argWasVal = Builder.CreateIntToPtr(argWasVal, expectedWasType);
-                        else if (argWasVal->getType()->isPointerTy() && expectedWasType->isPointerTy()) argWasVal = Builder.CreateBitCast(argWasVal, expectedWasType);
-                    }
-                    
-                    Builder.CreateCall(hook, {argVal, argWasVal});
-                }
-            }
-        
         } else if (auto member = dynamic_cast<MemberAccessNode*>(vdecl->lhs.get())) {
             Value* objPtr = handleExpression(member->object.get());
             if (objPtr->getType()->isPointerTy() && objPtr->getType()->getPointerElementType()->isPointerTy())
@@ -1482,41 +2429,6 @@ class LLVMCodegen {
                 
                 Builder.CreateStore(val, memberPtr); 
 
-                if (auto objLit = dynamic_cast<LiteralNode*>(member->object.get())) {
-                    std::string fullPath = objLit->value + "." + member->memberName;
-                    
-                    if (activeTriggers.count(fullPath)) {
-                        Function* hook = TheModule->getFunction(activeTriggers[fullPath]);
-                        if (hook) {
-                            std::vector<Value*> callArgs;
-                            
-                            if (hook->arg_size() == 3) {
-                                Value* callObj = objPtr;
-                                Type* expectedObjTy = hook->getFunctionType()->getParamType(0);
-                                if (callObj->getType() != expectedObjTy) callObj = Builder.CreateBitCast(callObj, expectedObjTy);
-                                callArgs.push_back(callObj);
-                            }
-
-                            Value* argVal = val;
-                            Type* expectedType = hook->getFunctionType()->getParamType(hook->arg_size() - 2);
-                            if (argVal->getType() != expectedType) {
-                                if (argVal->getType()->isIntegerTy() && expectedType->isPointerTy()) argVal = Builder.CreateIntToPtr(argVal, expectedType);
-                                else if (argVal->getType()->isPointerTy() && expectedType->isPointerTy()) argVal = Builder.CreateBitCast(argVal, expectedType);
-                            }
-                            callArgs.push_back(argVal);
-
-                            Value* argWasVal = wasVal;
-                            Type* expectedWasType = hook->getFunctionType()->getParamType(hook->arg_size() - 1);
-                            if (argWasVal->getType() != expectedWasType) {
-                                if (argWasVal->getType()->isIntegerTy() && expectedWasType->isPointerTy()) argWasVal = Builder.CreateIntToPtr(argWasVal, expectedWasType);
-                                else if (argWasVal->getType()->isPointerTy() && expectedWasType->isPointerTy()) argWasVal = Builder.CreateBitCast(argWasVal, expectedWasType);
-                            }
-                            callArgs.push_back(argWasVal);
-
-                            Builder.CreateCall(hook, callArgs);
-                        }
-                    }
-                }
             }
         } else if (auto binOp = dynamic_cast<BinaryOpNode*>(vdecl->lhs.get())) {
             // ... (keep your existing Array [] assignment logic here)
@@ -1640,6 +2552,7 @@ class LLVMCodegen {
             if (el->isStructTy()) {
                 std::string name = cast<StructType>(el)->getName().str();
                 if (name.find("struct.") == 0) name = name.substr(7);
+                { size_t d = name.find('.'); if (d != std::string::npos && std::isdigit((unsigned char)name[d+1])) name = name.substr(0, d); }
                 // Already Any* — pass through
                 if (name == "Any") return v;
                 // box_* are declared as i8*(i8*) — must bitcast struct ptr to i8* first
@@ -1647,14 +2560,30 @@ class LLVMCodegen {
                 if (name.find("String") != std::string::npos) return callBox("Core_Primitives_Any_box_string", {asPtr});
                 if (name.find("List")   != std::string::npos) return callBox("Core_Primitives_Any_box_list",   {asPtr});
                 if (name.find("Map")    != std::string::npos) return callBox("Core_Primitives_Any_box_map",    {asPtr});
-                // Other struct — call __str, fall back to __repr, then box as String
-                std::string strMethod = name + "___str";
-                Function* strFunc = TheModule->getFunction(strMethod);
-                if (!strFunc) strFunc = TheModule->getFunction(name + "__str");
-                if (!strFunc) strFunc = TheModule->getFunction(name + "___repr");
-                if (!strFunc) strFunc = TheModule->getFunction(name + "__repr");
+                if (name.find("Tuple")  != std::string::npos) return callBox("Core_Primitives_Any_box_tuple",  {asPtr});
+                // Other struct — call __str, walking up the inheritance hierarchy
+                auto findStrFunc = [&](const std::string& typeName) -> Function* {
+                    Function* f = TheModule->getFunction(typeName + "___str");
+                    if (!f) { std::string sfx = typeName + "___str"; for (auto& F : *TheModule) if (F.getName().endswith(sfx)) { f = &F; break; } }
+                    if (!f) f = TheModule->getFunction(typeName + "__str");
+                    if (!f) f = TheModule->getFunction(typeName + "___repr");
+                    if (!f) f = TheModule->getFunction(typeName + "__repr");
+                    return f;
+                };
+                Function* strFunc = findStrFunc(name);
+                Value* strSelf = v;
+                if (!strFunc) {
+                    // Walk inheritance hierarchy
+                    std::string current = name;
+                    while (!strFunc && structHierarchy.count(current) && !structHierarchy[current].empty()) {
+                        current = structHierarchy[current][0];
+                        strFunc = findStrFunc(current);
+                        if (strFunc && StructTypes.count(current))
+                            strSelf = Builder.CreateBitCast(v, PointerType::getUnqual(StructTypes[current]));
+                    }
+                }
                 if (strFunc) {
-                    Value* strObj = Builder.CreateCall(strFunc, {v});
+                    Value* strObj = Builder.CreateCall(strFunc, {strSelf});
                     if (strObj->getType()->isPointerTy() &&
                         strObj->getType()->getPointerElementType()->isIntegerTy(8)) {
                         std::vector<Value*> args = {strObj};
@@ -1721,6 +2650,200 @@ class LLVMCodegen {
                 return cond;
             },
             [this, parentFunc](Node* n) { this->handleStatement(n, parentFunc); });
+    }
+
+    // --- List Comprehension: [expr for var in iterable (where cond)] ---
+    Value* generateListComprehension(ListComprehensionNode* comp) {
+        Function* parentFunc = Builder.GetInsertBlock()->getParent();
+
+        // 1. Create an empty result list.
+        std::vector<Value*> noArgs;
+        Value* resultList = structGen->allocateAndInit("List", noArgs);
+        if (!resultList) return nullptr;
+
+        Function* appendFunc = TheModule->getFunction("Core_Collections_List_List_append");
+        if (!appendFunc) return resultList;
+
+        // 2. Evaluate the iterable and get its iterator.
+        Value* iterable = handleExpression(comp->iterable.get());
+        if (!iterable) return resultList;
+        if (iterable->getType()->isPointerTy() &&
+            iterable->getType()->getPointerElementType()->isPointerTy())
+            iterable = Builder.CreateLoad(iterable->getType()->getPointerElementType(), iterable);
+
+        if (!iterable->getType()->isPointerTy() ||
+            !iterable->getType()->getPointerElementType()->isStructTy())
+            return resultList;
+
+        StructType* st = cast<StructType>(iterable->getType()->getPointerElementType());
+        std::string structName = st->getName().str();
+
+        auto resolveF = [&](const std::string& n) -> Function* {
+            Function* f = TheModule->getFunction(n);
+            if (!f && functionDeclarations.count(n)) {
+                const auto& ln = functionDeclarations[n]->linkageName;
+                if (!ln.empty()) f = TheModule->getFunction(ln);
+            }
+            return f;
+        };
+
+        bool isPair = !comp->varName2.empty();
+        Function* iterFunc = isPair ? resolveF(structName + "___iter_pairs") : nullptr;
+        if (!iterFunc) iterFunc = resolveF(structName + "___iter");
+        if (!iterFunc) iterFunc = resolveF(structName + "__iter");
+        if (!iterFunc) return resultList;
+
+        Value* iteratorObj = Builder.CreateCall(iterFunc, {iterable}, "comp_iter");
+        StructType* iterST = cast<StructType>(iteratorObj->getType()->getPointerElementType());
+        std::string iterName = iterST->getName().str();
+
+        Function* hasNextFunc = resolveF(iterName + "___has_next");
+        if (!hasNextFunc) hasNextFunc = resolveF(iterName + "__has_next");
+        Function* nextFunc = resolveF(iterName + "___next");
+        if (!nextFunc) nextFunc = resolveF(iterName + "__next");
+        Function* curValFunc = isPair ? resolveF(iterName + "___current_value") : nullptr;
+        if (!hasNextFunc || !nextFunc) return resultList;
+
+        // 3. Loop: cond → body → back
+        BasicBlock* condBB  = BasicBlock::Create(Context, "lcomp_cond",  parentFunc);
+        BasicBlock* bodyBB  = BasicBlock::Create(Context, "lcomp_body",  parentFunc);
+        BasicBlock* afterBB = BasicBlock::Create(Context, "lcomp_after", parentFunc);
+
+        Builder.CreateBr(condBB);
+        Builder.SetInsertPoint(condBB);
+        Value* hasNext = Builder.CreateCall(hasNextFunc, {iteratorObj});
+        Builder.CreateCondBr(flowGen->toBool(hasNext), bodyBB, afterBB);
+
+        Builder.SetInsertPoint(bodyBB);
+        Value* item = Builder.CreateCall(nextFunc, {iteratorObj}, "comp_item");
+        varGen->defineLocalVariable(comp->varName, item);
+        if (isPair && curValFunc) {
+            Value* val = Builder.CreateCall(curValFunc, {iteratorObj}, "comp_val");
+            varGen->defineLocalVariable(comp->varName2, val);
+        }
+
+        // 4. Optional where filter.
+        if (comp->condition) {
+            BasicBlock* appendBB = BasicBlock::Create(Context, "lcomp_append", parentFunc);
+            Value* cond = handleExpression(comp->condition.get());
+            Builder.CreateCondBr(flowGen->toBool(cond), appendBB, condBB);
+            Builder.SetInsertPoint(appendBB);
+        }
+
+        // 5. Evaluate element and append.
+        Value* elem = handleExpression(comp->expr.get());
+        if (elem) {
+            Type* voidPtr = Type::getInt8PtrTy(Context);
+            Value* boxed = elem;
+            if (elem->getType()->isIntegerTy()) boxed = Builder.CreateIntToPtr(elem, voidPtr);
+            else if (elem->getType() != voidPtr) boxed = Builder.CreateBitCast(elem, voidPtr);
+            Builder.CreateCall(appendFunc, {resultList, boxed});
+        }
+        Builder.CreateBr(condBB);
+        Builder.SetInsertPoint(afterBB);
+        return resultList;
+    }
+
+    // --- Map Comprehension: {key: val for var in iterable (where cond)} ---
+    Value* generateMapComprehension(MapComprehensionNode* comp) {
+        Function* parentFunc = Builder.GetInsertBlock()->getParent();
+
+        // 1. Create empty map.
+        std::vector<Value*> noArgs;
+        Value* resultMap = structGen->allocateAndInit("Map", noArgs);
+        if (!resultMap) return nullptr;
+
+        Function* putFunc = TheModule->getFunction("Core_Collections_Map_Map_put");
+        if (!putFunc) return resultMap;
+
+        // 2. Evaluate iterable and get iterator.
+        Value* iterable = handleExpression(comp->iterable.get());
+        if (!iterable) return resultMap;
+        if (iterable->getType()->isPointerTy() &&
+            iterable->getType()->getPointerElementType()->isPointerTy())
+            iterable = Builder.CreateLoad(iterable->getType()->getPointerElementType(), iterable);
+
+        if (!iterable->getType()->isPointerTy() ||
+            !iterable->getType()->getPointerElementType()->isStructTy())
+            return resultMap;
+
+        StructType* st = cast<StructType>(iterable->getType()->getPointerElementType());
+        std::string structName = st->getName().str();
+
+        auto resolveF = [&](const std::string& n) -> Function* {
+            Function* f = TheModule->getFunction(n);
+            if (!f && functionDeclarations.count(n)) {
+                const auto& ln = functionDeclarations[n]->linkageName;
+                if (!ln.empty()) f = TheModule->getFunction(ln);
+            }
+            return f;
+        };
+
+        bool isPair = !comp->varName2.empty();
+        Function* iterFunc = isPair ? resolveF(structName + "___iter_pairs") : nullptr;
+        if (!iterFunc) iterFunc = resolveF(structName + "___iter");
+        if (!iterFunc) iterFunc = resolveF(structName + "__iter");
+        if (!iterFunc) return resultMap;
+
+        Value* iteratorObj = Builder.CreateCall(iterFunc, {iterable}, "mcomp_iter");
+        StructType* iterST = cast<StructType>(iteratorObj->getType()->getPointerElementType());
+        std::string iterName = iterST->getName().str();
+
+        Function* hasNextFunc = resolveF(iterName + "___has_next");
+        if (!hasNextFunc) hasNextFunc = resolveF(iterName + "__has_next");
+        Function* nextFunc = resolveF(iterName + "___next");
+        if (!nextFunc) nextFunc = resolveF(iterName + "__next");
+        Function* curValFunc = isPair ? resolveF(iterName + "___current_value") : nullptr;
+        if (!hasNextFunc || !nextFunc) return resultMap;
+
+        BasicBlock* condBB  = BasicBlock::Create(Context, "mcomp_cond",  parentFunc);
+        BasicBlock* bodyBB  = BasicBlock::Create(Context, "mcomp_body",  parentFunc);
+        BasicBlock* afterBB = BasicBlock::Create(Context, "mcomp_after", parentFunc);
+
+        Builder.CreateBr(condBB);
+        Builder.SetInsertPoint(condBB);
+        Value* hasNext = Builder.CreateCall(hasNextFunc, {iteratorObj});
+        Builder.CreateCondBr(flowGen->toBool(hasNext), bodyBB, afterBB);
+
+        Builder.SetInsertPoint(bodyBB);
+        Value* item = Builder.CreateCall(nextFunc, {iteratorObj}, "mcomp_item");
+        varGen->defineLocalVariable(comp->varName, item);
+        if (isPair && curValFunc) {
+            Value* val = Builder.CreateCall(curValFunc, {iteratorObj}, "mcomp_val");
+            varGen->defineLocalVariable(comp->varName2, val);
+        }
+
+        if (comp->condition) {
+            BasicBlock* putBB = BasicBlock::Create(Context, "mcomp_put", parentFunc);
+            Value* cond = handleExpression(comp->condition.get());
+            Builder.CreateCondBr(flowGen->toBool(cond), putBB, condBB);
+            Builder.SetInsertPoint(putBB);
+        }
+
+        Value* keyVal = handleExpression(comp->keyExpr.get());
+        Value* valVal = handleExpression(comp->valExpr.get());
+        if (keyVal && valVal) {
+            // Key must be a String* — unbox via quirk_opaque_to_string if it arrives as i8*
+            if (keyVal->getType()->isPointerTy() &&
+                keyVal->getType()->getPointerElementType()->isIntegerTy(8)) {
+                Function* opaqueToStr = TheModule->getFunction("quirk_opaque_to_string");
+                if (!opaqueToStr) {
+                    Type* retTy = StructTypes.count("String")
+                        ? (Type*)PointerType::getUnqual(StructTypes["String"])
+                        : (Type*)Type::getInt8PtrTy(Context);
+                    FunctionType* ft = FunctionType::get(retTy, {Type::getInt8PtrTy(Context)}, false);
+                    opaqueToStr = Function::Create(ft, Function::ExternalLinkage, "quirk_opaque_to_string", TheModule.get());
+                }
+                keyVal = Builder.CreateCall(opaqueToStr, {keyVal}, "mcomp_key_str");
+            }
+            Type* voidPtr = Type::getInt8PtrTy(Context);
+            if (valVal->getType()->isIntegerTy()) valVal = Builder.CreateIntToPtr(valVal, voidPtr);
+            else if (valVal->getType() != voidPtr) valVal = Builder.CreateBitCast(valVal, voidPtr);
+            Builder.CreateCall(putFunc, {resultMap, keyVal, valVal});
+        }
+        Builder.CreateBr(condBB);
+        Builder.SetInsertPoint(afterBB);
+        return resultMap;
     }
 
     Value* handleConstructor(ConstructorNode* node) {
@@ -1790,16 +2913,34 @@ Value* LLVMCodegen::handleExpression(Node* node) {
         }
 
         if (lit->value.size() >= 2 && lit->value.front() == '\'') {
-            std::string unescaped = unescapeString(lit->value.substr(1, lit->value.size() - 2));
-            char c = unescaped.empty() ? '\0' : unescaped[0];
-            return ConstantInt::get(Type::getInt8Ty(Context), c);
+            // Single-quoted literals are 1-char Strings (Char type is gone).
+            std::string rawStr = unescapeString(lit->value.substr(1, lit->value.size() - 2));
+            Value* rawPtr = Builder.CreateGlobalStringPtr(rawStr);
+            std::vector<Value*> args = {rawPtr};
+            return structGen->allocateAndInit("String", args);
         }
 
         if (varGen->exists(lit->value)) return varGen->resolveVariable(lit->value);
+
+        // Function name in a value context (not a direct call) — synthesize
+        // a Callable wrapper on the fly. Lets users pass `define`d functions
+        // as Callable args, store them in variables, return them, etc.
+        if (functionDeclarations.count(lit->value)) {
+            if (Value* cb = emitFunctionAsCallable(lit->value)) return cb;
+        }
     }
 
     if (auto arr = dynamic_cast<ListLiteralNode*>(node)) return structGen->generateListLiteral(arr, [this](Node* n) { return this->handleExpression(n); });
+    if (auto setLit = dynamic_cast<SetLiteralNode*>(node)) return structGen->generateSetLiteral(setLit, [this](Node* n) { return this->handleExpression(n); });
     if (auto mapLit = dynamic_cast<MapLiteralNode*>(node)) return structGen->generateMapLiteral(mapLit, [this](Node* n) { return this->handleExpression(n); });
+    if (auto comp = dynamic_cast<ListComprehensionNode*>(node)) return generateListComprehension(comp);
+    if (auto comp = dynamic_cast<MapComprehensionNode*>(node)) return generateMapComprehension(comp);
+    if (auto tup = dynamic_cast<TupleLiteralNode*>(node)) return structGen->generateTupleLiteral(tup,
+        [this](Node* n) { return this->handleExpression(n); },
+        [this](Value* v) { return this->boxToVoidPtr(v); });
+
+    // RangeLiteralNode in non-for-loop expression context is not supported directly
+    if (dynamic_cast<RangeLiteralNode*>(node)) return nullptr;
 
     if (auto binOp = dynamic_cast<BinaryOpNode*>(node)) {
         if (binOp->op == "not") return mathGen->generateNot(handleExpression(binOp->left.get()));
@@ -1860,11 +3001,11 @@ Value* LLVMCodegen::handleExpression(Node* node) {
         }
         // ── end `is` ─────────────────────────────────────────────────────────
 
-        // ── `elem in list` ───────────────────────────────────────────────────
-        if (binOp->op == "in") {
+        // ── `elem in collection` ─────────────────────────────────────────────
+        if (binOp->op == "in" || binOp->op == "not in") {
             Value* elem = handleExpression(binOp->left.get());
-            Value* list = handleExpression(binOp->right.get());
-            if (!elem || !list) return ConstantInt::getFalse(Context);
+            Value* coll = handleExpression(binOp->right.get());
+            if (!elem || !coll) return ConstantInt::getFalse(Context);
 
             Type* i8PtrTy = Type::getInt8PtrTy(Context);
             Value* elemI8 = elem->getType() == i8PtrTy
@@ -1873,25 +3014,214 @@ Value* LLVMCodegen::handleExpression(Node* node) {
                     ? Builder.CreateBitCast(elem, i8PtrTy)
                     : Builder.CreateIntToPtr(elem, i8PtrTy));
 
-            Value* listI8 = list->getType() == i8PtrTy
-                ? list
-                : Builder.CreateBitCast(list, i8PtrTy);
+            Value* result = nullptr;
 
-            Function* containsFn = TheModule->getFunction("Core_Collections_List_List_contains");
-            if (!containsFn) {
-                FunctionType* ft = FunctionType::get(
-                    Type::getInt32Ty(Context), {i8PtrTy, i8PtrTy}, false);
-                containsFn = Function::Create(ft, Function::ExternalLinkage,
-                    "Core_Collections_List_List_contains", TheModule.get());
+            // Determine collection type and dispatch accordingly
+            bool isMap = false, isSet = false, isString = false;
+            if (coll->getType()->isPointerTy() && coll->getType()->getPointerElementType()->isStructTy()) {
+                std::string sname = cast<StructType>(coll->getType()->getPointerElementType())->getName().str();
+                if (sname.find("Set") != std::string::npos) isSet = true;
+                else if (sname.find("Map") != std::string::npos) isMap = true;
+            } else if (coll->getType()->isPointerTy() && coll->getType()->getPointerElementType()->isIntegerTy(8)) {
+                isString = true;
             }
-            Value* result = Builder.CreateCall(containsFn, {listI8, elemI8}, "in_result");
-            return Builder.CreateICmpNE(result, ConstantInt::get(Type::getInt32Ty(Context), 0), "in_bool");
+
+            if (isSet) {
+                // `elem in set` → Set.has(set, elem_i8)
+                Function* hasFn = TheModule->getFunction("Core_Collections_Set_Set_has");
+                if (!hasFn) {
+                    FunctionType* ft = FunctionType::get(Type::getInt32Ty(Context), {coll->getType(), i8PtrTy}, false);
+                    hasFn = Function::Create(ft, Function::ExternalLinkage, "Core_Collections_Set_Set_has", TheModule.get());
+                }
+                result = Builder.CreateCall(hasFn, {coll, elemI8}, "in_result");
+            } else if (isMap) {
+                // `key in map` → Map.has(map, key_str)
+                // elem should be a String*; if it's i8* wrap it
+                Value* keyStr = elem;
+                if (StructTypes.count("String")) {
+                    Type* strPtrTy = PointerType::getUnqual(StructTypes["String"]);
+                    if (elem->getType() != strPtrTy) {
+                        Function* opaqueToStr = TheModule->getFunction("quirk_opaque_to_string");
+                        if (!opaqueToStr) {
+                            FunctionType* ft = FunctionType::get(strPtrTy, {i8PtrTy}, false);
+                            opaqueToStr = Function::Create(ft, Function::ExternalLinkage, "quirk_opaque_to_string", TheModule.get());
+                        }
+                        Value* asI8 = elem->getType() == i8PtrTy ? elem : Builder.CreateBitCast(elem, i8PtrTy);
+                        keyStr = Builder.CreateCall(opaqueToStr, {asI8}, "key_str");
+                    }
+                }
+                Function* hasFn = TheModule->getFunction("Core_Collections_Map_Map_has");
+                if (!hasFn) {
+                    Type* mapPtrTy = coll->getType();
+                    Type* strPtrTy = StructTypes.count("String") ? (Type*)PointerType::getUnqual(StructTypes["String"]) : i8PtrTy;
+                    FunctionType* ft = FunctionType::get(Type::getInt32Ty(Context), {mapPtrTy, strPtrTy}, false);
+                    hasFn = Function::Create(ft, Function::ExternalLinkage, "Core_Collections_Map_Map_has", TheModule.get());
+                }
+                result = Builder.CreateCall(hasFn, {coll, keyStr}, "in_result");
+            } else if (isString) {
+                // `sub in str` → String.contains via strstr check
+                // Build both as String* then call Core_String_String_contains
+                Value* collStr = coll; // already i8* (char*)
+                std::vector<Value*> args = {collStr};
+                Value* strObj = structGen->allocateAndInit("String", args);
+                Function* containsFn = TheModule->getFunction("Core_String_String_contains");
+                if (!containsFn) {
+                    Type* strPtrTy = PointerType::getUnqual(StructTypes["String"]);
+                    FunctionType* ft = FunctionType::get(Type::getInt32Ty(Context), {strPtrTy, strPtrTy}, false);
+                    containsFn = Function::Create(ft, Function::ExternalLinkage, "Core_String_String_contains", TheModule.get());
+                }
+                // elem must be a String* too
+                Value* elemStr = elemI8;
+                if (StructTypes.count("String")) {
+                    std::vector<Value*> eargs = {elemI8};
+                    elemStr = structGen->allocateAndInit("String", eargs);
+                }
+                result = Builder.CreateCall(containsFn, {strObj, elemStr}, "in_result");
+            } else {
+                // Default: List.contains
+                Value* collI8 = coll->getType() == i8PtrTy ? coll : Builder.CreateBitCast(coll, i8PtrTy);
+                Function* containsFn = TheModule->getFunction("Core_Collections_List_List_contains");
+                if (!containsFn) {
+                    FunctionType* ft = FunctionType::get(Type::getInt32Ty(Context), {i8PtrTy, i8PtrTy}, false);
+                    containsFn = Function::Create(ft, Function::ExternalLinkage, "Core_Collections_List_List_contains", TheModule.get());
+                }
+                result = Builder.CreateCall(containsFn, {collI8, elemI8}, "in_result");
+            }
+
+            Value* boolResult = Builder.CreateICmpNE(result, ConstantInt::get(Type::getInt32Ty(Context), 0), "in_bool");
+            if (binOp->op == "not in") boolResult = Builder.CreateNot(boolResult, "not_in_bool");
+            return boolResult;
         }
-        // ── end `in` ─────────────────────────────────────────────────────────
+        // ── end `in` / `not in` ──────────────────────────────────────────────
+
+        // ── `expr as TypeName` ───────────────────────────────────────────────
+        if (binOp->op == "as") {
+            Value* src = handleExpression(binOp->left.get());
+            if (!src) return nullptr;
+            std::string targetType;
+            if (auto* lit = dynamic_cast<LiteralNode*>(binOp->right.get()))
+                targetType = lit->value;
+
+            Type* srcTy = src->getType();
+            Type* i32Ty = Type::getInt32Ty(Context);
+            Type* dblTy = Type::getDoubleTy(Context);
+
+            if (targetType == "Double" || targetType == "Float") {
+                if (srcTy->isIntegerTy())  return Builder.CreateSIToFP(src, dblTy, "cast_dbl");
+                if (srcTy->isDoubleTy())   return src;
+            }
+            if (targetType == "Int") {
+                if (srcTy->isDoubleTy())      return Builder.CreateFPToSI(src, i32Ty, "cast_int");
+                if (srcTy->isIntegerTy(1))    return Builder.CreateZExt(src, i32Ty, "cast_int");
+                if (srcTy->isIntegerTy(8))    return Builder.CreateZExt(src, i32Ty, "cast_int");
+                if (srcTy->isIntegerTy(32))   return src;
+                if (srcTy->isPointerTy())     return Builder.CreatePtrToInt(src, i32Ty, "cast_int");
+            }
+            if (targetType == "Bool") {
+                if (srcTy->isIntegerTy(1))  return src;
+                if (srcTy->isIntegerTy())   return Builder.CreateICmpNE(src, ConstantInt::get(srcTy, 0), "cast_bool");
+                if (srcTy->isDoubleTy())    return Builder.CreateFCmpONE(src, ConstantFP::get(dblTy, 0.0), "cast_bool");
+                if (srcTy->isPointerTy())   return Builder.CreateICmpNE(src, Constant::getNullValue(srcTy), "cast_bool");
+            }
+            if (targetType == "String") {
+                // Int/Bool/Double → String via runtime str helpers
+                if (srcTy->isIntegerTy(1)) {
+                    Function* f = TheModule->getFunction("Core_Primitives_Bool_str");
+                    if (f) {
+                        Value* ext = Builder.CreateZExt(src, i32Ty);
+                        return Builder.CreateCall(f, {ext}, "cast_str");
+                    }
+                }
+                if (srcTy->isIntegerTy()) {
+                    Value* i32val = srcTy->isIntegerTy(32) ? src : Builder.CreateSExt(src, i32Ty);
+                    Function* f = TheModule->getFunction("Core_Primitives_Int_str");
+                    if (f) return Builder.CreateCall(f, {i32val}, "cast_str");
+                }
+                if (srcTy->isDoubleTy()) {
+                    Function* f = TheModule->getFunction("Core_Primitives_Double_str");
+                    if (f) return Builder.CreateCall(f, {src}, "cast_str");
+                }
+            }
+            // Pointer-to-pointer: bitcast (covers Any, struct upcasts, etc.)
+            if (srcTy->isPointerTy()) {
+                Type* dstTy = typeGen->getLLVMType(targetType);
+                if (dstTy && dstTy->isPointerTy())
+                    return Builder.CreateBitCast(src, dstTy, "cast_ptr");
+                // Any = i8*
+                if (targetType == "Any")
+                    return Builder.CreateBitCast(src, Type::getInt8PtrTy(Context), "cast_any");
+            }
+            return src; // no-op fallback
+        }
+        // ── end `as` ─────────────────────────────────────────────────────────
 
         Value* L = handleExpression(binOp->left.get());
         Value* R = handleExpression(binOp->right.get());
         if (!L || !R) return nullptr;
+
+        // Normalize `expr == null` / `expr != null` for any pointer type.
+        // `null` evaluates as a typeless `i8*` ConstantPointerNull; without
+        // this fixup, the magic-method dispatch fails (no `Match___eq`) and
+        // the math fallback ICmps mismatched pointer types.
+        if (binOp->op == "==" || binOp->op == "!=") {
+            auto isNullPtr = [](Value* v) {
+                return isa<ConstantPointerNull>(v);
+            };
+            if (isNullPtr(R) && L->getType()->isPointerTy() && L->getType() != R->getType()) {
+                R = ConstantPointerNull::get(cast<PointerType>(L->getType()));
+            } else if (isNullPtr(L) && R->getType()->isPointerTy() && L->getType() != R->getType()) {
+                L = ConstantPointerNull::get(cast<PointerType>(R->getType()));
+            }
+            // Both null-pointer comparisons now resolve via the math fallback
+            // ICmpEQ/ICmpNE on matching pointer types.
+            if (isNullPtr(L) || isNullPtr(R)) {
+                if (binOp->op == "==")
+                    return Builder.CreateICmpEQ(L, R, "ptr_eq_null");
+                else
+                    return Builder.CreateICmpNE(L, R, "ptr_ne_null");
+            }
+        }
+
+        // Operator overloading: check for magic methods on the left operand struct
+        if (L->getType()->isPointerTy() &&
+            L->getType()->getPointerElementType()->isStructTy()) {
+            StructType* st = cast<StructType>(L->getType()->getPointerElementType());
+            std::string sName = st->getName().str();
+            if (sName.find("struct.") == 0) sName = sName.substr(7);
+            static const std::map<std::string, std::string> opMethods = {
+                {"+",  "___add"}, {"-",  "___sub"}, {"*",  "___mul"}, {"/",  "___div"},
+                {"==", "___eq"},  {"!=", "___ne"},  {"<",  "___lt"},  {">",  "___gt"},
+                {"<=", "___le"},  {">=", "___ge"},
+            };
+            auto it = opMethods.find(binOp->op);
+            if (it != opMethods.end()) {
+                Function* magicFn = TheModule->getFunction(sName + it->second);
+                if (magicFn && magicFn->arg_size() >= 2) {
+                    Value* rArg = R;
+                    Type* expectedTy = magicFn->getFunctionType()->getParamType(1);
+                    if (rArg->getType() != expectedTy) {
+                        if (rArg->getType()->isPointerTy() && expectedTy->isPointerTy())
+                            rArg = Builder.CreateBitCast(rArg, expectedTy);
+                        else if (rArg->getType()->isIntegerTy() && expectedTy->isIntegerTy())
+                            rArg = Builder.CreateIntCast(rArg, expectedTy, true);
+                        else if (rArg->getType()->isIntegerTy() && expectedTy->isPointerTy())
+                            rArg = Builder.CreateIntToPtr(rArg, expectedTy);
+                    }
+                    Value* res = Builder.CreateCall(magicFn, {L, rArg}, "op_result");
+                    // Comparison ops are typed Bool at the Quirk level. Extern
+                    // implementations widen the C ABI return to i32, so truncate
+                    // back to i1 — otherwise the result boxes as ANY_INT and
+                    // prints as 0/1 instead of true/false.
+                    static const std::set<std::string> cmpOps = {"==","!=","<","<=",">",">="};
+                    if (cmpOps.count(binOp->op) && res->getType()->isIntegerTy() &&
+                        !res->getType()->isIntegerTy(1)) {
+                        res = Builder.CreateICmpNE(
+                            res, ConstantInt::get(res->getType(), 0), "cmp_to_bool");
+                    }
+                    return res;
+                }
+            }
+        }
 
         if (binOp->op == "[]") {
             // ... (Keep existing [] logic exactly as is) ...
@@ -1933,6 +3263,23 @@ Value* LLVMCodegen::handleExpression(Node* node) {
                     }
                 }
             }
+            // String character indexing: call Core_String_String___get for bounds checking
+            if (L->getType()->isPointerTy()) {
+                Type* elem = L->getType()->getPointerElementType();
+                bool isStrStruct = elem->isStructTy() &&
+                    cast<StructType>(elem)->getName().contains("String");
+                if (isStrStruct) {
+                    Type* i32Ty = Type::getInt32Ty(Context);
+                    Type* strPtrTy = L->getType();
+                    FunctionCallee getFn = TheModule->getOrInsertFunction(
+                        "Core_String_String___get",
+                        i32Ty, strPtrTy, i32Ty);
+                    Value* idx = R;
+                    if (!idx->getType()->isIntegerTy(32))
+                        idx = Builder.CreateIntCast(idx, i32Ty, true);
+                    return Builder.CreateCall(getFn, {L, idx}, "char_at");
+                }
+            }
             if (L->getType()->isPointerTy() && L->getType()->getPointerElementType()->isIntegerTy(8)) {
                 Value* ptr = Builder.CreateBitCast(L, PointerType::getUnqual(Type::getInt8PtrTy(Context)));
                 return Builder.CreateLoad(Type::getInt8PtrTy(Context), Builder.CreateGEP(Type::getInt8PtrTy(Context), ptr, R));
@@ -1951,7 +3298,15 @@ Value* LLVMCodegen::handleExpression(Node* node) {
                 return false;
             };
 
-            if (isStringType(L) || isStringType(R)) {
+            // Don't trigger string concat when an opaque i8* is mixed with a plain numeric type —
+            // that case should go through arithmetic unboxing (e.g. nonlocal cell values).
+            bool lOpaque = L->getType()->isPointerTy() && L->getType()->getPointerElementType()->isIntegerTy(8);
+            bool rOpaque = R->getType()->isPointerTy() && R->getType()->getPointerElementType()->isIntegerTy(8);
+            bool lNum = L->getType()->isIntegerTy() || L->getType()->isDoubleTy();
+            bool rNum = R->getType()->isIntegerTy() || R->getType()->isDoubleTy();
+            bool suppressString = (lOpaque && rNum) || (rOpaque && lNum);
+
+            if (!suppressString && (isStringType(L) || isStringType(R))) {
                 auto makeString = [&](Value* val) -> Value* {
                     Type* ty = val->getType();
                     // 1. Already a String Struct
@@ -1961,17 +3316,27 @@ Value* LLVMCodegen::handleExpression(Node* node) {
                         // ... (keep __str call logic) ...
                         std::string sName = st->getName().str();
                         if (sName.find("struct.") == 0) sName = sName.substr(7);
-                        // Try short name first, then search all functions for a matching ___str
-                        Function* strFunc = TheModule->getFunction(sName + "___str");
+                        { size_t d = sName.find('.'); if (d != std::string::npos && std::isdigit((unsigned char)sName[d+1])) sName = sName.substr(0, d); }
+                        // Try direct name, then walk inheritance hierarchy for __str
+                        auto findStr = [&](const std::string& t) -> Function* {
+                            Function* f = TheModule->getFunction(t + "___str");
+                            if (!f) { std::string sfx = t + "___str"; for (auto& F : *TheModule) if (F.getName().endswith(sfx)) { f = &F; break; } }
+                            if (!f) f = TheModule->getFunction(t + "__str");
+                            return f;
+                        };
+                        Function* strFunc = findStr(sName);
+                        Value* strSelf = val;
                         if (!strFunc) {
-                            // Search module for any function ending in <StructName>___str
-                            std::string suffix = sName + "___str";
-                            for (auto& F : *TheModule) {
-                                if (F.getName().endswith(suffix)) { strFunc = &F; break; }
+                            std::string cur = sName;
+                            while (!strFunc && structHierarchy.count(cur) && !structHierarchy[cur].empty()) {
+                                cur = structHierarchy[cur][0];
+                                strFunc = findStr(cur);
+                                if (strFunc && StructTypes.count(cur))
+                                    strSelf = Builder.CreateBitCast(val, PointerType::getUnqual(StructTypes[cur]));
                             }
                         }
                         if (strFunc) {
-                            Value* ret = Builder.CreateCall(strFunc, {val});
+                            Value* ret = Builder.CreateCall(strFunc, {strSelf});
                             if (ret->getType()->isPointerTy() && ret->getType()->getPointerElementType()->isIntegerTy(8)) {
                                 std::vector<Value*> boxArgs = {ret};
                                 return structGen->allocateAndInit("String", boxArgs);
@@ -2031,8 +3396,12 @@ Value* LLVMCodegen::handleExpression(Node* node) {
 
                 auto resolveFunc = [&](const std::string& suffix) -> Function* {
                     Function* f = TheModule->getFunction(sName + "___" + suffix.substr(2));
-                    if (!f) for (auto& F : *TheModule)
-                        if (F.getName().endswith("___" + suffix.substr(2))) { f = &F; break; }
+                    if (!f) {
+                        // Search for struct-specific match to avoid picking up wrong type's method.
+                        std::string target = sName + "___" + suffix.substr(2);
+                        for (auto& F : *TheModule)
+                            if (F.getName().contains(target)) { f = &F; break; }
+                    }
                     return f;
                 };
 
@@ -2046,7 +3415,18 @@ Value* LLVMCodegen::handleExpression(Node* node) {
                 }
                 if (opFunc) {
                     Value* result = Builder.CreateCall(opFunc, {L, R}, "cmp_result");
-                    if (negated) result = Builder.CreateNot(result, "cmp_ne");
+                    if (negated) {
+                        // __eq returns i32 (Bool widened for C ABI). CreateNot
+                        // on i32 1 yields -2; we want 0/1, so compare to 0.
+                        result = Builder.CreateICmpEQ(
+                            result, ConstantInt::get(result->getType(), 0), "cmp_ne");
+                    } else if (result->getType()->isIntegerTy() &&
+                               !result->getType()->isIntegerTy(1)) {
+                        // Truncate widened i32 Bool to i1 so the result is
+                        // typed Bool — matters for boxing/printing.
+                        result = Builder.CreateICmpNE(
+                            result, ConstantInt::get(result->getType(), 0), "cmp_to_bool");
+                    }
                     return result;
                 }
             }
@@ -2211,6 +3591,89 @@ Value* LLVMCodegen::handleExpression(Node* node) {
         phi->addIncoming(thenVal, thenEndBB);
         phi->addIncoming(elseVal, elseEndBB);
         return phi;
+    }
+
+    if (auto sl = dynamic_cast<SliceNode*>(node)) {
+        Value* objVal = handleExpression(sl->object.get());
+        if (!objVal) return nullptr;
+
+        Type* i32Ty    = Type::getInt32Ty(Context);
+        Type* i8PtrTy  = Type::getInt8PtrTy(Context);
+
+        // Determine object type: String or List
+        bool isListSlice = false;
+        if (objVal->getType()->isPointerTy()) {
+            Type* pointee = objVal->getType()->getPointerElementType();
+            if (pointee->isStructTy()) {
+                StringRef name = cast<StructType>(pointee)->getName();
+                if (name.contains("List") || name == "List") isListSlice = true;
+            }
+        }
+        // Also check if the sema type was List via the object expression type
+        // (fallback: if object holds a List*, treat as list)
+
+        Value* startVal = sl->start
+            ? handleExpression(sl->start.get())
+            : ConstantInt::get(i32Ty, 0);
+        if (!startVal) return nullptr;
+        if (!startVal->getType()->isIntegerTy(32))
+            startVal = Builder.CreateIntCast(startVal, i32Ty, true);
+
+        if (isListSlice) {
+            // List slice: Core_Collections_List_List_slice(List*, start, end)
+            // end==-1 is handled by passing size; use INT_MIN (-2147483648) as "no end"
+            // Actually: just pass -1 and let runtime clamp (end<0 → end+=size → size-1).
+            // Better: use the List size field. List struct: {void** data, int size, int cap}
+            StructType* listTy = StructTypes.count("List") ? StructTypes["List"] : nullptr;
+            Type* listPtrTy = listTy ? (Type*)PointerType::getUnqual(listTy) : i8PtrTy;
+            if (objVal->getType() != listPtrTy)
+                objVal = Builder.CreateBitCast(objVal, listPtrTy);
+
+            Value* endVal;
+            if (sl->end) {
+                endVal = handleExpression(sl->end.get());
+                if (!endVal) return nullptr;
+                if (!endVal->getType()->isIntegerTy(32))
+                    endVal = Builder.CreateIntCast(endVal, i32Ty, true);
+            } else if (listTy) {
+                // Load size field (index 1 in {void**, int, int})
+                Value* sizePtr = Builder.CreateGEP(listTy, objVal,
+                    {ConstantInt::get(i32Ty, 0), ConstantInt::get(i32Ty, 1)}, "list_sizeptr");
+                endVal = Builder.CreateLoad(i32Ty, sizePtr, "list_size");
+            } else {
+                endVal = ConstantInt::getSigned(i32Ty, -1);
+            }
+
+            FunctionCallee sliceFn = TheModule->getOrInsertFunction(
+                "Core_Collections_List_List_slice",
+                listPtrTy, listPtrTy, i32Ty, i32Ty);
+            return Builder.CreateCall(sliceFn, {objVal, startVal, endVal}, "list_slice");
+
+        } else {
+            // String slice: Core_String_String_substring(String*, start, end)
+            StructType* strTy = StructTypes.count("String") ? StructTypes["String"] : nullptr;
+            if (!strTy) strTy = StructType::create(Context, {i8PtrTy, i32Ty}, "String");
+            Type* strPtrTy = PointerType::getUnqual(strTy);
+            if (objVal->getType() != strPtrTy)
+                objVal = Builder.CreateBitCast(objVal, strPtrTy);
+
+            Value* endVal;
+            if (sl->end) {
+                endVal = handleExpression(sl->end.get());
+                if (!endVal) return nullptr;
+                if (!endVal->getType()->isIntegerTy(32))
+                    endVal = Builder.CreateIntCast(endVal, i32Ty, true);
+            } else {
+                Value* lenPtr = Builder.CreateGEP(strTy, objVal,
+                    {ConstantInt::get(i32Ty, 0), ConstantInt::get(i32Ty, 1)}, "str_lenptr");
+                endVal = Builder.CreateLoad(i32Ty, lenPtr, "str_len");
+            }
+
+            FunctionCallee substringFn = TheModule->getOrInsertFunction(
+                "Core_String_String_substring",
+                strPtrTy, strPtrTy, i32Ty, i32Ty);
+            return Builder.CreateCall(substringFn, {objVal, startVal, endVal}, "slice");
+        }
     }
 
     return nullptr;

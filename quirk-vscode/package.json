@@ -15,7 +15,7 @@
       {
         "id": "quirk",
         "aliases": ["Quirk", "quirk"],
-        "extensions": [".qk"],
+        "extensions": [".quirk"],
         "configuration": "./language-configuration.json",
         "icon": {
           "light": "./icons/icon.svg",
@@ -41,6 +41,10 @@
         "command": "quirk.runFile",
         "title": "Quirk: Run File",
         "icon": "$(play)"
+      },
+      {
+        "command": "quirk.selectInterpreter",
+        "title": "Quirk: Select Interpreter"
       }
     ],
     "keybindings": [
@@ -75,6 +79,18 @@
         }
       }
     },
+    "configurationDefaults": {
+      "[quirk]": {
+        "editor.quickSuggestions": {
+          "other": "on",
+          "comments": "off",
+          "strings": "off"
+        },
+        "editor.suggestOnTriggerCharacters": true,
+        "editor.acceptSuggestionOnEnter": "on",
+        "editor.wordBasedSuggestions": "currentDocument"
+      }
+    },
     "problemMatchers": [
       {
         "name": "quirk",
@@ -102,7 +118,7 @@
         "properties": {
           "file": {
             "type": "string",
-            "description": "The .qk file to compile and run."
+            "description": "The .quirk file to compile and run."
           }
         }
       }

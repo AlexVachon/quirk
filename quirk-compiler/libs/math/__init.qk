@@ -1,3 +1,0 @@
-from math.vectors use {
-    Vector2, Vector3
-}

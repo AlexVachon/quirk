@@ -1,5 +1,15 @@
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Support/TargetSelect.h"
+#include "llvm/Support/TargetRegistry.h"
+#include "llvm/Support/Host.h"
+#include "llvm/IR/Verifier.h"
+#include "llvm/IR/LegacyPassManager.h"
+#include "llvm/Target/TargetMachine.h"
+#include "llvm/Target/TargetOptions.h"
+#include "llvm/ExecutionEngine/Orc/LLJIT.h"
+#include "llvm/ExecutionEngine/Orc/ExecutionUtils.h"
+#include "llvm/ExecutionEngine/Orc/ThreadSafeModule.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -8,6 +18,9 @@
 #include <set>
 #include <sstream>
 #include <vector>
+#include <unistd.h>
+
+#include "PackageManager.hpp"
 
 #include "lexer.hpp"
 #include "parser.hpp"
@@ -23,10 +36,19 @@ namespace fs = std::filesystem;
 
 struct CompilerOptions {
     std::string inputFile;
+    std::string outputFile;   // non-empty → produce native binary, skip JIT
     bool runImmediate = true;
     bool verbose      = false;
     bool emitIR       = false;
     bool emitAST      = false;
+    bool checkOnly    = false; // --check: lex + parse + sema only, no codegen
+    // LLVM optimization level. Default 1 — runs the minimal correctness
+    // pass set (mem2reg + EarlyCSE + instcombine + simplifycfg + DCE) which
+    // the JIT needs to execute our codegen's "loose" IR safely. O2 adds
+    // inlining + loop opts + a longer pipeline; meaningful only for compute-
+    // heavy code (`--release`). O0 is unsafe today and segfaults a chunk of
+    // the suite; reserved for future codegen rewrites.
+    int  optLevel     = 1;
 };
 
 // ==========================================================
@@ -171,24 +193,50 @@ public:
 //  IMPORT RESOLUTION
 // ==========================================================
 
-std::vector<std::string> getSearchPaths() {
-    std::vector<std::string> paths;
+// Per-process cache. The search paths depend only on QUIRK_HOME, HOME, and
+// whether QUIRK_HOME contains bin/activate — all stable for the lifetime of
+// one compiler invocation. `resolveImportPath()` is hit once per import,
+// stdlib loading hits this hundreds of times, so caching saves a meaningful
+// amount of allocation + string concat + fs::exists checks.
+static std::vector<std::string>& getSearchPaths() {
+    static std::vector<std::string> paths = []() {
+        std::vector<std::string> p;
+        p.reserve(8);
 
-    const char* envHome = std::getenv("QUIRK_HOME");
-    if (envHome) {
-        std::string venvBase = std::string(envHome);
-        paths.push_back(venvBase + "/lib/quirk/packages/");
-        paths.push_back(venvBase + "/lib/quirk/");
-        paths.push_back(venvBase + "/libs/");
-    }
+        // Project-local installs win — matches pip's project-takes-precedence
+        // behavior and means `quirk install -e <path>` works even when
+        // QUIRK_HOME points at a venv or dev tree elsewhere.
+        p.push_back("./packages/");
 
-    paths.push_back("./libs/");
+        const char* envHome = std::getenv("QUIRK_HOME");
+        bool isVenv = false;
+        if (envHome) {
+            std::string venvBase = envHome;
+            p.push_back(venvBase + "/lib/quirk/packages/");
+            p.push_back(venvBase + "/lib/quirk/stdlib/");  // new layout
+            p.push_back(venvBase + "/lib/quirk/");         // legacy / dev install
+            p.push_back(venvBase + "/libs/");
+            // Distinguish a real venv from a dev-tree QUIRK_HOME: only the former
+            // has bin/activate. Venvs *isolate* — they don't see user-global.
+            isVenv = fs::exists(fs::path(venvBase) / "bin" / "activate");
+        }
 
-    if (!envHome) {
-        paths.push_back("/usr/local/lib/quirk/packages/");
-        paths.push_back("/usr/local/lib/quirk/");
-    }
+        // User-global installs — `pip install --user` / `cargo install` equivalent.
+        // Skipped when a venv is active so the venv stays a closed world.
+        if (!isVenv) {
+            if (const char* home = std::getenv("HOME")) {
+                p.push_back(std::string(home) + "/.quirk/packages/");
+            }
+        }
 
+        p.push_back("./libs/");
+
+        if (!envHome) {
+            p.push_back("/usr/local/lib/quirk/packages/");
+            p.push_back("/usr/local/lib/quirk/");
+        }
+        return p;
+    }();
     return paths;
 }
 
@@ -211,13 +259,22 @@ std::string resolveImportPath(const std::string& moduleName, const std::string& 
 
         std::string subPath = moduleName.substr(dotCount);
 
-        fs::path candidateFile = baseDir / (subPath + ".qk");
+        fs::path candidateFile = baseDir / (subPath + ".quirk");
         if (fs::exists(candidateFile)) return candidateFile.string();
 
-        fs::path candidateInit = baseDir / subPath / "__init.qk";
+        fs::path candidateInit = baseDir / subPath / "index.quirk";
         if (fs::exists(candidateInit)) return candidateInit.string();
 
         return "";
+    }
+
+    // Self-resolution: if the importing file lives inside a project whose
+    // quirk.toml declares `name = <moduleName>`, resolve to that project's
+    // own entry point. Wins over the standard search paths so that local
+    // edits aren't shadowed by an installed copy of the same package.
+    if (!relativeTo.empty()) {
+        std::string selfPath = qpm::resolve_self_package(moduleName, relativeTo);
+        if (!selfPath.empty()) return selfPath;
     }
 
     // Absolute imports
@@ -225,14 +282,27 @@ std::string resolveImportPath(const std::string& moduleName, const std::string& 
     std::replace(relPath.begin(), relPath.end(), '.', '/');
 
     std::vector<std::string> variants = {
-        relPath + ".qk",
-        relPath + "/__init.qk"
+        relPath + ".quirk",
+        relPath + "/index.quirk",
+        relPath + "/src/index.quirk",                       // package layout: pkg/src/index.quirk
+        relPath + "/src/" + relPath + ".quirk",
     };
 
     for (const auto& root : getSearchPaths()) {
         for (const auto& variant : variants) {
             fs::path fullPath = fs::path(root) / variant;
             if (fs::exists(fullPath)) return fullPath.string();
+        }
+        // Fall back to the package's manifest `entry` field if present.
+        // Lets a package override the default entry-point conventions.
+        fs::path pkgDir = fs::path(root) / relPath;
+        if (fs::exists(pkgDir / "quirk.toml")) {
+            qpm::Manifest m;
+            if (qpm::read_manifest((pkgDir / "quirk.toml").string(), m)
+                && !m.entry.empty()) {
+                fs::path entryPath = pkgDir / m.entry;
+                if (fs::exists(entryPath)) return entryPath.string();
+            }
         }
     }
 
@@ -246,6 +316,19 @@ std::string resolveImportPath(const std::string& moduleName, const std::string& 
 std::set<std::string> loadedModules;
 
 std::string getModuleName(const std::string& path) {
+    // Fall back to the manifest's `name` ONLY if the path has no standard
+    // layout marker. Otherwise the path-based stripping below handles it.
+    // This prevents stdlib files reached through `<venv>/lib/quirk/` from
+    // picking up the venv's own quirk.toml as their module name.
+    bool hasLayoutMarker =
+        path.find("/libs/") != std::string::npos ||
+        path.find("/lib/quirk/") != std::string::npos ||
+        path.find("/packages/") != std::string::npos;
+    if (!hasLayoutMarker) {
+        std::string pkg = qpm::project_name_for_file(path);
+        if (!pkg.empty()) return pkg;
+    }
+
     std::string mod = path;
 
     if (mod.find("./") == 0) mod = mod.substr(2);
@@ -255,14 +338,17 @@ std::string getModuleName(const std::string& path) {
 
     const char* envHome = std::getenv("QUIRK_HOME");
     if (envHome) {
-        std::string base     = std::string(envHome);
-        std::string venvPkg  = base + "/lib/quirk/packages/";
-        std::string venvCore = base + "/lib/quirk/";
-        std::string venvLibs = base + "/libs/";   // local dev layout: $QUIRK_HOME/libs/
+        std::string base       = std::string(envHome);
+        std::string venvPkg    = base + "/lib/quirk/packages/";
+        std::string venvStdlib = base + "/lib/quirk/stdlib/";   // new venv layout
+        std::string venvCore   = base + "/lib/quirk/";          // legacy + dev install
+        std::string venvLibs   = base + "/libs/";               // local dev layout
 
         size_t pos;
         if ((pos = mod.find(venvPkg)) != std::string::npos)
             mod = mod.substr(pos + venvPkg.length());
+        else if ((pos = mod.find(venvStdlib)) != std::string::npos)
+            mod = mod.substr(pos + venvStdlib.length());
         else if ((pos = mod.find(venvCore)) != std::string::npos)
             mod = mod.substr(pos + venvCore.length());
         else if ((pos = mod.find(venvLibs)) != std::string::npos)
@@ -302,6 +388,11 @@ std::vector<std::unique_ptr<Node>> processFile(const std::string& filePath,
     auto tokens = lexer.tokenize();
     Parser parser(tokens, source, filePath);
     auto nodes = parser.parse();
+    if (parser.hasErrors()) {
+        parser.flushErrors();
+        std::cerr << "Compilation failed." << std::endl;
+        exit(1);
+    }
 
     std::string currentModule = isMainFile ? "main" : getModuleName(filePath);
     std::vector<std::unique_ptr<Node>> allNodes;
@@ -338,13 +429,25 @@ std::vector<std::unique_ptr<Node>> processFile(const std::string& filePath,
 // ==========================================================
 
 void printUsage() {
-    std::cout << "Usage: quirk [options] <file.qk>\n"
+    std::cout << "Usage: quirk [options] <file.quirk> [script-args...]\n"
               << "\n"
-              << "Options:\n"
-              << "  --compile-only  Compile only, do not run\n"
-              << "  -v              Verbose: show debug output\n"
-              << "  --emit-ir       Write LLVM IR to <file>.ll\n"
-              << "  --emit-ast      Write AST dump to <file>.ast.log\n"
+              << "Run options:\n"
+              << "  --compile-only      Compile only, do not run\n"
+              << "  --check             Type-check only (no codegen)\n"
+              << "  -o <file>           Compile to native binary\n"
+              << "  -v                  Verbose: show debug output\n"
+              << "  --emit-ir           Write LLVM IR to <file>.ll\n"
+              << "  --emit-ast          Write AST dump to <file>.ast.log\n"
+              << "\n"
+              << "Package management:\n"
+              << "  quirk install [-r <file>] [pkg ...]   install dependencies\n"
+              << "  quirk upgrade [pkg ...]               bump to latest versions\n"
+              << "  quirk remove <pkg> [pkg ...]          uninstall packages\n"
+              << "  quirk list (or `packages`, `-p`)      show installed packages\n"
+              << "  quirk show <pkg>                      package details\n"
+              << "  quirk init                            scaffold quirk.toml\n"
+              << "  quirk venv <name>                     create an isolated env\n"
+              << "  quirk --version                       print Quirk version\n"
               << std::endl;
 }
 
@@ -358,15 +461,42 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Parse CLI flags
+    // Package-manager subcommand dispatch: `quirk install / upgrade / remove
+    // / list / show / init / version`, plus `--version` and `-p|--packages`
+    // shortcuts. Returns true when it handled the invocation; otherwise we
+    // fall through to the normal script-run path below.
+    int pmRc = 0;
+    if (qpm::dispatch(argc, argv, pmRc)) return pmRc;
+
+    // Parse CLI flags. Anything after the input file (the first non-`-` arg)
+    // is forwarded to the user script via sys.argv() — same convention as
+    // python/node: `quirk [compiler-flags] script.quirk [script-args...]`.
     CompilerOptions opts;
+    std::vector<std::string> scriptArgs;
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
+        if (!opts.inputFile.empty()) {
+            // Already seen script — everything else is the script's own argv.
+            scriptArgs.push_back(arg);
+            continue;
+        }
         if      (arg == "-h" || arg == "--help") { printUsage(); return 0; }
         else if (arg == "--compile-only") opts.runImmediate = false;
+        else if (arg == "--check")        { opts.checkOnly = true; opts.runImmediate = false; }
         else if (arg == "-v")             opts.verbose      = true;
         else if (arg == "--emit-ir")      opts.emitIR       = true;
         else if (arg == "--emit-ast")     opts.emitAST      = true;
+        else if (arg == "--release")      opts.optLevel     = 2;
+        else if (arg == "--debug")        opts.optLevel     = 0;  // default, kept for parity
+        else if (arg == "-O0")            opts.optLevel     = 0;
+        else if (arg == "-O1")            opts.optLevel     = 1;
+        else if (arg == "-O2")            opts.optLevel     = 2;
+        else if (arg == "-O3")            opts.optLevel     = 3;
+        else if (arg == "-o") {
+            if (++i >= argc) { std::cerr << "Error: -o requires a filename\n"; return 1; }
+            opts.outputFile    = argv[i];
+            opts.runImmediate  = false;
+        }
         else if (arg[0] != '-')           opts.inputFile    = arg;
         else {
             std::cerr << "Unknown option: " << arg << std::endl;
@@ -381,7 +511,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Derive base name for output files (e.g. "tests/strings.qk" -> "strings")
+    // Derive base name for output files (e.g. "tests/strings.quirk" -> "strings")
     fs::path inputPath(opts.inputFile);
     std::string baseName = inputPath.stem().string();    // "strings"
     std::string baseDir  = inputPath.parent_path().string();
@@ -397,14 +527,14 @@ int main(int argc, char* argv[]) {
     std::vector<std::unique_ptr<Node>> ast;
     std::map<std::string, std::string> sourceMap;
 
-    std::string corePath = resolveImportPath("core", "");
+    std::string corePath = resolveImportPath("typing", "");
     if (!corePath.empty()) {
         auto coreNodes = processFile(corePath, log, sourceMap);
-        log.debug("Loaded " + std::to_string(coreNodes.size()) + " nodes from Core.");
+        log.debug("Loaded " + std::to_string(coreNodes.size()) + " nodes from typing.");
         for (auto& node : coreNodes)
             ast.push_back(std::move(node));
     } else {
-        log.warn("'core' library not found! Standard types (String, List) will fail.");
+        log.warn("'typing' library not found! Standard types (String, List) will fail.");
         const char* env = std::getenv("QUIRK_HOME");
         log.warn(std::string("QUIRK_HOME: ") + (env ? env : "(unset)"));
         for (const auto& p : getSearchPaths())
@@ -442,9 +572,16 @@ int main(int argc, char* argv[]) {
     log.debug("Running Semantic Analysis...");
 
     Sema sema;
+    sema.setSourceMap(sourceMap);
+    sema.setUserFile(fs::absolute(opts.inputFile).string());
     if (!sema.analyze(ast)) {
         std::cerr << "Compilation failed." << std::endl;
         return 1;
+    }
+
+    if (opts.checkOnly) {
+        std::cout << opts.inputFile << ": OK\n";
+        return 0;
     }
 
     // =======================================================
@@ -452,17 +589,34 @@ int main(int argc, char* argv[]) {
     // =======================================================
     log.debug("Starting Code Generation...");
 
-    // IR goes to /tmp for -r (throwaway), or next to source for --emit-ir
-    std::string irPath;
-    if (opts.runImmediate && !opts.emitIR) {
-        irPath = "/tmp/quirk_" + baseName + ".ll";
-    } else if (opts.emitIR) {
-        irPath = baseDir + "/" + baseName + ".ll";
-    } else {
-        irPath = "/tmp/quirk_" + baseName + ".ll";
+    // Resolve runtime.so path: prefer the one next to the binary itself
+    // (works from any CWD and from inside a venv), then $QUIRK_HOME/bin/,
+    // then a CWD-relative fallback for legacy dev invocations.
+    std::string runtimePath;
+    {
+        char buf[4096];
+        ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+        if (n > 0) {
+            buf[n] = '\0';
+            fs::path next = fs::path(buf).parent_path() / "runtime.so";
+            if (fs::exists(next)) runtimePath = next.string();
+        }
+        const char* envHome = std::getenv("QUIRK_HOME");
+        if (envHome) {
+            std::string venvRuntime = std::string(envHome) + "/bin/runtime.so";
+            if (fs::exists(venvRuntime)) runtimePath = venvRuntime;
+        }
+        if (runtimePath.empty()) runtimePath = "./bin/runtime.so";
     }
 
-    {
+    // =======================================================
+    // 6a. EMIT IR (--emit-ir or --compile-only)
+    // =======================================================
+    if (opts.emitIR || !opts.runImmediate) {
+        std::string irPath = opts.emitIR
+            ? (baseDir + "/" + baseName + ".ll")
+            : ("/tmp/quirk_" + baseName + ".ll");
+
         std::error_code EC;
         raw_fd_ostream dest(irPath, EC, sys::fs::OF_None);
         if (EC) {
@@ -470,65 +624,158 @@ int main(int argc, char* argv[]) {
                       << "': " << EC.message() << std::endl;
             return 1;
         }
-
         LLVMCodegen codegen;
         codegen.setVerbose(opts.verbose);
+        codegen.setOptLevel(opts.optLevel);
         codegen.setSourceMap(sourceMap);
         codegen.compile(ast, dest);
         dest.flush();
+
+        if (opts.emitIR) {
+            log.debug("LLVM IR written to " + irPath);
+            return 0;
+        }
     }
 
-    if (opts.emitIR)
-        log.debug("LLVM IR written to " + irPath);
-
     // =======================================================
-    // 6. COMPILE + RUN (if -r)
+    // 6b. NATIVE BINARY OUTPUT (-o <file>)
     // =======================================================
-    if (opts.runImmediate) {
+    if (!opts.outputFile.empty()) {
+        // Emit optimised IR to a temp file, then compile + link via llc-14 + gcc.
+        // This is the same pipeline used by --emit-ir; it's reliable and avoids
+        // having to manage TargetMachine lifetime alongside the running compiler.
+        std::string irPath  = "/tmp/quirk_" + baseName + ".ll";
         std::string objPath = "/tmp/quirk_" + baseName + ".o";
-        std::string binPath = "/tmp/quirk_" + baseName;
 
-        // Resolve runtime.so
-        std::string runtimePath = "./bin/runtime.so";
-        const char* envHome = std::getenv("QUIRK_HOME");
-        if (envHome) {
-            std::string venvRuntime = std::string(envHome) + "/bin/runtime.so";
-            if (fs::exists(venvRuntime))
-                runtimePath = venvRuntime;
+        {
+            std::error_code EC;
+            llvm::raw_fd_ostream irDest(irPath, EC, llvm::sys::fs::OF_None);
+            if (EC) {
+                std::cerr << "Error: cannot open temp IR file '" << irPath
+                          << "': " << EC.message() << std::endl;
+                return 1;
+            }
+            LLVMCodegen codegen;
+            codegen.setVerbose(opts.verbose);
+            codegen.setOptLevel(opts.optLevel);
+            codegen.setSourceMap(sourceMap);
+            codegen.compile(ast, irDest);
         }
+
+        // Compile IR → object file
+        std::string llcCmd = "llc-14 -filetype=obj -relocation-model=pic -O2 "
+                           + irPath + " -o " + objPath;
+        log.debug("Compiling: " + llcCmd);
+        if (int r = std::system(llcCmd.c_str())) {
+            std::cerr << "Error: llc failed (exit " << r << ")" << std::endl;
+            return 1;
+        }
+
+        // Link: object + runtime.so → output binary
         std::string runtimeDir = fs::path(runtimePath).parent_path().string();
-        if (runtimeDir.empty()) runtimeDir = ".";
-
-        // Step 1: IR -> object file
-        std::string llcCmd = "llc-14 -filetype=obj -relocation-model=pic "
-                             + irPath + " -o " + objPath;
-        log.debug("Running: " + llcCmd);
-        if (system(llcCmd.c_str()) != 0) {
-            std::cerr << "Error: llc failed to compile IR." << std::endl;
-            return 1;
-        }
-
-        // Step 2: object + runtime.so -> binary
         std::string linkCmd = "gcc " + objPath + " " + runtimePath
-                            + " -Wl,-rpath," + runtimeDir
-                            + " -lgc -lm -o " + binPath;
-        log.debug("Running: " + linkCmd);
-        if (system(linkCmd.c_str()) != 0) {
-            std::cerr << "Error: gcc failed to link." << std::endl;
+                            + " -lgc -lm -o " + opts.outputFile
+                            + " -Wl,-rpath," + runtimeDir;
+        log.debug("Linking: " + linkCmd);
+        if (int r = std::system(linkCmd.c_str())) {
+            std::cerr << "Error: linker failed (exit " << r << ")" << std::endl;
             return 1;
         }
 
-        // Step 3: run
-        log.debug("Executing: " + binPath);
-        int ret = system(binPath.c_str());
+        log.debug("Binary written to " + opts.outputFile);
+        return 0;
+    }
 
-        // Step 4: clean up /tmp artifacts unless --emit-ir was also passed
-        if (!opts.emitIR) {
-            fs::remove(irPath);
-            fs::remove(objPath);
+    // =======================================================
+    // 6c. JIT COMPILE + RUN (runImmediate, no subprocess)
+    // =======================================================
+    if (opts.runImmediate && !opts.emitIR) {
+        llvm::InitializeNativeTarget();
+        llvm::InitializeNativeTargetAsmPrinter();
+        llvm::InitializeNativeTargetAsmParser();
+
+        // Load libgc explicitly with RTLD_GLOBAL so GC_malloc is visible to the JIT.
+        // runtime.so depends on libgc but loads it RTLD_LOCAL; the JIT needs it globally.
+        for (const char* gcLib : {"libgc.so.1", "libgc.so"}) {
+            std::string errMsg;
+            if (!llvm::sys::DynamicLibrary::LoadLibraryPermanently(gcLib, &errMsg)) break;
         }
-        fs::remove(binPath);
 
+        // Build IR + run O2 passes, get ownership of the module
+        LLVMCodegen codegen;
+        codegen.setVerbose(opts.verbose);
+        codegen.setOptLevel(opts.optLevel);
+        codegen.setSourceMap(sourceMap);
+        auto [module, ctx] = codegen.compileAndRelease(ast);
+
+        // Catch malformed IR early (e.g. missing terminators, type mismatches)
+        // before the JIT tries to compile it and produces a cryptic crash.
+        {
+            std::string verifyErrors;
+            llvm::raw_string_ostream verifyStream(verifyErrors);
+            if (llvm::verifyModule(*module, &verifyStream)) {
+                std::cerr << "Internal compiler error: malformed IR\n"
+                          << verifyStream.str() << std::endl;
+                return 1;
+            }
+        }
+
+        // Create LLJIT instance
+        auto jitOrErr = llvm::orc::LLJITBuilder().create();
+        if (!jitOrErr) {
+            std::cerr << "Error: failed to create JIT: "
+                      << llvm::toString(jitOrErr.takeError()) << std::endl;
+            return 1;
+        }
+        auto& JIT = *jitOrErr;
+        auto& JD  = JIT->getMainJITDylib();
+
+        // Expose current-process symbols (printf, malloc, etc.)
+        {
+            auto genOrErr = llvm::orc::DynamicLibrarySearchGenerator::GetForCurrentProcess(
+                JIT->getDataLayout().getGlobalPrefix());
+            if (!genOrErr) {
+                std::cerr << "Error: failed to create process symbol generator: "
+                          << llvm::toString(genOrErr.takeError()) << std::endl;
+                return 1;
+            }
+            JD.addGenerator(std::move(*genOrErr));
+        }
+
+        // Load runtime.so — provides all Core_* and quirk_* symbols
+        {
+            auto genOrErr = llvm::orc::DynamicLibrarySearchGenerator::Load(
+                runtimePath.c_str(), JIT->getDataLayout().getGlobalPrefix());
+            if (!genOrErr) {
+                std::cerr << "Error: could not load runtime.so (" << runtimePath << "): "
+                          << llvm::toString(genOrErr.takeError()) << std::endl;
+                return 1;
+            }
+            JD.addGenerator(std::move(*genOrErr));
+        }
+
+        // Add the compiled module
+        if (auto err = JIT->addIRModule(
+                llvm::orc::ThreadSafeModule(std::move(module), std::move(ctx)))) {
+            std::cerr << "Error: JIT addIRModule failed: "
+                      << llvm::toString(std::move(err)) << std::endl;
+            return 1;
+        }
+
+        // Resolve and call main(argc, argv)
+        auto mainSym = JIT->lookup("main");
+        if (!mainSym) {
+            std::cerr << "Error: JIT could not find 'main': "
+                      << llvm::toString(mainSym.takeError()) << std::endl;
+            return 1;
+        }
+        auto mainFn = (int(*)(int, char**))mainSym->getAddress();
+        // Build the argv visible to the running script: [scriptPath, ...scriptArgs]
+        // — argv[0] is the source file path; scriptArgs is everything after.
+        std::vector<char*> scriptArgv;
+        scriptArgv.push_back(const_cast<char*>(opts.inputFile.c_str()));
+        for (auto& a : scriptArgs) scriptArgv.push_back(const_cast<char*>(a.c_str()));
+        int ret = mainFn((int)scriptArgv.size(), scriptArgv.data());
         if (ret != 0) {
             std::cerr << "Error: Program exited with code " << ret << std::endl;
             return ret;

@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { QuirkCompletionProvider } from './CompletionProvider';
 
-const _sharedFormatter = new QuirkCompletionProvider({ appendLine: () => {} } as any);
+const _sharedFormatter = new QuirkCompletionProvider();
 
 export class QuirkHoverProvider implements vscode.HoverProvider {
     public async provideHover(
@@ -16,10 +16,13 @@ export class QuirkHoverProvider implements vscode.HoverProvider {
 
         // ---- Keyword hovers ----
         const keywordHovers: Record<string, string> = {
-            'use':      '**`use`** — import a module.\n\n```quirk\nuse core.sys\n```',
-            'from':     '**`from`** — destructuring import.\n\n```quirk\nfrom core.http use { request }\n```',
+            'use':      '**`use`** — import a module.\n\n```quirk\nuse sys\n```',
+            'from':     '**`from`** — destructuring import.\n\n```quirk\nfrom net.http use { request }\n```',
             'define':   '**`define`** — declare a function.\n\n```quirk\ndefine greet(name: String) -> void { ... }\n```',
-            'struct':   '**`struct`** — declare a data structure.\n\n```quirk\nstruct Point { x: Int  y: Int }\n```',
+            'struct':    '**`struct`** — declare a data structure.\n\n```quirk\nstruct Point { x: Int  y: Int }\n```',
+            'interface': '**`interface`** — declare an interface (abstract contract).\n\n```quirk\ninterface Printable {\n    define __str(self) -> String\n}\n```',
+            'enum':      '**`enum`** — declare an enumeration.\n\n```quirk\nenum Direction { North South East West }\n```',
+            'where':     '**`where`** — generic type constraint.\n\n```quirk\ndefine max[T](a: T, b: T) -> T where T: Comparable { ... }\n```',
             'try':      '**`try`** — begin an exception-safe block.',
             'catch':    '**`catch`** — handle a thrown exception.\n\n```quirk\ncatch (e: Exception) { print(e.message) }\n```',
             'throw':    '**`throw`** — raise an exception. Bare `throw` re-raises the current exception.\n\n```quirk\nthrow TypeError("Expected Int")\n```',
@@ -31,7 +34,7 @@ export class QuirkHoverProvider implements vscode.HoverProvider {
             'elif':     '**`elif`** — else-if branch.',
             'else':     '**`else`** — fallback branch.',
             'with':     '**`with`** — context-managed block (auto-close).\n\n```quirk\nwith File("f.txt", "r") as f { ... }\n```',
-            'trigger':  '**`trigger`** — register an event handler.',
+            'const':    '**`const`** — declare a constant (immutable) variable.\n\n```quirk\nconst PI := 3.14159\n```',
             'super':    '**`super`** — reference the parent struct.\n\n```quirk\nsuper().__init("message")\n```',
             'self':     '**`self`** — reference the current struct instance.',
             'true':     '**`true`** — boolean literal `true`',
@@ -44,7 +47,8 @@ export class QuirkHoverProvider implements vscode.HoverProvider {
             return new vscode.Hover(md);
         }
 
-        // ---- Magic method / attribute hovers ----
+        // ---- Magic method descriptions — used as fallback only, not an early return ----
+        // Priority: specific docstring from the .quirk file > generic description below.
         const magicHovers: Record<string, string> = {
             '__init':     '**`__init`** — constructor, called when the struct is instantiated.\n\n```quirk\ndefine __init(self, message: String) -> void { ... }\n```',
             '__del':      '**`__del`** — destructor, called when the struct instance is destroyed.',
@@ -73,29 +77,42 @@ export class QuirkHoverProvider implements vscode.HoverProvider {
             '__parent':   '**`__parent`** — the parent struct\'s name as a `String`. Only meaningful on a `Type` instance (`self.__class.__parent`).\n\n```quirk\nprint(self.__class.__parent)  // "Exception"\n```',
             '__class':    '**`__class`** — magic attribute. Returns a `Type` descriptor for the enclosing struct.\n\nAccess `.__name` and `.__parent` on the result.\n\n```quirk\nprint(self.__class.__name)    // "TypeError"\nprint(self.__class.__parent)  // "Exception"\n```',
         };
-        if (word in magicHovers) {
-            const md = new vscode.MarkdownString(magicHovers[word]);
+
+        // ---- Built-in function / literal hovers (not struct types) ----
+        const builtinFnHovers: Record<string, string> = {
+            'Any':       '**Built-in type** `Any`\n\nDynamic type — accepts any value.',
+            'void':      '**Type** `void` — no return value.',
+            'print':     '**Built-in** `print(value)`\n\nPrint a value to stdout followed by a newline. Accepts any type — calls `.__str()` on structs automatically.',
+            'printf':    '**Built-in** `printf(fmt, ...)`\n\nFormatted print using C-style format strings.\n\n```quirk\nprintf("%s is %d years old\\n", name, age)\n```',
+            'type':      '**Built-in** `type(value) → String`\n\nReturn the type name of a value as a `String`.\n\n```quirk\ntype(42)        // "Int"\ntype("hello")   // "String"\ntype(true)      // "Bool"\ntype(3.14)      // "Double"\n```\n\nFor `Any`-typed variables the lookup is done at runtime via the tag in the boxed value.',
+            'exit':      '**Built-in** `exit(code)`\n\nTerminate the program with the given exit code.\n\n```quirk\nexit(0)   // success\nexit(1)   // failure\n```',
+        };
+        if (word in builtinFnHovers) {
+            const md = new vscode.MarkdownString(builtinFnHovers[word]);
             md.isTrusted = true;
             return new vscode.Hover(md);
         }
 
-        // ---- Built-in type hovers ----
-        const builtinHovers: Record<string, string> = {
-            'String':    '**Built-in type** `String`\n\nUTF-8 string with methods: `.length`, `.substring()`, `.split()`, `.trim()`, etc.',
-            'Int':       '**Built-in type** `Int`\n\n32-bit signed integer.',
-            'Double':    '**Built-in type** `Double`\n\n64-bit floating-point number.',
-            'Bool':      '**Built-in type** `Bool`\n\n`true` or `false`.',
-            'Char':      '**Built-in type** `Char`\n\nA single character.',
-            'List':      '**Built-in type** `List`\n\nDynamic array. Methods: `.append()`, `.pop()`, `.length`, etc.',
-            'Map':       '**Built-in type** `Map`\n\nHash map. Methods: `.put()`, `.get()`, `.has()`, `.len()`, etc.',
-            'File':      '**Built-in type** `File`\n\nFile handle. Methods: `.read()`, `.write()`, `.close()`.',
-            'Any':       '**Built-in type** `Any`\n\nDynamic type — accepts any value.',
-            'void':      '**Type** `void` — no return value.',
-        };
-        if (word in builtinHovers) {
-            const md = new vscode.MarkdownString(builtinHovers[word]);
-            md.isTrusted = true;
-            return new vscode.Hover(md);
+        // ---- Built-in struct types — read docstrings live from the .quirk lib files ----
+        const builtinStructTypes = new Set([
+            // Primitive types
+            'String', 'Int', 'Double', 'Bool',
+            // Collections
+            'List', 'Map', 'Tuple', 'Set', 'Queue', 'Callable', 'File',
+            // Typing interfaces
+            'Printable', 'Equatable', 'Comparable', 'Hashable',
+            'Parseable', 'Sizeable', 'Iterable', 'Iterator', 'Representable', 'Primitive',
+            // Iterator types
+            'ListIterator', 'MapIterator', 'MapPairIterator', 'TupleIterator', 'SetIterator', 'QueueIterator', 'StringIterator',
+            // Exceptions
+            'Exception', 'TypeError', 'ValueError', 'IndexError', 'KeyError',
+            'IOError', 'FileNotFoundError', 'RuntimeError', 'NotImplementedError',
+            'SocketError', 'ZeroDivisionError', 'AssertionError', 'NullError', 'WhereConditionError',
+        ]);
+        if (builtinStructTypes.has(word)) {
+            const projectRoot = _sharedFormatter.findProjectRoot(document.uri.fsPath);
+            const docMd = _sharedFormatter.getStructDocHover(projectRoot, document.uri.fsPath, word);
+            if (docMd) return new vscode.Hover(docMd);
         }
 
         // ---- Definition-based hover ----
@@ -124,15 +141,16 @@ export class QuirkHoverProvider implements vscode.HoverProvider {
                     md.appendMarkdown(`**Module** \`${word}\`\n\n*${relPath}*\n`);
 
                     // Forward scan for opening --- ... closing ---
+                    // Skip blank lines, comments, and import lines (from/use) before the block.
                     const docLines: string[] = [];
                     let inDocBlock = false;
-                    for (let i = 0; i < Math.min(targetDoc.lineCount, 40); i++) {
+                    for (let i = 0; i < Math.min(targetDoc.lineCount, 60); i++) {
                         const t = targetDoc.lineAt(i).text.trim();
                         if (!inDocBlock) {
                             if (t === '---') {
                                 inDocBlock = true;
-                            } else if (t !== '' && !t.startsWith('//')) {
-                                break; // non-blank line before --- → no file docstring
+                            } else if (t !== '' && !t.startsWith('//') && !t.startsWith('from ') && !t.startsWith('use ')) {
+                                break; // non-blank, non-import line before --- → no file docstring
                             }
                         } else {
                             if (t === '---') { break; } // closing ---
@@ -153,7 +171,35 @@ export class QuirkHoverProvider implements vscode.HoverProvider {
                 // FUNCTION / STRUCT / VARIABLE HOVER
                 // =====================================================
                 const signature = defLine.split('{')[0].trim();
-                md.appendCodeblock(signature, 'quirk');
+
+                // Backward scan for `@decorator` lines stacked above the
+                // definition. Stops on the first non-decorator non-blank line
+                // (or a `---` docstring boundary, which the docstring scanner
+                // handles separately below). Decorators are prepended to the
+                // signature code block in source order so hovers read like
+                // the file:
+                //   @cached
+                //   @logged
+                //   define square(x: Int) -> Int
+                const decoratorLines: string[] = [];
+                {
+                    let dLine = def.range.start.line - 1;
+                    const decRe = /^\s*(@[a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)*(?:\s*\([^)]*\))?)\s*$/;
+                    while (dLine >= 0) {
+                        const t = targetDoc.lineAt(dLine).text;
+                        const trimmed = t.trim();
+                        if (trimmed === '') { dLine--; continue; }
+                        const m = decRe.exec(t);
+                        if (!m) break;
+                        decoratorLines.unshift(m[1]);
+                        dLine--;
+                    }
+                }
+
+                const codeBlock = decoratorLines.length
+                    ? decoratorLines.join('\n') + '\n' + signature
+                    : signature;
+                md.appendCodeblock(codeBlock, 'quirk');
 
                 if (def.uri.fsPath !== document.uri.fsPath) {
                     const relPath = vscode.workspace.asRelativePath(def.uri);
@@ -164,27 +210,73 @@ export class QuirkHoverProvider implements vscode.HoverProvider {
                 const docstring: string[] = [];
                 let lineNum = def.range.start.line - 1;
                 let readingDocBlock = false;
+                let docBlockOpenLine = -1;
+                let docBlockCloseLine = -1;
+                const decRe = /^\s*@[a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)*(?:\s*\([^)]*\))?\s*$/;
                 while (lineNum >= 0) {
                     const rawLine = targetDoc.lineAt(lineNum).text;
                     const t = rawLine.trim();
                     if (!readingDocBlock) {
-                        if (t === '---') { readingDocBlock = true; }
+                        // Skip decorator lines between the def and a potential
+                        // docstring above them — they're shown in the codeblock
+                        // header by the decorator scan above, not in the doc.
+                        if (decRe.test(rawLine)) { lineNum--; continue; }
+                        if (t === '---') { readingDocBlock = true; docBlockCloseLine = lineNum; }
+                        else if (t.startsWith('---') && t.endsWith('---') && t.length > 6) {
+                            // Inline single-line docstring: --- text ---
+                            docstring.unshift(t.slice(3, -3).trim());
+                            docBlockOpenLine = lineNum;
+                            docBlockCloseLine = lineNum;
+                            break;
+                        }
                         else if (t !== '') { break; }
                     } else {
-                        if (t === '---') { break; }
+                        if (t === '---') { docBlockOpenLine = lineNum; break; }
                         else { docstring.unshift(rawLine); }
                     }
                     lineNum--;
+                }
+
+                // Module-doc heuristic: a docstring is the *module's* doc only
+                // when (a) nothing non-blank precedes its opening `---`, AND
+                // (b) there's a blank-line gap between its closing `---` and
+                // the definition. Without the gap, the block is touching the
+                // definition and belongs to it — even when it sits at the
+                // very top of the file.
+                if (docBlockOpenLine >= 0) {
+                    // "Gap" = non-blank non-decorator content between the
+                    // closing `---` and the definition. Decorators stacked
+                    // above the def don't count as a gap — the doc still
+                    // belongs to the decorated function.
+                    let hasGap = false;
+                    for (let k = docBlockCloseLine + 1; k < def.range.start.line; k++) {
+                        const ln = targetDoc.lineAt(k).text;
+                        const tr = ln.trim();
+                        if (tr === '' || decRe.test(ln)) continue;
+                        hasGap = true;
+                        break;
+                    }
+                    let isModuleDoc = hasGap;
+                    if (isModuleDoc) {
+                        for (let j = 0; j < docBlockOpenLine; j++) {
+                            if (targetDoc.lineAt(j).text.trim() !== '') { isModuleDoc = false; break; }
+                        }
+                    }
+                    if (isModuleDoc) docstring.length = 0;
                 }
 
                 if (docstring.length > 0) {
                     md.appendMarkdown('\n---\n');
                     const formatted = _sharedFormatter.formatDocstring(docstring);
                     md.appendMarkdown(formatted.md.value);
+                } else if (word in magicHovers) {
+                    // No specific docstring — fall back to the generic magic method description.
+                    md.appendMarkdown('\n---\n');
+                    md.appendMarkdown(magicHovers[word]);
                 }
 
                 // For variable hovers (not define/struct lines) show inferred type
-                const isDefLine = /^\s*(?:extern\s+)?(?:define|def|init|struct|enum)\b/.test(defLine);
+                const isDefLine = /^\s*(?:extern\s+)?(?:define|def|init|struct|enum|interface)\b/.test(defLine);
                 if (!isDefLine) {
                     const inferredType = _sharedFormatter.inferTypeOfVariable(document, position, word);
                     if (inferredType) {
@@ -195,6 +287,13 @@ export class QuirkHoverProvider implements vscode.HoverProvider {
                 return new vscode.Hover(md);
             }
         } catch { }
+
+        // No definition found — last-resort fallback for magic methods.
+        if (word in magicHovers) {
+            const md = new vscode.MarkdownString(magicHovers[word]);
+            md.isTrusted = true;
+            return new vscode.Hover(md);
+        }
 
         return null;
     }

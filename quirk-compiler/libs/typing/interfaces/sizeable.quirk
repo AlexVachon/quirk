@@ -1,0 +1,13 @@
+---
+Implemented by types that have a finite, countable number of elements.
+`String`, `List`, `Map`, `Set`, and `Queue` all implement `Sizeable`.
+
+@example
+define is_empty[T](col: T) -> Bool where T: Sizeable {
+    return col.length() == 0
+}
+---
+interface Sizeable {
+    --- Returns the number of elements in this collection. ---
+    define length(self) -> Int
+}

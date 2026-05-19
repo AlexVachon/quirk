@@ -2,25 +2,139 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 
+// Standalone module-path resolver used by DiagnosticsProvider too.
+// Mirrors the compiler's order: project-local packages first, then venv, then
+// stdlib. Returns the resolved .quirk file path, or null if nothing matches.
+export function resolveModulePath(projectRoot: string, currentFile: string, modulePath: string): string | null {
+    if (modulePath.startsWith('.')) {
+        const m = /^(\.+)(.*)$/.exec(modulePath);
+        if (!m) return null;
+        let searchDir = path.dirname(currentFile);
+        for (let i = 1; i < m[1].length; i++) searchDir = path.dirname(searchDir);
+        const subPath = m[2].replace(/\./g, '/');
+        for (const c of [
+            path.join(searchDir, subPath + '.quirk'),
+            path.join(searchDir, subPath, 'index.quirk'),
+            path.join(searchDir, subPath, '__init.quirk'),
+        ]) if (fs.existsSync(c)) return c;
+        return null;
+    }
+    const relPath = modulePath.replace(/\./g, '/');
+    const roots: string[] = [path.join(projectRoot, 'packages')];
+    const home = resolveQuirkHome(projectRoot);
+    const isVenv = !!home && fs.existsSync(path.join(home, 'bin', 'activate'));
+    if (home) {
+        roots.push(
+            path.join(home, 'lib', 'quirk', 'packages'),
+            path.join(home, 'lib', 'quirk', 'stdlib'),
+            path.join(home, 'lib', 'quirk'),
+            path.join(home, 'libs'),
+        );
+    }
+    // User-global packages — skipped when a venv is active (pip-style isolation).
+    if (!isVenv && process.env['HOME']) {
+        roots.push(path.join(process.env['HOME'], '.quirk', 'packages'));
+    }
+    roots.push(path.join(projectRoot, 'libs'), path.join(projectRoot, 'src'));
+    for (const root of roots) {
+        for (const c of [
+            path.join(root, relPath + '.quirk'),
+            path.join(root, relPath, 'index.quirk'),
+            path.join(root, relPath, '__init.quirk'),
+            path.join(root, relPath, 'src', 'index.quirk'),
+            path.join(root, relPath, 'src', relPath + '.quirk'),
+        ]) if (fs.existsSync(c)) return c;
+    }
+    return null;
+}
+
+// Walk up to find the project root the same way the providers do.
+export function findProjectRootFor(filePath: string): string {
+    let dir = path.dirname(filePath);
+    const stopAt = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(filePath))?.uri.fsPath || '/';
+    while (dir.length >= stopAt.length) {
+        if (fs.existsSync(path.join(dir, 'quirk.toml')) ||
+            fs.existsSync(path.join(dir, 'Makefile')) ||
+            fs.existsSync(path.join(dir, 'libs'))) return dir;
+        const parent = path.dirname(dir);
+        if (parent === dir) break;
+        dir = parent;
+    }
+    return stopAt;
+}
+
+// Resolve QUIRK_HOME for IDE features. Three modes:
+//   1. setting has a non-empty path  → use exactly that
+//   2. setting was explicitly set to "" (via picker → "Quirk Global")
+//      → return undefined; the resolver falls through to global paths
+//      and skips workspace-venv autodetect
+//   3. setting absent (default)      → autodetect: workspace venv > $QUIRK_HOME
+export function resolveQuirkHome(projectRoot?: string): string | undefined {
+    const inspected = vscode.workspace
+        .getConfiguration('quirk').inspect<string>('quirkHome');
+    const explicit = inspected?.workspaceValue ?? inspected?.globalValue;
+    if (explicit !== undefined) {
+        const trimmed = (explicit ?? '').trim();
+        return trimmed || undefined;   // explicit "" = Global, skip autodetect
+    }
+    if (projectRoot) {
+        for (const name of ['.venv', 'venv']) {
+            const candidate = path.join(projectRoot, name);
+            if (fs.existsSync(path.join(candidate, 'bin', 'activate'))) {
+                return candidate;
+            }
+        }
+    }
+    return process.env['QUIRK_HOME'];
+}
+
 const PRELUDE_MODULES = [
-    'core/__init.qk',
-    'core/string.qk',
-    'core/primitives.qk',
-    'core/exceptions/base.qk',
-    'core/exceptions/__init.qk',
-    'core/types.qk',
-    'core/collections/list.qk',
-    'core/collections/map.qk',
-    'sys/__init.qk'
+    'typing/index.quirk',
+    // primitives
+    'typing/primitives/index.quirk',
+    'typing/primitives/string.quirk',
+    'typing/primitives/int.quirk',
+    'typing/primitives/double.quirk',
+    'typing/primitives/bool.quirk',
+    // interfaces
+    'typing/interfaces/index.quirk',
+    'typing/interfaces/printable.quirk',
+    'typing/interfaces/equatable.quirk',
+    'typing/interfaces/comparable.quirk',
+    'typing/interfaces/hashable.quirk',
+    'typing/interfaces/parseable.quirk',
+    'typing/interfaces/sizeable.quirk',
+    'typing/interfaces/iterable.quirk',
+    'typing/interfaces/iterator.quirk',
+    'typing/interfaces/representable.quirk',
+    'typing/interfaces/primitive.quirk',
+    'typing/interfaces/serializable.quirk',
+    // collections
+    'typing/collections/list.quirk',
+    'typing/collections/map.quirk',
+    'typing/collections/tuple.quirk',
+    'typing/collections/set.quirk',
+    'typing/collections/queue.quirk',
+    // other
+    'typing/callable.quirk',
+    'typing/exceptions/base.quirk',
+    'typing/exceptions/index.quirk',
+    'typing/exceptions/types.quirk',
+    'sys/index.quirk',
+    'console/index.quirk',
+    'math/index.quirk',
+    'math/vectors.quirk',
+    'fs/index.quirk',
+    'time/index.quirk',
+    'regex/index.quirk',
+    'test/index.quirk',
+    'crypto/index.quirk',
+    'argparse/index.quirk',
+    'url/index.quirk',
+    'csv/index.quirk'
 ];
 
 export class QuirkDefinitionProvider implements vscode.DefinitionProvider {
-    private outputChannel: vscode.OutputChannel;
-
-    constructor(outputChannel: vscode.OutputChannel) {
-        this.outputChannel = outputChannel;
-    }
-
     public provideDefinition(
         document: vscode.TextDocument,
         position: vscode.Position,
@@ -42,6 +156,20 @@ export class QuirkDefinitionProvider implements vscode.DefinitionProvider {
 
         const symbol = document.getText(range);
 
+        // Whether the word is immediately after a dot — member access, not an alias reference.
+        // Exception: a dotted module path like `typing.collections.map` in a use/from line
+        // has dots between segments but is NOT member access.
+        let isMemberAccess = range.start.character > 0 && lineText.charAt(range.start.character - 1) === '.';
+        if (isMemberAccess) {
+            const importPathMatch = /^\s*(?:use|from)\s+([.a-zA-Z0-9_/]+)/.exec(lineText);
+            if (importPathMatch) {
+                const pathStart = lineText.indexOf(importPathMatch[1], importPathMatch.index);
+                if (range.start.character >= pathStart && range.end.character <= pathStart + importPathMatch[1].length) {
+                    isMemberAccess = false;
+                }
+            }
+        }
+
         // =========================================================
         // 0. SUPER() METHOD CALL
         // =========================================================
@@ -52,9 +180,11 @@ export class QuirkDefinitionProvider implements vscode.DefinitionProvider {
 
         // =========================================================
         // 1. IMPORT LINE — clicking on the module path or a named import,
-        //    OR using an imported symbol elsewhere in the file
+        //    OR using an imported symbol elsewhere in the file.
+        //    Skip when the cursor is on a member (e.g. the `greet` in
+        //    `greet.greet(...)`) so it resolves to the function, not the module.
         // =========================================================
-        const importLocation = this.findImportLineInCurrentFile(document, symbol);
+        const importLocation = !isMemberAccess && this.findImportLineInCurrentFile(document, symbol);
         if (importLocation) {
             // Resolve the actual definition regardless of where the cursor is
             const importLine = document.lineAt(importLocation.range.start.line).text;
@@ -75,6 +205,13 @@ export class QuirkDefinitionProvider implements vscode.DefinitionProvider {
                     const file = this.resolvePath(projectRoot, currentFilePath, importMatch[1]);
                     if (file) return new vscode.Location(vscode.Uri.file(file), new vscode.Position(0, 0));
                 }
+
+                // from .path as alias — resolve alias to the module file
+                const asAliasImportMatch = /^\s*from\s+([.a-zA-Z0-9_/]+)\s+as\s+([a-zA-Z_]\w*)/.exec(importLine);
+                if (asAliasImportMatch && asAliasImportMatch[2] === symbol) {
+                    const file = this.resolvePath(projectRoot, currentFilePath, asAliasImportMatch[1]);
+                    if (file) return new vscode.Location(vscode.Uri.file(file), new vscode.Position(0, 0));
+                }
             }
 
             return importLocation;
@@ -83,7 +220,7 @@ export class QuirkDefinitionProvider implements vscode.DefinitionProvider {
         // =========================================================
         // 2. MEMBER ACCESS  — prefix.symbol
         // =========================================================
-        if (range.start.character > 0 && lineText.charAt(range.start.character - 1) === '.') {
+        if (isMemberAccess) {
             const prefixRange = document.getWordRangeAtPosition(
                 new vscode.Position(position.line, range.start.character - 2),
                 /[a-zA-Z0-9_]+/
@@ -154,11 +291,12 @@ export class QuirkDefinitionProvider implements vscode.DefinitionProvider {
     // =========================================================
 
     private findLocalDefinition(document: vscode.TextDocument, position: vscode.Position, symbol: string): vscode.Location | null {
-        const assignRe    = new RegExp(`^\\s*${symbol}\\b\\s*(?::\\s*[A-Za-z0-9_.]+\\s*)?(?:=|:=)`);
-        const forRe       = new RegExp(`\\bfor\\s+(?:ref\\s+)?${symbol}\\s+in\\b`);
-        const withAsRe    = new RegExp(`\\bwith\\b.*\\bas\\s+${symbol}\\b`);
-        const catchRe     = new RegExp(`\\bcatch\\s*\\(\\s*${symbol}\\s*:`);
-        const funcDefRe   = /^\s*(?:extern\s+)?(?:define|def|init)\s+[a-zA-Z0-9_]+\s*\(([^)]*)\)/;
+        const assignRe          = new RegExp(`^\\s*${symbol}\\b\\s*(?::\\s*[A-Za-z0-9_.]+\\s*)?(?:=|:=)`);
+        const forRe             = new RegExp(`\\bfor\\s+(?:ref\\s+)?${symbol}\\s+in\\b`);
+        const forParenDestructRe= new RegExp(`\\bfor\\s+\\([^)]*\\b${symbol}\\b[^)]*\\)\\s+in\\b`);
+        const withAsRe          = new RegExp(`\\bwith\\b.*\\bas\\s+${symbol}\\b`);
+        const catchRe           = new RegExp(`\\bcatch\\s*\\(\\s*${symbol}\\s*:`);
+        const funcDefRe         = /^\s*(?:extern\s+)?(?:define|def|init)\s+[a-zA-Z0-9_]+\s*\(([^)]*)\)/;
 
         for (let i = position.line; i >= 0; i--) {
             const rawLine  = document.lineAt(i).text;
@@ -168,7 +306,12 @@ export class QuirkDefinitionProvider implements vscode.DefinitionProvider {
                 return new vscode.Location(document.uri, new vscode.Position(i, rawLine.indexOf(symbol)));
             }
 
-            let m = forRe.exec(trimmed);
+            let m = forParenDestructRe.exec(trimmed);
+            if (m) {
+                return new vscode.Location(document.uri, new vscode.Position(i, rawLine.indexOf(symbol, m.index)));
+            }
+
+            m = forRe.exec(trimmed);
             if (m) {
                 return new vscode.Location(document.uri, new vscode.Position(i, rawLine.indexOf(symbol, m.index)));
             }
@@ -250,7 +393,7 @@ export class QuirkDefinitionProvider implements vscode.DefinitionProvider {
     private findMemberInStructBody(filePath: string, structName: string, member: string): vscode.Location | null {
         const content = this.getFileContent(filePath);
         const lines = content.split(/\r?\n/);
-        const structRe = new RegExp(`^\\s*struct\\s+${structName}\\b`);
+        const structRe = new RegExp(`^\\s*(?:struct|interface)\\s+${structName}\\b`);
         const memberRe = new RegExp(
             `(?:(?:extern\\s+)?(?:define|def|init)\\s+${member}\\b)` +
             `|(?:^\\s*${member}\\s*:(?!=))`
@@ -288,7 +431,7 @@ export class QuirkDefinitionProvider implements vscode.DefinitionProvider {
         if (!content) return null;
         const lines = content.split(/\r?\n/);
 
-        const defRe = new RegExp(`^\\s*(?:extern\\s+)?(?:struct|define|def|init|enum)\\s+${symbol}\\b`);
+        const defRe = new RegExp(`^\\s*(?:extern\\s+)?(?:struct|define|def|init|enum|interface)\\s+${symbol}\\b`);
         for (let i = 0; i < lines.length; i++) {
             if (defRe.test(lines[i])) {
                 return new vscode.Location(vscode.Uri.file(filePath), new vscode.Position(i, Math.max(0, lines[i].indexOf(symbol))));
@@ -368,7 +511,7 @@ export class QuirkDefinitionProvider implements vscode.DefinitionProvider {
     private findEnclosingDefinition(document: vscode.TextDocument, position: vscode.Position): vscode.Location | null {
         for (let i = position.line; i < document.lineCount; i++) {
             const line = document.lineAt(i).text;
-            const m = /^\s*(?:extern\s+)?(?:struct|define|def|init|enum)\s+([a-zA-Z_]\w*)/.exec(line);
+            const m = /^\s*(?:extern\s+)?(?:struct|define|def|init|enum|interface)\s+([a-zA-Z_]\w*)/.exec(line);
             if (m) {
                 return new vscode.Location(document.uri, new vscode.Position(i, line.indexOf(m[1])));
             }
@@ -376,18 +519,6 @@ export class QuirkDefinitionProvider implements vscode.DefinitionProvider {
             if (i > position.line && line.trim() === '---') break;
         }
         return null;
-    }
-
-    /** Returns the line index of the opening `---` of a docblock immediately before defLine, or -1. */
-    private findPrecedingDocstring(lines: string[], defLine: number): number {
-        let i = defLine - 1;
-        while (i >= 0 && lines[i].trim() === '') i--;
-        if (i >= 0 && lines[i].trim() === '---') {
-            i--;
-            while (i >= 0 && lines[i].trim() !== '---') i--;
-            return i >= 0 ? i : -1;
-        }
-        return -1;
     }
 
     // =========================================================
@@ -472,6 +603,14 @@ export class QuirkDefinitionProvider implements vscode.DefinitionProvider {
     private findImportLineInCurrentFile(document: vscode.TextDocument, symbol: string): vscode.Location | null {
         for (let i = 0; i < document.lineCount; i++) {
             const line = document.lineAt(i).text;
+
+            // from .path as alias — alias is the declared name
+            const asAliasMatch = /^\s*from\s+([.a-zA-Z0-9_/]+)\s+as\s+([a-zA-Z_]\w*)/.exec(line);
+            if (asAliasMatch && asAliasMatch[2] === symbol) {
+                const col = line.indexOf(symbol, line.indexOf(' as '));
+                return new vscode.Location(document.uri, new vscode.Position(i, Math.max(0, col)));
+            }
+
             const m = /^\s*(?:use|from)\s+([.a-zA-Z0-9_/]+)/.exec(line);
             if (!m) continue;
             if (m[1].split(/[./]/).pop() === symbol) {
@@ -487,6 +626,10 @@ export class QuirkDefinitionProvider implements vscode.DefinitionProvider {
     private resolveImportPathFromAlias(document: vscode.TextDocument, alias: string): string | null {
         for (let i = 0; i < document.lineCount; i++) {
             const line = document.lineAt(i).text;
+            // from .path as alias
+            const asMatch = /^\s*from\s+([.a-zA-Z0-9_/]+)\s+as\s+([a-zA-Z_]\w*)/.exec(line);
+            if (asMatch && asMatch[2] === alias) return asMatch[1];
+            // use module.name  (last segment matches alias)
             const m = /^\s*(?:use|from)\s+([.a-zA-Z0-9_/]+)/.exec(line);
             if (m && m[1].split(/[./]/).pop() === alias) return m[1];
         }
@@ -501,10 +644,14 @@ export class QuirkDefinitionProvider implements vscode.DefinitionProvider {
         if (modulePath.startsWith('.')) return this.resolveRelative(currentFile, modulePath);
         const relPath = modulePath.replace(/\./g, '/');
         for (const root of this.getSearchRoots(projectRoot)) {
-            const v1 = path.join(root, relPath + '.qk');
-            const v2 = path.join(root, relPath, '__init.qk');
-            if (fs.existsSync(v1)) return v1;
-            if (fs.existsSync(v2)) return v2;
+            const candidates = [
+                path.join(root, relPath + '.quirk'),
+                path.join(root, relPath, 'index.quirk'),
+                path.join(root, relPath, '__init.quirk'),
+                path.join(root, relPath, 'src', 'index.quirk'),
+                path.join(root, relPath, 'src', relPath + '.quirk'),
+            ];
+            for (const c of candidates) if (fs.existsSync(c)) return c;
         }
         return null;
     }
@@ -515,22 +662,32 @@ export class QuirkDefinitionProvider implements vscode.DefinitionProvider {
         let searchDir = path.dirname(currentFile);
         for (let i = 1; i < m[1].length; i++) searchDir = path.dirname(searchDir);
         const subPath = m[2].replace(/\./g, '/');
-        const v1 = path.join(searchDir, subPath + '.qk');
-        const v2 = path.join(searchDir, subPath, '__init.qk');
+        const v1 = path.join(searchDir, subPath + '.quirk');
+        const v2 = path.join(searchDir, subPath, 'index.quirk');
+        const v3 = path.join(searchDir, subPath, '__init.quirk');
         if (fs.existsSync(v1)) return v1;
         if (fs.existsSync(v2)) return v2;
+        if (fs.existsSync(v3)) return v3;
         return null;
     }
 
     private getSearchRoots(projectRoot: string): string[] {
         const roots: string[] = [];
-        const home = process.env['QUIRK_HOME'];
+        // Project-local packages win (matches the compiler's resolver order).
+        roots.push(path.join(projectRoot, 'packages'));
+        const home = resolveQuirkHome(projectRoot);
+        const isVenv = !!home && fs.existsSync(path.join(home, 'bin', 'activate'));
         if (home) {
             roots.push(
                 path.join(home, 'lib', 'quirk', 'packages'),
-                path.join(home, 'lib', 'quirk'),
+                path.join(home, 'lib', 'quirk', 'stdlib'),  // new venv layout
+                path.join(home, 'lib', 'quirk'),             // legacy / dev install
                 path.join(home, 'libs')
             );
+        }
+        // User-global packages — skipped when a venv is active.
+        if (!isVenv && process.env['HOME']) {
+            roots.push(path.join(process.env['HOME'], '.quirk', 'packages'));
         }
         roots.push(path.join(projectRoot, 'libs'), path.join(projectRoot, 'src'));
         return roots;
@@ -538,7 +695,7 @@ export class QuirkDefinitionProvider implements vscode.DefinitionProvider {
 
     private getLibRoots(projectRoot: string): string[] {
         const roots: string[] = [];
-        const home = process.env['QUIRK_HOME'];
+        const home = resolveQuirkHome(projectRoot);
         if (home) roots.push(path.join(home, 'libs'), path.join(home, 'lib', 'quirk'));
         roots.push(path.join(projectRoot, 'libs'), path.join(projectRoot, 'src'));
         return roots;
@@ -547,7 +704,9 @@ export class QuirkDefinitionProvider implements vscode.DefinitionProvider {
     private findProjectRoot(currentFile: string): string {
         let dir = path.dirname(currentFile);
         while (dir.length > 3) {
-            if (fs.existsSync(path.join(dir, 'Makefile')) || fs.existsSync(path.join(dir, 'libs'))) return dir;
+            if (fs.existsSync(path.join(dir, 'quirk.toml')) ||
+                fs.existsSync(path.join(dir, 'Makefile')) ||
+                fs.existsSync(path.join(dir, 'libs'))) return dir;
             const parent = path.dirname(dir);
             if (parent === dir) break;
             dir = parent;

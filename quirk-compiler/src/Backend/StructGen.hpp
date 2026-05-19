@@ -19,6 +19,7 @@ class StructGen {
     std::map<std::string, std::vector<std::string>> structLayouts;
     std::map<std::string, std::string> structInitMap;
     std::map<std::string, std::vector<std::string>>* structHierarchy = nullptr;
+    std::map<std::string, int> typeIdMap;
 
    public:
     StructGen(LLVMContext& ctx, Module* mod, IRBuilder<>& builder, std::map<std::string, StructType*>& structs)
@@ -26,6 +27,13 @@ class StructGen {
 
     void setBuiltinGen(BuiltinGen* bg) { builtinGen = bg; }
     void setHierarchy(std::map<std::string, std::vector<std::string>>* h) { structHierarchy = h; }
+
+    // Returns PointerType::getUnqual(String struct), or i8* if String not yet defined.
+    Type* getStringPtrType() {
+        if (StructTypes.count("String"))
+            return PointerType::getUnqual(StructTypes.at("String"));
+        return Type::getInt8PtrTy(Context);
+    }
 
     void registerStructLayout(const std::string& name, const std::vector<std::string>& fields) {
         structLayouts[name] = fields;
@@ -35,12 +43,34 @@ class StructGen {
         structInitMap[structName] = llvmFuncName;
     }
 
+    void registerTypeId(const std::string& name, int id) { typeIdMap[name] = id; }
+
+    bool inheritsFrom(const std::string& typeName, const std::string& base) {
+        if (typeName == base) return true;
+        if (!structHierarchy || !structHierarchy->count(typeName)) return false;
+        for (const auto& p : structHierarchy->at(typeName))
+            if (inheritsFrom(p, base)) return true;
+        return false;
+    }
+
     Value* generateStrCall(Value* objPtr, const std::string& structName) {
         std::string funcName = structName + "___str";
         Function* strFunc = TheModule->getFunction(funcName);
         if (!strFunc) {
             funcName = structName + "__str";
             strFunc = TheModule->getFunction(funcName);
+        }
+        // Endswith fallback: find any function whose name ends with "<Struct>___str"
+        // e.g. Core_Collections_Tuple_Tuple___str found when searching "Tuple"
+        if (!strFunc) {
+            std::string suffix = structName + "___str";
+            for (auto& F : *TheModule)
+                if (F.getName().endswith(suffix)) { strFunc = &F; break; }
+        }
+        if (!strFunc) {
+            std::string suffix = structName + "__str";
+            for (auto& F : *TheModule)
+                if (F.getName().endswith(suffix)) { strFunc = &F; break; }
         }
 
         if (!strFunc && structHierarchy && structHierarchy->count(structName)) {
@@ -49,6 +79,11 @@ class StructGen {
                     for (const std::string& parentName : structHierarchy->at(currentType)) {
                         Function* foundFunc = TheModule->getFunction(parentName + "___str");
                         if (!foundFunc) foundFunc = TheModule->getFunction(parentName + "__str");
+                        if (!foundFunc) {
+                            std::string sfx = parentName + "___str";
+                            for (auto& F : *TheModule)
+                                if (F.getName().endswith(sfx)) { foundFunc = &F; break; }
+                        }
                         if (foundFunc) return foundFunc;
                         foundFunc = searchHierarchy(parentName);
                         if (foundFunc) return foundFunc;
@@ -164,6 +199,16 @@ class StructGen {
             }
             Builder.CreateCall(initFunc, initArgs);
 
+            // Store __type_id for virtual dispatch (field 0 of vtable-eligible structs)
+            if (typeIdMap.count(name) && structLayouts.count(name)) {
+                const auto& layout = structLayouts[name];
+                if (!layout.empty() && layout[0] == "__type_id") {
+                    Value* tidPtr = Builder.CreateStructGEP(st, objPtr, 0, "tid_gep");
+                    Builder.CreateStore(
+                        ConstantInt::get(Type::getInt32Ty(Context), typeIdMap[name]), tidPtr);
+                }
+            }
+
             // ISerializable registration
             if (structHierarchy && structHierarchy->count(name)) {
                 bool isSerializable = false;
@@ -198,8 +243,11 @@ class StructGen {
                 }
             }
         } else {
-            std::cerr << "[DEBUG] StructGen::allocateAndInit fallback - About to GEP fields manually\n";
-            int idx = 0;
+            // No __init found — directly GEP-assign each field (normal path for plain user-defined structs).
+            // For vtable-eligible structs __type_id is field 0; skip it here and store below.
+            bool hasTypeId = typeIdMap.count(name) && structLayouts.count(name) &&
+                             !structLayouts[name].empty() && structLayouts[name][0] == "__type_id";
+            int idx = hasTypeId ? 1 : 0;
             for (auto val : args) {
                 if (idx >= (int)st->getNumElements()) break;
                 Value* fieldPtr = Builder.CreateStructGEP(st, objPtr, idx++);
@@ -230,6 +278,12 @@ class StructGen {
                 }
 
                 Builder.CreateStore(val, fieldPtr);
+            }
+            // Store __type_id for fallback path as well
+            if (hasTypeId) {
+                Value* tidPtr = Builder.CreateStructGEP(st, objPtr, 0, "tid_gep");
+                Builder.CreateStore(
+                    ConstantInt::get(Type::getInt32Ty(Context), typeIdMap[name]), tidPtr);
             }
         }
         return objPtr;
@@ -299,6 +353,37 @@ class StructGen {
         return Builder.CreateStructGEP(st, objPtr, index);
     }
 
+    Value* generateTupleLiteral(TupleLiteralNode* node, std::function<Value*(Node*)> exprHandler,
+                                std::function<Value*(Value*)> boxHandler) {
+        if (!StructTypes.count("Tuple")) return nullptr;
+        int count = (int)node->elements.size();
+
+        // Declare quirk_tuple_new if not yet in module
+        Function* newFn = TheModule->getFunction("quirk_tuple_new");
+        if (!newFn) {
+            Type* retTy = PointerType::getUnqual(StructTypes["Tuple"]);
+            FunctionType* ft = FunctionType::get(retTy, {Type::getInt32Ty(Context)}, false);
+            newFn = Function::Create(ft, Function::ExternalLinkage, "quirk_tuple_new", TheModule);
+        }
+        Function* setFn = TheModule->getFunction("quirk_tuple_set");
+        if (!setFn) {
+            Type* tuplePtrTy = PointerType::getUnqual(StructTypes["Tuple"]);
+            FunctionType* ft = FunctionType::get(Type::getVoidTy(Context),
+                {tuplePtrTy, Type::getInt32Ty(Context), Type::getInt8PtrTy(Context)}, false);
+            setFn = Function::Create(ft, Function::ExternalLinkage, "quirk_tuple_set", TheModule);
+        }
+
+        Value* tupleObj = Builder.CreateCall(newFn, {ConstantInt::get(Type::getInt32Ty(Context), count)});
+        Type* voidPtr = Type::getInt8PtrTy(Context);
+        for (int i = 0; i < count; i++) {
+            Value* elem = exprHandler(node->elements[i].get());
+            Value* boxed = boxHandler(elem);
+            if (boxed->getType() != voidPtr) boxed = Builder.CreateBitCast(boxed, voidPtr);
+            Builder.CreateCall(setFn, {tupleObj, ConstantInt::get(Type::getInt32Ty(Context), i), boxed});
+        }
+        return tupleObj;
+    }
+
     Value* generateListLiteral(ListLiteralNode* node, std::function<Value*(Node*)> exprHandler) {
         std::vector<Value*> values;
         for (auto& elem : node->elements) values.push_back(exprHandler(elem.get()));
@@ -340,6 +425,25 @@ class StructGen {
         Builder.CreateStore(ConstantInt::get(Type::getInt32Ty(Context), cap), capPtr);
 
         return listObj;
+    }
+
+    Value* generateSetLiteral(SetLiteralNode* node, std::function<Value*(Node*)> exprHandler) {
+        std::vector<Value*> emptyArgs;
+        Value* setObj = allocateAndInit("Set", emptyArgs);
+        if (!setObj) return nullptr;
+
+        Function* addFunc = TheModule->getFunction("Core_Collections_Set_Set_add");
+        if (!addFunc) return setObj;
+
+        Type* i8PtrTy = Type::getInt8PtrTy(Context);
+        for (auto& elem : node->elements) {
+            Value* v = exprHandler(elem.get());
+            if (!v) continue;
+            if (v->getType()->isIntegerTy()) v = Builder.CreateIntToPtr(v, i8PtrTy);
+            else if (v->getType()->isPointerTy() && v->getType() != i8PtrTy) v = Builder.CreateBitCast(v, i8PtrTy);
+            Builder.CreateCall(addFunc, {setObj, v});
+        }
+        return setObj;
     }
 
     Value* generateMapLiteral(MapLiteralNode* node, std::function<Value*(Node*)> exprHandler) {

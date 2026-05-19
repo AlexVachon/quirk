@@ -1,0 +1,69 @@
+use regex
+from regex use { Match }
+
+define main() -> void {
+    print("=== test ===")
+    digits := regex.compile("[0-9]+")
+    print("'abc 42 def' has digits: ${digits.test('abc 42 def')}")
+    print("'no digits' has digits:  ${digits.test('no digits')}")
+    print("''         has digits:  ${digits.test('')}")
+
+    print("=== find ===")
+    m := digits.find("hello 123 world 456")
+    print("first match: ${m.text} at [${m.start}, ${m.end})")
+
+    no_match := digits.find("nothing here")
+    print("no match is null: ${no_match == null}")
+
+    print("=== captures ===")
+    pair := regex.compile("([0-9]+)-([0-9]+)")
+    pm := pair.find("range 12-345 inside")
+    print("full:    ${pm.text}")
+    print("group 1: ${pm.groups.get(0)}")
+    print("group 2: ${pm.groups.get(1)}")
+
+    print("=== find_all ===")
+    all := digits.find_all("a1 b22 c333 d4444")
+    print("count: ${all.length()}")
+    i := 0
+    while i < all.length() {
+        item: Match = all.get(i)
+        print("  ${i}: ${item.text}")
+        i = i + 1
+    }
+
+    print("=== replace_all ===")
+    print(digits.replace_all("phone 555-1234 or 555-5678", "###"))
+    print(pair.replace_all("a 1-2 and 5-9 b", "(\\1..\\2)"))
+
+    print("=== split ===")
+    ws := regex.compile("[[:space:]]+")
+    parts := ws.split("hello   world\tfoo bar")
+    print("count: ${parts.length()}")
+    j := 0
+    while j < parts.length() {
+        p: String = parts.get(j)
+        print("  '${p}'")
+        j = j + 1
+    }
+
+    print("=== flags ===")
+    ci := regex.compile("hello", "i")
+    print("case-insensitive 'HELLO': ${ci.test('HELLO')}")
+    print("case-sensitive   'HELLO': ${regex.test('hello', 'HELLO')}")
+
+    print("=== anchors ===")
+    starts_with := regex.compile("^abc")
+    print("'^abc' on 'abcdef': ${starts_with.test('abcdef')}")
+    print("'^abc' on 'xabc':   ${starts_with.test('xabc')}")
+
+    print("=== shortcuts ===")
+    print("regex.test:        ${regex.test('[A-Z]+', 'hello WORLD')}")
+    print("regex.find text:   ${regex.find('[A-Z]+', 'hello WORLD').text}")
+    // Note: replacement uses double-quotes — single-quoted single-char literal
+    // is a Char in Quirk, not a String.
+    short_repl := regex.replace_all("[aeiou]", "hello world", "*")
+    print("regex.replace_all: ${short_repl}")
+
+    print("Done.")
+}

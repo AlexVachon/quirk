@@ -1,0 +1,190 @@
+---
+Lightweight test runner with assertion helpers.
+
+Workflow: build a List of `TestCase`s, hand it to `test.run_all(...)`. Each
+test is a `(name, lambda)` pair. The runner executes every case, prints a
+pass/fail mark, and returns the failure count (so CI can detect breakage
+via the exit status).
+
+Assertions throw `AssertionError` on failure with a descriptive message;
+the runner catches and reports.
+
+@example
+use test
+type TestCase = test.TestCase
+
+define main() -> void {
+    a := TestCase("addition",   fn() { test.assert_eq(2 + 2, 4) })
+    b := TestCase("string cat", fn() { test.assert_eq("a" + "b", "ab") })
+    test.run_all([a, b])
+}
+
+Note on naming: the runner is `run_all` (not `run`) to avoid colliding with
+`sys.run(command: String) -> Int`, which Sema otherwise merges with this
+signature.
+
+Note on Quirk quirks worked around in this library:
+  - String-defaulted parameters emit a stray byte when the call site goes
+    through a Callable lambda — so `msg` arguments are required, not optional.
+  - `c.body()` directly on a struct field also emits the stray byte; we copy
+    `body := c.body` first, then call `body()`.
+---
+from typing.primitives.string use { String }
+from typing.collections.list use { List }
+from typing.callable use { Callable }
+from typing.exceptions.types use { AssertionError }
+use console
+
+// ───────────────────────── Assertions ─────────────────────────
+
+// `Any == Any` is pointer equality in Quirk — two distinct String objects
+// with identical contents compare unequal. We work around by comparing string
+// representations, which falls back to `__str` and gives value semantics for
+// primitives and anything with a sensible printer.
+define _value_eq(actual: Any, expected: Any) -> Bool {
+    a := "" + actual
+    b := "" + expected
+    return a == b
+}
+
+// Combine the message with an optional `msg` extra into a final error string.
+define _with_msg(line: String, msg: String) -> String {
+    if msg.length() > 0 { return line + " -- " + msg }
+    return line
+}
+
+---
+Asserts `actual == expected` by value. For primitive types and anything
+with a `__str` method this matches stringified equality; for arbitrary
+struct refs it amounts to pointer identity.
+---
+define assert_eq(actual: Any, expected: Any, msg: String = "") -> void {
+    if _value_eq(actual, expected) { return }
+    throw AssertionError(_with_msg("assert_eq failed: expected ${expected}, got ${actual}", msg))
+}
+
+--- Asserts `actual != expected` by value. ---
+define assert_ne(actual: Any, expected: Any, msg: String = "") -> void {
+    if _value_eq(actual, expected) == false { return }
+    throw AssertionError(_with_msg("assert_ne failed: both values are ${actual}", msg))
+}
+
+--- Asserts `cond` is true. ---
+define assert_true(cond: Bool, msg: String = "") -> void {
+    if cond { return }
+    throw AssertionError(_with_msg("assert_true failed: condition was false", msg))
+}
+
+--- Asserts `cond` is false. ---
+define assert_false(cond: Bool, msg: String = "") -> void {
+    if cond == false { return }
+    throw AssertionError(_with_msg("assert_false failed: condition was true", msg))
+}
+
+---
+Asserts `actual` and `expected` differ by at most `tolerance`. Use for
+Doubles where exact equality is fragile.
+---
+define assert_approx(actual: Double, expected: Double, tolerance: Double = 0.0001, msg: String = "") -> void {
+    diff := actual - expected
+    if diff < 0.0 { diff = - diff }
+    if diff <= tolerance { return }
+    throw AssertionError(_with_msg("assert_approx failed: |${actual} - ${expected}| = ${diff} > ${tolerance}", msg))
+}
+
+---
+Asserts `cb` throws an exception. If `expected_type` is non-empty, the
+thrown exception's type must match (e.g. `"ValueError"`).
+---
+define assert_throws(cb: Callable, expected_type: String = "", msg: String = "") -> void {
+    threw := false
+    actual_type := ""
+    try {
+        cb()
+    } catch (e: Exception) {
+        threw = true
+        actual_type = e.type
+    }
+    if threw == false {
+        throw AssertionError(_with_msg("assert_throws failed: expected ${expected_type} but no exception was thrown", msg))
+    }
+    if expected_type.length() == 0 { return }
+    if actual_type == expected_type { return }
+    throw AssertionError(_with_msg("assert_throws failed: expected ${expected_type}, got ${actual_type}", msg))
+}
+
+---
+Asserts `haystack` contains `needle` (substring for Strings, element for
+Lists, or anything else with a `.contains` method).
+---
+define assert_contains(haystack: Any, needle: Any, msg: String = "") -> void {
+    found := false
+    try {
+        found = haystack.contains(needle)
+    } catch (_e: Exception) {
+        throw AssertionError(_with_msg("assert_contains: haystack does not support .contains", msg))
+    }
+    if found { return }
+    throw AssertionError(_with_msg("assert_contains failed: '${haystack}' does not contain '${needle}'", msg))
+}
+
+// ───────────────────────── TestCase / runner ─────────────────────────
+
+---
+A single named test. Construct with `TestCase("name", fn() { ... })`.
+The lambda body uses `test.assert_*` helpers; any AssertionError fails
+the case. Other exceptions also fail it (their type is shown).
+---
+struct TestCase {
+    name: String
+    body: Callable
+
+    define __init(self, name: String, body: Callable) -> void {
+        self.name = name
+        self.body = body
+    }
+}
+
+---
+Run every case in `cases`, printing pass/fail marks and a final summary.
+Returns the number of failures (0 == all green).
+---
+define run_all(cases: List) -> Int {
+    total := cases.length()
+    passed := 0
+    failed_names := []
+    failures := []
+
+    i := 0
+    while i < total {
+        c: TestCase = cases.get(i)
+        body := c.body
+        try {
+            body()
+            console.green("  ✓ ${c.name}")
+            passed = passed + 1
+        } catch (e: Exception) {
+            console.red("  ✗ ${c.name}")
+            failed_names.append(c.name)
+            failures.append(e.type + ": " + e.message)
+        }
+        i = i + 1
+    }
+
+    console.log("")
+    fail_count := total - passed
+    if fail_count == 0 {
+        console.green("${total} passed")
+    } else {
+        console.red("${fail_count} failed, ${passed} passed (of ${total})")
+        j := 0
+        while j < failed_names.length() {
+            n: String = failed_names.get(j)
+            f: String = failures.get(j)
+            console.red("    ${n}")
+            console.gray("      ${f}")
+            j = j + 1
+        }
+    }
+    return fail_count
+}

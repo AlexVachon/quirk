@@ -16,10 +16,18 @@ class TypeExtensions {
     IRBuilder<>& Builder;
     StructGen* structGen;
     BuiltinGen* builtinGen;
+    std::map<std::string, std::vector<std::string>>* structHierarchy = nullptr;
+    std::map<std::string, StructType*>* structTypes = nullptr;
 
 public:
     TypeExtensions(LLVMContext& ctx, Module* mod, IRBuilder<>& build, StructGen* sg, BuiltinGen* bg)
         : Context(ctx), TheModule(mod), Builder(build), structGen(sg), builtinGen(bg) {}
+
+    void setHierarchy(std::map<std::string, std::vector<std::string>>* h,
+                      std::map<std::string, StructType*>* t) {
+        structHierarchy = h;
+        structTypes = t;
+    }
 
     Value* tryHandleMethod(const std::string& typeName, const std::string& methodName,
                            Value* objPtr, const std::vector<Arg>& args,
@@ -69,6 +77,7 @@ private:
                 StructType* st = cast<StructType>(el);
                 std::string name = st->getName().str();
                 if (name.find("struct.") == 0) name = name.substr(7);
+                { size_t d = name.find('.'); if (d != std::string::npos && std::isdigit((unsigned char)name[d+1])) name = name.substr(0, d); }
 
                 if (name == "Any")
                     return Builder.CreateBitCast(v, Type::getInt8PtrTy(Context));
@@ -77,12 +86,29 @@ private:
                 if (name.find("String") != std::string::npos) return callBox("Core_Primitives_Any_box_string", {asPtr});
                 if (name.find("List")   != std::string::npos) return callBox("Core_Primitives_Any_box_list",   {asPtr});
                 if (name.find("Map")    != std::string::npos) return callBox("Core_Primitives_Any_box_map",    {asPtr});
+                if (name.find("Tuple")    != std::string::npos) return callBox("Core_Primitives_Any_box_tuple",    {asPtr});
+                if (name.find("Callable") != std::string::npos) return callBox("Core_Primitives_Any_box_callable", {asPtr});
 
-                std::string strMethod = name + "___str";
-                Function* strFunc = TheModule->getFunction(strMethod);
-                if (!strFunc) strFunc = TheModule->getFunction(name + "__str");
+                // Find __str walking up the inheritance hierarchy
+                auto findStr = [&](const std::string& t) -> Function* {
+                    Function* f = TheModule->getFunction(t + "___str");
+                    if (!f) { std::string sfx = t + "___str"; for (auto& F : *TheModule) if (F.getName().endswith(sfx)) { f = &F; break; } }
+                    if (!f) f = TheModule->getFunction(t + "__str");
+                    return f;
+                };
+                Function* strFunc = findStr(name);
+                Value* strSelf = v;
+                if (!strFunc && structHierarchy) {
+                    std::string cur = name;
+                    while (!strFunc && structHierarchy->count(cur) && !structHierarchy->at(cur).empty()) {
+                        cur = structHierarchy->at(cur)[0];
+                        strFunc = findStr(cur);
+                        if (strFunc && structTypes && structTypes->count(cur))
+                            strSelf = Builder.CreateBitCast(v, PointerType::getUnqual(structTypes->at(cur)));
+                    }
+                }
                 if (strFunc) {
-                    Value* strObj = Builder.CreateCall(strFunc, {v});
+                    Value* strObj = Builder.CreateCall(strFunc, {strSelf});
                     if (strObj->getType()->isPointerTy() &&
                         strObj->getType()->getPointerElementType()->isIntegerTy(8)) {
                         std::vector<Value*> args = {strObj};

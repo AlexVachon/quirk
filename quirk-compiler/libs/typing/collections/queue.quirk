@@ -1,0 +1,95 @@
+from typing.primitives.string use { String }
+from typing.interfaces.printable use { Printable }
+from typing.interfaces.sizeable use { Sizeable }
+from typing.interfaces.iterable use { Iterable }
+from typing.interfaces.iterator use { Iterator }
+
+struct QueueIterator : Iterator {
+    _queue_ref: Queue
+    _pos: Int
+
+    extern define __init(self, q: Queue) -> void
+    extern define __has_next(self) -> Bool
+    extern define __next(self) -> Any
+}
+
+---
+A double-ended queue (deque) supporting O(1) push/pop at both ends.
+Useful for BFS, sliding windows, and task scheduling.
+
+@example:
+q := Queue()
+q.push_back(1)
+q.push_back(2)
+q.push_front(0)
+print(q.pop_front())  // 0
+print(q.peek_front()) // 1
+print(q.size())       // 2
+---
+struct Queue : Printable, Sizeable, Iterable {
+    _data: Any
+    _head: Int
+    _tail: Int
+    _capacity: Int
+    _size: Int
+
+    extern define __init(self) -> void
+    extern define __del(self) -> void
+
+    ---
+    Appends a value to the back of the queue.
+    @param val: Any
+    ---
+    extern define push_back(self, val: Any) -> void
+
+    ---
+    Prepends a value to the front of the queue.
+    @param val: Any
+    ---
+    extern define push_front(self, val: Any) -> void
+
+    ---
+    Removes and returns the front element. Returns `null` if empty.
+    @returns: Any
+    ---
+    extern define pop_front(self) -> Any
+
+    ---
+    Removes and returns the back element. Returns `null` if empty.
+    @returns: Any
+    ---
+    extern define pop_back(self) -> Any
+
+    ---
+    Returns the front element without removing it.
+    @returns: Any
+    ---
+    extern define peek_front(self) -> Any
+
+    ---
+    Returns the back element without removing it.
+    @returns: Any
+    ---
+    extern define peek_back(self) -> Any
+
+    ---
+    Returns the number of elements.
+    @returns: Int
+    ---
+    extern define size(self) -> Int
+    define length(self) -> Int { return self.size() }
+
+    ---
+    Returns `true` if the queue is empty.
+    @returns: Bool
+    ---
+    extern define is_empty(self) -> Bool
+
+    ---
+    Removes all elements.
+    ---
+    extern define clear(self) -> void
+
+    extern define __iter(self) -> QueueIterator
+    extern define __str(self) -> String
+}

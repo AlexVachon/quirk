@@ -9,6 +9,7 @@
 // (included here so append_any / append_formatted can call it)
 String* Core_Primitives_Any_to_string(Any* a);
 double Core_Primitives_Any_to_float(Any* a);
+extern void quirk_throw_exception(const char* type_name, const char* message);
 
 #define MAX_SMALL_INT 0xFFFFF
 
@@ -125,8 +126,13 @@ static void append_formatted(char** buf,
     }
 
     switch (a->tag) {
+        case ANY_BOOL: {
+            // Always print "true"/"false". Numeric format specifiers (%d, %x)
+            // are intentionally ignored — Bools have a textual canonical form.
+            buffer_append(buf, cap, len, a->ival ? "true" : "false");
+            break;
+        }
         case ANY_INT:
-        case ANY_BOOL:
         case ANY_CHAR: {
             if (fmt_spec && strlen(fmt_spec) > 0) {
                 snprintf(format_string, 32, "%%%s", fmt_spec);
@@ -194,7 +200,10 @@ void Core_String_String___init(String* self, char* raw) {
         self->buffer = strdup(temp);
         return;
     }
-    if (!raw) {
+    if (!raw || raw[0] == '\0') {
+        // Empty literal "" — short-circuit before the Any-tag heuristic below.
+        // Reading 4 bytes past a 1-byte zeroinitializer is UB and intermittently
+        // picks up adjacent memory that happens to look like a valid AnyTag.
         self->length = 0;
         self->buffer = strdup("");
         return;
@@ -267,15 +276,29 @@ int Core_String_String___eq(String* self, String* other) {
     return strcmp(self->buffer, other->buffer) == 0;
 }
 
-char* Core_String_String___str(String* self) {
-    return self ? self->buffer : "";
+String* Core_String_String___str(String* self) {
+    return self ? self : make_String("");
 }
 
-char* Core_String_String___repr(String* self) {
+String* Core_String_String___repr(String* self) {
     int len = self->length + 2;
-    char* raw = (char*)malloc(len + 1);
+    char* raw = (char*)GC_malloc(len + 1);
     snprintf(raw, len + 1, "\"%s\"", self->buffer);
-    return raw;
+    return make_String(raw);
+}
+
+int Core_String_String___get(String* self, int index) {
+    if (!self || !self->buffer) {
+        quirk_throw_exception("IndexError", "string index on null string");
+    }
+    if (index < 0) index += self->length;
+    if (index < 0 || index >= self->length) {
+        char buf[128];
+        snprintf(buf, sizeof(buf),
+                 "string index %d out of range (length: %d)", index, self->length);
+        quirk_throw_exception("IndexError", buf);
+    }
+    return (int)(unsigned char)self->buffer[index];
 }
 
 // ==========================================
@@ -293,12 +316,14 @@ int Core_String_StringIterator___has_next(StringIterator* self) {
     return self->idx < self->str_ref->length;
 }
 
-char Core_String_StringIterator___next(StringIterator* self) {
-    if (!self || !self->str_ref)
-        return '\0';
+String* Core_String_StringIterator___next(StringIterator* self) {
+    if (!self || !self->str_ref) return make_String("");
     char c = self->str_ref->buffer[self->idx];
     self->idx++;
-    return c;
+    char* raw = (char*)malloc(2);
+    raw[0] = c;
+    raw[1] = '\0';
+    return make_String_taking_ownership(raw);
 }
 
 StringIterator* Core_String_String___iter(String* self) {
@@ -797,6 +822,32 @@ int Core_String_String_is_digit(String* self) {
     return 1;
 }
 
+int Core_String_String_is_upper(String* self) {
+    if (!self || self->length == 0) return 0;
+    int saw_letter = 0;
+    for (int i = 0; i < self->length; i++) {
+        unsigned char c = (unsigned char)self->buffer[i];
+        if (isalpha(c)) {
+            saw_letter = 1;
+            if (!isupper(c)) return 0;
+        }
+    }
+    return saw_letter;
+}
+
+int Core_String_String_is_lower(String* self) {
+    if (!self || self->length == 0) return 0;
+    int saw_letter = 0;
+    for (int i = 0; i < self->length; i++) {
+        unsigned char c = (unsigned char)self->buffer[i];
+        if (isalpha(c)) {
+            saw_letter = 1;
+            if (!islower(c)) return 0;
+        }
+    }
+    return saw_letter;
+}
+
 int Core_String_String_is_alpha(String* self) {
     if (!self || self->length == 0)
         return 0;
@@ -806,16 +857,67 @@ int Core_String_String_is_alpha(String* self) {
     return 1;
 }
 
+extern void quirk_throw_exception(const char* type_name, const char* message);
+
 int Core_String_String_to_int(String* self) {
-    if (!self || !self->buffer)
+    if (!self || !self->buffer || self->length == 0) {
+        quirk_throw_exception("ValueError", "cannot convert empty string to Int");
         return 0;
-    return (int)strtol(self->buffer, NULL, 10);
+    }
+    char* end;
+    long val = strtol(self->buffer, &end, 10);
+    if (end == self->buffer || *end != '\0') {
+        char msg[256];
+        snprintf(msg, sizeof(msg), "invalid literal for Int: '%s'", self->buffer);
+        quirk_throw_exception("ValueError", msg);
+        return 0;
+    }
+    return (int)val;
 }
 
 double Core_String_String_to_float(String* self) {
-    if (!self || !self->buffer)
+    if (!self || !self->buffer || self->length == 0) {
+        quirk_throw_exception("ValueError", "cannot convert empty string to Double");
         return 0.0;
-    return strtod(self->buffer, NULL);
+    }
+    char* end;
+    double val = strtod(self->buffer, &end);
+    if (end == self->buffer || *end != '\0') {
+        char msg[256];
+        snprintf(msg, sizeof(msg), "invalid literal for Double: '%s'", self->buffer);
+        quirk_throw_exception("ValueError", msg);
+        return 0.0;
+    }
+    return val;
+}
+
+int8_t Core_String_String_to_bool(String* self) {
+    if (!self || !self->buffer) {
+        quirk_throw_exception("ValueError", "cannot convert null string to Bool");
+        return 0;
+    }
+    if (strcmp(self->buffer, "true") == 0)  return 1;
+    if (strcmp(self->buffer, "false") == 0) return 0;
+    char msg[256];
+    snprintf(msg, sizeof(msg),
+             "invalid literal for Bool: '%s' (expected 'true' or 'false')", self->buffer);
+    quirk_throw_exception("ValueError", msg);
+    return 0;
+}
+
+char Core_String_String_to_char(String* self) {
+    if (!self || !self->buffer || self->length == 0) {
+        quirk_throw_exception("ValueError", "cannot convert empty string to Char");
+        return '\0';
+    }
+    if (self->length != 1) {
+        char msg[256];
+        snprintf(msg, sizeof(msg),
+                 "invalid conversion to Char: expected single character, got '%s'", self->buffer);
+        quirk_throw_exception("ValueError", msg);
+        return '\0';
+    }
+    return self->buffer[0];
 }
 
 char* Core_String_float_to_str(double val) {
@@ -1005,4 +1107,9 @@ String* Core_String_String_format_list(String* self, List* args) {
 
 String* Core_String_String_format(String* self, List* args) {
     return Core_String_String_format_list(self, args);
+}
+
+int Core_String_String_length(String* self) {
+    if (!self) return 0;
+    return self->length;
 }

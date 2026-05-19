@@ -1,0 +1,80 @@
+use fs
+
+define main() -> void {
+    print("=== path helpers ===")
+    print("join('/etc', 'hosts')         = ${fs.join('/etc', 'hosts')}")
+    print("join('/etc/', 'hosts')        = ${fs.join('/etc/', 'hosts')}")
+    print("join('', 'foo')               = ${fs.join('', 'foo')}")
+    print("basename('/a/b/c.txt')        = ${fs.basename('/a/b/c.txt')}")
+    print("basename('/etc/')             = ${fs.basename('/etc/')}")
+    print("basename('plain')             = ${fs.basename('plain')}")
+    print("dirname('/a/b/c.txt')         = ${fs.dirname('/a/b/c.txt')}")
+    print("dirname('foo.txt')            = ${fs.dirname('foo.txt')}")
+    print("extname('hello.tar.gz')       = ${fs.extname('hello.tar.gz')}")
+    print("extname('README')             = ${fs.extname('README')}")
+    print("extname('.gitignore')         = '${fs.extname('.gitignore')}'")
+    print("extname('.config.txt')        = ${fs.extname('.config.txt')}")
+    stem, ext := fs.split_ext("foo.tar.gz")
+    print("split_ext('foo.tar.gz')       = (${stem}, ${ext})")
+
+    print("=== inspection ===")
+    print("cwd:                  ${fs.cwd()}")
+    print("exists('/tmp'):       ${fs.exists('/tmp')}")
+    print("exists('/no_such'):   ${fs.exists('/no_such_xyz')}")
+    print("is_dir('/tmp'):       ${fs.is_dir('/tmp')}")
+    print("is_file('/tmp'):      ${fs.is_file('/tmp')}")
+
+    print("=== mutation: mkdir / rename / remove / rmdir ===")
+    base := "/tmp/quirk_fs_test"
+    if fs.exists(base) {
+        // Clean up from a prior failed run.
+        if fs.is_dir(base) {
+            for entry in fs.list_dir(base) {
+                fs.remove(fs.join(base, entry))
+            }
+            fs.rmdir(base)
+        }
+    }
+
+    fs.mkdir(base)
+    print("after mkdir, is_dir = ${fs.is_dir(base)}")
+
+    nested := fs.join(base, "deep/nested/path")
+    fs.mkdir(nested, parents = true)
+    print("after mkdir parents=true, is_dir = ${fs.is_dir(nested)}")
+
+    print("=== file create / size / mtime / rename / remove ===")
+    file_path := fs.join(base, "hello.txt")
+    with File(file_path, "w") as f {
+        f.write("Hello, fs!")
+    }
+    print("size:  ${fs.size(file_path)}")
+    print("is_file: ${fs.is_file(file_path)}")
+
+    renamed := fs.join(base, "renamed.txt")
+    fs.rename(file_path, renamed)
+    print("after rename, exists old: ${fs.exists(file_path)}")
+    print("after rename, exists new: ${fs.exists(renamed)}")
+
+    fs.remove(renamed)
+    print("after remove: ${fs.exists(renamed)}")
+
+    print("=== list_dir ===")
+    fs.mkdir(fs.join(base, "a"))
+    fs.mkdir(fs.join(base, "b"))
+    with File(fs.join(base, "c.txt"), "w") as f {
+        f.write("hi")
+    }
+    entries := fs.list_dir(base)
+    print("entries: ${entries.length()}")
+
+    print("=== cleanup ===")
+    fs.rmdir(fs.join(base, "deep/nested/path"))
+    fs.rmdir(fs.join(base, "deep/nested"))
+    fs.rmdir(fs.join(base, "deep"))
+    fs.rmdir(fs.join(base, "a"))
+    fs.rmdir(fs.join(base, "b"))
+    fs.remove(fs.join(base, "c.txt"))
+    fs.rmdir(base)
+    print("done, base exists = ${fs.exists(base)}")
+}

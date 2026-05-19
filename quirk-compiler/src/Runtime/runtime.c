@@ -26,11 +26,20 @@ static void* __gc_calloc(size_t n, size_t s) {
 #include "core/list.c"
 #include "core/map.c"
 #include "core/any.c"
+#include "core/tuple.c"
+#include "core/set.c"
+#include "core/queue.c"
+#include "core/callable.c"
 #include "core/exceptions.c"
 
 #include "libs/file.c"
-#include "libs/sys.c" 
+#include "libs/sys.c"
 #include "libs/net.c"
+#include "libs/math.c"
+#include "libs/fs.c"
+#include "libs/time.c"
+#include "libs/regex.c"
+#include "libs/crypto.c"
 
 #include "libs/encoding/json.c"
 #include "libs/encoding/base64.c"
@@ -65,8 +74,41 @@ String* quirk_opaque_to_string(void* val) {
     return (s->buffer) ? s : make_String("null");
 }
 
+// Unbox an opaque i8* / Any* / tagged-int to a C boolean (0 or 1).
+// Used by toBool() for Callable return values and any opaque condition.
+int32_t quirk_any_as_bool(void* val) {
+    if (!val) return 0;
+    uintptr_t uval = (uintptr_t)val;
+    if (uval <= 0xFFFFFFFFUL) return uval != 0;  // tagged int: 0 = false
+    int32_t possible_tag = *(int32_t*)val;
+    if (possible_tag >= ANY_INT && possible_tag <= ANY_NULL) {
+        Any* a = (Any*)val;
+        switch (a->tag) {
+            case ANY_BOOL:   return a->ival != 0;
+            case ANY_INT:    return a->ival != 0;
+            case ANY_DOUBLE: return a->dval != 0.0;
+            case ANY_NULL:   return 0;
+            default:         return a->ptr != NULL;
+        }
+    }
+    return 1;  // non-null non-Any pointer = truthy
+}
+
 // Print a boxed opaque value (i8* returned from Any-typed methods like map.get).
 void quirk_print_opaque(void* val) {
     String* s = quirk_opaque_to_string(val);
     printf("%s\n", s->buffer ? s->buffer : "");
+}
+
+// Return the type name of an opaque i8* value — safe version of Core_Primitives_Any_get_type
+// that handles tagged integers without dereferencing invalid addresses.
+String* quirk_opaque_get_type(void* val) {
+    if (!val) return make_String("Null");
+    uintptr_t uval = (uintptr_t)val;
+    if (uval <= 0xFFFFFFFFUL) return make_String("Int");
+    int32_t possible_tag = *(int32_t*)val;
+    if (possible_tag >= ANY_INT && possible_tag <= ANY_NULL)
+        return Core_Primitives_Any_get_type((Any*)val);
+    // Assume String* (most common non-Any heap value in opaque slots)
+    return make_String("String");
 }

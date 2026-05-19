@@ -1,0 +1,20 @@
+from typing.primitives.string use { String }
+
+---
+A first-class function value produced by a lambda expression (`fn(...) => ...`).
+Callables can be stored in variables, passed as arguments, and invoked
+by higher-order methods such as `List.map`, `List.filter`, and `List.each`.
+
+@example:
+double := fn(x: Int) => x * 2
+print(double(21))                      // 42
+evens := [1, 2, 3, 4].filter(fn(x: Int) => x % 2 == 0)
+---
+struct Callable {
+    ---
+    String representation of this callable.
+    @returns:
+        String — always `"<Callable>"`
+    ---
+    extern define __str(self) -> String
+}

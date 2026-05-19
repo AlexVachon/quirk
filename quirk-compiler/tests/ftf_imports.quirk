@@ -1,0 +1,11 @@
+from typing.collections.list use { List }
+from .utils use { greeting }
+
+define main() -> Int {
+    greeting("Hello from ftf_imports!")
+
+    items: List := [1, 2, 3]
+
+    print(", ".join(items))
+    return 0
+}

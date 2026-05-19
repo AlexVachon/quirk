@@ -1,0 +1,174 @@
+from typing.collections.list use { List }
+from typing.interfaces.primitive use { Primitive }
+from typing.interfaces.comparable use { Comparable }
+from typing.interfaces.sizeable use { Sizeable }
+from typing.interfaces.iterable use { Iterable }
+from typing.interfaces.iterator use { Iterator }
+from typing.interfaces.representable use { Representable }
+
+struct StringIterator : Iterator {
+    _str_ref: String
+    _idx: Int
+
+    extern define __init(self, s: String)
+    extern define __has_next(self) -> Bool
+    extern define __next(self) -> String
+}
+
+---
+An immutable UTF-8 string. String literals use double or single quotes.
+Supports interpolation with `"Hello ${name}"`, iteration over characters,
+and a rich set of transformation and query methods.
+
+@example:
+s := "Hello, world!"
+print(s.upper())            // "HELLO, WORLD!"
+print(s.contains("world")) // true
+parts := s.split(", ")
+print(parts.length())       // 2
+---
+struct String : Primitive, Comparable, Sizeable, Iterable, Representable {
+    _buffer: Any
+    _length: Int
+
+    extern define __init(self, raw: Any = "")
+    extern define __del(self)
+
+    extern define __add(self, other: String) -> String
+    extern define __eq(self, other: String) -> Bool
+    extern define __lt(self, other: String) -> Bool
+    extern define __iter(self) -> StringIterator
+    extern define __str(self) -> String
+    extern define __repr(self) -> String
+
+    ---
+    Returns a new string with each `{0}`, `{1}`, … placeholder replaced by the
+    corresponding argument.
+    @param args: List — positional values to interpolate
+    @returns: String
+    @example:
+    "Hello {0}, you are {1}!".format(["Alice", 30])
+    ---
+    extern define format(self, ...args: List) -> String
+    extern define format_map(self, keys: List, values: List) -> String
+    extern define format_list(self, args: List) -> String
+
+    ---
+    Splits the string on `delimiter` and returns a list of substrings.
+    @param delimiter: String
+    @returns: List — list of String parts
+    ---
+    extern define split(self, delimiter: String) -> List
+
+    ---
+    Joins a list of strings, inserting `self` between each element.
+    @param items: List — list of String values
+    @returns: String
+    @example:
+    ", ".join(["a", "b", "c"])  // "a, b, c"
+    ---
+    extern define join(self, items: List) -> String
+
+    ---
+    Returns the substring from `start` (inclusive) to `end` (exclusive).
+    @param start: Int — start index
+    @param end: Int — end index
+    @returns: String
+    @throws IndexError — if indices are out of range
+    ---
+    extern define substring(self, start: Int, end: Int) -> String
+
+    extern define upper(self) -> String
+    extern define lower(self) -> String
+    extern define title(self) -> String
+    extern define capitalize(self) -> String
+    extern define sentence_case(self) -> String
+    extern define swapcase(self) -> String
+
+    extern define encode(self) -> String
+
+    ---
+    Returns the number of non-overlapping occurrences of `sub`.
+    @param sub: String
+    @returns: Int
+    ---
+    extern define count(self, sub: String) -> Int
+
+    extern define startswith(self, prefix: String) -> Bool
+    extern define endswith(self, suffix: String) -> Bool
+
+    ---
+    Returns the index of the first occurrence of `sub`, or `-1` if not found.
+    @param sub: String
+    @returns: Int
+    ---
+    extern define find(self, sub: String) -> Int
+
+    ---
+    Like `find`, but throws `ValueError` if `sub` is not present.
+    @param sub: String
+    @returns: Int
+    @throws ValueError — if `sub` is not found
+    ---
+    extern define index(self, sub: String) -> Int
+
+    extern define contains(self, sub: String) -> Bool
+
+    extern define replace(self, old: String, new: String) -> String
+    extern define remove(self, sub: String) -> String
+    extern define repeat(self, n: Int) -> String
+    extern define reverse(self) -> String
+
+    extern define zfill(self, width: Int) -> String
+    extern define ljust(self, width: Int, pad: String) -> String
+    extern define rjust(self, width: Int, pad: String) -> String
+    extern define center(self, width: Int, pad: String) -> String
+
+    extern define trim(self) -> String
+    extern define lstrip(self) -> String
+    extern define rstrip(self) -> String
+
+    extern define is_alpha(self) -> Bool
+    extern define is_digit(self) -> Bool
+    extern define is_space(self) -> Bool
+    extern define is_upper(self) -> Bool
+    extern define is_lower(self) -> Bool
+
+    ---
+    Parses the string as an integer.
+    @returns: Int
+    @throws ValueError — if the string is not a valid integer
+    ---
+    extern define to_int(self) -> Int
+
+    ---
+    Parses the string as a floating-point number.
+    @returns: Double
+    @throws ValueError — if the string is not a valid number
+    ---
+    extern define to_float(self) -> Double
+
+    extern define to_bool(self) -> Bool
+
+    ---
+    Splits on newlines and returns each line as a list element.
+    @returns: List
+    ---
+    extern define lines(self) -> List
+
+    ---
+    Computes the Levenshtein edit distance between this string and `other`.
+    @param other: String
+    @returns: Int — number of single-character edits needed
+    ---
+    extern define distance(self, other: String) -> Int
+
+    ---
+    Returns `true` if the string has zero characters.
+    @returns: Bool
+    ---
+    extern define length(self) -> Int
+    define is_empty(self) -> Bool { return self._length == 0 }
+}
+
+extern define _float_to_str(val: Double) -> String

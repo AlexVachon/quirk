@@ -1,0 +1,87 @@
+// crypto library test — uses the `test` runner for a structured pass/fail
+// report. Reference digest values are from RFC test vectors and well-known
+// implementations.
+use crypto
+use test
+from test use { TestCase }
+use console
+
+define main() -> void {
+    // Hash reference values for the input "hello".
+    md5_hello := "5d41402abc4b2a76b9719d911017c592"
+    sha1_hello := "aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d"
+    sha256_hello := "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+
+    t1 := TestCase("md5('hello')", fn() {
+        test.assert_eq(crypto.md5("hello"), md5_hello)
+    })
+    t2 := TestCase("sha1('hello')", fn() {
+        test.assert_eq(crypto.sha1("hello"), sha1_hello)
+    })
+    t3 := TestCase("sha256('hello')", fn() {
+        test.assert_eq(crypto.sha256("hello"), sha256_hello)
+    })
+    t4 := TestCase("sha256('') is the empty-string hash", fn() {
+        test.assert_eq(
+        crypto.sha256(""),
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        )
+    })
+    t5 := TestCase("sha512 produces 128 hex chars", fn() {
+        test.assert_eq(crypto.sha512("hello").length(), 128)
+    })
+
+    // HMAC-SHA256 reference: HMAC("key", "msg") = ...
+    t6 := TestCase("hmac_sha256 deterministic", fn() {
+        test.assert_eq(
+        crypto.hmac_sha256("key", "msg"),
+        "2d93cbc1be167bcb1637a4a23cbff01a7878f0c50ee833954ea5221bb1b8c628"
+        )
+    })
+    t7 := TestCase("hmac changes with the key", fn() {
+        a := crypto.hmac_sha256("k1", "msg")
+        b := crypto.hmac_sha256("k2", "msg")
+        test.assert_ne(a, b)
+    })
+
+    t8 := TestCase("random_hex returns 2n chars", fn() {
+        test.assert_eq(crypto.random_hex(16).length(), 32)
+        test.assert_eq(crypto.random_hex(32).length(), 64)
+    })
+    t9 := TestCase("random_hex differs across calls", fn() {
+        a := crypto.random_hex(16)
+        b := crypto.random_hex(16)
+        test.assert_ne(a, b)
+    })
+
+    t10 := TestCase("uuid is 36 chars", fn() {
+        test.assert_eq(crypto.uuid().length(), 36)
+    })
+    t11 := TestCase("uuid v4 marker is '4' at index 14", fn() {
+        u := crypto.uuid()
+        test.assert_eq(u.substring(14, 15), "4")
+    })
+    t12 := TestCase("uuid variant nibble is 8/9/a/b at index 19", fn() {
+        u := crypto.uuid()
+        v := u.substring(19, 20)
+        ok := false
+        if v == "8" { ok = true }
+        if v == "9" { ok = true }
+        if v == "a" { ok = true }
+        if v == "b" { ok = true }
+        test.assert_true(ok)
+    })
+    t13 := TestCase("uuid differs across calls", fn() {
+        a := crypto.uuid()
+        b := crypto.uuid()
+        test.assert_ne(a, b)
+    })
+
+    fails := test.run_all([t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12, t13])
+
+    if fails == 0 {
+        console.bold("crypto: all checks passed.")
+    } else {
+        console.red("crypto: ${fails} failed.")
+    }
+}

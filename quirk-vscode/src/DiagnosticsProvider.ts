@@ -1,109 +1,96 @@
 import * as vscode from 'vscode';
+import { getDeadLines } from './DeadCodeProvider';
+import { maskLine } from './utils/maskLine';
+import { resolveModulePath, findProjectRootFor, resolveQuirkHome } from './ImportProvider';
 
 const KEYWORDS = new Set([
     'define', 'struct', 'if', 'else', 'elif', 'while', 'for', 'in',
     'return', 'break', 'continue', 'use', 'from', 'with', 'as',
     'extern', 'true', 'false', 'null', 'del', 'init', 'def',
-    'trigger', 'try', 'catch', 'throw', 'finally', 'and', 'or', 'not', 'super', 'enum',
-    'match', 'case', '_',
-    'fn'
+    'const', 'ref', 'try', 'catch', 'throw', 'finally', 'and', 'or', 'not', 'super', 'enum',
+    'match', 'case', '_', 'where', 'is',
+    'fn', 'nonlocal', 'global', 'interface'
 ]);
 
 const BUILTINS = new Set([
-    'print', 'exit', 'Char', 'String', 'List', 'Map',
-    'File', 'Int', 'Double', 'Bool', 'Any', 'void', 'Callable',
+    'print', 'printf', 'type', 'exit', 'String', 'List', 'Map',
+    'File', 'Int', 'Double', 'Bool', 'Any', 'void', 'Callable', 'Tuple',
+    'Self',  // type placeholder in interface methods
+    'Printable', 'Equatable', 'Comparable', 'Hashable',
+    'Parseable', 'Sizeable', 'Iterable', 'Iterator', 'Representable', 'Primitive', // built-in typing interfaces
+    'ListIterator', 'MapIterator', 'MapPairIterator', 'TupleIterator', 'SetIterator', 'QueueIterator', 'StringIterator',
+    'Set', 'Queue',
     'true', 'false', 'null',
     'Exception', 'TypeError', 'ValueError', 'IndexError', 'KeyError',
     'IOError', 'FileNotFoundError', 'RuntimeError', 'NotImplementedError',
-    'SocketError', 'ZeroDivisionError', 'AssertionError', 'NullError'
+    'SocketError', 'ZeroDivisionError', 'AssertionError', 'NullError', 'WhereConditionError'
 ]);
-
-function maskLine(line: string): string {
-    let masked = "";
-    let inString = false;
-    let quoteChar = ''; 
-    let inInterpolation = false;
-    let braceDepth = 0;
-    let nestedQuoteChar = ''; 
-
-    for (let j = 0; j < line.length; j++) {
-        const char = line[j];
-        const nextChar = line[j + 1];
-
-        if (!inString) {
-            if (char === '/' && nextChar === '/') {
-                masked += ' '.repeat(line.length - j);
-                break;
-            } else if (char === '"' || char === "'") { 
-                inString = true;
-                quoteChar = char; 
-                masked += ' ';
-            } else {
-                masked += char;
-            }
-        } else {
-            if (!inInterpolation) {
-                if (char === '\\') {
-                    masked += '  ';
-                    j++;
-                } else if (char === '$' && nextChar === '{') {
-                    inInterpolation = true;
-                    braceDepth = 1;
-                    masked += '  ';
-                    j++;
-                } else if (char === quoteChar) { 
-                    inString = false;
-                    quoteChar = '';
-                    masked += ' ';
-                } else {
-                    masked += ' ';
-                }
-            } else {
-                if (nestedQuoteChar) {
-                    if (char === '\\') {
-                        masked += '  ';
-                        j++;
-                    } else if (char === nestedQuoteChar) {
-                        nestedQuoteChar = ''; 
-                        masked += ' ';
-                    } else {
-                        masked += ' '; 
-                    }
-                } else {
-                    if (char === '"' || char === "'") {
-                        nestedQuoteChar = char; 
-                        masked += ' ';
-                    } else if (char === '{') {
-                        braceDepth++;
-                        masked += char;
-                    } else if (char === '}') {
-                        braceDepth--;
-                        if (braceDepth === 0) {
-                            inInterpolation = false;
-                            masked += ' ';
-                        } else {
-                            masked += char;
-                        }
-                    } else {
-                        masked += char; 
-                    }
-                }
-            }
-        }
-    }
-    return masked;
-}
 
 export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: vscode.DiagnosticCollection): void {
     if (doc.languageId !== 'quirk') return;
 
+    const deadLines = getDeadLines(doc);
     const diagnostics: vscode.Diagnostic[] = [];
     const text = doc.getText();
     const lines = text.split(/\r?\n/);
 
+    // Import resolution context — cached for the whole pass over the file.
+    const docPath = doc.uri.fsPath;
+    const projectRootForImports = findProjectRootFor(docPath);
+    const homeForImports = resolveQuirkHome(projectRootForImports);
+    const reportUnresolvedImport = (lineIdx: number, line: string, modulePath: string) => {
+        if (resolveModulePath(projectRootForImports, docPath, modulePath)) return;
+        const pos = line.indexOf(modulePath);
+        if (pos < 0) return;
+        const range = new vscode.Range(lineIdx, pos, lineIdx, pos + modulePath.length);
+        const hint = homeForImports
+            ? ` (checked QUIRK_HOME=${homeForImports})`
+            : ` (no venv detected — activate one or run \`quirk install\`)`;
+        diagnostics.push(new vscode.Diagnostic(
+            range,
+            `Cannot resolve module '${modulePath}'${hint}`,
+            vscode.DiagnosticSeverity.Warning,
+        ));
+    };
+
     const declarations = new Map<string, vscode.Range>();
+    // Parallel index: for each declared identifier, a sorted-ascending list
+    // of line numbers where it's declared. Lets the usage-tracking pass find
+    // the nearest predecessor declaration via binary search in O(log K)
+    // instead of an O(N) backward line scan per identifier reference.
+    const declarationLinesByName = new Map<string, number[]>();
+    const recordDeclaration = (name: string, line: number, range: vscode.Range) => {
+        declarations.set(`${line}_${name}`, range);
+        let arr = declarationLinesByName.get(name);
+        if (!arr) { arr = []; declarationLinesByName.set(name, arr); }
+        // Pass-1 walks lines in ascending order so the array stays sorted
+        // without an explicit insertion sort.
+        if (arr.length === 0 || arr[arr.length - 1] < line) arr.push(line);
+    };
+    // Find the largest declared line `<= usageLine` for `name`, or -1.
+    const nearestDeclLine = (name: string, usageLine: number): number => {
+        const arr = declarationLinesByName.get(name);
+        if (!arr || arr.length === 0) return -1;
+        // Binary search for rightmost entry <= usageLine
+        let lo = 0, hi = arr.length - 1, best = -1;
+        while (lo <= hi) {
+            const mid = (lo + hi) >> 1;
+            if (arr[mid] <= usageLine) { best = arr[mid]; lo = mid + 1; }
+            else hi = mid - 1;
+        }
+        return best;
+    };
     const usages = new Set<string>();
     const fileGlobals = new Set<string>();
+    // Module aliases brought into scope by `use X` (allow `X.foo(...)` only).
+    const useAliases = new Set<string>();
+    // Symbols brought in by `from X use { a, b }` (allow bare `a(...)`).
+    const explicitImports = new Set<string>();
+    const interfaceNames = new Set<string>([
+        'Any', 'Printable', 'Equatable', 'Comparable', 'Hashable',
+        'Parseable', 'Sizeable', 'Iterable', 'Iterator', 'Representable', 'Primitive',
+    ]); // built-ins + names declared with `interface`
+    const structNames = new Set<string>();    // names declared with `struct`
 
     let inDocBlock = false;
 
@@ -116,7 +103,9 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
 
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
-        if (line.trim() === '---') { inDocBlock = !inDocBlock; continue; }
+        const trimmed = line.trim();
+        if (trimmed === '---') { inDocBlock = !inDocBlock; continue; }
+        if (trimmed.startsWith('---') && trimmed.endsWith('---') && trimmed !== '---') continue;
         if (inDocBlock) continue;
 
         const cleanLine = maskLine(line);
@@ -128,7 +117,7 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
                 if (symbolsMatch) {
                     symbolsMatch[1].split(',').forEach(s => {
                         const trimmed = s.trim();
-                        if (trimmed) fileGlobals.add(trimmed);
+                        if (trimmed) { fileGlobals.add(trimmed); explicitImports.add(trimmed); }
                     });
                 }
                 isReadingImport = false;
@@ -163,27 +152,55 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
         if (/^\s*from\s+.*use\s+\{/.test(cleanLine) && !cleanLine.includes('}')) {
             isReadingImport = true;
             multiLineImport = cleanLine;
+            const fromMatch = /^\s*from\s+([.a-zA-Z0-9_/]+)/.exec(cleanLine);
+            if (fromMatch) reportUnresolvedImport(i, line, fromMatch[1]);
             continue;
         }
+
+        // Single-line `from X use { ... }` — validate the module path
+        const fromInlineMatch = /^\s*from\s+([.a-zA-Z0-9_/]+)\s+(?:use|as)\b/.exec(cleanLine);
+        if (fromInlineMatch) reportUnresolvedImport(i, line, fromInlineMatch[1]);
 
         let match = /^\s*use\s+([.a-zA-Z0-9_/]+)/.exec(cleanLine);
         if (match) {
             const alias = match[1].split(/[\.\/]/).pop();
-            if (alias) fileGlobals.add(alias);
+            if (alias) { fileGlobals.add(alias); useAliases.add(alias); }
+            reportUnresolvedImport(i, line, match[1]);
         }
+
+        // from .path as alias — register the alias as a known global
+        const fromAsMatch = /^\s*from\s+[.a-zA-Z0-9_/]+\s+as\s+([a-zA-Z_]\w*)/.exec(cleanLine);
+        if (fromAsMatch) { fileGlobals.add(fromAsMatch[1]); useAliases.add(fromAsMatch[1]); }
 
         match = /^\s*from\s+[.a-zA-Z0-9_/]+\s+use\s+\{([^}]*)\}/.exec(cleanLine);
         if (match) {
             match[1].split(',').forEach(s => {
                 const trimmed = s.trim();
-                if (trimmed) fileGlobals.add(trimmed);
+                if (trimmed) { fileGlobals.add(trimmed); explicitImports.add(trimmed); }
             });
         }
+
+        // Type alias: type Name = T — register as global so usage doesn't warn "not defined"
+        const typeAliasMatch1 = /^\s*type\s+([a-zA-Z_]\w*)\s*=/.exec(cleanLine);
+        if (typeAliasMatch1) { fileGlobals.add(typeAliasMatch1[1]); continue; }
+
+        // Interface declaration: register the name + collect type params from extends clause
+        const ifaceMatch = /^\s*interface\s+([a-zA-Z_]\w*)/.exec(cleanLine);
+        if (ifaceMatch) { fileGlobals.add(ifaceMatch[1]); interfaceNames.add(ifaceMatch[1]); continue; }
 
         match = /^\s*(?:extern\s+)?(?:struct|define|def|init)\s+([a-zA-Z_]\w*)/.exec(cleanLine);
         if (match) {
             const name = match[1];
             fileGlobals.add(name);
+            if (/^\s*(?:extern\s+)?struct\b/.test(cleanLine)) structNames.add(name);
+            // Collect generic type params [T, U] so they're not flagged as "not defined"
+            const typeParamMatch = /^\s*(?:extern\s+)?(?:struct|define|def|init)\s+[a-zA-Z_]\w*\s*\[([^\]]+)\]/.exec(cleanLine);
+            if (typeParamMatch) {
+                typeParamMatch[1].split(',').forEach(tp => {
+                    const t = tp.trim();
+                    if (t) fileGlobals.add(t);
+                });
+            }
             if (name !== 'main' && !name.startsWith('__')) {
                 const startIdx = cleanLine.indexOf(name, match.index);
                 declarations.set(name, new vscode.Range(i, startIdx, i, startIdx + name.length));
@@ -195,6 +212,7 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
     // PASS 2: Detailed Scope & Usage Scan
     // ==========================================
     let locals = new Set<string>();
+    const localTypes = new Map<string, string>(); // varName → inferred Quirk type
     inDocBlock = false;
 
     // Precompile regexes used inside the per-line loop
@@ -205,11 +223,24 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
     // Robust brace-depth tracking replaces the buggy 'inStruct' regex logic
     let braceDepth = 0;
     let currentFuncDepth = -1;
+    // Stack of outer (locals, funcDepth) pairs — pushed when we enter a
+    // nested `define` inside another function body so the inner define's
+    // params don't clobber the outer scope's locals. Popped when the inner
+    // function's braces close. Without this, code like
+    //     define main() {
+    //         t1 := ...
+    //         define helper() { ... }
+    //         t2 := ...        // would falsely warn "t1 not defined"
+    //     }
+    // breaks scope tracking because we reset `locals` on every funcMatch.
+    const scopeStack: { locals: Set<string>; depth: number }[] = [];
     let inMultiLineImport = false;
 
     for (let i = 0; i < lines.length; i++) {
         const originalLine = lines[i];
-        if (originalLine.trim() === '---') { inDocBlock = !inDocBlock; continue; }
+        const trimmedOrig = originalLine.trim();
+        if (trimmedOrig === '---') { inDocBlock = !inDocBlock; continue; }
+        if (trimmedOrig.startsWith('---') && trimmedOrig.endsWith('---') && trimmedOrig !== '---') continue;
         if (inDocBlock) continue;
 
         let maskedLine = maskLine(originalLine);
@@ -228,63 +259,182 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
         const openBraces = (maskedLine.match(/\{/g) || []).length;
         const closeBraces = (maskedLine.match(/\}/g) || []).length;
 
-        // Reset scope if we enter a new function
-        const funcMatch = /^\s*(?:extern\s+)?(?:define|def|init)\s+[a-zA-Z_]\w*\s*\(([^)]*)\)/.exec(maskedLine);
+        // Reset scope if we enter a new function (optional [T, U] generic params before `(`)
+        const funcMatch = /^\s*(?:extern\s+)?(?:define|def|init)\s+([a-zA-Z_]\w*)\s*(?:\[[^\]]*\]\s*)?\(([^)]*)\)/.exec(maskedLine);
         if (funcMatch) {
+            // Nested define inside another function body: the inner define
+            // desugars to a local Callable binding (`name := fn(...) {...}`),
+            // so its NAME is visible to the outer scope. Stash the outer
+            // (locals, funcDepth) so we can restore them when the inner
+            // body closes; meanwhile expose the inner function's name to
+            // the outer scope's locals.
+            if (currentFuncDepth !== -1 && !maskedLine.includes('extern')) {
+                const innerName = funcMatch[1];
+                locals.add(innerName);
+                scopeStack.push({ locals, depth: currentFuncDepth });
+            }
             locals = new Set<string>();
             if (!maskedLine.includes('extern')) {
                 currentFuncDepth = braceDepth;
             }
-            
+
+            // Seed locals with generic type params [T, U] so they're valid inside body
+            const typeParamBlock = /^\s*(?:extern\s+)?(?:define|def|init)\s+[a-zA-Z_]\w*\s*\[([^\]]*)\]/.exec(maskedLine);
+            if (typeParamBlock) {
+                typeParamBlock[1].split(',').forEach(tp => {
+                    const t = tp.trim();
+                    if (t) locals.add(t);
+                });
+            }
+
             const isExtern = maskedLine.includes('extern');
-            const paramsStr = funcMatch[1];
-            const paramMatches = [...paramsStr.matchAll(/\b([a-zA-Z_]\w*)\s*(?::\s*[a-zA-Z_][\w.?]*)?(?::|$|,)/g)];
+            // Bodyless signatures (interface methods, forward decls) have no { on the line.
+            // Params of bodyless functions are never "used" in Quirk source — don't track them.
+            const isBodyless = !maskedLine.includes('{');
+            const paramsStr = funcMatch[2];
+            // Type annotation allows generic params: List[T], Map[K, V], etc.
+            const paramMatches = [...paramsStr.matchAll(/(?:\.\.\.)?([a-zA-Z_]\w*)\s*(?::\s*[a-zA-Z_][\w.?]*(?:\[[^\]]*\])?)?(?:,|$)/g)];
             for (const pm of paramMatches) {
                 const pName = pm[1];
                 locals.add(pName);
 
-                // extern define params are implemented in C — never "used" in Quirk source
-                if (!isExtern && pName !== 'self' && !BUILTINS.has(pName)) {
+                // extern define and bodyless signatures are implemented outside Quirk source
+                if (!isExtern && !isBodyless && pName !== 'self' && !BUILTINS.has(pName)) {
                     const startIdx = originalLine.indexOf(pName, funcMatch.index);
-                    declarations.set(`${i}_${pName}`, new vscode.Range(i, startIdx, i, startIdx + pName.length));
+                    recordDeclaration(pName, i, new vscode.Range(i, startIdx, i, startIdx + pName.length));
                 }
             }
         }
 
-        // Reset scope if we enter a lambda trigger
-        const triggerMatch = /^\s*trigger\s+[a-zA-Z0-9_.]+(?:\s*\(([^)]*)\))?/.exec(maskedLine);
-        if (triggerMatch) {
-            locals = new Set<string>();
-            currentFuncDepth = braceDepth;
-            
-            const paramsStr = triggerMatch[1];
-            if (paramsStr) {
-                paramsStr.split(',').forEach(p => {
-                    const pName = p.trim();
-                    if (pName) {
-                        locals.add(pName);
-                        const startIdx = originalLine.indexOf(pName, triggerMatch.index);
-                        declarations.set(`${i}_${pName}`, new vscode.Range(i, startIdx, i, startIdx + pName.length));
-                    }
-                });
-            } else {
-                locals.add('it');
-                locals.add('was');
+        // Allow declaration tracking inside a function body OR at the top level (braceDepth === 0).
+        // braceDepth > 0 outside a function means we're inside a struct body — skip to avoid
+        // treating type-annotated fields like `data: Any` as variable declarations.
+        const isInsideFunc = currentFuncDepth !== -1;
+        const isTopLevel = braceDepth === 0;
+
+        // Collect named argument names: `ident =` patterns at paren-depth > 0.
+        // These are keyword arguments to function calls, not variable declarations.
+        const namedArgNames = new Set<string>();
+        {
+            let pd = 0;
+            for (let ci = 0; ci < maskedLine.length; ci++) {
+                const ch = maskedLine[ci];
+                if (ch === '(') { pd++; }
+                else if (ch === ')') { pd--; }
+                else if (pd > 0) {
+                    const m = /^([a-zA-Z_]\w*)\s*=(?![=>])/.exec(maskedLine.slice(ci));
+                    if (m) { namedArgNames.add(m[1]); }
+                }
             }
         }
 
-        // Only search for local variable declarations if we are INSIDE a function block.
-        // This prevents the linter from thinking struct property fields are local variables.
-        const isInsideFunc = currentFuncDepth !== -1;
+        // Collect comprehension variable names from ALL `for var1 (,var2) in` patterns on the line.
+        // These are defined by the for-clause and are valid identifiers throughout the expression.
+        const compVarNames = new Set<string>();
+        {
+            const cvRe = /\bfor\s+(?:ref\s+)?([a-zA-Z_]\w*)(?:\s*,\s*([a-zA-Z_]\w*))?\s+in\b/g;
+            let cvm;
+            while ((cvm = cvRe.exec(maskedLine)) !== null) {
+                compVarNames.add(cvm[1]);
+                if (cvm[2]) compVarNames.add(cvm[2]);
+            }
+            // Also capture parenthesized for-destructuring: for (n, s) in
+            const cvParenRe = /\bfor\s+\(([^)]+)\)\s+in\b/g;
+            let cvpm;
+            while ((cvpm = cvParenRe.exec(maskedLine)) !== null) {
+                cvpm[1].split(',').forEach(part => {
+                    const vn = part.trim();
+                    if (vn && /^[a-zA-Z_]\w*$/.test(vn)) compVarNames.add(vn);
+                });
+            }
+        }
 
-        if (isInsideFunc) {
-            const assignMatch = /(?<!\.)\b([a-zA-Z_]\w*)\s*(?::\s*[a-zA-Z0-9_.?]+)?\s*(?::=|=(?!>)|\+=|-=|\*=|\/=)/.exec(maskedLine);
-            if (assignMatch) {
+        // Type alias lines don't declare runtime variables — skip assignment matching
+        const isTypeAliasLine = /^\s*type\s+[a-zA-Z_]\w*\s*=/.test(maskedLine);
+
+        if (isInsideFunc || isTopLevel) {
+            // Parenthesized for-destructuring: for (n, s) in pairs
+            const forParenDestructMatch = /\bfor\s+\(([^)]+)\)\s+in\b/.exec(maskedLine);
+            if (forParenDestructMatch) {
+                forParenDestructMatch[1].split(',').forEach(part => {
+                    const vName = part.trim();
+                    if (vName && /^[a-zA-Z_]\w*$/.test(vName) && !locals.has(vName) && !KEYWORDS.has(vName) && !BUILTINS.has(vName)) {
+                        locals.add(vName);
+                        const startIdx = originalLine.indexOf(vName, forParenDestructMatch.index);
+                        recordDeclaration(vName, i, new vscode.Range(i, startIdx, i, startIdx + vName.length));
+                    }
+                });
+            }
+
+            // Parenthesized tuple destructuring: (x, y) := expr
+            const parenDestructMatch = /^\s*\(\s*([a-zA-Z_]\w*(?:\s*,\s*[a-zA-Z_]\w*)*)\s*\)\s*:=/.exec(maskedLine);
+            if (parenDestructMatch) {
+                parenDestructMatch[1].split(',').forEach(part => {
+                    const vName = part.trim();
+                    if (vName && !locals.has(vName) && !KEYWORDS.has(vName) && !BUILTINS.has(vName)) {
+                        locals.add(vName);
+                        const startIdx = originalLine.indexOf(vName);
+                        recordDeclaration(vName, i, new vscode.Range(i, startIdx, i, startIdx + vName.length));
+                    }
+                });
+            }
+
+            // Bare tuple destructuring: x, y := expr  (two or more names before :=)
+            const bareDestructMatch = /^\s*([a-zA-Z_]\w*(?:\s*,\s*[a-zA-Z_]\w*)+)\s*:=/.exec(maskedLine);
+            if (bareDestructMatch && !parenDestructMatch) {
+                bareDestructMatch[1].split(',').forEach(part => {
+                    const vName = part.trim();
+                    if (vName && !locals.has(vName) && !KEYWORDS.has(vName) && !BUILTINS.has(vName)) {
+                        locals.add(vName);
+                        const startIdx = originalLine.indexOf(vName);
+                        recordDeclaration(vName, i, new vscode.Range(i, startIdx, i, startIdx + vName.length));
+                    }
+                });
+            }
+
+            const assignMatch = !isTypeAliasLine ? /(?<!\.)\b([a-zA-Z_]\w*)\s*(?::\s*([a-zA-Z0-9_.?]+))?\s*(?::=|=(?!>)|\+=|-=|\*=|\/=)/.exec(maskedLine) : null;
+            if (assignMatch && !parenDestructMatch && !bareDestructMatch) {
                 const vName = assignMatch[1];
-                if (!locals.has(vName) && !KEYWORDS.has(vName) && !BUILTINS.has(vName)) {
+                if (!namedArgNames.has(vName) && !locals.has(vName) && !KEYWORDS.has(vName) && !BUILTINS.has(vName)) {
                     locals.add(vName);
                     const startIdx = originalLine.indexOf(vName);
-                    declarations.set(`${i}_${vName}`, new vscode.Range(i, startIdx, i, startIdx + vName.length));
+                    recordDeclaration(vName, i, new vscode.Range(i, startIdx, i, startIdx + vName.length));
+                }
+                // Infer type from explicit annotation or RHS
+                if (!localTypes.has(vName)) {
+                    const rhs = maskedLine.slice((assignMatch.index ?? 0) + assignMatch[0].length).trim();
+                    const explicitType = assignMatch[2];
+                    if (explicitType && explicitType !== 'void') {
+                        localTypes.set(vName, explicitType);
+                    } else if (rhs.startsWith('"'))                  { localTypes.set(vName, 'String'); }
+                    else if (/^\d+\.\d/.test(rhs))                   { localTypes.set(vName, 'Double'); }
+                    else if (/^\d/.test(rhs))                        { localTypes.set(vName, 'Int'); }
+                    else if (/^(?:true|false)\b/.test(rhs))          { localTypes.set(vName, 'Bool'); }
+                    else if (rhs.startsWith("'"))                    { localTypes.set(vName, 'String'); }
+                    else if (rhs.startsWith('['))                     { localTypes.set(vName, 'List'); }
+                    else if (rhs.startsWith('{'))                    { localTypes.set(vName, 'Map'); }
+                    else if (rhs.startsWith('('))                    { localTypes.set(vName, 'Tuple'); }
+                    else {
+                        // x := receiver.method(...)
+                        const mCall = /^([a-zA-Z0-9_]+)\.([a-zA-Z0-9_]+)\s*\(/.exec(rhs);
+                        if (mCall) {
+                            const recvType = localTypes.get(mCall[1]);
+                            if (recvType) {
+                                const methodReturnTypes: Record<string, Record<string, string>> = {
+                                    String: { upper:'String', lower:'String', trim:'String', replace:'String',
+                                              split:'List', lines:'List', to_int:'Int', to_float:'Double',
+                                              to_bool:'Bool', find:'Int', count:'Int',
+                                              contains:'Bool', startswith:'Bool', endswith:'Bool', distance:'Int',
+                                              substring:'String', join:'String', reverse:'String', encode:'String' },
+                                    List:   { join:'String', find:'Any', any:'Bool', all:'Bool', get:'Any' },
+                                    Map:    { get:'Any', keys:'List', values:'List', has:'Bool' },
+                                    Tuple:  { length:'Int', get:'Any' },
+                                };
+                                const ret = methodReturnTypes[recvType]?.[mCall[2]];
+                                if (ret) localTypes.set(vName, ret);
+                            }
+                        }
+                    }
                 }
             }
 
@@ -294,28 +444,46 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
                 if (!locals.has(vName)) {
                     locals.add(vName);
                     const startIdx = originalLine.indexOf(vName, withMatch.index + 4);
-                    declarations.set(`${i}_${vName}`, new vscode.Range(i, startIdx, i, startIdx + vName.length));
+                    recordDeclaration(vName, i, new vscode.Range(i, startIdx, i, startIdx + vName.length));
                 }
             }
 
-            const forMatch = /\bfor\s+(?:ref\s+)?([a-zA-Z_]\w*)\s+in\b/.exec(maskedLine);
+            const forMatch = /\bfor\s+(?:ref\s+)?([a-zA-Z_]\w*)(?:\s*,\s*([a-zA-Z_]\w*))?\s+in\s+([a-zA-Z0-9_"'\[]+)/.exec(maskedLine);
             if (forMatch) {
                 const vName = forMatch[1];
                 if (!locals.has(vName)) {
                     locals.add(vName);
                     const startIdx = originalLine.indexOf(vName, forMatch.index);
-                    declarations.set(`${i}_${vName}`, new vscode.Range(i, startIdx, i, startIdx + vName.length));
+                    recordDeclaration(vName, i, new vscode.Range(i, startIdx, i, startIdx + vName.length));
+                }
+                if (forMatch[2]) {
+                    const vName2 = forMatch[2];
+                    if (!locals.has(vName2)) {
+                        locals.add(vName2);
+                        const startIdx2 = originalLine.indexOf(vName2, forMatch.index + forMatch[1].length);
+                        recordDeclaration(vName2, i, new vscode.Range(i, startIdx2, i, startIdx2 + vName2.length));
+                    }
+                }
+                // Infer element type from the iterable
+                const iterable = forMatch[3];
+                if (iterable.startsWith('"') || iterable.startsWith("'")) {
+                    localTypes.set(vName, 'String');
+                } else {
+                    const iterType = localTypes.get(iterable);
+                    if (iterType === 'String') localTypes.set(vName, 'String');
+                    else if (iterType === 'List') localTypes.set(vName, 'Any');
                 }
             }
 
-            const catchMatch = /\bcatch\s*\(\s*([a-zA-Z_]\w*)\s*:/.exec(maskedLine);
+            const catchMatch = /\bcatch\s*\(\s*([a-zA-Z_]\w*)\s*:\s*([a-zA-Z_]\w*)/.exec(maskedLine);
             if (catchMatch) {
                 const vName = catchMatch[1];
                 if (!locals.has(vName)) {
                     locals.add(vName);
                     const startIdx = originalLine.indexOf(vName, catchMatch.index);
-                    declarations.set(`${i}_${vName}`, new vscode.Range(i, startIdx, i, startIdx + vName.length));
+                    recordDeclaration(vName, i, new vscode.Range(i, startIdx, i, startIdx + vName.length));
                 }
+                localTypes.set(vName, catchMatch[2]); // e: WhereConditionError → WhereConditionError
             }
 
             // Lambda params: fn(x: Int, y) => ... or fn(x) { ... }
@@ -331,6 +499,46 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
             }
         }
 
+        // where-clause generic constraint check: warn if bound is a concrete struct, not an interface
+        if (/^\s*(?:extern\s+)?(?:define|def|struct)\b/.test(maskedLine)) {
+            const whereIdx = maskedLine.indexOf(' where ');
+            if (whereIdx !== -1) {
+                const whereClause = maskedLine.slice(whereIdx + 7);
+                const constraintRe = /[a-zA-Z_]\w*\s*:\s*([a-zA-Z_]\w*(?:\s*&\s*[a-zA-Z_]\w*)*)/g;
+                let cm;
+                while ((cm = constraintRe.exec(whereClause)) !== null) {
+                    const bounds = cm[1].split(/\s*&\s*/);
+                    for (const b of bounds) {
+                        const bound = b.trim();
+                        if (structNames.has(bound) && !interfaceNames.has(bound)) {
+                            const boundIdx = originalLine.indexOf(bound, whereIdx);
+                            if (boundIdx !== -1) {
+                                diagnostics.push(new vscode.Diagnostic(
+                                    new vscode.Range(i, boundIdx, i, boundIdx + bound.length),
+                                    `'${bound}' is a concrete type, not an interface. Generic constraints should be interfaces.`,
+                                    vscode.DiagnosticSeverity.Warning
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Spread usage: ...varName counts as a reference (identRegex misses it due to dot lookbehind)
+        {
+            const spreadRe = /\.\.\.([a-zA-Z_]\w*)/g;
+            let sm;
+            while ((sm = spreadRe.exec(maskedLine)) !== null) {
+                const ident = sm[1];
+                if (!KEYWORDS.has(ident) && !BUILTINS.has(ident)) {
+                    usages.add(ident);
+                    const k = nearestDeclLine(ident, i);
+                    if (k !== -1) usages.add(`${k}_${ident}`);
+                }
+            }
+        }
+
         memberRegex.lastIndex = 0;
         let memMatch;
         while ((memMatch = memberRegex.exec(maskedLine)) !== null) {
@@ -343,10 +551,30 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
         while ((match = identRegex.exec(maskedLine)) !== null) {
             const ident = match[1];
             if (KEYWORDS.has(ident) || BUILTINS.has(ident)) continue;
+            if (namedArgNames.has(ident)) continue; // named argument — not a variable reference
+            if (compVarNames.has(ident)) {
+                if (!locals.has(ident)) locals.add(ident);
+                usages.add(ident);
+                const k = nearestDeclLine(ident, i);
+                if (k !== -1) usages.add(`${k}_${ident}`);
+                continue;
+            }
 
             // Prevent struct properties like "file: String" from triggering a warning
             const restOfLine = maskedLine.substring(match.index + ident.length);
             if (restOfLineColonRe.test(restOfLine)) continue;
+
+            // Strict-import warning: calling `name(...)` where `name` is only
+            // imported as a module via `use X` and not explicitly via
+            // `from X use { name }`. Mirrors the compiler's hard error.
+            if (useAliases.has(ident) && !explicitImports.has(ident) && /^\s*\(/.test(restOfLine)) {
+                const range = new vscode.Range(i, match.index, i, match.index + ident.length);
+                diagnostics.push(new vscode.Diagnostic(
+                    range,
+                    `Cannot call module '${ident}' directly. Use '${ident}.foo(...)' or import explicitly with 'from ${ident} use { ${ident} }'.`,
+                    vscode.DiagnosticSeverity.Warning,
+                ));
+            }
 
             const range = new vscode.Range(i, match.index, i, match.index + ident.length);
 
@@ -355,14 +583,10 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
             }
 
             if (locals.has(ident) || fileGlobals.has(ident)) {
-                usages.add(ident); 
-                for (let k = i; k >= 0; k--) {
-                    if (declarations.has(`${k}_${ident}`)) {
-                        usages.add(`${k}_${ident}`);  
-                        break;
-                    }
-                }
-            } else {
+                usages.add(ident);
+                const k = nearestDeclLine(ident, i);
+                if (k !== -1) usages.add(`${k}_${ident}`);
+            } else if (!deadLines.has(i)) {
                 diagnostics.push(new vscode.Diagnostic(range, `'${ident}' is not defined.`, vscode.DiagnosticSeverity.Warning));
             }
         }
@@ -370,9 +594,18 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
         // Adjust scope level
         braceDepth += openBraces - closeBraces;
         
-        // If we drop back down to the brace level where the function started, we have exited the function body
+        // If we drop back down to the brace level where the function started,
+        // we have exited the function body. Pop the outer scope if one was
+        // stashed (i.e. this was a nested define inside another function);
+        // otherwise return to "no function" state.
         if (currentFuncDepth !== -1 && braceDepth <= currentFuncDepth && closeBraces > 0) {
-            currentFuncDepth = -1;
+            const outer = scopeStack.pop();
+            if (outer) {
+                locals             = outer.locals;
+                currentFuncDepth   = outer.depth;
+            } else {
+                currentFuncDepth   = -1;
+            }
         }
     }
 
@@ -380,12 +613,14 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
     // PASS 3: Generate "Unused" Diagnostics 
     // ==========================================
     declarations.forEach((range, key) => {
-        // Only warn on unused LOCAL variables. 
+        // Only warn on unused LOCAL variables.
         if (/^\d+_/.test(key) && !usages.has(key)) {
             const cleanKey = key.replace(/^\d+_/, '');
 
-            // --- NEW: Ignore variables prefixed with an underscore ---
             if (cleanKey.startsWith('_')) return;
+
+            // Suppress warnings for declarations on dead code lines
+            if (deadLines.has(range.start.line)) return;
 
             const diagnostic = new vscode.Diagnostic(
                 range,

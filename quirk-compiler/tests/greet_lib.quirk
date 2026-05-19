@@ -1,0 +1,27 @@
+---
+Small library of greeting functions for testing the Quirk compiler.
+---
+
+---
+Greet a person by name.
+
+@param :
+- **name** The name of the person to greet.
+
+@returns A greeting string in the form `"Hello, <name>!"`.
+---
+define greet(name: String) -> String {
+    return "Hello, " + name + "!"
+}
+
+---
+Convert a message to uppercase.
+
+@param :
+- **msg** The message to shout.
+
+@returns A copy of **msg** with every character converted to uppercase.
+---
+define shout(msg: String) -> String {
+    return msg.upper()
+}

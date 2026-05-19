@@ -1,0 +1,25 @@
+from .printable use { Printable }
+from .comparable use { Comparable }
+
+---
+Base interface for primitive value types.
+
+All built-in scalar types (`Int`, `Double`, `Bool`, `String`) implement
+`Primitive`. Extends both `Printable` and `Comparable`, so any `where T: Primitive`
+constraint guarantees string conversion (`__str`) and ordering (`__lt`, `__eq`).
+
+For types that can be constructed from a string, see `Parseable`.
+For types usable as collection keys, see `Hashable`.
+
+@example
+struct Stack[T] where T: Primitive {
+    items: List[T]
+    ...
+}
+
+define echo[T](val: T) -> String where T: Primitive {
+    return val.__str()
+}
+---
+interface Primitive : Printable, Comparable {
+}

@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { maskLine } from './utils/maskLine';
 
 export class QuirkRenameProvider implements vscode.RenameProvider {
 
@@ -6,7 +7,7 @@ export class QuirkRenameProvider implements vscode.RenameProvider {
         'define', 'struct', 'if', 'else', 'elif', 'while', 'for', 'in',
         'return', 'break', 'continue', 'use', 'from', 'with', 'as',
         'extern', 'true', 'false', 'null', 'del', 'init', 'def', 'extend',
-        'print', 'exit', 'Char', 'String', 'List', 'Map', 'File', 'Int',
+        'print', 'exit', 'String', 'List', 'Map', 'File', 'Int',
         'Double', 'Bool', 'Any', 'void', 'self', 'super',
         'and', 'or', 'not', 'try', 'catch', 'throw', 'trigger',
     ]);
@@ -46,12 +47,12 @@ export class QuirkRenameProvider implements vscode.RenameProvider {
         const isLocal = this.isLocalSymbol(document, position, oldName);
 
         // Locals: rename only within the enclosing function in the current file
-        // Globals: rename across all .qk files in the workspace
+        // Globals: rename across all .quirk files in the workspace
         let filesToSearch: vscode.Uri[];
         if (isLocal) {
             filesToSearch = [document.uri];
         } else {
-            filesToSearch = await vscode.workspace.findFiles('**/*.qk', '**/node_modules/**');
+            filesToSearch = await vscode.workspace.findFiles('**/*.quirk', '**/node_modules/**');
         }
 
         for (const uri of filesToSearch) {
@@ -73,7 +74,7 @@ export class QuirkRenameProvider implements vscode.RenameProvider {
                 // For locals, skip lines outside the enclosing function scope
                 if (isLocal && !this.isLineInSameScope(document, position, i)) continue;
 
-                const maskedLine = this.maskLine(line);
+                const maskedLine = maskLine(line);
                 const regex = new RegExp(`\\b${escapeRegex(oldName)}\\b`, 'g');
                 let match: RegExpExecArray | null;
 
@@ -124,39 +125,6 @@ export class QuirkRenameProvider implements vscode.RenameProvider {
         return -1;
     }
 
-    private maskLine(line: string): string {
-        let masked = "";
-        let inString = false;
-        let quoteChar = '';
-        let inInterpolation = false;
-        let braceDepth = 0;
-
-        for (let j = 0; j < line.length; j++) {
-            const char = line[j];
-            const next = line[j + 1];
-
-            if (!inString) {
-                if (char === '/' && next === '/') { masked += ' '.repeat(line.length - j); break; }
-                if (char === '"' || char === "'") { inString = true; quoteChar = char; masked += ' '; }
-                else { masked += char; }
-            } else {
-                if (!inInterpolation) {
-                    if (char === '\\') { masked += '  '; j++; }
-                    else if (char === '$' && next === '{') { inInterpolation = true; braceDepth = 1; masked += '  '; j++; }
-                    else if (char === quoteChar) { inString = false; quoteChar = ''; masked += ' '; }
-                    else { masked += ' '; }
-                } else {
-                    if (char === '{') { braceDepth++; masked += char; }
-                    else if (char === '}') {
-                        braceDepth--;
-                        if (braceDepth === 0) { inInterpolation = false; masked += ' '; }
-                        else { masked += char; }
-                    } else { masked += char; }
-                }
-            }
-        }
-        return masked;
-    }
 }
 
 function escapeRegex(s: string): string {

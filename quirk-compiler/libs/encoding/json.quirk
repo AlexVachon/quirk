@@ -1,0 +1,165 @@
+---
+JSON encoding and decoding — mirrors Python's `json` module.
+
+The primary API is four functions:
+  `json.dumps(val)`        — serialize any value to a JSON string
+  `json.loads(s)`          — parse a JSON string into a Quirk value
+  `json.dump(val, file)`   — serialize and write to a File
+  `json.load(file)`        — read a File and parse as JSON
+
+`dumps` accepts Map, List, ISerializable structs, and String values
+directly — no wrapper types needed.
+
+@example
+m := Map()
+m.put("name", "Alice")
+m.put("age", "30")
+print(json.dumps(m))            // {"name":"Alice","age":30}
+
+data: Map = json.loads('{"x":1,"y":true}')
+print(data.get("x"))            // 1
+---
+from typing.primitives.string use { String }
+from typing.collections.map use { Map }
+from typing.collections.list use { List }
+from typing.interfaces.serializable use { ISerializable }
+from io.file use { File }
+
+// ── C-backed entry points (libs/encoding/json.c) ─────────────────────
+// dumps: fully dispatched in C — handles Map, List, Any, raw strings
+extern define dumps(val: Any) -> String
+
+// Low-level pretty-print: `indent` spaces per nesting level. Use
+// `dumps_pretty(val, indent=2)` below for the friendlier API.
+extern define dumps_indent(val: Any, indent: Int) -> String
+
+// parse: returns the parsed value as Any (Map, List, or raw String)
+extern define parse(s: String) -> Any
+
+---
+Pretty-print `val` with `indent` spaces per nesting level. Indented JSON
+is much easier to read for config files and debug output; pass `indent=4`
+for a more spacious layout.
+
+@example
+m := Map()
+m.put("name", "Alice")
+m.put("scores", [98, 87, 92])
+print(json.dumps_pretty(m))
+// {
+//   "name": "Alice",
+//   "scores": [
+//     98,
+//     87,
+//     92
+//   ]
+// }
+---
+define dumps_pretty(val: Any, indent: Int = 2) -> String {
+    return dumps_indent(val, indent)
+}
+
+// ======================================================================
+// loads — friendly alias for parse (matches Python naming)
+// ======================================================================
+
+---
+Parse a JSON string and return the corresponding Quirk value with
+real types — no manual coercion required.
+
+  JSON object  → `Map`     (String keys, mixed-type values)
+  JSON array   → `List`    (mixed-type elements)
+  JSON string  → `String`
+  JSON number  → `Int` (no decimal/exponent) or `Double`
+  JSON boolean → `Bool`
+  JSON null    → null
+
+@param s  A valid JSON string.
+@returns  A Map, List, String, or boxed primitive.
+
+@example
+data: Map = json.loads('{"name":"Alice","age":30,"active":true}')
+print(data.get("name"))     // Alice  (String)
+print(data.get("age"))      // 30     (Int — usable in arithmetic)
+print(data.get("active"))   // true   (Bool)
+---
+define loads(s: String) -> Any {
+    return parse(s)
+}
+
+// ======================================================================
+// dump — serialize and write directly to a File
+// ======================================================================
+
+---
+Serialize `val` and write the JSON string to an open File.
+
+@example
+with File("config.json", "w") as f {
+    json.dump(config_map, f)
+}
+---
+define dump(val: Any, file: File) -> void {
+    file.write(dumps(val))
+}
+
+// ======================================================================
+// load — read a File and parse its contents as JSON
+// ======================================================================
+
+---
+Read the entire contents of `file` and parse as JSON.
+
+@example
+with File("config.json", "r") as f {
+    config: Map = json.load(f)
+    print(config.get("host"))
+}
+---
+define load(file: File) -> Any {
+    return loads(file.read())
+}
+
+// ======================================================================
+// JsonMap / JsonList — ISerializable bridges for net.http
+//
+// Only needed when passing a Map or List to an API that requires an
+// ISerializable (e.g. the `json:` param of net.http.post).
+// For plain serialization, use json.dumps(m) directly.
+// ======================================================================
+
+---
+Wraps a Map as an ISerializable for net.http's `json:` parameter.
+
+@example
+http.post(url, json: JsonMap(m))
+---
+struct JsonMap : ISerializable {
+    data: Map
+
+    define __init(self, m: Map) -> void {
+        self.data = m
+    }
+
+    define to_json(self) -> String {
+        return dumps(self.data)
+    }
+}
+
+---
+Wraps a List as an ISerializable for net.http's `json:` parameter.
+
+@example
+http.post(url, json: JsonList(l))
+---
+struct JsonList : ISerializable {
+    data: List
+
+    define __init(self, l: List) -> void {
+        self.data = l
+    }
+
+    define to_json(self) -> String {
+        return dumps(self.data)
+    }
+}

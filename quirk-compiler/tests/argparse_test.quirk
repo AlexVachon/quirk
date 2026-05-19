@@ -1,0 +1,75 @@
+// argparse: tests the help/usage construction and flag-helper logic. Full
+// argv parsing is exercised separately through the smoke scripts (see the
+// repo's docs) since `parse()` reads sys.argv() and exits on errors —
+// awkward to assert against in-process.
+use argparse
+use test
+from test use { TestCase }
+use console
+
+define main() -> void {
+    p := argparse.parser("widget", "make widgets")
+    p.positional("input", "input file")
+    p.option("name", "n", "anon", "widget name")
+    p.flag("verbose", "v", "log everything")
+    p.required("output", "o", "output file")
+
+    t1 := TestCase("specs are added in order", fn() {
+        // 4 declared specs (positional, option, flag, required)
+        test.assert_eq(p.specs.length(), 4)
+    })
+
+    t2 := TestCase("flag() helper recognizes 'true'", fn() {
+        m := Map()
+        m.put("verbose", "true")
+        test.assert_true(argparse.flag(m, "verbose"))
+    })
+
+    t3 := TestCase("flag() helper recognizes 'false'", fn() {
+        m := Map()
+        m.put("verbose", "false")
+        test.assert_false(argparse.flag(m, "verbose"))
+    })
+
+    t4 := TestCase("_find_long resolves declared spec", fn() {
+        s := p._find_long("name")
+        test.assert_eq(s.name, "name")
+        test.assert_eq(s.short, "n")
+    })
+
+    t5 := TestCase("_find_long returns null for unknown", fn() {
+        test.assert_eq(p._find_long("xyz"), null)
+    })
+
+    t6 := TestCase("_find_short resolves declared spec", fn() {
+        s := p._find_short("o")
+        test.assert_eq(s.name, "output")
+        test.assert_true(s.required)
+    })
+
+    t7 := TestCase("flags carry default 'false'", fn() {
+        s := p._find_long("verbose")
+        test.assert_eq(s.default_str, "false")
+        test.assert_true(s.is_flag)
+    })
+
+    t8 := TestCase("required option has empty default and required=true", fn() {
+        s := p._find_long("output")
+        test.assert_true(s.required)
+        test.assert_eq(s.default_str, "")
+    })
+
+    t9 := TestCase("positional has is_positional=true", fn() {
+        s := p._find_long("input")
+        test.assert_true(s.is_positional)
+        test.assert_true(s.required)
+    })
+
+    fails := test.run_all([t1, t2, t3, t4, t5, t6, t7, t8, t9])
+
+    if fails == 0 {
+        console.bold("argparse: all checks passed.")
+    } else {
+        console.red("argparse: ${fails} failed.")
+    }
+}

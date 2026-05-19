@@ -1,0 +1,236 @@
+---
+Wall-clock time, calendar arithmetic, and ISO-8601 formatting.
+
+The core type is `DateTime` — a snapshot of a moment in time, derived from
+a Unix epoch (seconds since 1970-01-01 UTC) and broken into year / month /
+day / hour / minute / second / weekday components.
+
+Top-level helpers:
+  `time.now()`               — current local DateTime
+  `time.utc_now()`           — current UTC DateTime
+  `time.from_unix(epoch)`    — DateTime from epoch seconds (local)
+  `time.utc_from_unix(s)`    — DateTime from epoch seconds (UTC)
+  `time.from_iso(s)`         — parse ISO-8601 → DateTime (local)
+  `time.unix_now()`          — current epoch as Int (seconds)
+  `time.sleep(ms)`           — alias for `sys.sleep`
+
+DateTime methods:
+  `dt.iso()`                  — "2026-01-15T12:34:56Z" or "...+/-HH:MM"
+  `dt.format(spec)`           — strftime-style: %Y, %m, %d, %H, %M, %S, ...
+  `dt.add_seconds(n)`         — returns a new DateTime n seconds later
+  `dt.add_minutes(n)`         — convenience
+  `dt.add_hours(n)`           — convenience
+  `dt.add_days(n)`            — convenience
+  `dt.diff_seconds(other)`    — `self - other` in seconds
+  `dt.is_before(other)`       — true if `self < other`
+
+@example
+now := time.now()
+print(now.iso())                     // 2026-05-08T14:23:01+00:00
+print(now.format("%A, %B %d %Y"))    // Thursday, May 08 2026
+
+deadline := now.add_days(7)
+remaining := deadline.diff_seconds(now)
+print("seconds remaining: ${remaining}")
+---
+from typing.primitives.string use { String }
+from typing.exceptions.types use { ValueError }
+
+// ───────────────────────── Runtime externs ─────────────────────────
+
+--- Current Unix epoch in seconds. -1 if the host clock is unavailable. ---
+extern define unix_now() -> Int
+
+--- Year (e.g. 2026) for `epoch`. `utc=1` for UTC, `0` for local. ---
+extern define year(epoch: Int, utc: Int) -> Int
+
+--- Month 1-12 (1=January). ---
+extern define month(epoch: Int, utc: Int) -> Int
+
+--- Day of month, 1-31. ---
+extern define day(epoch: Int, utc: Int) -> Int
+
+--- Hour 0-23. ---
+extern define hour(epoch: Int, utc: Int) -> Int
+
+--- Minute 0-59. ---
+extern define minute(epoch: Int, utc: Int) -> Int
+
+--- Second 0-60 (60 for leap seconds, normally 0-59). ---
+extern define second(epoch: Int, utc: Int) -> Int
+
+--- Day of week, 0-6 (0=Sunday, 6=Saturday). ---
+extern define weekday(epoch: Int, utc: Int) -> Int
+
+--- Day of year, 1-366. ---
+extern define yearday(epoch: Int, utc: Int) -> Int
+
+---
+Convert calendar components to a Unix epoch. `utc=1` interprets the inputs
+as UTC; `utc=0` as the host's local time zone (DST handled).
+Returns -1 if the components are out of range.
+---
+extern define to_unix(year: Int, month: Int, day: Int, hour: Int, minute: Int, second: Int, utc: Int) -> Int
+
+---
+Format `epoch` with a strftime-style spec. Empty spec falls back to
+`"%Y-%m-%dT%H:%M:%S"`.
+---
+extern define format_at(epoch: Int, fmt: String, utc: Int) -> String
+
+---
+ISO-8601 form. UTC: `2026-01-15T12:34:56Z`. Local: `...+05:30` style offset.
+---
+extern define iso_at(epoch: Int, utc: Int) -> String
+
+---
+Parse an ISO-8601 string. Trailing `Z` means UTC; absent → local. Returns
+-1 on malformed input.
+---
+extern define parse_iso(s: String) -> Int
+
+// ───────────────────────── DateTime ─────────────────────────
+
+---
+Snapshot of a moment in time. Construct via `time.now()`, `time.from_unix(s)`,
+or `time.from_iso(s)` rather than calling `__init` directly.
+---
+struct DateTime {
+    epoch: Int // Unix seconds (negative for pre-1970)
+    year: Int
+    month: Int // 1-12
+    day: Int // 1-31
+    hour: Int // 0-23
+    minute: Int // 0-59
+    second: Int // 0-60
+    weekday: Int // 0=Sunday
+    is_utc: Bool
+
+    define __init(self, epoch: Int, utc: Bool) -> void {
+        flag := 0
+        if utc { flag = 1 }
+        self.epoch = epoch
+        self.year = year(epoch, flag)
+        self.month = month(epoch, flag)
+        self.day = day(epoch, flag)
+        self.hour = hour(epoch, flag)
+        self.minute = minute(epoch, flag)
+        self.second = second(epoch, flag)
+        self.weekday = weekday(epoch, flag)
+        self.is_utc = utc
+    }
+
+    --- ISO-8601 representation. ---
+    define iso(self) -> String {
+        flag := 0
+        if self.is_utc { flag = 1 }
+        return iso_at(self.epoch, flag)
+    }
+
+    ---
+    Format using a strftime-style spec. Common codes:
+      `%Y` 4-digit year   `%m` month 01-12   `%d` day 01-31
+      `%H` hour 00-23     `%M` minute 00-59  `%S` second 00-59
+      `%A` weekday name   `%a` short day      `%B` month name
+      `%j` day-of-year    `%w` weekday 0-6
+    ---
+    define format(self, fmt: String) -> String {
+        flag := 0
+        if self.is_utc { flag = 1 }
+        return format_at(self.epoch, fmt, flag)
+    }
+
+    --- Returns a new DateTime offset by `n` seconds (can be negative). ---
+    define add_seconds(self, n: Int) -> DateTime {
+        return DateTime(self.epoch + n, self.is_utc)
+    }
+
+    define add_minutes(self, n: Int) -> DateTime { return self.add_seconds(n * 60) }
+    define add_hours(self, n: Int) -> DateTime { return self.add_seconds(n * 3600) }
+    define add_days(self, n: Int) -> DateTime { return self.add_seconds(n * 86400) }
+
+    --- `self - other` in seconds. Negative if `self` is earlier. ---
+    define diff_seconds(self, other: DateTime) -> Int {
+        return self.epoch - other.epoch
+    }
+
+    define is_before(self, other: DateTime) -> Bool { return self.epoch < other.epoch }
+    define is_after(self, other: DateTime) -> Bool { return self.epoch > other.epoch }
+
+    --- Default str: ISO-8601. ---
+    define __str(self) -> String {
+        return self.iso()
+    }
+
+    define __eq(self, other: DateTime) -> Bool { return self.epoch == other.epoch }
+    define __lt(self, other: DateTime) -> Bool { return self.epoch < other.epoch }
+}
+
+// ───────────────────────── Top-level helpers ─────────────────────────
+
+---
+Current local DateTime.
+---
+define now() -> DateTime {
+    return DateTime(unix_now(), false)
+}
+
+---
+Current UTC DateTime.
+---
+define utc_now() -> DateTime {
+    return DateTime(unix_now(), true)
+}
+
+---
+Build a DateTime from an explicit Unix epoch (seconds), interpreted in the
+local time zone.
+---
+define from_unix(epoch: Int) -> DateTime {
+    return DateTime(epoch, false)
+}
+
+---
+Build a DateTime from an explicit Unix epoch, interpreted as UTC.
+---
+define utc_from_unix(epoch: Int) -> DateTime {
+    return DateTime(epoch, true)
+}
+
+---
+Parse an ISO-8601 string (`"YYYY-MM-DD[Thh:mm:ss[Z]]"`).
+Trailing `Z` → UTC; otherwise local. Throws `ValueError` on bad input.
+---
+define from_iso(s: String) -> DateTime {
+    epoch := parse_iso(s)
+    if epoch == -1 {
+        throw ValueError("time.from_iso: cannot parse '" + s + "'")
+    }
+    is_utc := false
+    if s.endswith("Z") { is_utc = true }
+    return DateTime(epoch, is_utc)
+}
+
+---
+Build a DateTime from explicit calendar components (local time).
+@throws ValueError if the components are out of range.
+---
+define make(year: Int, month: Int, day: Int, hour: Int = 0, minute: Int = 0, second: Int = 0) -> DateTime {
+    epoch := to_unix(year, month, day, hour, minute, second, 0)
+    if epoch == -1 {
+        throw ValueError("time.make: invalid date components")
+    }
+    return DateTime(epoch, false)
+}
+
+---
+Build a DateTime from explicit calendar components (UTC).
+@throws ValueError on out-of-range components.
+---
+define utc_make(year: Int, month: Int, day: Int, hour: Int = 0, minute: Int = 0, second: Int = 0) -> DateTime {
+    epoch := to_unix(year, month, day, hour, minute, second, 1)
+    if epoch == -1 {
+        throw ValueError("time.utc_make: invalid date components")
+    }
+    return DateTime(epoch, true)
+}

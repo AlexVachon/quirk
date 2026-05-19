@@ -2,6 +2,7 @@
 #define AST_HPP
 
 #include <iostream>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -20,13 +21,15 @@ class Node {
 class UseNode : public Node {
    public:
     std::string moduleName;
-    std::vector<std::string> filterList; 
+    std::vector<std::string> filterList;
+    std::string alias; // from .path as alias
 
-    UseNode(std::string mod, std::vector<std::string> filters = {})
-        : moduleName(mod), filterList(filters) {}
+    UseNode(std::string mod, std::vector<std::string> filters = {}, std::string alias = "")
+        : moduleName(mod), filterList(filters), alias(alias) {}
 
     void print(int indent) const override {
         std::cout << std::string(indent, ' ') << "Use: " << moduleName;
+        if (!alias.empty()) std::cout << " as " << alias;
         if (!filterList.empty()) {
             std::cout << " (Only: ";
             for (auto& s : filterList) std::cout << s << " ";
@@ -73,8 +76,27 @@ class FunctionNode : public Node {
 
     bool isExtern = false;
     bool isStatic = false;
+    bool isAbstract = false;             // true for interface method signatures (no body)
 
     std::string linkageName;
+    std::unique_ptr<Node> whereClause;
+    std::vector<std::string> typeParams; // generic type params, e.g. ["T", "U"]
+    // where T: Interface1 & Interface2 — maps type param name → required interfaces
+    std::map<std::string, std::vector<std::string>> genericConstraints;
+
+    // Python-style decorators: `@a` or `@a(args)` lines stacked above the
+    // `define` line. Stored bottom-up in source order; applied top-down at
+    // codegen time so `@a \n @b \n define f` produces `f := a(b(f__inner))`.
+    std::vector<std::unique_ptr<Node>> decorators;
+
+    // True when this FunctionNode is the *wrapper* synthesized by the parser
+    // for a decorated function. The wrapper's body is built specially by
+    // Codegen: it lazily evaluates `decoratorChainExpr` once, caches the
+    // resulting Callable in a module-internal global, then dispatches through
+    // that cached Callable on every call. Lets stateful decorators (e.g.
+    // `@cached`, `@retry`) keep state across invocations.
+    bool isDecoratorWrapper = false;
+    std::unique_ptr<Node> decoratorChainExpr;  // e.g. `a(b(foo__inner__))`
 
 
     void print(int indent) const override {
@@ -126,7 +148,10 @@ class StructField {
 class StructNode : public Node {
    public:
     std::string name;
-    std::vector<std::string> parents;
+    std::vector<std::string> parents;      // struct inheritance chain
+    std::vector<std::string> interfaces;   // interface conformances (populated by Sema)
+    std::vector<std::string> typeParams;   // generic type params, e.g. ["T"]
+    std::map<std::string, std::vector<std::string>> genericConstraints; // where T: Interface
     std::vector<StructField> fields;
 
     void print(int indent) const override {
@@ -191,6 +216,7 @@ class VarDeclNode : public Node {
     std::unique_ptr<Node> expression;
     std::string op;
     std::string typeAnnotation;
+    bool isConst = false;
 
     VarDeclNode(std::unique_ptr<Node> left,
                 std::unique_ptr<Node> expr,
@@ -216,6 +242,7 @@ class VarDeclNode : public Node {
 struct Arg {
     std::string name;
     std::unique_ptr<Node> value;
+    bool isSpread = false; // true for ...expr spread argument
 };
 
 class CallNode : public Node {
@@ -269,6 +296,21 @@ class LiteralNode : public Node {
     }
 };
 
+class TupleLiteralNode : public Node {
+   public:
+    std::vector<std::unique_ptr<Node>> elements;
+
+    TupleLiteralNode(std::vector<std::unique_ptr<Node>> elems)
+        : elements(std::move(elems)) {}
+
+    void print(int indent) const override {
+        std::cout << std::string(indent, ' ') << "TupleLiteral: (" << std::endl;
+        for (const auto& elem : elements)
+            elem->print(indent + 2);
+        std::cout << std::string(indent, ' ') << ")" << std::endl;
+    }
+};
+
 class ListLiteralNode : public Node {
    public:
     std::vector<std::unique_ptr<Node>> elements;
@@ -301,6 +343,54 @@ struct MapLiteralNode : public Node {
             pair.second->print(indent + 4);
         }
         std::cout << space << "}" << std::endl;
+    }
+};
+
+struct SetLiteralNode : public Node {
+    std::vector<std::unique_ptr<Node>> elements;
+
+    void print(int indent) const override {
+        std::string sp(indent, ' ');
+        std::cout << sp << "SetLiteral: {" << elements.size() << " elems}" << std::endl;
+    }
+};
+
+struct TypeAliasNode : public Node {
+    std::string name;
+    std::string target; // target type name
+
+    void print(int indent) const override {
+        std::string sp(indent, ' ');
+        std::cout << sp << "TypeAlias: " << name << " = " << target << std::endl;
+    }
+};
+
+struct ListComprehensionNode : public Node {
+    std::unique_ptr<Node> expr;
+    std::string varName;
+    std::string varName2; // optional second var for pair iteration: for k, v in iterable
+    std::unique_ptr<Node> iterable;
+    std::unique_ptr<Node> condition; // nullable — the 'where' clause
+
+    void print(int indent) const override {
+        std::string sp(indent, ' ');
+        std::string vars = varName2.empty() ? varName : varName + ", " + varName2;
+        std::cout << sp << "ListComprehension: [expr for " << vars << " in ...]" << std::endl;
+    }
+};
+
+struct MapComprehensionNode : public Node {
+    std::unique_ptr<Node> keyExpr;
+    std::unique_ptr<Node> valExpr;
+    std::string varName;
+    std::string varName2; // optional second var for pair iteration: for k, v in iterable
+    std::unique_ptr<Node> iterable;
+    std::unique_ptr<Node> condition; // nullable
+
+    void print(int indent) const override {
+        std::string sp(indent, ' ');
+        std::string vars = varName2.empty() ? varName : varName + ", " + varName2;
+        std::cout << sp << "MapComprehension: {k: v for " << vars << " in ...}" << std::endl;
     }
 };
 
@@ -353,6 +443,8 @@ class WhileNode : public Node {
 class ForNode : public Node {
    public:
     std::string varName;
+    std::string varName2; // optional second variable for pair iteration (k, v in map)
+    std::vector<std::string> destructureVars; // for (a, b) in tupleList
     bool isRef;
     std::unique_ptr<Node> iterable;
     std::vector<std::unique_ptr<Node>> body;
@@ -450,25 +542,11 @@ class ContinueNode : public Node {
     }
 };
 
-class TriggerNode : public Node {
-   public:
-    std::string varName;
-    std::string handlerName;
-    
-    FunctionNode* handlerNode; 
-
-    TriggerNode(std::string var, std::string handler, FunctionNode* fn) 
-        : varName(var), handlerName(handler), handlerNode(fn) {}
-
-    void print(int indent) const override {
-        std::string space(indent, ' ');
-        std::cout << space << "Trigger on '" << varName << "' -> " << handlerName << std::endl;
-    }
-};
 
 struct LambdaParam {
     std::string name;
     std::string type; // empty = untyped
+    bool isVariadic = false;
 };
 
 class LambdaNode : public Node {
@@ -477,6 +555,7 @@ class LambdaNode : public Node {
     std::unique_ptr<Node> exprBody;                    // set for fn(x) => expr
     std::vector<std::unique_ptr<Node>> stmtBody;       // set for fn(x) { stmts }
     bool isExpression = true;
+    std::string declaredReturnType;                    // user-annotated `fn(x) -> T`; empty if omitted
     std::string inferredReturnType;                    // set by Sema; empty = opaque i8*
 
     void print(int indent) const override {
@@ -509,6 +588,9 @@ class EnumNode : public Node {
 struct MatchArm {
     std::vector<std::unique_ptr<Node>> patterns;  // expressions; empty when isWildcard
     bool isWildcard = false;
+    bool isTypeMatch = false;        // true for `case Int =>` type-dispatch
+    std::vector<std::string> typeNames; // types to match when isTypeMatch
+    std::string bindName;            // optional `case Int as x =>` binding
     std::vector<std::unique_ptr<Node>> body;
 };
 
@@ -539,6 +621,25 @@ class MatchNode : public Node {
     }
 };
 
+class SliceNode : public Node {
+   public:
+    std::unique_ptr<Node> object;
+    std::unique_ptr<Node> start;  // nullptr means 0
+    std::unique_ptr<Node> end;    // nullptr means length
+
+    SliceNode(std::unique_ptr<Node> obj, std::unique_ptr<Node> s, std::unique_ptr<Node> e)
+        : object(std::move(obj)), start(std::move(s)), end(std::move(e)) {}
+
+    void print(int indent) const override {
+        std::string sp(indent, ' ');
+        std::cout << sp << "Slice[\n";
+        object->print(indent + 2);
+        std::cout << sp << "  start: "; if (start) start->print(0); else std::cout << "0\n";
+        std::cout << sp << "  end:   "; if (end)   end->print(0);   else std::cout << "len\n";
+        std::cout << sp << "]\n";
+    }
+};
+
 class TernaryNode : public Node {
    public:
     std::unique_ptr<Node> condition;
@@ -557,6 +658,56 @@ class TernaryNode : public Node {
         std::cout << space << "  :\n";
         elseExpr->print(indent + 2);
         std::cout << space << ")\n";
+    }
+};
+
+// Range literal: start..end  (used in `for x in 0..10`)
+struct RangeLiteralNode : public Node {
+    std::unique_ptr<Node> start;
+    std::unique_ptr<Node> end;
+
+    void print(int indent) const override {
+        std::string sp(indent, ' ');
+        std::cout << sp << "Range(\n";
+        start->print(indent + 2);
+        std::cout << sp << "  ..\n";
+        end->print(indent + 2);
+        std::cout << sp << ")\n";
+    }
+};
+
+// interface Printable { define __str(self) -> String }
+class InterfaceNode : public Node {
+   public:
+    std::string name;
+    std::vector<std::string> extends;                        // other interfaces this extends
+    std::vector<std::unique_ptr<FunctionNode>> methods;      // abstract method signatures
+
+    void print(int indent) const override {
+        std::string sp(indent, ' ');
+        std::cout << sp << "Interface: " << name;
+        if (!extends.empty()) {
+            std::cout << " : ";
+            for (size_t i = 0; i < extends.size(); i++)
+                std::cout << extends[i] << (i + 1 < extends.size() ? ", " : "");
+        }
+        std::cout << " {" << std::endl;
+        for (const auto& m : methods) m->print(indent + 2);
+        std::cout << sp << "}" << std::endl;
+    }
+};
+
+// nonlocal x, y  — marks variables as shared mutable cells with enclosing scope
+struct NonlocalNode : public Node {
+    std::vector<std::string> vars;
+    bool isGlobal = false; // true for `global x` (currently a no-op)
+
+    void print(int indent) const override {
+        std::string sp(indent, ' ');
+        std::cout << sp << (isGlobal ? "Global" : "Nonlocal") << ": ";
+        for (size_t i = 0; i < vars.size(); i++)
+            std::cout << vars[i] << (i + 1 < vars.size() ? ", " : "");
+        std::cout << "\n";
     }
 };
 

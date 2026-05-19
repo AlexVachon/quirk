@@ -1,22 +1,41 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
+import { resolveQuirkHome } from './ImportProvider';
 
 const FILE_CACHE_TTL_MS = 5000;
+const EXISTS_CACHE_TTL_MS = 2000;
 
 interface CachedFile {
     content: string;
     ts: number;
 }
 
+interface CachedExists {
+    exists: boolean;
+    ts: number;
+}
+
 export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
-    private outputChannel: vscode.OutputChannel;
     private fileCache = new Map<string, CachedFile>();
+    // Path-existence cache. `resolvePath` and `resolveImportPathFromAlias`
+    // call fs.existsSync up to ~5×N times per import (where N is the number
+    // of search roots), and each completion request can issue several
+    // resolves. Cache for 2s — short enough to pick up genuine filesystem
+    // changes, long enough to absorb a burst of keystroke-driven calls.
+    private existsCache = new Map<string, CachedExists>();
     private searchRootsCache: string[] | null = null;
     private searchRootsCacheKey = '';
+    private stdlibModulesCache: Array<{ alias: string; modulePath: string }> | null = null;
+    private stdlibModulesCacheKey = '';
 
-    constructor(outputChannel: vscode.OutputChannel) {
-        this.outputChannel = outputChannel;
+    private fileExists(filePath: string): boolean {
+        const now = Date.now();
+        const cached = this.existsCache.get(filePath);
+        if (cached && now - cached.ts < EXISTS_CACHE_TTL_MS) return cached.exists;
+        const exists = fs.existsSync(filePath);
+        this.existsCache.set(filePath, { exists, ts: now });
+        return exists;
     }
 
     private readFile(filePath: string): string | null {
@@ -44,6 +63,47 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
         // use / from  — path completions
         const importMatch = /^\s*(?:use|from)\s+([.a-zA-Z0-9_/]*)$/.exec(linePrefix);
         if (importMatch) return this.providePathCompletions(document, importMatch[1]);
+
+        // Chained method call: expr.method(args).partial
+        // Handles string literals, variables, and multi-level chains.
+        // e.g. "true".to_bool().s  →  Bool methods
+        //      word.distance(typo).  →  Int methods
+        //      s.split(",").  →  List methods
+        if (/\)\.[a-zA-Z0-9_]*$/.test(linePrefix)) {
+            const lastDot = linePrefix.lastIndexOf('.');
+            const exprStr = linePrefix.substring(0, lastDot);
+            const tailExpr = this.extractTailExpr(exprStr);
+            if (tailExpr !== null) {
+                const chainedType = this.inferExpressionType(tailExpr, document, position);
+                if (chainedType) return this.provideObjectMemberCompletions(document, position, '', chainedType);
+            }
+        }
+
+        // Literal value followed by a dot: "hello"., true., false., 42., []., {}.
+        // Must come before memberMatch since that regex only handles identifiers.
+        if (/(?:"[^"]*"|'[^']*')\.[a-zA-Z0-9_]*$/.test(linePrefix))
+            return this.provideObjectMemberCompletions(document, position, '', 'String');
+        if (/\b(true|false)\.[a-zA-Z0-9_]*$/.test(linePrefix))
+            return this.provideObjectMemberCompletions(document, position, '', 'Bool');
+        // \d+\.(?!\d) — int literal dot, but not a double like 3.14
+        if (/\b\d+\.(?!\d)[a-zA-Z0-9_]*$/.test(linePrefix))
+            return this.provideObjectMemberCompletions(document, position, '', 'Int');
+        // [...]., []., ["a", "b"]. — list literal dot (NOT index access like l[1].)
+        if (/(?<![a-zA-Z0-9_])\[.*\][ \t]*\.[a-zA-Z0-9_]*$/.test(linePrefix))
+            return this.provideObjectMemberCompletions(document, position, '', 'List');
+
+        // someVar[expr]. — index access dot: infer element type from the container variable
+        const indexAccessMatch = /([a-zA-Z0-9_]+)\[[^\]]*\][ \t]*\.[a-zA-Z0-9_]*$/.exec(linePrefix);
+        if (indexAccessMatch) {
+            const containerVar = indexAccessMatch[1];
+            const containerType = this.inferTypeOfVariable(document, position, containerVar);
+            if (containerType === 'String') return this.provideObjectMemberCompletions(document, position, '', 'String');
+            if (containerType === 'List') {
+                const elemType = this.inferElementType(document, position, containerVar);
+                if (elemType) return this.provideObjectMemberCompletions(document, position, '', elemType);
+            }
+            return [];
+        }
 
         // someVar.  or  someVar.partial  — member completions
         const memberMatch = /([a-zA-Z0-9_]+)\.([a-zA-Z0-9_]*)$/.exec(linePrefix);
@@ -79,6 +139,7 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
         let readingExample = false;
         let readingNoteList = false;
         let readingWarningList = false;
+        let readingReturns = false;
 
         const isListItem = (s: string) => s.startsWith('-') || s.startsWith('*') || /^\d+[\.\)]/.test(s);
 
@@ -97,6 +158,13 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
                 if (isListItem(trimmed)) { warnings[warnings.length - 1] += '\n' + trimmed; continue; }
                 if (trimmed === '') continue;
                 readingWarningList = false;
+            }
+
+            // @returns continuation — collect indented lines after a bare "@returns:"
+            if (readingReturns) {
+                if (trimmed.startsWith('@')) { readingReturns = false; }
+                else if (trimmed !== '') { returnsText += (returnsText ? ' ' : '') + trimmed; continue; }
+                else { continue; }
             }
 
             // @example block — collect until next @ tag
@@ -132,7 +200,8 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
             // @returns / @return
             if (trimmed.startsWith('@return')) {
                 readingParamsList = false;
-                returnsText = trimmed.replace(/^@returns?\s+/, '').replace(/\*\*/g, '').trim();
+                returnsText = trimmed.replace(/^@returns?\s*:?\s*/, '').replace(/\*\*/g, '').trim();
+                readingReturns = !returnsText;
                 continue;
             }
 
@@ -208,9 +277,10 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
     private provideObjectMemberCompletions(
         document: vscode.TextDocument,
         position: vscode.Position,
-        variableName: string
+        variableName: string,
+        overrideType?: string
     ): vscode.CompletionItem[] {
-        const typeName = this.inferTypeOfVariable(document, position, variableName);
+        const typeName = overrideType ?? this.inferTypeOfVariable(document, position, variableName);
         if (!typeName) return [];
         const projectRoot = this.findProjectRoot(document.uri.fsPath);
 
@@ -337,6 +407,16 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
             }
         }
 
+        // Tuple methods
+        if (typeName === 'Tuple') {
+            const lengthItem = new vscode.CompletionItem('length', vscode.CompletionItemKind.Method);
+            lengthItem.detail = '() → Int';
+            lengthItem.documentation = new vscode.MarkdownString('**`Tuple.length`** — returns the number of elements.\n\n```quirk\nt := (1, 2, 3)\nprint(t.length())  // 3\n```');
+            lengthItem.insertText = new vscode.SnippetString('length()');
+            lengthItem.sortText = '0_length';
+            items.push(lengthItem);
+        }
+
         // Type descriptor members (result of self.__class)
         if (typeName === 'Type') {
             const makeTypeAttr = (label: string, doc: string) => {
@@ -383,11 +463,16 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
         variableName: string
     ): string | null {
         const textBeforeCursor = document.getText(new vscode.Range(new vscode.Position(0, 0), position));
-        const lines = textBeforeCursor.split(/\r?\n/).reverse();
+        const lines = textBeforeCursor.split(/\r?\n/);
+
+        // Built-in type names used as static namespaces: Int.parse(), Double.parse(), etc.
+        const primitiveTypes = new Set(['Int', 'Double', 'Bool', 'String', 'List', 'Map']);
+        if (primitiveTypes.has(variableName)) return variableName;
 
         // self → look up the enclosing struct definition
         if (variableName === 'self') {
-            for (const line of lines) {
+            for (let i = lines.length - 1; i >= 0; i--) {
+                const line = lines[i];
                 let m = /\bstruct\s+([a-zA-Z0-9_]+)/.exec(line)
                     || /\bextend\s+([a-zA-Z0-9_]+)/.exec(line)
                     || /(?:define|def|init)\s+([A-Z][a-zA-Z0-9_]*)_/.exec(line);
@@ -395,34 +480,356 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
             }
         }
 
-        // Methods that return List regardless of receiver type
-        const listReturnMethods = new Set(['map', 'filter', 'keys', 'values']);
+        // ── Compile the per-variable regex set ONCE up front ──────────────
+        // Previously each of ~17 patterns was rebuilt per line via
+        // `new RegExp(...)`, recompiling thousands of regexes on every
+        // keystroke for a 500-line file. Now: escape the name once, compile
+        // each pattern once, reuse across every line in the backward scan.
+        const esc = variableName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const listReturnMethods = 'map|filter|keys|values';
 
-        for (const line of lines) {
-            const esc = variableName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const reCast       = new RegExp(`\\b${esc}\\s*(?::=|=)\\s*.+?\\bas\\s+([A-Z][a-zA-Z0-9_]*)\\s*$`);
+        const reList       = new RegExp(`\\b${esc}\\s*(?::=|=)\\s*\\[`);
+        const reMap        = new RegExp(`\\b${esc}\\s*(?::=|=)\\s*\\{`);
+        const reStr        = new RegExp(`\\b${esc}\\s*(?::=|=)\\s*"`);
+        const reDouble     = new RegExp(`\\b${esc}\\s*(?::=|=)\\s*\\d+\\.\\d`);
+        const reInt        = new RegExp(`\\b${esc}\\s*(?::=|=)\\s*\\d`);
+        const reBool       = new RegExp(`\\b${esc}\\s*(?::=|=)\\s*(?:true|false)\\b`);
+        const reChar       = new RegExp(`\\b${esc}\\s*(?::=|=)\\s*'`);
+        const reChained    = new RegExp(`\\b${esc}\\s*:=\\s*.+\\.(${listReturnMethods})\\s*\\(`);
+        const reMethodCall = new RegExp(`\\b${esc}\\s*:=\\s*([a-zA-Z0-9_]+)\\.([a-zA-Z0-9_]+)\\s*\\(`);
+        const reFuncCall   = new RegExp(`\\b${esc}\\s*:=\\s*([a-z][a-zA-Z0-9_]*)\\s*\\(`);
+        const reConcat     = new RegExp(`\\b${esc}\\s*:=\\s*(.+)\\+(.+)`);
+        const reArith      = new RegExp(`\\b${esc}\\s*:=\\s*([a-zA-Z0-9_]+)\\s*[+\\-*\\/]`);
+        const reTernary    = new RegExp(`\\b${esc}\\s*:=\\s*.+\\?\\s*([a-zA-Z0-9_"'\`[{]+)`);
+        const reLambdaPar  = new RegExp(`\\bfn\\s*\\([^)]*\\b${esc}\\s*:\\s*([A-Za-z0-9_]+)`);
+        const reForLoop    = new RegExp(`\\bfor\\s+(?:ref\\s+)?${esc}\\s+in\\s+([a-zA-Z0-9_"'\\[]+)`);
+        const reCatchPar   = new RegExp(`\\bcatch\\s*\\(\\s*${esc}\\s*:\\s*([A-Za-z0-9_]+)`);
+        const reTypeCall   = new RegExp(`\\b${esc}\\s*:=\\s*(?:[a-zA-Z0-9_]+\\.)?([A-Z][A-Za-z0-9_]+)\\s*\\(`);
+        const reAnnot      = new RegExp(`\\b${esc}\\s*:\\s*(?:[a-zA-Z0-9_]+\\.)?([A-Za-z0-9_]+)`);
+        const reAlias      = new RegExp(`\\b${esc}\\s*:=\\s*(?:[a-zA-Z0-9_]+\\.)?([A-Za-z0-9_]+)$`);
 
-            // x := [...]  or  x = [...]  → List literal
-            if (new RegExp(`\\b${esc}\\s*(?::=|=)\\s*\\[`).test(line)) return 'List';
+        const projectRoot = this.findProjectRoot(document.uri.fsPath);
 
-            // x := { or x = {  → Map literal
-            if (new RegExp(`\\b${esc}\\s*(?::=|=)\\s*\\{`).test(line)) return 'Map';
+        // Iterate backward by index (closest-declaration-wins). Avoids the
+        // O(n) `.reverse()` allocation that the previous version did.
+        for (let i = lines.length - 1; i >= 0; i--) {
+            const line = lines[i];
+
+            // x := expr as TypeName  — explicit cast overrides any inferred type
+            const castMatch = reCast.exec(line);
+            if (castMatch) return castMatch[1];
+
+            if (reList.test(line))   return 'List';
+            if (reMap.test(line))    return 'Map';
+            if (reStr.test(line))    return 'String';
+            if (reDouble.test(line)) return 'Double';
+            if (reInt.test(line))    return 'Int';
+            if (reBool.test(line))   return 'Bool';
+            if (reChar.test(line))   return 'String';
 
             // x := something.map(...) / .filter(...) / .keys() / .values()  → List
-            const chainedMatch = new RegExp(`\\b${esc}\\s*:=\\s*.+\\.(${[...listReturnMethods].join('|')})\\s*\\(`).exec(line);
-            if (chainedMatch) return 'List';
+            if (reChained.test(line)) return 'List';
+
+            // x := receiver.method(...)  → look up method return type
+            const methodCallMatch = reMethodCall.exec(line);
+            if (methodCallMatch) {
+                const receiverName = methodCallMatch[1];
+                const methodName   = methodCallMatch[2];
+                const receiverType = this.inferTypeOfVariable(document, position, receiverName);
+                if (receiverType) {
+                    const ret = this.inferMethodReturnType(projectRoot, document.uri.fsPath, receiverType, methodName);
+                    if (ret) return ret;
+                }
+            }
+
+            // x := someFunc(...)  → look up function return type
+            const funcCallMatch = reFuncCall.exec(line);
+            if (funcCallMatch) {
+                const ret = this.inferFunctionReturnType(projectRoot, document, funcCallMatch[1]);
+                if (ret) return ret;
+            }
+
+            // x := expr + expr  — if either side contains a string literal, result is String
+            const concatMatch = reConcat.exec(line);
+            if (concatMatch && (/"/.test(concatMatch[1]) || /"/.test(concatMatch[2]))) return 'String';
+
+            // x := a + b  — if a has a known numeric type, propagate it (Double wins over Int)
+            const arithMatch = reArith.exec(line);
+            if (arithMatch) {
+                const lhsType = this.inferTypeOfVariable(document, position, arithMatch[1]);
+                if (lhsType === 'Double') return 'Double';
+                if (lhsType === 'Int')    return 'Int';
+            }
+
+            // x := condition? thenExpr : elseExpr  — use the then-branch type
+            const ternaryMatch = reTernary.exec(line);
+            if (ternaryMatch) {
+                const thenToken = ternaryMatch[1];
+                if (thenToken.startsWith('"')) return 'String';
+                if (/^\d+\.\d/.test(thenToken))  return 'Double';
+                if (/^\d/.test(thenToken))        return 'Int';
+                if (thenToken === 'true' || thenToken === 'false') return 'Bool';
+                if (thenToken.startsWith('['))    return 'List';
+                if (thenToken.startsWith('{'))    return 'Map';
+                const thenType = this.inferTypeOfVariable(document, position, thenToken);
+                if (thenType) return thenType;
+            }
+
+            // lambda param:  fn(varName: Type)  or  fn(varName: Type, ...)
+            const lambdaParamMatch = reLambdaPar.exec(line);
+            if (lambdaParamMatch) return lambdaParamMatch[1];
+
+            // for varName in iterable  → infer element type from iterable
+            const forMatch = reForLoop.exec(line);
+            if (forMatch) {
+                const iterable = forMatch[1];
+                if (iterable.startsWith('"') || iterable.startsWith("'")) return 'String';
+                const iterType = this.inferTypeOfVariable(document, position, iterable);
+                if (iterType === 'String') return 'String';
+                if (iterType === 'List') {
+                    const elemType = this.inferElementType(document, position, iterable);
+                    if (elemType) return elemType;
+                }
+            }
+
+            // catch (varName: ExceptionType)  → ExceptionType
+            const catchParamMatch = reCatchPar.exec(line);
+            if (catchParamMatch) return catchParamMatch[1];
 
             // x := SomeType(...)
-            let match = new RegExp(`\\b${esc}\\s*:=\\s*(?:[a-zA-Z0-9_]+\\.)?([A-Z][A-Za-z0-9_]+)\\s*\\(`).exec(line);
+            let match = reTypeCall.exec(line);
             if (match) return match[1];
 
             // x: SomeType  or  x: SomeType =
-            match = new RegExp(`\\b${esc}\\s*:\\s*(?:[a-zA-Z0-9_]+\\.)?([A-Za-z0-9_]+)`).exec(line);
+            match = reAnnot.exec(line);
             if (match) return match[1];
 
             // x := someIdentifier  (catch-all, might be a constructor alias)
-            match = new RegExp(`\\b${esc}\\s*:=\\s*(?:[a-zA-Z0-9_]+\\.)?([A-Za-z0-9_]+)$`).exec(line);
+            match = reAlias.exec(line);
             if (match) return match[1];
         }
+
+        return null;
+    }
+
+    // Infer the element type of a List variable from its initialization literal.
+    // e.g. names := ["Alice", "Bob"] → 'String'
+    //      nums  := [1, 2, 3]        → 'Int'
+    //      items := []               → null (unknown)
+    private inferElementType(document: vscode.TextDocument, position: vscode.Position, varName: string): string | null {
+        const textBefore = document.getText(new vscode.Range(new vscode.Position(0, 0), position));
+        const lines = textBefore.split(/\r?\n/);
+        const esc = varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        // Compile the per-variable list-init pattern ONCE; iterate lines
+        // backward by index to avoid the .reverse() allocation.
+        const reList = new RegExp(`\\b${esc}\\s*(?::=|=)\\s*\\[([^\\]]*)\\]`);
+
+        for (let i = lines.length - 1; i >= 0; i--) {
+            const listMatch = reList.exec(lines[i]);
+            if (!listMatch) continue;
+
+            const content = listMatch[1].trim();
+            if (!content) return null; // empty list — element type unknown
+
+            const firstElem = content.split(',')[0].trim();
+            if (!firstElem) return null;
+
+            if (/^"/.test(firstElem))            return 'String';
+            if (/^\d+\.\d/.test(firstElem))      return 'Double';
+            if (/^\d/.test(firstElem))            return 'Int';
+            if (/^(true|false)$/.test(firstElem)) return 'Bool';
+            if (/^'.'$/.test(firstElem))          return 'String';
+
+            // SomeType(...) constructor
+            const ctorMatch = /^([A-Z][a-zA-Z0-9_]*)\s*\(/.exec(firstElem);
+            if (ctorMatch) return ctorMatch[1];
+
+            // bare identifier — infer its type
+            if (/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(firstElem))
+                return this.inferTypeOfVariable(document, position, firstElem);
+
+            return null;
+        }
+        return null;
+    }
+
+    // Return type of `receiverType.methodName()` — built-in table first, then source scan.
+    private inferMethodReturnType(projectRoot: string, currentFile: string, receiverType: string, methodName: string): string | null {
+        // Built-in method return types for core types
+        const builtinReturns: Record<string, Record<string, string>> = {
+            String: {
+                upper: 'String', lower: 'String', title: 'String', capitalize: 'String',
+                sentence_case: 'String', swapcase: 'String', trim: 'String', lstrip: 'String',
+                rstrip: 'String', replace: 'String', remove: 'String', repeat: 'String',
+                reverse: 'String', encode: 'String', substring: 'String', zfill: 'String',
+                ljust: 'String', rjust: 'String', center: 'String', join: 'String',
+                format: 'String', format_map: 'String', format_list: 'String',
+                split: 'List', lines: 'List',
+                find: 'Int', index: 'Int', count: 'Int', distance: 'Int',
+                to_int: 'Int', to_float: 'Double', to_bool: 'Bool',
+                startswith: 'Bool', endswith: 'Bool', contains: 'Bool', is_alpha: 'Bool',
+                is_digit: 'Bool', is_space: 'Bool', is_upper: 'Bool', is_lower: 'Bool', is_empty: 'Bool',
+                str: 'String', __str: 'String',
+            },
+            List: {
+                map: 'List', filter: 'List', find: 'Any',
+                join: 'String',
+                length: 'Int',
+                any: 'Bool', all: 'Bool', is_empty: 'Bool',
+                pop: 'Any', get: 'Any',
+                reduce: 'Any',
+            },
+            Map: {
+                get: 'Any', keys: 'List', values: 'List',
+                length: 'Int',
+                has: 'Bool', is_empty: 'Bool',
+            },
+            Int: {
+                str: 'String', __str: 'String',
+                abs: 'Int', pow: 'Int',
+                to_float: 'Double',
+                is_even: 'Bool', is_odd: 'Bool',
+                parse: 'Int',
+            },
+            Double: {
+                str: 'String', __str: 'String',
+                abs: 'Double', ceil: 'Double', floor: 'Double', round: 'Double', sqrt: 'Double',
+                to_int: 'Int',
+                parse: 'Double',
+            },
+            Bool: {
+                str: 'String', __str: 'String',
+                parse: 'Bool',
+            },
+            Tuple: {
+                length: 'Int',
+            },
+            Callable: {
+                __str: 'String',
+            },
+        };
+
+        if (builtinReturns[receiverType]?.[methodName]) {
+            return builtinReturns[receiverType][methodName];
+        }
+
+        // Fall back to scanning the struct definition for the method's return type
+        const structFile = this.findFileContainingStruct(projectRoot, currentFile, receiverType);
+        if (!structFile) return null;
+        const content = this.readFile(structFile);
+        if (!content) return null;
+
+        const methodRe = new RegExp(
+            `(?:extern\\s+)?(?:define|def)\\s+${methodName}\\s*\\([^)]*\\)\\s*->\\s*([A-Za-z0-9_]+)`
+        );
+        const m = methodRe.exec(content);
+        return m ? m[1] : null;
+    }
+
+    // Return type of a free function call — scans current file and imports.
+    private inferFunctionReturnType(projectRoot: string, document: vscode.TextDocument, funcName: string): string | null {
+        // Built-in functions with known return types
+        if (funcName === 'type') return 'String';
+
+        const defRe = new RegExp(
+            `(?:extern\\s+)?define\\s+${funcName}\\s*\\([^)]*\\)\\s*->\\s*([A-Za-z0-9_]+)`
+        );
+
+        // Current file
+        const src = document.getText();
+        let m = defRe.exec(src);
+        if (m) return m[1];
+
+        // Imported files (shallow — one level of imports)
+        const importRe = /^\s*(?:use|from)\s+([.a-zA-Z0-9_/]+)/gm;
+        let im: RegExpExecArray | null;
+        while ((im = importRe.exec(src)) !== null) {
+            const resolved = this.resolvePath(projectRoot, document.uri.fsPath, im[1]);
+            if (!resolved) continue;
+            const content = this.readFile(resolved);
+            if (!content) continue;
+            m = defRe.exec(content);
+            if (m) return m[1];
+        }
+
+        return null;
+    }
+
+    // Extract the last "complete" sub-expression from a string, respecting
+    // balanced parens and quoted strings. Returns the extracted expression or null.
+    // e.g. 'print("true".to_bool()' → '"true".to_bool()'
+    private extractTailExpr(s: string): string | null {
+        s = s.trimEnd();
+        if (!s.length) return null;
+
+        // Walk backward through balanced parens to find where the expression starts
+        let i = s.length - 1;
+        let depth = 0;
+
+        // Each iteration steps backward one "unit" (paren group, string, or char)
+        outer: while (i >= 0) {
+            const c = s[i];
+            if (c === ')') { depth++; i--; continue; }
+            if (c === '(') {
+                if (depth > 0) { depth--; i--; continue; }
+                break; // unmatched '(' — this is a call-context boundary
+            }
+            if (depth === 0) {
+                // Stop at operator / punctuation that isn't part of an expression
+                if ('+-*/%,;=!<>&|^~@#'.includes(c)) break;
+            }
+            if ((c === '"' || c === "'") && depth === 0) {
+                // Walk backward through the string literal
+                const q = c;
+                i--;
+                while (i >= 0 && !(s[i] === q && s[i - 1] !== '\\')) i--;
+                i--; // skip opening quote
+                continue;
+            }
+            i--;
+        }
+
+        const tail = s.substring(i + 1).trimStart();
+        return tail.length ? tail : null;
+    }
+
+    // Recursively infer the Quirk type of a simple expression string.
+    // Handles literals, identifiers, and single/multi-level method chains.
+    private inferExpressionType(expr: string, document: vscode.TextDocument, position: vscode.Position): string | null {
+        expr = expr.trim();
+        if (!expr) return null;
+
+        // Method call chain MUST come first: receiver.method(args)
+        // If the expression ends with ')', it's a call — check this before literal sniffing
+        // so "true".to_bool() isn't short-circuited to String by the string-literal check.
+        // Use lazy `.*?` so we peel off the OUTERMOST call last (matching from the end)
+        const callRe = /^(.*?)\.([a-zA-Z_]\w*)\(([^()]*)\)$/.exec(expr);
+        if (callRe) {
+            const receiverExpr = callRe[1];
+            const methodName   = callRe[2];
+            const receiverType = this.inferExpressionType(receiverExpr, document, position);
+            if (receiverType) {
+                const projectRoot = this.findProjectRoot(document.uri.fsPath);
+                return this.inferMethodReturnType(projectRoot, document.uri.fsPath, receiverType, methodName);
+            }
+        }
+
+        // (expr as TypeName) — cast expression, e.g. (val as Int)
+        const castExprMatch = /^\(\s*.+\s+as\s+([A-Z][a-zA-Z0-9_]*)\s*\)$/.exec(expr);
+        if (castExprMatch) return castExprMatch[1];
+
+        // Literals (checked after method-call so "str".method() isn't short-circuited)
+        if (/^["']/.test(expr))                     return 'String';
+        if (/^\d+\.\d/.test(expr))                  return 'Double';
+        if (/^\d/.test(expr))                       return 'Int';
+        if (/^(true|false)$/.test(expr))            return 'Bool';
+        if (expr.startsWith('['))                   return 'List';
+        if (expr.startsWith('{'))                   return 'Map';
+
+        // Simple identifier
+        if (/^[a-zA-Z_]\w*$/.test(expr))
+            return this.inferTypeOfVariable(document, position, expr);
 
         return null;
     }
@@ -527,13 +934,19 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
                     }
                     if (inDocBlock) { currentDocstring.push(trimmed); continue; }
 
+                    // Inline single-line docstring: --- text ---
+                    if (trimmed.startsWith('---') && trimmed.endsWith('---') && trimmed.length > 6) {
+                        currentDocstring = [trimmed.slice(3, -3).trim()];
+                        continue;
+                    }
+
                     if (trimmed !== '' && !trimmed.startsWith('//') && !/^\s*(?:extern\s+)?(?:define|def|init)/.test(line)) {
                         currentDocstring = [];
                     }
 
-                    // Field:  name: Type
+                    // Field:  name: Type  (skip _-prefixed private/internal fields)
                     const fieldMatch = /^\s*([a-zA-Z0-9_]+)\s*:\s*([a-zA-Z0-9_]+)/.exec(line);
-                    if (fieldMatch && !line.includes('(') && !line.includes('return') && !line.includes('=')) {
+                    if (fieldMatch && !line.includes('(') && !line.includes('return') && !line.includes('=') && !fieldMatch[1].startsWith('_')) {
                         addCompletion(fieldMatch[1], vscode.CompletionItemKind.Field, currentDocstring, undefined, fieldMatch[2]);
                         currentDocstring = [];
                         continue;
@@ -553,7 +966,10 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
 
                         // Build snippet from params, skipping 'self'
                         const params = rawParams.split(',').map(p => p.trim()).filter(p => p && p !== 'self');
-                        const snippetArgs = params.map((p, i) => `\${${i + 1}:${p.split(':')[0].trim()}}`).join(', ');
+                        const snippetArgs = params.map((p, i) => {
+                            const name = p.split(':')[0].trim().replace(/^\.\.\./, '');
+                            return `\${${i + 1}:${name}}`;
+                        }).join(', ');
                         const insertText = `${methodName}(${snippetArgs})$0`;
 
                         addCompletion(
@@ -588,7 +1004,7 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
             }
         }
 
-        const implicitCores = ['core', 'core.sys', 'core.string', 'core.collections.list', 'core.collections.map', 'core.primitives'];
+        const implicitCores = ['typing', 'typing.string', 'typing.int', 'typing.double', 'typing.bool', 'typing.char', 'typing.collections.list', 'typing.collections.map', 'typing.collections.tuple', 'typing.callable', 'typing.serializable', 'typing.exceptions'];
         for (const coreMod of implicitCores) {
             const coreFile = this.resolvePath(projectRoot, currentFile, coreMod);
             if (coreFile) {
@@ -648,13 +1064,17 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
         // ---- Keywords with block snippets ----
         const keywords: [string, string?, string?][] = [
             ['define',   'define ${1:name}(${2:args}) -> ${3:void} {\n\t$0\n}',   'Define a function'],
-            ['struct',   'struct ${1:Name} {\n\t${2:field}: ${3:Type}\n}',         'Define a struct'],
-            ['enum', 'enum ${1:Name} {\n\t${2:Variant1}\n\t${3:Variant2}\n}', 'Define an enum'],
+            ['defv',     'define ${1:name}(*${2:args}) -> ${3:void} {\n\t$0\n}',  'Define a variadic function (*args)'],
+            ['struct',    'struct ${1:Name} {\n\t${2:field}: ${3:Type}\n}',              'Define a struct'],
+            ['interface', 'interface ${1:Name} {\n\t$0\n}',                           'Define an interface'],
+            ['enum',      'enum ${1:Name} {\n\t${2:Variant1}\n\t${3:Variant2}\n}',    'Define an enum'],
             ['if',       'if ${1:condition} {\n\t$0\n}',                           'If statement'],
             ['else',     'else {\n\t$0\n}',                                        'Else block'],
             ['elif',     'elif ${1:condition} {\n\t$0\n}',                         'Else-if branch'],
             ['while',    'while ${1:condition} {\n\t$0\n}',                        'While loop'],
             ['for',      'for ${1:item} in ${2:iterable} {\n\t$0\n}',             'For-in loop'],
+            ['forr',     'for ${1:i} in ${2:0}..${3:10} {\n\t$0\n}',            'For loop over a range'],
+            ['ford',     'for (${1:k}, ${2:v}) in ${3:items} {\n\t$0\n}',       'For loop with tuple destructuring'],
             ['try',      'try {\n\t$0\n} catch (${1:e}: ${2:Exception}) {\n\t\n}','Try-catch block'],
             ['throw',    'throw ${1:Exception}("${2:message}")',                   'Throw an exception'],
             ['match',    'match ${1:value} {\n\tcase ${2:pattern} => $0\n\tcase _ => \n}', 'Match statement'],
@@ -663,11 +1083,16 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
             ['use',      'use ${1:module}',                                        'Import a module'],
             ['from',     'from ${1:module} use { ${2:symbol} }',                  'Destructure import'],
             ['with',     'with ${1:expr} as ${2:name} {\n\t$0\n}',               'Context manager'],
+            ['where',    'where ${1:condition}',                                   'Precondition on a function (where clause)'],
             ['in'],      ['as'],      ['del'],
             ['true'],    ['false'],   ['null'],
             ['and'],     ['or'],      ['not'],
-            ['trigger'], ['catch'],   ['super'],
+            ['const',    'const ${1:name} := ${2:value}',                             'Declare a constant variable'],
+            ['catch'],   ['super'],
             ['fn',       'fn(${1:x}) => ${2:x}',                                    'Lambda expression'],
+            ['nonlocal', 'nonlocal ${1:variable}',                                  'Capture a variable by reference in a closure'],
+            ['global',   'global ${1:variable}',                                    'Reference a module-level variable'],
+            ['type',     'type ${1:Alias} = ${2:Type}',                             'Declare a type alias'],
         ];
         for (const [kw, snippet, doc] of keywords) {
             addItem(kw, vscode.CompletionItemKind.Keyword, 'keyword', snippet, doc);
@@ -675,9 +1100,10 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
 
         // ---- Built-ins ----
         const builtins: [string, string, string?][] = [
-            ['print',     '`print(value)` — print to stdout',       'print(${1:value})'],
-            ['printf',    '`printf(fmt, ...)` — formatted print',    'printf(${1:fmt}${2:, args})'],
-            ['exit',      '`exit(code)` — terminate program',        'exit(${1:0})'],
+            ['print',     '`print(value)` — print to stdout',                          'print(${1:value})'],
+            ['printf',    '`printf(fmt, ...)` — formatted print',                   'printf(${1:fmt}${2:, args})'],
+            ['type',      '`type(value) → String` — return the type name of a value', 'type(${1:value})'],
+            ['exit',      '`exit(code)` — terminate program',                       'exit(${1:0})'],
             ['String',    'Built-in String type'],
             ['Int',       'Built-in Int type'],
             ['Double',    'Built-in Double type'],
@@ -687,6 +1113,9 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
             ['Map',       'Built-in Map<K,V> type'],
             ['File',      'Built-in File type'],
             ['Any',       'Dynamic Any type'],
+            ['Tuple',     'Immutable fixed-size sequence — (a, b, c)'],
+            ['Set',       'Unordered collection of unique values'],
+            ['Queue',     'First-in first-out sequence'],
             ['Callable',  'Lambda / function value (produced by fn(...) => ...)'],
             ['void',      'No return value'],
             ['Exception',           'Base exception class'],
@@ -702,6 +1131,18 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
             ['AssertionError',      'Assertion failed'],
             ['NullError',           'Null value dereferenced'],
             ['SocketError',         'Socket or network failure'],
+            ['WhereConditionError', 'where precondition violated'],
+            // Typing interfaces
+            ['Printable',    'interface: implement `__str` for print() support'],
+            ['Equatable',    'interface: implement `__eq` for equality checks'],
+            ['Comparable',   'interface: extends Equatable; implement `__lt` for ordering'],
+            ['Hashable',     'interface: extends Equatable; implement `__hash` for use in maps/sets'],
+            ['Parseable',    'interface: implement `parse` to construct from a String'],
+            ['Sizeable',     'interface: implement `length` to report element count'],
+            ['Iterable',     'interface: implement `__iter` to support for-in loops'],
+            ['Iterator',     'interface: implement `__has_next` and `__next` for iteration'],
+            ['Representable','interface: implement `__repr` for developer-facing string representation'],
+            ['Primitive',    'marker interface for primitive types (Int, Double, Bool, Char, String)'],
         ];
         for (const [name, doc, snippet] of builtins) {
             addItem(name, vscode.CompletionItemKind.Class, 'built-in', snippet, doc);
@@ -726,14 +1167,20 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
             }
         }
 
-        // ---- This-file definitions (functions & structs) ----
-        const defRegex = /^\s*(?:extern\s+)?(?:define|def|init|struct)\s+([a-zA-Z0-9_]+)\s*(?:\(([^)]*)\))?(?:\s*->\s*([a-zA-Z0-9_]+))?/gm;
+        // ---- This-file definitions (functions, structs, enums, interfaces) ----
+        const defRegex = /^\s*(?:extern\s+)?(?:define|def|init|struct|enum|interface)\s+([a-zA-Z0-9_]+)\s*(?:\(([^)]*)\))?(?:\s*->\s*([a-zA-Z0-9_]+))?/gm;
         while ((match = defRegex.exec(fullText)) !== null) {
-            const isStruct = /\bstruct\b/.test(match[0]);
+            const isStruct    = /\bstruct\b/.test(match[0]);
+            const isEnum      = /\benum\b/.test(match[0]);
+            const isInterface = /\binterface\b/.test(match[0]);
             const name = match[1];
             if (name === 'main') continue;
             if (isStruct) {
                 addItem(name, vscode.CompletionItemKind.Struct, 'struct', `${name}($0)`);
+            } else if (isEnum) {
+                addItem(name, vscode.CompletionItemKind.Enum, 'enum');
+            } else if (isInterface) {
+                addItem(name, vscode.CompletionItemKind.Interface, 'interface');
             } else {
                 const rawParams = (match[2] || '').split(',').map(p => p.trim()).filter(p => p && p !== 'self');
                 const retType = match[3] || 'void';
@@ -742,19 +1189,48 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
             }
         }
 
-        // ---- Symbols from imported modules ----
+        // ---- Module aliases and imported symbols ----
+        // `use X[.Y]` / `use X as Z`  → adds the alias as a Module completion.
+        // `from X use { a, b }`       → adds a, b as items (but not X itself).
         const projectRoot = this.findProjectRoot(document.uri.fsPath);
-        const importRegex = /^\s*(?:use|from)\s+([.a-zA-Z0-9_/]+)/gm;
-        while ((match = importRegex.exec(fullText)) !== null) {
+        const importedModulePaths = new Set<string>();
+        const useRegex = /^\s*use\s+([.a-zA-Z0-9_/]+)(?:\s+as\s+([a-zA-Z_][a-zA-Z0-9_]*))?/gm;
+        while ((match = useRegex.exec(fullText)) !== null) {
             const modulePath = match[1];
+            importedModulePaths.add(modulePath);
+            const alias = match[2] || modulePath.split(/[./]/).pop()!;
+            addItem(alias, vscode.CompletionItemKind.Module, `module (${modulePath})`);
+        }
+        // Only `from X use { a, b }` brings bare names into scope. `use X`
+        // alone exposes X as a module (handled above) — the compiler rejects
+        // a bare `name()` reference into a module-only import, so surfacing
+        // those names as bare completions would mislead the user.
+        const fromImportRegex = /^\s*from\s+([.a-zA-Z0-9_/]+)\s+use\s+\{([^}]*)\}/gm;
+        while ((match = fromImportRegex.exec(fullText)) !== null) {
+            const modulePath = match[1];
+            const named = new Set(match[2].split(',').map(s => s.trim()).filter(Boolean));
             const filePath = this.resolvePath(projectRoot, document.uri.fsPath, modulePath);
             if (filePath) {
                 this.scanFileForExports(projectRoot, filePath).forEach(exp => {
-                    if (typeof exp.label === 'string') {
+                    if (typeof exp.label === 'string' && named.has(exp.label)) {
                         addItem(exp.label, exp.kind || vscode.CompletionItemKind.Reference, `from ${modulePath}`);
                     }
                 });
             }
+        }
+
+        // ---- Auto-import suggestions for stdlib modules not yet imported ----
+        // Selecting one of these inserts the alias at the cursor AND prepends
+        // `use <module>` at the top of the file via additionalTextEdits.
+        const insertPos = this.findImportInsertPosition(document);
+        for (const m of this.getAvailableStdlibModules(projectRoot)) {
+            if (importedModulePaths.has(m.modulePath) || seen.has(m.alias)) continue;
+            seen.add(m.alias);
+            const item = new vscode.CompletionItem(m.alias, vscode.CompletionItemKind.Module);
+            item.detail = `auto-import: use ${m.modulePath}`;
+            item.sortText = '4_' + m.alias;  // after locally-defined and imported names
+            item.additionalTextEdits = [vscode.TextEdit.insert(insertPos, `use ${m.modulePath}\n`)];
+            items.push(item);
         }
 
         // ---- Magic methods (only when cursor is directly inside a struct body) ----
@@ -808,7 +1284,17 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
         const projectRoot = this.findProjectRoot(document.uri.fsPath);
         const filePath = this.resolvePath(projectRoot, document.uri.fsPath, modulePath);
         if (!filePath) return [];
-        return this.scanFileForExports(projectRoot, filePath);
+        // Inside `from X use { ... }` we only want the bare name, not the
+        // function-call snippet. Strip insertText so VSCode falls back to
+        // the label.
+        return this.scanFileForExports(projectRoot, filePath).map(item => {
+            const clone = new vscode.CompletionItem(item.label, item.kind);
+            clone.detail = item.detail;
+            clone.documentation = item.documentation;
+            clone.sortText = item.sortText;
+            clone.tags = item.tags;
+            return clone;
+        });
     }
 
     private provideMemberCompletions(document: vscode.TextDocument, modulePath: string): vscode.CompletionItem[] {
@@ -839,24 +1325,36 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
                 }
                 if (inDocBlock) { currentDocstring.push(trimmed); continue; }
 
-                if (trimmed !== '' && !trimmed.startsWith('//') && !/^\s*(?:extern\s+)?(?:struct|define|def|init)/.test(line)) {
+                // Inline single-line docstring: --- text ---
+                if (trimmed.startsWith('---') && trimmed.endsWith('---') && trimmed.length > 6) {
+                    currentDocstring = [trimmed.slice(3, -3).trim()];
+                    continue;
+                }
+
+                if (trimmed !== '' && !trimmed.startsWith('//') && !/^\s*(?:extern\s+)?(?:struct|define|def|init|enum|interface)/.test(line)) {
                     currentDocstring = [];
                 }
 
-                const defMatch = /^\s*(?:extern\s+)?(?:struct|define|def|init)\s+([a-zA-Z0-9_]+)\s*(?:\(([^)]*)\))?(?:\s*->\s*([a-zA-Z0-9_]+))?/.exec(line);
+                const defMatch = /^\s*(?:extern\s+)?(?:struct|define|def|init|enum|interface)\s+([a-zA-Z0-9_]+)\s*(?:\(([^)]*)\))?(?:\s*->\s*([a-zA-Z0-9_]+))?/.exec(line);
                 if (defMatch) {
                     const name = defMatch[1];
                     if (name === 'init' || name === 'main' || name.startsWith('_')) continue;
 
-                    const isStruct = /\bstruct\b/.test(line.trimStart());
+                    const isStruct    = /\bstruct\b/.test(line.trimStart());
+                    const isEnum      = /\benum\b/.test(line.trimStart());
+                    const isInterface = /\binterface\b/.test(line.trimStart());
                     const rawParams = (defMatch[2] || '').split(',').map(p => p.trim()).filter(p => p && p !== 'self');
                     const retType = defMatch[3];
 
-                    const item = new vscode.CompletionItem(name, isStruct ? vscode.CompletionItemKind.Struct : vscode.CompletionItemKind.Function);
+                    const kind = isStruct    ? vscode.CompletionItemKind.Struct
+                               : isEnum      ? vscode.CompletionItemKind.Enum
+                               : isInterface ? vscode.CompletionItemKind.Interface
+                               :               vscode.CompletionItemKind.Function;
+                    const item = new vscode.CompletionItem(name, kind);
                     item.sortText = '2_' + name;
                     if (retType) item.detail = `→ ${retType}`;
 
-                    if (!isStruct) {
+                    if (!isStruct && !isEnum && !isInterface) {
                         const snippetArgs = rawParams.map((p, i) => `\${${i + 1}:${p.split(':')[0].trim()}}`).join(', ');
                         item.insertText = new vscode.SnippetString(`${name}(${snippetArgs})$0`);
                     }
@@ -872,10 +1370,15 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
                 }
             }
 
-            // Follow re-exports:  from x use { y, z }
+            // Follow re-exports — only relative imports (`from .x use {...}`) are
+            // treated as re-exports of the package's public surface (the typing/
+            // index.quirk pattern). Absolute imports (`from io.file use { File }`) are
+            // internal use; surfacing them as members of the importing module would
+            // leak names like `console.File` to outside callers.
             const reExportRegex = /from\s+([.a-zA-Z0-9_/]+)\s+use\s+\{([^}]*)\}/g;
             let match: RegExpExecArray | null;
             while ((match = reExportRegex.exec(content)) !== null) {
+                if (!match[1].startsWith('.')) continue;
                 const targetFile = this.resolvePath(projectRoot, filePath, match[1]);
                 if (targetFile && fs.existsSync(targetFile)) {
                     const valid = new Set(match[2].split(',').map(s => s.trim()));
@@ -921,17 +1424,28 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
             }
         }
 
+        // `stdlib/` and `packages/` are bucket directories inside a venv —
+        // they hold modules but are not themselves importable.
+        const BUCKETS = new Set(['stdlib', 'packages']);
+        // Symlink-aware directory check: installed packages live as symlinks,
+        // so lstat would say "not a directory" and skip them. Use stat which
+        // follows the link.
+        const isDirSafely = (p: string): boolean => {
+            try { return fs.statSync(p).isDirectory(); } catch { return false; }
+        };
         const completions: vscode.CompletionItem[] = [];
         for (const root of searchRoots) {
             const targetDir = searchDirRel ? path.join(root, searchDirRel) : root;
-            if (fs.existsSync(targetDir) && fs.lstatSync(targetDir).isDirectory()) {
+            if (fs.existsSync(targetDir) && isDirSafely(targetDir)) {
                 try {
                     for (const f of fs.readdirSync(targetDir)) {
-                        if (f.startsWith('.') || f === '__init.qk') continue;
+                        if (f.startsWith('.') || f === '__init.quirk' || f === 'index.quirk') continue;
+                        // Skip bucket dirs only at the top level (no subpath yet).
+                        if (!searchDirRel && BUCKETS.has(f)) continue;
                         let name = f, kind = vscode.CompletionItemKind.Folder;
                         const fullPath = path.join(targetDir, f);
-                        if (!fs.lstatSync(fullPath).isDirectory()) {
-                            if (!f.endsWith('.qk')) continue;
+                        if (!isDirSafely(fullPath)) {
+                            if (!f.endsWith('.quirk')) continue;
                             name = f.substring(0, f.length - 3);
                             kind = vscode.CompletionItemKind.Module;
                         }
@@ -950,7 +1464,13 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
     // =========================================================
 
     private resolveImportPathFromAlias(document: vscode.TextDocument, alias: string): string | null {
-        for (const line of document.getText().split(/\r?\n/)) {
+        // Use document.lineAt(i) instead of splitting the whole text — no
+        // copy of the line array. `use` statements normally cluster at the
+        // top of the file, but we don't guarantee that, so scan the whole
+        // document (cheaply, via the document's line index).
+        const lineCount = document.lineCount;
+        for (let i = 0; i < lineCount; i++) {
+            const line = document.lineAt(i).text;
             const useMatch = /^\s*use\s+([.a-zA-Z0-9_/]+)/.exec(line);
             if (useMatch && useMatch[1].split(/[\.\/]/).pop() === alias) return useMatch[1];
         }
@@ -965,32 +1485,51 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
             let searchDir = path.dirname(currentFile);
             for (let i = 1; i < dotCount; i++) searchDir = path.dirname(searchDir);
             const targetBase = subPath ? path.join(searchDir, subPath) : searchDir;
-            if (fs.existsSync(targetBase + '.qk')) return targetBase + '.qk';
-            if (fs.existsSync(path.join(targetBase, '__init.qk'))) return path.join(targetBase, '__init.qk');
+            const cand1 = targetBase + '.quirk';
+            if (this.fileExists(cand1)) return cand1;
+            const cand2 = path.join(targetBase, 'index.quirk');
+            if (this.fileExists(cand2)) return cand2;
+            const cand3 = path.join(targetBase, '__init.quirk');
+            if (this.fileExists(cand3)) return cand3;
             return null;
         }
 
         const searchRoots = this.getSearchRoots(projectRoot);
         const relPath = modulePath.replace(/\./g, '/');
         for (const root of searchRoots) {
-            if (fs.existsSync(path.join(root, relPath + '.qk'))) return path.join(root, relPath + '.qk');
-            if (fs.existsSync(path.join(root, relPath, '__init.qk'))) return path.join(root, relPath, '__init.qk');
+            const candidates = [
+                path.join(root, relPath + '.quirk'),
+                path.join(root, relPath, 'index.quirk'),
+                path.join(root, relPath, '__init.quirk'),
+                path.join(root, relPath, 'src', 'index.quirk'),
+                path.join(root, relPath, 'src', relPath + '.quirk'),
+            ];
+            for (const c of candidates) if (this.fileExists(c)) return c;
         }
         return null;
     }
 
     private getSearchRoots(projectRoot: string): string[] {
-        const cacheKey = projectRoot + '|' + (process.env['QUIRK_HOME'] || '');
+        const home = resolveQuirkHome(projectRoot);
+        const cacheKey = projectRoot + '|' + (home || '');
         if (this.searchRootsCache && this.searchRootsCacheKey === cacheKey) {
             return this.searchRootsCache;
         }
 
         const roots: string[] = [];
-        if (process.env['QUIRK_HOME']) {
+        // Project-local packages win (matches the compiler's resolver order).
+        roots.push(path.join(projectRoot, 'packages'));
+        const isVenv = !!home && fs.existsSync(path.join(home, 'bin', 'activate'));
+        if (home) {
             roots.push(
-                path.join(process.env['QUIRK_HOME'], 'lib', 'quirk', 'packages'),
-                path.join(process.env['QUIRK_HOME'], 'lib', 'quirk')
+                path.join(home, 'lib', 'quirk', 'packages'),
+                path.join(home, 'lib', 'quirk', 'stdlib'),
+                path.join(home, 'lib', 'quirk')
             );
+        }
+        // User-global packages — skipped when a venv is active.
+        if (!isVenv && process.env['HOME']) {
+            roots.push(path.join(process.env['HOME'], '.quirk', 'packages'));
         }
         try {
             for (const item of fs.readdirSync(projectRoot)) {
@@ -1007,15 +1546,129 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
         return roots;
     }
 
+    // Lists every importable stdlib/library module reachable from this project's
+    // search roots. Surfaces modules as `use <path>` completions even before the
+    // user has imported them — selecting a suggestion auto-inserts the `use` line.
+    // `typing/*` is omitted: it's the implicit prelude, no `use typing` needed.
+    private getAvailableStdlibModules(projectRoot: string): Array<{ alias: string; modulePath: string }> {
+        const cacheKey = projectRoot + '|' + (resolveQuirkHome(projectRoot) || '');
+        if (this.stdlibModulesCache && this.stdlibModulesCacheKey === cacheKey) {
+            return this.stdlibModulesCache;
+        }
+        const modules: Array<{ alias: string; modulePath: string }> = [];
+        const seen = new Set<string>();
+        const add = (alias: string, modulePath: string) => {
+            if (seen.has(modulePath)) return;
+            seen.add(modulePath);
+            modules.push({ alias, modulePath });
+        };
+
+        // `packages/` and `stdlib/` are bucket directories that hold modules,
+        // not modules themselves. Skip them so we don't surface bogus
+        // `packages.slug` / `stdlib.console` import paths in completions.
+        const BUCKET_NAMES = new Set(['packages', 'stdlib']);
+        for (const root of this.getSearchRoots(projectRoot)) {
+            if (!fs.existsSync(root)) continue;
+            try { if (!fs.statSync(root).isDirectory()) continue; } catch { continue; }
+            try {
+                for (const entry of fs.readdirSync(root)) {
+                    if (entry.startsWith('.') || entry === 'typing' || BUCKET_NAMES.has(entry)) continue;
+                    if (entry.endsWith('.dist-info')) continue;        // metadata sidecars
+                    const fullPath = path.join(root, entry);
+                    let isDir = false;
+                    try { isDir = fs.statSync(fullPath).isDirectory(); } catch { }
+                    if (isDir) {
+                        // Package — stdlib layout (`<entry>/index.quirk`) or
+                        // package layout (`<entry>/src/index.quirk`).
+                        if (fs.existsSync(path.join(fullPath, 'index.quirk')) ||
+                            fs.existsSync(path.join(fullPath, 'src', 'index.quirk')) ||
+                            fs.existsSync(path.join(fullPath, 'src', entry + '.quirk'))) {
+                            add(entry, entry);
+                        }
+                        // Sub-modules: <root>/<entry>/<sub>.quirk → `use entry.sub`
+                        try {
+                            for (const sub of fs.readdirSync(fullPath)) {
+                                if (sub.startsWith('.') || sub === 'index.quirk' || sub === '__init.quirk' || !sub.endsWith('.quirk')) continue;
+                                const subAlias = sub.slice(0, -3);
+                                add(subAlias, `${entry}.${subAlias}`);
+                            }
+                        } catch { }
+                    } else if (entry.endsWith('.quirk')) {
+                        const alias = entry.slice(0, -3);
+                        add(alias, alias);
+                    }
+                }
+            } catch { }
+        }
+
+        this.stdlibModulesCache = modules;
+        this.stdlibModulesCacheKey = cacheKey;
+        return modules;
+    }
+
+    // Returns the position where a new `use <module>` line should be inserted —
+    // immediately after the last contiguous import line at the top of the file,
+    // or at line 0 if there are none.
+    private findImportInsertPosition(document: vscode.TextDocument): vscode.Position {
+        let lastImportLine = -1;
+        for (let i = 0; i < document.lineCount; i++) {
+            const text = document.lineAt(i).text;
+            const trimmed = text.trim();
+            if (/^\s*(?:use|from)\s/.test(text)) {
+                lastImportLine = i;
+            } else if (trimmed !== '' && !trimmed.startsWith('//')) {
+                break;
+            }
+        }
+        return new vscode.Position(lastImportLine + 1, 0);
+    }
+
     public findProjectRoot(currentFile: string): string {
         let currentDir = path.dirname(currentFile);
         const stopAt = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(currentFile))?.uri.fsPath || "/";
         while (currentDir.length >= stopAt.length) {
-            if (fs.existsSync(path.join(currentDir, 'Makefile')) || fs.existsSync(path.join(currentDir, 'libs'))) return currentDir;
+            if (fs.existsSync(path.join(currentDir, 'quirk.toml')) ||
+                fs.existsSync(path.join(currentDir, 'Makefile')) ||
+                fs.existsSync(path.join(currentDir, 'libs'))) return currentDir;
             const parent = path.dirname(currentDir);
             if (parent === currentDir) break;
             currentDir = parent;
         }
         return stopAt;
+    }
+
+    // Read the --- docstring block that sits directly above `struct TypeName` in a .quirk file.
+    // Returns null if no file or docstring is found.
+    public getStructDocHover(projectRoot: string, currentFile: string, typeName: string): vscode.MarkdownString | null {
+        const filePath = this.findFileContainingStruct(projectRoot, currentFile, typeName);
+        if (!filePath) return null;
+        const content = this.readFile(filePath);
+        if (!content) return null;
+
+        const lines = content.split(/\r?\n/);
+        // Find the `struct` or `interface` TypeName line
+        const structLineIdx = lines.findIndex(l => new RegExp(`^\\s*(?:struct|interface)\\s+${typeName}\\b`).test(l));
+        if (structLineIdx < 0) return null;
+
+        // Backward scan for the closing --- of the docstring above
+        const docLines: string[] = [];
+        let i = structLineIdx - 1;
+        // Skip blank lines between struct and docstring
+        while (i >= 0 && lines[i].trim() === '') i--;
+        if (i < 0 || lines[i].trim() !== '---') return null;
+        i--; // step past closing ---
+        while (i >= 0 && lines[i].trim() !== '---') {
+            docLines.unshift(lines[i]);
+            i--;
+        }
+
+        if (docLines.length === 0) return null;
+
+        const md = new vscode.MarkdownString();
+        md.isTrusted = true;
+        md.appendMarkdown(`**\`${typeName}\`** — *${vscode.workspace.asRelativePath(filePath)}*\n\n---\n`);
+        const formatted = this.formatDocstring(docLines);
+        md.appendMarkdown(formatted.md.value);
+        return md;
     }
 }

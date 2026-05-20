@@ -35,21 +35,45 @@ export class QuirkSemanticTokensProvider implements vscode.DocumentSemanticToken
 
         // 2. Scan for usages of these aliases
         //    Looking for: "alias.Member"
+        // Track docstring state so we don't paint module references inside
+        // `---` blocks. Semantic tokens override TextMate coloring, so
+        // without this `print(itertools.foo)` in a docstring example would
+        // still get the namespace highlight.
+        let inDocBlock = false;
         for (let i = 0; i < lines.length; i++) {
             const line = lines[i];
-            
+            const trimmed = line.trim();
+
+            // Single-line docstring (`--- text ---`): entire line is doc,
+            // skip without touching `inDocBlock`.
+            if (trimmed.startsWith('---') && trimmed.endsWith('---') && trimmed.length > 3) {
+                continue;
+            }
+            // Lone `---` toggles a multi-line docstring block.
+            if (trimmed === '---') {
+                inDocBlock = !inDocBlock;
+                continue;
+            }
+            if (inDocBlock) continue;
+
+            // Skip `//` line comments — same reason: namespace coloring
+            // shouldn't bleed into commentary that happens to mention a
+            // module name with a dot.
+            const commentIdx = line.indexOf('//');
+
             // Look for words followed immediately by a dot: "word."
             const regex = /([a-zA-Z_]\w*)\./g;
             let match;
 
             while ((match = regex.exec(line)) !== null) {
+                if (commentIdx !== -1 && match.index >= commentIdx) break;
                 const word = match[1];
-                
+
                 if (moduleAliases.has(word)) {
-                    // It is a known module alias! 
+                    // It is a known module alias!
                     // Color it as a 'namespace' (Index 0 in tokenTypes)
                     const startPos = match.index;
-                    
+
                     builder.push(
                         i,                  // Line number
                         startPos,           // Character position

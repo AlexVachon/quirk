@@ -326,7 +326,11 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
             const isBodyless = !maskedLine.includes('{');
             const paramsStr = funcMatch[2];
             // Type annotation allows generic params: List[T], Map[K, V], etc.
-            const paramMatches = [...paramsStr.matchAll(/(?:\.\.\.)?([a-zA-Z_]\w*)\s*(?::\s*[a-zA-Z_][\w.?]*(?:\[[^\]]*\])?)?(?:,|$)/g)];
+            // Optional `= <default>` between the type annotation and the
+            // comma — without consuming it, only the first parameter of a
+            // signature like `(a, b: Int = 0, c: Int = 1)` matched, and
+            // every subsequent name was flagged "not defined".
+            const paramMatches = [...paramsStr.matchAll(/(?:\.\.\.)?([a-zA-Z_]\w*)\s*(?::\s*[a-zA-Z_][\w.?]*(?:\[[^\]]*\])?)?(?:\s*=\s*(?:"[^"]*"|'[^']*'|\[[^\]]*\]|\([^)]*\)|[^,)]+))?(?:\s*,|\s*$)/g)];
             for (const pm of paramMatches) {
                 const pName = pm[1];
                 locals.add(pName);

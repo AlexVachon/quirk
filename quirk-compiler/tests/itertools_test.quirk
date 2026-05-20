@@ -1,0 +1,119 @@
+// itertools — eager combinators on top of List.
+
+use console
+use itertools
+use test
+from test use { TestCase }
+
+define main() -> void {
+
+    // ─── Sources ──────────────────────────────────────────────────────
+
+    t_range_one_arg := TestCase("range_list(n) is [0..n-1]", fn() {
+        r := itertools.range_list(5)
+        test.assert_eq(r.length(), 5)
+        test.assert_eq(r.get(0), 0)
+        test.assert_eq(r.get(4), 4)
+    })
+
+    t_range_two_args := TestCase("range_list(start, count) is [start..start+count-1]", fn() {
+        r := itertools.range_list(2, 5)
+        test.assert_eq(r.length(), 5)
+        test.assert_eq(r.get(0), 2)
+        test.assert_eq(r.get(4), 6)
+    })
+
+    t_range_step := TestCase("range_list(start, count, step) steps", fn() {
+        r := itertools.range_list(0, 5, 3)
+        test.assert_eq(r.length(), 5)
+        test.assert_eq(r.get(0), 0)
+        test.assert_eq(r.get(1), 3)
+        test.assert_eq(r.get(4), 12)
+    })
+
+    t_repeat := TestCase("repeat(value, n) makes n copies", fn() {
+        r := itertools.repeat("x", 3)
+        test.assert_eq(r.length(), 3)
+        test.assert_eq(r.get(0), "x")
+        test.assert_eq(r.get(2), "x")
+    })
+
+    t_cycle := TestCase("cycle wraps around `items` to length `total`", fn() {
+        r := itertools.cycle([1, 2, 3], 7)
+        test.assert_eq(r.length(), 7)
+        test.assert_eq(r.get(0), 1)
+        test.assert_eq(r.get(2), 3)
+        test.assert_eq(r.get(3), 1)
+        test.assert_eq(r.get(6), 1)
+    })
+
+    t_cycle_empty := TestCase("cycle on empty input is empty", fn() {
+        r := itertools.cycle([], 100)
+        test.assert_eq(r.length(), 0)
+    })
+
+    // ─── Combinators ──────────────────────────────────────────────────
+
+    t_chain := TestCase("chain concatenates in order", fn() {
+        r := itertools.chain([1, 2], [3, 4, 5])
+        test.assert_eq(r.length(), 5)
+        test.assert_eq(r.get(0), 1)
+        test.assert_eq(r.get(2), 3)
+        test.assert_eq(r.get(4), 5)
+    })
+
+    t_take_while := TestCase("take_while stops at the first false", fn() {
+        r := itertools.take_while(fn(x) => x < 5, [1, 3, 5, 4, 2])
+        test.assert_eq(r.length(), 2)
+        test.assert_eq(r.get(0), 1)
+        test.assert_eq(r.get(1), 3)
+    })
+
+    t_take_while_empty := TestCase("take_while returns empty when nothing matches", fn() {
+        r := itertools.take_while(fn(x) => x < 0, [1, 2, 3])
+        test.assert_eq(r.length(), 0)
+    })
+
+    t_drop_while := TestCase("drop_while keeps everything after the first false", fn() {
+        r := itertools.drop_while(fn(x) => x < 5, [1, 3, 5, 4, 2])
+        test.assert_eq(r.length(), 3)
+        test.assert_eq(r.get(0), 5)
+        test.assert_eq(r.get(2), 2)
+    })
+
+    t_unique := TestCase("unique preserves first-seen order", fn() {
+        r := itertools.unique([3, 1, 4, 1, 5, 9, 2, 6, 5, 3])
+        test.assert_eq(r.length(), 7)
+        test.assert_eq(r.get(0), 3)
+        test.assert_eq(r.get(1), 1)
+        test.assert_eq(r.get(6), 6)
+    })
+
+    t_groupby := TestCase("groupby buckets items by key_fn result", fn() {
+        // Group fruit names by initial letter.
+        items := ["pear", "plum", "apple", "peach", "apricot"]
+        g: Map = itertools.groupby(fn(w) => w.substring(0, 1), items)
+        test.assert_eq(g.length(), 2)
+        p_bucket: List = g.get("p")
+        a_bucket: List = g.get("a")
+        test.assert_eq(p_bucket.length(), 3)
+        test.assert_eq(p_bucket.get(0), "pear")
+        test.assert_eq(p_bucket.get(1), "plum")
+        test.assert_eq(p_bucket.get(2), "peach")
+        test.assert_eq(a_bucket.length(), 2)
+        test.assert_eq(a_bucket.get(0), "apple")
+        test.assert_eq(a_bucket.get(1), "apricot")
+    })
+
+    fails := test.run_all([
+        t_range_one_arg, t_range_two_args, t_range_step,
+        t_repeat, t_cycle, t_cycle_empty,
+        t_chain, t_take_while, t_take_while_empty,
+        t_drop_while, t_unique, t_groupby
+    ])
+    if fails > 0 {
+        console.error("itertools tests failed (" + fails.str() + ")")
+    } else {
+        console.info("all itertools tests passed")
+    }
+}

@@ -87,6 +87,67 @@ define cycle(items: List, total: Int) -> List {
 // ─────────────────────── Combinators ──────────────────────────────────
 
 ---
+Pair each value with a running index, returning `(idx, value)` tuples.
+`start` defaults to 0 — pass `start=1` for 1-based numbering. Access the
+returned pairs with `t.0` / `t.1` or `t[0]` / `t[1]`.
+
+@example
+for pair in enumerate(["a", "b", "c"]) {
+    print("${pair.0}: ${pair.1}")
+}
+---
+define enumerate(items: List, start: Int = 0) -> List {
+    out := List()
+    i := 0
+    n := items.length()
+    while i < n {
+        out.append((start + i, items.get(i)))
+        i = i + 1
+    }
+    return out
+}
+
+---
+Pair up two Lists element-wise as tuples. Stops at the shorter length —
+matches Python's `zip`, not `zip_longest`.
+
+@example
+zip([1, 2, 3], ["a", "b"])   // [(1, "a"), (2, "b")]
+---
+define zip(a: List, b: List) -> List {
+    out := List()
+    n := a.length()
+    if b.length() < n { n = b.length() }
+    i := 0
+    while i < n {
+        out.append((a.get(i), b.get(i)))
+        i = i + 1
+    }
+    return out
+}
+
+---
+Split into `(matching, non_matching)` based on `pred`. Useful for "yes/no"
+splits where you want both halves at once.
+
+@example
+p := partition(fn(x) => x > 0, [-2, 3, -1, 7])
+print(p.0)   // [3, 7]
+print(p.1)   // [-2, -1]
+---
+define partition(pred: Callable, items: List) -> Tuple {
+    yes := List()
+    no  := List()
+    i := 0
+    while i < items.length() {
+        v := items.get(i)
+        if pred(v) { yes.append(v) } else { no.append(v) }
+        i = i + 1
+    }
+    return (yes, no)
+}
+
+---
 Concatenate two Lists in order.
 @example chain([1, 2], [3, 4])   // [1, 2, 3, 4]
 ---

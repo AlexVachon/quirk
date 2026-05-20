@@ -472,6 +472,59 @@ void Lexer::tokenizeString()
         // Consume the closing triple-quote (three chars). atTerminator()
         // already verified all three are present before exiting the loop.
         if (peek() == quoteType) { advance(); advance(); advance(); }
+
+        // Dedent: triple-quoted strings get the common leading whitespace
+        // stripped off every line so users can indent the literal to match
+        // surrounding code without that indent leaking into the value.
+        // Also trims a leading and trailing newline so the canonical form
+        //     sql := """
+        //         SELECT 1
+        //     """
+        // produces `"SELECT 1\n"` rather than `"\n        SELECT 1\n    "`.
+        if (!format_builder.empty()) {
+            // Strip exactly one leading \n if the literal opens with one.
+            if (format_builder.front() == '\n') {
+                format_builder.erase(0, 1);
+            }
+            // Find min leading whitespace across non-empty lines.
+            size_t minIndent = std::string::npos;
+            size_t i = 0;
+            while (i < format_builder.size()) {
+                size_t lineStart = i;
+                while (i < format_builder.size() && format_builder[i] != '\n') i++;
+                // measure leading whitespace on this line
+                size_t ws = 0;
+                while (lineStart + ws < i &&
+                       (format_builder[lineStart + ws] == ' ' ||
+                        format_builder[lineStart + ws] == '\t')) ws++;
+                // ignore blank lines for the min calculation
+                if (lineStart + ws < i) {
+                    if (ws < minIndent) minIndent = ws;
+                }
+                if (i < format_builder.size()) i++; // skip the \n
+            }
+            if (minIndent != std::string::npos && minIndent > 0) {
+                std::string out;
+                out.reserve(format_builder.size());
+                size_t j = 0;
+                while (j < format_builder.size()) {
+                    size_t lineStart = j;
+                    while (j < format_builder.size() && format_builder[j] != '\n') j++;
+                    size_t lineLen = j - lineStart;
+                    // Strip up to minIndent leading whitespace; lines that
+                    // are pure whitespace and shorter just become empty.
+                    size_t skip = std::min(minIndent, lineLen);
+                    out.append(format_builder, lineStart + skip, lineLen - skip);
+                    if (j < format_builder.size()) { out.push_back('\n'); j++; }
+                }
+                format_builder = std::move(out);
+            }
+            // Strip one trailing \n if the closing """ was on its own line —
+            // detected by the last char being \n after the dedent pass.
+            if (!format_builder.empty() && format_builder.back() == '\n') {
+                format_builder.pop_back();
+            }
+        }
     } else if (peek() == quoteType) {
         advance(); // Skip closing quote
     }

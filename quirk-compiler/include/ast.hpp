@@ -596,6 +596,9 @@ struct MatchArm {
     // element of the scrutinee tuple at codegen time. Empty when not a
     // tuple-destructure arm.
     std::vector<std::string> bindNames;
+    // `true` for `case [a, b] =>` list destructure (vs `case (a, b)`).
+    // Codegen reads through List.get(i) instead of Tuple.get(i).
+    bool bindsList = false;
     // Optional `if cond` guard. The arm fires only if the pattern matches
     // AND `guard` evaluates truthy. Lets `case x if x > 0 => …` work.
     std::unique_ptr<Node> guard;

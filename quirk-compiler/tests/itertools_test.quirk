@@ -89,6 +89,48 @@ define main() -> void {
         test.assert_eq(r.get(6), 6)
     })
 
+    t_enumerate := TestCase("enumerate produces (idx, value) tuples", fn() {
+        r := itertools.enumerate(["a", "b", "c"])
+        test.assert_eq(r.length(), 3)
+        p0: Tuple = r.get(0)
+        p2: Tuple = r.get(2)
+        test.assert_eq(p0.0, 0)
+        test.assert_eq(p0.1, "a")
+        test.assert_eq(p2.0, 2)
+        test.assert_eq(p2.1, "c")
+    })
+
+    t_enumerate_start := TestCase("enumerate respects custom start", fn() {
+        r := itertools.enumerate(["x", "y"], 10)
+        p0: Tuple = r.get(0)
+        p1: Tuple = r.get(1)
+        test.assert_eq(p0.0, 10)
+        test.assert_eq(p1.0, 11)
+    })
+
+    t_zip := TestCase("zip pairs element-wise, stops at shorter", fn() {
+        r := itertools.zip([1, 2, 3], ["a", "b"])
+        test.assert_eq(r.length(), 2)
+        p0: Tuple = r.get(0)
+        p1: Tuple = r.get(1)
+        test.assert_eq(p0.0, 1)
+        test.assert_eq(p0.1, "a")
+        test.assert_eq(p1.0, 2)
+        test.assert_eq(p1.1, "b")
+    })
+
+    t_partition := TestCase("partition splits into (yes, no) lists", fn() {
+        p: Tuple = itertools.partition(fn(x) => x > 0, [-2, 3, -1, 7])
+        yes: List = p.0
+        no: List = p.1
+        test.assert_eq(yes.length(), 2)
+        test.assert_eq(yes.get(0), 3)
+        test.assert_eq(yes.get(1), 7)
+        test.assert_eq(no.length(), 2)
+        test.assert_eq(no.get(0), -2)
+        test.assert_eq(no.get(1), -1)
+    })
+
     t_groupby := TestCase("groupby buckets items by key_fn result", fn() {
         // Group fruit names by initial letter.
         items := ["pear", "plum", "apple", "peach", "apricot"]
@@ -109,7 +151,8 @@ define main() -> void {
         t_range_one_arg, t_range_two_args, t_range_step,
         t_repeat, t_cycle, t_cycle_empty,
         t_chain, t_take_while, t_take_while_empty,
-        t_drop_while, t_unique, t_groupby
+        t_drop_while, t_unique, t_groupby,
+        t_enumerate, t_enumerate_start, t_zip, t_partition
     ])
     if fails > 0 {
         console.error("itertools tests failed (" + fails.str() + ")")

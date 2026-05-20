@@ -1117,7 +1117,45 @@ class LLVMCodegen {
             else if (auto i = dynamic_cast<IfNode*>(n)) {
                 walk(i->condition.get());
                 for (auto& s : i->thenBranch) walk(s.get());
+                for (auto& eb : i->elIfBranches) {
+                    walk(eb.condition.get());
+                    for (auto& s : eb.body) walk(s.get());
+                }
                 for (auto& s : i->elseBranch) walk(s.get());
+            }
+            // Loops inside a lambda body need their inner references picked
+            // up too — without this, `fn() => { while cond { it() } }` lost
+            // the capture of outer-scope `it` and `cond`.
+            else if (auto w = dynamic_cast<WhileNode*>(n)) {
+                walk(w->condition.get());
+                for (auto& s : w->body) walk(s.get());
+            }
+            else if (auto f = dynamic_cast<ForNode*>(n)) {
+                walk(f->iterable.get());
+                for (auto& s : f->body) walk(s.get());
+            }
+            else if (auto m = dynamic_cast<MatchNode*>(n)) {
+                walk(m->scrutinee.get());
+                for (auto& arm : m->arms) {
+                    for (auto& p : arm.patterns) walk(p.get());
+                    if (arm.guard) walk(arm.guard.get());
+                    for (auto& s : arm.body) walk(s.get());
+                }
+            }
+            else if (auto t = dynamic_cast<TryCatchNode*>(n)) {
+                for (auto& s : t->tryBlock) walk(s.get());
+                for (auto& cb : t->catchBlocks) for (auto& s : cb.body) walk(s.get());
+                for (auto& s : t->finallyBlock) walk(s.get());
+            }
+            else if (auto th = dynamic_cast<ThrowNode*>(n)) {
+                if (th->expression) walk(th->expression.get());
+                if (th->cause) walk(th->cause.get());
+            }
+            else if (auto tup = dynamic_cast<TupleLiteralNode*>(n)) {
+                for (auto& e : tup->elements) walk(e.get());
+            }
+            else if (auto lst = dynamic_cast<ListLiteralNode*>(n)) {
+                for (auto& e : lst->elements) walk(e.get());
             }
             else if (auto lm = dynamic_cast<LambdaNode*>(n)) {
                 // Nested lambda: only capture outer refs (don't recurse into inner params)
@@ -3566,9 +3604,37 @@ Value* LLVMCodegen::handleExpression(Node* node) {
         Value* objPtr = handleExpression(member->object.get());
 
         // Handle double pointer dereference
-        if (objPtr && objPtr->getType()->isPointerTy() && 
+        if (objPtr && objPtr->getType()->isPointerTy() &&
             objPtr->getType()->getPointerElementType()->isPointerTy()) {
             objPtr = Builder.CreateLoad(objPtr->getType()->getPointerElementType(), objPtr);
+        }
+
+        // Numeric tuple field access: `t.0`, `t.1`, ... Equivalent to
+        // `t[0]` but using dot-notation. We detect it before the generic
+        // member-access path so a Tuple's `.N` calls the runtime helper
+        // rather than searching for a named field that doesn't exist.
+        if (objPtr && !member->memberName.empty() &&
+            std::all_of(member->memberName.begin(), member->memberName.end(),
+                        [](char c) { return std::isdigit(static_cast<unsigned char>(c)); })) {
+            bool isTuple = false;
+            if (objPtr->getType()->isPointerTy() && StructTypes.count("Tuple")) {
+                Type* elt = objPtr->getType()->getPointerElementType();
+                if (elt == StructTypes["Tuple"]) isTuple = true;
+            }
+            if (isTuple) {
+                Function* getFn = TheModule->getFunction("Core_Collections_Tuple_Tuple___get");
+                if (!getFn) {
+                    Type* tuplePtrTy = PointerType::getUnqual(StructTypes["Tuple"]);
+                    FunctionType* ft = FunctionType::get(Type::getInt8PtrTy(Context),
+                        {tuplePtrTy, Type::getInt32Ty(Context)}, false);
+                    getFn = Function::Create(ft, Function::ExternalLinkage,
+                        "Core_Collections_Tuple_Tuple___get", TheModule.get());
+                }
+                int idx = std::stoi(member->memberName);
+                return Builder.CreateCall(getFn,
+                    {objPtr, ConstantInt::get(Type::getInt32Ty(Context), idx)},
+                    "tup_" + member->memberName);
+            }
         }
 
         // --- FIX 2: Enable Member Access on Any (Assume String) ---
@@ -3609,7 +3675,34 @@ Value* LLVMCodegen::handleExpression(Node* node) {
             return nullptr;
         }
 
-        return structGen->generateMemberAccess(objPtr, member->memberName);
+        Value* fieldVal = structGen->generateMemberAccess(objPtr, member->memberName);
+        if (fieldVal) return fieldVal;
+
+        // Property accessor: `obj.name` (no parens) — when no field of
+        // that name exists, look for a zero-arg method and auto-call it.
+        // Lets users define computed properties like `area`, `is_done`,
+        // `length`, etc. without parens at the call site. Methods with
+        // arguments still require `obj.method(args)`.
+        if (objPtr && objPtr->getType()->isPointerTy()
+            && objPtr->getType()->getPointerElementType()->isStructTy()) {
+            std::string structName = cast<StructType>(objPtr->getType()->getPointerElementType())->getName().str();
+            if (structName.rfind("struct.", 0) == 0) structName = structName.substr(7);
+            // Resolve <Struct>_<name> first, then the magic-method form.
+            Function* propFn = TheModule->getFunction(structName + "_" + member->memberName);
+            if (!propFn) propFn = resolveFunction(structName + "_" + member->memberName);
+            if (!propFn) propFn = TheModule->getFunction(structName + "___" + member->memberName);
+            if (!propFn) propFn = resolveFunction(structName + "___" + member->memberName);
+            // Only auto-call zero-arg (the `self` param is the one arg).
+            if (propFn && propFn->arg_size() == 1) {
+                Value* arg = objPtr;
+                Type* expected = propFn->getFunctionType()->getParamType(0);
+                if (arg->getType() != expected && arg->getType()->isPointerTy() && expected->isPointerTy()) {
+                    arg = Builder.CreateBitCast(arg, expected);
+                }
+                return Builder.CreateCall(propFn, {arg}, member->memberName);
+            }
+        }
+        return nullptr;
     }
 
     if (auto c = dynamic_cast<ConstructorNode*>(node)) return handleConstructor(c);

@@ -1720,6 +1720,30 @@ std::unique_ptr<Node> Parser::parseMatch() {
                         arm.patterns.clear();
                     }
                 }
+                // List destructure: `case [a, b] =>` — same shape as the
+                // tuple-destructure above, but for List scrutinees. Codegen
+                // reads via `List.get(i)` instead of `Tuple.get(i)`.
+                else if (auto lst = dynamic_cast<ListLiteralNode*>(arm.patterns[0].get())) {
+                    bool allBindings = !lst->elements.empty();
+                    std::vector<std::string> names;
+                    for (auto& elem : lst->elements) {
+                        auto* lit = dynamic_cast<LiteralNode*>(elem.get());
+                        if (!lit) { allBindings = false; break; }
+                        const std::string& v = lit->value;
+                        if (v.empty() || !(std::isalpha((unsigned char)v[0]) || v[0] == '_')) {
+                            allBindings = false; break;
+                        }
+                        if (!std::islower((unsigned char)v[0])
+                            && v[0] != '_') { allBindings = false; break; }
+                        names.push_back(v);
+                    }
+                    if (allBindings) {
+                        arm.isWildcard = true;
+                        arm.bindNames = std::move(names);
+                        arm.bindsList = true;
+                        arm.patterns.clear();
+                    }
+                }
             }
         }
 

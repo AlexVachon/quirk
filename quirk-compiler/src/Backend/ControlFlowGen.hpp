@@ -522,24 +522,26 @@ class ControlFlowGen {
                 // Tuple destructure: `case (a, b)` was rewritten to a
                 // wildcard with bindNames=[a,b]. Pull each element out of
                 // the scrutinee Tuple via Core_Collections_Tuple_Tuple___get(idx).
-                // Pass scrutVal at its native type so we match whatever
-                // signature the rest of Codegen already declared for the
-                // runtime helper.
+                // For `case [a, b]` (list destructure) the same dispatch
+                // uses `Core_Collections_List_List___get` instead.
                 if (!arm.bindNames.empty() && bindHook) {
-                    Function* getFn = TheModule->getFunction("Core_Collections_Tuple_Tuple___get");
+                    const char* fnName = arm.bindsList
+                        ? "Core_Collections_List_List___get"
+                        : "Core_Collections_Tuple_Tuple___get";
+                    Function* getFn = TheModule->getFunction(fnName);
                     if (!getFn) {
                         FunctionType* ft = FunctionType::get(Type::getInt8PtrTy(Context),
                             {scrutVal->getType(), Type::getInt32Ty(Context)}, false);
                         getFn = Function::Create(ft, Function::ExternalLinkage,
-                            "Core_Collections_Tuple_Tuple___get", TheModule);
+                            fnName, TheModule);
                     }
-                    Value* tupArg = scrutVal;
+                    Value* contArg = scrutVal;
                     Type* paramTy = getFn->getFunctionType()->getParamType(0);
-                    if (tupArg->getType() != paramTy && tupArg->getType()->isPointerTy() && paramTy->isPointerTy())
-                        tupArg = Builder.CreateBitCast(tupArg, paramTy);
+                    if (contArg->getType() != paramTy && contArg->getType()->isPointerTy() && paramTy->isPointerTy())
+                        contArg = Builder.CreateBitCast(contArg, paramTy);
                     for (size_t bi = 0; bi < arm.bindNames.size(); bi++) {
                         Value* elem = Builder.CreateCall(getFn,
-                            {tupArg, ConstantInt::get(Type::getInt32Ty(Context), (int)bi)},
+                            {contArg, ConstantInt::get(Type::getInt32Ty(Context), (int)bi)},
                             arm.bindNames[bi]);
                         bindHook(arm.bindNames[bi], elem);
                     }

@@ -73,11 +73,9 @@ define nil() -> String {
 }
 
 // Internal predicate: is `c` (length-1 String) a valid lowercase hex
-// digit? `parse` and `is_valid` both call into this. We use a literal
-// set lookup because Quirk's String `<=` doesn't compare lexicographically
-// on single chars the way you'd expect.
+// digit? `parse` and `is_valid` both call into this.
 define _is_hex(c: String) -> Bool {
-    return _HEX.contains(c)
+    return (c >= "0" and c <= "9") or (c >= "a" and c <= "f")
 }
 
 ---

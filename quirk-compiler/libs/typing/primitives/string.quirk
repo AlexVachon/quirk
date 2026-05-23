@@ -37,6 +37,9 @@ struct String : Primitive, Comparable, Sizeable, Iterable, Representable {
     extern define __add(self, other: String) -> String
     extern define __eq(self, other: String) -> Bool
     extern define __lt(self, other: String) -> Bool
+    extern define __le(self, other: String) -> Bool
+    extern define __gt(self, other: String) -> Bool
+    extern define __ge(self, other: String) -> Bool
     extern define __iter(self) -> StringIterator
     extern define __str(self) -> String
     extern define __repr(self) -> String

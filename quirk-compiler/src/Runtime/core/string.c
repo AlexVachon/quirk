@@ -276,6 +276,23 @@ int Core_String_String___eq(String* self, String* other) {
     return strcmp(self->buffer, other->buffer) == 0;
 }
 
+// Lexicographic comparisons. Until these existed, codegen fell back to
+// raw pointer comparison for `<` / `<=` / `>` / `>=` on String, which
+// produced nonsense (`"5" <= "9"` could return false depending on the
+// GC's allocation order).
+static int Core_String__cmp(String* self, String* other) {
+    if (!self && !other) return 0;
+    if (!self) return -1;
+    if (!other) return 1;
+    return strcmp(self->buffer ? self->buffer : "",
+                  other->buffer ? other->buffer : "");
+}
+
+int Core_String_String___lt(String* self, String* other) { return Core_String__cmp(self, other) <  0; }
+int Core_String_String___le(String* self, String* other) { return Core_String__cmp(self, other) <= 0; }
+int Core_String_String___gt(String* self, String* other) { return Core_String__cmp(self, other) >  0; }
+int Core_String_String___ge(String* self, String* other) { return Core_String__cmp(self, other) >= 0; }
+
 String* Core_String_String___str(String* self) {
     return self ? self : make_String("");
 }

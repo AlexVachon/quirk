@@ -36,6 +36,7 @@ static void Queue__grow(Queue* self) {
 // ===== MUTATION =====
 
 void Core_Collections_Queue_Queue_push_back(Queue* self, void* val) {
+    if (!self) return;
     if (self->size >= self->capacity) Queue__grow(self);
     self->data[self->tail] = val;
     self->tail = (self->tail + 1) % self->capacity;
@@ -43,6 +44,7 @@ void Core_Collections_Queue_Queue_push_back(Queue* self, void* val) {
 }
 
 void Core_Collections_Queue_Queue_push_front(Queue* self, void* val) {
+    if (!self) return;
     if (self->size >= self->capacity) Queue__grow(self);
     self->head = (self->head - 1 + self->capacity) % self->capacity;
     self->data[self->head] = val;
@@ -50,7 +52,7 @@ void Core_Collections_Queue_Queue_push_front(Queue* self, void* val) {
 }
 
 void* Core_Collections_Queue_Queue_pop_front(Queue* self) {
-    if (self->size == 0) return NULL;
+    if (!self || self->size == 0) return NULL;
     void* val = self->data[self->head];
     self->head = (self->head + 1) % self->capacity;
     self->size--;
@@ -58,7 +60,7 @@ void* Core_Collections_Queue_Queue_pop_front(Queue* self) {
 }
 
 void* Core_Collections_Queue_Queue_pop_back(Queue* self) {
-    if (self->size == 0) return NULL;
+    if (!self || self->size == 0) return NULL;
     self->tail = (self->tail - 1 + self->capacity) % self->capacity;
     void* val = self->data[self->tail];
     self->size--;
@@ -80,6 +82,7 @@ int Core_Collections_Queue_Queue_size(Queue* self) { return self ? self->size : 
 int Core_Collections_Queue_Queue_is_empty(Queue* self) { return !self || self->size == 0; }
 
 void Core_Collections_Queue_Queue_clear(Queue* self) {
+    if (!self) return;
     self->head = self->tail = self->size = 0;
 }
 

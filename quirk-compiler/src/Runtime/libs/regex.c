@@ -137,9 +137,13 @@ int Regex_group_end(void* handle, int idx) {
 
 static void buf_append_n(char** buf, int* cap, int* len, const char* src, int n) {
     while (*len + n + 1 > *cap) {
-        *cap = *cap ? (*cap * 2) : 64;
-        *buf = (char*)realloc(*buf, *cap);
+        int new_cap = *cap ? (*cap * 2) : 64;
+        char* grown = (char*)realloc(*buf, new_cap);
+        if (!grown) return;   // OOM — leave the buffer at its current size
+        *buf = grown;
+        *cap = new_cap;
     }
+    if (!*buf) return;
     memcpy(*buf + *len, src, n);
     *len += n;
     (*buf)[*len] = '\0';

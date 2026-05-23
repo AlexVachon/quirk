@@ -16,6 +16,17 @@ static void* __gc_calloc(size_t n, size_t s) {
 }
 #define calloc(x, y) __gc_calloc((x), (y))
 #define free(x)
+// `strdup` lives in libc and bypasses Boehm — each call is a permanent
+// leak when paired with our macro-no-op `free`. Route it through GC by
+// copying via GC_malloc.
+static char* __gc_strdup(const char* s) {
+    if (!s) return NULL;
+    size_t n = strlen(s);
+    char* out = (char*)GC_malloc(n + 1);
+    if (out) memcpy(out, s, n + 1);
+    return out;
+}
+#define strdup(s) __gc_strdup(s)
 
 #include "types.h"  // NOTE: make_safe_cstr is defined inline in types.h
                     //       sys.c no longer needs its own definition.

@@ -383,7 +383,7 @@ static std::string project_name_for_file(const std::string& filePath) {
 // then probes the conventional entry-point layouts. Returns empty if no
 // match. Lets a library import itself from anywhere inside its own repo
 // — the in-tree equivalent of `pip install -e .`.
-static std::string resolve_self_package(const std::string& moduleName,
+inline std::string resolve_self_package(const std::string& moduleName,
                                         const std::string& relativeTo) {
     if (relativeTo.empty() || moduleName.empty()) return "";
     fs::path root = find_project_root(relativeTo);
@@ -3471,12 +3471,17 @@ static int cmd_release(const std::vector<std::string>& args) {
 
     if (push) {
         std::cout << "  ↑ pushing...\n";
-        // Push the commit (if any) and the new tag.
+        // Push the commit (if any) and the new tag. Bail early if the
+        // branch push fails so the tag push doesn't quietly succeed on a
+        // partial publish.
         std::string p1 = "git push 2>&1";
-        std::system(p1.c_str());
+        if (std::system(p1.c_str()) != 0) {
+            std::cerr << "release: `git push` failed; tag not pushed\n";
+            return 1;
+        }
         std::string p2 = "git push origin " + tag + " 2>&1";
         if (std::system(p2.c_str()) != 0) {
-            std::cerr << "release: pushed tag locally but `git push origin "
+            std::cerr << "release: pushed branch but `git push origin "
                       << tag << "` failed\n";
             return 1;
         }
@@ -4638,7 +4643,7 @@ static void shift_argv(int& argc, char** argv) {
 // the rest of main() proceed (i.e. it's a script run, not a PM command).
 // `argc` is taken by reference so commands like `run` and the `-m`/`-c`
 // aliases can rewrite argv before letting main() carry on.
-static bool dispatch(int& argc, char** argv, int& outRc) {
+inline bool dispatch(int& argc, char** argv, int& outRc) {
     if (argc < 2) return false;
     std::string first = argv[1];
 

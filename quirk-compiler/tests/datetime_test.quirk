@@ -1,0 +1,110 @@
+// datetime — calendar helpers on top of `time.DateTime`.
+
+use console
+use datetime
+use time
+from time use { DateTime }
+use test
+from test use { TestCase }
+
+define main() -> void {
+
+    t_is_leap := TestCase("is_leap follows the Gregorian rule", fn() {
+        test.assert_true(datetime.is_leap(2024))
+        test.assert_true(datetime.is_leap(2000))
+        test.assert_false(datetime.is_leap(2023))
+        test.assert_false(datetime.is_leap(1900))
+        test.assert_false(datetime.is_leap(2100))
+    })
+
+    t_days_in_month := TestCase("days_in_month handles 28/29/30/31", fn() {
+        test.assert_eq(datetime.days_in_month(2024, 1), 31)
+        test.assert_eq(datetime.days_in_month(2024, 2), 29)
+        test.assert_eq(datetime.days_in_month(2023, 2), 28)
+        test.assert_eq(datetime.days_in_month(2024, 4), 30)
+        test.assert_eq(datetime.days_in_month(2024, 12), 31)
+    })
+
+    t_day_name := TestCase("day_name returns the English weekday", fn() {
+        // 2024-01-01 (Monday) UTC epoch = 1704067200
+        mon := DateTime(1704067200, true)
+        test.assert_eq(datetime.day_name(mon), "Monday")
+        // +1 day → Tuesday
+        test.assert_eq(datetime.day_name(mon.add_days(1)), "Tuesday")
+        // +5 days → Saturday
+        test.assert_eq(datetime.day_name(mon.add_days(5)), "Saturday")
+    })
+
+    t_month_name := TestCase("month_name returns the English month", fn() {
+        test.assert_eq(datetime.month_name(1), "January")
+        test.assert_eq(datetime.month_name(7), "July")
+        test.assert_eq(datetime.month_name(12), "December")
+        test.assert_eq(datetime.month_name(0), "")
+        test.assert_eq(datetime.month_name(13), "")
+    })
+
+    t_is_weekend := TestCase("is_weekend flags Sat + Sun", fn() {
+        // 2024-01-01 was a Monday. +5 = Saturday, +6 = Sunday.
+        mon := DateTime(1704067200, true)
+        test.assert_false(datetime.is_weekend(mon))
+        test.assert_true(datetime.is_weekend(mon.add_days(5)))
+        test.assert_true(datetime.is_weekend(mon.add_days(6)))
+        test.assert_false(datetime.is_weekend(mon.add_days(7)))
+    })
+
+    t_start_of_day := TestCase("start_of_day truncates to midnight", fn() {
+        // 2024-01-15 14:30:45 UTC
+        afternoon := DateTime(time.to_unix(2024, 1, 15, 14, 30, 45, 1), true)
+        sod := datetime.start_of_day(afternoon)
+        test.assert_eq(sod.hour, 0)
+        test.assert_eq(sod.minute, 0)
+        test.assert_eq(sod.second, 0)
+        test.assert_eq(sod.day, 15)
+    })
+
+    t_start_of_month := TestCase("start_of_month resets to the 1st", fn() {
+        mid := DateTime(time.to_unix(2024, 5, 17, 10, 0, 0, 1), true)
+        som := datetime.start_of_month(mid)
+        test.assert_eq(som.day, 1)
+        test.assert_eq(som.month, 5)
+        test.assert_eq(som.year, 2024)
+        test.assert_eq(som.hour, 0)
+    })
+
+    t_start_of_year := TestCase("start_of_year is January 1 at midnight", fn() {
+        mid := DateTime(time.to_unix(2024, 5, 17, 10, 0, 0, 1), true)
+        soy := datetime.start_of_year(mid)
+        test.assert_eq(soy.year, 2024)
+        test.assert_eq(soy.month, 1)
+        test.assert_eq(soy.day, 1)
+        test.assert_eq(soy.hour, 0)
+    })
+
+    t_diff_days := TestCase("diff_days returns signed whole-day count", fn() {
+        a := DateTime(1704067200, true)             // 2024-01-01
+        b := a.add_days(7)
+        test.assert_eq(datetime.diff_days(a, b), 7)
+        test.assert_eq(datetime.diff_days(b, a), -7)
+    })
+
+    t_humanize := TestCase("humanize produces a relative-time string", fn() {
+        now_ish := DateTime(1704067200, true)
+        past := now_ish.add_seconds(-3600)
+        future := now_ish.add_days(3)
+        test.assert_eq(datetime.humanize(past, now_ish), "1 hour ago")
+        test.assert_eq(datetime.humanize(future, now_ish), "in 3 days")
+    })
+
+    fails := test.run_all([
+        t_is_leap, t_days_in_month,
+        t_day_name, t_month_name,
+        t_is_weekend,
+        t_start_of_day, t_start_of_month, t_start_of_year,
+        t_diff_days, t_humanize
+    ])
+    if fails > 0 {
+        console.error("datetime tests failed (" + fails.str() + ")")
+    } else {
+        console.info("all datetime tests passed")
+    }
+}

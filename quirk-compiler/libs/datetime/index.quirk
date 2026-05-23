@@ -1,0 +1,206 @@
+---
+Calendar helpers built on top of `time.DateTime`. Where `time` exposes
+the raw epoch-arithmetic primitives, `datetime` adds the human-readable
+layer: leap years, day / month names, weekend checks, period anchors
+(start_of_day / week / month / year), human-friendly diffs.
+
+Pure Quirk on top of the existing `time` lib — no new C runtime.
+
+@example
+use datetime
+print(datetime.day_name(datetime.today()))   // "Monday"
+print(datetime.is_weekend(datetime.today())) // true / false
+print(datetime.is_leap(2024))                // true
+print(datetime.days_in_month(2024, 2))       // 29
+---
+from typing.primitives.string use { String }
+use time
+from time use { DateTime }
+
+// ─── Convenience constructors ─────────────────────────────────────────
+
+--- The current local date+time. Convenience wrapper over `time.now()`. ---
+define today() -> DateTime {
+    return time.now()
+}
+
+--- One day in the future, same time-of-day. ---
+define tomorrow() -> DateTime {
+    return time.now().add_days(1)
+}
+
+--- One day in the past, same time-of-day. ---
+define yesterday() -> DateTime {
+    return time.now().add_days(-1)
+}
+
+// ─── Calendar predicates ──────────────────────────────────────────────
+
+---
+Standard Gregorian leap-year rule: divisible by 4, except centuries that
+aren't divisible by 400. 2000 was leap; 1900 wasn't.
+
+@example
+is_leap(2024)   // true
+is_leap(2023)   // false
+is_leap(2000)   // true
+is_leap(1900)   // false
+---
+define is_leap(year: Int) -> Bool {
+    if year % 400 == 0 { return true }
+    if year % 100 == 0 { return false }
+    return year % 4 == 0
+}
+
+---
+Number of days in `month` (1-12) of `year`. Handles February's leap-year
+adjustment via `is_leap`.
+---
+define days_in_month(year: Int, month: Int) -> Int {
+    if month == 2 {
+        if is_leap(year) { return 29 } else { return 28 }
+    }
+    // 30-day months: April (4), June (6), September (9), November (11).
+    if month == 4 or month == 6 or month == 9 or month == 11 { return 30 }
+    return 31
+}
+
+---
+True for Saturday and Sunday (where `weekday` is 0=Sunday … 6=Saturday).
+---
+define is_weekend(dt: DateTime) -> Bool {
+    return dt.weekday == 0 or dt.weekday == 6
+}
+
+// ─── Names ────────────────────────────────────────────────────────────
+
+// Names are built inline rather than stored as module-level List globals
+// because List values held as LLVM GlobalVariables corrupt on read in
+// the current codegen — the storage works for Int/String scalars but not
+// for List/Tuple/Map containers yet.
+
+--- Full English weekday name for `dt`. `weekday` is 0=Sunday … 6=Saturday. ---
+define day_name(dt: DateTime) -> String {
+    names := ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+    // Pull through a typed local so the Any* from List.get is properly
+    // converted to String* before the return path — without this the
+    // return statement reads the raw void* and prints garbage.
+    s: String = names.get(dt.weekday)
+    return s
+}
+
+--- Full English month name for `month` (1-12). ---
+define month_name(month: Int) -> String {
+    if month < 1 or month > 12 { return "" }
+    names := ["January", "February", "March", "April", "May", "June",
+              "July", "August", "September", "October", "November", "December"]
+    s: String = names.get(month - 1)
+    return s
+}
+
+// ─── Period anchors ───────────────────────────────────────────────────
+
+---
+Truncate `dt` to midnight. Returns a fresh DateTime with the same date
+but `hour = minute = second = 0`.
+---
+define start_of_day(dt: DateTime) -> DateTime {
+    secs_into_day := dt.hour * 3600 + dt.minute * 60 + dt.second
+    return dt.add_seconds(-secs_into_day)
+}
+
+---
+Monday of the week containing `dt`, at midnight. Uses ISO weeks
+(Monday = first day). If `dt` already falls on Monday, returns midnight
+of the same day.
+---
+define start_of_week(dt: DateTime) -> DateTime {
+    // dt.weekday: 0=Sun, 1=Mon, ... 6=Sat. Days to subtract to reach Monday:
+    //   Sun → 6, Mon → 0, Tue → 1, ... Sat → 5
+    back := dt.weekday - 1
+    if back < 0 { back = back + 7 }
+    return start_of_day(dt.add_days(-back))
+}
+
+--- First day of `dt`'s month, at midnight. ---
+define start_of_month(dt: DateTime) -> DateTime {
+    return start_of_day(dt.add_days(-(dt.day - 1)))
+}
+
+--- January 1 of `dt`'s year, at midnight. ---
+define start_of_year(dt: DateTime) -> DateTime {
+    flag := 0
+    if dt.is_utc { flag = 1 }
+    epoch := time.to_unix(dt.year, 1, 1, 0, 0, 0, flag)
+    return DateTime(epoch, dt.is_utc)
+}
+
+// ─── Whole-unit diffs ─────────────────────────────────────────────────
+
+--- Whole minutes between `a` and `b` (signed; `b - a`). ---
+define diff_minutes(a: DateTime, b: DateTime) -> Int {
+    return b.diff_seconds(a) / 60
+}
+
+--- Whole hours between `a` and `b` (signed). ---
+define diff_hours(a: DateTime, b: DateTime) -> Int {
+    return b.diff_seconds(a) / 3600
+}
+
+---
+Whole days between `a` and `b` (signed). Calendar-day boundaries
+aren't honored — this is simply `seconds / 86400`.
+---
+define diff_days(a: DateTime, b: DateTime) -> Int {
+    return b.diff_seconds(a) / 86400
+}
+
+// ─── Human-readable diffs ─────────────────────────────────────────────
+
+---
+Approximate relative time vs `relative_to`, e.g. "2 hours ago" or
+"in 3 days". `relative_to` defaults to "now" via `time.now()`.
+Granularity grows with the gap: seconds → minutes → hours → days →
+weeks → months → years.
+
+@example
+humanize(yesterday())          // "1 day ago"
+humanize(tomorrow())           // "in 1 day"
+---
+define humanize(dt: DateTime, relative_to: DateTime = time.now()) -> String {
+    secs := relative_to.diff_seconds(dt)
+    future := secs < 0
+    abs_s := secs
+    if future { abs_s = -secs }
+
+    unit := ""
+    n := 0
+    if abs_s < 60 {
+        n = abs_s
+        unit = "second"
+    } elif abs_s < 3600 {
+        n = abs_s / 60
+        unit = "minute"
+    } elif abs_s < 86400 {
+        n = abs_s / 3600
+        unit = "hour"
+    } elif abs_s < 604800 {
+        n = abs_s / 86400
+        unit = "day"
+    } elif abs_s < 2592000 {
+        n = abs_s / 604800
+        unit = "week"
+    } elif abs_s < 31536000 {
+        n = abs_s / 2592000
+        unit = "month"
+    } else {
+        n = abs_s / 31536000
+        unit = "year"
+    }
+    plural := ""
+    if n != 1 { plural = "s" }
+    if future {
+        return "in " + n.str() + " " + unit + plural
+    }
+    return n.str() + " " + unit + plural + " ago"
+}

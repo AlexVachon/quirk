@@ -143,7 +143,9 @@ Token Lexer::nextToken()
         if (ident == "while")    return {TokenType::WHILE,      ident, startLine, startCol};
         if (ident == "for")      return {TokenType::FOR,        ident, startLine, startCol};
         if (ident == "in")       return {TokenType::IN,         ident, startLine, startCol};
-        if (ident == "ref")      return {TokenType::REF,        ident, startLine, startCol};
+        // `ref` was reserved for future pass-by-reference semantics, but
+        // codegen never used the flag. Treat as a plain identifier so
+        // names like `ref` aren't blocked from real code.
         if (ident == "with")     return {TokenType::WITH,       ident, startLine, startCol};
         if (ident == "as")       return {TokenType::AS,         ident, startLine, startCol};
         if (ident == "del")      return {TokenType::DEL,        ident, startLine, startCol};

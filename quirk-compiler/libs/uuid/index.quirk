@@ -1,0 +1,108 @@
+---
+RFC 4122 v4 UUIDs — 128 random bits, formatted as
+`xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx` where:
+
+  * the literal `4` at position 14 marks the version (random),
+  * `y` is one of `8 9 a b` (variant: RFC 4122),
+  * everything else is hex from a CSPRNG-quality stream (we use the
+    `random` lib, which is xoshiro256** auto-seeded from time+pid).
+
+This is pure-Quirk and composes directly on `random` — see
+`libs/uuid/index.quirk` for an example of building a small lib on top
+of another lib without any new C runtime.
+
+@example
+use uuid
+print(uuid.v4())          // e.g. "550e8400-e29b-41d4-a716-446655440000"
+print(uuid.nil())          // "00000000-0000-0000-0000-000000000000"
+print(uuid.is_valid("550e8400-e29b-41d4-a716-446655440000"))  // true
+---
+from typing.primitives.string use { String }
+use random
+
+// Lookup table for hex digit emission. Kept module-private so callers
+// can't accidentally mutate it.
+_HEX := "0123456789abcdef"
+
+// Indexes (0-based, dash-free) of the two special slots in a v4 UUID:
+//   * position 12 is the version nibble — always `4`,
+//   * position 16 is the variant nibble — one of `8 9 a b`.
+// Anything else is fully random in `[0..15]`.
+define _hex_digit(idx: Int) -> String {
+    return _HEX.substring(idx, idx + 1)
+}
+
+---
+Generate a random RFC 4122 v4 UUID. Two calls back-to-back return
+different values (with overwhelming probability — 122 random bits of
+entropy each).
+
+@example
+id := uuid.v4()
+print(id.length())           // 36
+---
+define v4() -> String {
+    buf := ""
+    i := 0
+    while i < 32 {
+        if i == 12 {
+            buf += "4"                 // version 4
+        } elif i == 16 {
+            // Variant: must start with binary `10xx`, i.e. one of
+            // hex 8, 9, a, b.
+            buf += _hex_digit(8 + random.randint(0, 3))
+        } else {
+            buf += _hex_digit(random.randint(0, 15))
+        }
+        i = i + 1
+    }
+    // Insert dashes at the canonical 8-4-4-4-12 group boundaries.
+    return buf.substring(0,  8) + "-" +
+           buf.substring(8,  12) + "-" +
+           buf.substring(12, 16) + "-" +
+           buf.substring(16, 20) + "-" +
+           buf.substring(20, 32)
+}
+
+---
+The all-zero "nil" UUID — useful as a sentinel for "no UUID yet" in
+schemas that disallow nulls.
+---
+define nil() -> String {
+    return "00000000-0000-0000-0000-000000000000"
+}
+
+// Internal predicate: is `c` (length-1 String) a valid lowercase hex
+// digit? `parse` and `is_valid` both call into this. We use a literal
+// set lookup because Quirk's String `<=` doesn't compare lexicographically
+// on single chars the way you'd expect.
+define _is_hex(c: String) -> Bool {
+    return _HEX.contains(c)
+}
+
+---
+Lightweight format check. Returns true iff `s` matches the canonical
+36-char shape with dashes at positions 8 / 13 / 18 / 23 and hex
+characters everywhere else. The version / variant nibbles aren't
+enforced — anything you parse cleanly via `v4()` will round-trip.
+
+@example
+uuid.is_valid("550e8400-e29b-41d4-a716-446655440000")   // true
+uuid.is_valid("not-a-uuid")                             // false
+uuid.is_valid("550E8400-E29B-41D4-A716-446655440000")   // true (case-insensitive)
+---
+define is_valid(s: String) -> Bool {
+    if s.length() != 36 { return false }
+    lower := s.lower()
+    i := 0
+    while i < 36 {
+        c := lower.substring(i, i + 1)
+        if i == 8 or i == 13 or i == 18 or i == 23 {
+            if c != "-" { return false }
+        } else {
+            if _is_hex(c) == false { return false }
+        }
+        i = i + 1
+    }
+    return true
+}

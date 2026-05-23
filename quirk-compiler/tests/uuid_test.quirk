@@ -1,0 +1,77 @@
+// uuid — RFC 4122 v4 UUIDs, generated from the `random` xoshiro256** stream.
+
+use console
+use uuid
+use test
+from test use { TestCase }
+
+define main() -> void {
+
+    t_format := TestCase("v4 returns a 36-char xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx string", fn() {
+        u := uuid.v4()
+        test.assert_eq(u.length(), 36)
+        // Dashes at the canonical 8-4-4-4-12 positions.
+        test.assert_eq(u.substring(8, 9), "-")
+        test.assert_eq(u.substring(13, 14), "-")
+        test.assert_eq(u.substring(18, 19), "-")
+        test.assert_eq(u.substring(23, 24), "-")
+    })
+
+    t_version := TestCase("v4 sets the version nibble to '4'", fn() {
+        u := uuid.v4()
+        // Position 14 in the dashed form (0-indexed) is the version digit.
+        test.assert_eq(u.substring(14, 15), "4")
+    })
+
+    t_variant := TestCase("v4 sets the variant nibble to one of 8 9 a b", fn() {
+        u := uuid.v4()
+        v := u.substring(19, 20)
+        ok := v == "8" or v == "9" or v == "a" or v == "b"
+        test.assert_true(ok)
+    })
+
+    t_unique := TestCase("v4 returns distinct values on repeat calls", fn() {
+        a := uuid.v4()
+        b := uuid.v4()
+        c := uuid.v4()
+        // 122 random bits — collision probability is astronomically small.
+        test.assert_ne(a, b)
+        test.assert_ne(b, c)
+        test.assert_ne(a, c)
+    })
+
+    t_nil := TestCase("nil() is the all-zero UUID", fn() {
+        test.assert_eq(uuid.nil(), "00000000-0000-0000-0000-000000000000")
+        test.assert_eq(uuid.nil().length(), 36)
+    })
+
+    t_is_valid_true := TestCase("is_valid accepts well-formed UUIDs", fn() {
+        test.assert_true(uuid.is_valid(uuid.v4()))
+        test.assert_true(uuid.is_valid(uuid.nil()))
+        test.assert_true(uuid.is_valid("550e8400-e29b-41d4-a716-446655440000"))
+        // Case-insensitive — uppercase hex still validates.
+        test.assert_true(uuid.is_valid("550E8400-E29B-41D4-A716-446655440000"))
+    })
+
+    t_is_valid_false := TestCase("is_valid rejects malformed input", fn() {
+        test.assert_false(uuid.is_valid(""))
+        test.assert_false(uuid.is_valid("not-a-uuid"))
+        // Wrong length.
+        test.assert_false(uuid.is_valid("550e8400-e29b-41d4-a716"))
+        // Missing dash.
+        test.assert_false(uuid.is_valid("550e8400e29b-41d4-a716-446655440000g"))
+        // Non-hex character.
+        test.assert_false(uuid.is_valid("550e8400-e29b-41d4-a716-44665544000z"))
+    })
+
+    fails := test.run_all([
+        t_format, t_version, t_variant,
+        t_unique, t_nil,
+        t_is_valid_true, t_is_valid_false
+    ])
+    if fails > 0 {
+        console.error("uuid tests failed (" + fails.str() + ")")
+    } else {
+        console.info("all uuid tests passed")
+    }
+}

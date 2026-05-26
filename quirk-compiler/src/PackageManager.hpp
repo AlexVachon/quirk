@@ -3497,6 +3497,157 @@ static int cmd_release(const std::vector<std::string>& args) {
     return 0;
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// `quirk bump-compiler patch|minor|major [--commit] [--tag] [--push]`
+//
+// Edits the `QUIRK_VERSION` constant in src/PackageManager.hpp in place.
+// The compiler itself doesn't have a `quirk.toml`, so `quirk release`
+// doesn't apply; this command is the canonical path to roll a new
+// compiler version. Locates the source tree by walking up from the
+// running binary (`<root>/bin/quirk` → `<root>/src/PackageManager.hpp`),
+// so it always edits the source the running binary was built from.
+// Doesn't rebuild — that's an explicit `make` step the user runs after.
+// ─────────────────────────────────────────────────────────────────────────
+
+static int cmd_bump_compiler(const std::vector<std::string>& args) {
+    std::string bumpPart;
+    bool commit = false, tag = false, push = false;
+    for (size_t i = 0; i < args.size(); i++) {
+        const std::string& a = args[i];
+        if (a == "--help" || a == "-h") {
+            std::cout <<
+                "quirk bump-compiler <patch|minor|major> [--commit] [--tag] [--push]\n"
+                "    Bump the QUIRK_VERSION constant in src/PackageManager.hpp.\n"
+                "    The compiler doesn't have a quirk.toml, so `quirk release`\n"
+                "    doesn't apply — this is the dedicated path.\n"
+                "    --commit   `git add` + commit the version bump (and CHANGELOG.md if present)\n"
+                "    --tag      annotated git tag `vX.Y.Z` (implies --commit)\n"
+                "    --push     push the commit and tag to origin (implies --tag)\n"
+                "    Always print the rebuild reminder; never rebuilds for you.\n";
+            return 0;
+        }
+        if (a == "--commit") commit = true;
+        else if (a == "--tag") { tag = true; commit = true; }
+        else if (a == "--push") { push = true; tag = true; commit = true; }
+        else if (bumpPart.empty()) bumpPart = a;
+        else {
+            log::err("bump-compiler: unknown flag '" + a + "'");
+            return 1;
+        }
+    }
+    if (bumpPart != "patch" && bumpPart != "minor" && bumpPart != "major") {
+        log::err("bump-compiler: first argument must be patch | minor | major");
+        return 1;
+    }
+
+    // Locate src/PackageManager.hpp by walking up from /proc/self/exe.
+    // The binary lives at <root>/bin/quirk; the source is <root>/src/...
+    char buf[4096];
+    ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    if (n <= 0) {
+        log::err("bump-compiler: can't read /proc/self/exe");
+        return 1;
+    }
+    buf[n] = '\0';
+    fs::path src_path;
+    fs::path root = fs::path(buf).parent_path();
+    for (int up = 0; up < 6 && !root.empty(); up++) {
+        fs::path candidate = root / "src" / "PackageManager.hpp";
+        if (fs::exists(candidate)) { src_path = candidate; break; }
+        root = root.parent_path();
+    }
+    if (src_path.empty()) {
+        log::err("bump-compiler: couldn't find src/PackageManager.hpp near "
+                 + std::string(buf));
+        std::cerr << "    " << log::dim("(this command needs to run from a built-from-source compiler)") << "\n";
+        return 1;
+    }
+
+    // Read the file, find the version line, extract + replace.
+    std::ifstream in(src_path);
+    std::string content((std::istreambuf_iterator<char>(in)),
+                         std::istreambuf_iterator<char>());
+    in.close();
+
+    std::regex re(R"((QUIRK_VERSION\s*=\s*)\"(\d+\.\d+\.\d+)\")");
+    std::smatch m;
+    if (!std::regex_search(content, m, re)) {
+        log::err("bump-compiler: couldn't locate the `QUIRK_VERSION = \"X.Y.Z\"` line in "
+                 + src_path.string());
+        return 1;
+    }
+    std::string oldVersion = m[2];
+    std::string newVersion = bump_version(oldVersion, bumpPart);
+    std::string replaced = std::regex_replace(content, re,
+        m[1].str() + "\"" + newVersion + "\"",
+        std::regex_constants::format_first_only);
+
+    {
+        std::ofstream out(src_path);
+        if (!out) { log::err("bump-compiler: can't write " + src_path.string()); return 1; }
+        out << replaced;
+    }
+
+    log::ok("bumped " + oldVersion + " → " + newVersion + "  (" + src_path.string() + ")");
+    std::cout << "  " << log::dim("rebuild with `make` from " + src_path.parent_path().parent_path().string()) << "\n";
+
+    if (!commit) return 0;
+
+    // git ops run in the source tree's root.
+    fs::path compiler_root = src_path.parent_path().parent_path();
+    fs::path repo_root = compiler_root;
+    // Walk further up if `.git` lives at a parent (compiler is in a subdir).
+    for (int up = 0; up < 4 && !repo_root.empty(); up++) {
+        if (fs::is_directory(repo_root / ".git")) break;
+        repo_root = repo_root.parent_path();
+    }
+    if (!fs::is_directory(repo_root / ".git")) {
+        log::warn("--commit requested but no .git found near " + compiler_root.string());
+        return 1;
+    }
+
+    // Stage the version bump (and CHANGELOG.md if it exists alongside).
+    fs::path rel_hpp  = fs::relative(src_path, repo_root);
+    fs::path changelog = compiler_root / "CHANGELOG.md";
+    std::string add_cmd = "cd \"" + repo_root.string() + "\" && git add \""
+                        + rel_hpp.string() + "\"";
+    if (fs::exists(changelog)) {
+        fs::path rel_cl = fs::relative(changelog, repo_root);
+        add_cmd += " \"" + rel_cl.string() + "\"";
+    }
+    add_cmd += " 2>&1";
+    if (std::system(add_cmd.c_str()) != 0) {
+        log::err("git add failed");
+        return 1;
+    }
+    std::string commit_cmd = "cd \"" + repo_root.string() + "\" && git commit -m \"release v"
+                           + newVersion + "\" 2>&1";
+    if (std::system(commit_cmd.c_str()) != 0) {
+        log::err("git commit failed (nothing to commit?)");
+        return 1;
+    }
+    log::ok("committed `release v" + newVersion + "`");
+
+    if (!tag) return 0;
+    std::string tag_cmd = "cd \"" + repo_root.string() + "\" && git tag -a v"
+                        + newVersion + " -m \"Quirk " + newVersion + "\" 2>&1";
+    if (std::system(tag_cmd.c_str()) != 0) {
+        log::err("git tag failed");
+        return 1;
+    }
+    log::ok("tagged v" + newVersion);
+
+    if (!push) return 0;
+    std::string push_cmd = "cd \"" + repo_root.string() + "\" && git push && git push origin v"
+                         + newVersion + " 2>&1";
+    if (std::system(push_cmd.c_str()) != 0) {
+        log::err("git push failed");
+        return 1;
+    }
+    log::ok("pushed v" + newVersion + " to origin");
+    return 0;
+}
+
 // `quirk pkg versions <name>` — list every published version of a package
 // by querying its git tags (via `git ls-remote`, cached 24h).
 static int cmd_versions(const std::vector<std::string>& args) {
@@ -4626,7 +4777,7 @@ static bool is_subcommand(const std::string& arg) {
            arg == "run" || arg == "eval" || arg == "module" ||
            arg == "env" || arg == "new" || arg == "help" ||
            arg == "script" || arg == "sync" || arg == "stdlib" || arg == "fmt" ||
-           arg == "repl" || arg == "test";
+           arg == "repl" || arg == "test" || arg == "bump-compiler";
 }
 
 // Drop argv[1] (a verb) and shift everything left. argc decreases by 1.
@@ -4785,6 +4936,7 @@ inline bool dispatch(int& argc, char** argv, int& outRc) {
     else if (verb == "check")        outRc = cmd_check(verbArgs);
     else if (verb == "versions")     outRc = cmd_versions(verbArgs);
     else if (verb == "release")      outRc = cmd_release(verbArgs);
+    else if (verb == "bump-compiler") outRc = cmd_bump_compiler(verbArgs);
     else if (verb == "audit")        outRc = cmd_audit(verbArgs);
     else if (verb == "script")       outRc = cmd_script(verbArgs);
     else if (verb == "sync")         outRc = cmd_sync(verbArgs);

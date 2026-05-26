@@ -1,37 +1,184 @@
 ---
-Calendar helpers built on top of `time.DateTime`. Where `time` exposes
-the raw epoch-arithmetic primitives, `datetime` adds the human-readable
-layer: leap years, day / month names, weekend checks, period anchors
-(start_of_day / week / month / year), human-friendly diffs.
+Calendar dates + times. Owns the `DateTime` struct and the surrounding
+helpers: constructors (`now`, `from_unix`, `from_iso`, `make`, …),
+arithmetic on the struct (`add_seconds`, `diff_seconds`, `is_before`),
+calendar predicates (`is_leap`, `is_weekend`), period anchors
+(`start_of_day` / `week` / `month` / `year`), and human-readable
+diffs.
 
-Pure Quirk on top of the existing `time` lib — no new C runtime.
+Built on top of the low-level `time` lib, which provides the Unix epoch
+and the C-backed component accessors. Most user code should reach for
+`datetime`; only drop down to `time` for raw epoch arithmetic.
 
 @example
 use datetime
-print(datetime.day_name(datetime.today()))   // "Monday"
-print(datetime.is_weekend(datetime.today())) // true / false
+print(datetime.now().iso())                  // 2026-05-08T14:23:01+00:00
+print(datetime.day_name(datetime.today()))   // "Friday"
 print(datetime.is_leap(2024))                // true
-print(datetime.days_in_month(2024, 2))       // 29
+
+deadline := datetime.now().add_days(7)
+print(datetime.humanize(deadline))           // "in 7 days"
 ---
 from typing.primitives.string use { String }
+from typing.exceptions.types use { ValueError }
 use time
-from time use { DateTime }
 
-// ─── Convenience constructors ─────────────────────────────────────────
+// ───────────────────────── DateTime ─────────────────────────
 
---- The current local date+time. Convenience wrapper over `time.now()`. ---
+---
+Snapshot of a moment in time. Construct via `datetime.now()`,
+`datetime.from_unix(s)`, or `datetime.from_iso(s)` rather than calling
+`__init` directly.
+---
+struct DateTime {
+    epoch: Int // Unix seconds (negative for pre-1970)
+    year: Int
+    month: Int // 1-12
+    day: Int // 1-31
+    hour: Int // 0-23
+    minute: Int // 0-59
+    second: Int // 0-60
+    weekday: Int // 0=Sunday
+    is_utc: Bool
+
+    define __init(self, epoch: Int, utc: Bool) -> void {
+        flag := 0
+        if utc { flag = 1 }
+        self.epoch = epoch
+        self.year = time.year(epoch, flag)
+        self.month = time.month(epoch, flag)
+        self.day = time.day(epoch, flag)
+        self.hour = time.hour(epoch, flag)
+        self.minute = time.minute(epoch, flag)
+        self.second = time.second(epoch, flag)
+        self.weekday = time.weekday(epoch, flag)
+        self.is_utc = utc
+    }
+
+    --- ISO-8601 representation. ---
+    define iso(self) -> String {
+        flag := 0
+        if self.is_utc { flag = 1 }
+        return time.iso_at(self.epoch, flag)
+    }
+
+    ---
+    Format using a strftime-style spec. Common codes:
+      `%Y` 4-digit year   `%m` month 01-12   `%d` day 01-31
+      `%H` hour 00-23     `%M` minute 00-59  `%S` second 00-59
+      `%A` weekday name   `%a` short day      `%B` month name
+      `%j` day-of-year    `%w` weekday 0-6
+    ---
+    define format(self, fmt: String) -> String {
+        flag := 0
+        if self.is_utc { flag = 1 }
+        return time.format_at(self.epoch, fmt, flag)
+    }
+
+    --- Returns a new DateTime offset by `n` seconds (can be negative). ---
+    define add_seconds(self, n: Int) -> DateTime {
+        return DateTime(self.epoch + n, self.is_utc)
+    }
+
+    define add_minutes(self, n: Int) -> DateTime { return self.add_seconds(n * 60) }
+    define add_hours(self, n: Int) -> DateTime { return self.add_seconds(n * 3600) }
+    define add_days(self, n: Int) -> DateTime { return self.add_seconds(n * 86400) }
+
+    --- `self - other` in seconds. Negative if `self` is earlier. ---
+    define diff_seconds(self, other: DateTime) -> Int {
+        return self.epoch - other.epoch
+    }
+
+    define is_before(self, other: DateTime) -> Bool { return self.epoch < other.epoch }
+    define is_after(self, other: DateTime) -> Bool { return self.epoch > other.epoch }
+
+    --- Default str: ISO-8601. ---
+    define __str(self) -> String {
+        return self.iso()
+    }
+
+    define __eq(self, other: DateTime) -> Bool { return self.epoch == other.epoch }
+    define __lt(self, other: DateTime) -> Bool { return self.epoch < other.epoch }
+}
+
+// ───────────────────────── Constructors ─────────────────────────
+
+--- Current local DateTime. ---
+define now() -> DateTime {
+    return DateTime(time.unix_now(), false)
+}
+
+--- Current UTC DateTime. ---
+define utc_now() -> DateTime {
+    return DateTime(time.unix_now(), true)
+}
+
+---
+Build a DateTime from an explicit Unix epoch (seconds), interpreted in the
+local time zone.
+---
+define from_unix(epoch: Int) -> DateTime {
+    return DateTime(epoch, false)
+}
+
+--- Build a DateTime from an explicit Unix epoch, interpreted as UTC. ---
+define utc_from_unix(epoch: Int) -> DateTime {
+    return DateTime(epoch, true)
+}
+
+---
+Parse an ISO-8601 string (`"YYYY-MM-DD[Thh:mm:ss[Z]]"`).
+Trailing `Z` → UTC; otherwise local. Throws `ValueError` on bad input.
+---
+define from_iso(s: String) -> DateTime {
+    epoch := time.parse_iso(s)
+    if epoch == -1 {
+        throw ValueError("datetime.from_iso: cannot parse '" + s + "'")
+    }
+    is_utc := false
+    if s.endswith("Z") { is_utc = true }
+    return DateTime(epoch, is_utc)
+}
+
+---
+Build a DateTime from explicit calendar components (local time).
+@throws ValueError if the components are out of range.
+---
+define make(year: Int, month: Int, day: Int, hour: Int = 0, minute: Int = 0, second: Int = 0) -> DateTime {
+    epoch := time.to_unix(year, month, day, hour, minute, second, 0)
+    if epoch == -1 {
+        throw ValueError("datetime.make: invalid date components")
+    }
+    return DateTime(epoch, false)
+}
+
+---
+Build a DateTime from explicit calendar components (UTC).
+@throws ValueError on out-of-range components.
+---
+define utc_make(year: Int, month: Int, day: Int, hour: Int = 0, minute: Int = 0, second: Int = 0) -> DateTime {
+    epoch := time.to_unix(year, month, day, hour, minute, second, 1)
+    if epoch == -1 {
+        throw ValueError("datetime.utc_make: invalid date components")
+    }
+    return DateTime(epoch, true)
+}
+
+// ─── Convenience: relative-day constructors ───────────────────────────
+
+--- The current local date+time. Synonym for `now()`. ---
 define today() -> DateTime {
-    return time.now()
+    return now()
 }
 
 --- One day in the future, same time-of-day. ---
 define tomorrow() -> DateTime {
-    return time.now().add_days(1)
+    return now().add_days(1)
 }
 
 --- One day in the past, same time-of-day. ---
 define yesterday() -> DateTime {
-    return time.now().add_days(-1)
+    return now().add_days(-1)
 }
 
 // ─── Calendar predicates ──────────────────────────────────────────────
@@ -159,7 +306,7 @@ define diff_days(a: DateTime, b: DateTime) -> Int {
 
 ---
 Approximate relative time vs `relative_to`, e.g. "2 hours ago" or
-"in 3 days". `relative_to` defaults to "now" via `time.now()`.
+"in 3 days". `relative_to` defaults to "now" via `now()`.
 Granularity grows with the gap: seconds → minutes → hours → days →
 weeks → months → years.
 
@@ -167,7 +314,7 @@ weeks → months → years.
 humanize(yesterday())          // "1 day ago"
 humanize(tomorrow())           // "in 1 day"
 ---
-define humanize(dt: DateTime, relative_to: DateTime = time.now()) -> String {
+define humanize(dt: DateTime, relative_to: DateTime = now()) -> String {
     secs := relative_to.diff_seconds(dt)
     future := secs < 0
     abs_s := secs

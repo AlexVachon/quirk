@@ -1,9 +1,15 @@
+// The DateTime struct moved from `time` to `datetime` — `time` now owns
+// only the low-level epoch + component externs. This test exercises the
+// high-level type via `datetime` (the convention for user code) plus a
+// raw `time.unix_now()` call to prove the externs still work.
+
+use datetime
 use time
 
 define main() -> void {
     print("=== now / utc_now ===")
-    local := time.now()
-    utc := time.utc_now()
+    local := datetime.now()
+    utc := datetime.utc_now()
     print("local: ${local.iso()}")
     print("utc:   ${utc.iso()}")
     print("epoch matches: ${local.epoch == utc.epoch}")
@@ -27,17 +33,17 @@ define main() -> void {
     print("+1h diff = ${next_hour.diff_seconds(local)} (expected 3600)")
 
     print("=== make / utc_make ===")
-    epoch_zero := time.utc_make(1970, 1, 1, 0, 0, 0)
+    epoch_zero := datetime.utc_make(1970, 1, 1, 0, 0, 0)
     print("1970-01-01 epoch: ${epoch_zero.epoch} (expected 0)")
     print("1970-01-01 iso:   ${epoch_zero.iso()}")
 
-    xmas := time.utc_make(2024, 12, 25, 9, 30, 0)
+    xmas := datetime.utc_make(2024, 12, 25, 9, 30, 0)
     print("Christmas iso: ${xmas.iso()}")
     print("year=${xmas.year} month=${xmas.month} day=${xmas.day}")
 
     print("=== from_iso round trip ===")
     src := "2026-01-15T12:34:56Z"
-    parsed := time.from_iso(src)
+    parsed := datetime.from_iso(src)
     print("parsed: ${parsed.iso()}")
     print("round-trip match: ${parsed.iso() == src}")
 
@@ -47,17 +53,22 @@ define main() -> void {
     print("format Y-m-d: ${iso_date}")
 
     print("=== from_unix ===")
-    fixed := time.utc_from_unix(1577836800)
+    fixed := datetime.utc_from_unix(1577836800)
     print("epoch 1577836800 = ${fixed.iso()}") // 2020-01-01 UTC
 
     print("=== comparison ===")
-    a := time.utc_make(2024, 1, 1, 0, 0, 0)
-    b := time.utc_make(2025, 1, 1, 0, 0, 0)
+    a := datetime.utc_make(2024, 1, 1, 0, 0, 0)
+    b := datetime.utc_make(2025, 1, 1, 0, 0, 0)
     print("a == a: ${a == a}")
     print("a == b: ${a == b}")
     print("a < b:  ${a < b}")
     print("b < a:  ${b < a}")
     print("a != b: ${a != b}")
+
+    print("=== raw time externs still work ===")
+    epoch := time.unix_now()
+    print("unix_now > 0: ${epoch > 0}")
+    print("year(0, utc=1) = ${time.year(0, 1)} (expected 1970)")
 
     print("Done.")
 }

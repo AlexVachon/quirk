@@ -2,8 +2,10 @@
 
 use console
 use datetime
+from datetime use { DateTime }
+
 use time
-from time use { DateTime }
+
 use test
 from test use { TestCase }
 

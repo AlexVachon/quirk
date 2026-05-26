@@ -1,0 +1,107 @@
+// statistics — summary statistics on Lists of Int / Double.
+
+use console
+use statistics
+use test
+from test use { TestCase }
+
+define main() -> void {
+
+    t_mean := TestCase("mean of [1..10] is 5.5", fn() {
+        m := statistics.mean([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+        test.assert_approx(m, 5.5, 0.0001)
+    })
+
+    // Note: a "Doubles in a List" test would belong here, but Quirk's
+    // codegen can't currently box Double primitives into a List (neither
+    // `[1.0, 2.0]` literal nor `list.append(1.0)`). The `_to_double`
+    // coercion in this lib still lets a mixed-type or String-bearing
+    // List flow through `mean` / etc.; the gap is in storing raw Doubles.
+
+    t_median_odd := TestCase("median of odd-length is the middle element", fn() {
+        m := statistics.median([1, 2, 3, 4, 5])
+        test.assert_approx(m, 3.0, 0.0001)
+    })
+
+    t_median_even := TestCase("median of even-length averages the middles", fn() {
+        m := statistics.median([1, 2, 3, 4])
+        test.assert_approx(m, 2.5, 0.0001)
+    })
+
+    t_median_unsorted := TestCase("median sorts before picking", fn() {
+        m := statistics.median([5, 1, 3, 2, 4])
+        test.assert_approx(m, 3.0, 0.0001)
+    })
+
+    t_median_low_high := TestCase("median_low / median_high straddle the gap", fn() {
+        xs := [1, 2, 3, 4]
+        test.assert_approx(statistics.median_low(xs), 2.0, 0.0001)
+        test.assert_approx(statistics.median_high(xs), 3.0, 0.0001)
+    })
+
+    t_mode := TestCase("mode returns the most common element", fn() {
+        test.assert_eq(statistics.mode([1, 2, 2, 3, 3, 3]), "3")
+        test.assert_eq(statistics.mode(["a", "b", "a", "c", "a"]), "a")
+    })
+
+    t_variance := TestCase("sample variance of [2,4,4,4,5,5,7,9] is 32/7", fn() {
+        // Mean = 5, sum of squared deviations = 32. Sample variance
+        // divides by n-1 = 7 → 32/7 ≈ 4.5714.
+        v := statistics.variance([2, 4, 4, 4, 5, 5, 7, 9])
+        test.assert_approx(v, 32.0 / 7.0, 0.0001)
+    })
+
+    t_stdev := TestCase("sample stdev matches sqrt(variance)", fn() {
+        // sqrt(32/7) ≈ 2.1381
+        s := statistics.stdev([2, 4, 4, 4, 5, 5, 7, 9])
+        test.assert_approx(s, 2.1380899, 0.0001)
+    })
+
+    t_pvariance := TestCase("population variance of [2,4,4,4,5,5,7,9] is 4", fn() {
+        // Same input as `t_variance`, but the population formula divides
+        // by n = 8 → 32/8 = 4. The classic textbook value.
+        v := statistics.pvariance([2, 4, 4, 4, 5, 5, 7, 9])
+        test.assert_approx(v, 4.0, 0.0001)
+    })
+
+    t_pstdev := TestCase("population stdev = sqrt(pvariance)", fn() {
+        s := statistics.pstdev([2, 4, 4, 4, 5, 5, 7, 9])
+        test.assert_approx(s, 2.0, 0.0001)
+    })
+
+    t_min_max := TestCase("min_val and max_val find the extrema", fn() {
+        xs := [3, 1, 4, 1, 5, 9, 2, 6]
+        test.assert_approx(statistics.min_val(xs), 1.0, 0.0001)
+        test.assert_approx(statistics.max_val(xs), 9.0, 0.0001)
+    })
+
+    t_quantile_quarters := TestCase("quantile(0.25 / 0.75) returns the quartiles", fn() {
+        xs := [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        // Linear-interp method: pos = q * (n - 1).
+        // q=0.25 → pos=2.25 → 3 + 0.25*(4-3) = 3.25.
+        // q=0.75 → pos=6.75 → 7 + 0.75*(8-7) = 7.75.
+        test.assert_approx(statistics.quantile(xs, 0.25), 3.25, 0.0001)
+        test.assert_approx(statistics.quantile(xs, 0.75), 7.75, 0.0001)
+    })
+
+    t_quantile_extremes := TestCase("quantile(0) and quantile(1) return the bounds", fn() {
+        xs := [10, 20, 30, 40, 50]
+        test.assert_approx(statistics.quantile(xs, 0.0), 10.0, 0.0001)
+        test.assert_approx(statistics.quantile(xs, 1.0), 50.0, 0.0001)
+    })
+
+    fails := test.run_all([
+        t_mean,
+        t_median_odd, t_median_even, t_median_unsorted,
+        t_median_low_high,
+        t_mode,
+        t_variance, t_stdev, t_pvariance, t_pstdev,
+        t_min_max,
+        t_quantile_quarters, t_quantile_extremes
+    ])
+    if fails > 0 {
+        console.error("statistics tests failed (" + fails.str() + ")")
+    } else {
+        console.info("all statistics tests passed")
+    }
+}

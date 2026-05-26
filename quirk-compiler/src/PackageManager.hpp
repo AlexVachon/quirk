@@ -3648,6 +3648,169 @@ static int cmd_bump_compiler(const std::vector<std::string>& args) {
     return 0;
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// `quirk completion <bash|zsh|fish>` — emit a shell completion script
+// to stdout. Install via:
+//     echo 'source <(quirk completion bash)' >> ~/.bashrc
+//     echo 'source <(quirk completion zsh)'  >> ~/.zshrc
+//     quirk completion fish > ~/.config/fish/completions/quirk.fish
+//
+// Verb list lives in the emitted script so tab-completion stays fast
+// (no subprocess on every keystroke). Re-run the install line after any
+// `bump-compiler` to pick up new verbs.
+// ─────────────────────────────────────────────────────────────────────────
+
+static int cmd_completion(const std::vector<std::string>& args) {
+    std::string shell = args.empty() ? "" : args[0];
+    if (shell == "--help" || shell == "-h" || shell.empty()) {
+        std::cout <<
+            "quirk completion <bash|zsh|fish>\n"
+            "    Emit a shell completion script on stdout.\n"
+            "    Install:\n"
+            "      bash: echo 'source <(quirk completion bash)' >> ~/.bashrc\n"
+            "      zsh:  echo 'source <(quirk completion zsh)'  >> ~/.zshrc\n"
+            "      fish: quirk completion fish > ~/.config/fish/completions/quirk.fish\n";
+        return shell.empty() ? 1 : 0;
+    }
+
+    if (shell == "bash" || shell == "zsh") {
+        // Zsh: front the bash script with bashcompinit so `complete -F`
+        // works. The completion logic itself is identical.
+        if (shell == "zsh") {
+            std::cout <<
+                "# Quirk completion for zsh — runs the bash script under bashcompinit.\n"
+                "autoload -U +X compinit && compinit\n"
+                "autoload -U +X bashcompinit && bashcompinit\n";
+        }
+        std::cout << R"BASH(_quirk_complete() {
+    local cur prev verbs
+    cur="${COMP_WORDS[COMP_CWORD]}"
+    prev="${COMP_WORDS[COMP_CWORD-1]}"
+
+    # Top-level verbs (keep in sync with PackageManager.hpp::dispatch).
+    verbs="run repl test fmt install upgrade remove uninstall list packages show init new venv version eval module deps env cache registry register check versions release bump-compiler audit script sync stdlib pkg help completion"
+
+    # First word: complete the verb itself.
+    if [ "$COMP_CWORD" -eq 1 ]; then
+        COMPREPLY=($(compgen -W "$verbs" -- "$cur"))
+        return
+    fi
+
+    # Dispatch on the verb for smarter per-command completion.
+    case "${COMP_WORDS[1]}" in
+        run|fmt|test)
+            # Complete .quirk file paths.
+            COMPREPLY=($(compgen -f -X '!*.quirk' -- "$cur"))
+            COMPREPLY+=($(compgen -d -- "$cur"))
+            ;;
+        bump-compiler)
+            if [ "$COMP_CWORD" -eq 2 ]; then
+                COMPREPLY=($(compgen -W "patch minor major" -- "$cur"))
+            else
+                COMPREPLY=($(compgen -W "--commit --tag --push --help" -- "$cur"))
+            fi
+            ;;
+        release)
+            if [ "$prev" = "--bump" ]; then
+                COMPREPLY=($(compgen -W "patch minor major" -- "$cur"))
+            else
+                COMPREPLY=($(compgen -W "--bump --no-push --help" -- "$cur"))
+            fi
+            ;;
+        venv)
+            if [ "$COMP_CWORD" -eq 2 ]; then
+                COMPREPLY=($(compgen -W "new repair info list" -- "$cur"))
+            else
+                COMPREPLY=($(compgen -d -- "$cur"))
+            fi
+            ;;
+        completion)
+            COMPREPLY=($(compgen -W "bash zsh fish" -- "$cur"))
+            ;;
+        cache)
+            COMPREPLY=($(compgen -W "list clear show" -- "$cur"))
+            ;;
+        registry)
+            COMPREPLY=($(compgen -W "list add remove use" -- "$cur"))
+            ;;
+        pkg)
+            COMPREPLY=($(compgen -W "install upgrade remove list show check release audit register versions" -- "$cur"))
+            ;;
+        init|new)
+            COMPREPLY=($(compgen -d -- "$cur"))
+            ;;
+        eval|module)
+            COMPREPLY=($(compgen -W "--help" -- "$cur"))
+            ;;
+        *)
+            COMPREPLY=($(compgen -W "--help -h" -- "$cur"))
+            ;;
+    esac
+}
+complete -F _quirk_complete quirk
+)BASH";
+        return 0;
+    }
+
+    if (shell == "fish") {
+        std::cout << R"FISH(# Quirk completion for fish — drop this in
+# ~/.config/fish/completions/quirk.fish
+
+# Helper: true if the command line has no subcommand yet.
+function __quirk_needs_verb
+    set -l cmd (commandline -opc)
+    test (count $cmd) -le 1
+end
+
+# Helper: true if the first subcommand equals $argv[1].
+function __quirk_verb_is
+    set -l cmd (commandline -opc)
+    test (count $cmd) -ge 2; and test "$cmd[2]" = "$argv[1]"
+end
+
+# Top-level verbs.
+complete -c quirk -n __quirk_needs_verb -a 'run'              -d 'Run a .quirk script'
+complete -c quirk -n __quirk_needs_verb -a 'repl'             -d 'Interactive shell'
+complete -c quirk -n __quirk_needs_verb -a 'test'             -d 'Run *_test.quirk files'
+complete -c quirk -n __quirk_needs_verb -a 'fmt'              -d 'Reformat .quirk source'
+complete -c quirk -n __quirk_needs_verb -a 'install'          -d 'Install a package'
+complete -c quirk -n __quirk_needs_verb -a 'upgrade'          -d 'Upgrade installed packages'
+complete -c quirk -n __quirk_needs_verb -a 'remove'           -d 'Remove a package'
+complete -c quirk -n __quirk_needs_verb -a 'list'             -d 'List installed packages'
+complete -c quirk -n __quirk_needs_verb -a 'show'             -d 'Show package details'
+complete -c quirk -n __quirk_needs_verb -a 'init'             -d 'Init a new package here'
+complete -c quirk -n __quirk_needs_verb -a 'new'              -d 'Scaffold a new package'
+complete -c quirk -n __quirk_needs_verb -a 'venv'             -d 'Virtual environment ops'
+complete -c quirk -n __quirk_needs_verb -a 'version'          -d 'Show compiler version'
+complete -c quirk -n __quirk_needs_verb -a 'env'              -d 'Show environment info'
+complete -c quirk -n __quirk_needs_verb -a 'release'          -d 'Release the current package'
+complete -c quirk -n __quirk_needs_verb -a 'bump-compiler'    -d 'Bump QUIRK_VERSION'
+complete -c quirk -n __quirk_needs_verb -a 'sync'             -d 'Install missing deps'
+complete -c quirk -n __quirk_needs_verb -a 'completion'       -d 'Emit shell completion script'
+complete -c quirk -n __quirk_needs_verb -a 'help'             -d 'Show command help'
+
+# Per-verb completions.
+complete -c quirk -n '__quirk_verb_is bump-compiler' -a 'patch minor major'
+complete -c quirk -n '__quirk_verb_is bump-compiler' -l commit -d 'Commit the bump'
+complete -c quirk -n '__quirk_verb_is bump-compiler' -l tag    -d 'Annotated git tag'
+complete -c quirk -n '__quirk_verb_is bump-compiler' -l push   -d 'Push to origin'
+
+complete -c quirk -n '__quirk_verb_is venv' -a 'new repair info list'
+
+complete -c quirk -n '__quirk_verb_is completion' -a 'bash zsh fish'
+
+complete -c quirk -n '__quirk_verb_is run' -F -k -a '(__fish_complete_suffix .quirk)'
+complete -c quirk -n '__quirk_verb_is fmt' -F -k -a '(__fish_complete_suffix .quirk)'
+complete -c quirk -n '__quirk_verb_is fmt' -l check  -d 'Exit 1 if any file would change'
+complete -c quirk -n '__quirk_verb_is fmt' -l stdout -d "Print formatted output, don't modify"
+)FISH";
+        return 0;
+    }
+
+    log::err("completion: unknown shell '" + shell + "' (want bash, zsh, or fish)");
+    return 1;
+}
+
 // `quirk pkg versions <name>` — list every published version of a package
 // by querying its git tags (via `git ls-remote`, cached 24h).
 static int cmd_versions(const std::vector<std::string>& args) {
@@ -4777,7 +4940,8 @@ static bool is_subcommand(const std::string& arg) {
            arg == "run" || arg == "eval" || arg == "module" ||
            arg == "env" || arg == "new" || arg == "help" ||
            arg == "script" || arg == "sync" || arg == "stdlib" || arg == "fmt" ||
-           arg == "repl" || arg == "test" || arg == "bump-compiler";
+           arg == "repl" || arg == "test" || arg == "bump-compiler" ||
+           arg == "completion";
 }
 
 // Drop argv[1] (a verb) and shift everything left. argc decreases by 1.
@@ -4937,6 +5101,7 @@ inline bool dispatch(int& argc, char** argv, int& outRc) {
     else if (verb == "versions")     outRc = cmd_versions(verbArgs);
     else if (verb == "release")      outRc = cmd_release(verbArgs);
     else if (verb == "bump-compiler") outRc = cmd_bump_compiler(verbArgs);
+    else if (verb == "completion")   outRc = cmd_completion(verbArgs);
     else if (verb == "audit")        outRc = cmd_audit(verbArgs);
     else if (verb == "script")       outRc = cmd_script(verbArgs);
     else if (verb == "sync")         outRc = cmd_sync(verbArgs);

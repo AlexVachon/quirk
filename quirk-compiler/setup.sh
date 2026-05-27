@@ -44,6 +44,23 @@ else
     echo "Added QUIRK_HOME to $SHELL_RC"
 fi
 
+# Tab-completion. `quirk completion <shell>` emits the script; sourcing
+# it via `< <(...)` keeps the verb list in sync with the installed
+# binary without anyone having to hand-edit a static .bash_completion.d
+# file. The marker comment lets us detect a prior install and avoid
+# duplicate `source` lines on re-runs.
+COMPLETION_MARKER="# Quirk shell completion"
+if ! grep -qF "$COMPLETION_MARKER" "$SHELL_RC" 2>/dev/null; then
+    SHELL_NAME="bash"
+    if [ -n "${ZSH_VERSION:-}" ]; then SHELL_NAME="zsh"; fi
+    {
+        echo ""
+        echo "$COMPLETION_MARKER"
+        echo "source <(quirk completion $SHELL_NAME)"
+    } >> "$SHELL_RC"
+    echo "Added quirk completion to $SHELL_RC"
+fi
+
 export QUIRK_HOME="$QUIRK_HOME_VALUE"
 export PATH="$QUIRK_HOME/bin:$PATH"
 

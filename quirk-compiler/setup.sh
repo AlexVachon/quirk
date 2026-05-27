@@ -53,8 +53,8 @@ smoke_ok=true
 if [ ! -x "$SCRIPT_DIR/bin/quirk" ]; then
     echo "  FAIL  bin/quirk not found or not executable"
     smoke_ok=false
-elif ! { "$SCRIPT_DIR/bin/quirk" --help 2>&1 || true; } | grep -q "Usage:"; then
-    echo "  FAIL  bin/quirk --help did not print usage"
+elif ! { "$SCRIPT_DIR/bin/quirk" --help 2>&1 || true; } | grep -q "^Quirk"; then
+    echo "  FAIL  bin/quirk --help did not print the help banner"
     smoke_ok=false
 else
     echo "  OK    bin/quirk"

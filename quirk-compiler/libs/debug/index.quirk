@@ -1,0 +1,42 @@
+---
+Interactive breakpoint helper — drops into a tiny REPL-style prompt at
+the call site and lets you inspect the stack before continuing.
+
+This is tier-1 debugging: you place `debug.breakpoint("label")` in
+source, run the program, and when it hits the call the runtime pauses
+and reads commands from stdin:
+
+  c, continue    resume
+  q, quit        abort the program (exit 1)
+  bt, backtrace  print the current shadow stack
+  s, skip        suppress every breakpoint() for the rest of the run
+
+For inspection, put `print(x)` BEFORE the breakpoint — the prompt
+doesn't yet evaluate Quirk expressions (that needs sub-compilation
+with the active scope, on the roadmap for tier 2).
+
+Setting `QUIRK_DEBUG_SKIP=1` in the environment turns every
+breakpoint() into a no-op for that process. The `quirk test` runner
+sets this automatically so a stray breakpoint() in source can't hang
+the suite; production / CI invocations can opt in the same way.
+
+@example
+use debug
+counter := 0
+counter = counter + 1
+debug.breakpoint("after increment")    // pauses here
+counter = counter + 5
+print(counter)
+---
+from typing.primitives.string use { String }
+
+---
+Pause execution at this line and prompt for a debugger command. `label`
+shows up in the banner so multiple breakpoints in the same file stay
+distinguishable. Defaults to "" — fine when you only have one.
+
+@example
+debug.breakpoint()                      // unlabeled, simplest form
+debug.breakpoint("before db write")     // labeled
+---
+extern define breakpoint(label: String = "") -> void

@@ -39,9 +39,19 @@ RUNTIME_DEPS  = \
 	src/Runtime/core/map.c \
 	src/Runtime/core/any.c \
 	src/Runtime/core/exceptions.c \
+	src/Runtime/core/queue.c \
+	src/Runtime/core/set.c \
+	src/Runtime/core/tuple.c \
 	src/Runtime/libs/file.c \
 	src/Runtime/libs/sys.c \
 	src/Runtime/libs/net.c \
+	src/Runtime/libs/math.c \
+	src/Runtime/libs/fs.c \
+	src/Runtime/libs/time.c \
+	src/Runtime/libs/regex.c \
+	src/Runtime/libs/crypto.c \
+	src/Runtime/libs/random.c \
+	src/Runtime/libs/debug.c \
 	src/Runtime/libs/encoding/json.c \
 	src/Runtime/libs/encoding/base64.c \
 	src/Runtime/libs/encoding/hex.c

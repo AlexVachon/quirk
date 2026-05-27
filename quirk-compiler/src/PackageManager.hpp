@@ -3122,7 +3122,12 @@ struct TestFileResult {
 static TestFileResult run_one_test_file(const fs::path& file) {
     TestFileResult r;
     r.file = file.string();
-    std::string cmd = "\"" + self_binary() + "\" run \"" + file.string() + "\" 2>&1";
+    // QUIRK_DEBUG_SKIP=1 turns any `debug.breakpoint()` left in the
+    // source into a no-op so tests never hang waiting on stdin.
+    // Anyone wanting an interactive break should `quirk run` the file
+    // directly.
+    std::string cmd = "QUIRK_DEBUG_SKIP=1 \"" + self_binary()
+                    + "\" run \"" + file.string() + "\" 2>&1";
     FILE* pipe = popen(cmd.c_str(), "r");
     if (!pipe) { r.failed = 1; r.exitCode = -1; return r; }
     std::string out;

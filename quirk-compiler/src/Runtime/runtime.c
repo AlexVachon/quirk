@@ -52,6 +52,7 @@ static char* __gc_strdup(const char* s) {
 #include "libs/regex.c"
 #include "libs/crypto.c"
 #include "libs/random.c"
+#include "libs/debug.c"
 
 #include "libs/encoding/json.c"
 #include "libs/encoding/base64.c"

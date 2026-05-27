@@ -1,0 +1,39 @@
+// debug.breakpoint — tier-1 interactive debugger. The runtime reads
+// stdin for commands at each breakpoint, so a test that hit the prompt
+// would hang under `quirk test`. The test runner sets
+// `QUIRK_DEBUG_SKIP=1` when spawning child runs, which the runtime
+// honours by treating every breakpoint as a no-op. This test relies on
+// that behavior to prove the API is wired (lib loads, function is
+// callable, returns control to the caller).
+
+use console
+use debug
+use test
+from test use { TestCase }
+
+// Module-level "did we reach here?" so the test body can prove the
+// post-breakpoint code ran after the runtime resumed.
+reached_after_bp := false
+reached_after_second_bp := false
+
+define trigger_breakpoints() -> void {
+    debug.breakpoint("first")
+    reached_after_bp = true
+    debug.breakpoint("second")
+    reached_after_second_bp = true
+}
+
+define main() -> void {
+    t_breakpoint_resumes := TestCase("breakpoint() returns control under QUIRK_DEBUG_SKIP", fn() {
+        trigger_breakpoints()
+        test.assert_true(reached_after_bp)
+        test.assert_true(reached_after_second_bp)
+    })
+
+    fails := test.run_all([t_breakpoint_resumes])
+    if fails > 0 {
+        console.error("debug tests failed (" + fails.str() + ")")
+    } else {
+        console.info("all debug tests passed")
+    }
+}

@@ -1,0 +1,31 @@
+# Force LF on text files regardless of contributor's git config or
+# editor. Without this, files touched on Windows / WSL pick up CRLF and
+# break shell scripts (`setup.sh` line endings → bash $'\r' errors) and
+# any Quirk source where the lexer sees a stray \r.
+
+* text=auto eol=lf
+
+# Shell + build scripts: hard-pin LF. They're executed by /bin/sh and
+# explode immediately on CRLF.
+*.sh        text eol=lf
+Makefile    text eol=lf
+
+# Quirk source + tests + manifests.
+*.quirk     text eol=lf
+*.toml      text eol=lf
+
+# C / C++ compiler sources and headers.
+*.c         text eol=lf
+*.h         text eol=lf
+*.cpp       text eol=lf
+*.hpp       text eol=lf
+
+# Web/JSON config and TypeScript for the VSCode extension.
+*.ts        text eol=lf
+*.json      text eol=lf
+*.md        text eol=lf
+
+# Treat binaries as binary so git doesn't try to "fix" line endings.
+*.png       binary
+*.svg       text eol=lf
+*.so        binary

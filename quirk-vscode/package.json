@@ -14,8 +14,13 @@
     "languages": [
       {
         "id": "quirk",
-        "aliases": ["Quirk", "quirk"],
-        "extensions": [".quirk"],
+        "aliases": [
+          "Quirk",
+          "quirk"
+        ],
+        "extensions": [
+          ".quirk"
+        ],
         "configuration": "./language-configuration.json",
         "icon": {
           "light": "./icons/icon_quark.svg",
@@ -43,6 +48,19 @@
         "icon": "$(play)"
       },
       {
+        "command": "quirk.runFileDedicated",
+        "title": "Quirk: Run File in Dedicated Terminal"
+      },
+      {
+        "command": "quirk.debugFile",
+        "title": "Quirk Debugger: Debug Quirk File",
+        "icon": "$(debug-alt)"
+      },
+      {
+        "command": "quirk.debugLaunchJson",
+        "title": "Quirk Debugger: Debug using launch.json"
+      },
+      {
         "command": "quirk.selectInterpreter",
         "title": "Quirk: Select Interpreter"
       }
@@ -53,6 +71,11 @@
         "key": "ctrl+f5",
         "mac": "cmd+f5",
         "when": "editorLangId == quirk"
+      },
+      {
+        "command": "quirk.debugFile",
+        "key": "f5",
+        "when": "editorLangId == quirk && !inDebugMode"
       }
     ],
     "menus": {
@@ -60,7 +83,22 @@
         {
           "command": "quirk.runFile",
           "when": "editorLangId == quirk",
-          "group": "navigation"
+          "group": "1_run@1"
+        },
+        {
+          "command": "quirk.runFileDedicated",
+          "when": "editorLangId == quirk",
+          "group": "1_run@2"
+        },
+        {
+          "command": "quirk.debugFile",
+          "when": "editorLangId == quirk",
+          "group": "2_debug@1"
+        },
+        {
+          "command": "quirk.debugLaunchJson",
+          "when": "editorLangId == quirk",
+          "group": "2_debug@2"
         }
       ]
     },
@@ -95,7 +133,9 @@
       {
         "name": "quirk",
         "owner": "quirk",
-        "fileLocation": ["absolute"],
+        "fileLocation": [
+          "absolute"
+        ],
         "pattern": [
           {
             "regexp": "^\\[ERROR\\]\\s+(.*)$",
@@ -114,13 +154,84 @@
     "taskDefinitions": [
       {
         "type": "quirk",
-        "required": ["file"],
+        "required": [
+          "file"
+        ],
         "properties": {
           "file": {
             "type": "string",
             "description": "The .quirk file to compile and run."
           }
         }
+      }
+    ],
+    "breakpoints": [
+      { "language": "quirk" }
+    ],
+    "debuggers": [
+      {
+        "type": "quirk",
+        "label": "Quirk",
+        "languages": ["quirk"],
+        "configurationAttributes": {
+          "launch": {
+            "required": ["program"],
+            "properties": {
+              "program": {
+                "type": "string",
+                "description": "Path to the .quirk file to debug.",
+                "default": "${file}"
+              },
+              "args": {
+                "type": "array",
+                "description": "Arguments forwarded to the Quirk script as sys.argv.",
+                "items": { "type": "string" },
+                "default": []
+              },
+              "cwd": {
+                "type": "string",
+                "description": "Working directory for the debug session.",
+                "default": "${workspaceFolder}"
+              },
+              "stopOnEntry": {
+                "type": "boolean",
+                "description": "Pause at the first executable statement of main().",
+                "default": false
+              },
+              "compilerPath": {
+                "type": "string",
+                "description": "Override the auto-detected quirk binary."
+              },
+              "env": {
+                "type": "object",
+                "description": "Environment variables to add to the debuggee.",
+                "additionalProperties": { "type": "string" }
+              }
+            }
+          }
+        },
+        "initialConfigurations": [
+          {
+            "type": "quirk",
+            "request": "launch",
+            "name": "Quirk: current file",
+            "program": "${file}",
+            "stopOnEntry": false
+          }
+        ],
+        "configurationSnippets": [
+          {
+            "label": "Quirk: Launch current file",
+            "description": "Run the file open in the editor under the Quirk debugger.",
+            "body": {
+              "type": "quirk",
+              "request": "launch",
+              "name": "Quirk: current file",
+              "program": "^\"\\${file}\"",
+              "stopOnEntry": false
+            }
+          }
+        ]
       }
     ]
   },
@@ -133,5 +244,9 @@
     "@types/node": "^16.x",
     "@types/vscode": "^1.75.0",
     "typescript": "^4.9.x"
+  },
+  "dependencies": {
+    "@vscode/debugadapter": "^1.68.0",
+    "@vscode/debugprotocol": "^1.68.0"
   }
 }

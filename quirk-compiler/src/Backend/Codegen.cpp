@@ -44,6 +44,10 @@ class LLVMCodegen {
     // LLVM optimization level (0..3). Default 1 — runs the minimal pass set
     // the JIT needs for correctness. See `runOptimizations` for details.
     int  optLevel = 1;
+    // When true, every statement-level handleStatement call emits a hook
+    // into the IR that gives the runtime a chance to pause at qdb. Off by
+    // default so non-debug runs pay zero overhead.
+    bool debugMode = false;
 
     std::map<std::string, bool> variadicFunctions;
     std::map<std::string, FunctionNode*> functionDeclarations;
@@ -96,6 +100,13 @@ class LLVMCodegen {
 
     void setVerbose(bool v) { verbose = v; }
     void setOptLevel(int o) { optLevel = (o < 0 ? 0 : o > 3 ? 3 : o); }
+    void setDebugMode(bool d) {
+        debugMode = d;
+        // varGen is built in the ctor before this setter runs, so push the
+        // flag through whenever it lands. Module pointer is stable for the
+        // life of the codegen.
+        if (varGen) varGen->setDebugMode(d, TheModule.get());
+    }
 
     void setSourceMap(const std::map<std::string, std::string>& sm) { sourceMap = sm; }
 
@@ -139,6 +150,7 @@ class LLVMCodegen {
 
         typeExtensions = std::make_unique<TypeExtensions>(Context, TheModule.get(), Builder, structGen.get(), builtinGen.get());
         varGen = std::make_unique<VariableGen>(Context, Builder);
+        varGen->setDebugMode(debugMode, TheModule.get());
         mathGen = std::make_unique<MathGen>(Context, Builder);
     }
 
@@ -547,13 +559,34 @@ class LLVMCodegen {
             
         Builder.CreateCall(runtimeInit, {argc, argv});
 
-        // --- NEW: Push 'main' to the shadow stack! ---
+        // --- Push 'main' to the shadow stack ---
+        // Locate the user's entry-file path so the frame carries a real path
+        // (not the literal "main"). Without this the VSCode debugger tries
+        // to open a phantom file called "main" when it shows the stack frame.
+        std::string mainFile;
+        for (const auto& n : nodes) {
+            if (auto fn = dynamic_cast<FunctionNode*>(n.get())) {
+                if (fn->name == "main" && !fn->filePath.empty()) {
+                    mainFile = fn->filePath;
+                    break;
+                }
+            }
+        }
+        if (mainFile.empty()) {
+            // Fall back to the first user node with a path — covers scripts
+            // with no explicit main() (top-level code only).
+            for (const auto& n : nodes) {
+                if (!n->filePath.empty()) { mainFile = n->filePath; break; }
+            }
+        }
+        if (mainFile.empty()) mainFile = "main";  // last-resort sentinel
+
         FunctionCallee pushFrame = TheModule->getOrInsertFunction("quirk_push_frame",
             Type::getVoidTy(Context), Type::getInt8PtrTy(Context), Type::getInt8PtrTy(Context),
             Type::getInt32Ty(Context));
 
         Value* mainFuncName = Builder.CreateGlobalStringPtr("main");
-        Value* mainFileName = Builder.CreateGlobalStringPtr("main");
+        Value* mainFileName = Builder.CreateGlobalStringPtr(mainFile);
         Builder.CreateCall(pushFrame, {mainFuncName, mainFileName,
             ConstantInt::get(Type::getInt32Ty(Context), 0)});
         // ---------------------------------------------
@@ -640,8 +673,29 @@ class LLVMCodegen {
         BasicBlock* prevBB = Builder.GetInsertBlock();
         BasicBlock* BB = BasicBlock::Create(Context, "entry", F);
         Builder.SetInsertPoint(BB);
-        
+
         varGen->clear();
+
+        // Push the shadow frame BEFORE binding parameters so that any
+        // Debug_register_local calls emitted by defineArgument see the
+        // correct frame depth (this function's, not the caller's). The
+        // matching pop happens at function exit; pushing earlier within the
+        // same body doesn't change pop balance.
+        if (!node->isDecoratorWrapper) {
+            FunctionCallee pushFrame = TheModule->getOrInsertFunction("quirk_push_frame",
+                Type::getVoidTy(Context), Type::getInt8PtrTy(Context), Type::getInt8PtrTy(Context),
+                Type::getInt32Ty(Context));
+
+            Value* funcNameVal = Builder.CreateGlobalStringPtr(node->name);
+            // Prefer the AST node's filePath (the actual source path) over
+            // moduleName (a logical name like "math"). DAP clients open
+            // frames by clicking the source link; a bare module name fails
+            // the file-exists check in the IDE.
+            std::string fnFile = !node->filePath.empty() ? node->filePath : node->moduleName;
+            Value* fileNameVal = Builder.CreateGlobalStringPtr(fnFile);
+            Value* lineNumVal  = ConstantInt::get(Type::getInt32Ty(Context), node->line);
+            Builder.CreateCall(pushFrame, {funcNameVal, fileNameVal, lineNumVal});
+        }
 
         size_t paramIdx = 0;
         auto argIt = F->arg_begin();
@@ -724,24 +778,6 @@ class LLVMCodegen {
             }
         }
         // ---------------------------------
-
-        // --- NEW: INJECT SHADOW STACK PUSH ---
-        // Skipped for decorator wrappers: they're synthetic dispatchers, not
-        // user-visible call sites. The wrapped function (and any decorator
-        // lambdas in the chain) already push their own frames, so tracebacks
-        // are unaffected. Removing this saves two extern calls per decorated
-        // invocation — measurably hot on tight decorator loops.
-        if (!node->isDecoratorWrapper) {
-            FunctionCallee pushFrame = TheModule->getOrInsertFunction("quirk_push_frame",
-                Type::getVoidTy(Context), Type::getInt8PtrTy(Context), Type::getInt8PtrTy(Context),
-                Type::getInt32Ty(Context));
-
-            Value* funcNameVal = Builder.CreateGlobalStringPtr(node->name);
-            Value* fileNameVal = Builder.CreateGlobalStringPtr(node->moduleName);
-            Value* lineNumVal  = ConstantInt::get(Type::getInt32Ty(Context), node->line);
-            Builder.CreateCall(pushFrame, {funcNameVal, fileNameVal, lineNumVal});
-        }
-        // -------------------------------------
 
         // ── Decorator wrapper: lazy-init + cached dispatch ───────────────────
         // For `@dec define foo(args) {...}`, the parser produced this wrapper
@@ -2092,7 +2128,29 @@ class LLVMCodegen {
     }
     
     void handleStatement(Node* node, Function* parentFunc) {
-        if (Builder.GetInsertBlock()->getTerminator()) return; 
+        if (Builder.GetInsertBlock()->getTerminator()) return;
+
+        // When --debug is on, give the runtime a chance to pause at each
+        // statement. The hook is a no-op unless the user has armed step mode
+        // or set a breakpoint, so the only overhead in debug builds is the
+        // call itself. We skip Use/Nonlocal — they don't represent runnable
+        // user code, and stopping on them would just be noise.
+        if (debugMode && node->line > 0
+            && !dynamic_cast<UseNode*>(node)
+            && !dynamic_cast<NonlocalNode*>(node)) {
+            FunctionCallee dbgHook = TheModule->getOrInsertFunction(
+                "Debug_step_hook",
+                Type::getVoidTy(Context),
+                Type::getInt8PtrTy(Context),
+                Type::getInt32Ty(Context));
+            std::string fileStr = !node->filePath.empty() ? node->filePath
+                               : !node->moduleName.empty() ? node->moduleName
+                                                           : currentFilePath;
+            if (fileStr.empty()) fileStr = "<unknown>";
+            Value* fileVal = Builder.CreateGlobalStringPtr(fileStr);
+            Builder.CreateCall(dbgHook,
+                {fileVal, ConstantInt::get(Type::getInt32Ty(Context), node->line)});
+        }
 
         // Identify node type for logging
         auto nodeTypeName = [&]() -> std::string {

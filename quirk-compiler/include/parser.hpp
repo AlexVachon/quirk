@@ -45,6 +45,7 @@ private:
 
     // Statement parsing
     std::unique_ptr<Node> parseStatement();
+    std::unique_ptr<Node> parseStatementImpl();
     std::unique_ptr<Node> parseIf();
     std::unique_ptr<Node> parseWhile();
     std::unique_ptr<Node> parseFor();

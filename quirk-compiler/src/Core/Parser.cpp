@@ -654,6 +654,23 @@ std::unique_ptr<Node> Parser::parseExpression(int min_precedence) {
 
 // --- Statement & Control Flow ---
 std::unique_ptr<Node> Parser::parseStatement() {
+    // Stamp every returned statement with the start-of-statement line/col so
+    // the --debug stepper has something to show at every pause. Many of the
+    // narrow paths below (e.g. `(a, b) := rhs`) don't bother setting line on
+    // the node they build; doing it once here keeps them honest.
+    while (peek().type == TokenType::SEMICOLON) advance();
+    int stmtLine = peek().line;
+    int stmtCol  = peek().col;
+    auto stmt = parseStatementImpl();
+    if (stmt && stmt->line == 0) {
+        stmt->line = stmtLine;
+        stmt->col  = stmtCol;
+        if (stmt->filePath.empty()) stmt->filePath = filePath;
+    }
+    return stmt;
+}
+
+std::unique_ptr<Node> Parser::parseStatementImpl() {
     // Skip any leading `;` — they act as empty statement separators, so a
     // line like `a := 1; b := 2` parses two statements without complaint.
     while (peek().type == TokenType::SEMICOLON) advance();

@@ -49,6 +49,9 @@ struct CompilerOptions {
     // heavy code (`--release`). O0 is unsafe today and segfaults a chunk of
     // the suite; reserved for future codegen rewrites.
     int  optLevel     = 1;
+    // --debug: pause execution at every Quirk statement and drop into the
+    // interactive qdb prompt. Forces optLevel = 0 so line boundaries survive.
+    bool debugMode    = false;
 };
 
 // ==========================================================
@@ -438,6 +441,7 @@ void printUsage() {
               << "  -v                  Verbose: show debug output\n"
               << "  --emit-ir           Write LLVM IR to <file>.ll\n"
               << "  --emit-ast          Write AST dump to <file>.ast.log\n"
+              << "  --debug             Step through execution in the qdb prompt\n"
               << "\n"
               << "Package management:\n"
               << "  quirk install [-r <file>] [pkg ...]   install dependencies\n"
@@ -487,7 +491,10 @@ int main(int argc, char* argv[]) {
         else if (arg == "--emit-ir")      opts.emitIR       = true;
         else if (arg == "--emit-ast")     opts.emitAST      = true;
         else if (arg == "--release")      opts.optLevel     = 2;
-        else if (arg == "--debug")        opts.optLevel     = 0;  // default, kept for parity
+        else if (arg == "--debug") {
+            opts.debugMode = true;
+            opts.optLevel  = 0;  // keep statement boundaries intact for the stepper
+        }
         else if (arg == "-O0")            opts.optLevel     = 0;
         else if (arg == "-O1")            opts.optLevel     = 1;
         else if (arg == "-O2")            opts.optLevel     = 2;
@@ -627,6 +634,7 @@ int main(int argc, char* argv[]) {
         LLVMCodegen codegen;
         codegen.setVerbose(opts.verbose);
         codegen.setOptLevel(opts.optLevel);
+        codegen.setDebugMode(opts.debugMode);
         codegen.setSourceMap(sourceMap);
         codegen.compile(ast, dest);
         dest.flush();
@@ -658,6 +666,7 @@ int main(int argc, char* argv[]) {
             LLVMCodegen codegen;
             codegen.setVerbose(opts.verbose);
             codegen.setOptLevel(opts.optLevel);
+            codegen.setDebugMode(opts.debugMode);
             codegen.setSourceMap(sourceMap);
             codegen.compile(ast, irDest);
         }
@@ -705,6 +714,7 @@ int main(int argc, char* argv[]) {
         LLVMCodegen codegen;
         codegen.setVerbose(opts.verbose);
         codegen.setOptLevel(opts.optLevel);
+        codegen.setDebugMode(opts.debugMode);
         codegen.setSourceMap(sourceMap);
         auto [module, ctx] = codegen.compileAndRelease(ast);
 

@@ -1,0 +1,19 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "quirk",
+            "request": "launch",
+            "name": "Quirk: current file",
+            "program": "${file}",
+            "stopOnEntry": false
+        },
+        {
+            "type": "quirk",
+            "request": "launch",
+            "name": "Quirk: stepper smoke test",
+            "program": "${workspaceFolder}/quirk-compiler/tests/debug_step_test.quirk",
+            "stopOnEntry": true
+        }
+    ]
+}

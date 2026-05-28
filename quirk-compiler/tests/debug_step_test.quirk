@@ -1,0 +1,29 @@
+// Smoke test for tier-2 stepper + tier-2.1 inspection. Run by hand:
+//   echo "c" | ./bin/quirk --debug tests/debug_step_test.quirk
+// or interactively:
+//   ./bin/quirk --debug tests/debug_step_test.quirk
+use console
+
+define double_it(x: Int) -> Int {
+    y := x * 2
+    return y
+}
+
+define main() -> void {
+    a := 10
+    b := double_it(a)
+    name := "alice"
+    pi := 3.14
+    flag := true
+    
+    console.info("a = " + a.str())
+    console.info("b = " + b.str())
+
+    // c := fn(...args) {
+    //     for arg in args {
+    //         console.log(arg)
+    //     }
+    // }
+
+    // c("hello", 42, false, 3.14)
+}

@@ -1,5 +1,6 @@
 #pragma once
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/Module.h"
 #include <map>
 #include <set>
 #include <iostream>
@@ -9,6 +10,36 @@ using namespace llvm;
 class VariableGen {
     LLVMContext& Context;
     IRBuilder<>& Builder;
+    // When set, every new local alloca emits a Debug_register_local() call
+    // so the qdb prompt can inspect the variable by name. Off by default;
+    // turned on by Codegen when --debug is passed. Needs a Module* so we
+    // can `getOrInsertFunction` the runtime helper from inside the helpers.
+    bool debugMode = false;
+    Module* dbgModule = nullptr;
+
+    // Emit Debug_register_local(name, &slot, type_tag). type_tag matches
+    // the enum in libs/debug.c — small int, see DBG_TAG_* there.
+    void emitDebugRegister(const std::string& name, Value* slot) {
+        if (!debugMode || !dbgModule) return;
+        if (!slot || !slot->getType()->isPointerTy()) return;
+        Type* elTy = slot->getType()->getPointerElementType();
+        int tag = 5;  // 5 = OPAQUE / unknown — printed via quirk_opaque_to_string
+        if (elTy->isIntegerTy(1))        tag = 4;  // BOOL
+        else if (elTy->isIntegerTy(32))  tag = 0;  // INT
+        else if (elTy->isIntegerTy(64))  tag = 1;  // INT64
+        else if (elTy->isDoubleTy())     tag = 2;  // DOUBLE
+        else if (elTy->isPointerTy())    tag = 3;  // POINTER (String*/Any*/etc.)
+        FunctionCallee reg = dbgModule->getOrInsertFunction(
+            "Debug_register_local",
+            Type::getVoidTy(Context),
+            Type::getInt8PtrTy(Context),  // name
+            Type::getInt8PtrTy(Context),  // address
+            Type::getInt32Ty(Context));   // type_tag
+        Value* nameStr = Builder.CreateGlobalStringPtr(name);
+        Value* slotI8  = Builder.CreateBitCast(slot, Type::getInt8PtrTy(Context));
+        Builder.CreateCall(reg,
+            {nameStr, slotI8, ConstantInt::get(Type::getInt32Ty(Context), tag)});
+    }
 
     // The Symbol Table: Maps variable name -> Stack Slot (AllocaInst*)
     std::map<std::string, Value*> NamedValues;
@@ -27,6 +58,8 @@ class VariableGen {
    public:
     VariableGen(LLVMContext& ctx, IRBuilder<>& build)
         : Context(ctx), Builder(build) {}
+
+    void setDebugMode(bool d, Module* m) { debugMode = d; dbgModule = m; }
 
     void clear() {
         NamedValues.clear();
@@ -55,6 +88,7 @@ class VariableGen {
         Value* slot = TmpB.CreateAlloca(val->getType(), nullptr, name);
         Builder.CreateStore(val, slot);
         NamedValues[name] = slot;
+        emitDebugRegister(name, slot);
     }
 
     // Handle 'x := 10'
@@ -74,6 +108,7 @@ class VariableGen {
         Value* slot = TmpB.CreateAlloca(val->getType(), nullptr, name);
         Builder.CreateStore(val, slot);
         NamedValues[name] = slot;
+        emitDebugRegister(name, slot);
     }
 
     // Handle 'x = 20' (Reassignment)

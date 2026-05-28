@@ -2,6 +2,44 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 
+// Read the `name = "..."` field from a quirk.toml. Returns "" on miss.
+// Cheap, regex-based — full TOML parsing isn't needed for one scalar.
+function readPackageName(quirkTomlPath: string): string {
+    try {
+        const txt = fs.readFileSync(quirkTomlPath, 'utf8');
+        // First top-level `name = "..."` outside of [section] blocks.
+        let inSection = false;
+        for (const rawLine of txt.split(/\r?\n/)) {
+            const line = rawLine.trim();
+            if (line.startsWith('[')) { inSection = !!line.match(/^\[[^.\s]+/); continue; }
+            if (inSection) continue;
+            const m = /^name\s*=\s*"([^"]+)"/.exec(line);
+            if (m) return m[1];
+        }
+    } catch { /* missing or unreadable — fall through */ }
+    return "";
+}
+
+// Mirror of PackageManager.hpp::resolve_self_package. When a `use X` matches
+// the current package's name (from quirk.toml), Quirk lets you import its
+// own src/index.quirk as `use X` from inside the package itself — without
+// having to install it into a venv first. Used to resolve `use logger`
+// inside `logger/tests/foo.quirk`.
+function resolveSelfPackage(projectRoot: string, modulePath: string): string | null {
+    if (!projectRoot || !modulePath) return null;
+    const pkgName = readPackageName(path.join(projectRoot, 'quirk.toml'));
+    if (!pkgName || pkgName !== modulePath) return null;
+    for (const c of [
+        path.join(projectRoot, 'src', 'index.quirk'),
+        path.join(projectRoot, 'src', pkgName + '.quirk'),
+        path.join(projectRoot, pkgName + '.quirk'),
+        path.join(projectRoot, pkgName, 'index.quirk'),
+    ]) {
+        if (fs.existsSync(c)) return c;
+    }
+    return null;
+}
+
 // Standalone module-path resolver used by DiagnosticsProvider too.
 // Mirrors the compiler's order: project-local packages first, then venv, then
 // stdlib. Returns the resolved .quirk file path, or null if nothing matches.
@@ -19,6 +57,16 @@ export function resolveModulePath(projectRoot: string, currentFile: string, modu
         ]) if (fs.existsSync(c)) return c;
         return null;
     }
+    // Self-package: `use <pkgname>` from within a package's own tree should
+    // resolve to <projectRoot>/src/index.quirk when pkgname matches the
+    // `name = "..."` in quirk.toml. Mirrors PackageManager.hpp:resolve_self_package.
+    // Without this the diagnostics provider squiggles `use logger` inside the
+    // logger package itself even though `quirk run` resolves it fine.
+    {
+        const selfHit = resolveSelfPackage(projectRoot, modulePath);
+        if (selfHit) return selfHit;
+    }
+
     const relPath = modulePath.replace(/\./g, '/');
     const roots: string[] = [path.join(projectRoot, 'packages')];
     const home = resolveQuirkHome(projectRoot);

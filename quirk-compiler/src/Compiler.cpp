@@ -1,7 +1,15 @@
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/TargetSelect.h"
-#include "llvm/Support/TargetRegistry.h"
+// TargetRegistry was relocated from Support/ to MC/ mid-LLVM-14. Some
+// distros still ship the old layout (Debian's WSL builds, older Ubuntu);
+// GitHub's ubuntu-22.04 runner has only the new path. __has_include lets
+// the same source compile against both, and forward-portable to LLVM 15+.
+#if __has_include(<llvm/MC/TargetRegistry.h>)
+#  include "llvm/MC/TargetRegistry.h"
+#else
+#  include "llvm/Support/TargetRegistry.h"
+#endif
 #include "llvm/Support/Host.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/IR/LegacyPassManager.h"

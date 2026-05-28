@@ -5,6 +5,33 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [1.0.1] — 2026-05-28
+
+Four compiler correctness fixes, surfaced while building a real
+third-party package (the in-tree `logger` lib), plus a new self-
+management command so updating the compiler doesn't require touching
+the install.sh URL.
+
+### New
+- **`quirk compiler <subcommand>`** — self-manage the compiler binary
+  from inside the running compiler:
+    - `quirk compiler version` — print the running version
+    - `quirk compiler list` — list `vX.Y.Z` releases on GitHub
+    - `quirk compiler install vA.B.C` — replace this binary with that version
+    - `quirk compiler update` — replace this binary with the latest
+  Internally delegates to `install.sh` on `main`, so there's a single
+  source of truth for the install flow.
+
+### Compiler fixes
+- **Enum-typed parameters now compare to enum literals.** `define f(l: Level) -> Int { if l == Level.A {...} }` used to crash LLVM with an `ICmp` operand-type assertion because `TypeGen` fell through to `i8*` for any unrecognised name, while enum literals are codegen'd as `i32`. `TypeGen` now knows about user-declared enums and resolves them to `i32`.
+- **Top-level `NAME := value` bindings are now importable across modules.** `from M use { NAME }` previously only matched struct / function / interface / enum names. A new `moduleConstRegistry` in `Sema` tracks module-level value bindings and the filter-list validator consults it.
+- **Cross-module function-name collisions resolved.** Two files that both declared a function called `info` (or any common name) collided on the same LLVM symbol, and `module.info` calls could end up at the wrong implementation. Non-extern user functions now get module-prefixed linkage names (`MyMod$info`), and `moduleFunctionIndex` is keyed by both PascalCase and lowercase forms so `use console` matches the parser's `Console` prefix.
+- **`list[i]` (`Any`) now passes correctly where `Callable*` (or any non-String struct pointer) is expected.** The argument-coercion site in `processCallArgs` was String-only for `i8* → struct*`; widened to all pointer-to-pointer casts, fixing the "Call parameter type does not match function signature" verifier failure that hit any code passing a `Callable` retrieved from a `List`.
+
+### Known limitations
+- Bare-name calls (`info(...)` without `module.` prefix) when two modules expose `info` still pick whichever was registered last. Module-qualified is the right pattern.
+- `use .relative_path` in a sibling-file import still misses `moduleFunctionIndex`'s lookup keys; the surrounding tooling works around this for in-package imports.
+
 ## [1.0.0] — 2026-05-28
 
 First stable release. The interactive debugger and VSCode integration are

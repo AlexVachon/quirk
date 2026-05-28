@@ -48,7 +48,7 @@
 
 namespace qpm {
 
-constexpr const char* QUIRK_VERSION = "1.0.0";
+constexpr const char* QUIRK_VERSION = "1.0.1";
 
 namespace fs = std::filesystem;
 
@@ -3654,6 +3654,121 @@ static int cmd_bump_compiler(const std::vector<std::string>& args) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// `quirk compiler {install <vX.Y.Z> | update | list | version}`
+//
+// User-facing self-management of the compiler binary. Internally everything
+// delegates to install.sh on `main` — same logic the one-liner uses — so
+// there's a single source of truth for the install flow. We just make it
+// invokable from inside the running compiler.
+//
+//   quirk compiler version       — print current QUIRK_VERSION
+//   quirk compiler list          — show available `vX.Y.Z` releases on GitHub
+//   quirk compiler install vA.B.C — replace this binary with version A.B.C
+//   quirk compiler update         — replace this binary with the latest tag
+//
+// Note: replacement happens by re-running install.sh, which downloads the
+// release tarball and unpacks into INSTALL_DIR (defaults to ~/.quirk). The
+// command does NOT mutate a quirk binary that lives elsewhere (e.g. a
+// system /usr/local install) — that's by design; system installs should
+// be managed by the package manager that owns them.
+// ─────────────────────────────────────────────────────────────────────────
+
+static const char* QUIRK_INSTALL_SCRIPT_URL =
+    "https://raw.githubusercontent.com/AlexVachon/quirk/main/install.sh";
+static const char* QUIRK_RELEASES_API_URL =
+    "https://api.github.com/repos/AlexVachon/quirk/releases?per_page=30";
+
+static int cmd_compiler(const std::vector<std::string>& args) {
+    auto usage = []() {
+        std::cout <<
+            "quirk compiler <subcommand>\n"
+            "  version                 Print the currently-running compiler version\n"
+            "  list                    List `vX.Y.Z` releases available on GitHub\n"
+            "  install <vX.Y.Z>        Replace this compiler with the given version\n"
+            "  update                  Replace this compiler with the latest release\n";
+        return 0;
+    };
+
+    if (args.empty() || args[0] == "--help" || args[0] == "-h") return usage();
+    const std::string& sub = args[0];
+
+    if (sub == "version") {
+        std::cout << "quirk " << QUIRK_VERSION << "\n";
+        return 0;
+    }
+
+    if (sub == "list") {
+        // Curl + grep the tag_name lines for v<digit>... entries. Same
+        // filtering install.sh uses for "latest compiler release".
+        std::string cmd = std::string("curl -fsSL '") + QUIRK_RELEASES_API_URL
+                        + "' 2>/dev/null"
+                        + R"SH( | grep -oE '"tag_name"[[:space:]]*:[[:space:]]*"v[0-9][^"]*"')SH"
+                        + R"SH( | sed -E 's/.*"tag_name"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')SH";
+        FILE* p = popen(cmd.c_str(), "r");
+        if (!p) {
+            log::err("compiler list: failed to fetch the GitHub releases list");
+            return 1;
+        }
+        char buf[128];
+        bool any = false;
+        std::cout << "Available compiler releases (newest first):\n";
+        std::string current = std::string("v") + QUIRK_VERSION;
+        while (fgets(buf, sizeof(buf), p)) {
+            std::string tag(buf);
+            while (!tag.empty() && (tag.back() == '\n' || tag.back() == '\r' || tag.back() == ' '))
+                tag.pop_back();
+            if (tag.empty()) continue;
+            std::cout << "  " << tag;
+            if (tag == current) std::cout << log::dim("  (current)");
+            std::cout << "\n";
+            any = true;
+        }
+        pclose(p);
+        if (!any) {
+            log::warn("no releases found — network unreachable or no tags published");
+            return 1;
+        }
+        return 0;
+    }
+
+    if (sub == "install" || sub == "update") {
+        // Build install.sh invocation. `update` = no version flag → script
+        // resolves the latest itself. `install vX.Y.Z` = pass --version flag.
+        std::string version;
+        if (sub == "install") {
+            if (args.size() < 2) {
+                log::err("compiler install: missing version (e.g. `quirk compiler install v1.0.1`)");
+                return 1;
+            }
+            version = args[1];
+            // Accept both `1.0.1` and `v1.0.1`; install.sh wants the v form.
+            if (!version.empty() && version[0] != 'v') version = "v" + version;
+        }
+
+        // Build the shell pipeline. We pipe install.sh to `sh` directly so
+        // failures from curl propagate via the exit code.
+        std::string flag;
+        if (!version.empty()) flag = " --version=" + version;
+        std::string cmd = std::string("curl -fsSL '") + QUIRK_INSTALL_SCRIPT_URL
+                        + "' | sh -s --" + flag;
+
+        std::cout << log::dim("→ ") << cmd << "\n";
+        int rc = std::system(cmd.c_str());
+        if (rc != 0) {
+            log::err("compiler " + sub + " failed (exit "
+                     + std::to_string(WEXITSTATUS(rc)) + ")");
+            return 1;
+        }
+        std::cout << "\n";
+        log::ok("Open a new shell (or re-source your profile) to use the new compiler.");
+        return 0;
+    }
+
+    log::err("compiler: unknown subcommand '" + sub + "'");
+    return usage();
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // `quirk completion <bash|zsh|fish>` — emit a shell completion script
 // to stdout. Install via:
 //     echo 'source <(quirk completion bash)' >> ~/.bashrc
@@ -4946,7 +5061,7 @@ static bool is_subcommand(const std::string& arg) {
            arg == "env" || arg == "new" || arg == "help" ||
            arg == "script" || arg == "sync" || arg == "stdlib" || arg == "fmt" ||
            arg == "repl" || arg == "test" || arg == "bump-compiler" ||
-           arg == "completion";
+           arg == "compiler" || arg == "completion";
 }
 
 // Drop argv[1] (a verb) and shift everything left. argc decreases by 1.
@@ -5106,6 +5221,7 @@ inline bool dispatch(int& argc, char** argv, int& outRc) {
     else if (verb == "versions")     outRc = cmd_versions(verbArgs);
     else if (verb == "release")      outRc = cmd_release(verbArgs);
     else if (verb == "bump-compiler") outRc = cmd_bump_compiler(verbArgs);
+    else if (verb == "compiler")     outRc = cmd_compiler(verbArgs);
     else if (verb == "completion")   outRc = cmd_completion(verbArgs);
     else if (verb == "audit")        outRc = cmd_audit(verbArgs);
     else if (verb == "script")       outRc = cmd_script(verbArgs);

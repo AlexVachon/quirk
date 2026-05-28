@@ -14,22 +14,51 @@ permissions:
 
 jobs:
   linux-x86_64:
+    # `runs-on: ubuntu-22.04` is just the host shell where the action runner
+    # itself lives. The actual compile happens inside `container:` so the
+    # produced binary is linked against the container's glibc.
     runs-on: ubuntu-22.04
+    # Build inside ubuntu:20.04 (glibc 2.31) so the resulting binary runs
+    # on every modern Linux distro — Ubuntu 20.04+, Debian 11+, RHEL 9+,
+    # WSL with the default Ubuntu image, etc. The earlier ubuntu-22.04
+    # runner build was glibc 2.34-linked and refused to start on 20.04.
+    container:
+      image: ubuntu:20.04
+    env:
+      DEBIAN_FRONTEND: noninteractive
     steps:
-      - uses: actions/checkout@v4
+      - name: Install base tools
+        # The bare ubuntu:20.04 image is intentionally minimal — needs git
+        # for actions/checkout@v4 to operate inside the container, and
+        # curl + ca-certificates + gnupg to add the LLVM apt repo (Ubuntu
+        # 20.04's default repos don't ship llvm-14).
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates curl gnupg lsb-release software-properties-common git
+
+      - name: Add LLVM 14 apt repository
+        # Quirk pins LLVM 14. Ubuntu 20.04 (focal) doesn't have it in its
+        # default sources; LLVM publishes its own apt repo for every major.
+        # Using `signed-by` instead of the deprecated `apt-key`.
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key \
+            | gpg --dearmor -o /usr/share/keyrings/llvm-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] https://apt.llvm.org/focal/ llvm-toolchain-focal-14 main" \
+            > /etc/apt/sources.list.d/llvm-14.list
+          apt-get update
 
       - name: Install build dependencies
-        # Mirror quirk-compiler/setup.sh's apt list so CI ≡ local-build.
-        # On Ubuntu 22.04, `llvm-14` (the meta-package) is what ships
-        # `llvm-config-14` — `llvm-14-dev` alone doesn't, which is why
-        # the previous workflow failed at make time.
+        # Mirror quirk-compiler/setup.sh's apt list. `llvm-14` is the
+        # meta-package that ships `llvm-config-14`; `llvm-14-dev` alone
+        # would miss it.
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential \
-            gcc g++ make pkg-config git \
+          apt-get install -y --no-install-recommends \
+            build-essential gcc g++ make pkg-config \
             llvm-14 libllvm14 llvm-14-dev \
             libgc-dev libssl-dev
+
+      - uses: actions/checkout@v4
 
       - name: Build compiler + runtime
         working-directory: quirk-compiler
@@ -42,6 +71,10 @@ jobs:
         # Catch obvious linkage failures before we ship a broken artifact.
         run: |
           ./bin/quirk --version
+          # Also confirm the glibc baseline — fail loudly if the build
+          # somehow links against anything newer than glibc 2.31.
+          echo "Required glibc symbols:"
+          objdump -T ./bin/quirk | awk '/GLIBC_/{print $5}' | sort -u
           echo 'use console
           define main() -> void { console.log("hello from CI") }' > /tmp/smoke.quirk
           ./bin/quirk /tmp/smoke.quirk
@@ -66,14 +99,13 @@ jobs:
           echo "pkg=${PKG}" >> "$GITHUB_OUTPUT"
 
       - name: Create or update GitHub Release
+        # Runs as a JS action on the runner host, NOT inside the container —
+        # which is what we want (the container has its own /tmp etc.).
         uses: softprops/action-gh-release@v2
         with:
           files: |
             ${{ steps.pkg.outputs.pkg }}.tar.gz
             ${{ steps.pkg.outputs.pkg }}.tar.gz.sha256
           generate_release_notes: true
-          # Don't auto-publish — let the tag-author edit the body first.
-          # Flip to `false` (or remove) when you're confident the notes
-          # generation is what you want.
           draft: false
           prerelease: ${{ contains(github.ref_name, '-') }}

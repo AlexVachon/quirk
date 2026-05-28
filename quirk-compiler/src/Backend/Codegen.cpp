@@ -300,6 +300,9 @@ class LLVMCodegen {
             if (auto s = dynamic_cast<StructNode*>(node.get()))
                 structNodeMap[s->name] = s;
 
+        // (Auto-infer of struct fields from __init is done in the parser —
+        // see Parser.cpp:parseStruct's "Implicit field inference" block.)
+
         if (verbose) std::cerr << "[Codegen] Pass 2: Filling struct bodies and resolving inheritance\n";
         for (const auto& node : nodes) {
             if (auto s = dynamic_cast<StructNode*>(node.get())) {
@@ -1445,11 +1448,19 @@ class LLVMCodegen {
                         std::vector<Value*> argVals;
                         for (auto& a : call->args) argVals.push_back(handleExpression(a.value.get()));
 
-                        // Bundle variadic tail into a List if this lambda is variadic
+                        // Bundle variadic tail into a List. Elements need to
+                        // survive a round-trip through the i8* List slots
+                        // and be readable by `quirk_opaque_to_string` at the
+                        // other end — that requires an Any* wrap (not a raw
+                        // bit-reinterpretation, which would crash for double
+                        // and lose type info for bool). emitBox wraps each
+                        // value in the right Any_box_* variant.
                         int varStart = variadicCallableStart.count(lit->value)
                                        ? variadicCallableStart.at(lit->value) : -1;
                         if (varStart >= 0 && (int)argVals.size() > varStart) {
-                            std::vector<Value*> tail(argVals.begin() + varStart, argVals.end());
+                            std::vector<Value*> tail;
+                            for (size_t i = (size_t)varStart; i < argVals.size(); i++)
+                                tail.push_back(emitBox(argVals[i]));
                             argVals.erase(argVals.begin() + varStart, argVals.end());
                             Value* bundled = structGen->createListFromValues(tail);
                             argVals.push_back(bundled);
@@ -2062,9 +2073,13 @@ class LLVMCodegen {
                         }
                     }
                 }
-                if (vArg->getType()->isIntegerTy(1)) vArg = boxToVoidPtr(vArg);
-                else if (vArg->getType()->isIntegerTy()) vArg = Builder.CreateIntToPtr(vArg, Type::getInt8PtrTy(Context));
-                else if (!vArg->getType()->isPointerTy()) vArg = Builder.CreateBitCast(vArg, Type::getInt8PtrTy(Context));
+                // Delegate to the canonical boxer — it knows how to handle
+                // i1, integers (IntToPtr), doubles (bitcast→i64→inttoptr),
+                // and pointers. Previous hand-rolled chain crashed LLVM
+                // with `Invalid bitcast: i8* bitcast (double ... to i8*)`
+                // because doubles aren't pointer-sized and bitcast can't
+                // bridge across non-pointer types.
+                vArg = boxToVoidPtr(vArg);
                 castedVariadic.push_back(vArg);
             }
             variadicList = structGen->createListFromValues(castedVariadic);
@@ -3123,10 +3138,11 @@ Value* LLVMCodegen::handleExpression(Node* node) {
             }
             Value* typeStrVal = Builder.CreateCall(makeStrFn, {typeNameCStr}, "type_str");
 
-            // Cast lval to i8* for isinstance
-            Value* lvalI8 = lval->getType()->isPointerTy()
-                ? Builder.CreateBitCast(lval, Type::getInt8PtrTy(Context))
-                : Builder.CreateIntToPtr(lval, Type::getInt8PtrTy(Context));
+            // Cast lval to i8* for isinstance — use the canonical boxer so
+            // doubles get the proper bitcast→i64→inttoptr sequence; raw
+            // IntToPtr would emit invalid IR for a double `lval` (e.g.,
+            // `3.14 is Double`).
+            Value* lvalI8 = boxToVoidPtr(lval);
 
             // Get or declare Core_Primitives_Any_isinstance(i8*, i8*) -> i32
             Function* isinstanceFn = TheModule->getFunction("Core_Primitives_Quirk_isinstance");

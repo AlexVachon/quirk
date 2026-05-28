@@ -1409,6 +1409,29 @@ std::unique_ptr<StructNode> Parser::parseStruct() {
                         else if (std::isdigit(c))                                inferredType = "Int";
                     }
                 }
+                // `paramName.method()` where paramName is a String — most
+                // String methods return a new String, so a small hardcoded
+                // table covers the common case (`self.x = name.title()`).
+                // Without this the field defaults to Any, and Any→String
+                // returns elsewhere (e.g. `__str`) end up as garbage memory.
+                else if (auto* callExpr = dynamic_cast<CallNode*>(vd->expression.get())) {
+                    if (auto* mem = dynamic_cast<MemberAccessNode*>(callExpr->callee.get())) {
+                        if (auto* recv = dynamic_cast<LiteralNode*>(mem->object.get())) {
+                            auto pit = paramTypes.find(recv->value);
+                            if (pit != paramTypes.end() && pit->second == "String") {
+                                static const std::set<std::string> stringToString = {
+                                    "title", "upper", "lower", "capitalize",
+                                    "strip", "lstrip", "rstrip", "trim",
+                                    "replace", "format", "slice", "substring",
+                                    "concat", "reverse", "padLeft", "padRight",
+                                    "str", "repr", "lstripChars", "rstripChars",
+                                };
+                                if (stringToString.count(mem->memberName))
+                                    inferredType = "String";
+                            }
+                        }
+                    }
+                }
 
                 node->fields.push_back({fieldName, inferredType, nullptr});
                 declaredFields.insert(fieldName);

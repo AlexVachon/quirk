@@ -9,21 +9,41 @@ define double_it(x: Int) -> Int {
     return y
 }
 
+struct User {
+    define __init(self, name: String, age: Int) -> void {
+        self.name = name.title()
+        self.age = age
+    }
+
+    define __str(self) -> String {
+        return self.name
+    }
+}
+
 define main() -> void {
     a := 10
     b := double_it(a)
+    triple_string := """
+        This is a multi-line string.
+        Sometimes called a "triple string" because of the three quotes.
+    """
     name := "alice"
     pi := 3.14
     flag := true
     
     console.info("a = " + a.str())
     console.info("b = " + b.str())
+    console.info("triple_string = " + triple_string)
 
-    // c := fn(...args) {
-    //     for arg in args {
-    //         console.log(arg)
-    //     }
-    // }
+    c := fn(...args) {
+        console.log("Printing ${args.length()} arguments:")
+        for arg in args {
+            console.log(arg)
+        }
+    }
 
-    // c("hello", 42, false, 3.14)
+    c("hello", 42, false, 3.14)
+
+    u := User("Alexandre", 25)
+    console.log(u)
 }

@@ -1,0 +1,79 @@
+name: Release
+
+# Fires on any `vX.Y.Z` tag push (which is what `quirk bump-compiler --tag
+# --push` produces, or `git tag v1.0.0 && git push --tags` by hand).
+# Builds the compiler, bundles the binary + runtime.so + stdlib, and
+# attaches a tarball to a GitHub Release for the tag.
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write   # needed to create releases and upload assets
+
+jobs:
+  linux-x86_64:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        # llvm-14 (Quirk's pinned LLVM major), libgc for Boehm, libssl for
+        # the `crypto` extern. clang isn't strictly required but pulls in
+        # the right LLVM linkage chain.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            llvm-14-dev \
+            clang-14 \
+            libgc-dev \
+            libssl-dev
+
+      - name: Build compiler + runtime
+        working-directory: quirk-compiler
+        run: make -j"$(nproc)"
+
+      - name: Smoke-test the binary
+        working-directory: quirk-compiler
+        env:
+          QUIRK_HOME: ${{ github.workspace }}/quirk-compiler
+        # Catch obvious linkage failures before we ship a broken artifact.
+        run: |
+          ./bin/quirk --version
+          echo 'use console
+          define main() -> void { console.log("hello from CI") }' > /tmp/smoke.quirk
+          ./bin/quirk /tmp/smoke.quirk
+
+      - name: Package
+        id: pkg
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          PKG="quirk-${VERSION}-linux-x86_64"
+          # Mirror the on-disk layout the install.sh script (and QUIRK_HOME)
+          # expects: bin/quirk, lib/quirk/runtime.so, lib/quirk/libs/...
+          mkdir -p "${PKG}/bin" "${PKG}/lib/quirk"
+          cp quirk-compiler/bin/quirk      "${PKG}/bin/"
+          cp quirk-compiler/bin/runtime.so "${PKG}/lib/quirk/"
+          cp -r quirk-compiler/libs        "${PKG}/lib/quirk/libs"
+          cp -r libs                        "${PKG}/lib/quirk/stdlib" 2>/dev/null || true
+          cp README.md INSTALL.md           "${PKG}/" 2>/dev/null || true
+          cp quirk-compiler/CHANGELOG.md    "${PKG}/" 2>/dev/null || true
+          tar czf "${PKG}.tar.gz" "${PKG}"
+          # SHA256 lets install.sh verify the download.
+          sha256sum "${PKG}.tar.gz" > "${PKG}.tar.gz.sha256"
+          echo "pkg=${PKG}" >> "$GITHUB_OUTPUT"
+
+      - name: Create or update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ steps.pkg.outputs.pkg }}.tar.gz
+            ${{ steps.pkg.outputs.pkg }}.tar.gz.sha256
+          generate_release_notes: true
+          # Don't auto-publish — let the tag-author edit the body first.
+          # Flip to `false` (or remove) when you're confident the notes
+          # generation is what you want.
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}

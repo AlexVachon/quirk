@@ -48,7 +48,7 @@
 
 namespace qpm {
 
-constexpr const char* QUIRK_VERSION = "0.4.0";
+constexpr const char* QUIRK_VERSION = "1.0.0";
 
 namespace fs = std::filesystem;
 

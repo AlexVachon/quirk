@@ -297,6 +297,19 @@ export class QuirkDefinitionProvider implements vscode.DefinitionProvider {
         const withAsRe          = new RegExp(`\\bwith\\b.*\\bas\\s+${symbol}\\b`);
         const catchRe           = new RegExp(`\\bcatch\\s*\\(\\s*${symbol}\\s*:`);
         const funcDefRe         = /^\s*(?:extern\s+)?(?:define|def|init)\s+[a-zA-Z0-9_]+\s*\(([^)]*)\)/;
+        const lambdaParamRe     = /\bfn\s*\(([^)]*)\)/g;
+
+        // Returns the index of `symbol` inside a param list `(a, b: T, ...c)`
+        // — strips leading `...` (variadic) and trailing `: Type` from each
+        // entry. Returns -1 when not found.
+        const findInParams = (paramsStr: string): boolean => {
+            for (const rawParam of paramsStr.split(',')) {
+                let p = rawParam.trim();
+                if (p.startsWith('...')) p = p.slice(3).trim();
+                if (new RegExp(`^${symbol}\\b\\s*(?::|=|$)`).test(p)) return true;
+            }
+            return false;
+        };
 
         for (let i = position.line; i >= 0; i--) {
             const rawLine  = document.lineAt(i).text;
@@ -327,14 +340,23 @@ export class QuirkDefinitionProvider implements vscode.DefinitionProvider {
                 return new vscode.Location(document.uri, new vscode.Position(i, rawLine.indexOf(symbol, m.index)));
             }
 
+            // Inline lambdas — `fn(...args) { ... }`. There can be multiple
+            // on one line and they nest, so we scan ALL `fn(...)` matches
+            // before walking up further.
+            lambdaParamRe.lastIndex = 0;
+            let lm: RegExpExecArray | null;
+            while ((lm = lambdaParamRe.exec(rawLine)) !== null) {
+                if (findInParams(lm[1])) {
+                    const idx = rawLine.indexOf(symbol, lm.index);
+                    return new vscode.Location(document.uri, new vscode.Position(i, Math.max(0, idx)));
+                }
+            }
+
             const funcMatch = funcDefRe.exec(rawLine);
             if (funcMatch) {
-                for (const rawParam of funcMatch[1].split(',')) {
-                    const p = rawParam.trim();
-                    if (new RegExp(`^${symbol}\\b\\s*(?::|$)`).test(p)) {
-                        const idx = rawLine.indexOf(symbol, funcMatch.index);
-                        return new vscode.Location(document.uri, new vscode.Position(i, Math.max(0, idx)));
-                    }
+                if (findInParams(funcMatch[1])) {
+                    const idx = rawLine.indexOf(symbol, funcMatch.index);
+                    return new vscode.Location(document.uri, new vscode.Position(i, Math.max(0, idx)));
                 }
                 // Hit a function boundary — stop searching upward
                 break;

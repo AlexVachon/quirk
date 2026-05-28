@@ -5,6 +5,89 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [1.0.0] — 2026-05-28
+
+First stable release. The interactive debugger and VSCode integration are
+the headline features; the rest is correctness and IDE-experience work
+accumulated during that build-out.
+
+### Interactive debugger
+- **`debug.breakpoint(label)`** — tier-1 breakpoint helper that drops into an
+  interactive `(qdb)` prompt with continue / quit / backtrace / skip-rest.
+- **`--debug` line stepper** — tier-2 stepper that pauses at every statement.
+  Commands: `c`/continue, `n`/next (step-over), `s`/step (step-into), `bt`,
+  `where`, `b [file:]line` / `clear`, `skip`, `q`.
+- **Locals inspection (`p <name>`, `locals`)** — Codegen registers each local
+  with the runtime at its alloca site so the prompt can read live values
+  for Int, Double, Bool, String, and any pointer type. Frame-scoped: stale
+  entries get pruned when the owning function returns.
+- **JSON event mode (`QUIRK_DBG_JSON=1`)** — qdb emits one machine-parseable
+  event per stderr line (`stopped`, `stack`, `locals`, `breakpointSet`, …)
+  so external tools can drive the debugger over stdio.
+
+### VSCode integration
+- **Debug Adapter Protocol bridge** — the extension ships a DAP adapter that
+  spawns `quirk --debug` with `QUIRK_DBG_JSON=1` and translates DAP requests
+  into qdb commands. Gutter breakpoints, F5 / F10 / F11 stepping, Call
+  Stack panel, Variables panel, hover-evaluate for identifiers.
+- **Inline values during debug** — Python-style `(value)` decorations next
+  to variable references on paused lines, driven by a custom
+  `InlineValuesProvider` that skips keywords, comments, string contents,
+  and method/call chains.
+- **Run/Debug dropdown** in the editor title bar with grouped sections —
+  *Run File* + *Run File in Dedicated Terminal* and *Debug File* + *Debug
+  using launch.json*.
+- **Hover kind prefix** — every symbol hover leads with `(function)`,
+  `(method)`, `(parameter)`, `(struct)`, `(enum)`, `(interface)`,
+  `(type alias)`, `(constant)`, or `(variable)`, matching Pylance's
+  shape. Lambda assignments (`c := fn(...)`) promote to `(function)`.
+- **Ctrl+click navigation** now works on lambda parameters and variadic
+  (`...args`) parameters.
+
+### Codegen fixes
+- **Variadic-lambda boxing** — passing a `Double` (or `Bool`) to a `fn(...args)`
+  lambda no longer crashes with `Invalid bitcast: i8* bitcast (double … to
+  i8*)`; values are now wrapped via `Core_Primitives_Any_box_*` before
+  being placed into the variadic `List`. Same fix for the `is`/isinstance
+  path.
+- **Per-statement source line preservation** — the parser stamps `line`/`col`/
+  `filePath` on every statement node so the stepper has something to show
+  at each pause. The synthetic `main` shadow frame now carries the real
+  source path instead of the string `"main"`.
+- **Struct field inference from `__init`** — `self.X = paramName.method()`
+  patterns where the receiver is a `String` parameter and the method is a
+  known String-returning operation (`title`, `upper`, `lower`, `strip`, …)
+  now infer to `String` instead of falling back to `Any` (which caused
+  garbage memory reads on Any→String returns).
+
+### Runtime
+- **Locals registry overflow warning** — once-only `[debug] locals table
+  full` message instead of silent truncation when more than 1024 locals
+  are registered.
+- **`strdup` routed through Boehm GC** — eliminates permanent leaks from
+  libc calls that bypass the macro-no-op `free`.
+
+### IDE extension polish
+- **Variadic param syntax fixes** — `...args` no longer trips an `args is
+  not defined` warning inside lambdas, and the spread operator wins the
+  tokenization race against the range operator (`...` was being eaten as
+  `..` + `.args`).
+- **`QUIRK_HOME` auto-resolution** for the debug adapter — derived from the
+  `quirk.quirkHome` setting when launching the debuggee, so the child can
+  find runtime.so and the stdlib.
+
+### Tooling
+- **DAP adapter resilience** — pending `bt`/`locals`/`p` requests now reject
+  when the child exits/errors, so VSCode panels stop hanging on a Promise
+  that would never resolve.
+
+### Breaking
+- The synthetic main shadow frame's `file` field changed from the literal
+  string `"main"` to the user's entry-file path. Tooling that parsed the
+  old value should update.
+- The hover provider's prefix format changed from no prefix to
+  `(<kind>) name`. Documented for consistency with Python's Pylance.
+
 ## [0.3.0] — 2026-05-23
 
 ### New stdlib libraries

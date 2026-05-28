@@ -3,6 +3,66 @@ import { QuirkCompletionProvider } from './CompletionProvider';
 
 const _sharedFormatter = new QuirkCompletionProvider();
 
+// Categorize a definition line so the hover can lead with `(kind) name` —
+// Python's pylance does this and it's surprisingly informative at a glance.
+// `defLine` is the line of the declaration; we walk up briefly to detect
+// whether a `define` is sitting inside a `struct` body (→ method, not
+// function).
+function kindLabelFor(doc: vscode.TextDocument, defLineIdx: number, word: string, defLine: string): string | null {
+    const trimmed = defLine.trim();
+    // Function-like
+    if (/^(?:extern\s+)?(?:define|def)\b/.test(trimmed)) {
+        return isInsideStruct(doc, defLineIdx) ? `(method) ${word}` : `(function) ${word}`;
+    }
+    if (/^init\b/.test(trimmed)) return `(method) ${word}`;
+    if (/^struct\b/.test(trimmed)) return `(struct) ${word}`;
+    if (/^enum\b/.test(trimmed))   return `(enum) ${word}`;
+    if (/^interface\b/.test(trimmed)) return `(interface) ${word}`;
+    if (/^type\b/.test(trimmed))   return `(type alias) ${word}`;
+    // Parameter — declaration line is a function/lambda signature and the
+    // word lands inside the param list. We detect by checking whether `word`
+    // appears between `(` and `)` of the line. Generous match — false
+    // positives are harmless ("(parameter)" is still informative).
+    const parenOpen  = defLine.indexOf('(');
+    const parenClose = defLine.indexOf(')', parenOpen);
+    if (parenOpen >= 0 && parenClose > parenOpen) {
+        const wordIdx = defLine.indexOf(word);
+        if (wordIdx > parenOpen && wordIdx < parenClose) return `(parameter) ${word}`;
+    }
+    // const X := ... → constant; lambda-bound name → function (Pylance does
+    // the same with `c = lambda ...` — calling it a variable is technically
+    // true but loses the more useful "this is callable" signal).
+    if (/^const\b/.test(trimmed)) return `(constant) ${word}`;
+    if (/^(?:[A-Za-z_]\w*)\s*(?::\s*[A-Za-z_][\w.?<>\[\]]*\s*)?(?::=|=)/.test(trimmed)) {
+        const lambdaAssign = /(?::=|=)\s*fn\s*\(/.test(trimmed);
+        return lambdaAssign ? `(function) ${word}` : `(variable) ${word}`;
+    }
+    return null;
+}
+
+function isInsideStruct(doc: vscode.TextDocument, lineIdx: number): boolean {
+    // Walk upward and count braces; a `struct Foo {` whose `}` we haven't
+    // crossed yet means we're inside a struct body. Cheap heuristic — good
+    // enough for hover labeling (worst case we mislabel a top-level define
+    // as a function vs method, which is forgivable).
+    let depth = 0;
+    for (let i = lineIdx - 1; i >= 0; i--) {
+        const t = doc.lineAt(i).text;
+        for (let c = t.length - 1; c >= 0; c--) {
+            if (t[c] === '}') depth++;
+            else if (t[c] === '{') {
+                if (depth === 0) {
+                    // Found the opening brace; check the line it's on
+                    if (/^\s*struct\b/.test(t)) return true;
+                    return false;
+                }
+                depth--;
+            }
+        }
+    }
+    return false;
+}
+
 export class QuirkHoverProvider implements vscode.HoverProvider {
     public async provideHover(
         document: vscode.TextDocument,
@@ -194,6 +254,17 @@ export class QuirkHoverProvider implements vscode.HoverProvider {
                         decoratorLines.unshift(m[1]);
                         dLine--;
                     }
+                }
+
+                // Python-style kind prefix — gives a quick visual cue what
+                // the symbol is before showing the signature. Detected from
+                // the declaration line: `define` outside a struct is a
+                // function, `define` inside a struct is a method; `struct`/
+                // `enum`/`interface` are classes; a param list match means
+                // parameter; everything else is a variable.
+                const kindLabel = kindLabelFor(targetDoc, def.range.start.line, word, defLine);
+                if (kindLabel) {
+                    md.appendMarkdown(`\`${kindLabel}\`\n\n`);
                 }
 
                 const codeBlock = decoratorLines.length

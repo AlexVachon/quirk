@@ -299,12 +299,13 @@
           "match": "\\b(and|or|not)\\b"
         },
         {
-          "name": "keyword.operator.range.quirk",
-          "match": "\\.\\."
-        },
-        {
+          "comment": "Spread/variadic — must precede the range operator below; TextMate is first-match-wins so `...args` was being eaten as `..` + `.args` and the parameter name rendered as garbage.",
           "name": "keyword.operator.spread.quirk",
           "match": "\\.\\.\\."
+        },
+        {
+          "name": "keyword.operator.range.quirk",
+          "match": "\\.\\."
         },
         {
           "name": "storage.type.function.arrow.quirk",

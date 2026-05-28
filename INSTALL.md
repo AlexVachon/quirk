@@ -2,6 +2,28 @@
 
 Quirk is a self-hosted language compiler built on LLVM 14. It produces native binaries via JIT (default) or AOT (`-o <file>`).
 
+---
+
+## One-liner install (prebuilt binary, Linux x86_64)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/AlexVachon/quirk/main/install.sh | sh
+```
+
+Drops the compiler + runtime + stdlib into `~/.quirk/`. After it runs, add the two `export` lines it prints to your shell profile.
+
+To install a specific version:
+
+```bash
+QUIRK_VERSION=v1.0.0 curl -fsSL https://raw.githubusercontent.com/AlexVachon/quirk/main/install.sh | sh
+```
+
+Other platforms (macOS, Windows, ARM): build from source — see below.
+
+---
+
+## What's in the install
+
 The install gives you two artifacts in `bin/`:
 
 | File | Role |

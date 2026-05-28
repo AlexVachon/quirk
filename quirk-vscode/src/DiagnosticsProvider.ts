@@ -533,11 +533,15 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
             }
 
             // Lambda params: fn(x: Int, y) => ... or fn(x) { ... }
+            // The `...args` variadic prefix needs to be stripped before the
+            // identifier regex sees it — otherwise the param name leaks out
+            // as "not defined" everywhere it's referenced inside the body.
             const lambdaParamRegex = /\bfn\s*\(([^)]*)\)/g;
             let lambdaParamMatch;
             while ((lambdaParamMatch = lambdaParamRegex.exec(maskedLine)) !== null) {
                 lambdaParamMatch[1].split(',').forEach(part => {
-                    const pName = part.trim().split(':')[0].trim();
+                    let pName = part.trim().split(':')[0].trim();
+                    if (pName.startsWith('...')) pName = pName.slice(3).trim();
                     if (pName && /^[a-zA-Z_]\w*$/.test(pName)) {
                         locals.add(pName);
                     }

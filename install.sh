@@ -80,17 +80,21 @@ case "$arch" in
 esac
 
 # --- Resolve version --------------------------------------------------------
+# The compiler ships under tags like `vX.Y.Z`; the VSCode extension ships
+# under `vscode-vX.Y.Z`. GitHub's /releases/latest returns whichever was
+# published most recently — so once an extension release lands, blindly
+# trusting /latest sends us off looking for a compiler tarball at
+# `vscode-v0.2.1`. List releases instead and pick the first whose tag
+# matches `v<digit>...` — that's a compiler release.
 if [ -z "${QUIRK_VERSION:-}" ]; then
-    api="https://api.github.com/repos/${QUIRK_REPO}/releases/latest"
-    # Tolerate either "tag_name": "vX.Y.Z" formatting. jq would be nicer
-    # but installers shouldn't depend on it.
+    api="https://api.github.com/repos/${QUIRK_REPO}/releases?per_page=30"
     tag=$(curl -fsSL "$api" \
-        | grep -E '"tag_name"\s*:\s*"' \
+        | grep -E '"tag_name"\s*:\s*"v[0-9]' \
         | head -1 \
         | sed -E 's/.*"tag_name"\s*:\s*"([^"]+)".*/\1/')
     if [ -z "$tag" ]; then
-        echo "Failed to resolve latest release from $api" >&2
-        echo "(maybe no releases yet, or the network is unreachable)" >&2
+        echo "Failed to resolve a compiler release from $api" >&2
+        echo "(maybe no v<digit>... tags yet, or the network is unreachable)" >&2
         exit 1
     fi
 else

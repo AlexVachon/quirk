@@ -1,10 +1,29 @@
 # Quirk (.quirk) Language Reference
 
-**Version:** 2.0  
+**Compiler:** 1.0.0  
+**Language spec:** rev 2  
 **Extension:** `.quirk`  
 **Runtime:** LLVM JIT + native binary output
 
 Quirk is a compiled, statically-typed language with Python-like syntax, struct-based OOP, first-class functions, and a rich standard library. It compiles to native code via LLVM and uses the Boehm GC for memory management.
+
+---
+
+## Install
+
+Linux x86_64, one line:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/AlexVachon/quirk/main/install.sh | sh
+```
+
+Drops the compiler + runtime + stdlib into `~/.quirk/`. After it runs, add the two `export` lines it prints to your shell profile, reopen the shell, then:
+
+```bash
+quirk --version
+```
+
+Source builds, other platforms, and dependency lists: see [INSTALL.md](INSTALL.md).
 
 ---
 

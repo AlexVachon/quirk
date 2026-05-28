@@ -323,8 +323,17 @@ function sendActivation(terminal: vscode.Terminal, venvPath: string) {
 
 // Activate the venv in every currently-open terminal. Used after the user
 // picks a new interpreter from the QuickPick.
+// Terminals the extension created for run/debug — same rule as
+// onDidOpenTerminal: don't pollute them with venv activate/deactivate.
+function isExtensionOwnedTerminal(t: vscode.Terminal): boolean {
+    return t.name.startsWith('Quirk: ') || t.name.startsWith('Quirk Debugger: ');
+}
+
 function activateInAllTerminals(venvPath: string) {
-    for (const t of vscode.window.terminals) sendActivation(t, venvPath);
+    for (const t of vscode.window.terminals) {
+        if (isExtensionOwnedTerminal(t)) continue;
+        sendActivation(t, venvPath);
+    }
 }
 
 // Deactivate any active Quirk venv in every currently-open terminal.
@@ -333,6 +342,7 @@ function activateInAllTerminals(venvPath: string) {
 // swallows the "command not found" message).
 function deactivateInAllTerminals() {
     for (const t of vscode.window.terminals) {
+        if (isExtensionOwnedTerminal(t)) continue;
         t.sendText('deactivate 2>/dev/null; true', true);
     }
 }
@@ -346,9 +356,18 @@ function activeVenvPath(): string | null {
 }
 
 export function registerInterpreterPicker(context: vscode.ExtensionContext): void {
-    // Auto-activate any newly-opened terminal in the selected venv.
+    // Auto-activate any newly-opened terminal in the selected venv — EXCEPT
+    // the ones the extension itself created to run/debug user files. Those
+    // already invoke quirk by its full venv-internal path, so adding a
+    // deactivate+source on top just echoes noise after the program output:
+    //     $ /path/to/.venv/bin/quirk foo.quirk
+    //     hello world
+    //     $ deactivate 2>/dev/null; source ".../activate"   ← unwanted
+    // Naming convention enforced in extension.ts: every extension-spawned
+    // terminal starts with "Quirk: " (run) or "Quirk Debugger: " (debug).
     context.subscriptions.push(
         vscode.window.onDidOpenTerminal(t => {
+            if (isExtensionOwnedTerminal(t)) return;
             const venv = activeVenvPath();
             if (venv) sendActivation(t, venv);
         }),

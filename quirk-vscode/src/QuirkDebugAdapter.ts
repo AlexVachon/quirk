@@ -36,6 +36,8 @@ interface LaunchArgs extends DebugProtocol.LaunchRequestArguments {
 interface PendingResponse {
     event: string;                       // event name we're waiting for
     resolve: (payload: any) => void;
+    reject: (reason: any) => void;       // fired on child exit/error so the
+                                         // DAP request doesn't hang forever
 }
 
 // Single fake thread id — Quirk is single-threaded today. VSCode insists
@@ -149,6 +151,7 @@ export class QuirkDebugSession extends DebugSession {
         });
         this.child.stderr.on('data', (chunk: Buffer) => this.consumeStderr(chunk));
         this.child.on('exit', (code) => {
+            this.failPending(`quirk exited (code ${code ?? 0})`);
             this.sendEvent(new OutputEvent(`\n[quirk exited with code ${code ?? 0}]\n`, 'console'));
             this.sendEvent(new TerminatedEvent());
         });
@@ -159,6 +162,7 @@ export class QuirkDebugSession extends DebugSession {
             const hint = (err as any).code === 'ENOENT'
                 ? `\nset 'quirk.compilerPath' in settings or ensure 'quirk' is on PATH`
                 : '';
+            this.failPending(`quirk launch failed: ${err.message}`);
             this.sendEvent(new OutputEvent(`quirk launch failed: ${err.message}${hint}\n`, 'stderr'));
             this.sendEvent(new TerminatedEvent());
         });
@@ -225,7 +229,9 @@ export class QuirkDebugSession extends DebugSession {
         response: DebugProtocol.StackTraceResponse,
         _args: DebugProtocol.StackTraceArguments,
     ): Promise<void> {
-        const payload = await this.request('bt\n', 'stack');
+        let payload: any;
+        try { payload = await this.request('bt\n', 'stack'); }
+        catch { response.body = { stackFrames: [], totalFrames: 0 }; this.sendResponse(response); return; }
         const frames: StackFrame[] = (payload.frames ?? []).map(
             (f: { name: string; file: string; line: number }, i: number) => {
                 // Frame 0 is the active frame — overlay the stop event's
@@ -264,7 +270,9 @@ export class QuirkDebugSession extends DebugSession {
         response: DebugProtocol.VariablesResponse,
         _args: DebugProtocol.VariablesArguments,
     ): Promise<void> {
-        const payload = await this.request('locals\n', 'locals');
+        let payload: any;
+        try { payload = await this.request('locals\n', 'locals'); }
+        catch { response.body = { variables: [] }; this.sendResponse(response); return; }
         const vars: Variable[] = (payload.items ?? []).map(
             (it: { name: string; value: string; type: string }) =>
                 new Variable(it.name, it.value),
@@ -332,7 +340,13 @@ export class QuirkDebugSession extends DebugSession {
             this.sendResponse(response);
             return;
         }
-        const payload = await this.request(`p ${expr}\n`, 'local');
+        let payload: any;
+        try { payload = await this.request(`p ${expr}\n`, 'local'); }
+        catch {
+            response.body = { result: '<debuggee gone>', variablesReference: 0 };
+            this.sendResponse(response);
+            return;
+        }
         if (payload.missing) {
             response.body = { result: `<no local named ${expr}>`, variablesReference: 0 };
         } else {
@@ -377,10 +391,19 @@ export class QuirkDebugSession extends DebugSession {
     // honours (it processes one command per stdin line before reading the
     // next).
     private request(cmd: string, expectedEvent: string): Promise<any> {
-        return new Promise((resolve) => {
-            this.pending.push({ event: expectedEvent, resolve });
+        return new Promise((resolve, reject) => {
+            this.pending.push({ event: expectedEvent, resolve, reject });
             this.send(cmd);
         });
+    }
+
+    // Fail every queued request — called when the child dies. Without this,
+    // a pending `bt`/`locals`/`p` after a crash would leave VSCode panels
+    // hanging on a Promise that never resolves.
+    private failPending(reason: string): void {
+        const queue = this.pending;
+        this.pending = [];
+        for (const p of queue) p.reject(new Error(reason));
     }
 
     private consumeStderr(chunk: Buffer): void {

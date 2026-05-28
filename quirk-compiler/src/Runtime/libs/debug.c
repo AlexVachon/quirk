@@ -209,7 +209,22 @@ void Debug_register_local(const char* name, void* addr, int tag) {
             return;
         }
     }
-    if (debug_locals_count >= DEBUG_MAX_LOCALS) return;  // table full → silently drop
+    if (debug_locals_count >= DEBUG_MAX_LOCALS) {
+        // One-shot warning — without this the user sees a partial locals
+        // panel with no hint why some names are missing. Once is plenty;
+        // emitting per drop would flood the debug console.
+        static int warned = 0;
+        if (!warned) {
+            warned = 1;
+            if (Debug__json_active())
+                fprintf(stderr, "{\"event\":\"message\",\"text\":\"locals table full (%d) — some variables omitted\"}\n",
+                        DEBUG_MAX_LOCALS);
+            else
+                fprintf(stderr, "  [debug] locals table full (%d) — some variables will not appear\n",
+                        DEBUG_MAX_LOCALS);
+        }
+        return;
+    }
     debug_locals[debug_locals_count].name        = name;
     debug_locals[debug_locals_count].addr        = addr;
     debug_locals[debug_locals_count].tag         = tag;

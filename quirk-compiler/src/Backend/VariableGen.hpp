@@ -137,7 +137,12 @@ class VariableGen {
             // cast cell pointer to i8** so we can store an i8* through it
             Value* cellI8pp = Builder.CreateBitCast(cellPtr,
                 PointerType::getUnqual(Type::getInt8PtrTy(Context)), name + "_cell_i8pp");
-            // Box val to i8*
+            // Box val to i8* so the heap cell can hold any Quirk type.
+            // Integer/Double need a numeric→ptr conversion; pointers can
+            // be reinterpreted directly. Anything else falls through to a
+            // best-effort BitCast — only struct-by-value or vector would
+            // hit this, neither of which is currently produced by the rest
+            // of codegen for nonlocal captures.
             Value* boxed;
             if (val->getType()->isPointerTy())
                 boxed = Builder.CreateBitCast(val, Type::getInt8PtrTy(Context));
@@ -147,9 +152,7 @@ class VariableGen {
                 Value* asInt = Builder.CreateBitCast(val, Type::getInt64Ty(Context));
                 boxed = Builder.CreateIntToPtr(asInt, Type::getInt8PtrTy(Context));
             } else {
-                boxed = val->getType()->isPointerTy()
-                    ? Builder.CreateBitCast(val, Type::getInt8PtrTy(Context))
-                    : Builder.CreateBitCast(val, Type::getInt8PtrTy(Context));
+                boxed = Builder.CreateBitCast(val, Type::getInt8PtrTy(Context));
             }
             Builder.CreateStore(boxed, cellI8pp);
             return;

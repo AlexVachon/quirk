@@ -72,6 +72,15 @@ jobs:
           path: quirk-vscode/*.vsix
           if-no-files-found: error
 
+      - name: Compute display version
+        id: ver
+        # Strip the `vscode-` prefix so the release title reads
+        # `quirk-vscode v0.2.0` instead of `quirk-vscode vscode-v0.2.0`.
+        if: startsWith(github.ref, 'refs/tags/vscode-v')
+        run: |
+          VERSION="${GITHUB_REF_NAME#vscode-}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
       - name: Publish .vsix to GitHub Release
         # Default install path — users grab the .vsix from the Releases
         # page and `code --install-extension <file>` it. Works whether or
@@ -82,10 +91,7 @@ jobs:
         with:
           files: quirk-vscode/*.vsix
           generate_release_notes: true
-          # `quirk-vscode v0.2.0` is clearer than the raw `vscode-v0.2.0`
-          # tag in the Releases UI (the compiler also uses the Releases
-          # tab; this naming keeps the two tracks visually separate).
-          name: "quirk-vscode ${{ github.ref_name }}"
+          name: "quirk-vscode ${{ steps.ver.outputs.version }}"
 
       - name: Publish to VSCode Marketplace
         # Requires the `VSCE_PAT` repo secret — Settings → Secrets and

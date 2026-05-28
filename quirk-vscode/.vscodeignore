@@ -1,0 +1,22 @@
+# Files excluded from the .vsix shipped to the marketplace.
+# Only compiled `out/` JS is needed at runtime; TypeScript sources, tests,
+# and config are dev-time only.
+
+# Source + build config — extension runs from out/extension.js
+src/**
+tsconfig.json
+**/*.ts
+**/*.map
+
+# Repo housekeeping
+.vscode/**
+.gitignore
+.gitattributes
+
+# Local artifacts that occasionally land in the dir
+*.vsix
+node_modules/.cache/**
+
+# Don't ship the extra-large SVGs when icon.png is the one referenced
+icons/icon_quark.svg
+icons/icon.svg

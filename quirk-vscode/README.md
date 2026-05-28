@@ -24,7 +24,22 @@ Official language support for [Quirk](https://github.com/AlexVachon/quirk) — a
    ```
    Add the two `export` lines it prints to your shell profile. Other platforms: see the [INSTALL guide](https://github.com/AlexVachon/quirk/blob/main/INSTALL.md).
 
-2. **Install this extension** from the Marketplace (or search "Quirk" in the Extensions sidebar).
+2. **Install this extension.** Quirk ships its VSCode extension as a `.vsix` on the GitHub Releases page (not the Marketplace yet):
+
+   - Browse to https://github.com/AlexVachon/quirk/releases
+   - Find the latest **`quirk-vscode vX.Y.Z`** release (tagged `vscode-v*`)
+   - Download `quirk-X.Y.Z.vsix`
+   - Install it:
+     ```bash
+     code --install-extension /path/to/quirk-X.Y.Z.vsix
+     ```
+     Or, in VSCode: open the Extensions sidebar (`Ctrl+Shift+X`) → click the `…` menu → **Install from VSIX…**
+
+   One-liner (Linux/macOS, requires the [`gh`](https://cli.github.com/) CLI):
+   ```bash
+   gh release download --repo AlexVachon/quirk --pattern '*.vsix' --dir /tmp && \
+     code --install-extension /tmp/quirk-*.vsix
+   ```
 
 3. **Open a `.quirk` file.** The extension auto-activates. If the compiler isn't found, the status bar shows a warning — click it to set `quirk.compilerPath` or `quirk.quirkHome`.
 

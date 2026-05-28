@@ -4,7 +4,7 @@ All notable changes to the extension land here. Versioning follows SemVer; minor
 
 ## [0.2.0] — 2026-05-28
 
-First Marketplace release. Bundles the IDE work that landed alongside the Quirk 1.0.0 compiler.
+First public release. Ships as a `.vsix` attached to a GitHub Release rather than via the VSCode Marketplace — see the README for the install command. Bundles the IDE work that landed alongside the Quirk 1.0.0 compiler.
 
 ### Debugger
 - Full Debug Adapter Protocol bridge to qdb — gutter breakpoints, F5 / F10 / F11 stepping, Call Stack, Variables panel, hover-evaluate for identifiers.

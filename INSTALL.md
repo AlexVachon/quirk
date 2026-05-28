@@ -69,7 +69,7 @@ When it finishes:
 ```bash
 source ~/.bashrc           # or ~/.zshrc
 quirk --version
-# quirk 0.2.0
+# quirk 1.0.0
 ```
 
 ---
@@ -129,7 +129,7 @@ No `QUIRK_HOME` needed in this case — Quirk falls back to `/usr/local/lib/quir
 ## Verifying
 
 ```bash
-quirk --version                          # quirk 0.2.0
+quirk --version                          # quirk 1.0.0
 quirk --help                             # full command reference
 echo 'define main() { print("ok") }' | tee /tmp/x.quirk
 quirk /tmp/x.quirk                          # ok

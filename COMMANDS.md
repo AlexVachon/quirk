@@ -9,6 +9,7 @@ The `quirk` binary is both the compiler/runner and the package manager. This pag
 | [`quirk run <file>`](#quirk-run) | `quirk <file>` | Run a Quirk script |
 | [`quirk eval "<code>"`](#quirk-eval) | `-c` | Run an inline one-liner |
 | [`quirk module <name>`](#quirk-module) | `-m` | Run an installed module's `main()` |
+| [`quirk --debug <file>`](#quirk---debug) | — | Run under the interactive `(qdb)` line stepper |
 | [`quirk new <name>`](#quirk-new) | — | Scaffold a new package |
 | [`quirk init`](#quirk-init) | — | Write a `quirk.toml` in the current dir |
 | [`quirk venv <name>`](#quirk-venv) | — | Create an isolated environment |
@@ -38,6 +39,7 @@ The `quirk` binary is both the compiler/runner and the package manager. This pag
 | `--emit-ast` | Write AST dump to `<basename>.ast.log` |
 | `-O0` / `-O1` / `-O2` / `-O3` | LLVM optimization level (default `-O2`) |
 | `--release` | Alias for `-O2` (kept for parity with future O3 modes) |
+| `--debug` | Run under the interactive `(qdb)` line stepper — `c`/`n`/`s` to step, `b file:line` to break, `p <name>` / `locals` to inspect. Forces `-O0`. See the [debugger guide](#quirk---debug) below. |
 
 **Optimization defaults.** Quirk currently defaults to `-O2`. The IR the codegen emits is "loose" — it depends on the O2 pass pipeline (`mem2reg`, `instcombine`, `dce`) to be safe at the JIT level. Lowering below O2 segfaults some programs today; a future codegen cleanup will let `-O0` be a safe fast-iteration mode.
 
@@ -93,6 +95,65 @@ quirk -m my-lib --debug some-arg
 ```
 
 Mirrors `python -m <module>`. Arguments after the module name are forwarded to its `main()` via `sys.argv()`.
+
+---
+
+## Debugging
+
+### `quirk --debug`
+
+Synopsis: `quirk --debug <file.quirk> [script args...]`
+
+Run a script under the interactive line stepper. Pauses at the first statement and reads commands from stdin until you continue. Per-statement pauses are emitted by the compiler when `--debug` is set; non-debug runs pay zero overhead. Forces `-O0` so statement boundaries survive the optimizer.
+
+```bash
+quirk --debug examples/hello.quirk
+```
+
+At the `(qdb)` prompt:
+
+| Command | Effect |
+|---------|--------|
+| `c`, `continue` | Resume; only stop again at a breakpoint |
+| `n`, `next` | Step over — run until next statement at the same frame depth or shallower |
+| `s`, `step` | Step into — pause at the very next statement (descends into calls) |
+| `b <file>:<line>` · `b <line>` | Set a breakpoint. Bare line targets the current file |
+| `b` | List active breakpoints |
+| `clear <file>:<line>` · `clear` | Remove one breakpoint or clear them all |
+| `bt`, `backtrace` | Print the shadow stack |
+| `where` | Print the current `file:line` |
+| `p <name>` | Print the live value of a local in the current frame |
+| `locals`, `l` | List every local registered in the current frame |
+| `skip` | Disable every breakpoint / step hook for the rest of this run (sticky) |
+| `q`, `quit` | Abort (`exit 1`) |
+| *(blank line)* | Repeat the last navigation command (`c` / `n` / `s`) |
+
+Variable inspection is name-only — `p x` works, `p x + 1` does not (arbitrary expression eval would need a re-entrant codegen path, which is tier-3 work).
+
+#### Programmatic breakpoints
+
+The `debug` library exposes a `debug.breakpoint(label)` call that always pauses, even without `--debug`:
+
+```quirk
+use debug
+counter := 0
+counter = counter + 1
+debug.breakpoint("after increment")
+counter = counter + 5
+```
+
+Setting `QUIRK_DEBUG_SKIP=1` in the environment makes every `debug.breakpoint()` a no-op for that process. The `quirk test` runner sets this automatically so a stray `breakpoint()` in source can't hang the suite.
+
+#### Machine-readable mode
+
+Setting `QUIRK_DBG_JSON=1` switches qdb's output to one JSON event per line on stderr — used by the VSCode debug adapter and any other tool that wants to drive the debugger programmatically.
+
+```text
+{"event":"stopped","reason":"step","file":"foo.quirk","line":12,"depth":1}
+{"event":"locals","items":[{"name":"x","value":"10","type":"Int"}]}
+```
+
+Commands on stdin keep the text format (`c\n`, `b foo.quirk:12\n`, etc.).
 
 ---
 
@@ -170,7 +231,7 @@ Print the current resolution context. Use this to debug "why isn't this package 
 ```bash
 $ quirk env
 quirk:           /usr/local/bin/quirk
-version:         0.2.0
+version:         1.0.0
 QUIRK_HOME:      /home/alex/proj/.venv
 in venv:         yes
 project root:    /home/alex/proj
@@ -383,7 +444,7 @@ Print the compiler version:
 
 ```
 $ quirk version
-quirk 0.2.0
+quirk 1.0.0
 ```
 
 ---

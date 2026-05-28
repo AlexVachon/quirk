@@ -55,7 +55,7 @@ Source builds, other platforms, and dependency lists: see [INSTALL.md](INSTALL.m
 
 ## 1. Quick Start
 
-```qk
+```quirk
 // Hello, World!
 print("Hello, World!")
 
@@ -72,7 +72,7 @@ print(greet("Quirk"))
 ```
 
 ```bash
-./bin/quirk hello.quirk
+quirk hello.quirk
 ```
 
 ---
@@ -81,7 +81,7 @@ print(greet("Quirk"))
 
 ### Declaration
 
-```qk
+```quirk
 x := 42              // Type-inferred (Int)
 name: String = "Alex" // Explicit type annotation
 const PI := 3.14159  // Immutable constant
@@ -89,14 +89,14 @@ const PI := 3.14159  // Immutable constant
 
 ### Reassignment
 
-```qk
+```quirk
 x := 5
 x = 10   // Update existing variable
 ```
 
 ### Multiple Assignment
 
-```qk
+```quirk
 x, y, z := 0         // Assign 0 to all three
 a, b := (10, 20)     // Tuple destructuring
 ```
@@ -109,7 +109,7 @@ a, b := (10, 20)     // Tuple destructuring
 
 32-bit signed integer.
 
-```qk
+```quirk
 n := 42
 print(n.abs())        // 42
 print(n.is_even())    // true
@@ -124,7 +124,7 @@ total := Int.parse("123")
 
 64-bit floating-point number.
 
-```qk
+```quirk
 pi := 3.14159
 print(pi.ceil())      // 4
 print(pi.floor())     // 3
@@ -138,7 +138,7 @@ val := Double.parse("3.14")
 
 ### Bool
 
-```qk
+```quirk
 flag := true
 flag2 := false
 print(flag.str())     // "true"
@@ -147,7 +147,7 @@ b := Bool.parse("false")
 
 ### String
 
-```qk
+```quirk
 s := "Hello, World!"
 print(s.length())          // 13
 print(s.upper())           // "HELLO, WORLD!"
@@ -195,7 +195,7 @@ print("kitten".distance("sitting"))  // 3
 
 Single character (single-quoted literal).
 
-```qk
+```quirk
 c := 'A'
 print(c.is_upper())   // true
 print(c.is_lower())   // false
@@ -216,7 +216,7 @@ ch := Char.parse("X")
 
 Dynamic ordered array.
 
-```qk
+```quirk
 l := [1, 2, 3, 4, 5]
 l.append(6)
 val := l.pop()         // Remove and return last element
@@ -244,7 +244,7 @@ evens   := [x for x in nums if x % 2 == 0]
 
 Key-value store (String keys, Any values).
 
-```qk
+```quirk
 m := {"name": "Alice", "age": 30}
 m.put("city", "Paris")
 print(m.get("name"))       // "Alice"
@@ -276,7 +276,7 @@ inverted  := {v: k for k, v in m}
 
 Unordered collection of unique values.
 
-```qk
+```quirk
 s := {1, 2, 3, 4, 5}
 s.add(6)
 s.remove(2)
@@ -301,7 +301,7 @@ from typing.collections use { Set }
 
 Double-ended queue (deque) with O(1) push/pop at both ends.
 
-```qk
+```quirk
 from typing.collections use { Queue }
 
 q := Queue()
@@ -321,7 +321,7 @@ q.clear()
 
 Fixed-size, heterogeneous, immutable sequence.
 
-```qk
+```quirk
 t := (1, "hello", true)
 single := (42,)            // Single-element (trailing comma required)
 empty  := ()
@@ -346,7 +346,7 @@ for item in pairs {
 
 ### If / Elif / Else
 
-```qk
+```quirk
 if x > 0 {
     print("positive")
 } elif x < 0 {
@@ -358,7 +358,7 @@ if x > 0 {
 
 ### While
 
-```qk
+```quirk
 i := 0
 while i < 10 {
     print(i)
@@ -368,7 +368,7 @@ while i < 10 {
 
 ### For (iteration)
 
-```qk
+```quirk
 // Over a list
 for item in [1, 2, 3] {
     print(item)
@@ -400,7 +400,7 @@ for elem in t {
 
 ### Break & Continue
 
-```qk
+```quirk
 for i in [1, 2, 3, 4, 5] {
     if i == 3 { break }
     if i == 2 { continue }
@@ -414,7 +414,7 @@ for i in [1, 2, 3, 4, 5] {
 
 ### Definition
 
-```qk
+```quirk
 define add(a: Int, b: Int) -> Int {
     return a + b
 }
@@ -427,7 +427,7 @@ define greet(name: String) {
 
 ### Default Parameters
 
-```qk
+```quirk
 define connect(host: String, port: Int = 8080, ssl: Bool = false) -> void {
     print("Connecting to ${host}:${port} (ssl=${ssl})")
 }
@@ -438,7 +438,7 @@ connect("example.com", port = 443, ssl = true)
 
 ### Named Arguments
 
-```qk
+```quirk
 define func(url: String, timeout: Int = 30, ssl: Bool = false) -> void { }
 
 func(timeout = 60, url = "https://example.com", ssl = true)
@@ -446,7 +446,7 @@ func(timeout = 60, url = "https://example.com", ssl = true)
 
 ### Variadic Functions
 
-```qk
+```quirk
 define log(prefix: String, sep: String = " ", ...parts) -> void {
     result := prefix
     for p in parts {
@@ -461,7 +461,7 @@ log(prefix = ">>", "hello", "world")
 
 ### Where Clause (Preconditions)
 
-```qk
+```quirk
 define divide(a: Int, b: Int) -> Double where b != 0 {
     return a as Double / b as Double
 }
@@ -473,7 +473,7 @@ define clamp_positive(x: Int) -> Int where x >= 0 {
 
 ### Recursion
 
-```qk
+```quirk
 define factorial(n: Int) -> Int {
     if n <= 1 { return 1 }
     return n * factorial(n - 1)
@@ -486,7 +486,7 @@ define factorial(n: Int) -> Int {
 
 Anonymous functions that can capture variables from their surrounding scope.
 
-```qk
+```quirk
 // Basic lambda
 square := fn(x: Int) => x * x
 print(square(5))   // 25
@@ -527,7 +527,7 @@ Quirk's object model uses structs — value types with methods and inheritance.
 
 ### Basic Struct
 
-```qk
+```quirk
 struct Point {
     x: Int
     y: Int
@@ -553,7 +553,7 @@ print(p)                         // "(3, 4)"
 
 ### Inheritance
 
-```qk
+```quirk
 struct Animal {
     name: String
     sound: String
@@ -603,7 +603,7 @@ print(d.describe())   // "Rex says Woof (Labrador)"
 
 ### Extend (Add Methods to Existing Types)
 
-```qk
+```quirk
 extend String {
     define shout(self) -> String {
         return self.upper() + "!!!"
@@ -615,7 +615,7 @@ print("hello".shout())  // "HELLO!!!"
 
 ### Docstrings
 
-```qk
+```quirk
 ---
 Represents a 2D point in space.
 @param x: X coordinate
@@ -632,7 +632,7 @@ struct Point {
 
 ## 9. Enumerations
 
-```qk
+```quirk
 enum Color {
     Red
     Green
@@ -665,7 +665,7 @@ match c {
 
 ### Value Match
 
-```qk
+```quirk
 match x {
     case 1        => print("one")
     case 2, 3     => print("two or three")
@@ -679,7 +679,7 @@ match x {
 
 ### String Match
 
-```qk
+```quirk
 match lang {
     case "Python" => print("snake")
     case "Quirk"  => print("quirky!")
@@ -689,7 +689,7 @@ match lang {
 
 ### Bool Match
 
-```qk
+```quirk
 match flag {
     case true  => print("yes")
     case false => print("no")
@@ -698,7 +698,7 @@ match flag {
 
 ### Enum Match
 
-```qk
+```quirk
 match color {
     case Color.Red   => print("red")
     case Color.Green => print("green")
@@ -710,7 +710,7 @@ match color {
 
 Match on the runtime type of a value. Useful for `Any`-typed parameters.
 
-```qk
+```quirk
 define describe(x) {
     match x {
         case Int => { print("integer: ${x}") }
@@ -726,7 +726,7 @@ describe("hello")    // "string: hello"
 
 ### Type Match with Binding
 
-```qk
+```quirk
 match x {
     case Int as n => { print("Int value: ${n}") }
     case String as s => { print("String: ${s}") }
@@ -735,7 +735,7 @@ match x {
 
 ### Union Type Match
 
-```qk
+```quirk
 match x {
     case Int | Float => { print("numeric") }
     case String => { print("text") }
@@ -749,7 +749,7 @@ match x {
 
 ### Throw
 
-```qk
+```quirk
 throw ValueError("bad value")
 throw TypeError("wrong type")
 throw RuntimeError("something failed")
@@ -757,7 +757,7 @@ throw RuntimeError("something failed")
 
 ### Try / Catch / Finally
 
-```qk
+```quirk
 try {
     throw ValueError("oops")
 } catch (e: ValueError) {
@@ -771,7 +771,7 @@ try {
 
 ### Anonymous Catch (no binding)
 
-```qk
+```quirk
 try {
     risky()
 } catch (ZeroDivisionError) {
@@ -788,7 +788,7 @@ try {
 
 ### Bare Re-raise
 
-```qk
+```quirk
 try {
     throw ValueError("root cause")
 } catch (e: ValueError) {
@@ -799,7 +799,7 @@ try {
 
 ### Exception Chaining
 
-```qk
+```quirk
 try {
     throw ValueError("root cause")
 } catch (e: ValueError) {
@@ -809,7 +809,7 @@ try {
 
 ### Automatic Exceptions
 
-```qk
+```quirk
 // IndexError — list/string out of bounds
 items := [1, 2, 3]
 _ := items[99]    // Throws IndexError
@@ -847,14 +847,14 @@ Exception
 
 ### Optional Declaration
 
-```qk
+```quirk
 name: String? = null    // Nullable
 name: String? = "Alex"  // Non-null
 ```
 
 ### Null Coalesce (`??`)
 
-```qk
+```quirk
 a: String? = null
 print(a ?? "default")       // "default"
 
@@ -863,7 +863,7 @@ print(a ?? b ?? c ?? "none")  // First non-null, or "none"
 
 ### Safe Call (`?.`)
 
-```qk
+```quirk
 s: String? = "hello"
 print(s?.upper() ?? "(null)")   // "HELLO"
 
@@ -873,7 +873,7 @@ print(n?.upper() ?? "(null)")   // "(null)"
 
 ### Null Check (`?`)
 
-```qk
+```quirk
 p: String? = "present"
 q: String? = null
 
@@ -885,7 +885,7 @@ print(q?)   // false
 
 ### Optional Parameters
 
-```qk
+```quirk
 define greet(name: String?) -> String {
     return "Hello, " + (name ?? "stranger") + "!"
 }
@@ -895,7 +895,7 @@ define greet(name: String?) -> String {
 
 ## 13. String Interpolation
 
-```qk
+```quirk
 name := "Quirk"
 version := 2
 
@@ -923,7 +923,7 @@ print("${user} is ${age} years old")
 
 ### Casting with `as`
 
-```qk
+```quirk
 i: Int = 7
 d := i as Double       // 7.0
 
@@ -941,7 +941,7 @@ ci := c as Int         // 65
 
 Preconditions that are checked at call time and throw `WhereConditionError` on violation.
 
-```qk
+```quirk
 define divide(a: Int, b: Int) -> Double where b != 0 {
     return a as Double / b as Double
 }
@@ -963,7 +963,7 @@ try {
 
 ### Type Aliases
 
-```qk
+```quirk
 type Name = String
 type Number = Int
 type ID = Int
@@ -975,7 +975,7 @@ define greet(n: Name) -> String {
 
 ### Union Types
 
-```qk
+```quirk
 // In function parameters
 define process(val: Int | String) -> void {
     print("Got a value")
@@ -994,7 +994,7 @@ type NumberOrText = Int | String
 
 ### Import Entire Module
 
-```qk
+```quirk
 use io
 use sys
 use encoding.json
@@ -1003,7 +1003,7 @@ use net.http
 
 ### Selective Import
 
-```qk
+```quirk
 from typing.collections use { List, Map }
 from typing.collections use { Set, Queue }
 from typing.exceptions use { ValueError, KeyError }
@@ -1014,14 +1014,14 @@ from math.vectors use { Vector2, Vector3 }
 
 ### Relative Imports
 
-```qk
+```quirk
 from .utils use { helper }
 from .models use { User, Post }
 ```
 
 ### Module Alias
 
-```qk
+```quirk
 from .greet_lib as greet
 
 greet.greet("Alice")
@@ -1034,7 +1034,7 @@ greet.shout("hello")
 
 Any struct implementing `__enter` and `__exit` can be used in a `with` block. The resource is automatically cleaned up when the block exits.
 
-```qk
+```quirk
 with File("data.txt", "w") as f {
     f.write("Hello!\n")
     f.write("Goodbye!\n")
@@ -1048,7 +1048,7 @@ with File("data.txt", "r") as f {
 
 ### Custom Context Manager
 
-```qk
+```quirk
 struct Timer {
     define __enter(self) -> Self {
         print("Starting timer")
@@ -1070,7 +1070,7 @@ with Timer() as t {
 
 ### List Comprehension
 
-```qk
+```quirk
 squares := [x * x for x in [1, 2, 3, 4, 5]]
 // [1, 4, 9, 16, 25]
 
@@ -1083,7 +1083,7 @@ upper_names := [name.upper() for name in ["alice", "bob"]]
 
 ### Map Comprehension
 
-```qk
+```quirk
 m := {"a": 1, "b": 2, "c": 3}
 
 upper_keys := {k.upper(): v for k, v in m}
@@ -1115,7 +1115,7 @@ keys_set := {k for k in m}
 
 ### `is` operator (type check)
 
-```qk
+```quirk
 x := 42
 print(x is Int)       // true
 print(x is String)    // false
@@ -1139,7 +1139,7 @@ print(name is String) // true
 
 ### I/O
 
-```qk
+```quirk
 use io
 
 with io.File("output.txt", "w") as f {
@@ -1159,7 +1159,7 @@ stderr.write("Error message\n")
 
 ### JSON
 
-```qk
+```quirk
 from encoding.json use { json }
 
 // Encode
@@ -1177,7 +1177,7 @@ with File("config.json", "r") as f { loaded: Map = json.load(f) }
 
 ### HTTP
 
-```qk
+```quirk
 use net.http
 
 resp := http.get("https://example.com")
@@ -1192,7 +1192,7 @@ resp2 := http.post("https://api.example.com/data", "body=content")
 
 ### Networking (Sockets)
 
-```qk
+```quirk
 from net use { Socket }
 
 server := Socket()
@@ -1207,7 +1207,7 @@ with server.accept() as client {
 
 ### Math / Vectors
 
-```qk
+```quirk
 from math.vectors use { Vector2, Vector3 }
 
 v := Vector2(3.0, 4.0)
@@ -1220,20 +1220,25 @@ print(v)
 
 ```bash
 # Run immediately (JIT)
-./bin/quirk program.quirk
+quirk program.quirk
+
+# Step through interactively under the (qdb) debugger
+quirk --debug program.quirk
 
 # Emit LLVM IR
-./bin/quirk --emit-ir program.quirk
+quirk --emit-ir program.quirk
 
 # Compile to native binary
-./bin/quirk -o output program.quirk
+quirk -o output program.quirk
 
 # Verbose compilation output
-./bin/quirk -v program.quirk
+quirk -v program.quirk
 
 # Dump AST
-./bin/quirk --emit-ast program.quirk
+quirk --emit-ast program.quirk
 ```
+
+For the full CLI reference (subcommands, package manager, debugger commands, …) see [COMMANDS.md](COMMANDS.md).
 
 ### Building the Compiler
 
@@ -1248,7 +1253,7 @@ The compiler outputs to `bin/quirk`. The runtime shared library is built at `bin
 
 ## Comments
 
-```qk
+```quirk
 // Single-line comment
 
 ---
@@ -1267,7 +1272,7 @@ define greet(name: String) -> String {
 
 ## Complete Example
 
-```qk
+```quirk
 from typing.collections use { Set }
 from typing.exceptions use { ValueError }
 from encoding.json use { json }

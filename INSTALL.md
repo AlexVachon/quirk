@@ -52,7 +52,7 @@ macOS and Windows aren't packaged yet — the runtime uses some POSIX-only paths
 ## Quick install (Ubuntu / Debian / WSL)
 
 ```bash
-git clone https://github.com/<your-org>/quirk.git
+git clone https://github.com/AlexVachon/quirk.git
 cd quirk/quirk-compiler
 bash setup.sh
 ```

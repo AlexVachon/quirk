@@ -142,6 +142,14 @@ bool Sema::analyze(const std::vector<std::unique_ptr<Node>> &nodes)
         else if (auto e = dynamic_cast<EnumNode*>(node.get())) {
             enumRegistry[e->name] = e;
         }
+        else if (auto v = dynamic_cast<VarDeclNode*>(node.get())) {
+            // Top-level `NAME := value` bindings — track them so
+            // `from M use { NAME }` can resolve them across modules.
+            // The LHS is a LiteralNode whose value is the name.
+            if (auto* lhs = dynamic_cast<LiteralNode*>(v->lhs.get())) {
+                moduleConstRegistry[lhs->value] = v;
+            }
+        }
     }
 
     // Pass 2: Analyze Bodies
@@ -227,7 +235,8 @@ void Sema::checkUse(UseNode *node)
         for (const auto &item : node->filterList)
         {
             bool found = structRegistry.count(item) || methodRegistry[""].count(item)
-                      || interfaceRegistry.count(item) || enumRegistry.count(item);
+                      || interfaceRegistry.count(item) || enumRegistry.count(item)
+                      || moduleConstRegistry.count(item);
             if (!found)
                 fatalError("module '" + node->moduleName + "' does not export symbol '" + item + "'",
                            node->line, node->col, node->filePath);

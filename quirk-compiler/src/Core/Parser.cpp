@@ -1101,8 +1101,16 @@ std::unique_ptr<FunctionNode> Parser::parseFunction(bool allowAbstract) {
         node->linkageName = modulePrefix + "_" + name;
     } else if (isLibFunction) {
         node->linkageName = modulePrefix + "$" + name;
-    } else {
+    } else if (name == "main") {
+        // The program entry must link as plain `main` for the C runtime.
         node->linkageName = name;
+    } else {
+        // User functions: module-prefix them too so two files that both
+        // declare `info` (or any other common name) get distinct LLVM
+        // symbols. Without this, `module_a.info` and `module_b.info`
+        // both resolve to the same getFunction("info") at the call site
+        // and we end up calling the wrong one.
+        node->linkageName = modulePrefix + "$" + name;
     }
     // --------------------------------
 

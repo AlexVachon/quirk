@@ -242,6 +242,10 @@ class LLVMCodegen {
                 enumVariants[e->name] = e->variants;
             }
         }
+        // Hand the registry to TypeGen so `define f(l: L)` types `l` as
+        // i32 (matching how `L.A` codegens), instead of falling through
+        // to the i8* default.
+        typeGen->setEnumRegistry(&enumVariants);
 
         // --- Virtual dispatch pre-scan ---
         // Determine which structs get __type_id (vtable-eligible):
@@ -363,7 +367,20 @@ class LLVMCodegen {
                     functionDeclarations[func->linkageName] = func;
                 }
                 if (!func->moduleName.empty() && func->cls.empty()) {
+                    // Original PascalCase key (from computeModulePrefix).
                     moduleFunctionIndex[{func->moduleName, func->name}] = func;
+                    // ALSO a lowercased key — `use console` aliases to the
+                    // lowercase form the user typed, while the parser
+                    // computed "Console". Without this second entry the
+                    // module-qualified lookup misses and falls through to
+                    // bare-name resolution, which picks the wrong function
+                    // when two modules share a name (`console.info` vs
+                    // `mylib.info`).
+                    auto lowered = func->moduleName;
+                    for (auto& ch : lowered) ch = (char)std::tolower((unsigned char)ch);
+                    if (lowered != func->moduleName)
+                        moduleFunctionIndex[{lowered, func->name}] = func;
+
                     // Module names from file paths end in ".index" for
                     // foo/index.quirk packages, but `use foo` aliases to "foo".
                     // Index under the trimmed form too so the lookup matches.
@@ -373,6 +390,10 @@ class LLVMCodegen {
                         trimmed.compare(trimmed.size() - idx.size(), idx.size(), idx) == 0) {
                         trimmed = trimmed.substr(0, trimmed.size() - idx.size());
                         moduleFunctionIndex[{trimmed, func->name}] = func;
+                        auto trimmedLower = trimmed;
+                        for (auto& ch : trimmedLower) ch = (char)std::tolower((unsigned char)ch);
+                        if (trimmedLower != trimmed)
+                            moduleFunctionIndex[{trimmedLower, func->name}] = func;
                     }
                 }
 
@@ -2124,10 +2145,12 @@ class LLVMCodegen {
                 argVal->getType()->getPointerElementType()->isIntegerTy(8) &&
                 expectedType->isPointerTy() &&
                 expectedType->getPointerElementType()->isStructTy()) {
-                StructType* st = cast<StructType>(expectedType->getPointerElementType());
-                if (st->getName() == "String") {
-                    argVal = Builder.CreateBitCast(argVal, expectedType);
-                }
+                // i8* → SomeStruct*. Used to be String-only; widened so that
+                // Callable, Map, List, etc. flowing through Any-typed slots
+                // (most commonly `list[i]` returning Any) get coerced to the
+                // function's declared pointer type instead of triggering an
+                // LLVM "param type does not match" verifier failure.
+                argVal = Builder.CreateBitCast(argVal, expectedType);
             } else if (argVal->getType() != expectedType) {
                 if (argVal->getType()->isIntegerTy() && expectedType->isIntegerTy())
                     argVal = Builder.CreateIntCast(argVal, expectedType, true);

@@ -67,6 +67,10 @@ class Sema {
     std::map<std::string, EnumNode*> enumRegistry;
     std::map<std::string, InterfaceNode*> interfaceRegistry;
     std::map<std::string, std::map<std::string, FunctionNode*>> methodRegistry;
+    // Top-level `NAME := value` bindings that should be exportable across
+    // modules. Sema fills this during the first walk; `from M use { NAME }`
+    // accepts a name iff it's in here (or one of the other registries).
+    std::map<std::string, VarDeclNode*> moduleConstRegistry;
     FunctionNode* findMethod(const std::string& cls, const std::string& name) {
         auto cit = methodRegistry.find(cls);
         if (cit == methodRegistry.end()) return nullptr;

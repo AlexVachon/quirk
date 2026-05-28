@@ -10,10 +10,20 @@ using namespace llvm;
 class TypeGen {
     LLVMContext& Context;
     std::map<std::string, StructType*>& StructTypes;
+    // Enum name → variant list, populated by Codegen's Pass 1. Used so a
+    // user-declared `enum Level { ... }` resolves to i32 (matching what
+    // enum-literal codegen emits at `Level.TRACE`). Without this, enum-
+    // typed parameters fall through to the i8* default and any comparison
+    // against an enum literal crashes LLVM's ICmp type assertion.
+    const std::map<std::string, std::vector<std::string>>* enumVariants = nullptr;
 
 public:
     TypeGen(LLVMContext& ctx, std::map<std::string, StructType*>& structs)
         : Context(ctx), StructTypes(structs) {}
+
+    void setEnumRegistry(const std::map<std::string, std::vector<std::string>>* ev) {
+        enumVariants = ev;
+    }
 
     Type* getLLVMType(const std::string& typeName) {
         // Untyped parameter → generic void pointer (i8*)
@@ -33,6 +43,13 @@ public:
         auto bracketPos = typeName.find('[');
         if (bracketPos != std::string::npos)
             return getLLVMType(typeName.substr(0, bracketPos));
+
+        // User-declared enums are i32 (the same type the enum-literal
+        // codegen emits). Without this the param alloca is i8* and any
+        // comparison against an enum value blows up ICmp.
+        if (enumVariants && enumVariants->count(typeName)) {
+            return Type::getInt32Ty(Context);
+        }
 
         // Handle Structs (including String!)
         if (StructTypes.count(typeName)) {

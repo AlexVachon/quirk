@@ -22,6 +22,38 @@ set -e
 QUIRK_REPO="${QUIRK_REPO:-AlexVachon/quirk}"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.quirk}"
 
+# --- Argument parsing -------------------------------------------------------
+# Accept a real flag in addition to the env var. Lets users write
+#     curl … | sh -s -- --install-extension
+# instead of the easy-to-mess-up
+#     curl … | INSTALL_EXTENSION=1 sh
+# (the latter still works, but the env var has to land on `sh`, not on
+# `curl` — common foot-gun for first-time users).
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --install-extension|--with-extension) INSTALL_EXTENSION=1 ;;
+        --code-cmd=*)  CODE_CMD="${1#*=}" ;;
+        --version=*)   QUIRK_VERSION="${1#*=}" ;;
+        --dir=*)       INSTALL_DIR="${1#*=}" ;;
+        -h|--help)
+            cat <<'EOF'
+Usage: install.sh [flags]
+  --install-extension     Also install the Quirk VSCode extension
+  --code-cmd=<cmd>        Editor CLI to install into (default: code)
+  --version=vX.Y.Z        Pin to a specific release (default: latest)
+  --dir=<path>            Install root (default: ~/.quirk)
+Env var equivalents: INSTALL_EXTENSION, CODE_CMD, QUIRK_VERSION, INSTALL_DIR
+EOF
+            exit 0
+            ;;
+        *)
+            echo "install.sh: unknown flag '$1' — see --help" >&2
+            exit 2
+            ;;
+    esac
+    shift
+done
+
 # --- Platform detection -----------------------------------------------------
 os=$(uname -s | tr '[:upper:]' '[:lower:]')
 arch=$(uname -m)

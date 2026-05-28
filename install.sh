@@ -102,4 +102,53 @@ echo
 echo "    export QUIRK_HOME=\"$INSTALL_DIR\""
 echo "    export PATH=\"\$QUIRK_HOME/bin:\$PATH\""
 echo
+
+# --- VSCode extension (opt-in) ----------------------------------------------
+# Off by default — a `curl | sh` installer that silently mutates the user's
+# IDE would be a surprise. Opt-in by running with INSTALL_EXTENSION=1:
+#
+#     INSTALL_EXTENSION=1 curl -fsSL .../install.sh | sh
+#
+# Only fires when the `code` CLI is on PATH. To install into a non-default
+# editor (VSCodium, Cursor, etc.), set CODE_CMD accordingly:
+#
+#     INSTALL_EXTENSION=1 CODE_CMD=codium curl -fsSL .../install.sh | sh
+CODE_CMD="${CODE_CMD:-code}"
+
+install_quirk_extension() {
+    if ! command -v "$CODE_CMD" >/dev/null 2>&1; then
+        echo "INSTALL_EXTENSION=1 was set, but '$CODE_CMD' is not on PATH — skipping."
+        echo "  (Set CODE_CMD=codium / CODE_CMD=cursor / etc. to target another editor.)"
+        return 0
+    fi
+    # The releases endpoint lists newest-first; only `vscode-v*` releases
+    # carry .vsix assets, so the first .vsix we find IS the latest extension.
+    vsix_url=$(curl -fsSL "https://api.github.com/repos/${QUIRK_REPO}/releases" 2>/dev/null \
+               | grep -oE 'https://[^"]+\.vsix' | head -n 1)
+    if [ -z "$vsix_url" ]; then
+        echo "Couldn't locate a published Quirk VSCode extension. Skipping."
+        return 0
+    fi
+    echo
+    echo "Installing Quirk VSCode extension into '$CODE_CMD'..."
+    vsix_path="$tmpdir/quirk.vsix"
+    if ! curl -fsSL "$vsix_url" -o "$vsix_path"; then
+        echo "Extension download failed; skipping."
+        return 0
+    fi
+    "$CODE_CMD" --install-extension "$vsix_path" || {
+        echo "Extension install failed. You can install it manually later:"
+        echo "    $CODE_CMD --install-extension $vsix_url"
+    }
+}
+
+if [ "${INSTALL_EXTENSION:-0}" = "1" ]; then
+    install_quirk_extension
+else
+    echo "VSCode extension (optional):"
+    echo "    INSTALL_EXTENSION=1 curl -fsSL https://raw.githubusercontent.com/${QUIRK_REPO}/main/install.sh | sh"
+    echo "  or download the .vsix manually:"
+    echo "    https://github.com/${QUIRK_REPO}/releases"
+    echo
+fi
 echo "Then reopen your shell and run:  quirk --version"

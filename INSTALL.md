@@ -18,6 +18,14 @@ To install a specific version:
 QUIRK_VERSION=v1.0.0 curl -fsSL https://raw.githubusercontent.com/AlexVachon/quirk/main/install.sh | sh
 ```
 
+To also install the **VSCode extension** in one go (requires the `code` CLI on PATH):
+
+```bash
+INSTALL_EXTENSION=1 curl -fsSL https://raw.githubusercontent.com/AlexVachon/quirk/main/install.sh | sh
+```
+
+For VSCodium / Cursor / Theia, set `CODE_CMD` to their CLI name (`codium`, `cursor`, …). If `INSTALL_EXTENSION` isn't set, the script just prints the link to grab the `.vsix` manually.
+
 Other platforms (macOS, Windows, ARM): build from source — see below.
 
 ---

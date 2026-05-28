@@ -82,16 +82,20 @@ jobs:
 
       - name: Package
         id: pkg
+        # Mirror the SOURCE TREE layout exactly — that's the layout the
+        # compiler's stdlib resolution actually expects:
+        #   <QUIRK_HOME>/bin/quirk
+        #   <QUIRK_HOME>/bin/runtime.so   (sibling of the binary)
+        #   <QUIRK_HOME>/libs/console/...  (top-level, NOT under lib/quirk/)
+        # An earlier layout buried libs at lib/quirk/libs and the compiler
+        # printed `stdlib: (not found)` despite QUIRK_HOME being correct.
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           PKG="quirk-${VERSION}-linux-x86_64"
-          # Mirror the on-disk layout the install.sh script (and QUIRK_HOME)
-          # expects: bin/quirk, lib/quirk/runtime.so, lib/quirk/libs/...
-          mkdir -p "${PKG}/bin" "${PKG}/lib/quirk"
+          mkdir -p "${PKG}/bin"
           cp quirk-compiler/bin/quirk      "${PKG}/bin/"
-          cp quirk-compiler/bin/runtime.so "${PKG}/lib/quirk/"
-          cp -r quirk-compiler/libs        "${PKG}/lib/quirk/libs"
-          cp -r libs                        "${PKG}/lib/quirk/stdlib" 2>/dev/null || true
+          cp quirk-compiler/bin/runtime.so "${PKG}/bin/"
+          cp -r quirk-compiler/libs        "${PKG}/libs"
           cp README.md INSTALL.md           "${PKG}/" 2>/dev/null || true
           cp quirk-compiler/CHANGELOG.md    "${PKG}/" 2>/dev/null || true
           tar czf "${PKG}.tar.gz" "${PKG}"

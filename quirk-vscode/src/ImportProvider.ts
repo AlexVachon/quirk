@@ -712,6 +712,15 @@ export class QuirkDefinitionProvider implements vscode.DefinitionProvider {
 
     public resolvePath(projectRoot: string, currentFile: string, modulePath: string): string | null {
         if (modulePath.startsWith('.')) return this.resolveRelative(currentFile, modulePath);
+        // Self-package: `use <pkgname>` from within a package's own tree
+        // should resolve to <projectRoot>/src/index.quirk when pkgname
+        // matches `name = "..."` in quirk.toml. Mirrors what the standalone
+        // resolveModulePath() does for diagnostics, so Ctrl+click on a
+        // self-imported symbol resolves to the local definition.
+        {
+            const selfHit = resolveSelfPackage(projectRoot, modulePath);
+            if (selfHit) return selfHit;
+        }
         const relPath = modulePath.replace(/\./g, '/');
         for (const root of this.getSearchRoots(projectRoot)) {
             const candidates = [

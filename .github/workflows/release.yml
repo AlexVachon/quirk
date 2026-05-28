@@ -1,13 +1,14 @@
 name: Release
 
-# Fires on any `vX.Y.Z` tag push (which is what `quirk bump-compiler --tag
-# --push` produces, or `git tag v1.0.0 && git push --tags` by hand).
-# Builds the compiler, bundles the binary + runtime.so + stdlib, and
-# attaches a tarball to a GitHub Release for the tag.
+# Fires on `vX.Y.Z` (compiler) tag pushes only. The leading `v` followed
+# by a digit excludes `vscode-vX.Y.Z` (extension) tags — those have their
+# own workflow (publish-vscode.yml). Without this restriction the
+# compiler build would also fire on extension tags and pollute the
+# extension's release with a mis-named compiler tarball.
 on:
   push:
     tags:
-      - 'v*'
+      - 'v[0-9]*'
 
 permissions:
   contents: write   # needed to create releases and upload assets

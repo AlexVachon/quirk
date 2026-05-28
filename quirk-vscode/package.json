@@ -3,7 +3,7 @@
   "displayName": "Quirk",
   "description": "Language support, interactive debugger, and Run/Debug integration for the Quirk programming language.",
   "version": "0.2.0",
-  "publisher": "alexvachon",
+  "publisher": "quirk",
   "license": "MIT",
   "icon": "icons/icon.png",
   "repository": {

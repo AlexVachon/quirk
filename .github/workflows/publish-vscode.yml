@@ -1,0 +1,93 @@
+name: Publish VSCode extension
+
+# Fires on `vscode-vX.Y.Z` tags (distinct from the compiler's `vX.Y.Z`
+# tags so the two release tracks don't collide). The tag version IS the
+# published extension version — i.e. push `vscode-v0.3.0` and that's
+# what lands on the marketplace.
+#
+# Also dispatchable manually for dry runs / re-publishes.
+on:
+  push:
+    tags:
+      - 'vscode-v*'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build the .vsix but skip the publish step"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        working-directory: quirk-vscode
+    # Hoist secrets to job-level env so step `if:` conditions can check
+    # whether they're populated — GH Actions forbids `secrets.X` in `if:`
+    # expressions, but `env.X` is fine once the env block is in place.
+    env:
+      VSCE_PAT: ${{ secrets.VSCE_PAT }}
+      OVSX_PAT: ${{ secrets.OVSX_PAT }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: quirk-vscode/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Compile TypeScript
+        run: npm run compile
+
+      - name: Sync version with tag
+        # `vscode-v0.3.0` → 0.3.0 — written into package.json *without*
+        # creating a git commit, so the marketplace version always
+        # matches the tag verbatim. Skipped on workflow_dispatch (the
+        # already-in-source version wins for manual runs).
+        if: startsWith(github.ref, 'refs/tags/vscode-v')
+        run: |
+          TAG="${GITHUB_REF_NAME#vscode-v}"
+          echo "Publishing version: $TAG"
+          npx --yes @vscode/vsce@latest --version
+          # `npm version --no-git-tag-version` updates package.json safely.
+          npm version "$TAG" --no-git-tag-version --allow-same-version
+
+      - name: Package
+        # Always package so the workflow_dispatch dry run produces a
+        # downloadable artifact even when publish is skipped.
+        run: npx --yes @vscode/vsce@latest package --no-yarn
+
+      - name: Upload .vsix artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: quirk-vsix
+          path: quirk-vscode/*.vsix
+          if-no-files-found: error
+
+      - name: Publish to VSCode Marketplace
+        # Requires the `VSCE_PAT` repo secret — Settings → Secrets and
+        # variables → Actions → New repository secret. The PAT comes from
+        # dev.azure.com with the "Marketplace > Manage" scope.
+        if: (github.event_name == 'push' || inputs.dry_run != true) && env.VSCE_PAT != ''
+        run: npx --yes @vscode/vsce@latest publish --packagePath ./*.vsix --pat "$VSCE_PAT"
+
+      - name: Warn if VSCE_PAT missing
+        if: (github.event_name == 'push' || inputs.dry_run != true) && env.VSCE_PAT == ''
+        run: |
+          echo "::warning::VSCE_PAT secret is not set — the .vsix was built but NOT published."
+          echo "Add it at: Settings → Secrets and variables → Actions → New repository secret"
+
+      - name: Publish to Open VSX (Cursor / VSCodium)
+        # Optional second marketplace. Skipped silently when the
+        # OVSX_PAT secret isn't set — Open VSX uses its own token from
+        # https://open-vsx.org/user-settings/tokens.
+        if: (github.event_name == 'push' || inputs.dry_run != true) && env.OVSX_PAT != ''
+        run: npx --yes ovsx@latest publish ./*.vsix --pat "$OVSX_PAT"

@@ -5,6 +5,29 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [1.0.3] — 2026-05-29
+
+### Improved
+- **`quirk release` now diagnoses git-push failures** instead of just
+  saying "git push failed". Pattern-matches the captured `git push`
+  output for the most common reasons a publish blows up, then prints
+  a targeted hint with concrete remediation steps and the relevant
+  GitHub settings URL:
+    - **Deploy key lacks write access** — links to
+      `<repo>/settings/keys`, suggests the read-only key fix, an
+      explicit `GIT_SSH_COMMAND` for a personal SSH identity, or
+      switching to HTTPS + a fine-grained PAT.
+    - **HTTPS auth missing / invalid** — explains PAT setup vs SSH switch.
+    - **Repository not found** — flags missing repo or zero access.
+    - **Network unreachable** — suggests retry.
+    - **Branch is behind** — suggests `git pull --rebase && quirk release`.
+  In all cases, when the commit was pushed but the tag wasn't, the
+  diagnostic surfaces "the commit was pushed; only the tag is pending"
+  so users know exactly which retry command to run.
+
+  Reminder: Quirk publishes via plain `git push` — there's no central
+  registry — so any auth issue that blocks `git push` blocks deploys.
+
 ## [1.0.2] — 2026-05-29
 
 ### Fixed

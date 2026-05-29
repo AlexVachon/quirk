@@ -48,7 +48,7 @@
 
 namespace qpm {
 
-constexpr const char* QUIRK_VERSION = "1.0.2";
+constexpr const char* QUIRK_VERSION = "1.0.3";
 
 namespace fs = std::filesystem;
 
@@ -3478,16 +3478,89 @@ static int cmd_release(const std::vector<std::string>& args) {
         std::cout << "  ↑ pushing...\n";
         // Push the commit (if any) and the new tag. Bail early if the
         // branch push fails so the tag push doesn't quietly succeed on a
-        // partial publish.
-        std::string p1 = "git push 2>&1";
-        if (std::system(p1.c_str()) != 0) {
-            std::cerr << "release: `git push` failed; tag not pushed\n";
+        // partial publish. Captured output is echoed in real-time AND
+        // saved so we can emit a targeted hint for common auth failures.
+        auto run_capture = [](const std::string& cmd) -> std::pair<int, std::string> {
+            FILE* p = popen((cmd + " 2>&1").c_str(), "r");
+            if (!p) return {-1, ""};
+            char buf[1024]; std::string out;
+            while (fgets(buf, sizeof(buf), p)) {
+                std::cerr << buf;
+                out += buf;
+            }
+            int rc = pclose(p);
+            return {WEXITSTATUS(rc), out};
+        };
+
+        auto remote_url = capture("git remote get-url origin");
+        std::string https_url = remote_url;
+        // Best-effort SSH → HTTPS conversion for the hint output.
+        // git@github.com:owner/repo.git  →  https://github.com/owner/repo
+        if (https_url.rfind("git@", 0) == 0) {
+            size_t colon = https_url.find(':');
+            if (colon != std::string::npos) {
+                std::string host = https_url.substr(4, colon - 4);
+                std::string path = https_url.substr(colon + 1);
+                if (path.size() > 4 && path.substr(path.size() - 4) == ".git")
+                    path = path.substr(0, path.size() - 4);
+                https_url = "https://" + host + "/" + path;
+            }
+        }
+
+        auto diagnose = [&](const std::string& out, const std::string& step) {
+            std::cerr << "\n";
+            const std::string lo = [&](){ std::string s = out; for (auto& c : s) c = (char)std::tolower((unsigned char)c); return s; }();
+            if (lo.find("denied to deploy key") != std::string::npos ||
+                (lo.find("permission") != std::string::npos && lo.find("deploy key") != std::string::npos)) {
+                log::err(step + ": the SSH deploy key in use lacks write access to " + remote_url);
+                std::cerr << "    The push went through a repository-scoped deploy key that's\n"
+                          << "    read-only (or registered against a different repo).\n";
+                std::cerr << "    Fix one of:\n";
+                std::cerr << "      • Settings → Deploy keys → tick `Allow write access` on the key\n";
+                std::cerr << "          " << https_url << "/settings/keys\n";
+                std::cerr << "      • Or use your personal SSH identity for this repo:\n";
+                std::cerr << "          GIT_SSH_COMMAND='ssh -i ~/.ssh/id_ed25519 -F /dev/null -o IdentitiesOnly=yes' git push origin <ref>\n";
+                std::cerr << "      • Or switch to HTTPS + a fine-grained PAT (Contents: read+write on the repo):\n";
+                std::cerr << "          git remote set-url origin " << https_url << ".git\n";
+            } else if (lo.find("could not read username") != std::string::npos ||
+                       lo.find("authentication failed") != std::string::npos ||
+                       lo.find("invalid username or password") != std::string::npos) {
+                log::err(step + ": HTTPS authentication missing or invalid");
+                std::cerr << "    git can't log in to the HTTPS remote. Either:\n";
+                std::cerr << "      • Create a fine-grained PAT (Contents: read+write on this repo) and\n";
+                std::cerr << "        configure a credential helper, or paste it at the next prompt;\n";
+                std::cerr << "        https://github.com/settings/personal-access-tokens\n";
+                std::cerr << "      • Or switch to SSH:\n";
+                std::cerr << "          git remote set-url origin git@github.com:<owner>/<repo>.git\n";
+            } else if (lo.find("repository not found") != std::string::npos) {
+                log::err(step + ": remote repository not found (" + remote_url + ")");
+                std::cerr << "    Either the repo doesn't exist yet, or your credentials lack any access.\n";
+                std::cerr << "    Create it on GitHub first, then retry.\n";
+            } else if (lo.find("could not resolve host") != std::string::npos ||
+                       lo.find("could not connect") != std::string::npos) {
+                log::err(step + ": network unreachable — check connectivity and try again");
+            } else if (lo.find("non-fast-forward") != std::string::npos ||
+                       lo.find("rejected") != std::string::npos) {
+                log::err(step + ": branch is behind origin");
+                std::cerr << "    Someone else pushed since you last pulled. Run:\n";
+                std::cerr << "      git pull --rebase && quirk release\n";
+            } else {
+                log::err(step + " failed — see git output above");
+            }
+            std::cerr << "    (Quirk publishes via plain `git push` — there's no central registry.)\n";
+        };
+
+        auto [rc1, out1] = run_capture("git push");
+        if (rc1 != 0) {
+            diagnose(out1, "`git push`");
+            std::cerr << "\n    Local tag `" << tag << "` was created. After fixing the issue:\n";
+            std::cerr << "      git push origin " << tag << "\n";
             return 1;
         }
-        std::string p2 = "git push origin " + tag + " 2>&1";
-        if (std::system(p2.c_str()) != 0) {
-            std::cerr << "release: pushed branch but `git push origin "
-                      << tag << "` failed\n";
+        auto [rc2, out2] = run_capture("git push origin " + tag);
+        if (rc2 != 0) {
+            diagnose(out2, "`git push origin " + tag + "`");
+            std::cerr << "\n    The commit was pushed; only the tag is pending.\n";
             return 1;
         }
         std::cout << "  ✓ pushed " << tag << " to origin\n";

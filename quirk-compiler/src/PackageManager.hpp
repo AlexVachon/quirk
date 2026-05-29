@@ -48,7 +48,7 @@
 
 namespace qpm {
 
-constexpr const char* QUIRK_VERSION = "1.0.1";
+constexpr const char* QUIRK_VERSION = "1.0.2";
 
 namespace fs = std::filesystem;
 
@@ -3808,7 +3808,7 @@ static int cmd_completion(const std::vector<std::string>& args) {
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
     # Top-level verbs (keep in sync with PackageManager.hpp::dispatch).
-    verbs="run repl test fmt install upgrade remove uninstall list packages show init new venv version eval module deps env cache registry register check versions release bump-compiler audit script sync stdlib pkg help completion"
+    verbs="run repl test fmt install upgrade remove uninstall list packages show init new venv version eval module deps env cache registry register check versions release bump-compiler compiler audit script sync stdlib pkg help completion"
 
     # First word: complete the verb itself.
     if [ "$COMP_CWORD" -eq 1 ]; then
@@ -3846,6 +3846,11 @@ static int cmd_completion(const std::vector<std::string>& args) {
             ;;
         completion)
             COMPREPLY=($(compgen -W "bash zsh fish" -- "$cur"))
+            ;;
+        compiler)
+            if [ "$COMP_CWORD" -eq 2 ]; then
+                COMPREPLY=($(compgen -W "version list install update" -- "$cur"))
+            fi
             ;;
         cache)
             COMPREPLY=($(compgen -W "list clear show" -- "$cur"))
@@ -3904,7 +3909,8 @@ complete -c quirk -n __quirk_needs_verb -a 'venv'             -d 'Virtual enviro
 complete -c quirk -n __quirk_needs_verb -a 'version'          -d 'Show compiler version'
 complete -c quirk -n __quirk_needs_verb -a 'env'              -d 'Show environment info'
 complete -c quirk -n __quirk_needs_verb -a 'release'          -d 'Release the current package'
-complete -c quirk -n __quirk_needs_verb -a 'bump-compiler'    -d 'Bump QUIRK_VERSION'
+complete -c quirk -n __quirk_needs_verb -a 'bump-compiler'    -d 'Bump QUIRK_VERSION (dev workflow)'
+complete -c quirk -n __quirk_needs_verb -a 'compiler'         -d 'Manage the compiler binary itself'
 complete -c quirk -n __quirk_needs_verb -a 'sync'             -d 'Install missing deps'
 complete -c quirk -n __quirk_needs_verb -a 'completion'       -d 'Emit shell completion script'
 complete -c quirk -n __quirk_needs_verb -a 'help'             -d 'Show command help'
@@ -3914,6 +3920,11 @@ complete -c quirk -n '__quirk_verb_is bump-compiler' -a 'patch minor major'
 complete -c quirk -n '__quirk_verb_is bump-compiler' -l commit -d 'Commit the bump'
 complete -c quirk -n '__quirk_verb_is bump-compiler' -l tag    -d 'Annotated git tag'
 complete -c quirk -n '__quirk_verb_is bump-compiler' -l push   -d 'Push to origin'
+
+complete -c quirk -n '__quirk_verb_is compiler' -a 'version' -d 'Print the running compiler version'
+complete -c quirk -n '__quirk_verb_is compiler' -a 'list'    -d 'List available releases on GitHub'
+complete -c quirk -n '__quirk_verb_is compiler' -a 'install' -d 'Install a specific version'
+complete -c quirk -n '__quirk_verb_is compiler' -a 'update'  -d 'Update to the latest release'
 
 complete -c quirk -n '__quirk_verb_is venv' -a 'new repair info list'
 

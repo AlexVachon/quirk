@@ -5,6 +5,24 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [1.0.2] — 2026-05-29
+
+### Fixed
+- **`quirk compiler` now shows up in tab-completion.** The new verb
+  shipped in 1.0.1 wasn't in the hard-coded verb list inside the
+  `quirk completion <shell>` output, so bash/zsh/fish tab-completion
+  didn't suggest it. Added to the bash/zsh verb list plus a per-verb
+  completion for the four subcommands (`version` / `list` / `install`
+  / `update`), and the equivalent fish completions.
+
+  After upgrading, refresh the completion in your shell:
+
+  ```bash
+  source <(quirk completion bash)   # or zsh / fish
+  ```
+
+  Or just open a new terminal — your rc file will source it.
+
 ## [1.0.1] — 2026-05-28
 
 Four compiler correctness fixes, surfaced while building a real

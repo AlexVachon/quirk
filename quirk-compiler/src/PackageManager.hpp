@@ -48,7 +48,7 @@
 
 namespace qpm {
 
-constexpr const char* QUIRK_VERSION = "1.0.3";
+constexpr const char* QUIRK_VERSION = "1.0.4";
 
 namespace fs = std::filesystem;
 
@@ -3494,8 +3494,10 @@ static int cmd_release(const std::vector<std::string>& args) {
 
         auto remote_url = capture("git remote get-url origin");
         std::string https_url = remote_url;
-        // Best-effort SSH → HTTPS conversion for the hint output.
-        // git@github.com:owner/repo.git  →  https://github.com/owner/repo
+        // Best-effort SSH → HTTPS conversion. Used for the hint output AND
+        // (when gh is in play) as the push target so gh's credential helper
+        // actually gets invoked — credential helpers don't fire for SSH URLs.
+        // git@github.com:owner/repo.git  →  https://github.com/owner/repo.git
         if (https_url.rfind("git@", 0) == 0) {
             size_t colon = https_url.find(':');
             if (colon != std::string::npos) {
@@ -3506,22 +3508,57 @@ static int cmd_release(const std::vector<std::string>& args) {
                 https_url = "https://" + host + "/" + path;
             }
         }
+        std::string https_with_git = https_url;
+        if (https_with_git.size() < 4 ||
+            https_with_git.substr(https_with_git.size() - 4) != ".git")
+            https_with_git += ".git";
+
+        // Level-1 publish ergonomics: if the user has `gh` installed and is
+        // logged in, route the push through gh's credential helper so they
+        // don't have to fuss with SSH keys, deploy keys, or PATs. One-time
+        // setup for the user is `gh auth login` — browser flow, no secrets
+        // to copy around. We always push to the HTTPS URL when in this
+        // path (SSH wouldn't consult the credential helper).
+        bool gh_installed = (std::system("command -v gh >/dev/null 2>&1") == 0);
+        bool gh_authed    = gh_installed
+                         && (std::system("gh auth status >/dev/null 2>&1") == 0);
+        if (gh_authed) {
+            std::cout << "  using gh CLI auth (no SSH/PAT setup needed)\n";
+        }
+
+        // Choose the push command — same shape for both paths so the
+        // diagnostic / retry logic below doesn't have to branch.
+        std::string push_pfx;
+        std::string push_target;
+        if (gh_authed) {
+            push_pfx    = "git -c credential.helper='!gh auth git-credential'";
+            push_target = https_with_git;
+        } else {
+            push_pfx    = "git";
+            push_target = "origin";
+        }
 
         auto diagnose = [&](const std::string& out, const std::string& step) {
             std::cerr << "\n";
             const std::string lo = [&](){ std::string s = out; for (auto& c : s) c = (char)std::tolower((unsigned char)c); return s; }();
             if (lo.find("denied to deploy key") != std::string::npos ||
                 (lo.find("permission") != std::string::npos && lo.find("deploy key") != std::string::npos)) {
-                log::err(step + ": the SSH deploy key in use lacks write access to " + remote_url);
-                std::cerr << "    The push went through a repository-scoped deploy key that's\n"
-                          << "    read-only (or registered against a different repo).\n";
-                std::cerr << "    Fix one of:\n";
-                std::cerr << "      • Settings → Deploy keys → tick `Allow write access` on the key\n";
-                std::cerr << "          " << https_url << "/settings/keys\n";
-                std::cerr << "      • Or use your personal SSH identity for this repo:\n";
-                std::cerr << "          GIT_SSH_COMMAND='ssh -i ~/.ssh/id_ed25519 -F /dev/null -o IdentitiesOnly=yes' git push origin <ref>\n";
-                std::cerr << "      • Or switch to HTTPS + a fine-grained PAT (Contents: read+write on the repo):\n";
-                std::cerr << "          git remote set-url origin " << https_url << ".git\n";
+                log::err(step + ": SSH push rejected — your key is a deploy key without write access here");
+                std::cerr << "    GitHub recognized your SSH key as a *deploy key* (per-repo, scoped) —\n"
+                          << "    either it's registered on a different repo, or registered here as\n"
+                          << "    read-only. Easiest fixes, in order of preference:\n\n";
+                std::cerr << "    1. Use the `gh` CLI for auth (handles everything via browser):\n"
+                          << "         brew install gh         # or: sudo apt install gh\n"
+                          << "         gh auth login           # one-time, browser-based\n"
+                          << "         quirk release           # retry — gh's credential helper kicks in\n\n";
+                std::cerr << "    2. Add your SSH key to your GitHub *account* (not as a deploy key) —\n"
+                          << "       one-time setup, works for all your repos:\n"
+                          << "         https://github.com/settings/keys → New SSH key → paste ~/.ssh/id_ed25519.pub\n\n";
+                std::cerr << "    3. Add a deploy key on this repo *with write access* ticked:\n"
+                          << "         " << https_url << "/settings/keys\n"
+                          << "       (If the list is empty, click `Add deploy key` and tick `Allow write access` on the form.)\n\n";
+                std::cerr << "    4. Switch to HTTPS + a fine-grained PAT (Contents: read+write on this repo):\n"
+                          << "         git remote set-url origin " << https_with_git << "\n";
             } else if (lo.find("could not read username") != std::string::npos ||
                        lo.find("authentication failed") != std::string::npos ||
                        lo.find("invalid username or password") != std::string::npos) {
@@ -3550,14 +3587,14 @@ static int cmd_release(const std::vector<std::string>& args) {
             std::cerr << "    (Quirk publishes via plain `git push` — there's no central registry.)\n";
         };
 
-        auto [rc1, out1] = run_capture("git push");
+        auto [rc1, out1] = run_capture(push_pfx + " push " + push_target + " HEAD");
         if (rc1 != 0) {
             diagnose(out1, "`git push`");
             std::cerr << "\n    Local tag `" << tag << "` was created. After fixing the issue:\n";
             std::cerr << "      git push origin " << tag << "\n";
             return 1;
         }
-        auto [rc2, out2] = run_capture("git push origin " + tag);
+        auto [rc2, out2] = run_capture(push_pfx + " push " + push_target + " " + tag);
         if (rc2 != 0) {
             diagnose(out2, "`git push origin " + tag + "`");
             std::cerr << "\n    The commit was pushed; only the tag is pending.\n";

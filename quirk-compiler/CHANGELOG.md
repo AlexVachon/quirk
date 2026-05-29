@@ -5,6 +5,33 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [1.0.4] — 2026-05-29
+
+### Improved
+- **`quirk release` auto-routes through `gh` when available.** If the
+  user has the GitHub CLI installed and is logged in (`gh auth login`,
+  one-time, browser-based — no SSH keys, no PATs to manage), the
+  release push automatically uses gh's stored credentials via a
+  scoped git credential helper. SSH-only repos still work because
+  we override the push URL to HTTPS for that single command. The
+  user sees one extra line:
+
+      using gh CLI auth (no SSH/PAT setup needed)
+
+  …and the push just works.
+
+  Goal: make "publish a Quirk package" cost one-time `gh auth login`
+  and that's it. No deploy-key juggling, no PAT scoping, no SSH
+  identity routing. The git-push fallback (with the diagnostic from
+  1.0.3) still runs verbatim when `gh` isn't installed/authed.
+
+- **Improved deploy-key diagnostic.** When `git push` fails with the
+  "denied to deploy key" message, the diagnostic now leads with the
+  `gh` setup (1-2 commands), then walks down through three SSH/PAT
+  alternatives. Clarified that an empty deploy-keys page is fine
+  (click "Add deploy key" and tick "Allow write access" on the form
+  — there's no toggle on the empty list).
+
 ## [1.0.3] — 2026-05-29
 
 ### Improved

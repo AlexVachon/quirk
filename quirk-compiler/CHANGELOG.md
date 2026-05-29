@@ -5,6 +5,45 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [1.0.5] — 2026-05-29
+
+### New
+- **`quirk auth {login|status|logout}` — zero-setup publish auth.**
+  Implements GitHub's OAuth Device Flow directly in the compiler so
+  publishing a package doesn't need any of: SSH keys, deploy keys,
+  PATs, or even the `gh` CLI. Flow:
+
+      $ quirk auth login
+      → Visit https://github.com/login/device
+      → Code:  A4B7-C2D9
+      [waiting for authorization...]
+      ✓ Logged in as alexvachon
+
+  Token is saved to `~/.quirk/auth.json` (chmod 600). One-time
+  setup; subsequent `quirk release`/`quirk publish` Just Works.
+
+- **`quirk release` push chain rewritten** to prefer the least-setup
+  path that's actually available:
+    1. Quirk's own stored token (from `quirk auth login`)
+    2. `gh` CLI (from `gh auth login`)
+    3. Plain `git push` against the configured remote
+  When any of the first two are active, the push is automatically
+  routed over HTTPS with the token applied via a scoped git
+  credential helper — no manual remote-url switching, no global
+  git config changes, no SSH identity routing.
+
+### Improved
+- **Updated deploy-key diagnostic** to lead with `quirk auth login`
+  (zero external dependencies) as option 1, then `gh`, then the
+  three SSH/PAT fallbacks.
+
+### Setup note
+- The first `quirk auth login` requires the Quirk OAuth App's
+  `client_id` to be baked in (or supplied via `QUIRK_OAUTH_CLIENT_ID`).
+  Build emits a clear error pointing at
+  `https://github.com/settings/applications/new` if it's not
+  configured. Public client IDs are safe to ship in the binary.
+
 ## [1.0.4] — 2026-05-29
 
 ### Improved

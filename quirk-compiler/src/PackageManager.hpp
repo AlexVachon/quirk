@@ -38,6 +38,7 @@
 #include <unistd.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
+#include <thread>
 #include <chrono>
 #include <ctime>
 #include <cctype>
@@ -48,7 +49,7 @@
 
 namespace qpm {
 
-constexpr const char* QUIRK_VERSION = "1.0.4";
+constexpr const char* QUIRK_VERSION = "1.0.5";
 
 namespace fs = std::filesystem;
 
@@ -2412,6 +2413,11 @@ static std::string capture(const std::string& cmd) {
     return trim(out);
 }
 
+// Forward-decl: defined alongside `cmd_auth` further down. Read from
+// ~/.quirk/auth.json if it exists; returns "" otherwise. Used by
+// `cmd_release` to route the git push through the stored OAuth token.
+std::string quirk_load_github_token();
+
 static bool valid_pkg_name(const std::string& n) {
     if (n.empty()) return false;
     for (char c : n) {
@@ -3513,26 +3519,34 @@ static int cmd_release(const std::vector<std::string>& args) {
             https_with_git.substr(https_with_git.size() - 4) != ".git")
             https_with_git += ".git";
 
-        // Level-1 publish ergonomics: if the user has `gh` installed and is
-        // logged in, route the push through gh's credential helper so they
-        // don't have to fuss with SSH keys, deploy keys, or PATs. One-time
-        // setup for the user is `gh auth login` — browser flow, no secrets
-        // to copy around. We always push to the HTTPS URL when in this
-        // path (SSH wouldn't consult the credential helper).
+        // Publish ergonomics, in order of "least setup for the user":
+        //   1. Built-in token from `quirk auth login` (preferred — zero
+        //      external dependencies, just a browser flow Quirk owns).
+        //   2. gh CLI if the user has run `gh auth login`.
+        //   3. Plain `git push` against the configured remote (SSH/HTTPS
+        //      with whatever credentials git has set up).
+        //
+        // The first path that's available wins. We always push to the
+        // HTTPS URL when using a credential helper, since helpers don't
+        // fire on SSH transports.
+        std::string quirk_token = quirk_load_github_token();
         bool gh_installed = (std::system("command -v gh >/dev/null 2>&1") == 0);
         bool gh_authed    = gh_installed
                          && (std::system("gh auth status >/dev/null 2>&1") == 0);
-        if (gh_authed) {
-            std::cout << "  using gh CLI auth (no SSH/PAT setup needed)\n";
-        }
 
-        // Choose the push command — same shape for both paths so the
-        // diagnostic / retry logic below doesn't have to branch.
         std::string push_pfx;
         std::string push_target;
-        if (gh_authed) {
+        if (!quirk_token.empty()) {
+            // Inline credential helper that prints the token at git's prompt.
+            // Single-quoted command keeps the shell out of the variable.
+            push_pfx = "git -c credential.helper= -c 'credential.helper=!f() { echo username=x-access-token; echo password="
+                     + quirk_token + "; }; f'";
+            push_target = https_with_git;
+            std::cout << "  using token from `quirk auth login` (no SSH/PAT setup needed)\n";
+        } else if (gh_authed) {
             push_pfx    = "git -c credential.helper='!gh auth git-credential'";
             push_target = https_with_git;
+            std::cout << "  using gh CLI auth (no SSH/PAT setup needed)\n";
         } else {
             push_pfx    = "git";
             push_target = "origin";
@@ -3547,17 +3561,19 @@ static int cmd_release(const std::vector<std::string>& args) {
                 std::cerr << "    GitHub recognized your SSH key as a *deploy key* (per-repo, scoped) —\n"
                           << "    either it's registered on a different repo, or registered here as\n"
                           << "    read-only. Easiest fixes, in order of preference:\n\n";
-                std::cerr << "    1. Use the `gh` CLI for auth (handles everything via browser):\n"
-                          << "         brew install gh         # or: sudo apt install gh\n"
-                          << "         gh auth login           # one-time, browser-based\n"
-                          << "         quirk release           # retry — gh's credential helper kicks in\n\n";
-                std::cerr << "    2. Add your SSH key to your GitHub *account* (not as a deploy key) —\n"
-                          << "       one-time setup, works for all your repos:\n"
+                std::cerr << "    1. Use Quirk's built-in auth (zero external setup):\n"
+                          << "         quirk auth login        # browser device flow, ~30s\n"
+                          << "         quirk release           # retry\n\n";
+                std::cerr << "    2. Use the `gh` CLI:\n"
+                          << "         sudo apt install gh     # or: brew install gh\n"
+                          << "         gh auth login\n"
+                          << "         quirk release\n\n";
+                std::cerr << "    3. Add your SSH key to your GitHub *account* (not as a deploy key):\n"
                           << "         https://github.com/settings/keys → New SSH key → paste ~/.ssh/id_ed25519.pub\n\n";
-                std::cerr << "    3. Add a deploy key on this repo *with write access* ticked:\n"
+                std::cerr << "    4. Add a deploy key on this repo *with write access* ticked:\n"
                           << "         " << https_url << "/settings/keys\n"
                           << "       (If the list is empty, click `Add deploy key` and tick `Allow write access` on the form.)\n\n";
-                std::cerr << "    4. Switch to HTTPS + a fine-grained PAT (Contents: read+write on this repo):\n"
+                std::cerr << "    5. Switch to HTTPS + a fine-grained PAT (Contents: read+write on this repo):\n"
                           << "         git remote set-url origin " << https_with_git << "\n";
             } else if (lo.find("could not read username") != std::string::npos ||
                        lo.find("authentication failed") != std::string::npos ||
@@ -3788,6 +3804,261 @@ static const char* QUIRK_INSTALL_SCRIPT_URL =
 static const char* QUIRK_RELEASES_API_URL =
     "https://api.github.com/repos/AlexVachon/quirk/releases?per_page=30";
 
+// ─────────────────────────────────────────────────────────────────────────
+// `quirk auth {login | status | logout}` — GitHub OAuth Device Flow
+//
+// Lets users publish packages (`quirk release`, eventually `quirk publish`)
+// without ever touching SSH keys, deploy keys, or PATs. The flow:
+//
+//   1. `quirk auth login` POSTs to https://github.com/login/device/code
+//      with our OAuth App's client_id and the `repo` scope.
+//   2. GitHub returns a `user_code` and `verification_uri`. We print them.
+//   3. The user visits the URL, types the 8-char code, clicks Authorize.
+//   4. Meanwhile we poll the token endpoint at the cadence GitHub asks for.
+//   5. Once granted, we save the token to ~/.quirk/auth.json (chmod 600)
+//      and look up the user's login name for the UX.
+//
+// Subsequent `quirk release` reads the token, wraps it in an inline git
+// credential helper, and pushes over HTTPS. Zero further setup.
+//
+// QUIRK_OAUTH_CLIENT_ID env var overrides the baked-in value — handy for
+// dev/testing. The baked-in id is public (OAuth client IDs always are);
+// only the user's *token* is sensitive, and that lives in their home dir.
+// ─────────────────────────────────────────────────────────────────────────
+
+// TODO: replace this with the real client_id from the GitHub OAuth App once
+// it's registered. The placeholder is harmless — `quirk auth login` will
+// just fail with a clear error pointing at the registration steps.
+static const char* QUIRK_OAUTH_CLIENT_ID_DEFAULT = "REPLACE_ME_WITH_OAUTH_APP_CLIENT_ID";
+static const char* QUIRK_DEVICE_CODE_URL = "https://github.com/login/device/code";
+static const char* QUIRK_TOKEN_URL       = "https://github.com/login/oauth/access_token";
+static const char* QUIRK_USER_API        = "https://api.github.com/user";
+
+inline std::string quirk_oauth_client_id() {
+    const char* env = std::getenv("QUIRK_OAUTH_CLIENT_ID");
+    if (env && *env) return env;
+    return QUIRK_OAUTH_CLIENT_ID_DEFAULT;
+}
+
+inline fs::path quirk_auth_file() {
+    const char* home = std::getenv("HOME");
+    if (!home || !*home) return {};
+    return fs::path(home) / ".quirk" / "auth.json";
+}
+
+// Minimal JSON-scalar extractor — pulls the value of "key" out of a flat
+// JSON object. Used for our own auth.json (which we write) and GitHub's
+// device/token API responses. Returns "" on miss. Good enough for the
+// half-dozen scalar fields we touch; not a full parser.
+inline std::string quirk_json_str(const std::string& body, const std::string& key) {
+    std::string needle = "\"" + key + "\"";
+    size_t p = body.find(needle);
+    if (p == std::string::npos) return "";
+    p = body.find(':', p + needle.size());
+    if (p == std::string::npos) return "";
+    p++;
+    while (p < body.size() && std::isspace((unsigned char)body[p])) p++;
+    if (p >= body.size() || body[p] != '"') {
+        // Maybe a numeric value — read until comma/brace.
+        size_t end = body.find_first_of(",}\n", p);
+        if (end == std::string::npos) end = body.size();
+        std::string raw = body.substr(p, end - p);
+        while (!raw.empty() && std::isspace((unsigned char)raw.back())) raw.pop_back();
+        return raw;
+    }
+    p++;
+    std::string out;
+    while (p < body.size() && body[p] != '"') {
+        if (body[p] == '\\' && p + 1 < body.size()) {
+            char c = body[p + 1];
+            if (c == 'n')      out += '\n';
+            else if (c == 't') out += '\t';
+            else if (c == '"') out += '"';
+            else if (c == '\\') out += '\\';
+            else               out += c;
+            p += 2;
+        } else {
+            out += body[p++];
+        }
+    }
+    return out;
+}
+
+// Shell out to curl. Captures stdout, discards stderr (the URLs we hit
+// have small, well-defined JSON responses; we don't need progress chatter).
+inline std::string quirk_curl(const std::string& cmd) {
+    FILE* p = popen((cmd + " 2>/dev/null").c_str(), "r");
+    if (!p) return "";
+    char buf[1024]; std::string out;
+    while (fgets(buf, sizeof(buf), p)) out += buf;
+    pclose(p);
+    return out;
+}
+
+inline std::string quirk_load_github_token() {
+    fs::path af = quirk_auth_file();
+    if (af.empty() || !fs::exists(af)) return "";
+    std::ifstream f(af);
+    std::string body((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    return quirk_json_str(body, "github_token");
+}
+
+static int cmd_auth(const std::vector<std::string>& args) {
+    auto usage = []() {
+        std::cout <<
+            "quirk auth <subcommand>\n"
+            "  login    Authenticate via GitHub OAuth Device Flow (browser-based)\n"
+            "  status   Show who's currently logged in\n"
+            "  logout   Forget the saved token\n";
+        return 0;
+    };
+    if (args.empty() || args[0] == "--help" || args[0] == "-h") return usage();
+    const std::string& sub = args[0];
+
+    fs::path af = quirk_auth_file();
+    if (af.empty()) {
+        log::err("auth: $HOME isn't set; can't locate ~/.quirk/auth.json");
+        return 1;
+    }
+
+    if (sub == "status") {
+        std::string tok = quirk_load_github_token();
+        if (tok.empty()) {
+            std::cout << "Not logged in. Run `quirk auth login` to authenticate.\n";
+            return 1;
+        }
+        std::ifstream f(af);
+        std::string body((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        std::string user = quirk_json_str(body, "github_user");
+        std::string obtained = quirk_json_str(body, "obtained_at");
+        std::cout << "Logged in to github.com as " << (user.empty() ? "?" : user) << "\n";
+        if (!obtained.empty()) std::cout << "  (token obtained " << obtained << ")\n";
+        std::cout << "  token file: " << af.string() << " (chmod 600)\n";
+        return 0;
+    }
+
+    if (sub == "logout") {
+        if (!fs::exists(af)) {
+            std::cout << "Already logged out.\n";
+            return 0;
+        }
+        std::error_code ec;
+        fs::remove(af, ec);
+        if (ec) { log::err("auth logout: " + ec.message()); return 1; }
+        log::ok("Logged out — token forgotten.");
+        return 0;
+    }
+
+    if (sub == "login") {
+        std::string client_id = quirk_oauth_client_id();
+        if (client_id == QUIRK_OAUTH_CLIENT_ID_DEFAULT) {
+            log::err("auth login: the Quirk OAuth App client_id isn't configured in this build");
+            std::cerr << "    Register a GitHub OAuth App (free, 5 minutes):\n";
+            std::cerr << "      https://github.com/settings/applications/new\n";
+            std::cerr << "        Application name: Quirk CLI\n";
+            std::cerr << "        Homepage URL:     https://github.com/AlexVachon/quirk\n";
+            std::cerr << "        Callback URL:     http://localhost   (not used by device flow)\n";
+            std::cerr << "      → Save, then on the app's page tick `Enable Device Flow`.\n";
+            std::cerr << "    Then either bake the client_id into the binary or export it:\n";
+            std::cerr << "      export QUIRK_OAUTH_CLIENT_ID=Ov23li...\n";
+            return 1;
+        }
+
+        // Step 1 — request a device + user code.
+        std::string req = "curl -fsSL -X POST '" + std::string(QUIRK_DEVICE_CODE_URL)
+                        + "' -H 'Accept: application/json'"
+                        + " -d 'client_id=" + client_id + "&scope=repo'";
+        std::string resp = quirk_curl(req);
+        std::string device_code      = quirk_json_str(resp, "device_code");
+        std::string user_code        = quirk_json_str(resp, "user_code");
+        std::string verification_uri = quirk_json_str(resp, "verification_uri");
+        std::string interval_s       = quirk_json_str(resp, "interval");
+        if (device_code.empty() || user_code.empty()) {
+            log::err("auth login: GitHub didn't return a device code");
+            std::cerr << "    Response was: " << resp << "\n";
+            return 1;
+        }
+        int interval = interval_s.empty() ? 5 : std::max(1, std::atoi(interval_s.c_str()));
+
+        std::cout << "\n  Visit: " << log::bold(verification_uri) << "\n";
+        std::cout << "  Code:  " << log::bold(user_code) << "\n\n";
+        std::cout << "  Waiting for authorization (press Ctrl+C to cancel)...\n";
+
+        // Step 2 — poll the token endpoint. GitHub tells us the cadence
+        // and may return `slow_down` to bump us up.
+        std::string token;
+        std::string username;
+        int max_attempts = 60; // ~5 min at 5s interval
+        for (int i = 0; i < max_attempts; i++) {
+            std::this_thread::sleep_for(std::chrono::seconds(interval));
+            std::string r2 = quirk_curl(
+                "curl -fsSL -X POST '" + std::string(QUIRK_TOKEN_URL) + "'"
+                + " -H 'Accept: application/json'"
+                + " -d 'client_id=" + client_id
+                + "&device_code="    + device_code
+                + "&grant_type=urn:ietf:params:oauth:grant-type:device_code'");
+            std::string err = quirk_json_str(r2, "error");
+            if (err == "authorization_pending") continue;
+            if (err == "slow_down") { interval += 5; continue; }
+            if (err == "expired_token") {
+                log::err("auth login: device code expired — run `quirk auth login` again");
+                return 1;
+            }
+            if (err == "access_denied") {
+                log::err("auth login: authorization denied");
+                return 1;
+            }
+            token = quirk_json_str(r2, "access_token");
+            if (!token.empty()) break;
+            if (!err.empty()) {
+                log::err("auth login: GitHub returned error '" + err + "'");
+                return 1;
+            }
+        }
+        if (token.empty()) {
+            log::err("auth login: timed out waiting for authorization");
+            return 1;
+        }
+
+        // Step 3 — look up the user's login for the UX.
+        std::string ur = quirk_curl(
+            "curl -fsSL '" + std::string(QUIRK_USER_API) + "'"
+            + " -H 'Authorization: Bearer " + token + "'"
+            + " -H 'Accept: application/json'");
+        username = quirk_json_str(ur, "login");
+
+        // Step 4 — persist the token. ~/.quirk/ should already exist
+        // (install.sh creates it); make sure it does, chmod 700.
+        fs::path dir = af.parent_path();
+        std::error_code ec;
+        fs::create_directories(dir, ec);
+        ::chmod(dir.c_str(), 0700);
+
+        // Build a tiny ISO-8601 timestamp without bringing in <chrono> heavyweight.
+        std::time_t now = std::time(nullptr);
+        char ts[32];
+        std::strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%SZ", std::gmtime(&now));
+
+        std::ofstream out(af);
+        if (!out) { log::err("auth login: can't write " + af.string()); return 1; }
+        out << "{\n"
+            << "  \"github_token\": \"" << token << "\",\n"
+            << "  \"github_user\":  \"" << username << "\",\n"
+            << "  \"obtained_at\":  \"" << ts << "\"\n"
+            << "}\n";
+        out.close();
+        ::chmod(af.c_str(), 0600);
+
+        log::ok("Logged in as " + (username.empty() ? std::string("?") : username));
+        std::cout << "  Token saved to " << af.string() << " (chmod 600).\n";
+        std::cout << "  You can now `quirk release` without any further setup.\n";
+        return 0;
+    }
+
+    log::err("auth: unknown subcommand '" + sub + "'");
+    return usage();
+}
+
 static int cmd_compiler(const std::vector<std::string>& args) {
     auto usage = []() {
         std::cout <<
@@ -3918,7 +4189,7 @@ static int cmd_completion(const std::vector<std::string>& args) {
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
     # Top-level verbs (keep in sync with PackageManager.hpp::dispatch).
-    verbs="run repl test fmt install upgrade remove uninstall list packages show init new venv version eval module deps env cache registry register check versions release bump-compiler compiler audit script sync stdlib pkg help completion"
+    verbs="run repl test fmt install upgrade remove uninstall list packages show init new venv version eval module deps env cache registry register check versions release bump-compiler compiler auth audit script sync stdlib pkg help completion"
 
     # First word: complete the verb itself.
     if [ "$COMP_CWORD" -eq 1 ]; then
@@ -3960,6 +4231,11 @@ static int cmd_completion(const std::vector<std::string>& args) {
         compiler)
             if [ "$COMP_CWORD" -eq 2 ]; then
                 COMPREPLY=($(compgen -W "version list install update" -- "$cur"))
+            fi
+            ;;
+        auth)
+            if [ "$COMP_CWORD" -eq 2 ]; then
+                COMPREPLY=($(compgen -W "login status logout" -- "$cur"))
             fi
             ;;
         cache)
@@ -4021,6 +4297,7 @@ complete -c quirk -n __quirk_needs_verb -a 'env'              -d 'Show environme
 complete -c quirk -n __quirk_needs_verb -a 'release'          -d 'Release the current package'
 complete -c quirk -n __quirk_needs_verb -a 'bump-compiler'    -d 'Bump QUIRK_VERSION (dev workflow)'
 complete -c quirk -n __quirk_needs_verb -a 'compiler'         -d 'Manage the compiler binary itself'
+complete -c quirk -n __quirk_needs_verb -a 'auth'             -d 'GitHub auth for publishing packages'
 complete -c quirk -n __quirk_needs_verb -a 'sync'             -d 'Install missing deps'
 complete -c quirk -n __quirk_needs_verb -a 'completion'       -d 'Emit shell completion script'
 complete -c quirk -n __quirk_needs_verb -a 'help'             -d 'Show command help'
@@ -4035,6 +4312,10 @@ complete -c quirk -n '__quirk_verb_is compiler' -a 'version' -d 'Print the runni
 complete -c quirk -n '__quirk_verb_is compiler' -a 'list'    -d 'List available releases on GitHub'
 complete -c quirk -n '__quirk_verb_is compiler' -a 'install' -d 'Install a specific version'
 complete -c quirk -n '__quirk_verb_is compiler' -a 'update'  -d 'Update to the latest release'
+
+complete -c quirk -n '__quirk_verb_is auth' -a 'login'  -d 'Authenticate via GitHub device flow'
+complete -c quirk -n '__quirk_verb_is auth' -a 'status' -d 'Show who is currently logged in'
+complete -c quirk -n '__quirk_verb_is auth' -a 'logout' -d 'Forget the saved token'
 
 complete -c quirk -n '__quirk_verb_is venv' -a 'new repair info list'
 
@@ -5182,7 +5463,7 @@ static bool is_subcommand(const std::string& arg) {
            arg == "env" || arg == "new" || arg == "help" ||
            arg == "script" || arg == "sync" || arg == "stdlib" || arg == "fmt" ||
            arg == "repl" || arg == "test" || arg == "bump-compiler" ||
-           arg == "compiler" || arg == "completion";
+           arg == "compiler" || arg == "auth" || arg == "completion";
 }
 
 // Drop argv[1] (a verb) and shift everything left. argc decreases by 1.
@@ -5343,6 +5624,7 @@ inline bool dispatch(int& argc, char** argv, int& outRc) {
     else if (verb == "release")      outRc = cmd_release(verbArgs);
     else if (verb == "bump-compiler") outRc = cmd_bump_compiler(verbArgs);
     else if (verb == "compiler")     outRc = cmd_compiler(verbArgs);
+    else if (verb == "auth")         outRc = cmd_auth(verbArgs);
     else if (verb == "completion")   outRc = cmd_completion(verbArgs);
     else if (verb == "audit")        outRc = cmd_audit(verbArgs);
     else if (verb == "script")       outRc = cmd_script(verbArgs);

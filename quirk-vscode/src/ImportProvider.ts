@@ -76,14 +76,19 @@ export function resolveModulePath(projectRoot: string, currentFile: string, modu
             path.join(home, 'lib', 'quirk', 'packages'),
             path.join(home, 'lib', 'quirk', 'stdlib'),
             path.join(home, 'lib', 'quirk'),
-            path.join(home, 'libs'),
+            path.join(home, 'packages'),  // 1.0.8+ install layout
+            path.join(home, 'libs'),      // legacy pre-1.0.8
         );
     }
     // User-global packages — skipped when a venv is active (pip-style isolation).
     if (!isVenv && process.env['HOME']) {
         roots.push(path.join(process.env['HOME'], '.quirk', 'packages'));
     }
-    roots.push(path.join(projectRoot, 'libs'), path.join(projectRoot, 'src'));
+    roots.push(
+        path.join(projectRoot, 'packages'),
+        path.join(projectRoot, 'libs'),   // legacy
+        path.join(projectRoot, 'src'),
+    );
     for (const root of roots) {
         for (const c of [
             path.join(root, relPath + '.quirk'),
@@ -103,6 +108,7 @@ export function findProjectRootFor(filePath: string): string {
     while (dir.length >= stopAt.length) {
         if (fs.existsSync(path.join(dir, 'quirk.toml')) ||
             fs.existsSync(path.join(dir, 'Makefile')) ||
+            fs.existsSync(path.join(dir, 'packages')) ||
             fs.existsSync(path.join(dir, 'libs'))) return dir;
         const parent = path.dirname(dir);
         if (parent === dir) break;
@@ -761,22 +767,35 @@ export class QuirkDefinitionProvider implements vscode.DefinitionProvider {
                 path.join(home, 'lib', 'quirk', 'packages'),
                 path.join(home, 'lib', 'quirk', 'stdlib'),  // new venv layout
                 path.join(home, 'lib', 'quirk'),             // legacy / dev install
-                path.join(home, 'libs')
+                path.join(home, 'packages'),                 // 1.0.8+ install layout
+                path.join(home, 'libs')                      // legacy pre-1.0.8
             );
         }
         // User-global packages — skipped when a venv is active.
         if (!isVenv && process.env['HOME']) {
             roots.push(path.join(process.env['HOME'], '.quirk', 'packages'));
         }
-        roots.push(path.join(projectRoot, 'libs'), path.join(projectRoot, 'src'));
+        roots.push(
+            path.join(projectRoot, 'packages'),
+            path.join(projectRoot, 'libs'),   // legacy
+            path.join(projectRoot, 'src'),
+        );
         return roots;
     }
 
     private getLibRoots(projectRoot: string): string[] {
         const roots: string[] = [];
         const home = resolveQuirkHome(projectRoot);
-        if (home) roots.push(path.join(home, 'libs'), path.join(home, 'lib', 'quirk'));
-        roots.push(path.join(projectRoot, 'libs'), path.join(projectRoot, 'src'));
+        if (home) roots.push(
+            path.join(home, 'packages'),
+            path.join(home, 'libs'),
+            path.join(home, 'lib', 'quirk'),
+        );
+        roots.push(
+            path.join(projectRoot, 'packages'),
+            path.join(projectRoot, 'libs'),
+            path.join(projectRoot, 'src'),
+        );
         return roots;
     }
 
@@ -785,6 +804,7 @@ export class QuirkDefinitionProvider implements vscode.DefinitionProvider {
         while (dir.length > 3) {
             if (fs.existsSync(path.join(dir, 'quirk.toml')) ||
                 fs.existsSync(path.join(dir, 'Makefile')) ||
+                fs.existsSync(path.join(dir, 'packages')) ||
                 fs.existsSync(path.join(dir, 'libs'))) return dir;
             const parent = path.dirname(dir);
             if (parent === dir) break;

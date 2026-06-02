@@ -5,6 +5,25 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [1.0.8] — 2026-06-02
+
+### Stdlib lives under `packages/`
+
+- The bundled standard library moved from `quirk-compiler/libs/` to
+  `quirk-compiler/packages/`. Every stdlib module (`typing`, `console`,
+  `net`, `crypto`, …) is now resolved through the same path the package
+  manager uses for third-party packages.
+- **Why:** a project that drops a `packages/<name>/` folder into its
+  own tree can now shadow a stdlib module without reaching into the
+  compiler install. Previously stdlib lived on a separate search path
+  that user projects couldn't override.
+- Install layout follows: tarballs now ship `<QUIRK_HOME>/packages/`
+  (not `libs/`). `install.sh` wipes a stale `~/.quirk/libs/` on
+  reinstall so the legacy fallback never shadows the fresh layout.
+- The resolver still recognises legacy `libs/` directories — pre-1.0.8
+  installs and any project that already had `./libs/` keep working
+  until you reinstall.
+
 ## [1.0.7] — 2026-05-29
 
 ### Improved CLI surface

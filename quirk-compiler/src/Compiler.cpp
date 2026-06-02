@@ -226,7 +226,7 @@ static std::vector<std::string>& getSearchPaths() {
             p.push_back(venvBase + "/lib/quirk/packages/");
             p.push_back(venvBase + "/lib/quirk/stdlib/");  // new layout
             p.push_back(venvBase + "/lib/quirk/");         // legacy / dev install
-            p.push_back(venvBase + "/libs/");
+            p.push_back(venvBase + "/packages/");
             // Distinguish a real venv from a dev-tree QUIRK_HOME: only the former
             // has bin/activate. Venvs *isolate* — they don't see user-global.
             isVenv = fs::exists(fs::path(venvBase) / "bin" / "activate");
@@ -240,7 +240,13 @@ static std::vector<std::string>& getSearchPaths() {
             }
         }
 
+        // Legacy: pre-1.0.8 installs put the stdlib in `libs/`. Keep
+        // checking both old and new locations during the migration so
+        // an old `~/.quirk/libs/` still works while users upgrade.
         p.push_back("./libs/");
+        if (const char* home2 = std::getenv("HOME")) {
+            p.push_back(std::string(home2) + "/.quirk/libs/");
+        }
 
         if (!envHome) {
             p.push_back("/usr/local/lib/quirk/packages/");
@@ -344,7 +350,8 @@ std::string getModuleName(const std::string& path) {
 
     if (mod.find("./") == 0) mod = mod.substr(2);
 
-    if (mod.find("libs/") == 0) mod = mod.substr(5);
+    if (mod.find("packages/") == 0) mod = mod.substr(9);
+    else if (mod.find("libs/") == 0) mod = mod.substr(5);    // legacy pre-1.0.8 layout
     else if (mod.find("src/") == 0) mod = mod.substr(4);
 
     const char* envHome = std::getenv("QUIRK_HOME");
@@ -353,7 +360,7 @@ std::string getModuleName(const std::string& path) {
         std::string venvPkg    = base + "/lib/quirk/packages/";
         std::string venvStdlib = base + "/lib/quirk/stdlib/";   // new venv layout
         std::string venvCore   = base + "/lib/quirk/";          // legacy + dev install
-        std::string venvLibs   = base + "/libs/";               // local dev layout
+        std::string venvLibs   = base + "/packages/";           // 1.0.8+ dev layout
 
         size_t pos;
         if ((pos = mod.find(venvPkg)) != std::string::npos)

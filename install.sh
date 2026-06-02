@@ -11,8 +11,8 @@
 #
 # Layout after install:
 #     $INSTALL_DIR/bin/quirk
-#     $INSTALL_DIR/lib/quirk/runtime.so
-#     $INSTALL_DIR/lib/quirk/libs/...   (stdlib)
+#     $INSTALL_DIR/bin/runtime.so
+#     $INSTALL_DIR/packages/...    (stdlib — pre-1.0.8 used `libs/` here)
 #
 # The script does NOT touch your shell rc files — it prints the two lines
 # to add so you can put them wherever you keep your env.
@@ -128,7 +128,10 @@ fi
 tar xzf "$tmpdir/quirk.tar.gz" -C "$tmpdir"
 mkdir -p "$INSTALL_DIR"
 # Use cp -R + delete-overwrite to handle reinstalls cleanly.
-rm -rf "$INSTALL_DIR/bin" "$INSTALL_DIR/lib"
+# `$INSTALL_DIR/libs` is removed for users migrating from pre-1.0.8 — the
+# tarball now ships `packages/` and a leftover `libs/` would shadow it via
+# the legacy-fallback lookup in the resolver.
+rm -rf "$INSTALL_DIR/bin" "$INSTALL_DIR/lib" "$INSTALL_DIR/libs" "$INSTALL_DIR/packages"
 cp -R "$tmpdir/$pkg/." "$INSTALL_DIR/"
 chmod +x "$INSTALL_DIR/bin/quirk"
 

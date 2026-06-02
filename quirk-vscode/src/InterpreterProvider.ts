@@ -34,7 +34,7 @@ function venvLabel(candidate: string): string {
 const SKIP_DIRS = new Set([
     '.git', '.svn', '.hg', 'node_modules', 'build', 'dist', 'out', 'obj',
     'target', 'vcpkg', 'vcpkg_installed', '__pycache__', '.gradle', '.cargo',
-    'bin', 'include', 'lib', 'libs',   // never look INSIDE these for a venv
+    'bin', 'include', 'lib', 'libs', 'packages',   // never look INSIDE these for a venv
 ]);
 
 function scanForVenvs(root: string, depth: number, seen: Set<string>, out: Interpreter[]): void {
@@ -89,8 +89,9 @@ function findWorkspaceVenvs(): Interpreter[] {
     return results;
 }
 
-// A dev tree is identified by a `libs/typing/` directory next to a `bin/quirk`.
-// Useful when working inside the compiler repo itself.
+// A dev tree is identified by a `packages/typing/` (or legacy `libs/typing/`)
+// directory next to a `bin/quirk`. Useful when working inside the compiler
+// repo itself.
 function findDevTree(): Interpreter | null {
     const candidates: string[] = [];
     for (const folder of vscode.workspace.workspaceFolders ?? []) {
@@ -99,7 +100,9 @@ function findDevTree(): Interpreter | null {
         candidates.push(path.join(folder.uri.fsPath, 'quirk-compiler'));
     }
     for (const c of candidates) {
-        if (fs.existsSync(path.join(c, 'libs', 'typing')) &&
+        const hasStdlib = fs.existsSync(path.join(c, 'packages', 'typing')) ||
+                          fs.existsSync(path.join(c, 'libs', 'typing'));
+        if (hasStdlib &&
             fs.existsSync(path.join(c, 'bin', 'quirk'))) {
             return {
                 label: 'dev tree',

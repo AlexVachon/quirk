@@ -482,11 +482,12 @@ When you write `use foo` in a script, the compiler searches in order:
 2. `$QUIRK_HOME/lib/quirk/packages/` (venv-installed)
 3. `$QUIRK_HOME/lib/quirk/stdlib/` (stdlib in venv layout)
 4. `$QUIRK_HOME/lib/quirk/` (legacy / dev install)
-5. `$QUIRK_HOME/libs/` (dev tree libs)
-6. `~/.quirk/packages/` (user-global — **skipped when in a venv**)
-7. `./libs/` (dev fallback)
-8. `/usr/local/lib/quirk/packages/` (when `QUIRK_HOME` is unset)
-9. `/usr/local/lib/quirk/` (system stdlib, when `QUIRK_HOME` unset)
+5. `$QUIRK_HOME/packages/` (dev tree / 1.0.8+ install)
+6. `$QUIRK_HOME/libs/` (legacy pre-1.0.8 dev tree)
+7. `~/.quirk/packages/` (user-global — **skipped when in a venv**)
+8. `./libs/` (dev fallback, legacy)
+9. `/usr/local/lib/quirk/packages/` (when `QUIRK_HOME` is unset)
+10. `/usr/local/lib/quirk/` (system stdlib, when `QUIRK_HOME` unset)
 
 Within a search root, the compiler tries these layouts:
 

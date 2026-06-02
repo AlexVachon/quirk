@@ -27,7 +27,7 @@ make clean
 make -j"$(nproc)"
 
 # ── 3. QUIRK_HOME ──────────────────────────────────────────────────────────────
-# The compiler searches QUIRK_HOME/libs/ for the standard library at runtime.
+# The compiler searches QUIRK_HOME/packages/ for the standard library at runtime.
 QUIRK_HOME_VALUE="$SCRIPT_DIR"
 
 if grep -q "QUIRK_HOME" "$SHELL_RC" 2>/dev/null; then

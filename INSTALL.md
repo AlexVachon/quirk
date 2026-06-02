@@ -124,7 +124,9 @@ echo 'export PATH="$QUIRK_HOME/bin:$PATH"' >> ~/.bashrc
 source ~/.bashrc
 ```
 
-`QUIRK_HOME` is how the runtime finds the standard library (`$QUIRK_HOME/libs/`).
+`QUIRK_HOME` is how the runtime finds the standard library (`$QUIRK_HOME/packages/`).
+Pre-1.0.8 installs used `$QUIRK_HOME/libs/`; the resolver still accepts that
+name so existing trees keep working until you reinstall.
 
 **Option B — install to `/usr/local` (system-wide):**
 
@@ -133,7 +135,7 @@ sudo install -m 755 bin/quirk     /usr/local/bin/
 sudo install -m 755 bin/runtime.so /usr/local/bin/
 
 sudo mkdir -p /usr/local/lib/quirk
-sudo cp -r libs/* /usr/local/lib/quirk/
+sudo cp -r packages/* /usr/local/lib/quirk/
 ```
 
 No `QUIRK_HOME` needed in this case — Quirk falls back to `/usr/local/lib/quirk/` when the env var is unset.
@@ -159,7 +161,7 @@ If you see `Error: could not load runtime.so`, the `quirk` binary couldn't find 
 |---------|--------------|-----|
 | `find_package(LLVM 14)` fails | LLVM 14 not installed or installed in a non-default prefix | `apt install llvm-14-dev`; if it's elsewhere, set `CMAKE_PREFIX_PATH=/path/to/llvm-14/cmake` |
 | `Package 'bdw-gc' not found` | libgc-dev missing | `apt install libgc-dev` |
-| `Could not open module 'typing'` | Compiler can't find stdlib | Verify `$QUIRK_HOME` is set (`echo $QUIRK_HOME`) or that you run from a directory next to a `libs/` |
+| `Could not open module 'typing'` | Compiler can't find stdlib | Verify `$QUIRK_HOME` is set (`echo $QUIRK_HOME`) or that you run from a directory next to a `packages/` (or legacy `libs/`) |
 | `error: -lcurl: No such file` | libcurl-dev missing | `apt install libcurl4-openssl-dev` |
 | `Crypto_*` symbols missing | OpenSSL not linked | `apt install libssl-dev` then rebuild |
 

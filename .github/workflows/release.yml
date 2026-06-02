@@ -85,17 +85,18 @@ jobs:
         # Mirror the SOURCE TREE layout exactly — that's the layout the
         # compiler's stdlib resolution actually expects:
         #   <QUIRK_HOME>/bin/quirk
-        #   <QUIRK_HOME>/bin/runtime.so   (sibling of the binary)
-        #   <QUIRK_HOME>/libs/console/...  (top-level, NOT under lib/quirk/)
-        # An earlier layout buried libs at lib/quirk/libs and the compiler
-        # printed `stdlib: (not found)` despite QUIRK_HOME being correct.
+        #   <QUIRK_HOME>/bin/runtime.so      (sibling of the binary)
+        #   <QUIRK_HOME>/packages/console/...  (top-level, NOT under lib/quirk/)
+        # Pre-1.0.8 releases used `libs/` at the same level; the resolver
+        # still recognises that name for back-compat, but new packaging
+        # ships everything under `packages/`.
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           PKG="quirk-${VERSION}-linux-x86_64"
           mkdir -p "${PKG}/bin"
           cp quirk-compiler/bin/quirk      "${PKG}/bin/"
           cp quirk-compiler/bin/runtime.so "${PKG}/bin/"
-          cp -r quirk-compiler/libs        "${PKG}/libs"
+          cp -r quirk-compiler/packages    "${PKG}/packages"
           cp README.md INSTALL.md           "${PKG}/" 2>/dev/null || true
           cp quirk-compiler/CHANGELOG.md    "${PKG}/" 2>/dev/null || true
           tar czf "${PKG}.tar.gz" "${PKG}"

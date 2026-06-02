@@ -1539,7 +1539,11 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
                 }
             }
         } catch { }
-        roots.push(path.join(projectRoot, 'libs'), path.join(projectRoot, 'src'));
+        roots.push(
+            path.join(projectRoot, 'packages'),
+            path.join(projectRoot, 'libs'),   // legacy pre-1.0.8
+            path.join(projectRoot, 'src'),
+        );
 
         this.searchRootsCache = roots;
         this.searchRootsCacheKey = cacheKey;
@@ -1629,6 +1633,7 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
         while (currentDir.length >= stopAt.length) {
             if (fs.existsSync(path.join(currentDir, 'quirk.toml')) ||
                 fs.existsSync(path.join(currentDir, 'Makefile')) ||
+                fs.existsSync(path.join(currentDir, 'packages')) ||
                 fs.existsSync(path.join(currentDir, 'libs'))) return currentDir;
             const parent = path.dirname(currentDir);
             if (parent === currentDir) break;

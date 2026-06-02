@@ -49,7 +49,7 @@
 
 namespace qpm {
 
-constexpr const char* QUIRK_VERSION = "1.0.7";
+constexpr const char* QUIRK_VERSION = "1.0.8";
 
 namespace fs = std::filesystem;
 
@@ -419,9 +419,11 @@ static std::string git_head(const fs::path& dir) {
 
 // Resolve where the system-wide Quirk standard library lives. Tries, in order:
 //   $QUIRK_HOME/lib/quirk
-//   $QUIRK_HOME/libs
-//   <bindir>/../libs           (dev tree: quirk-compiler/libs)
-//   <bindir>/../lib/quirk      (installed tree: /usr/local/lib/quirk)
+//   $QUIRK_HOME/packages           (1.0.8+ dev / install layout)
+//   $QUIRK_HOME/libs               (pre-1.0.8 layout, kept for backward compat)
+//   <bindir>/../packages           (dev tree: quirk-compiler/packages)
+//   <bindir>/../libs               (legacy)
+//   <bindir>/../lib/quirk          (installed tree: /usr/local/lib/quirk)
 //   /usr/local/lib/quirk
 //   /usr/lib/quirk
 // Returns an empty path if none found.
@@ -433,17 +435,19 @@ static fs::path find_system_stdlib() {
     if (const char* env = std::getenv("QUIRK_HOME")) {
         fs::path h(env);
         if (try_dir(h / "lib" / "quirk")) return h / "lib" / "quirk";
-        if (try_dir(h / "libs"))          return h / "libs";
+        if (try_dir(h / "packages"))      return h / "packages";
+        if (try_dir(h / "libs"))          return h / "libs";   // legacy
     }
 
-    // Walk up from /proc/self/exe to find sibling libs/ directories.
+    // Walk up from /proc/self/exe to find sibling packages/ (or legacy libs/).
     char buf[4096];
     ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
     if (n > 0) {
         buf[n] = '\0';
         fs::path bin(buf);
         fs::path bindir = bin.parent_path();
-        if (try_dir(bindir.parent_path() / "libs"))          return bindir.parent_path() / "libs";
+        if (try_dir(bindir.parent_path() / "packages"))      return bindir.parent_path() / "packages";
+        if (try_dir(bindir.parent_path() / "libs"))          return bindir.parent_path() / "libs";   // legacy
         if (try_dir(bindir.parent_path() / "lib" / "quirk")) return bindir.parent_path() / "lib" / "quirk";
     }
 

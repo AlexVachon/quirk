@@ -293,7 +293,26 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
         const closeBraces = (maskedLine.match(/\}/g) || []).length;
 
         // Reset scope if we enter a new function (optional [T, U] generic params before `(`)
-        const funcMatch = /^\s*(?:extern\s+)?(?:define|def|init)\s+([a-zA-Z_]\w*)\s*(?:\[[^\]]*\]\s*)?\(([^)]*)\)/.exec(maskedLine);
+        // Single-line case first: `define foo(a, b) -> T { ... }` all on this line.
+        let funcMatch = /^\s*(?:extern\s+)?(?:define|def|init)\s+([a-zA-Z_]\w*)\s*(?:\[[^\]]*\]\s*)?\(([^)]*)\)/.exec(maskedLine);
+        // Multi-line fallback: signature opens on this line but `)` lives on a
+        // later line. Walk forward, joining as we go, until we find the close.
+        // Without this, every parameter in a wrapped signature gets flagged
+        // "not defined" because the regex never matches the full param list.
+        if (!funcMatch) {
+            const opener = /^\s*(?:extern\s+)?(?:define|def|init)\s+([a-zA-Z_]\w*)\s*(?:\[[^\]]*\]\s*)?\(([^)]*)$/.exec(maskedLine);
+            if (opener) {
+                let joined = maskedLine;
+                // Cap the lookahead so a stray `define X(` without a close
+                // can't pull us into the next thousand lines.
+                const maxPeek = Math.min(lines.length, i + 30);
+                for (let j = i + 1; j < maxPeek; j++) {
+                    joined += ' ' + lines[j];
+                    if (lines[j].indexOf(')') !== -1) break;
+                }
+                funcMatch = /^\s*(?:extern\s+)?(?:define|def|init)\s+([a-zA-Z_]\w*)\s*(?:\[[^\]]*\]\s*)?\(([^)]*)\)/.exec(joined);
+            }
+        }
         if (funcMatch) {
             // Nested define inside another function body: the inner define
             // desugars to a local Callable binding (`name := fn(...) {...}`),

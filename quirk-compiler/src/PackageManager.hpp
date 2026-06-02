@@ -49,7 +49,7 @@
 
 namespace qpm {
 
-constexpr const char* QUIRK_VERSION = "1.0.6";
+constexpr const char* QUIRK_VERSION = "1.0.7";
 
 namespace fs = std::filesystem;
 
@@ -2417,6 +2417,8 @@ static std::string capture(const std::string& cmd) {
 // the release-push chain and the update-check cache I/O.
 std::string quirk_load_github_token();
 std::string quirk_json_str(const std::string& body, const std::string& key);
+// Forward-decl: defined later. `quirk compiler stdlib` delegates here.
+static int cmd_stdlib(const std::vector<std::string>& args);
 
 static bool valid_pkg_name(const std::string& n) {
     if (n.empty()) return false;
@@ -4238,7 +4240,9 @@ static int cmd_compiler(const std::vector<std::string>& args) {
             "  check                   Check GitHub for a newer release (bypasses 24h cache)\n"
             "  list                    List `vX.Y.Z` releases available on GitHub\n"
             "  install <vX.Y.Z>        Replace this compiler with the given version\n"
-            "  update                  Replace this compiler with the latest release\n";
+            "  update                  Replace this compiler with the latest release\n"
+            "  stdlib                  Show where the bundled stdlib lives (= old `quirk stdlib`)\n"
+            "  bump <patch|minor|major>  Bump QUIRK_VERSION in src/PackageManager.hpp (= old `quirk bump-compiler`)\n";
         return 0;
     };
 
@@ -4309,6 +4313,17 @@ static int cmd_compiler(const std::vector<std::string>& args) {
             return 1;
         }
         return 0;
+    }
+
+    if (sub == "bump") {
+        // Pass through to the existing cmd_bump_compiler.
+        std::vector<std::string> rest(args.begin() + 1, args.end());
+        return cmd_bump_compiler(rest);
+    }
+
+    if (sub == "stdlib") {
+        std::vector<std::string> rest(args.begin() + 1, args.end());
+        return cmd_stdlib(rest);
     }
 
     if (sub == "install" || sub == "update") {
@@ -5592,38 +5607,69 @@ static void print_pm_help() {
     std::cout <<
         "Quirk — language toolchain & package manager\n"
         "\n"
-        "Run code:\n"
-        "  quirk run <file.quirk> [args...]              run a Quirk script\n"
-        "  quirk run <script>                         run a script from [scripts] (alias: quirk script <name>)\n"
-        "  quirk eval \"<code>\"                        run a one-liner (alias: -c)\n"
-        "  quirk module <name>                        invoke a module's main() (alias: -m)\n"
+        "Usage:  quirk <command> [options] [args...]\n"
         "\n"
-        "Project / environment:\n"
-        "  quirk new <name>                           scaffold a new package\n"
-        "  quirk init                                 write a quirk.toml here\n"
-        "  quirk sync                                 bootstrap a clone: venv + frozen install\n"
-        "  quirk venv <path>                          create a venv (subcmds: new|list|info|repair)\n"
-        "  quirk env                                  print resolution context (warns on stale venv)\n"
-        "  quirk stdlib                               introspect the bundled standard library\n"
-        "  quirk fmt [--check] [file ...]             reformat source to canonical style\n"
-        "  quirk repl                                 interactive shell — try snippets, inspect values\n"
+        "RUN CODE\n"
+        "  run <file.quirk> [args...]      Compile + run a script (the default)\n"
+        "  eval \"<code>\"                   Run a one-liner             (alias: -c)\n"
+        "  module <name>                   Invoke a module's main()    (alias: -m)\n"
+        "  test [<file>...]                Run *_test.quirk files\n"
+        "  repl                            Interactive shell\n"
         "\n"
-        "Packages (short forms shown; long forms work too — see `quirk pkg --help`):\n"
-        "  quirk i, add <spec>                        install (alias of `pkg install`)\n"
-        "  quirk up [pkg ...]                         upgrade installed versions\n"
-        "  quirk rm  <pkg>[@<ver>] ...                remove a package or version\n"
-        "  quirk ls                                   list installed packages\n"
-        "  quirk show <pkg>                           detailed package info\n"
-        "  quirk deps                                 print deps in installable form\n"
-        "  quirk cache    list|clean|dir              manage the cross-project cache\n"
-        "  quirk registry list|search|add|...         name → URL mappings\n"
+        "PROJECT\n"
+        "  new <name>                      Scaffold a new package directory\n"
+        "  init                            Write a quirk.toml in the current dir\n"
+        "  venv <path>                     Create/repair an isolated env\n"
+        "  env                             Show the active resolution context\n"
+        "  fmt [--check] [<file>...]       Reformat source to canonical style\n"
+        "  sync                            Bootstrap from a clone (venv + install)\n"
         "\n"
-        "Misc:\n"
-        "  quirk help [command]                       show help (per-command)\n"
-        "  quirk version (or --version)               print quirk version\n"
+        "PACKAGES                                            (see also: `quirk pkg help`)\n"
+        "  install [<spec>...]             Install dependencies        (alias: i, add)\n"
+        "  upgrade [<pkg>...]              Bump to latest versions     (alias: up)\n"
+        "  remove <pkg>[@<ver>] ...        Uninstall                   (alias: rm)\n"
+        "  list                            List installed packages     (alias: ls)\n"
+        "  show <pkg>                      Detailed package info\n"
+        "  deps                            Print deps in installable form\n"
+        "  cache <subcommand>              Cross-project version cache\n"
+        "  registry <subcommand>           Name → URL mappings\n"
         "\n"
-        "Specs:  github.com/owner/repo[@ref]   (git: ref is a tag/branch/SHA)\n"
-        "        ./path/to/lib[@<version>]    (local; @<version> can be a range)\n";
+        "PUBLISHING\n"
+        "  auth login                      Authenticate via GitHub device flow\n"
+        "  auth status / auth logout       Inspect or forget the stored token\n"
+        "  release [--bump <part>]         Validate + tag + push the current package\n"
+        "  audit                           Scan installed packages for advisories\n"
+        "  pkg versions <name>             List every published tag of a package\n"
+        "\n"
+        "COMPILER (self-management)\n"
+        "  compiler version                Print the running compiler version\n"
+        "  compiler check                  Check GitHub for a newer release\n"
+        "  compiler update                 Replace this compiler with the latest\n"
+        "  compiler install <vX.Y.Z>       Install a specific version\n"
+        "  compiler list                   List available releases\n"
+        "  compiler stdlib                 Show where the bundled stdlib lives\n"
+        "  compiler bump <part>            Bump QUIRK_VERSION (compiler maintainers)\n"
+        "\n"
+        "MISC\n"
+        "  help [<command>]                Per-command help\n"
+        "  completion <bash|zsh|fish>      Emit shell tab-completion script\n"
+        "  version                         Print the compiler version (alias: --version)\n"
+        "\n"
+        "RUN FLAGS  (apply to `quirk run` and bare `quirk <file>`)\n"
+        "  --check                         Type-check only, no codegen / run\n"
+        "  --debug                         Step through under the (qdb) prompt\n"
+        "  --release | -O0..-O3            LLVM optimisation level (default -O2)\n"
+        "  -o <file>                       Compile to a native binary at <file>\n"
+        "  --emit-ir / --emit-ast / -v     Diagnostics + IR / AST dumps\n"
+        "\n"
+        "ENVIRONMENT\n"
+        "  QUIRK_HOME                      Stdlib / venv location (auto-detected)\n"
+        "  QUIRK_NO_UPDATE_CHECK=1         Suppress the once-per-day update notice\n"
+        "  NO_COLOR=1                      Disable ANSI colors\n"
+        "\n"
+        "Specs:  <name>[@<ver>]                  resolved via registry/aliases\n"
+        "        github.com/owner/repo[@<ref>]   direct git URL\n"
+        "        ./path/to/lib[@<ver>]           local directory (snapshot)\n";
 }
 
 // Map a short verb to its canonical name. npm/cargo-style aliases so users

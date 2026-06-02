@@ -24,21 +24,23 @@ INSTALL_DIR="${INSTALL_DIR:-$HOME/.quirk}"
 
 # --- Argument parsing -------------------------------------------------------
 # Accept a real flag in addition to the env var. Lets users write
-#     curl … | sh -s -- --install-extension
+#     curl … | sh -s -- --with-extension
 # instead of the easy-to-mess-up
 #     curl … | INSTALL_EXTENSION=1 sh
 # (the latter still works, but the env var has to land on `sh`, not on
 # `curl` — common foot-gun for first-time users).
 while [ $# -gt 0 ]; do
     case "$1" in
-        --install-extension|--with-extension) INSTALL_EXTENSION=1 ;;
+        --with-extension|--install-extension) INSTALL_EXTENSION=1 ;;  # --install-extension is the legacy spelling
+        --no-extension) INSTALL_EXTENSION=0 ;;
         --code-cmd=*)  CODE_CMD="${1#*=}" ;;
         --version=*)   QUIRK_VERSION="${1#*=}" ;;
         --dir=*)       INSTALL_DIR="${1#*=}" ;;
         -h|--help)
             cat <<'EOF'
 Usage: install.sh [flags]
-  --install-extension     Also install the Quirk VSCode extension
+  --with-extension        Also install the Quirk VSCode extension
+  --no-extension          Don't install the extension (default)
   --code-cmd=<cmd>        Editor CLI to install into (default: code)
   --version=vX.Y.Z        Pin to a specific release (default: latest)
   --dir=<path>            Install root (default: ~/.quirk)
@@ -182,7 +184,7 @@ if [ "${INSTALL_EXTENSION:-0}" = "1" ]; then
     install_quirk_extension
 else
     echo "VSCode extension (optional):"
-    echo "    INSTALL_EXTENSION=1 curl -fsSL https://raw.githubusercontent.com/${QUIRK_REPO}/main/install.sh | sh"
+    echo "    curl -fsSL https://raw.githubusercontent.com/${QUIRK_REPO}/main/install.sh | sh -s -- --with-extension"
     echo "  or download the .vsix manually:"
     echo "    https://github.com/${QUIRK_REPO}/releases"
     echo

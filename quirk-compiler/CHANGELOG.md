@@ -5,6 +5,26 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [1.0.7] — 2026-05-29
+
+### Improved CLI surface
+- **`quirk help` is now grouped** into RUN CODE / PROJECT / PACKAGES /
+  PUBLISHING / COMPILER / MISC, with RUN FLAGS and ENVIRONMENT
+  sections beneath. Replaces the alphabetical wall of 35 verbs.
+- **`quirk bump-compiler`** is now also reachable as **`quirk compiler bump <part>`**
+  (the old form still works; the new is documented).
+- **`quirk stdlib`** is now also reachable as **`quirk compiler stdlib`**.
+- **`quirk versions <pkg>`** is documented as **`quirk pkg versions <pkg>`**
+  (the bare form remains an alias; the new is clearer that it lists
+  *package* versions, not Quirk's).
+- **`install.sh` flag renamed to `--with-extension`** (with
+  `--install-extension` still working as a legacy alias, and a new
+  explicit `--no-extension` opt-out). README + INSTALL.md updated.
+
+The CLI is now consistently `quirk <command> [--flags] [args...]`,
+matching standard Unix-tool conventions. No verbs were removed; only
+the help / install-flag spellings changed.
+
 ## [1.0.6] — 2026-05-29
 
 ### New

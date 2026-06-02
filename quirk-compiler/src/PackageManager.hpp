@@ -49,7 +49,7 @@
 
 namespace qpm {
 
-constexpr const char* QUIRK_VERSION = "1.0.5";
+constexpr const char* QUIRK_VERSION = "1.0.6";
 
 namespace fs = std::filesystem;
 
@@ -2413,10 +2413,10 @@ static std::string capture(const std::string& cmd) {
     return trim(out);
 }
 
-// Forward-decl: defined alongside `cmd_auth` further down. Read from
-// ~/.quirk/auth.json if it exists; returns "" otherwise. Used by
-// `cmd_release` to route the git push through the stored OAuth token.
+// Forward-decls: defined alongside `cmd_auth` further down. Used by
+// the release-push chain and the update-check cache I/O.
 std::string quirk_load_github_token();
+std::string quirk_json_str(const std::string& body, const std::string& key);
 
 static bool valid_pkg_name(const std::string& n) {
     if (n.empty()) return false;
@@ -3805,6 +3805,177 @@ static const char* QUIRK_RELEASES_API_URL =
     "https://api.github.com/repos/AlexVachon/quirk/releases?per_page=30";
 
 // ─────────────────────────────────────────────────────────────────────────
+// Update check — at most once per 24h, prints a one-line notice when a
+// newer release is on GitHub. Cargo / rustup / npm all do this; for a
+// young language it's the difference between users staying current and
+// drifting onto bug-fixed releases they never heard about.
+//
+// Behavior:
+//   - First call refreshes the cache by hitting the releases API (with a
+//     short curl --max-time so it never blocks a CLI for long).
+//   - Subsequent calls within 24h reuse the cache (no network).
+//   - Notice prints once per CHECK_INTERVAL on a TTY; CI / piped output
+//     stays clean.
+//   - QUIRK_NO_UPDATE_CHECK=1 disables entirely (CI default).
+//   - Running from a source-tree dev build is detected via a sibling
+//     `.git` dir and skipped — version drift in dev is expected.
+//
+// Cache lives at `~/.quirk/update-check.json` (same dir as auth.json).
+// ─────────────────────────────────────────────────────────────────────────
+
+inline fs::path quirk_update_cache_file() {
+    const char* home = std::getenv("HOME");
+    if (!home || !*home) return {};
+    return fs::path(home) / ".quirk" / "update-check.json";
+}
+
+// Compare two SemVer strings of the form "1.0.5". Returns >0 if a>b,
+// <0 if a<b, 0 if equal. Tolerates leading `v` on either side.
+inline int quirk_compare_versions(const std::string& a_in, const std::string& b_in) {
+    auto trim_v = [](const std::string& s) {
+        return (!s.empty() && (s[0] == 'v' || s[0] == 'V')) ? s.substr(1) : s;
+    };
+    std::string a = trim_v(a_in), b = trim_v(b_in);
+    auto parts = [](const std::string& s) {
+        std::vector<int> out; std::string seg;
+        for (char c : s) {
+            if (c == '.') { out.push_back(std::atoi(seg.c_str())); seg.clear(); }
+            else if (std::isdigit((unsigned char)c)) seg += c;
+            else break;  // stop at -pre, +meta, etc.
+        }
+        if (!seg.empty()) out.push_back(std::atoi(seg.c_str()));
+        return out;
+    };
+    auto pa = parts(a), pb = parts(b);
+    for (size_t i = 0; i < std::max(pa.size(), pb.size()); i++) {
+        int x = i < pa.size() ? pa[i] : 0;
+        int y = i < pb.size() ? pb[i] : 0;
+        if (x != y) return x - y;
+    }
+    return 0;
+}
+
+// True when the running binary lives in a source-tree checkout — i.e. has
+// a sibling `.git` somewhere above. Avoids nagging devs who are working
+// on the compiler itself.
+inline bool quirk_is_dev_build() {
+    char buf[4096];
+    ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    if (n <= 0) return false;
+    buf[n] = '\0';
+    fs::path p = fs::path(buf).parent_path();
+    for (int up = 0; up < 6; up++) {
+        if (fs::is_directory(p / ".git")) return true;
+        if (p == p.parent_path()) break;
+        p = p.parent_path();
+    }
+    return false;
+}
+
+// Fetch the latest `v[0-9]*` release tag, with a 3-second curl timeout
+// so a slow network never makes Quirk feel laggy. Returns "" on failure.
+inline std::string quirk_fetch_latest_tag() {
+    std::string cmd = std::string("curl -fsSL --max-time 3 '") + QUIRK_RELEASES_API_URL
+                    + "' 2>/dev/null"
+                    + R"SH( | grep -oE '"tag_name"[[:space:]]*:[[:space:]]*"v[0-9][^"]*"')SH"
+                    + R"SH( | head -1)SH"
+                    + R"SH( | sed -E 's/.*"tag_name"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')SH";
+    FILE* p = popen(cmd.c_str(), "r");
+    if (!p) return "";
+    char buf[128]; std::string out;
+    while (fgets(buf, sizeof(buf), p)) out += buf;
+    pclose(p);
+    while (!out.empty() && (out.back() == '\n' || out.back() == '\r' || out.back() == ' '))
+        out.pop_back();
+    return out;
+}
+
+// Either:
+//   - refreshFromNetwork=true  → hit GitHub, update cache file, return tag
+//   - refreshFromNetwork=false → return cached tag if fresh (<24h), else ""
+// The cache file also tracks `last_shown_at` so the announcement doesn't
+// reprint inside the same day even if multiple commands run.
+struct QuirkUpdateCache {
+    std::string latest_tag;
+    std::time_t checked_at  = 0;
+    std::time_t last_shown_at = 0;
+};
+
+inline QuirkUpdateCache quirk_read_update_cache() {
+    QuirkUpdateCache c;
+    fs::path f = quirk_update_cache_file();
+    if (f.empty() || !fs::exists(f)) return c;
+    std::ifstream in(f);
+    std::string body((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    c.latest_tag    = quirk_json_str(body, "latest_tag");
+    auto a = quirk_json_str(body, "checked_at");
+    auto b = quirk_json_str(body, "last_shown_at");
+    if (!a.empty()) c.checked_at    = (std::time_t)std::atoll(a.c_str());
+    if (!b.empty()) c.last_shown_at = (std::time_t)std::atoll(b.c_str());
+    return c;
+}
+
+inline void quirk_write_update_cache(const QuirkUpdateCache& c) {
+    fs::path f = quirk_update_cache_file();
+    if (f.empty()) return;
+    std::error_code ec;
+    fs::create_directories(f.parent_path(), ec);
+    std::ofstream out(f);
+    if (!out) return;
+    out << "{\n"
+        << "  \"latest_tag\":    \"" << c.latest_tag << "\",\n"
+        << "  \"checked_at\":    \"" << c.checked_at    << "\",\n"
+        << "  \"last_shown_at\": \"" << c.last_shown_at << "\"\n"
+        << "}\n";
+}
+
+// Show a one-line notice if a newer release exists. Called from main() AFTER
+// the subcommand returns, so it doesn't interleave with normal output.
+// Silent (and skips the network entirely) when:
+//   * QUIRK_NO_UPDATE_CHECK is set
+//   * stdout isn't a TTY (CI, pipes, redirects)
+//   * we're running from a dev build (sibling .git)
+inline void maybe_announce_update() {
+    if (std::getenv("QUIRK_NO_UPDATE_CHECK")) return;
+    if (!::isatty(STDOUT_FILENO)) return;
+    if (quirk_is_dev_build()) return;
+
+    constexpr std::time_t DAY = 24 * 60 * 60;
+    std::time_t now = std::time(nullptr);
+    QuirkUpdateCache c = quirk_read_update_cache();
+
+    // Refresh from network if cache is stale.
+    if (now - c.checked_at > DAY) {
+        std::string tag = quirk_fetch_latest_tag();
+        if (!tag.empty()) {
+            c.latest_tag = tag;
+            c.checked_at = now;
+            quirk_write_update_cache(c);
+        } else {
+            // Network unreachable / API rate limit / etc. Silently skip
+            // and try again on the next CLI invocation that comes after
+            // the cache expires.
+            return;
+        }
+    }
+
+    if (c.latest_tag.empty()) return;
+    if (quirk_compare_versions(c.latest_tag, QUIRK_VERSION) <= 0) return;
+    if (now - c.last_shown_at < DAY) return;
+
+    // Tell the user, and remember we did so today.
+    std::cerr << "\n"
+              << log::dim("  ↑ ") << "A new Quirk release is available: "
+              << log::bold(QUIRK_VERSION) << " → " << log::bold(c.latest_tag)
+              << "\n"
+              << log::dim("    run `quirk compiler update` to upgrade, or set "
+                          "QUIRK_NO_UPDATE_CHECK=1 to silence this.")
+              << "\n";
+    c.last_shown_at = now;
+    quirk_write_update_cache(c);
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // `quirk auth {login | status | logout}` — GitHub OAuth Device Flow
 //
 // Lets users publish packages (`quirk release`, eventually `quirk publish`)
@@ -4064,6 +4235,7 @@ static int cmd_compiler(const std::vector<std::string>& args) {
         std::cout <<
             "quirk compiler <subcommand>\n"
             "  version                 Print the currently-running compiler version\n"
+            "  check                   Check GitHub for a newer release (bypasses 24h cache)\n"
             "  list                    List `vX.Y.Z` releases available on GitHub\n"
             "  install <vX.Y.Z>        Replace this compiler with the given version\n"
             "  update                  Replace this compiler with the latest release\n";
@@ -4075,6 +4247,33 @@ static int cmd_compiler(const std::vector<std::string>& args) {
 
     if (sub == "version") {
         std::cout << "quirk " << QUIRK_VERSION << "\n";
+        return 0;
+    }
+
+    if (sub == "check") {
+        // Explicit on-demand check — bypass the once-per-day cache so the
+        // user gets a fresh answer right now.
+        std::string tag = quirk_fetch_latest_tag();
+        if (tag.empty()) {
+            log::err("compiler check: couldn't reach GitHub — try again in a moment");
+            return 1;
+        }
+        // Update cache so the background notice doesn't redundantly fire today.
+        QuirkUpdateCache c = quirk_read_update_cache();
+        c.latest_tag = tag;
+        c.checked_at = std::time(nullptr);
+        quirk_write_update_cache(c);
+
+        int cmp = quirk_compare_versions(tag, QUIRK_VERSION);
+        std::cout << "Currently running: " << log::bold(QUIRK_VERSION) << "\n";
+        std::cout << "Latest on GitHub:  " << log::bold(tag) << "\n\n";
+        if (cmp > 0) {
+            std::cout << "  ↑ Update available. Run `quirk compiler update` to upgrade.\n";
+        } else if (cmp == 0) {
+            log::ok("Up to date.");
+        } else {
+            log::note("You're running newer than the latest published tag — probably a dev build.");
+        }
         return 0;
     }
 
@@ -4230,7 +4429,7 @@ static int cmd_completion(const std::vector<std::string>& args) {
             ;;
         compiler)
             if [ "$COMP_CWORD" -eq 2 ]; then
-                COMPREPLY=($(compgen -W "version list install update" -- "$cur"))
+                COMPREPLY=($(compgen -W "version check list install update" -- "$cur"))
             fi
             ;;
         auth)
@@ -4309,6 +4508,7 @@ complete -c quirk -n '__quirk_verb_is bump-compiler' -l tag    -d 'Annotated git
 complete -c quirk -n '__quirk_verb_is bump-compiler' -l push   -d 'Push to origin'
 
 complete -c quirk -n '__quirk_verb_is compiler' -a 'version' -d 'Print the running compiler version'
+complete -c quirk -n '__quirk_verb_is compiler' -a 'check'   -d 'Check GitHub for a newer release now'
 complete -c quirk -n '__quirk_verb_is compiler' -a 'list'    -d 'List available releases on GitHub'
 complete -c quirk -n '__quirk_verb_is compiler' -a 'install' -d 'Install a specific version'
 complete -c quirk -n '__quirk_verb_is compiler' -a 'update'  -d 'Update to the latest release'

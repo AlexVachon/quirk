@@ -5,6 +5,39 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [1.0.6] — 2026-05-29
+
+### New
+- **`quirk` now notifies users when a newer release is available.**
+  Cargo/npm-style: a one-line dim notice on stderr after any quirk
+  subcommand finishes:
+
+      ↑ A new Quirk release is available: 1.0.5 → 1.0.6
+        run `quirk compiler update` to upgrade, or set
+        QUIRK_NO_UPDATE_CHECK=1 to silence this.
+
+  Behavior:
+  - Checks GitHub at most **once per 24h** (cached at
+    `~/.quirk/update-check.json`). Curl times out after 3s so a slow
+    network never makes Quirk feel laggy.
+  - Notice prints **at most once per 24h** even when the cache is
+    refreshed sooner — tracked via `last_shown_at` in the cache file.
+  - **Silent on non-TTY stdout** (pipes, redirects, CI logs).
+  - **Silent on dev builds** — when the binary lives inside a source
+    checkout with a `.git` directory above. Avoids nagging contributors
+    working on the compiler.
+  - **Silent when `QUIRK_NO_UPDATE_CHECK=1`** in the environment.
+
+- **`quirk compiler check` — explicit on-demand version check.**
+  Bypasses the 24h cache, hits GitHub right now, prints "Up to date"
+  / "Update available" / "Newer than published (probably a dev build)".
+
+### Setup note
+- The first time a v1.0.5 user runs any quirk command after upgrading,
+  the cache file is created. From then on the once-per-day check kicks
+  in automatically. Users on older versions never see notices until they
+  update once (manually or via `quirk compiler update`).
+
 ## [1.0.5] — 2026-05-29
 
 ### New

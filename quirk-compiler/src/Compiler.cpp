@@ -478,7 +478,14 @@ int main(int argc, char* argv[]) {
     // shortcuts. Returns true when it handled the invocation; otherwise we
     // fall through to the normal script-run path below.
     int pmRc = 0;
-    if (qpm::dispatch(argc, argv, pmRc)) return pmRc;
+    if (qpm::dispatch(argc, argv, pmRc)) {
+        // Fire the once-per-24h update notice on the subcommand path —
+        // those are the invocations the user is paying attention to.
+        // Skipped automatically on pipes/CI, dev builds, and when
+        // QUIRK_NO_UPDATE_CHECK is set.
+        qpm::maybe_announce_update();
+        return pmRc;
+    }
 
     // Parse CLI flags. Anything after the input file (the first non-`-` arg)
     // is forwarded to the user script via sys.argv() — same convention as

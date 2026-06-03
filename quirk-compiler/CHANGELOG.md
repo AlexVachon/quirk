@@ -5,6 +5,57 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [1.3.0] — 2026-06-03
+
+### First macOS support — source-buildable + CI-validated
+
+Quirk now compiles cleanly on macOS (Apple Silicon). All Linux-specific
+code paths have been replaced with portable wrappers:
+
+- **`self_binary()`** dispatches on `__APPLE__`: uses
+  `_NSGetExecutablePath` + `realpath()` on macOS, `/proc/self/exe`
+  + `readlink()` on Linux. The half-dozen `readlink("/proc/self/exe", ...)`
+  call sites scattered across `PackageManager.hpp` + `Compiler.cpp`
+  now go through this single helper.
+- **`runtime.so`** filename is kept on macOS too (Apple's `dlopen`
+  doesn't care about the extension, and renaming would ripple into
+  7+ install-script and resolver sites for no practical benefit).
+- **Makefile** uses `?=` on `CXX`/`CC`/`LLVM_CONFIG` so macOS users
+  can build with `LLVM_CONFIG=$(brew --prefix llvm@14)/bin/llvm-config make`
+  without touching any source.
+
+### CI
+
+A new `macos-arm64` job in the release workflow builds + smoke-tests
+the compiler on every tag push and uploads `quirk-X.Y.Z-darwin-arm64.tar.gz`
+alongside the Linux tarball. Marked `continue-on-error: true` for now —
+won't block a release if the macOS build flakes during this
+first-shipping window.
+
+### Installer
+
+`install.sh` recognises macOS arm64 and attempts to fetch the matching
+tarball. On 404 (e.g. installing a pre-1.3 tag), it prints the
+build-from-source path:
+
+```
+brew install llvm@14 bdw-gc openssl@3
+LLVM_CONFIG=$(brew --prefix llvm@14)/bin/llvm-config make
+```
+
+Also: `sha256sum` (Linux) vs `shasum -a 256` (macOS) is dispatched by
+availability rather than hardcoded — fixes a checksum-verification
+crash that would otherwise hit Mac users.
+
+### Known caveats
+
+- **No local validation.** This release is a blind port — built and
+  tested on Linux only. The first macOS binary will materialise from
+  CI; expect a v1.3.1 with the first round of "wait, that doesn't
+  compile on macOS after all" fixes.
+- **Apple Silicon only.** Intel-Mac (`darwin-x86_64`) and Windows are
+  not yet built; both are on the roadmap.
+
 ## [1.2.0] — 2026-06-03
 
 ### REPL line editing + persistent history

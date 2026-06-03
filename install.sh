@@ -60,23 +60,33 @@ done
 os=$(uname -s | tr '[:upper:]' '[:lower:]')
 arch=$(uname -m)
 case "$os" in
-    linux) ;;
+    linux)
+        case "$arch" in
+            x86_64|amd64) arch=x86_64 ;;
+            *)
+                echo "Unsupported Linux architecture: $arch"
+                echo "Quirk ships Linux x86_64 and macOS arm64; see source-build instructions."
+                exit 1
+                ;;
+        esac
+        ;;
     darwin)
-        echo "Quirk doesn't ship prebuilt macOS binaries yet."
-        echo "Build from source: https://github.com/${QUIRK_REPO}#building"
-        exit 1
+        # First macOS-shipping release was 1.3.0. Tarballs are produced by
+        # the macos-arm64 release job; older tags won't have them, so a
+        # download miss falls through to source-build instructions rather
+        # than crashing the script.
+        case "$arch" in
+            arm64|aarch64) arch=arm64 ;;
+            *)
+                echo "Unsupported macOS architecture: $arch (only arm64 is built)"
+                echo "Build from source: https://github.com/${QUIRK_REPO}#macos"
+                exit 1
+                ;;
+        esac
         ;;
     *)
         echo "Unsupported OS: $os"
         echo "Build from source: https://github.com/${QUIRK_REPO}#building"
-        exit 1
-        ;;
-esac
-case "$arch" in
-    x86_64|amd64) arch=x86_64 ;;
-    *)
-        echo "Unsupported architecture: $arch"
-        echo "Quirk currently ships only Linux x86_64 binaries."
         exit 1
         ;;
 esac
@@ -111,13 +121,38 @@ echo "Installing Quirk ${version} → ${INSTALL_DIR}"
 # --- Download + verify ------------------------------------------------------
 tmpdir=$(mktemp -d)
 trap 'rm -rf "$tmpdir"' EXIT
-curl -fSL --progress-bar "$url" -o "$tmpdir/quirk.tar.gz"
+# A 404 on macOS happens when the requested tag was cut before v1.3 (the
+# first release with darwin tarballs). Print the source-build escape
+# hatch instead of dying with a cryptic curl error.
+if ! curl -fSL --progress-bar "$url" -o "$tmpdir/quirk.tar.gz"; then
+    if [ "$os" = "darwin" ]; then
+        echo ""
+        echo "No prebuilt macOS tarball for ${tag} — first macOS tarballs ship in v1.3."
+        echo "Either pin --version=v1.3.0 (or later) or build from source:"
+        echo "  brew install llvm@14 bdw-gc openssl@3"
+        echo "  git clone https://github.com/${QUIRK_REPO}.git"
+        echo "  cd quirk/quirk-compiler"
+        echo "  LLVM_CONFIG=\$(brew --prefix llvm@14)/bin/llvm-config make"
+        echo "  export QUIRK_HOME=\$(pwd) PATH=\$QUIRK_HOME/bin:\$PATH"
+    else
+        echo "Download failed: $url" >&2
+    fi
+    exit 1
+fi
 
 # Best-effort SHA256 check — the release also publishes a .sha256 sidecar
-# so a tampered tarball without a matching sidecar gets caught here.
-if curl -fsSL "$url.sha256" -o "$tmpdir/quirk.tar.gz.sha256" 2>/dev/null; then
+# so a tampered tarball without a matching sidecar gets caught here. macOS
+# ships `shasum` not `sha256sum`, so dispatch by availability.
+if command -v sha256sum >/dev/null 2>&1; then
+    sha_cmd="sha256sum"
+elif command -v shasum >/dev/null 2>&1; then
+    sha_cmd="shasum -a 256"
+else
+    sha_cmd=""
+fi
+if [ -n "$sha_cmd" ] && curl -fsSL "$url.sha256" -o "$tmpdir/quirk.tar.gz.sha256" 2>/dev/null; then
     expected=$(awk '{print $1}' "$tmpdir/quirk.tar.gz.sha256")
-    actual=$(sha256sum "$tmpdir/quirk.tar.gz" | awk '{print $1}')
+    actual=$($sha_cmd "$tmpdir/quirk.tar.gz" | awk '{print $1}')
     if [ "$expected" != "$actual" ]; then
         echo "Checksum mismatch! expected $expected got $actual" >&2
         exit 1

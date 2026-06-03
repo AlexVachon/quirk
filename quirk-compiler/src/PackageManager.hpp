@@ -38,9 +38,20 @@
 #include <unistd.h>
 #include <sys/wait.h>
 
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>
+#endif
+
 extern "C" {
 #include "third_party/linenoise/linenoise.h"
 }
+
+namespace qpm {
+// Forward declaration so the half-dozen places inside this header that
+// need the running binary's path can call it without depending on order.
+// Defined further down where the package-manager helpers live.
+static std::string self_binary();
+}  // namespace qpm
 #include <sys/stat.h>
 #include <thread>
 #include <chrono>
@@ -53,7 +64,7 @@ extern "C" {
 
 namespace qpm {
 
-constexpr const char* QUIRK_VERSION = "1.2.0";
+constexpr const char* QUIRK_VERSION = "1.3.0";
 
 namespace fs = std::filesystem;
 
@@ -443,12 +454,11 @@ static fs::path find_system_stdlib() {
         if (try_dir(h / "libs"))          return h / "libs";   // legacy
     }
 
-    // Walk up from /proc/self/exe to find sibling packages/ (or legacy libs/).
-    char buf[4096];
-    ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
-    if (n > 0) {
-        buf[n] = '\0';
-        fs::path bin(buf);
+    // Walk up from the running binary's path to find sibling packages/
+    // (or legacy libs/). self_binary() does the platform-specific lookup.
+    std::string exe = self_binary();
+    if (!exe.empty() && exe != "quirk") {
+        fs::path bin(exe);
         fs::path bindir = bin.parent_path();
         if (try_dir(bindir.parent_path() / "packages"))      return bindir.parent_path() / "packages";
         if (try_dir(bindir.parent_path() / "libs"))          return bindir.parent_path() / "libs";   // legacy
@@ -464,11 +474,9 @@ static fs::path find_system_stdlib() {
 // Best-effort path to the running `quirk` binary itself — used so the venv's
 // `bin/quirk` can symlink back at the system install.
 static fs::path find_quirk_binary() {
-    char buf[4096];
-    ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
-    if (n <= 0) return {};
-    buf[n] = '\0';
-    return fs::path(buf);
+    std::string exe = self_binary();
+    if (exe.empty() || exe == "quirk") return {};
+    return fs::path(exe);
 }
 
 // Generated activate script. Sourced with `source <venv>/bin/activate` from
@@ -2415,12 +2423,31 @@ static int cmd_show(const std::vector<std::string>& args) {
 }
 
 // Absolute path to the running quirk binary — used when we need to re-invoke
-// ourselves (eval, module, check).
+// ourselves (eval, module, check). Linux + macOS today; Windows is the next
+// portability hop.
+//
+//   Linux:  /proc/self/exe is a symlink to the running image; readlink it.
+//   macOS:  _NSGetExecutablePath returns the path the loader used. It can
+//           contain `..` or symlinks, so we realpath() it for a canonical
+//           form. Falls back to argv[0]-ish "quirk" on either if the
+//           syscall fails for any reason.
 static std::string self_binary() {
+#if defined(__APPLE__)
+    char buf[4096];
+    uint32_t size = sizeof(buf);
+    if (_NSGetExecutablePath(buf, &size) == 0) {
+        char resolved[4096];
+        if (realpath(buf, resolved)) return resolved;
+        return buf;
+    }
+    return "quirk";
+#else
+    // Linux (and WSL, which is Linux): /proc/self/exe.
     char buf[4096];
     ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
     if (n > 0) { buf[n] = '\0'; return buf; }
     return "quirk";
+#endif
 }
 
 // ---- Package validation -----------------------------------------------
@@ -3768,17 +3795,15 @@ static int cmd_bump_compiler(const std::vector<std::string>& args) {
         return 1;
     }
 
-    // Locate src/PackageManager.hpp by walking up from /proc/self/exe.
+    // Locate src/PackageManager.hpp by walking up from the binary path.
     // The binary lives at <root>/bin/quirk; the source is <root>/src/...
-    char buf[4096];
-    ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
-    if (n <= 0) {
-        log::err("bump-compiler: can't read /proc/self/exe");
+    std::string exe = self_binary();
+    if (exe.empty() || exe == "quirk") {
+        log::err("bump-compiler: can't locate the running quirk binary");
         return 1;
     }
-    buf[n] = '\0';
     fs::path src_path;
-    fs::path root = fs::path(buf).parent_path();
+    fs::path root = fs::path(exe).parent_path();
     for (int up = 0; up < 6 && !root.empty(); up++) {
         fs::path candidate = root / "src" / "PackageManager.hpp";
         if (fs::exists(candidate)) { src_path = candidate; break; }
@@ -3786,7 +3811,7 @@ static int cmd_bump_compiler(const std::vector<std::string>& args) {
     }
     if (src_path.empty()) {
         log::err("bump-compiler: couldn't find src/PackageManager.hpp near "
-                 + std::string(buf));
+                 + exe);
         std::cerr << "    " << log::dim("(this command needs to run from a built-from-source compiler)") << "\n";
         return 1;
     }
@@ -3956,11 +3981,9 @@ inline int quirk_compare_versions(const std::string& a_in, const std::string& b_
 // a sibling `.git` somewhere above. Avoids nagging devs who are working
 // on the compiler itself.
 inline bool quirk_is_dev_build() {
-    char buf[4096];
-    ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
-    if (n <= 0) return false;
-    buf[n] = '\0';
-    fs::path p = fs::path(buf).parent_path();
+    std::string exe = qpm::self_binary();
+    if (exe.empty() || exe == "quirk") return false;
+    fs::path p = fs::path(exe).parent_path();
     for (int up = 0; up < 6; up++) {
         if (fs::is_directory(p / ".git")) return true;
         if (p == p.parent_path()) break;

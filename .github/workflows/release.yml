@@ -115,3 +115,70 @@ jobs:
           generate_release_notes: true
           draft: false
           prerelease: ${{ contains(github.ref_name, '-') }}
+
+  macos-arm64:
+    # First macOS build, added in v1.3. Uses Apple Silicon (macos-latest
+    # = arm64). Source already compiles cleanly thanks to the
+    # `_NSGetExecutablePath` shim and platform-agnostic `dlopen` calls;
+    # this job just verifies CI can produce a runnable arm64 binary and
+    # uploads it alongside the linux tarball.
+    #
+    # `continue-on-error: true` keeps a macOS failure from blocking a
+    # release while the platform is in its first-shipping window. Drop
+    # the flag once we have a couple of clean macOS releases.
+    runs-on: macos-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        # llvm@14 is keg-only on Homebrew (parallel installs of multiple
+        # LLVM versions don't share PATH), so we pin via LLVM_CONFIG below
+        # instead of touching PATH.
+        run: brew install llvm@14 bdw-gc openssl@3
+
+      - name: Build compiler + runtime
+        working-directory: quirk-compiler
+        env:
+          LLVM_CONFIG: /opt/homebrew/opt/llvm@14/bin/llvm-config
+          # Homebrew installs headers under <prefix>/include. The runtime
+          # uses bdw-gc + openssl, both keg-only, so pkg-config-style paths
+          # don't help — explicit -I + -L is the simplest.
+          CPATH: /opt/homebrew/opt/bdw-gc/include:/opt/homebrew/opt/openssl@3/include
+          LIBRARY_PATH: /opt/homebrew/opt/bdw-gc/lib:/opt/homebrew/opt/openssl@3/lib
+        run: make -j"$(sysctl -n hw.ncpu)"
+
+      - name: Smoke-test the binary
+        working-directory: quirk-compiler
+        env:
+          QUIRK_HOME: ${{ github.workspace }}/quirk-compiler
+        run: |
+          ./bin/quirk --version
+          echo 'use console
+          define main() -> void { console.log("hello from macOS CI") }' > /tmp/smoke.quirk
+          ./bin/quirk /tmp/smoke.quirk
+
+      - name: Package
+        id: pkg
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          PKG="quirk-${VERSION}-darwin-arm64"
+          mkdir -p "${PKG}/bin"
+          cp quirk-compiler/bin/quirk      "${PKG}/bin/"
+          cp quirk-compiler/bin/runtime.so "${PKG}/bin/"
+          cp -r quirk-compiler/packages    "${PKG}/packages"
+          cp README.md INSTALL.md           "${PKG}/" 2>/dev/null || true
+          cp quirk-compiler/CHANGELOG.md    "${PKG}/" 2>/dev/null || true
+          tar czf "${PKG}.tar.gz" "${PKG}"
+          shasum -a 256 "${PKG}.tar.gz" | awk '{print $1"  "$2}' > "${PKG}.tar.gz.sha256"
+          echo "pkg=${PKG}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ steps.pkg.outputs.pkg }}.tar.gz
+            ${{ steps.pkg.outputs.pkg }}.tar.gz.sha256
+          generate_release_notes: false   # the linux job already wrote them
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}

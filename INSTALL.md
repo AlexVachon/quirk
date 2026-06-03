@@ -59,7 +59,22 @@ Both are needed at run time. `quirk` resolves `runtime.so` from its own director
 | OpenSSL | `crypto.*` hashes / HMAC / UUID | `libssl-dev` |
 | build tools | C++ compile (C++17) | `build-essential pkg-config cmake git` |
 
-macOS and Windows aren't packaged yet — the runtime uses some POSIX-only paths (`/proc/self/exe`, `termios`). Should be portable with modest work.
+**macOS:** builds cleanly from source as of v1.3.0 (POSIX-clean code +
+`_NSGetExecutablePath` for the exe-path lookup). Prebuilt tarballs not
+yet published — GitHub Actions needs a macOS job before the release
+workflow can produce them. To build:
+
+```bash
+brew install llvm@14 bdw-gc openssl@3
+git clone https://github.com/AlexVachon/quirk.git
+cd quirk/quirk-compiler
+LLVM_CONFIG=$(brew --prefix llvm@14)/bin/llvm-config make -j$(sysctl -n hw.ncpu)
+export QUIRK_HOME="$(pwd)"
+export PATH="$QUIRK_HOME/bin:$PATH"
+```
+
+**Windows:** not yet supported. The runtime uses `dlopen` and POSIX
+`termios`; Windows shims are tracked for a later release.
 
 ---
 

@@ -690,11 +690,9 @@ static bool saveCachedBitcode(const fs::path& path, llvm::Module& module) {
 // the search logic.
 static std::string resolveRuntimeSoPath() {
     std::string runtimePath;
-    char buf[4096];
-    ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
-    if (n > 0) {
-        buf[n] = '\0';
-        fs::path next = fs::path(buf).parent_path() / "runtime.so";
+    std::string exe = qpm::self_binary();
+    if (!exe.empty() && exe != "quirk") {
+        fs::path next = fs::path(exe).parent_path() / "runtime.so";
         if (fs::exists(next)) runtimePath = next.string();
     }
     if (const char* envHome = std::getenv("QUIRK_HOME")) {
@@ -961,25 +959,10 @@ int main(int argc, char* argv[]) {
     // =======================================================
     log.debug("Starting Code Generation...");
 
-    // Resolve runtime.so path: prefer the one next to the binary itself
-    // (works from any CWD and from inside a venv), then $QUIRK_HOME/bin/,
-    // then a CWD-relative fallback for legacy dev invocations.
-    std::string runtimePath;
-    {
-        char buf[4096];
-        ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
-        if (n > 0) {
-            buf[n] = '\0';
-            fs::path next = fs::path(buf).parent_path() / "runtime.so";
-            if (fs::exists(next)) runtimePath = next.string();
-        }
-        const char* envHome = std::getenv("QUIRK_HOME");
-        if (envHome) {
-            std::string venvRuntime = std::string(envHome) + "/bin/runtime.so";
-            if (fs::exists(venvRuntime)) runtimePath = venvRuntime;
-        }
-        if (runtimePath.empty()) runtimePath = "./bin/runtime.so";
-    }
+    // Resolve runtime.so path via the shared helper — keeps the JIT path
+    // and the cache-hit fast path in sync, and routes the binary-path
+    // lookup through `qpm::self_binary()` which has the macOS shim.
+    std::string runtimePath = resolveRuntimeSoPath();
 
     // =======================================================
     // 6a. EMIT IR (--emit-ir or --compile-only)

@@ -1,17 +1,30 @@
 # Compiler settings
-LLVM_CONFIG = llvm-config-14
+#
+# `llvm-config-14` is the apt naming used on Debian/Ubuntu. Homebrew's
+# `llvm@14` formula installs it under `/opt/homebrew/opt/llvm@14/bin`
+# (Apple Silicon) or `/usr/local/opt/llvm@14/bin` (Intel) — pre-seed
+# LLVM_CONFIG=/opt/homebrew/opt/llvm@14/bin/llvm-config when building
+# on macOS. The compiler/runtime themselves are POSIX-clean; nothing
+# else in the Makefile needs an OS branch.
+LLVM_CONFIG ?= llvm-config-14
 
 # -O2 on the host C++ build: this is the Quirk compiler itself, not the
 # LLVM passes it runs over user IR. Default-O0 means parser/sema/codegen
 # walk the AST unoptimized, which added ~30-40% to every invocation.
-CXX      = g++
+CXX      ?= g++
 CXXFLAGS = -std=c++17 -Wall -O2 -Iinclude $(shell $(LLVM_CONFIG) --cppflags) -MMD -MP
 LDFLAGS  = $(shell $(LLVM_CONFIG) --ldflags --libs all --system-libs)
 
 # Same story for runtime.so — the .c files implementing String, List, Map,
 # etc. were unoptimized at runtime. -O2 here makes every string/list/map
 # operation faster.
-CC     = gcc
+CC     ?= gcc
+# `-shared -fPIC` is the same incantation on Linux and macOS. Apple's
+# clang accepts `-shared` and produces a `.dylib`-compatible Mach-O
+# object; keeping the `.so` filename is fine because `dlopen` ignores
+# the extension on macOS. (Renaming to `.dylib` would also work but
+# would ripple into 7+ install-script and resolver sites for no
+# practical benefit.)
 CFLAGS = -shared -fPIC -O2
 
 # Directories

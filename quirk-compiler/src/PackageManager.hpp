@@ -49,7 +49,7 @@
 
 namespace qpm {
 
-constexpr const char* QUIRK_VERSION = "1.0.12";
+constexpr const char* QUIRK_VERSION = "1.1.0";
 
 namespace fs = std::filesystem;
 
@@ -3154,15 +3154,25 @@ struct TestFileResult {
 // summary. The framework prints either "N passed" (success) or
 // "M failed, N passed (of T)" (failure). We scan stdout for both shapes
 // to support repeated runs (some test files invoke run_all more than once).
-static TestFileResult run_one_test_file(const fs::path& file) {
+//
+// `timeoutSecs` caps the wall-clock runtime — tests that bind sockets or
+// wait on stdin would otherwise wedge the entire suite. We shell out to
+// `timeout(1)` from coreutils (always present on Linux); on a kill the
+// exit code surfaces as 124 and the file shows up as a failure with a
+// "(timeout)" annotation. 0 disables the cap.
+static TestFileResult run_one_test_file(const fs::path& file, int timeoutSecs) {
     TestFileResult r;
     r.file = file.string();
     // QUIRK_DEBUG_SKIP=1 turns any `debug.breakpoint()` left in the
     // source into a no-op so tests never hang waiting on stdin.
     // Anyone wanting an interactive break should `quirk run` the file
     // directly.
-    std::string cmd = "QUIRK_DEBUG_SKIP=1 \"" + self_binary()
-                    + "\" run \"" + file.string() + "\" 2>&1";
+    std::string cmd;
+    if (timeoutSecs > 0) {
+        cmd = "timeout --foreground " + std::to_string(timeoutSecs) + "s ";
+    }
+    cmd += "env QUIRK_DEBUG_SKIP=1 \"" + self_binary()
+        + "\" run \"" + file.string() + "\" 2>&1";
     FILE* pipe = popen(cmd.c_str(), "r");
     if (!pipe) { r.failed = 1; r.exitCode = -1; return r; }
     std::string out;
@@ -3233,16 +3243,34 @@ static TestFileResult run_one_test_file(const fs::path& file) {
 static int cmd_test(const std::vector<std::string>& args) {
     std::vector<std::string> roots;
     bool verbose = false;
-    for (auto& a : args) {
+    int  timeoutSecs = 30;           // 0 = no cap
+    std::string filter;
+    for (size_t i = 0; i < args.size(); i++) {
+        const std::string& a = args[i];
         if (a == "--help" || a == "-h") {
             std::cout <<
-                "quirk test [-v] [<path>...]\n"
+                "quirk test [flags] [<path>...]\n"
                 "    Discover *_test.quirk files and run them with the test framework.\n"
                 "    Default path is ./tests if it exists, else the current directory.\n"
-                "    -v / --verbose   print each file's full output\n";
+                "\n"
+                "  -v, --verbose         Print each file's full output\n"
+                "  --filter <substr>     Run only files whose path contains <substr>\n"
+                "  --timeout <secs>      Per-file wall-clock cap (default 30, 0 = off)\n"
+                "                        Tests over the cap fail with exit 124.\n";
             return 0;
         }
         if (a == "-v" || a == "--verbose") { verbose = true; continue; }
+        if (a == "--filter") {
+            if (i + 1 >= args.size()) { log::err("test: --filter needs a substring"); return 1; }
+            filter = args[++i]; continue;
+        }
+        if (a == "--timeout") {
+            if (i + 1 >= args.size()) { log::err("test: --timeout needs seconds"); return 1; }
+            try { timeoutSecs = std::stoi(args[++i]); }
+            catch (...) { log::err("test: --timeout: not a number"); return 1; }
+            if (timeoutSecs < 0) timeoutSecs = 0;
+            continue;
+        }
         if (!a.empty() && a[0] == '-') {
             log::err("test: unknown flag '" + a + "'");
             return 1;
@@ -3285,6 +3313,17 @@ static int cmd_test(const std::vector<std::string>& args) {
     }
     std::sort(files.begin(), files.end());
 
+    if (!filter.empty()) {
+        auto before = files.size();
+        files.erase(std::remove_if(files.begin(), files.end(),
+            [&](const fs::path& p) { return p.string().find(filter) == std::string::npos; }),
+            files.end());
+        if (files.empty()) {
+            log::note("no *_test.quirk files match '" + filter + "' (was " + std::to_string(before) + " total)");
+            return 0;
+        }
+    }
+
     if (files.empty()) {
         log::note("no *_test.quirk files found");
         return 0;
@@ -3299,7 +3338,7 @@ static int cmd_test(const std::vector<std::string>& args) {
         // show both the "…" and final lines, which is noisy.
         bool tty = log::stdout_is_tty();
         if (tty) std::cout << log::dim("  …") << " " << f.string() << std::flush;
-        auto res = run_one_test_file(f);
+        auto res = run_one_test_file(f, timeoutSecs);
         totalPassed += res.passed;
         totalFailed += res.failed;
         // A file is a failure only if the process itself didn't exit 0.
@@ -3328,6 +3367,8 @@ static int cmd_test(const std::vector<std::string>& args) {
                                               + " failed, "
                                               + std::to_string(res.passed)
                                               + " passed)");
+            else if (res.exitCode == 124)
+                std::cout << "  " << log::dim("(timeout)");
             else
                 std::cout << "  " << log::dim("(exit " + std::to_string(res.exitCode) + ")");
             std::cout << "\n";

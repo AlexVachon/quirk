@@ -5,6 +5,37 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [1.1.0] — 2026-06-03
+
+### `quirk test` is now usable
+
+The runner has been in the codebase for a while — walks `tests/`,
+spawns `quirk run` per `*_test.quirk`, parses framework summary
+lines — but in practice it deadlocked on any test that opened a
+network port or waited on stdin (e.g. `server_test.quirk` would
+block forever binding a socket). v1.1.0 ships the fixes that make
+it actually usable as a CI / pre-tag check.
+
+- **`--timeout <secs>`** (default 30s, `0` to disable). Per-file
+  wall-clock cap, enforced by shelling out to `timeout(1)`. Tests
+  over the cap fail with exit 124 and render as `(timeout)` in the
+  status line instead of `(exit 124)`.
+- **`--filter <substr>`** runs only files whose path contains
+  `<substr>`. Useful for iterating on one suite without paying for
+  the whole batch.
+- **`-v` / `--verbose`** still dumps each file's full output (was
+  already there; just documented now).
+
+The runner discovers files matching `<name>_test.quirk` recursively
+under `tests/` by default, or the path you pass. It already skipped
+`packages/`, `.venv`, `.git`, `node_modules` — that's unchanged.
+
+The framework contract: tests must end with a summary line matching
+`N passed` (success) or `M failed, N passed (of T)` (failure). The
+bundled `test` package emits both shapes; user frameworks can match
+either format. Files that exit non-zero without a summary line still
+count as failures with `(exit N)` in the status line.
+
 ## [1.0.12] — 2026-06-03
 
 ### `pkg remove` now keeps the lockfile consistent

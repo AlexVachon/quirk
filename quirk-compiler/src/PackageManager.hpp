@@ -64,7 +64,7 @@ static std::string self_binary();
 
 namespace qpm {
 
-constexpr const char* QUIRK_VERSION = "1.4.0";
+constexpr const char* QUIRK_VERSION = "1.5.0";
 
 namespace fs = std::filesystem;
 
@@ -1112,9 +1112,32 @@ static std::string resolve_registry_url() {
 // new compiler can `quirk pkg install` the new name.
 static const std::map<std::string, std::string>& stdlib_registry() {
     static const std::map<std::string, std::string> reg = {
-        // First-shipping package (v1.4 pilot). Add more here as each
-        // stdlib package gets its own repo + initial tag.
-        {"argparse", "github.com/AlexVachon/quirk-argparse"},
+        // v1.4: pilot (argparse).
+        // v1.5: completed the split — every stdlib package below this
+        // line ships as github.com/AlexVachon/quirk-<name>@v1.0.0 with
+        // the same source as the bundled compiler copy. Adding a new
+        // stdlib package = one line here + the GitHub repo.
+        {"argparse",   "github.com/AlexVachon/quirk-argparse"},
+        {"console",    "github.com/AlexVachon/quirk-console"},
+        {"crypto",     "github.com/AlexVachon/quirk-crypto"},
+        {"csv",        "github.com/AlexVachon/quirk-csv"},
+        {"datetime",   "github.com/AlexVachon/quirk-datetime"},
+        {"debug",      "github.com/AlexVachon/quirk-debug"},
+        {"encoding",   "github.com/AlexVachon/quirk-encoding"},
+        {"fs",         "github.com/AlexVachon/quirk-fs"},
+        {"io",         "github.com/AlexVachon/quirk-io"},
+        {"itertools",  "github.com/AlexVachon/quirk-itertools"},
+        {"math",       "github.com/AlexVachon/quirk-math"},
+        {"net",        "github.com/AlexVachon/quirk-net"},
+        {"random",     "github.com/AlexVachon/quirk-random"},
+        {"regex",      "github.com/AlexVachon/quirk-regex"},
+        {"statistics", "github.com/AlexVachon/quirk-statistics"},
+        {"sys",        "github.com/AlexVachon/quirk-sys"},
+        {"test",       "github.com/AlexVachon/quirk-test"},
+        {"time",       "github.com/AlexVachon/quirk-time"},
+        {"typing",     "github.com/AlexVachon/quirk-typing"},
+        {"url",        "github.com/AlexVachon/quirk-url"},
+        {"uuid",       "github.com/AlexVachon/quirk-uuid"},
     };
     return reg;
 }
@@ -1574,8 +1597,21 @@ static int materialize_from_cache(const fs::path& cachePath, const fs::path& pkg
             return 1;
         }
     } else {
+        // "src layout" flatten: a package whose repo has `src/index.quirk`
+        // (the convention we generate when splitting stdlib packages — and
+        // what pip/npm-style packagings produce) installs the *contents*
+        // of `src/` directly into `<pkgRoot>/<name>/`. Without this,
+        // relative imports like `from ...sys` walk through the extra
+        // `src/` segment and land one level shallow vs the flat layout
+        // they were written against. README / LICENSE / quirk.toml stay
+        // at the top of the cache and aren't part of the runtime
+        // package, so they don't need to be copied.
+        fs::path copyFrom = cachePath;
+        if (fs::exists(cachePath / "src" / "index.quirk")) {
+            copyFrom = cachePath / "src";
+        }
         // Copy into staging first; the old target stays intact while we work.
-        ec = copy_pruned(cachePath, staging);
+        ec = copy_pruned(copyFrom, staging);
         if (ec) {
             log::err("failed to stage " + m.name + ": " + ec.message());
             fs::remove_all(staging);

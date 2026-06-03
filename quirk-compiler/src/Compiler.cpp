@@ -271,22 +271,26 @@ static std::vector<std::string>& getSearchPaths() {
 
 std::string resolveImportPath(const std::string& moduleName, const std::string& relativeTo = "") {
 
+    // `effectiveName` lets the relative-import miss fall through into the
+    // absolute search below (`moduleName` itself is a const reference).
+    std::string effectiveName = moduleName;
+
     // Relative imports (start with '.')
-    if (!moduleName.empty() && moduleName[0] == '.') {
+    if (!effectiveName.empty() && effectiveName[0] == '.') {
         if (relativeTo.empty()) {
-            std::cerr << "Error: Relative import '" << moduleName << "' used without context." << std::endl;
+            std::cerr << "Error: Relative import '" << effectiveName << "' used without context." << std::endl;
             exit(1);
         }
 
         size_t dotCount = 0;
-        while (dotCount < moduleName.size() && moduleName[dotCount] == '.')
+        while (dotCount < effectiveName.size() && effectiveName[dotCount] == '.')
             dotCount++;
 
         fs::path baseDir = fs::path(relativeTo).parent_path();
         for (size_t i = 1; i < dotCount; i++)
             baseDir = baseDir.parent_path();
 
-        std::string subPath = moduleName.substr(dotCount);
+        std::string subPath = effectiveName.substr(dotCount);
 
         fs::path candidateFile = baseDir / (subPath + ".quirk");
         if (fs::exists(candidateFile)) return candidateFile.string();
@@ -294,7 +298,15 @@ std::string resolveImportPath(const std::string& moduleName, const std::string& 
         fs::path candidateInit = baseDir / subPath / "index.quirk";
         if (fs::exists(candidateInit)) return candidateInit.string();
 
-        return "";
+        // Fall through to the absolute search below: relative walks that
+        // miss (e.g. `from ...sys` inside an installed typing package
+        // where `sys` is a sibling in the bundled stdlib but absent in
+        // a project-local install) shouldn't hard-fail. Strip the leading
+        // dots and let the absolute resolver have a go with each search
+        // path root. Without this, splitting the stdlib into independent
+        // repos broke every cross-package relative import that used to
+        // rely on the flat bundled layout.
+        effectiveName = subPath;
     }
 
     // Self-resolution: if the importing file lives inside a project whose
@@ -302,12 +314,12 @@ std::string resolveImportPath(const std::string& moduleName, const std::string& 
     // own entry point. Wins over the standard search paths so that local
     // edits aren't shadowed by an installed copy of the same package.
     if (!relativeTo.empty()) {
-        std::string selfPath = qpm::resolve_self_package(moduleName, relativeTo);
+        std::string selfPath = qpm::resolve_self_package(effectiveName, relativeTo);
         if (!selfPath.empty()) return selfPath;
     }
 
     // Absolute imports
-    std::string relPath = moduleName;
+    std::string relPath = effectiveName;
     std::replace(relPath.begin(), relPath.end(), '.', '/');
 
     std::vector<std::string> variants = {
@@ -316,6 +328,41 @@ std::string resolveImportPath(const std::string& moduleName, const std::string& 
         relPath + "/src/index.quirk",                       // package layout: pkg/src/index.quirk
         relPath + "/src/" + relPath + ".quirk",
     };
+
+    // Sub-module access through a `src/`-layout package: when the import is
+    // `typing.primitives.string`, the installed copy lives at
+    // `<root>/typing/src/primitives/string.quirk` — note the `src/` is
+    // *between* the package name and the submodule path, not at either
+    // end. Without this, `quirk pkg install typing` would install the
+    // package correctly but every `from typing.primitives.string` would
+    // miss the project-local copy and fall through to the bundled stdlib.
+    //
+    // Try every possible split point — for a 3-segment path
+    // (a/b/c) that's `a/src/b/c.quirk` and `a/b/src/c.quirk`. The
+    // generated list is short (≤ N-1 entries for N segments) and we
+    // only build it once per resolve call.
+    {
+        std::vector<std::string> parts;
+        std::string cur;
+        for (char c : relPath) {
+            if (c == '/') { if (!cur.empty()) parts.push_back(cur); cur.clear(); }
+            else cur += c;
+        }
+        if (!cur.empty()) parts.push_back(cur);
+        for (size_t k = 1; k < parts.size(); k++) {
+            std::string prefix, suffix;
+            for (size_t i = 0; i < k; i++) {
+                if (i) prefix += '/';
+                prefix += parts[i];
+            }
+            for (size_t i = k; i < parts.size(); i++) {
+                if (i > k) suffix += '/';
+                suffix += parts[i];
+            }
+            variants.push_back(prefix + "/src/" + suffix + ".quirk");
+            variants.push_back(prefix + "/src/" + suffix + "/index.quirk");
+        }
+    }
 
     for (const auto& root : getSearchPaths()) {
         for (const auto& variant : variants) {

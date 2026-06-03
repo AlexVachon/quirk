@@ -5,6 +5,61 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [1.5.0] — 2026-06-03
+
+### Full stdlib split — every package now has a canonical repo
+
+v1.4.0 shipped the *mechanism* (compiler-baked `stdlib_registry()`)
+and one pilot package (`argparse`). v1.5.0 completes the rollout:
+all 21 stdlib packages now resolve via the registry to their own
+GitHub repo at `github.com/AlexVachon/quirk-<name>@v1.0.0`. The
+bundled copies under `<QUIRK_HOME>/packages/` stay in place as the
+offline fallback.
+
+### Resolver fixes (uncovered while validating the split)
+
+Two related issues surfaced when round-tripping `typing` end-to-end:
+
+- **`src/` layout install flatten.** Repos for stdlib packages use
+  the `src/index.quirk` convention (separate package source from
+  README/LICENSE). On install, `materialize_from_cache` now copies
+  the contents of `src/` (not `src/` itself) into
+  `<pkgRoot>/<name>/`, so the installed layout matches what the
+  bundled packages look like. Detection is presence-of-
+  `src/index.quirk`; legacy packages without `src/` are unchanged.
+- **Relative-import fall-through.** `from ...sys` inside the typing
+  package used to rely on `sys` being a sibling directory in the
+  bundled flat layout. In a project-local install of only `typing`,
+  that sibling doesn't exist. The resolver now falls through to the
+  absolute search when a relative walk misses, so the import lands
+  on the bundled `sys` (or a separately-installed one) instead of
+  hard-failing.
+
+Together these unblock running scripts that depend on packages
+installed via the new registry.
+
+Newly registered: `console`, `crypto`, `csv`, `datetime`, `debug`,
+`encoding`, `fs`, `io`, `itertools`, `math`, `net`, `random`,
+`regex`, `statistics`, `sys`, `test`, `time`, `typing`, `url`, `uuid`.
+
+Each repo carries the same source the compiler shipped, a generated
+`quirk.toml` (`quirk-version = ">=1.4.0"`), a README with the
+top-of-file docstring, MIT LICENSE, and a `v1.0.0` tag. Future
+maintenance: bump tags in the individual repos for fixes;
+compiler-baked URLs stay stable.
+
+`quirk pkg install typing` (or any other name) now fetches the
+latest tag and shadows the bundled copy at `use typing` time.
+`quirk pkg upgrade typing` re-fetches if a newer tag has been
+published.
+
+### Roadmap update
+
+The LSP rollout (was v1.5) slides to **v1.6**. Doing the full
+stdlib split first was higher leverage — every stdlib fix from
+this point can ship via a package tag rather than a compiler
+release.
+
 ## [1.4.0] — 2026-06-03
 
 ### Stdlib packages can now live in independent repos

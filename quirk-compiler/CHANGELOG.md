@@ -5,6 +5,33 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [1.0.12] — 2026-06-03
+
+### `pkg remove` now keeps the lockfile consistent
+
+`quirk pkg remove <name>` deleted `packages/<name>/` and stripped the
+entry from `quirk.toml`, but left a stale `[[package]]` block in
+`quirk.lock`. A subsequent `pkg install --frozen` would then either
+resurrect the package or fail with a misleading "lockfile/manifest
+mismatch". Fixed: `cmd_remove` now also drops matching entries from
+the lockfile, and removes the file entirely when it ends up empty so
+there's no header-only file polluting git diffs.
+
+This applies to both bare-name remove (`pkg remove logger`) and the
+versioned `pkg remove logger@0.1.0` path when the version being
+removed is the active one.
+
+### Audit notes (no code change)
+
+Round-tripped a third-party path-based install end-to-end:
+- `pkg install` → correct project-local install under `packages/` when
+  `quirk.toml` is present; falls back to `~/.quirk/packages/` outside
+  a project, as documented.
+- `quirk-version = ">=X"` is enforced — packages requiring a newer
+  compiler are rejected with a clear message.
+- Resolver precedence is correct: project-local `./packages/X` wins
+  over user-global `~/.quirk/packages/X`.
+
 ## [1.0.11] — 2026-06-03
 
 ### Cache key now walks the transitive import graph

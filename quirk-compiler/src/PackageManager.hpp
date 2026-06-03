@@ -49,7 +49,7 @@
 
 namespace qpm {
 
-constexpr const char* QUIRK_VERSION = "1.0.11";
+constexpr const char* QUIRK_VERSION = "1.0.12";
 
 namespace fs = std::filesystem;
 
@@ -2174,6 +2174,16 @@ static int cmd_remove(const std::vector<std::string>& names) {
     }
     Manifest projMan;
     bool haveManifest = fs::exists("quirk.toml") && read_manifest("quirk.toml", projMan);
+    // Also keep the lockfile honest. Without this, `pkg remove logger` left
+    // a stale `[[package]]` entry behind, so a subsequent `pkg install
+    // --frozen` would either resurrect the package or fail with a confusing
+    // "lockfile/manifest mismatch". Lockfile is only loaded when one exists
+    // — bare removes outside a project (no quirk.toml) skip this step.
+    fs::path lockPath = "quirk.lock";
+    bool haveLockfile = fs::exists(lockPath);
+    std::map<std::string, LockEntry> lockEntries =
+        haveLockfile ? read_lockfile(lockPath) : std::map<std::string, LockEntry>{};
+    bool lockChanged = false;
     fs::path pkgRoot = package_install_dir();
     for (auto& nv : names) {
         // <name>@<version> drops only that cached version; bare name uninstalls
@@ -2197,6 +2207,7 @@ static int cmd_remove(const std::vector<std::string>& names) {
                         else                 ++it;
                     }
                 }
+                if (lockEntries.erase(n) > 0) lockChanged = true;
             } else {
                 log::warn(n + " not installed");
             }
@@ -2218,9 +2229,21 @@ static int cmd_remove(const std::vector<std::string>& names) {
             fs::remove_all(pkgRoot / n);
             clear_dist_info(pkgRoot, n);
             log::note(log::dim("(was active; uninstalled)"));
+            if (lockEntries.erase(n) > 0) lockChanged = true;
         }
     }
     if (haveManifest) write_manifest("quirk.toml", projMan);
+    if (lockChanged) {
+        if (lockEntries.empty()) {
+            // Don't leave a header-only lockfile behind — confusing for git
+            // diffs and for new contributors. If we removed everything,
+            // remove the file itself.
+            std::error_code ec;
+            fs::remove(lockPath, ec);
+        } else {
+            write_lockfile(lockPath, lockEntries);
+        }
+    }
     return 0;
 }
 

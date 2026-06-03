@@ -261,6 +261,36 @@ First match wins. Set `QUIRK_HOME` to control this hierarchy explicitly.
 
 ---
 
+## Stdlib in independent repos (since 1.4.0)
+
+The bundled stdlib at `<QUIRK_HOME>/packages/` still exists — it's the
+offline fallback. But each stdlib package now also has a canonical
+GitHub repo, listed in the compiler-shipped registry. Run
+`quirk pkg registry list` to see the current entries.
+
+`quirk pkg install argparse` (with no version) reads this registry,
+fetches the latest tag from `github.com/AlexVachon/quirk-argparse`,
+and installs it into the resolver-priority paths (project-local
+`./packages/argparse/` or user-global `~/.quirk/packages/argparse/`),
+which shadow the bundled copy.
+
+To pin: `quirk pkg install argparse@1.0.0`. To override the canonical
+URL for one name: `quirk pkg registry add argparse github.com/me/my-fork`
+(user aliases win over the built-in registry).
+
+**Adding a new stdlib package to the registry** (compiler-maintainer
+workflow):
+
+1. Create `github.com/AlexVachon/quirk-<name>` with the package's
+   `index.quirk` under `src/`, a `quirk.toml`, README, LICENSE.
+2. Tag `v1.0.0` (or whichever) and push.
+3. In `quirk-compiler/src/PackageManager.hpp`, find
+   `stdlib_registry()` and add the entry: `{"<name>", "github.com/AlexVachon/quirk-<name>"}`.
+4. Bump compiler version, ship.
+
+Existing bundled packages keep working until you decide to split them.
+First pilot: `argparse` (split in 1.4.0).
+
 ## Limitations (today)
 
 - **No transitive deps.** `quirk install` only fetches what you list. If a library's own `quirk.toml` has deps, install them yourself for now.

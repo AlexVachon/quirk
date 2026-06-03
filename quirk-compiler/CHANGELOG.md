@@ -5,6 +5,36 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [1.4.0] — 2026-06-03
+
+### Stdlib packages can now live in independent repos
+
+First step of the stdlib-decoupling roadmap. The bundled stdlib at
+`<QUIRK_HOME>/packages/` still ships and stays the offline fallback,
+but `quirk pkg install <stdlib-name>` now resolves to a canonical
+GitHub repo and can fetch a newer version than the one the compiler
+shipped with. Users no longer need a compiler bump to pick up an
+argparse fix.
+
+- **`stdlib_registry()` in `PackageManager.hpp`** is a baked-in map
+  of stdlib names → canonical repo URLs. Falls in after user aliases
+  (`~/.quirk/aliases.toml`) and the cached external registry, so user
+  overrides win.
+- **`quirk pkg registry list`** now displays the built-in entries
+  alongside aliases and the cached registry. Run it to see what bare
+  names resolve to.
+- **First entry: `argparse → github.com/AlexVachon/quirk-argparse`.**
+  A staging repo for the package is prepared locally at
+  `/tmp/quirk-argparse-staging/` (with `quirk.toml`, README, LICENSE,
+  `v1.0.0` tag); compiler-maintainer creates the GitHub repo and
+  pushes from there. The bundled `packages/argparse/` in the compiler
+  tree stays in place as the offline fallback.
+
+Adding a new stdlib package to the registry is one entry in
+`stdlib_registry()` + a compiler ship. See
+[PACKAGES.md](../PACKAGES.md#stdlib-in-independent-repos-since-140)
+for the full maintainer workflow.
+
 ## [1.3.0] — 2026-06-03
 
 ### First macOS support — source-buildable + CI-validated

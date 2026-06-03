@@ -64,7 +64,7 @@ static std::string self_binary();
 
 namespace qpm {
 
-constexpr const char* QUIRK_VERSION = "1.3.0";
+constexpr const char* QUIRK_VERSION = "1.4.0";
 
 namespace fs = std::filesystem;
 
@@ -1092,8 +1092,36 @@ static std::string resolve_registry_url() {
     return expand_registry_url(DEFAULT_REGISTRY_URL);
 }
 
-// Look up <name> in user aliases first, then the cached registry.
-// Returns the URL/spec the user should install, or empty if not found.
+// Compiler-shipped registry of stdlib package repos. Falls in *after*
+// user aliases and the cached external registry, so a user override
+// (`quirk pkg registry add typing github.com/me/my-typing-fork`)
+// always wins. Without this map, `quirk pkg install typing` would
+// fail with "couldn't resolve" since stdlib names aren't in the
+// public registry index.
+//
+// Versioning model: the URL is the canonical home of each stdlib
+// package. The latest tag in that repo is what `quirk pkg install
+// <name>` resolves to. A pinned `<name>@<ver>` install uses the same
+// URL with a tag override. The bundled stdlib in `<QUIRK_HOME>/
+// packages/<name>/` is the offline fallback at `use <name>` time —
+// it stays in place so first-runs and disconnected installs work
+// out of the box.
+//
+// Updating this map is the only step needed when a new stdlib
+// package gets its own repo. Compiler rebuild + ship; users with the
+// new compiler can `quirk pkg install` the new name.
+static const std::map<std::string, std::string>& stdlib_registry() {
+    static const std::map<std::string, std::string> reg = {
+        // First-shipping package (v1.4 pilot). Add more here as each
+        // stdlib package gets its own repo + initial tag.
+        {"argparse", "github.com/AlexVachon/quirk-argparse"},
+    };
+    return reg;
+}
+
+// Look up <name> in user aliases first, then the cached registry,
+// then the compiler-shipped stdlib registry. Returns the URL/spec
+// the user should install, or empty if not found.
 static std::string registry_lookup(const std::string& name) {
     auto aliases = read_kv_file(aliases_path());
     auto it = aliases.find(name);
@@ -1101,6 +1129,9 @@ static std::string registry_lookup(const std::string& name) {
     auto cache = read_kv_file(registry_cache_path());
     it = cache.find(name);
     if (it != cache.end()) return it->second;
+    const auto& stdlib = stdlib_registry();
+    auto sit = stdlib.find(name);
+    if (sit != stdlib.end()) return sit->second;
     return "";
 }
 
@@ -4982,7 +5013,8 @@ static int cmd_registry(const std::vector<std::string>& args) {
     if (sub == "list") {
         auto aliases  = read_kv_file(aliases_path());
         auto registry = read_kv_file(registry_cache_path());
-        if (aliases.empty() && registry.empty()) {
+        const auto& builtin = stdlib_registry();
+        if (aliases.empty() && registry.empty() && builtin.empty()) {
             std::cout << "No registered names.\n"
                       << "  add one:    quirk pkg registry add <name> <url>\n"
                       << "  fetch idx:  quirk pkg registry update\n";
@@ -5000,8 +5032,10 @@ static int cmd_registry(const std::vector<std::string>& args) {
             }
         };
         printRows("Local aliases (~/.quirk/aliases.toml)", aliases);
-        if (!aliases.empty() && !registry.empty()) std::cout << "\n";
+        if (!aliases.empty() && (!registry.empty() || !builtin.empty())) std::cout << "\n";
         printRows("Registry (~/.quirk/registry-cache.toml)", registry);
+        if (!registry.empty() && !builtin.empty()) std::cout << "\n";
+        printRows("Built-in stdlib repos (compiler-shipped)", builtin);
         return 0;
     }
 

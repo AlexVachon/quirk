@@ -24,6 +24,12 @@ SRCS = src/Compiler.cpp src/Core/Lexer.cpp src/Core/Parser.cpp src/Core/Sema.cpp
 OBJS = $(patsubst $(SRC_DIR)/%.cpp, $(OBJ_DIR)/%.o, $(SRCS))
 DEPS = $(OBJS:.o=.d)
 
+# linenoise — vendored single-file readline alternative for the REPL.
+# BSD-2-clause (see src/third_party/linenoise/LICENSE). Built as a C
+# translation unit and linked in alongside the C++ compiler objects.
+LINENOISE_SRC = src/third_party/linenoise/linenoise.c
+LINENOISE_OBJ = $(OBJ_DIR)/third_party/linenoise/linenoise.o
+
 TARGET = $(BIN_DIR)/quirk
 
 # --- 2. RUNTIME LIBRARY ---
@@ -62,13 +68,17 @@ RUNTIME_LIB = $(BIN_DIR)/runtime.so
 
 all: $(TARGET) $(RUNTIME_LIB)
 
-$(TARGET): $(OBJS)
+$(TARGET): $(OBJS) $(LINENOISE_OBJ)
 	@mkdir -p $(BIN_DIR)
-	$(CXX) $(OBJS) -o $@ $(LDFLAGS)
+	$(CXX) $(OBJS) $(LINENOISE_OBJ) -o $@ $(LDFLAGS)
 
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(LINENOISE_OBJ): $(LINENOISE_SRC) src/third_party/linenoise/linenoise.h
+	@mkdir -p $(dir $@)
+	$(CC) -O2 -fPIC -c $< -o $@
 
 $(RUNTIME_LIB): $(RUNTIME_ENTRY) $(RUNTIME_DEPS)
 	@mkdir -p $(BIN_DIR)

@@ -37,6 +37,10 @@
 #include <system_error>
 #include <unistd.h>
 #include <sys/wait.h>
+
+extern "C" {
+#include "third_party/linenoise/linenoise.h"
+}
 #include <sys/stat.h>
 #include <thread>
 #include <chrono>
@@ -49,7 +53,7 @@
 
 namespace qpm {
 
-constexpr const char* QUIRK_VERSION = "1.1.0";
+constexpr const char* QUIRK_VERSION = "1.2.0";
 
 namespace fs = std::filesystem;
 
@@ -3038,14 +3042,36 @@ static int cmd_repl(const std::vector<std::string>& args) {
     std::vector<std::string> preamble;     // top-level decls (define, struct, ...)
     std::vector<std::string> state;        // `x := ...` lines (re-evaluated each turn)
 
+    // Persistent history at ~/.quirk/repl_history (capped at 1000 entries).
+    // linenoise falls back to plain fgets on non-TTY stdin (piped input)
+    // so scripted REPL sessions still work; arrow-key recall + line edit
+    // only activate when stdin is a real terminal.
+    fs::path histPath;
+    if (const char* home = std::getenv("HOME")) {
+        histPath = fs::path(home) / ".quirk" / "repl_history";
+        std::error_code ec;
+        fs::create_directories(histPath.parent_path(), ec);
+        linenoiseHistoryLoad(histPath.string().c_str());
+    }
+    linenoiseHistorySetMaxLen(1000);
+
     std::string carry;                     // unfinished multi-line input
     bool active = true;
     while (active) {
-        // Prompt: `>>> ` fresh, `... ` continuation.
-        std::cout << (carry.empty() ? log::CYAN() : log::DIM()) << (carry.empty() ? ">>> " : "... ") << log::RESET();
-        std::cout.flush();
-        std::string line;
-        if (!std::getline(std::cin, line)) { std::cout << "\n"; break; }
+        // Prompt: `>>> ` fresh, `... ` continuation. Embedding ANSI codes
+        // in the prompt is fine — linenoise computes the visible width by
+        // stripping `\033[...m` sequences when deciding cursor placement.
+        std::string prompt = (carry.empty()
+            ? std::string(log::CYAN()) + ">>> " + log::RESET()
+            : std::string(log::DIM())  + "... " + log::RESET());
+        char* raw = linenoise(prompt.c_str());
+        if (!raw) { std::cout << "\n"; break; }
+        std::string line = raw;
+        linenoiseFree(raw);
+        // Only fresh (non-continuation) lines go into history. Mid-block
+        // continuation lines would clutter recall without being useful
+        // on their own.
+        if (carry.empty() && !line.empty()) linenoiseHistoryAdd(line.c_str());
 
         // ── Meta commands (only at top level, not mid-multi-line) ──────
         if (carry.empty() && !line.empty() && line[0] == ':') {
@@ -3125,6 +3151,7 @@ static int cmd_repl(const std::vector<std::string>& args) {
     }
 
     std::error_code ec; fs::remove(tmp, ec);
+    if (!histPath.empty()) linenoiseHistorySave(histPath.string().c_str());
     return 0;
 }
 

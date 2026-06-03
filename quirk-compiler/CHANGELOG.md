@@ -5,6 +5,30 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [1.2.0] — 2026-06-03
+
+### REPL line editing + persistent history
+
+`quirk repl` now does the things you'd expect from a real interactive
+shell:
+
+- **Arrow-key recall** (↑/↓) walks through previous inputs.
+- **Line editing** — ←/→, ctrl-A/E, ctrl-W, backspace etc. all work.
+- **Persistent history** at `~/.quirk/repl_history` (capped at 1000
+  entries). Sessions merge with the file on save, so quitting and
+  reopening keeps your context.
+- **Non-TTY input still works** — when stdin is piped (`printf ... |
+  quirk repl`), linenoise transparently falls back to plain fgets.
+
+The REPL itself (preamble/state model, multi-line via brace balance,
+`:help` / `:quit` / `:reset` / `:state` meta-commands) was already in
+the codebase; this release just makes it pleasant to use.
+
+Implementation: vendored linenoise (BSD-2-clause, antirez/linenoise)
+into `src/third_party/linenoise/`. No new build dep — linenoise is a
+single-file C library, compiled in alongside the existing objects.
+~1500 LOC added, scoped to `quirk repl` only.
+
 ## [1.1.0] — 2026-06-03
 
 ### `quirk test` is now usable

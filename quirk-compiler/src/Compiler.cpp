@@ -541,18 +541,111 @@ void printUsage() {
 // users with mutable imports should disable the cache (`--no-cache`)
 // or clear `~/.quirk/cache`. Documented as a known limitation in 1.0.10.
 
-static std::string computeCacheKey(const std::string& inputPath, int optLevel) {
-    std::ifstream f(inputPath, std::ios::binary);
-    if (!f) return "";
-    std::stringstream ss;
-    ss << f.rdbuf();
+// Mini-scanner that mimics the parser's import resolution. Walks the
+// transitive `use` graph from `entry`, folding each file's bytes into
+// the running hasher. We deliberately use a line-based scan (not the
+// full lexer) — it's tiny, has no AST/Sema cost, and the worst-case
+// failure mode is benign: any divergence from the real parser just
+// downgrades the run to a cache miss, never produces a wrong result.
+//
+// Notable simplifications vs the parser:
+//   - `---` block-comment tracking is line-anchored. A `use` directive
+//     hidden mid-line inside a block comment would be picked up. That
+//     would just cause a spurious dependency in the hash (safe).
+//   - String literals containing `use ...` would also be picked up.
+//     Same safety story.
+static void hashImportGraph(const std::string& entry,
+                            llvm::SHA256& hasher,
+                            std::set<std::string>& visited) {
+    std::string abs;
+    try { abs = fs::absolute(entry).string(); }
+    catch (...) { return; }
+    if (visited.count(abs)) return;
+    visited.insert(abs);
+
+    std::ifstream f(entry, std::ios::binary);
+    if (!f) return;
+    std::stringstream ss; ss << f.rdbuf();
     std::string content = ss.str();
 
+    // Mix the file content + a delimiter that pins the absolute path so
+    // two files with identical bytes at different paths produce
+    // different hashes (mostly belt-and-suspenders — collisions here
+    // would already require an attacker-shaped scenario).
+    hasher.update(llvm::ArrayRef<uint8_t>(
+        reinterpret_cast<const uint8_t*>(content.data()), content.size()));
+    std::string delim = "\n--quirk-file:" + abs + "--\n";
+    hasher.update(llvm::ArrayRef<uint8_t>(
+        reinterpret_cast<const uint8_t*>(delim.data()), delim.size()));
+
+    std::istringstream lines(content);
+    std::string line;
+    bool inBlock = false;
+    while (std::getline(lines, line)) {
+        // Find first non-whitespace; bail early on blanks.
+        size_t s = line.find_first_not_of(" \t");
+        if (s == std::string::npos) continue;
+        std::string t = line.substr(s);
+
+        if (inBlock) {
+            if (t.find("---") != std::string::npos) inBlock = false;
+            continue;
+        }
+        if (t.rfind("---", 0) == 0) {
+            // open `---` at start of line; close is anywhere in the rest
+            inBlock = (t.length() == 3) || (t.find("---", 3) == std::string::npos);
+            continue;
+        }
+        if (t.rfind("//", 0) == 0) continue;
+
+        // Extract module name from `use NAME` or `from NAME use { ... }`.
+        // `use .foo`, `use .foo.bar`, `use foo`, `from foo use {...}` all work.
+        size_t pos;
+        if (t.rfind("use ", 0) == 0)        pos = 4;
+        else if (t.rfind("from ", 0) == 0)  pos = 5;
+        else continue;
+        while (pos < t.size() && (t[pos] == ' ' || t[pos] == '\t')) pos++;
+
+        std::string moduleName;
+        while (pos < t.size()) {
+            char c = t[pos];
+            if (isalnum((unsigned char)c) || c == '_' || c == '.') {
+                moduleName += c;
+                pos++;
+            } else break;
+        }
+        if (moduleName.empty()) continue;
+
+        std::string resolved = resolveImportPath(moduleName, entry);
+        if (!resolved.empty()) hashImportGraph(resolved, hasher, visited);
+    }
+}
+
+// Cache key = sha256 of the import-closure (entry + everything `use`d
+// transitively) + compiler version + opt level. Returns hex.
+//
+// On a stale `use`d file the new key won't match the old cache file,
+// so we get a clean miss. Recompile + new cache entry. The old entry
+// just lingers until cache cleanup (TODO: LRU eviction).
+static std::string computeCacheKey(const std::string& inputPath, int optLevel) {
+    if (!fs::exists(inputPath)) return "";
+
     llvm::SHA256 hasher;
-    hasher.update(llvm::StringRef(content));
+    std::set<std::string> visited;
+
+    // Seed `typing` — it's auto-imported by every program (see step 1
+    // of main()), so its bytes need to influence the key even though
+    // the entry file doesn't write `use typing` explicitly.
+    std::string typingPath = resolveImportPath("typing", "");
+    if (!typingPath.empty()) hashImportGraph(typingPath, hasher, visited);
+
+    hashImportGraph(inputPath, hasher, visited);
+
     std::string suffix = std::string("\n--quirk-") + qpm::QUIRK_VERSION
                        + "-O" + std::to_string(optLevel) + "--";
-    hasher.update(llvm::StringRef(suffix));
+    hasher.update(llvm::ArrayRef<uint8_t>(
+        reinterpret_cast<const uint8_t*>(suffix.data()), suffix.size()));
+
     auto digest = hasher.final();
     static const char hexDigits[] = "0123456789abcdef";
     std::string hex;

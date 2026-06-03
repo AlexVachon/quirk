@@ -5,6 +5,27 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [1.0.11] — 2026-06-03
+
+### Cache key now walks the transitive import graph
+
+The 1.0.10 bitcode cache hashed only the entry file. Changing a `use`d
+file (a stdlib module, a project-local package) without also changing
+the entry script produced a stale cache hit. Fixed: a mini-scanner
+now walks `use` / `from … use` directives starting at the entry file,
+following resolved imports recursively, and folds each loaded file's
+bytes into the SHA-256. `typing` is seeded explicitly since it's
+auto-imported by every program.
+
+The scanner is deliberately simpler than the real parser — line-based
+text scan, no AST, no Sema. Worst-case divergence (e.g. picking up a
+`use ...` string inside a block comment) just adds a spurious file to
+the hash, which downgrades to a cache miss on the next run. Never
+produces a wrong result.
+
+`--no-cache` still bypasses everything. Stale entries from old keys
+linger in `~/.quirk/cache` until a future LRU eviction (TODO).
+
 ## [1.0.10] — 2026-06-03
 
 ### Per-invocation bitcode cache

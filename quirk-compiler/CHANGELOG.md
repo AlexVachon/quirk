@@ -5,6 +5,43 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [1.0.10] — 2026-06-03
+
+### Per-invocation bitcode cache
+
+- **`quirk <file>` now caches compiled bitcode under `~/.quirk/cache/`.**
+  The cache key is `sha256(file content + compiler version + opt
+  level)`. On a hit, parse + Sema + Codegen + LLVM passes are skipped
+  entirely — the JIT consumes the cached IR directly. Saves ~15–25%
+  per-run on real scripts that import stdlib; small wins on
+  compute-heavy scripts where runtime dominates.
+- **`--no-cache`** opts out, e.g. for benchmarking or when transitive
+  imports have changed (see known limitation below).
+- The cache is skipped automatically when `--debug` is on (the line
+  stepper needs the source map that bitcode doesn't carry) and for the
+  `-o`/`--check`/`--emit-*` paths.
+
+**Known limitation:** the cache key hashes the entry file but not its
+transitive `use` imports. If a `use`d file changes without the entry
+also changing, the stale cache wins. Workaround: `--no-cache` or
+`rm -rf ~/.quirk/cache`. A future release will walk imports during
+key computation.
+
+### Misc
+
+- `quirk --help` now correctly documents `-O1` as the default optimization
+  level (it always was — only the help text was wrong).
+
+### Wart #2 status (Int 0 in nonlocal cells)
+
+Investigated a fix using bit-48 tagging of nonlocal-cell pointers. The
+tagged pointer survives the `ptrtoint→i32` unbox sites (truncation
+discards the tag), but it breaks downstream consumers that treat the
+cell value as a real `Any*` — `print(it())` crashed with a SEGV when
+the tagged pointer was dereferenced. A correct fix needs coordinated
+changes to both the boxing convention and every unbox site, which is
+larger than this release. Tracked in `feedback_iter_lib_warts`.
+
 ## [1.0.9] — 2026-06-03
 
 ### Closures-with-state fixes

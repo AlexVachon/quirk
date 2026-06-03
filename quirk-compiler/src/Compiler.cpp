@@ -18,6 +18,12 @@
 #include "llvm/ExecutionEngine/Orc/LLJIT.h"
 #include "llvm/ExecutionEngine/Orc/ExecutionUtils.h"
 #include "llvm/ExecutionEngine/Orc/ThreadSafeModule.h"
+#include "llvm/Bitcode/BitcodeReader.h"
+#include "llvm/Bitcode/BitcodeWriter.h"
+#include "llvm/IRReader/IRReader.h"
+#include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/SHA256.h"
+#include "llvm/Support/SourceMgr.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -60,6 +66,12 @@ struct CompilerOptions {
     // --debug: pause execution at every Quirk statement and drop into the
     // interactive qdb prompt. Forces optLevel = 0 so line boundaries survive.
     bool debugMode    = false;
+    // --no-cache: skip the per-invocation bitcode cache. The cache lives
+    // at $HOME/.quirk/cache/<sha256>.bc and stores the post-optimisation
+    // LLVM IR for a given (input file, compiler version, opt level)
+    // triple. A cache hit skips parse + Sema + Codegen + LLVM passes,
+    // which on small scripts is most of the per-run latency.
+    bool useCache     = true;
 };
 
 // ==========================================================
@@ -498,11 +510,12 @@ void printUsage() {
         "  --check                   Type-check only (no codegen, no run)\n"
         "  --compile-only            Compile + emit IR, don't run\n"
         "  -o <file>                 Compile to a native binary at <file>\n"
-        "  -O0|-O1|-O2|-O3           LLVM optimization level (default -O2)\n"
+        "  -O0|-O1|-O2|-O3           LLVM optimization level (default -O1)\n"
         "  --release                 Alias for -O2\n"
         "  --debug                   Run under the interactive (qdb) line stepper\n"
         "  --emit-ir                 Write LLVM IR to <basename>.ll\n"
         "  --emit-ast                Write AST dump to <basename>.ast.log\n"
+        "  --no-cache                Skip the ~/.quirk/cache/ bitcode cache\n"
         "  -v                        Verbose compiler output\n"
         "\n"
         "ENVIRONMENT\n"
@@ -512,6 +525,171 @@ void printUsage() {
         "\n"
         "More detail: `quirk help <command>` or https://github.com/AlexVachon/quirk\n"
         << std::endl;
+}
+
+// ==========================================================
+//  BITCODE CACHE  (~/.quirk/cache/<sha256>.bc)
+// ==========================================================
+//
+// On a cache hit we skip parse + Sema + Codegen + LLVM passes entirely;
+// the JIT just consumes the cached bitcode and runs. On a cache miss
+// we run the full pipeline and save the post-pass IR for next time.
+//
+// Cache key derivation hashes input content + compiler version + opt
+// level + debug flag. Transitive imports are NOT yet part of the key —
+// changing a `use`d file won't invalidate the cache. Until that lands,
+// users with mutable imports should disable the cache (`--no-cache`)
+// or clear `~/.quirk/cache`. Documented as a known limitation in 1.0.10.
+
+static std::string computeCacheKey(const std::string& inputPath, int optLevel) {
+    std::ifstream f(inputPath, std::ios::binary);
+    if (!f) return "";
+    std::stringstream ss;
+    ss << f.rdbuf();
+    std::string content = ss.str();
+
+    llvm::SHA256 hasher;
+    hasher.update(llvm::StringRef(content));
+    std::string suffix = std::string("\n--quirk-") + qpm::QUIRK_VERSION
+                       + "-O" + std::to_string(optLevel) + "--";
+    hasher.update(llvm::StringRef(suffix));
+    auto digest = hasher.final();
+    static const char hexDigits[] = "0123456789abcdef";
+    std::string hex;
+    hex.reserve(digest.size() * 2);
+    for (uint8_t b : digest) {
+        hex += hexDigits[(b >> 4) & 0xF];
+        hex += hexDigits[b & 0xF];
+    }
+    return hex;
+}
+
+static fs::path cachePathFor(const std::string& key) {
+    const char* home = std::getenv("HOME");
+    fs::path root = home ? fs::path(home) / ".quirk" / "cache"
+                         : fs::temp_directory_path() / "quirk-cache";
+    return root / (key + ".bc");
+}
+
+static std::unique_ptr<llvm::Module>
+loadCachedBitcode(const fs::path& path, llvm::LLVMContext& ctx) {
+    auto bufOrErr = llvm::MemoryBuffer::getFile(path.string());
+    if (!bufOrErr) return nullptr;
+    auto modOrErr = llvm::parseBitcodeFile((*bufOrErr)->getMemBufferRef(), ctx);
+    if (!modOrErr) return nullptr;
+    return std::move(*modOrErr);
+}
+
+static bool saveCachedBitcode(const fs::path& path, llvm::Module& module) {
+    std::error_code ec;
+    fs::create_directories(path.parent_path(), ec);
+    if (ec) return false;
+    llvm::raw_fd_ostream out(path.string(), ec, llvm::sys::fs::OF_None);
+    if (ec) return false;
+    llvm::WriteBitcodeToFile(module, out);
+    out.flush();
+    return !out.has_error();
+}
+
+// Resolve runtime.so the same way the JIT path does (binary-relative
+// first, then $QUIRK_HOME/bin, then CWD fallback). Pulled into its own
+// helper so the cache-hit fast path can call it without duplicating
+// the search logic.
+static std::string resolveRuntimeSoPath() {
+    std::string runtimePath;
+    char buf[4096];
+    ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    if (n > 0) {
+        buf[n] = '\0';
+        fs::path next = fs::path(buf).parent_path() / "runtime.so";
+        if (fs::exists(next)) runtimePath = next.string();
+    }
+    if (const char* envHome = std::getenv("QUIRK_HOME")) {
+        std::string venvRuntime = std::string(envHome) + "/bin/runtime.so";
+        if (fs::exists(venvRuntime)) runtimePath = venvRuntime;
+    }
+    if (runtimePath.empty()) runtimePath = "./bin/runtime.so";
+    return runtimePath;
+}
+
+// JIT-compile and run a Module. Used by both the normal pipeline (after
+// Codegen) and the cache-hit fast path (after loading bitcode). Returns
+// the script's exit code, or a non-zero failure code from the JIT setup.
+static int runJITModule(std::unique_ptr<llvm::Module> module,
+                        std::unique_ptr<llvm::LLVMContext> ctx,
+                        const std::string& runtimePath,
+                        const std::string& inputFile,
+                        const std::vector<std::string>& scriptArgs) {
+    llvm::InitializeNativeTarget();
+    llvm::InitializeNativeTargetAsmPrinter();
+    llvm::InitializeNativeTargetAsmParser();
+
+    for (const char* gcLib : {"libgc.so.1", "libgc.so"}) {
+        std::string errMsg;
+        if (!llvm::sys::DynamicLibrary::LoadLibraryPermanently(gcLib, &errMsg)) break;
+    }
+
+    {
+        std::string verifyErrors;
+        llvm::raw_string_ostream verifyStream(verifyErrors);
+        if (llvm::verifyModule(*module, &verifyStream)) {
+            std::cerr << "Internal compiler error: malformed IR\n"
+                      << verifyStream.str() << std::endl;
+            return 1;
+        }
+    }
+
+    auto jitOrErr = llvm::orc::LLJITBuilder().create();
+    if (!jitOrErr) {
+        std::cerr << "Error: failed to create JIT: "
+                  << llvm::toString(jitOrErr.takeError()) << std::endl;
+        return 1;
+    }
+    auto& JIT = *jitOrErr;
+    auto& JD  = JIT->getMainJITDylib();
+
+    auto genOrErr = llvm::orc::DynamicLibrarySearchGenerator::GetForCurrentProcess(
+        JIT->getDataLayout().getGlobalPrefix());
+    if (!genOrErr) {
+        std::cerr << "Error: process symbol generator failed: "
+                  << llvm::toString(genOrErr.takeError()) << std::endl;
+        return 1;
+    }
+    JD.addGenerator(std::move(*genOrErr));
+
+    auto rtGenOrErr = llvm::orc::DynamicLibrarySearchGenerator::Load(
+        runtimePath.c_str(), JIT->getDataLayout().getGlobalPrefix());
+    if (!rtGenOrErr) {
+        std::cerr << "Error: could not load runtime.so (" << runtimePath << "): "
+                  << llvm::toString(rtGenOrErr.takeError()) << std::endl;
+        return 1;
+    }
+    JD.addGenerator(std::move(*rtGenOrErr));
+
+    if (auto err = JIT->addIRModule(
+            llvm::orc::ThreadSafeModule(std::move(module), std::move(ctx)))) {
+        std::cerr << "Error: JIT addIRModule failed: "
+                  << llvm::toString(std::move(err)) << std::endl;
+        return 1;
+    }
+
+    auto mainSym = JIT->lookup("main");
+    if (!mainSym) {
+        std::cerr << "Error: JIT could not find 'main': "
+                  << llvm::toString(mainSym.takeError()) << std::endl;
+        return 1;
+    }
+    auto mainFn = (int(*)(int, char**))mainSym->getAddress();
+
+    std::vector<char*> scriptArgv;
+    scriptArgv.push_back(const_cast<char*>(inputFile.c_str()));
+    for (auto& a : scriptArgs) scriptArgv.push_back(const_cast<char*>(a.c_str()));
+    int ret = mainFn((int)scriptArgv.size(), scriptArgv.data());
+    if (ret != 0) {
+        std::cerr << "Error: Program exited with code " << ret << std::endl;
+        return ret;
+    }
+    return 0;
 }
 
 // ==========================================================
@@ -565,6 +743,7 @@ int main(int argc, char* argv[]) {
         else if (arg == "-O1")            opts.optLevel     = 1;
         else if (arg == "-O2")            opts.optLevel     = 2;
         else if (arg == "-O3")            opts.optLevel     = 3;
+        else if (arg == "--no-cache")     opts.useCache     = false;
         else if (arg == "-o") {
             if (++i >= argc) { std::cerr << "Error: -o requires a filename\n"; return 1; }
             opts.outputFile    = argv[i];
@@ -591,6 +770,33 @@ int main(int argc, char* argv[]) {
     if (baseDir.empty()) baseDir = ".";
 
     Logger log(opts.verbose);
+
+    // =======================================================
+    // 0. BITCODE CACHE FAST PATH
+    // =======================================================
+    // Only attempted for the JIT path (`quirk file.quirk` with no `-o`,
+    // no `--check`, no `--debug`). On hit we skip ALL Quirk frontend
+    // work and hand the cached IR straight to the JIT.
+    if (opts.useCache && opts.runImmediate && !opts.debugMode
+        && !opts.checkOnly && !opts.emitIR && !opts.emitAST
+        && opts.outputFile.empty()) {
+        std::string key = computeCacheKey(opts.inputFile, opts.optLevel);
+        if (!key.empty()) {
+            fs::path cp = cachePathFor(key);
+            if (fs::exists(cp)) {
+                log.debug("Cache HIT: " + cp.string());
+                auto ctx = std::make_unique<llvm::LLVMContext>();
+                if (auto cached = loadCachedBitcode(cp, *ctx)) {
+                    std::string runtimePath = resolveRuntimeSoPath();
+                    return runJITModule(std::move(cached), std::move(ctx),
+                                        runtimePath, opts.inputFile, scriptArgs);
+                }
+                log.warn("Failed to load cached bitcode, falling through to full compile");
+            } else {
+                log.debug("Cache MISS: " + cp.string());
+            }
+        }
+    }
 
     // =======================================================
     // 1. LOAD STANDARD LIBRARY (PRELUDE)
@@ -765,18 +971,7 @@ int main(int argc, char* argv[]) {
     // 6c. JIT COMPILE + RUN (runImmediate, no subprocess)
     // =======================================================
     if (opts.runImmediate && !opts.emitIR) {
-        llvm::InitializeNativeTarget();
-        llvm::InitializeNativeTargetAsmPrinter();
-        llvm::InitializeNativeTargetAsmParser();
-
-        // Load libgc explicitly with RTLD_GLOBAL so GC_malloc is visible to the JIT.
-        // runtime.so depends on libgc but loads it RTLD_LOCAL; the JIT needs it globally.
-        for (const char* gcLib : {"libgc.so.1", "libgc.so"}) {
-            std::string errMsg;
-            if (!llvm::sys::DynamicLibrary::LoadLibraryPermanently(gcLib, &errMsg)) break;
-        }
-
-        // Build IR + run O2 passes, get ownership of the module
+        // Build IR + run passes, get ownership of the module.
         LLVMCodegen codegen;
         codegen.setVerbose(opts.verbose);
         codegen.setOptLevel(opts.optLevel);
@@ -784,78 +979,24 @@ int main(int argc, char* argv[]) {
         codegen.setSourceMap(sourceMap);
         auto [module, ctx] = codegen.compileAndRelease(ast);
 
-        // Catch malformed IR early (e.g. missing terminators, type mismatches)
-        // before the JIT tries to compile it and produces a cryptic crash.
-        {
-            std::string verifyErrors;
-            llvm::raw_string_ostream verifyStream(verifyErrors);
-            if (llvm::verifyModule(*module, &verifyStream)) {
-                std::cerr << "Internal compiler error: malformed IR\n"
-                          << verifyStream.str() << std::endl;
-                return 1;
+        // Save bitcode for next run BEFORE the JIT consumes the module —
+        // the JIT takes ownership of `module` and we can't serialize a
+        // moved-from unique_ptr. The fast-path early exit at the top of
+        // main checks for this file on subsequent invocations.
+        if (opts.useCache && !opts.debugMode) {
+            std::string key = computeCacheKey(opts.inputFile, opts.optLevel);
+            if (!key.empty()) {
+                fs::path cp = cachePathFor(key);
+                if (saveCachedBitcode(cp, *module)) {
+                    log.debug("Cache SAVE: " + cp.string());
+                } else {
+                    log.debug("Cache SAVE failed: " + cp.string());
+                }
             }
         }
 
-        // Create LLJIT instance
-        auto jitOrErr = llvm::orc::LLJITBuilder().create();
-        if (!jitOrErr) {
-            std::cerr << "Error: failed to create JIT: "
-                      << llvm::toString(jitOrErr.takeError()) << std::endl;
-            return 1;
-        }
-        auto& JIT = *jitOrErr;
-        auto& JD  = JIT->getMainJITDylib();
-
-        // Expose current-process symbols (printf, malloc, etc.)
-        {
-            auto genOrErr = llvm::orc::DynamicLibrarySearchGenerator::GetForCurrentProcess(
-                JIT->getDataLayout().getGlobalPrefix());
-            if (!genOrErr) {
-                std::cerr << "Error: failed to create process symbol generator: "
-                          << llvm::toString(genOrErr.takeError()) << std::endl;
-                return 1;
-            }
-            JD.addGenerator(std::move(*genOrErr));
-        }
-
-        // Load runtime.so — provides all Core_* and quirk_* symbols
-        {
-            auto genOrErr = llvm::orc::DynamicLibrarySearchGenerator::Load(
-                runtimePath.c_str(), JIT->getDataLayout().getGlobalPrefix());
-            if (!genOrErr) {
-                std::cerr << "Error: could not load runtime.so (" << runtimePath << "): "
-                          << llvm::toString(genOrErr.takeError()) << std::endl;
-                return 1;
-            }
-            JD.addGenerator(std::move(*genOrErr));
-        }
-
-        // Add the compiled module
-        if (auto err = JIT->addIRModule(
-                llvm::orc::ThreadSafeModule(std::move(module), std::move(ctx)))) {
-            std::cerr << "Error: JIT addIRModule failed: "
-                      << llvm::toString(std::move(err)) << std::endl;
-            return 1;
-        }
-
-        // Resolve and call main(argc, argv)
-        auto mainSym = JIT->lookup("main");
-        if (!mainSym) {
-            std::cerr << "Error: JIT could not find 'main': "
-                      << llvm::toString(mainSym.takeError()) << std::endl;
-            return 1;
-        }
-        auto mainFn = (int(*)(int, char**))mainSym->getAddress();
-        // Build the argv visible to the running script: [scriptPath, ...scriptArgs]
-        // — argv[0] is the source file path; scriptArgs is everything after.
-        std::vector<char*> scriptArgv;
-        scriptArgv.push_back(const_cast<char*>(opts.inputFile.c_str()));
-        for (auto& a : scriptArgs) scriptArgv.push_back(const_cast<char*>(a.c_str()));
-        int ret = mainFn((int)scriptArgv.size(), scriptArgv.data());
-        if (ret != 0) {
-            std::cerr << "Error: Program exited with code " << ret << std::endl;
-            return ret;
-        }
+        return runJITModule(std::move(module), std::move(ctx),
+                            runtimePath, opts.inputFile, scriptArgs);
     }
 
     log.debug("Done.");

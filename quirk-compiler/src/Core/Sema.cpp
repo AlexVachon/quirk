@@ -958,9 +958,20 @@ std::string Sema::checkMemberAccess(MemberAccessNode *node)
     }
 
     std::string type = resolveMember(objType, node->memberName);
-    if (type == "unknown")
-        fatalError("'" + objType + "' has no member '" + node->memberName + "'",
-                   node->line, node->col, node->filePath);
+    if (type == "unknown") {
+        std::string msg = "'" + objType + "' has no member '" + node->memberName + "'";
+        // The usual cause of an unexpected `Any` is a value flowing through
+        // a `Callable` (whose return is type-erased) or a Map/List read.
+        // The typed-walrus annotation re-narrows the binding and lets the
+        // codegen unbox at the assignment — pointing at it turns a
+        // head-scratcher into a one-line fix at the callsite.
+        if (objType == "Any") {
+            msg += "\n  hint: 'Any' values (e.g. Callable returns, Map.get) "
+                   "don't carry struct types; annotate the binding to unbox, "
+                   "e.g. `resp: T := <expr>`";
+        }
+        fatalError(msg, node->line, node->col, node->filePath);
+    }
     if (type == "method") {
         if (auto* fn = findMethod(objType, objType + "_" + node->memberName)) {
             const std::string& ret = fn->returnType;

@@ -5,6 +5,31 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [1.0.9] — 2026-06-03
+
+### Closures-with-state fixes
+
+Two longstanding codegen warts that bit anyone writing stateful iterators
+or filter pipelines through `Callable`. Both surfaced while building
+`packages/itertools/` and have been worked around with annotations until
+now.
+
+- **Nonlocal Int values now flow through call sites correctly.** A
+  `nonlocal i` cell stores `i8*`; passing it as the index to
+  `List.get(i)` previously crashed with `Call parameter type does not
+  match function signature` because the call-args codegen didn't insert
+  a `ptrtoint`. The typed-local workaround (`idx: Int = i`) is no
+  longer needed.
+- **`pred(v) == false` no longer aborts the JIT.** Comparing the
+  `i8*`-boxed return of a `Callable` against an `i1` literal used to
+  hit `ICmpInst::AssertOK`. The BinaryOp codegen now routes the boxed
+  side through `Core_Primitives_Any_to_int` (which reads `.ival` for
+  `ANY_BOOL`/`ANY_INT`/`ANY_CHAR`) before the compare, so any
+  `boxed-Any ==/!= primitive` pattern works.
+
+Both fixes are pure compiler — no runtime changes — and existing tests
+keep passing.
+
 ## [1.0.8] — 2026-06-02
 
 ### Stdlib lives under `packages/`

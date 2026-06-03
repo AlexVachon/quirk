@@ -2160,6 +2160,13 @@ class LLVMCodegen {
                     argVal = Builder.CreateBitCast(argVal, expectedType);
                 else if (argVal->getType()->isIntegerTy() && expectedType->isDoubleTy())
                     argVal = Builder.CreateSIToFP(argVal, expectedType);
+                // ptr → int: e.g. a `nonlocal i: Int` cell loads as i8* but
+                // gets passed where an i32/i64 is expected (List.get(i)).
+                // The auto-unbox for arithmetic already does this in MathGen;
+                // mirror it for call sites so closures-with-state stop hitting
+                // `Call parameter type does not match function signature`.
+                else if (argVal->getType()->isPointerTy() && expectedType->isIntegerTy())
+                    argVal = Builder.CreatePtrToInt(argVal, expectedType, "nonlocal_unbox");
             }
             finalArgs.push_back(argVal);
         }
@@ -3358,6 +3365,39 @@ Value* LLVMCodegen::handleExpression(Node* node) {
                     return Builder.CreateICmpEQ(L, R, "ptr_eq_null");
                 else
                     return Builder.CreateICmpNE(L, R, "ptr_ne_null");
+            }
+
+            // Boxed-Any compared to a primitive Bool/Int literal — e.g.
+            // `pred(v) == false` where pred is a `Callable` returning Bool.
+            // The boxed return is `i8*` pointing at an Any{tag,ival,…}; the
+            // literal is `i1`. Without an unbox, ICmpInst trips on operand
+            // type mismatch AND `ptrtoint` of the pointer compares against
+            // garbage. Route through `Core_Primitives_Any_to_int`, which
+            // pulls `.ival` out for ANY_BOOL / ANY_INT / ANY_CHAR.
+            Type* i8p = Type::getInt8PtrTy(Context);
+            auto unboxAnyToInt = [&](Value* boxedI8p, Type* targetIntTy) {
+                FunctionCallee toInt = TheModule->getOrInsertFunction(
+                    "Core_Primitives_Any_to_int",
+                    Type::getInt32Ty(Context),
+                    i8p);
+                Value* asI32 = Builder.CreateCall(toInt, {boxedI8p}, "any_unbox_i");
+                if (targetIntTy->isIntegerTy(32)) return asI32;
+                return Builder.CreateIntCast(asI32, targetIntTy, true, "any_unbox_cast");
+            };
+            if (L->getType() == i8p && R->getType()->isIntegerTy() &&
+                !R->getType()->isIntegerTy(64)) {
+                L = unboxAnyToInt(L, Type::getInt32Ty(Context));
+                if (R->getType()->isIntegerTy(1))
+                    R = Builder.CreateZExt(R, Type::getInt32Ty(Context), "bool_widen");
+                else if (R->getType() != L->getType())
+                    R = Builder.CreateIntCast(R, L->getType(), true, "rhs_widen");
+            } else if (R->getType() == i8p && L->getType()->isIntegerTy() &&
+                       !L->getType()->isIntegerTy(64)) {
+                R = unboxAnyToInt(R, Type::getInt32Ty(Context));
+                if (L->getType()->isIntegerTy(1))
+                    L = Builder.CreateZExt(L, Type::getInt32Ty(Context), "bool_widen");
+                else if (L->getType() != R->getType())
+                    L = Builder.CreateIntCast(L, R->getType(), true, "lhs_widen");
             }
         }
 

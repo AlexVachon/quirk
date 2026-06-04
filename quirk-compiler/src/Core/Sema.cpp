@@ -42,23 +42,35 @@ static std::string json_escape(const std::string& s) {
 // line-buffered (`stderr` would buffer differently and complicate
 // integration on every editor).
 static void emitDiagnosticJson(const char* level, const std::string& msg,
-                               const std::string& path, int line, int col) {
+                               const std::string& path, int line, int col,
+                               const std::vector<std::string>& suggestions = {}) {
     std::cout << "{\"level\":\"" << level
               << "\",\"msg\":\""  << json_escape(msg)
               << "\",\"path\":\"" << json_escape(path)
               << "\",\"line\":"   << line
-              << ",\"col\":"      << col
-              << "}\n";
+              << ",\"col\":"      << col;
+    if (!suggestions.empty()) {
+        std::cout << ",\"suggestions\":[";
+        for (size_t i = 0; i < suggestions.size(); i++) {
+            if (i) std::cout << ",";
+            std::cout << "\"" << json_escape(suggestions[i]) << "\"";
+        }
+        std::cout << "]";
+    }
+    std::cout << "}\n";
     std::cout.flush();
 }
 
 // Shared formatting helper — prints one error to stderr (or one JSON
-// line to stdout when `--diagnostics-json` is on).
+// line to stdout when `--diagnostics-json` is on). `suggestions` is
+// only consulted by the JSON branch; the human-readable rendering
+// adds the suggestions as a follow-up hint line.
 static void printSemaError(const std::string& msg, int line, int col,
                            const std::string& path,
-                           const std::map<std::string, std::string>& sourceMap) {
+                           const std::map<std::string, std::string>& sourceMap,
+                           const std::vector<std::string>& suggestions = {}) {
     if (g_diagnostics_json) {
-        emitDiagnosticJson("error", msg, path, line, col);
+        emitDiagnosticJson("error", msg, path, line, col, suggestions);
         return;
     }
     std::cerr << "\033[1;31m[ERROR]\033[0m " << msg << "\n";
@@ -79,9 +91,18 @@ static void printSemaError(const std::string& msg, int line, int col,
             int off = (col > 1) ? col - 1 : 0;
             std::cerr << std::string(ln.size(), ' ') << " | "
                       << std::string(off, ' ')
-                      << "\033[1;33m^--- here\033[0m\n\n";
+                      << "\033[1;33m^--- here\033[0m\n";
         }
     }
+    if (!suggestions.empty()) {
+        std::cerr << "  hint: did you mean ";
+        for (size_t i = 0; i < suggestions.size(); i++) {
+            if (i > 0) std::cerr << (i + 1 == suggestions.size() ? " or " : ", ");
+            std::cerr << "`" << suggestions[i] << "`";
+        }
+        std::cerr << "?\n";
+    }
+    if (line > 0) std::cerr << "\n";
 }
 
 [[noreturn]] void Sema::fatalError(const std::string& msg, int line, int col,
@@ -106,12 +127,88 @@ void Sema::reportError(const std::string& msg, int line, int col,
     std::string path = (!filePath.empty())                          ? filePath
                      : (lastNode && !lastNode->filePath.empty()) ? lastNode->filePath
                      : currentFilePath;
-    errors.push_back({msg, path, line, col});
+    errors.push_back({msg, path, line, col, {}});
+}
+
+void Sema::reportError(const std::string& msg,
+                       const std::vector<std::string>& suggestions,
+                       int line, int col,
+                       const std::string& filePath) {
+    if (line <= 0 && lastNode && lastNode->line > 0) {
+        line = lastNode->line; col = lastNode->col;
+    }
+    std::string path = (!filePath.empty())                          ? filePath
+                     : (lastNode && !lastNode->filePath.empty()) ? lastNode->filePath
+                     : currentFilePath;
+    errors.push_back({msg, path, line, col, suggestions});
+}
+
+// Levenshtein distance via the classic two-row DP. Used only on
+// short identifier comparisons (names rarely exceed ~30 chars), so
+// the allocation overhead is negligible.
+static size_t editDistance(const std::string& a, const std::string& b) {
+    if (a.empty()) return b.size();
+    if (b.empty()) return a.size();
+    std::vector<size_t> prev(b.size() + 1), cur(b.size() + 1);
+    for (size_t j = 0; j <= b.size(); j++) prev[j] = j;
+    for (size_t i = 1; i <= a.size(); i++) {
+        cur[0] = i;
+        for (size_t j = 1; j <= b.size(); j++) {
+            size_t cost = (a[i - 1] == b[j - 1]) ? 0 : 1;
+            cur[j] = std::min({prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost});
+        }
+        std::swap(prev, cur);
+    }
+    return prev[b.size()];
+}
+
+std::vector<std::string> Sema::suggestNames(const std::string& query, size_t maxN) {
+    // Distance cutoff scales with name length: short typos (1 char)
+    // shouldn't admit 2-edit "matches"; long names get a little more
+    // slack. Pinning at 2 keeps the "did you mean Direction" for
+    // `print` confusion in check.
+    const size_t cutoff = std::min<size_t>(query.size() <= 4 ? 1 : 2, 2);
+
+    std::vector<std::pair<size_t, std::string>> scored;
+    auto consider = [&](const std::string& candidate) {
+        if (candidate.empty() || candidate == query) return;
+        size_t d = editDistance(query, candidate);
+        if (d <= cutoff) scored.push_back({d, candidate});
+    };
+
+    // Local scopes — params + locals in the current function.
+    for (const auto& scope : scopeStack)
+        for (const auto& kv : scope) consider(kv.first);
+    // Globals + module aliases.
+    for (const auto& kv : globalSymbols) consider(kv.first);
+    for (const auto& kv : globalModuleAliases) consider(kv.first);
+    // Registries.
+    for (const auto& kv : structRegistry) consider(kv.first);
+    for (const auto& kv : enumRegistry) consider(kv.first);
+    for (const auto& kv : interfaceRegistry) consider(kv.first);
+    // Top-level module functions live under structRegistry[""] in
+    // practice, but the method registry also holds them under the
+    // empty class slot. Iterate both for safety.
+    for (const auto& cls : methodRegistry)
+        for (const auto& kv : cls.second)
+            consider(kv.first);
+    // Module-level constants like `PI := 3.14`.
+    for (const auto& kv : moduleConstRegistry) consider(kv.first);
+
+    // Dedup + sort by distance.
+    std::sort(scored.begin(), scored.end());
+    std::vector<std::string> out;
+    std::set<std::string> seen;
+    for (const auto& kv : scored) {
+        if (seen.insert(kv.second).second) out.push_back(kv.second);
+        if (out.size() >= maxN) break;
+    }
+    return out;
 }
 
 void Sema::flushErrors() {
     for (auto& e : errors)
-        printSemaError(e.msg, e.line, e.col, e.filePath, sourceMap);
+        printSemaError(e.msg, e.line, e.col, e.filePath, sourceMap, e.suggestions);
     errors.clear();
 }
 
@@ -1471,7 +1568,8 @@ std::string Sema::resolveVariable(const std::string &name)
         }
     }
 
-    reportError("undefined variable or function '" + name + "'");
+    reportError("undefined variable or function '" + name + "'",
+                suggestNames(name));
     return "unknown";  // allow analysis to continue
 }
 

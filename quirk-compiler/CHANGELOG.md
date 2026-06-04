@@ -5,6 +5,31 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [1.7.2] — 2026-06-04
+
+### "Did you mean … ?" diagnostics + LSP quick fixes
+
+Compiler:
+- New `Sema::suggestNames(query, N=3)` — Levenshtein over every
+  in-scope name (locals, params, globals, structs, enums,
+  interfaces, methods, module constants). Cutoff scales with name
+  length so 3-char typos don't get 2-edit "matches".
+- Undefined-identifier errors now carry top-3 candidates. Human-
+  readable rendering adds a `hint: did you mean \`X\`?` line;
+  `--diagnostics-json` emits a `suggestions` array on the record.
+
+quirk-lsp 0.17.0:
+- `textDocument/codeAction` returns one `QuickFix` per suggestion,
+  with the closest match marked `isPreferred` (single-keystroke
+  default-fix in most editors).
+- Suggestions ride along on each diagnostic's `data` field, so the
+  code-action handler can pull them out without re-running the
+  compiler.
+
+Round-trip verified: `print(gret("world"))` surfaces
+`undefined variable or function 'gret'` with `suggestions:["greet"]`,
+and the LSP exposes a `Replace with 'greet'` quick fix.
+
 ## [1.7.1] — 2026-06-04
 
 ### `quirk-lsp` 0.16.0 — call hierarchy

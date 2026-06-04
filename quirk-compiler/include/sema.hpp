@@ -36,7 +36,14 @@ class Sema {
     Node* lastNode = nullptr;      // updated as we walk — used by fatalError for location
     FunctionNode* currentFunctionNode = nullptr;
 
-    struct ErrorRecord { std::string msg, filePath; int line, col; };
+    // `suggestions` carries "did you mean … ?" candidates the LSP can
+    // turn into code actions. Empty on warnings; populated for the
+    // undefined-name error path by `Sema::suggestNames`.
+    struct ErrorRecord {
+        std::string msg, filePath;
+        int line, col;
+        std::vector<std::string> suggestions;
+    };
     std::vector<ErrorRecord> errors;
     std::vector<ErrorRecord> warnings;
 
@@ -70,9 +77,23 @@ class Sema {
         fatalError(msg, node ? node->line : 0, node ? node->col : 0,
                    node ? node->filePath : "");
     }
-    // Non-fatal: record the error and return so analysis can continue
+    // Non-fatal: record the error and return so analysis can continue.
+    // The trailing `suggestions` flavor attaches "did you mean … ?" hints
+    // to the diagnostic — the LSP turns these into one CodeAction per
+    // suggestion when the diagnostic surfaces in the editor.
     void reportError(const std::string& msg, int line = 0, int col = 0,
                      const std::string& filePath = "");
+    void reportError(const std::string& msg,
+                     const std::vector<std::string>& suggestions,
+                     int line = 0, int col = 0,
+                     const std::string& filePath = "");
+
+    // Top-N closest names to `query` from every known scope (locals,
+    // params, globals, registered functions, structs, enums,
+    // interfaces). Edit-distance cutoff is intentionally small to
+    // avoid wild "did you mean Direction" for `print`. Caller is the
+    // undefined-name error path.
+    std::vector<std::string> suggestNames(const std::string& query, size_t maxN = 3);
     void checkInitArgCount(const std::string& name, FunctionNode* init,
                            int provided, int line, int col, const std::string& filePath);
 

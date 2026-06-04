@@ -2,6 +2,17 @@
 
 Language Server Protocol implementation for [Quirk](https://github.com/AlexVachon/quirk).
 
+## What's in v0.17 (compiler 1.7.2)
+
+Same as 0.16 plus:
+
+- **Code actions** (`textDocument/codeAction`) — quick fixes for
+  Sema's "did you mean … ?" diagnostics. The compiler now attaches
+  candidate names to undefined-identifier errors; the LSP turns each
+  candidate into a `Replace with 'X'` code action. The closest match
+  is marked `isPreferred` so the editor's default-fix keybinding
+  applies it in one keystroke.
+
 ## What's in v0.16 (compiler 1.7.1)
 
 Same as 0.15 plus:

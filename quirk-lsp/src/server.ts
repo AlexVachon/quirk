@@ -31,6 +31,9 @@ import {
   CallHierarchyOutgoingCall,
   CallHierarchyOutgoingCallsParams,
   CallHierarchyPrepareParams,
+  CodeAction,
+  CodeActionKind,
+  CodeActionParams,
   CompletionItem,
   CompletionItemKind,
   CompletionParams,
@@ -104,6 +107,11 @@ interface QuirkDiag {
   path: string;
   line: number;   // 1-based, like the compiler prints
   col: number;    // 1-based, ditto
+  // Sema-supplied "did you mean … ?" candidates. The LSP turns each
+  // entry into a `CodeAction` that replaces the diagnostic range with
+  // the suggested name. Present only on the undefined-name error
+  // today; more diagnostic kinds can opt in later.
+  suggestions?: string[];
 }
 
 // Symbol-table NDJSON record emitted by `quirk --symbols-json`. Same
@@ -184,8 +192,11 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
       inlayHintProvider: true,
       documentHighlightProvider: true,
       callHierarchyProvider: true,
+      codeActionProvider: {
+        codeActionKinds: [CodeActionKind.QuickFix],
+      },
     },
-    serverInfo: { name: 'quirk-lsp', version: '0.16.0' },
+    serverInfo: { name: 'quirk-lsp', version: '0.17.0' },
   };
 });
 
@@ -264,6 +275,11 @@ async function checkDocument(document: TextDocument): Promise<void> {
       range: rangeFromQuirkDiag(rec),
       message: rec.msg,
       source: 'quirk',
+      // Stash compiler-supplied "did you mean … ?" candidates on the
+      // diagnostic itself. The code-action handler reads them back
+      // out of `params.context.diagnostics[*].data` when the cursor
+      // hovers over this diagnostic.
+      data: rec.suggestions && rec.suggestions.length ? { suggestions: rec.suggestions } : undefined,
     });
     byUri.set(uri, list);
   }
@@ -1848,6 +1864,41 @@ connection.onRequest('callHierarchy/outgoingCalls',
     to: item,
     fromRanges: ranges,
   }));
+});
+
+// ──────────────────────────────────────────────────────────────────────
+// Code actions (`textDocument/codeAction`)
+// ──────────────────────────────────────────────────────────────────────
+// Walks every diagnostic in the request's context, pulls Sema's
+// "did you mean … ?" suggestions out of its `data` payload, and
+// emits one `QuickFix` CodeAction per suggestion. The edit replaces
+// the diagnostic's range with the suggested name verbatim.
+
+connection.onCodeAction((params: CodeActionParams): CodeAction[] => {
+  const actions: CodeAction[] = [];
+  for (const diag of params.context.diagnostics) {
+    const data = diag.data as { suggestions?: string[] } | undefined;
+    if (!data?.suggestions?.length) continue;
+    for (const suggestion of data.suggestions) {
+      actions.push({
+        title: `Replace with '${suggestion}'`,
+        kind: CodeActionKind.QuickFix,
+        diagnostics: [diag],
+        edit: {
+          changes: {
+            [params.textDocument.uri]: [{
+              range: diag.range,
+              newText: suggestion,
+            }],
+          },
+        },
+        // Mark the first suggestion as preferred so the editor's
+        // "apply default fix" keybinding works on a single keystroke.
+        isPreferred: actions.length === 0,
+      });
+    }
+  }
+  return actions;
 });
 
 documents.listen(connection);

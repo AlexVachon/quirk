@@ -1,6 +1,14 @@
 #ifndef AST_HPP
 #define AST_HPP
 
+// Set by `--diagnostics-json` (defined in Compiler.cpp). When true, every
+// error printer in the compiler (Parser, Sema) writes one NDJSON record
+// per diagnostic to stdout instead of the human-readable ANSI output to
+// stderr. Designed for tools that consume errors structurally — chiefly
+// the v1.6+ LSP server, which spawns `quirk --check --diagnostics-json`
+// and turns each line into a `Diagnostic`.
+extern bool g_diagnostics_json;
+
 #include <iostream>
 #include <map>
 #include <memory>

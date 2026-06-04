@@ -48,6 +48,11 @@ namespace fs = std::filesystem;
 //  COMPILER OPTIONS
 // ==========================================================
 
+// Declared in ast.hpp; defined here so it's a single linker-visible
+// symbol. Flipped by `--diagnostics-json`; consulted by every error
+// printer (Parser::flushErrors, Sema::printSemaError, etc).
+bool g_diagnostics_json = false;
+
 struct CompilerOptions {
     std::string inputFile;
     std::string outputFile;   // non-empty → produce native binary, skip JIT
@@ -467,7 +472,7 @@ std::vector<std::unique_ptr<Node>> processFile(const std::string& filePath,
     auto nodes = parser.parse();
     if (parser.hasErrors()) {
         parser.flushErrors();
-        std::cerr << "Compilation failed." << std::endl;
+        if (!g_diagnostics_json) std::cerr << "Compilation failed." << std::endl;
         exit(1);
     }
 
@@ -882,6 +887,14 @@ int main(int argc, char* argv[]) {
         else if (arg == "-O2")            opts.optLevel     = 2;
         else if (arg == "-O3")            opts.optLevel     = 3;
         else if (arg == "--no-cache")     opts.useCache     = false;
+        else if (arg == "--diagnostics-json") {
+            // Structured error mode for tooling (LSP). Switches every
+            // error printer to NDJSON-on-stdout; the bitcode cache is
+            // disabled so each invocation emits fresh diagnostics
+            // instead of silently short-circuiting on a stale hit.
+            g_diagnostics_json = true;
+            opts.useCache = false;
+        }
         else if (arg == "-o") {
             if (++i >= argc) { std::cerr << "Error: -o requires a filename\n"; return 1; }
             opts.outputFile    = argv[i];
@@ -992,12 +1005,15 @@ int main(int argc, char* argv[]) {
     sema.setSourceMap(sourceMap);
     sema.setUserFile(fs::absolute(opts.inputFile).string());
     if (!sema.analyze(ast)) {
-        std::cerr << "Compilation failed." << std::endl;
+        if (!g_diagnostics_json) std::cerr << "Compilation failed." << std::endl;
         return 1;
     }
 
     if (opts.checkOnly) {
-        std::cout << opts.inputFile << ": OK\n";
+        // In JSON mode the LSP infers "no errors" from an empty stdout —
+        // skip the human-readable confirmation. Exit code 0 still means
+        // success; the LSP looks at that, not at any banner.
+        if (!g_diagnostics_json) std::cout << opts.inputFile << ": OK\n";
         return 0;
     }
 

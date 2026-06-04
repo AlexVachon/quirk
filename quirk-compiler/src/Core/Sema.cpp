@@ -12,10 +12,55 @@ static std::string baseType(const std::string& t) {
     return pos != std::string::npos ? t.substr(0, pos) : t;
 }
 
-// Shared formatting helper — prints one error to stderr.
+// Minimal JSON-string escaper for the NDJSON diagnostics mode. Quotes,
+// backslashes, and control bytes get escaped; everything else passes
+// through verbatim (we don't try to be Unicode-aware — Quirk file paths
+// and error messages are ASCII in practice, and the LSP just feeds the
+// string to its JSON parser).
+static std::string json_escape(const std::string& s) {
+    std::string out;
+    out.reserve(s.size() + 8);
+    for (char c : s) {
+        switch (c) {
+            case '"':  out += "\\\""; break;
+            case '\\': out += "\\\\"; break;
+            case '\n': out += "\\n";  break;
+            case '\r': out += "\\r";  break;
+            case '\t': out += "\\t";  break;
+            default:
+                if (static_cast<unsigned char>(c) < 0x20) {
+                    char buf[8];
+                    std::snprintf(buf, sizeof(buf), "\\u%04x", c);
+                    out += buf;
+                } else out += c;
+        }
+    }
+    return out;
+}
+
+// One NDJSON record per diagnostic. Goes to stdout so the LSP can read
+// line-buffered (`stderr` would buffer differently and complicate
+// integration on every editor).
+static void emitDiagnosticJson(const char* level, const std::string& msg,
+                               const std::string& path, int line, int col) {
+    std::cout << "{\"level\":\"" << level
+              << "\",\"msg\":\""  << json_escape(msg)
+              << "\",\"path\":\"" << json_escape(path)
+              << "\",\"line\":"   << line
+              << ",\"col\":"      << col
+              << "}\n";
+    std::cout.flush();
+}
+
+// Shared formatting helper — prints one error to stderr (or one JSON
+// line to stdout when `--diagnostics-json` is on).
 static void printSemaError(const std::string& msg, int line, int col,
                            const std::string& path,
                            const std::map<std::string, std::string>& sourceMap) {
+    if (g_diagnostics_json) {
+        emitDiagnosticJson("error", msg, path, line, col);
+        return;
+    }
     std::cerr << "\033[1;31m[ERROR]\033[0m " << msg << "\n";
     if (line > 0) {
         std::cerr << " --> ";

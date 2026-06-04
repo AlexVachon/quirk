@@ -5,6 +5,39 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [1.6.0] — 2026-06-03
+
+### LSP foundation: `quirk-lsp` server
+
+Quirk now ships with a standalone Language Server Protocol implementation
+under `quirk-lsp/`. Same diagnostics in any LSP-aware editor — Neovim,
+Helix, Zed, JetBrains. The VSCode extension keeps its in-process
+providers for now; switching it to use the LSP is on the v1.6.x roadmap.
+
+This release covers the foundation:
+
+- **`quirk --check --diagnostics-json`** — new flag on the compiler.
+  Emits one NDJSON record per diagnostic to stdout instead of the
+  human-readable ANSI output to stderr. Both Sema and Parser route
+  through it. `--check` also stays silent on success in JSON mode
+  (no `: OK` banner) so the LSP can infer success from an empty
+  stream + exit 0.
+- **`quirk-lsp` TypeScript server** — single Node binary. Speaks
+  stdio. Spawns the compiler on `didOpen` + `didSave`, translates
+  NDJSON records into LSP `Diagnostic` objects. Compiler binary
+  resolved via `initializationOptions.quirk.executablePath` →
+  `QUIRK_BIN` env → `quirk` on `PATH`.
+- **Editor configs** — `quirk-lsp/README.md` has copy-pasteable
+  snippets for Neovim's built-in LSP, Helix's `languages.toml`, and
+  Zed's settings. The wire format is documented for one-off tools
+  (CI gates, pre-commit hooks).
+
+What ships in later 1.6.x:
+- Hover, completion, definition, references, rename, signature help,
+  semantic tokens, formatter, outline (each is a port of an existing
+  VSCode provider).
+- VSCode extension switches to the LSP for at least diagnostics.
+
 ## [1.5.1] — 2026-06-03
 
 ### `pkg install --frozen` lockfile-name vs URL-basename mismatch

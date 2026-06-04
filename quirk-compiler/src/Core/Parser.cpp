@@ -1600,6 +1600,34 @@ void Parser::reportError(const std::string& message, const Token& token) {
 
 void Parser::flushErrors() const {
     for (const auto& e : errors) {
+        if (g_diagnostics_json) {
+            // NDJSON record per diagnostic. The escape pattern mirrors
+            // the one in Sema.cpp — kept inline rather than shared so
+            // the parser stays free of Sema/header coupling.
+            std::string esc; esc.reserve(e.msg.size() + 8);
+            for (char c : e.msg) {
+                switch (c) {
+                    case '"':  esc += "\\\""; break;
+                    case '\\': esc += "\\\\"; break;
+                    case '\n': esc += "\\n";  break;
+                    case '\r': esc += "\\r";  break;
+                    case '\t': esc += "\\t";  break;
+                    default:
+                        if (static_cast<unsigned char>(c) < 0x20) {
+                            char buf[8];
+                            std::snprintf(buf, sizeof(buf), "\\u%04x", c);
+                            esc += buf;
+                        } else esc += c;
+                }
+            }
+            std::cout << "{\"level\":\"error\",\"msg\":\"" << esc
+                      << "\",\"path\":\""                 << e.filePath
+                      << "\",\"line\":"                   << e.line
+                      << ",\"col\":"                      << e.col
+                      << "}\n";
+            std::cout.flush();
+            continue;
+        }
         std::cerr << "\033[1;31m[ERROR]\033[0m " << e.msg << "\n";
         if (!e.filePath.empty())
             std::cerr << " --> " << e.filePath << ":" << e.line << ":" << e.col << "\n";

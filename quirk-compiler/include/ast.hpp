@@ -224,6 +224,12 @@ class VarDeclNode : public Node {
     std::unique_ptr<Node> expression;
     std::string op;
     std::string typeAnnotation;
+    // Type Sema settled on after checking the RHS, when the user
+    // didn't write an explicit `typeAnnotation`. Used by the
+    // `--symbols-json` walker so the LSP can emit inlay hints next
+    // to `:=` bindings. Leaves `typeAnnotation` untouched so the AST
+    // still reflects what the user actually typed.
+    std::string inferredType;
     bool isConst = false;
 
     VarDeclNode(std::unique_ptr<Node> left,

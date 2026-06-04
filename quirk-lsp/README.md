@@ -2,6 +2,17 @@
 
 Language Server Protocol implementation for [Quirk](https://github.com/AlexVachon/quirk).
 
+## What's in v0.13 (compiler 1.6.12)
+
+Same as 0.12 plus:
+
+- **Inlay hints** (`textDocument/inlayHint`) — Sema's inferred type
+  renders next to `x := value` bindings when the user didn't
+  annotate. `x := 42` looks like `x: Int := 42` in the editor; the
+  hint is virtual (the source file isn't modified). Powered by a new
+  `inferredType` field on `VarDeclNode` that Sema fills from the
+  RHS check, surfaced through `--symbols-json`.
+
 ## What's in v0.12 (compiler 1.6.11)
 
 Same as 0.11 plus:

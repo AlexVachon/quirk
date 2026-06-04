@@ -910,9 +910,16 @@ static void emitBodyVariables(const std::vector<std::unique_ptr<Node>>& body,
     for (auto& stmt : body) {
         if (auto vd = dynamic_cast<VarDeclNode*>(stmt.get())) {
             if (auto* lit = dynamic_cast<LiteralNode*>(vd->lhs.get())) {
+                // Prefer the explicit `typeAnnotation` (what the user
+                // typed) over `inferredType` (what Sema decided). The
+                // LSP needs the inferred form to render an inlay hint
+                // — there's no point putting a hint where the user
+                // already wrote one.
+                const std::string& ty = !vd->typeAnnotation.empty()
+                    ? vd->typeAnnotation
+                    : vd->inferredType;
                 emitSymbol("variable", lit->value, scope,
-                           vd->filePath, vd->line, vd->col,
-                           vd->typeAnnotation);
+                           vd->filePath, vd->line, vd->col, ty);
             }
         }
         // Could recurse into IfNode / WhileNode / ForNode bodies for

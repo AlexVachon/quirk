@@ -491,6 +491,11 @@ void Sema::checkVarDecl(VarDeclNode *node)
         if (isDecl || !alreadyDefined) {
             std::string finalType =
                 node->typeAnnotation.empty() ? exprType : node->typeAnnotation;
+            // Stash the inferred type on the node so post-Sema walkers
+            // (notably `--symbols-json`) can publish it as an inlay
+            // hint at the binding site. Only meaningful when the user
+            // didn't explicitly annotate.
+            if (node->typeAnnotation.empty()) node->inferredType = exprType;
             defineVariable(lit->value, finalType, node->isConst);
         } else {
             // Reassignment — mark the existing binding as used

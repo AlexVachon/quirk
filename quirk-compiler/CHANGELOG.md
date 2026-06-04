@@ -5,6 +5,27 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [1.6.12] — 2026-06-03
+
+### `--symbols-json` learns inferred types + `quirk-lsp` 0.13 inlay hints
+
+Compiler:
+- `VarDeclNode` gains a new `inferredType` field. `Sema::checkVarDecl`
+  fills it with the RHS expression's type when the user didn't write
+  an explicit `typeAnnotation`. The original `typeAnnotation` stays
+  untouched so the AST still reflects the source.
+- `--symbols-json` prefers `typeAnnotation` when present, falls back
+  to `inferredType`. Result: `variable` records now carry a `type`
+  even for bare `x := value` declarations.
+
+LSP:
+- New `textDocument/inlayHint` handler. Renders `: <type>` next to
+  the identifier of every `:=` binding whose record has a type. The
+  hint is virtual — Source files aren't modified.
+
+Example: `count := 0` shows in the editor as `count: Int := 0` once
+the LSP has a chance to publish.
+
 ## [1.6.11] — 2026-06-03
 
 ### `quirk-lsp` 0.12.0 — folding ranges

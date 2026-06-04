@@ -41,6 +41,9 @@ import {
   FoldingRangeParams,
   Hover,
   HoverParams,
+  InlayHint,
+  InlayHintKind,
+  InlayHintParams,
   Location,
   MarkupKind,
   PrepareRenameParams,
@@ -165,8 +168,9 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
       workspaceSymbolProvider: true,
       renameProvider: { prepareProvider: true },
       foldingRangeProvider: true,
+      inlayHintProvider: true,
     },
-    serverInfo: { name: 'quirk-lsp', version: '0.12.0' },
+    serverInfo: { name: 'quirk-lsp', version: '0.13.0' },
   };
 });
 
@@ -1465,6 +1469,69 @@ connection.onFoldingRanges((params: FoldingRangeParams): FoldingRange[] => {
   }
 
   return out;
+});
+
+// ──────────────────────────────────────────────────────────────────────
+// Inlay hints (`textDocument/inlayHint`)
+// ──────────────────────────────────────────────────────────────────────
+// Display Sema's inferred type next to `x := value` bindings when the
+// user didn't write an explicit annotation. Symbol records emitted by
+// `quirk --symbols-json` already carry the inferred type — the LSP
+// just publishes them as hints.
+//
+// We only hint variables (not parameters, which are explicitly typed
+// in Quirk) and only when:
+//   - the record is in the current file
+//   - the record has a `type`
+//   - the source line at that position doesn't already contain a
+//     colon between the identifier and the next `:=` (cheap text
+//     check that catches `x: Int := ...` — `typeAnnotation` already
+//     wins over `inferredType` on the compiler side, but the heuristic
+//     here is a backstop for any record where both are set)
+
+connection.onRequest('textDocument/inlayHint', (params: InlayHintParams): InlayHint[] => {
+  const doc = documents.get(params.textDocument.uri);
+  if (!doc) return [];
+  const filePath = uriToPath(params.textDocument.uri);
+  if (!filePath) return [];
+
+  const text = doc.getText();
+  const lines = text.split(/\r?\n/);
+  const symbols = symbolCache.get(params.textDocument.uri) ?? [];
+
+  const hints: InlayHint[] = [];
+  for (const s of symbols) {
+    if (s.kind !== 'variable') continue;
+    if (!s.type) continue;
+    if (s.file !== filePath) continue;
+
+    const lineIdx = s.line - 1;
+    if (lineIdx < params.range.start.line) continue;
+    if (lineIdx > params.range.end.line) continue;
+
+    const lineText = lines[lineIdx] ?? '';
+    // Find the identifier in the source line. The symbol record's
+    // `col` points at the start of the LHS, but `lineText.indexOf`
+    // is more forgiving for tab/space differences after the compiler
+    // round-trip.
+    const identCol = lineText.indexOf(s.name, Math.max(0, s.col - 1));
+    if (identCol < 0) continue;
+    const after = lineText.slice(identCol + s.name.length);
+    // Skip the hint when the source already shows a type annotation
+    // (`name : Int := ...`) — defends against the rare case where
+    // typeAnnotation got filled in but inferredType also exists.
+    const colonBeforeAssign = /^\s*:\s*[A-Za-z_]/.test(after);
+    if (colonBeforeAssign) continue;
+
+    hints.push({
+      position: { line: lineIdx, character: identCol + s.name.length },
+      label: `: ${s.type}`,
+      kind: InlayHintKind.Type,
+      paddingLeft: false,
+      paddingRight: false,
+    });
+  }
+  return hints;
 });
 
 documents.listen(connection);

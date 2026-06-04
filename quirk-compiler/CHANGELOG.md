@@ -5,6 +5,27 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [1.6.5] — 2026-06-03
+
+### `quirk-lsp` 0.6.0 — hover
+
+`textDocument/hover` returns the declaration's signature line (wrapped
+in a ```quirk fence) plus the doc-comment block that precedes it. Two
+doc styles supported:
+
+- `---` block fences (Quirk's docstring convention used throughout
+  the stdlib)
+- consecutive `// …` line comments
+
+Same-file declarations win first; cross-file hits walk the file's
+imports + `quirk resolve` and read the target file off disk. A
+cross-file hover suffixes the source basename (e.g. `*from string.quirk*`)
+so the user knows which module the signature was lifted from when
+multiple stdlib modules export same-named types.
+
+Compiler binary is byte-identical to 1.6.4 modulo the version
+constant — this release is `quirk-lsp` only.
+
 ## [1.6.4] — 2026-06-03
 
 ### `quirk-lsp` 0.5.0 — find references (`textDocument/references`)

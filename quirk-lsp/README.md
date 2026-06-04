@@ -2,25 +2,25 @@
 
 Language Server Protocol implementation for [Quirk](https://github.com/AlexVachon/quirk).
 
-## What's in v0.5 (compiler 1.6.4)
+## What's in v0.6 (compiler 1.6.5)
 
 - **Diagnostics** on open + save via `quirk --check --diagnostics-json`.
 - **Document symbols** (`textDocument/documentSymbol`) — outline,
   breadcrumbs, `@` symbol picker.
-- **Formatting** (`textDocument/formatting`) — shells out to `quirk fmt --stdout`.
+- **Formatting** (`textDocument/formatting`) — shells out to
+  `quirk fmt --stdout`.
 - **Go-to-definition** (`textDocument/definition`) — same-file decls
   *and* cross-file via `quirk resolve <name>`.
-- **Find references** (`textDocument/references`) — word-boundary
-  search across every `.quirk` file in the workspace folders. Skips
-  `packages/`, `.venv/`, `.git/`, `node_modules/`, `build/`, `out/`.
-  Honors `includeDeclaration: false`. Coarse on purpose — finds
-  textual matches regardless of scope; a real semantic search needs
-  the compiler's symbol table (deferred).
+- **Find references** (`textDocument/references`) — workspace-wide
+  word-boundary search; respects `includeDeclaration`.
+- **Hover** (`textDocument/hover`) — signature line in a fenced
+  `quirk` code block, plus the preceding `---` or `// ...` docstring
+  as markdown. Same-file decls first, then cross-file via the
+  resolver. Cross-file hover shows the source file as a footer.
 - **Lifecycle** — `initialize`, `shutdown`, `exit`, document open/save/close.
 
-Coming later in 1.6.x: hover, completion, rename (depends on a real
-references resolver to be safe), signature help, semantic tokens. The
-VSCode extension keeps its in-process providers for those.
+Coming later in 1.6.x: completion, signature help, semantic-aware
+rename. The VSCode extension keeps its in-process providers for those.
 
 ## Install
 

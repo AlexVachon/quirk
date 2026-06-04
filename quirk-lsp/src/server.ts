@@ -29,7 +29,10 @@ import {
   DocumentSymbol,
   DocumentSymbolParams,
   DocumentFormattingParams,
+  Hover,
+  HoverParams,
   Location,
+  MarkupKind,
   ProposedFeatures,
   ReferenceParams,
   WorkspaceFolder,
@@ -120,8 +123,9 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
       documentFormattingProvider: true,
       definitionProvider: true,
       referencesProvider: true,
+      hoverProvider: true,
     },
-    serverInfo: { name: 'quirk-lsp', version: '0.5.0' },
+    serverInfo: { name: 'quirk-lsp', version: '0.6.0' },
   };
 });
 
@@ -722,6 +726,103 @@ connection.onReferences((params: ReferenceParams): Location[] => {
     });
   }
   return out;
+});
+
+// ──────────────────────────────────────────────────────────────────────
+// Hover (`textDocument/hover`)
+// ──────────────────────────────────────────────────────────────────────
+// Show the declaration's signature line + the preceding `---` docstring
+// block (Quirk's doc-comment convention) as a single markdown payload.
+// Reuses the same lookup chain as go-to-definition: same-file decls
+// first, then cross-file via `quirk resolve`.
+
+// Pull the `---`-fenced block ending at the line ABOVE `declLine`, if
+// one exists. Returns an empty string when there's no docstring. The
+// scan walks backward over consecutive non-blank lines that *don't*
+// belong to another declaration, stopping at the opening `---`.
+function extractDocstring(lines: string[], declLine: number): string {
+  if (declLine <= 0) return '';
+  // Skip blank lines between the docstring close and the declaration.
+  let i = declLine - 1;
+  while (i >= 0 && lines[i].trim() === '') i--;
+  if (i < 0) return '';
+
+  // Two doc-comment styles are recognized:
+  //   1. `---` block (one line) or block fence (`---\n…\n---`)
+  //   2. consecutive `//` line comments
+  if (lines[i].trim() === '---') {
+    // Walk up to the matching opening fence.
+    const end = i - 1;
+    let start = end;
+    while (start >= 0 && lines[start].trim() !== '---') start--;
+    if (start < 0) return '';
+    return lines.slice(start + 1, end + 1).join('\n');
+  }
+  if (lines[i].trimStart().startsWith('//')) {
+    let start = i;
+    while (start - 1 >= 0 && lines[start - 1].trimStart().startsWith('//')) start--;
+    return lines.slice(start, i + 1)
+      .map((l) => l.replace(/^\s*\/\/\s?/, ''))
+      .join('\n');
+  }
+  return '';
+}
+
+// Build the hover payload for a declaration at `lines[declLine]`. Wraps
+// the signature line in a `quirk` code fence so editors with syntax
+// highlighting present it correctly.
+function hoverFromDecl(lines: string[], declLine: number): string {
+  const sig = (lines[declLine] ?? '').replace(/^\s+/, '').replace(/\s*\{\s*$/, '').trimEnd();
+  const doc = extractDocstring(lines, declLine);
+  let body = '```quirk\n' + sig + '\n```';
+  if (doc) body += '\n\n' + doc;
+  return body;
+}
+
+connection.onHover((params: HoverParams): Hover | null => {
+  const doc = documents.get(params.textDocument.uri);
+  if (!doc) return null;
+  const text = doc.getText();
+  const docLines = text.split(/\r?\n/);
+  const lineText = docLines[params.position.line] ?? '';
+  const ident = identifierAt(lineText, params.position.character);
+  if (!ident) return null;
+
+  // 1. Same-file decl.
+  for (let i = 0; i < docLines.length; i++) {
+    for (const { re, nameGroup } of DECL_PATTERNS) {
+      const m = docLines[i].match(re);
+      if (m && m[nameGroup] === ident) {
+        return {
+          contents: { kind: MarkupKind.Markdown, value: hoverFromDecl(docLines, i) },
+        };
+      }
+    }
+  }
+
+  // 2. Cross-file via import map.
+  const { byName, modules } = scanImports(text);
+  const moduleHit = byName.get(ident) ?? (modules.has(ident) ? ident : null);
+  if (!moduleHit) return null;
+  const resolved = resolveModule(moduleHit);
+  if (!resolved) return null;
+  let imported: string;
+  try { imported = fs.readFileSync(resolved, 'utf8'); } catch { return null; }
+  const importedLines = imported.split(/\r?\n/);
+  for (let i = 0; i < importedLines.length; i++) {
+    for (const { re, nameGroup } of DECL_PATTERNS) {
+      const m = importedLines[i].match(re);
+      if (m && m[nameGroup] === ident) {
+        const body = hoverFromDecl(importedLines, i);
+        // Suffix the source path so the user knows which file the
+        // signature was lifted from (handy when several stdlib
+        // modules export same-named types).
+        const trailer = `\n\n*from \`${path.basename(resolved)}\`*`;
+        return { contents: { kind: MarkupKind.Markdown, value: body + trailer } };
+      }
+    }
+  }
+  return null;
 });
 
 documents.listen(connection);

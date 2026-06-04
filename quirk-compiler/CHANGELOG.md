@@ -5,6 +5,22 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [2.1.1] — 2026-06-04
+
+### `toml` is now bundled
+
+Promotes `toml` from "registered, install-on-demand" to "bundled with
+every release tarball" — same tier as the original 21 stdlib packages.
+
+- Added to `STDLIB_PACKAGES` in `quirk-compiler/Makefile` so
+  `make bootstrap-stdlib` (run by the release workflow) pulls
+  `github.com/AlexVachon/quirk-toml@v1.0.0` into the tarball.
+- The repo also gets a `v1.0.0` tag pointing at the same commit as
+  `v0.1.0`, to match the stdlib tagging convention.
+
+After the next release ships, fresh `install.sh` users will have
+`use toml` working out of the box without any `pkg install` step.
+
 ## [2.1.0] — 2026-06-04
 
 ### Stdlib registry adds `toml`

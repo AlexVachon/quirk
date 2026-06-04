@@ -5,6 +5,48 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [2.0.2] — 2026-06-04
+
+### Stdlib no longer ships in the compiler repo
+
+The 21 stdlib packages used to live in two places: the source-tree
+`quirk-compiler/packages/` AND the 21 canonical
+`github.com/AlexVachon/quirk-<name>` repos. As of 2.0.2 only the
+GitHub repos are tracked — the source tree's copy is now a build
+artifact, populated on demand and excluded from git.
+
+### What changed
+
+- **New `make bootstrap-stdlib` target.** Clones each of the 21
+  stdlib repos at `v1.0.0` into `quirk-compiler/packages/`.
+  Idempotent (skips packages that already have an `index.quirk`),
+  ~30s on a typical connection.
+- **`setup.sh`** now runs `make bootstrap-stdlib` before the build
+  so source-build users keep working out of the box.
+- **`.github/workflows/release.yml`** runs the same target on both
+  Linux and macOS jobs before packaging — the release tarball is
+  byte-equivalent to what 2.0.1 shipped.
+- **`quirk-compiler/packages/`** is now in `.gitignore`. The
+  directory is no longer in git's index.
+
+### Why
+
+- Single source of truth: editing argparse means pushing to
+  `quirk-argparse`, not duplicating the change in two places.
+- Smaller repo: ~28 stdlib files no longer track in git history.
+- Cleaner mental model: "stdlib lives in repos; compiler bundles them
+  for distribution" matches how every other package works.
+
+### Compatibility
+
+`install.sh` users see no difference — the release tarball still
+ships a populated `packages/` (built by the workflow). Existing
+clones with a populated `packages/` keep working; git considers it
+deleted but the files stay on disk (since they're now ignored).
+
+Fresh contributors must run `make bootstrap-stdlib` (or `setup.sh`,
+which calls it) before their first build.
+
 ## [2.0.1] — 2026-06-04
 
 ### Fix: `quirk run` mistook flags for script names

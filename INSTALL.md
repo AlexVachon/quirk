@@ -68,6 +68,7 @@ workflow can produce them. To build:
 brew install llvm@14 bdw-gc openssl@3
 git clone https://github.com/AlexVachon/quirk.git
 cd quirk/quirk-compiler
+make bootstrap-stdlib                                           # fetch the 21 stdlib repos
 LLVM_CONFIG=$(brew --prefix llvm@14)/bin/llvm-config make -j$(sysctl -n hw.ncpu)
 export QUIRK_HOME="$(pwd)"
 export PATH="$QUIRK_HOME/bin:$PATH"
@@ -83,8 +84,15 @@ export PATH="$QUIRK_HOME/bin:$PATH"
 ```bash
 git clone https://github.com/AlexVachon/quirk.git
 cd quirk/quirk-compiler
+make bootstrap-stdlib   # fetch the 21 stdlib repos into packages/
 bash setup.sh
 ```
+
+> Since 2.0.2 the stdlib is **not** committed to the compiler repo. The
+> 21 packages live in their own `github.com/AlexVachon/quirk-<name>`
+> repos and are cloned in by `make bootstrap-stdlib`. The release tarball
+> (`install.sh` users) bundles them automatically — only source-build
+> contributors need this step.
 
 `setup.sh` does four things:
 

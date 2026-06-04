@@ -61,6 +61,14 @@ jobs:
 
       - uses: actions/checkout@v4
 
+      - name: Bootstrap stdlib (clone the 21 quirk-<name> repos)
+        # Source tree no longer ships bundled stdlib (2.0.2). Pull the
+        # canonical content from the per-package GitHub repos before
+        # packaging. Pinned to the same tag the compiler's stdlib
+        # registry resolves to, so a release is reproducible by tag.
+        working-directory: quirk-compiler
+        run: make bootstrap-stdlib
+
       - name: Build compiler + runtime
         working-directory: quirk-compiler
         run: make -j"$(nproc)"
@@ -136,6 +144,10 @@ jobs:
         # LLVM versions don't share PATH), so we pin via LLVM_CONFIG below
         # instead of touching PATH.
         run: brew install llvm@14 bdw-gc openssl@3
+
+      - name: Bootstrap stdlib (clone the 21 quirk-<name> repos)
+        working-directory: quirk-compiler
+        run: make bootstrap-stdlib
 
       - name: Build compiler + runtime
         working-directory: quirk-compiler

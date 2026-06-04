@@ -109,4 +109,52 @@ clean:
 test: all
 	./$(TARGET) tests/encoding_test.quirk
 
-.PHONY: all clean test
+# --- STDLIB BOOTSTRAP -------------------------------------------------------
+# Fetch the 21 canonical stdlib repos into ./packages/. Required for:
+#   - fresh contributor checkouts (the source tree no longer ships bundled
+#     stdlib)
+#   - the release workflow (the resulting tarball needs a populated
+#     packages/ dir so install.sh users get a working compiler)
+#
+# Idempotent: skips any package whose subdir already has an `index.quirk`.
+# Versioned: each clone pins the package's `v1.0.0` tag (matching the
+# stdlib_registry() versions baked into the compiler). To pull newer tags,
+# bump the version inline below and re-run.
+STDLIB_PACKAGES = \
+	argparse console crypto csv datetime debug encoding fs io itertools \
+	math net random regex statistics sys test time typing url uuid
+STDLIB_OWNER ?= AlexVachon
+STDLIB_TAG   ?= v1.0.0
+
+bootstrap-stdlib:
+	@mkdir -p packages
+	@for pkg in $(STDLIB_PACKAGES); do                                            \
+	    if [ -f "packages/$$pkg/index.quirk" ]; then                              \
+	        echo "  ✓ $$pkg (already present)";                                   \
+	        continue;                                                             \
+	    fi;                                                                       \
+	    echo "  → cloning quirk-$$pkg@$(STDLIB_TAG)";                             \
+	    tmp=$$(mktemp -d);                                                        \
+	    if ! git clone --quiet --depth 1 --branch $(STDLIB_TAG)                   \
+	            "https://github.com/$(STDLIB_OWNER)/quirk-$$pkg.git" "$$tmp";     \
+	    then                                                                      \
+	        echo "  ✗ $$pkg — clone failed";                                      \
+	        rm -rf "$$tmp";                                                       \
+	        exit 1;                                                               \
+	    fi;                                                                       \
+	    rm -rf "packages/$$pkg";                                                  \
+	    if [ -d "$$tmp/src" ]; then                                               \
+	        mv "$$tmp/src" "packages/$$pkg";                                      \
+	    else                                                                      \
+	        mv "$$tmp" "packages/$$pkg";                                          \
+	    fi;                                                                       \
+	    rm -rf "$$tmp";                                                           \
+	done
+	@echo "Stdlib bootstrap complete: $$(ls packages | wc -l) packages"
+
+# Convenience: wipe + re-fetch the entire stdlib.
+bootstrap-stdlib-clean:
+	rm -rf packages
+	$(MAKE) bootstrap-stdlib
+
+.PHONY: all clean test bootstrap-stdlib bootstrap-stdlib-clean

@@ -1,0 +1,2 @@
+Hello from Quirk!
+This file was generated using the new io.file module.

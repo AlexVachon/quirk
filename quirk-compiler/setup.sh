@@ -23,6 +23,10 @@ sudo apt-get install -y \
 # ── 2. Build ───────────────────────────────────────────────────────────────────
 echo "Building compiler and runtime..."
 cd "$SCRIPT_DIR"
+# Stdlib stopped shipping in-tree after 2.0.2 — clone the 21 quirk-<name>
+# repos into ./packages/ before building so QUIRK_HOME=<this-dir> finds them.
+# `bootstrap-stdlib` is idempotent and skips already-present packages.
+make bootstrap-stdlib
 make clean
 make -j"$(nproc)"
 

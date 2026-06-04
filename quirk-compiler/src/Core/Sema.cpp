@@ -358,10 +358,22 @@ void Sema::checkFunction(FunctionNode *f)
 
     std::string prevClass = currentClass;
     FunctionNode *prevFunc = currentFunctionNode;
+    std::string prevScope = currentScope;
 
     currentClass = f->cls;
     currentFunctionNode = f;
     if (!f->filePath.empty()) currentFilePath = f->filePath;
+
+    // Track scope for the usage table. We use the function's
+    // demangled raw name when it's a method so usages match the same
+    // `scope` key that `--symbols-json` emits for the decl.
+    if (!f->cls.empty()) {
+        if (f->name == f->cls + "__init")                currentScope = "__init";
+        else if (f->name.rfind(f->cls + "_", 0) == 0)    currentScope = f->name.substr(f->cls.size() + 1);
+        else                                              currentScope = f->name;
+    } else {
+        currentScope = f->name;
+    }
 
     // Push generic type params as type aliases for "Any" so that annotations
     // like `item: T` and `-> T` are accepted without "unknown type" errors.
@@ -431,6 +443,7 @@ void Sema::checkFunction(FunctionNode *f)
 
     currentClass = prevClass;
     currentFunctionNode = prevFunc;
+    currentScope = prevScope;
 }
 
 void Sema::checkVarDecl(VarDeclNode *node)
@@ -1382,6 +1395,16 @@ void Sema::defineVariable(const std::string &name, const std::string &type, bool
 
 std::string Sema::resolveVariable(const std::string &name)
 {
+    // Every identifier reference Sema actually evaluates lands here.
+    // Record the position so `--symbols-json` can ship a usage table
+    // to the LSP for semantic find-references and rename. `lastNode`
+    // is set by checkExpression entry points to the LiteralNode that
+    // names the identifier, so its line/col is precise.
+    if (lastNode && lastNode->line > 0) {
+        usages.push_back({name, currentScope,
+                          lastNode->filePath, lastNode->line, lastNode->col});
+    }
+
     // 1. Check local scopes first.
     // Single find() per scope avoids the double-lookup (count + [] pattern)
     // — resolveVariable is hit on every identifier reference, so this is hot.

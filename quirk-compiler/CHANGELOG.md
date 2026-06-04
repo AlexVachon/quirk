@@ -5,6 +5,37 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [1.7.0] — 2026-06-04
+
+### Per-usage tracking in Sema; semantic LSP references and rename
+
+Sema now records every successful identifier resolution into a
+`usages` table — one entry per `resolveVariable` call. Each entry
+has `(name, scope, file, line, col)` where `scope` mirrors the
+declaration-side records (`"module"`, a struct name, or an
+enclosing function's demangled name). The table is exposed through
+`--symbols-json` as `kind:"usage"` records that interleave with
+the existing decl records.
+
+This was the missing piece for two LSP features that previously
+fell back to text-only walks:
+
+- **`textDocument/references`** now returns Sema's exact answer.
+  A parameter `x` in function A doesn't show up when listing refs
+  of an unrelated local `x` in function B.
+- **`textDocument/rename`** uses the same data for precise, scope-
+  respecting edits — no more "rename the wrong `foo`" risk.
+
+Both still text-search per matched line for the exact identifier
+column, since Sema's usage records use the enclosing-expression
+start (Parameter doesn't carry its own line/col yet). For files
+Sema didn't see this session, both features gracefully fall back to
+the v1.6.x text-based walker.
+
+This is a minor bump (`1.7.0`) — every change is additive. Existing
+clients of `--symbols-json` see new records they didn't before and
+should drop unfamiliar `kind`s the way the spec asks.
+
 ## [1.6.13] — 2026-06-03
 
 ### `quirk-lsp` 0.14.0 — document highlights

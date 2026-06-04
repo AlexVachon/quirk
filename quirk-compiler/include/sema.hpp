@@ -39,6 +39,26 @@ class Sema {
     struct ErrorRecord { std::string msg, filePath; int line, col; };
     std::vector<ErrorRecord> errors;
     std::vector<ErrorRecord> warnings;
+
+    // Per-identifier usage table. Filled by resolveVariable on every
+    // successful lookup, exposed (via `--symbols-json`) to the LSP for
+    // semantic find-references and rename. `scope` mirrors what the
+    // declaration-side records use — "module", a struct name, or an
+    // enclosing function name — so consumers can match a usage to
+    // the right binding without redoing resolution.
+   public:
+    struct UsageRecord {
+        std::string name;
+        std::string scope;
+        std::string filePath;
+        int line = 0;
+        int col  = 0;
+    };
+    std::vector<UsageRecord> usages;
+   private:
+    // The function currently being checked; usages encountered while
+    // walking its body get this as their `scope`. Empty == "module".
+    std::string currentScope = "module";
     void flushErrors();    // print all accumulated errors
     void flushWarnings();  // print all accumulated warnings
     void reportWarning(const std::string& msg, int line = 0, int col = 0,

@@ -1189,8 +1189,17 @@ int main(int argc, char* argv[]) {
     if (opts.checkOnly) {
         // --symbols-json runs through --check too. Sema's results are
         // recorded in node properties, so walking the AST here is
-        // enough to produce the symbol table.
-        if (opts.symbolsJson) emitSymbols(ast);
+        // enough to produce the symbol table. After the decls, dump
+        // Sema's recorded usage table so the LSP can do semantic
+        // find-references and rename without re-resolving.
+        if (opts.symbolsJson) {
+            emitSymbols(ast);
+            for (const auto& u : sema.usages) {
+                emitSymbol("usage", u.name, u.scope,
+                           u.filePath, u.line, u.col);
+            }
+            std::cout.flush();
+        }
         // In JSON mode the LSP infers "no errors" from an empty stdout —
         // skip the human-readable confirmation. Exit code 0 still means
         // success; the LSP looks at that, not at any banner.

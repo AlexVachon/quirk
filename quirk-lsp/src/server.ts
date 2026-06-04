@@ -105,13 +105,17 @@ interface QuirkDiag {
 // backwards compatible. Each record represents ONE declaration site.
 interface QuirkSymbol {
   kind: 'function' | 'method' | 'struct' | 'enum' | 'enumvariant'
-      | 'interface' | 'field' | 'parameter' | 'variable' | 'module_const';
+      | 'interface' | 'field' | 'parameter' | 'variable' | 'module_const'
+      | 'usage';
   name: string;
   scope: string;          // "module", a struct name, or an enclosing function name
   file: string;           // absolute path on disk
   line: number;           // 1-based
-  col: number;            // 1-based
-  type?: string;          // present for params/vars/fields/functions where Sema knew the type
+  col: number;            // 1-based. For usages this typically points at the
+                          //   enclosing expression's start, not the identifier
+                          //   itself — pair with a per-line text search to find
+                          //   the precise byte offset.
+  type?: string;          // present for params/vars/fields/functions where Sema knew one
 }
 
 // Resolve the compiler binary in this order:
@@ -765,6 +769,47 @@ function findOccurrencesInText(text: string, name: string, uri: string): Locatio
   return out;
 }
 
+// Convert a Sema-style usage record into a precise LSP `Location`. The
+// record's column is the enclosing-expression start; we scan the line
+// for the actual identifier to get the right column. Returns null if
+// the name doesn't appear on the recorded line (rare — Sema and the
+// source can diverge after a hot edit).
+function usageToLocation(rec: QuirkSymbol): Location | null {
+  let text: string;
+  try { text = fs.readFileSync(rec.file, 'utf8'); } catch { return null; }
+  const lines = text.split(/\r?\n/);
+  const lineIdx = rec.line - 1;
+  const line = lines[lineIdx];
+  if (line === undefined) return null;
+  // Search anchored at the recorded column (typically the start of the
+  // enclosing call/expression) so we don't return an earlier shadowed
+  // hit on the same line.
+  const start = Math.max(0, rec.col - 1);
+  const re = new RegExp('(?<![A-Za-z0-9_])' + rec.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?![A-Za-z0-9_])', 'g');
+  re.lastIndex = start;
+  const m = re.exec(line);
+  if (!m) {
+    // Fall back to a full-line scan if the anchored search missed.
+    re.lastIndex = 0;
+    const m2 = re.exec(line);
+    if (!m2) return null;
+    return {
+      uri: pathToUri(rec.file),
+      range: {
+        start: { line: lineIdx, character: m2.index },
+        end:   { line: lineIdx, character: m2.index + rec.name.length },
+      },
+    };
+  }
+  return {
+    uri: pathToUri(rec.file),
+    range: {
+      start: { line: lineIdx, character: m.index },
+      end:   { line: lineIdx, character: m.index + rec.name.length },
+    },
+  };
+}
+
 connection.onReferences((params: ReferenceParams): Location[] => {
   const doc = documents.get(params.textDocument.uri);
   if (!doc) return [];
@@ -773,6 +818,43 @@ connection.onReferences((params: ReferenceParams): Location[] => {
   const ident = identifierAt(lineText, params.position.character);
   if (!ident) return [];
 
+  // Semantic fast path: when the symbol cache has a `usage` record
+  // for this exact name in the current document, prefer Sema's
+  // answer over the workspace-wide regex walk. Sema's resolution
+  // respects scope (a param `x` in fn A and a local `x` in fn B
+  // don't get conflated). Open-doc usages get a precise column via
+  // `usageToLocation`; we still merge with the regex walk for
+  // cross-file refs that haven't been compiled this session.
+  const symbols = symbolCache.get(params.textDocument.uri) ?? [];
+  const usageHits = symbols.filter((s) => s.kind === 'usage' && s.name === ident);
+  if (usageHits.length) {
+    const out: Location[] = [];
+    const seen = new Set<string>();
+    for (const u of usageHits) {
+      const loc = usageToLocation(u);
+      if (!loc) continue;
+      const key = `${loc.uri}:${loc.range.start.line}:${loc.range.start.character}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(loc);
+    }
+    // Tack on the declaration sites for this name (the symbol cache
+    // lists them as kind=function/struct/etc.). Decl `col` is precise
+    // for top-level decls but approximate for parameters/fields, so
+    // we route through `usageToLocation` to text-find the actual
+    // identifier on the line.
+    if (params.context?.includeDeclaration !== false) {
+      for (const s of symbols) {
+        if (s.kind === 'usage') continue;
+        if (s.name !== ident) continue;
+        const loc = usageToLocation(s);
+        if (loc) out.push(loc);
+      }
+    }
+    if (out.length) return out;
+  }
+
+  // Fallback: workspace-wide text walk (the v1.6.4 behaviour).
   const out: Location[] = [];
 
   // Scan every open document first so unsaved edits show up. Then walk
@@ -1344,7 +1426,40 @@ connection.onRenameRequest((params: RenameParams): WorkspaceEdit | null => {
 
   // Gather Locations to edit.
   const locations: Location[] = [];
-  if (renameSameFileOnly) {
+
+  // Semantic path: if Sema gave us usage records for this name in the
+  // open document, prefer them — they respect scope (param `x` in
+  // function A doesn't get swapped when renaming local `x` in
+  // function B). Decl sites come from the same cache.
+  const usageRecs = symbols.filter((s) => s.kind === 'usage' && s.name === oldName);
+  if (usageRecs.length) {
+    const seen = new Set<string>();
+    for (const u of usageRecs) {
+      const loc = usageToLocation(u);
+      if (!loc) continue;
+      const key = `${loc.uri}:${loc.range.start.line}:${loc.range.start.character}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      locations.push(loc);
+    }
+    for (const s of symbols) {
+      if (s.kind === 'usage') continue;
+      if (s.name !== oldName) continue;
+      // Decl `col` is precise for functions/structs/enums/interfaces
+      // but approximate for parameters and fields (Parameter doesn't
+      // carry its own line/col, so the compiler emits the enclosing
+      // function's). Reuse `usageToLocation` to text-find the actual
+      // identifier on the recorded line — same logic that fixes the
+      // usage records.
+      const loc = usageToLocation(s);
+      if (!loc) continue;
+      const key = `${loc.uri}:${loc.range.start.line}:${loc.range.start.character}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        locations.push(loc);
+      }
+    }
+  } else if (renameSameFileOnly) {
     locations.push(...findOccurrencesInText(doc.getText(), oldName, doc.uri));
   } else {
     // Workspace path — open docs first, then on-disk files. Same

@@ -2,6 +2,24 @@
 
 Language Server Protocol implementation for [Quirk](https://github.com/AlexVachon/quirk).
 
+## What's in v0.15 (compiler 1.7.0)
+
+Same as 0.14 plus:
+
+- **Semantic find-references and rename.** Sema now records every
+  identifier resolution in a usage table, surfaced as `usage` records
+  in `--symbols-json`. The LSP prefers these over text search:
+  - `textDocument/references` returns Sema's exact resolution chain,
+    not regex matches. A parameter `x` in function A doesn't appear
+    when listing refs of an unrelated `x` in function B.
+  - `textDocument/rename` uses the same data to produce precise,
+    scope-respecting edits. Falls back to the v1.6.x text-based
+    walk when usage records aren't available (e.g. for cross-file
+    references in files Sema didn't visit).
+  - Both pass each record through a small line-scan that re-finds
+    the exact identifier column, since Sema's records use the
+    enclosing-expression's start.
+
 ## What's in v0.14 (compiler 1.6.13)
 
 Same as 0.13 plus:

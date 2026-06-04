@@ -2,20 +2,24 @@
 
 Language Server Protocol implementation for [Quirk](https://github.com/AlexVachon/quirk).
 
-## What's in v0.2 (compiler 1.6.1)
+## What's in v0.3 (compiler 1.6.2)
 
 - **Diagnostics** on open + save via `quirk --check --diagnostics-json`.
-- **Document symbols** (`textDocument/documentSymbol`) — powers the
-  editor's outline panel, breadcrumbs, and `@` symbol picker. Lists
-  top-level `define` / `struct` / `enum` / `interface`, with `struct`
-  bodies nesting their `define` methods.
+- **Document symbols** (`textDocument/documentSymbol`) — outline panel,
+  breadcrumbs, `@` symbol picker. Top-level `define` / `struct` /
+  `enum` / `interface`; methods nest under their struct.
 - **Formatting** (`textDocument/formatting`) — shells out to
   `quirk fmt --stdout`, replaces the whole buffer.
-- **Lifecycle** — `initialize`, `shutdown`, `exit`, document open/save/close.
+- **Go-to-definition** (`textDocument/definition`) — ctrl-click a
+  name to jump to its `define` / `struct` / `enum` / `interface`
+  declaration in the same file. Cross-file resolution is on the
+  roadmap (needs a compiler-side `quirk resolve` query first).
+- **Lifecycle** — `initialize`, `shutdown`, `exit`, document
+  open/save/close.
 
-Coming later in 1.6.x: hover, completion, go-to-definition, references,
-rename, signature help, semantic tokens. The VSCode extension keeps its
-in-process providers for those.
+Coming later in 1.6.x: hover, completion, cross-file go-to-def,
+references, rename, signature help, semantic tokens. The VSCode
+extension keeps its in-process providers for those.
 
 ## Install
 

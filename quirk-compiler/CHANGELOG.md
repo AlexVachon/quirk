@@ -5,6 +5,26 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [1.6.2] — 2026-06-03
+
+### `quirk-lsp` 0.3.0 — go-to-definition (current file)
+
+- **`textDocument/definition`** — ctrl-click a name to jump to its
+  `define` / `struct` / `enum` / `interface` declaration. Scope is
+  intentionally tight: same-file top-level + struct methods only.
+  Returns multiple `Location`s when the editor would render that as
+  a chooser (e.g. interface + concrete method with the same name).
+- Local variables, struct fields, and parameters don't resolve yet
+  — they need scope tracking that's bigger than what regex can do.
+- Cross-file resolution (`use argparse` → `packages/argparse/...`)
+  is also deferred. The cleanest path is a `quirk resolve <name>
+  --from <file>` query on the compiler so the LSP doesn't have to
+  duplicate the C++ resolver in TypeScript; that lands in a later
+  1.6.x release.
+
+Compiler binary is byte-identical to 1.6.1 modulo the version constant
+— this release is `quirk-lsp` only.
+
 ## [1.6.1] — 2026-06-03
 
 ### `quirk-lsp` 0.2.0 — outline + formatting

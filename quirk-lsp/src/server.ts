@@ -25,9 +25,11 @@ import {
   TextDocuments,
   Diagnostic,
   DiagnosticSeverity,
+  DefinitionParams,
   DocumentSymbol,
   DocumentSymbolParams,
   DocumentFormattingParams,
+  Location,
   ProposedFeatures,
   InitializeParams,
   TextDocumentSyncKind,
@@ -102,8 +104,9 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
       textDocumentSync: TextDocumentSyncKind.Full,
       documentSymbolProvider: true,
       documentFormattingProvider: true,
+      definitionProvider: true,
     },
-    serverInfo: { name: 'quirk-lsp', version: '0.2.0' },
+    serverInfo: { name: 'quirk-lsp', version: '0.3.0' },
   };
 });
 
@@ -355,6 +358,80 @@ connection.onDocumentFormatting((params: DocumentFormattingParams): TextEdit[] =
   } finally {
     try { fs.unlinkSync(tmp); } catch { /* fine if already gone */ }
   }
+});
+
+// ──────────────────────────────────────────────────────────────────────
+// Go-to-definition (`textDocument/definition`)
+// ──────────────────────────────────────────────────────────────────────
+// Scope: same-file declarations only — define/struct/enum/interface
+// at the top level, plus methods inside a struct. Local variables,
+// struct fields, parameters, and cross-file imports are deferred to
+// later 1.6.x releases (the latter needs a compiler-side resolver
+// query so we don't duplicate the C++ logic in TypeScript).
+//
+// The cursor position is interpreted character-precisely: we grab the
+// identifier the cursor is inside (or immediately to the right of)
+// and walk the whole file for any declaration that names it. Multiple
+// hits — e.g. two `define foo` for an overloaded interface — all
+// return; LSP clients render that as a chooser.
+
+const IDENT_RE = /[A-Za-z_][A-Za-z0-9_]*/g;
+
+// Find the identifier word that contains (or starts at) `character` on
+// `line`. Returns null when the cursor isn't on a word.
+function identifierAt(line: string, character: number): string | null {
+  IDENT_RE.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = IDENT_RE.exec(line)) !== null) {
+    const start = match.index;
+    const end   = start + match[0].length;
+    if (character >= start && character <= end) return match[0];
+    if (start > character) return null;
+  }
+  return null;
+}
+
+// All same-file declarations the LSP knows how to navigate to. Anchored
+// to start-of-line (after optional whitespace) so the regex doesn't
+// pick up the *uses* of the identifier elsewhere in the file. The
+// `define` form is used both for top-level functions and for struct
+// methods — both are valid jump targets, so we accept either.
+const DECL_PATTERNS: { re: RegExp; nameGroup: number }[] = [
+  { re: /^[ \t]*define\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/,         nameGroup: 1 },
+  { re: /^[ \t]*struct\s+([A-Za-z_][A-Za-z0-9_]*)\b/,            nameGroup: 1 },
+  { re: /^[ \t]*enum\s+([A-Za-z_][A-Za-z0-9_]*)\b/,              nameGroup: 1 },
+  { re: /^[ \t]*interface\s+([A-Za-z_][A-Za-z0-9_]*)\b/,         nameGroup: 1 },
+];
+
+function findDeclarations(doc: TextDocument, name: string): Location[] {
+  const lines = doc.getText().split(/\r?\n/);
+  const out: Location[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    for (const { re, nameGroup } of DECL_PATTERNS) {
+      const m = lines[i].match(re);
+      if (m && m[nameGroup] === name) {
+        const startCol = lines[i].indexOf(name, m.index ?? 0);
+        out.push({
+          uri: doc.uri,
+          range: {
+            start: { line: i, character: startCol },
+            end:   { line: i, character: startCol + name.length },
+          },
+        });
+        break;       // one decl per line; don't double-count
+      }
+    }
+  }
+  return out;
+}
+
+connection.onDefinition((params: DefinitionParams): Location[] => {
+  const doc = documents.get(params.textDocument.uri);
+  if (!doc) return [];
+  const lineText = doc.getText().split(/\r?\n/)[params.position.line] ?? '';
+  const ident = identifierAt(lineText, params.position.character);
+  if (!ident) return [];
+  return findDeclarations(doc, ident);
 });
 
 documents.listen(connection);

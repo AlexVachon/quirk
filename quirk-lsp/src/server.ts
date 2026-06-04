@@ -29,6 +29,9 @@ import {
   CompletionItemKind,
   CompletionParams,
   DefinitionParams,
+  DocumentHighlight,
+  DocumentHighlightKind,
+  DocumentHighlightParams,
   ParameterInformation,
   SignatureHelp,
   SignatureHelpParams,
@@ -169,8 +172,9 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
       renameProvider: { prepareProvider: true },
       foldingRangeProvider: true,
       inlayHintProvider: true,
+      documentHighlightProvider: true,
     },
-    serverInfo: { name: 'quirk-lsp', version: '0.13.0' },
+    serverInfo: { name: 'quirk-lsp', version: '0.14.0' },
   };
 });
 
@@ -1532,6 +1536,45 @@ connection.onRequest('textDocument/inlayHint', (params: InlayHintParams): InlayH
     });
   }
   return hints;
+});
+
+// ──────────────────────────────────────────────────────────────────────
+// Document highlights (`textDocument/documentHighlight`)
+// ──────────────────────────────────────────────────────────────────────
+// Highlight every occurrence of the identifier under the cursor in the
+// *current* file. Most editors render this as a subtle background tint
+// on every matching token; it makes "where does this variable live?"
+// answerable at a glance.
+//
+// We mark the declaration site as `Write` (it binds the name) and
+// every other occurrence as `Read`. The declaration is detected by
+// the same DECL_PATTERNS the rest of the LSP uses.
+
+connection.onDocumentHighlight((params: DocumentHighlightParams): DocumentHighlight[] => {
+  const doc = documents.get(params.textDocument.uri);
+  if (!doc) return [];
+  const text = doc.getText();
+  const lineText = text.split(/\r?\n/)[params.position.line] ?? '';
+  const ident = identifierAt(lineText, params.position.character);
+  if (!ident) return [];
+
+  const occurrences = findOccurrencesInText(text, ident, doc.uri);
+  // Detect each occurrence's role. Cheap heuristic: if the source
+  // line matches one of our DECL_PATTERNS with this name, that
+  // occurrence is the declaration. Otherwise it's a read.
+  const docLines = text.split(/\r?\n/);
+  return occurrences.map((loc) => {
+    const line = docLines[loc.range.start.line] ?? '';
+    let isDecl = false;
+    for (const { re, nameGroup } of DECL_PATTERNS) {
+      const m = line.match(re);
+      if (m && m[nameGroup] === ident) { isDecl = true; break; }
+    }
+    return {
+      range: loc.range,
+      kind: isDecl ? DocumentHighlightKind.Write : DocumentHighlightKind.Read,
+    };
+  });
 });
 
 documents.listen(connection);

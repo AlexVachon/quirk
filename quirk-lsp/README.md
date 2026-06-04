@@ -2,6 +2,17 @@
 
 Language Server Protocol implementation for [Quirk](https://github.com/AlexVachon/quirk).
 
+## What's in v0.14 (compiler 1.6.13)
+
+Same as 0.13 plus:
+
+- **Document highlights** (`textDocument/documentHighlight`) — when
+  the cursor is on an identifier, every other occurrence in the
+  current file gets highlighted. Decl sites render as `Write`,
+  other uses as `Read`; most editors render this as a subtle
+  background tint that makes "where else does this live?" answerable
+  at a glance.
+
 ## What's in v0.13 (compiler 1.6.12)
 
 Same as 0.12 plus:

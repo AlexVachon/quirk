@@ -5,6 +5,17 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [1.6.13] — 2026-06-03
+
+### `quirk-lsp` 0.14.0 — document highlights
+
+`textDocument/documentHighlight` — cursor on an identifier highlights
+every other occurrence in the current file. Decl sites render as
+`Write`, other uses as `Read`. Most editors render this as a subtle
+background tint.
+
+Compiler binary byte-identical to 1.6.12 modulo the version constant.
+
 ## [1.6.12] — 2026-06-03
 
 ### `--symbols-json` learns inferred types + `quirk-lsp` 0.13 inlay hints

@@ -64,7 +64,7 @@ static std::string self_binary();
 
 namespace qpm {
 
-constexpr const char* QUIRK_VERSION = "1.5.0";
+constexpr const char* QUIRK_VERSION = "1.5.1";
 
 namespace fs = std::filesystem;
 
@@ -2002,9 +2002,36 @@ static int cmd_install(const std::vector<std::string>& args) {
 
     // Materialize one queued spec. Sets processed/lock on success; queues
     // the installed package's manifest [deps] for further processing.
+    // The lockfile keys by the package's actual `name` (from its
+    // quirk.toml), not by the URL basename. `preview_name(spec)` for a
+    // git spec returns the URL basename — `quirk-crypto` for
+    // `github.com/.../quirk-crypto`. Without an alias, --frozen and the
+    // pinned-install fast-path would miss a lockfile entry whose name
+    // is `crypto`. Build a URL → lockfile-name map once so we can look
+    // up either way.
+    auto urlKey = [](const std::string& src) {
+        std::string s = src;
+        auto at = s.find('@');
+        if (at != std::string::npos) s = s.substr(0, at);
+        if (s.size() >= 4 && s.substr(s.size() - 4) == ".git") s = s.substr(0, s.size() - 4);
+        if (s.rfind("https://", 0) == 0) s = s.substr(8);
+        if (s.rfind("http://", 0) == 0)  s = s.substr(7);
+        return s;
+    };
+    std::map<std::string, std::string> lockByUrl;
+    for (auto& kv : lock) lockByUrl[urlKey(kv.second.source)] = kv.first;
+
     // Returns 0 on success, 1 on failure, 2 if skipped (already processed).
     auto install_pending = [&](const Pending& p) -> int {
         std::string name = preview_name(p.spec);
+
+        // If preview_name returned the URL basename but the lockfile
+        // keys by manifest name, the URL fallback maps spec → real
+        // name. Used by both the dedup check and --frozen.
+        if (!lock.count(name)) {
+            auto urlMatch = lockByUrl.find(urlKey(p.spec));
+            if (urlMatch != lockByUrl.end()) name = urlMatch->second;
+        }
 
         // (a) Dedup + conflict: have we already resolved this name?
         if (!name.empty()) {

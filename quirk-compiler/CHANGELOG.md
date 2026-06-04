@@ -5,6 +5,27 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [1.5.1] — 2026-06-03
+
+### `pkg install --frozen` lockfile-name vs URL-basename mismatch
+
+A stdlib package spec like `crypto = "github.com/AlexVachon/quirk-crypto@v1.0.0"`
+produced a lockfile entry keyed by the package's manifest name (`crypto`),
+but `--frozen` lookup used the URL basename (`quirk-crypto`). Result:
+every `pkg install --frozen` against a clean working tree failed with
+`'quirk-crypto' not in quirk.lock` even though the lockfile was correct.
+
+Fixed: the resolver now also builds a URL → lockfile-name map before
+the install loop and falls back to it whenever `preview_name(spec)`
+disagrees with what's actually in the lockfile. Same code path
+handles the dedup/conflict check, so two specs pointing at the same
+repo with different prefixes (e.g. one `crypto` alias and one full
+`github.com/.../quirk-crypto`) are treated as duplicates.
+
+Surfaced during a full audit of the 21 stdlib packages — round-trip
+install + use works for every package; the `--frozen` path was the
+only crack.
+
 ## [1.5.0] — 2026-06-03
 
 ### Full stdlib split — every package now has a canonical repo

@@ -2,6 +2,15 @@
 
 Language Server Protocol implementation for [Quirk](https://github.com/AlexVachon/quirk).
 
+## What's in v0.18 (compiler 1.7.3)
+
+Same as 0.17 plus:
+
+- **Document links** (`textDocument/documentLink`) — `use X` and
+  `from X use { … }` lines surface the module name as a clickable
+  hyperlink. Ctrl-click jumps to the resolved file. Resolution
+  goes through the same per-session cache as go-to-definition.
+
 ## What's in v0.17 (compiler 1.7.2)
 
 Same as 0.16 plus:

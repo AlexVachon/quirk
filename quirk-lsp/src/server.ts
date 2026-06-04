@@ -48,6 +48,8 @@ import {
   DocumentSymbol,
   DocumentSymbolParams,
   DocumentFormattingParams,
+  DocumentLink,
+  DocumentLinkParams,
   FoldingRange,
   FoldingRangeKind,
   FoldingRangeParams,
@@ -195,8 +197,9 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
       codeActionProvider: {
         codeActionKinds: [CodeActionKind.QuickFix],
       },
+      documentLinkProvider: { resolveProvider: false },
     },
-    serverInfo: { name: 'quirk-lsp', version: '0.17.0' },
+    serverInfo: { name: 'quirk-lsp', version: '0.18.0' },
   };
 });
 
@@ -1899,6 +1902,53 @@ connection.onCodeAction((params: CodeActionParams): CodeAction[] => {
     }
   }
   return actions;
+});
+
+// ──────────────────────────────────────────────────────────────────────
+// Document links (`textDocument/documentLink`)
+// ──────────────────────────────────────────────────────────────────────
+// Each `use X` / `from X use { … }` line gets a clickable link
+// targeting X's resolved file (`quirk resolve X` style). Editors
+// render these as hyperlinks (ctrl-click navigates). Resolution
+// uses the same per-session cache as go-to-definition so we don't
+// re-spawn the compiler per request.
+
+connection.onDocumentLinks((params: DocumentLinkParams): DocumentLink[] => {
+  const doc = documents.get(params.textDocument.uri);
+  if (!doc) return [];
+  const lines = doc.getText().split(/\r?\n/);
+  const out: DocumentLink[] = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    // Match `use X` or `from X use {…}` and recover the X span so
+    // the link range covers exactly the module name (not the
+    // whole line — a wider range would highlight too much in some
+    // editors).
+    let match = line.match(/^(\s*use\s+)([A-Za-z_][A-Za-z0-9_.]*)/);
+    let kind: 'use' | 'from' | null = null;
+    if (match) kind = 'use';
+    else {
+      match = line.match(/^(\s*from\s+)([A-Za-z_][A-Za-z0-9_.]*)/);
+      if (match) kind = 'from';
+    }
+    if (!match || !kind) continue;
+
+    const prefixLen = match[1].length;
+    const modName   = match[2];
+    const resolved  = resolveModule(modName);
+    if (!resolved) continue;
+
+    out.push({
+      range: {
+        start: { line: i, character: prefixLen },
+        end:   { line: i, character: prefixLen + modName.length },
+      },
+      target: pathToUri(resolved),
+      tooltip: `Open ${modName} (${path.basename(resolved)})`,
+    });
+  }
+  return out;
 });
 
 documents.listen(connection);

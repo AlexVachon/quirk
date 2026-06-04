@@ -5,6 +5,18 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [1.7.3] — 2026-06-04
+
+### `quirk-lsp` 0.18.0 — document links for imports
+
+`textDocument/documentLink` surfaces `use X` and `from X use { … }`
+lines as clickable hyperlinks. The link range covers just the module
+name; the target is the resolved file (`quirk resolve X`). Resolution
+goes through the per-session cache the LSP already maintains for
+go-to-definition, so links don't cost a fresh compiler spawn.
+
+Compiler binary byte-identical to 1.7.2 modulo the version constant.
+
 ## [1.7.2] — 2026-06-04
 
 ### "Did you mean … ?" diagnostics + LSP quick fixes

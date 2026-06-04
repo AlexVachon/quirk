@@ -82,6 +82,20 @@ interface QuirkDiag {
   col: number;    // 1-based, ditto
 }
 
+// Symbol-table NDJSON record emitted by `quirk --symbols-json`. Same
+// "extra keys are ignored" contract — additions on the C++ side are
+// backwards compatible. Each record represents ONE declaration site.
+interface QuirkSymbol {
+  kind: 'function' | 'method' | 'struct' | 'enum' | 'enumvariant'
+      | 'interface' | 'field' | 'parameter' | 'variable' | 'module_const';
+  name: string;
+  scope: string;          // "module", a struct name, or an enclosing function name
+  file: string;           // absolute path on disk
+  line: number;           // 1-based
+  col: number;            // 1-based
+  type?: string;          // present for params/vars/fields/functions where Sema knew the type
+}
+
 // Resolve the compiler binary in this order:
 //   1. `quirk.executablePath` workspace setting (when present)
 //   2. `QUIRK_BIN` env var (handy for monorepo dev loops)
@@ -133,7 +147,7 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
         triggerCharacters: ['.'],
       },
     },
-    serverInfo: { name: 'quirk-lsp', version: '0.7.0' },
+    serverInfo: { name: 'quirk-lsp', version: '0.8.0' },
   };
 });
 
@@ -243,8 +257,49 @@ function recordUri(p: string): string | null {
 // Trigger a check on open + save. Skipping on `didChangeContent` means
 // the LSP doesn't run the compiler on every keystroke — fast typists
 // would queue up many parallel compilations otherwise.
-documents.onDidOpen((e) => { void checkDocument(e.document); });
-documents.onDidSave((e) => { void checkDocument(e.document); });
+documents.onDidOpen((e) => { void checkDocument(e.document); void refreshSymbols(e.document); });
+documents.onDidSave((e) => { void checkDocument(e.document); void refreshSymbols(e.document); });
+documents.onDidClose((e) => { symbolCache.delete(e.document.uri); });
+
+// ──────────────────────────────────────────────────────────────────────
+// Symbol table cache (`quirk --symbols-json`)
+// ──────────────────────────────────────────────────────────────────────
+// The compiler walks the entire transitive-import graph for this dump,
+// so running it on every keystroke would be way too expensive. Instead
+// it runs once on `didOpen` + on every `didSave`; the cached result
+// feeds scope-aware completion (and, later, semantic rename).
+
+const symbolCache = new Map<string, QuirkSymbol[]>();
+
+async function refreshSymbols(document: TextDocument): Promise<void> {
+  const filePath = uriToPath(document.uri);
+  if (!filePath) return;
+
+  const child = spawn(quirkBinary, ['--symbols-json', filePath], {
+    cwd: path.dirname(filePath),
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let stdout = '';
+  child.stdout.on('data', (chunk) => { stdout += chunk.toString('utf8'); });
+  child.on('error', (err) => {
+    connection.console.warn(`quirk-lsp: --symbols-json spawn failed: ${err.message}`);
+  });
+
+  await new Promise<void>((resolve) => { child.on('close', () => resolve()); });
+
+  const records: QuirkSymbol[] = [];
+  for (const line of stdout.split('\n')) {
+    if (!line.trim()) continue;
+    try {
+      const rec = JSON.parse(line) as QuirkSymbol;
+      if (rec && rec.name && rec.kind) records.push(rec);
+    } catch {
+      // Diagnostics from a parse failure end up here too — silently
+      // drop. We only want symbol records on this channel.
+    }
+  }
+  symbolCache.set(document.uri, records);
+}
 
 // ──────────────────────────────────────────────────────────────────────
 // Document symbols (`textDocument/documentSymbol`)
@@ -947,6 +1002,51 @@ connection.onCompletion((params: CompletionParams): CompletionItem[] => {
   };
 
   for (const it of completionsFromDeclarations(text, 'this file')) push(it);
+
+  // Scope-aware additions from the cached symbol table — parameters
+  // and local variables of the function the cursor is in. The
+  // symbol table comes from `quirk --symbols-json` (refreshed on
+  // didOpen / didSave), so it's slightly stale between edits and a
+  // save; that's a fine trade for not re-running the compiler on
+  // every keystroke.
+  const filePath = uriToPath(params.textDocument.uri);
+  const symbols = symbolCache.get(params.textDocument.uri) ?? [];
+  if (filePath) {
+    // Identify the enclosing function: the latest "function" /
+    // "method" record whose declaration line is <= cursor line in
+    // the same file. Coarse — block scoping inside the function
+    // isn't tracked — but good enough to surface params + locals.
+    let enclosingScope: string | null = null;
+    let enclosingLine = -1;
+    for (const sym of symbols) {
+      if (sym.file !== filePath) continue;
+      if ((sym.kind === 'function' || sym.kind === 'method')
+          && sym.line - 1 <= params.position.line
+          && sym.line - 1 > enclosingLine) {
+        enclosingLine = sym.line - 1;
+        enclosingScope = sym.name;
+      }
+    }
+    if (enclosingScope !== null) {
+      for (const sym of symbols) {
+        if (sym.file !== filePath) continue;
+        if (sym.scope !== enclosingScope) continue;
+        if (sym.kind === 'parameter') {
+          push({
+            label: sym.name,
+            kind: CompletionItemKind.Variable,
+            detail: sym.type ? `param: ${sym.type}` : 'parameter',
+          });
+        } else if (sym.kind === 'variable') {
+          push({
+            label: sym.name,
+            kind: CompletionItemKind.Variable,
+            detail: sym.type ? `local: ${sym.type}` : 'local',
+          });
+        }
+      }
+    }
+  }
 
   const { byName } = scanImports(text);
   for (const [name, mod] of byName) {

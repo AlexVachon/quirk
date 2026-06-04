@@ -71,6 +71,12 @@ struct CompilerOptions {
     // --debug: pause execution at every Quirk statement and drop into the
     // interactive qdb prompt. Forces optLevel = 0 so line boundaries survive.
     bool debugMode    = false;
+    // --symbols-json: dump the AST's declaration set as NDJSON to
+    // stdout instead of running. One record per top-level definition,
+    // method, field, parameter, variable, or enum variant. Designed
+    // for the LSP's scope-aware features (completion, future semantic
+    // rename). Implies --check (compile through Sema, no codegen / run).
+    bool symbolsJson  = false;
     // --no-cache: skip the per-invocation bitcode cache. The cache lives
     // at $HOME/.quirk/cache/<sha256>.bc and stores the post-optimisation
     // LLVM IR for a given (input file, compiler version, opt level)
@@ -568,6 +574,11 @@ void printUsage() {
         "  --emit-ir                 Write LLVM IR to <basename>.ll\n"
         "  --emit-ast                Write AST dump to <basename>.ast.log\n"
         "  --no-cache                Skip the ~/.quirk/cache/ bitcode cache\n"
+        "  --symbols-json            Walk the AST and emit one NDJSON record\n"
+        "                            per declaration (function, method, struct,\n"
+        "                            field, variable, parameter, enum variant).\n"
+        "                            Implies --check. Used by the LSP for\n"
+        "                            scope-aware completion + future rename.\n"
         "  -v                        Verbose compiler output\n"
         "\n"
         "ENVIRONMENT\n"
@@ -836,6 +847,154 @@ static int runJITModule(std::unique_ptr<llvm::Module> module,
 }
 
 // ==========================================================
+//  SYMBOL TABLE DUMP  (--symbols-json)
+// ==========================================================
+//
+// Walks the analyzed AST and emits one NDJSON record per declaration
+// to stdout. Designed for the LSP — scope-aware completion needs to
+// know what names are in scope at any given file:line, and a future
+// semantic-rename pass needs the canonical decl site for each symbol.
+//
+// Record shape (extra keys ignored by consumers):
+//   {"kind":"function","name":"greet","scope":"module",
+//    "file":"/abs/path.quirk","line":3,"col":8,"type":"String"}
+//
+// `scope` is the enclosing context:
+//   - "module" for top-level decls
+//   - "<struct_name>" for fields and methods
+//   - "<function_name>" for parameters and local variables
+// Nested scopes (closures, lambdas) inherit their parent function's
+// name today — finer-grained scope tracking can layer on later.
+
+static std::string symJsonEscape(const std::string& s) {
+    std::string out; out.reserve(s.size() + 4);
+    for (char c : s) {
+        switch (c) {
+            case '"':  out += "\\\""; break;
+            case '\\': out += "\\\\"; break;
+            case '\n': out += "\\n";  break;
+            case '\r': out += "\\r";  break;
+            case '\t': out += "\\t";  break;
+            default:
+                if (static_cast<unsigned char>(c) < 0x20) {
+                    char buf[8];
+                    std::snprintf(buf, sizeof(buf), "\\u%04x", c);
+                    out += buf;
+                } else out += c;
+        }
+    }
+    return out;
+}
+
+static void emitSymbol(const char* kind, const std::string& name,
+                       const std::string& scope, const std::string& file,
+                       int line, int col, const std::string& type = "") {
+    std::cout << "{\"kind\":\""  << kind
+              << "\",\"name\":\""  << symJsonEscape(name)
+              << "\",\"scope\":\"" << symJsonEscape(scope)
+              << "\",\"file\":\""  << symJsonEscape(file)
+              << "\",\"line\":"    << line
+              << ",\"col\":"       << col;
+    if (!type.empty())
+        std::cout << ",\"type\":\""  << symJsonEscape(type) << "\"";
+    std::cout << "}\n";
+}
+
+// Walk a function/method body looking for variable declarations. The
+// existing AST already carries line/col on every node, so we just
+// inspect the LHS of each VarDeclNode for a bare identifier (the
+// common `x := value` shape). Destructuring (`(a, b) := tuple`) is
+// rare today and can be folded in later.
+static void emitBodyVariables(const std::vector<std::unique_ptr<Node>>& body,
+                              const std::string& scope) {
+    for (auto& stmt : body) {
+        if (auto vd = dynamic_cast<VarDeclNode*>(stmt.get())) {
+            if (auto* lit = dynamic_cast<LiteralNode*>(vd->lhs.get())) {
+                emitSymbol("variable", lit->value, scope,
+                           vd->filePath, vd->line, vd->col,
+                           vd->typeAnnotation);
+            }
+        }
+        // Could recurse into IfNode / WhileNode / ForNode bodies for
+        // block-scoped declarations. Skipped for the first cut to keep
+        // the LSP's scope model simple (function-level granularity).
+    }
+}
+
+static void emitSymbols(const std::vector<std::unique_ptr<Node>>& ast) {
+    for (auto& node : ast) {
+        if (auto fn = dynamic_cast<FunctionNode*>(node.get())) {
+            if (fn->isExtern) continue;     // external decls: declared, not defined here
+            // Top-level functions have empty `cls`; methods carry their
+            // owning struct's name. Use that to pick "function" vs
+            // "method" + the right scope.
+            const bool isMethod = !fn->cls.empty();
+            // The parser mangles method names as `<Struct>_<raw>` (or
+            // `<Struct>__init` for constructors) so codegen can emit
+            // them as flat LLVM symbols. The LSP needs the *raw* name
+            // — that's what users type in `obj.<raw>(...)`. Demangle
+            // by stripping the cls prefix where we recognise it.
+            std::string displayName = fn->name;
+            if (isMethod) {
+                if (fn->name == fn->cls + "__init") displayName = "__init";
+                else if (fn->name.rfind(fn->cls + "_", 0) == 0)
+                    displayName = fn->name.substr(fn->cls.size() + 1);
+            }
+            emitSymbol(isMethod ? "method" : "function",
+                       displayName,
+                       isMethod ? fn->cls : std::string("module"),
+                       fn->filePath, fn->line, fn->col,
+                       fn->returnType);
+            // Parameters: scope is the function's own name. Use the
+            // *display* name for methods so the LSP can attach params
+            // to the right outline node (`Point.norm`'s `self`).
+            const std::string& paramScope = isMethod ? displayName : fn->name;
+            for (const auto& p : fn->parameters) {
+                emitSymbol("parameter", p.name, paramScope,
+                           fn->filePath, fn->line, fn->col, p.type);
+            }
+            emitBodyVariables(fn->body, paramScope);
+        }
+        else if (auto sn = dynamic_cast<StructNode*>(node.get())) {
+            emitSymbol("struct", sn->name, "module",
+                       sn->filePath, sn->line, sn->col);
+            for (const auto& f : sn->fields) {
+                emitSymbol("field", f.name, sn->name,
+                           sn->filePath, sn->line, sn->col, f.type);
+            }
+            // Methods are emitted as top-level FunctionNodes whose
+            // `cls` matches `sn->name` — they get picked up in the
+            // FunctionNode branch above. No duplicate emission here.
+        }
+        else if (auto en = dynamic_cast<EnumNode*>(node.get())) {
+            emitSymbol("enum", en->name, "module",
+                       en->filePath, en->line, en->col);
+            for (const auto& v : en->variants) {
+                emitSymbol("enumvariant", v, en->name,
+                           en->filePath, en->line, en->col);
+            }
+        }
+        else if (auto in = dynamic_cast<InterfaceNode*>(node.get())) {
+            emitSymbol("interface", in->name, "module",
+                       in->filePath, in->line, in->col);
+            for (const auto& m : in->methods) {
+                emitSymbol("method", m->name, in->name,
+                           m->filePath, m->line, m->col, m->returnType);
+            }
+        }
+        else if (auto vd = dynamic_cast<VarDeclNode*>(node.get())) {
+            // Top-level `NAME := value` — module-level constant.
+            if (auto* lit = dynamic_cast<LiteralNode*>(vd->lhs.get())) {
+                emitSymbol("module_const", lit->value, "module",
+                           vd->filePath, vd->line, vd->col,
+                           vd->typeAnnotation);
+            }
+        }
+    }
+    std::cout.flush();
+}
+
+// ==========================================================
 //  MAIN
 // ==========================================================
 
@@ -894,6 +1053,17 @@ int main(int argc, char* argv[]) {
             // instead of silently short-circuiting on a stale hit.
             g_diagnostics_json = true;
             opts.useCache = false;
+        }
+        else if (arg == "--symbols-json") {
+            // Symbol-table dump for tooling. Implies --check so we
+            // don't pay the codegen cost; runs through Sema, then
+            // walks the AST and emits NDJSON. Bitcode cache off for
+            // the same reason as --diagnostics-json.
+            opts.symbolsJson  = true;
+            opts.checkOnly    = true;
+            opts.runImmediate = false;
+            g_diagnostics_json = true;     // route any errors to NDJSON too
+            opts.useCache     = false;
         }
         else if (arg == "-o") {
             if (++i >= argc) { std::cerr << "Error: -o requires a filename\n"; return 1; }
@@ -1010,6 +1180,10 @@ int main(int argc, char* argv[]) {
     }
 
     if (opts.checkOnly) {
+        // --symbols-json runs through --check too. Sema's results are
+        // recorded in node properties, so walking the AST here is
+        // enough to produce the symbol table.
+        if (opts.symbolsJson) emitSymbols(ast);
         // In JSON mode the LSP infers "no errors" from an empty stdout —
         // skip the human-readable confirmation. Exit code 0 still means
         // success; the LSP looks at that, not at any banner.

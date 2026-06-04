@@ -5,6 +5,30 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [1.6.7] — 2026-06-03
+
+### `quirk --symbols-json` + scope-aware LSP completion
+
+- **New `--symbols-json` flag.** Walks the AST after Sema and emits
+  one NDJSON record per declaration: functions, methods (demangled
+  from `<Struct>_<raw>` to `<raw>`), structs, fields, enums, enum
+  variants, interfaces, parameters, local variables, module
+  constants. Each record carries `kind`, `name`, `scope` (`"module"`
+  / struct-name / enclosing-function-name), `file`, `line`, `col`,
+  and `type` where Sema knows one. Implies `--check`.
+- **`quirk-lsp` 0.8.0** runs `--symbols-json` on `didOpen` + every
+  `didSave` and caches the records per-document. Completion now
+  surfaces the parameters and local variables of the function the
+  cursor is in, alongside the existing identifier / keyword /
+  member-access suggestions. Detect the enclosing function by
+  picking the latest `function`/`method` record whose line is at or
+  above the cursor; coarse but matches Quirk's column-0
+  decl convention well enough for the common case.
+
+This unlocks two future features without further compiler work:
+*signature help* (use the parameter records of the function being
+called) and (with usage tracking added) *semantic rename*.
+
 ## [1.6.6] — 2026-06-03
 
 ### `quirk-lsp` 0.7.0 — completion

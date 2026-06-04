@@ -2,21 +2,29 @@
 
 Language Server Protocol implementation for [Quirk](https://github.com/AlexVachon/quirk).
 
-## What's in v0.7 (compiler 1.6.6)
+## What's in v0.8 (compiler 1.6.7)
 
 - **Diagnostics** on open + save via `quirk --check --diagnostics-json`.
 - **Document symbols**, **Formatting**, **Go-to-definition** (same
   file + cross-file), **Find references**, **Hover**.
-- **Completion** (`textDocument/completion`) — two modes:
-  - **Identifier completion** suggests current-file declarations,
-    imported names, Quirk keywords, and the builtin types.
-  - **Member access completion** triggers on `.` — after a known
-    imported module (e.g. `argparse.`), the LSP reads that module's
-    file and offers its top-level declarations.
+- **Completion** (`textDocument/completion`) — three modes:
+  - **Scope-aware identifier completion** — current-file declarations,
+    plus the *parameters and local variables* of the function the
+    cursor is in (pulled from `quirk --symbols-json` and cached
+    per-document).
+  - **Imported names** from `from X use { Y, Z }` blocks.
+  - **Member access** (triggered by `.`) — after a known imported
+    module, the LSP reads its file and offers its top-level decls.
 - **Lifecycle** — `initialize`, `shutdown`, `exit`, document open/save/close.
 
-Coming later in 1.6.x: signature help, semantic-aware rename. The
-VSCode extension keeps its in-process providers for those.
+The symbol cache refreshes on `didOpen` + `didSave`. Between saves,
+local-variable suggestions are computed against the on-disk state —
+fine for typical edit loops; just save when you've added new locals
+you want to complete against.
+
+Coming later in 1.6.x: signature help, semantic-aware rename (needs
+usage tracking in the compiler too). The VSCode extension keeps its
+in-process providers for those.
 
 ## Install
 

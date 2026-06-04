@@ -2,25 +2,21 @@
 
 Language Server Protocol implementation for [Quirk](https://github.com/AlexVachon/quirk).
 
-## What's in v0.6 (compiler 1.6.5)
+## What's in v0.7 (compiler 1.6.6)
 
 - **Diagnostics** on open + save via `quirk --check --diagnostics-json`.
-- **Document symbols** (`textDocument/documentSymbol`) — outline,
-  breadcrumbs, `@` symbol picker.
-- **Formatting** (`textDocument/formatting`) — shells out to
-  `quirk fmt --stdout`.
-- **Go-to-definition** (`textDocument/definition`) — same-file decls
-  *and* cross-file via `quirk resolve <name>`.
-- **Find references** (`textDocument/references`) — workspace-wide
-  word-boundary search; respects `includeDeclaration`.
-- **Hover** (`textDocument/hover`) — signature line in a fenced
-  `quirk` code block, plus the preceding `---` or `// ...` docstring
-  as markdown. Same-file decls first, then cross-file via the
-  resolver. Cross-file hover shows the source file as a footer.
+- **Document symbols**, **Formatting**, **Go-to-definition** (same
+  file + cross-file), **Find references**, **Hover**.
+- **Completion** (`textDocument/completion`) — two modes:
+  - **Identifier completion** suggests current-file declarations,
+    imported names, Quirk keywords, and the builtin types.
+  - **Member access completion** triggers on `.` — after a known
+    imported module (e.g. `argparse.`), the LSP reads that module's
+    file and offers its top-level declarations.
 - **Lifecycle** — `initialize`, `shutdown`, `exit`, document open/save/close.
 
-Coming later in 1.6.x: completion, signature help, semantic-aware
-rename. The VSCode extension keeps its in-process providers for those.
+Coming later in 1.6.x: signature help, semantic-aware rename. The
+VSCode extension keeps its in-process providers for those.
 
 ## Install
 

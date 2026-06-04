@@ -5,6 +5,31 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [1.6.6] — 2026-06-03
+
+### `quirk-lsp` 0.7.0 — completion
+
+`textDocument/completion` adds two modes:
+
+- **Identifier completion** (fires automatically as you type) merges:
+  - Top-level declarations in the current file (functions, structs,
+    enums, interfaces)
+  - Names brought in via `from X use { Y, Z }` blocks
+  - Quirk keywords (`define`, `struct`, `if`, `match`, …)
+  - Builtin types (`String`, `Int`, `List`, `Map`, exception kinds, …)
+- **Member access** (triggered by `.`) — when the LHS is a known
+  imported module, the LSP reads that module's file and offers its
+  top-level declarations. Typing `argparse.` after `use argparse`
+  surfaces `Parser`, `flag`, `option`, etc.
+
+Like the rest of `quirk-lsp`, the suggestions are regex/text-based
+— no scope tracking, no type inference. False positives (e.g. a
+parameter name surviving past its function) are sorted by the
+editor's fuzzy match as the user types.
+
+Compiler binary is byte-identical to 1.6.5 modulo the version
+constant — this release is `quirk-lsp` only.
+
 ## [1.6.5] — 2026-06-03
 
 ### `quirk-lsp` 0.6.0 — hover

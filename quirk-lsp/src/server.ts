@@ -25,6 +25,9 @@ import {
   TextDocuments,
   Diagnostic,
   DiagnosticSeverity,
+  CompletionItem,
+  CompletionItemKind,
+  CompletionParams,
   DefinitionParams,
   DocumentSymbol,
   DocumentSymbolParams,
@@ -124,8 +127,13 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
       definitionProvider: true,
       referencesProvider: true,
       hoverProvider: true,
+      completionProvider: {
+        // `.` triggers member-access completion (`foo.<cursor>`);
+        // identifier completion fires automatically as the user types.
+        triggerCharacters: ['.'],
+      },
     },
-    serverInfo: { name: 'quirk-lsp', version: '0.6.0' },
+    serverInfo: { name: 'quirk-lsp', version: '0.7.0' },
   };
 });
 
@@ -823,6 +831,136 @@ connection.onHover((params: HoverParams): Hover | null => {
     }
   }
   return null;
+});
+
+// ──────────────────────────────────────────────────────────────────────
+// Completion (`textDocument/completion`)
+// ──────────────────────────────────────────────────────────────────────
+// Two completion modes:
+//   1. Plain identifier — suggest current-file top-level decls,
+//      imported names from the file's `from X use {...}` block, and
+//      Quirk keywords + a small builtin set.
+//   2. After `.` (member access) — if the LHS is a known imported
+//      module, suggest the top-level decls of that module's file.
+//
+// Like every other LSP feature here, this is regex/text based — no
+// scope tracking, no type inference. Suggestions can include things
+// that won't actually resolve in the current scope; the user filters
+// them by continuing to type.
+
+const QUIRK_KEYWORDS = [
+  'define', 'struct', 'enum', 'interface', 'extern', 'use', 'from',
+  'if', 'else', 'elif', 'while', 'for', 'in', 'return', 'break',
+  'continue', 'with', 'as', 'try', 'catch', 'throw', 'finally',
+  'and', 'or', 'not', 'is', 'where', 'match', 'case', 'super',
+  'true', 'false', 'null', 'fn', 'nonlocal', 'global', 'self',
+];
+
+const QUIRK_BUILTINS = [
+  'print', 'printf', 'type', 'String', 'Int', 'Double', 'Bool',
+  'Any', 'void', 'List', 'Map', 'Set', 'Queue', 'Tuple', 'Callable',
+  'Exception', 'TypeError', 'ValueError', 'IndexError', 'KeyError',
+  'IOError', 'RuntimeError', 'NotImplementedError', 'AssertionError',
+];
+
+// Build a completion item set from declaration scans in `text`. Used
+// for both same-file and imported-file completions; the `detail` tag
+// shows the kind so the editor's completion popup is informative.
+function completionsFromDeclarations(text: string, detail: string): CompletionItem[] {
+  const lines = text.split(/\r?\n/);
+  const out: CompletionItem[] = [];
+  const seen = new Set<string>();
+  for (let i = 0; i < lines.length; i++) {
+    for (const { re, nameGroup } of DECL_PATTERNS) {
+      const m = lines[i].match(re);
+      if (m) {
+        const name = m[nameGroup];
+        if (seen.has(name)) continue;
+        seen.add(name);
+        // Map the keyword to an LSP CompletionItemKind. `define` could
+        // be either a function or a method — without scope info we
+        // assume Function; the user sees "method" naming in struct
+        // bodies regardless.
+        const kw = (lines[i].trimStart().split(/\s+/)[0] ?? 'define') as 'define' | 'struct' | 'enum' | 'interface';
+        const kind = kw === 'struct'
+          ? CompletionItemKind.Struct
+          : kw === 'enum'
+          ? CompletionItemKind.Enum
+          : kw === 'interface'
+          ? CompletionItemKind.Interface
+          : CompletionItemKind.Function;
+        out.push({ label: name, kind, detail });
+        break;
+      }
+    }
+  }
+  return out;
+}
+
+// Inspect the text just before `position` to decide whether we're
+// completing after a `.` (member access) and, if so, what the LHS
+// looked like.
+function memberAccessLhs(line: string, character: number): string | null {
+  // Walk left from the cursor over identifier chars + dots until we
+  // hit something else. `foo.bar.<cursor>` → returns "foo.bar".
+  let end = character;
+  if (end <= 0) return null;
+  // Scan past the optional partial word to the right of the dot.
+  while (end > 0 && /[A-Za-z0-9_]/.test(line[end - 1])) end--;
+  if (end === 0 || line[end - 1] !== '.') return null;
+  let start = end - 1;
+  while (start > 0 && /[A-Za-z0-9_.]/.test(line[start - 1])) start--;
+  return line.slice(start, end - 1);    // strip the trailing dot
+}
+
+connection.onCompletion((params: CompletionParams): CompletionItem[] => {
+  const doc = documents.get(params.textDocument.uri);
+  if (!doc) return [];
+  const text = doc.getText();
+  const docLines = text.split(/\r?\n/);
+  const lineText = docLines[params.position.line] ?? '';
+
+  // Member access — `<module>.` → suggest decls in that module's file.
+  const lhs = memberAccessLhs(lineText, params.position.character);
+  if (lhs) {
+    const { byName, modules } = scanImports(text);
+    const moduleHit = byName.get(lhs) ?? (modules.has(lhs) ? lhs : null);
+    if (!moduleHit) return [];
+    const resolved = resolveModule(moduleHit);
+    if (!resolved) return [];
+    try {
+      const moduleText = fs.readFileSync(resolved, 'utf8');
+      return completionsFromDeclarations(moduleText, `from ${path.basename(resolved)}`);
+    } catch { return []; }
+  }
+
+  // Identifier completion. Merge:
+  //  - current-file declarations
+  //  - imported names (from `from X use {Y, Z}`)
+  //  - keywords + builtin types
+  const items: CompletionItem[] = [];
+  const seen = new Set<string>();
+  const push = (it: CompletionItem) => {
+    if (seen.has(it.label)) return;
+    seen.add(it.label);
+    items.push(it);
+  };
+
+  for (const it of completionsFromDeclarations(text, 'this file')) push(it);
+
+  const { byName } = scanImports(text);
+  for (const [name, mod] of byName) {
+    push({ label: name, kind: CompletionItemKind.Reference, detail: `from ${mod}` });
+  }
+
+  for (const kw of QUIRK_KEYWORDS) {
+    push({ label: kw, kind: CompletionItemKind.Keyword });
+  }
+  for (const bn of QUIRK_BUILTINS) {
+    push({ label: bn, kind: CompletionItemKind.Class, detail: 'builtin' });
+  }
+
+  return items;
 });
 
 documents.listen(connection);

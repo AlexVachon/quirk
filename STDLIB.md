@@ -2,7 +2,7 @@
 
 Every module shipped with the compiler. Already importable — no install
 needed. To see methods on a builtin type (`String`, `List`, `Map`, etc.),
-peek at [`libs/typing/`](quirk-compiler/libs/typing/).
+peek at [`packages/typing/`](quirk-compiler/packages/typing/).
 
 ## Quick reference
 
@@ -45,7 +45,7 @@ m := {"a": 1, "b": 2}
 for (k, v) in m { print(k, "=", v) }
 ```
 
-See [`libs/typing/`](quirk-compiler/libs/typing/) for every method.
+See [`packages/typing/`](quirk-compiler/packages/typing/) for every method.
 
 ---
 

@@ -5,6 +5,34 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [2.0.3] — 2026-06-04
+
+### Dead-code sweep
+
+A focused scan turned up almost nothing — every static function is
+called, no commented-out blocks, no leftover code from reverted
+experiments (bit-48 boxing in particular was confirmed gone). What
+did surface:
+
+- `test_output.txt` was tracked at the repo root. The
+  `sys_test.quirk` test writes a relative `test_output.txt` from
+  whichever directory it runs in, so both `/test_output.txt` and
+  `quirk-compiler/test_output.txt` are accidental commits. Removed
+  the tracked copy; gitignore now covers both paths.
+- `STDLIB.md` linked to `quirk-compiler/libs/typing/` — the v1.0.7
+  layout that 1.0.8's `libs/` → `packages/` rename obsoleted.
+  Updated to `quirk-compiler/packages/typing/`.
+
+What was scanned but kept as intentional:
+- `libs/` fallback paths in the compiler's import resolver
+  (documented backwards-compat for pre-1.0.8 installs).
+- `REPLACE_ME` OAuth client_id placeholder (tracked, waiting on the
+  user to register the GitHub OAuth App).
+- The bitcode-cache LRU-eviction TODO (non-blocking; old entries
+  are stale-safe, just take disk space).
+
+Compiler binary byte-identical to 2.0.2.
+
 ## [2.0.2] — 2026-06-04
 
 ### Stdlib no longer ships in the compiler repo

@@ -1153,6 +1153,23 @@ std::string Sema::checkMemberAccess(MemberAccessNode *node)
     return type;
 }
 
+void Sema::checkInitArgTypes(const std::string& name, FunctionNode* init,
+                              const std::vector<std::string>& argTypes,
+                              int line, int col, const std::string& filePath) {
+    for (size_t i = 0; i < argTypes.size() && i < init->parameters.size(); ++i) {
+        const auto& param = init->parameters[i];
+        if (param.isVariadic) break;
+        const std::string& paramType = param.type;
+        const std::string& argType   = argTypes[i];
+        if (paramType.empty()) continue;       // untyped param — accept anything
+        if (argType.empty()) continue;         // unknown arg type — defer
+        if (isCompatibleTypes(paramType, argType)) continue;
+        fatalError("argument " + std::to_string(i + 1) + " of " + name +
+                   "() expected '" + paramType + "' but got '" + argType + "'",
+                   line, col, filePath);
+    }
+}
+
 void Sema::checkInitArgCount(const std::string& name, FunctionNode* init,
                               int provided, int line, int col, const std::string& filePath) {
     int required = 0, total = 0;
@@ -1180,8 +1197,14 @@ std::string Sema::checkConstructor(ConstructorNode *node)
     std::string initName = node->structName + "__init";
     if (methodRegistry.count(node->structName) &&
         methodRegistry[node->structName].count(initName)) {
-        checkInitArgCount(node->structName, methodRegistry[node->structName][initName],
+        FunctionNode* init = methodRegistry[node->structName][initName];
+        checkInitArgCount(node->structName, init,
                           (int)node->args.size(), node->line, node->col, node->filePath);
+        std::vector<std::string> argTypes;
+        argTypes.reserve(node->args.size());
+        for (auto& a : node->args) argTypes.push_back(checkExpression(a.value.get()));
+        checkInitArgTypes(node->structName, init, argTypes,
+                          node->line, node->col, node->filePath);
     }
 
     return node->structName;
@@ -1200,8 +1223,12 @@ std::string Sema::checkCall(CallNode *node)
             return structRegistry[currentClass]->parents[0];
         }
 
-        // Always check all argument expressions so variables inside them are marked used
-        for (auto& a : node->args) checkExpression(a.value.get());
+        // Always check all argument expressions so variables inside them
+        // are marked used. Collect the resulting types so positional ctor
+        // calls below can validate each arg against the matching param.
+        std::vector<std::string> argTypes;
+        argTypes.reserve(node->args.size());
+        for (auto& a : node->args) argTypes.push_back(checkExpression(a.value.get()));
 
         // Positional constructor call: Foo(...) where Foo is a known struct.
         // Validate argument count against __init (self already stripped by parser).
@@ -1209,8 +1236,11 @@ std::string Sema::checkCall(CallNode *node)
             std::string initName = l->value + "__init";
             if (methodRegistry.count(l->value) &&
                 methodRegistry[l->value].count(initName)) {
-                checkInitArgCount(l->value, methodRegistry[l->value][initName],
+                FunctionNode* init = methodRegistry[l->value][initName];
+                checkInitArgCount(l->value, init,
                                   (int)node->args.size(), node->line, node->col, node->filePath);
+                checkInitArgTypes(l->value, init, argTypes,
+                                  node->line, node->col, node->filePath);
             }
             return l->value;
         }
@@ -1249,6 +1279,19 @@ std::string Sema::checkCall(CallNode *node)
 
             // Calling a Callable variable or a generic-param value — return Any
             if (vtype == "Callable" || isGenericParam(vtype)) return "Any";
+
+            // Pass 1 freezes the scope binding to whatever returnType was
+            // parsed (or the FunctionNode default "void" when no `-> T`).
+            // Pass 2 later infers the real return type from `return`
+            // statements and writes it back to the FunctionNode, but the
+            // scope binding is never updated. Prefer the live registry
+            // entry so callers see e.g. "String" for an inferred-return
+            // function whose body returns a String.
+            auto fnIt = methodRegistry[""].find(l->value);
+            if (fnIt != methodRegistry[""].end()) {
+                const std::string& ret = fnIt->second->returnType;
+                return (ret.empty() || ret == "auto") ? std::string("void") : ret;
+            }
             return vtype;
         }
     }

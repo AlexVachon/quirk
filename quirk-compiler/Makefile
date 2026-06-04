@@ -129,7 +129,7 @@ STDLIB_TAG   ?= v1.0.0
 # Per-package tag override. Set when a package has its own version
 # that doesn't match the global STDLIB_TAG (e.g. `prompt` was
 # renamed from `ask` and ships v1.0.1 with the rename baked in).
-STDLIB_TAG_prompt ?= v1.0.1
+STDLIB_TAG_prompt ?= v1.0.2
 
 bootstrap-stdlib:
 	@mkdir -p packages

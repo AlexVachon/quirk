@@ -96,6 +96,15 @@ class Sema {
     std::vector<std::string> suggestNames(const std::string& query, size_t maxN = 3);
     void checkInitArgCount(const std::string& name, FunctionNode* init,
                            int provided, int line, int col, const std::string& filePath);
+    // Type-check each positional arg against the corresponding init param.
+    // Catches things like `User(name, age_string, gender_string)` where
+    // age/gender are declared `Int`/`Gender` — without this, the mismatch
+    // falls through to Codegen and surfaces as a malformed-IR crash.
+    // `argTypes` is pre-resolved via checkExpression so the caller can use
+    // either CallNode::Arg or ConstructorArg without templating.
+    void checkInitArgTypes(const std::string& name, FunctionNode* init,
+                           const std::vector<std::string>& argTypes,
+                           int line, int col, const std::string& filePath);
 
     // --- NEW: Per-Module Visibility Map ---
     std::map<std::string, VisibilityContext> moduleVisibility;

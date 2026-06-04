@@ -5,6 +5,72 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [2.2.2] — 2026-06-04
+
+### Better diagnostics + `return null` actually returns null
+
+Three follow-on fixes after 2.2.1 — all surfaced while a user wrote a
+program against the new `prompt` package.
+
+#### Sema: type-check positional struct constructors
+
+Calling `User(name, age, gender)` with the wrong arg types used to
+fall through Sema and surface as `Internal compiler error: malformed
+IR` at codegen. Now Sema reports it cleanly:
+
+```
+[ERROR] argument 2 of User() expected 'Int' but got 'String'
+ --> main.quirk:37:17
+```
+
+Wired into both `ConstructorNode` (named-field form) and `CallNode`
+when the literal callee resolves to a known struct. The check piggybacks
+on the existing `isCompatibleTypes` helper, so the rules match
+ordinary method-arg checking (Any/Null/enum widening all preserved).
+
+#### Sema: live return-type lookup for inferred-return functions
+
+Pass 1 freezes each function's scope binding to whatever return type
+was parsed (the FunctionNode default is `"void"` when no `-> T`).
+Pass 2 later infers the real return type from `return` statements
+and writes it back to the FunctionNode, but the **scope binding was
+never updated**. So at the call site, `name := infer_returning_fn()`
+saw `name: void` even though the function actually returned `String`,
+breaking the new struct-ctor type check (and quietly degrading every
+other arg-type check that relied on `vtype`).
+
+Fix in `checkCall`: when the callee is a literal naming a registered
+function, read `methodRegistry[""][name]->returnType` instead of the
+stale scope binding. The FunctionNode is the source of truth; the
+scope binding is now just a fallback for non-function values.
+
+#### Codegen: `return null` no longer becomes the literal string `"null"`
+
+The 2.2.1 return-unbox fix routed `i8* → String*` returns through
+`quirk_opaque_to_string`. That helper translates a null pointer to
+`make_String("null")` — the 4-char string `"null"` — which is right
+for stringification contexts (`print(null)`) but wrong for actual
+returns: `define try() -> String? { return null }` made the caller
+see a non-null `"null"` string and silently miss the `case null` arm.
+
+Fix in the ReturnNode handler: check `isa<ConstantPointerNull>`
+**before** the String-unbox branch. Null propagates as a null pointer
+cast to the expected struct type; non-null `i8*` values still route
+through `quirk_opaque_to_string` as before.
+
+#### Stdlib: `prompt.input_optional`
+
+Pairs with the null-return fix. Returns `String?` — `null` on empty
+reply, `String` otherwise. Bundled as `quirk-prompt@v1.0.2`.
+
+```quirk
+name := prompt.input_optional("Your name")
+match name {
+    case null => print("(skipped)")
+    case _    => print("hi, " + name)
+}
+```
+
 ## [2.2.1] — 2026-06-04
 
 ### Two boxing/scoping bugs fixed — `ask` is now `prompt`

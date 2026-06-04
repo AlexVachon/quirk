@@ -2387,7 +2387,15 @@ class LLVMCodegen {
                         StructType* st = cast<StructType>(expectedType->getPointerElementType());
                         std::string sName = st->getName().str();
                         if (sName.find("struct.") == 0) sName = sName.substr(7);
-                        if (sName == "String") {
+                        // Check for `return null` BEFORE the String unbox
+                        // branch — otherwise quirk_opaque_to_string(null)
+                        // produces the literal string "null", which makes
+                        // `case null` arms at the call site silently miss.
+                        // Nullable returns (`-> String?`, `-> User?`, etc.)
+                        // need to propagate the null pointer as-is.
+                        if (isa<ConstantPointerNull>(retVal)) {
+                            retVal = ConstantPointerNull::get(cast<PointerType>(expectedType));
+                        } else if (sName == "String") {
                             // The i8* here is a boxed value coming back from a
                             // void*-returning callsite (List.get, Map.get, an
                             // Any-typed Callable invocation, etc). It may be a
@@ -2404,10 +2412,6 @@ class LLVMCodegen {
                                 opaqueToStr = Function::Create(ft, Function::ExternalLinkage, "quirk_opaque_to_string", TheModule.get());
                             }
                             retVal = Builder.CreateCall(opaqueToStr, {retVal}, "ret_unbox_str");
-                        } else if (isa<ConstantPointerNull>(retVal)) {
-                            // `return null` from a struct-returning function:
-                            // bitcast the null to the expected struct pointer.
-                            retVal = ConstantPointerNull::get(cast<PointerType>(expectedType));
                         } else if (sName != "Callable") {
                             // i8* (boxed) → struct*: bitcast (Callable handled
                             // by the boxToVoidPtr branch below for symmetry).

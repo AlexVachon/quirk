@@ -2,6 +2,16 @@
 
 Language Server Protocol implementation for [Quirk](https://github.com/AlexVachon/quirk).
 
+## What's in v0.12 (compiler 1.6.11)
+
+Same as 0.11 plus:
+
+- **Folding ranges** (`textDocument/foldingRange`) — collapsible
+  regions for: function bodies, struct/enum/interface bodies, `if`
+  / `else` / `while` / `for` blocks, multi-line `from X use { … }`
+  imports, `---` doc-block fences, and runs of `// …` line comments.
+  Brace-balanced scan; no compiler call needed.
+
 ## What's in v0.11 (compiler 1.6.10)
 
 Same as 0.10 plus:

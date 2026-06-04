@@ -36,6 +36,9 @@ import {
   DocumentSymbol,
   DocumentSymbolParams,
   DocumentFormattingParams,
+  FoldingRange,
+  FoldingRangeKind,
+  FoldingRangeParams,
   Hover,
   HoverParams,
   Location,
@@ -161,8 +164,9 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
       },
       workspaceSymbolProvider: true,
       renameProvider: { prepareProvider: true },
+      foldingRangeProvider: true,
     },
-    serverInfo: { name: 'quirk-lsp', version: '0.11.0' },
+    serverInfo: { name: 'quirk-lsp', version: '0.12.0' },
   };
 });
 
@@ -1366,6 +1370,101 @@ connection.onRenameRequest((params: RenameParams): WorkspaceEdit | null => {
     });
   }
   return { changes };
+});
+
+// ──────────────────────────────────────────────────────────────────────
+// Folding ranges (`textDocument/foldingRange`)
+// ──────────────────────────────────────────────────────────────────────
+// Brace-balanced scan over the buffer. Anywhere `{` opens at end-of-
+// line and the matching `}` lives on a later line, we emit a fold.
+// Also folds:
+//   - Multi-line `---` doc blocks (collapse the body to a single line).
+//   - Multi-line `from X use { … }` import lists.
+//   - Consecutive `// …` comment runs (collapse the whole comment).
+//
+// The implementation is shallow on purpose — string and char literals
+// containing braces could in theory throw off the brace stack. Quirk
+// has no multi-line string literals, so a `{` inside `"…"` only
+// matters if it appears at end-of-line, which is rare enough to
+// punt on for v0.12.
+
+connection.onFoldingRanges((params: FoldingRangeParams): FoldingRange[] => {
+  const doc = documents.get(params.textDocument.uri);
+  if (!doc) return [];
+  const lines = doc.getText().split(/\r?\n/);
+  const out: FoldingRange[] = [];
+
+  // Brace pairs: each `{` that's the last non-comment char on its
+  // line opens a fold; pop on the matching `}`.
+  type Open = { line: number };
+  const stack: Open[] = [];
+  // Track `---` doc-block toggling.
+  let docBlockStart = -1;
+  // Track contiguous `//` comments.
+  let commentStart = -1;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmed = line.trim();
+
+    // Comment block runs of `//`.
+    if (trimmed.startsWith('//')) {
+      if (commentStart < 0) commentStart = i;
+    } else {
+      if (commentStart >= 0 && i - 1 > commentStart) {
+        out.push({ startLine: commentStart, endLine: i - 1, kind: FoldingRangeKind.Comment });
+      }
+      commentStart = -1;
+    }
+
+    // `---` block-comment toggle.
+    if (trimmed === '---') {
+      if (docBlockStart < 0) docBlockStart = i;
+      else {
+        if (i - 1 > docBlockStart) {
+          out.push({ startLine: docBlockStart, endLine: i, kind: FoldingRangeKind.Comment });
+        }
+        docBlockStart = -1;
+      }
+      continue;
+    }
+
+    // Inside a `---` block we shouldn't try to brace-balance the body.
+    if (docBlockStart >= 0) continue;
+
+    // Brace balance. Walk left→right; any `{` that's not closed on
+    // the same line opens a fold.
+    let openCol = -1;
+    let depthInLine = 0;
+    for (let c = 0; c < line.length; c++) {
+      const ch = line[c];
+      if (ch === '{') {
+        if (depthInLine === 0) openCol = c;
+        depthInLine++;
+      } else if (ch === '}') {
+        depthInLine--;
+        if (depthInLine < 0) {
+          // Closing brace deeper than this line opened — pops the stack.
+          const top = stack.pop();
+          if (top && i > top.line) {
+            out.push({ startLine: top.line, endLine: i - 1, kind: FoldingRangeKind.Region });
+          }
+          depthInLine = 0;
+          openCol = -1;
+        }
+      }
+    }
+    if (depthInLine > 0 && openCol >= 0) {
+      stack.push({ line: i });
+    }
+  }
+
+  // Trailing comment run at EOF.
+  if (commentStart >= 0 && lines.length - 1 > commentStart) {
+    out.push({ startLine: commentStart, endLine: lines.length - 1, kind: FoldingRangeKind.Comment });
+  }
+
+  return out;
 });
 
 documents.listen(connection);

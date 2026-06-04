@@ -5,6 +5,17 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [1.6.11] — 2026-06-03
+
+### `quirk-lsp` 0.12.0 — folding ranges
+
+`textDocument/foldingRange` lets the editor collapse function bodies,
+struct/enum/interface blocks, `if`/`else`/`while`/`for` bodies, the
+multi-line `from X use { … }` import form, `---` doc fences, and
+runs of `//` line comments. Brace-balanced scan; no compiler call.
+
+Compiler binary byte-identical to 1.6.10 modulo the version constant.
+
 ## [1.6.10] — 2026-06-03
 
 ### `quirk-lsp` 0.11.0 — scope-aware rename

@@ -5,6 +5,24 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [1.6.9] — 2026-06-03
+
+### `quirk-lsp` 0.10.0 — workspace symbols
+
+`workspace/symbol` searches every symbol the LSP has cached this
+session. Lists top-level decls + methods + fields (skips parameters
+and local variables — too noisy at the workspace level). Substring
+matches the query case-insensitively; capped at 500 results so a
+huge multi-file project doesn't flood the editor's picker.
+
+Scope is "files opened this session" rather than every `.quirk` file
+under the workspace folders. A full pre-indexed workspace search
+would require running `--symbols-json` for every file on startup or
+on a `workspace/didChangeWatchedFiles` notification — deferred until
+someone hits the gap.
+
+Compiler binary byte-identical to 1.6.8 modulo the version constant.
+
 ## [1.6.8] — 2026-06-03
 
 ### `quirk-lsp` 0.9.0 — signature help

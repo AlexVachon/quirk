@@ -42,7 +42,9 @@ import {
   MarkupKind,
   ProposedFeatures,
   ReferenceParams,
+  SymbolInformation,
   WorkspaceFolder,
+  WorkspaceSymbolParams,
   InitializeParams,
   TextDocumentSyncKind,
   InitializeResult,
@@ -154,8 +156,9 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
         triggerCharacters: ['(', ','],
         retriggerCharacters: [','],
       },
+      workspaceSymbolProvider: true,
     },
-    serverInfo: { name: 'quirk-lsp', version: '0.9.0' },
+    serverInfo: { name: 'quirk-lsp', version: '0.10.0' },
   };
 });
 
@@ -1174,6 +1177,69 @@ connection.onSignatureHelp((params: SignatureHelpParams): SignatureHelp | null =
     activeSignature: 0,
     activeParameter: ctx.activeParameter,
   };
+});
+
+// ──────────────────────────────────────────────────────────────────────
+// Workspace symbols (`workspace/symbol`)
+// ──────────────────────────────────────────────────────────────────────
+// `Ctrl+T` / `:Telescope lsp_workspace_symbols` style searches. We
+// surface every top-level declaration (function, struct, enum,
+// interface, module_const) and every method that's currently in the
+// per-document symbol cache.
+//
+// Scope is "files currently open in this session" rather than every
+// .quirk file under the workspace. A full-workspace index would
+// require running `quirk --symbols-json` for every file at startup
+// or on a `workspace/didChangeWatchedFiles` notification — bigger
+// undertaking. For now the user-typed query falls back to the editor's
+// fuzzy-find over files when the symbol isn't open.
+
+function symbolKindFromQuirk(kind: QuirkSymbol['kind']): SymbolKind {
+  switch (kind) {
+    case 'struct':       return SymbolKind.Struct;
+    case 'enum':         return SymbolKind.Enum;
+    case 'enumvariant':  return SymbolKind.EnumMember;
+    case 'interface':    return SymbolKind.Interface;
+    case 'method':       return SymbolKind.Method;
+    case 'field':        return SymbolKind.Field;
+    case 'parameter':    return SymbolKind.Variable;
+    case 'variable':     return SymbolKind.Variable;
+    case 'module_const': return SymbolKind.Constant;
+    default:             return SymbolKind.Function;
+  }
+}
+
+connection.onWorkspaceSymbol((params: WorkspaceSymbolParams): SymbolInformation[] => {
+  const q = params.query.toLowerCase();
+  const out: SymbolInformation[] = [];
+  const SKIP_KINDS = new Set<QuirkSymbol['kind']>(['parameter', 'variable']);
+  for (const [uri, symbols] of symbolCache) {
+    for (const s of symbols) {
+      if (SKIP_KINDS.has(s.kind)) continue;       // too noisy at the workspace level
+      // Empty query matches everything (standard LSP behaviour);
+      // non-empty queries do a coarse substring match. The editor
+      // does its own fuzzy ranking on top of whatever we return.
+      if (q && !s.name.toLowerCase().includes(q)) continue;
+      out.push({
+        name: s.name,
+        kind: symbolKindFromQuirk(s.kind),
+        containerName: s.scope === 'module' ? '' : s.scope,
+        location: {
+          // We pass through the symbol's recorded path rather than the
+          // doc URI we found it in — `--symbols-json` walks the import
+          // graph so a record for a stdlib decl may have come back
+          // through some user file's cache.
+          uri: s.file.startsWith('file://') ? s.file : pathToUri(s.file),
+          range: {
+            start: { line: s.line - 1, character: Math.max(0, s.col - 1) },
+            end:   { line: s.line - 1, character: Math.max(0, s.col - 1) + s.name.length },
+          },
+        },
+      });
+    }
+  }
+  // Cap so a huge multi-file project doesn't flood the editor.
+  return out.slice(0, 500);
 });
 
 documents.listen(connection);

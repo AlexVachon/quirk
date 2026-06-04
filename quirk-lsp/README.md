@@ -2,6 +2,16 @@
 
 Language Server Protocol implementation for [Quirk](https://github.com/AlexVachon/quirk).
 
+## What's in v0.10 (compiler 1.6.9)
+
+Same as 0.9 plus:
+
+- **Workspace symbols** (`workspace/symbol`) — `Ctrl+T` / picker
+  search across every symbol the LSP has seen this session. Lists
+  every top-level decl + method + field (skips parameters and local
+  variables, which would be too noisy). Substring matches the query
+  case-insensitively; results capped at 500.
+
 ## What's in v0.9 (compiler 1.6.8)
 
 Same as 0.8 plus:

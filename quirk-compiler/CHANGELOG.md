@@ -5,6 +5,26 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [2.1.0] — 2026-06-04
+
+### Stdlib registry adds `toml`
+
+[`AlexVachon/quirk-toml`](https://github.com/AlexVachon/quirk-toml) `v0.1.0`
+joins the compiler-shipped registry. Bare-name `quirk pkg install toml`
+now resolves to the canonical repo without `pkg registry add` first.
+
+The package is a pure-Quirk parser covering the subset used by Quirk's
+own `quirk.toml` / `quirk.lock`: top-level pairs, `[sections]`,
+`[[array-of-tables]]`, basic + literal strings, integers (with `_`
+separators), booleans, one-line arrays, comments. Returns the top-level
+table as a `Map`; errors raise `ValueError` annotated with the offending
+line number.
+
+Why this is a minor bump (`2.1.0`) instead of a patch: adding a name
+to `stdlib_registry()` extends the compiler's public surface (any script
+can now write `use toml` after `quirk pkg install toml` with no user
+config). Future stdlib package additions will land the same way.
+
 ## [2.0.3] — 2026-06-04
 
 ### Dead-code sweep

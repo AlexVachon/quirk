@@ -1512,7 +1512,16 @@ class LLVMCodegen {
         if (auto member = dynamic_cast<MemberAccessNode*>(call->callee.get())) {
             if (auto lit = dynamic_cast<LiteralNode*>(member->object.get())) {
                 if (verbose) std::cerr << "[Codegen]     handleCall: " << lit->value << "." << member->memberName << "\n";
-                if (activeModuleAliases.count(lit->value)) {
+                // Module-call routing must yield to local-variable scope.
+                // Without this, importing a module whose name shadows a
+                // function parameter (e.g. `use prompt` in a script that
+                // also calls `console.input(prompt: String)`) makes every
+                // `prompt.length()` inside that function route to "the
+                // prompt module's length()" — there is no such function,
+                // and the user gets a confusing "Unknown function" error.
+                // Locals always win.
+                bool litIsLocal = varGen->exists(lit->value);
+                if (!litIsLocal && activeModuleAliases.count(lit->value)) {
                     std::string memberName = member->memberName;
                     if (StructTypes.count(memberName)) {
                         std::vector<Value*> args;
@@ -2379,8 +2388,22 @@ class LLVMCodegen {
                         std::string sName = st->getName().str();
                         if (sName.find("struct.") == 0) sName = sName.substr(7);
                         if (sName == "String") {
-                            std::vector<Value*> sArgs = {retVal};
-                            retVal = structGen->allocateAndInit("String", sArgs);
+                            // The i8* here is a boxed value coming back from a
+                            // void*-returning callsite (List.get, Map.get, an
+                            // Any-typed Callable invocation, etc). It may be a
+                            // String*, an Any*, or a tagged int. Wrapping it as
+                            // a raw char* would treat the pointer bytes as the
+                            // string contents — garbage. quirk_opaque_to_string
+                            // sniffs the three shapes and returns a real String*.
+                            // String literals never hit this branch: they are
+                            // materialised as String* at the LiteralNode site.
+                            Function* opaqueToStr = TheModule->getFunction("quirk_opaque_to_string");
+                            if (!opaqueToStr) {
+                                Type* retTy = PointerType::getUnqual(StructTypes["String"]);
+                                FunctionType* ft = FunctionType::get(retTy, {Type::getInt8PtrTy(Context)}, false);
+                                opaqueToStr = Function::Create(ft, Function::ExternalLinkage, "quirk_opaque_to_string", TheModule.get());
+                            }
+                            retVal = Builder.CreateCall(opaqueToStr, {retVal}, "ret_unbox_str");
                         } else if (isa<ConstantPointerNull>(retVal)) {
                             // `return null` from a struct-returning function:
                             // bitcast the null to the expected struct pointer.

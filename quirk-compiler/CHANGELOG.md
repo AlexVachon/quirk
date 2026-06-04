@@ -5,6 +5,73 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [2.2.1] — 2026-06-04
+
+### Two boxing/scoping bugs fixed — `ask` is now `prompt`
+
+Two warts surfaced while building the [2.2.0](#220--2026-06-04) `ask`
+package made the `prompt` name unusable and forced a typed-walrus
+workaround on every `select`/`multiselect` callsite. Both are now
+fixed at the compiler level, the package is renamed back to its
+natural name, and the workaround is gone.
+
+#### 1. `use X` no longer shadows local parameters
+
+Before: `use prompt` in any file made `prompt` route as a module
+alias **everywhere** — including inside `console.input(prompt: ...)`,
+where `prompt.length()` would then look up `prompt`-the-module
+instead of `prompt`-the-parameter and die with `Unknown function
+'length'`. Codegen's `handleCall` was checking module aliases before
+local-variable scope.
+
+Fix at `quirk-compiler/src/Backend/Codegen.cpp` ~line 1515: defer to
+local scope first; the module-alias branch only fires when the
+identifier does not name a live local.
+
+```cpp
+bool litIsLocal = varGen->exists(lit->value);
+if (!litIsLocal && activeModuleAliases.count(lit->value)) { ... }
+```
+
+#### 2. `return list.get(i)` from a `-> String` slot is no longer garbled
+
+Before: `List.get` (and any other `void*`-returning callsite) hands
+back an `i8*` that may be a `String*`, an `Any*`, or a tagged int.
+When that `i8*` was returned into a function whose declared return
+type was `String`, codegen wrapped it as if the pointer were a raw
+`char*` — wrapping the *bytes of the String struct pointer* into a
+new String. Output was mojibake. The standing workaround was a
+typed-walrus annotation (`chosen: String := list.get(i); return
+chosen`) which routed through the same unbox helper that already
+existed for var-decls.
+
+Fix at `quirk-compiler/src/Backend/Codegen.cpp` ~line 2390: at the
+ReturnNode handler, when the source is `i8*` and the destination is
+`String*`, route through `quirk_opaque_to_string` (the runtime
+helper that already handles all three shapes) instead of
+`make_String`. String literals were never affected — they reach the
+return site already typed as `String*`, so the regression surface
+is empty.
+
+#### Stdlib: `ask` → `prompt`
+
+With (1) fixed, the natural name is usable again:
+
+- `stdlib_registry()` swaps `ask → quirk-ask` for `prompt → quirk-prompt`.
+- `Makefile`'s `STDLIB_PACKAGES` swaps `ask` for `prompt`.
+- The package source drops the typed-walrus workarounds in
+  `select` / `multiselect`; direct `return options.get(i)` works.
+
+```quirk
+use prompt
+
+name := prompt.input("Your name", "Anonymous")
+mode := prompt.select("Mode?", ["fast", "thorough", "debug"])
+```
+
+The `quirk-ask` v1.0.0 repo stays online as a historical artifact;
+the v2.2.1 tarball ships `prompt` only.
+
 ## [2.2.0] — 2026-06-04
 
 ### Stdlib gains `ask` — interactive CLI prompts

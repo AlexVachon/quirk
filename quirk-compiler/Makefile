@@ -121,10 +121,15 @@ test: all
 # stdlib_registry() versions baked into the compiler). To pull newer tags,
 # bump the version inline below and re-run.
 STDLIB_PACKAGES = \
-	argparse ask console crypto csv datetime debug encoding fs io itertools \
-	math net random regex statistics sys test time toml typing url uuid
+	argparse console crypto csv datetime debug encoding fs io itertools \
+	math net prompt random regex statistics sys test time toml typing url uuid
 STDLIB_OWNER ?= AlexVachon
 STDLIB_TAG   ?= v1.0.0
+
+# Per-package tag override. Set when a package has its own version
+# that doesn't match the global STDLIB_TAG (e.g. `prompt` was
+# renamed from `ask` and ships v1.0.1 with the rename baked in).
+STDLIB_TAG_prompt ?= v1.0.1
 
 bootstrap-stdlib:
 	@mkdir -p packages
@@ -133,9 +138,13 @@ bootstrap-stdlib:
 	        echo "  ✓ $$pkg (already present)";                                   \
 	        continue;                                                             \
 	    fi;                                                                       \
-	    echo "  → cloning quirk-$$pkg@$(STDLIB_TAG)";                             \
+	    tag="$(STDLIB_TAG)";                                                      \
+	    case "$$pkg" in                                                           \
+	        prompt) tag="$(STDLIB_TAG_prompt)" ;;                                 \
+	    esac;                                                                     \
+	    echo "  → cloning quirk-$$pkg@$$tag";                                     \
 	    tmp=$$(mktemp -d);                                                        \
-	    if ! git clone --quiet --depth 1 --branch $(STDLIB_TAG)                   \
+	    if ! git clone --quiet --depth 1 --branch "$$tag"                         \
 	            "https://github.com/$(STDLIB_OWNER)/quirk-$$pkg.git" "$$tmp";     \
 	    then                                                                      \
 	        echo "  ✗ $$pkg — clone failed";                                      \

@@ -5,6 +5,26 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [1.7.1] — 2026-06-04
+
+### `quirk-lsp` 0.16.0 — call hierarchy
+
+Three new LSP requests:
+
+- `callHierarchy/prepareCallHierarchy` — given a cursor position,
+  return the function/method represented there.
+- `callHierarchy/incomingCalls` — given an item, list every caller
+  (each is a `usage` record of the item's name; the caller is the
+  function whose decl matches `usage.scope`).
+- `callHierarchy/outgoingCalls` — given an item, list every callee
+  (each is a `usage` record with `scope == item.name`).
+
+Built on the 1.7.0 usage table — no text walks; scope-precise. The
+editor's "Show Call Hierarchy" panel can now walk arbitrary depth
+through Quirk code.
+
+Compiler binary byte-identical to 1.7.0 modulo the version constant.
+
 ## [1.7.0] — 2026-06-04
 
 ### Per-usage tracking in Sema; semantic LSP references and rename

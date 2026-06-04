@@ -2,6 +2,18 @@
 
 Language Server Protocol implementation for [Quirk](https://github.com/AlexVachon/quirk).
 
+## What's in v0.16 (compiler 1.7.1)
+
+Same as 0.15 plus:
+
+- **Call hierarchy** (`callHierarchy/prepareCallHierarchy` +
+  `callHierarchy/incomingCalls` + `callHierarchy/outgoingCalls`) —
+  given a function or method, list everywhere it's called *from*
+  (incoming) and everywhere it calls *to* (outgoing). Uses Sema's
+  usage records directly: incoming = usages of the function's name;
+  outgoing = usages whose `scope` is this function. Both are scope-
+  precise (no false matches from text walks).
+
 ## What's in v0.15 (compiler 1.7.0)
 
 Same as 0.14 plus:

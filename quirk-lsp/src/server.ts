@@ -25,6 +25,12 @@ import {
   TextDocuments,
   Diagnostic,
   DiagnosticSeverity,
+  CallHierarchyIncomingCall,
+  CallHierarchyIncomingCallsParams,
+  CallHierarchyItem,
+  CallHierarchyOutgoingCall,
+  CallHierarchyOutgoingCallsParams,
+  CallHierarchyPrepareParams,
   CompletionItem,
   CompletionItemKind,
   CompletionParams,
@@ -177,8 +183,9 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
       foldingRangeProvider: true,
       inlayHintProvider: true,
       documentHighlightProvider: true,
+      callHierarchyProvider: true,
     },
-    serverInfo: { name: 'quirk-lsp', version: '0.14.0' },
+    serverInfo: { name: 'quirk-lsp', version: '0.16.0' },
   };
 });
 
@@ -1690,6 +1697,157 @@ connection.onDocumentHighlight((params: DocumentHighlightParams): DocumentHighli
       kind: isDecl ? DocumentHighlightKind.Write : DocumentHighlightKind.Read,
     };
   });
+});
+
+// ──────────────────────────────────────────────────────────────────────
+// Call hierarchy (`callHierarchy/*`)
+// ──────────────────────────────────────────────────────────────────────
+// Three-step protocol:
+//   1. prepareCallHierarchy — given a cursor position, return the
+//      `CallHierarchyItem` representing the function/method there.
+//   2. incomingCalls — given an item, return every caller (i.e. every
+//      usage of the function's name in a callee position).
+//   3. outgoingCalls — given an item, return every function/method
+//      called from inside its body.
+//
+// We use Sema's usage table to enumerate calls: an "incoming" call
+// is any usage record whose `name` matches the item's function name
+// (the caller's location is the usage's enclosing scope's decl).
+// "Outgoing" is the inverse — usages with `scope` matching the item's
+// own demangled name.
+
+// Encode the function name + scope into the item's `data` so the
+// follow-up `incomingCalls` / `outgoingCalls` requests can find it
+// without re-resolving the cursor. LSP guarantees the data round-trips
+// untouched between requests.
+interface CallHierarchyData {
+  name: string;
+  scope: string;
+  file: string;
+}
+
+function findCallHierarchyTarget(symbols: QuirkSymbol[], name: string, file: string): QuirkSymbol | null {
+  for (const s of symbols) {
+    if (s.kind !== 'function' && s.kind !== 'method') continue;
+    if (s.name !== name) continue;
+    if (s.file !== file) continue;
+    return s;
+  }
+  // Cross-file: any callable record with the matching name.
+  for (const s of symbols) {
+    if ((s.kind === 'function' || s.kind === 'method') && s.name === name) return s;
+  }
+  return null;
+}
+
+function callHierarchyItemFor(sym: QuirkSymbol): CallHierarchyItem {
+  const uri = pathToUri(sym.file);
+  const range: Range = {
+    start: { line: sym.line - 1, character: Math.max(0, sym.col - 1) },
+    end:   { line: sym.line - 1, character: Math.max(0, sym.col - 1) + sym.name.length },
+  };
+  const data: CallHierarchyData = { name: sym.name, scope: sym.scope, file: sym.file };
+  return {
+    name: sym.name,
+    kind: sym.kind === 'method' ? SymbolKind.Method : SymbolKind.Function,
+    detail: sym.scope === 'module' ? undefined : sym.scope,
+    uri,
+    range,
+    selectionRange: range,
+    data,
+  };
+}
+
+connection.onRequest('textDocument/prepareCallHierarchy', (params: CallHierarchyPrepareParams): CallHierarchyItem[] => {
+  const doc = documents.get(params.textDocument.uri);
+  if (!doc) return [];
+  const lineText = doc.getText().split(/\r?\n/)[params.position.line] ?? '';
+  const ident = identifierAt(lineText, params.position.character);
+  if (!ident) return [];
+  const filePath = uriToPath(params.textDocument.uri) ?? '';
+  const symbols = symbolCache.get(params.textDocument.uri) ?? [];
+  const target = findCallHierarchyTarget(symbols, ident, filePath);
+  if (!target) return [];
+  return [callHierarchyItemFor(target)];
+});
+
+connection.onRequest('callHierarchy/incomingCalls',
+  (params: CallHierarchyIncomingCallsParams): CallHierarchyIncomingCall[] => {
+  const data = params.item.data as CallHierarchyData | undefined;
+  if (!data) return [];
+
+  // Every cached document might contain callers — aggregate across
+  // all symbols this session has seen.
+  const incoming = new Map<string, { item: CallHierarchyItem; ranges: Range[] }>();
+  for (const symbols of symbolCache.values()) {
+    for (const u of symbols) {
+      if (u.kind !== 'usage') continue;
+      if (u.name !== data.name) continue;
+      // `u.scope` is the function the call lives in. Find its decl
+      // so we can return a CallHierarchyItem for the caller.
+      const callerDecl = symbols.find(
+        (s) => (s.kind === 'function' || s.kind === 'method')
+            && s.name === u.scope
+            && s.file === u.file
+      );
+      if (!callerDecl) continue;
+      const loc = usageToLocation(u);
+      if (!loc) continue;
+      const callerKey = `${callerDecl.file}:${callerDecl.line}:${callerDecl.name}`;
+      let entry = incoming.get(callerKey);
+      if (!entry) {
+        entry = { item: callHierarchyItemFor(callerDecl), ranges: [] };
+        incoming.set(callerKey, entry);
+      }
+      entry.ranges.push(loc.range);
+    }
+  }
+  return Array.from(incoming.values()).map(({ item, ranges }) => ({
+    from: item,
+    fromRanges: ranges,
+  }));
+});
+
+connection.onRequest('callHierarchy/outgoingCalls',
+  (params: CallHierarchyOutgoingCallsParams): CallHierarchyOutgoingCall[] => {
+  const data = params.item.data as CallHierarchyData | undefined;
+  if (!data) return [];
+
+  // Walk usage records whose `scope` matches the item's own name —
+  // those are calls made FROM inside its body.
+  const outgoing = new Map<string, { item: CallHierarchyItem; ranges: Range[] }>();
+  for (const symbols of symbolCache.values()) {
+    for (const u of symbols) {
+      if (u.kind !== 'usage') continue;
+      if (u.scope !== data.name) continue;
+      // Resolve the callee — could be a same-file decl or in any
+      // cached document. Prefer a same-file decl when both exist.
+      let calleeDecl: QuirkSymbol | undefined;
+      for (const set of symbolCache.values()) {
+        for (const s of set) {
+          if ((s.kind === 'function' || s.kind === 'method') && s.name === u.name) {
+            if (s.file === u.file) { calleeDecl = s; break; }
+            if (!calleeDecl) calleeDecl = s;
+          }
+        }
+        if (calleeDecl && calleeDecl.file === u.file) break;
+      }
+      if (!calleeDecl) continue;
+      const loc = usageToLocation(u);
+      if (!loc) continue;
+      const calleeKey = `${calleeDecl.file}:${calleeDecl.line}:${calleeDecl.name}`;
+      let entry = outgoing.get(calleeKey);
+      if (!entry) {
+        entry = { item: callHierarchyItemFor(calleeDecl), ranges: [] };
+        outgoing.set(calleeKey, entry);
+      }
+      entry.ranges.push(loc.range);
+    }
+  }
+  return Array.from(outgoing.values()).map(({ item, ranges }) => ({
+    to: item,
+    fromRanges: ranges,
+  }));
 });
 
 documents.listen(connection);

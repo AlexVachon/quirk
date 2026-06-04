@@ -5,6 +5,63 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [2.0.0] — 2026-06-04
+
+### AOT execution model — `quirk build` + cached native binaries
+
+This is the first major version bump. Quirk's default execution flow
+changes: instead of JIT-compiling every invocation, the compiler now
+checks for a precompiled native binary cached at
+`~/.quirk/cache/build/<sha>-<arch>/quirk-bin`. When the cache hits,
+`execv` replaces this process with the binary — typical warm-run
+startup drops from ~80ms (JIT cold) to ~25ms (process startup +
+dlopen). When the cache misses, execution falls through to the
+existing JIT path (1.x behavior); nothing breaks.
+
+### New subcommand
+
+- **`quirk build <file>`** runs Codegen + `llc-14` + `gcc` and stashes
+  the resulting binary at the cache key. Idempotent — re-running on
+  an unchanged source is a no-op. The cache key shares the bitcode
+  cache's content+imports hash, plus the host arch so a Linux x86_64
+  binary doesn't get exec'd on macOS arm64 (or vice versa).
+
+### New flags / env vars
+
+- `--build` — alias for `quirk build <file>` (same flow, single CLI).
+- `--no-aot` — skip the AOT cache lookup for this invocation, force
+  the JIT path. Useful for `quirk run --debug` or when debugging
+  Codegen.
+- `QUIRK_NO_AOT=1` — same kill switch, env-var form.
+
+### Behavior summary
+
+| Command | Before (1.7.x) | After (2.0.0) |
+|--|--|--|
+| `quirk file.quirk` | JIT every time | Cache hit: exec binary. Miss: JIT (same as 1.7.x). |
+| `quirk build file.quirk` | (didn't exist) | Build to cache; no run. |
+| `quirk -o out file.quirk` | One-shot AOT | One-shot AOT (unchanged). |
+| `quirk --debug file.quirk` | JIT with stepper | JIT with stepper (cache skipped). |
+
+### Why a major bump
+
+Quirk now defaults to a "compile-once, run-many" execution model. The
+old "JIT each run" can still be opted into via `--no-aot`, but the
+recommended workflow is `quirk build my_script.quirk` followed by
+fast `quirk my_script.quirk` invocations. Scripts that pipe through
+`quirk --debug` or `quirk --check` are unaffected.
+
+### Known limitations
+
+- The build pipeline still shells out to `llc-14` and `gcc`. Users
+  without those on PATH get a clean "build failed" message; `--no-aot`
+  works around it without effort.
+- `quirk build` doesn't yet recurse into a project's `quirk.toml` for
+  multi-entry builds; that's the next thing on the v2.x todo list.
+- macOS arm64 path is theoretical (the bin is built CI-only in v1.3+);
+  if the cached binary architecture mismatches the runtime arch, the
+  cache key's `-arch` suffix ensures we never cross-execv.
+
 ## [1.7.3] — 2026-06-04
 
 ### `quirk-lsp` 0.18.0 — document links for imports

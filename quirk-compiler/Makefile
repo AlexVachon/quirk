@@ -121,7 +121,7 @@ test: all
 # stdlib_registry() versions baked into the compiler). To pull newer tags,
 # bump the version inline below and re-run.
 STDLIB_PACKAGES = \
-	argparse console crypto csv datetime debug encoding fs io itertools \
+	argparse ask console crypto csv datetime debug encoding fs io itertools \
 	math net random regex statistics sys test time toml typing url uuid
 STDLIB_OWNER ?= AlexVachon
 STDLIB_TAG   ?= v1.0.0

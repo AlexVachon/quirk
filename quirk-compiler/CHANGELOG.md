@@ -5,6 +5,49 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [2.2.0] — 2026-06-04
+
+### Stdlib gains `ask` — interactive CLI prompts
+
+[`AlexVachon/quirk-ask`](https://github.com/AlexVachon/quirk-ask) `v1.0.0`
+joins the bundled stdlib. Pairs with `argparse` for runtime questions
+the user didn't pre-answer on the command line.
+
+```quirk
+use ask
+
+name := ask.input("Your name", "Anonymous")
+pw   := ask.password("Password: ")
+go   := ask.confirm("Continue?", true)
+mode := ask.select("Mode?", ["fast", "thorough", "debug"])
+tags := ask.multiselect("Tags?", ["urgent", "blocked", "needs-review"])
+```
+
+- Added to `stdlib_registry()` (bare-name install works).
+- Added to `STDLIB_PACKAGES` in the Makefile (release tarball bundles
+  it; `use ask` works on fresh `install.sh` users with no extra step).
+
+### Why not `prompt`?
+
+The natural name `prompt` collides with `prompt: String` parameters
+inside the `console` package. Quirk's current compiler treats `use X`
+as a workspace-global declaration (rather than scoping it per-file),
+so `use prompt` in any file makes `prompt` look like a module
+reference everywhere — including inside `console.input`'s body where
+`prompt` is a local parameter. Sema then dies on `prompt.length()`.
+
+The `ask` name avoids the collision and ships the same surface. When
+the compiler's import scoping bug is fixed, both names could
+co-exist, but renaming is the right call for now.
+
+### Known caveat in `ask.select` / `multiselect`
+
+Both use numbered menus (user types `1`, `2`, …) rather than
+arrow-key navigation. Arrow keys would need a raw-mode `getch()`
+primitive that the stdlib doesn't yet expose; the public signatures
+will stay the same when that primitive lands and `ask` switches to
+arrow keys under the hood.
+
 ## [2.1.1] — 2026-06-04
 
 ### `toml` is now bundled

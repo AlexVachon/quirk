@@ -64,7 +64,7 @@ static std::string self_binary();
 
 namespace qpm {
 
-constexpr const char* QUIRK_VERSION = "2.1.1";
+constexpr const char* QUIRK_VERSION = "2.2.0";
 
 namespace fs = std::filesystem;
 
@@ -1118,6 +1118,7 @@ static const std::map<std::string, std::string>& stdlib_registry() {
         // the same source as the bundled compiler copy. Adding a new
         // stdlib package = one line here + the GitHub repo.
         {"argparse",   "github.com/AlexVachon/quirk-argparse"},
+        {"ask",        "github.com/AlexVachon/quirk-ask"},
         {"console",    "github.com/AlexVachon/quirk-console"},
         {"crypto",     "github.com/AlexVachon/quirk-crypto"},
         {"csv",        "github.com/AlexVachon/quirk-csv"},

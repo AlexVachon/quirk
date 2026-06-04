@@ -2,6 +2,17 @@
 
 Language Server Protocol implementation for [Quirk](https://github.com/AlexVachon/quirk).
 
+## What's in v0.9 (compiler 1.6.8)
+
+Same as 0.8 plus:
+
+- **Signature help** (`textDocument/signatureHelp`) — typing `(` or
+  `,` inside a call pops up the callee's parameter list with the
+  current argument highlighted. Driven by the cached
+  `quirk --symbols-json` records so signatures stay in sync with
+  what Sema sees. Multiple matching declarations (e.g. interface +
+  concrete method) all show up; the editor renders a chooser.
+
 ## What's in v0.8 (compiler 1.6.7)
 
 - **Diagnostics** on open + save via `quirk --check --diagnostics-json`.

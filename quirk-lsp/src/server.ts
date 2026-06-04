@@ -29,6 +29,10 @@ import {
   CompletionItemKind,
   CompletionParams,
   DefinitionParams,
+  ParameterInformation,
+  SignatureHelp,
+  SignatureHelpParams,
+  SignatureInformation,
   DocumentSymbol,
   DocumentSymbolParams,
   DocumentFormattingParams,
@@ -146,8 +150,12 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
         // identifier completion fires automatically as the user types.
         triggerCharacters: ['.'],
       },
+      signatureHelpProvider: {
+        triggerCharacters: ['(', ','],
+        retriggerCharacters: [','],
+      },
     },
-    serverInfo: { name: 'quirk-lsp', version: '0.8.0' },
+    serverInfo: { name: 'quirk-lsp', version: '0.9.0' },
   };
 });
 
@@ -1061,6 +1069,111 @@ connection.onCompletion((params: CompletionParams): CompletionItem[] => {
   }
 
   return items;
+});
+
+// ──────────────────────────────────────────────────────────────────────
+// Signature help (`textDocument/signatureHelp`)
+// ──────────────────────────────────────────────────────────────────────
+// Triggered by `(` or `,`. Walks backward from the cursor balancing
+// parentheses to find:
+//   1. the most-recent un-closed `(`, and the identifier immediately
+//      before it (the callee), and
+//   2. the number of top-level commas between that `(` and the
+//      cursor — that's the active parameter index.
+//
+// Once the callee name is known, we look it up in the cached symbol
+// table (`quirk --symbols-json` output, see `symbolCache`). Each
+// matching record contributes one SignatureInformation, with its
+// parameters lifted from the parameter records that share its scope.
+
+interface CallContext {
+  callee: string;
+  activeParameter: number;
+}
+
+// Scan text left-of-cursor with a parenthesis-balanced walker. Returns
+// the innermost open call context, or null if the cursor isn't in a
+// function call. Comments and strings inside the call would confuse
+// this, but Quirk's stdlib + sample code rarely puts those between a
+// `(` and a `,`.
+function findCallContext(text: string, line: number, character: number): CallContext | null {
+  const lines = text.split(/\r?\n/);
+  let depth = 0;
+  let activeParam = 0;
+  for (let li = line; li >= 0; li--) {
+    const lineText = li === line ? lines[li].slice(0, character) : lines[li];
+    for (let i = lineText.length - 1; i >= 0; i--) {
+      const c = lineText[i];
+      if (c === ')') depth++;
+      else if (c === '(') {
+        if (depth === 0) {
+          // Pull the callee — the longest identifier that ends at i.
+          let end = i;
+          // Skip whitespace between callee and `(`
+          while (end > 0 && /\s/.test(lineText[end - 1])) end--;
+          let start = end;
+          while (start > 0 && /[A-Za-z0-9_.]/.test(lineText[start - 1])) start--;
+          const callee = lineText.slice(start, end);
+          if (!callee) return null;
+          // For `mod.fn(...)` we only want the last segment.
+          const dot = callee.lastIndexOf('.');
+          return {
+            callee: dot >= 0 ? callee.slice(dot + 1) : callee,
+            activeParameter: activeParam,
+          };
+        }
+        depth--;
+      }
+      else if (c === ',' && depth === 0) activeParam++;
+    }
+    // Bail if we walked past the start of the file without finding an
+    // open paren — defends against pathological scans of huge files.
+    if (li === 0) break;
+  }
+  return null;
+}
+
+// Build a `SignatureInformation` per symbol matching the callee name.
+// Most calls resolve to one signature; method overloads or interface
+// vs concrete-method clashes give multiple, which LSP clients render
+// as a chooser strip above the signature.
+function signaturesFor(callee: string, symbols: QuirkSymbol[]): SignatureInformation[] {
+  const sigs: SignatureInformation[] = [];
+  for (const s of symbols) {
+    if (s.kind !== 'function' && s.kind !== 'method') continue;
+    if (s.name !== callee) continue;
+    // Collect the parameter records that share this function's scope.
+    // For methods the scope is the demangled name (we emit it that way
+    // in --symbols-json), so this still matches.
+    const params = symbols
+      .filter((p) => p.kind === 'parameter' && p.scope === s.name
+                  && p.file === s.file && p.line === s.line)
+      .map((p) => ({
+        label: p.type ? `${p.name}: ${p.type}` : p.name,
+      } as ParameterInformation));
+    const paramText = params.map((p) => p.label as string).join(', ');
+    const ret = s.type ? ` -> ${s.type}` : '';
+    sigs.push({
+      label: `${s.name}(${paramText})${ret}`,
+      parameters: params,
+    });
+  }
+  return sigs;
+}
+
+connection.onSignatureHelp((params: SignatureHelpParams): SignatureHelp | null => {
+  const doc = documents.get(params.textDocument.uri);
+  if (!doc) return null;
+  const ctx = findCallContext(doc.getText(), params.position.line, params.position.character);
+  if (!ctx) return null;
+  const symbols = symbolCache.get(params.textDocument.uri) ?? [];
+  const signatures = signaturesFor(ctx.callee, symbols);
+  if (!signatures.length) return null;
+  return {
+    signatures,
+    activeSignature: 0,
+    activeParameter: ctx.activeParameter,
+  };
 });
 
 documents.listen(connection);

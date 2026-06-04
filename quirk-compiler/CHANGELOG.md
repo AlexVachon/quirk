@@ -5,6 +5,25 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [1.6.8] — 2026-06-03
+
+### `quirk-lsp` 0.9.0 — signature help
+
+`textDocument/signatureHelp` triggers on `(` and `,` inside a call.
+Walks backward from the cursor balancing parens to find the callee
+identifier and the active argument index, then pulls the function's
+parameter list from the cached `--symbols-json` records. Active
+parameter is highlighted; multiple matching decls (e.g. interface
+method + concrete method with the same name) all show up and the
+editor renders a chooser.
+
+Round-trip verified end-to-end on a two-parameter function: cursor
+between `(` and `,` highlights param `[0]`, cursor after the `,`
+switches to param `[1]`.
+
+Compiler binary is byte-identical to 1.6.7 modulo the version
+constant — this release is `quirk-lsp` only.
+
 ## [1.6.7] — 2026-06-03
 
 ### `quirk --symbols-json` + scope-aware LSP completion

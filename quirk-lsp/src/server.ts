@@ -25,17 +25,25 @@ import {
   TextDocuments,
   Diagnostic,
   DiagnosticSeverity,
+  DocumentSymbol,
+  DocumentSymbolParams,
+  DocumentFormattingParams,
   ProposedFeatures,
   InitializeParams,
   TextDocumentSyncKind,
   InitializeResult,
   Position,
+  Range,
   StreamMessageReader,
   StreamMessageWriter,
+  SymbolKind,
+  TextEdit,
 } from 'vscode-languageserver/node';
 import { TextDocument } from 'vscode-languageserver-textdocument';
-import { spawn } from 'child_process';
+import { spawn, spawnSync } from 'child_process';
 import { URL, fileURLToPath } from 'url';
+import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 
 // One JSON-RPC connection over stdio, plus a document store.
@@ -92,8 +100,10 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
       // whole buffer. Incremental sync would be a measurable win only
       // for very large files (Quirk projects don't have those yet).
       textDocumentSync: TextDocumentSyncKind.Full,
+      documentSymbolProvider: true,
+      documentFormattingProvider: true,
     },
-    serverInfo: { name: 'quirk-lsp', version: '0.1.0' },
+    serverInfo: { name: 'quirk-lsp', version: '0.2.0' },
   };
 });
 
@@ -205,6 +215,147 @@ function recordUri(p: string): string | null {
 // would queue up many parallel compilations otherwise.
 documents.onDidOpen((e) => { void checkDocument(e.document); });
 documents.onDidSave((e) => { void checkDocument(e.document); });
+
+// ──────────────────────────────────────────────────────────────────────
+// Document symbols (`textDocument/documentSymbol`)
+// ──────────────────────────────────────────────────────────────────────
+// Powers the editor's outline / breadcrumbs / `@` symbol picker. We
+// don't run the compiler for this — a focused regex over the buffer
+// gives us top-level + method-level definitions cheaply. The compiler
+// already exposes structured AST via `--emit-ast` but that's heavier
+// than what an outline panel actually needs.
+
+// Regexes leverage Quirk's column-0 convention for top-level
+// definitions: `define`, `struct`, `enum`, `interface` sit at the
+// margin; nested method `define`s are indented at least one column.
+// Crucially TOP_LEVEL must NOT accept leading whitespace, otherwise
+// every method also matches as a top-level function and methods get
+// hoisted out of their enclosing struct in the outline.
+const TOP_LEVEL_RE = /^(define|struct|enum|interface)\s+([A-Za-z_][A-Za-z0-9_]*)/;
+const METHOD_RE    = /^[ \t]+define\s+([A-Za-z_][A-Za-z0-9_]*)/;
+
+function symbolKindFor(keyword: string): SymbolKind {
+  switch (keyword) {
+    case 'struct':    return SymbolKind.Struct;
+    case 'enum':      return SymbolKind.Enum;
+    case 'interface': return SymbolKind.Interface;
+    default:          return SymbolKind.Function;
+  }
+}
+
+// Build a flat list of top-level DocumentSymbols, nesting method
+// definitions under their enclosing struct. Doesn't try to be clever
+// about closing braces — uses indentation as the nesting signal, which
+// works for the canonical formatter output and matches what users
+// actually write.
+function extractSymbols(doc: TextDocument): DocumentSymbol[] {
+  const lines = doc.getText().split(/\r?\n/);
+  const out: DocumentSymbol[] = [];
+  let currentStruct: DocumentSymbol | null = null;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    const top = line.match(TOP_LEVEL_RE);
+    if (top) {
+      const [, kw, name] = top;
+      const startCol = line.indexOf(name);
+      const range: Range = {
+        start: { line: i, character: 0 },
+        end:   { line: i, character: line.length },
+      };
+      const selectionRange: Range = {
+        start: { line: i, character: startCol },
+        end:   { line: i, character: startCol + name.length },
+      };
+      const sym: DocumentSymbol = {
+        name, kind: symbolKindFor(kw), range, selectionRange, children: [],
+      };
+      out.push(sym);
+      // Only nest methods inside structs/interfaces — enum variants
+      // aren't method-shaped, and top-level `define` doesn't contain
+      // other defines worth showing in the outline.
+      currentStruct = (kw === 'struct' || kw === 'interface') ? sym : null;
+      continue;
+    }
+
+    if (currentStruct) {
+      const meth = line.match(METHOD_RE);
+      if (meth) {
+        const [, name] = meth;
+        const startCol = line.indexOf(name);
+        const range: Range = {
+          start: { line: i, character: 0 },
+          end:   { line: i, character: line.length },
+        };
+        const selectionRange: Range = {
+          start: { line: i, character: startCol },
+          end:   { line: i, character: startCol + name.length },
+        };
+        currentStruct.children!.push({
+          name, kind: SymbolKind.Method, range, selectionRange, children: [],
+        });
+      }
+      // A top-level closing brace at column 0 — the struct is over.
+      if (/^[ \t]*\}\s*$/.test(line) && !/^[ \t]+/.test(line)) {
+        currentStruct = null;
+      }
+    }
+  }
+  return out;
+}
+
+connection.onDocumentSymbol((params: DocumentSymbolParams): DocumentSymbol[] => {
+  const doc = documents.get(params.textDocument.uri);
+  if (!doc) return [];
+  return extractSymbols(doc);
+});
+
+// ──────────────────────────────────────────────────────────────────────
+// Formatting (`textDocument/formatting`)
+// ──────────────────────────────────────────────────────────────────────
+// Shell out to `quirk fmt --stdout` so the formatter and the LSP can
+// never drift — same canonical style as `quirk fmt path/to/file` from
+// the CLI. Write the current buffer to a temp file (the formatter
+// reads file paths, not stdin); replace the whole document on success.
+connection.onDocumentFormatting((params: DocumentFormattingParams): TextEdit[] => {
+  const doc = documents.get(params.textDocument.uri);
+  if (!doc) return [];
+
+  const tmp = path.join(os.tmpdir(), `quirk-lsp-fmt-${process.pid}-${Date.now()}.quirk`);
+  fs.writeFileSync(tmp, doc.getText(), 'utf8');
+
+  try {
+    const result = spawnSync(quirkBinary, ['fmt', '--stdout', tmp], {
+      encoding: 'utf8',
+      timeout: 15_000,
+    });
+    if (result.status !== 0) {
+      connection.console.warn(
+        `quirk-lsp: fmt failed (exit ${result.status}): ${result.stderr?.slice(0, 200) ?? ''}`,
+      );
+      return [];
+    }
+    // A no-op edit causes a noisy "buffer modified" hint in some
+    // editors; skip publishing when the text didn't actually change.
+    if (result.stdout === doc.getText()) return [];
+
+    // Replace the entire document range with the formatter output.
+    // LSP's `Range` end is exclusive; pointing at "one past the last
+    // line, character 0" covers every byte regardless of trailing
+    // newline policy.
+    const lastLine = doc.lineCount;
+    return [{
+      range: {
+        start: { line: 0, character: 0 },
+        end:   { line: lastLine, character: 0 },
+      },
+      newText: result.stdout,
+    }];
+  } finally {
+    try { fs.unlinkSync(tmp); } catch { /* fine if already gone */ }
+  }
+});
 
 documents.listen(connection);
 connection.listen();

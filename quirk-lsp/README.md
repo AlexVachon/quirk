@@ -2,12 +2,20 @@
 
 Language Server Protocol implementation for [Quirk](https://github.com/AlexVachon/quirk).
 
-## What's in v0.1 (compiler 1.6.0)
+## What's in v0.2 (compiler 1.6.1)
 
-- **Diagnostics on open + save** by spawning `quirk --check --diagnostics-json <file>`.
+- **Diagnostics** on open + save via `quirk --check --diagnostics-json`.
+- **Document symbols** (`textDocument/documentSymbol`) — powers the
+  editor's outline panel, breadcrumbs, and `@` symbol picker. Lists
+  top-level `define` / `struct` / `enum` / `interface`, with `struct`
+  bodies nesting their `define` methods.
+- **Formatting** (`textDocument/formatting`) — shells out to
+  `quirk fmt --stdout`, replaces the whole buffer.
 - **Lifecycle** — `initialize`, `shutdown`, `exit`, document open/save/close.
 
-Other LSP features (hover, completion, go-to-definition, references, rename, signature help, semantic tokens, formatter, outline) ship incrementally in later 1.6.x releases. The VSCode extension keeps its in-process providers for those.
+Coming later in 1.6.x: hover, completion, go-to-definition, references,
+rename, signature help, semantic tokens. The VSCode extension keeps its
+in-process providers for those.
 
 ## Install
 

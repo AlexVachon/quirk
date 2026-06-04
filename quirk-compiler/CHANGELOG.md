@@ -5,6 +5,29 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [1.6.1] — 2026-06-03
+
+### `quirk-lsp` 0.2.0 — outline + formatting
+
+Two more LSP features land in the standalone server; the compiler
+itself is unchanged this release. Same install instructions as 1.6.0
+still work — pull a fresh `quirk-lsp` from the repo + `npm run build`.
+
+- **`textDocument/documentSymbol`** populates the editor's outline
+  panel, breadcrumbs, and `@`-prefix symbol picker. Top-level
+  `define` / `struct` / `enum` / `interface` show as Function /
+  Struct / Enum / Interface; methods inside a struct nest under it.
+  Regex-driven (no compiler invocation) so it's cheap on every keystroke.
+- **`textDocument/formatting`** shells out to `quirk fmt --stdout`
+  on the buffer and returns a single edit replacing the whole
+  document. Same canonical output as `quirk fmt` from the CLI, so
+  format-on-save in any editor stays in sync with the project's
+  pre-commit hook.
+
+The version bump in `quirk-compiler/src/PackageManager.hpp` is only
+for the bundled CHANGELOG entry; the binary itself is byte-identical
+to 1.6.0 modulo the version constant.
+
 ## [1.6.0] — 2026-06-03
 
 ### LSP foundation: `quirk-lsp` server

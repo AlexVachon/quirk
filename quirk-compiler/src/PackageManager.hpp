@@ -64,7 +64,7 @@ static std::string self_binary();
 
 namespace qpm {
 
-constexpr const char* QUIRK_VERSION = "2.0.0";
+constexpr const char* QUIRK_VERSION = "2.0.1";
 
 namespace fs = std::filesystem;
 
@@ -6018,16 +6018,35 @@ inline bool dispatch(int& argc, char** argv, int& outRc) {
             std::cerr << "run: need a filename or script name\n";
             outRc = 1; return true;
         }
-        std::string target = argv[2];
-        // Shortcut: `quirk run -l` / `quirk run --list` lists named scripts.
+        // Locate the first positional after `run`. Flags like
+        // `--emit-ast` / `-v` shouldn't be mistaken for the script
+        // name — without this, `quirk run --emit-ast foo.quirk`
+        // resolved `--emit-ast` to a quirk.toml [scripts] entry and
+        // bailed with "no quirk.toml here".
+        int firstPos = 2;
+        while (firstPos < argc && argv[firstPos][0] == '-') firstPos++;
+        if (firstPos >= argc) {
+            // All-flags `run` (e.g. `quirk run --list`). The `--list`
+            // shortcut is handled by stepping back to argv[2].
+            if (argc > 2 && (std::string(argv[2]) == "-l"
+                          || std::string(argv[2]) == "--list")) {
+                outRc = cmd_script({});
+                return true;
+            }
+            std::cerr << "run: no script or filename given\n";
+            outRc = 1; return true;
+        }
+        std::string target = argv[firstPos];
         if (target == "-l" || target == "--list") {
             outRc = cmd_script({});
             return true;
         }
+        // Bare name (no path, no extension) and no file on disk —
+        // treat as a `[scripts]` entry in quirk.toml.
         if (!fs::exists(target) && target.find('/') == std::string::npos
                                 && target.find('.') == std::string::npos) {
             std::vector<std::string> sa;
-            for (int i = 2; i < argc; i++) sa.emplace_back(argv[i]);
+            for (int i = firstPos; i < argc; i++) sa.emplace_back(argv[i]);
             outRc = cmd_script(sa);
             return true;
         }

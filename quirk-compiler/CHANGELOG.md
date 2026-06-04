@@ -5,6 +5,23 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [2.0.1] — 2026-06-04
+
+### Fix: `quirk run` mistook flags for script names
+
+`quirk run --emit-ast foo.quirk` (and similar with `--check`,
+`--debug`, `-v`, …) bailed out with `script: no quirk.toml here`.
+The dispatch was reading `argv[2]` as the target; when that was a
+flag like `--emit-ast`, it didn't exist on disk and had no dot or
+slash, so it fell into the `[scripts]` lookup branch — which then
+required a `quirk.toml`.
+
+Fix: skip leading flags in the `run` dispatcher to find the first
+positional argument, and use *that* as the candidate target. Bare
+`quirk run` and the `--list` shortcut keep their existing semantics.
+
+Compiler binary is otherwise byte-identical to 2.0.0.
+
 ## [2.0.0] — 2026-06-04
 
 ### AOT execution model — `quirk build` + cached native binaries

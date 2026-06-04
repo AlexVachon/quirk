@@ -5,6 +5,31 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [1.6.4] — 2026-06-03
+
+### `quirk-lsp` 0.5.0 — find references (`textDocument/references`)
+
+Word-boundary text search for every occurrence of the identifier
+under the cursor, across every `.quirk` file in the workspace
+folders. Skips `packages/`, `.venv/`, `.git/`, `node_modules/`,
+`build/`, `out/`, `obj/`, `target/`, `.cache/`. Caps at 5000 files
+and 1 MiB per file to keep accidental walkthroughs bounded.
+
+- Open documents are scanned via their in-memory text first, so
+  unsaved edits show up.
+- Files not currently open are read from disk.
+- `context.includeDeclaration: false` strips the canonical
+  declaration site from the result.
+
+Coarse on purpose — finds textual matches regardless of scope, so a
+parameter named `foo` in one function and a top-level `foo()` both
+appear. A scope-aware version needs the compiler to expose its
+symbol table; until then, the find-references panel is "good enough"
+for navigation and a bad fit for fully-automatic rename.
+
+Compiler binary is byte-identical to 1.6.3 modulo the version
+constant — this release is `quirk-lsp` only.
+
 ## [1.6.3] — 2026-06-03
 
 ### `quirk resolve <name>` + cross-file LSP go-to-def

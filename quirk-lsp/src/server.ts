@@ -31,6 +31,8 @@ import {
   DocumentFormattingParams,
   Location,
   ProposedFeatures,
+  ReferenceParams,
+  WorkspaceFolder,
   InitializeParams,
   TextDocumentSyncKind,
   InitializeResult,
@@ -87,6 +89,7 @@ function resolveQuirkBin(settingsPath: string | undefined): string {
 }
 
 let quirkBinary = 'quirk';
+let workspaceFolders: WorkspaceFolder[] = [];
 
 connection.onInitialize((params: InitializeParams): InitializeResult => {
   // The client may pass `initializationOptions = { quirk: { executablePath: ... } }`
@@ -94,7 +97,18 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
   const opts = params.initializationOptions as { quirk?: { executablePath?: string } } | undefined;
   quirkBinary = resolveQuirkBin(opts?.quirk?.executablePath);
 
+  // `workspaceFolders` drives the find-references walk: every .quirk
+  // file under each folder gets scanned (with a few sensible
+  // exclusions). Editors that don't advertise folders (rare) fall
+  // back to `rootUri`; both deprecated and modern keys handled.
+  if (params.workspaceFolders && params.workspaceFolders.length) {
+    workspaceFolders = params.workspaceFolders;
+  } else if (params.rootUri) {
+    workspaceFolders = [{ uri: params.rootUri, name: '<root>' }];
+  }
+
   connection.console.info(`quirk-lsp: using compiler at '${quirkBinary}'`);
+  connection.console.info(`quirk-lsp: ${workspaceFolders.length} workspace folder(s)`);
 
   return {
     capabilities: {
@@ -105,8 +119,9 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
       documentSymbolProvider: true,
       documentFormattingProvider: true,
       definitionProvider: true,
+      referencesProvider: true,
     },
-    serverInfo: { name: 'quirk-lsp', version: '0.4.0' },
+    serverInfo: { name: 'quirk-lsp', version: '0.5.0' },
   };
 });
 
@@ -579,6 +594,134 @@ connection.onDefinition((params: DefinitionParams): Location[] => {
     }];
   }
   return findDeclarationsInFile(resolved, ident);
+});
+
+// ──────────────────────────────────────────────────────────────────────
+// Find references (`textDocument/references`)
+// ──────────────────────────────────────────────────────────────────────
+// Word-boundary text search across every `.quirk` file under the
+// workspace folders. Coarse on purpose — finds every textual match
+// regardless of scope, including same-name parameters in unrelated
+// functions. A real semantic search needs Sema's symbol table; until
+// the compiler exposes that, this is the best we can do without
+// duplicating Sema in TypeScript.
+//
+// Excludes:
+//   - `packages/` (third-party + bundled stdlib copies)
+//   - `.venv/`, `.git/`, `node_modules/`, `build/`, `out/`, `obj/`
+//   - Files larger than 1 MiB (defends against accidental binary blobs
+//     with .quirk extensions — vanishingly rare but the cap is cheap)
+// Walks at most `MAX_FILES` matching files; if the workspace is
+// larger, the first N win.
+
+const SKIP_DIRS = new Set(['packages', '.venv', '.git', 'node_modules', 'build', 'out', 'obj', 'target', '.cache']);
+const MAX_FILES = 5000;
+const MAX_FILE_BYTES = 1 << 20;     // 1 MiB
+
+function uriToPath(uri: string): string | null {
+  try { return fileURLToPath(uri); } catch { return null; }
+}
+
+function pathToUri(p: string): string {
+  return new URL('file://' + path.resolve(p)).toString();
+}
+
+function* walkQuirkFiles(root: string): Generator<string> {
+  const stack: string[] = [root];
+  let visited = 0;
+  while (stack.length) {
+    const dir = stack.pop()!;
+    let entries: fs.Dirent[];
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); }
+    catch { continue; }
+    for (const e of entries) {
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) {
+        if (SKIP_DIRS.has(e.name)) continue;
+        stack.push(full);
+      } else if (e.isFile() && e.name.endsWith('.quirk')) {
+        yield full;
+        if (++visited >= MAX_FILES) return;
+      }
+    }
+  }
+}
+
+// Word-boundary scan: an identifier hit needs non-`[A-Za-z0-9_]`
+// flanking characters (or buffer boundary). We do the regex
+// per-line so the Location ranges are easy to compute.
+function findOccurrencesInText(text: string, name: string, uri: string): Location[] {
+  const re = new RegExp('(?<![A-Za-z0-9_])' + name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?![A-Za-z0-9_])', 'g');
+  const lines = text.split(/\r?\n/);
+  const out: Location[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    re.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(lines[i])) !== null) {
+      const start = m.index;
+      out.push({
+        uri,
+        range: {
+          start: { line: i, character: start },
+          end:   { line: i, character: start + name.length },
+        },
+      });
+    }
+  }
+  return out;
+}
+
+connection.onReferences((params: ReferenceParams): Location[] => {
+  const doc = documents.get(params.textDocument.uri);
+  if (!doc) return [];
+  const docLines = doc.getText().split(/\r?\n/);
+  const lineText = docLines[params.position.line] ?? '';
+  const ident = identifierAt(lineText, params.position.character);
+  if (!ident) return [];
+
+  const out: Location[] = [];
+
+  // Scan every open document first so unsaved edits show up. Then walk
+  // the workspace folders on disk for files not currently open.
+  const seenUris = new Set<string>();
+  for (const open of documents.all()) {
+    seenUris.add(open.uri);
+    out.push(...findOccurrencesInText(open.getText(), ident, open.uri));
+  }
+  for (const folder of workspaceFolders) {
+    const root = uriToPath(folder.uri);
+    if (!root) continue;
+    for (const file of walkQuirkFiles(root)) {
+      const uri = pathToUri(file);
+      if (seenUris.has(uri)) continue;
+      let buf: Buffer;
+      try { buf = fs.readFileSync(file); } catch { continue; }
+      if (buf.length > MAX_FILE_BYTES) continue;
+      out.push(...findOccurrencesInText(buf.toString('utf8'), ident, uri));
+    }
+  }
+  // `includeDeclaration: false` is a hint that the caller (find-refs
+  // panel) doesn't want the declaration site in the list. Most LSP
+  // clients flip this on for `Find Usages` and off for hover-style
+  // peek; we honor it without trying to distinguish *which* hit is
+  // the declaration, by stripping any hit that's adjacent to the
+  // canonical decl keywords.
+  if (params.context && !params.context.includeDeclaration) {
+    return out.filter((loc) => {
+      const lines = (loc.uri === doc.uri ? docLines :
+        (() => { const p = uriToPath(loc.uri); if (!p) return null;
+                 try { return fs.readFileSync(p, 'utf8').split(/\r?\n/); } catch { return null; } })());
+      if (!lines) return true;
+      const line = lines[loc.range.start.line] ?? '';
+      // Strip if the line is a declaration of this identifier.
+      for (const { re, nameGroup } of DECL_PATTERNS) {
+        const m = line.match(re);
+        if (m && m[nameGroup] === ident) return false;
+      }
+      return true;
+    });
+  }
+  return out;
 });
 
 documents.listen(connection);

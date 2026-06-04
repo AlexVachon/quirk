@@ -2,24 +2,22 @@
 
 Language Server Protocol implementation for [Quirk](https://github.com/AlexVachon/quirk).
 
-## What's in v0.3 (compiler 1.6.2)
+## What's in v0.4 (compiler 1.6.3)
 
 - **Diagnostics** on open + save via `quirk --check --diagnostics-json`.
-- **Document symbols** (`textDocument/documentSymbol`) — outline panel,
-  breadcrumbs, `@` symbol picker. Top-level `define` / `struct` /
-  `enum` / `interface`; methods nest under their struct.
-- **Formatting** (`textDocument/formatting`) — shells out to
-  `quirk fmt --stdout`, replaces the whole buffer.
-- **Go-to-definition** (`textDocument/definition`) — ctrl-click a
-  name to jump to its `define` / `struct` / `enum` / `interface`
-  declaration in the same file. Cross-file resolution is on the
-  roadmap (needs a compiler-side `quirk resolve` query first).
-- **Lifecycle** — `initialize`, `shutdown`, `exit`, document
-  open/save/close.
+- **Document symbols** (`textDocument/documentSymbol`) — outline,
+  breadcrumbs, `@` symbol picker.
+- **Formatting** (`textDocument/formatting`) — shells out to `quirk fmt --stdout`.
+- **Go-to-definition** (`textDocument/definition`) — same-file decls
+  *and* cross-file via the compiler's new `quirk resolve <name>`
+  subcommand. Ctrl-click a name imported via `use X` or `from X use { Y }`
+  and the LSP jumps to its declaration in the resolved module.
+  Caches resolved module paths per session.
+- **Lifecycle** — `initialize`, `shutdown`, `exit`, document open/save/close.
 
-Coming later in 1.6.x: hover, completion, cross-file go-to-def,
-references, rename, signature help, semantic tokens. The VSCode
-extension keeps its in-process providers for those.
+Coming later in 1.6.x: hover, completion, references, rename, signature
+help, semantic tokens. The VSCode extension keeps its in-process
+providers for those.
 
 ## Install
 

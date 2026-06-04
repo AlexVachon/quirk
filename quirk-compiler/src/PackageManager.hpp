@@ -64,7 +64,7 @@ static std::string self_binary();
 
 namespace qpm {
 
-constexpr const char* QUIRK_VERSION = "1.6.2";
+constexpr const char* QUIRK_VERSION = "1.6.3";
 
 namespace fs = std::filesystem;
 
@@ -5392,6 +5392,44 @@ static int cmd_script(const std::vector<std::string>& args) {
 // `quirk module <name> [args...]` — locate the module's entry file and run
 // it. The module is expected to define `main()`; if it doesn't, the compiler
 // errors out cleanly.
+// `quirk resolve <name>` — print the absolute path of the source file
+// that `use <name>` would load, or exit non-zero if it doesn't resolve.
+// Used by the LSP for cross-file go-to-definition; also handy from the
+// shell to confirm where a given import lands when debugging the
+// resolver chain. Doesn't try to mirror Compiler.cpp's full
+// `resolveImportPath` (which also handles relative `.foo` imports);
+// `locate_module_file` is the right shape for absolute names.
+static int cmd_resolve(const std::vector<std::string>& args) {
+    if (args.empty() || args[0] == "-h" || args[0] == "--help") {
+        std::cout <<
+            "quirk resolve <name>\n"
+            "    Print the absolute path of the .quirk file that\n"
+            "    `use <name>` would load. Exits 0 + prints the path on a\n"
+            "    hit, exits 1 + prints to stderr on a miss.\n";
+        return args.empty() ? 1 : 0;
+    }
+    const std::string& name = args[0];
+    fs::path p = locate_module_file(name);
+    // `locate_module_file` treats the input as a single directory name;
+    // dotted module names like `typing.primitives.int` need the dots
+    // turned into path separators so the file structure under `packages/
+    // typing/primitives/int.quirk` is reachable. Try the dotted form
+    // first (so a literal `foo.bar` directory wins on disk if it
+    // exists), then the path form.
+    if (p.empty() && name.find('.') != std::string::npos) {
+        std::string asPath = name;
+        std::replace(asPath.begin(), asPath.end(), '.', '/');
+        p = locate_module_file(asPath);
+    }
+    if (p.empty()) {
+        std::cerr << "resolve: '" << name << "' not found in any search path\n";
+        std::cerr << "  (run `quirk env` to see the search paths)\n";
+        return 1;
+    }
+    std::cout << fs::absolute(p).string() << "\n";
+    return 0;
+}
+
 static int cmd_module(const std::vector<std::string>& args) {
     if (args.empty()) {
         std::cerr << "module: need a module name\n";
@@ -5924,7 +5962,8 @@ static bool is_subcommand(const std::string& arg) {
            arg == "env" || arg == "new" || arg == "help" ||
            arg == "script" || arg == "sync" || arg == "stdlib" || arg == "fmt" ||
            arg == "repl" || arg == "test" || arg == "bump-compiler" ||
-           arg == "compiler" || arg == "auth" || arg == "completion";
+           arg == "compiler" || arg == "auth" || arg == "completion" ||
+           arg == "resolve";
 }
 
 // Drop argv[1] (a verb) and shift everything left. argc decreases by 1.
@@ -6075,6 +6114,7 @@ inline bool dispatch(int& argc, char** argv, int& outRc) {
     else if (verb == "version")      outRc = cmd_version();
     else if (verb == "eval")         outRc = cmd_eval(verbArgs);
     else if (verb == "module")       outRc = cmd_module(verbArgs);
+    else if (verb == "resolve")      outRc = cmd_resolve(verbArgs);
     else if (verb == "deps")         outRc = cmd_deps();
     else if (verb == "env")          outRc = cmd_env();
     else if (verb == "cache")        outRc = cmd_cache(verbArgs);

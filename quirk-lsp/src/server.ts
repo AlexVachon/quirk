@@ -106,7 +106,7 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
       documentFormattingProvider: true,
       definitionProvider: true,
     },
-    serverInfo: { name: 'quirk-lsp', version: '0.3.0' },
+    serverInfo: { name: 'quirk-lsp', version: '0.4.0' },
   };
 });
 
@@ -425,13 +425,160 @@ function findDeclarations(doc: TextDocument, name: string): Location[] {
   return out;
 }
 
+// Cross-file lookup helpers. The LSP doesn't try to reimplement the
+// Quirk resolver in TypeScript — it shells out to `quirk resolve <name>`
+// instead, so we stay byte-identical with `use foo` semantics. A miss
+// just returns the empty list; the editor will fall back to its own
+// fuzzy navigation (workspace symbol search, etc).
+
+// Pull the module name out of `use X` or `from X use { ... }`. Returns
+// null when the line isn't an import. Module names are dotted, so we
+// match `[A-Za-z_][A-Za-z0-9_.]*`.
+const USE_RE  = /^[ \t]*use\s+([A-Za-z_][A-Za-z0-9_.]*)/;
+const FROM_RE = /^[ \t]*from\s+([A-Za-z_][A-Za-z0-9_.]*)\s+use\b/;
+
+interface ImportLine {
+  module: string;
+  imported: Set<string>;   // empty for plain `use X`
+}
+
+// Build a name → module map by scanning the file's import block. The
+// scanner accepts both single-line (`from foo use { A, B }`) and
+// multi-line (`from foo use {\n    A,\n    B,\n}`) forms; the typing
+// module heavily uses the multi-line one.
+function scanImports(text: string): { byName: Map<string, string>; modules: Set<string> } {
+  const byName  = new Map<string, string>();
+  const modules = new Set<string>();
+  const lines = text.split(/\r?\n/);
+
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    const fromMatch = line.match(FROM_RE);
+    if (fromMatch) {
+      const mod = fromMatch[1];
+      modules.add(mod);
+      // Collect everything between the first `{` (anywhere in the
+      // current line) and the matching `}` (possibly on a later line).
+      let body = '';
+      const openIdx = line.indexOf('{');
+      if (openIdx >= 0) body += line.slice(openIdx + 1);
+      let j = i;
+      while (body.indexOf('}') === -1 && j + 1 < lines.length) {
+        j++;
+        body += '\n' + lines[j];
+      }
+      const close = body.indexOf('}');
+      if (close >= 0) body = body.slice(0, close);
+      for (const tok of body.split(/[,\s]+/)) {
+        const t = tok.trim();
+        if (!t) continue;
+        // Strip `as alias` if present — we record the local alias
+        // name, since that's what the user types at the call site.
+        const asMatch = t.match(/^([A-Za-z_][A-Za-z0-9_]*)(?:\s+as\s+([A-Za-z_][A-Za-z0-9_]*))?$/);
+        if (asMatch) byName.set(asMatch[2] ?? asMatch[1], mod);
+      }
+      i = j + 1;
+      continue;
+    }
+    const useMatch = line.match(USE_RE);
+    if (useMatch) {
+      modules.add(useMatch[1]);
+      // Bare `use X` also exposes the module name itself for member
+      // access (`X.foo`). The bare name maps to itself for jump.
+      // Multi-dot names like `net.http` create a separate entry per
+      // segment chain so `use net.http` is jumpable as either
+      // `net` (unlikely) or the full `net.http`.
+      const parts = useMatch[1].split('.');
+      byName.set(parts[parts.length - 1], useMatch[1]);
+    }
+    i++;
+  }
+  return { byName, modules };
+}
+
+// Cache resolved module paths so repeat lookups in the same session
+// don't repeatedly spawn the compiler. Cleared on shutdown via process
+// exit — no LRU eviction needed (compile-time module count is small).
+const resolveCache = new Map<string, string | null>();
+
+function resolveModule(moduleName: string): string | null {
+  if (resolveCache.has(moduleName)) return resolveCache.get(moduleName) ?? null;
+  const r = spawnSync(quirkBinary, ['resolve', moduleName], {
+    encoding: 'utf8',
+    timeout: 5_000,
+  });
+  let result: string | null = null;
+  if (r.status === 0 && r.stdout) {
+    result = r.stdout.trim();
+    if (!result) result = null;
+  }
+  resolveCache.set(moduleName, result);
+  return result;
+}
+
+// Find declarations matching `name` in the file at `absPath`. Reads the
+// file synchronously off disk so we don't have to keep the imported
+// docs in `documents`. Returns [] on read failure (file moved/deleted
+// since the import was written).
+function findDeclarationsInFile(absPath: string, name: string): Location[] {
+  let text: string;
+  try { text = fs.readFileSync(absPath, 'utf8'); }
+  catch { return []; }
+  const lines = text.split(/\r?\n/);
+  const uri = new URL('file://' + path.resolve(absPath)).toString();
+  const out: Location[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    for (const { re, nameGroup } of DECL_PATTERNS) {
+      const m = lines[i].match(re);
+      if (m && m[nameGroup] === name) {
+        const startCol = lines[i].indexOf(name, m.index ?? 0);
+        out.push({
+          uri,
+          range: {
+            start: { line: i, character: startCol },
+            end:   { line: i, character: startCol + name.length },
+          },
+        });
+        break;
+      }
+    }
+  }
+  return out;
+}
+
 connection.onDefinition((params: DefinitionParams): Location[] => {
   const doc = documents.get(params.textDocument.uri);
   if (!doc) return [];
-  const lineText = doc.getText().split(/\r?\n/)[params.position.line] ?? '';
+  const text = doc.getText();
+  const lineText = text.split(/\r?\n/)[params.position.line] ?? '';
   const ident = identifierAt(lineText, params.position.character);
   if (!ident) return [];
-  return findDeclarations(doc, ident);
+
+  // 1. Same-file declarations win. Local edits should be visible
+  // immediately, regardless of what the compiler's resolver thinks.
+  const same = findDeclarations(doc, ident);
+  if (same.length) return same;
+
+  // 2. Cross-file: walk the file's imports. The cursor identifier
+  // could be either the module itself or a name imported from one.
+  const { byName, modules } = scanImports(text);
+  const moduleHit = byName.get(ident) ?? (modules.has(ident) ? ident : null);
+  if (!moduleHit) return [];
+
+  const resolved = resolveModule(moduleHit);
+  if (!resolved) return [];
+
+  // If we landed because the cursor was the module name itself, jump
+  // to the top of the resolved file. Otherwise look for a declaration
+  // matching `ident` *inside* the resolved module.
+  if (ident === moduleHit.split('.').pop()) {
+    return [{
+      uri: new URL('file://' + path.resolve(resolved)).toString(),
+      range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
+    }];
+  }
+  return findDeclarationsInFile(resolved, ident);
 });
 
 documents.listen(connection);

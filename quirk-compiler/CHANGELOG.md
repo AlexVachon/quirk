@@ -5,6 +5,32 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [1.6.3] — 2026-06-03
+
+### `quirk resolve <name>` + cross-file LSP go-to-def
+
+- **New `quirk resolve <name>` subcommand.** Prints the absolute path
+  of the `.quirk` file that `use <name>` would load, or exits 1 on a
+  miss. Accepts both bare names (`quirk resolve argparse`) and dotted
+  paths (`quirk resolve typing.primitives.int`) — the dotted form
+  converts `.` → `/` before the lookup so the file layout under
+  `packages/typing/primitives/int.quirk` is reachable. Reuses
+  `locate_module_file` so the resolution matches what `use` does at
+  compile time.
+- **`quirk-lsp` 0.4.0** uses this to extend go-to-definition across
+  files. The LSP scans the current document's import block
+  (`use X`, `from X use { Y, Z }`, including the multi-line brace
+  form heavily used by `typing/`) into a `name → module` map. On
+  ctrl-click, same-file declarations still win first; if the cursor
+  identifier matches an imported name, the LSP runs `quirk resolve`
+  and jumps to that module's matching decl. Resolved paths are
+  cached per session so repeat lookups don't re-spawn the compiler.
+
+Tested round-trip: ctrl-click on `argparse` jumps to the user-global
+install at `~/.quirk/packages/argparse/index.quirk`; ctrl-click on
+`Int` (imported via `from typing.primitives.int use { Int }`) jumps
+to `packages/typing/primitives/int.quirk` at the `struct Int` line.
+
 ## [1.6.2] — 2026-06-03
 
 ### `quirk-lsp` 0.3.0 — go-to-definition (current file)

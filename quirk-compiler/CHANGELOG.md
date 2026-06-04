@@ -5,6 +5,30 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [1.6.10] — 2026-06-03
+
+### `quirk-lsp` 0.11.0 — scope-aware rename
+
+`textDocument/prepareRename` returns the identifier span so the
+editor's rename popup pre-fills with the current name. `textDocument/
+rename` picks one of two paths based on the symbol cache:
+
+- **Local-only rename** (parameters, local variables): touches the
+  current file only. Other files can't reference a local.
+- **Workspace rename** (functions, structs, enums, interfaces,
+  methods, fields, module constants, enum variants): word-boundary
+  rename across every opened doc + every `.quirk` file under the
+  workspace folders. Same walker as find-references.
+
+Caveat: text-based for the actual replacement. Two locals with the
+same name in different functions, or a parameter shadowed by a
+local, can't yet be renamed independently from the workspace path
+— that needs per-usage tracking from Sema (v1.6.11+ direction).
+The same-file case mitigates the worst risk by limiting scope when
+the symbol cache says the name is local.
+
+Compiler binary byte-identical to 1.6.9 modulo the version constant.
+
 ## [1.6.9] — 2026-06-03
 
 ### `quirk-lsp` 0.10.0 — workspace symbols

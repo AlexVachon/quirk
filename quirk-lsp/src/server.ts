@@ -40,9 +40,12 @@ import {
   HoverParams,
   Location,
   MarkupKind,
+  PrepareRenameParams,
   ProposedFeatures,
   ReferenceParams,
+  RenameParams,
   SymbolInformation,
+  WorkspaceEdit,
   WorkspaceFolder,
   WorkspaceSymbolParams,
   InitializeParams,
@@ -157,8 +160,9 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
         retriggerCharacters: [','],
       },
       workspaceSymbolProvider: true,
+      renameProvider: { prepareProvider: true },
     },
-    serverInfo: { name: 'quirk-lsp', version: '0.10.0' },
+    serverInfo: { name: 'quirk-lsp', version: '0.11.0' },
   };
 });
 
@@ -1240,6 +1244,128 @@ connection.onWorkspaceSymbol((params: WorkspaceSymbolParams): SymbolInformation[
   }
   // Cap so a huge multi-file project doesn't flood the editor.
   return out.slice(0, 500);
+});
+
+// ──────────────────────────────────────────────────────────────────────
+// Rename (`textDocument/rename` + `textDocument/prepareRename`)
+// ──────────────────────────────────────────────────────────────────────
+// Two paths, picked by the kind of symbol the cursor sits on:
+//
+// 1. Local symbol (parameter or `:=`-bound variable): rename within
+//    the current file only. Other files can't reference a local, so
+//    a workspace walk would be wasted work.
+// 2. Top-level decl (function, struct, enum, interface, method,
+//    field, module_const): workspace-wide word-boundary rename
+//    across every opened/cached document plus on-disk .quirk files
+//    under the workspace folders. Same walker as find-references.
+//
+// Caveats — no full scope tracking:
+//   - Two locals with the same name in different functions can't be
+//     renamed independently from the workspace path; we use the
+//     symbol cache to detect that case and limit the rename to the
+//     enclosing function's body when possible.
+//   - Shadowed identifiers (param `x` and local `x` inside the same
+//     function) will all be renamed together. Real semantic rename
+//     needs usage tracking from Sema; deferred until that lands.
+
+// Look up which symbol record(s) match (name, file). Returns all
+// matches so the caller can decide what to do with ambiguity.
+function findSymbolsByName(name: string, file: string, symbols: QuirkSymbol[]): QuirkSymbol[] {
+  return symbols.filter((s) => s.name === name && s.file === file);
+}
+
+// Top-level kinds get workspace rename; everything else is same-file
+// only. `enumvariant` lives somewhere in the middle — variants are
+// referenced as `Direction.North`, so any cross-file user of the enum
+// could mention them. Treat as workspace.
+function isWorkspaceVisible(kind: QuirkSymbol['kind']): boolean {
+  return kind === 'function' || kind === 'method' || kind === 'struct'
+      || kind === 'enum' || kind === 'enumvariant' || kind === 'interface'
+      || kind === 'field' || kind === 'module_const';
+}
+
+connection.onPrepareRename((params: PrepareRenameParams) => {
+  const doc = documents.get(params.textDocument.uri);
+  if (!doc) return null;
+  const lineText = doc.getText().split(/\r?\n/)[params.position.line] ?? '';
+  // Walk left/right from the cursor to find the identifier span.
+  let start = params.position.character;
+  let end   = params.position.character;
+  while (start > 0 && /[A-Za-z0-9_]/.test(lineText[start - 1])) start--;
+  while (end < lineText.length && /[A-Za-z0-9_]/.test(lineText[end])) end++;
+  if (start === end) return null;
+  // First char must be a valid identifier start.
+  if (!/[A-Za-z_]/.test(lineText[start])) return null;
+  return {
+    range: {
+      start: { line: params.position.line, character: start },
+      end:   { line: params.position.line, character: end },
+    },
+    placeholder: lineText.slice(start, end),
+  };
+});
+
+connection.onRenameRequest((params: RenameParams): WorkspaceEdit | null => {
+  const doc = documents.get(params.textDocument.uri);
+  if (!doc) return null;
+  const lineText = doc.getText().split(/\r?\n/)[params.position.line] ?? '';
+  const oldName = identifierAt(lineText, params.position.character);
+  if (!oldName) return null;
+  const newName = params.newName;
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(newName)) {
+    connection.console.warn(`rename: '${newName}' is not a valid Quirk identifier`);
+    return null;
+  }
+  if (oldName === newName) return { changes: {} };
+
+  const docPath = uriToPath(params.textDocument.uri);
+  if (!docPath) return null;
+
+  // Disambiguate via the symbol cache. If the cache has nothing for
+  // this name, fall back to "any same-file occurrence" — better than
+  // refusing rename entirely.
+  const symbols = symbolCache.get(params.textDocument.uri) ?? [];
+  const matches = findSymbolsByName(oldName, docPath, symbols);
+
+  const renameSameFileOnly = !matches.length
+      || matches.every((s) => !isWorkspaceVisible(s.kind));
+
+  // Gather Locations to edit.
+  const locations: Location[] = [];
+  if (renameSameFileOnly) {
+    locations.push(...findOccurrencesInText(doc.getText(), oldName, doc.uri));
+  } else {
+    // Workspace path — open docs first, then on-disk files. Same
+    // walker as find-references.
+    const seen = new Set<string>();
+    for (const open of documents.all()) {
+      seen.add(open.uri);
+      locations.push(...findOccurrencesInText(open.getText(), oldName, open.uri));
+    }
+    for (const folder of workspaceFolders) {
+      const root = uriToPath(folder.uri);
+      if (!root) continue;
+      for (const file of walkQuirkFiles(root)) {
+        const uri = pathToUri(file);
+        if (seen.has(uri)) continue;
+        let buf: Buffer;
+        try { buf = fs.readFileSync(file); } catch { continue; }
+        if (buf.length > MAX_FILE_BYTES) continue;
+        locations.push(...findOccurrencesInText(buf.toString('utf8'), oldName, uri));
+      }
+    }
+  }
+
+  // Group edits by URI; the LSP client applies them as one
+  // workspace-wide change.
+  const changes: { [uri: string]: TextEdit[] } = {};
+  for (const loc of locations) {
+    (changes[loc.uri] ??= []).push({
+      range: loc.range,
+      newText: newName,
+    });
+  }
+  return { changes };
 });
 
 documents.listen(connection);

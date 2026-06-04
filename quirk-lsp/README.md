@@ -2,6 +2,22 @@
 
 Language Server Protocol implementation for [Quirk](https://github.com/AlexVachon/quirk).
 
+## What's in v0.11 (compiler 1.6.10)
+
+Same as 0.10 plus:
+
+- **Rename** (`textDocument/rename` + `textDocument/prepareRename`)
+  — scope-aware. Renaming a parameter or local variable touches the
+  current file only. Renaming a top-level decl (function, struct,
+  enum, interface, method, field, module_const) walks the workspace
+  the same way find-references does. `prepareRename` returns the
+  identifier span so the editor's rename popup pre-fills correctly.
+
+  Caveat: still text-based for the actual replacement. Two locals
+  with the same name in different functions can't yet be renamed
+  independently from a workspace rename — that needs per-usage
+  tracking from Sema, which is the v1.6.11+ direction.
+
 ## What's in v0.10 (compiler 1.6.9)
 
 Same as 0.9 plus:

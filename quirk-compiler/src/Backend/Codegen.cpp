@@ -2292,12 +2292,16 @@ class LLVMCodegen {
                 std::string sName = st->getName().str();
                 if (sName.find("struct.") == 0) sName = sName.substr(7);
                 if (sName == "String") {
-                    Function* opaqueToStr = TheModule->getFunction("quirk_opaque_to_string");
+                    // Use the …_or_null variant so a literal-null arg
+                    // stays null at the callee, instead of being wrapped
+                    // as the 4-char string "null" (which would defeat
+                    // any `default != null` guard the callee has).
+                    Function* opaqueToStr = TheModule->getFunction("quirk_opaque_to_string_or_null");
                     if (!opaqueToStr) {
                         Type* retTy = PointerType::getUnqual(StructTypes["String"]);
                         FunctionType* ft = FunctionType::get(retTy, {Type::getInt8PtrTy(Context)}, false);
                         opaqueToStr = Function::Create(ft, Function::ExternalLinkage,
-                                                       "quirk_opaque_to_string", TheModule.get());
+                                                       "quirk_opaque_to_string_or_null", TheModule.get());
                     }
                     argVal = Builder.CreateCall(opaqueToStr, {argVal}, "arg_unbox_str");
                 } else {

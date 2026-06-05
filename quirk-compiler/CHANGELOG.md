@@ -5,6 +5,33 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [2.2.9] — 2026-06-05
+
+### Codegen: arg-coercion preserves null pointers
+
+Follow-up to 2.2.7. The `i8* → String*` arg coercion routes through
+`quirk_opaque_to_string` to handle Any-laundered values safely. The
+helper's stringification semantics turn a literal null into the
+4-char string `"null"`, which is correct for `print(null)` and
+collection display, but wrong at function-argument boundaries: any
+callee that defends with `s != null` then sees a non-null String
+of length 4, and the guard silently passes through.
+
+Concretely: `prompt.input("Name?", null)` (or any wrapper that
+forwards a null through an `Any`-typed parameter) was rendering as
+`Name? [null]: ` — the v1.0.3 `default != null and default.length()
+> 0` guard in the package thought it had a real default.
+
+Fix: added a sibling runtime helper `quirk_opaque_to_string_or_null`
+that returns the null pointer for null input and otherwise behaves
+identically. Codegen's arg-coercion site uses the new helper;
+stringification callers (print / debug / collection display) stay
+on the original.
+
+The v2.2.2 return-path null propagation is unaffected (it already
+short-circuits on `isa<ConstantPointerNull>` before reaching the
+unbox helper).
+
 ## [2.2.8] — 2026-06-05
 
 ### `quirk pkg install <stdlib-name>` no longer shadows the stdlib symlink

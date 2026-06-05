@@ -90,6 +90,18 @@ String* quirk_opaque_to_string(void* val) {
     return (s->buffer) ? s : make_String("null");
 }
 
+// Coercion-friendly variant of quirk_opaque_to_string used at function-
+// argument boundaries: when the value is *literally null* at runtime,
+// return the null pointer (cast to String*) so the receiver's
+// `s != null` guard keeps working. Other shapes route through the
+// standard helper. The stringification-shaped callers (print, debug,
+// collection display) still want `null → "null"` and stay on the
+// original helper.
+String* quirk_opaque_to_string_or_null(void* val) {
+    if (!val) return NULL;
+    return quirk_opaque_to_string(val);
+}
+
 // Unbox an opaque i8* / Any* / tagged-int to a C boolean (0 or 1).
 // Used by toBool() for Callable return values and any opaque condition.
 int32_t quirk_any_as_bool(void* val) {

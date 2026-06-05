@@ -5,6 +5,62 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [2.2.8] — 2026-06-05
+
+### `quirk pkg install <stdlib-name>` no longer shadows the stdlib symlink
+
+Inside a venv the resolver order is:
+
+```
+./packages/                      # project local
+<venv>/lib/quirk/packages/       # venv-installed (real copies)
+<venv>/lib/quirk/stdlib/         # symlink → ~/.quirk/packages/<name>
+…
+```
+
+`quirk venv` populates `stdlib/` with symlinks to the user-global
+stdlib, which means `quirk compiler update` propagates to every
+venv automatically. But before this release, `quirk pkg install
+<stdlib-name>` (with no version pin) wrote a frozen copy under
+`packages/`, which sits *above* the symlink in the resolver order
+and silently kept the venv on whatever version was current at
+install time — even after the global got updated. That's how the
+user-reported scenario surfaced: a venv created on day 1, an old
+stale `prompt` copy from a `pkg install prompt`, then days of
+compiler/stdlib updates that never reached the program.
+
+Three changes:
+
+1. **`pkg install <stdlib-name>` short-circuits in a venv** when no
+   version pin is provided. Prints "<name> is bundled with the
+   stdlib", points at the symlink, and tells the user how to pin
+   anyway if that's actually what they want.
+
+2. **The short-circuit also cleans up any existing stale copy** in
+   `<venv>/lib/quirk/packages/<name>`. Re-running `pkg install
+   <stdlib-name>` is now the easy way to recover from a previously-
+   broken venv.
+
+3. **`quirk venv repair` sweeps stale stdlib copies** out of
+   `<venv>/lib/quirk/packages/` for every name in
+   `stdlib_registry()`. Reports the count alongside the new
+   stdlib-link tally. User packages in the same directory are
+   preserved.
+
+Pinned installs (`quirk pkg install prompt@1.0.2`) are honored
+unchanged — the user is explicitly choosing to deviate from the
+bundled stdlib, the lockfile records the pin, and subsequent bare
+installs go through the lockfile fast-path as before.
+
+Bug fixed along the way: the short-circuit used to write an empty
+`LockEntry`, which `cmd_install` then persisted as `[[package]]
+name = ""` in `quirk.lock`. The next bare install routed through
+the lockfile fast-path with the empty version, producing the
+malformed `pkg@` spec and re-triggering the short-circuit by
+accident. Now the short-circuit signals "no install happened" via
+an empty `e.name`, and the caller filters that case before touching
+the lock.
+
 ## [2.2.7] — 2026-06-05
 
 ### Codegen: `Any → String*` arg coercion no longer hands back a bogus pointer

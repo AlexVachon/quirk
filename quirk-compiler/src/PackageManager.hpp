@@ -64,7 +64,7 @@ static std::string self_binary();
 
 namespace qpm {
 
-constexpr const char* QUIRK_VERSION = "2.2.7";
+constexpr const char* QUIRK_VERSION = "2.2.8";
 
 namespace fs = std::filesystem;
 
@@ -597,6 +597,11 @@ static int link_stdlib(const fs::path& venvDir, const fs::path& stdlib) {
     return created;
 }
 
+// Forward decl — definition lives below near the other registry code.
+// Needed so the stale-stdlib-copy sweep in build_venv() can ask which
+// names are stdlib packages without reordering the whole file.
+static const std::map<std::string, std::string>& stdlib_registry();
+
 // Internal: build the venv layout under `venvDir`. Used by `cmd_venv_new` and
 // `cmd_venv_repair`. `repair` is true when called to fix an existing venv
 // (won't overwrite the activate script unless missing).
@@ -614,6 +619,27 @@ static int build_venv(const fs::path& venvDir, bool repair) {
     fs::create_directories(venvDir / "lib" / "quirk" / "stdlib");
 
     int linked = link_stdlib(venvDir, stdlib);
+
+    // On repair, sweep stale frozen copies of stdlib packages out of
+    // <venv>/lib/quirk/packages/. Older `quirk pkg install <stdlib-name>`
+    // runs (pre-2.2.8) wrote real copies there, which shadow the stdlib
+    // symlink in resolver order and silently keep the user on an old
+    // version. The symlink at <venv>/lib/quirk/stdlib/<name> already
+    // tracks the latest stdlib, so removing the shadowing copy is a
+    // pure cleanup.
+    int sweptStale = 0;
+    if (repair) {
+        fs::path pkgDir = venvDir / "lib" / "quirk" / "packages";
+        const auto& reg = stdlib_registry();
+        for (const auto& [name, _url] : reg) {
+            std::error_code ec;
+            fs::path stale = pkgDir / name;
+            if (fs::exists(stale, ec)) {
+                fs::remove_all(stale, ec);
+                if (!ec) sweptStale++;
+            }
+        }
+    }
 
     // Symlink the compiler + runtime. On repair, replace stale symlinks so the
     // venv tracks whichever quirk binary is running now.
@@ -644,8 +670,11 @@ static int build_venv(const fs::path& venvDir, bool repair) {
     // Cfg always rewritten (records *current* compiler version + paths).
     write_venv_cfg(venvDir, stdlib, binPath);
 
+    std::string detail = std::to_string(linked) + " new stdlib link(s)";
+    if (sweptStale > 0)
+        detail += ", swept " + std::to_string(sweptStale) + " stale stdlib copy(ies)";
     log::ok(std::string(repair ? "repaired" : "created") + " " + venvDir.string()
-            + log::dim("  (" + std::to_string(linked) + " new stdlib link(s))"));
+            + log::dim("  (" + detail + ")"));
     return 0;
 }
 
@@ -1738,6 +1767,58 @@ static int install_one(const std::string& spec_str, bool quiet, bool editable = 
     //   2. Otherwise, look the name up via aliases / registry and recurse
     //      with the resolved URL spec.
     if (!isPathLike && !looksLikeGitSpec) {
+        // Stdlib short-circuit: when running inside a venv, every stdlib
+        // package is already exposed via a symlink at
+        // <venv>/lib/quirk/stdlib/<name> → ~/.quirk/packages/<name>.
+        // That symlink tracks `quirk compiler update` automatically.
+        // Materialising a real copy under <venv>/lib/quirk/packages/
+        // creates a frozen snapshot that *shadows* the symlink in
+        // resolver order (packages/ wins over stdlib/), so users
+        // silently keep using a stale version even after the global
+        // has been refreshed. Refuse the install when no pin is given;
+        // a pinned version is an explicit deviation and is honored.
+        if (pinVersion.empty() && is_active_venv()) {
+            const auto& stdlib = stdlib_registry();
+            if (stdlib.count(pathPart)) {
+                const char* envHome = std::getenv("QUIRK_HOME");
+                if (envHome) {
+                    fs::path symlink = fs::path(envHome) / "lib" / "quirk" /
+                                       "stdlib" / pathPart;
+                    std::error_code ec;
+                    if (fs::is_symlink(symlink, ec) || fs::exists(symlink, ec)) {
+                        // Defensive: an existing copy in <venv>/lib/quirk/packages/
+                        // (from a pre-fix `pkg install`) shadows the stdlib
+                        // symlink in resolver order. Remove it so the user
+                        // re-tracks stdlib updates.
+                        fs::path stalePkg = fs::path(envHome) / "lib" / "quirk" /
+                                            "packages" / pathPart;
+                        bool removedStale = false;
+                        if (fs::exists(stalePkg, ec)) {
+                            fs::remove_all(stalePkg, ec);
+                            removedStale = !ec;
+                        }
+                        log::ok(pathPart + " is bundled with the stdlib");
+                        if (removedStale) {
+                            std::cerr << "    " << log::dim(
+                                "removed stale frozen copy at " + stalePkg.string()) << "\n";
+                        }
+                        std::cerr << "    " << log::dim(
+                            "the stdlib symlink at " + symlink.string() +
+                            " tracks `quirk compiler update`") << "\n";
+                        std::cerr << "    " << log::dim(
+                            "to pin a specific version anyway, use `quirk pkg install "
+                            + pathPart + "@<version>`") << "\n";
+                        // Deliberately *don't* set outLock — there's no real
+                        // install to record. A lock entry here would route
+                        // future runs through the lockfile fast-path with
+                        // an empty version, producing the malformed
+                        // "prompt@" spec.
+                        return 0;
+                    }
+                }
+            }
+        }
+
         if (!pinVersion.empty()) {
             std::string chosen = pick_cached_version(pathPart, pinVersion);
             if (!chosen.empty()) {
@@ -2091,6 +2172,12 @@ static int cmd_install(const std::vector<std::string>& args) {
         LockEntry e;
         int rc = install_one(p.spec, false, p.editable, &e);
         if (rc != 0) return 1;
+        // An empty `e.name` means install_one short-circuited without
+        // doing real work (e.g. the stdlib short-circuit in a venv).
+        // Don't record an empty lock entry — it'd write a malformed
+        // `[[package]] name = ""` and on the next run route through the
+        // lockfile fast-path with an empty version → "pkg@" spec.
+        if (e.name.empty()) return 0;
         processed[e.name] = {e.version, p.spec};
         lock[e.name] = e;
         fs::path pkgDir = package_install_dir() / e.name;

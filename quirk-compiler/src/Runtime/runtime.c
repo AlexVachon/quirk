@@ -102,6 +102,49 @@ String* quirk_opaque_to_string_or_null(void* val) {
     return quirk_opaque_to_string(val);
 }
 
+// Generic Any → struct* coercion for the non-String collection types
+// (List, Map, Tuple, Callable). Throws TypeError when the runtime value
+// can't possibly be the expected struct — e.g. an Int laundered through
+// `Any` arriving at a `: List` parameter. Without this, the v2.2.7
+// String fix's twin hazard surfaced as a SIGSEGV at the first method
+// dispatch (the receiver bitcast a tagged-int pointer to a real struct
+// pointer and dereferenced address 42 or similar).
+//
+//   null in                → null out (preserves legit nullability)
+//   uval ≤ 0xFFFFFFFF      → tagged int  → throw TypeError
+//   Any*-tagged (0..NULL)  → matching tag: unwrap; else: throw TypeError
+//   otherwise              → assume direct struct ptr (the common case;
+//                            the low 32 bits of a real heap pointer are
+//                            ~always above the AnyTag range, so the
+//                            heuristic is safe in practice)
+//
+// `type_name` is purely for the error message — e.g. "List", "Map".
+void* quirk_opaque_unwrap_or_null(void* val, int32_t expected_tag,
+                                  const char* type_name) {
+    if (!val) return NULL;
+    uintptr_t u = (uintptr_t)val;
+    if (u <= 0xFFFFFFFFUL) {
+        char buf[128];
+        snprintf(buf, sizeof(buf),
+                 "expected %s but got Int (laundered through Any-typed parameter)",
+                 type_name ? type_name : "<struct>");
+        quirk_throw_exception("TypeError", buf);
+        return NULL;  // unreachable
+    }
+    int32_t possible_tag = *(int32_t*)val;
+    if (possible_tag >= ANY_INT && possible_tag <= ANY_NULL) {
+        Any* a = (Any*)val;
+        if (a->tag == expected_tag) return a->ptr;
+        char buf[128];
+        snprintf(buf, sizeof(buf),
+                 "expected %s but got differently-tagged Any value",
+                 type_name ? type_name : "<struct>");
+        quirk_throw_exception("TypeError", buf);
+        return NULL;  // unreachable
+    }
+    return val;
+}
+
 // Unbox an opaque i8* / Any* / tagged-int to a C boolean (0 or 1).
 // Used by toBool() for Callable return values and any opaque condition.
 int32_t quirk_any_as_bool(void* val) {

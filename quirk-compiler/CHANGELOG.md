@@ -5,6 +5,48 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [2.2.10] — 2026-06-05
+
+### Codegen: Any → List/Map/Tuple/Callable arg coercion is now type-safe
+
+Twin of the v2.2.7 String fix, applied to the other collection types
+that had the same latent crash hazard: an `Any`-laundered non-pointer
+value (a tagged-int from `Int.parse("...")` flowing through an
+untyped parameter, say) hitting a `: List` / `: Map` / `: Tuple` /
+`: Callable` slot used to get raw-bitcast straight to the struct
+pointer type and SIGSEGV at the first method dispatch.
+
+Repro that crashed before this release:
+
+```quirk
+define take_list(lst: List) -> Int { return lst.length() }
+define wrap(x)                      { return take_list(x) }
+define main() -> void               { print(wrap(42)) }   // crash
+```
+
+Now produces a clean exception instead:
+
+```
+TypeError: expected List but got Int (laundered through Any-typed parameter)
+```
+
+Implementation:
+- New runtime helper `quirk_opaque_unwrap_or_null(val, expected_tag,
+  type_name)` — same heuristic as `quirk_opaque_to_string` but
+  parameterised by `AnyTag`. Throws `TypeError` on mismatch (tagged
+  int into struct slot, or `Any*` with wrong tag); returns the
+  pointer unchanged on the common direct-struct-ptr path; preserves
+  null so callers' `lst == null` guards keep working.
+- `processCallArgs` at the `i8* → struct*` site routes through this
+  helper for `List`/`Map`/`Tuple`/`Callable`. `String` stays on
+  `quirk_opaque_to_string_or_null` (added in 2.2.9). Unknown struct
+  types fall back to the existing bitcast.
+
+Doesn't yet cover `Set`/`Queue`/`File` (no `ANY_*` tag) or
+user-defined structs. Same hazard but hasn't been hit in practice;
+fixing it would need per-struct tag assignments which is a larger
+change.
+
 ## [2.2.9] — 2026-06-05
 
 ### Codegen: arg-coercion preserves null pointers

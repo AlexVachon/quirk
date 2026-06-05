@@ -2305,7 +2305,39 @@ class LLVMCodegen {
                     }
                     argVal = Builder.CreateCall(opaqueToStr, {argVal}, "arg_unbox_str");
                 } else {
-                    argVal = Builder.CreateBitCast(argVal, expectedType);
+                    // For struct types that have a known Any tag (List, Map,
+                    // Tuple, Callable), route through the generic unwrap helper.
+                    // It returns null on null input, null on mismatched
+                    // Any-laundered shapes, and the direct pointer otherwise —
+                    // the same safety net the String path has had since 2.2.7.
+                    // ANY_LIST=5, MAP=6, TUPLE=9, CALLABLE=10 in types.h.
+                    int anyTag = -1;
+                    if      (sName == "List")     anyTag = 5;
+                    else if (sName == "Map")      anyTag = 6;
+                    else if (sName == "Tuple")    anyTag = 9;
+                    else if (sName == "Callable") anyTag = 10;
+                    if (anyTag >= 0) {
+                        Function* unwrap = TheModule->getFunction("quirk_opaque_unwrap_or_null");
+                        if (!unwrap) {
+                            FunctionType* ft = FunctionType::get(
+                                Type::getInt8PtrTy(Context),
+                                {Type::getInt8PtrTy(Context),
+                                 Type::getInt32Ty(Context),
+                                 Type::getInt8PtrTy(Context)},
+                                false);
+                            unwrap = Function::Create(ft, Function::ExternalLinkage,
+                                                     "quirk_opaque_unwrap_or_null", TheModule.get());
+                        }
+                        Value* tagConst = ConstantInt::get(Type::getInt32Ty(Context), anyTag);
+                        Value* nameStr  = Builder.CreateGlobalStringPtr(sName);
+                        Value* unwrapped = Builder.CreateCall(unwrap, {argVal, tagConst, nameStr}, "arg_unbox_" + sName);
+                        argVal = Builder.CreateBitCast(unwrapped, expectedType);
+                    } else {
+                        // Unknown struct (Set, Queue, user types) — keep
+                        // the existing bitcast. Same hazard as before, but
+                        // hasn't been hit in practice.
+                        argVal = Builder.CreateBitCast(argVal, expectedType);
+                    }
                 }
             } else if (argVal->getType() != expectedType) {
                 if (argVal->getType()->isIntegerTy() && expectedType->isIntegerTy())

@@ -2270,12 +2270,39 @@ class LLVMCodegen {
                 argVal->getType()->getPointerElementType()->isIntegerTy(8) &&
                 expectedType->isPointerTy() &&
                 expectedType->getPointerElementType()->isStructTy()) {
-                // i8* → SomeStruct*. Used to be String-only; widened so that
-                // Callable, Map, List, etc. flowing through Any-typed slots
-                // (most commonly `list[i]` returning Any) get coerced to the
-                // function's declared pointer type instead of triggering an
-                // LLVM "param type does not match" verifier failure.
-                argVal = Builder.CreateBitCast(argVal, expectedType);
+                // i8* → SomeStruct*. The i8* may be a genuine struct
+                // pointer cast down (List/Map/Callable flowing through
+                // Any slots) or it may be an Any-laundered value: a
+                // tagged-int (inttoptr small_int) or an Any* heap
+                // wrapper. A raw bitcast is correct for the first
+                // shape but disastrous for the others — passing
+                // `Gender.Other` (i32=2) through an Any-typed param
+                // into a `default: String` slot lands a String*
+                // pointing at address 0x2 and segfaults on the next
+                // method dispatch.
+                //
+                // For String* targets specifically, route through
+                // quirk_opaque_to_string — the runtime helper sniffs
+                // the three shapes and always returns a real String*.
+                // Other struct targets keep the bitcast because the
+                // helper only handles strings; their misuse pattern
+                // is the same hazard but the fix needs separate
+                // per-type helpers (out of scope here).
+                StructType* st = cast<StructType>(expectedType->getPointerElementType());
+                std::string sName = st->getName().str();
+                if (sName.find("struct.") == 0) sName = sName.substr(7);
+                if (sName == "String") {
+                    Function* opaqueToStr = TheModule->getFunction("quirk_opaque_to_string");
+                    if (!opaqueToStr) {
+                        Type* retTy = PointerType::getUnqual(StructTypes["String"]);
+                        FunctionType* ft = FunctionType::get(retTy, {Type::getInt8PtrTy(Context)}, false);
+                        opaqueToStr = Function::Create(ft, Function::ExternalLinkage,
+                                                       "quirk_opaque_to_string", TheModule.get());
+                    }
+                    argVal = Builder.CreateCall(opaqueToStr, {argVal}, "arg_unbox_str");
+                } else {
+                    argVal = Builder.CreateBitCast(argVal, expectedType);
+                }
             } else if (argVal->getType() != expectedType) {
                 if (argVal->getType()->isIntegerTy() && expectedType->isIntegerTy())
                     argVal = Builder.CreateIntCast(argVal, expectedType, true);

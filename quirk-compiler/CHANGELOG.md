@@ -5,6 +5,42 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [2.2.7] — 2026-06-05
+
+### Codegen: `Any → String*` arg coercion no longer hands back a bogus pointer
+
+`processCallArgs` widened the `i8* → SomeStruct*` arg coercion in
+an earlier change so `Callable`/`Map`/`List` values flowing through
+`Any`-typed slots wouldn't trip the LLVM verifier. The widening was
+fine for those types — their `i8*` IS a real struct pointer cast
+down. But for `String*`, the `i8*` may also be:
+
+- an Any-laundered **tagged-int** (`inttoptr small_int`, used to box
+  enum ordinals and small ints) — bitcasting it produces a `String*`
+  pointing at the tag value as a literal memory address;
+- an Any-laundered **Any\*** heap wrapper — bitcasting reinterprets
+  the Any struct's first field as the String buffer pointer.
+
+Both crash on the next `.length()` / `.buffer` access. The user-
+reported repro: a helper with an untyped `default` parameter passing
+`Gender.Other` (ordinal `2`) to `prompt.input(..., default: String)`
+landed an invalid `String*` at address `0x2`, and the first
+`default.length()` SIGSEGV'd.
+
+Fix at [Codegen.cpp:2269](src/Backend/Codegen.cpp#L2269): when the
+expected param type is `String*` specifically, route through
+`quirk_opaque_to_string` — the same runtime helper that already
+handles all three opaque shapes (tagged int, `Any*`, `String*`) and
+hands back a real `String*` every time. Other struct targets keep
+the existing bitcast; their misuse pattern is the same hazard but
+needs separate per-type runtime helpers, which is out of scope here.
+
+This doesn't validate the *semantic* correctness of e.g. passing
+`Gender.Other` where a `String` is expected — it just stops the
+crash. The cleanest fix on the source side is to type the helper's
+`default` parameter as `String` explicitly; with the 2.2.6 arg-type
+check, Sema then rejects the enum-into-string call at compile time.
+
 ## [2.2.6] — 2026-06-05
 
 ### Sema: tighten null compatibility + extend arg-type checks to function calls

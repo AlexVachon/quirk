@@ -1327,7 +1327,23 @@ std::string Sema::checkCall(CallNode *node)
             // function whose body returns a String.
             auto fnIt = methodRegistry[""].find(l->value);
             if (fnIt != methodRegistry[""].end()) {
-                const std::string& ret = fnIt->second->returnType;
+                // Type-check positional arguments against the function's
+                // declared parameters. Same shape as the struct-ctor
+                // check that landed in 2.2.2 — catches things like
+                // `User(name, age, null)` for `age: Int`.
+                FunctionNode* fn = fnIt->second;
+                for (size_t i = 0; i < argTypes.size() && i < fn->parameters.size(); ++i) {
+                    const auto& param = fn->parameters[i];
+                    if (param.isVariadic) break;
+                    const std::string& paramType = param.type;
+                    const std::string& argType   = argTypes[i];
+                    if (paramType.empty() || argType.empty()) continue;
+                    if (isCompatibleTypes(paramType, argType)) continue;
+                    fatalError("argument " + std::to_string(i + 1) + " of " + l->value +
+                               "() expected '" + paramType + "' but got '" + argType + "'",
+                               node->line, node->col, node->filePath);
+                }
+                const std::string& ret = fn->returnType;
                 return (ret.empty() || ret == "auto") ? std::string("void") : ret;
             }
             return vtype;
@@ -1531,7 +1547,29 @@ bool Sema::isCompatibleTypes(const std::string &expected, const std::string &act
     if (expected == actual) return true;
     if (isGenericParam(expected) || isGenericParam(actual)) return true;
     if (expected == "Any" || actual == "Any") return true;
-    if (expected == "Null" || actual == "Null") return true;
+
+    // Null compatibility: `null` (actual="Null") is allowed for any
+    // pointer-like target — nullable annotations (`T?`), structs,
+    // collection/reference types, enums-nope (no null state), and
+    // primitives-nope (no null state either). Without the primitive
+    // and enum carve-outs, `User(name, age, null)` for `age: Int`
+    // used to flow through Sema and resurface as malformed-IR / a
+    // SIGSEGV on the first dereference.
+    if (expected == "Null" || actual == "Null") {
+        const std::string& other = (expected == "Null") ? actual : expected;
+        if (other.empty()) return true;                  // untyped param — defer
+        if (!other.empty() && other.back() == '?') return true;
+        // Primitive scalars have no null state.
+        if (other == "Int" || other == "int" ||
+            other == "Double" || other == "double" ||
+            other == "Bool" || other == "bool" ||
+            other == "Char" || other == "char") return false;
+        // Enums lower to i32 ordinals — no representation for null.
+        if (enumRegistry.count(other)) return false;
+        // Everything else (structs, Any, collections, Callable, …) is
+        // reference-shaped and can hold a null pointer at the IR level.
+        return true;
+    }
 
     // Enum compatibility: same-enum already matched above. An enum lowers
     // to i32 at codegen time, so it's bidirectionally compatible with

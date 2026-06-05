@@ -5,6 +5,59 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [2.2.6] — 2026-06-05
+
+### Sema: tighten null compatibility + extend arg-type checks to function calls
+
+Two adjacent cleanups that mirror the 2.2.3 enum-compat tighten.
+
+#### `isCompatibleTypes("X", "Null")` is no longer a free pass
+
+Before, `null` was compatible with *every* type:
+
+```cpp
+if (expected == "Null" || actual == "Null") return true;
+```
+
+So `User(name, age, null)` for `age: Int` flowed straight through
+Sema, even with the 2.2.2 ctor type check active. Now null is gated:
+
+- **Allowed**: nullable annotations (`T?`), `Any`, structs and other
+  reference types (List/Map/Set/Queue/Tuple/Callable/File). These
+  lower to pointers at the IR level and can hold null at runtime.
+- **Rejected**: primitives (`Int`, `Double`, `Bool`, `Char`) — no
+  null state in their representation.
+- **Rejected**: enums — they lower to i32 ordinals, also no null
+  state. Use `Enum?` if you genuinely need null.
+
+```
+[ERROR] argument 2 of User() expected 'Int' but got 'Null'
+ --> main.quirk:10:14
+```
+
+#### Sema now type-checks positional args at literal-callee function calls
+
+The 2.2.2 type check was wired into struct constructors and member-
+method calls but not into plain `foo(a, b, c)` calls. Now it is —
+same `isCompatibleTypes` rule, same error shape. Catches null →
+Int/enum and any other type mismatch at the call site that would
+have surfaced later as a malformed-IR crash or a runtime SIGSEGV.
+
+```
+[ERROR] argument 1 of f() expected 'Color' but got 'Null'
+ --> main.quirk:8:5
+```
+
+#### What this *doesn't* catch
+
+Values laundered through `Any` (or any untyped parameter) still pass
+through Sema, because `Any` is the explicit escape hatch and tightening
+it would break existing stdlib patterns. So a chain like
+`confirm_input(m, f, default)` with an untyped `default` will still
+let null reach `prompt.input` — that's why `quirk-prompt@v1.0.3`
+added runtime null-tolerance to `prompt.input`. Tightening `Any` is
+a much bigger change tracked separately.
+
 ## [2.2.5] — 2026-06-05
 
 ### Stdlib: bundle `quirk-prompt@v1.0.3`

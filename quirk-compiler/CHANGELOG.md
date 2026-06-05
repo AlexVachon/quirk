@@ -5,6 +5,27 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [2.2.5] — 2026-06-05
+
+### Stdlib: bundle `quirk-prompt@v1.0.3`
+
+Patch release of the bundled prompt package. `prompt.input(message,
+default)` now treats a null `default` argument the same way it
+treats an absent one (empty → re-prompt loop) instead of crashing
+with SIGSEGV on the first `default.length()` call.
+
+The trip-up: callers that route the default through an untyped /
+Any-typed parameter chain (e.g. `confirm_input(m, f, default)` then
+`prompt.input(m, default)`) silently pass null where the String
+signature would suggest a real value. The compiler's existing
+type-erasure rules let this through Sema (Null is "compatible" with
+everything as far as Sema is concerned). The package now defends
+itself; the broader Sema cleanup is tracked separately.
+
+No compiler-side code changed in this release — just the
+`STDLIB_TAG_prompt` Makefile pin moves to `v1.0.3` so the release
+tarball ships the patched package.
+
 ## [2.2.4] — 2026-06-05
 
 ### Backed enums (Python-style)

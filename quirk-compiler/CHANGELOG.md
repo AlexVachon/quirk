@@ -5,6 +5,66 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [2.2.4] — 2026-06-05
+
+### Backed enums (Python-style)
+
+Enums can now declare a backing type and per-variant values, and the
+enum itself becomes callable for value→variant lookup:
+
+```quirk
+enum Gender(String) {
+    Male
+    Female = "F"
+    Other
+}
+
+enum Status(Int) {
+    OK = 200
+    NotFound = 404
+    ServerError = 500
+}
+
+g := Gender("F")          // → Gender.Female
+g.value                   // → "F"
+Gender.Other.value        // → "Other"
+
+s := Status(404)          // → Status.NotFound
+s.value                   // → 404
+
+Gender("nope")            // → throws ValueError
+```
+
+- Defaults: a variant without `= ...` uses the variant name as-written
+  for String backing, or its ordinal index for Int backing.
+- `EnumName(value)` is a value→variant lookup. On miss, it raises
+  `ValueError("'<value>' is not a valid <EnumName>")` — use try/catch
+  for null-on-miss behaviour.
+- `instance.value` returns the backing value. Works for plain bindings
+  (`g.value`), chained variant access (`Gender.Other.value`), and
+  struct-field access (`response.code.value`).
+- Existing unbacked enums (`enum X { A, B, C }`) are unaffected — the
+  parentheses are optional and the old ordinal-only shape stays as-is.
+
+Implementation surface:
+- AST: `EnumNode` gains `backingType` and a parallel `variantValues`.
+- Parser: `enum Name(T) { V1, V2 = literal, ... }`.
+- Sema: `EnumName(value)` is recognized at the literal-callee path
+  (alongside struct constructors); `.value` is recognized at member
+  access for any backed enum.
+- Runtime: four helpers — `quirk_enum_lookup_str`, `_lookup_int`,
+  `_value_str`, `_value_int` — walk a packed values blob emitted as
+  a global per backed enum. No per-call setup at the call site.
+- Codegen: one global blob + one name string per backed enum, both
+  marked `unnamed_addr` so the linker can merge identical blobs
+  across translation units if it wants.
+
+Not yet: `EnumName.parse(value) -> EnumName?`. Quirk's nullable
+primitives don't have a runtime null state today (`Int?` and
+`Gender?` lower to the underlying primitive), so a clean null-return
+parse would need a separate boxing path. Wrapping `EnumName(...)`
+in try/catch covers the same shape for now.
+
 ## [2.2.3] — 2026-06-05
 
 ### Sema: enum compatibility is no longer a free pass

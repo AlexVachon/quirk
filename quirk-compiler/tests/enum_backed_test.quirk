@@ -1,0 +1,66 @@
+// Backed-enum feature smoke (v2.2.4):
+//   enum Name(BackingType) { V1, V2 = literal, ... }
+//   Name(value)  → variant ordinal, throws ValueError on miss
+//   g.value      → the backing value of an instance
+//
+// Covers: String backing, Int backing, default values, explicit
+// overrides, throw-on-miss, struct-field access, chained access.
+
+enum Gender(String) {
+    Male
+    Female = "F"
+    Other
+}
+
+enum Status(Int) {
+    OK = 200
+    NotFound = 404
+    ServerError = 500
+}
+
+struct Resp {
+    code: Status
+    body: String
+
+    define __init(self, code: Status, body: String) {
+        self.code = code
+        self.body = body
+    }
+
+    define __str(self) {
+        return "Resp(${self.code.value}, ${self.body})"
+    }
+}
+
+define main() -> void {
+    // Forward lookup: value → variant.
+    g := Gender("Male")
+    if g != Gender.Male { print("FAIL: Gender(Male)") }
+    g2 := Gender("F")
+    if g2 != Gender.Female { print("FAIL: Gender(F)") }
+
+    // Reverse lookup: variant → backing value.
+    if g.value != "Male"   { print("FAIL: g.value") }
+    if g2.value != "F"     { print("FAIL: g2.value") }
+    if Gender.Other.value != "Other" { print("FAIL: chained .value") }
+
+    // Int-backed.
+    s := Status(404)
+    if s != Status.NotFound { print("FAIL: Status(404)") }
+    if s.value != 404       { print("FAIL: s.value") }
+
+    // Struct field of enum type.
+    r := Resp(Status.OK, "ok")
+    if r.code.value != 200 { print("FAIL: struct-field .value") }
+
+    // Throw on miss.
+    caught := false
+    try {
+        bad := Gender("nope")
+    } catch (e: ValueError) {
+        caught = true
+    }
+    if not caught { print("FAIL: throw-on-miss") }
+
+    print("all backed-enum checks passed")
+}

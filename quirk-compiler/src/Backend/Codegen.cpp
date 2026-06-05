@@ -68,6 +68,19 @@ class LLVMCodegen {
 
     std::map<std::string, std::vector<std::string>> enumVariants;  // name -> ordered variants
     std::map<std::string, std::string> varEnumTypes;               // varName -> enum type name
+    // (struct name, field name) → declared field type. Populated in
+    // the same Pass-1 walk that registers struct layouts; used so
+    // `self.gender.value` (gender: Gender on the struct) can resolve
+    // to the right backed-enum runtime helper.
+    std::map<std::string, std::map<std::string, std::string>> structFieldTypes;
+    // Backed-enum metadata: name → (backingType, resolved values per variant).
+    // Populated alongside enumVariants in Pass 1b. Empty backingType means
+    // the legacy ordinal-only enum — the new lookup path is skipped.
+    struct BackedEnumInfo {
+        std::string backingType;             // "String" or "Int"
+        std::vector<std::string> values;     // one per variant, defaults resolved
+    };
+    std::map<std::string, BackedEnumInfo> backedEnums;
 
     std::map<std::string, std::string> sourceMap;
     std::string currentFilePath;
@@ -240,6 +253,22 @@ class LLVMCodegen {
         for (const auto& node : nodes) {
             if (auto* e = dynamic_cast<EnumNode*>(node.get())) {
                 enumVariants[e->name] = e->variants;
+                if (!e->backingType.empty()) {
+                    BackedEnumInfo info;
+                    info.backingType = e->backingType;
+                    info.values.reserve(e->variants.size());
+                    for (size_t i = 0; i < e->variants.size(); i++) {
+                        std::string v = (i < e->variantValues.size()) ? e->variantValues[i] : std::string();
+                        if (v.empty()) {
+                            // Default: variant name for String backing, ordinal for Int.
+                            v = (e->backingType == "Int")
+                                ? std::to_string(i)
+                                : e->variants[i];
+                        }
+                        info.values.push_back(std::move(v));
+                    }
+                    backedEnums[e->name] = std::move(info);
+                }
             }
         }
         // Hand the registry to TypeGen so `define f(l: L)` types `l` as
@@ -329,6 +358,7 @@ class LLVMCodegen {
                         if (t->isStructTy()) t = PointerType::getUnqual(t);
                         types.push_back(t);
                         names.push_back(field.name);
+                        structFieldTypes[sn->name][field.name] = field.type;
                     }
                 };
 
@@ -555,6 +585,45 @@ class LLVMCodegen {
                     Builder.SetInsertPoint(dflt);
                     Builder.CreateRet(makeStr("<unknown>"));
                 }
+            }
+
+            // Per-backed-enum packed globals: the values blob the runtime
+            // helpers walk (`quirk_enum_lookup_*` / `quirk_enum_value_*`).
+            // Stored at file scope so each `Gender(...)` callsite is a
+            // single function call with no per-call setup.
+            for (const auto& [name, info] : backedEnums) {
+                if (info.backingType == "String") {
+                    std::string packed;
+                    for (const auto& v : info.values) { packed += v; packed.push_back('\0'); }
+                    Constant* blob = ConstantDataArray::getString(Context, packed, /*AddNull=*/false);
+                    auto* gv = new GlobalVariable(
+                        *TheModule, blob->getType(), /*isConstant=*/true,
+                        GlobalValue::PrivateLinkage, blob, "__" + name + "_packed");
+                    gv->setUnnamedAddr(GlobalValue::UnnamedAddr::Global);
+                    (void)gv;
+                } else if (info.backingType == "Int") {
+                    std::vector<Constant*> vals;
+                    vals.reserve(info.values.size());
+                    for (const auto& v : info.values) {
+                        int32_t n = 0;
+                        try { n = (int32_t)std::stol(v); } catch (...) { n = 0; }
+                        vals.push_back(ConstantInt::get(Type::getInt32Ty(Context), n));
+                    }
+                    auto* arrTy = ArrayType::get(Type::getInt32Ty(Context), vals.size());
+                    Constant* blob = ConstantArray::get(arrTy, vals);
+                    auto* gv = new GlobalVariable(
+                        *TheModule, arrTy, /*isConstant=*/true,
+                        GlobalValue::PrivateLinkage, blob, "__" + name + "_packed");
+                    gv->setUnnamedAddr(GlobalValue::UnnamedAddr::Global);
+                    (void)gv;
+                }
+                // Enum name global — used as the runtime error-message prefix.
+                Constant* nameBlob = ConstantDataArray::getString(Context, name, /*AddNull=*/true);
+                auto* nameGv = new GlobalVariable(
+                    *TheModule, nameBlob->getType(), /*isConstant=*/true,
+                    GlobalValue::PrivateLinkage, nameBlob, "__" + name + "_name");
+                nameGv->setUnnamedAddr(GlobalValue::UnnamedAddr::Global);
+                (void)nameGv;
             }
         }
 
@@ -1425,6 +1494,53 @@ class LLVMCodegen {
                 if (!override)
                     return builtinGen->handleBuiltin(lit->value, call, [this](Node* n) { return this->handleExpression(n); });
                 // Fall through to normal function dispatch below
+            }
+
+            // Backed-enum value lookup: `Gender("Male")` lowers to a
+            // runtime helper call against the packed values blob. Sema
+            // already validated arity and argument type, so codegen just
+            // wires the IR. Result is the ordinal (i32), which is the
+            // same shape as `Gender.Male` — both flow through the rest
+            // of codegen identically.
+            if (backedEnums.count(lit->value) && !call->args.empty()) {
+                const BackedEnumInfo& info = backedEnums[lit->value];
+                Value* query = handleExpression(call->args[0].value.get());
+                Type* i32 = Type::getInt32Ty(Context);
+                Type* i8p = Type::getInt8PtrTy(Context);
+                GlobalVariable* packedGv = TheModule->getNamedGlobal("__" + lit->value + "_packed");
+                GlobalVariable* nameGv   = TheModule->getNamedGlobal("__" + lit->value + "_name");
+                Value* packedPtr = Builder.CreateBitCast(packedGv, i8p);
+                Value* namePtr   = Builder.CreateBitCast(nameGv,   i8p);
+                Value* count     = ConstantInt::get(i32, info.values.size());
+
+                if (info.backingType == "Int") {
+                    FunctionCallee fn = TheModule->getOrInsertFunction(
+                        "quirk_enum_lookup_int",
+                        FunctionType::get(i32, {i32, i8p, i32, i8p}, false));
+                    // Coerce a boxed-int (i8*) query to i32 if needed.
+                    if (query->getType()->isPointerTy())
+                        query = Builder.CreatePtrToInt(query, i32);
+                    return Builder.CreateCall(fn, {query, packedPtr, count, namePtr});
+                }
+                // String backing
+                FunctionCallee fn = TheModule->getOrInsertFunction(
+                    "quirk_enum_lookup_str",
+                    FunctionType::get(i32,
+                        {PointerType::getUnqual(StructTypes["String"]), i8p, i32, i8p}, false));
+                // String literals come in as String*; opaque i8* (e.g.
+                // a Callable return) gets unboxed first.
+                if (query->getType()->isPointerTy() &&
+                    query->getType()->getPointerElementType()->isIntegerTy(8)) {
+                    Function* opaqueToStr = TheModule->getFunction("quirk_opaque_to_string");
+                    if (!opaqueToStr) {
+                        FunctionType* ft = FunctionType::get(
+                            PointerType::getUnqual(StructTypes["String"]), {i8p}, false);
+                        opaqueToStr = Function::Create(ft, Function::ExternalLinkage,
+                                                       "quirk_opaque_to_string", TheModule.get());
+                    }
+                    query = Builder.CreateCall(opaqueToStr, {query});
+                }
+                return Builder.CreateCall(fn, {query, packedPtr, count, namePtr});
             }
 
             if (StructTypes.count(lit->value)) {
@@ -2594,10 +2710,21 @@ class LLVMCodegen {
                 varGen->updateLocalVariable(lhs->value, val);
             }
 
-            // Track enum type for .str() calls
+            // Track enum type for .str() / .value calls.
+            //   x := Gender.Male      → MemberAccess(Gender, Male)
+            //   x := Gender("Male")   → Call(callee=Gender, ...)
+            // Both shapes bind x to a Gender ordinal; the codegen needs
+            // to remember which enum so `.value` knows which packed
+            // global to look up.
             if (auto* rhsMember = dynamic_cast<MemberAccessNode*>(vdecl->expression.get())) {
                 if (auto* rhsLit = dynamic_cast<LiteralNode*>(rhsMember->object.get())) {
                     if (enumVariants.count(rhsLit->value)) {
+                        varEnumTypes[lhs->value] = rhsLit->value;
+                    }
+                }
+            } else if (auto* rhsCall = dynamic_cast<CallNode*>(vdecl->expression.get())) {
+                if (auto* rhsLit = dynamic_cast<LiteralNode*>(rhsCall->callee.get())) {
+                    if (backedEnums.count(rhsLit->value)) {
                         varEnumTypes[lhs->value] = rhsLit->value;
                     }
                 }
@@ -3705,6 +3832,77 @@ Value* LLVMCodegen::handleExpression(Node* node) {
                     int idx = (int)std::distance(variants.begin(), it);
                     return ConstantInt::get(Type::getInt32Ty(Context), idx);
                 }
+            }
+        }
+
+        // Backed-enum `.value` reverse lookup. Three shapes get here:
+        //   g.value              — g is an enum-typed binding tracked
+        //                          via varEnumTypes
+        //   Gender.Other.value   — chained member access; the inner
+        //                          MemberAccess names the enum directly
+        //   self.gender.value    — struct field of enum type; looked
+        //                          up via structFieldTypes
+        if (member->memberName == "value") {
+            std::string enumName;
+            if (auto* lit = dynamic_cast<LiteralNode*>(member->object.get())) {
+                auto it = varEnumTypes.find(lit->value);
+                if (it != varEnumTypes.end()) enumName = it->second;
+            } else if (auto* innerMem = dynamic_cast<MemberAccessNode*>(member->object.get())) {
+                if (auto* innerLit = dynamic_cast<LiteralNode*>(innerMem->object.get())) {
+                    if (backedEnums.count(innerLit->value)) {
+                        enumName = innerLit->value;  // Gender.Other.value
+                    } else {
+                        // Probably struct-field access: object.field.value.
+                        // Resolve via the owning struct's field-type map.
+                        // For `self.field`, the struct is currentCodegenClass.
+                        // For `x.field`, look up x's type in varEnumTypes
+                        // (handles e.g. `user := User(...); user.gender.value`).
+                        std::string ownerStruct;
+                        if (innerLit->value == "self") {
+                            ownerStruct = currentCodegenClass;
+                        } else {
+                            auto t = varEnumTypes.find(innerLit->value);
+                            if (t == varEnumTypes.end()) {
+                                // Fallback: query varGen for the declared type
+                                Value* v = varGen->resolveVariable(innerLit->value);
+                                if (v && v->getType()->isPointerTy() &&
+                                    v->getType()->getPointerElementType()->isStructTy()) {
+                                    StructType* st = cast<StructType>(v->getType()->getPointerElementType());
+                                    std::string sName = st->getName().str();
+                                    if (sName.find("struct.") == 0) sName = sName.substr(7);
+                                    ownerStruct = sName;
+                                }
+                            }
+                        }
+                        if (!ownerStruct.empty()) {
+                            auto& fields = structFieldTypes[ownerStruct];
+                            auto fIt = fields.find(innerMem->memberName);
+                            if (fIt != fields.end() && backedEnums.count(fIt->second))
+                                enumName = fIt->second;
+                        }
+                    }
+                }
+            }
+            if (!enumName.empty() && backedEnums.count(enumName)) {
+                const BackedEnumInfo& info = backedEnums[enumName];
+                Value* ordinal = handleExpression(member->object.get());
+                Type* i32 = Type::getInt32Ty(Context);
+                Type* i8p = Type::getInt8PtrTy(Context);
+                GlobalVariable* packedGv = TheModule->getNamedGlobal("__" + enumName + "_packed");
+                Value* packedPtr = Builder.CreateBitCast(packedGv, i8p);
+                Value* count     = ConstantInt::get(i32, info.values.size());
+                if (info.backingType == "Int") {
+                    FunctionCallee fn = TheModule->getOrInsertFunction(
+                        "quirk_enum_value_int",
+                        FunctionType::get(i32, {i32, i8p, i32}, false));
+                    return Builder.CreateCall(fn, {ordinal, packedPtr, count});
+                }
+                FunctionCallee fn = TheModule->getOrInsertFunction(
+                    "quirk_enum_value_str",
+                    FunctionType::get(
+                        PointerType::getUnqual(StructTypes["String"]),
+                        {i32, i8p, i32}, false));
+                return Builder.CreateCall(fn, {ordinal, packedPtr, count});
             }
         }
 

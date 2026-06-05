@@ -128,3 +128,76 @@ String* quirk_opaque_get_type(void* val) {
     // Assume String* (most common non-Any heap value in opaque slots)
     return make_String("String");
 }
+
+// ============================================================
+//  Backed Enum lookup / value getter helpers.
+//
+//  `enum Gender(String) { Male, Female = "F", Other }` compiles to:
+//   - the existing i32-ordinal codegen (Male=0, Female=1, Other=2)
+//   - a packed values blob:  "Male\0F\0Other\0"
+//   - a count: 3
+//   - a name: "Gender" (used in error messages)
+//
+//  `Gender("F")` emits a call to quirk_enum_lookup_str — returns 1
+//  (Female), or throws ValueError if no variant matches.
+//
+//  `g.value` (where g: Gender) emits a call to quirk_enum_value_str —
+//  given the ordinal, returns the variant's backing String*.
+//
+//  Same shape for Int-backed enums (`enum Status(Int) { OK=200,
+//  NotFound=404 }`) — packed is a plain int32_t[].
+// ============================================================
+
+// Walk the packed null-separated list, returning the index of the
+// matching entry, or -1 if none. `packed` is laid out as
+// "<v0>\0<v1>\0...<vN-1>\0".
+static int32_t enum_str_index_of(const char* needle, const char* packed, int32_t count) {
+    if (!needle || !packed) return -1;
+    const char* p = packed;
+    for (int32_t i = 0; i < count; i++) {
+        if (strcmp(needle, p) == 0) return i;
+        p += strlen(p) + 1;
+    }
+    return -1;
+}
+
+extern void quirk_throw_exception(const char* type_name, const char* message);
+
+int32_t quirk_enum_lookup_str(String* query, const char* packed,
+                              int32_t count, const char* enum_name) {
+    const char* q = (query && query->buffer) ? query->buffer : "";
+    int32_t idx = enum_str_index_of(q, packed, count);
+    if (idx >= 0) return idx;
+    char buf[256];
+    snprintf(buf, sizeof(buf), "'%s' is not a valid %s",
+             q, enum_name ? enum_name : "enum");
+    quirk_throw_exception("ValueError", buf);
+    return -1;  // unreachable
+}
+
+int32_t quirk_enum_lookup_int(int32_t query, const int32_t* packed,
+                              int32_t count, const char* enum_name) {
+    for (int32_t i = 0; i < count; i++) {
+        if (packed[i] == query) return i;
+    }
+    char buf[64];
+    snprintf(buf, sizeof(buf), "%d is not a valid %s",
+             query, enum_name ? enum_name : "enum");
+    quirk_throw_exception("ValueError", buf);
+    return -1;
+}
+
+// `ordinal` is in-range by construction (it came from typed enum codegen).
+// `packed` holds the variant's backing values; this just extracts the
+// right slice. Out-of-range returns a safe default rather than UB.
+String* quirk_enum_value_str(int32_t ordinal, const char* packed, int32_t count) {
+    if (ordinal < 0 || ordinal >= count || !packed) return make_String("");
+    const char* p = packed;
+    for (int32_t i = 0; i < ordinal; i++) p += strlen(p) + 1;
+    return make_String(p);
+}
+
+int32_t quirk_enum_value_int(int32_t ordinal, const int32_t* packed, int32_t count) {
+    if (ordinal < 0 || ordinal >= count || !packed) return 0;
+    return packed[ordinal];
+}

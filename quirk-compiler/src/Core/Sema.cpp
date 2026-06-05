@@ -1097,6 +1097,23 @@ std::string Sema::checkMemberAccess(MemberAccessNode *node)
         }
     }
 
+    // `g.value` on a backed-enum instance returns the backing type.
+    // Handles both `g.value` (where g is a typed binding) and the
+    // chained form `Gender.Other.value` (where the LHS is the variant
+    // expression itself).
+    if (node->memberName == "value") {
+        std::string objType;
+        if (auto lit = dynamic_cast<LiteralNode*>(node->object.get())) {
+            objType = resolveVariable(lit->value);
+        } else {
+            objType = checkExpression(node->object.get());
+        }
+        if (!objType.empty() && objType.back() == '?') objType.pop_back();
+        if (enumRegistry.count(objType) && !enumRegistry[objType]->backingType.empty()) {
+            return enumRegistry[objType]->backingType;
+        }
+    }
+
     std::string objType = checkExpression(node->object.get());
     // Strip Optional marker and generic type args before method lookup
     if (!objType.empty() && objType.back() == '?') objType.pop_back();
@@ -1241,6 +1258,27 @@ std::string Sema::checkCall(CallNode *node)
                                   (int)node->args.size(), node->line, node->col, node->filePath);
                 checkInitArgTypes(l->value, init, argTypes,
                                   node->line, node->col, node->filePath);
+            }
+            return l->value;
+        }
+
+        // Backed-enum value lookup: `Gender("Male")` where Gender is
+        // declared `enum Gender(String) { ... }`. Takes exactly one
+        // argument of the backing type and returns the enum. Throws
+        // ValueError at runtime on no-match — for null-on-miss callers,
+        // use `Gender.parse(...)` (routed through the member-access path).
+        if (enumRegistry.count(l->value) && !enumRegistry[l->value]->backingType.empty()) {
+            EnumNode* en = enumRegistry[l->value];
+            if (node->args.size() != 1) {
+                fatalError(l->value + "(...) expects exactly one argument of type '" +
+                           en->backingType + "' (got " + std::to_string(node->args.size()) + ")",
+                           node->line, node->col, node->filePath);
+            }
+            const std::string& argType = argTypes[0];
+            if (!isCompatibleTypes(en->backingType, argType)) {
+                fatalError(l->value + "(...) expects '" + en->backingType +
+                           "' but got '" + argType + "'",
+                           node->line, node->col, node->filePath);
             }
             return l->value;
         }

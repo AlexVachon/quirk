@@ -1491,9 +1491,54 @@ std::unique_ptr<EnumNode> Parser::parseEnum() {
     node->name = nameTok.value;
     node->line = nameTok.line;
     node->col  = nameTok.col;
+
+    // Optional backing type: `enum Name(String) { ... }`. Without this
+    // the enum stays its old ordinal-only shape; with it, Sema/Codegen
+    // make the enum callable for value→variant lookup.
+    if (peek().type == TokenType::LPAREN) {
+        advance();
+        Token typeTok = peek();
+        if (typeTok.type != TokenType::IDENTIFIER) {
+            throw std::runtime_error(
+                "Expected backing type (String or Int) after enum name '(' at line "
+                + std::to_string(typeTok.line));
+        }
+        advance();
+        node->backingType = typeTok.value;
+        if (node->backingType != "String" && node->backingType != "Int") {
+            throw std::runtime_error(
+                "Unsupported enum backing type '" + node->backingType +
+                "' — only String and Int are supported (line "
+                + std::to_string(typeTok.line) + ")");
+        }
+        consume(TokenType::RPAREN, "Expected ')' after enum backing type");
+    }
+
     consume(TokenType::LBRACE, "Expected '{' after enum name");
     while (peek().type == TokenType::IDENTIFIER) {
         node->variants.push_back(advance().value);
+        std::string value;
+        if (peek().type == TokenType::ASSIGN) {
+            advance();
+            Token litTok = peek();
+            if (litTok.type == TokenType::STRING_LITERAL) {
+                // Strip the surrounding quotes that the lexer keeps; the
+                // variantValues vector holds the *content* of the string,
+                // which is what the runtime lookup compares against.
+                value = litTok.value;
+                if (value.size() >= 2 && value.front() == '"' && value.back() == '"')
+                    value = value.substr(1, value.size() - 2);
+                advance();
+            } else if (litTok.type == TokenType::INT_LITERAL) {
+                value = litTok.value;
+                advance();
+            } else {
+                throw std::runtime_error(
+                    "Expected literal value after '=' in enum variant at line "
+                    + std::to_string(litTok.line));
+            }
+        }
+        node->variantValues.push_back(value);
     }
     consume(TokenType::RBRACE, "Expected '}' to close enum");
     return node;

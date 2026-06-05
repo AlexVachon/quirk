@@ -590,11 +590,29 @@ class EnumNode : public Node {
    public:
     std::string name;
     std::vector<std::string> variants;   // in declaration order
+    // Backed enums: `enum Name(String) { V1, V2 = "x" }`. Empty means
+    // the legacy unbacked enum (ordinal-only). When set, the enum is
+    // callable as a value-→ordinal lookup: `Name("x")` returns the
+    // matching variant or throws ValueError. `.value` on an instance
+    // returns the backing value. Supported: "String", "Int".
+    std::string backingType;
+    // Parallel to `variants`. Each entry is the variant's backing
+    // literal as written in source (without quotes, e.g. `"male"` is
+    // stored as `male`). An empty entry means "use the default" —
+    // for String, that's the variant name as-written; for Int, the
+    // variant's ordinal index.
+    std::vector<std::string> variantValues;
 
     void print(int indent) const override {
         std::string space(indent, ' ');
-        std::cout << space << "Enum: " << name << " {";
-        for (const auto& v : variants) std::cout << " " << v;
+        std::cout << space << "Enum: " << name;
+        if (!backingType.empty()) std::cout << "(" << backingType << ")";
+        std::cout << " {";
+        for (size_t i = 0; i < variants.size(); i++) {
+            std::cout << " " << variants[i];
+            if (i < variantValues.size() && !variantValues[i].empty())
+                std::cout << "=" << variantValues[i];
+        }
         std::cout << " }" << std::endl;
     }
 };

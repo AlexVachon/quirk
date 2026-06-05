@@ -1492,9 +1492,21 @@ bool Sema::isCompatibleTypes(const std::string &expected, const std::string &act
 {
     if (expected == actual) return true;
     if (isGenericParam(expected) || isGenericParam(actual)) return true;
-    if (enumRegistry.count(expected) || enumRegistry.count(actual)) return true;
     if (expected == "Any" || actual == "Any") return true;
     if (expected == "Null" || actual == "Null") return true;
+
+    // Enum compatibility: same-enum already matched above. An enum lowers
+    // to i32 at codegen time, so it's bidirectionally compatible with
+    // Int — useful for e.g. `Direction.North.to_int()` and explicit
+    // `Int` ↔ enum casts. But anything else against an enum (String,
+    // Bool, a different enum) is a real mismatch — without this, every
+    // arg-type check that mentions an enum used to silently pass.
+    bool expIsEnum = enumRegistry.count(expected) > 0;
+    bool actIsEnum = enumRegistry.count(actual) > 0;
+    if (expIsEnum || actIsEnum) {
+        const std::string& other = expIsEnum ? actual : expected;
+        return other == "Int" || other == "int";
+    }
 
     // Implicit widening coercions
     if (expected == "Double" && actual == "Int") return true;

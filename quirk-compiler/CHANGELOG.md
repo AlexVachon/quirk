@@ -5,6 +5,43 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [2.2.3] — 2026-06-05
+
+### Sema: enum compatibility is no longer a free pass
+
+`isCompatibleTypes` short-circuited to **true** whenever either side
+was an enum:
+
+```cpp
+if (enumRegistry.count(expected) || enumRegistry.count(actual))
+    return true;
+```
+
+So `User(name, age, gender)` where `gender: Gender` got a `String`
+was waved through Sema — including by the new ctor type check added
+in 2.2.2 — and only blew up at the LLVM verifier:
+
+```
+Call parameter type does not match function signature!
+  call void @User__init(%User*, %String*, i32, %String*)
+                                                ^^^^^^^^ expected i32
+```
+
+Tightened to: an enum is compatible with itself (already covered by
+the `==` short-circuit above), with `Int`/`int` (since enums lower
+to `i32` and the cast goes both ways), with `Any`, and with `Null`.
+Anything else against an enum is a real mismatch.
+
+Caught now at the Sema layer:
+
+```
+[ERROR] argument 3 of User() expected 'Gender' but got 'String'
+ --> main.quirk:59:17
+```
+
+The full stdlib + per-file regression sweep stays green — the loose
+rule turned out to only hide bugs, not enable any legitimate use.
+
 ## [2.2.2] — 2026-06-04
 
 ### Better diagnostics + `return null` actually returns null

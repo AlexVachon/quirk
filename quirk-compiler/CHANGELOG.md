@@ -5,6 +5,55 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [2.2.12] — 2026-06-06
+
+### CLI ergonomics: aliases, typo suggestions, fuller per-verb help
+
+Four small improvements that don't touch the verb-first shape of the
+CLI (which intentionally matches cargo / pip / npm / git / gh).
+
+**New short aliases for high-frequency verbs:**
+
+| Short | Long |
+|---|---|
+| `quirk r <file>` | `quirk run <file>` |
+| `quirk t [<file>...]` | `quirk test` |
+| `quirk h [<cmd>]` | `quirk help` |
+
+Joins the existing `i`/`add` (install), `up` (upgrade), `rm`/`un`
+(remove), `ls` (list). `-h` / `--help` / `--version` are also
+normalised through the same path so they work in every position.
+
+**Typo suggestions** at both the top level and inside `quirk pkg`:
+
+```
+$ quirk insatll
+quirk: unknown command 'insatll'
+    did you mean `quirk install`?
+
+$ quirk pkg insatll
+pkg: unknown subcommand 'insatll'
+    did you mean `quirk pkg install`?
+```
+
+Same edit-distance cutoffs Sema uses for identifier suggestions
+(1 edit for short verbs, 2 for longer ones). Genuine file paths
+(anything with a `/` or `.`) bypass the suggestion path so
+`quirk somefile.quirk` keeps working unchanged.
+
+**`quirk help <verb>` now covers every verb.** Previously `help`
+worked for the package verbs but silently fell back to the top-
+level summary for `compiler`, `auth`, `test`, `completion`, and
+`resolve`. Added per-verb help text for all five.
+
+**Top-level help layout tidied:** the `RUN CODE` and `MISC` blocks
+now list the new short aliases inline, and a small `TIPS` block at
+the bottom points at `quirk help <cmd>`, typo suggestions, and the
+global `--verbose`/`--quiet`/`-h` flags.
+
+No CLI shape changes. Existing scripts and muscle memory are
+unaffected.
+
 ## [2.2.11] — 2026-06-06
 
 ### Bugproofing pass: 34-probe sweep, 8 distinct bugs closed

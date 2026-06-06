@@ -64,7 +64,7 @@ static std::string self_binary();
 
 namespace qpm {
 
-constexpr const char* QUIRK_VERSION = "2.2.11";
+constexpr const char* QUIRK_VERSION = "2.2.12";
 
 namespace fs = std::filesystem;
 
@@ -5952,6 +5952,46 @@ static std::string help_for(const std::string& cmdIn) {
                "    Run a named script from ./quirk.toml [scripts].\n"
                "    With no args: list available scripts.\n"
                "    `quirk run <name>` also works as long as <name> isn't a path.\n";
+    if (cmd == "test" || cmd == "t")
+        return "quirk test [<file>...]\n"
+               "    Short alias: quirk t\n"
+               "    Run *_test.quirk files. With no args, runs every test under\n"
+               "    tests/ and src/. Each file's `main()` is invoked; non-zero\n"
+               "    exit means failure. Set QUIRK_TEST_FILTER=<substr> to run\n"
+               "    only matching files.\n";
+    if (cmd == "auth")
+        return "quirk auth login                              GitHub device-flow login\n"
+               "quirk auth status                             show stored token + scopes\n"
+               "quirk auth logout                             forget the stored token\n"
+               "    Stored at ~/.quirk/auth.toml (chmod 0600). Used by\n"
+               "    `quirk pkg release` and any other operation that pushes\n"
+               "    to GitHub. Token scope: public_repo (plus repo if you\n"
+               "    have private packages).\n";
+    if (cmd == "compiler")
+        return "quirk compiler <subcommand>\n"
+               "      version                Print the running compiler version\n"
+               "      check                  Check GitHub for a newer release\n"
+               "      update                 Replace this compiler with the latest\n"
+               "      install <vX.Y.Z>       Install a specific version\n"
+               "      list                   List available releases\n"
+               "      stdlib                 Show where the bundled stdlib lives\n"
+               "      bump <part>            Bump QUIRK_VERSION (maintainers only)\n"
+               "    `quirk compiler update` pulls the latest tarball into\n"
+               "    ~/.quirk/bin and refreshes the symlinked stdlib so every\n"
+               "    venv picks up the new release automatically.\n";
+    if (cmd == "completion")
+        return "quirk completion <bash|zsh|fish>\n"
+               "    Emit a shell completion script to stdout. Install with:\n"
+               "      bash: source <(quirk completion bash)\n"
+               "      zsh:  source <(quirk completion zsh)\n"
+               "      fish: quirk completion fish > ~/.config/fish/completions/quirk.fish\n"
+               "    Tab-completes verbs, common flags, and known package names.\n";
+    if (cmd == "resolve")
+        return "quirk resolve <name>\n"
+               "    Print the canonical source-file path that `use <name>`\n"
+               "    would import in the current environment, or an error\n"
+               "    if it can't be found. Used by the LSP for go-to-def\n"
+               "    on a `use` statement.\n";
     return "";
 }
 
@@ -5974,10 +6014,11 @@ static void print_pm_help() {
         "Usage:  quirk <command> [options] [args...]\n"
         "\n"
         "RUN CODE\n"
-        "  run <file.quirk> [args...]      Compile + run a script (the default)\n"
+        "  run <file.quirk> [args...]      Compile + run a script      (alias: r)\n"
+        "                                  Also: `quirk <file.quirk>`\n"
         "  eval \"<code>\"                   Run a one-liner             (alias: -c)\n"
         "  module <name>                   Invoke a module's main()    (alias: -m)\n"
-        "  test [<file>...]                Run *_test.quirk files\n"
+        "  test [<file>...]                Run *_test.quirk files      (alias: t)\n"
         "  repl                            Interactive shell\n"
         "\n"
         "PROJECT\n"
@@ -6015,9 +6056,14 @@ static void print_pm_help() {
         "  compiler bump <part>            Bump QUIRK_VERSION (compiler maintainers)\n"
         "\n"
         "MISC\n"
-        "  help [<command>]                Per-command help\n"
+        "  help [<command>]                Per-command help            (alias: h, --help)\n"
         "  completion <bash|zsh|fish>      Emit shell tab-completion script\n"
         "  version                         Print the compiler version (alias: --version)\n"
+        "\n"
+        "TIPS\n"
+        "  • `quirk help <cmd>` for detailed per-command help, e.g. `quirk help compiler`.\n"
+        "  • Unknown commands get a typo suggestion (`quirk insatll` → install).\n"
+        "  • All commands accept --verbose / --quiet / -h.\n"
         "\n"
         "RUN FLAGS  (apply to `quirk run` and bare `quirk <file>`)\n"
         "  --check                         Type-check only, no codegen / run\n"
@@ -6040,8 +6086,51 @@ static void print_pm_help() {
 // can type `quirk i slug` instead of `quirk install slug`. Identity for
 // anything that isn't an alias. Always run on the verb string *before*
 // is_subcommand/is_pkg_subcommand and the dispatch chain.
+// Levenshtein distance for typo suggestions. Self-contained copy
+// (Sema has its own) so we don't pull a translation-unit dependency.
+static size_t verb_edit_distance(const std::string& a, const std::string& b) {
+    if (a.empty()) return b.size();
+    if (b.empty()) return a.size();
+    std::vector<size_t> prev(b.size() + 1), cur(b.size() + 1);
+    for (size_t j = 0; j <= b.size(); j++) prev[j] = j;
+    for (size_t i = 1; i <= a.size(); i++) {
+        cur[0] = i;
+        for (size_t j = 1; j <= b.size(); j++) {
+            size_t cost = (a[i - 1] == b[j - 1]) ? 0 : 1;
+            cur[j] = std::min({prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost});
+        }
+        std::swap(prev, cur);
+    }
+    return prev[b.size()];
+}
+
+// Closest-known verb to `q`, or empty if nothing is within typo range.
+// Cutoff matches Sema's: 1 edit for short queries, 2 for longer ones.
+static std::string suggest_known_verb(const std::string& q) {
+    static const std::vector<std::string> known = {
+        // Top-level run/project verbs
+        "run", "eval", "module", "test", "repl",
+        "new", "init", "venv", "env", "fmt", "sync",
+        // Package verbs (canonical forms; aliases get normalized first)
+        "install", "upgrade", "remove", "list", "show", "deps",
+        "cache", "registry", "register", "versions", "audit",
+        // Publishing / compiler / auth
+        "auth", "release", "compiler", "completion", "stdlib",
+        "version", "check", "resolve", "script", "help", "pkg",
+    };
+    if (q.empty()) return "";
+    const size_t cutoff = q.size() <= 4 ? 1 : 2;
+    std::pair<size_t, std::string> best{cutoff + 1, ""};
+    for (const auto& candidate : known) {
+        size_t d = verb_edit_distance(q, candidate);
+        if (d <= cutoff && d < best.first) best = {d, candidate};
+    }
+    return best.second;
+}
+
 static std::string canonicalize_verb(const std::string& v) {
     static const std::map<std::string, std::string> aliases = {
+        // Package verbs
         {"i",         "install"},   // npm i
         {"add",       "install"},   // cargo add / uv add — friendlier verb
         {"rm",        "remove"},    // Unix-y
@@ -6049,6 +6138,13 @@ static std::string canonicalize_verb(const std::string& v) {
         {"uninstall", "remove"},
         {"up",        "upgrade"},   // npm up
         {"ls",        "list"},      // Unix / npm ls
+        // Top-level shortcuts for high-frequency verbs
+        {"r",         "run"},       // npm r, cargo r
+        {"t",         "test"},      // cargo t, npm t
+        {"h",         "help"},      // standard help shortcut
+        {"-h",        "help"},
+        {"--help",    "help"},
+        {"--version", "version"},
     };
     auto it = aliases.find(v);
     return it != aliases.end() ? it->second : v;
@@ -6065,7 +6161,12 @@ static bool is_pkg_subcommand(const std::string& arg) {
 }
 
 // Top-level subcommand verbs (and not a path).
-static bool is_subcommand(const std::string& arg) {
+static bool is_subcommand(const std::string& argIn) {
+    // Run the canonicalizer first so short aliases (r/t/h/i/ls/...) are
+    // recognised here. Without this, `quirk r main.quirk` falls through
+    // to the implicit-run path and tries to open a file literally named
+    // "r" — surfaces as "Could not open module 'r'".
+    const std::string arg = canonicalize_verb(argIn);
     return is_pkg_subcommand(arg) ||
            arg == "pkg" ||
            arg == "init" || arg == "version" || arg == "venv" ||
@@ -6119,7 +6220,29 @@ inline bool dispatch(int& argc, char** argv, int& outRc) {
         return true;
     }
 
-    if (!is_subcommand(first)) return false;
+    if (!is_subcommand(first)) {
+        // Not a known verb — but if it's a typo of one, surface a
+        // suggestion before main() falls into "open module" mode and
+        // produces a less helpful error message. Only fire when the
+        // input doesn't look like a path (no slash, no dot extension)
+        // so genuine file paths fall through unchanged.
+        bool looksLikeFile = first.find('/') != std::string::npos ||
+                             first.find('.') != std::string::npos;
+        if (!looksLikeFile && !first.empty() && first[0] != '-') {
+            std::string sugg = suggest_known_verb(first);
+            if (!sugg.empty()) {
+                std::cerr << "quirk: unknown command '" << first << "'\n"
+                          << "    " << log::dim("did you mean `quirk " + sugg + "`?") << "\n";
+                outRc = 1; return true;
+            }
+        }
+        return false;
+    }
+
+    // Canonicalize short aliases so the rest of dispatch only sees the
+    // long-form names (`run`, `test`, `help`, …). `quirk r foo.quirk`
+    // then hits the same path as `quirk run foo.quirk`.
+    first = canonicalize_verb(first);
 
     // `quirk run <file>` — strip the verb and let main() take over.
     // If <file> isn't a path that exists, fall through to a script lookup
@@ -6224,6 +6347,11 @@ inline bool dispatch(int& argc, char** argv, int& outRc) {
             verbArgs.clear();
         } else if (!is_pkg_subcommand(rest[0])) {
             std::cerr << "pkg: unknown subcommand '" << rest[0] << "'\n";
+            std::string sugg = suggest_known_verb(rest[0]);
+            if (!sugg.empty())
+                std::cerr << "    " << log::dim("did you mean `quirk pkg " + sugg + "`?") << "\n";
+            else
+                std::cerr << "    " << log::dim("run `quirk pkg help` for the full list") << "\n";
             outRc = 1; return true;
         } else {
             verb = canonicalize_verb(rest[0]);
@@ -6265,7 +6393,21 @@ inline bool dispatch(int& argc, char** argv, int& outRc) {
     else if (verb == "test")         outRc = cmd_test(verbArgs);
     else if (verb == "stdlib")       outRc = cmd_stdlib(verbArgs);
     else if (verb == "help")         outRc = cmd_help(verbArgs);
-    else { print_pm_help(); outRc = 1; }
+    else {
+        // Unknown verb. Before dumping the full help, try a typo
+        // suggestion — `quirk insatll foo` is almost certainly meant
+        // as `quirk install foo`, and a one-line hint reads better
+        // than a 40-line help dump.
+        std::string sugg = suggest_known_verb(verb);
+        if (!sugg.empty()) {
+            std::cerr << "quirk: unknown command '" << verb << "'\n"
+                      << "    " << log::dim("did you mean `quirk " + sugg + "`?") << "\n";
+        } else {
+            std::cerr << "quirk: unknown command '" << verb << "'\n"
+                      << "    " << log::dim("run `quirk help` for the full list") << "\n";
+        }
+        outRc = 1;
+    }
     return true;
 }
 

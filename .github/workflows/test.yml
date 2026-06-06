@@ -1,0 +1,210 @@
+name: Test
+
+# Fires on every push to main and every PR targeting main. Two
+# parallel jobs:
+#
+#   test      — vanilla build, runs the stdlib test suite + the
+#               adversarial probe suite. Fails on any SIGSEGV, ICE,
+#               LLVM verifier abort, or wrong output.
+#
+#   ubsan     — same probes, with the runtime built under
+#               -fsanitize=undefined. Catches latent UB (signed
+#               overflow, null deref, OOB, alignment, etc.) that a
+#               functional test can't see. Ships as a separate matrix
+#               entry so a flaky sanitizer hit doesn't block a
+#               release-blocking functional regression.
+#
+# Both jobs build inside ubuntu:20.04 to match the release build's
+# glibc baseline. Same toolchain setup as release.yml — duplicated
+# rather than factored out because GitHub Actions doesn't have a
+# clean way to share container steps across jobs without paying for
+# composite-action complexity that isn't worth it for two jobs.
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-22.04
+    container:
+      image: ubuntu:20.04
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - name: Install base tools
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates curl gnupg lsb-release software-properties-common git
+
+      - name: Add LLVM 14 apt repository
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key \
+            | gpg --dearmor -o /usr/share/keyrings/llvm-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] https://apt.llvm.org/focal/ llvm-toolchain-focal-14 main" \
+            > /etc/apt/sources.list.d/llvm-14.list
+          apt-get update
+
+      - name: Install build dependencies
+        run: |
+          apt-get install -y --no-install-recommends \
+            build-essential gcc g++ make pkg-config \
+            llvm-14 libllvm14 llvm-14-dev \
+            libgc-dev libssl-dev
+
+      - uses: actions/checkout@v4
+
+      - name: Bootstrap stdlib
+        working-directory: quirk-compiler
+        run: make bootstrap-stdlib
+
+      - name: Build
+        working-directory: quirk-compiler
+        run: make -j"$(nproc)"
+
+      - name: Run stdlib tests
+        working-directory: quirk-compiler
+        env:
+          QUIRK_HOME: ${{ github.workspace }}/quirk-compiler
+        # Iterate every tests/*.quirk that isn't a known shell harness.
+        # A test "fails" only when the *runtime crashes* — an ICE, a
+        # SIGSEGV, or an LLVM verifier abort. Functional assertions
+        # (assert_eq etc.) are checked by each test's own framework
+        # output; many tests deliberately throw exceptions, so the
+        # exit code alone isn't a reliable signal.
+        run: |
+          set +e
+          fails=0
+          for t in tests/*.quirk; do
+            case "$t" in *compiler_errors*) continue ;; esac
+            out=$(timeout 30 ./bin/quirk --no-aot --no-cache "$t" 2>&1)
+            rc=$?
+            if echo "$out" | grep -qE "Internal compiler error|malformed IR|core dumped|Aborted \(core|Segmentation fault"; then
+              echo "::error file=$t::stdlib test crashed: $t"
+              echo "$out" | head -10
+              fails=$((fails + 1))
+            elif [ $rc -eq 139 ] || [ $rc -eq 134 ] || [ $rc -eq 136 ]; then
+              # 139=SIGSEGV, 134=SIGABRT, 136=SIGFPE — process died from
+              # a signal even if the marker grep above missed it.
+              echo "::error file=$t::stdlib test died with signal rc=$rc: $t"
+              echo "$out" | head -10
+              fails=$((fails + 1))
+            elif echo "$out" | tail -5 | grep -qiE "^FAIL:|^[0-9]+ failed|tests? failed"; then
+              # Some test frameworks print a final "N failed" line on
+              # assertion failures while still exiting 0. Treat those
+              # as failures too.
+              echo "::error file=$t::stdlib test assertion failure: $t"
+              echo "$out" | tail -10
+              fails=$((fails + 1))
+            fi
+          done
+          echo "stdlib failures: $fails"
+          exit $fails
+
+      - name: Run probe suite
+        working-directory: quirk-compiler
+        env:
+          QUIRK_HOME: ${{ github.workspace }}/quirk-compiler
+        # Every probe in tests/probes/ documents the bug class it
+        # protects against. A probe is failing when it produces an
+        # uncaught SIGSEGV, an ICE, or an LLVM verifier abort. A
+        # *thrown* Quirk exception (ValueError, TypeError, etc.) is
+        # the correct behaviour for most probes.
+        run: |
+          set +e
+          fails=0
+          for p in tests/probes/p*.quirk; do
+            out=$(timeout 10 ./bin/quirk run --no-aot --no-cache "$p" 2>&1)
+            if echo "$out" | grep -qE "Internal compiler error|malformed IR|core dumped|Aborted|Segmentation fault"; then
+              echo "::error file=$p::probe regressed: $p"
+              echo "$out" | head -8
+              fails=$((fails + 1))
+            fi
+          done
+          echo "probe failures: $fails"
+          exit $fails
+
+  ubsan:
+    # Same shape as `test` but builds the runtime under UBSan so latent
+    # undefined behaviour surfaces with a stack trace instead of
+    # silently producing wrong-typed values. Sticks to UBSan only —
+    # ASan + Boehm GC's conservative scan can produce confusing false
+    # positives, so a separate ASan matrix entry would need work to
+    # silence those. Worth doing once UBSan is clean.
+    runs-on: ubuntu-22.04
+    container:
+      image: ubuntu:20.04
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - name: Install base tools
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates curl gnupg lsb-release software-properties-common git
+
+      - name: Add LLVM 14 apt repository
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key \
+            | gpg --dearmor -o /usr/share/keyrings/llvm-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] https://apt.llvm.org/focal/ llvm-toolchain-focal-14 main" \
+            > /etc/apt/sources.list.d/llvm-14.list
+          apt-get update
+
+      - name: Install build dependencies
+        run: |
+          apt-get install -y --no-install-recommends \
+            build-essential gcc g++ make pkg-config \
+            llvm-14 libllvm14 llvm-14-dev \
+            libgc-dev libssl-dev libubsan1
+
+      - uses: actions/checkout@v4
+
+      - name: Bootstrap stdlib
+        working-directory: quirk-compiler
+        run: make bootstrap-stdlib
+
+      - name: Build runtime with UBSan
+        working-directory: quirk-compiler
+        # CFLAGS gets the sanitizer; the Makefile passes it through to
+        # the runtime.so build. The compiler binary itself stays
+        # vanilla so we're isolating UB in the runtime's C code, which
+        # is where the probes are aimed.
+        run: |
+          make -j"$(nproc)" CXX=g++ CC=gcc
+          # Rebuild runtime.so with UBSan flags.
+          gcc -shared -fPIC -O1 -g \
+              -fsanitize=undefined -fno-omit-frame-pointer \
+              src/Runtime/runtime.c -o bin/runtime.so -lgc -lcrypto
+
+      - name: Run probes under UBSan
+        working-directory: quirk-compiler
+        env:
+          QUIRK_HOME: ${{ github.workspace }}/quirk-compiler
+          UBSAN_OPTIONS: "halt_on_error=1:print_stacktrace=1:abort_on_error=0"
+        run: |
+          set +e
+          fails=0
+          for p in tests/probes/p*.quirk; do
+            out=$(timeout 15 ./bin/quirk run --no-aot --no-cache "$p" 2>&1)
+            # UBSan format: "<file>:<line>:<col>: runtime error: <msg>".
+            # The leading path+line:col is what distinguishes a real
+            # UBSan hit from Quirk's own `Quirk runtime error:` prints
+            # (which are normal behavior in probes like p13's stack-
+            # overflow trigger).
+            if echo "$out" | grep -qE "\\.[ch]:[0-9]+:[0-9]+: runtime error:|UndefinedBehaviorSanitizer"; then
+              echo "::error file=$p::UBSan hit in probe: $p"
+              echo "$out" | head -20
+              fails=$((fails + 1))
+            fi
+          done
+          echo "UBSan failures: $fails"
+          exit $fails

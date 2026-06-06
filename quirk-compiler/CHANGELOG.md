@@ -5,6 +5,72 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [2.2.14] — 2026-06-06
+
+### Per-venv compiler versions (Python-style)
+
+Venvs are now fully self-contained. `quirk venv <path>` writes a
+**real copy** of the compiler binary, runtime.so, and the entire
+stdlib into the venv instead of symlinks to the global location.
+Each venv pins the compiler version it was created with; updates
+to the global no longer leak in.
+
+```
+.venv/
+├── bin/
+│   ├── quirk           ← real ELF binary (not a symlink)
+│   └── runtime.so      ← real, not a symlink
+└── lib/quirk/
+    ├── stdlib/         ← real per-package directories (was symlinks)
+    └── site-packages/  ← user-installed packages
+```
+
+#### `quirk compiler update` is now venv-aware
+
+```
+$ quirk compiler update              # in venv  → updates venv only
+$ quirk compiler update --global     # in venv  → updates global only
+$ quirk compiler update              # outside  → updates global
+```
+
+Default behaviour mirrors `pkg install`: the active context wins.
+A staging install runs in a temp dir first so a half-installed
+toolchain can never overwrite a working venv. The global is left
+untouched unless `--global` is passed.
+
+Inside an active venv the output makes the scope explicit:
+
+```
+  ✓ venv updated  (23 stdlib package(s), bin/quirk + runtime.so)
+      global compiler unchanged (use `quirk compiler update --global`
+      to also update the global)
+```
+
+#### `quirk venv repair` syncs from the current global
+
+The existing `venv repair` command now refreshes the venv's
+compiler + stdlib content from whatever the global is right now.
+The flow for "I want to bump this venv":
+
+```
+$ deactivate
+$ quirk compiler update              # bump global to latest
+$ source .venv/bin/activate
+$ quirk venv repair .venv            # pull global into this venv
+```
+
+Also migrates any pre-2.2.14 symlinks the venv still has — repair
+detects each symlink, removes it, and replaces with a copy from the
+target. No manual cleanup needed when upgrading existing venvs.
+
+#### Disk-cost trade-off
+
+Each venv is now ~30 MB larger (binary + runtime + 23 stdlib
+copies). The benefit is reproducibility: a venv created against a
+specific compiler version stays on that version regardless of what
+happens to the global. Same trade-off Python makes; matches the
+"projects pin their toolchain" mental model.
+
 ## [2.2.13] — 2026-06-06
 
 ### `EnumName.values` — class-level accessor

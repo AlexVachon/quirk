@@ -64,7 +64,7 @@ static std::string self_binary();
 
 namespace qpm {
 
-constexpr const char* QUIRK_VERSION = "2.2.13";
+constexpr const char* QUIRK_VERSION = "2.2.14";
 
 namespace fs = std::filesystem;
 
@@ -577,10 +577,18 @@ static std::map<std::string, std::string> read_venv_cfg(const fs::path& venvDir)
     return out;
 }
 
-// Link/relink stdlib modules into the venv. Skips entries that already exist
-// (idempotent — safe to re-run for `quirk venv repair`). Returns the number
-// of links newly created (not the total).
-static int link_stdlib(const fs::path& venvDir, const fs::path& stdlib) {
+// Materialise stdlib modules into the venv. v2.2.14+ uses *copies*
+// rather than symlinks so the venv pins a specific compiler/stdlib
+// version (matches Python's venv model). Each stdlib package is
+// copy-recursed from the global stdlib root.
+//
+// Skip-if-exists is intentional for `quirk venv repair`: a stdlib
+// entry already on disk is left alone unless `force` is true. `force`
+// is set by `compiler update --in-venv` so an explicit upgrade can
+// refresh stale content.
+//
+// Returns the number of NEW stdlib entries materialised this call.
+static int sync_stdlib(const fs::path& venvDir, const fs::path& stdlib, bool force) {
     fs::path target = venvDir / "lib" / "quirk" / "stdlib";
     fs::create_directories(target);
     int created = 0;
@@ -588,10 +596,16 @@ static int link_stdlib(const fs::path& venvDir, const fs::path& stdlib) {
         if (!entry.is_directory()) continue;
         std::string name = entry.path().filename().string();
         if (name.empty() || name[0] == '.' || name == "packages") continue;
-        fs::path linkPath = target / name;
+        fs::path dest = target / name;
         std::error_code ec;
-        if (fs::exists(linkPath) || fs::is_symlink(linkPath)) continue;
-        fs::create_symlink(fs::absolute(entry.path()), linkPath, ec);
+        // If a pre-2.2.14 symlink lives here, replace it with a real
+        // copy on repair/upgrade so the venv stops following global.
+        bool isStale = fs::is_symlink(dest, ec);
+        if (fs::exists(dest, ec) && !force && !isStale) continue;
+        if (isStale || (force && fs::exists(dest, ec)))
+            fs::remove_all(dest, ec);
+        fs::copy(entry.path(), dest,
+                 fs::copy_options::recursive | fs::copy_options::copy_symlinks, ec);
         if (!ec) created++;
     }
     return created;
@@ -618,7 +632,11 @@ static int build_venv(const fs::path& venvDir, bool repair) {
     fs::create_directories(venvDir / "lib" / "quirk" / "site-packages");
     fs::create_directories(venvDir / "lib" / "quirk" / "stdlib");
 
-    int linked = link_stdlib(venvDir, stdlib);
+    // Copy stdlib content into the venv (not symlink). v2.2.14+
+    // pins each venv to a specific compiler/stdlib version. The
+    // `force` flag is reserved for `compiler update --in-venv`;
+    // venv create/repair only fills in missing entries.
+    int linked = sync_stdlib(venvDir, stdlib, /*force=*/false);
 
     // On repair, two layout migrations:
     //   1. Pre-2.2.8 frozen copies of stdlib packages in EITHER the
@@ -661,17 +679,29 @@ static int build_venv(const fs::path& venvDir, bool repair) {
         }
     }
 
-    // Symlink the compiler + runtime. On repair, replace stale symlinks so the
-    // venv tracks whichever quirk binary is running now.
-    auto link_bin = [&](const fs::path& from, const fs::path& to) {
+    // Copy the compiler + runtime into the venv (v2.2.14+). Each venv
+    // owns a real binary and runtime.so so `quirk compiler update`
+    // from inside touches only this venv. On repair we replace pre-
+    // 2.2.14 symlinks with a real copy of whatever the current
+    // global compiler is; subsequent updates from outside the venv
+    // no longer leak in. Permission bits are preserved by
+    // fs::copy_file's default behavior.
+    auto install_bin = [&](const fs::path& from, const fs::path& to) {
         std::error_code ec;
         if (fs::is_symlink(to) || fs::exists(to)) fs::remove(to, ec);
-        fs::create_symlink(fs::absolute(from), to, ec);
+        fs::copy_file(from, to, fs::copy_options::overwrite_existing, ec);
+        if (!ec) {
+            // Preserve the +x bit on the binary.
+            fs::permissions(to,
+                fs::perms::owner_all | fs::perms::group_read | fs::perms::group_exec
+                                     | fs::perms::others_read | fs::perms::others_exec,
+                fs::perm_options::replace, ec);
+        }
     };
     if (!binPath.empty()) {
-        link_bin(binPath, venvDir / "bin" / "quirk");
+        install_bin(binPath, venvDir / "bin" / "quirk");
         fs::path rt = binPath.parent_path() / "runtime.so";
-        if (fs::exists(rt)) link_bin(rt, venvDir / "bin" / "runtime.so");
+        if (fs::exists(rt)) install_bin(rt, venvDir / "bin" / "runtime.so");
     }
 
     // Always (re)write the activate script — it's small and may have changed
@@ -4650,35 +4680,131 @@ static int cmd_compiler(const std::vector<std::string>& args) {
     }
 
     if (sub == "install" || sub == "update") {
-        // Build install.sh invocation. `update` = no version flag → script
-        // resolves the latest itself. `install vX.Y.Z` = pass --version flag.
+        // Argument parsing: --global flag (force global install even
+        // from inside a venv) and a positional version (install only).
+        // The default target picks itself: inside an active venv we
+        // update the *venv* exclusively; outside, the global. Matches
+        // Python's pip/python convention — activated env wins.
+        bool forceGlobal = false;
         std::string version;
-        if (sub == "install") {
-            if (args.size() < 2) {
-                log::err("compiler install: missing version (e.g. `quirk compiler install v1.0.1`)");
-                return 1;
+        for (size_t i = 1; i < args.size(); i++) {
+            const std::string& a = args[i];
+            if (a == "--global") forceGlobal = true;
+            else if (sub == "install") {
+                version = a;
+                if (!version.empty() && version[0] != 'v') version = "v" + version;
             }
-            version = args[1];
-            // Accept both `1.0.1` and `v1.0.1`; install.sh wants the v form.
-            if (!version.empty() && version[0] != 'v') version = "v" + version;
         }
-
-        // Build the shell pipeline. We pipe install.sh to `sh` directly so
-        // failures from curl propagate via the exit code.
-        std::string flag;
-        if (!version.empty()) flag = " --version=" + version;
-        std::string cmd = std::string("curl -fsSL '") + QUIRK_INSTALL_SCRIPT_URL
-                        + "' | sh -s --" + flag;
-
-        std::cout << log::dim("→ ") << cmd << "\n";
-        int rc = std::system(cmd.c_str());
-        if (rc != 0) {
-            log::err("compiler " + sub + " failed (exit "
-                     + std::to_string(WEXITSTATUS(rc)) + ")");
+        if (sub == "install" && version.empty()) {
+            log::err("compiler install: missing version (e.g. `quirk compiler install v1.0.1`)");
             return 1;
         }
+
+        const bool inVenv      = is_active_venv();
+        const bool targetVenv  = inVenv && !forceGlobal;
+        const bool targetGlobal = !inVenv || forceGlobal;
+
+        // For a venv-only install: run install.sh against a temp dir,
+        // then copy the binary/runtime/stdlib into the venv's layout
+        // (which differs from the tarball's flat shape). The global
+        // stays untouched. For a global install (or no venv) we run
+        // install.sh as before.
+        std::string flag = version.empty() ? "" : (" --version=" + version);
+
+        if (targetGlobal) {
+            std::string cmd = std::string("curl -fsSL '") + QUIRK_INSTALL_SCRIPT_URL
+                            + "' | sh -s --" + flag;
+            std::cout << log::dim("→ ") << cmd << "\n";
+            int rc = std::system(cmd.c_str());
+            if (rc != 0) {
+                log::err("compiler " + sub + " failed (exit "
+                         + std::to_string(WEXITSTATUS(rc)) + ")");
+                return 1;
+            }
+        }
+
+        if (targetVenv) {
+            const char* envHome = std::getenv("QUIRK_HOME");
+            fs::path venvDir = envHome ? fs::path(envHome) : fs::path();
+            if (venvDir.empty()) {
+                log::err("compiler " + sub + ": active venv has no QUIRK_HOME");
+                return 1;
+            }
+            // Stage the install into a fresh temp dir so a failure
+            // halfway through can't leave the venv with a half-installed
+            // toolchain.
+            std::error_code ec;
+            char tmpl[] = "/tmp/quirk-update-XXXXXX";
+            char* tdir = mkdtemp(tmpl);
+            if (!tdir) {
+                log::err("compiler " + sub + ": couldn't create staging dir");
+                return 1;
+            }
+            fs::path stage = tdir;
+            std::string cmd = std::string("curl -fsSL '") + QUIRK_INSTALL_SCRIPT_URL
+                            + "' | INSTALL_DIR='" + stage.string() + "' sh -s --" + flag;
+            std::cout << log::dim("→ ") << cmd << "\n";
+            int rc = std::system(cmd.c_str());
+            if (rc != 0) {
+                fs::remove_all(stage, ec);
+                log::err("compiler " + sub + ": staging install failed (exit "
+                         + std::to_string(WEXITSTATUS(rc)) + ")");
+                return 1;
+            }
+
+            // Promote staged content into the venv layout. The tarball
+            // is flat (`bin/quirk`, `packages/<each>/`); the venv uses
+            // `bin/quirk` + `lib/quirk/stdlib/<each>/`.
+            fs::path stageBin = stage / "bin";
+            fs::path stagePkg = stage / "packages";
+            fs::path venvBin  = venvDir / "bin";
+            fs::path venvLib  = venvDir / "lib" / "quirk" / "stdlib";
+            fs::create_directories(venvBin);
+            fs::create_directories(venvLib);
+
+            for (const std::string& f : {"quirk", "runtime.so"}) {
+                fs::path src = stageBin / f;
+                if (!fs::exists(src, ec)) continue;
+                fs::path dst = venvBin / f;
+                if (fs::exists(dst, ec) || fs::is_symlink(dst, ec)) fs::remove(dst, ec);
+                fs::copy_file(src, dst, fs::copy_options::overwrite_existing, ec);
+                if (f == "quirk") {
+                    fs::permissions(dst,
+                        fs::perms::owner_all | fs::perms::group_read | fs::perms::group_exec
+                                             | fs::perms::others_read | fs::perms::others_exec,
+                        fs::perm_options::replace, ec);
+                }
+            }
+
+            int swapped = 0;
+            for (auto& entry : fs::directory_iterator(stagePkg, ec)) {
+                if (!entry.is_directory()) continue;
+                std::string name = entry.path().filename().string();
+                if (name.empty() || name[0] == '.') continue;
+                fs::path dst = venvLib / name;
+                if (fs::exists(dst, ec) || fs::is_symlink(dst, ec)) fs::remove_all(dst, ec);
+                fs::copy(entry.path(), dst,
+                         fs::copy_options::recursive | fs::copy_options::copy_symlinks, ec);
+                if (!ec) swapped++;
+            }
+            fs::remove_all(stage, ec);
+            log::ok("venv updated  " + log::dim("(" + std::to_string(swapped) +
+                    " stdlib package(s), bin/quirk + runtime.so)"));
+            std::cerr << "    " << log::dim(
+                "global compiler unchanged (use `quirk compiler "
+                + sub + " --global` to also update the global)") << "\n";
+            return 0;
+        }
+
         std::cout << "\n";
-        log::ok("Open a new shell (or re-source your profile) to use the new compiler.");
+        if (inVenv && forceGlobal) {
+            std::cerr << "    " << log::dim(
+                "active venv left unchanged — `deactivate` and re-run "
+                "without --global to also bump the venv, or `quirk venv "
+                "repair` to sync from the new global.") << "\n";
+        } else {
+            log::ok("Open a new shell (or re-source your profile) to use the new compiler.");
+        }
         return 0;
     }
 

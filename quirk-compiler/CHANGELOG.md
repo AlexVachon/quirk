@@ -5,6 +5,47 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [2.2.13] — 2026-06-06
+
+### `EnumName.values` — class-level accessor
+
+Every enum now exposes a `.values` accessor that returns a `List`
+of the backing values (or variant names for unbacked enums):
+
+```quirk
+enum Gender(String) { Male = "male", Female = "female", Other = "other" }
+Gender.values  // → ["male", "female", "other"]   (List<String>)
+
+enum Status(Int) { OK = 200, NotFound = 404 }
+Status.values  // → [200, 404]                    (List<Int>)
+
+enum Color { Red, Green, Blue }
+Color.values   // → ["Red", "Green", "Blue"]      (List<String>, variant names)
+```
+
+The motivating use case — drop the triple `.value` repetition when
+building a menu from an enum:
+
+```quirk
+// before
+gender := prompt.select(
+    "Gender?",
+    [Gender.Male.value, Gender.Female.value, Gender.Other.value],
+    Gender.Other.value
+)
+
+// after
+gender := prompt.select("Gender?", Gender.values, Gender.Other.value)
+```
+
+Built lazily: each access calls a runtime helper
+(`quirk_enum_values_str` / `_int`) that walks the per-enum packed
+global emitted at codegen time. The List is GC-allocated; the
+backing bytes are immutable. Same uniform interface across all
+three enum shapes (String-backed, Int-backed, unbacked).
+
+Probe `tests/probes/p35_enum_values.quirk` exercises all three.
+
 ## [2.2.12] — 2026-06-06
 
 ### CLI ergonomics: aliases, typo suggestions, fuller per-verb help

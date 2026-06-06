@@ -293,6 +293,35 @@ static int32_t enum_str_index_of(const char* needle, const char* packed, int32_t
 
 extern void quirk_throw_exception(const char* type_name, const char* message);
 
+// `EnumName.values` — eagerly materialise the enum's backing values
+// as a List. String-backed and unbacked enums share the same packed
+// blob format (`"v0\0v1\0...\0"`) so one helper covers both.
+List* quirk_enum_values_str(const char* packed, int32_t count) {
+    List* lst = (List*)GC_malloc(sizeof(List));
+    Core_Collections_List_List___init(lst);
+    if (!packed) return lst;
+    const char* p = packed;
+    for (int32_t i = 0; i < count; i++) {
+        Core_Collections_List_List_append(lst, make_String(p));
+        p += strlen(p) + 1;
+    }
+    return lst;
+}
+
+List* quirk_enum_values_int(const int32_t* packed, int32_t count) {
+    List* lst = (List*)GC_malloc(sizeof(List));
+    Core_Collections_List_List___init(lst);
+    if (!packed) return lst;
+    for (int32_t i = 0; i < count; i++) {
+        // Ints in Lists live as tagged-pointer Any boxes — `inttoptr`
+        // of the int value. Same encoding Codegen uses when an Int
+        // literal lands in a List<Any>.
+        uintptr_t boxed = (uintptr_t)(uint32_t)packed[i];
+        Core_Collections_List_List_append(lst, (void*)boxed);
+    }
+    return lst;
+}
+
 int32_t quirk_enum_lookup_str(String* query, const char* packed,
                               int32_t count, const char* enum_name) {
     const char* q = (query && query->buffer) ? query->buffer : "";

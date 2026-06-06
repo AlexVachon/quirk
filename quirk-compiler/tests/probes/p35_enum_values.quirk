@@ -1,0 +1,51 @@
+// Enum.values — the class-level accessor that returns a List of
+// backing values (or variant names for unbacked enums). Added in
+// v2.2.13. Same pattern across String-backed, Int-backed, and
+// unbacked enums.
+
+enum Gender(String) {
+    Male = "male"
+    Female = "female"
+    Other = "other"
+}
+
+enum Status(Int) {
+    OK = 200
+    NotFound = 404
+}
+
+enum Color {
+    Red
+    Green
+    Blue
+}
+
+define main() -> void {
+    // String-backed → List of backing strings
+    g := Gender.values
+    if g.length() != 3 { print("FAIL: Gender.values length") }
+    s0: String := g.get(0)
+    s1: String := g.get(1)
+    s2: String := g.get(2)
+    if s0 != "male"   { print("FAIL: Gender.values[0]") }
+    if s1 != "female" { print("FAIL: Gender.values[1]") }
+    if s2 != "other"  { print("FAIL: Gender.values[2]") }
+
+    // Int-backed → List of ints
+    sv := Status.values
+    if sv.length() != 2 { print("FAIL: Status.values length") }
+    n0: Int := sv.get(0)
+    n1: Int := sv.get(1)
+    if n0 != 200 { print("FAIL: Status.values[0]") }
+    if n1 != 404 { print("FAIL: Status.values[1]") }
+
+    // Unbacked → variant names as Strings
+    cv := Color.values
+    if cv.length() != 3 { print("FAIL: Color.values length") }
+    c0: String := cv.get(0)
+    c2: String := cv.get(2)
+    if c0 != "Red"  { print("FAIL: Color.values[0]") }
+    if c2 != "Blue" { print("FAIL: Color.values[2]") }
+
+    print("Enum.values probe passed")
+}

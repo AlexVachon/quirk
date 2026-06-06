@@ -1209,6 +1209,13 @@ std::string Sema::checkMemberAccess(MemberAccessNode *node)
         if (enumRegistry.count(lit->value)) {
             EnumNode* en = enumRegistry[lit->value];
             if (node->memberName == "str" || node->memberName == "name") return "String";
+            // `EnumName.values` — a List of the backing values (or
+            // variant names for unbacked enums). Codegen materialises
+            // this lazily from the packed global; Sema just needs to
+            // tell the world the result is a List so downstream
+            // checks (passing to `prompt.select(..., List, ...)`,
+            // iterating with `for`, etc.) all type-check cleanly.
+            if (node->memberName == "values") return "List";
             auto it = std::find(en->variants.begin(), en->variants.end(), node->memberName);
             if (it == en->variants.end())
                 fatalError("'" + node->memberName + "' is not a variant of enum '" + lit->value + "'",

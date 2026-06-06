@@ -253,22 +253,27 @@ class LLVMCodegen {
         for (const auto& node : nodes) {
             if (auto* e = dynamic_cast<EnumNode*>(node.get())) {
                 enumVariants[e->name] = e->variants;
-                if (!e->backingType.empty()) {
-                    BackedEnumInfo info;
-                    info.backingType = e->backingType;
-                    info.values.reserve(e->variants.size());
-                    for (size_t i = 0; i < e->variants.size(); i++) {
-                        std::string v = (i < e->variantValues.size()) ? e->variantValues[i] : std::string();
-                        if (v.empty()) {
-                            // Default: variant name for String backing, ordinal for Int.
-                            v = (e->backingType == "Int")
-                                ? std::to_string(i)
-                                : e->variants[i];
-                        }
-                        info.values.push_back(std::move(v));
+                // Every enum (backed or not) gets a BackedEnumInfo entry
+                // so `EnumName.values` has one uniform codegen path. For
+                // unbacked enums we treat the backing as String and use
+                // the variant names as the values — same shape that
+                // `instance.value` would yield via the existing
+                // `__<Name>_str` helper, but materialised eagerly into
+                // the packed global so `.values` can build the List in
+                // one runtime call.
+                BackedEnumInfo info;
+                info.backingType = e->backingType.empty() ? "String" : e->backingType;
+                info.values.reserve(e->variants.size());
+                for (size_t i = 0; i < e->variants.size(); i++) {
+                    std::string v = (i < e->variantValues.size()) ? e->variantValues[i] : std::string();
+                    if (v.empty()) {
+                        v = (info.backingType == "Int")
+                            ? std::to_string(i)
+                            : e->variants[i];
                     }
-                    backedEnums[e->name] = std::move(info);
+                    info.values.push_back(std::move(v));
                 }
+                backedEnums[e->name] = std::move(info);
             }
         }
         // Hand the registry to TypeGen so `define f(l: L)` types `l` as
@@ -3930,6 +3935,33 @@ Value* LLVMCodegen::handleExpression(Node* node) {
         // Enum variant access: Direction.North
         if (auto* lit = dynamic_cast<LiteralNode*>(member->object.get())) {
             if (enumVariants.count(lit->value)) {
+                // `EnumName.values` — return a fresh List of the
+                // backing values (String/Int) for backed enums, or the
+                // variant names as Strings for unbacked. Built lazily
+                // each call from the packed global; cheap because the
+                // packed bytes are immutable and the List itself is
+                // GC-allocated.
+                if (member->memberName == "values" && backedEnums.count(lit->value)) {
+                    const BackedEnumInfo& info = backedEnums[lit->value];
+                    Type* i32 = Type::getInt32Ty(Context);
+                    Type* i8p = Type::getInt8PtrTy(Context);
+                    GlobalVariable* packedGv = TheModule->getNamedGlobal("__" + lit->value + "_packed");
+                    Type* listPtrTy = PointerType::getUnqual(StructTypes["List"]);
+                    Value* count = ConstantInt::get(i32, info.values.size());
+                    if (info.backingType == "Int") {
+                        FunctionCallee fn = TheModule->getOrInsertFunction(
+                            "quirk_enum_values_int",
+                            FunctionType::get(listPtrTy,
+                                {PointerType::getUnqual(i32), i32}, false));
+                        Value* asI32p = Builder.CreateBitCast(packedGv, PointerType::getUnqual(i32));
+                        return Builder.CreateCall(fn, {asI32p, count});
+                    }
+                    FunctionCallee fn = TheModule->getOrInsertFunction(
+                        "quirk_enum_values_str",
+                        FunctionType::get(listPtrTy, {i8p, i32}, false));
+                    Value* asI8p = Builder.CreateBitCast(packedGv, i8p);
+                    return Builder.CreateCall(fn, {asI8p, count});
+                }
                 const auto& variants = enumVariants[lit->value];
                 auto it = std::find(variants.begin(), variants.end(), member->memberName);
                 if (it != variants.end()) {

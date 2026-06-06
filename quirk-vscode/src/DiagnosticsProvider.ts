@@ -140,23 +140,40 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
             continue;
         }
 
-        // Enum block: collect name + all variants into fileGlobals
+        // Enum block: collect name + all variants into fileGlobals.
+        // Backed enums (v2.2.4+) declare variants with an explicit
+        // backing literal: `Male = "male"` or `OK = 200`. The variant
+        // regex matches an identifier with an optional `= <literal>`
+        // suffix so the declaration site doesn't get flagged as a
+        // bare identifier usage.
         if (isReadingEnum) {
             if (cleanLine.includes('}')) { isReadingEnum = false; }
             else {
-                const variantMatch = /^\s*([a-zA-Z_]\w*)\s*$/.exec(cleanLine);
+                const variantMatch = /^\s*([a-zA-Z_]\w*)(?:\s*=\s*(?:"[^"]*"|'[^']*'|-?\d+(?:\.\d+)?))?\s*$/.exec(cleanLine);
                 if (variantMatch) fileGlobals.add(variantMatch[1]);
             }
             continue;
         }
 
-        const enumMatch = /^\s*enum\s+([a-zA-Z_]\w*)/.exec(cleanLine);
+        // `enum Name { ... }` OR `enum Name(BackingType) { ... }`.
+        // The `(BackingType)` is the v2.2.4+ backed-enum form — the
+        // regex deliberately allows it via the non-capturing
+        // `(?:\([^)]*\))?` so both forms are recognised.
+        const enumMatch = /^\s*enum\s+([a-zA-Z_]\w*)\s*(?:\([^)]*\))?\s*\{?/.exec(cleanLine);
         if (enumMatch) {
             fileGlobals.add(enumMatch[1]);
-            // Collect inline variants (e.g. enum Small { A B C })
+            // Collect inline variants (e.g. enum Small { A B C }). The
+            // body content runs to the first `}` on the same line; if
+            // there's no closing `}`, we're starting a multi-line enum
+            // and pick up variants in the `isReadingEnum` branch above.
             const inlineBody = /\{([^}]*)\}/.exec(cleanLine);
             if (inlineBody) {
-                inlineBody[1].split(/\s+/).forEach(v => { if (v) fileGlobals.add(v); });
+                // Per-variant: either a bare identifier or `Name = literal`.
+                // Split on commas/whitespace, then strip any `= literal` tail.
+                inlineBody[1].split(/[,\s]+/).forEach(v => {
+                    const name = v.split('=')[0].trim();
+                    if (/^[a-zA-Z_]\w*$/.test(name)) fileGlobals.add(name);
+                });
             } else {
                 isReadingEnum = true;
             }

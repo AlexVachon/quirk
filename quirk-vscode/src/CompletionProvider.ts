@@ -111,6 +111,12 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
             const aliasOrVar = memberMatch[1];
             const modulePath = this.resolveImportPathFromAlias(document, aliasOrVar);
             if (modulePath) return this.provideMemberCompletions(document, modulePath);
+            // Enum class access (`Gender.`) → variants + the
+            // class-level `values` accessor (returns a List of backing
+            // values). Same approach as Python's `Enum.__members__` /
+            // Rust's `strum::EnumIter`.
+            const enumCompletions = this.provideEnumClassCompletions(document, aliasOrVar);
+            if (enumCompletions) return enumCompletions;
             return this.provideObjectMemberCompletions(document, position, aliasOrVar);
         }
 
@@ -271,6 +277,124 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
     }
 
     // =========================================================
+    // ENUM CLASS COMPLETIONS — `Gender.` → variants + `.values`
+    // =========================================================
+    //
+    // Recognises both unbacked enums (`enum Color { Red, Green, Blue }`)
+    // and v2.2.4+ backed enums (`enum Gender(String) { Male = "male",
+    // ... }`). Returns null when `name` doesn't match an enum
+    // declaration in the file — caller falls through to the regular
+    // object-member path.
+    private provideEnumClassCompletions(
+        document: vscode.TextDocument,
+        name: string,
+    ): vscode.CompletionItem[] | null {
+        const text = document.getText();
+        const lines = text.split(/\r?\n/);
+        // Find the `enum <name>` decl, then read variant names until
+        // the matching `}`. We don't track precise braces here because
+        // enum bodies don't nest — single closing `}` ends the block.
+        const enumStartRe = new RegExp(`^\\s*enum\\s+${name}\\s*(?:\\([^)]*\\))?\\s*\\{?`);
+        let startLine = -1;
+        for (let i = 0; i < lines.length; i++) {
+            if (enumStartRe.test(lines[i])) { startLine = i; break; }
+        }
+        if (startLine === -1) return null;
+
+        const variants: string[] = [];
+        // Inline body: `enum Foo { A, B, C }`
+        const inline = /\{([^}]*)\}/.exec(lines[startLine]);
+        if (inline) {
+            inline[1].split(/[,\s]+/).forEach(v => {
+                const variant = v.split('=')[0].trim();
+                if (/^[a-zA-Z_]\w*$/.test(variant)) variants.push(variant);
+            });
+        } else {
+            // Multi-line body: walk forward until `}`.
+            for (let j = startLine + 1; j < lines.length; j++) {
+                if (lines[j].includes('}')) break;
+                const m = /^\s*([a-zA-Z_]\w*)/.exec(lines[j]);
+                if (m) variants.push(m[1]);
+            }
+        }
+
+        const items: vscode.CompletionItem[] = [];
+        for (const v of variants) {
+            const item = new vscode.CompletionItem(v, vscode.CompletionItemKind.EnumMember);
+            item.detail = `variant of ${name}`;
+            item.sortText = '1' + v;
+            items.push(item);
+        }
+        // Class-level `.values` accessor — added in compiler v2.2.13.
+        const valuesItem = new vscode.CompletionItem('values', vscode.CompletionItemKind.Property);
+        valuesItem.detail = `${name}.values → List`;
+        valuesItem.documentation = new vscode.MarkdownString(
+            `**\`${name}.values\`** — \`List\` of all backing values (or variant names for unbacked enums), in declaration order.\n\n` +
+            '```quirk\n' +
+            `enum Gender(String) { Male = "male", Female = "female", Other = "other" }\n` +
+            `Gender.values  // ["male", "female", "other"]\n` +
+            '```\n\nUseful for building menus:\n\n' +
+            '```quirk\n' +
+            `gender := prompt.select("Gender?", ${name}.values, ${name}.${variants[0] ?? 'Variant'}.value)\n` +
+            '```'
+        );
+        valuesItem.sortText = '0values';
+        items.push(valuesItem);
+
+        return items;
+    }
+
+    // Is `name` declared as an enum somewhere in the document?
+    private isEnumTypeInFile(document: vscode.TextDocument, name: string): boolean {
+        if (!name || !/^[A-Z][a-zA-Z0-9_]*$/.test(name)) return false;
+        const re = new RegExp(`^\\s*enum\\s+${name}\\b`, 'm');
+        return re.test(document.getText());
+    }
+
+    // Enum-instance dot completions: `.value`, `.str`, `.name`.
+    private provideEnumInstanceCompletions(enumName: string): vscode.CompletionItem[] {
+        const items: vscode.CompletionItem[] = [];
+
+        const valueItem = new vscode.CompletionItem('value', vscode.CompletionItemKind.Property);
+        valueItem.detail = `${enumName}.value → String | Int`;
+        valueItem.documentation = new vscode.MarkdownString(
+            '**`.value`** — the backing value of an enum instance.\n\n' +
+            'For backed enums (`enum Name(String|Int) { ... }`), returns the declared backing literal.\n\n' +
+            '```quirk\n' +
+            'enum Gender(String) { Male = "male", Female = "female", Other = "other" }\n' +
+            'g := Gender.Female\n' +
+            'print(g.value)   // "female"\n' +
+            '```'
+        );
+        valueItem.sortText = '0value';
+        items.push(valueItem);
+
+        const strItem = new vscode.CompletionItem('str', vscode.CompletionItemKind.Method);
+        strItem.detail = `${enumName}.str() → String`;
+        strItem.insertText = new vscode.SnippetString('str()');
+        strItem.documentation = new vscode.MarkdownString(
+            '**`.str()`** — the variant name as a `String` (always, regardless of backing).\n\n' +
+            '```quirk\n' +
+            'g := Gender.Female\n' +
+            'print(g.str())   // "Female"\n' +
+            '```'
+        );
+        strItem.sortText = '1str';
+        items.push(strItem);
+
+        const nameItem = new vscode.CompletionItem('name', vscode.CompletionItemKind.Property);
+        nameItem.detail = `${enumName}.name → String`;
+        nameItem.documentation = new vscode.MarkdownString(
+            '**`.name`** — alias for `.str()`; the variant name as written.\n\n' +
+            '```quirk\nGender.Female.name   // "Female"\n```'
+        );
+        nameItem.sortText = '2name';
+        items.push(nameItem);
+
+        return items;
+    }
+
+    // =========================================================
     // TYPE INFERENCE & OBJECT MEMBER COMPLETIONS
     // =========================================================
 
@@ -283,6 +407,14 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
         const typeName = overrideType ?? this.inferTypeOfVariable(document, position, variableName);
         if (!typeName) return [];
         const projectRoot = this.findProjectRoot(document.uri.fsPath);
+
+        // Enum-instance completions: when typeName is an enum declared
+        // in this file, offer `.value` (backing value), `.str` (string
+        // form), `.name` (variant name). `.value` is the v2.2.4+
+        // backed-enum accessor; the others have been around longer.
+        if (this.isEnumTypeInFile(document, typeName)) {
+            return this.provideEnumInstanceCompletions(typeName);
+        }
 
         // Labels that will be superseded by richer hand-crafted completions below
         const overriddenByLambdaMethods = new Set<string>(

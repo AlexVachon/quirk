@@ -1,0 +1,16 @@
+// Self-referential struct field. Mostly a Sema test — should
+// either work or give a clean error, not a parser crash.
+struct Node {
+    value: Int
+    next: Node
+    define __init(self, v: Int) {
+        self.value = v
+        self.next = null
+    }
+}
+define main() -> void {
+    a := Node(1)
+    b := Node(2)
+    a.next = b
+    print(a.next.value)
+}

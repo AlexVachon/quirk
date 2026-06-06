@@ -1,0 +1,6 @@
+// Integer division by zero. Clean ZeroDivisionError, not SIGFPE.
+define main() -> void {
+    a := 10
+    b := 0
+    print(a / b)
+}

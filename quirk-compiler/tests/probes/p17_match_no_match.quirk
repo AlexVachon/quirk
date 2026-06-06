@@ -1,0 +1,10 @@
+// match with no matching arm and no wildcard. Should produce a
+// deterministic outcome (throw, or just fall through). Not UB.
+define main() -> void {
+    x := 5
+    match x {
+        case 1 { print("one") }
+        case 2 { print("two") }
+    }
+    print("after")
+}

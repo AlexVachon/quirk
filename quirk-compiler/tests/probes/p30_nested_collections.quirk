@@ -1,0 +1,13 @@
+// List of List, Map of List, etc.
+from typing.collections.list use { List }
+from typing.collections.map use { Map }
+define main() -> void {
+    grid: List = [[1,2],[3,4]]
+    row: List := grid.get(0)
+    print(row.get(1))
+
+    by_name: Map = {}
+    by_name.put("a", [10, 20])
+    nums: List := by_name.get("a")
+    print(nums.get(0) + nums.get(1))
+}

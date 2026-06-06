@@ -1,0 +1,8 @@
+// Any-laundered Int → user-defined struct slot.
+struct Box {
+    n: Int
+    define __init(self, n: Int) { self.n = n }
+}
+define use_box(b: Box) -> Int { return b.n }
+define wrap(x) { return use_box(x) }
+define main() -> void { print(wrap(42)) }

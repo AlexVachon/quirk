@@ -1,0 +1,6 @@
+// Out-of-bounds List.get — should throw IndexError, not crash.
+from typing.collections.list use { List }
+define main() -> void {
+    items: List = [1, 2, 3]
+    print(items.get(99))
+}

@@ -1,0 +1,12 @@
+// Arithmetic on enum values. Enum lowers to i32 — adding makes
+// little sense semantically but Sema's v2.2.3 should reject it.
+enum Color {
+    Red
+    Green
+    Blue
+}
+define main() -> void {
+    c := Color.Red
+    d := c + 1   // bad: arithmetic on enum
+    print(d)
+}

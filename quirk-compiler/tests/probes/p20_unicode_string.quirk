@@ -1,0 +1,7 @@
+// UTF-8 multi-byte characters. Length is in bytes, not chars — known
+// design choice; what we care about is no crash or wrong output.
+define main() -> void {
+    s := "héllo"
+    print(s.length())
+    print(s.substring(0, 1))
+}

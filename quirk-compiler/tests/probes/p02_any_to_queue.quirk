@@ -1,0 +1,5 @@
+// Same as p01 but for Queue.
+from typing.collections.queue use { Queue }
+define take_queue(q: Queue) -> Int { return q.length() }
+define wrap(x) { return take_queue(x) }
+define main() -> void { print(wrap(42)) }

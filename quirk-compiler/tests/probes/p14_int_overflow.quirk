@@ -1,0 +1,8 @@
+// i32 overflow. Wrap-around is fine; what's not fine is UB-derived
+// nonsense or a crash. Most languages document the behavior either
+// way; what matters is consistency.
+define main() -> void {
+    a := 2147483647     // INT32_MAX
+    b := 1
+    print(a + b)        // overflows to INT32_MIN
+}

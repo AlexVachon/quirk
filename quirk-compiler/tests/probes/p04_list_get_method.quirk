@@ -1,0 +1,11 @@
+// `list.get(i)` returns Any. Calling .upper() on it relies on the
+// implicit Any→String dispatch. With a non-string element, this should
+// throw cleanly, not crash.
+from typing.collections.list use { List }
+define main() -> void {
+    items: List = [1, 2, 3]
+    s := items.get(0)
+    // s is Any; the dispatch path treats Any as String. The value here
+    // is a tagged-int 1, so a strcmp/.upper would deref a low address.
+    print(s)
+}

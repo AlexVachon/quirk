@@ -1,0 +1,5 @@
+from typing.collections.list use { List }
+define main() -> void {
+    items: List = []
+    print(items.pop())   // pop from empty
+}

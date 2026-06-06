@@ -102,6 +102,51 @@ String* quirk_opaque_to_string_or_null(void* val) {
     return quirk_opaque_to_string(val);
 }
 
+// Coerce an opaque i8* (whatever shape it has) to an int32. Same
+// heuristic as quirk_opaque_to_string but for the Int target:
+//   null                 → 0       (legit "no value" fallback)
+//   uval ≤ 0xFFFFFFFF    → (int32)uval        (tagged int — the common
+//                                              case for list[i] of Ints)
+//   Any*-tagged ANY_INT  → a->ival
+//   Any*-tagged ANY_DOUBLE/CHAR/BOOL → coerce
+//   Any*-tagged anything else → 0
+// Used by field assignments / typed-walrus when the RHS is opaque.
+int32_t quirk_opaque_to_int(void* val) {
+    if (!val) return 0;
+    uintptr_t u = (uintptr_t)val;
+    if (u <= 0xFFFFFFFFUL) return (int32_t)u;
+    int32_t possible_tag = *(int32_t*)val;
+    if (possible_tag >= ANY_INT && possible_tag <= ANY_NULL) {
+        Any* a = (Any*)val;
+        switch (a->tag) {
+            case ANY_INT:
+            case ANY_BOOL:
+            case ANY_CHAR:   return a->ival;
+            case ANY_DOUBLE: return (int32_t)a->dval;
+            default:         return 0;
+        }
+    }
+    return 0;
+}
+
+double quirk_opaque_to_double(void* val) {
+    if (!val) return 0.0;
+    uintptr_t u = (uintptr_t)val;
+    if (u <= 0xFFFFFFFFUL) return (double)(int32_t)u;
+    int32_t possible_tag = *(int32_t*)val;
+    if (possible_tag >= ANY_INT && possible_tag <= ANY_NULL) {
+        Any* a = (Any*)val;
+        switch (a->tag) {
+            case ANY_DOUBLE: return a->dval;
+            case ANY_INT:
+            case ANY_BOOL:
+            case ANY_CHAR:   return (double)a->ival;
+            default:         return 0.0;
+        }
+    }
+    return 0.0;
+}
+
 // Generic Any → struct* coercion for the non-String collection types
 // (List, Map, Tuple, Callable). Throws TypeError when the runtime value
 // can't possibly be the expected struct — e.g. an Int laundered through
@@ -119,6 +164,36 @@ String* quirk_opaque_to_string_or_null(void* val) {
 //                            heuristic is safe in practice)
 //
 // `type_name` is purely for the error message — e.g. "List", "Map".
+// Untagged variant for struct types without a dedicated AnyTag
+// (Set, Queue, File, user-defined structs). Rejects the two
+// obviously-wrong opaque shapes (tagged int, Any* heap wrap) but
+// trusts the "direct struct ptr" path — the same heuristic the
+// String / List / Map / Tuple / Callable unwraps use, minus the
+// per-tag validation. Without this, an Any-laundered Int into a
+// `: Set` slot used to land at address 42 and SIGSEGV on .length().
+void* quirk_opaque_check_struct_or_null(void* val, const char* type_name) {
+    if (!val) return NULL;
+    uintptr_t u = (uintptr_t)val;
+    if (u <= 0xFFFFFFFFUL) {
+        char buf[128];
+        snprintf(buf, sizeof(buf),
+                 "expected %s but got Int (laundered through Any-typed parameter)",
+                 type_name ? type_name : "<struct>");
+        quirk_throw_exception("TypeError", buf);
+        return NULL;
+    }
+    int32_t possible_tag = *(int32_t*)val;
+    if (possible_tag >= ANY_INT && possible_tag <= ANY_NULL) {
+        char buf[128];
+        snprintf(buf, sizeof(buf),
+                 "expected %s but got Any-wrapped value",
+                 type_name ? type_name : "<struct>");
+        quirk_throw_exception("TypeError", buf);
+        return NULL;
+    }
+    return val;
+}
+
 void* quirk_opaque_unwrap_or_null(void* val, int32_t expected_tag,
                                   const char* type_name) {
     if (!val) return NULL;

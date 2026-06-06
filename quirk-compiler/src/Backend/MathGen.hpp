@@ -83,8 +83,37 @@ class MathGen {
             if (op == "+")  return Builder.CreateAdd(L, R, "i_add");
             if (op == "-")  return Builder.CreateSub(L, R, "i_sub");
             if (op == "*")  return Builder.CreateMul(L, R, "i_mul");
-            if (op == "/")  return Builder.CreateSDiv(L, R, "i_div");
-            if (op == "%")  return Builder.CreateSRem(L, R, "i_mod");
+            if (op == "/" || op == "%") {
+                // LLVM's `sdiv` / `srem` against 0 are *undefined
+                // behavior* — at -O2 the optimizer assumes the divisor
+                // is non-zero and the result is arbitrary bits. Emit
+                // a runtime guard before the divide: if R == 0, throw
+                // ZeroDivisionError; otherwise proceed.
+                Function* parent = Builder.GetInsertBlock()->getParent();
+                Module* mod      = Builder.GetInsertBlock()->getModule();
+                Value* isZero = Builder.CreateICmpEQ(R, ConstantInt::get(R->getType(), 0), "div_zero_chk");
+                BasicBlock* throwBB = BasicBlock::Create(Context, "div_by_zero", parent);
+                BasicBlock* okBB    = BasicBlock::Create(Context, "div_ok",      parent);
+                Builder.CreateCondBr(isZero, throwBB, okBB);
+
+                Builder.SetInsertPoint(throwBB);
+                FunctionCallee thrower = mod->getOrInsertFunction(
+                    "quirk_throw_exception",
+                    Type::getVoidTy(Context),
+                    Type::getInt8PtrTy(Context),
+                    Type::getInt8PtrTy(Context));
+                const char* msg = (op == "/") ? "integer division by zero"
+                                              : "integer modulo by zero";
+                Builder.CreateCall(thrower, {
+                    Builder.CreateGlobalStringPtr("ZeroDivisionError"),
+                    Builder.CreateGlobalStringPtr(msg)
+                });
+                Builder.CreateUnreachable();
+
+                Builder.SetInsertPoint(okBB);
+                if (op == "/") return Builder.CreateSDiv(L, R, "i_div");
+                return Builder.CreateSRem(L, R, "i_mod");
+            }
             if (op == ">")  return Builder.CreateICmpSGT(L, R, "i_gt");
             if (op == "<")  return Builder.CreateICmpSLT(L, R, "i_lt");
             if (op == ">=") return Builder.CreateICmpSGE(L, R, "i_ge");

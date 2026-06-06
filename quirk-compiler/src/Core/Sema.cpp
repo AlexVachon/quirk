@@ -1022,6 +1022,75 @@ std::string Sema::checkBinaryOp(BinaryOpNode *node)
                    node->line, node->col, node->filePath);
     }
 
+    // Type-compatibility gate for arithmetic / comparison. Reject
+    // mismatches *before* the operator-overloading branch — that
+    // branch declares a result type (e.g. "Bool" for ==) but
+    // doesn't actually verify Codegen will dispatch a struct
+    // method, so without this gate `5 == "5"` would land at
+    // Codegen's ICmp(i32, String*) and abort the LLVM verifier.
+    {
+        auto isNumericEarly = [](const std::string& t) {
+            return t == "Int" || t == "int" || t == "Double" || t == "double";
+        };
+        auto isUnknownEarly = [](const std::string& t) {
+            // `void` is the FunctionNode default before Pass-2 infers a
+            // return type — treat it the same as Any here so we don't
+            // reject correct programs whose callee's return type Sema
+            // didn't resolve in time (e.g. resp.status_code coming back
+            // as void because the field path lost its annotation).
+            return t.empty() || t == "Any" || t == "Null" || t == "auto" || t == "void";
+        };
+        bool arith = (node->op == "+" || node->op == "-" || node->op == "*" ||
+                      node->op == "/" || node->op == "%");
+        bool cmp   = (node->op == "==" || node->op == "!=" || node->op == "<" ||
+                      node->op == "<=" || node->op == ">"  || node->op == ">=");
+        if (arith || cmp) {
+            bool ok = false;
+            // Same type is always fine (covers enum==enum, String==String,
+            // user-struct==user-struct via overload, etc.).
+            if (lType == rType) ok = true;
+            // Anything against Any/Null/empty/auto is deferred.
+            else if (isUnknownEarly(lType) || isUnknownEarly(rType)) ok = true;
+            // Numeric coercion across Int/Double.
+            else if (isNumericEarly(lType) && isNumericEarly(rType)) ok = true;
+            // `+` with String operand is concat — handled below.
+            else if (node->op == "+" && (lType == "String" || rType == "String")) ok = true;
+            // Struct on the LHS with a user-defined __op overload —
+            // trust the overload. Built-in primitives (Int / Double /
+            // Bool / Char / String) are registered as structs and have
+            // findable __eq/__add methods, but Codegen handles them as
+            // primitives at the IR level (raw ICmp / CreateAdd) and
+            // doesn't actually dispatch to those methods. Exclude
+            // them so a primitive-mismatch (Int == String) doesn't
+            // silently slip through.
+            else if (structRegistry.count(lType)) {
+                static const std::set<std::string> primitivesAsStructs = {
+                    "Int","Double","Bool","Char","String",
+                    "int","double","bool","char","string"
+                };
+                if (!primitivesAsStructs.count(lType)) {
+                    static const std::map<std::string, std::string> magicMap = {
+                        {"+","__add"},{"-","__sub"},{"*","__mul"},{"/","__div"},{"%","__mod"},
+                        {"==","__eq"},{"!=","__ne"},{"<","__lt"},{"<=","__le"},
+                        {">","__gt"},{">=","__ge"},
+                    };
+                    auto m = magicMap.find(node->op);
+                    if (m != magicMap.end()) {
+                        FunctionNode* fn = findMethod(lType, lType + "_" + m->second);
+                        if (!fn && node->op == "!=")
+                            fn = findMethod(lType, lType + "___eq");
+                        if (fn) ok = true;
+                    }
+                }
+            }
+            if (!ok) {
+                fatalError("operator '" + node->op + "' incompatible types: '" +
+                           lType + "' and '" + rType + "'",
+                           node->line, node->col, node->filePath);
+            }
+        }
+    }
+
     // Operator Overloading
     if (structRegistry.count(lType))
     {
@@ -1052,30 +1121,81 @@ std::string Sema::checkBinaryOp(BinaryOpNode *node)
     }
 
     // Primitives
+    // Type-compatibility helpers for arithmetic / comparison. Both
+    // operands need to be in the same "kind" — Codegen otherwise emits
+    // an ICmp against incompatible LLVM types and LLVM's verifier
+    // aborts the whole process (no traceback, no chance to catch).
+    auto isNumeric = [](const std::string& t) {
+        return t == "Int" || t == "int" || t == "Double" || t == "double";
+    };
+    auto isUnknown = [](const std::string& t) {
+        // Empty / "Any" / "Null" / "auto" / "void" all defer to runtime.
+        // `void` shows up when Sema can't resolve a member-access result
+        // type (e.g. resp.status_code through a Map.get chain) — treating
+        // it as an error here misclassifies correct code.
+        return t.empty() || t == "Any" || t == "Null" || t == "auto" || t == "void";
+    };
+    auto compatibleOperands = [&](const std::string& a, const std::string& b) {
+        if (a == b) return true;
+        if (isUnknown(a) || isUnknown(b)) return true;
+        if (isNumeric(a) && isNumeric(b)) return true;
+        // Enum vs same-enum already handled by a==b above; enum vs Int
+        // is intentionally rejected (use `.value` if you want the int).
+        return false;
+    };
+
     if (node->op == "+")
     {
+        // `+` is also string concat. Anything + String / String + anything
+        // is allowed; numeric + numeric is allowed; otherwise error.
         if (lType == "String" || rType == "String")
             return "String";
-        if (lType == "Double" || rType == "Double")
-            return "Double";
-        return "Int";
+        if (compatibleOperands(lType, rType)) {
+            if (lType == "Double" || rType == "Double")
+                return "Double";
+            return "Int";
+        }
+        fatalError("'+' operands must be numeric or include a String; got '" +
+                   lType + "' and '" + rType + "'",
+                   node->line, node->col, node->filePath);
     }
     if (node->op == "-" || node->op == "*" || node->op == "/" || node->op == "%")
     {
-        if (lType == "Double" || rType == "Double")
-            return "Double";
-        return "Int";
+        // Arithmetic — both sides must be numeric (or unknown / deferred).
+        // Enums are intentionally rejected: `Color.Red + 1` was silently
+        // accepted before and produced a wrong-typed Bool/Int at codegen.
+        if (compatibleOperands(lType, rType) && !enumRegistry.count(lType)
+                                             && !enumRegistry.count(rType)) {
+            if (lType == "Double" || rType == "Double")
+                return "Double";
+            return "Int";
+        }
+        fatalError("'" + node->op + "' operands must be numeric; got '" +
+                   lType + "' and '" + rType + "'",
+                   node->line, node->col, node->filePath);
     }
     // Allow comparison between same enum types
     if (node->op == "==" || node->op == "!=") {
         if (enumRegistry.count(lType) && lType == rType) return "Bool";
-        if (enumRegistry.count(lType) || enumRegistry.count(rType)) return "Bool";
+        // `enum vs same-typed Any / Null` is fine — covers `g != null`,
+        // `g == returned_any`. But enum vs unrelated type is rejected.
+        if (enumRegistry.count(lType) || enumRegistry.count(rType)) {
+            const std::string& other = enumRegistry.count(lType) ? rType : lType;
+            if (isUnknown(other)) return "Bool";
+            fatalError("cannot compare enum '" +
+                       (enumRegistry.count(lType) ? lType : rType) +
+                       "' with '" + other + "'",
+                       node->line, node->col, node->filePath);
+        }
     }
 
     if (node->op == ">" || node->op == "<" || node->op == ">=" ||
         node->op == "<=" || node->op == "==" || node->op == "!=")
     {
-        return "Bool";
+        if (compatibleOperands(lType, rType)) return "Bool";
+        fatalError("cannot compare '" + lType + "' with '" + rType +
+                   "' (operator '" + node->op + "')",
+                   node->line, node->col, node->filePath);
     }
     fatalError("unsupported operator '" + node->op + "' on types '" + lType + "' and '" + rType + "'",
                node->line, node->col, node->filePath);
@@ -1332,7 +1452,13 @@ std::string Sema::checkCall(CallNode *node)
                 // check that landed in 2.2.2 — catches things like
                 // `User(name, age, null)` for `age: Int`.
                 FunctionNode* fn = fnIt->second;
-                for (size_t i = 0; i < argTypes.size() && i < fn->parameters.size(); ++i) {
+                // If *any* arg has a name, the call uses keyword form
+                // (`f(x=1, y=2)`) and positional matching no longer
+                // applies — Codegen reorders by name. Skip the
+                // positional gate in that case.
+                bool anyKwarg = false;
+                for (auto& a : node->args) if (!a.name.empty()) { anyKwarg = true; break; }
+                for (size_t i = 0; !anyKwarg && i < argTypes.size() && i < fn->parameters.size(); ++i) {
                     const auto& param = fn->parameters[i];
                     if (param.isVariadic) break;
                     const std::string& paramType = param.type;

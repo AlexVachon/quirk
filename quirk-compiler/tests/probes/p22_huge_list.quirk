@@ -1,0 +1,12 @@
+// Build a big list and operate on it. Stress-test allocator + GC.
+from typing.collections.list use { List }
+define main() -> void {
+    items: List = []
+    i := 0
+    while i < 10000 {
+        items.append(i)
+        i = i + 1
+    }
+    print(items.length())
+    print(items.get(9999))
+}

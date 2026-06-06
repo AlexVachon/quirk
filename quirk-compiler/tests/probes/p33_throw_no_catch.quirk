@@ -1,0 +1,6 @@
+// Uncaught exception. Should produce a proper traceback to stderr,
+// exit non-zero. Not SIGABRT or silent exit.
+define main() -> void {
+    throw ValueError("uncaught")
+    print("not reached")
+}

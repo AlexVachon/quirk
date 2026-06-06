@@ -2333,10 +2333,24 @@ class LLVMCodegen {
                         Value* unwrapped = Builder.CreateCall(unwrap, {argVal, tagConst, nameStr}, "arg_unbox_" + sName);
                         argVal = Builder.CreateBitCast(unwrapped, expectedType);
                     } else {
-                        // Unknown struct (Set, Queue, user types) — keep
-                        // the existing bitcast. Same hazard as before, but
-                        // hasn't been hit in practice.
-                        argVal = Builder.CreateBitCast(argVal, expectedType);
+                        // Struct types without a dedicated AnyTag (Set,
+                        // Queue, File, user structs). Route through the
+                        // untagged-check helper so Any-laundered Ints /
+                        // mismatched Any wraps throw a clean TypeError
+                        // instead of crashing on the first dereference.
+                        Function* checkFn = TheModule->getFunction("quirk_opaque_check_struct_or_null");
+                        if (!checkFn) {
+                            FunctionType* ft = FunctionType::get(
+                                Type::getInt8PtrTy(Context),
+                                {Type::getInt8PtrTy(Context),
+                                 Type::getInt8PtrTy(Context)},
+                                false);
+                            checkFn = Function::Create(ft, Function::ExternalLinkage,
+                                                       "quirk_opaque_check_struct_or_null", TheModule.get());
+                        }
+                        Value* nameStr = Builder.CreateGlobalStringPtr(sName);
+                        Value* checked = Builder.CreateCall(checkFn, {argVal, nameStr}, "arg_check_" + sName);
+                        argVal = Builder.CreateBitCast(checked, expectedType);
                     }
                 }
             } else if (argVal->getType() != expectedType) {
@@ -2827,6 +2841,16 @@ class LLVMCodegen {
                     else if (val->getType()->isPointerTy() && fieldType->isPointerTy()) val = Builder.CreateBitCast(val, fieldType);
                     else if (val->getType()->isIntegerTy() && fieldType->isPointerTy()) val = Builder.CreateIntToPtr(val, fieldType);
                     else if (val->getType()->isIntegerTy() && fieldType->isDoubleTy()) val = Builder.CreateSIToFP(val, fieldType);
+                    // i8* (Any-laundered value, e.g. list.get(i)) → Int / Double field.
+                    // Without this, Codegen tried `store i8* into i32*` and the
+                    // verifier aborted with "Stored value type does not match pointer".
+                    // emitUnboxToType handles the Any* heap-wrap path AND the
+                    // raw-tagged-int path.
+                    else if (val->getType()->isPointerTy() &&
+                             val->getType()->getPointerElementType()->isIntegerTy(8) &&
+                             (fieldType->isIntegerTy() || fieldType->isDoubleTy())) {
+                        val = emitUnboxToType(val, fieldType);
+                    }
                 }
                 
                 Builder.CreateStore(val, memberPtr); 
@@ -3012,22 +3036,39 @@ class LLVMCodegen {
         return callBox("Core_Primitives_Any_box_null", {});
     }
 
-    // Emit unboxing from Any* to a specific LLVM target type
+    // Emit unboxing from Any* to a specific LLVM target type.
+    //
+    // For Int/Double targets we route through the runtime's
+    // quirk_opaque_to_int / quirk_opaque_to_double helpers, which
+    // accept any of the three opaque shapes (tagged int, Any* heap
+    // wrap, raw value cast) safely. The old code called
+    // Core_Primitives_Any_to_int which assumed a real Any*; passing a
+    // tagged-int (the common shape returned by list[i] for an Int
+    // element) made it dereference a small-int address and SIGSEGV.
     Value* emitUnboxToType(Value* anyPtr, Type* targetType) {
-        // Ensure we have Any* not i8*
+        Type* i8p = Type::getInt8PtrTy(Context);
+        Value* asI8 = anyPtr;
+        if (anyPtr->getType() != i8p)
+            asI8 = Builder.CreateBitCast(anyPtr, i8p);
+
+        if (targetType->isIntegerTy(32)) {
+            FunctionCallee f = TheModule->getOrInsertFunction(
+                "quirk_opaque_to_int",
+                FunctionType::get(Type::getInt32Ty(Context), {i8p}, false));
+            return Builder.CreateCall(f, {asI8});
+        }
+        if (targetType->isDoubleTy()) {
+            FunctionCallee f = TheModule->getOrInsertFunction(
+                "quirk_opaque_to_double",
+                FunctionType::get(Type::getDoubleTy(Context), {i8p}, false));
+            return Builder.CreateCall(f, {asI8});
+        }
+        // Fall-through path uses the original Any*-based logic for
+        // struct-pointer targets.
         if (anyPtr->getType()->isPointerTy() &&
             anyPtr->getType()->getPointerElementType()->isIntegerTy(8) &&
             StructTypes.count("Any")) {
             anyPtr = Builder.CreateBitCast(anyPtr, PointerType::getUnqual(StructTypes["Any"]));
-        }
-
-        if (targetType->isIntegerTy(32)) {
-            Function* f = TheModule->getFunction("Core_Primitives_Any_to_int");
-            if (f) return Builder.CreateCall(f, {anyPtr});
-        }
-        if (targetType->isDoubleTy()) {
-            Function* f = TheModule->getFunction("Core_Primitives_Any_to_float");
-            if (f) return Builder.CreateCall(f, {anyPtr});
         }
         if (targetType->isPointerTy() && targetType->getPointerElementType()->isStructTy()) {
             std::string name = cast<StructType>(targetType->getPointerElementType())->getName().str();

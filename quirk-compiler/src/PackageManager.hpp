@@ -64,7 +64,7 @@ static std::string self_binary();
 
 namespace qpm {
 
-constexpr const char* QUIRK_VERSION = "2.2.10";
+constexpr const char* QUIRK_VERSION = "2.2.11";
 
 namespace fs = std::filesystem;
 
@@ -615,29 +615,49 @@ static int build_venv(const fs::path& venvDir, bool repair) {
     fs::path binPath = find_quirk_binary();
 
     fs::create_directories(venvDir / "bin");
-    fs::create_directories(venvDir / "lib" / "quirk" / "packages");
+    fs::create_directories(venvDir / "lib" / "quirk" / "site-packages");
     fs::create_directories(venvDir / "lib" / "quirk" / "stdlib");
 
     int linked = link_stdlib(venvDir, stdlib);
 
-    // On repair, sweep stale frozen copies of stdlib packages out of
-    // <venv>/lib/quirk/packages/. Older `quirk pkg install <stdlib-name>`
-    // runs (pre-2.2.8) wrote real copies there, which shadow the stdlib
-    // symlink in resolver order and silently keep the user on an old
-    // version. The symlink at <venv>/lib/quirk/stdlib/<name> already
-    // tracks the latest stdlib, so removing the shadowing copy is a
-    // pure cleanup.
+    // On repair, two layout migrations:
+    //   1. Pre-2.2.8 frozen copies of stdlib packages in EITHER the
+    //      legacy packages/ or the new site-packages/. Same hazard
+    //      (shadow the stdlib symlink); sweep them.
+    //   2. Pre-2.2.11 venvs only have packages/, not site-packages/.
+    //      Move every remaining (non-stdlib, user-installed) entry to
+    //      site-packages/ so the Python-strict resolver picks it up.
+    //      The legacy packages/ entry stays in the resolver as a
+    //      fallback during the transition, but new installs land in
+    //      site-packages/ only.
     int sweptStale = 0;
+    int migrated   = 0;
     if (repair) {
-        fs::path pkgDir = venvDir / "lib" / "quirk" / "packages";
+        fs::path siteDir = venvDir / "lib" / "quirk" / "site-packages";
+        fs::path pkgDir  = venvDir / "lib" / "quirk" / "packages";
         const auto& reg = stdlib_registry();
+        std::error_code ec;
+        // (1) Sweep stale stdlib copies from BOTH dirs.
         for (const auto& [name, _url] : reg) {
-            std::error_code ec;
-            fs::path stale = pkgDir / name;
-            if (fs::exists(stale, ec)) {
-                fs::remove_all(stale, ec);
-                if (!ec) sweptStale++;
+            for (const fs::path& dir : {pkgDir, siteDir}) {
+                fs::path stale = dir / name;
+                if (fs::exists(stale, ec)) {
+                    fs::remove_all(stale, ec);
+                    if (!ec) sweptStale++;
+                }
             }
+        }
+        // (2) Migrate remaining packages/ entries → site-packages/.
+        if (fs::exists(pkgDir, ec) && fs::is_directory(pkgDir, ec)) {
+            for (auto& entry : fs::directory_iterator(pkgDir, ec)) {
+                fs::path src = entry.path();
+                fs::path dst = siteDir / src.filename();
+                if (fs::exists(dst, ec)) continue;  // site-packages already has it
+                fs::rename(src, dst, ec);
+                if (!ec) migrated++;
+            }
+            // Remove the old packages/ if it's empty now.
+            if (fs::is_empty(pkgDir, ec)) fs::remove(pkgDir, ec);
         }
     }
 
@@ -673,6 +693,8 @@ static int build_venv(const fs::path& venvDir, bool repair) {
     std::string detail = std::to_string(linked) + " new stdlib link(s)";
     if (sweptStale > 0)
         detail += ", swept " + std::to_string(sweptStale) + " stale stdlib copy(ies)";
+    if (migrated > 0)
+        detail += ", migrated " + std::to_string(migrated) + " packages/ → site-packages/";
     log::ok(std::string(repair ? "repaired" : "created") + " " + venvDir.string()
             + log::dim("  (" + detail + ")"));
     return 0;
@@ -961,12 +983,16 @@ static fs::path user_packages_dir() {
 //   3. Otherwise                        → ~/.quirk/packages/               (pip --user / cargo)
 // System-wide /usr/local/... is reserved for stdlib & vendor; never for user installs.
 static fs::path package_install_dir() {
-    if (is_active_venv()) return fs::path(std::getenv("QUIRK_HOME")) / "lib" / "quirk" / "packages";
+    // 2.2.11+ installs land in site-packages/ to match Python's
+    // convention and to make stdlib-vs-third-party visually obvious.
+    // Old packages/ still exists in legacy venvs/projects and stays
+    // readable via the resolver until `venv repair` migrates it.
+    if (is_active_venv()) return fs::path(std::getenv("QUIRK_HOME")) / "lib" / "quirk" / "site-packages";
     fs::path proj = find_project_root(fs::current_path());
-    if (!proj.empty()) return proj / "packages";
+    if (!proj.empty()) return proj / "site-packages";
     fs::path userDir = user_packages_dir();
     if (!userDir.empty()) return userDir;
-    return fs::path("packages");   // last-ditch fallback if $HOME is unset
+    return fs::path("site-packages");
 }
 
 // True when `spec` looks like a local filesystem path rather than a git spec.
@@ -1777,7 +1803,17 @@ static int install_one(const std::string& spec_str, bool quiet, bool editable = 
         // silently keep using a stale version even after the global
         // has been refreshed. Refuse the install when no pin is given;
         // a pinned version is an explicit deviation and is honored.
-        if (pinVersion.empty() && is_active_venv()) {
+        // Python-strict (2.2.11+): refuse to install stdlib names into
+        // site-packages, full stop. The stdlib lives at
+        // <venv>/lib/quirk/stdlib/<name> as a symlink that tracks
+        // `quirk compiler update`; installing a same-named copy would
+        // be a structural anti-pattern (and was the silent shadowing
+        // bug we fixed in 2.2.8 with short-circuit-+-cleanup logic).
+        // No more lockfile dance, no special-case for pinned versions:
+        // if you need to override a stdlib package, vendor it under a
+        // different name. Defensive sweep below catches legacy installs
+        // a user might have lying around in the *old* packages/ dir.
+        if (is_active_venv()) {
             const auto& stdlib = stdlib_registry();
             if (stdlib.count(pathPart)) {
                 const char* envHome = std::getenv("QUIRK_HOME");
@@ -1785,36 +1821,22 @@ static int install_one(const std::string& spec_str, bool quiet, bool editable = 
                     fs::path symlink = fs::path(envHome) / "lib" / "quirk" /
                                        "stdlib" / pathPart;
                     std::error_code ec;
-                    if (fs::is_symlink(symlink, ec) || fs::exists(symlink, ec)) {
-                        // Defensive: an existing copy in <venv>/lib/quirk/packages/
-                        // (from a pre-fix `pkg install`) shadows the stdlib
-                        // symlink in resolver order. Remove it so the user
-                        // re-tracks stdlib updates.
-                        fs::path stalePkg = fs::path(envHome) / "lib" / "quirk" /
-                                            "packages" / pathPart;
-                        bool removedStale = false;
-                        if (fs::exists(stalePkg, ec)) {
-                            fs::remove_all(stalePkg, ec);
-                            removedStale = !ec;
-                        }
-                        log::ok(pathPart + " is bundled with the stdlib");
-                        if (removedStale) {
-                            std::cerr << "    " << log::dim(
-                                "removed stale frozen copy at " + stalePkg.string()) << "\n";
-                        }
-                        std::cerr << "    " << log::dim(
-                            "the stdlib symlink at " + symlink.string() +
-                            " tracks `quirk compiler update`") << "\n";
-                        std::cerr << "    " << log::dim(
-                            "to pin a specific version anyway, use `quirk pkg install "
-                            + pathPart + "@<version>`") << "\n";
-                        // Deliberately *don't* set outLock — there's no real
-                        // install to record. A lock entry here would route
-                        // future runs through the lockfile fast-path with
-                        // an empty version, producing the malformed
-                        // "prompt@" spec.
-                        return 0;
+                    // Best-effort cleanup of any pre-2.2.11 frozen copy
+                    // that's still lurking in the old packages/ dir.
+                    for (const char* dir : {"packages", "site-packages"}) {
+                        fs::path stale = fs::path(envHome) / "lib" / "quirk" /
+                                         dir / pathPart;
+                        if (fs::exists(stale, ec)) fs::remove_all(stale, ec);
                     }
+                    log::err(pathPart + " is part of the stdlib");
+                    std::cerr << "    " << log::dim(
+                        "stdlib packages are exposed at " + symlink.string() +
+                        " and tracked by `quirk compiler update`") << "\n";
+                    std::cerr << "    " << log::dim(
+                        "to use a different version, vendor it under a new "
+                        "name (`quirk pkg install github.com/you/" + pathPart +
+                        "-fork`)") << "\n";
+                    return 1;
                 }
             }
         }

@@ -1,0 +1,17 @@
+// Classic closure-over-loop-variable pitfall. Each lambda should
+// either capture the iteration value or the latest. Either is OK
+// as long as it's deterministic.
+from typing.collections.list use { List }
+define main() -> void {
+    fns: List = []
+    i := 0
+    while i < 3 {
+        n := i
+        fns.append(fn() => n)
+        i = i + 1
+    }
+    for f in fns {
+        cb: Callable := f
+        print(cb())
+    }
+}

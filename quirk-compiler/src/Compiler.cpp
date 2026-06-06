@@ -249,16 +249,29 @@ static std::vector<std::string>& getSearchPaths() {
         // Project-local installs win — matches pip's project-takes-precedence
         // behavior and means `quirk install -e <path>` works even when
         // QUIRK_HOME points at a venv or dev tree elsewhere.
+        // Project-local third-party installs. site-packages/ is the new
+        // (2.2.11+) Python-conventional location; packages/ stays
+        // accepted as a fallback so older project trees keep resolving
+        // until a `quirk pkg install` migrates them on next run.
+        p.push_back("./site-packages/");
         p.push_back("./packages/");
 
         const char* envHome = std::getenv("QUIRK_HOME");
         bool isVenv = false;
         if (envHome) {
             std::string venvBase = envHome;
-            p.push_back(venvBase + "/lib/quirk/packages/");
-            p.push_back(venvBase + "/lib/quirk/stdlib/");  // new layout
-            p.push_back(venvBase + "/lib/quirk/");         // legacy / dev install
-            p.push_back(venvBase + "/packages/");
+            // Venv layout, Python-strict: site-packages/ holds third-
+            // party installs and *wins* over stdlib/, exactly mirroring
+            // Python's resolver order. stdlib/ is symlinks to the global
+            // bundled stdlib that track `quirk compiler update`. The
+            // legacy packages/ entry stays for backwards-compat with
+            // venvs created before 2.2.11 (`venv repair` migrates them).
+            p.push_back(venvBase + "/lib/quirk/site-packages/");
+            p.push_back(venvBase + "/lib/quirk/packages/");  // legacy
+            p.push_back(venvBase + "/lib/quirk/stdlib/");
+            p.push_back(venvBase + "/lib/quirk/");           // dev install
+            p.push_back(venvBase + "/site-packages/");
+            p.push_back(venvBase + "/packages/");            // legacy
             // Distinguish a real venv from a dev-tree QUIRK_HOME: only the former
             // has bin/activate. Venvs *isolate* — they don't see user-global.
             isVenv = fs::exists(fs::path(venvBase) / "bin" / "activate");

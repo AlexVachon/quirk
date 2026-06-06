@@ -1,0 +1,7 @@
+define main() -> void {
+    s := ""
+    print(s.length())
+    print(s.trim().length())
+    print(s.split(",").length())
+    print(s.replace("a", "b"))
+}

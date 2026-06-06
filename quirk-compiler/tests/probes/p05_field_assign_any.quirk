@@ -1,0 +1,12 @@
+// Field assignment from an Any value into a typed field.
+from typing.collections.list use { List }
+struct Holder {
+    n: Int
+    define __init(self, n: Int) { self.n = n }
+}
+define main() -> void {
+    items: List = [1, 2, 3]
+    h := Holder(0)
+    h.n = items.get(0)   // Any → Int field
+    print(h.n)
+}

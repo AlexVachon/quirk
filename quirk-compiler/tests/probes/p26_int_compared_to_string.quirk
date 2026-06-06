@@ -1,0 +1,8 @@
+// Comparing two unrelated types. Should be a clean Sema error.
+define main() -> void {
+    if 5 == "5" {
+        print("bug")
+    } else {
+        print("ok: different types")
+    }
+}

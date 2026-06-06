@@ -1,0 +1,9 @@
+// Deep recursion. Stack should overflow with a recognizable error,
+// not a hard SIGSEGV that swallows the traceback.
+define rec(n: Int) -> Int {
+    if n == 0 { return 0 }
+    return rec(n - 1) + 1
+}
+define main() -> void {
+    print(rec(100000))
+}

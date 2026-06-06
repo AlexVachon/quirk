@@ -1,0 +1,10 @@
+// Repeated concatenation, ensure no buffer overflow.
+define main() -> void {
+    s := ""
+    i := 0
+    while i < 1000 {
+        s = s + "x"
+        i = i + 1
+    }
+    print(s.length())
+}

@@ -1,0 +1,8 @@
+// Callable invoked with mismatched arity / types.
+define apply(f: Callable, x: Int) -> Int {
+    return f(x, x)   // calling f with 2 args when it takes 1?
+}
+define main() -> void {
+    sq := fn(n) => n * n
+    print(apply(sq, 5))
+}

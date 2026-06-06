@@ -1,0 +1,7 @@
+// Any-laundered Int → Set slot. v2.2.10 covers List/Map/Tuple/Callable
+// but Set has no AnyTag, so this still raw-bitcasts. Expected: clean
+// TypeError, not SIGSEGV.
+from typing.collections.set use { Set }
+define take_set(s: Set) -> Int { return s.length() }
+define wrap(x) { return take_set(x) }
+define main() -> void { print(wrap(42)) }

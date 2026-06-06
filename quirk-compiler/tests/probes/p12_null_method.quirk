@@ -1,0 +1,6 @@
+// Calling a method on a null binding. NPE-equivalent — should not
+// be a raw SIGSEGV; ideally a NullError of some shape.
+define main() -> void {
+    s: String = null
+    print(s.length())
+}

@@ -5,6 +5,103 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [2.2.11] — 2026-06-06
+
+### Bugproofing pass: 34-probe sweep, 8 distinct bugs closed
+
+Sat down with a structured adversarial probe suite (`tests/probes/`,
+34 minimal programs) that exercises the corners where compiler /
+runtime bugs typically hide: Any-laundering, division by zero,
+out-of-bounds, recursion depth, unicode, closure-over-loop,
+self-referential structs, comparison across types, etc. First pass
+caught **8 distinct bugs across 5 categories**; all eight now
+produce correct output, a clean Quirk exception, or a clean Sema
+rejection.
+
+#### Sema: cross-type `==` / `!=` / arithmetic no longer aborts LLVM
+
+`5 == "5"` used to fall through Sema (returns `Bool` unconditionally),
+hit Codegen's `ICmp(i32, String*)`, and **abort the LLVM verifier** —
+no traceback, no chance to catch. Same hazard for `enum + Int` and
+any other cross-type arithmetic. Added a type-compatibility gate at
+the top of `checkBinaryOp`:
+
+```
+operator '==' incompatible types: 'Int' and 'String'
+  --> main.quirk:3:10
+```
+
+Primitives (`Int`/`Double`/`Bool`/`Char`/`String`) that happen to be
+registered as structs no longer trigger the operator-overload bypass
+— the gate now probes whether the overload method actually exists
+before trusting it. Enums are intentionally rejected from arithmetic
+(use `.value` if you want the backing int).
+
+#### Codegen: `i / 0` and `i % 0` throw `ZeroDivisionError`
+
+LLVM `sdiv` / `srem` on zero is *undefined behavior* — at -O2 the
+optimizer assumes a non-zero divisor and the result is arbitrary
+bits. Probes saw `10 / 0` returning `-1736491003`. Codegen now emits
+a guard before each integer divide: zero ⇒ `throw
+ZeroDivisionError("integer division by zero")`. Doubles are
+unaffected (IEEE 754 defines `x/0` cleanly).
+
+#### Codegen: `h.n = items.get(0)` (Any → typed field) no longer ICEs
+
+Field-assignment codegen had branches for `int→int`, `ptr→ptr`,
+`int→ptr`, `int→double`, but not `i8*(Any-boxed) → int/double`. So
+assigning the result of `list.get(i)` (which returns `i8*`) into a
+typed field used to emit malformed IR (`store i8* %x, i32* %y`).
+The new branch routes through `emitUnboxToType`, which now uses
+runtime helpers (`quirk_opaque_to_int` / `_to_double`) that handle
+all three opaque shapes safely instead of assuming a heap-allocated
+`Any*`.
+
+#### Codegen: Any-launder into Set / Queue / File / user struct
+
+Twin of the v2.2.7 (String) and v2.2.10 (List/Map/Tuple/Callable)
+fixes, generalized to every struct type without a dedicated
+`AnyTag`. New runtime helper `quirk_opaque_check_struct_or_null`
+rejects the two obviously-wrong opaque shapes (tagged int, `Any*`
+heap wrap) at the arg boundary with a clean `TypeError`, instead of
+the raw-bitcast → SIGSEGV-on-first-method-dispatch path. Together
+with v2.2.10 this closes the Any-launder crash class **across all
+struct types**, not just the four that had explicit tags.
+
+```
+TypeError: expected Set but got Int (laundered through Any-typed parameter)
+TypeError: expected Box but got Int (laundered through Any-typed parameter)
+```
+
+### Package layout: Python-strict (`site-packages/`)
+
+Aligned the venv layout with Python's convention:
+
+```
+<venv>/lib/quirk/
+├── stdlib/                (symlinks → ~/.quirk/packages/, opaque to pkg)
+└── site-packages/         (Python-conventional name, flat, dist-info siblings)
+```
+
+- New installs land in `site-packages/`. Old `packages/` stays
+  accepted by the resolver until `quirk venv repair` migrates it
+  (rename + non-stdlib entries moved across).
+- `quirk pkg install <stdlib-name>` is now a **hard error**, no
+  short-circuit-with-cleanup machinery. Stdlib packages are exposed
+  only through the `stdlib/` symlink, and the resolver order
+  (site-packages first, then stdlib) mirrors Python — third-party
+  installs override the stdlib by *name choice*, not by accidental
+  same-name shadowing.
+- `venv repair` sweeps stale stdlib copies from both old and new
+  dirs and migrates remaining user packages.
+
+### Probe suite kept as regression tests
+
+The 34 `tests/probes/*.quirk` programs and a `README.md` are now
+part of the repo. Each one documents the bug class it protects
+against. Anyone regressing the fixes above will see the
+corresponding probe fail in CI.
+
 ## [2.2.10] — 2026-06-05
 
 ### Codegen: Any → List/Map/Tuple/Callable arg coercion is now type-safe

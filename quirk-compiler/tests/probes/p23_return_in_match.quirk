@@ -1,0 +1,15 @@
+// Return inside a match arm inside a loop. Codegen has historically
+// been finicky about control-flow termination here.
+define classify(n: Int) -> String {
+    while true {
+        match n {
+            case 0 { return "zero" }
+            case _ { return "nonzero" }
+        }
+    }
+    return "unreachable"
+}
+define main() -> void {
+    print(classify(0))
+    print(classify(5))
+}

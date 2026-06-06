@@ -1,0 +1,15 @@
+// Lambda inside a method body referencing self. Closure capture
+// across method boundary.
+struct Counter {
+    n: Int
+    define __init(self) { self.n = 0 }
+    define inc_fn(self) {
+        return fn() => self.n + 1
+    }
+}
+define main() -> void {
+    c := Counter()
+    f := c.inc_fn()
+    cb: Callable := f
+    print(cb())
+}

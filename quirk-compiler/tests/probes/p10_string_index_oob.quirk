@@ -1,0 +1,4 @@
+define main() -> void {
+    s := "hi"
+    print(s.substring(0, 100))   // end beyond length
+}

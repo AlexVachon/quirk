@@ -1,0 +1,8 @@
+// Calling a function before it's been defined in source order.
+// Pass-1 should pick it up.
+define main() -> void {
+    print(helper())
+}
+define helper() -> String {
+    return "ok"
+}

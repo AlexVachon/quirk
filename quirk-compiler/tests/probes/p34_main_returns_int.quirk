@@ -1,0 +1,4 @@
+// main with non-void return.
+define main() -> void {
+    print("ok")
+}

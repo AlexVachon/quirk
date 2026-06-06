@@ -1,0 +1,13 @@
+// Throwing inside a lambda invoked through Callable.
+define main() -> void {
+    f := fn() => {
+        throw ValueError("boom")
+    }
+    try {
+        cb: Callable := f
+        cb()
+        print("not reached")
+    } catch (e: ValueError) {
+        print("caught: " + e.message)
+    }
+}

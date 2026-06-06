@@ -1,0 +1,7 @@
+// Int.parse on various garbage. ValueError, not crash.
+define main() -> void {
+    try { print(Int.parse("abc")) } catch (e: ValueError) { print("caught: abc") }
+    try { print(Int.parse(""))    } catch (e: ValueError) { print("caught: empty") }
+    try { print(Int.parse("3.14"))} catch (e: ValueError) { print("caught: float-as-int") }
+    try { print(Int.parse("  5 "))} catch (e: ValueError) { print("caught: padded") }
+}

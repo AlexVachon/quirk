@@ -1,0 +1,14 @@
+// break / continue inside a match arm inside a loop.
+from typing.collections.list use { List }
+define main() -> void {
+    items: List = [1, 2, 3, 4, 5]
+    for x in items {
+        n: Int := x
+        match n {
+            case 3 { continue }
+            case 5 { break }
+            case _ { print(n) }
+        }
+    }
+    print("done")
+}

@@ -1,0 +1,13 @@
+// Map.get on a missing key, then accessing as a typed slot.
+// Known wart from memory ("Map.get miss stringifies to 'null'"),
+// but the modern guard should be cleaner.
+from typing.collections.map use { Map }
+define main() -> void {
+    m: Map = {}
+    v := m.get("missing")
+    if v == null {
+        print("ok: null")
+    } else {
+        print("bug: " + v)
+    }
+}

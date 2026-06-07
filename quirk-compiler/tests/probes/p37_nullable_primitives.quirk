@@ -1,0 +1,56 @@
+// v2.3.0: nullable primitives + enums actually hold null at runtime.
+//
+// Pre-2.3.0 the typedef `Int? = null` silently stored zero — the i32
+// slot couldn't hold a null pointer. After 2.3.0, `T?` for primitive
+// or enum T lowers to i8* and the slot holds a real null vs a boxed
+// value.
+
+enum Gender(String) {
+    Male = "male"
+    Female = "female"
+    Other = "other"
+}
+
+define main() -> void {
+    // Int? round-trip
+    a: Int? = null
+    b: Int? = 42
+    if a != null   { print("FAIL: a should be null") }
+    if b == null   { print("FAIL: b should be set") }
+
+    // 0 is a real value, NOT null — the old tagged-ptr scheme
+    // couldn't tell them apart; the new heap-Any boxing can.
+    c: Int? = 0
+    if c == null   { print("FAIL: Int? = 0 should not be null") }
+
+    // Enum.parse returns Gender?, NOT Any anymore
+    g := Gender.parse("female")
+    match g {
+        case null { print("FAIL: parse hit returned null") }
+        case _ {
+            ord: Int := g
+            if ord != 1 { print("FAIL: parse hit ordinal") }
+        }
+    }
+    miss := Gender.parse("nope")
+    match miss {
+        case null {}
+        case _    { print("FAIL: parse miss returned non-null") }
+    }
+
+    // Bool? round-trip
+    x: Bool? = null
+    y: Bool? = true
+    z: Bool? = false
+    if x != null { print("FAIL: x should be null") }
+    if y == null { print("FAIL: y should be set") }
+    if z == null { print("FAIL: false should not be null") }
+
+    // Double? round-trip
+    p: Double? = null
+    q: Double? = 3.14
+    if p != null { print("FAIL: p should be null") }
+    if q == null { print("FAIL: q should be set") }
+
+    print("p37 nullable primitives passed")
+}

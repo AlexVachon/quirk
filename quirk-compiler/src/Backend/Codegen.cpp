@@ -2827,6 +2827,38 @@ class LLVMCodegen {
             } else {
                 Type* targetType = typeGen->getLLVMType(vdecl->typeAnnotation);
 
+                // Nullable primitive/enum: target is i8* but the
+                // *base* (non-nullable) is a value type. Box the
+                // value into a heap Any (or pass through if it's
+                // already a pointer / a null literal) so the i8*
+                // slot can hold null OR a real value. The rest of
+                // the existing coercion logic still runs against
+                // the boxed pointer; for an i8* target the chain
+                // becomes a no-op (val is already i8*).
+                bool annoIsNullablePrim = false;
+                if (vdecl->typeAnnotation.back() == '?') {
+                    std::string base = vdecl->typeAnnotation.substr(
+                        0, vdecl->typeAnnotation.size() - 1);
+                    annoIsNullablePrim =
+                        (base == "int" || base == "Int" ||
+                         base == "bool" || base == "Bool" ||
+                         base == "double" || base == "Double" ||
+                         base == "char" || base == "Char" ||
+                         enumVariants.count(base));
+                }
+                if (annoIsNullablePrim && val) {
+                    Type* i8p = Type::getInt8PtrTy(Context);
+                    if (val->getType()->isIntegerTy() ||
+                        val->getType()->isDoubleTy()) {
+                        val = emitBox(val);  // → Any* (struct.Any*)
+                    }
+                    if (val->getType() != i8p && val->getType()->isPointerTy()) {
+                        val = Builder.CreateBitCast(val, i8p);
+                    }
+                    targetType = i8p;  // skip the non-nullable-target paths below
+                }
+
+
                 // Source is Any* and target is a concrete type — unbox
                 if (isAnyType(val)) {
                     val = emitUnboxToType(val, targetType);

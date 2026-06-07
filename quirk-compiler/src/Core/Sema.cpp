@@ -1519,21 +1519,10 @@ std::string Sema::checkCall(CallNode *node)
 
     if (auto m = dynamic_cast<MemberAccessNode *>(node->callee.get()))
     {
-        // `EnumName.parse(v)` — safe lookup. Returns `Any` (boxed
-        // Int ordinal on hit, null on miss). Companion to the
-        // throwing `EnumName(v)` form.
-        //
-        // Type *would* be more precisely `EnumName?` but Quirk's
-        // nullable primitives lower to their base type at LLVM level
-        // (i.e. `Gender?` → i32) and can't hold a null pointer. So
-        // parse returns Any, and the caller unwraps with the usual
-        // `match` / `??` machinery:
-        //
-        //   result := Gender.parse(s)
-        //   match result {
-        //       case null { ... }
-        //       case _    { ord: Int := result; ... }
-        //   }
+        // `EnumName.parse(v)` — safe lookup. Returns `EnumName?`:
+        // a boxed-Any-int ordinal on hit, null on miss. v2.3.0+
+        // lowers nullable enums as i8*, so the proper `EnumName?`
+        // return type now flows correctly through `match` and `??`.
         if (auto* eLit = dynamic_cast<LiteralNode*>(m->object.get())) {
             if (m->memberName == "parse" && enumRegistry.count(eLit->value) &&
                 !enumRegistry[eLit->value]->backingType.empty()) {
@@ -1544,7 +1533,7 @@ std::string Sema::checkCall(CallNode *node)
                                en->backingType + "' (got " + std::to_string(node->args.size()) + ")",
                                node->line, node->col, node->filePath);
                 }
-                return "Any";
+                return eLit->value + "?";
             }
         }
 

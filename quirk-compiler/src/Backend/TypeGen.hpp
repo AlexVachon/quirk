@@ -28,9 +28,27 @@ public:
     Type* getLLVMType(const std::string& typeName) {
         // Untyped parameter → generic void pointer (i8*)
         if (typeName.empty()) return Type::getInt8PtrTy(Context);
-        // Strip Optional marker — "String?" and "String" resolve identically
-        if (typeName.back() == '?')
-            return getLLVMType(typeName.substr(0, typeName.size() - 1));
+        // Nullable handling.
+        //   - String? / List? / struct?  →  the base type is already a
+        //     pointer (struct*), nullable comes for free.
+        //   - Int? / Bool? / Double? / Char? / <Enum>?  →  the base
+        //     lowers to a value type that can't hold null. Lower the
+        //     nullable form to i8* instead; Codegen boxes on assign
+        //     and unboxes on read. This is the v2.3.0 / v3-phase-1
+        //     change that makes `case null` work on primitives.
+        if (typeName.back() == '?') {
+            std::string base = typeName.substr(0, typeName.size() - 1);
+            if (base == "int" || base == "Int" ||
+                base == "bool" || base == "Bool" ||
+                base == "double" || base == "Double" ||
+                base == "char" || base == "Char") {
+                return Type::getInt8PtrTy(Context);
+            }
+            if (enumVariants && enumVariants->count(base)) {
+                return Type::getInt8PtrTy(Context);
+            }
+            return getLLVMType(base);   // struct? / String? / etc. unchanged
+        }
         if (typeName == "int" || typeName == "Int") return Type::getInt32Ty(Context);
         if (typeName == "bool" || typeName == "Bool") return Type::getInt1Ty(Context);
         if (typeName == "double" || typeName == "Double") return Type::getDoubleTy(Context);

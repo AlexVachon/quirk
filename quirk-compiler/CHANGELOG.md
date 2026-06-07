@@ -5,6 +5,89 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [2.3.0] — 2026-06-06
+
+### Nullable primitives + enums actually hold null at runtime
+
+**Phase 1 of the v3.0.0 type-system overhaul.** Each "deferred to a
+future release" note left through v2 around nullability is now
+addressed.
+
+#### Before
+
+```quirk
+x: Int? = null    // silently stored 0; `x == null` was false
+g: Gender? = null // i32 slot can't hold null; behavior was UB-ish
+Gender.parse(s)   // had to return Any because Gender? was useless
+```
+
+The `T?` annotation was syntax-only: TypeGen stripped the `?` and
+the slot lowered to the base type (`i32` for Int, `i1` for Bool,
+etc.). A nullable primitive couldn't actually hold null — it just
+silently held the zero-value.
+
+#### After
+
+```quirk
+x: Int? = null            // → real null pointer in an i8* slot
+y: Int? = 42              // → heap Any-boxed 42
+z: Int? = 0               // → distinguishable from null (was impossible before)
+
+if x == null { ... }      // works as expected
+y ?? -1                   // null-coalesce works for primitives now
+```
+
+For primitive (`Int`/`Bool`/`Double`/`Char`) and enum `T`, the
+nullable form `T?` lowers to `i8*` (an opaque pointer). Codegen
+auto-boxes a primitive value into a heap `Any` at assignment to a
+`T?` slot. Existing reads still work because `match` / `==`-against-
+null / `??` already operate on the pointer shape.
+
+For struct types (`String?`, `List?`, `User?`, …) the base was
+already a pointer, so nothing changes — those nullable cases have
+been working all along.
+
+#### `Enum.parse(v) -> Enum?` returns the proper type
+
+The v2.2.16 workaround (returning `Any` because `Gender?` couldn't
+hold null) is gone. `Gender.parse(s)` now has the correct signature.
+Existing `match` / `??` patterns keep working unchanged.
+
+#### Migration notes (breaking change for explicit `T? = null` users)
+
+Old programs that relied on `Int? = null` *silently meaning zero*
+will see a real null instead. Before:
+
+```quirk
+x: Int? = null
+print(x + 1)     // pre-2.3.0: printed 1; now: SIGSEGV / runtime null deref
+```
+
+The fix is to handle the null case:
+
+```quirk
+x: Int? = null
+print((x ?? 0) + 1)         // explicit coalesce
+// or
+if x != null { print(x + 1) }
+```
+
+If you find this pattern in your code, the compiler change exposes a
+bug that was always there; the silent-zero behavior was the bug.
+
+#### What's still ahead (rest of v3 theme)
+
+* **Phase 2 — generics monomorphization** (`List<Int>.get(i)` returns
+  `Int` directly, no Any unbox). 2–3 sessions of work.
+* **Phase 3 — tagged unions** (`String | Int` with safe match
+  discrimination). 1–2 sessions.
+* When all three phases land, the next release bundles them as
+  **v3.0.0**.
+
+Probe `tests/probes/p37_nullable_primitives.quirk` covers seven
+nullable-primitive cases including the previously-impossible
+`Int? = 0` distinction.
+
 ## [2.2.16] — 2026-06-06
 
 ### Enum magic surface expanded + Double backing

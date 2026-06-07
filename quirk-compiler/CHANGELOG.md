@@ -5,6 +5,30 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [2.2.15] — 2026-06-06
+
+### `quirk compiler update --with-extension`
+
+`compiler update` and `compiler install` now accept `--with-extension`
+and `--no-extension`, threaded directly through to `install.sh`.
+Saves the second `curl … install.sh | sh -s -- --with-extension`
+invocation when you just want to bump the compiler and grab the
+latest VSCode extension at the same time.
+
+```
+$ quirk compiler update --with-extension
+$ quirk compiler install v2.2.14 --with-extension
+$ quirk compiler update --global --with-extension     # inside a venv
+```
+
+Works in both code paths — the global install path and the v2.2.14
+in-venv staged install path — because the extension install side-
+effect in install.sh isn't scoped to `INSTALL_DIR`. The .vsix
+always lands in `~/.vscode/extensions/` regardless of which compiler
+target was chosen. Reuses install.sh's `CODE_CMD` lookup, so
+`CODE_CMD=cursor quirk compiler update --with-extension` works for
+Cursor / VSCodium.
+
 ## [2.2.14] — 2026-06-06
 
 ### Per-venv compiler versions (Python-style)

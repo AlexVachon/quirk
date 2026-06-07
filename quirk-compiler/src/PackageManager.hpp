@@ -64,7 +64,7 @@ static std::string self_binary();
 
 namespace qpm {
 
-constexpr const char* QUIRK_VERSION = "2.2.14";
+constexpr const char* QUIRK_VERSION = "2.2.15";
 
 namespace fs = std::filesystem;
 
@@ -4588,14 +4588,21 @@ static int cmd_auth(const std::vector<std::string>& args) {
 static int cmd_compiler(const std::vector<std::string>& args) {
     auto usage = []() {
         std::cout <<
-            "quirk compiler <subcommand>\n"
-            "  version                 Print the currently-running compiler version\n"
-            "  check                   Check GitHub for a newer release (bypasses 24h cache)\n"
-            "  list                    List `vX.Y.Z` releases available on GitHub\n"
-            "  install <vX.Y.Z>        Replace this compiler with the given version\n"
-            "  update                  Replace this compiler with the latest release\n"
-            "  stdlib                  Show where the bundled stdlib lives (= old `quirk stdlib`)\n"
-            "  bump <patch|minor|major>  Bump QUIRK_VERSION in src/PackageManager.hpp (= old `quirk bump-compiler`)\n";
+            "quirk compiler <subcommand> [flags]\n"
+            "  version                  Print the currently-running compiler version\n"
+            "  check                    Check GitHub for a newer release (bypasses 24h cache)\n"
+            "  list                     List `vX.Y.Z` releases available on GitHub\n"
+            "  install <vX.Y.Z>         Replace this compiler with the given version\n"
+            "  update                   Replace this compiler with the latest release\n"
+            "  stdlib                   Show where the bundled stdlib lives (= old `quirk stdlib`)\n"
+            "  bump <patch|minor|major> Bump QUIRK_VERSION in src/PackageManager.hpp\n"
+            "\n"
+            "FLAGS  (apply to `install` / `update`)\n"
+            "  --global                 In a venv, target the *global* compiler (default: the venv).\n"
+            "                           Outside a venv, has no effect — global is already the target.\n"
+            "  --with-extension         Also install the Quirk VSCode extension\n"
+            "                           (downloads the latest .vsix from the GitHub Releases page).\n"
+            "  --no-extension           Skip the extension prompt (default).\n";
         return 0;
     };
 
@@ -4680,16 +4687,22 @@ static int cmd_compiler(const std::vector<std::string>& args) {
     }
 
     if (sub == "install" || sub == "update") {
-        // Argument parsing: --global flag (force global install even
-        // from inside a venv) and a positional version (install only).
-        // The default target picks itself: inside an active venv we
-        // update the *venv* exclusively; outside, the global. Matches
-        // Python's pip/python convention — activated env wins.
+        // Argument parsing:
+        //   --global              force global install even from inside a venv
+        //   --with-extension      pass through to install.sh (VSCode extension)
+        //   --no-extension        opposite — explicit "skip extension" (default)
+        //   <version>             positional, for `install` only
+        // Default target picks itself: inside an active venv we update
+        // the *venv* exclusively; outside, the global. Matches Python's
+        // pip/python convention — activated env wins.
         bool forceGlobal = false;
+        std::string extFlag;  // "" / " --with-extension" / " --no-extension"
         std::string version;
         for (size_t i = 1; i < args.size(); i++) {
             const std::string& a = args[i];
             if (a == "--global") forceGlobal = true;
+            else if (a == "--with-extension") extFlag = " --with-extension";
+            else if (a == "--no-extension")   extFlag = " --no-extension";
             else if (sub == "install") {
                 version = a;
                 if (!version.empty() && version[0] != 'v') version = "v" + version;
@@ -4709,7 +4722,14 @@ static int cmd_compiler(const std::vector<std::string>& args) {
         // (which differs from the tarball's flat shape). The global
         // stays untouched. For a global install (or no venv) we run
         // install.sh as before.
-        std::string flag = version.empty() ? "" : (" --version=" + version);
+        //
+        // `extFlag` threads through both paths because the extension
+        // install side-effect in install.sh isn't scoped to
+        // INSTALL_DIR — VSCode extensions always land in
+        // ~/.vscode/extensions/ regardless. Routing it through both
+        // paths means `quirk compiler update --with-extension` works
+        // identically whether or not a venv is active.
+        std::string flag = (version.empty() ? "" : (" --version=" + version)) + extFlag;
 
         if (targetGlobal) {
             std::string cmd = std::string("curl -fsSL '") + QUIRK_INSTALL_SCRIPT_URL
@@ -6094,17 +6114,25 @@ static std::string help_for(const std::string& cmdIn) {
                "    to GitHub. Token scope: public_repo (plus repo if you\n"
                "    have private packages).\n";
     if (cmd == "compiler")
-        return "quirk compiler <subcommand>\n"
-               "      version                Print the running compiler version\n"
-               "      check                  Check GitHub for a newer release\n"
-               "      update                 Replace this compiler with the latest\n"
-               "      install <vX.Y.Z>       Install a specific version\n"
-               "      list                   List available releases\n"
-               "      stdlib                 Show where the bundled stdlib lives\n"
-               "      bump <part>            Bump QUIRK_VERSION (maintainers only)\n"
-               "    `quirk compiler update` pulls the latest tarball into\n"
-               "    ~/.quirk/bin and refreshes the symlinked stdlib so every\n"
-               "    venv picks up the new release automatically.\n";
+        return "quirk compiler <subcommand> [flags]\n"
+               "      version                  Print the running compiler version\n"
+               "      check                    Check GitHub for a newer release\n"
+               "      update                   Replace this compiler with the latest\n"
+               "      install <vX.Y.Z>         Install a specific version\n"
+               "      list                     List available releases\n"
+               "      stdlib                   Show where the bundled stdlib lives\n"
+               "      bump <part>              Bump QUIRK_VERSION (maintainers only)\n"
+               "\n"
+               "    Flags for install / update:\n"
+               "      --global                 In a venv, target the global compiler\n"
+               "                               (default: the active venv).\n"
+               "      --with-extension         Also install the Quirk VSCode extension.\n"
+               "      --no-extension           Skip the extension (default).\n"
+               "\n"
+               "    `quirk compiler update` in a v2.2.14+ venv updates *only* that\n"
+               "    venv; the global stays put. Use `--global` to flip the target.\n"
+               "    Run `quirk venv repair` afterwards if you want to bump an existing\n"
+               "    venv to a newly-installed global compiler.\n";
     if (cmd == "completion")
         return "quirk completion <bash|zsh|fish>\n"
                "    Emit a shell completion script to stdout. Install with:\n"

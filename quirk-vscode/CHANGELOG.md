@@ -2,6 +2,23 @@
 
 All notable changes to the extension land here. Versioning follows SemVer; minor bumps for new features, patches for fixes.
 
+## [0.2.5] — 2026-06-06
+
+### Backed-enum diagnostics actually fire now
+
+0.2.4 added a variant regex that handled `Male = "male"` form, but
+tested it against raw source — and the diagnostics provider runs
+its regexes against the *masked* line where `maskLine()` has
+replaced string contents with whitespace. So `Male = "male"`
+arrived as `Male =        ` and the regex (which required a real
+string literal or digit after `=`) never matched. Variants stayed
+unrecognised; the warnings stayed up.
+
+Widened to accept `^\s*<ident>\s*(?:=.*)?$` — the literal-shape
+constraint dropped, since the post-mask `=.*` is whatever the
+parser was going to scan anyway. Catches all three variant shapes
+(unbacked, String-backed, Int-backed) consistently.
+
 ## [0.2.4] — 2026-06-06
 
 ### Backed-enum support (matches compiler v2.2.4+)

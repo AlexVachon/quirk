@@ -149,7 +149,15 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
         if (isReadingEnum) {
             if (cleanLine.includes('}')) { isReadingEnum = false; }
             else {
-                const variantMatch = /^\s*([a-zA-Z_]\w*)(?:\s*=\s*(?:"[^"]*"|'[^']*'|-?\d+(?:\.\d+)?))?\s*$/.exec(cleanLine);
+                // `cleanLine` comes from `maskLine` which replaces string
+                // contents with whitespace, so `Male = "male"` arrives
+                // here as `Male =        `. The regex below accepts an
+                // identifier, optionally followed by `= <anything>` to
+                // end-of-line. Catches all three variant shapes:
+                //    Male                  (unbacked)
+                //    Male = "male"         (String-backed, after masking)
+                //    OK = 200              (Int-backed)
+                const variantMatch = /^\s*([a-zA-Z_]\w*)\s*(?:=.*)?$/.exec(cleanLine);
                 if (variantMatch) fileGlobals.add(variantMatch[1]);
             }
             continue;

@@ -805,6 +805,24 @@ void Sema::checkWhile(WhileNode *node)
 
 void Sema::checkFor(ForNode *node)
 {
+    // Sugar: `for v in EnumName` iterates the enum's variants. Treat
+    // a bare enum-name literal as if the user had written
+    // `EnumName.variants` so checkExpression doesn't trip on the
+    // "undefined variable" path. Codegen does the matching rewrite.
+    if (auto* lit = dynamic_cast<LiteralNode*>(node->iterable.get())) {
+        if (enumRegistry.count(lit->value)) {
+            // Variants list yields Any-typed items (boxed ordinals).
+            enterScope();
+            defineVariable(node->varName, "Any");
+            if (!node->varName2.empty()) defineVariable(node->varName2, "Any", false, true);
+            for (const auto& dv : node->destructureVars)
+                defineVariable(dv, "Any", false, true);
+            for (auto& s : node->body) checkStatement(s.get());
+            exitScope();
+            return;
+        }
+    }
+
     std::string iterType = checkExpression(node->iterable.get());
     std::string itemType = "Any";
 
@@ -1209,13 +1227,15 @@ std::string Sema::checkMemberAccess(MemberAccessNode *node)
         if (enumRegistry.count(lit->value)) {
             EnumNode* en = enumRegistry[lit->value];
             if (node->memberName == "str" || node->memberName == "name") return "String";
-            // `EnumName.values` — a List of the backing values (or
-            // variant names for unbacked enums). Codegen materialises
-            // this lazily from the packed global; Sema just needs to
-            // tell the world the result is a List so downstream
-            // checks (passing to `prompt.select(..., List, ...)`,
-            // iterating with `for`, etc.) all type-check cleanly.
-            if (node->memberName == "values") return "List";
+            // `EnumName.values` / `.names` / `.variants` — three
+            // class-level accessors that each return a List. Sema's
+            // job is just to surface the right return type so
+            // downstream checks pass cleanly; Codegen handles the
+            // distinction (values: backing values; names: variant
+            // identifiers; variants: ordinals as Any-ints).
+            if (node->memberName == "values"   ||
+                node->memberName == "names"    ||
+                node->memberName == "variants") return "List";
             auto it = std::find(en->variants.begin(), en->variants.end(), node->memberName);
             if (it == en->variants.end())
                 fatalError("'" + node->memberName + "' is not a variant of enum '" + lit->value + "'",
@@ -1239,6 +1259,20 @@ std::string Sema::checkMemberAccess(MemberAccessNode *node)
         if (enumRegistry.count(objType) && !enumRegistry[objType]->backingType.empty()) {
             return enumRegistry[objType]->backingType;
         }
+    }
+
+    // `g.ordinal` — i32 declaration-order index of an enum instance.
+    // Works for backed and unbacked enums uniformly; same resolution
+    // path as `.value` above.
+    if (node->memberName == "ordinal") {
+        std::string objType;
+        if (auto lit = dynamic_cast<LiteralNode*>(node->object.get())) {
+            objType = resolveVariable(lit->value);
+        } else {
+            objType = checkExpression(node->object.get());
+        }
+        if (!objType.empty() && objType.back() == '?') objType.pop_back();
+        if (enumRegistry.count(objType)) return "Int";
     }
 
     std::string objType = checkExpression(node->object.get());
@@ -1485,6 +1519,35 @@ std::string Sema::checkCall(CallNode *node)
 
     if (auto m = dynamic_cast<MemberAccessNode *>(node->callee.get()))
     {
+        // `EnumName.parse(v)` — safe lookup. Returns `Any` (boxed
+        // Int ordinal on hit, null on miss). Companion to the
+        // throwing `EnumName(v)` form.
+        //
+        // Type *would* be more precisely `EnumName?` but Quirk's
+        // nullable primitives lower to their base type at LLVM level
+        // (i.e. `Gender?` → i32) and can't hold a null pointer. So
+        // parse returns Any, and the caller unwraps with the usual
+        // `match` / `??` machinery:
+        //
+        //   result := Gender.parse(s)
+        //   match result {
+        //       case null { ... }
+        //       case _    { ord: Int := result; ... }
+        //   }
+        if (auto* eLit = dynamic_cast<LiteralNode*>(m->object.get())) {
+            if (m->memberName == "parse" && enumRegistry.count(eLit->value) &&
+                !enumRegistry[eLit->value]->backingType.empty()) {
+                EnumNode* en = enumRegistry[eLit->value];
+                for (auto& a : node->args) checkExpression(a.value.get());
+                if (node->args.size() != 1) {
+                    fatalError(eLit->value + ".parse(...) expects exactly one argument of type '" +
+                               en->backingType + "' (got " + std::to_string(node->args.size()) + ")",
+                               node->line, node->col, node->filePath);
+                }
+                return "Any";
+            }
+        }
+
         std::string objType = checkExpression(m->object.get());
         // Strip Optional marker and generic type args before method lookup
         if (!objType.empty() && objType.back() == '?') objType.pop_back();

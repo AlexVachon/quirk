@@ -308,6 +308,20 @@ List* quirk_enum_values_str(const char* packed, int32_t count) {
     return lst;
 }
 
+// `EnumName.variants` — eagerly builds the List [0, 1, ..., count-1]
+// of variant ordinals. Each ordinal is stored as a tagged-pointer
+// Any-int (inttoptr of the value), matching how List<Any> elements
+// of Int type are encoded everywhere else.
+List* quirk_enum_variants(int32_t count) {
+    List* lst = (List*)GC_malloc(sizeof(List));
+    Core_Collections_List_List___init(lst);
+    for (int32_t i = 0; i < count; i++) {
+        uintptr_t boxed = (uintptr_t)(uint32_t)i;
+        Core_Collections_List_List_append(lst, (void*)boxed);
+    }
+    return lst;
+}
+
 List* quirk_enum_values_int(const int32_t* packed, int32_t count) {
     List* lst = (List*)GC_malloc(sizeof(List));
     Core_Collections_List_List___init(lst);
@@ -322,6 +336,25 @@ List* quirk_enum_values_int(const int32_t* packed, int32_t count) {
     return lst;
 }
 
+// Safe variants of the lookup helpers: return NULL on miss instead
+// of throwing. Hit case returns a heap-Any-boxed Int (the ordinal),
+// so callers can `match result { case null => ... case _ => ... }`
+// or `result ?? default`. Box_int already lives in core/any.c (the
+// unity build pulled it in above), so no extern is needed.
+void* quirk_enum_parse_str(String* query, const char* packed, int32_t count) {
+    const char* q = (query && query->buffer) ? query->buffer : "";
+    int32_t idx = enum_str_index_of(q, packed, count);
+    if (idx < 0) return NULL;
+    return Core_Primitives_Any_box_int(idx);
+}
+
+void* quirk_enum_parse_int(int32_t query, const int32_t* packed, int32_t count) {
+    for (int32_t i = 0; i < count; i++) {
+        if (packed[i] == query) return Core_Primitives_Any_box_int(i);
+    }
+    return NULL;
+}
+
 int32_t quirk_enum_lookup_str(String* query, const char* packed,
                               int32_t count, const char* enum_name) {
     const char* q = (query && query->buffer) ? query->buffer : "";
@@ -332,6 +365,55 @@ int32_t quirk_enum_lookup_str(String* query, const char* packed,
              q, enum_name ? enum_name : "enum");
     quirk_throw_exception("ValueError", buf);
     return -1;  // unreachable
+}
+
+int32_t quirk_enum_lookup_double(double query, const double* packed,
+                                 int32_t count, const char* enum_name) {
+    for (int32_t i = 0; i < count; i++) {
+        // Exact double equality is fine here because the packed values
+        // come from compile-time literals; the user's query is whatever
+        // they passed at the call site. Standard FP-equality pitfalls
+        // (NaN != NaN, 0.0 vs -0.0) carry through with the same caveats
+        // any Quirk `==` comparison has.
+        if (packed[i] == query) return i;
+    }
+    char buf[80];
+    snprintf(buf, sizeof(buf), "%g is not a valid %s",
+             query, enum_name ? enum_name : "enum");
+    quirk_throw_exception("ValueError", buf);
+    return -1;
+}
+
+void* quirk_enum_parse_double(double query, const double* packed, int32_t count) {
+    for (int32_t i = 0; i < count; i++) {
+        if (packed[i] == query) return Core_Primitives_Any_box_int(i);
+    }
+    return NULL;
+}
+
+double quirk_enum_value_double(int32_t ordinal, const double* packed, int32_t count) {
+    if (ordinal < 0 || ordinal >= count || !packed) return 0.0;
+    return packed[ordinal];
+}
+
+// Same packed array gets walked for `EnumName.values` on a Double-
+// backed enum — each entry boxes as ANY_DOUBLE so the resulting List
+// can be iterated and the elements `n: Double := list.get(i)`-unboxed
+// the same way Int-backed enums work.
+List* quirk_enum_values_double(const double* packed, int32_t count) {
+    List* lst = (List*)GC_malloc(sizeof(List));
+    Core_Collections_List_List___init(lst);
+    if (!packed) return lst;
+    for (int32_t i = 0; i < count; i++) {
+        // Heap-Any wrap so the value carries its tag through the List.
+        Any* a = (Any*)GC_malloc(sizeof(Any));
+        a->tag = ANY_DOUBLE;
+        a->ival = 0;
+        a->dval = packed[i];
+        a->ptr  = NULL;
+        Core_Collections_List_List_append(lst, a);
+    }
+    return lst;
 }
 
 int32_t quirk_enum_lookup_int(int32_t query, const int32_t* packed,

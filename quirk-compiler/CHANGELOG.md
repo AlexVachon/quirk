@@ -5,6 +5,100 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [2.2.16] — 2026-06-06
+
+### Enum magic surface expanded + Double backing
+
+Five additions and one new backing type, all orthogonal to each
+other. Builds on the v2.2.4 backed enums + v2.2.13 `Enum.values`.
+
+#### `instance.ordinal` — declaration-order index
+
+`Gender.Male.ordinal` → `0`. At runtime an enum instance IS the i32,
+so this is a pure passthrough at codegen — no helper, no allocation.
+Works for all backings (String, Int, Double, unbacked).
+
+#### `Enum.names` — variant identifiers as Strings
+
+Always returns the variant *names* regardless of backing:
+
+```quirk
+enum Gender(String) { Male = "male", Female = "female" }
+Gender.values  // ["male", "female"]      (backing values)
+Gender.names   // ["Male", "Female"]      (variant identifiers)
+```
+
+For unbacked enums `.names` and `.values` are content-identical.
+
+#### `Enum.variants` — List of variant ordinals
+
+```quirk
+for v in Gender.variants {
+    ord: Int := v
+    print(v.value)
+}
+```
+
+Each element is a tagged-int Any holding the ordinal. Unbox with
+`ord: Int := v.get(i)`.
+
+#### `for v in EnumName` — iteration sugar
+
+Equivalent to `for v in Gender.variants`. Recognised at Sema (item
+type is Any) and Codegen (rewrites the iterable to a `.variants`
+member access on the fly). Same runtime cost.
+
+#### `EnumName.parse(v) -> Any` — safe lookup
+
+Companion to the throwing `EnumName(v)` form. Returns `null` on
+miss, an Any-boxed ordinal on hit:
+
+```quirk
+g := Gender.parse(input)
+match g {
+    case null { fallback() }
+    case _    {
+        ord: Int := g
+        // use ord as a Gender ordinal
+    }
+}
+```
+
+Return type is `Any` rather than `Gender?` because Quirk's nullable
+primitives lower to their base type at LLVM level — `Gender?` would
+become i32, which has no null state. Returning Any keeps the
+nullable semantics correct at the cost of one explicit unbox.
+
+#### Double-backed enums
+
+```quirk
+enum Prices(Double) {
+    Cheap = 9.99
+    Mid = 49.99
+    Expensive = 199.99
+}
+
+Prices(199.99)              // Prices.Expensive
+Prices.Mid.value            // 49.99
+Prices.values               // [9.99, 49.99, 199.99]  (List<Double>)
+Prices.parse(0.0)           // null
+```
+
+Joins String and Int as a backing type. Exact double equality
+applies on lookup (same FP-equality caveats as `==`).
+
+#### Codegen side-effect: safer i8* → Int typed-walrus
+
+While wiring `Enum.parse`, I found the typed-walrus `ord: Int := g`
+path used a raw `PtrToInt` for any `i8* → int` coercion. That works
+for tagged-int Any boxes (the common shape from `list.get(i)`) but
+returns the heap address for *real* `Any*` heap allocations — which
+is what `parse` returns. Routed through `emitUnboxToType` so both
+shapes unbox correctly.
+
+Probe `tests/probes/p36_enum_magic.quirk` covers all five additions
+plus Double backing across String/Int/Double/unbacked enums.
+
 ## [2.2.15] — 2026-06-06
 
 ### `quirk compiler update --with-extension`

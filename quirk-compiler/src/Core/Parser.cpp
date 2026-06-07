@@ -1505,10 +1505,11 @@ std::unique_ptr<EnumNode> Parser::parseEnum() {
         }
         advance();
         node->backingType = typeTok.value;
-        if (node->backingType != "String" && node->backingType != "Int") {
+        if (node->backingType != "String" && node->backingType != "Int"
+                                          && node->backingType != "Double") {
             throw std::runtime_error(
                 "Unsupported enum backing type '" + node->backingType +
-                "' — only String and Int are supported (line "
+                "' — only String, Int, and Double are supported (line "
                 + std::to_string(typeTok.line) + ")");
         }
         consume(TokenType::RPAREN, "Expected ')' after enum backing type");
@@ -1529,7 +1530,8 @@ std::unique_ptr<EnumNode> Parser::parseEnum() {
                 if (value.size() >= 2 && value.front() == '"' && value.back() == '"')
                     value = value.substr(1, value.size() - 2);
                 advance();
-            } else if (litTok.type == TokenType::INT_LITERAL) {
+            } else if (litTok.type == TokenType::INT_LITERAL ||
+                       litTok.type == TokenType::FLOAT_LITERAL) {
                 value = litTok.value;
                 advance();
             } else {

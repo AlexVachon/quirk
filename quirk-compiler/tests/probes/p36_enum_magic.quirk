@@ -1,0 +1,90 @@
+// Full enum magic-method surface (v2.2.16):
+//   instance.ordinal       — declaration-order index
+//   Enum.names             — variant names as Strings
+//   Enum.variants          — List of ordinals
+//   for v in Enum          — iteration sugar
+//   Enum.parse(v) -> Any   — safe lookup (null on miss)
+//   Double backing         — `enum X(Double) { ... }`
+//
+// One probe covers all of them since they're orthogonal additions.
+
+enum Gender(String) {
+    Male = "male"
+    Female = "female"
+    Other = "other"
+}
+
+enum Status(Int) {
+    OK = 200
+    NotFound = 404
+}
+
+enum Prices(Double) {
+    Cheap = 9.99
+    Mid = 49.99
+    Expensive = 199.99
+}
+
+enum Color {
+    Red
+    Green
+    Blue
+}
+
+define main() -> void {
+    // instance.ordinal
+    if Gender.Male.ordinal   != 0 { print("FAIL: Gender.Male.ordinal") }
+    if Gender.Other.ordinal  != 2 { print("FAIL: Gender.Other.ordinal") }
+    if Status.NotFound.ordinal != 1 { print("FAIL: Status.NotFound.ordinal") }
+    if Color.Blue.ordinal    != 2 { print("FAIL: Color.Blue.ordinal") }
+
+    // Enum.names (variant identifiers regardless of backing)
+    n: String := Gender.names.get(1)
+    if n != "Female" { print("FAIL: Gender.names[1]") }
+    n2: String := Status.names.get(0)
+    if n2 != "OK" { print("FAIL: Status.names[0]") }
+    n3: String := Prices.names.get(2)
+    if n3 != "Expensive" { print("FAIL: Prices.names[2]") }
+
+    // Enum.variants (List of ordinals)
+    if Gender.variants.length() != 3 { print("FAIL: Gender.variants length") }
+    ord: Int := Gender.variants.get(2)
+    if ord != 2 { print("FAIL: Gender.variants[2]") }
+
+    // for v in Enum
+    count := 0
+    for v in Color {
+        count = count + 1
+    }
+    if count != 3 { print("FAIL: for in Color") }
+
+    // Enum.parse hit
+    p := Gender.parse("female")
+    match p {
+        case null { print("FAIL: Gender.parse hit returned null") }
+        case _ {
+            i: Int := p
+            if i != 1 { print("FAIL: Gender.parse hit ordinal") }
+        }
+    }
+
+    // Enum.parse miss
+    pmiss := Gender.parse("nope")
+    match pmiss {
+        case null {}
+        case _    { print("FAIL: Gender.parse miss returned non-null") }
+    }
+
+    // Double-backed forward + reverse
+    d := Prices.Mid
+    if d.value != 49.99 { print("FAIL: Prices.Mid.value") }
+    pd := Prices(199.99)
+    if pd != Prices.Expensive { print("FAIL: Prices(199.99) lookup") }
+    pdmiss := Prices.parse(0.0)
+    match pdmiss {
+        case null {}
+        case _    { print("FAIL: Prices.parse miss") }
+    }
+
+    print("p36 enum magic passed")
+}

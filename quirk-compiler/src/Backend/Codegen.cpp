@@ -592,11 +592,32 @@ class LLVMCodegen {
                 }
             }
 
-            // Per-backed-enum packed globals: the values blob the runtime
-            // helpers walk (`quirk_enum_lookup_*` / `quirk_enum_value_*`).
-            // Stored at file scope so each `Gender(...)` callsite is a
-            // single function call with no per-call setup.
+            // Per-enum packed globals: the *values* blob (the runtime
+            // helpers walk this for `Gender(...)` lookup, `.value`,
+            // `.values`) and the separate *names* blob (used by
+            // `.names`, always a packed String list of variant
+            // identifiers regardless of backing). For unbacked enums
+            // the two blobs are identical content but Codegen emits
+            // both so `Enum.names` has one uniform code path.
             for (const auto& [name, info] : backedEnums) {
+                // Names blob — variant identifiers as a packed
+                // null-separated string.
+                {
+                    std::string namesPacked;
+                    auto vIt = enumVariants.find(name);
+                    if (vIt != enumVariants.end()) {
+                        for (const auto& v : vIt->second) {
+                            namesPacked += v;
+                            namesPacked.push_back('\0');
+                        }
+                    }
+                    Constant* blob = ConstantDataArray::getString(Context, namesPacked, /*AddNull=*/false);
+                    auto* gv = new GlobalVariable(
+                        *TheModule, blob->getType(), /*isConstant=*/true,
+                        GlobalValue::PrivateLinkage, blob, "__" + name + "_names");
+                    gv->setUnnamedAddr(GlobalValue::UnnamedAddr::Global);
+                    (void)gv;
+                }
                 if (info.backingType == "String") {
                     std::string packed;
                     for (const auto& v : info.values) { packed += v; packed.push_back('\0'); }
@@ -615,6 +636,21 @@ class LLVMCodegen {
                         vals.push_back(ConstantInt::get(Type::getInt32Ty(Context), n));
                     }
                     auto* arrTy = ArrayType::get(Type::getInt32Ty(Context), vals.size());
+                    Constant* blob = ConstantArray::get(arrTy, vals);
+                    auto* gv = new GlobalVariable(
+                        *TheModule, arrTy, /*isConstant=*/true,
+                        GlobalValue::PrivateLinkage, blob, "__" + name + "_packed");
+                    gv->setUnnamedAddr(GlobalValue::UnnamedAddr::Global);
+                    (void)gv;
+                } else if (info.backingType == "Double") {
+                    std::vector<Constant*> vals;
+                    vals.reserve(info.values.size());
+                    for (const auto& v : info.values) {
+                        double d = 0.0;
+                        try { d = std::stod(v); } catch (...) { d = 0.0; }
+                        vals.push_back(ConstantFP::get(Type::getDoubleTy(Context), d));
+                    }
+                    auto* arrTy = ArrayType::get(Type::getDoubleTy(Context), vals.size());
                     Constant* blob = ConstantArray::get(arrTy, vals);
                     auto* gv = new GlobalVariable(
                         *TheModule, arrTy, /*isConstant=*/true,
@@ -1527,6 +1563,17 @@ class LLVMCodegen {
                         query = Builder.CreatePtrToInt(query, i32);
                     return Builder.CreateCall(fn, {query, packedPtr, count, namePtr});
                 }
+                if (info.backingType == "Double") {
+                    Type* dbl = Type::getDoubleTy(Context);
+                    FunctionCallee fn = TheModule->getOrInsertFunction(
+                        "quirk_enum_lookup_double",
+                        FunctionType::get(i32, {dbl, PointerType::getUnqual(dbl), i32, i8p}, false));
+                    // Coerce Int → Double if the user passed an int literal.
+                    if (query->getType()->isIntegerTy())
+                        query = Builder.CreateSIToFP(query, dbl);
+                    Value* packedD = Builder.CreateBitCast(packedGv, PointerType::getUnqual(dbl));
+                    return Builder.CreateCall(fn, {query, packedD, count, namePtr});
+                }
                 // String backing
                 FunctionCallee fn = TheModule->getOrInsertFunction(
                     "quirk_enum_lookup_str",
@@ -1633,6 +1680,61 @@ class LLVMCodegen {
         if (auto member = dynamic_cast<MemberAccessNode*>(call->callee.get())) {
             if (auto lit = dynamic_cast<LiteralNode*>(member->object.get())) {
                 if (verbose) std::cerr << "[Codegen]     handleCall: " << lit->value << "." << member->memberName << "\n";
+
+                // `EnumName.parse(value)` — safe lookup. Returns
+                // i8* (boxed-int Any on hit, null on miss). Sema
+                // typed this as `EnumName?` so the caller's `case
+                // null` / `??` machinery picks it up correctly.
+                if (member->memberName == "parse" && backedEnums.count(lit->value)
+                                                 && !call->args.empty()) {
+                    const BackedEnumInfo& info = backedEnums[lit->value];
+                    Value* query = handleExpression(call->args[0].value.get());
+                    Type* i32 = Type::getInt32Ty(Context);
+                    Type* i8p = Type::getInt8PtrTy(Context);
+                    GlobalVariable* packedGv = TheModule->getNamedGlobal("__" + lit->value + "_packed");
+                    Value* count = ConstantInt::get(i32, info.values.size());
+
+                    if (info.backingType == "Int") {
+                        FunctionCallee fn = TheModule->getOrInsertFunction(
+                            "quirk_enum_parse_int",
+                            FunctionType::get(i8p, {i32, PointerType::getUnqual(i32), i32}, false));
+                        if (query->getType()->isPointerTy())
+                            query = Builder.CreatePtrToInt(query, i32);
+                        Value* packedPtr = Builder.CreateBitCast(packedGv, PointerType::getUnqual(i32));
+                        return Builder.CreateCall(fn, {query, packedPtr, count});
+                    }
+                    if (info.backingType == "Double") {
+                        Type* dbl = Type::getDoubleTy(Context);
+                        FunctionCallee fn = TheModule->getOrInsertFunction(
+                            "quirk_enum_parse_double",
+                            FunctionType::get(i8p, {dbl, PointerType::getUnqual(dbl), i32}, false));
+                        if (query->getType()->isIntegerTy())
+                            query = Builder.CreateSIToFP(query, dbl);
+                        Value* packedPtr = Builder.CreateBitCast(packedGv, PointerType::getUnqual(dbl));
+                        return Builder.CreateCall(fn, {query, packedPtr, count});
+                    }
+                    // String backing
+                    FunctionCallee fn = TheModule->getOrInsertFunction(
+                        "quirk_enum_parse_str",
+                        FunctionType::get(i8p,
+                            {PointerType::getUnqual(StructTypes["String"]),
+                             i8p, i32}, false));
+                    // Unbox opaque i8* → String* if needed.
+                    if (query->getType()->isPointerTy() &&
+                        query->getType()->getPointerElementType()->isIntegerTy(8)) {
+                        Function* opaqueToStr = TheModule->getFunction("quirk_opaque_to_string");
+                        if (!opaqueToStr) {
+                            FunctionType* ft = FunctionType::get(
+                                PointerType::getUnqual(StructTypes["String"]), {i8p}, false);
+                            opaqueToStr = Function::Create(ft, Function::ExternalLinkage,
+                                                           "quirk_opaque_to_string", TheModule.get());
+                        }
+                        query = Builder.CreateCall(opaqueToStr, {query});
+                    }
+                    Value* packedPtr = Builder.CreateBitCast(packedGv, i8p);
+                    return Builder.CreateCall(fn, {query, packedPtr, count});
+                }
+
                 // Module-call routing must yield to local-variable scope.
                 // Without this, importing a module whose name shadows a
                 // function parameter (e.g. `use prompt` in a script that
@@ -2471,6 +2573,24 @@ class LLVMCodegen {
             }
         }
         else if (auto f = dynamic_cast<ForNode*>(node)) {
+            // Sugar: `for v in EnumName` iterates the variants in
+            // declaration order. Mirrors `for v in EnumName.variants`
+            // exactly — same runtime helper, same lowering — just
+            // saves the user the `.variants` suffix. Recognise the
+            // bare-enum-name literal here and rewrite the iterable in
+            // place to a MemberAccess so flowGen's normal path takes
+            // over.
+            if (auto* lit = dynamic_cast<LiteralNode*>(f->iterable.get())) {
+                if (backedEnums.count(lit->value)) {
+                    auto syntheticObj = std::make_unique<LiteralNode>(*lit);
+                    auto memberAccess = std::make_unique<MemberAccessNode>(std::move(syntheticObj), "variants");
+                    memberAccess->line = lit->line;
+                    memberAccess->col  = lit->col;
+                    memberAccess->filePath = lit->filePath;
+                    f->iterable = std::move(memberAccess);
+                }
+            }
+
             // Special-case: range literal iterable → emit a simple counter loop
             if (auto* range = dynamic_cast<RangeLiteralNode*>(f->iterable.get())) {
                 Value* startV = handleExpression(range->start.get());
@@ -2711,11 +2831,19 @@ class LLVMCodegen {
                 if (isAnyType(val)) {
                     val = emitUnboxToType(val, targetType);
                 }
-                // Source is type-erased i8* (Map_get/List_get/lambda result)
+                // Source is type-erased i8* (Map_get/List_get/lambda
+                // result/Enum.parse(...)).
                 else if (val->getType()->isPointerTy() &&
                          val->getType()->getPointerElementType()->isIntegerTy(8)) {
-                    if (targetType->isIntegerTy())
-                        // Unbox tagged-pointer integer: ptrtoint(i8*, i32)
+                    if (targetType->isIntegerTy(32) || targetType->isDoubleTy()) {
+                        // Route through emitUnboxToType so heap-Any-boxed
+                        // values unbox correctly. The previous shortcut
+                        // PtrToInt(i8*, i32) only worked for tagged-int
+                        // pointers (`inttoptr small_int`); for a real
+                        // Any* heap allocation it returned the heap
+                        // address as an int — garbage.
+                        val = emitUnboxToType(val, targetType);
+                    } else if (targetType->isIntegerTy())
                         val = Builder.CreatePtrToInt(val, targetType);
                     else if (targetType->isPointerTy() && targetType->getPointerElementType()->isStructTy())
                         val = Builder.CreateBitCast(val, targetType);
@@ -3941,13 +4069,45 @@ Value* LLVMCodegen::handleExpression(Node* node) {
                 // each call from the packed global; cheap because the
                 // packed bytes are immutable and the List itself is
                 // GC-allocated.
-                if (member->memberName == "values" && backedEnums.count(lit->value)) {
+                if ((member->memberName == "values" ||
+                     member->memberName == "names" ||
+                     member->memberName == "variants") && backedEnums.count(lit->value)) {
                     const BackedEnumInfo& info = backedEnums[lit->value];
                     Type* i32 = Type::getInt32Ty(Context);
                     Type* i8p = Type::getInt8PtrTy(Context);
-                    GlobalVariable* packedGv = TheModule->getNamedGlobal("__" + lit->value + "_packed");
                     Type* listPtrTy = PointerType::getUnqual(StructTypes["List"]);
                     Value* count = ConstantInt::get(i32, info.values.size());
+
+                    // `.names` always walks the names-only packed
+                    // global (variant identifiers as Strings), never
+                    // the backing values. For unbacked enums the two
+                    // blobs are content-identical; emitting both
+                    // keeps the codegen branch flat.
+                    if (member->memberName == "names") {
+                        GlobalVariable* namesGv =
+                            TheModule->getNamedGlobal("__" + lit->value + "_names");
+                        FunctionCallee fn = TheModule->getOrInsertFunction(
+                            "quirk_enum_values_str",
+                            FunctionType::get(listPtrTy, {i8p, i32}, false));
+                        Value* asI8p = Builder.CreateBitCast(namesGv, i8p);
+                        return Builder.CreateCall(fn, {asI8p, count});
+                    }
+
+                    // `.variants` — List of ordinals (0..n-1). Each
+                    // variant lowers to its i32 ordinal at runtime,
+                    // so the "list of variant instances" reduces to
+                    // `[0, 1, ..., n-1]` boxed as Any-ints. Reuse
+                    // quirk_enum_variants which builds that range
+                    // directly, no packed input needed.
+                    if (member->memberName == "variants") {
+                        FunctionCallee fn = TheModule->getOrInsertFunction(
+                            "quirk_enum_variants",
+                            FunctionType::get(listPtrTy, {i32}, false));
+                        return Builder.CreateCall(fn, {count});
+                    }
+
+                    // `.values`
+                    GlobalVariable* packedGv = TheModule->getNamedGlobal("__" + lit->value + "_packed");
                     if (info.backingType == "Int") {
                         FunctionCallee fn = TheModule->getOrInsertFunction(
                             "quirk_enum_values_int",
@@ -3955,6 +4115,15 @@ Value* LLVMCodegen::handleExpression(Node* node) {
                                 {PointerType::getUnqual(i32), i32}, false));
                         Value* asI32p = Builder.CreateBitCast(packedGv, PointerType::getUnqual(i32));
                         return Builder.CreateCall(fn, {asI32p, count});
+                    }
+                    if (info.backingType == "Double") {
+                        Type* dbl = Type::getDoubleTy(Context);
+                        FunctionCallee fn = TheModule->getOrInsertFunction(
+                            "quirk_enum_values_double",
+                            FunctionType::get(listPtrTy,
+                                {PointerType::getUnqual(dbl), i32}, false));
+                        Value* asDp = Builder.CreateBitCast(packedGv, PointerType::getUnqual(dbl));
+                        return Builder.CreateCall(fn, {asDp, count});
                     }
                     FunctionCallee fn = TheModule->getOrInsertFunction(
                         "quirk_enum_values_str",
@@ -3968,6 +4137,53 @@ Value* LLVMCodegen::handleExpression(Node* node) {
                     int idx = (int)std::distance(variants.begin(), it);
                     return ConstantInt::get(Type::getInt32Ty(Context), idx);
                 }
+            }
+        }
+
+        // `instance.ordinal` — at runtime an enum instance IS already
+        // an i32 (its declaration-order index), so `.ordinal` is just
+        // a pass-through of the underlying value. Handled identically
+        // for the three carrier shapes (binding, chained variant,
+        // struct field) by evaluating member->object directly. No
+        // runtime call needed.
+        if (member->memberName == "ordinal") {
+            std::string enumName;
+            if (auto* lit = dynamic_cast<LiteralNode*>(member->object.get())) {
+                auto it = varEnumTypes.find(lit->value);
+                if (it != varEnumTypes.end()) enumName = it->second;
+            } else if (auto* innerMem = dynamic_cast<MemberAccessNode*>(member->object.get())) {
+                if (auto* innerLit = dynamic_cast<LiteralNode*>(innerMem->object.get())) {
+                    if (backedEnums.count(innerLit->value)) {
+                        enumName = innerLit->value;
+                    } else {
+                        std::string ownerStruct;
+                        if (innerLit->value == "self") ownerStruct = currentCodegenClass;
+                        else {
+                            Value* v = varGen->resolveVariable(innerLit->value);
+                            if (v && v->getType()->isPointerTy() &&
+                                v->getType()->getPointerElementType()->isStructTy()) {
+                                StructType* st = cast<StructType>(v->getType()->getPointerElementType());
+                                std::string sName = st->getName().str();
+                                if (sName.find("struct.") == 0) sName = sName.substr(7);
+                                ownerStruct = sName;
+                            }
+                        }
+                        if (!ownerStruct.empty()) {
+                            auto& fields = structFieldTypes[ownerStruct];
+                            auto fIt = fields.find(innerMem->memberName);
+                            if (fIt != fields.end() && backedEnums.count(fIt->second))
+                                enumName = fIt->second;
+                        }
+                    }
+                }
+            }
+            if (!enumName.empty()) {
+                Value* ord = handleExpression(member->object.get());
+                // Defensive cast — varGen may hand back an i8* in some
+                // closure-capture paths; coerce to i32 with PtrToInt.
+                if (ord->getType()->isPointerTy())
+                    ord = Builder.CreatePtrToInt(ord, Type::getInt32Ty(Context));
+                return ord;
             }
         }
 
@@ -4032,6 +4248,14 @@ Value* LLVMCodegen::handleExpression(Node* node) {
                         "quirk_enum_value_int",
                         FunctionType::get(i32, {i32, i8p, i32}, false));
                     return Builder.CreateCall(fn, {ordinal, packedPtr, count});
+                }
+                if (info.backingType == "Double") {
+                    Type* dbl = Type::getDoubleTy(Context);
+                    FunctionCallee fn = TheModule->getOrInsertFunction(
+                        "quirk_enum_value_double",
+                        FunctionType::get(dbl, {i32, PointerType::getUnqual(dbl), i32}, false));
+                    Value* packedD = Builder.CreateBitCast(packedGv, PointerType::getUnqual(dbl));
+                    return Builder.CreateCall(fn, {ordinal, packedD, count});
                 }
                 FunctionCallee fn = TheModule->getOrInsertFunction(
                     "quirk_enum_value_str",

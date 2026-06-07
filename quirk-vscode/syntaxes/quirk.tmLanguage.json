@@ -13,6 +13,7 @@
     { "include": "#types" },
     { "include": "#magic-methods" },
     { "include": "#enum-access" },
+    { "include": "#enum-class-properties" },
     { "include": "#method-calls" },
     { "include": "#functions" },
     { "include": "#keyword-arguments" },
@@ -242,6 +243,19 @@
         {
           "match": "\\b(__init|__del|__str|__repr|__bool|__len|__get|__set|__iter|__has_next|__next|__add|__sub|__mul|__div|__eq|__ne|__lt|__le|__gt|__ge|__enter|__exit|__name|__parent|__class)\\b",
           "name": "support.function.magic.quirk"
+        }
+      ]
+    },
+    "enum-class-properties": {
+      "comment": "Class-level accessors on a Capitalized identifier: `Gender.values`, `Color.values`. Colored as a property even when followed by `(` so `Gender.values()` (incorrect usage — it's an accessor, not a method) doesn't get the method-call color and the wrong shape is visually obvious. Same idea for the magic-method names already handled above.",
+      "patterns": [
+        {
+          "match": "\\b([A-Z][a-zA-Z0-9_]*)(\\.)(values)\\b",
+          "captures": {
+            "1": { "name": "entity.name.type.enum.quirk" },
+            "2": { "name": "punctuation.separator.property.quirk" },
+            "3": { "name": "variable.other.property.constant.quirk" }
+          }
         }
       ]
     },

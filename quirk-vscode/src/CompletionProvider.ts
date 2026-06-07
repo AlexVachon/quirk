@@ -326,7 +326,13 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
             items.push(item);
         }
         // Class-level `.values` accessor — added in compiler v2.2.13.
+        // Explicitly a Property (not a Method) and the insertText is a
+        // plain `values` with no trailing parens. The TM grammar's
+        // `enum-class-properties` rule colors it as a property even
+        // when somebody writes `Gender.values()` so the wrong-shape
+        // mistake is visually flagged.
         const valuesItem = new vscode.CompletionItem('values', vscode.CompletionItemKind.Property);
+        valuesItem.insertText = 'values';
         valuesItem.detail = `${name}.values → List`;
         valuesItem.documentation = new vscode.MarkdownString(
             `**\`${name}.values\`** — \`List\` of all backing values (or variant names for unbacked enums), in declaration order.\n\n` +

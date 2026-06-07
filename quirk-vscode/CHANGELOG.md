@@ -2,6 +2,16 @@
 
 All notable changes to the extension land here. Versioning follows SemVer; minor bumps for new features, patches for fixes.
 
+## [0.2.6] — 2026-06-06
+
+### Syntax: `Gender.values` colors as a property, not a method
+
+The TM grammar's `method-calls` rule matches any `.foo(` pattern and colors `foo` as a method name. That fires on `Gender.values()` too — but `.values` is a class-level *property accessor* (returns a `List`), not a method, so writing it with `()` is a usage error. The old highlight made the mistake look legitimate.
+
+New `enum-class-properties` rule (placed before `method-calls`) matches `<Capitalized>.values` regardless of trailing parens and colors it as `variable.other.property.constant.quirk`. Themes that distinguish property vs method names now visually flag `Gender.values()` as wrong.
+
+The completion item for `values` also pins `insertText: 'values'` explicitly — no editor setting can make it auto-paren now.
+
 ## [0.2.5] — 2026-06-06
 
 ### Backed-enum diagnostics actually fire now

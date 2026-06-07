@@ -325,27 +325,75 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
             item.sortText = '1' + v;
             items.push(item);
         }
-        // Class-level `.values` accessor — added in compiler v2.2.13.
-        // Explicitly a Property (not a Method) and the insertText is a
-        // plain `values` with no trailing parens. The TM grammar's
-        // `enum-class-properties` rule colors it as a property even
-        // when somebody writes `Gender.values()` so the wrong-shape
-        // mistake is visually flagged.
+        // Class-level accessors — `.values`, `.names`, `.variants`,
+        // `.parse()`. All added in the v2.2.13 / v2.2.16 compiler
+        // releases. Properties (no auto-paren) except `parse` which
+        // is genuinely a method.
+        const firstVariant = variants[0] ?? 'Variant';
+
         const valuesItem = new vscode.CompletionItem('values', vscode.CompletionItemKind.Property);
         valuesItem.insertText = 'values';
         valuesItem.detail = `${name}.values → List`;
         valuesItem.documentation = new vscode.MarkdownString(
-            `**\`${name}.values\`** — \`List\` of all backing values (or variant names for unbacked enums), in declaration order.\n\n` +
+            `**\`${name}.values\`** — \`List\` of all backing values in declaration order.\n\n` +
+            'For unbacked enums the values are the variant identifiers (same as `.names`); for backed enums they\'re the declared backing literals.\n\n' +
             '```quirk\n' +
             `enum Gender(String) { Male = "male", Female = "female", Other = "other" }\n` +
-            `Gender.values  // ["male", "female", "other"]\n` +
-            '```\n\nUseful for building menus:\n\n' +
-            '```quirk\n' +
-            `gender := prompt.select("Gender?", ${name}.values, ${name}.${variants[0] ?? 'Variant'}.value)\n` +
+            `${name}.values  // ["male", "female", "other"]\n` +
             '```'
         );
         valuesItem.sortText = '0values';
         items.push(valuesItem);
+
+        const namesItem = new vscode.CompletionItem('names', vscode.CompletionItemKind.Property);
+        namesItem.insertText = 'names';
+        namesItem.detail = `${name}.names → List<String>`;
+        namesItem.documentation = new vscode.MarkdownString(
+            `**\`${name}.names\`** — \`List<String>\` of variant identifiers in declaration order, regardless of backing.\n\n` +
+            'For backed enums this differs from `.values` (which returns the *backing values*).\n\n' +
+            '```quirk\n' +
+            `enum Gender(String) { Male = "male", Female = "female", Other = "other" }\n` +
+            `${name}.values  // ["male", "female", "other"]    (backing)\n` +
+            `${name}.names   // ["Male", "Female", "Other"]    (identifiers)\n` +
+            '```'
+        );
+        namesItem.sortText = '0names';
+        items.push(namesItem);
+
+        const variantsItem = new vscode.CompletionItem('variants', vscode.CompletionItemKind.Property);
+        variantsItem.insertText = 'variants';
+        variantsItem.detail = `${name}.variants → List<${name}>`;
+        variantsItem.documentation = new vscode.MarkdownString(
+            `**\`${name}.variants\`** — \`List\` of variant ordinals (each element is an enum instance).\n\n` +
+            '```quirk\n' +
+            `for v in ${name}.variants {\n` +
+            '    ord: Int := v\n' +
+            '    // ...\n' +
+            '}\n' +
+            '```\n\n' +
+            `Shortcut: \`for v in ${name}\` iterates the variants directly.`
+        );
+        variantsItem.sortText = '0variants';
+        items.push(variantsItem);
+
+        const parseItem = new vscode.CompletionItem('parse', vscode.CompletionItemKind.Method);
+        parseItem.insertText = new vscode.SnippetString('parse(${1:value})');
+        parseItem.detail = `${name}.parse(value) → ${name}?`;
+        parseItem.documentation = new vscode.MarkdownString(
+            `**\`${name}.parse(value)\`** — safe value→variant lookup. Returns \`null\` on miss, otherwise the matching variant.\n\n` +
+            `Companion to the throwing \`${name}(value)\` form.\n\n` +
+            '```quirk\n' +
+            `match ${name}.parse(input) {\n` +
+            `    case null { print("not a valid ${name}") }\n` +
+            '    case _    {\n' +
+            '        ord: Int := result\n' +
+            '        // use ord as a variant ordinal\n' +
+            '    }\n' +
+            '}\n' +
+            '```'
+        );
+        parseItem.sortText = '1parse';
+        items.push(parseItem);
 
         return items;
     }
@@ -396,6 +444,24 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
         );
         nameItem.sortText = '2name';
         items.push(nameItem);
+
+        // .ordinal — i32 declaration-order index (compiler v2.2.16+).
+        // At runtime an enum instance IS the i32 already, so this is a
+        // direct passthrough; same color as the other properties.
+        const ordItem = new vscode.CompletionItem('ordinal', vscode.CompletionItemKind.Property);
+        ordItem.insertText = 'ordinal';
+        ordItem.detail = `${enumName}.ordinal → Int`;
+        ordItem.documentation = new vscode.MarkdownString(
+            '**`.ordinal`** — the variant\'s declaration-order index as `Int`.\n\n' +
+            '```quirk\n' +
+            'enum Gender { Male, Female, Other }\n' +
+            'Gender.Male.ordinal     // 0\n' +
+            'Gender.Female.ordinal   // 1\n' +
+            'Gender.Other.ordinal    // 2\n' +
+            '```\n\nUseful for serialization, comparisons that don\'t go through `.value`.'
+        );
+        ordItem.sortText = '3ordinal';
+        items.push(ordItem);
 
         return items;
     }

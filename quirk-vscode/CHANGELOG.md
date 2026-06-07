@@ -2,6 +2,54 @@
 
 All notable changes to the extension land here. Versioning follows SemVer; minor bumps for new features, patches for fixes.
 
+## [0.2.7] — 2026-06-07
+
+### Catch-up with the compiler's v2.2.16 and v2.3.0 enum surface
+
+Adds IDE support for the enum-magic features that landed in the
+compiler between vscode 0.2.6 and now.
+
+**New completions on enum classes (`Gender.`):**
+
+| Item | Kind | Description |
+|---|---|---|
+| `values` | property | `List` of backing values (v2.2.13) |
+| `names` | property | `List<String>` of variant identifiers (v2.2.16) |
+| `variants` | property | `List` of variant instances (v2.2.16) |
+| `parse(...)` | method | Safe lookup, returns `EnumName?` (v2.2.16 / v2.3.0) |
+
+**New completion on enum instances (`g.`):**
+
+| Item | Kind | Description |
+|---|---|---|
+| `ordinal` | property | i32 declaration-order index (v2.2.16) |
+
+Each completion ships rich Markdown docs with usage examples in
+the suggestion popup.
+
+### Grammar
+
+* `Gender.names` and `Gender.variants` now color as constant
+  properties (same shade as the v0.2.6 `Gender.values` rule). If
+  themed properly, `Gender.names()` (incorrect — `.names` doesn't
+  take parens) visually flags as a property rather than a method.
+* New `enum-instance-properties` rule colors `.value`, `.ordinal`,
+  `.name` distinctly from `.foo()` method calls. `.str` falls
+  through to `method-calls` since it's a real method (takes parens).
+
+### Diagnostics
+
+Verified against the new compiler features:
+
+* `enum Prices(Double) { Pi = 3.14, Half = 0.5, Neg = -1.5 }` — the
+  v0.2.5 variant regex already accepts numeric values; no change
+  needed.
+* `for v in EnumName` — bare enum name in iterable position. The
+  enum name is already registered in `fileGlobals` at pass 1, so
+  the pass-2 identifier scanner doesn't false-flag it.
+* `x: Int? = null` — nullable primitive declarations. `null` is in
+  the keyword set and `Int` in builtins, so neither false-flags.
+
 ## [0.2.6] — 2026-06-06
 
 ### Syntax: `Gender.values` colors as a property, not a method

@@ -14,6 +14,7 @@
     { "include": "#magic-methods" },
     { "include": "#enum-access" },
     { "include": "#enum-class-properties" },
+    { "include": "#enum-instance-properties" },
     { "include": "#method-calls" },
     { "include": "#functions" },
     { "include": "#keyword-arguments" },
@@ -247,14 +248,26 @@
       ]
     },
     "enum-class-properties": {
-      "comment": "Class-level accessors on a Capitalized identifier: `Gender.values`, `Color.values`. Colored as a property even when followed by `(` so `Gender.values()` (incorrect usage — it's an accessor, not a method) doesn't get the method-call color and the wrong shape is visually obvious. Same idea for the magic-method names already handled above.",
+      "comment": "Class-level accessors on a Capitalized identifier: `Gender.values`, `Color.names`, etc. Colored as a property even when followed by `(` so `Gender.values()` (incorrect usage — it's an accessor, not a method) doesn't get the method-call color and the wrong shape is visually obvious. `parse` is the lone real method on the enum class and is intentionally NOT listed here — it gets the regular method-call color via the rule below.",
       "patterns": [
         {
-          "match": "\\b([A-Z][a-zA-Z0-9_]*)(\\.)(values)\\b",
+          "match": "\\b([A-Z][a-zA-Z0-9_]*)(\\.)(values|names|variants)\\b",
           "captures": {
             "1": { "name": "entity.name.type.enum.quirk" },
             "2": { "name": "punctuation.separator.property.quirk" },
             "3": { "name": "variable.other.property.constant.quirk" }
+          }
+        }
+      ]
+    },
+    "enum-instance-properties": {
+      "comment": "Per-instance accessors that are properties (not methods): `.value`, `.ordinal`, `.name`. Coloring them at the grammar level keeps `g.value` distinct from `g.foo()` even when no LSP semantic-token data is available. `.str` is a method (takes parens) and falls through to method-calls.",
+      "patterns": [
+        {
+          "match": "(\\.)(value|ordinal|name)\\b(?!\\s*\\()",
+          "captures": {
+            "1": { "name": "punctuation.separator.property.quirk" },
+            "2": { "name": "variable.other.property.constant.quirk" }
           }
         }
       ]

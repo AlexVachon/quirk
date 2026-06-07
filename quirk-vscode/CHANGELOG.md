@@ -2,7 +2,7 @@
 
 All notable changes to the extension land here. Versioning follows SemVer; minor bumps for new features, patches for fixes.
 
-## [0.2.1] — 2026-06-06
+## [0.2.4] — 2026-06-06
 
 ### Backed-enum support (matches compiler v2.2.4+)
 

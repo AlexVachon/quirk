@@ -1678,6 +1678,44 @@ class LLVMCodegen {
         }
 
         if (auto member = dynamic_cast<MemberAccessNode*>(call->callee.get())) {
+
+            // v2.3.1+: enum accessor methods. Recognised here BEFORE
+            // the lit/object literal check, so chained shapes like
+            // `Gender.Male.ordinal()` work alongside `g.ordinal()`.
+            // Codegen reuses the existing MemberAccess expression
+            // handlers for the property cases — we just evaluate
+            // the callee as if it were a bare property access.
+            // `name()` has no MemberAccess handler so it's
+            // synthesised inline via the existing `__<Enum>_str`.
+            {
+                static const std::set<std::string> enumAccessors = {
+                    "value", "name", "ordinal",
+                    "values", "names", "variants"
+                };
+                if (call->args.empty() && enumAccessors.count(member->memberName)) {
+                    if (member->memberName == "name") {
+                        std::string enumName;
+                        if (auto* nameLit = dynamic_cast<LiteralNode*>(member->object.get())) {
+                            auto it = varEnumTypes.find(nameLit->value);
+                            if (it != varEnumTypes.end()) enumName = it->second;
+                            else if (enumVariants.count(nameLit->value)) enumName = nameLit->value;
+                        } else if (auto* innerMem = dynamic_cast<MemberAccessNode*>(member->object.get())) {
+                            if (auto* innerLit = dynamic_cast<LiteralNode*>(innerMem->object.get())) {
+                                if (enumVariants.count(innerLit->value)) enumName = innerLit->value;
+                            }
+                        }
+                        if (!enumName.empty()) {
+                            Value* ordinal = handleExpression(member->object.get());
+                            if (ordinal->getType()->isPointerTy())
+                                ordinal = Builder.CreatePtrToInt(ordinal, Type::getInt32Ty(Context));
+                            Function* strFn = TheModule->getFunction("__" + enumName + "_str");
+                            if (strFn) return Builder.CreateCall(strFn, {ordinal});
+                        }
+                    }
+                    return handleExpression(call->callee.get());
+                }
+            }
+
             if (auto lit = dynamic_cast<LiteralNode*>(member->object.get())) {
                 if (verbose) std::cerr << "[Codegen]     handleCall: " << lit->value << "." << member->memberName << "\n";
 

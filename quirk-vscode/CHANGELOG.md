@@ -2,6 +2,37 @@
 
 All notable changes to the extension land here. Versioning follows SemVer; minor bumps for new features, patches for fixes.
 
+## [0.2.8] — 2026-06-08
+
+### Catch up with compiler v2.3.1 — enum accessors are methods now
+
+The six enum accessors switched from property to method shape in
+the compiler (matches the rest of Quirk's API: `list.length()`,
+`set.size()`, etc.). Extension updates to match:
+
+**Completions** now insert with parens, kind=Method, cursor lands
+between the parens:
+
+| Insert | Was |
+|---|---|
+| `values()` | `values` |
+| `names()` | `names` |
+| `variants()` | `variants` |
+| `value()` | `value` |
+| `name()` | `name` |
+| `ordinal()` | `ordinal` |
+
+**Grammar** tightened: `enum-class-properties` now uses a negative
+lookahead — `.values()` (correct, with parens) falls through to
+`method-calls` and gets the method color; `.values` (no parens,
+which is a compile error in v2.3.1) keeps the constant-property
+color so the wrong shape is visually flagged.
+
+`enum-instance-properties` already had the no-parens lookahead from
+v0.2.7, so `.value` / `.ordinal` / `.name` without parens stay
+property-colored (compile error), and the `()` form falls through
+to method-calls.
+
 ## [0.2.7] — 2026-06-07
 
 ### Catch-up with the compiler's v2.2.16 and v2.3.0 enum surface

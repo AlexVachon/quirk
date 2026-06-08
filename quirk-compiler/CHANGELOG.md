@@ -5,6 +5,64 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [2.3.1] — 2026-06-08
+
+### Breaking: enum accessors are methods, not properties
+
+The six enum accessors added in v2.2.13 / v2.2.16 are now methods
+(require parens). This aligns them with Quirk's existing convention
+— every other parameterless accessor in the language uses parens
+(`list.length()`, `set.size()`, `s.is_empty()`, `console.size()`).
+The property form was an unconscious Python-ism that didn't match.
+
+```quirk
+//          v2.3.0          →   v2.3.1+
+//          ------          →   --------
+g.value         → g.value()
+g.name          → g.name()
+g.ordinal       → g.ordinal()
+Gender.values   → Gender.values()
+Gender.names    → Gender.names()
+Gender.variants → Gender.variants()
+
+// Unchanged:
+Gender.parse(s)              // always was a method
+Gender.Male                  // variant constant, no parens
+```
+
+#### Migration
+
+Sema rejects the bare property form with a pointer at the new shape:
+
+```
+[ERROR] 'value' is a method on enum 'Gender' — write `obj.value()` (with parens)
+  --> file.quirk:7:13
+```
+
+Manually: add `()` after every `.value`, `.name`, `.ordinal`,
+`.values`, `.names`, `.variants` on an enum context. The error
+message tells you exactly where each one is. Variant access
+(`Gender.Male`) and struct-field access (`user.name` where name is
+a String field) are unaffected — Sema only fires when the receiver
+is an enum-typed value or an enum class.
+
+#### Side fix: f-string + nested call interaction
+
+While wiring the Sema rejection I had to be careful not to call
+`resolveVariable` on receivers that aren't variable names (string
+literals, numbers, etc). My first pass triggered "undefined variable
+'\"...\"'" errors for every f-string interpolation that called a
+method (`${s.upper()}` etc.) because the resolution happens after
+the string-literal-receiver check. Guarded with an `isIdentLit`
+predicate so only actual identifier names go to resolveVariable.
+
+#### What stays as a property
+
+`Gender.Male` (variant access) — still bare. Variants are constants
+that resolve to i32 ordinals at compile time; there's nothing being
+"called". Treating them as methods would mean `Gender.Male()` which
+reads as "construct a Male"; that's not what's happening.
+
 ## [2.3.0] — 2026-06-06
 
 ### Nullable primitives + enums actually hold null at runtime

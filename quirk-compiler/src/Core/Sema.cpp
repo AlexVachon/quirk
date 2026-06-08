@@ -1226,16 +1226,22 @@ std::string Sema::checkMemberAccess(MemberAccessNode *node)
     if (auto lit = dynamic_cast<LiteralNode*>(node->object.get())) {
         if (enumRegistry.count(lit->value)) {
             EnumNode* en = enumRegistry[lit->value];
-            if (node->memberName == "str" || node->memberName == "name") return "String";
-            // `EnumName.values` / `.names` / `.variants` — three
-            // class-level accessors that each return a List. Sema's
-            // job is just to surface the right return type so
-            // downstream checks pass cleanly; Codegen handles the
-            // distinction (values: backing values; names: variant
-            // identifiers; variants: ordinals as Any-ints).
-            if (node->memberName == "values"   ||
-                node->memberName == "names"    ||
-                node->memberName == "variants") return "List";
+            // v2.3.1+: the class-level accessors `.values`, `.names`,
+            // `.variants` and the instance accessors `.value`, `.name`,
+            // `.ordinal` are now methods (require parens). They're
+            // checked via checkCall's member-call branch when invoked
+            // as `EnumName.values()` / `g.value()`. Bare property
+            // access here is a usage error — point at the new shape.
+            static const std::set<std::string> nowMethods = {
+                "values", "names", "variants", "value", "name", "ordinal"
+            };
+            if (nowMethods.count(node->memberName)) {
+                fatalError("'" + node->memberName + "' on enum '" + lit->value +
+                           "' is a method — write `" + lit->value + "." +
+                           node->memberName + "()` (with parens)",
+                           node->line, node->col, node->filePath);
+            }
+            if (node->memberName == "str") return "String";
             auto it = std::find(en->variants.begin(), en->variants.end(), node->memberName);
             if (it == en->variants.end())
                 fatalError("'" + node->memberName + "' is not a variant of enum '" + lit->value + "'",
@@ -1244,35 +1250,27 @@ std::string Sema::checkMemberAccess(MemberAccessNode *node)
         }
     }
 
-    // `g.value` on a backed-enum instance returns the backing type.
-    // Handles both `g.value` (where g is a typed binding) and the
-    // chained form `Gender.Other.value` (where the LHS is the variant
-    // expression itself).
-    if (node->memberName == "value") {
-        std::string objType;
-        if (auto lit = dynamic_cast<LiteralNode*>(node->object.get())) {
-            objType = resolveVariable(lit->value);
-        } else {
-            objType = checkExpression(node->object.get());
+    // v2.3.1+: `.value` / `.ordinal` / `.name` as bare property access
+    // on an enum-typed binding is also a usage error (same family).
+    // checkCall handles the `g.value()` form below.
+    {
+        static const std::set<std::string> instanceMethods = {
+            "value", "ordinal", "name"
+        };
+        if (instanceMethods.count(node->memberName)) {
+            std::string objType;
+            if (auto lit = dynamic_cast<LiteralNode*>(node->object.get())) {
+                objType = resolveVariable(lit->value);
+            } else {
+                objType = checkExpression(node->object.get());
+            }
+            if (!objType.empty() && objType.back() == '?') objType.pop_back();
+            if (enumRegistry.count(objType)) {
+                fatalError("'" + node->memberName + "' is a method on enum '" + objType +
+                           "' — write `obj." + node->memberName + "()` (with parens)",
+                           node->line, node->col, node->filePath);
+            }
         }
-        if (!objType.empty() && objType.back() == '?') objType.pop_back();
-        if (enumRegistry.count(objType) && !enumRegistry[objType]->backingType.empty()) {
-            return enumRegistry[objType]->backingType;
-        }
-    }
-
-    // `g.ordinal` — i32 declaration-order index of an enum instance.
-    // Works for backed and unbacked enums uniformly; same resolution
-    // path as `.value` above.
-    if (node->memberName == "ordinal") {
-        std::string objType;
-        if (auto lit = dynamic_cast<LiteralNode*>(node->object.get())) {
-            objType = resolveVariable(lit->value);
-        } else {
-            objType = checkExpression(node->object.get());
-        }
-        if (!objType.empty() && objType.back() == '?') objType.pop_back();
-        if (enumRegistry.count(objType)) return "Int";
     }
 
     std::string objType = checkExpression(node->object.get());
@@ -1519,6 +1517,82 @@ std::string Sema::checkCall(CallNode *node)
 
     if (auto m = dynamic_cast<MemberAccessNode *>(node->callee.get()))
     {
+        // v2.3.1+: enum class-level accessors as methods.
+        // `EnumName.values()` / `.names()` / `.variants()`.
+        if (auto* eLit = dynamic_cast<LiteralNode*>(m->object.get())) {
+            if (enumRegistry.count(eLit->value) &&
+                (m->memberName == "values" ||
+                 m->memberName == "names"  ||
+                 m->memberName == "variants")) {
+                if (!node->args.empty()) {
+                    fatalError(eLit->value + "." + m->memberName + "() takes no arguments",
+                               node->line, node->col, node->filePath);
+                }
+                return "List";
+            }
+        }
+
+        // v2.3.1+: enum instance accessors as methods.
+        // `g.value()` / `.ordinal()` / `.name()`. Only fire when
+        // memberName is one of the three accessors AND the receiver
+        // is plausibly an enum-typed binding. Without these guards
+        // we'd call resolveVariable on string/number literals and
+        // synthesise spurious "undefined variable" errors for every
+        // f-string interpolation (which routes a string literal
+        // through this checkCall path).
+        if (m->memberName == "value" || m->memberName == "ordinal" || m->memberName == "name") {
+            // Skip when the object is the enum class itself —
+            // class-level access doesn't go through this branch.
+            auto* oLit = dynamic_cast<LiteralNode*>(m->object.get());
+            bool isClassLevel = oLit && enumRegistry.count(oLit->value);
+            // Skip non-identifier literals (string / numeric / bool / null
+            // literals stored as LiteralNode with the raw token text).
+            auto isIdentLit = [](const std::string& v) {
+                if (v.empty()) return false;
+                if (!(std::isalpha((unsigned char)v[0]) || v[0] == '_')) return false;
+                for (char c : v) if (!std::isalnum((unsigned char)c) && c != '_') return false;
+                return v != "true" && v != "false" && v != "null";
+            };
+            if (!isClassLevel) {
+                std::string objType;
+                if (oLit) {
+                    if (!isIdentLit(oLit->value)) objType = ""; // not a binding name
+                    else objType = resolveVariable(oLit->value);
+                } else {
+                    objType = checkExpression(m->object.get());
+                }
+                if (!objType.empty() && objType.back() == '?') objType.pop_back();
+                if (enumRegistry.count(objType)) {
+                if (m->memberName == "value") {
+                    if (!node->args.empty()) {
+                        fatalError("value() takes no arguments",
+                                   node->line, node->col, node->filePath);
+                    }
+                    EnumNode* en = enumRegistry[objType];
+                    if (en->backingType.empty()) {
+                        fatalError("'" + objType + "' has no backing type — `.value()` is only on backed enums",
+                                   node->line, node->col, node->filePath);
+                    }
+                    return en->backingType;
+                }
+                if (m->memberName == "ordinal") {
+                    if (!node->args.empty()) {
+                        fatalError("ordinal() takes no arguments",
+                                   node->line, node->col, node->filePath);
+                    }
+                    return "Int";
+                }
+                if (m->memberName == "name") {
+                    if (!node->args.empty()) {
+                        fatalError("name() takes no arguments",
+                                   node->line, node->col, node->filePath);
+                    }
+                    return "String";
+                }
+                }  // close enumRegistry.count(objType)
+            }      // close !isClassLevel
+        }          // close memberName-in-set
+
         // `EnumName.parse(v)` — safe lookup. Returns `EnumName?`:
         // a boxed-Any-int ordinal on hit, null on miss. v2.3.0+
         // lowers nullable enums as i8*, so the proper `EnumName?`

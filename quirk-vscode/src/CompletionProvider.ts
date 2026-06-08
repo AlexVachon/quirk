@@ -331,9 +331,10 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
         // is genuinely a method.
         const firstVariant = variants[0] ?? 'Variant';
 
-        const valuesItem = new vscode.CompletionItem('values', vscode.CompletionItemKind.Property);
-        valuesItem.insertText = 'values';
-        valuesItem.detail = `${name}.values → List`;
+        // v2.3.1+: enum class-level accessors are methods (parens required).
+        const valuesItem = new vscode.CompletionItem('values', vscode.CompletionItemKind.Method);
+        valuesItem.insertText = new vscode.SnippetString('values()');
+        valuesItem.detail = `${name}.values() → List`;
         valuesItem.documentation = new vscode.MarkdownString(
             `**\`${name}.values\`** — \`List\` of all backing values in declaration order.\n\n` +
             'For unbacked enums the values are the variant identifiers (same as `.names`); for backed enums they\'re the declared backing literals.\n\n' +
@@ -345,9 +346,9 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
         valuesItem.sortText = '0values';
         items.push(valuesItem);
 
-        const namesItem = new vscode.CompletionItem('names', vscode.CompletionItemKind.Property);
-        namesItem.insertText = 'names';
-        namesItem.detail = `${name}.names → List<String>`;
+        const namesItem = new vscode.CompletionItem('names', vscode.CompletionItemKind.Method);
+        namesItem.insertText = new vscode.SnippetString('names()');
+        namesItem.detail = `${name}.names() → List<String>`;
         namesItem.documentation = new vscode.MarkdownString(
             `**\`${name}.names\`** — \`List<String>\` of variant identifiers in declaration order, regardless of backing.\n\n` +
             'For backed enums this differs from `.values` (which returns the *backing values*).\n\n' +
@@ -360,9 +361,9 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
         namesItem.sortText = '0names';
         items.push(namesItem);
 
-        const variantsItem = new vscode.CompletionItem('variants', vscode.CompletionItemKind.Property);
-        variantsItem.insertText = 'variants';
-        variantsItem.detail = `${name}.variants → List<${name}>`;
+        const variantsItem = new vscode.CompletionItem('variants', vscode.CompletionItemKind.Method);
+        variantsItem.insertText = new vscode.SnippetString('variants()');
+        variantsItem.detail = `${name}.variants() → List<${name}>`;
         variantsItem.documentation = new vscode.MarkdownString(
             `**\`${name}.variants\`** — \`List\` of variant ordinals (each element is an enum instance).\n\n` +
             '```quirk\n' +
@@ -409,8 +410,9 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
     private provideEnumInstanceCompletions(enumName: string): vscode.CompletionItem[] {
         const items: vscode.CompletionItem[] = [];
 
-        const valueItem = new vscode.CompletionItem('value', vscode.CompletionItemKind.Property);
-        valueItem.detail = `${enumName}.value → String | Int`;
+        const valueItem = new vscode.CompletionItem('value', vscode.CompletionItemKind.Method);
+        valueItem.insertText = new vscode.SnippetString('value()');
+        valueItem.detail = `${enumName}.value() → String | Int | Double`;
         valueItem.documentation = new vscode.MarkdownString(
             '**`.value`** — the backing value of an enum instance.\n\n' +
             'For backed enums (`enum Name(String|Int) { ... }`), returns the declared backing literal.\n\n' +
@@ -436,8 +438,9 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
         strItem.sortText = '1str';
         items.push(strItem);
 
-        const nameItem = new vscode.CompletionItem('name', vscode.CompletionItemKind.Property);
-        nameItem.detail = `${enumName}.name → String`;
+        const nameItem = new vscode.CompletionItem('name', vscode.CompletionItemKind.Method);
+        nameItem.insertText = new vscode.SnippetString('name()');
+        nameItem.detail = `${enumName}.name() → String`;
         nameItem.documentation = new vscode.MarkdownString(
             '**`.name`** — alias for `.str()`; the variant name as written.\n\n' +
             '```quirk\nGender.Female.name   // "Female"\n```'
@@ -448,9 +451,9 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
         // .ordinal — i32 declaration-order index (compiler v2.2.16+).
         // At runtime an enum instance IS the i32 already, so this is a
         // direct passthrough; same color as the other properties.
-        const ordItem = new vscode.CompletionItem('ordinal', vscode.CompletionItemKind.Property);
-        ordItem.insertText = 'ordinal';
-        ordItem.detail = `${enumName}.ordinal → Int`;
+        const ordItem = new vscode.CompletionItem('ordinal', vscode.CompletionItemKind.Method);
+        ordItem.insertText = new vscode.SnippetString('ordinal()');
+        ordItem.detail = `${enumName}.ordinal() → Int`;
         ordItem.documentation = new vscode.MarkdownString(
             '**`.ordinal`** — the variant\'s declaration-order index as `Int`.\n\n' +
             '```quirk\n' +

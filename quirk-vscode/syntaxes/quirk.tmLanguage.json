@@ -248,10 +248,10 @@
       ]
     },
     "enum-class-properties": {
-      "comment": "Class-level accessors on a Capitalized identifier: `Gender.values`, `Color.names`, etc. Colored as a property even when followed by `(` so `Gender.values()` (incorrect usage — it's an accessor, not a method) doesn't get the method-call color and the wrong shape is visually obvious. `parse` is the lone real method on the enum class and is intentionally NOT listed here — it gets the regular method-call color via the rule below.",
+      "comment": "Class-level enum accessors WITHOUT parens: `Gender.values` (compile error in v2.3.1+ — these are now methods that require `()`). Coloring them as property surfaces the wrong-shape error visually; the actual method form `Gender.values()` falls through to method-calls and gets the method color. Pre-v2.3.1 the rule applied to both shapes; the negative lookahead is the v0.2.8 tightening.",
       "patterns": [
         {
-          "match": "\\b([A-Z][a-zA-Z0-9_]*)(\\.)(values|names|variants)\\b",
+          "match": "\\b([A-Z][a-zA-Z0-9_]*)(\\.)(values|names|variants)\\b(?!\\s*\\()",
           "captures": {
             "1": { "name": "entity.name.type.enum.quirk" },
             "2": { "name": "punctuation.separator.property.quirk" },

@@ -2,6 +2,31 @@
 
 All notable changes to the extension land here. Versioning follows SemVer; minor bumps for new features, patches for fixes.
 
+## [0.2.9] — 2026-06-08
+
+### Fix: enum variant `Name = literal` no longer paints as keyword arg
+
+The `keyword-arguments` rule (`ident = value` → `variable.parameter`
+coloring, intended for `func(name = value)`) was unconstrained and
+fired anywhere a bare identifier preceded `=`. Inside an enum body:
+
+```quirk
+enum Gender(String) {
+    Male
+    Female = "F"      // Female painted orange (parameter color)
+    Other
+}
+```
+
+`Female` got the parameter color while `Male` / `Other` (no `=`)
+stayed identifier-colored. Inconsistent and visually misleading.
+
+Tightened the lookbehind from `(?<![.\[])` to `(?<=[(,]\s*)` — the
+ident must be immediately inside an argument list (after `(` or `,`,
+possibly across a newline for multi-line calls). Multi-line keyword
+args still work; bare top-level `Name = value` patterns no longer
+mis-color.
+
 ## [0.2.8] — 2026-06-08
 
 ### Catch up with compiler v2.3.1 — enum accessors are methods now

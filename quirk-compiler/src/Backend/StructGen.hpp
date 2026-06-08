@@ -1,7 +1,10 @@
 #pragma once
 #include <iostream>
 #include <map>
+#include <set>
 #include <string>
+#include <utility>
+#include <vector>
 #include <functional>
 #include "ast.hpp"
 #include "llvm/IR/IRBuilder.h"
@@ -20,6 +23,21 @@ class StructGen {
     std::map<std::string, std::string> structInitMap;
     std::map<std::string, std::vector<std::string>>* structHierarchy = nullptr;
     std::map<std::string, int> typeIdMap;
+
+    // Virtual-dispatch bookkeeping (v2.3.3 — merged from Codegen.cpp).
+    // `vtableEligible`: structs that get an `__type_id` (i32) prepended
+    //   as field 0 — needed for the type-switch in overridden-method
+    //   dispatch. Excludes extern-init C-backed structs (String, List,
+    //   Char, …) and Exception.
+    // `overrideMap[parent][methodName] = [(childType, childTypeId), …]`:
+    //   for each method on a vtable-eligible struct, the chain of
+    //   ancestor types that also define it. The Codegen dispatch site
+    //   walks this list and emits one `case <id>: call <Child>_method`
+    //   per entry.
+    std::set<std::string> vtableEligible;
+    std::map<std::string,
+        std::map<std::string,
+            std::vector<std::pair<std::string,int>>>> overrideMap;
 
    public:
     StructGen(LLVMContext& ctx, Module* mod, IRBuilder<>& builder, std::map<std::string, StructType*>& structs)
@@ -44,6 +62,31 @@ class StructGen {
     }
 
     void registerTypeId(const std::string& name, int id) { typeIdMap[name] = id; }
+    int  getTypeId(const std::string& name) const {
+        auto it = typeIdMap.find(name);
+        return it == typeIdMap.end() ? 0 : it->second;
+    }
+
+    // -- Virtual-dispatch state (v2.3.3). Codegen feeds entries via
+    // the mutators below during its pre-scan passes; the dispatch
+    // site at method-call time reads through the queries.
+    void markVtableEligible(const std::string& name) { vtableEligible.insert(name); }
+    bool isVtableEligible(const std::string& name) const {
+        return vtableEligible.count(name) > 0;
+    }
+    void recordOverride(const std::string& parent, const std::string& method,
+                        const std::string& child, int childTypeId) {
+        overrideMap[parent][method].push_back({child, childTypeId});
+    }
+    // Returns nullptr if no overrides recorded for (parent, method).
+    const std::vector<std::pair<std::string,int>>*
+    getOverrides(const std::string& parent, const std::string& method) const {
+        auto pIt = overrideMap.find(parent);
+        if (pIt == overrideMap.end()) return nullptr;
+        auto mIt = pIt->second.find(method);
+        if (mIt == pIt->second.end()) return nullptr;
+        return &mIt->second;
+    }
 
     bool inheritsFrom(const std::string& typeName, const std::string& base) {
         if (typeName == base) return true;

@@ -30,6 +30,7 @@
 #include "BuiltinGen.hpp"
 #include "TypeExtensions.hpp"
 #include "ControlFlowGen.hpp"
+#include "EnumGen.hpp"
 
 
 using namespace llvm;
@@ -61,26 +62,28 @@ class LLVMCodegen {
     std::map<std::string, std::vector<std::string>> structHierarchy;
 
     // Virtual dispatch tables
-    std::set<std::string> vtableEligible;   // structs that get __type_id at field 0
-    std::map<std::string, int> structTypeIds; // struct name → unique runtime type ID
-    // overrideMap[parentType][methodName] = [(childType, childTypeId), ...]
-    std::map<std::string, std::map<std::string, std::vector<std::pair<std::string,int>>>> overrideMap;
+    // Virtual-dispatch state moved into StructGen (v2.3.3 locality
+    // refactor, sibling of the EnumGen extraction). Read at this site
+    // via `structGen->isVtableEligible(name)` / `getOverrides(...)` /
+    // `getTypeId(name)`. The old `structTypeIds` duplicate is gone —
+    // `structGen->getTypeId(name)` reads straight from typeIdMap.
 
-    std::map<std::string, std::vector<std::string>> enumVariants;  // name -> ordered variants
-    std::map<std::string, std::string> varEnumTypes;               // varName -> enum type name
+    // Enum state — moved into EnumGen (v2.3.2 locality refactor).
+    // `enumGen` owns the registries; the reference aliases below let
+    // the existing inline dispatch keep using `enumVariants[X]` /
+    // `backedEnums[X]` syntax unchanged. Writes go through the EnumGen
+    // accessor methods (registerEnum / trackVarEnum); reads via these
+    // refs hit the same underlying maps.
+    EnumGen enumGen{Context, nullptr, Builder, StructTypes};
+    std::map<std::string, std::vector<std::string>>& enumVariants{*enumGen.variantsRegistryPtr()};
+    std::map<std::string, std::string>&              varEnumTypes{*enumGen.varEnumTypesPtr()};
+    using BackedEnumInfo = EnumGen::BackedEnumInfo;
+    std::map<std::string, BackedEnumInfo>&           backedEnums{*enumGen.backedEnumsPtr()};
     // (struct name, field name) → declared field type. Populated in
     // the same Pass-1 walk that registers struct layouts; used so
     // `self.gender.value` (gender: Gender on the struct) can resolve
     // to the right backed-enum runtime helper.
     std::map<std::string, std::map<std::string, std::string>> structFieldTypes;
-    // Backed-enum metadata: name → (backingType, resolved values per variant).
-    // Populated alongside enumVariants in Pass 1b. Empty backingType means
-    // the legacy ordinal-only enum — the new lookup path is skipped.
-    struct BackedEnumInfo {
-        std::string backingType;             // "String" or "Int"
-        std::vector<std::string> values;     // one per variant, defaults resolved
-    };
-    std::map<std::string, BackedEnumInfo> backedEnums;
 
     std::map<std::string, std::string> sourceMap;
     std::string currentFilePath;
@@ -155,6 +158,7 @@ class LLVMCodegen {
 
     LLVMCodegen() : pCtx(std::make_unique<LLVMContext>()), Context(*pCtx), Builder(Context) {
         TheModule = std::make_unique<Module>("QuirkCompiler", Context);
+        enumGen.setModule(TheModule.get());
         typeGen = std::make_unique<TypeGen>(Context, StructTypes);
         flowGen = std::make_unique<ControlFlowGen>(Context, TheModule.get(), Builder);
         structGen = std::make_unique<StructGen>(Context, TheModule.get(), Builder, StructTypes);
@@ -249,31 +253,13 @@ class LLVMCodegen {
             structGen->registerStructLayout("Callable", {"fn", "env"});
         }
 
-        // Pass 1b: Register enum variant lists (body generation deferred to after Pass 3)
+        // Pass 1b: Register enum variant lists (body generation deferred
+        // to after Pass 3). Delegated to EnumGen — see EnumGen.hpp for
+        // the variant-defaulting rule (Int-backed → ordinal index,
+        // String-backed / unbacked → variant identifier).
         for (const auto& node : nodes) {
             if (auto* e = dynamic_cast<EnumNode*>(node.get())) {
-                enumVariants[e->name] = e->variants;
-                // Every enum (backed or not) gets a BackedEnumInfo entry
-                // so `EnumName.values` has one uniform codegen path. For
-                // unbacked enums we treat the backing as String and use
-                // the variant names as the values — same shape that
-                // `instance.value` would yield via the existing
-                // `__<Name>_str` helper, but materialised eagerly into
-                // the packed global so `.values` can build the List in
-                // one runtime call.
-                BackedEnumInfo info;
-                info.backingType = e->backingType.empty() ? "String" : e->backingType;
-                info.values.reserve(e->variants.size());
-                for (size_t i = 0; i < e->variants.size(); i++) {
-                    std::string v = (i < e->variantValues.size()) ? e->variantValues[i] : std::string();
-                    if (v.empty()) {
-                        v = (info.backingType == "Int")
-                            ? std::to_string(i)
-                            : e->variants[i];
-                    }
-                    info.values.push_back(std::move(v));
-                }
-                backedEnums[e->name] = std::move(info);
+                enumGen.registerEnum(e);
             }
         }
         // Hand the registry to TypeGen so `define f(l: L)` types `l` as
@@ -321,7 +307,7 @@ class LLVMCodegen {
             for (const auto& n : nodes) {
                 if (auto s = dynamic_cast<StructNode*>(n.get())) {
                     std::set<std::string> vis;
-                    if (eligible(s->name, vis, eligible)) vtableEligible.insert(s->name);
+                    if (eligible(s->name, vis, eligible)) structGen->markVtableEligible(s->name);
                 }
             }
 
@@ -329,7 +315,7 @@ class LLVMCodegen {
             int nextId = 1;
             for (const auto& n : nodes)
                 if (auto s = dynamic_cast<StructNode*>(n.get()))
-                    if (vtableEligible.count(s->name)) structTypeIds[s->name] = nextId++;
+                    if (structGen->isVtableEligible(s->name)) structGen->registerTypeId(s->name, nextId++);
         }
         // ---------------------------------
 
@@ -374,7 +360,7 @@ class LLVMCodegen {
 
                 // Prepend __type_id (i32) as field 0 for vtable-eligible structs.
                 // This provides the runtime type tag needed for virtual dispatch.
-                if (vtableEligible.count(s->name)) {
+                if (structGen->isVtableEligible(s->name)) {
                     elementTypes.insert(elementTypes.begin(), Type::getInt32Ty(Context));
                     fieldNames.insert(fieldNames.begin(), "__type_id");
                 }
@@ -503,14 +489,13 @@ class LLVMCodegen {
         }
 
         // --- Post-Pass-3: Virtual dispatch setup ---
-        // Register type IDs with StructGen so allocateAndInit can stamp __type_id.
-        for (const auto& [name, id] : structTypeIds)
-            structGen->registerTypeId(name, id);
-
-        // Build overrideMap: for each user-defined method in a vtable-eligible struct,
-        // find ancestor structs that also define that method and record the override.
+        // Build the override map for type-switch dispatch — for each
+        // user-defined method on a vtable-eligible struct, record the
+        // chain of ancestor types that also define it. StructGen owns
+        // the resulting map and exposes it via `getOverrides(parent,
+        // method)` at the dispatch site. Type IDs were already
+        // registered in the Pass-1c eligibility pre-scan.
         {
-            // Extract raw method name from full funcName and its cls prefix.
             auto methodSuffix = [](const std::string& fn, const std::string& cls) -> std::string {
                 if (fn.size() <= cls.size()) return "";
                 std::string s = fn.substr(cls.size());
@@ -523,17 +508,17 @@ class LLVMCodegen {
 
             for (const auto& [funcName, funcNode] : functionDeclarations) {
                 const std::string& cls = funcNode->cls;
-                if (cls.empty() || !vtableEligible.count(cls) || funcNode->isExtern) continue;
+                if (cls.empty() || !structGen->isVtableEligible(cls) || funcNode->isExtern) continue;
                 std::string rawMethod = methodSuffix(funcName, cls);
                 if (rawMethod.empty()) continue;
 
                 auto checkAncestor = [&](const std::string& parent, auto& self) -> void {
-                    if (!vtableEligible.count(parent)) return;
+                    if (!structGen->isVtableEligible(parent)) return;
                     std::string parentFn = (rawMethod.size() >= 2 && rawMethod[0] == '_' && rawMethod[1] == '_')
                         ? parent + rawMethod
                         : parent + "_" + rawMethod;
                     if (functionDeclarations.count(parentFn))
-                        overrideMap[parent][rawMethod].push_back({cls, structTypeIds[cls]});
+                        structGen->recordOverride(parent, rawMethod, cls, structGen->getTypeId(cls));
                     auto hit = structHierarchy.find(parent);
                     if (hit != structHierarchy.end())
                         for (const auto& gp : hit->second) self(gp, self);
@@ -546,8 +531,11 @@ class LLVMCodegen {
         }
         // -------------------------------------------
 
-        // Pass 3b: Generate __EnumName_str(i32)->String* helpers
-        // Runs after Pass 3 so String's body and __init prototype are both declared.
+        // Pass 3b: Per-enum LLVM emission — packed value/name globals,
+        // the `__<Enum>_name` C string, and the `__<Enum>_str(i32)`
+        // helper that maps ordinal → variant-name String*. All
+        // delegated to EnumGen; runs after Pass 3 so String's body
+        // and __init prototype are both declared.
         {
             // Ensure make_String is declared (external runtime helper i8*->i8*)
             Function* makeStrFn = TheModule->getFunction("make_String");
@@ -560,112 +548,8 @@ class LLVMCodegen {
                 ? (Type*)PointerType::getUnqual(StructTypes["String"])
                 : (Type*)Type::getInt8PtrTy(Context);
 
-            for (const auto& node : nodes) {
-                if (auto* e = dynamic_cast<EnumNode*>(node.get())) {
-                    std::string fnName = "__" + e->name + "_str";
-                    FunctionType* ft = FunctionType::get(strPtrTy, {Type::getInt32Ty(Context)}, false);
-                    Function* strFn = Function::Create(ft, Function::InternalLinkage, fnName, TheModule.get());
-
-                    BasicBlock* entry = BasicBlock::Create(Context, "entry", strFn);
-                    BasicBlock* dflt  = BasicBlock::Create(Context, "default", strFn);
-                    Builder.SetInsertPoint(entry);
-                    Value* arg = strFn->arg_begin();
-                    SwitchInst* sw = Builder.CreateSwitch(arg, dflt, (unsigned)e->variants.size());
-
-                    auto makeStr = [&](const std::string& text) -> Value* {
-                        Value* rawPtr = Builder.CreateGlobalStringPtr(text);
-                        Value* strVal = Builder.CreateCall(makeStrFn, {rawPtr});
-                        return strPtrTy->isPointerTy() && strPtrTy != Type::getInt8PtrTy(Context)
-                            ? Builder.CreateBitCast(strVal, strPtrTy)
-                            : strVal;
-                    };
-
-                    for (int i = 0; i < (int)e->variants.size(); i++) {
-                        BasicBlock* bb = BasicBlock::Create(Context, "case_" + e->variants[i], strFn);
-                        sw->addCase(ConstantInt::get(Type::getInt32Ty(Context), i), bb);
-                        Builder.SetInsertPoint(bb);
-                        Builder.CreateRet(makeStr(e->variants[i]));
-                    }
-
-                    Builder.SetInsertPoint(dflt);
-                    Builder.CreateRet(makeStr("<unknown>"));
-                }
-            }
-
-            // Per-enum packed globals: the *values* blob (the runtime
-            // helpers walk this for `Gender(...)` lookup, `.value`,
-            // `.values`) and the separate *names* blob (used by
-            // `.names`, always a packed String list of variant
-            // identifiers regardless of backing). For unbacked enums
-            // the two blobs are identical content but Codegen emits
-            // both so `Enum.names` has one uniform code path.
-            for (const auto& [name, info] : backedEnums) {
-                // Names blob — variant identifiers as a packed
-                // null-separated string.
-                {
-                    std::string namesPacked;
-                    auto vIt = enumVariants.find(name);
-                    if (vIt != enumVariants.end()) {
-                        for (const auto& v : vIt->second) {
-                            namesPacked += v;
-                            namesPacked.push_back('\0');
-                        }
-                    }
-                    Constant* blob = ConstantDataArray::getString(Context, namesPacked, /*AddNull=*/false);
-                    auto* gv = new GlobalVariable(
-                        *TheModule, blob->getType(), /*isConstant=*/true,
-                        GlobalValue::PrivateLinkage, blob, "__" + name + "_names");
-                    gv->setUnnamedAddr(GlobalValue::UnnamedAddr::Global);
-                    (void)gv;
-                }
-                if (info.backingType == "String") {
-                    std::string packed;
-                    for (const auto& v : info.values) { packed += v; packed.push_back('\0'); }
-                    Constant* blob = ConstantDataArray::getString(Context, packed, /*AddNull=*/false);
-                    auto* gv = new GlobalVariable(
-                        *TheModule, blob->getType(), /*isConstant=*/true,
-                        GlobalValue::PrivateLinkage, blob, "__" + name + "_packed");
-                    gv->setUnnamedAddr(GlobalValue::UnnamedAddr::Global);
-                    (void)gv;
-                } else if (info.backingType == "Int") {
-                    std::vector<Constant*> vals;
-                    vals.reserve(info.values.size());
-                    for (const auto& v : info.values) {
-                        int32_t n = 0;
-                        try { n = (int32_t)std::stol(v); } catch (...) { n = 0; }
-                        vals.push_back(ConstantInt::get(Type::getInt32Ty(Context), n));
-                    }
-                    auto* arrTy = ArrayType::get(Type::getInt32Ty(Context), vals.size());
-                    Constant* blob = ConstantArray::get(arrTy, vals);
-                    auto* gv = new GlobalVariable(
-                        *TheModule, arrTy, /*isConstant=*/true,
-                        GlobalValue::PrivateLinkage, blob, "__" + name + "_packed");
-                    gv->setUnnamedAddr(GlobalValue::UnnamedAddr::Global);
-                    (void)gv;
-                } else if (info.backingType == "Double") {
-                    std::vector<Constant*> vals;
-                    vals.reserve(info.values.size());
-                    for (const auto& v : info.values) {
-                        double d = 0.0;
-                        try { d = std::stod(v); } catch (...) { d = 0.0; }
-                        vals.push_back(ConstantFP::get(Type::getDoubleTy(Context), d));
-                    }
-                    auto* arrTy = ArrayType::get(Type::getDoubleTy(Context), vals.size());
-                    Constant* blob = ConstantArray::get(arrTy, vals);
-                    auto* gv = new GlobalVariable(
-                        *TheModule, arrTy, /*isConstant=*/true,
-                        GlobalValue::PrivateLinkage, blob, "__" + name + "_packed");
-                    gv->setUnnamedAddr(GlobalValue::UnnamedAddr::Global);
-                    (void)gv;
-                }
-                // Enum name global — used as the runtime error-message prefix.
-                Constant* nameBlob = ConstantDataArray::getString(Context, name, /*AddNull=*/true);
-                auto* nameGv = new GlobalVariable(
-                    *TheModule, nameBlob->getType(), /*isConstant=*/true,
-                    GlobalValue::PrivateLinkage, nameBlob, "__" + name + "_name");
-                nameGv->setUnnamedAddr(GlobalValue::UnnamedAddr::Global);
-                (void)nameGv;
-            }
+            enumGen.emitStrFns(nodes, FunctionCallee(makeStrFn), strPtrTy);
+            enumGen.emitGlobals();
         }
 
         // We used to compile non-main function bodies (Pass 4) *before* main,
@@ -2067,12 +1951,11 @@ class LLVMCodegen {
                     if (auto lit2 = dynamic_cast<LiteralNode*>(callExpr->callee.get()))
                         isSuperCall = (lit2->value == "super");
 
-                if (!isSuperCall && objPtr &&
-                    vtableEligible.count(typeName) &&
-                    overrideMap.count(typeName) &&
-                    overrideMap[typeName].count(member->memberName)) {
-
-                    const auto& overrides = overrideMap[typeName][member->memberName];
+                const std::vector<std::pair<std::string,int>>* overridesPtr = nullptr;
+                if (!isSuperCall && objPtr && structGen->isVtableEligible(typeName))
+                    overridesPtr = structGen->getOverrides(typeName, member->memberName);
+                if (overridesPtr) {
+                    const auto& overrides = *overridesPtr;
 
                     // Pre-evaluate non-self arguments once before the switch.
                     std::vector<Value*> rawArgs;

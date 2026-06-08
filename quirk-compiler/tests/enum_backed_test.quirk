@@ -28,7 +28,7 @@ struct Resp {
     }
 
     define __str(self) {
-        return "Resp(${self.code.value}, ${self.body})"
+        return "Resp(${self.code.value()}, ${self.body})"
     }
 }
 
@@ -40,25 +40,30 @@ define main() -> void {
     if g2 != Gender.Female { print("FAIL: Gender(F)") }
 
     // Reverse lookup: variant → backing value.
-    if g.value != "Male"   { print("FAIL: g.value") }
-    if g2.value != "F"     { print("FAIL: g2.value") }
-    if Gender.Other.value != "Other" { print("FAIL: chained .value") }
+    if g.value() != "Male"   { print("FAIL: g.value") }
+    if g2.value() != "F"     { print("FAIL: g2.value") }
+    if Gender.Other.value() != "Other" { print("FAIL: chained .value") }
 
     // Int-backed.
     s := Status(404)
     if s != Status.NotFound { print("FAIL: Status(404)") }
-    if s.value != 404       { print("FAIL: s.value") }
+    if s.value() != 404       { print("FAIL: s.value") }
 
     // Struct field of enum type.
     r := Resp(Status.OK, "ok")
-    if r.code.value != 200 { print("FAIL: struct-field .value") }
+    if r.code.value() != 200 { print("FAIL: struct-field .value") }
 
-    // Throw on miss.
+    // Throw on miss — verify both that it throws *and* that the
+    // ValueError carries the offending value in its message.
     caught := false
     try {
         bad := Gender("nope")
+        print("FAIL: throw-on-miss returned ${bad}")
     } catch (e: ValueError) {
         caught = true
+        if not e.message.contains("nope") {
+            print("FAIL: error message missing 'nope': ${e.message}")
+        }
     }
     if not caught { print("FAIL: throw-on-miss") }
 

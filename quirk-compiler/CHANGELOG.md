@@ -5,6 +5,46 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [2.3.3] — 2026-06-08
+
+### Internal: virtual-dispatch state folded into `StructGen`
+
+Continuing the locality refactor that landed `EnumGen` in v2.3.2.
+The three pieces of vtable bookkeeping that Codegen.cpp owned —
+`vtableEligible` (struct set), `structTypeIds` (name → runtime id),
+and `overrideMap` (parent → method → [(child, id), …]) — all moved
+into `StructGen`, where the struct-inheritance + dispatch story
+already lives. The dispatch site, the field-0 `__type_id` prepend,
+and the override-map build now read/write through StructGen's
+`markVtableEligible` / `isVtableEligible` / `registerTypeId` /
+`getTypeId` / `recordOverride` / `getOverrides` accessors.
+
+The duplicate `structTypeIds` map dropped — StructGen's
+`typeIdMap` was always the source of truth; Codegen's mirror was
+just there because the pre-scan happened in Codegen.
+
+No user-visible change. Same code paths, same generated IR; just
+the inheritance/dispatch bookkeeping lives in one file now.
+
+## [2.3.2] — 2026-06-08
+
+### Internal: extracted `EnumGen` out of `Codegen.cpp`
+
+All enum-related Codegen state — the variant registry, per-variable
+enum-type map, and backed-enum value/blob metadata — moved into a
+new `EnumGen` helper alongside the existing `StructGen` / `MathGen`
+/ `TypeGen` / `VariableGen` / `ControlFlowGen` / `TypeExtensions` /
+`BuiltinGen` cluster. EnumGen also owns the "pure" emission steps:
+the per-enum packed value/name LLVM globals, the `__<Enum>_name`
+C-string, and the `__<Enum>_str(i32) -> String*` ordinal-to-name
+helper. Codegen still owns dispatch (handleCall / handleExpression
+member-access branches) because those need too many Codegen
+internals to extract cleanly.
+
+No user-visible change. The bookkeeping refactor cuts ~120 lines of
+inline enum machinery from Codegen.cpp and makes future enum work
+(richer parse errors, custom traits, etc.) land in one focused file.
+
 ## [2.3.1] — 2026-06-08
 
 ### Breaking: enum accessors are methods, not properties

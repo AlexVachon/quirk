@@ -298,8 +298,8 @@
     "keyword-arguments": {
       "patterns": [
         {
-          "comment": "Named/keyword argument: func(name = value) — ident directly before = (not :=, ==, =>)",
-          "match": "(?<![.\\[])\\b([a-zA-Z_]\\w*)\\s*(=)(?![=>])",
+          "comment": "Named/keyword argument: func(name = value) — ident directly before = (not :=, ==, =>). The variable-width lookbehind `(?<=[(,]\\s*)` requires the ident to be inside an arg list (immediately after `(` or `,`, possibly across a newline for multi-line calls). Without that constraint, a bare `Name = literal` in an enum body got false-painted as a parameter — see vscode 0.2.9 fix.",
+          "match": "(?<=[(,]\\s*)([a-zA-Z_]\\w*)\\s*(=)(?![=>])",
           "captures": {
             "1": { "name": "variable.parameter.quirk" },
             "2": { "name": "keyword.operator.assignment.quirk" }

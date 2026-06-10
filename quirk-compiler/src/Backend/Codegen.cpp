@@ -2609,7 +2609,8 @@ class LLVMCodegen {
             flowGen->generateMatch(mt, parentFunc,
                 [this](Node* n) { return this->handleExpression(n); },
                 [this, parentFunc](Node* n) { this->handleStatement(n, parentFunc); },
-                [this](const std::string& name, Value* val) { varGen->defineLocalVariable(name, val); });
+                [this](const std::string& name, Value* val) { varGen->defineLocalVariable(name, val); },
+                [this](const std::string& typeName) -> int { return structGen->getTypeId(typeName); });
         }
         else if (auto th = dynamic_cast<ThrowNode*>(node)) {
             flowGen->generateThrow(th, parentFunc, 

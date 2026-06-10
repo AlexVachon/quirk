@@ -121,6 +121,14 @@ class Sema {
     // modules. Sema fills this during the first walk; `from M use { NAME }`
     // accepts a name iff it's in here (or one of the other registries).
     std::map<std::string, VarDeclNode*> moduleConstRegistry;
+    // Tagged-union variant sets (v2.4). Maps the union name to the
+    // ordered list of variant identifiers it declares. Used by the
+    // match-arm exhaustiveness check — if the scrutinee's declared
+    // type is a tagged-union root and one or more variants are
+    // missing from the arms (and there's no `_` wildcard), Sema
+    // warns. The actual struct registration (one StructNode per
+    // variant, parent=union) happens at parse time via desugaring.
+    std::map<std::string, std::vector<std::string>> taggedUnionVariants;
     FunctionNode* findMethod(const std::string& cls, const std::string& name) {
         auto cit = methodRegistry.find(cls);
         if (cit == methodRegistry.end()) return nullptr;

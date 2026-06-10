@@ -1,0 +1,44 @@
+// p40 — Tagged unions (v2.4.0). Locks the construction +
+// match-with-narrowing path so future Codegen refactors don't regress
+// the variant→union assignability or the `case Variant as v` field-
+// access via `v.payload`.
+//
+// Implementation: each variant desugars to a StructNode with the
+// union name as its parent. Sema knows variant→union subtyping via
+// the struct-inheritance compatibility rule (Sema.cpp::isCompatibleTypes).
+// Codegen's match path emits a direct `__type_id` ICmp (variants are
+// vtable-eligible) and the bind-arm bitcasts the scrutinee to the
+// variant's LLVM struct type so `.value` GEPs against the right
+// layout.
+
+type Result = Ok(value: Int) | Err(msg: String)
+type LoadStatus = Pending() | Loaded(data: String) | Failed(err: String)
+
+define unwrap_or_zero(r: Result) -> Int {
+    match r {
+        case Ok as o => return o.value
+        case Err     => return 0
+    }
+    return -1
+}
+
+define status_label(s: LoadStatus) -> String {
+    match s {
+        case Pending => return "waiting"
+        case Loaded  => return "ready"
+        case Failed  => return "broken"
+    }
+    return "unknown"
+}
+
+define main() -> void {
+    if unwrap_or_zero(Ok(42))      != 42 { print("FAIL: unwrap Ok(42)");        return }
+    if unwrap_or_zero(Ok(0))       != 0  { print("FAIL: unwrap Ok(0)");         return }
+    if unwrap_or_zero(Err("nope")) != 0  { print("FAIL: unwrap Err");           return }
+
+    if status_label(Pending())          != "waiting" { print("FAIL: Pending"); return }
+    if status_label(Loaded("rows"))     != "ready"   { print("FAIL: Loaded");  return }
+    if status_label(Failed("timeout"))  != "broken"  { print("FAIL: Failed");  return }
+
+    print("PASS: tagged unions — construction + match + narrow-bind")
+}

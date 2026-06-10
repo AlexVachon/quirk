@@ -164,16 +164,86 @@ std::vector<std::unique_ptr<Node>> Parser::parse() {
                 advance(); // consume 'type'
                 std::string aliasName = advance().value;
                 consume(TokenType::ASSIGN, "Expected '=' after type alias name");
-                // Collect the target type (may include | for unions)
-                std::string target = advance().value;
-                while (peek().type == TokenType::PIPE) {
-                    advance(); // consume '|'
-                    target += "|" + advance().value;
+                // Distinguish tagged-union syntax from type-union alias:
+                //   tagged: `Ok(value: Int) | Err(msg: String)` — at least
+                //           one alternative is `Ident(...)`.
+                //   alias:  `Int | String`                     — every
+                //           alternative is a bare type identifier.
+                // Look ahead one token after the first identifier: if it
+                // is `(`, we're parsing a tagged union; otherwise fall
+                // through to the existing TypeAlias path.
+                bool isTagged = pos + 1 < (int)tokens.size() &&
+                                tokens[pos].type == TokenType::IDENTIFIER &&
+                                tokens[pos + 1].type == TokenType::LPAREN;
+                if (isTagged) {
+                    auto node = std::make_unique<TaggedUnionDeclNode>();
+                    node->name = aliasName;
+                    while (true) {
+                        TaggedUnionVariant v;
+                        v.name = advance().value;  // variant identifier
+                        consume(TokenType::LPAREN, "Expected '(' after variant name");
+                        // Empty payload: `V()` — zero-field variant.
+                        // Otherwise: comma-separated `name: Type` pairs.
+                        if (peek().type != TokenType::RPAREN) {
+                            while (true) {
+                                std::string fName = advance().value;
+                                consume(TokenType::COLON, "Expected ':' in variant field");
+                                std::string fType = parseTypeString();
+                                v.fields.push_back({fName, fType});
+                                if (peek().type == TokenType::COMMA) { advance(); continue; }
+                                break;
+                            }
+                        }
+                        consume(TokenType::RPAREN, "Expected ')' closing variant fields");
+                        node->variants.push_back(std::move(v));
+                        if (peek().type != TokenType::PIPE) break;
+                        advance();  // consume '|'
+                    }
+                    // Desugar: synthesise the parent (union) struct + one
+                    // child struct per variant. The parent is fieldless
+                    // and serves only as the inheritance root so all
+                    // variants share a vtable / type-id space. Each
+                    // variant becomes a plain struct with `parents = {
+                    // unionName }` and the declared fields; Codegen's
+                    // existing fallback path (GEP-store each field at
+                    // construction time) generates the constructor.
+                    {
+                        auto baseStruct = std::make_unique<StructNode>();
+                        baseStruct->name = node->name;
+                        extraNodes.push_back(std::move(baseStruct));
+                        for (const auto& v : node->variants) {
+                            auto variantStruct = std::make_unique<StructNode>();
+                            variantStruct->name    = v.name;
+                            variantStruct->parents = { node->name };
+                            for (const auto& [fName, fType] : v.fields) {
+                                StructField sf;
+                                sf.name = fName;
+                                sf.type = fType;
+                                variantStruct->fields.push_back(std::move(sf));
+                            }
+                            extraNodes.push_back(std::move(variantStruct));
+                        }
+                    }
+                    nodes.push_back(std::move(node));
+                    // Flush the synthesised StructNodes into the top-
+                    // level stream so Sema's Pass 1 picks them up like
+                    // any other struct decl.
+                    for (auto& extra : extraNodes) nodes.push_back(std::move(extra));
+                    extraNodes.clear();
+                } else {
+                    // Type-alias / type-union: collect identifiers
+                    // separated by '|' into one string. This path is
+                    // unchanged from the pre-v2.4 behaviour.
+                    std::string target = advance().value;
+                    while (peek().type == TokenType::PIPE) {
+                        advance(); // consume '|'
+                        target += "|" + advance().value;
+                    }
+                    auto node = std::make_unique<TypeAliasNode>();
+                    node->name = aliasName;
+                    node->target = target;
+                    nodes.push_back(std::move(node));
                 }
-                auto node = std::make_unique<TypeAliasNode>();
-                node->name = aliasName;
-                node->target = target;
-                nodes.push_back(std::move(node));
             } else if (type == TokenType::INTERFACE) {
                 nodes.push_back(parseInterface());
             } else if (type == TokenType::EXTEND) {

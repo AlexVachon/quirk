@@ -284,6 +284,15 @@ bool Sema::analyze(const std::vector<std::unique_ptr<Node>> &nodes)
         else if (auto e = dynamic_cast<EnumNode*>(node.get())) {
             enumRegistry[e->name] = e;
         }
+        else if (auto tu = dynamic_cast<TaggedUnionDeclNode*>(node.get())) {
+            // Variants were already desugared to StructNodes at parse
+            // time; here we just record the union → variant-set mapping
+            // for the exhaustiveness check in checkStatement(MatchNode).
+            std::vector<std::string> names;
+            names.reserve(tu->variants.size());
+            for (const auto& v : tu->variants) names.push_back(v.name);
+            taggedUnionVariants[tu->name] = std::move(names);
+        }
         else if (auto v = dynamic_cast<VarDeclNode*>(node.get())) {
             // Top-level `NAME := value` bindings — track them so
             // `from M use { NAME }` can resolve them across modules.
@@ -675,7 +684,37 @@ void Sema::checkStatement(Node *node)
         defineVariable(ta->name, "Type");
     }
     else if (auto m = dynamic_cast<MatchNode*>(node)) {
-        checkExpression(m->scrutinee.get());
+        std::string scrutType = checkExpression(m->scrutinee.get());
+        // Exhaustiveness: if the scrutinee is a tagged-union root and
+        // no wildcard arm is present, warn for any missing variant.
+        // Doesn't error — runtime fall-through is harmless (the match
+        // just exits with no body); the warning surfaces the missed
+        // case at compile time without blocking partial matches.
+        if (taggedUnionVariants.count(scrutType)) {
+            bool hasWildcard = false;
+            std::set<std::string> covered;
+            for (const auto& arm : m->arms) {
+                if (arm.isWildcard) { hasWildcard = true; break; }
+                if (arm.isTypeMatch)
+                    for (const auto& tn : arm.typeNames) covered.insert(tn);
+            }
+            if (!hasWildcard) {
+                std::vector<std::string> missing;
+                for (const auto& v : taggedUnionVariants[scrutType])
+                    if (!covered.count(v)) missing.push_back(v);
+                if (!missing.empty()) {
+                    std::string msg = "non-exhaustive match on '" + scrutType + "' — missing variant";
+                    if (missing.size() > 1) msg += "s";
+                    msg += ": ";
+                    for (size_t i = 0; i < missing.size(); i++) {
+                        if (i > 0) msg += ", ";
+                        msg += missing[i];
+                    }
+                    msg += ". Add an arm or a `_` wildcard.";
+                    reportWarning(msg, m->line, m->col, m->filePath);
+                }
+            }
+        }
         for (auto& arm : m->arms) {
             if (arm.isTypeMatch) {
                 enterScope();
@@ -1863,6 +1902,24 @@ bool Sema::isCompatibleTypes(const std::string &expected, const std::string &act
     bool expIsPtr = (expected == "Any" || expected == "String");
     bool actIsPtr = (actual   == "Any" || actual   == "String");
     if (expIsPtr && actIsPtr) return true;
+
+    // Struct inheritance: `Ok` (parent `Result`) is compatible with
+    // anything declared as `Result`. Walks the parent chain
+    // transitively. Drives both struct subtyping in the wild and
+    // tagged-union variant→union assignability (v2.4 — each variant
+    // is desugared into a child StructNode with `parents = {union}`).
+    if (structRegistry.count(actual)) {
+        std::function<bool(const std::string&)> walks = [&](const std::string& s) -> bool {
+            auto it = structRegistry.find(s);
+            if (it == structRegistry.end()) return false;
+            for (const auto& p : it->second->parents) {
+                if (p == expected) return true;
+                if (walks(p)) return true;
+            }
+            return false;
+        };
+        if (walks(actual)) return true;
+    }
 
     return false;
 }

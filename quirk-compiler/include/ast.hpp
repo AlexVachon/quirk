@@ -379,6 +379,37 @@ struct TypeAliasNode : public Node {
     }
 };
 
+// Tagged-union declaration (v2.4 / v3 phase 2). Each variant is a
+// named constructor with zero or more typed payload fields. Each
+// variant lowers in Codegen to a struct whose first field is a tag
+// (`__type_id`), inheriting from a virtual base struct named after
+// the union itself — so `match` dispatches via the same vtable
+// machinery already used for `case Subclass =>` arms on user
+// structs. See CHANGELOG v2.4.0 / project_tagged_unions.md.
+struct TaggedUnionVariant {
+    std::string name;                                          // e.g. "Ok"
+    std::vector<std::pair<std::string, std::string>> fields;   // (name, type)
+};
+
+struct TaggedUnionDeclNode : public Node {
+    std::string name;                          // e.g. "Result"
+    std::vector<TaggedUnionVariant> variants;
+
+    void print(int indent) const override {
+        std::string sp(indent, ' ');
+        std::cout << sp << "TaggedUnion: " << name << " =";
+        for (size_t i = 0; i < variants.size(); i++) {
+            std::cout << (i == 0 ? " " : " | ") << variants[i].name << "(";
+            for (size_t j = 0; j < variants[i].fields.size(); j++) {
+                if (j > 0) std::cout << ", ";
+                std::cout << variants[i].fields[j].first << ": " << variants[i].fields[j].second;
+            }
+            std::cout << ")";
+        }
+        std::cout << std::endl;
+    }
+};
+
 struct ListComprehensionNode : public Node {
     std::unique_ptr<Node> expr;
     std::string varName;

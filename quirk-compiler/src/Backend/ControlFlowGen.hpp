@@ -490,7 +490,15 @@ class ControlFlowGen {
     void generateMatch(MatchNode* node, Function* parentFunc,
                        std::function<Value*(Node*)> exprHandler,
                        std::function<void(Node*)> stmtHandler,
-                       std::function<void(const std::string&, Value*)> bindHook = nullptr) {
+                       std::function<void(const std::string&, Value*)> bindHook = nullptr,
+                       // Optional: maps a type name to its vtable type-id
+                       // (returns 0 if the type isn't vtable-eligible).
+                       // When non-zero, `case StructName =>` emits a
+                       // direct __type_id load+ICmp instead of falling
+                       // back to the heuristic `isinstance` runtime
+                       // helper — the latter doesn't know about user
+                       // struct IDs and silently fails to match.
+                       std::function<int(const std::string&)> typeIdLookup = nullptr) {
         Value* scrutVal = exprHandler(node->scrutinee.get());
         if (!scrutVal) return;
 
@@ -548,29 +556,56 @@ class ControlFlowGen {
                 }
             } else if (arm.isTypeMatch) {
                 // Type-match: `case TypeName =>` / `case T1 | T2 as x =>`
-                // Emit: isinstance(scrutinee_as_i8*, type_name_String*) for each type
+                // For vtable-eligible user structs (incl. tagged-union
+                // variants), emit a direct `__type_id` field-0 load and
+                // ICmp against the variant's compile-time id. For
+                // primitives / collections / Any-shapes, fall back to
+                // the `isinstance` heuristic.
                 Type* i8PtrTy = Type::getInt8PtrTy(Context);
+                Type* i32Ty   = Type::getInt32Ty(Context);
                 Value* scrutI8 = scrutVal->getType()->isPointerTy()
                     ? Builder.CreateBitCast(scrutVal, i8PtrTy)
                     : Builder.CreateIntToPtr(scrutVal, i8PtrTy);
 
-                Function* makeStrFn = TheModule->getFunction("make_String");
-                if (!makeStrFn) {
-                    FunctionType* ft = FunctionType::get(i8PtrTy, {i8PtrTy}, false);
-                    makeStrFn = Function::Create(ft, Function::ExternalLinkage, "make_String", TheModule);
-                }
-                Function* isinstanceFn = TheModule->getFunction("Core_Primitives_Quirk_isinstance");
-                if (!isinstanceFn) {
-                    FunctionType* ft = FunctionType::get(Type::getInt32Ty(Context), {i8PtrTy, i8PtrTy}, false);
-                    isinstanceFn = Function::Create(ft, Function::ExternalLinkage, "Core_Primitives_Quirk_isinstance", TheModule);
-                }
+                Function* makeStrFn = nullptr;
+                Function* isinstanceFn = nullptr;
+                auto ensureRuntime = [&]() {
+                    if (!makeStrFn) {
+                        makeStrFn = TheModule->getFunction("make_String");
+                        if (!makeStrFn) {
+                            FunctionType* ft = FunctionType::get(i8PtrTy, {i8PtrTy}, false);
+                            makeStrFn = Function::Create(ft, Function::ExternalLinkage, "make_String", TheModule);
+                        }
+                    }
+                    if (!isinstanceFn) {
+                        isinstanceFn = TheModule->getFunction("Core_Primitives_Quirk_isinstance");
+                        if (!isinstanceFn) {
+                            FunctionType* ft = FunctionType::get(i32Ty, {i8PtrTy, i8PtrTy}, false);
+                            isinstanceFn = Function::Create(ft, Function::ExternalLinkage, "Core_Primitives_Quirk_isinstance", TheModule);
+                        }
+                    }
+                };
 
                 Value* cond = nullptr;
                 for (auto& typeName : arm.typeNames) {
-                    Constant* cstr = Builder.CreateGlobalStringPtr(typeName, "type_name_cstr");
-                    Value* typeStr = Builder.CreateCall(makeStrFn, {cstr}, "type_str");
-                    Value* res = Builder.CreateCall(isinstanceFn, {scrutI8, typeStr}, "isinstance_res");
-                    Value* eq = Builder.CreateICmpNE(res, ConstantInt::get(Type::getInt32Ty(Context), 0), "type_match");
+                    int typeId = typeIdLookup ? typeIdLookup(typeName) : 0;
+                    Value* eq;
+                    if (typeId > 0) {
+                        // Load scrutinee's __type_id (field 0 of every
+                        // vtable-eligible struct) and compare against
+                        // the variant's compile-time id.
+                        Value* tidPtrTyped = Builder.CreateBitCast(
+                            scrutI8, PointerType::getUnqual(i32Ty), "tid_addr");
+                        Value* tidLoaded = Builder.CreateLoad(i32Ty, tidPtrTyped, "scrut_tid");
+                        eq = Builder.CreateICmpEQ(tidLoaded,
+                            ConstantInt::get(i32Ty, typeId), "tid_eq");
+                    } else {
+                        ensureRuntime();
+                        Constant* cstr = Builder.CreateGlobalStringPtr(typeName, "type_name_cstr");
+                        Value* typeStr = Builder.CreateCall(makeStrFn, {cstr}, "type_str");
+                        Value* res = Builder.CreateCall(isinstanceFn, {scrutI8, typeStr}, "isinstance_res");
+                        eq = Builder.CreateICmpNE(res, ConstantInt::get(i32Ty, 0), "type_match");
+                    }
                     cond = cond ? Builder.CreateOr(cond, eq, "type_or") : eq;
                 }
                 if (!cond) cond = ConstantInt::getFalse(Context);
@@ -579,9 +614,29 @@ class ControlFlowGen {
                 Builder.SetInsertPoint(matchTargetBB);
                 // Bind the scrutinee to `bindName` if present — must happen
                 // before the guard so a guard like `case T as x if x > 0`
-                // can see `x`.
+                // can see `x`. When the arm narrows to a single vtable-
+                // eligible struct (e.g. `case Ok as o` against a Result-
+                // typed scrutinee), bitcast scrutVal to that variant's
+                // LLVM struct type so `o.value` GEPs against the right
+                // layout. Without this, the scrutinee retains the
+                // declared parent type and field access misses.
                 if (!arm.bindName.empty() && bindHook) {
-                    bindHook(arm.bindName, scrutVal);
+                    Value* boundVal = scrutVal;
+                    if (arm.typeNames.size() == 1 && typeIdLookup &&
+                        typeIdLookup(arm.typeNames[0]) > 0 &&
+                        scrutVal->getType()->isPointerTy()) {
+                        // User-defined structs register as plain
+                        // `<Name>` in the LLVM type table; built-ins
+                        // (Type, Callable) use the `struct.<Name>` form.
+                        StructType* st = StructType::getTypeByName(Context, arm.typeNames[0]);
+                        if (!st) st = StructType::getTypeByName(Context, "struct." + arm.typeNames[0]);
+                        if (st) {
+                            Type* targetPtrTy = PointerType::getUnqual(st);
+                            if (scrutVal->getType() != targetPtrTy)
+                                boundVal = Builder.CreateBitCast(scrutVal, targetPtrTy, arm.bindName + "_narrow");
+                        }
+                    }
+                    bindHook(arm.bindName, boundVal);
                 }
             } else {
                 // OR together equality checks for all patterns in this arm

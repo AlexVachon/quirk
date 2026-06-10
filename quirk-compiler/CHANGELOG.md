@@ -5,6 +5,60 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [2.4.0] — 2026-06-09
+
+### Feature: tagged unions (v3 phase 2)
+
+```quirk
+type Result = Ok(value: Int) | Err(msg: String)
+
+define unwrap_or_zero(r: Result) -> Int {
+    match r {
+        case Ok as o => return o.value
+        case Err     => return 0
+    }
+    return 0
+}
+```
+
+Sum types with typed payloads. Each variant is a named constructor;
+zero-payload variants use `()` (`Pending()`) to disambiguate from the
+existing type-alias union (`type T = Int | String`).
+
+**Design — desugar to struct + vtable.** Each `type T = A(...) | B(...)`
+synthesizes one fieldless parent struct `T` and one child struct per
+variant with `parents = {T}` and the declared payload fields. The
+existing struct-inheritance + vtable machinery handles the rest:
+- Variant constructors (`Ok(42)`) flow through Codegen's normal
+  struct-constructor path — fields stored at GEP slots after `__type_id`.
+- `match` dispatches via a direct `__type_id` ICmp (no `isinstance`
+  runtime call needed for vtable-eligible types).
+- `case Variant as v` narrows `v`'s LLVM type to the variant struct
+  (bitcast at the bind site) so `v.payload` GEPs the right layout.
+
+**New Sema rule — struct-inheritance compatibility.** `isCompatibleTypes`
+now walks the parent chain: `Ok` (parent `Result`) is assignable to
+anything declared `Result`. Drives both tagged-union assignability
+and ordinary struct subtyping in the wild.
+
+**Exhaustiveness check.** A match on a tagged-union scrutinee warns
+when one or more variants are missing and no `_` wildcard is present.
+Warning only — not an error — so partial matches keep compiling.
+
+```
+[WARNING] non-exhaustive match on 'Result' — missing variant: Err.
+          Add an arm or a `_` wildcard.
+```
+
+**Known limitations (v2.4.0):**
+- Generic variants (`Option<T>`) deferred to phase 3 (monomorphization).
+- Variant methods deferred — methods live on the union, dispatched via match.
+- Recursive variants (`type Tree = Leaf() | Node(value: Int, left: Tree, right: Tree)`)
+  work via existing struct forward-declaration.
+
+Probe `p40_tagged_unions.quirk` locks construction + match + narrow-
+bind. 40/40 probes + 19 stdlib tests pass.
+
 ## [2.3.4] — 2026-06-09
 
 ### Wart cleanup — closures, tuples-in-lists, equality on Any

@@ -169,6 +169,7 @@ class LLVMCodegen {
         varGen = std::make_unique<VariableGen>(Context, Builder);
         varGen->setDebugMode(debugMode, TheModule.get());
         mathGen = std::make_unique<MathGen>(Context, Builder);
+        mathGen->setModule(TheModule.get());
     }
 
    private:
@@ -1166,7 +1167,18 @@ class LLVMCodegen {
                 for (auto& a : c->args) walk(a.value.get());
             }
             else if (auto m = dynamic_cast<MemberAccessNode*>(n)) { walk(m->object.get()); }
-            else if (auto v = dynamic_cast<VarDeclNode*>(n)) { walk(v->expression.get()); }
+            else if (auto v = dynamic_cast<VarDeclNode*>(n)) {
+                // Always walk the RHS expression. For reassignment
+                // (`x = expr`, op="="), also walk the LHS so a
+                // write-only nonlocal reference is captured —
+                // `fn() => { nonlocal x; x = 7 }` used to silently
+                // create a fresh local because `x` only appeared as
+                // an assignment target and the walker never saw it.
+                // For `:=` declarations the LHS is a brand-new local
+                // binding and doesn't need capture.
+                walk(v->expression.get());
+                if (v->op == "=") walk(v->lhs.get());
+            }
             else if (auto r = dynamic_cast<ReturnNode*>(n)) { walk(r->expression.get()); }
             else if (auto i = dynamic_cast<IfNode*>(n)) {
                 walk(i->condition.get());
@@ -2390,13 +2402,24 @@ class LLVMCodegen {
                     argVal = Builder.CreateBitCast(argVal, expectedType);
                 else if (argVal->getType()->isIntegerTy() && expectedType->isDoubleTy())
                     argVal = Builder.CreateSIToFP(argVal, expectedType);
-                // ptr → int: e.g. a `nonlocal i: Int` cell loads as i8* but
-                // gets passed where an i32/i64 is expected (List.get(i)).
-                // The auto-unbox for arithmetic already does this in MathGen;
-                // mirror it for call sites so closures-with-state stop hitting
-                // `Call parameter type does not match function signature`.
-                else if (argVal->getType()->isPointerTy() && expectedType->isIntegerTy())
-                    argVal = Builder.CreatePtrToInt(argVal, expectedType, "nonlocal_unbox");
+                // ptr → int: e.g. a `nonlocal i: Int` cell loads as i8*
+                // but gets passed where an i32/i64 is expected
+                // (List.get(i)). Route through quirk_opaque_to_int so
+                // both encodings — Any* (Int 0/false/Bool false) and
+                // legacy tagged-int (nonzero ints, list elements) —
+                // resolve correctly.
+                else if (argVal->getType()->isPointerTy() && expectedType->isIntegerTy()) {
+                    Type* i8p = Type::getInt8PtrTy(Context);
+                    FunctionCallee toInt = TheModule->getOrInsertFunction(
+                        "quirk_opaque_to_int", Type::getInt32Ty(Context), i8p);
+                    Value* casted = (argVal->getType() == i8p)
+                        ? argVal
+                        : Builder.CreateBitCast(argVal, i8p);
+                    Value* asI32 = Builder.CreateCall(toInt, {casted}, "nonlocal_unbox");
+                    argVal = expectedType->isIntegerTy(32)
+                        ? asI32
+                        : Builder.CreateIntCast(asI32, expectedType, /*isSigned=*/true);
+                }
             }
             finalArgs.push_back(argVal);
         }
@@ -2458,8 +2481,9 @@ class LLVMCodegen {
                     if (varGen->isNonlocal(varName)) continue; // already a heap cell
                     Value* curVal = varGen->resolveVariable(varName);
                     if (!curVal) continue;
-                    // Box to i8*
-                    Value* boxed = boxToVoidPtr(curVal);
+                    // Box for the cell — routes Int/Double/Bool through
+                    // Any* heap-box so 0/false aren't stored as NULL.
+                    Value* boxed = varGen->boxForNonlocalCell(curVal);
                     // Allocate a single-pointer cell (8 bytes)
                     Value* cell = Builder.CreateCall(gcMallocFn,
                         {ConstantInt::get(Type::getInt64Ty(Context), 8)}, varName + "_cell");
@@ -3712,16 +3736,19 @@ Value* LLVMCodegen::handleExpression(Node* node) {
             }
 
             // Boxed-Any compared to a primitive Bool/Int literal — e.g.
-            // `pred(v) == false` where pred is a `Callable` returning Bool.
-            // The boxed return is `i8*` pointing at an Any{tag,ival,…}; the
-            // literal is `i1`. Without an unbox, ICmpInst trips on operand
-            // type mismatch AND `ptrtoint` of the pointer compares against
-            // garbage. Route through `Core_Primitives_Any_to_int`, which
-            // pulls `.ival` out for ANY_BOOL / ANY_INT / ANY_CHAR.
+            // `pred(v) == false` where pred is a `Callable` returning Bool,
+            // or `pairs.get(0).0 == 10` where the tuple data is a tagged
+            // int (`IntToPtr(N)`). Two i8* encodings can show up:
+            //   - Any* heap-box (tagged ANY_INT/BOOL/CHAR — from box_*)
+            //   - Tagged integer (`inttoptr` of an i32 — from arithmetic
+            //     and tuple/list storage of small ints)
+            // `quirk_opaque_to_int` handles both transparently;
+            // `Core_Primitives_Any_to_int` SEGV'd on tagged ints because
+            // it derefs `.tag` on pointer N.
             Type* i8p = Type::getInt8PtrTy(Context);
             auto unboxAnyToInt = [&](Value* boxedI8p, Type* targetIntTy) {
                 FunctionCallee toInt = TheModule->getOrInsertFunction(
-                    "Core_Primitives_Any_to_int",
+                    "quirk_opaque_to_int",
                     Type::getInt32Ty(Context),
                     i8p);
                 Value* asI32 = Builder.CreateCall(toInt, {boxedI8p}, "any_unbox_i");
@@ -4288,26 +4315,35 @@ Value* LLVMCodegen::handleExpression(Node* node) {
         // `t[0]` but using dot-notation. We detect it before the generic
         // member-access path so a Tuple's `.N` calls the runtime helper
         // rather than searching for a named field that doesn't exist.
+        // Also handles i8* (Any) receivers — the common case of
+        // `pairs.get(i).0` where `pairs: List<Tuple>`. At runtime the
+        // i8* points at a Tuple struct, so a bitcast is safe; if it
+        // doesn't, `Core_Collections_Tuple_Tuple___get` returns NULL
+        // for out-of-bounds and the caller sees null instead of UB.
         if (objPtr && !member->memberName.empty() &&
             std::all_of(member->memberName.begin(), member->memberName.end(),
-                        [](char c) { return std::isdigit(static_cast<unsigned char>(c)); })) {
-            bool isTuple = false;
-            if (objPtr->getType()->isPointerTy() && StructTypes.count("Tuple")) {
-                Type* elt = objPtr->getType()->getPointerElementType();
-                if (elt == StructTypes["Tuple"]) isTuple = true;
-            }
-            if (isTuple) {
+                        [](char c) { return std::isdigit(static_cast<unsigned char>(c)); }) &&
+            StructTypes.count("Tuple")) {
+            Type* tuplePtrTy = PointerType::getUnqual(StructTypes["Tuple"]);
+            Type* elt = objPtr->getType()->isPointerTy()
+                ? objPtr->getType()->getPointerElementType()
+                : nullptr;
+            bool isTuple = elt && elt == StructTypes["Tuple"];
+            bool isOpaqueAny = elt && elt->isIntegerTy(8);
+            if (isTuple || isOpaqueAny) {
                 Function* getFn = TheModule->getFunction("Core_Collections_Tuple_Tuple___get");
                 if (!getFn) {
-                    Type* tuplePtrTy = PointerType::getUnqual(StructTypes["Tuple"]);
                     FunctionType* ft = FunctionType::get(Type::getInt8PtrTy(Context),
                         {tuplePtrTy, Type::getInt32Ty(Context)}, false);
                     getFn = Function::Create(ft, Function::ExternalLinkage,
                         "Core_Collections_Tuple_Tuple___get", TheModule.get());
                 }
+                Value* tupPtr = isOpaqueAny
+                    ? Builder.CreateBitCast(objPtr, tuplePtrTy, "any_as_tuple")
+                    : objPtr;
                 int idx = std::stoi(member->memberName);
                 return Builder.CreateCall(getFn,
-                    {objPtr, ConstantInt::get(Type::getInt32Ty(Context), idx)},
+                    {tupPtr, ConstantInt::get(Type::getInt32Ty(Context), idx)},
                     "tup_" + member->memberName);
             }
         }

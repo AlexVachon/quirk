@@ -10,17 +10,17 @@ using namespace llvm;
 class VariableGen {
     LLVMContext& Context;
     IRBuilder<>& Builder;
-    // When set, every new local alloca emits a Debug_register_local() call
-    // so the qdb prompt can inspect the variable by name. Off by default;
-    // turned on by Codegen when --debug is passed. Needs a Module* so we
-    // can `getOrInsertFunction` the runtime helper from inside the helpers.
+    // The active LLVM Module. Used by emitDebugRegister and by the
+    // nonlocal-cell box helper (which calls into Core_Primitives_Any_*
+    // box functions). Set via setDebugMode (legacy name; sets the
+    // module unconditionally, regardless of `debugMode`).
     bool debugMode = false;
-    Module* dbgModule = nullptr;
+    Module* TheModule = nullptr;
 
     // Emit Debug_register_local(name, &slot, type_tag). type_tag matches
     // the enum in libs/debug.c — small int, see DBG_TAG_* there.
     void emitDebugRegister(const std::string& name, Value* slot) {
-        if (!debugMode || !dbgModule) return;
+        if (!debugMode || !TheModule) return;
         if (!slot || !slot->getType()->isPointerTy()) return;
         Type* elTy = slot->getType()->getPointerElementType();
         int tag = 5;  // 5 = OPAQUE / unknown — printed via quirk_opaque_to_string
@@ -29,7 +29,7 @@ class VariableGen {
         else if (elTy->isIntegerTy(64))  tag = 1;  // INT64
         else if (elTy->isDoubleTy())     tag = 2;  // DOUBLE
         else if (elTy->isPointerTy())    tag = 3;  // POINTER (String*/Any*/etc.)
-        FunctionCallee reg = dbgModule->getOrInsertFunction(
+        FunctionCallee reg = TheModule->getOrInsertFunction(
             "Debug_register_local",
             Type::getVoidTy(Context),
             Type::getInt8PtrTy(Context),  // name
@@ -59,7 +59,58 @@ class VariableGen {
     VariableGen(LLVMContext& ctx, IRBuilder<>& build)
         : Context(ctx), Builder(build) {}
 
-    void setDebugMode(bool d, Module* m) { debugMode = d; dbgModule = m; }
+    void setDebugMode(bool d, Module* m) { debugMode = d; TheModule = m; }
+
+    // Box a value for storage in a nonlocal heap cell. Pointers go in
+    // as-is (after a bitcast to i8*). Integers/Doubles/Bools allocate
+    // a `Core_Primitives_Any_box_*` wrapper so the cell pointer is
+    // never NULL — without this, `Int 0` and `Bool false` would round-
+    // trip through the cell as the null pointer and `quirk_opaque_to_
+    // string` would stringify them as "null". The companion unboxers
+    // are MathGen's arithmetic auto-unbox and Codegen's call-arg
+    // auto-unbox; both now route through `quirk_opaque_to_int`/
+    // `quirk_opaque_to_double` which transparently handle both the
+    // Any* and the legacy tagged-int encoding.
+    Value* boxForNonlocalCell(Value* val) {
+        Type* i8p = Type::getInt8PtrTy(Context);
+        if (!val || val->getType()->isVoidTy())
+            return ConstantPointerNull::get(cast<PointerType>(i8p));
+        if (val->getType()->isPointerTy())
+            return Builder.CreateBitCast(val, i8p);
+        if (!TheModule) {
+            // Module not yet bound — fall back to the lossy encoding.
+            // Should not happen in practice; setDebugMode is called
+            // immediately after construction.
+            if (val->getType()->isIntegerTy())
+                return Builder.CreateIntToPtr(val, i8p);
+            if (val->getType()->isDoubleTy()) {
+                Value* asInt = Builder.CreateBitCast(val, Type::getInt64Ty(Context));
+                return Builder.CreateIntToPtr(asInt, i8p);
+            }
+            return Builder.CreateBitCast(val, i8p);
+        }
+        Type* i32 = Type::getInt32Ty(Context);
+        if (val->getType()->isIntegerTy(1)) {
+            FunctionCallee boxBool = TheModule->getOrInsertFunction(
+                "Core_Primitives_Any_box_bool", i8p, i32);
+            Value* ext = Builder.CreateZExt(val, i32);
+            return Builder.CreateCall(boxBool, {ext});
+        }
+        if (val->getType()->isIntegerTy()) {
+            FunctionCallee boxInt = TheModule->getOrInsertFunction(
+                "Core_Primitives_Any_box_int", i8p, i32);
+            Value* w = val->getType()->getIntegerBitWidth() == 32
+                ? val
+                : Builder.CreateIntCast(val, i32, /*isSigned=*/true);
+            return Builder.CreateCall(boxInt, {w});
+        }
+        if (val->getType()->isDoubleTy()) {
+            FunctionCallee boxDbl = TheModule->getOrInsertFunction(
+                "Core_Primitives_Any_box_double", i8p, Type::getDoubleTy(Context));
+            return Builder.CreateCall(boxDbl, {val});
+        }
+        return Builder.CreateBitCast(val, i8p);
+    }
 
     void clear() {
         NamedValues.clear();
@@ -137,23 +188,7 @@ class VariableGen {
             // cast cell pointer to i8** so we can store an i8* through it
             Value* cellI8pp = Builder.CreateBitCast(cellPtr,
                 PointerType::getUnqual(Type::getInt8PtrTy(Context)), name + "_cell_i8pp");
-            // Box val to i8* so the heap cell can hold any Quirk type.
-            // Integer/Double need a numeric→ptr conversion; pointers can
-            // be reinterpreted directly. Anything else falls through to a
-            // best-effort BitCast — only struct-by-value or vector would
-            // hit this, neither of which is currently produced by the rest
-            // of codegen for nonlocal captures.
-            Value* boxed;
-            if (val->getType()->isPointerTy())
-                boxed = Builder.CreateBitCast(val, Type::getInt8PtrTy(Context));
-            else if (val->getType()->isIntegerTy())
-                boxed = Builder.CreateIntToPtr(val, Type::getInt8PtrTy(Context));
-            else if (val->getType()->isDoubleTy()) {
-                Value* asInt = Builder.CreateBitCast(val, Type::getInt64Ty(Context));
-                boxed = Builder.CreateIntToPtr(asInt, Type::getInt8PtrTy(Context));
-            } else {
-                boxed = Builder.CreateBitCast(val, Type::getInt8PtrTy(Context));
-            }
+            Value* boxed = boxForNonlocalCell(val);
             Builder.CreateStore(boxed, cellI8pp);
             return;
         }

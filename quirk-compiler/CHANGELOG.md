@@ -5,6 +5,71 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [2.3.4] — 2026-06-09
+
+### Wart cleanup — closures, tuples-in-lists, equality on Any
+
+Three long-standing rough edges around boxing/unboxing fixed in one pass.
+
+#### Int 0 (and Bool false) in a nonlocal cell read back as "null"
+
+```quirk
+counter := 0
+nonlocal counter
+bump := fn() => { nonlocal counter; counter = counter + 1 }
+print(counter)      // before: "null"   after: 0
+```
+
+`boxToVoidPtr` encoded Int N as `IntToPtr(N)`, so `0` became the null
+pointer. `quirk_opaque_to_string(null)` short-circuited to `"null"`.
+Nonlocal-cell boxing now routes through
+`Core_Primitives_Any_box_int` / `_box_double` / `_box_bool`
+(new `VariableGen::boxForNonlocalCell`) so the cell pointer is never
+null. Companion unboxers (MathGen's arithmetic auto-unbox + Codegen's
+call-site auto-unbox) route through `quirk_opaque_to_int`, which
+handles both the Any* and the legacy tagged-int encoding.
+
+#### Closures didn't capture write-only nonlocal references
+
+```quirk
+seen := -1
+nonlocal seen
+set := fn() => { nonlocal seen; seen = 7 }    // before: silently no-op
+set()
+print(seen)         // before: -1   after: 7
+```
+
+The free-var collector walked `VarDeclNode::expression` (the RHS)
+but never the LHS. So a closure that ASSIGNED to a nonlocal without
+also READING it never picked up the capture, silently producing a
+fresh local instead. Now walks the LHS for `op == "="`
+reassignments.
+
+#### `pairs.get(i).0` no longer needs a `t: Tuple :=` annotation
+
+```quirk
+pairs := [(1, "one"), (2, "two")]
+a := pairs.get(0).0     // before: error 'Any' has no member '0'
+                        // after:  a = 1
+```
+
+Sema now lets all-digit member names (`.0`, `.1`, …) through on Any
+(returns Any). Codegen's tuple-`.N` path accepts i8* receivers and
+bitcasts to `Tuple*` before calling
+`Core_Collections_Tuple_Tuple___get`. The annotation workaround is
+still valid, just no longer required.
+
+#### `boxed == int_literal` no longer SIGSEGVs on tagged-int pointers
+
+The "boxed-Any vs primitive Int" equality path called
+`Core_Primitives_Any_to_int`, which derefs `.tag` on the receiver.
+That works for Any* heap-boxes but SIGSEGV'd on tagged-int pointers
+(e.g. `IntToPtr(10)`) where derefing pointer 10 is UB. Switched to
+`quirk_opaque_to_int`, which transparently handles both encodings.
+
+Probes `p38_nonlocal_int_zero.quirk` and
+`p39_tuple_in_list_unbox.quirk` added to lock the regression.
+
 ## [2.3.3] — 2026-06-08
 
 ### Internal: virtual-dispatch state folded into `StructGen`

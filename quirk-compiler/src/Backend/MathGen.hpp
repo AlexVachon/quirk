@@ -1,5 +1,6 @@
 #pragma once
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/Module.h"
 #include "ast.hpp"
 #include <functional>
 
@@ -8,10 +9,13 @@ using namespace llvm;
 class MathGen {
     LLVMContext& Context;
     IRBuilder<>& Builder;
+    Module* TheModule = nullptr;
 
    public:
     MathGen(LLVMContext& ctx, IRBuilder<>& build)
         : Context(ctx), Builder(build) {}
+
+    void setModule(Module* m) { TheModule = m; }
 
     Value* toBool(Value* v) {
         if (!v) return nullptr;
@@ -43,17 +47,42 @@ class MathGen {
     Value* generateBinaryOp(std::string op, Value* L, Value* R) {
         if (!L || !R) return nullptr;
 
-        // Unbox i8* (Any-boxed integer/double) for arithmetic and numeric comparisons.
-        // This handles `for x in list` / list comprehension variables that arrive as void*.
+        // Unbox i8* for arithmetic / numeric comparisons. Two encodings
+        // can show up:
+        //   - Legacy tagged int (low 32 bits = value) — e.g. `for x in
+        //     list` elements, list[i] reads of Int.
+        //   - Any* heap-box — used by nonlocal cells so Int 0 / Bool
+        //     false aren't NULL.
+        // `quirk_opaque_to_int` handles both, so we route through it
+        // when we have a Module pointer; the raw PtrToInt fallback
+        // covers the early-init path where setModule hasn't fired.
         bool isNumericOp = (op=="+"||op=="-"||op=="*"||op=="/"||op==">"||op=="<"||op==">="||op=="<=");
-        if (isNumericOp) {
+        bool isEqOp     = (op == "==" || op == "!=");
+        {
             Type* i8p = Type::getInt8PtrTy(Context);
             bool Lptr = L->getType() == i8p;
             bool Rptr = R->getType() == i8p;
             bool Lnum = L->getType()->isIntegerTy() || L->getType()->isDoubleTy();
             bool Rnum = R->getType()->isIntegerTy() || R->getType()->isDoubleTy();
-            if (Lptr && (Rnum || Rptr)) L = Builder.CreatePtrToInt(L, Type::getInt32Ty(Context), "unbox_l");
-            if (Rptr && (Lnum || Lptr)) R = Builder.CreatePtrToInt(R, Type::getInt32Ty(Context), "unbox_r");
+            auto unbox = [&](Value* v, const char* label) -> Value* {
+                if (!TheModule) return Builder.CreatePtrToInt(v, Type::getInt32Ty(Context), label);
+                FunctionCallee toInt = TheModule->getOrInsertFunction(
+                    "quirk_opaque_to_int", Type::getInt32Ty(Context), i8p);
+                return Builder.CreateCall(toInt, {v}, label);
+            };
+            if (isNumericOp) {
+                // Arithmetic / ordered comparison: unbox any i8* side that
+                // pairs with a number-or-pointer.
+                if (Lptr && (Rnum || Rptr)) L = unbox(L, "unbox_l");
+                if (Rptr && (Lnum || Lptr)) R = unbox(R, "unbox_r");
+            } else if (isEqOp) {
+                // `==` / `!=` against a literal int (or a known Int local)
+                // must unbox the i8* side or LLVM ICmp asserts on type
+                // mismatch. Don't touch i8*-vs-i8* — that's a legit
+                // pointer-equality compare (struct identity, etc.).
+                if (Lptr && Rnum) L = unbox(L, "unbox_eq_l");
+                if (Rptr && Lnum) R = unbox(R, "unbox_eq_r");
+            }
         }
 
         bool isDouble = L->getType()->isDoubleTy() || R->getType()->isDoubleTy();

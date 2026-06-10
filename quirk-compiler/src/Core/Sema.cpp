@@ -1295,6 +1295,17 @@ std::string Sema::checkMemberAccess(MemberAccessNode *node)
 
     std::string type = resolveMember(objType, node->memberName);
     if (type == "unknown") {
+        // Numeric tuple-index `.0` / `.1` / … on an Any: at runtime
+        // the value is often a Tuple (e.g. `pairs.get(0).0` where
+        // `pairs: List<Tuple>`). Codegen has a path that calls the
+        // Tuple_get helper on the underlying i8*, so let it through
+        // and type the result as Any. Without this, `t: Tuple :=
+        // pairs.get(i)` was forced on every tuple-in-collection read.
+        if (objType == "Any" && !node->memberName.empty() &&
+            std::all_of(node->memberName.begin(), node->memberName.end(),
+                        [](char c) { return std::isdigit(static_cast<unsigned char>(c)); })) {
+            return "Any";
+        }
         std::string msg = "'" + objType + "' has no member '" + node->memberName + "'";
         // The usual cause of an unexpected `Any` is a value flowing through
         // a `Callable` (whose return is type-erased) or a Map/List read.

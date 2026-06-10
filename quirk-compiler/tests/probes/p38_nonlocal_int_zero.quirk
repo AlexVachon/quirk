@@ -1,0 +1,36 @@
+// p38 — Int 0 in a nonlocal heap cell must read back as 0, not "null".
+// Before v2.3.4, boxToVoidPtr encoded Int N as IntToPtr(N) — and IntToPtr(0)
+// is the null pointer 0x0. quirk_opaque_to_string treats null as "null", so
+// `print(zero)` from a closure capturing a nonlocal `zero := 0` would print
+// "null" instead of "0". Fix: VariableGen::boxForNonlocalCell now routes
+// Int/Double/Bool through Core_Primitives_Any_box_* — the heap-Any pointer
+// is never null. The companion unboxers (MathGen arithmetic + Codegen call-
+// arg unbox) route through quirk_opaque_to_int which handles both shapes.
+define main() -> void {
+    zero := 0
+    nonlocal zero
+    seen := -1
+    nonlocal seen
+    show := fn() => {
+        nonlocal zero
+        nonlocal seen
+        seen = zero
+    }
+    show()
+    if seen == 0 { print("PASS: zero reads as 0 across closure") }
+    else         { print("FAIL: seen=${seen}") }
+
+    // Bonus check: closure mutation of an Int counter — was the original
+    // failure mode in the iter lib that the v2.3.4 work was named after.
+    counter := 0
+    nonlocal counter
+    bump := fn() => {
+        nonlocal counter
+        counter = counter + 1
+    }
+    bump()
+    bump()
+    bump()
+    if counter == 3 { print("PASS: counter == 3") }
+    else            { print("FAIL: counter=${counter}") }
+}

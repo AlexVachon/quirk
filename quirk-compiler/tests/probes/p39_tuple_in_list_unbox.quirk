@@ -1,0 +1,21 @@
+// p39 — Numeric `.N` access on an Any (e.g. `pairs.get(i).0` where
+// `pairs: List<Tuple>`) used to error in Sema with "'Any' has no member '0'".
+// The workaround was `t: Tuple := pairs.get(i)` then `t.0` — annoying
+// because the typed-walrus annotation is the only way to surface tuple
+// fields out of a List. Fixed in v2.3.4: Sema lets all-digit member names
+// through on Any (returns Any), and Codegen extends the tuple-get codegen
+// path to accept i8* receivers (cast to Tuple*) before calling
+// Core_Collections_Tuple_Tuple___get.
+define main() -> void {
+    pairs := [(10, 100), (20, 200), (30, 300)]
+    if pairs.length() != 3 { print("FAIL: length"); return }
+
+    // Direct chained access — no annotation. Pre-v2.3.4 this errored
+    // at Sema with "'Any' has no member '0'".
+    a := pairs.get(0).0
+    b := pairs.get(1).1
+    c := pairs.get(2).0
+
+    if a == 10 and b == 200 and c == 30 { print("PASS: tuple-in-list chained access") }
+    else                                 { print("FAIL: a=${a} b=${b} c=${c}") }
+}

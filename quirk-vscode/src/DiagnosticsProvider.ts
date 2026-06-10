@@ -224,11 +224,20 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
         // shape: `type Result = Ok(value: Int) | Err(msg: String)` —
         // scan the RHS for `Identifier(` patterns and register each
         // variant constructor so `Ok(42)` / `Err("...")` / `case Ok =>`
-        // don't false-flag as undefined.
-        const typeAliasMatch1 = /^\s*type\s+([a-zA-Z_]\w*)\s*=(.*)$/.exec(cleanLine);
+        // don't false-flag as undefined. v2.4.1 also accepts a generic
+        // parameter list — `type Option[T] = Some(value: T) | None()`.
+        const typeAliasMatch1 = /^\s*type\s+([a-zA-Z_]\w*)\s*(?:\[([^\]]*)\])?\s*=(.*)$/.exec(cleanLine);
         if (typeAliasMatch1) {
             fileGlobals.add(typeAliasMatch1[1]);
-            const rhs = typeAliasMatch1[2];
+            // Generic type params (`[T, E]`) become scope-local names
+            // so payload type annotations `value: T` don't false-flag.
+            if (typeAliasMatch1[2]) {
+                typeAliasMatch1[2].split(',').forEach(tp => {
+                    const t = tp.trim();
+                    if (t) fileGlobals.add(t);
+                });
+            }
+            const rhs = typeAliasMatch1[3];
             const variantRe = /\b([A-Z][a-zA-Z0-9_]*)\s*\(/g;
             let vm: RegExpExecArray | null;
             while ((vm = variantRe.exec(rhs)) !== null) {

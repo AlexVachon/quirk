@@ -163,6 +163,20 @@ std::vector<std::unique_ptr<Node>> Parser::parse() {
             } else if (type == TokenType::TYPE_KW) {
                 advance(); // consume 'type'
                 std::string aliasName = advance().value;
+                // Generic type-params: `type Option[T] = ...`
+                // / `type Result[T, E] = ...`. Mirrors struct/define
+                // bracket-param syntax — comma-separated identifiers.
+                std::vector<std::string> typeParams;
+                if (peek().type == TokenType::LBRACKET) {
+                    advance(); // consume '['
+                    while (peek().type != TokenType::RBRACKET && !isAtEnd()) {
+                        if (peek().type == TokenType::IDENTIFIER)
+                            typeParams.push_back(advance().value);
+                        if (peek().type == TokenType::COMMA) advance();
+                        else break;
+                    }
+                    consume(TokenType::RBRACKET, "Expected ']' closing type parameters");
+                }
                 consume(TokenType::ASSIGN, "Expected '=' after type alias name");
                 // Distinguish tagged-union syntax from type-union alias:
                 //   tagged: `Ok(value: Int) | Err(msg: String)` — at least
@@ -178,6 +192,7 @@ std::vector<std::unique_ptr<Node>> Parser::parse() {
                 if (isTagged) {
                     auto node = std::make_unique<TaggedUnionDeclNode>();
                     node->name = aliasName;
+                    node->typeParams = typeParams;
                     while (true) {
                         TaggedUnionVariant v;
                         v.name = advance().value;  // variant identifier
@@ -209,12 +224,20 @@ std::vector<std::unique_ptr<Node>> Parser::parse() {
                     // construction time) generates the constructor.
                     {
                         auto baseStruct = std::make_unique<StructNode>();
-                        baseStruct->name = node->name;
+                        baseStruct->name       = node->name;
+                        baseStruct->typeParams = node->typeParams;
                         extraNodes.push_back(std::move(baseStruct));
                         for (const auto& v : node->variants) {
                             auto variantStruct = std::make_unique<StructNode>();
-                            variantStruct->name    = v.name;
-                            variantStruct->parents = { node->name };
+                            variantStruct->name       = v.name;
+                            variantStruct->parents    = { node->name };
+                            // Each variant inherits the union's type
+                            // parameters so a payload field declared as
+                            // `value: T` resolves against the same scope
+                            // as the rest of the file expects (Sema's
+                            // type-param push pushes both the variant's
+                            // and its parent's typeParams).
+                            variantStruct->typeParams = node->typeParams;
                             for (const auto& [fName, fType] : v.fields) {
                                 StructField sf;
                                 sf.name = fName;

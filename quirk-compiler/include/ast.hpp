@@ -393,11 +393,21 @@ struct TaggedUnionVariant {
 
 struct TaggedUnionDeclNode : public Node {
     std::string name;                          // e.g. "Result"
+    std::vector<std::string> typeParams;       // e.g. {"T", "E"} for `type Result[T, E]`
     std::vector<TaggedUnionVariant> variants;
 
     void print(int indent) const override {
         std::string sp(indent, ' ');
-        std::cout << sp << "TaggedUnion: " << name << " =";
+        std::cout << sp << "TaggedUnion: " << name;
+        if (!typeParams.empty()) {
+            std::cout << "[";
+            for (size_t i = 0; i < typeParams.size(); i++) {
+                if (i > 0) std::cout << ", ";
+                std::cout << typeParams[i];
+            }
+            std::cout << "]";
+        }
+        std::cout << " =";
         for (size_t i = 0; i < variants.size(); i++) {
             std::cout << (i == 0 ? " " : " | ") << variants[i].name << "(";
             for (size_t j = 0; j < variants[i].fields.size(); j++) {

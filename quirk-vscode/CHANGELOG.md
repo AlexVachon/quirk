@@ -2,6 +2,23 @@
 
 All notable changes to the extension land here. Versioning follows SemVer; minor bumps for new features, patches for fixes.
 
+## [0.2.11] — 2026-06-10
+
+### Catch up with compiler v2.4.1 — generic tagged unions
+
+The type-alias regex now accepts an optional `[T, U]` clause between
+the type name and the `=`:
+
+```
+type Option[T] = Some(value: T) | None()
+```
+
+Type params are themselves registered in `fileGlobals` so payload
+annotations (`value: T`) don't false-flag, and the existing RHS
+variant-walk still finds `Some` / `None`. Without this patch a
+generic tagged-union file fired ~14 phantom "is not defined"
+warnings (`Option`, `T`, `Some`, `None`, `E`, …).
+
 ## [0.2.10] — 2026-06-10
 
 ### Catch up with compiler v2.4.0 — tagged unions

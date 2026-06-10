@@ -1,0 +1,57 @@
+// p41 — Generic tagged unions (v2.4.1 / v3 phase 3-a). Locks the
+// `type Option[T] = Some(value: T) | None()` and Result[T, E] shapes,
+// which were a documented limitation of v2.4.0.
+//
+// Implementation: the Parser now accepts a `[T, U, ...]` clause after
+// the type name. The synthesized parent + variant StructNodes inherit
+// the typeParams, so Sema's existing struct-generic scope-push picks
+// them up at body-check time. Codegen still type-erases T to Any* at
+// the runtime layer (real monomorphization is phases 3-b and 3-c) —
+// but for the common case (construct, match, destructure payload),
+// erasure is transparent and end-to-end behaviour matches a typed
+// Quirk program.
+
+type Option[T] = Some(value: T) | None()
+type Result[T, E] = Ok(value: T) | Err(error: E)
+
+define check_some_int(a: Option) -> Int {
+    match a {
+        case Some as s => return s.value
+        case None      => return -1
+    }
+    return -2
+}
+
+define check_some_str(a: Option) -> String {
+    match a {
+        case Some as s => return s.value
+        case None      => return "miss"
+    }
+    return "fallthrough"
+}
+
+define ok_or_neg(r: Result) -> Int {
+    match r {
+        case Ok  as o => return o.value
+        case Err      => return -1
+    }
+    return -2
+}
+
+define err_msg(r: Result) -> String {
+    match r {
+        case Ok       => return "ok"
+        case Err as e => return e.error
+    }
+    return "fallthrough"
+}
+
+define main() -> void {
+    if check_some_int(Some(42))       != 42       { print("FAIL: Some(42)");     return }
+    if check_some_str(Some("hello"))  != "hello"  { print("FAIL: Some(hello)");  return }
+    if check_some_int(None())         != -1       { print("FAIL: None Int");     return }
+    if ok_or_neg(Ok(100))             != 100      { print("FAIL: Ok(100)");      return }
+    if ok_or_neg(Err("boom"))         != -1       { print("FAIL: Err Int");      return }
+    if err_msg(Err("boom"))           != "boom"   { print("FAIL: Err.error");    return }
+    print("PASS: Option[T] + Result[T, E] construct/match/destructure")
+}

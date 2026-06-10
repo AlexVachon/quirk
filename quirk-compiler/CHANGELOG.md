@@ -5,6 +5,35 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [2.4.1] — 2026-06-10
+
+### Generic tagged unions (v3 phase 3-a)
+
+```quirk
+type Option[T]    = Some(value: T) | None()
+type Result[T, E] = Ok(value: T)   | Err(error: E)
+```
+
+Closes the documented v2.4.0 limitation. The parser now accepts a
+`[T, U, ...]` clause after the type name; the synthesised parent +
+variant `StructNode`s inherit the type params, and Sema's existing
+struct-generic scope-push picks up the payload type annotations
+(`value: T`, `error: E`) at body-check time.
+
+**Caveat — still type-erased at runtime.** Phase 3-a is parser
++ Sema only. The codegen continues to lower `T` as `Any*`, so
+`Box(42)` / `Box("hello")` round-trip values opaquely. This is
+sufficient for the common cases (construct, match, destructure
+payload, propagate through function returns) but the type
+parameter isn't substituted at use sites yet — `b: Box[Int]` will
+still see `b.value` typed as `T` rather than `Int`. Phase 3-b
+(Sema type substitution) and 3-c (per-instantiation Codegen) are
+the next sessions.
+
+Probe `p41_generic_tagged_unions.quirk` locks the construction +
+match + destructure path against Option[T] and Result[T, E].
+41/41 probes + 12 stdlib tests pass.
+
 ## [2.4.0] — 2026-06-09
 
 ### Feature: tagged unions (v3 phase 2)

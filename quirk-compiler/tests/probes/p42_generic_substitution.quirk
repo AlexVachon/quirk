@@ -1,0 +1,42 @@
+// p42 — Phase 3-b Sema type substitution at use sites (v2.4.2).
+// Locks the contract that `b: Box[Int]` narrows `b.value` to Int (not
+// T) for member-access, comparisons, and arithmetic. Without this,
+// `return b.value * 2` errored with "'*' operands must be numeric;
+// got 'T' and 'Int'".
+//
+// Implementation: checkMemberAccess preserves the parameterized type
+// string ("Box[Int]") in objTypeFull, extractTypeArgs() splits it,
+// substituteTypeParams() rewrites the field type — `T` → `Int` —
+// before returning. Codegen still uses a single type-erased layout
+// (i8* per generic field); a small unbox helper at the equality site
+// bitcasts i8* → struct* so `w.value == "expected"` doesn't trip on
+// mismatched LLVM pointer types.
+
+struct Box[T] {
+    value: T
+    define __init(self, value: T) -> void { self.value = value }
+}
+
+struct Pair[K, V] {
+    key: K
+    val: V
+    define __init(self, key: K, val: V) -> void {
+        self.key = key
+        self.val = val
+    }
+}
+
+define double_int(b: Box[Int]) -> Int { return b.value * 2 }
+define check_str(b: Box[String]) -> Bool { return b.value == "expected" }
+define pair_sum(p: Pair[Int, Int]) -> Int { return p.key + p.val }
+define key_len(p: Pair[String, Int]) -> Int { return p.key.length() + p.val }
+
+define main() -> void {
+    if double_int(Box(21))          != 42       { print("FAIL: Box[Int] mul");  return }
+    if check_str(Box("expected"))   != true     { print("FAIL: Box[Str] eq");   return }
+    if check_str(Box("other"))      != false    { print("FAIL: Box[Str] ne");   return }
+    if pair_sum(Pair(3, 4))         != 7        { print("FAIL: Pair[Int,Int]"); return }
+    if key_len(Pair("hello", 100))  != 105      { print("FAIL: Pair[Str,Int]"); return }
+
+    print("PASS: Phase 3-b — Sema type substitution at use sites")
+}

@@ -12,6 +12,90 @@ static std::string baseType(const std::string& t) {
     return pos != std::string::npos ? t.substr(0, pos) : t;
 }
 
+// Extract the comma-separated type args from a parameterized type:
+//   "Box[Int]"          -> ["Int"]
+//   "Map[String, Int]"  -> ["String", "Int"]
+//   "Result[T, E]"      -> ["T", "E"]   (still parameterized at the use site)
+//   "Int"               -> []           (no brackets)
+// Respects nesting: `List[Pair[K, V]]` returns ["Pair[K, V]"].
+// Used by the v2.4.2 type-substitution pass — when a binding is
+// declared `b: Box[Int]`, member-access resolution swaps any `T`
+// (from Box's typeParams) for `Int` before returning the field type.
+static std::vector<std::string> extractTypeArgs(const std::string& t) {
+    std::vector<std::string> out;
+    auto open = t.find('[');
+    if (open == std::string::npos) return out;
+    int depth = 0;
+    std::string cur;
+    for (size_t i = open + 1; i < t.size(); i++) {
+        char c = t[i];
+        if (c == '[') { depth++; cur += c; }
+        else if (c == ']') {
+            if (depth == 0) {
+                // Trim leading/trailing whitespace on the final arg.
+                size_t a = cur.find_first_not_of(" \t");
+                size_t b = cur.find_last_not_of(" \t");
+                if (a != std::string::npos) out.push_back(cur.substr(a, b - a + 1));
+                return out;
+            }
+            depth--;
+            cur += c;
+        }
+        else if (c == ',' && depth == 0) {
+            size_t a = cur.find_first_not_of(" \t");
+            size_t b = cur.find_last_not_of(" \t");
+            if (a != std::string::npos) out.push_back(cur.substr(a, b - a + 1));
+            cur.clear();
+        }
+        else { cur += c; }
+    }
+    // Unterminated — best-effort emit whatever's there.
+    if (!cur.empty()) out.push_back(cur);
+    return out;
+}
+
+// Substitute generic type params with concrete args inside a field
+// or return-type string. Walks the string and replaces whole-word
+// occurrences of `typeParams[i]` with `typeArgs[i]`. Recursive shapes
+// (`List[T]`) are handled because the substitution is textual — the
+// `T` inside `List[T]` gets swapped just like a bare `T`. If either
+// vector is shorter, only the prefix in common substitutes.
+static std::string substituteTypeParams(const std::string& type,
+                                        const std::vector<std::string>& typeParams,
+                                        const std::vector<std::string>& typeArgs) {
+    if (typeParams.empty() || typeArgs.empty()) return type;
+    const size_t n = std::min(typeParams.size(), typeArgs.size());
+    std::string out = type;
+    for (size_t i = 0; i < n; i++) {
+        const std::string& from = typeParams[i];
+        const std::string& to   = typeArgs[i];
+        if (from.empty() || from == to) continue;
+        // Whole-word replace (alphanumeric/underscore boundaries) so
+        // `T` in `T` matches but `T` in `Tuple` doesn't.
+        std::string next;
+        size_t i2 = 0;
+        while (i2 < out.size()) {
+            size_t hit = out.find(from, i2);
+            if (hit == std::string::npos) { next.append(out, i2, std::string::npos); break; }
+            char before = hit == 0 ? '\0' : out[hit - 1];
+            char after  = hit + from.size() < out.size() ? out[hit + from.size()] : '\0';
+            auto isWordChar = [](char c) {
+                return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                       (c >= '0' && c <= '9') || c == '_';
+            };
+            next.append(out, i2, hit - i2);
+            if (isWordChar(before) || isWordChar(after)) {
+                next.append(from);
+            } else {
+                next.append(to);
+            }
+            i2 = hit + from.size();
+        }
+        out = std::move(next);
+    }
+    return out;
+}
+
 // Minimal JSON-string escaper for the NDJSON diagnostics mode. Quotes,
 // backslashes, and control bytes get escaped; everything else passes
 // through verbatim (we don't try to be Unicode-aware — Quirk file paths
@@ -1313,8 +1397,13 @@ std::string Sema::checkMemberAccess(MemberAccessNode *node)
     }
 
     std::string objType = checkExpression(node->object.get());
-    // Strip Optional marker and generic type args before method lookup
+    // Strip Optional marker before method lookup. Preserve the full
+    // parameterized form (e.g. `Box[Int]`) in `objTypeFull` so the
+    // type-substitution pass below can read out the concrete args;
+    // the stripped base name (`Box`) goes through to the actual
+    // method/field resolution path.
     if (!objType.empty() && objType.back() == '?') objType.pop_back();
+    std::string objTypeFull = objType;
     objType = baseType(objType);
 
     // Magic attributes
@@ -1333,6 +1422,23 @@ std::string Sema::checkMemberAccess(MemberAccessNode *node)
     }
 
     std::string type = resolveMember(objType, node->memberName);
+    // Substitute generic type params with the concrete args from
+    // the receiver type. `b: Box[Int]; b.value` returns the raw
+    // field type `T` from resolveMember; we now rewrite it to `Int`
+    // so downstream callers (operator typing, function-arg checks,
+    // chained .member access) see the narrowed type. This is the
+    // v3 phase 3-b Sema substitution — the field still lowers as
+    // Any* at codegen time, but Sema-level type information is now
+    // properly threaded.
+    {
+        auto sIt = structRegistry.find(objType);
+        if (sIt != structRegistry.end() && !sIt->second->typeParams.empty()) {
+            std::vector<std::string> typeArgs = extractTypeArgs(objTypeFull);
+            if (!typeArgs.empty()) {
+                type = substituteTypeParams(type, sIt->second->typeParams, typeArgs);
+            }
+        }
+    }
     if (type == "unknown") {
         // Numeric tuple-index `.0` / `.1` / … on an Any: at runtime
         // the value is often a Tuple (e.g. `pairs.get(0).0` where

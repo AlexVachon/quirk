@@ -3771,6 +3771,23 @@ Value* LLVMCodegen::handleExpression(Node* node) {
                 else if (L->getType() != R->getType())
                     L = Builder.CreateIntCast(L, R->getType(), true, "lhs_widen");
             }
+            // i8* (type-erased generic-field read) vs typed struct
+            // pointer — the v3 phase 3-b substitution narrows
+            // `w.value` to e.g. String at Sema time but the field
+            // still lowers as i8*. Bitcast the i8* to the struct ptr
+            // type so the magic `___eq` dispatch (below) finds the
+            // method and the fallback ICmp uses matching ptr types.
+            // For String specifically, dispatch routes through
+            // Core_String_String___eq for value-based equality.
+            if (L->getType() == i8p && R->getType()->isPointerTy() &&
+                R->getType() != i8p &&
+                R->getType()->getPointerElementType()->isStructTy()) {
+                L = Builder.CreateBitCast(L, R->getType(), "lhs_struct_unbox");
+            } else if (R->getType() == i8p && L->getType()->isPointerTy() &&
+                       L->getType() != i8p &&
+                       L->getType()->getPointerElementType()->isStructTy()) {
+                R = Builder.CreateBitCast(R, L->getType(), "rhs_struct_unbox");
+            }
         }
 
         // Operator overloading: check for magic methods on the left operand struct
@@ -3889,13 +3906,21 @@ Value* LLVMCodegen::handleExpression(Node* node) {
                 return false;
             };
 
-            // Don't trigger string concat when an opaque i8* is mixed with a plain numeric type —
-            // that case should go through arithmetic unboxing (e.g. nonlocal cell values).
+            // Don't trigger string concat when an opaque i8* is mixed
+            // with a plain numeric type — that case goes through
+            // arithmetic unboxing (e.g. nonlocal cell values). Also
+            // suppress when BOTH sides are opaque i8* (no struct type
+            // info): default to numeric. The arithmetic unbox in
+            // MathGen handles both encodings (Any* heap-box, tagged
+            // int), so we won't crash on a real String pair — at
+            // worst we'd get a garbage int. Real String literals are
+            // always typed as `%String*` not `i8*`, so they take the
+            // string-concat branch correctly.
             bool lOpaque = L->getType()->isPointerTy() && L->getType()->getPointerElementType()->isIntegerTy(8);
             bool rOpaque = R->getType()->isPointerTy() && R->getType()->getPointerElementType()->isIntegerTy(8);
             bool lNum = L->getType()->isIntegerTy() || L->getType()->isDoubleTy();
             bool rNum = R->getType()->isIntegerTy() || R->getType()->isDoubleTy();
-            bool suppressString = (lOpaque && rNum) || (rOpaque && lNum);
+            bool suppressString = (lOpaque && rNum) || (rOpaque && lNum) || (lOpaque && rOpaque);
 
             if (!suppressString && (isStringType(L) || isStringType(R))) {
                 auto makeString = [&](Value* val) -> Value* {

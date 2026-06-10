@@ -5,6 +5,60 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [2.4.2] — 2026-06-10
+
+### Generics: Sema type substitution at use sites (v3 phase 3-b)
+
+Generic struct parameters are now properly threaded through member
+access at compile time:
+
+```quirk
+struct Box[T] {
+    value: T
+    define __init(self, value: T) -> void { self.value = value }
+}
+
+define double_it(b: Box[Int]) -> Int {
+    return b.value * 2          // ✓ now: T → Int, arithmetic works
+}                               //   pre-v2.4.2: "'*' operands must be
+                                //   numeric; got 'T' and 'Int'"
+```
+
+`checkMemberAccess` preserves the parameterized receiver type
+(`Box[Int]`), extracts the type arguments, and substitutes against
+the struct's `typeParams` before returning the field type. Works for
+multi-param generics too (`Pair[K, V]` substitutes K and V
+independently).
+
+### Codegen bridges to keep the IR coherent
+
+Two codegen tweaks ride along so the new Sema narrowing doesn't
+introduce IR-type mismatches:
+
+* **`i8*` vs typed `Struct*` equality** — the equality codegen
+  now bitcasts the opaque `i8*` (generic-field read) to the typed
+  struct pointer on the other side, so `w.value == "expected"`
+  (where `w: Wrapper[String]`) flows through the existing `String___eq`
+  dispatch path instead of asserting on mismatched ICmp operand types.
+* **`i8* + i8*` defaults to numeric arithmetic** — when both
+  operands are opaque, the string-concat path is suppressed and
+  MathGen's `quirk_opaque_to_int` unbox handles both legacy tagged-
+  int and Any* heap-box encodings. Real String literals always
+  arrive as `%String*` (not `i8*`), so the string-concat branch
+  still fires correctly for `"a" + "b"`.
+
+### Caveat — still type-erased at the IR layer
+
+The runtime layout for `Box[Int]` and `Box[String]` is still a
+single shared struct (`value: i8*`). True per-instantiation
+monomorphization (Phase 3-c) is future work; the Sema layer now
+delivers correctness, but the perf win of unboxed primitive
+payloads is on the table for a follow-up. Probe
+`p42_generic_substitution.quirk` locks the Sema contract for Box,
+Wrapper, and Pair.
+
+42/42 probes + 19 stdlib tests pass.
+
 ## [2.4.1] — 2026-06-10
 
 ### Generic tagged unions (v3 phase 3-a)

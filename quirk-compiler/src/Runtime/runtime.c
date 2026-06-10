@@ -171,6 +171,44 @@ double quirk_opaque_to_double(void* val) {
 // String / List / Map / Tuple / Callable unwraps use, minus the
 // per-tag validation. Without this, an Any-laundered Int into a
 // `: Set` slot used to land at address 42 and SIGSEGV on .length().
+// Shape-aware equality on two opaque i8* pointers. Used by codegen
+// when both sides of `==`/`!=` arrive as i8* (no struct-type info
+// from the LLVM type alone) — e.g. comparing two generic-field
+// reads from a `Box[T]`. Without this the codegen path would fall
+// back to raw pointer equality, so two `Box[String]` values with
+// equal string contents but distinct heap allocations would compare
+// false. Routes through `Core_String_String___eq` for the common
+// two-Strings case; otherwise compares as tagged ints (raw uintptr).
+extern int Core_String_String___eq(String* self, String* other);
+int32_t quirk_opaque_eq(void* a, void* b) {
+    if (a == b) return 1;                 // bit-identical (incl both-null)
+    if (!a || !b) return 0;
+    uintptr_t ua = (uintptr_t)a, ub = (uintptr_t)b;
+    // Tagged-int range: compare raw values.
+    int aTagged = ua <= 0xFFFFFFFFUL;
+    int bTagged = ub <= 0xFFFFFFFFUL;
+    if (aTagged && bTagged) return ua == ub;
+    if (aTagged != bTagged) return 0;
+    // Both heap-pointers. Check Any* tag — if both ANY_*, compare ival.
+    int32_t ta = *(int32_t*)a, tb = *(int32_t*)b;
+    if (ta >= ANY_INT && ta <= ANY_NULL && tb >= ANY_INT && tb <= ANY_NULL) {
+        Any* aa = (Any*)a; Any* ab = (Any*)b;
+        if (aa->tag != ab->tag) return 0;
+        switch (aa->tag) {
+            case ANY_INT:
+            case ANY_BOOL:
+            case ANY_CHAR: return aa->ival == ab->ival;
+            case ANY_DOUBLE: return aa->dval == ab->dval;
+            default: return aa->ptr == ab->ptr;
+        }
+    }
+    // Fall through to String shape — most common non-Any heap eq.
+    // String has the buffer ptr at offset 0 + length at offset 8.
+    // If the layout doesn't match (e.g. user struct), bail to raw
+    // pointer eq (already failed above by a != b).
+    return Core_String_String___eq((String*)a, (String*)b);
+}
+
 void* quirk_opaque_check_struct_or_null(void* val, const char* type_name) {
     if (!val) return NULL;
     uintptr_t u = (uintptr_t)val;

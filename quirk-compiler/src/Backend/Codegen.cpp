@@ -3788,6 +3788,22 @@ Value* LLVMCodegen::handleExpression(Node* node) {
                        L->getType()->getPointerElementType()->isStructTy()) {
                 R = Builder.CreateBitCast(R, L->getType(), "rhs_struct_unbox");
             }
+            // Both sides erased — no struct type info either way.
+            // Route through quirk_opaque_eq, which does shape-aware
+            // equality (tagged-int / Any* / String). Without this,
+            // `b1.equals(b2)` on `Box[String]` falls through to raw
+            // pointer eq and two distinct heap allocations of the
+            // same string compare false.
+            else if (L->getType() == i8p && R->getType() == i8p) {
+                FunctionCallee opEq = TheModule->getOrInsertFunction(
+                    "quirk_opaque_eq", Type::getInt32Ty(Context), i8p, i8p);
+                Value* res = Builder.CreateCall(opEq, {L, R}, "opaque_eq");
+                Value* asBool = Builder.CreateICmpNE(res,
+                    ConstantInt::get(Type::getInt32Ty(Context), 0), "opaque_eq_b");
+                if (binOp->op == "!=")
+                    asBool = Builder.CreateNot(asBool, "opaque_ne");
+                return asBool;
+            }
         }
 
         // Operator overloading: check for magic methods on the left operand struct

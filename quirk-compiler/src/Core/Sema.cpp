@@ -1173,13 +1173,18 @@ std::string Sema::checkBinaryOp(BinaryOpNode *node)
         auto isNumericEarly = [](const std::string& t) {
             return t == "Int" || t == "int" || t == "Double" || t == "double";
         };
-        auto isUnknownEarly = [](const std::string& t) {
+        auto isUnknownEarly = [this](const std::string& t) {
             // `void` is the FunctionNode default before Pass-2 infers a
             // return type — treat it the same as Any here so we don't
             // reject correct programs whose callee's return type Sema
             // didn't resolve in time (e.g. resp.status_code coming back
             // as void because the field path lost its annotation).
-            return t.empty() || t == "Any" || t == "Null" || t == "auto" || t == "void";
+            // Generic type params (T, K, V, …) in scope are also unknown
+            // — `self.value * 2` inside a `Box[T]` method body must
+            // compile; codegen falls back to quirk_opaque_to_int for
+            // the i8* unbox at runtime.
+            if (t.empty() || t == "Any" || t == "Null" || t == "auto" || t == "void") return true;
+            return isGenericParam(t);
         };
         bool arith = (node->op == "+" || node->op == "-" || node->op == "*" ||
                       node->op == "/" || node->op == "%");
@@ -1269,12 +1274,18 @@ std::string Sema::checkBinaryOp(BinaryOpNode *node)
     auto isNumeric = [](const std::string& t) {
         return t == "Int" || t == "int" || t == "Double" || t == "double";
     };
-    auto isUnknown = [](const std::string& t) {
+    auto isUnknown = [this](const std::string& t) {
         // Empty / "Any" / "Null" / "auto" / "void" all defer to runtime.
         // `void` shows up when Sema can't resolve a member-access result
         // type (e.g. resp.status_code through a Map.get chain) — treating
-        // it as an error here misclassifies correct code.
-        return t.empty() || t == "Any" || t == "Null" || t == "auto" || t == "void";
+        // it as an error here misclassifies correct code. Generic type
+        // params (T, K, V, …) currently in scope are also unknown for
+        // operator-typing purposes — `self.value * 2` inside a `Box[T]`
+        // method body must compile, and at the use site Sema's type-
+        // substitution narrows the result correctly. Codegen falls back
+        // to `quirk_opaque_to_int` for the i8* unbox at runtime.
+        if (t.empty() || t == "Any" || t == "Null" || t == "auto" || t == "void") return true;
+        return isGenericParam(t);
     };
     auto compatibleOperands = [&](const std::string& a, const std::string& b) {
         if (a == b) return true;

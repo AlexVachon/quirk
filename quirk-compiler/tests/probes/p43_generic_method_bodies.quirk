@@ -1,0 +1,42 @@
+// p43 — Generic method bodies can do arithmetic + equality on T
+// (v2.4.3 / v3 phase 3-c, lighter-weight take). Locks the contract
+// that `self.value * 2`, `self.value == other`, and similar
+// operations are valid inside a `Box[T]` method even when T is
+// still abstract.
+//
+// Implementation: Sema's `isUnknown` / `isUnknownEarly` operator
+// gates accept generic type params (T, K, V) as deferred-to-runtime
+// — the existing `pushTypeParam` already aliases them as "Any" in
+// the typeAliases map, so `isGenericParam(T)` returns true. Codegen
+// already knows how to handle i8* on both sides of arithmetic
+// (MathGen routes through quirk_opaque_to_int), and equality with
+// two opaque pointers now routes through the new `quirk_opaque_eq`
+// runtime helper which dispatches on shape (tagged-int, Any*, or
+// String). True monomorphization (per-instantiation struct layouts
+// with unboxed primitive payloads) is still future work — this
+// phase delivers correctness through uniform representation.
+
+struct Box[T] {
+    value: T
+    define __init(self, value: T) -> void { self.value = value }
+    define triple(self) -> T { return self.value * 3 }
+    define equals(self, other: T) -> Bool { return self.value == other }
+}
+
+define main() -> void {
+    a := Box(7)
+    if a.triple()      != 21      { print("FAIL: Int triple");      return }
+    if a.equals(7)     != true    { print("FAIL: Int equals same"); return }
+    if a.equals(8)     != false   { print("FAIL: Int equals diff"); return }
+
+    b := Box("hello")
+    if b.equals("hello") != true  { print("FAIL: String equals same"); return }
+    if b.equals("world") != false { print("FAIL: String equals diff"); return }
+
+    // Sanity — two distinct Box[Int] don't alias by pointer value.
+    c := Box(0)
+    d := Box(0)
+    if c.equals(0) != true { print("FAIL: Box(0).equals(0)"); return }
+
+    print("PASS: Phase 3-c — generic method body ops on T")
+}

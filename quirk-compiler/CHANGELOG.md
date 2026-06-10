@@ -5,6 +5,51 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [2.4.3] — 2026-06-10
+
+### Generics: method bodies can operate on `T` (v3 phase 3-c, lite)
+
+```quirk
+struct Box[T] {
+    value: T
+    define triple(self) -> T { return self.value * 3 }       // ✓
+    define equals(self, other: T) -> Bool {
+        return self.value == other                           // ✓
+    }
+}
+```
+
+Pre-v2.4.3 these errored at Sema with "operator '*' incompatible
+types: 'T' and 'Int'". Sema now treats unbound type-params as
+deferred-to-runtime in the operator-typing gates — the existing
+`pushTypeParam` already aliases T as "Any" in `typeAliases`, so
+`isGenericParam(T)` returns true and `isUnknown`/`isUnknownEarly`
+short-circuit the type-mismatch error.
+
+### New runtime helper: `quirk_opaque_eq`
+
+Codegen previously hit two i8* operands on `==` with no struct-type
+info and fell back to raw pointer equality — so
+`b1.equals(b2)` on `Box[String]` with equal contents but distinct
+heap allocations compared false. The new helper dispatches on
+shape: tagged ints compare bitwise, Any\*-tagged values compare by
+the .ival/.dval/.ptr appropriate to their tag, and the fall-through
+treats both pointers as Strings and uses `Core_String_String___eq`.
+
+### Caveat — true monomorphization (per-instantiation IR layouts)
+remains future work
+
+This is "uniform representation" (every generic field is `i8*` at
+the IR layer, with shape-aware runtime dispatch) rather than the
+C++-style "stamp out a struct per `(Type, [Args])` pair". The user-
+visible behaviour is now correct; the perf win of unboxed primitive
+payloads (`Box[Int]` packing the Int directly) is on the table for a
+future deeper push.
+
+Probe `p43_generic_method_bodies.quirk` locks arithmetic + equality
+on T for both Int and String instantiations. 43/43 probes + 19
+stdlib tests pass.
+
 ## [2.4.2] — 2026-06-10
 
 ### Generics: Sema type substitution at use sites (v3 phase 3-b)

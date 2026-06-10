@@ -2,6 +2,46 @@
 
 All notable changes to the extension land here. Versioning follows SemVer; minor bumps for new features, patches for fixes.
 
+## [0.2.10] — 2026-06-10
+
+### Catch up with compiler v2.4.0 — tagged unions
+
+The v2.4.0 compiler introduced tagged unions:
+
+```quirk
+type Result = Ok(value: Int) | Err(msg: String)
+```
+
+Without IDE catch-up, the extension fired 15 false-positive
+"X is not defined" warnings against a basic tagged-union file
+(variant decls, construction sites, `case Ok =>` arms). v0.2.10
+closes those gaps.
+
+### Diagnostics
+
+* **Variant constructors collected.** The type-alias regex now
+  walks the RHS for `Capitalized(` patterns and registers each
+  variant identifier in `fileGlobals`. Covers the decl line itself
+  (`Ok` / `Err`) and unblocks all downstream uses (`Ok(42)`,
+  `case Err =>`, etc.).
+* **`case Variant as v` registers `v` as a local.** The existing
+  case-bind regexes only matched `case x` / `case (a, b)` shapes.
+  Added a `case <CapitalizedType> as <bind>` regex so the body's
+  `v.field` accesses don't false-flag as undefined.
+
+### Grammar
+
+* New `case <Variant>` rule in `keywords` — capitalized identifiers
+  in case position color as `entity.name.type.variant.quirk` so the
+  variant tag stands out the same way `case Int =>` does in
+  primitive type-matches.
+
+### Snippets
+
+* `tunion` — `type Result = Ok(value: Int) | Err(msg: String)`
+* `tmatch` — match block with `case Variant as v => ` narrow-bind
+  shape pre-filled.
+
 ## [0.2.9] — 2026-06-08
 
 ### Fix: enum variant `Name = literal` no longer paints as keyword arg

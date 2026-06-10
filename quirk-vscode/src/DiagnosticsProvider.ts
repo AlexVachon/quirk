@@ -219,9 +219,23 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
             });
         }
 
-        // Type alias: type Name = T — register as global so usage doesn't warn "not defined"
-        const typeAliasMatch1 = /^\s*type\s+([a-zA-Z_]\w*)\s*=/.exec(cleanLine);
-        if (typeAliasMatch1) { fileGlobals.add(typeAliasMatch1[1]); continue; }
+        // Type alias: `type Name = T` — register Name as global so the
+        // usage site doesn't warn. Also handles the v2.4 tagged-union
+        // shape: `type Result = Ok(value: Int) | Err(msg: String)` —
+        // scan the RHS for `Identifier(` patterns and register each
+        // variant constructor so `Ok(42)` / `Err("...")` / `case Ok =>`
+        // don't false-flag as undefined.
+        const typeAliasMatch1 = /^\s*type\s+([a-zA-Z_]\w*)\s*=(.*)$/.exec(cleanLine);
+        if (typeAliasMatch1) {
+            fileGlobals.add(typeAliasMatch1[1]);
+            const rhs = typeAliasMatch1[2];
+            const variantRe = /\b([A-Z][a-zA-Z0-9_]*)\s*\(/g;
+            let vm: RegExpExecArray | null;
+            while ((vm = variantRe.exec(rhs)) !== null) {
+                fileGlobals.add(vm[1]);
+            }
+            continue;
+        }
 
         // Interface declaration: register the name + collect type params from extends clause
         const ifaceMatch = /^\s*interface\s+([a-zA-Z_]\w*)/.exec(cleanLine);
@@ -613,6 +627,16 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
                     const n = part.trim();
                     if (n && /^[a-z_]\w*$/.test(n) && !KEYWORDS.has(n)) locals.add(n);
                 });
+            }
+            // Type narrow with as-bind: `case Variant as v` / `case T1 | T2 as v`.
+            // Compiler-side this narrows `v` to the matched type for
+            // the rest of the arm. Register `v` as a local so the
+            // body's `v.field` access doesn't false-flag as undefined.
+            const caseAsRe = /\bcase\s+[A-Z][\w\s|]*\s+as\s+([a-z_]\w*)\s*(?:if\b|=>|\{)/g;
+            let cam;
+            while ((cam = caseAsRe.exec(maskedLine)) !== null) {
+                const n = cam[1];
+                if (!KEYWORDS.has(n) && !BUILTINS.has(n)) locals.add(n);
             }
         }
 

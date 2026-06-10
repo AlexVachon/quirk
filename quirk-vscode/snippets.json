@@ -172,6 +172,23 @@
         "description": "Declare a type alias"
     },
 
+    "Tagged Union": {
+        "prefix": "tunion",
+        "body": "type ${1:Result} = ${2:Ok}(${3:value}: ${4:Int}) | ${5:Err}(${6:msg}: ${7:String})",
+        "description": "Declare a tagged-union type with two variants (v2.4+)"
+    },
+
+    "Tagged Union Match": {
+        "prefix": "tmatch",
+        "body": [
+            "match ${1:value} {",
+            "\tcase ${2:Ok} as ${3:o} => $0",
+            "\tcase ${4:Err} => ",
+            "}"
+        ],
+        "description": "Match arm over a tagged union, with payload narrow-bind"
+    },
+
     "Variadic Function": {
         "prefix": "defv",
         "body": [

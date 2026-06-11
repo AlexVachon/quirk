@@ -5,6 +5,44 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [3.0.0] — 2026-06-10
+
+### Milestone — the v3 type-system overhaul is complete
+
+v3.0.0 is the marker that closes the type-system arc that ran
+across v2.3.0 → v2.4.4. **No breaking changes** vs v2.4.4 — same
+code compiles. The major bump is a narrative milestone, not a
+break.
+
+The v3 type system in one place:
+
+| Feature              | Landed | Headline                                                                    |
+|----------------------|--------|-----------------------------------------------------------------------------|
+| Nullable primitives  | v2.3.0 | `x: Int? = null` — `Int` / `Bool` / `Double` / `Char` lower as `i8*`        |
+| Tagged unions        | v2.4.0 | `type Result = Ok(...) \| Err(...)` with payloads + exhaustiveness          |
+| Match narrowing      | v2.4.0 | `case Ok as o => o.value` bitcasts the bind to the variant struct           |
+| Generic tagged unions| v2.4.1 | `type Option[T] = Some(value: T) \| None()`                                 |
+| Generic substitution | v2.4.2 | `b: Box[Int]; b.value * 2` — Sema substitutes `T → Int` at use sites        |
+| Generic method bodies| v2.4.3 | `define triple(self) -> T { return self.value * 3 }` — T treated as Any    |
+| Variant methods      | v2.4.4 | `extend Ok { define is_ok(self) -> Bool { return true } }`                  |
+| Canonical `Option` / `Result` | v2.4.4 | `from typing use { Option, Some, None, Result, Ok, Err }`         |
+
+### Deferred to a future v3.x
+
+- **Per-instantiation Codegen monomorphization.** `Box[Int]` and
+  `Box[String]` still share a single LLVM struct layout with
+  `value: i8*`. The full type-system correctness is shipped; the
+  perf win of unboxed primitive payloads is future work.
+
+### Regression coverage
+
+45 probes lock the v3 surface against crash / wrong-output
+regressions; 60 stdlib smoke tests cover the broader compiler. All
+pass on both linux-x86_64 and macos-arm64.
+
+See [RELEASE_NOTES_v3.0.0.md](RELEASE_NOTES_v3.0.0.md) for the full
+upgrade narrative.
+
 ## [2.4.4] — 2026-06-10
 
 ### Per-variant methods via `extend VariantName { … }`

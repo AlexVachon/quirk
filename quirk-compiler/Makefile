@@ -130,6 +130,10 @@ STDLIB_TAG   ?= v1.0.0
 # that doesn't match the global STDLIB_TAG (e.g. `prompt` was
 # renamed from `ask` and ships v1.0.1 with the rename baked in).
 STDLIB_TAG_prompt ?= v1.0.3
+# typing v1.1.0 adds the canonical Option[T] / Result[T, E] sum
+# types (requires compiler v2.4.4+ — tagged unions + variant methods
+# + return-upcast codegen).
+STDLIB_TAG_typing ?= v1.1.0
 
 bootstrap-stdlib:
 	@mkdir -p packages
@@ -141,6 +145,7 @@ bootstrap-stdlib:
 	    tag="$(STDLIB_TAG)";                                                      \
 	    case "$$pkg" in                                                           \
 	        prompt) tag="$(STDLIB_TAG_prompt)" ;;                                 \
+	        typing) tag="$(STDLIB_TAG_typing)" ;;                                 \
 	    esac;                                                                     \
 	    echo "  → cloning quirk-$$pkg@$$tag";                                     \
 	    tmp=$$(mktemp -d);                                                        \

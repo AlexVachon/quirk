@@ -569,7 +569,15 @@ class LLVMCodegen {
         Builder.SetInsertPoint(BasicBlock::Create(Context, "entry", mainFunc));
 
         if (verbose) std::cerr << "[Codegen] Pass 4: Compiling 'main' body (creates module globals first)\n";
-        varGen->clear();  // avoid variable table leaking from last compiled function into main
+        varGen->clear();
+        // varEnumTypes tracks `s := SomeEnum(...)` bindings so `s.value`
+        // codegens via the enum-accessor path. Clearing alongside
+        // varGen avoids leaks across function boundaries — e.g. a
+        // top-level `s := Status(404)` from one user file used to
+        // make `s.value` in a library helper (Option.unwrap_or's
+        // `case Some as s => return s.value`) route into
+        // quirk_enum_value_int with a Some* receiver and crash IR.
+        varEnumTypes.clear();  // avoid variable table leaking from last compiled function into main
         Value* argc = mainFunc->getArg(0);
         Value* argv = mainFunc->getArg(1);
         
@@ -694,6 +702,14 @@ class LLVMCodegen {
         Builder.SetInsertPoint(BB);
 
         varGen->clear();
+        // varEnumTypes tracks `s := SomeEnum(...)` bindings so `s.value`
+        // codegens via the enum-accessor path. Clearing alongside
+        // varGen avoids leaks across function boundaries — e.g. a
+        // top-level `s := Status(404)` from one user file used to
+        // make `s.value` in a library helper (Option.unwrap_or's
+        // `case Some as s => return s.value`) route into
+        // quirk_enum_value_int with a Some* receiver and crash IR.
+        varEnumTypes.clear();
 
         // Push the shadow frame BEFORE binding parameters so that any
         // Debug_register_local calls emitted by defineArgument see the
@@ -1291,6 +1307,14 @@ class LLVMCodegen {
         // Switch into the lambda function
         Builder.SetInsertPoint(entryBB);
         varGen->clear();
+        // varEnumTypes tracks `s := SomeEnum(...)` bindings so `s.value`
+        // codegens via the enum-accessor path. Clearing alongside
+        // varGen avoids leaks across function boundaries — e.g. a
+        // top-level `s := Status(404)` from one user file used to
+        // make `s.value` in a library helper (Option.unwrap_or's
+        // `case Some as s => return s.value`) route into
+        // quirk_enum_value_int with a Some* receiver and crash IR.
+        varEnumTypes.clear();
 
         // 4. Load captures from env
         auto argIt = lambdaFn->arg_begin();
@@ -2699,6 +2723,21 @@ class LLVMCodegen {
                     // Returning from a lambda (i8* return): box the value
                     else if (expectedType == Type::getInt8PtrTy(Context)) {
                         retVal = boxToVoidPtr(retVal);
+                    }
+                    // Variant struct → union parent struct. `return
+                    // Some(42)` from a function declared `-> Option`
+                    // gives a `%Some*` retVal where expectedType is
+                    // `%Option*`. Bitcast: the variant's first field
+                    // (__type_id) matches the union base layout, so
+                    // upcasting is layout-safe and preserves vtable
+                    // dispatch. Without this, LLVM's tail-merge
+                    // tries to phi `%Some*` and `%None*` against an
+                    // `%Option*` result and the verifier rejects it.
+                    else if (retVal->getType()->isPointerTy() &&
+                             expectedType->isPointerTy() &&
+                             retVal->getType()->getPointerElementType()->isStructTy() &&
+                             expectedType->getPointerElementType()->isStructTy()) {
+                        retVal = Builder.CreateBitCast(retVal, expectedType, "ret_variant_upcast");
                     }
                 }
                 Builder.CreateRet(retVal);

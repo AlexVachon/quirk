@@ -1,0 +1,40 @@
+// p44 — Per-variant methods via `extend VariantName { ... }` on a
+// tagged union (v2.4.4). Two issues fixed:
+//
+// 1. The extend-block parser kept `self` as a regular parameter, so
+//    Sema's param-loop re-defined `self` as Any and clobbered the
+//    `self: VariantName` binding set right above. As a result,
+//    `self.value` errored with "'Any' has no member 'value'".
+//    Fix: mirror parseStruct's behaviour — strip leading `self`,
+//    mark `isStatic = false`.
+//
+// 2. Two extend-blocks defining the same raw method (e.g. `describe`
+//    on `Ok` and on `Err`) shared the parser-default linkage name
+//    `<modulePrefix>$describe`, so LLVM emitted only one and every
+//    dispatch routed to whichever was defined last. Fix: compose a
+//    struct-specific linkage `<modulePrefix>_<Target>_<raw>` matching
+//    the in-struct method shape.
+
+type Result = Ok(value: Int) | Err(msg: String)
+
+extend Ok {
+    define describe(self) -> String { return "Ok(" + self.value + ")" }
+    define is_ok(self)    -> Bool   { return true }
+}
+extend Err {
+    define describe(self) -> String { return "Err: " + self.msg }
+    define is_ok(self)    -> Bool   { return false }
+}
+
+define main() -> void {
+    a := Ok(42)
+    b := Err("boom")
+
+    if a.describe() != "Ok(42)"    { print("FAIL: Ok.describe");  return }
+    if b.describe() != "Err: boom" { print("FAIL: Err.describe"); return }
+    if a.is_ok()    != true        { print("FAIL: Ok.is_ok");     return }
+    if b.is_ok()    != false       { print("FAIL: Err.is_ok");    return }
+
+    // Same shape on a plain struct pair (no tagged union)
+    print("PASS: variant methods via extend")
+}

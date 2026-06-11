@@ -1,0 +1,83 @@
+// p45 — Canonical Option[T] / Result[T, E] shape locked here at
+// the compiler level (v2.4.4). The canonical declarations live in
+// the `quirk-typing` package's `option.quirk` / `result.quirk`
+// files (pulled in by `from typing use { Option, Some, None, ... }`);
+// this probe inlines the same declarations so the test stays self-
+// contained and survives a stdlib-bootstrap regression in either
+// direction.
+//
+// Two implementation fixes covered:
+//
+// 1. Variant→union return upcast. `return Some(42)` from a function
+//    declared `-> Option` previously emitted `ret %Some* %x` against
+//    a `%Option*` return type, and LLVM's tail-merge then phi'd two
+//    distinct variant types together → IR verifier rejected it.
+//    Codegen now bitcasts variant struct pointers to the declared
+//    union return type before `ret`.
+//
+// 2. `varEnumTypes` cross-function leak. The Codegen tracker for
+//    `s := SomeEnum(…)` bindings (used so `s.value` routes to the
+//    enum-accessor path) leaked across function boundaries. A top-
+//    level `s := Status(404)` from one file made `s.value` in
+//    `Option.unwrap_or`'s `case Some as s => return s.value` arm try
+//    to call quirk_enum_value_int on a Some* — IR verifier rejected
+//    it. Cleared alongside varGen at every function-scope reset.
+
+type Option[T] = Some(value: T) | None()
+
+extend Option {
+    define is_some(self) -> Bool {
+        match self {
+            case Some => return true
+            case None => return false
+        }
+        return false
+    }
+    define is_none(self) -> Bool { return not self.is_some() }
+    define unwrap_or(self, default_value: T) -> T {
+        match self {
+            case Some as s => return s.value
+            case None      => return default_value
+        }
+        return default_value
+    }
+}
+
+type Result[T, E] = Ok(value: T) | Err(error: E)
+
+extend Result {
+    define is_ok(self) -> Bool {
+        match self {
+            case Ok  => return true
+            case Err => return false
+        }
+        return false
+    }
+    define is_err(self) -> Bool { return not self.is_ok() }
+}
+
+define lookup(k: String) -> Option {
+    if k == "found" { return Some(42) }
+    return None()
+}
+
+define parse(s: String) -> Result {
+    if s == "ok" { return Ok(1) }
+    return Err("bad: " + s)
+}
+
+define main() -> void {
+    a := lookup("found")
+    b := lookup("missing")
+    if a.is_some()       != true { print("FAIL: a.is_some");       return }
+    if b.is_none()       != true { print("FAIL: b.is_none");       return }
+    if a.unwrap_or(99)   != 42   { print("FAIL: a.unwrap_or(42)"); return }
+    if b.unwrap_or(99)   != 99   { print("FAIL: b.unwrap_or(99)"); return }
+
+    p := parse("ok")
+    q := parse("bad")
+    if p.is_ok()         != true { print("FAIL: p.is_ok");         return }
+    if q.is_err()        != true { print("FAIL: q.is_err");        return }
+
+    print("PASS: Option / Result canonical shape works end-to-end")
+}

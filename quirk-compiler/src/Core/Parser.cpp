@@ -276,6 +276,43 @@ std::vector<std::unique_ptr<Node>> Parser::parse() {
                 while (peek().type != TokenType::RBRACE && !isAtEnd()) {
                     auto func = parseFunction();
                     func->cls = targetStruct;
+                    // Mirror the in-struct method shape: strip a leading
+                    // `self` param and mark non-static. Without this,
+                    // `extend Ok { define describe(self) -> String { ... } }`
+                    // left `self` as a regular Any-typed parameter,
+                    // which clobbered Sema's `self: Ok` binding when
+                    // the param loop re-defined the name.
+                    if (!func->parameters.empty() && func->parameters[0].name == "self") {
+                        func->parameters.erase(func->parameters.begin());
+                        func->isStatic = false;
+                    } else {
+                        func->isStatic = true;
+                    }
+                    // Prefix the linkage name with the target struct so
+                    // method dispatch (`a.describe()`) finds it via
+                    // findMethod("Ok", "Ok_describe"). The non-extend
+                    // path does this in parseStruct; mirror it here.
+                    if (func->name.rfind(targetStruct + "_", 0) != 0 &&
+                        func->name != targetStruct + "__init") {
+                        // Store the raw name pre-prefix so we can use
+                        // it as the LLVM symbol suffix below.
+                        std::string raw = func->name;
+                        func->name = targetStruct + "_" + raw;
+                        // Two extend-blocks defining the same raw method
+                        // (e.g. `describe` on `A` and on `B`) would
+                        // otherwise share the same linkage name (the
+                        // parser default is `<modulePrefix>$<rawName>`)
+                        // and LLVM picks just one — the other dispatch
+                        // silently routes to the first definition.
+                        // Re-mangle: `<modulePrefix>_<Target>_<raw>`,
+                        // matching the in-struct method linkage shape.
+                        std::string mp = computeModulePrefix();
+                        if (!mp.empty()) {
+                            func->linkageName = mp + "_" + targetStruct + "_" + raw;
+                        } else {
+                            func->linkageName = targetStruct + "_" + raw;
+                        }
+                    }
                     nodes.push_back(std::move(func));
                 }
                 consume(TokenType::RBRACE, "Expected '}'");

@@ -5,6 +5,96 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [2.4.4] — 2026-06-10
+
+### Per-variant methods via `extend VariantName { … }`
+
+```quirk
+type Result = Ok(value: Int) | Err(msg: String)
+
+extend Ok  { define describe(self) -> String { return "Ok(${self.value})" } }
+extend Err { define describe(self) -> String { return "Err: ${self.msg}"  } }
+```
+
+Two parser bugs blocked this before:
+
+1. The `extend` block didn't strip the leading `self` parameter the
+   way the in-struct parser does — so Sema's param-loop re-defined
+   `self` as Any and clobbered the `self: VariantName` binding,
+   making `self.value` error with "'Any' has no member 'value'".
+2. Two extends defining the same raw method (`describe` on `Ok` and
+   on `Err`) shared the parser-default linkage `<mp>$describe`. LLVM
+   emitted only one and every dispatch routed to whichever was
+   defined last. The extend parser now composes
+   `<modulePrefix>_<Target>_<raw>` linkage matching the in-struct
+   method shape.
+
+### `Option[T]` / `Result[T, E]` canonical shape works end-to-end
+
+```quirk
+type Option[T] = Some(value: T) | None()
+
+extend Option {
+    define is_some(self) -> Bool {
+        match self {
+            case Some => return true
+            case None => return false
+        }
+        return false
+    }
+    define unwrap_or(self, default_value: T) -> T {
+        match self {
+            case Some as s => return s.value
+            case None      => return default_value
+        }
+        return default_value
+    }
+}
+```
+
+`is_some` / `is_none` / `is_ok` / `is_err` / `unwrap_or` live on
+the union (not the variants) — that's the shape users actually hold
+in practice; per-variant narrowing only kicks in inside `case … as v`
+arms.
+
+The canonical declarations land in the `quirk-typing` package
+(`option.quirk` + `result.quirk`) so user code can write
+`from typing use { Option, Some, None, Result, Ok, Err }`. Those are
+in a separate repo and ship through the stdlib-bootstrap path; the
+in-repo probe inlines the same shape so the compiler-level contract
+is locked here regardless of the typing repo's state.
+
+### Codegen fixes that unblocked the canonical types
+
+- **Variant → union return upcast.** `return Some(42)` from a fn
+  declared `-> Option` emitted `ret %Some* %x` against a `%Option*`
+  signature and LLVM's tail-merge then phi'd two distinct variant
+  types into one slot. Return path now bitcasts variant struct
+  pointers to the declared union return type before `ret`.
+- **`varEnumTypes` cross-function leak.** The tracker for
+  `s := SomeEnum(…)` bindings (so `s.value` routes to the enum-
+  accessor path) wasn't cleared between functions. A top-level
+  `s := Status(404)` made `s.value` in
+  `Option.unwrap_or`'s `case Some as s => return s.value` arm try
+  to call `quirk_enum_value_int` on a `%Some*` → IR verifier
+  rejected the call. Now cleared alongside `varGen` at every
+  function-scope reset.
+
+### Monomorphization (#1 from today's options) — deferred
+
+Started scoping per-instantiation Codegen monomorphization
+(distinct `Box__Int` / `Box__String` LLVM struct layouts so
+primitive payloads pack directly instead of round-tripping through
+i8*). Reverted the partial scaffolding because the surface is
+genuinely 500–1000 LOC across Sema + Codegen + constructor
+inference + ~70 lookup sites. Saved for a dedicated multi-session
+push when a perf demand surfaces — the current uniform-
+representation correctness is shipped (v2.4.3) and is what
+languages like OCaml use by default.
+
+Probes `p44_variant_methods.quirk` and `p45_typing_option_result.quirk`
+lock the new behaviour. 45/45 probes + 19 stdlib tests pass.
+
 ## [2.4.3] — 2026-06-10
 
 ### Generics: method bodies can operate on `T` (v3 phase 3-c, lite)

@@ -902,13 +902,26 @@ class LLVMCodegen {
                 return;
             }
             if (rt == "Int" || rt == "Int32") {
-                unboxed = Builder.CreatePtrToInt(raw, Type::getInt32Ty(Context), "dec_int");
+                // The wrapped Callable returns i8*; the user-declared
+                // return type is Int. Two encodings can show up:
+                //   - Legacy tagged int (PtrToInt round-trips)
+                //   - Any* heap-box (PtrToInt would return the pointer
+                //     address, not the int — e.g. a nonlocal Int
+                //     captured in the wrapped closure leaks as
+                //     `(int32)(uintptr_t)Any*`).
+                // Route through quirk_opaque_to_int which handles both.
+                Type* i8p = Type::getInt8PtrTy(Context);
+                FunctionCallee toInt = TheModule->getOrInsertFunction(
+                    "quirk_opaque_to_int", Type::getInt32Ty(Context), i8p);
+                unboxed = Builder.CreateCall(toInt, {raw}, "dec_int");
             } else if (rt == "Bool") {
                 unboxed = Builder.CreateICmpNE(raw,
                     ConstantPointerNull::get(cast<PointerType>(raw->getType())), "dec_bool");
             } else if (rt == "Double" || rt == "Float") {
-                Value* asInt = Builder.CreatePtrToInt(raw, Type::getInt64Ty(Context));
-                unboxed = Builder.CreateBitCast(asInt, Type::getDoubleTy(Context), "dec_dbl");
+                Type* i8p = Type::getInt8PtrTy(Context);
+                FunctionCallee toDbl = TheModule->getOrInsertFunction(
+                    "quirk_opaque_to_double", Type::getDoubleTy(Context), i8p);
+                unboxed = Builder.CreateCall(toDbl, {raw}, "dec_dbl");
             } else if (!rt.empty() && StructTypes.count(rt)) {
                 unboxed = Builder.CreateBitCast(raw,
                     PointerType::getUnqual(StructTypes[rt]), "dec_struct");
@@ -2706,19 +2719,42 @@ class LLVMCodegen {
                             retVal = Builder.CreateBitCast(retVal, expectedType);
                         }
                     }
-                    // i8* boxed result (from a Callable call) → unbox to a
-                    // primitive scalar. Without this, `return f(x)` from a
-                    // function declared `-> Int` produces an IR type mismatch.
+                    // i8* boxed result (from a Callable call OR a nonlocal-
+                    // cell read) → unbox to a primitive scalar. Two
+                    // encodings can show up:
+                    //   - Legacy tagged int (low 32 bits = value) —
+                    //     PtrToInt round-trips correctly.
+                    //   - Any* heap-box (from v2.3.4 nonlocal-cell
+                    //     boxing) — PtrToInt returns the pointer
+                    //     address, NOT the contained int. Use
+                    //     quirk_opaque_to_int which handles both.
+                    // Was a regression in v2.3.4: `return count` from
+                    // a lambda that captures a nonlocal Int counter
+                    // gave the heap-Any pointer address as the
+                    // returned int.
                     else if (retVal->getType()->isPointerTy()
                           && retVal->getType()->getPointerElementType()->isIntegerTy(8)
                           && expectedType->isIntegerTy()) {
-                        retVal = Builder.CreatePtrToInt(retVal, expectedType, "ret_unbox_int");
+                        Type* i8p = Type::getInt8PtrTy(Context);
+                        FunctionCallee toInt = TheModule->getOrInsertFunction(
+                            "quirk_opaque_to_int",
+                            Type::getInt32Ty(Context), i8p);
+                        Value* asI32 = Builder.CreateCall(toInt, {retVal}, "ret_unbox_int");
+                        retVal = expectedType->isIntegerTy(32)
+                            ? asI32
+                            : Builder.CreateIntCast(asI32, expectedType, true);
                     }
                     else if (retVal->getType()->isPointerTy()
                           && retVal->getType()->getPointerElementType()->isIntegerTy(8)
                           && expectedType->isDoubleTy()) {
-                        Value* asInt = Builder.CreatePtrToInt(retVal, Type::getInt64Ty(Context));
-                        retVal = Builder.CreateBitCast(asInt, expectedType, "ret_unbox_dbl");
+                        // Same Any*-vs-tagged-int issue for Double
+                        // returns. quirk_opaque_to_double handles
+                        // both encodings.
+                        Type* i8p = Type::getInt8PtrTy(Context);
+                        FunctionCallee toDbl = TheModule->getOrInsertFunction(
+                            "quirk_opaque_to_double",
+                            Type::getDoubleTy(Context), i8p);
+                        retVal = Builder.CreateCall(toDbl, {retVal}, "ret_unbox_dbl");
                     }
                     // Returning from a lambda (i8* return): box the value
                     else if (expectedType == Type::getInt8PtrTy(Context)) {

@@ -587,10 +587,18 @@ class ControlFlowGen {
                 };
 
                 Value* cond = nullptr;
+                // The direct __type_id load is only safe when the
+                // scrutinee is actually a pointer-to-struct. For
+                // primitives (Int → i32, Bool → i1, Double → double)
+                // the scrut was IntToPtr'd above and isn't a real
+                // heap pointer; reading 4 bytes from address 42
+                // SIGSEGVs. The isinstance fallback handles those.
+                bool scrutIsStructPtr = scrutVal->getType()->isPointerTy() &&
+                    scrutVal->getType()->getPointerElementType()->isStructTy();
                 for (auto& typeName : arm.typeNames) {
                     int typeId = typeIdLookup ? typeIdLookup(typeName) : 0;
                     Value* eq;
-                    if (typeId > 0) {
+                    if (typeId > 0 && scrutIsStructPtr) {
                         // Load scrutinee's __type_id (field 0 of every
                         // vtable-eligible struct) and compare against
                         // the variant's compile-time id.

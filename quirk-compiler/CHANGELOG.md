@@ -5,6 +5,44 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [3.0.1] — 2026-06-12
+
+### Fix: Test CI workflow was failing on every push since v2.3.4
+
+The Release workflow has been green throughout (binaries shipped),
+but the Test workflow on `main` was failing every commit since
+v2.3.4. Two distinct regressions, both in this patch.
+
+**1. Closure-captured `count` returned the heap-Any pointer
+address (decorator wrapper return path).** When v2.3.4 switched
+nonlocal-cell boxing to `Any_box_*` (so Int 0 doesn't lower as
+NULL), the cell now holds an Any\* heap pointer. The decorator
+wrapper's `dec_int` return-unbox at
+[`Codegen.cpp:904`](src/Backend/Codegen.cpp#L904) and the lambda /
+function `ret_unbox_int` at [`Codegen.cpp:~2712`](src/Backend/Codegen.cpp#L2712)
+both used raw `PtrToInt` — fine for legacy tagged ints, broken for
+Any\* heap-boxes (returns the pointer address as the int).
+Symptom: a `@call_counter`-decorated function returning a counter
+gave back random heap addresses (-1155488768, 914379776, …)
+instead of 1, 2, 3. Both sites now route through
+`quirk_opaque_to_int`, which handles both encodings.
+
+**2. `match x { case Int => … }` SIGSEGV on a primitive
+scrutinee.** v2.4.4's direct-`__type_id` ICmp path in the match-on-
+type codegen fired whenever `typeIdLookup(typeName) > 0`. But
+primitive types like `Int` (whose StructNode is in the registry
+but isn't actually struct-shaped at the LLVM layer) ended up
+vtable-eligible and got a type-id — so `case Int` on a `42` i32
+emitted `bitcast (i8*)42 to i32* ; load i32` and segfaulted reading
+address 42. Added a `scrutVal` shape guard: the direct-load path
+only fires when the scrutinee is actually a pointer-to-struct;
+primitives keep using the `isinstance` runtime fallback (unchanged
+from v2.3.x behaviour).
+
+The CI workflow itself wasn't changed — same probes + same
+stdlib smoke harness now run clean: 45/45 probes + 59 stdlib tests
+pass on both linux-x86_64 and macos-arm64.
+
 ## [3.0.0] — 2026-06-10
 
 ### Milestone — the v3 type-system overhaul is complete

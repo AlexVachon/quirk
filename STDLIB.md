@@ -4,6 +4,11 @@ Every module shipped with the compiler. Already importable — no install
 needed. To see methods on a builtin type (`String`, `List`, `Map`, etc.),
 peek at [`packages/typing/`](quirk-compiler/packages/typing/).
 
+> **Full API reference** generated from in-source docstrings:
+> [`docs/stdlib/index.md`](quirk-compiler/docs/stdlib/index.md) — 23 packages,
+> ~336 documented entries. Regenerate with `make docs` after editing any
+> `---` docstring block.
+
 ## Quick reference
 
 | Module | What it does |

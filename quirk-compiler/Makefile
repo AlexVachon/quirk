@@ -171,4 +171,10 @@ bootstrap-stdlib-clean:
 	rm -rf packages
 	$(MAKE) bootstrap-stdlib
 
-.PHONY: all clean test bootstrap-stdlib bootstrap-stdlib-clean
+# Regenerate `docs/stdlib/*.md` from the in-source `---` docstrings
+# in `packages/*/*.quirk`. Run after touching any stdlib docstring or
+# refreshing the bootstrap. Requires Python 3.
+docs:
+	@python3 tools/gen_stdlib_docs.py
+
+.PHONY: all clean test bootstrap-stdlib bootstrap-stdlib-clean docs

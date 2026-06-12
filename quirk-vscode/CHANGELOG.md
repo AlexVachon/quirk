@@ -2,6 +2,33 @@
 
 All notable changes to the extension land here. Versioning follows SemVer; minor bumps for new features, patches for fixes.
 
+## [0.2.12] — 2026-06-12
+
+### Hover for stdlib symbols, even when not explicitly `use`d
+
+Previously, hovering over an stdlib name like `argv` in
+`sys.argv()` produced nothing — `executeDefinitionProvider` only
+resolves names reachable via an `from sys use { argv }` import.
+Module-alias access dropped through to "no hover."
+
+v0.2.12 ships a pre-built **stdlib symbol index** alongside the
+extension and uses it as a hover fallback. The index is generated
+by `tools/gen_stdlib_docs.py` in the compiler repo (run `make
+docs` to refresh) and bundles 287 documented stdlib symbols —
+signatures + docstrings extracted from in-source `---` blocks.
+
+Resolution order in `HoverProvider`:
+1. Keywords / known constants
+2. Magic methods (`__init`, `__str`, …)
+3. Built-in struct types (`String`, `List`, …) — live read from
+   `packages/typing`
+4. `executeDefinitionProvider` (existing path — works for any name
+   reachable via imports in the current file)
+5. **NEW: stdlib symbol index** (`data/stdlib-index.json`)
+
+The index is loaded lazily on first hover and cached for the
+session.
+
 ## [0.2.11] — 2026-06-10
 
 ### Catch up with compiler v2.4.1 — generic tagged unions

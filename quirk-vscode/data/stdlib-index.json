@@ -1,0 +1,2928 @@
+{
+"AssertionError": [
+{
+"package": "typing",
+"qualified": "AssertionError",
+"kind": "struct",
+"signature": "struct AssertionError : Exception {",
+"doc": "Raised when an assertion fails.\nUse this to enforce invariants or preconditions in your code.\n\n@note Prefer specific exception types (ValueError, NullError, etc.) in library code so callers can catch them precisely.\n\n@example:\ndefine assert_positive(n: Int) -> void {\n    if n <= 0 {\n        throw AssertionError(\"Expected positive, got \" + n.str())\n    }\n}"
+}
+],
+"Bool": [
+{
+"package": "typing",
+"qualified": "Bool",
+"kind": "struct",
+"signature": "struct Bool : Primitive, Comparable, Parseable {",
+"doc": "Boolean type. Only two values: `true` and `false`."
+}
+],
+"Callable": [
+{
+"package": "typing",
+"qualified": "Callable",
+"kind": "struct",
+"signature": "struct Callable {",
+"doc": "A first-class function value produced by a lambda expression (`fn(...) => ...`).\nCallables can be stored in variables, passed as arguments, and invoked\nby higher-order methods such as `List.map`, `List.filter`, and `List.each`.\n\n@example:\ndouble := fn(x: Int) => x * 2\nprint(double(21))                      // 42\nevens := [1, 2, 3, 4].filter(fn(x: Int) => x % 2 == 0)"
+}
+],
+"Comparable": [
+{
+"package": "typing",
+"qualified": "Comparable",
+"kind": "interface",
+"signature": "interface Comparable : Equatable {",
+"doc": "Implemented by types that support ordering and equality comparisons.\nRequired for use in sorted collections, binary search, and generic\nfunctions that need to compare values.\n\n@example\nstruct Temperature : Comparable {\n    degrees: Double\n\n    define __lt(self, other: Temperature) -> Bool {\n        return self.degrees < other.degrees\n    }\n\n    define __eq(self, other: Temperature) -> Bool {\n        return self.degrees == other.degrees\n    }\n}"
+}
+],
+"DateTime": [
+{
+"package": "datetime",
+"qualified": "DateTime",
+"kind": "struct",
+"signature": "struct DateTime {",
+"doc": "Snapshot of a moment in time. Construct via `datetime.now()`,\n`datetime.from_unix(s)`, or `datetime.from_iso(s)` rather than calling\n`__init` directly."
+}
+],
+"Double": [
+{
+"package": "typing",
+"qualified": "Double",
+"kind": "struct",
+"signature": "struct Double : Primitive, Comparable, Parseable {",
+"doc": "64-bit IEEE 754 floating-point number.\n\n@example:\nx := 3.14\nprint(x.ceil())    // 4.0\nprint(x.str())     // \"3.14\""
+}
+],
+"Equatable": [
+{
+"package": "typing",
+"qualified": "Equatable",
+"kind": "interface",
+"signature": "interface Equatable {",
+"doc": "Implemented by types that support equality comparison.\nAll types that implement `Comparable` or `Hashable` extend `Equatable`.\n\n@example\nstruct Color : Equatable {\n    r: Int\n    g: Int\n    b: Int\n\n    define __eq(self, other: Color) -> Bool {\n        return self.r == other.r and self.g == other.g and self.b == other.b\n    }\n}"
+}
+],
+"Exception": [
+{
+"package": "typing",
+"qualified": "Exception",
+"kind": "struct",
+"signature": "struct Exception {",
+"doc": "Base class for all exceptions in Quirk.\nCatch this type to handle any exception regardless of its specific kind.\n\nFields: message, type, file, line, traceback, cause_trace\n\n@note Prefer catching a specific subclass (ValueError, IOError, etc.) over\ncatching Exception directly, so unrelated errors are not silently swallowed.\n\n@warning Catching Exception will also catch RuntimeError, NullError, and all\nother built-in exceptions \u2014 use with care in broad catch blocks.\n\n@example:\ntry {\n    throw ValueError(\"bad input\")\n} catch (e: Exception) {\n    print(e.type + \": \" + e.message)\n}"
+}
+],
+"File": [
+{
+"package": "io",
+"qualified": "File",
+"kind": "struct",
+"signature": "struct File {",
+"doc": "A handle for reading and writing to the OS file system.\nSupports the `with` statement for automatic close on scope exit.\n\nUse `sys.stdin()`, `sys.stdout()`, `sys.stderr()` to wrap the standard\nstreams as Files (those wrappers ignore `close()`)."
+}
+],
+"FileIterator": [
+{
+"package": "io",
+"qualified": "FileIterator",
+"kind": "struct",
+"signature": "struct FileIterator {",
+"doc": "Iterator over a file's lines. Produced by `for line in file { ... }`.\nEach `__next` call reads one line via `File.read_line`."
+}
+],
+"FileNotFoundError": [
+{
+"package": "typing",
+"qualified": "FileNotFoundError",
+"kind": "struct",
+"signature": "struct FileNotFoundError : IOError {",
+"doc": "Raised when a file or directory cannot be found at the given path.\nInherits from IOError.\n\n@note Catch IOError instead if you want to handle all I/O failures together.\n\n@example:\ntry {\n    f := File(\"config.json\", \"r\")\n} catch (e: FileNotFoundError) {\n    print(\"Missing file: \" + e.message)\n}"
+}
+],
+"Hashable": [
+{
+"package": "typing",
+"qualified": "Hashable",
+"kind": "interface",
+"signature": "interface Hashable : Equatable {",
+"doc": "Implemented by types that can produce a stable integer hash of their value.\nRequired for use as keys in `Map` or elements in `Set`.\nAny `Hashable` type must also be `Equatable`: two equal values must hash identically.\n\n@example\nstruct Point : Hashable {\n    x: Int\n    y: Int\n\n    define __eq(self, other: Point) -> Bool {\n        return self.x == other.x and self.y == other.y\n    }\n\n    define __hash(self) -> Int {\n        return self.x * 31 + self.y\n    }\n}"
+}
+],
+"IOError": [
+{
+"package": "typing",
+"qualified": "IOError",
+"kind": "struct",
+"signature": "struct IOError : Exception {",
+"doc": "Raised for file and I/O operation failures such as permission errors,\nread/write failures, or other OS-level I/O problems.\nParent of FileNotFoundError.\n\n@example:\ntry {\n    f := File(\"output.log\", \"w\")\n} catch (e: IOError) {\n    print(\"I/O failed: \" + e.message)\n}"
+}
+],
+"ISerializable": [
+{
+"package": "typing",
+"qualified": "ISerializable",
+"kind": "struct",
+"signature": "struct ISerializable {",
+"doc": "Serialization interface for Quirk structs.\n\nInherit `ISerializable` and override `to_json()` to make any struct\nserializable \u2014 including as the `json:` argument to `net.http` requests.\n\n@example\nstruct User : ISerializable {\n    name: String\n    age: Int\n\n    define __init(self, name: String, age: Int) -> void {\n        self.name = name\n        self.age = age\n    }\n\n    define to_json(self) -> String {\n        return \"{\\\"name\\\":\\\"\" + self.name + \"\\\",\\\"age\\\":\" + self.age.str() + \"}\"\n    }\n}\n\nuser := User(\"Alice\", 30)\nres := http.post(\"http://api.example.com/users\", json: user)"
+}
+],
+"IndexError": [
+{
+"package": "typing",
+"qualified": "IndexError",
+"kind": "struct",
+"signature": "struct IndexError : ValueError {",
+"doc": "Raised when a list or string index is out of range.\nInherits from ValueError.\n\n@note\n- The runtime throws this automatically on invalid list access.\n- Negative indices are supported: -1 refers to the last element.\n\n@example:\nitems := [1, 2, 3]\ntry {\n    _ := items[10]\n} catch (e: IndexError) {\n    print(\"Out of bounds: \" + e.message)\n}"
+}
+],
+"Int": [
+{
+"package": "typing",
+"qualified": "Int",
+"kind": "struct",
+"signature": "struct Int : Primitive, Comparable, Parseable {",
+"doc": "32-bit signed integer.\nSupports arithmetic operators (`+`, `-`, `*`, `/`, `%`, `**`) and comparisons.\n\n@example:\nn := 42\nprint(n.str())       // \"42\"\nprint(n.is_even())   // true\nprint(n.pow(2))      // 1764"
+}
+],
+"Iterable": [
+{
+"package": "typing",
+"qualified": "Iterable",
+"kind": "interface",
+"signature": "interface Iterable {",
+"doc": "Implemented by types that can be traversed with a `for` loop.\n`String`, `List`, `Map`, `Set`, `Queue`, and `Tuple` all implement `Iterable`.\n\n@example\ndefine print_all[T](col: T) where T: Iterable {\n    for item in col {\n        print(item)\n    }\n}"
+}
+],
+"Iterator": [
+{
+"package": "typing",
+"qualified": "Iterator",
+"kind": "interface",
+"signature": "interface Iterator {",
+"doc": "Protocol for types that produce values one at a time.\nAll built-in collection iterators implement `Iterator`.\nEnables the `for` loop and any code that calls `__has_next` / `__next` directly.\n\n@example\ndefine collect[T](it: Iterator) -> List {\n    result := []\n    while it.__has_next() {\n        result.append(it.__next())\n    }\n    return result\n}"
+}
+],
+"JsonList": [
+{
+"package": "encoding",
+"qualified": "JsonList",
+"kind": "struct",
+"signature": "struct JsonList : ISerializable {",
+"doc": "Wraps a List as an ISerializable for net.http's `json:` parameter.\n\n@example\nhttp.post(url, json: JsonList(l))"
+}
+],
+"JsonMap": [
+{
+"package": "encoding",
+"qualified": "JsonMap",
+"kind": "struct",
+"signature": "struct JsonMap : ISerializable {",
+"doc": "Wraps a Map as an ISerializable for net.http's `json:` parameter.\n\n@example\nhttp.post(url, json: JsonMap(m))"
+}
+],
+"KeyError": [
+{
+"package": "typing",
+"qualified": "KeyError",
+"kind": "struct",
+"signature": "struct KeyError : ValueError {",
+"doc": "Raised when a map key does not exist.\nInherits from ValueError.\n\n@note\n- The runtime throws this automatically on missing key access.\n- Use map.has(key) to check before accessing if you want to avoid the exception.\n\n@example:\nm := {\"a\": 1}\ntry {\n    _ := m[\"missing\"]\n} catch (e: KeyError) {\n    print(\"No such key: \" + e.message)\n}"
+}
+],
+"KvResult": [
+{
+"package": "toml",
+"qualified": "KvResult",
+"kind": "struct",
+"signature": "struct KvResult {",
+"doc": "Key + value extracted from a `key = value` line. Bare-key syntax only\nfor now (no quoted keys)."
+}
+],
+"List": [
+{
+"package": "typing",
+"qualified": "List",
+"kind": "struct",
+"signature": "struct List : Printable, Representable, Sizeable, Iterable {",
+"doc": "A dynamic, ordered sequence of values of any type.\nElements are zero-indexed. Lists grow automatically as items are appended.\n\n@example:\nnums := [1, 2, 3]\nnums.append(4)\nprint(nums.length())    // 4\nprint(nums[0])          // 1\ndoubled := nums.map(fn(x: Int) => x * 2)"
+}
+],
+"Map": [
+{
+"package": "typing",
+"qualified": "Map",
+"kind": "struct",
+"signature": "struct Map : Printable, Sizeable, Iterable {",
+"doc": "A hash map (dictionary) that associates `String` keys with values of any type.\nInsertion order is not guaranteed. All keys must be `String`.\n\n@example:\nm := {}\nm.put(\"name\", \"Alice\")\nm.put(\"age\", 30)\nprint(m.get(\"name\"))    // \"Alice\"\nprint(m.has(\"age\"))     // true\nm.remove(\"age\")\nprint(m.length())       // 1"
+}
+],
+"Match": [
+{
+"package": "regex",
+"qualified": "Match",
+"kind": "struct",
+"signature": "struct Match {",
+"doc": "Result of `Regex.find`. `start` and `end` are byte offsets into the input\nString; `text` is the substring `[start, end)`; `groups` is a `List<String>`\nof the captured groups (group 0 = full match is NOT included \u2014 `text` is\nthe whole match)."
+}
+],
+"NotImplementedError": [
+{
+"package": "typing",
+"qualified": "NotImplementedError",
+"kind": "struct",
+"signature": "struct NotImplementedError : RuntimeError {",
+"doc": "Raised when a method that must be overridden is called without a concrete implementation.\nInherits from RuntimeError.\n\n@note Use this as a sentinel in base struct methods to enforce that substructs override them.\n\n@example:\nstruct Animal {\n    define speak(self) -> void {\n        throw NotImplementedError(\"speak() must be overridden\")\n    }\n}"
+}
+],
+"NullError": [
+{
+"package": "typing",
+"qualified": "NullError",
+"kind": "struct",
+"signature": "struct NullError : RuntimeError {",
+"doc": "Raised when a null value is accessed where a non-null value is required. Inherits from RuntimeError.\n\n@note Check for null explicitly before accessing fields or calling methods on optional values.\n\n@example:\ndefine get_name(user: Any) -> String {\n    if user == null {\n        throw NullError(\"user must not be null\")\n    }\n    return user.name\n}"
+}
+],
+"Parseable": [
+{
+"package": "typing",
+"qualified": "Parseable",
+"kind": "interface",
+"signature": "interface Parseable {",
+"doc": "Implemented by types that can be constructed from a string representation.\nPairs naturally with `Printable` \u2014 a round-trip of `parse(val.str())` should\nreturn the original value.\n\n@example\nn := Int.parse(\"42\")     // 42\nd := Double.parse(\"3.14\") // 3.14\nb := Bool.parse(\"true\")   // true"
+}
+],
+"Primitive": [
+{
+"package": "typing",
+"qualified": "Primitive",
+"kind": "interface",
+"signature": "interface Primitive : Printable, Comparable {",
+"doc": "Base interface for primitive value types.\n\nAll built-in scalar types (`Int`, `Double`, `Bool`, `String`) implement\n`Primitive`. Extends both `Printable` and `Comparable`, so any `where T: Primitive`\nconstraint guarantees string conversion (`__str`) and ordering (`__lt`, `__eq`).\n\nFor types that can be constructed from a string, see `Parseable`.\nFor types usable as collection keys, see `Hashable`.\n\n@example\nstruct Stack[T] where T: Primitive {\n    items: List[T]\n    ...\n}\n\ndefine echo[T](val: T) -> String where T: Primitive {\n    return val.__str()\n}"
+}
+],
+"Printable": [
+{
+"package": "typing",
+"qualified": "Printable",
+"kind": "interface",
+"signature": "interface Printable {",
+"doc": "Implemented by types that have a human-readable string representation.\nAny struct implementing `Printable` can be passed directly to `print()`.\n\n@example\nstruct Point : Printable {\n    x: Int\n    y: Int\n\n    define __str(self) -> String {\n        return \"(\" + self.x + \", \" + self.y + \")\"\n    }\n}\n\np := Point(3, 4)\nprint(p)   // (3, 4)"
+}
+],
+"Queue": [
+{
+"package": "typing",
+"qualified": "Queue",
+"kind": "struct",
+"signature": "struct Queue : Printable, Sizeable, Iterable {",
+"doc": "A double-ended queue (deque) supporting O(1) push/pop at both ends.\nUseful for BFS, sliding windows, and task scheduling.\n\n@example:\nq := Queue()\nq.push_back(1)\nq.push_back(2)\nq.push_front(0)\nprint(q.pop_front())  // 0\nprint(q.peek_front()) // 1\nprint(q.size())       // 2"
+}
+],
+"Regex": [
+{
+"package": "regex",
+"qualified": "Regex",
+"kind": "struct",
+"signature": "struct Regex {",
+"doc": "A compiled regular expression. Construct via `regex.compile(pattern, flags)`."
+}
+],
+"Representable": [
+{
+"package": "typing",
+"qualified": "Representable",
+"kind": "interface",
+"signature": "interface Representable {",
+"doc": "Implemented by types that have a developer-facing debug representation,\ndistinct from the human-readable `__str`. Used by the REPL and logging tools.\n\n@example\nstruct Token : Representable {\n    kind: String\n    value: String\n\n    define __repr(self) -> String {\n        return \"Token(\" + self.kind + \", \" + self.value + \")\"\n    }\n}"
+}
+],
+"Request": [
+{
+"package": "net",
+"qualified": "Request",
+"kind": "struct",
+"signature": "struct Request {",
+"doc": "A parsed incoming HTTP request \u2014 what `Server` hands to your handler.\n\n  `method`   \u2014 uppercase verb (`GET`, `POST`, \u2026).\n  `path`     \u2014 request path with query stripped (e.g. `/users/42`).\n  `query`    \u2014 Map of query-string params (parsed via `url.parse_query`).\n  `headers`  \u2014 Map of header name \u2192 value (case-preserved as received).\n  `body`     \u2014 request body for POST/PUT, \"\" otherwise."
+}
+],
+"Response": [
+{
+"package": "net",
+"qualified": "Response",
+"kind": "struct",
+"signature": "struct Response {",
+"doc": "HTTP response.\n  `status_code`  \u2014 numeric status (200, 404, ...).\n  `headers`      \u2014 Map of header name \u2192 value (header names are\n                   case-preserved as the server returned them).\n  `text`         \u2014 decoded response body (chunked encoding handled).\n  `ok`           \u2014 true iff `200 <= status_code < 300`."
+}
+],
+"RuntimeError": [
+{
+"package": "typing",
+"qualified": "RuntimeError",
+"kind": "struct",
+"signature": "struct RuntimeError : Exception {",
+"doc": "Raised for generic runtime errors that don't fit a more specific category.\nParent of NotImplementedError and NullError.\n\n@warning Avoid throwing RuntimeError directly when a more specific subclass applies.\n\n@example:\ndefine run(mode: String) -> void {\n    if mode != \"fast\" and mode != \"slow\" {\n        throw RuntimeError(\"Unknown mode: \" + mode)\n    }\n}"
+}
+],
+"Server": [
+{
+"package": "net",
+"qualified": "Server",
+"kind": "struct",
+"signature": "struct Server {",
+"doc": "A simple HTTP/1.1 server. Holds the listener socket and an exit flag so\n`stop()` can break the accept-loop from another thread once Quirk gains\nthat ability \u2014 for now `listen` runs forever."
+}
+],
+"Set": [
+{
+"package": "typing",
+"qualified": "Set",
+"kind": "struct",
+"signature": "struct Set : Printable, Sizeable, Iterable {",
+"doc": "An unordered collection of unique values. Insertion order is preserved for\niteration. Values are compared by their string representation.\n\n@example:\ns := {1, 2, 3}\ns.add(4)\nprint(s.has(2))      // true\ns.remove(2)\nprint(s.size())      // 3\nfor v in s { print(v) }"
+}
+],
+"Sizeable": [
+{
+"package": "typing",
+"qualified": "Sizeable",
+"kind": "interface",
+"signature": "interface Sizeable {",
+"doc": "Implemented by types that have a finite, countable number of elements.\n`String`, `List`, `Map`, `Set`, and `Queue` all implement `Sizeable`.\n\n@example\ndefine is_empty[T](col: T) -> Bool where T: Sizeable {\n    return col.length() == 0\n}"
+}
+],
+"Socket": [
+{
+"package": "net",
+"qualified": "Socket",
+"kind": "struct",
+"signature": "struct Socket {",
+"doc": "TCP socket. Wraps an OS file descriptor and provides high-level\n`bind`/`listen`/`accept`/`connect`/`send`/`recv`/`close` operations.\nAll failure modes raise `SocketError`."
+}
+],
+"SocketError": [
+{
+"package": "typing",
+"qualified": "SocketError",
+"kind": "struct",
+"signature": "struct SocketError : Exception {",
+"doc": "Raised for socket and network operation failures such as connection\nrefused, timeout, or DNS resolution errors.\n\n@example:\ntry {\n    conn := Socket.connect(\"localhost\", 8080)\n} catch (e: SocketError) {\n    print(\"Connection failed: \" + e.message)\n}"
+}
+],
+"String": [
+{
+"package": "typing",
+"qualified": "String",
+"kind": "struct",
+"signature": "struct String : Primitive, Comparable, Sizeable, Iterable, Representable {",
+"doc": "An immutable UTF-8 string. String literals use double or single quotes.\nSupports interpolation with `\"Hello ${name}\"`, iteration over characters,\nand a rich set of transformation and query methods.\n\n@example:\ns := \"Hello, world!\"\nprint(s.upper())            // \"HELLO, WORLD!\"\nprint(s.contains(\"world\")) // true\nparts := s.split(\", \")\nprint(parts.length())       // 2"
+}
+],
+"StringResult": [
+{
+"package": "toml",
+"qualified": "StringResult",
+"kind": "struct",
+"signature": "struct StringResult {",
+"doc": "Parsed string result paired with the index of the closing quote so\nthe caller can detect trailing junk."
+}
+],
+"TestCase": [
+{
+"package": "test",
+"qualified": "TestCase",
+"kind": "struct",
+"signature": "struct TestCase {",
+"doc": "A single named test. Construct with `TestCase(\"name\", fn() { ... })`.\nThe lambda body uses `test.assert_*` helpers; any AssertionError fails\nthe case. Other exceptions also fail it (their type is shown)."
+}
+],
+"Tuple": [
+{
+"package": "typing",
+"qualified": "Tuple",
+"kind": "struct",
+"signature": "struct Tuple : Printable, Sizeable, Iterable {",
+"doc": "An immutable, fixed-size ordered sequence of heterogeneous values.\nTuples are created with parenthesis syntax and support index access,\n`length()`, and destructuring assignment.\n\nA trailing comma is required for single-element tuples: `(x,)`.\nAn empty tuple is written as `()`.\n\n@example:\ncoords := (10, 20)\nprint(coords[0])        // 10\nprint(coords.length())  // 2\nx, y := coords          // destructuring\nnested := ((1, 2), \"outer\")\nprint(nested[1])        // \"outer\""
+}
+],
+"TypeError": [
+{
+"package": "typing",
+"qualified": "TypeError",
+"kind": "struct",
+"signature": "struct TypeError : Exception {",
+"doc": "Raised when an operation is applied to an object of the wrong type.\nUse this when a function receives an argument whose type is incompatible\nwith the expected type.\n\n@note Prefer ValueError when the type is correct but the value is invalid.\n\n@example:\ndefine require_int(n: Any) -> void {\n    if n.type != \"Int\" {\n        throw TypeError(\"Expected Int, got \" + n.type)\n    }\n}"
+}
+],
+"URL": [
+{
+"package": "url",
+"qualified": "URL",
+"kind": "struct",
+"signature": "struct URL {",
+"doc": "Parsed URL components. All fields are present (empty strings / 0 when the\nURL omits them) so callers don't need null-checks.\n\n  scheme:   `\"https\"`, `\"http\"`, `\"file\"`, `\"ftp\"`, ...\n  host:     hostname or IP literal (no port)\n  port:     port number, or 0 if absent\n  path:     `/path` portion (may be empty)\n  query:    raw query without the leading `?`\n  fragment: raw fragment without the leading `#`"
+}
+],
+"ValueError": [
+{
+"package": "typing",
+"qualified": "ValueError",
+"kind": "struct",
+"signature": "struct ValueError : Exception {",
+"doc": "Raised when an argument has the right type but an unacceptable value.\nParent of IndexError and KeyError \u2014 catch ValueError to handle both.\n\n@example:\ndefine set_age(age: Int) -> void {\n    if age < 0 {\n        throw ValueError(\"Age cannot be negative: \" + age.str())\n    }\n}"
+}
+],
+"Vector2": [
+{
+"package": "math",
+"qualified": "Vector2",
+"kind": "struct",
+"signature": "struct Vector2 {",
+"doc": "A 2D vector with `Double` components and operator overloading for\n`+`, `-`, and scalar `*`."
+}
+],
+"Vector3": [
+{
+"package": "math",
+"qualified": "Vector3",
+"kind": "struct",
+"signature": "struct Vector3 {",
+"doc": "A 3D vector with `Double` components. Currently supports `+` only \u2014\nextend with `__sub`, `__mul`, `dot`, `cross` as needed."
+}
+],
+"WhereConditionError": [
+{
+"package": "typing",
+"qualified": "WhereConditionError",
+"kind": "struct",
+"signature": "struct WhereConditionError : RuntimeError {",
+"doc": "Raised when a function's `where` precondition is violated at runtime.\nInherits from RuntimeError.\n\n@example:\ndefine sqrt(x: Double) -> Double where x >= 0.0 {\n    return x\n}\n\ntry {\n    sqrt(-1.0)\n} catch (e: WhereConditionError) {\n    print(\"Precondition failed: \" + e.message)\n}"
+}
+],
+"ZeroDivisionError": [
+{
+"package": "typing",
+"qualified": "ZeroDivisionError",
+"kind": "struct",
+"signature": "struct ZeroDivisionError : Exception {",
+"doc": "Raised when division or modulo by zero is attempted.\n\n@example:\ndefine divide(a: Int, b: Int) -> Int {\n    if b == 0 {\n        throw ZeroDivisionError(\"Cannot divide \" + a.str() + \" by zero\")\n    }\n    return a / b\n}"
+}
+],
+"__get": [
+{
+"package": "typing",
+"qualified": "TupleIterator.__get",
+"kind": "method",
+"signature": "extern define __get(self, index: Int) -> Any",
+"doc": "Returns the element at the given index.\n@param index: Int \u2014 zero-based position\n@returns: Any \u2014 the element at that index\n@throws IndexError \u2014 if index is out of bounds"
+},
+{
+"package": "typing",
+"qualified": "ListIterator.__get",
+"kind": "method",
+"signature": "extern define __get(self, index: Int) -> Any",
+"doc": "Returns the element at the given index.\n@param index: Int \u2014 zero-based position (negative indices not supported)\n@returns: Any \u2014 the element at that index\n@throws IndexError \u2014 if index is out of bounds"
+}
+],
+"__init": [
+{
+"package": "io",
+"qualified": "File.__init",
+"kind": "method",
+"signature": "extern define __init(self, path: String, mode: String) -> void",
+"doc": "Open `path` in the requested `mode`. Sets `is_open` based on whether the\nunderlying `fopen` succeeded \u2014 check it before reading.\n@param path File path (absolute or relative to cwd).\n@param mode Standard fopen-style mode string."
+},
+{
+"package": "net",
+"qualified": "Socket.__init",
+"kind": "method",
+"signature": "define __init(self, initial_fd: Int = -1) -> void {",
+"doc": "Create a new socket. Pass `initial_fd` only when wrapping a fd you\nalready own (e.g. inside `accept`). The default `-1` allocates a fresh\nsocket via the OS.\n@throws SocketError if the OS could not provide a socket fd."
+}
+],
+"__iter": [
+{
+"package": "typing",
+"qualified": "TupleIterator.__iter",
+"kind": "method",
+"signature": "extern define __iter(self) -> TupleIterator",
+"doc": "Returns an iterator over the elements of this tuple.\n@returns: TupleIterator"
+}
+],
+"__set": [
+{
+"package": "typing",
+"qualified": "ListIterator.__set",
+"kind": "method",
+"signature": "extern define __set(self, index: Int, item: Any) -> void",
+"doc": "Sets the element at the given index.\n@param index: Int \u2014 zero-based position\n@param item: Any \u2014 the new value\n@throws IndexError if index is out of bounds"
+}
+],
+"__str": [
+{
+"package": "typing",
+"qualified": "Callable.__str",
+"kind": "method",
+"signature": "extern define __str(self) -> String",
+"doc": "String representation of this callable.\n@returns:\n    String \u2014 always `\"<Callable>\"`"
+},
+{
+"package": "typing",
+"qualified": "__str",
+"kind": "define",
+"signature": "define __str(self) -> String",
+"doc": "Returns a human-readable string representation of this value."
+},
+{
+"package": "typing",
+"qualified": "TupleIterator.__str",
+"kind": "method",
+"signature": "extern define __str(self) -> String",
+"doc": "Returns a human-readable string representation of this tuple.\n@returns: String \u2014 e.g. `\"(1, hello, true)\"`"
+}
+],
+"_char": [
+{
+"package": "toml",
+"qualified": "_char",
+"kind": "define",
+"signature": "define _char(s: String, i: Int) -> String {",
+"doc": "One character of `s` at byte offset `i`, returned as a length-1\nString. Quirk's String API doesn't expose `char_at` today, so we\nsimulate via substring \u2014 same semantics, slightly more allocation\nthat the parser absorbs in its inner loops."
+}
+],
+"_index_outside_strings": [
+{
+"package": "toml",
+"qualified": "_index_outside_strings",
+"kind": "define",
+"signature": "define _index_outside_strings(hay: String, needle: String, start_idx: Int) -> Int {",
+"doc": "Index of `needle` in `hay` starting from `start_idx`, or -1. Skips\noccurrences inside double/single-quoted strings so a `#` inside\n`\"foo # bar\"` doesn't get mistaken for a comment marker."
+}
+],
+"_is_digit": [
+{
+"package": "toml",
+"qualified": "StringResult._is_digit",
+"kind": "method",
+"signature": "define _is_digit(c: String) -> Bool {",
+"doc": "True if `c` (a length-1 String) is an ASCII digit '0'..'9'. String\ncomparisons (`<=`, `>=`) are defined on the stdlib String type, so\nthis is a single comparison-pair on the host runtime."
+}
+],
+"_parse_string": [
+{
+"package": "toml",
+"qualified": "StringResult._parse_string",
+"kind": "method",
+"signature": "define _parse_string(line: String, start_idx: Int) -> StringResult {",
+"doc": "Parse a string literal starting at `start_idx` in `line`. Supports\nbasic (`\"...\"` with escapes) and literal (`'...'`, no escapes) forms.\nRaises ValueError on an unterminated string."
+}
+],
+"_parse_value": [
+{
+"package": "toml",
+"qualified": "StringResult._parse_value",
+"kind": "method",
+"signature": "define _parse_value(raw: String) -> Any {",
+"doc": "Parse a single value (right-hand side of `key = ...`). Handles\nstrings, integers, booleans, and one-line arrays."
+}
+],
+"_quote_if_needed": [
+{
+"package": "csv",
+"qualified": "_quote_if_needed",
+"kind": "define",
+"signature": "define _quote_if_needed(field: String, delim: String) -> String {",
+"doc": "Wraps `field` in quotes and doubles internal quotes IF it contains\nthe delimiter, a quote, or a newline. Otherwise returns it unchanged."
+}
+],
+"_strip_comment": [
+{
+"package": "toml",
+"qualified": "_strip_comment",
+"kind": "define",
+"signature": "define _strip_comment(line: String) -> String {",
+"doc": "Strip a trailing `# ...` comment from a logical line, respecting\nquoted strings."
+}
+],
+"abs": [
+{
+"package": "typing",
+"qualified": "Int.abs",
+"kind": "method",
+"signature": "extern define abs(self) -> Int",
+"doc": "Returns the absolute value.\n@returns: Int"
+}
+],
+"abs_f": [
+{
+"package": "math",
+"qualified": "abs_f",
+"kind": "define",
+"signature": "define abs_f(x: Double) -> Double { return fabs(x) }",
+"doc": "Absolute value of a Double. (`abs` is the Int version.)"
+}
+],
+"accept": [
+{
+"package": "net",
+"qualified": "Socket.accept",
+"kind": "method",
+"signature": "define accept(self) -> Socket {",
+"doc": "Block until a client connects, then return a new Socket wrapping that\nclient's fd. The returned socket should be closed when done (or use\n`with`).\n@throws SocketError if the accept syscall fails."
+},
+{
+"package": "net",
+"qualified": "accept",
+"kind": "define",
+"signature": "extern define accept(fd: Int) -> Int",
+"doc": "Block until a client connects to listening socket `fd`, returning the new\nclient socket's fd. Negative on error."
+}
+],
+"add": [
+{
+"package": "typing",
+"qualified": "SetIterator.add",
+"kind": "method",
+"signature": "extern define add(self, val: Any) -> void",
+"doc": "Adds a value to the set. Does nothing if already present.\n@param val: Any"
+}
+],
+"all": [
+{
+"package": "typing",
+"qualified": "ListIterator.all",
+"kind": "method",
+"signature": "extern define all(self, cb: Callable) -> Bool",
+"doc": "Returns `true` if every element satisfies the predicate.\n@param cb: Callable \u2014 `fn(element: T) => Bool`\n@returns: Bool"
+}
+],
+"ansi": [
+{
+"package": "sys",
+"qualified": "ansi",
+"kind": "define",
+"signature": "extern define ansi(name: String) -> String",
+"doc": "Returns the ANSI SGR sequence for a named effect, or \"\" if unknown.\nNames: `reset`, `bold`, `dim`, `red`, `green`, `yellow`, `blue`, `cyan`,\n`gray`, and `clear` (full screen clear)."
+}
+],
+"any": [
+{
+"package": "typing",
+"qualified": "ListIterator.any",
+"kind": "method",
+"signature": "extern define any(self, cb: Callable) -> Bool",
+"doc": "Returns `true` if at least one element satisfies the predicate.\n@param cb: Callable \u2014 `fn(element: T) => Bool`\n@returns: Bool"
+}
+],
+"append": [
+{
+"package": "typing",
+"qualified": "ListIterator.append",
+"kind": "method",
+"signature": "extern define append(self, item: Any) -> void",
+"doc": "Appends a value to the end of the list.\n@param item: Any \u2014 the value to add"
+}
+],
+"arg_count": [
+{
+"package": "sys",
+"qualified": "arg_count",
+"kind": "define",
+"signature": "extern define arg_count() -> Int",
+"doc": "Number of command-line arguments. Prefer `argv()` for the parsed List."
+}
+],
+"arg_get": [
+{
+"package": "sys",
+"qualified": "arg_get",
+"kind": "define",
+"signature": "extern define arg_get(index: Int) -> String",
+"doc": "Argument at `index` (0-based; 0 is the program name).\n@throws IndexError if index is out of range."
+}
+],
+"argv": [
+{
+"package": "sys",
+"qualified": "argv",
+"kind": "define",
+"signature": "define argv() -> List {",
+"doc": "Returns a List of Strings representing the command-line arguments.\nIndex 0 is the name/path of the executing program.\n@example\nfor arg in sys.argv() { print(arg) }"
+}
+],
+"assert_approx": [
+{
+"package": "test",
+"qualified": "assert_approx",
+"kind": "define",
+"signature": "define assert_approx(actual: Double, expected: Double, tolerance: Double = 0.0001, msg: String = \"\") -> void {",
+"doc": "Asserts `actual` and `expected` differ by at most `tolerance`. Use for\nDoubles where exact equality is fragile."
+}
+],
+"assert_contains": [
+{
+"package": "test",
+"qualified": "assert_contains",
+"kind": "define",
+"signature": "define assert_contains(haystack: Any, needle: Any, msg: String = \"\") -> void {",
+"doc": "Asserts `haystack` contains `needle` (substring for Strings, element for\nLists, or anything else with a `.contains` method)."
+}
+],
+"assert_eq": [
+{
+"package": "test",
+"qualified": "assert_eq",
+"kind": "define",
+"signature": "define assert_eq(actual: Any, expected: Any, msg: String = \"\") -> void {",
+"doc": "Asserts `actual == expected` by value. For primitive types and anything\nwith a `__str` method this matches stringified equality; for arbitrary\nstruct refs it amounts to pointer identity."
+}
+],
+"assert_throws": [
+{
+"package": "test",
+"qualified": "assert_throws",
+"kind": "define",
+"signature": "define assert_throws(cb: Callable, expected_type: String = \"\", msg: String = \"\") -> void {",
+"doc": "Asserts `cb` throws an exception. If `expected_type` is non-empty, the\nthrown exception's type must match (e.g. `\"ValueError\"`)."
+}
+],
+"atan2": [
+{
+"package": "math",
+"qualified": "atan2",
+"kind": "define",
+"signature": "extern define atan2(y: Double, x: Double) -> Double",
+"doc": "Two-argument arctangent \u2014 angle of the point `(x, y)` from the origin.\nReturns radians in `(-pi, pi]`. Handles all four quadrants correctly.\n@example math.atan2(1.0, 0.0)  // pi/2"
+}
+],
+"backtrace_frame": [
+{
+"package": "sys",
+"qualified": "backtrace_frame",
+"kind": "define",
+"signature": "extern define backtrace_frame(index: Int) -> String",
+"doc": "Returns one captured C backtrace frame as a formatted string."
+}
+],
+"backtrace_size": [
+{
+"package": "sys",
+"qualified": "backtrace_size",
+"kind": "define",
+"signature": "extern define backtrace_size() -> Int",
+"doc": "Number of frames in the buffer captured by the most recent `capture_backtrace()`."
+}
+],
+"basename": [
+{
+"package": "fs",
+"qualified": "basename",
+"kind": "define",
+"signature": "define basename(path: String) -> String {",
+"doc": "Final component of `path` \u2014 strips any trailing slash and returns the\nlast segment. `\"a/b/c.txt\"` \u2192 `\"c.txt\"`; `\"/etc/\"` \u2192 `\"etc\"`."
+}
+],
+"bind": [
+{
+"package": "net",
+"qualified": "Socket.bind",
+"kind": "method",
+"signature": "define bind(self, host: String, port: Int) -> void {",
+"doc": "Bind this socket to `host:port`. Use `\"0.0.0.0\"` to listen on all\ninterfaces, or `\"127.0.0.1\"` for loopback only.\n@throws SocketError on bind failure (port in use, permission denied, ...)."
+},
+{
+"package": "net",
+"qualified": "bind",
+"kind": "define",
+"signature": "extern define bind(fd: Int, host: String, port: Int) -> Int",
+"doc": "Bind socket `fd` to `host:port`. Returns 0 on success, negative on error.\n@example bind(fd, \"0.0.0.0\", 8080)"
+}
+],
+"bool": [
+{
+"package": "random",
+"qualified": "bool",
+"kind": "define",
+"signature": "define bool() -> Bool {",
+"doc": "True or False with 50/50 odds. One-liner around `_next_int(0, 1)`; the\nsugar pays off because it reads better at call sites (`if random.bool()`)."
+}
+],
+"breakpoint": [
+{
+"package": "debug",
+"qualified": "breakpoint",
+"kind": "define",
+"signature": "extern define breakpoint(label: String = \"\") -> void",
+"doc": "Pause execution at this line and prompt for a debugger command. `label`\nshows up in the banner so multiple breakpoints in the same file stay\ndistinguishable. Defaults to \"\" \u2014 fine when you only have one.\n\n@example\ndebug.breakpoint()                      // unlabeled, simplest form\ndebug.breakpoint(\"before db write\")     // labeled"
+}
+],
+"build_query": [
+{
+"package": "url",
+"qualified": "build_query",
+"kind": "define",
+"signature": "define build_query(m: Map) -> String {",
+"doc": "Build a `&`-joined query string from a Map. Each key and value is\npercent-encoded."
+}
+],
+"builtin_module_names": [
+{
+"package": "sys",
+"qualified": "builtin_module_names",
+"kind": "define",
+"signature": "define builtin_module_names() -> List {",
+"doc": "Names of modules compiled into this Quirk distribution."
+}
+],
+"byteorder": [
+{
+"package": "sys",
+"qualified": "byteorder",
+"kind": "define",
+"signature": "extern define byteorder() -> String",
+"doc": "The host machine's byte order: `\"little\"` or `\"big\"`."
+}
+],
+"capture_backtrace": [
+{
+"package": "sys",
+"qualified": "capture_backtrace",
+"kind": "define",
+"signature": "extern define capture_backtrace() -> void",
+"doc": "Captures the C-level backtrace into an internal buffer. Subsequent calls\noverwrite. Used by exception handlers to attach traceback info."
+}
+],
+"chain": [
+{
+"package": "itertools",
+"qualified": "chain",
+"kind": "define",
+"signature": "define chain(a: List, b: List) -> List {",
+"doc": "Concatenate two Lists in order.\n@example chain([1, 2], [3, 4])   // [1, 2, 3, 4]"
+}
+],
+"chdir_raw": [
+{
+"package": "fs",
+"qualified": "chdir_raw",
+"kind": "define",
+"signature": "extern define chdir_raw(path: String) -> Int",
+"doc": "Change current working directory. @throws IOError on failure."
+}
+],
+"choice": [
+{
+"package": "math",
+"qualified": "choice",
+"kind": "define",
+"signature": "define choice(items: List) -> Any {",
+"doc": "Pick one element of `list` uniformly at random.\n@throws ValueError if the list is empty."
+}
+],
+"clamp": [
+{
+"package": "math",
+"qualified": "clamp",
+"kind": "define",
+"signature": "define clamp(value: Int, lo: Int, hi: Int) -> Int {",
+"doc": "Restrict `value` to the closed range [lo, hi].\n@example math.clamp(150, 0, 100) // 100"
+}
+],
+"clear": [
+{
+"package": "console",
+"qualified": "clear",
+"kind": "define",
+"signature": "define clear() -> void {",
+"doc": "Clear the terminal screen."
+},
+{
+"package": "typing",
+"qualified": "ListIterator.clear",
+"kind": "method",
+"signature": "extern define clear(self) -> void",
+"doc": "Removes all elements from the list."
+},
+{
+"package": "typing",
+"qualified": "QueueIterator.clear",
+"kind": "method",
+"signature": "extern define clear(self) -> void",
+"doc": "Removes all elements."
+},
+{
+"package": "typing",
+"qualified": "MapIterator.clear",
+"kind": "method",
+"signature": "extern define clear(self) -> void",
+"doc": "Removes all entries from the map."
+},
+{
+"package": "typing",
+"qualified": "SetIterator.clear",
+"kind": "method",
+"signature": "extern define clear(self) -> void",
+"doc": "Removes all elements."
+}
+],
+"clear_line": [
+{
+"package": "console",
+"qualified": "clear_line",
+"kind": "define",
+"signature": "define clear_line() -> void {",
+"doc": "Erase the current line and move the cursor to column 0.\nPairs with `put` for in-place updates (progress bars, spinners)."
+}
+],
+"close": [
+{
+"package": "io",
+"qualified": "File.close",
+"kind": "method",
+"signature": "extern define close(self) -> void",
+"doc": "Close the file handle. Standard streams (`stdin`/`stdout`/`stderr`)\nare protected from being closed."
+},
+{
+"package": "net",
+"qualified": "Socket.close",
+"kind": "method",
+"signature": "define close(self) -> void {",
+"doc": "Close the socket. Idempotent \u2014 calling close twice is a no-op."
+},
+{
+"package": "net",
+"qualified": "close",
+"kind": "define",
+"signature": "extern define close(fd: Int) -> void",
+"doc": "Close socket `fd`, releasing the OS resource."
+}
+],
+"compile": [
+{
+"package": "regex",
+"qualified": "Match.compile",
+"kind": "method",
+"signature": "define compile(pattern: String, flags: String = \"\") -> Regex {",
+"doc": "Compile a pattern. Equivalent to `Regex(pattern, flags)`."
+}
+],
+"compile_raw": [
+{
+"package": "regex",
+"qualified": "compile_raw",
+"kind": "define",
+"signature": "extern define compile_raw(pattern: String, flags: String) -> Any",
+"doc": "Compile a pattern. Returns an opaque handle stored in `Regex._handle`.\n@throws ValueError if the pattern fails to compile."
+}
+],
+"confirm": [
+{
+"package": "console",
+"qualified": "confirm",
+"kind": "define",
+"signature": "define confirm(prompt: String, default: Bool = true) -> Bool {",
+"doc": "Yes/no prompt with a default answer. Pressing Enter uses the default.\n@example\nif console.confirm(\"Continue?\", default: false) { ... }"
+},
+{
+"package": "prompt",
+"qualified": "confirm",
+"kind": "define",
+"signature": "define confirm(message: String, default: Bool = true) -> Bool {",
+"doc": "Yes/no question. `default=true` means an empty reply (pressing Enter)\naccepts; `default=false` means it rejects. The prompt suffix is\n`[Y/n]` / `[y/N]` matching most CLI conventions."
+}
+],
+"connect": [
+{
+"package": "net",
+"qualified": "Socket.connect",
+"kind": "method",
+"signature": "define connect(self, host: String, port: Int) -> void {",
+"doc": "Connect this socket to a remote `host:port`.\n@throws SocketError on connect failure (DNS, refused, timeout, ...)."
+},
+{
+"package": "net",
+"qualified": "connect",
+"kind": "define",
+"signature": "extern define connect(fd: Int, host: String, port: Int) -> Int",
+"doc": "Connect socket `fd` to a remote `host:port`. Returns 0 on success.\n@example connect(fd, \"example.com\", 80)"
+}
+],
+"copyright": [
+{
+"package": "sys",
+"qualified": "copyright",
+"kind": "define",
+"signature": "extern define copyright() -> String",
+"doc": "A short copyright string for the Quirk runtime."
+}
+],
+"count": [
+{
+"package": "typing",
+"qualified": "StringIterator.count",
+"kind": "method",
+"signature": "extern define count(self, sub: String) -> Int",
+"doc": "Returns the number of non-overlapping occurrences of `sub`.\n@param sub: String\n@returns: Int"
+}
+],
+"cycle": [
+{
+"package": "itertools",
+"qualified": "cycle",
+"kind": "define",
+"signature": "define cycle(items: List, total: Int) -> List {",
+"doc": "Cycle `items` to produce a List of length `total`. Empty input yields an\nempty list regardless of `total`.\n\n@example\ncycle([1, 2, 3], 7)   // [1, 2, 3, 1, 2, 3, 1]"
+}
+],
+"days_in_month": [
+{
+"package": "datetime",
+"qualified": "DateTime.days_in_month",
+"kind": "method",
+"signature": "define days_in_month(year: Int, month: Int) -> Int {",
+"doc": "Number of days in `month` (1-12) of `year`. Handles February's leap-year\nadjustment via `is_leap`."
+}
+],
+"decode": [
+{
+"package": "encoding",
+"qualified": "decode",
+"kind": "define",
+"signature": "extern define decode(data: String) -> String",
+"doc": "Decode a hex String back to its original bytes. Accepts mixed case.\nReturns \"\" if the input length is odd or contains non-hex characters."
+},
+{
+"package": "encoding",
+"qualified": "decode",
+"kind": "define",
+"signature": "extern define decode(data: String) -> String",
+"doc": "Decode a Base64 String back to the original. Tolerant of whitespace and\nmissing padding; returns \"\" on malformed input."
+}
+],
+"delete": [
+{
+"package": "net",
+"qualified": "Response.delete",
+"kind": "method",
+"signature": "define delete(target: String, headers: Map = Map()) -> Response {",
+"doc": "HTTP DELETE.\n@example resp := http.delete(\"http://api/users/42\")"
+}
+],
+"diff_days": [
+{
+"package": "datetime",
+"qualified": "DateTime.diff_days",
+"kind": "method",
+"signature": "define diff_days(a: DateTime, b: DateTime) -> Int {",
+"doc": "Whole days between `a` and `b` (signed). Calendar-day boundaries\naren't honored \u2014 this is simply `seconds / 86400`."
+}
+],
+"difference": [
+{
+"package": "typing",
+"qualified": "SetIterator.difference",
+"kind": "method",
+"signature": "extern define difference(self, other: Set) -> Set",
+"doc": "Returns a new set with elements in this set that are not in `other`.\n@param other: Set\n@returns: Set"
+}
+],
+"dir": [
+{
+"package": "console",
+"qualified": "dir",
+"kind": "define",
+"signature": "define dir(value: Any) -> void {",
+"doc": "Pretty-dump a value with newlines and indentation. Mirrors JS console.dir \u2014\nuseful when `log` (single-line) hides structure."
+}
+],
+"dirname": [
+{
+"package": "fs",
+"qualified": "dirname",
+"kind": "define",
+"signature": "define dirname(path: String) -> String {",
+"doc": "Everything before the final path component. `\"a/b/c.txt\"` \u2192 `\"a/b\"`.\nReturns \"\" if the path has no separators."
+}
+],
+"distance": [
+{
+"package": "typing",
+"qualified": "StringIterator.distance",
+"kind": "method",
+"signature": "extern define distance(self, other: String) -> Int",
+"doc": "Computes the Levenshtein edit distance between this string and `other`.\n@param other: String\n@returns: Int \u2014 number of single-character edits needed"
+}
+],
+"dot": [
+{
+"package": "math",
+"qualified": "Vector2.dot",
+"kind": "method",
+"signature": "define dot(self, other: Vector2) -> Double {",
+"doc": "Dot product: `a \u00b7 b = a.x*b.x + a.y*b.y`. Useful for projections,\nangle calculations (`cos \u03b8 = dot(a, b) / (|a| * |b|)`), and detecting\northogonality (dot == 0)."
+}
+],
+"drop_while": [
+{
+"package": "itertools",
+"qualified": "drop_while",
+"kind": "define",
+"signature": "define drop_while(pred: Callable, items: List) -> List {",
+"doc": "Drop items from the front while `pred` is true, return the remainder.\n@example drop_while(fn(x) => x < 5, [1, 3, 5, 4, 2])   // [5, 4, 2]"
+}
+],
+"dump": [
+{
+"package": "encoding",
+"qualified": "dump",
+"kind": "define",
+"signature": "define dump(val: Any, file: File) -> void {",
+"doc": "Serialize `val` and write the JSON string to an open File.\n\n@example\nwith File(\"config.json\", \"w\") as f {\n    json.dump(config_map, f)\n}"
+}
+],
+"dumps_pretty": [
+{
+"package": "encoding",
+"qualified": "dumps_pretty",
+"kind": "define",
+"signature": "define dumps_pretty(val: Any, indent: Int = 2) -> String {",
+"doc": "Pretty-print `val` with `indent` spaces per nesting level. Indented JSON\nis much easier to read for config files and debug output; pass `indent=4`\nfor a more spacious layout.\n\n@example\nm := Map()\nm.put(\"name\", \"Alice\")\nm.put(\"scores\", [98, 87, 92])\nprint(json.dumps_pretty(m))\n// {\n//   \"name\": \"Alice\",\n//   \"scores\": [\n//     98,\n//     87,\n//     92\n//   ]\n// }"
+}
+],
+"each": [
+{
+"package": "typing",
+"qualified": "ListIterator.each",
+"kind": "method",
+"signature": "extern define each(self, cb: Callable) -> void",
+"doc": "Calls `cb` for each element. Returns nothing.\n@param cb: Callable \u2014 `fn(element: T) => void`\n\n@example:\n[1, 2, 3].each(fn(x: Int) => print(x))"
+},
+{
+"package": "typing",
+"qualified": "MapIterator.each",
+"kind": "method",
+"signature": "extern define each(self, cb: Callable) -> void",
+"doc": "Calls `cb` for each key-value pair.\n@param cb: Callable \u2014 `fn(key: String, value: Any)`\n\n@example:\nm.each(fn(k: String, v: Any) => print(k + \": \" + v))"
+}
+],
+"each_key": [
+{
+"package": "typing",
+"qualified": "MapIterator.each_key",
+"kind": "method",
+"signature": "extern define each_key(self, cb: Callable) -> void",
+"doc": "Calls `cb` for each key only.\n@param cb: Callable \u2014 `fn(key: String)`"
+}
+],
+"each_value": [
+{
+"package": "typing",
+"qualified": "MapIterator.each_value",
+"kind": "method",
+"signature": "extern define each_value(self, cb: Callable) -> void",
+"doc": "Calls `cb` for each value only.\n@param cb: Callable \u2014 `fn(value: Any)`"
+}
+],
+"encode": [
+{
+"package": "encoding",
+"qualified": "encode",
+"kind": "define",
+"signature": "extern define encode(data: String) -> String",
+"doc": "Encode each byte of `data` as two lowercase hex digits.\nOutput length is exactly `2 * data.length()`."
+},
+{
+"package": "encoding",
+"qualified": "encode",
+"kind": "define",
+"signature": "extern define encode(data: String) -> String",
+"doc": "Encode `data` to a Base64 String. Output length is roughly 4/3 of input,\nrounded up to a multiple of 4 with `=` padding."
+}
+],
+"enumerate": [
+{
+"package": "itertools",
+"qualified": "enumerate",
+"kind": "define",
+"signature": "define enumerate(items: List, start: Int = 0) -> List {",
+"doc": "Pair each value with a running index, returning `(idx, value)` tuples.\n`start` defaults to 0 \u2014 pass `start=1` for 1-based numbering. Access the\nreturned pairs with `t.0` / `t.1` or `t[0]` / `t[1]`.\n\n@example\nfor pair in enumerate([\"a\", \"b\", \"c\"]) {\n    print(\"${pair.0}: ${pair.1}\")\n}"
+}
+],
+"env": [
+{
+"package": "sys",
+"qualified": "env",
+"kind": "define",
+"signature": "define env(key: String) -> String {",
+"doc": "Retrieves the value of an environment variable. Returns the empty string\nwhen the variable is unset.\n@example\nhome := sys.env(\"HOME\")"
+}
+],
+"exc_info": [
+{
+"package": "sys",
+"qualified": "exc_info",
+"kind": "define",
+"signature": "extern define exc_info() -> Any",
+"doc": "Information about the most recently caught exception, or null if none.\nUsed by debugging tools."
+}
+],
+"executable": [
+{
+"package": "sys",
+"qualified": "executable",
+"kind": "define",
+"signature": "extern define executable() -> String",
+"doc": "Absolute path to the running quirk executable."
+}
+],
+"exit": [
+{
+"package": "sys",
+"qualified": "exit",
+"kind": "define",
+"signature": "extern define exit(code: Int) -> void",
+"doc": "Immediately terminates the program with `code`. Skips finalizers.\nPrefer `terminate(code)` for the friendlier name."
+}
+],
+"extname": [
+{
+"package": "fs",
+"qualified": "extname",
+"kind": "define",
+"signature": "define extname(path: String) -> String {",
+"doc": "File extension including the leading dot (`\".txt\"`), or \"\" when there\nis none. A leading dot in the basename (e.g. `.gitignore`) is NOT an\nextension \u2014 it's the filename."
+}
+],
+"filter": [
+{
+"package": "typing",
+"qualified": "ListIterator.filter",
+"kind": "method",
+"signature": "extern define filter(self, cb: Callable) -> List",
+"doc": "Returns a new list containing only elements for which `cb` returns `true`.\n@param cb: Callable \u2014 `fn(element: T) => Bool`\n@returns: List \u2014 filtered list\n\n@example:\nevens := [1, 2, 3, 4].filter(fn(x: Int) => x % 2 == 0)  // [2, 4]"
+}
+],
+"find": [
+{
+"package": "regex",
+"qualified": "Match.find",
+"kind": "method",
+"signature": "define find(self, s: String) -> Match {",
+"doc": "Find the first match starting at or after `from_offset`. Returns a Match\nwith `text` = full match string and `groups` = captured-group strings.\nReturns null when no match is found."
+},
+{
+"package": "typing",
+"qualified": "StringIterator.find",
+"kind": "method",
+"signature": "extern define find(self, sub: String) -> Int",
+"doc": "Returns the index of the first occurrence of `sub`, or `-1` if not found.\n@param sub: String\n@returns: Int"
+},
+{
+"package": "typing",
+"qualified": "ListIterator.find",
+"kind": "method",
+"signature": "extern define find(self, cb: Callable) -> Any",
+"doc": "Returns the first element that satisfies the predicate, or `null` if none found.\n@param cb: Callable \u2014 `fn(element: T) => Bool`\n@returns: Any \u2014 the matching element, or `null`"
+}
+],
+"find_all": [
+{
+"package": "regex",
+"qualified": "Match.find_all",
+"kind": "method",
+"signature": "define find_all(self, s: String) -> List {",
+"doc": "Find every non-overlapping match. Returns a List<Match>.\nEmpty matches advance one byte to avoid infinite loops."
+}
+],
+"find_at": [
+{
+"package": "regex",
+"qualified": "find_at",
+"kind": "define",
+"signature": "extern define find_at(handle: Any, s: String, from_offset: Int) -> Int",
+"doc": "Searches `s` starting at `from_offset` and caches the match groups in the\nhandle. Returns the start offset of the full match, or -1 if no match.\nQuirk wrappers then read group_count/group_start/group_end to assemble Match."
+}
+],
+"flag": [
+{
+"package": "argparse",
+"qualified": "ArgSpec.flag",
+"kind": "method",
+"signature": "define flag(args: Map, name: String) -> Bool {",
+"doc": "Convenience: read a flag from a parsed-args Map as a Bool. Equivalent to\n`args.get(name) == \"true\"`.\n@example  if argparse.flag(args, \"verbose\") { ... }"
+}
+],
+"fmod": [
+{
+"package": "math",
+"qualified": "fmod",
+"kind": "define",
+"signature": "extern define fmod(a: Double, b: Double) -> Double",
+"doc": "Floating-point remainder of `a / b` with the sign of `a`.\n@example math.fmod(10.0, 3.0)  // 1.0"
+}
+],
+"format": [
+{
+"package": "datetime",
+"qualified": "DateTime.format",
+"kind": "method",
+"signature": "define format(self, fmt: String) -> String {",
+"doc": "Format using a strftime-style spec. Common codes:\n  `%Y` 4-digit year   `%m` month 01-12   `%d` day 01-31\n  `%H` hour 00-23     `%M` minute 00-59  `%S` second 00-59\n  `%A` weekday name   `%a` short day      `%B` month name\n  `%j` day-of-year    `%w` weekday 0-6"
+},
+{
+"package": "typing",
+"qualified": "StringIterator.format",
+"kind": "method",
+"signature": "extern define format(self, ...args: List) -> String",
+"doc": "Returns a new string with each `{0}`, `{1}`, \u2026 placeholder replaced by the\ncorresponding argument.\n@param args: List \u2014 positional values to interpolate\n@returns: String\n@example:\n\"Hello {0}, you are {1}!\".format([\"Alice\", 30])"
+}
+],
+"format_at": [
+{
+"package": "time",
+"qualified": "format_at",
+"kind": "define",
+"signature": "extern define format_at(epoch: Int, fmt: String, utc: Int) -> String",
+"doc": "Format `epoch` with a strftime-style spec. Empty spec falls back to\n`\"%Y-%m-%dT%H:%M:%S\"`."
+}
+],
+"from_iso": [
+{
+"package": "datetime",
+"qualified": "DateTime.from_iso",
+"kind": "method",
+"signature": "define from_iso(s: String) -> DateTime {",
+"doc": "Parse an ISO-8601 string (`\"YYYY-MM-DD[Thh:mm:ss[Z]]\"`).\nTrailing `Z` \u2192 UTC; otherwise local. Throws `ValueError` on bad input."
+}
+],
+"from_unix": [
+{
+"package": "datetime",
+"qualified": "DateTime.from_unix",
+"kind": "method",
+"signature": "define from_unix(epoch: Int) -> DateTime {",
+"doc": "Build a DateTime from an explicit Unix epoch (seconds), interpreted in the\nlocal time zone."
+}
+],
+"get": [
+{
+"package": "net",
+"qualified": "Response.get",
+"kind": "method",
+"signature": "define get(target: String, headers: Map = Map(), params: Map = Map()) -> Response {",
+"doc": "HTTP GET.\n@param headers Extra request headers (optional).\n@param params Query-string parameters merged into the URL (optional).\n@example resp := http.get(\"http://example.com\")\n@example resp := http.get(\"http://api/search\", params: { \"q\": \"quirk\" })"
+},
+{
+"package": "typing",
+"qualified": "MapIterator.get",
+"kind": "method",
+"signature": "extern define get(self, key: String) -> Any",
+"doc": "Returns the value for the given key, or `null` if not found.\n@param key: String \u2014 the key to look up\n@returns: Any \u2014 the associated value, or `null`"
+}
+],
+"getdefaultencoding": [
+{
+"package": "sys",
+"qualified": "getdefaultencoding",
+"kind": "define",
+"signature": "extern define getdefaultencoding() -> String",
+"doc": "Default text encoding (e.g. `\"utf-8\"`)."
+}
+],
+"getenv": [
+{
+"package": "sys",
+"qualified": "getenv",
+"kind": "define",
+"signature": "extern define getenv(name: String) -> String",
+"doc": "Reads an environment variable. Returns the empty string when unset.\nPrefer `env(key)` for the same behavior with a friendlier name."
+}
+],
+"getrecursionlimit": [
+{
+"package": "sys",
+"qualified": "getrecursionlimit",
+"kind": "define",
+"signature": "extern define getrecursionlimit() -> Int",
+"doc": "Maximum recursion depth before a stack-overflow is raised."
+}
+],
+"getsizeof": [
+{
+"package": "sys",
+"qualified": "getsizeof",
+"kind": "define",
+"signature": "extern define getsizeof(obj: Any) -> Int",
+"doc": "Approximate size of `obj` in bytes (best-effort)."
+}
+],
+"group": [
+{
+"package": "console",
+"qualified": "group",
+"kind": "define",
+"signature": "define group(label: String) -> void {",
+"doc": "Start an indented log group. Subsequent log/info/warn/etc. calls are indented\n2 spaces per group level. Pair with `group_end()` to close.\n@example\nconsole.group(\"Build\")\nconsole.log(\"step 1\")\nconsole.log(\"step 2\")\nconsole.group_end()"
+}
+],
+"group_depth_dec": [
+{
+"package": "sys",
+"qualified": "group_depth_dec",
+"kind": "define",
+"signature": "extern define group_depth_dec() -> void",
+"doc": "Decrement group-indent depth (clamped at 0)."
+}
+],
+"group_depth_get": [
+{
+"package": "sys",
+"qualified": "group_depth_get",
+"kind": "define",
+"signature": "extern define group_depth_get() -> Int",
+"doc": "Current group-indent depth (0 at the top level). Used by `console.group`."
+}
+],
+"group_depth_inc": [
+{
+"package": "sys",
+"qualified": "group_depth_inc",
+"kind": "define",
+"signature": "extern define group_depth_inc() -> void",
+"doc": "Increment group-indent depth. Paired with `group_depth_dec()` by `console.group`."
+}
+],
+"groupby": [
+{
+"package": "itertools",
+"qualified": "groupby",
+"kind": "define",
+"signature": "define groupby(key_fn: Callable, items: List) -> Map {",
+"doc": "Group items by the value produced by `key_fn`. Returns a Map from\nstringified key to a List of items with that key. Order of insertion in\neach group is preserved.\n\n@example\nwords := [\"pear\", \"plum\", \"apple\", \"peach\", \"apricot\"]\ngroupby(fn(w) => w.substring(0, 1), words)\n// {\"p\": [\"pear\", \"plum\", \"peach\"], \"a\": [\"apple\", \"apricot\"]}"
+}
+],
+"has": [
+{
+"package": "typing",
+"qualified": "MapIterator.has",
+"kind": "method",
+"signature": "extern define has(self, key: String) -> Bool",
+"doc": "Returns `true` if the key exists in the map.\n@param key: String\n@returns: Bool"
+},
+{
+"package": "typing",
+"qualified": "SetIterator.has",
+"kind": "method",
+"signature": "extern define has(self, val: Any) -> Bool",
+"doc": "Returns `true` if the value is in the set.\n@param val: Any\n@returns: Bool"
+}
+],
+"hmac_sha256": [
+{
+"package": "crypto",
+"qualified": "hmac_sha256",
+"kind": "define",
+"signature": "extern define hmac_sha256(key: String, msg: String) -> String",
+"doc": "HMAC-SHA256 \u2014 message authentication code. Use for signed cookies, JWT\nHS256, webhook signature verification, etc. Returns 64 hex chars."
+}
+],
+"humanize": [
+{
+"package": "datetime",
+"qualified": "DateTime.humanize",
+"kind": "method",
+"signature": "define humanize(dt: DateTime, relative_to: DateTime = now()) -> String {",
+"doc": "Approximate relative time vs `relative_to`, e.g. \"2 hours ago\" or\n\"in 3 days\". `relative_to` defaults to \"now\" via `now()`.\nGranularity grows with the gap: seconds \u2192 minutes \u2192 hours \u2192 days \u2192\nweeks \u2192 months \u2192 years.\n\n@example\nhumanize(yesterday())          // \"1 day ago\"\nhumanize(tomorrow())           // \"in 1 day\""
+}
+],
+"hypot": [
+{
+"package": "math",
+"qualified": "hypot",
+"kind": "define",
+"signature": "extern define hypot(x: Double, y: Double) -> Double",
+"doc": "Euclidean distance from origin: `sqrt(x*x + y*y)` without intermediate overflow.\n@example math.hypot(3.0, 4.0)  // 5.0"
+}
+],
+"implementation": [
+{
+"package": "sys",
+"qualified": "implementation",
+"kind": "define",
+"signature": "define implementation() -> Map {",
+"doc": "Implementation info: `name`, `cache_tag`, `version`.\n@example\nsys.implementation().get(\"version\")"
+}
+],
+"index": [
+{
+"package": "typing",
+"qualified": "StringIterator.index",
+"kind": "method",
+"signature": "extern define index(self, sub: String) -> Int",
+"doc": "Like `find`, but throws `ValueError` if `sub` is not present.\n@param sub: String\n@returns: Int\n@throws ValueError \u2014 if `sub` is not found"
+}
+],
+"input": [
+{
+"package": "prompt",
+"qualified": "input",
+"kind": "define",
+"signature": "define input(message: String, default: String = \"\") -> String {",
+"doc": "Free-text input. Appends ` [default]: ` when a default is provided so\nthe user knows what an empty reply gets them. An empty reply with\na default returns the default; an empty reply with no default\nre-prompts (mirrors `read -p` behaviour in shells)."
+}
+],
+"input_float": [
+{
+"package": "console",
+"qualified": "input_float",
+"kind": "define",
+"signature": "define input_float(prompt: String = \"\") -> Double {",
+"doc": "Prompt for a Double, retrying until the user enters a valid number."
+}
+],
+"input_int": [
+{
+"package": "console",
+"qualified": "input_int",
+"kind": "define",
+"signature": "define input_int(prompt: String = \"\") -> Int {",
+"doc": "Prompt for an Int, retrying until the user enters a valid number.\n@example\nage := console.input_int(\"Your age: \")"
+}
+],
+"input_optional": [
+{
+"package": "prompt",
+"qualified": "input_optional",
+"kind": "define",
+"signature": "define input_optional(message: String) -> String? {",
+"doc": "Like `input` but returns `null` on an empty reply instead of re-prompting.\nUse when the caller wants to handle the \"user didn't say anything\" branch\nitself \u2014 e.g. asking a custom follow-up before re-prompting, or skipping\nthe field entirely.\n\n    name := prompt.input_optional(\"Your name\")\n    match name {\n        case null => print(\"(skipped)\")\n        case _    => print(\"hi, \" + name)\n    }"
+}
+],
+"intersection": [
+{
+"package": "typing",
+"qualified": "SetIterator.intersection",
+"kind": "method",
+"signature": "extern define intersection(self, other: Set) -> Set",
+"doc": "Returns a new set containing only elements present in both sets.\n@param other: Set\n@returns: Set"
+}
+],
+"is_empty": [
+{
+"package": "typing",
+"qualified": "ListIterator.is_empty",
+"kind": "method",
+"signature": "extern define is_empty(self) -> Bool",
+"doc": "Returns `true` if the list has no elements.\n@returns: Bool"
+},
+{
+"package": "typing",
+"qualified": "QueueIterator.is_empty",
+"kind": "method",
+"signature": "extern define is_empty(self) -> Bool",
+"doc": "Returns `true` if the queue is empty.\n@returns: Bool"
+},
+{
+"package": "typing",
+"qualified": "MapIterator.is_empty",
+"kind": "method",
+"signature": "define is_empty(self) -> Bool { return self.length() == 0 }",
+"doc": "Returns `true` if the map has no entries.\n@returns: Bool"
+},
+{
+"package": "typing",
+"qualified": "SetIterator.is_empty",
+"kind": "method",
+"signature": "extern define is_empty(self) -> Bool",
+"doc": "Returns `true` if the set has no elements.\n@returns: Bool"
+}
+],
+"is_leap": [
+{
+"package": "datetime",
+"qualified": "DateTime.is_leap",
+"kind": "method",
+"signature": "define is_leap(year: Int) -> Bool {",
+"doc": "Standard Gregorian leap-year rule: divisible by 4, except centuries that\naren't divisible by 400. 2000 was leap; 1900 wasn't.\n\n@example\nis_leap(2024)   // true\nis_leap(2023)   // false\nis_leap(2000)   // true\nis_leap(1900)   // false"
+}
+],
+"is_valid": [
+{
+"package": "uuid",
+"qualified": "is_valid",
+"kind": "define",
+"signature": "define is_valid(s: String) -> Bool {",
+"doc": "Lightweight format check. Returns true iff `s` matches the canonical\n36-char shape with dashes at positions 8 / 13 / 18 / 23 and hex\ncharacters everywhere else. The version / variant nibbles aren't\nenforced \u2014 anything you parse cleanly via `v4()` will round-trip.\n\n@example\nuuid.is_valid(\"550e8400-e29b-41d4-a716-446655440000\")   // true\nuuid.is_valid(\"not-a-uuid\")                             // false\nuuid.is_valid(\"550E8400-E29B-41D4-A716-446655440000\")   // true (case-insensitive)"
+}
+],
+"is_weekend": [
+{
+"package": "datetime",
+"qualified": "DateTime.is_weekend",
+"kind": "method",
+"signature": "define is_weekend(dt: DateTime) -> Bool {",
+"doc": "True for Saturday and Sunday (where `weekday` is 0=Sunday \u2026 6=Saturday)."
+}
+],
+"isatty": [
+{
+"package": "sys",
+"qualified": "isatty",
+"kind": "define",
+"signature": "extern define isatty(f: File) -> Bool",
+"doc": "Returns true if the given stream is a terminal (interactive). Use to decide\nwhether to emit ANSI codes \u2014 pipes/files should stay plain."
+}
+],
+"iso_at": [
+{
+"package": "time",
+"qualified": "iso_at",
+"kind": "define",
+"signature": "extern define iso_at(epoch: Int, utc: Int) -> String",
+"doc": "ISO-8601 form. UTC: `2026-01-15T12:34:56Z`. Local: `...+05:30` style offset."
+}
+],
+"join": [
+{
+"package": "fs",
+"qualified": "join",
+"kind": "define",
+"signature": "define join(a: String, b: String) -> String {",
+"doc": "Join two path components with `/`. Avoids double-slashes when `a` already\nends with one. (Forward slashes work on Windows in modern paths.)\n@example fs.join(\"/etc\", \"hosts\")  // \"/etc/hosts\""
+},
+{
+"package": "typing",
+"qualified": "StringIterator.join",
+"kind": "method",
+"signature": "extern define join(self, items: List) -> String",
+"doc": "Joins a list of strings, inserting `self` between each element.\n@param items: List \u2014 list of String values\n@returns: String\n@example:\n\", \".join([\"a\", \"b\", \"c\"])  // \"a, b, c\""
+}
+],
+"keys": [
+{
+"package": "typing",
+"qualified": "MapIterator.keys",
+"kind": "method",
+"signature": "extern define keys(self) -> List",
+"doc": "Returns all keys as a `List` of `String`.\n@returns: List"
+}
+],
+"length": [
+{
+"package": "typing",
+"qualified": "StringIterator.length",
+"kind": "method",
+"signature": "extern define length(self) -> Int",
+"doc": "Returns `true` if the string has zero characters.\n@returns: Bool"
+},
+{
+"package": "typing",
+"qualified": "TupleIterator.length",
+"kind": "method",
+"signature": "extern define length(self) -> Int",
+"doc": "Returns the number of elements in this tuple.\n@returns: Int \u2014 element count"
+},
+{
+"package": "typing",
+"qualified": "ListIterator.length",
+"kind": "method",
+"signature": "extern define length(self) -> Int",
+"doc": "Returns the number of elements.\n@returns: Int \u2014 element count"
+},
+{
+"package": "typing",
+"qualified": "MapIterator.length",
+"kind": "method",
+"signature": "extern define length(self) -> Int",
+"doc": "Returns the number of key-value pairs.\n@returns: Int"
+}
+],
+"lines": [
+{
+"package": "typing",
+"qualified": "StringIterator.lines",
+"kind": "method",
+"signature": "extern define lines(self) -> List",
+"doc": "Splits on newlines and returns each line as a list element.\n@returns: List"
+}
+],
+"list_dir": [
+{
+"package": "fs",
+"qualified": "list_dir",
+"kind": "define",
+"signature": "extern define list_dir(path: String) -> List",
+"doc": "List the immediate entries of directory `path` as a List<String>.\nExcludes `.` and `..`. Returns an empty List if the path doesn't exist\nor isn't a directory.\n@example\nfor name in fs.list_dir(\".\") { print(name) }"
+}
+],
+"listen": [
+{
+"package": "net",
+"qualified": "Socket.listen",
+"kind": "method",
+"signature": "define listen(self, backlog: Int = 5) -> void {",
+"doc": "Mark this socket as listening for incoming connections. Must follow `bind`.\n@param backlog Pending-connection queue size (default 5)."
+},
+{
+"package": "net",
+"qualified": "Request.listen",
+"kind": "method",
+"signature": "define listen(self, host: String, port: Int, handler: Callable) -> void {",
+"doc": "Block forever, accepting connections on `host:port` and dispatching\neach parsed `Request` to `handler`. The handler returns a `Response`\nwhich is sent back and the connection is closed.\n\nExceptions raised by the handler are caught and converted to a plain\n500 \u2014 they don't take the server down.\n\n@example\nServer().listen(\"0.0.0.0\", 8080, fn(req: Request) -> Response {\n    return Response(200, \"hi\", Map())\n})"
+},
+{
+"package": "net",
+"qualified": "listen",
+"kind": "define",
+"signature": "extern define listen(fd: Int, backlog: Int) -> Int",
+"doc": "Mark `fd` as a listening socket with the given pending-connection backlog.\nMust be called after `bind`. Returns 0 on success."
+}
+],
+"load": [
+{
+"package": "encoding",
+"qualified": "load",
+"kind": "define",
+"signature": "define load(file: File) -> Any {",
+"doc": "Read the entire contents of `file` and parse as JSON.\n\n@example\nwith File(\"config.json\", \"r\") as f {\n    config: Map = json.load(f)\n    print(config.get(\"host\"))\n}"
+}
+],
+"loads": [
+{
+"package": "encoding",
+"qualified": "loads",
+"kind": "define",
+"signature": "define loads(s: String) -> Any {",
+"doc": "Parse a JSON string and return the corresponding Quirk value with\nreal types \u2014 no manual coercion required.\n\n  JSON object  \u2192 `Map`     (String keys, mixed-type values)\n  JSON array   \u2192 `List`    (mixed-type elements)\n  JSON string  \u2192 `String`\n  JSON number  \u2192 `Int` (no decimal/exponent) or `Double`\n  JSON boolean \u2192 `Bool`\n  JSON null    \u2192 null\n\n@param s  A valid JSON string.\n@returns  A Map, List, String, or boxed primitive.\n\n@example\ndata: Map = json.loads('{\"name\":\"Alice\",\"age\":30,\"active\":true}')\nprint(data.get(\"name\"))     // Alice  (String)\nprint(data.get(\"age\"))      // 30     (Int \u2014 usable in arithmetic)\nprint(data.get(\"active\"))   // true   (Bool)"
+}
+],
+"make": [
+{
+"package": "datetime",
+"qualified": "DateTime.make",
+"kind": "method",
+"signature": "define make(year: Int, month: Int, day: Int, hour: Int = 0, minute: Int = 0, second: Int = 0) -> DateTime {",
+"doc": "Build a DateTime from explicit calendar components (local time).\n@throws ValueError if the components are out of range."
+}
+],
+"map": [
+{
+"package": "typing",
+"qualified": "ListIterator.map",
+"kind": "method",
+"signature": "extern define map(self, cb: Callable) -> List",
+"doc": "Transforms each element and returns a new list.\n@param cb: Callable \u2014 `fn(element: T) => U`\n@returns: List \u2014 new list of transformed values\n\n@example:\ndoubled := [1, 2, 3].map(fn(x: Int) => x * 2)  // [2, 4, 6]"
+}
+],
+"max": [
+{
+"package": "math",
+"qualified": "max",
+"kind": "define",
+"signature": "define max(a: Int, b: Int) -> Int {",
+"doc": "Larger of two Ints."
+}
+],
+"maxsize": [
+{
+"package": "sys",
+"qualified": "maxsize",
+"kind": "define",
+"signature": "extern define maxsize() -> Int",
+"doc": "Largest representable Int on this platform."
+}
+],
+"mean": [
+{
+"package": "statistics",
+"qualified": "mean",
+"kind": "define",
+"signature": "define mean(items: List) -> Double {",
+"doc": "Arithmetic mean. Throws `ValueError` on empty input.\n\n@example\nmean([1, 2, 3, 4])   // 2.5"
+}
+],
+"median": [
+{
+"package": "statistics",
+"qualified": "median",
+"kind": "define",
+"signature": "define median(items: List) -> Double {",
+"doc": "Median value (50th percentile). For even-length inputs returns the\naverage of the two middle values.\n\n@example\nmedian([1, 2, 3, 4, 5])   // 3.0\nmedian([1, 2, 3, 4])      // 2.5"
+}
+],
+"median_high": [
+{
+"package": "statistics",
+"qualified": "median_high",
+"kind": "define",
+"signature": "define median_high(items: List) -> Double {",
+"doc": "Upper median. Mirror of `median_low`: for even n returns the upper\nmidpoint."
+}
+],
+"median_low": [
+{
+"package": "statistics",
+"qualified": "median_low",
+"kind": "define",
+"signature": "define median_low(items: List) -> Double {",
+"doc": "Lower median (no averaging \u2014 returns one of the input values). For odd\nn this matches `median`; for even n it returns the lower of the two\nmidpoints."
+}
+],
+"min": [
+{
+"package": "math",
+"qualified": "min",
+"kind": "define",
+"signature": "define min(a: Int, b: Int) -> Int {",
+"doc": "Smaller of two Ints."
+}
+],
+"mkdir": [
+{
+"package": "fs",
+"qualified": "mkdir",
+"kind": "define",
+"signature": "define mkdir(path: String, parents: Bool = false) -> void {",
+"doc": "Create a directory.\n@param parents If true, intermediate directories are also created and an\n              existing directory is not an error (`mkdir -p` semantics).\n@throws IOError on failure."
+}
+],
+"mkdir_raw": [
+{
+"package": "fs",
+"qualified": "mkdir_raw",
+"kind": "define",
+"signature": "extern define mkdir_raw(path: String, parents: Int) -> Int",
+"doc": "Create the directory at `path`. Returns 0 on success, -1 on failure.\n@param parents If true, also creates any missing intermediate directories\n              (like `mkdir -p`) and treats \"already exists\" as success."
+}
+],
+"mode": [
+{
+"package": "statistics",
+"qualified": "mode",
+"kind": "define",
+"signature": "define mode(items: List) -> String {",
+"doc": "Most common element. Ties resolve to the first-seen value. Returns the\nstringified form (since elements can be heterogeneous types).\n\n@example\nmode([1, 2, 2, 3, 3, 3])   // \"3\""
+}
+],
+"modules": [
+{
+"package": "sys",
+"qualified": "modules",
+"kind": "define",
+"signature": "define modules() -> Map {",
+"doc": "Map of loaded modules. Currently a stub \u2014 returns empty until reflection lands."
+}
+],
+"multiselect": [
+{
+"package": "prompt",
+"qualified": "multiselect",
+"kind": "define",
+"signature": "define multiselect(message: String, options: List) -> List {",
+"doc": "Pick zero-or-more options from a numbered list. Renders the same as\n`select` but takes a comma-separated list of indices:\n\n    Tags?\n      1) urgent\n      2) blocked\n      3) needs-review\n    Pick (comma-separated, blank for none): 1,3\n\nReturns the chosen options as a List<String> in their original order.\nWhitespace and duplicates are tolerated; an empty reply returns []."
+}
+],
+"nil": [
+{
+"package": "uuid",
+"qualified": "nil",
+"kind": "define",
+"signature": "define nil() -> String {",
+"doc": "The all-zero \"nil\" UUID \u2014 useful as a sentinel for \"no UUID yet\" in\nschemas that disallow nulls."
+}
+],
+"now_ms": [
+{
+"package": "sys",
+"qualified": "now_ms",
+"kind": "define",
+"signature": "extern define now_ms() -> Int",
+"doc": "Monotonic clock in milliseconds. Use deltas only \u2014 the absolute value is\nnot tied to the Unix epoch. Suitable for measuring elapsed time."
+}
+],
+"parse": [
+{
+"package": "argparse",
+"qualified": "ArgSpec.parse",
+"kind": "method",
+"signature": "define parse(self) -> Map {",
+"doc": "Parse `sys.argv()`, returning a Map<String, String> (or \"true\"/\"false\"\nfor flags \u2014 call `.to_bool()` to convert). On `--help` or `-h`, prints\nusage and exits 0. On any error, prints the error + usage and exits 2."
+},
+{
+"package": "csv",
+"qualified": "parse",
+"kind": "define",
+"signature": "define parse(text: String, delim: String = \",\") -> List {",
+"doc": "Parse `text` into a `List<List<String>>` \u2014 each outer item is a record,\neach inner item is a field. Empty input returns an empty list.\n\nField rules (RFC 4180):\n  - Fields are delimited by `delim` (default `,`).\n  - Records end at LF or CRLF.\n  - A field can be wrapped in `\"...\"`. Inside such a field:\n      - the delimiter and newlines are taken literally\n      - a literal quote is written as `\"\"`\n  - Trailing newline at the very end is ignored (no empty extra record)."
+},
+{
+"package": "toml",
+"qualified": "StringResult.parse",
+"kind": "method",
+"signature": "define parse(text: String) -> Map {",
+"doc": "Parse a complete TOML document into a Map. Sections become nested\nMaps; `[[name]]` headers accumulate Lists of Maps under `name` in\nthe root.\n\nErrors raise ValueError annotated with the offending line number."
+},
+{
+"package": "typing",
+"qualified": "Double.parse",
+"kind": "method",
+"signature": "extern define parse(s: String) -> Double",
+"doc": "Parses a string as a floating-point number.\n@param s: String\n@returns: Double\n@throws ValueError \u2014 if `s` is not a valid number"
+},
+{
+"package": "typing",
+"qualified": "Int.parse",
+"kind": "method",
+"signature": "extern define parse(s: String) -> Int",
+"doc": "Parses a string as an integer.\n@param s: String\n@returns: Int\n@throws ValueError \u2014 if `s` is not a valid integer"
+},
+{
+"package": "typing",
+"qualified": "Bool.parse",
+"kind": "method",
+"signature": "extern define parse(s: String) -> Bool",
+"doc": "Parses `\"true\"` or `\"false\"`.\n@param s: String\n@returns: Bool\n@throws ValueError \u2014 if `s` is not `\"true\"` or `\"false\"`"
+},
+{
+"package": "typing",
+"qualified": "parse",
+"kind": "define",
+"signature": "define parse(s: String) -> Self",
+"doc": "Parses `s` and returns the corresponding value.\n@param s: String \u2014 the string to parse\n@throws ValueError \u2014 if `s` is not a valid representation"
+},
+{
+"package": "url",
+"qualified": "URL.parse",
+"kind": "method",
+"signature": "define parse(raw: String) -> URL {",
+"doc": "Parse a URL string into a `URL` struct. Tolerates missing scheme and\nmissing host: e.g. `\"/path?x=1\"` parses with scheme=\"\" and host=\"\"."
+}
+],
+"parse_dicts": [
+{
+"package": "csv",
+"qualified": "parse_dicts",
+"kind": "define",
+"signature": "define parse_dicts(text: String, delim: String = \",\") -> List {",
+"doc": "Parse `text` taking the first row as a header, returning a\n`List<Map<String,String>>`. Each record's keys come from the header row;\nmissing trailing fields map to the empty String."
+}
+],
+"parse_iso": [
+{
+"package": "time",
+"qualified": "parse_iso",
+"kind": "define",
+"signature": "extern define parse_iso(s: String) -> Int",
+"doc": "Parse an ISO-8601 string. Trailing `Z` means UTC; absent \u2192 local. Returns\n-1 on malformed input."
+}
+],
+"parse_query": [
+{
+"package": "url",
+"qualified": "parse_query",
+"kind": "define",
+"signature": "define parse_query(q: String) -> Map {",
+"doc": "Parse a query string `\"k1=v1&k2=v2\"` into a Map. Both keys and values are\npercent-decoded. Keys with no `=` map to the empty String."
+}
+],
+"parser": [
+{
+"package": "argparse",
+"qualified": "ArgSpec.parser",
+"kind": "method",
+"signature": "define parser(name: String, description: String) -> Parser {",
+"doc": "Construct a new Parser. `name` is shown in the usage line; `description` is\nprinted under it."
+}
+],
+"partition": [
+{
+"package": "itertools",
+"qualified": "partition",
+"kind": "define",
+"signature": "define partition(pred: Callable, items: List) -> Tuple {",
+"doc": "Split into `(matching, non_matching)` based on `pred`. Useful for \"yes/no\"\nsplits where you want both halves at once.\n\n@example\np := partition(fn(x) => x > 0, [-2, 3, -1, 7])\nprint(p.0)   // [3, 7]\nprint(p.1)   // [-2, -1]"
+}
+],
+"password": [
+{
+"package": "console",
+"qualified": "password",
+"kind": "define",
+"signature": "define password(prompt: String = \"\") -> String {",
+"doc": "Read a line from stdin with echo disabled. Useful for password prompts.\nA newline is echoed automatically after the user presses Enter so the next\noutput starts on a fresh line."
+},
+{
+"package": "prompt",
+"qualified": "password",
+"kind": "define",
+"signature": "define password(message: String) -> String {",
+"doc": "Hidden input. Shells out to console.password, which already disables\nterminal echo via termios in the C runtime. Single-call wrapper so\nclient code doesn't need to know which stdlib module owns the helper."
+}
+],
+"path": [
+{
+"package": "sys",
+"qualified": "path",
+"kind": "define",
+"signature": "define path() -> List {",
+"doc": "Search path for `use` / `from ... use` resolution.\nOrder: `<prefix>/libs`, `<prefix>/packages`, current directory."
+}
+],
+"peek_back": [
+{
+"package": "typing",
+"qualified": "QueueIterator.peek_back",
+"kind": "method",
+"signature": "extern define peek_back(self) -> Any",
+"doc": "Returns the back element without removing it.\n@returns: Any"
+}
+],
+"peek_front": [
+{
+"package": "typing",
+"qualified": "QueueIterator.peek_front",
+"kind": "method",
+"signature": "extern define peek_front(self) -> Any",
+"doc": "Returns the front element without removing it.\n@returns: Any"
+}
+],
+"platform": [
+{
+"package": "sys",
+"qualified": "platform",
+"kind": "define",
+"signature": "extern define platform() -> String",
+"doc": "Platform identifier, e.g. `\"linux\"`, `\"darwin\"`, `\"win32\"`."
+}
+],
+"pop": [
+{
+"package": "typing",
+"qualified": "ListIterator.pop",
+"kind": "method",
+"signature": "extern define pop(self) -> Any",
+"doc": "Removes and returns the last element.\n@returns: Any \u2014 the removed element\n@throws IndexError \u2014 if the list is empty"
+}
+],
+"pop_back": [
+{
+"package": "typing",
+"qualified": "QueueIterator.pop_back",
+"kind": "method",
+"signature": "extern define pop_back(self) -> Any",
+"doc": "Removes and returns the back element. Returns `null` if empty.\n@returns: Any"
+}
+],
+"pop_front": [
+{
+"package": "typing",
+"qualified": "QueueIterator.pop_front",
+"kind": "method",
+"signature": "extern define pop_front(self) -> Any",
+"doc": "Removes and returns the front element. Returns `null` if empty.\n@returns: Any"
+}
+],
+"post": [
+{
+"package": "net",
+"qualified": "Response.post",
+"kind": "method",
+"signature": "define post(target: String, data: String, headers: Map = Map()) -> Response {",
+"doc": "HTTP POST with a raw body. The body is sent as-is \u2014 set the matching\n`Content-Type` in `headers` if it isn't `application/octet-stream`.\n@example resp := http.post(\"http://api/echo\", \"name=Quirk\")\n@example resp := http.post(url, \"raw\", headers: { \"Content-Type\": \"text/plain\" })"
+}
+],
+"post_json": [
+{
+"package": "net",
+"qualified": "Response.post_json",
+"kind": "method",
+"signature": "define post_json(target: String, body: Any, headers: Map = Map()) -> Response {",
+"doc": "POST a value as JSON. Serializes `body` via `json.dumps` and sets\n`Content-Type: application/json` unless the caller already supplied one.\nAccepts anything `json.dumps` does: Map, List, ISerializable structs, or\na String.\n@example resp := http.post_json(\"http://api/users\", { \"name\": \"Quirk\" })"
+}
+],
+"pow": [
+{
+"package": "math",
+"qualified": "pow",
+"kind": "define",
+"signature": "extern define pow(base: Double, exponent: Double) -> Double",
+"doc": "`base ** exponent`. Handles fractional and negative exponents.\nFor Int powers prefer `Int.pow`, which avoids floating-point rounding."
+},
+{
+"package": "typing",
+"qualified": "Int.pow",
+"kind": "method",
+"signature": "extern define pow(self, exp: Int) -> Int",
+"doc": "Returns `self` raised to the power `exp`.\n@param exp: Int \u2014 exponent (must be \u2265 0)\n@returns: Int"
+}
+],
+"prefix": [
+{
+"package": "sys",
+"qualified": "prefix",
+"kind": "define",
+"signature": "extern define prefix() -> String",
+"doc": "Installation prefix \u2014 directory containing `bin/quirk` and `libs/`."
+}
+],
+"print_help": [
+{
+"package": "argparse",
+"qualified": "ArgSpec.print_help",
+"kind": "method",
+"signature": "define print_help(self) -> void {",
+"doc": "Print usage to stdout. Called automatically by `parse()` when `--help`\nor `-h` is seen."
+}
+],
+"progress": [
+{
+"package": "console",
+"qualified": "progress",
+"kind": "define",
+"signature": "define progress(current: Int, total: Int, label: String = \"\") -> void {",
+"doc": "Render a one-line progress bar using `\\r` to overwrite. Width auto-fits the\nterminal (or 40 chars when not a TTY). Caller is responsible for printing a\nnewline after the final update (or call `console.log(\"\")` to advance).\n\n@example\nfor i in 0..101 {\n    console.progress(i, 100, \"Building\")\n    sys.sleep(20)\n}\nconsole.log(\"\")  // newline after final bar"
+}
+],
+"push_back": [
+{
+"package": "typing",
+"qualified": "QueueIterator.push_back",
+"kind": "method",
+"signature": "extern define push_back(self, val: Any) -> void",
+"doc": "Appends a value to the back of the queue.\n@param val: Any"
+}
+],
+"push_front": [
+{
+"package": "typing",
+"qualified": "QueueIterator.push_front",
+"kind": "method",
+"signature": "extern define push_front(self, val: Any) -> void",
+"doc": "Prepends a value to the front of the queue.\n@param val: Any"
+}
+],
+"put": [
+{
+"package": "console",
+"qualified": "put",
+"kind": "define",
+"signature": "define put(msg: Any) -> void {",
+"doc": "Write `msg` to stdout WITHOUT a trailing newline. Available as both\n`console.put` and `console.write` (the latter shadows the top-level\n`write` builtin only in the `console.` namespace).\n@example\nconsole.put(\"Loading\")\nfor i in 0..3 { console.put(\".\") }\nconsole.log(\"done\")"
+},
+{
+"package": "typing",
+"qualified": "MapIterator.put",
+"kind": "method",
+"signature": "extern define put(self, key: String, value: Any) -> void",
+"doc": "Inserts or updates a key-value pair.\n@param key: String \u2014 the key\n@param value: Any \u2014 the value to associate"
+}
+],
+"pvariance": [
+{
+"package": "statistics",
+"qualified": "pvariance",
+"kind": "define",
+"signature": "define pvariance(items: List) -> Double {",
+"doc": "Population variance (divides by `n`). Use when the input *is* the\npopulation, not a sample of it."
+}
+],
+"quantile": [
+{
+"package": "statistics",
+"qualified": "quantile",
+"kind": "define",
+"signature": "define quantile(items: List, q: Double) -> Double {",
+"doc": "The `q`-th quantile of `items` for `q` in `[0.0, 1.0]`. Uses linear\ninterpolation between the two surrounding sample points. `quantile(xs,\n0.5)` is the median; `0.25` is the lower quartile; `0.75` the upper.\n\n@example\nquantile([1, 2, 3, 4, 5], 0.25)   // 2.0\nquantile([1, 2, 3, 4, 5], 0.75)   // 4.0"
+}
+],
+"quote": [
+{
+"package": "url",
+"qualified": "quote",
+"kind": "define",
+"signature": "define quote(s: String) -> String {",
+"doc": "Percent-encode `s` for safe use in a URL component. Every byte that is not\nin the unreserved set (A-Z a-z 0-9 - _ . ~) becomes `%XX` (uppercase hex).\nSpaces are encoded as `%20`, NOT `+`.\n@example  url.quote(\"Hello, world!\")  // \"Hello%2C%20world%21\""
+}
+],
+"randint": [
+{
+"package": "random",
+"qualified": "randint",
+"kind": "define",
+"signature": "define randint(lo: Int, hi: Int) -> Int {",
+"doc": "Inclusive integer in `[lo, hi]`. Matches Python's `random.randint`.\nOrder of arguments doesn't matter \u2014 the runtime swaps if `hi < lo`.\n\n@example\ndie := random.randint(1, 6)"
+}
+],
+"random": [
+{
+"package": "math",
+"qualified": "random",
+"kind": "define",
+"signature": "extern define random() -> Double",
+"doc": "Uniform Double in `[0.0, 1.0)`. 53 bits of precision."
+},
+{
+"package": "random",
+"qualified": "random",
+"kind": "define",
+"signature": "define random() -> Double {",
+"doc": "Uniform double in `[0.0, 1.0)`. The fundamental float-valued primitive\n\u2014 all higher-level Double helpers build on this.\n\n@example\nif random.random() < 0.5 { print(\"heads\") }"
+}
+],
+"random_hex": [
+{
+"package": "crypto",
+"qualified": "random_hex",
+"kind": "define",
+"signature": "extern define random_hex(n: Int) -> String",
+"doc": "Cryptographically-strong random bytes, returned as a 2n-character lowercase\nhex String. Suitable for tokens, salts, session IDs.\n@example  token := crypto.random_hex(32)   // 64 hex chars = 256 random bits"
+}
+],
+"random_int": [
+{
+"package": "math",
+"qualified": "random_int",
+"kind": "define",
+"signature": "extern define random_int(lo: Int, hi: Int) -> Int",
+"doc": "Uniform Int in `[lo, hi]` (inclusive on both ends).\nReturns `lo` if `hi <= lo`.\n@example math.random_int(1, 6)  // dice roll"
+}
+],
+"range_list": [
+{
+"package": "itertools",
+"qualified": "range_list",
+"kind": "define",
+"signature": "define range_list(start: Int, count: Int = -1, step: Int = 1) -> List {",
+"doc": "List of `n` arithmetic-progression values starting at `start`, stepping\nby `step`. `range_list(5)` \u2192 [0,1,2,3,4]; `range_list(2, 5)` \u2192\n[2,3,4,5,6]; `range_list(0, 10, 2)` \u2192 [0,2,4,6,8,10,12,14,16,18]."
+}
+],
+"read": [
+{
+"package": "io",
+"qualified": "File.read",
+"kind": "method",
+"signature": "extern define read(self) -> String",
+"doc": "Read the entire file into a String. Returns \"\" on error or empty file.\n@returns The file contents as a String."
+}
+],
+"read_file": [
+{
+"package": "csv",
+"qualified": "read_file",
+"kind": "define",
+"signature": "define read_file(path: String, delim: String = \",\") -> List {",
+"doc": "Read `path` as CSV and parse. Returns `List<List<String>>`."
+}
+],
+"read_key": [
+{
+"package": "sys",
+"qualified": "read_key",
+"kind": "define",
+"signature": "extern define read_key() -> Int",
+"doc": "Reads ONE keypress from stdin without waiting for Enter. Returns the byte\nvalue as an Int (e.g. 13 for Enter, 27 for ESC, 0x41 for 'A').\nArrow keys produce a 3-byte sequence: `27, 91, 65/66/67/68`."
+}
+],
+"read_line": [
+{
+"package": "io",
+"qualified": "File.read_line",
+"kind": "method",
+"signature": "extern define read_line(self) -> String",
+"doc": "Read one line from the file. The trailing `\\n` is stripped.\nReturns the empty string at EOF; check both for empty content and EOF\nby comparing against `\"\"` plus a separate `is_open` check if needed.\nMaximum line length is 2048 characters."
+}
+],
+"read_password": [
+{
+"package": "sys",
+"qualified": "read_password",
+"kind": "define",
+"signature": "extern define read_password() -> String",
+"doc": "Reads one line from stdin with echo disabled. The trailing newline is stripped.\nUsed by `console.password`."
+}
+],
+"recv": [
+{
+"package": "net",
+"qualified": "Socket.recv",
+"kind": "method",
+"signature": "define recv(self, size: Int = 1024) -> String {",
+"doc": "Receive up to `size` bytes. Returns \"\" when the peer has closed the\nconnection. Default buffer is 1024 bytes."
+},
+{
+"package": "net",
+"qualified": "recv",
+"kind": "define",
+"signature": "extern define recv(fd: Int, size: Int) -> String",
+"doc": "Read up to `size` bytes from socket `fd`. Returns the data received as\na String. An empty string indicates the peer closed the connection."
+}
+],
+"reduce": [
+{
+"package": "typing",
+"qualified": "ListIterator.reduce",
+"kind": "method",
+"signature": "extern define reduce(self, initial: Any, cb: Callable) -> Any",
+"doc": "Folds all elements into a single accumulated value.\n@param initial: Any \u2014 the starting accumulator value\n@param cb: Callable \u2014 `fn(acc: T, element: T) => T`\n@returns: Any \u2014 final accumulated value\n\n@example:\nsum := [1, 2, 3].reduce(0, fn(acc: Int, x: Int) => acc + x)  // 6"
+}
+],
+"remove": [
+{
+"package": "typing",
+"qualified": "MapIterator.remove",
+"kind": "method",
+"signature": "extern define remove(self, key: String) -> void",
+"doc": "Removes the entry with the given key. Does nothing if the key is absent.\n@param key: String"
+},
+{
+"package": "typing",
+"qualified": "SetIterator.remove",
+"kind": "method",
+"signature": "extern define remove(self, val: Any) -> void",
+"doc": "Removes a value from the set. Does nothing if absent.\n@param val: Any"
+}
+],
+"remove_raw": [
+{
+"package": "fs",
+"qualified": "remove_raw",
+"kind": "define",
+"signature": "extern define remove_raw(path: String) -> Int",
+"doc": "Delete a file. @throws IOError on failure."
+}
+],
+"rename_raw": [
+{
+"package": "fs",
+"qualified": "rename_raw",
+"kind": "define",
+"signature": "extern define rename_raw(src: String, dst: String) -> Int",
+"doc": "Rename / move from one path to another. Atomic on the same filesystem.\n@throws IOError on failure."
+}
+],
+"repeat": [
+{
+"package": "itertools",
+"qualified": "repeat",
+"kind": "define",
+"signature": "define repeat(value: Any, n: Int) -> List {",
+"doc": "List of `n` copies of `value`.\n@example repeat(\"x\", 3)   // [\"x\", \"x\", \"x\"]"
+}
+],
+"replace_all": [
+{
+"package": "regex",
+"qualified": "Match.replace_all",
+"kind": "method",
+"signature": "define replace_all(self, s: String, replacement: String) -> String {",
+"doc": "Replace every match with `replacement`. Replacement supports `\\1`, `\\2`, ...\nbackrefs to captured groups. `\\0` is the entire match."
+}
+],
+"replace_all_raw": [
+{
+"package": "regex",
+"qualified": "replace_all_raw",
+"kind": "define",
+"signature": "extern define replace_all_raw(handle: Any, s: String, replacement: String) -> String",
+"doc": "Returns a fresh String with every match of `handle`'s pattern replaced\nby `replacement`. The replacement may reference captured groups via\n`\\1`, `\\2`, ... (`\\0` is the entire match)."
+}
+],
+"request": [
+{
+"package": "net",
+"qualified": "Response.request",
+"kind": "method",
+"signature": "define request(method: String, target: String, data: String = \"\", headers: Map = Map(), params: Map = Map(), follow_redirects: Bool = true) -> Response {",
+"doc": "Send a single HTTP request and return the response. Lower-level form\nbehind `get`/`post`/`delete`/`post_json`.\n\n@param method HTTP verb (GET, POST, DELETE, PUT, ...) \u2014 case-insensitive.\n@param target Full URL starting with `http://`. HTTPS is not supported.\n@param data Request body \u2014 pass \"\" for GET/DELETE.\n@param headers Extra headers to send (case-preserved). Caller-supplied\n       Host / User-Agent / Connection / Content-Length override the defaults.\n@param params Query-string parameters; merged into the URL's existing\n       query and percent-encoded via `url.build_query`.\n@param follow_redirects When true (the default), 3xx responses are\n       followed automatically up to 5 hops. Set to false if you want to\n       inspect or short-circuit the redirect yourself.\n@returns The final `Response`."
+}
+],
+"rmdir_raw": [
+{
+"package": "fs",
+"qualified": "rmdir_raw",
+"kind": "define",
+"signature": "extern define rmdir_raw(path: String) -> Int",
+"doc": "Remove an empty directory. @throws IOError on failure (incl. non-empty dir)."
+}
+],
+"run": [
+{
+"package": "sys",
+"qualified": "run",
+"kind": "define",
+"signature": "define run(command: String) -> Int {",
+"doc": "Executes a shell command and returns the OS exit status (0 = success).\n@example\nif sys.run(\"git status\") != 0 { print(\"not a repo\") }"
+}
+],
+"run_all": [
+{
+"package": "test",
+"qualified": "TestCase.run_all",
+"kind": "method",
+"signature": "define run_all(cases: List) -> Int {",
+"doc": "Run every case in `cases`, printing pass/fail marks and a final summary.\nReturns the number of failures (0 == all green)."
+}
+],
+"sample": [
+{
+"package": "random",
+"qualified": "sample",
+"kind": "define",
+"signature": "define sample(items: List, k: Int) -> List {",
+"doc": "Return `k` distinct elements drawn from `items`. Throws if `k > items.length()`.\nImplemented as a partial Fisher-Yates over a copy so the caller's list\nisn't disturbed. O(k) work in the average case.\n\n@example\ndeck := [1,2,3,4,5,6,7,8,9,10]\nhand := random.sample(deck, 5)"
+}
+],
+"seed": [
+{
+"package": "math",
+"qualified": "seed",
+"kind": "define",
+"signature": "extern define seed(s: Int) -> void",
+"doc": "Seed the pseudo-random generator. The same seed always produces the same\nsequence of `random()` / `random_int()` results \u2014 useful for reproducible\ntests and procedural generation."
+}
+],
+"select": [
+{
+"package": "console",
+"qualified": "select",
+"kind": "define",
+"signature": "define select(prompt: String, options: List) -> String {",
+"doc": "Render an arrow-key menu and return the selected option string. Up/Down or\nj/k navigate; Enter accepts; q/Esc cancels (returns the empty string).\nFalls back to a numeric prompt when stdin is not a TTY.\n\n@example\nchoice := console.select(\"Pick a fruit\", [\"apple\", \"banana\", \"cherry\"])\nconsole.log(\"You chose:\", choice)"
+},
+{
+"package": "prompt",
+"qualified": "select",
+"kind": "define",
+"signature": "define select(message: String, options: List, default_idx: Int = 0) -> String {",
+"doc": "Pick one option from a numbered list. Renders:\n\n    Mode?\n      1) fast        [default]\n      2) thorough\n      3) debug\n    Choice (1-3, default 1): _\n\nReturns the selected option's text. `default_idx` is zero-based; out-\nof-range values fall back to the first option."
+}
+],
+"send": [
+{
+"package": "net",
+"qualified": "Socket.send",
+"kind": "method",
+"signature": "define send(self, data: String) -> Int {",
+"doc": "Send `data` over the socket. Returns the number of bytes actually sent \u2014\ncallers should retry on short writes for large payloads."
+},
+{
+"package": "net",
+"qualified": "send",
+"kind": "define",
+"signature": "extern define send(fd: Int, data: String) -> Int",
+"doc": "Send `data` over socket `fd`. Returns the number of bytes sent (may be\nless than `data.length()` for partial sends)."
+}
+],
+"setrecursionlimit": [
+{
+"package": "sys",
+"qualified": "setrecursionlimit",
+"kind": "define",
+"signature": "extern define setrecursionlimit(limit: Int) -> void",
+"doc": "Sets the maximum recursion depth. Use cautiously \u2014 too high can crash the host."
+}
+],
+"shadow_frame": [
+{
+"package": "sys",
+"qualified": "shadow_frame",
+"kind": "define",
+"signature": "extern define shadow_frame(index: Int) -> String",
+"doc": "Returns one shadow-stack frame as a formatted string. Index 0 is the bottom\nof the stack (`main`); higher indices are deeper calls."
+}
+],
+"shadow_size": [
+{
+"package": "sys",
+"qualified": "shadow_size",
+"kind": "define",
+"signature": "extern define shadow_size() -> Int",
+"doc": "Number of frames currently on the Quirk shadow stack (per-thread call depth)."
+}
+],
+"shuffle": [
+{
+"package": "math",
+"qualified": "shuffle",
+"kind": "define",
+"signature": "define shuffle(items: List) -> List {",
+"doc": "Shuffle `items` in place using Fisher-Yates. Returns the same list for chaining."
+}
+],
+"sign_i": [
+{
+"package": "math",
+"qualified": "sign_i",
+"kind": "define",
+"signature": "define sign_i(x: Int) -> Int { return sign_int(x) }",
+"doc": "Sign of an Int: -1, 0, or 1."
+}
+],
+"size": [
+{
+"package": "console",
+"qualified": "size",
+"kind": "define",
+"signature": "define size() -> Tuple {",
+"doc": "Terminal dimensions as `(cols, rows)`. Falls back to (80, 24) when stdout\nis not a TTY or the syscall fails. Use `tuple[0]` and `tuple[1]` to access."
+},
+{
+"package": "typing",
+"qualified": "QueueIterator.size",
+"kind": "method",
+"signature": "extern define size(self) -> Int",
+"doc": "Returns the number of elements.\n@returns: Int"
+},
+{
+"package": "typing",
+"qualified": "SetIterator.size",
+"kind": "method",
+"signature": "extern define size(self) -> Int",
+"doc": "Returns the number of elements.\n@returns: Int"
+}
+],
+"sleep": [
+{
+"package": "sys",
+"qualified": "sleep",
+"kind": "define",
+"signature": "extern define sleep(ms: Int) -> void",
+"doc": "Suspend the current thread for `ms` milliseconds. Negative values are no-ops."
+}
+],
+"socket": [
+{
+"package": "net",
+"qualified": "socket",
+"kind": "define",
+"signature": "extern define socket() -> Int",
+"doc": "Create a new TCP/IPv4 socket. Returns the OS file descriptor as an Int,\nor a negative value on error."
+}
+],
+"split": [
+{
+"package": "regex",
+"qualified": "Match.split",
+"kind": "method",
+"signature": "define split(self, s: String) -> List {",
+"doc": "Split `s` on every match of the pattern. Empty input yields a single\nempty-string element."
+},
+{
+"package": "typing",
+"qualified": "StringIterator.split",
+"kind": "method",
+"signature": "extern define split(self, delimiter: String) -> List",
+"doc": "Splits the string on `delimiter` and returns a list of substrings.\n@param delimiter: String\n@returns: List \u2014 list of String parts"
+}
+],
+"split_ext": [
+{
+"package": "fs",
+"qualified": "split_ext",
+"kind": "define",
+"signature": "define split_ext(path: String) -> Tuple {",
+"doc": "Splits `path` into `(stem, ext)`.\n`\"foo.tar.gz\"` \u2192 `(\"foo.tar\", \".gz\")`. `\"README\"` \u2192 `(\"README\", \"\")`."
+}
+],
+"split_raw": [
+{
+"package": "regex",
+"qualified": "split_raw",
+"kind": "define",
+"signature": "extern define split_raw(handle: Any, s: String) -> List",
+"doc": "Splits `s` on every match of `handle`'s pattern. Empty matches advance one\nbyte to prevent infinite loops."
+}
+],
+"sqrt": [
+{
+"package": "typing",
+"qualified": "Double.sqrt",
+"kind": "method",
+"signature": "extern define sqrt(self) -> Double",
+"doc": "Returns the square root.\n@returns: Double\n@throws ValueError \u2014 if the value is negative"
+}
+],
+"srcline": [
+{
+"package": "sys",
+"qualified": "srcline",
+"kind": "define",
+"signature": "extern define srcline(filename: Any, line: Int) -> Any",
+"doc": "Returns the source line at `filename:line` as a String, or null on failure.\nUsed by exception printers to render code snippets in tracebacks."
+}
+],
+"start_of_day": [
+{
+"package": "datetime",
+"qualified": "DateTime.start_of_day",
+"kind": "method",
+"signature": "define start_of_day(dt: DateTime) -> DateTime {",
+"doc": "Truncate `dt` to midnight. Returns a fresh DateTime with the same date\nbut `hour = minute = second = 0`."
+}
+],
+"start_of_week": [
+{
+"package": "datetime",
+"qualified": "DateTime.start_of_week",
+"kind": "method",
+"signature": "define start_of_week(dt: DateTime) -> DateTime {",
+"doc": "Monday of the week containing `dt`, at midnight. Uses ISO weeks\n(Monday = first day). If `dt` already falls on Monday, returns midnight\nof the same day."
+}
+],
+"stderr": [
+{
+"package": "sys",
+"qualified": "stderr",
+"kind": "define",
+"signature": "extern define stderr() -> File",
+"doc": "Standard error wrapped as a `File`. See `stdin()` for handle semantics."
+}
+],
+"stdin": [
+{
+"package": "sys",
+"qualified": "stdin",
+"kind": "define",
+"signature": "extern define stdin() -> File",
+"doc": "Standard input wrapped as a `File`. Multiple calls return fresh wrappers\naround the same underlying handle; closing one does not close stdin."
+}
+],
+"stdout": [
+{
+"package": "sys",
+"qualified": "stdout",
+"kind": "define",
+"signature": "extern define stdout() -> File",
+"doc": "Standard output wrapped as a `File`. See `stdin()` for handle semantics."
+}
+],
+"str": [
+{
+"package": "typing",
+"qualified": "Int.str",
+"kind": "method",
+"signature": "extern define str(self) -> String",
+"doc": "Returns the string representation of this integer.\n@returns: String"
+}
+],
+"substring": [
+{
+"package": "typing",
+"qualified": "StringIterator.substring",
+"kind": "method",
+"signature": "extern define substring(self, start: Int, end: Int) -> String",
+"doc": "Returns the substring from `start` (inclusive) to `end` (exclusive).\n@param start: Int \u2014 start index\n@param end: Int \u2014 end index\n@returns: String\n@throws IndexError \u2014 if indices are out of range"
+}
+],
+"system": [
+{
+"package": "sys",
+"qualified": "system",
+"kind": "define",
+"signature": "extern define system(cmd: String) -> Int",
+"doc": "Runs `cmd` via the OS shell and returns the exit status.\nPrefer `run(cmd)` for the same behavior with a friendlier name."
+}
+],
+"take_while": [
+{
+"package": "itertools",
+"qualified": "take_while",
+"kind": "define",
+"signature": "define take_while(pred: Callable, items: List) -> List {",
+"doc": "Take items from the front while `pred` is true; stop at the first false.\n\n@example\ntake_while(fn(x) => x < 5, [1, 3, 5, 4, 2])   // [1, 3]"
+}
+],
+"terminal_cols": [
+{
+"package": "sys",
+"qualified": "terminal_cols",
+"kind": "define",
+"signature": "extern define terminal_cols() -> Int",
+"doc": "Width of the terminal in columns. Returns 80 when stdout is not a TTY."
+}
+],
+"terminal_rows": [
+{
+"package": "sys",
+"qualified": "terminal_rows",
+"kind": "define",
+"signature": "extern define terminal_rows() -> Int",
+"doc": "Height of the terminal in rows. Returns 24 when stdout is not a TTY."
+}
+],
+"terminate": [
+{
+"package": "sys",
+"qualified": "terminate",
+"kind": "define",
+"signature": "define terminate(code: Int) -> void {",
+"doc": "Immediately terminates the program with the given status code.\nEquivalent to `exit(code)` but with a more descriptive name."
+}
+],
+"time": [
+{
+"package": "console",
+"qualified": "time",
+"kind": "define",
+"signature": "define time(label: String) -> void {",
+"doc": "Start a named timer."
+}
+],
+"time_end": [
+{
+"package": "console",
+"qualified": "time_end",
+"kind": "define",
+"signature": "define time_end(label: String) -> void {",
+"doc": "Stop a named timer and log the elapsed milliseconds.\n@example\nconsole.time(\"fetch\")\ndata := http.get(\"http://example.com\")\nconsole.time_end(\"fetch\")  // logs: fetch: 123 ms"
+}
+],
+"timer_end": [
+{
+"package": "sys",
+"qualified": "timer_end",
+"kind": "define",
+"signature": "extern define timer_end(label: String) -> Int",
+"doc": "Stop a named timer and return elapsed ms since `timer_start(label)`.\nReturns -1 if the label was never started or has already ended."
+}
+],
+"timer_start": [
+{
+"package": "sys",
+"qualified": "timer_start",
+"kind": "define",
+"signature": "extern define timer_start(label: String) -> void",
+"doc": "Start a named timer. Subsequent `timer_end(label)` returns elapsed ms.\nUp to 32 timers can be active at once."
+}
+],
+"to_float": [
+{
+"package": "typing",
+"qualified": "StringIterator.to_float",
+"kind": "method",
+"signature": "extern define to_float(self) -> Double",
+"doc": "Parses the string as a floating-point number.\n@returns: Double\n@throws ValueError \u2014 if the string is not a valid number"
+}
+],
+"to_int": [
+{
+"package": "typing",
+"qualified": "StringIterator.to_int",
+"kind": "method",
+"signature": "extern define to_int(self) -> Int",
+"doc": "Parses the string as an integer.\n@returns: Int\n@throws ValueError \u2014 if the string is not a valid integer"
+}
+],
+"to_json": [
+{
+"package": "typing",
+"qualified": "ISerializable.to_json",
+"kind": "method",
+"signature": "define to_json(self) -> String {",
+"doc": "Serialize this object to a JSON string.\nOverride this in every subclass.\n@returns A valid JSON string representing this object."
+}
+],
+"to_unix": [
+{
+"package": "time",
+"qualified": "to_unix",
+"kind": "define",
+"signature": "extern define to_unix(year: Int, month: Int, day: Int, hour: Int, minute: Int, second: Int, utc: Int) -> Int",
+"doc": "Convert calendar components to a Unix epoch. `utc=1` interprets the inputs\nas UTC; `utc=0` as the host's local time zone (DST handled).\nReturns -1 if the components are out of range."
+}
+],
+"uniform": [
+{
+"package": "random",
+"qualified": "uniform",
+"kind": "define",
+"signature": "define uniform(lo: Double, hi: Double) -> Double {",
+"doc": "Uniform Double in `[lo, hi)`. Useful for sampling continuous ranges\n(positions, weights, etc.).\n\n@example\nangle := random.uniform(0.0, 6.28318)"
+}
+],
+"union": [
+{
+"package": "typing",
+"qualified": "SetIterator.union",
+"kind": "method",
+"signature": "extern define union(self, other: Set) -> Set",
+"doc": "Returns a new set containing all elements from both sets.\n@param other: Set\n@returns: Set"
+}
+],
+"unique": [
+{
+"package": "itertools",
+"qualified": "unique",
+"kind": "define",
+"signature": "define unique(items: List) -> List {",
+"doc": "Distinct elements, preserving the first-seen order. Items are deduped by\ntheir string representation, which matches the rest of Quirk's value-\nequality conventions.\n\n@example\nunique([3, 1, 4, 1, 5, 9, 2, 6, 5, 3])   // [3, 1, 4, 5, 9, 2, 6]"
+}
+],
+"unquote": [
+{
+"package": "url",
+"qualified": "unquote",
+"kind": "define",
+"signature": "define unquote(s: String) -> String {",
+"doc": "Decode `%XX` byte escapes. `+` is NOT converted to space (use\n`url.unquote_form` if you need application/x-www-form-urlencoded behavior)."
+}
+],
+"unquote_form": [
+{
+"package": "url",
+"qualified": "unquote_form",
+"kind": "define",
+"signature": "define unquote_form(s: String) -> String {",
+"doc": "Decode a form-encoded value: handles `%XX` AND maps `+` to space, matching\nthe `application/x-www-form-urlencoded` spec used by HTML forms."
+}
+],
+"utc_make": [
+{
+"package": "datetime",
+"qualified": "DateTime.utc_make",
+"kind": "method",
+"signature": "define utc_make(year: Int, month: Int, day: Int, hour: Int = 0, minute: Int = 0, second: Int = 0) -> DateTime {",
+"doc": "Build a DateTime from explicit calendar components (UTC).\n@throws ValueError on out-of-range components."
+}
+],
+"uuid": [
+{
+"package": "crypto",
+"qualified": "uuid",
+"kind": "define",
+"signature": "extern define uuid() -> String",
+"doc": "RFC 4122 v4 UUID. 36 chars: `xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx` where\nthe version is fixed at 4 and `y` is one of {8, 9, a, b}."
+}
+],
+"v4": [
+{
+"package": "uuid",
+"qualified": "v4",
+"kind": "define",
+"signature": "define v4() -> String {",
+"doc": "Generate a random RFC 4122 v4 UUID. Two calls back-to-back return\ndifferent values (with overwhelming probability \u2014 122 random bits of\nentropy each).\n\n@example\nid := uuid.v4()\nprint(id.length())           // 36"
+}
+],
+"values": [
+{
+"package": "typing",
+"qualified": "MapIterator.values",
+"kind": "method",
+"signature": "extern define values(self) -> List",
+"doc": "Returns all values as a `List`.\n@returns: List"
+}
+],
+"variance": [
+{
+"package": "statistics",
+"qualified": "variance",
+"kind": "define",
+"signature": "define variance(items: List) -> Double {",
+"doc": "Sample variance (divides by `n - 1`, the unbiased estimator). Throws if\n`n < 2`. Use `pvariance` when treating the input as the entire population."
+}
+],
+"version": [
+{
+"package": "sys",
+"qualified": "version",
+"kind": "define",
+"signature": "extern define version() -> String",
+"doc": "Quirk version string, e.g. `\"0.1.0\"`."
+}
+],
+"write": [
+{
+"package": "io",
+"qualified": "File.write",
+"kind": "method",
+"signature": "extern define write(self, data: String) -> void",
+"doc": "Write `data` to the file at the current position and flush immediately.\nNo newline is appended \u2014 include `\\n` in `data` if you want one."
+}
+],
+"write_dicts": [
+{
+"package": "csv",
+"qualified": "write_dicts",
+"kind": "define",
+"signature": "define write_dicts(records: List, delim: String = \",\") -> String {",
+"doc": "Serialize a `List<Map<String,String>>` with a header row drawn from the\nkeys of the first record. Records with missing keys emit empty fields.\nReturns the empty String for an empty input."
+}
+],
+"write_file": [
+{
+"package": "csv",
+"qualified": "write_file",
+"kind": "define",
+"signature": "define write_file(path: String, records: List, delim: String = \",\") -> void {",
+"doc": "Write `records` to `path` as CSV."
+}
+],
+"zip": [
+{
+"package": "itertools",
+"qualified": "zip",
+"kind": "define",
+"signature": "define zip(a: List, b: List) -> List {",
+"doc": "Pair up two Lists element-wise as tuples. Stops at the shorter length \u2014\nmatches Python's `zip`, not `zip_longest`.\n\n@example\nzip([1, 2, 3], [\"a\", \"b\"])   // [(1, \"a\"), (2, \"b\")]"
+}
+]
+}

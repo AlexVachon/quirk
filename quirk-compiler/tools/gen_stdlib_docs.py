@@ -26,6 +26,7 @@ Run:
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import sys
@@ -36,6 +37,9 @@ from typing import Optional
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PACKAGES_DIR = REPO_ROOT / "packages"
 DOCS_DIR = REPO_ROOT / "docs" / "stdlib"
+# JSON symbol index consumed by the VSCode extension's hover provider.
+# Lives next to the extension source so the build pipeline can bundle it.
+VSCODE_DATA = REPO_ROOT.parent / "quirk-vscode" / "data"
 
 # Header line for a struct or define, capturing the signature.
 RE_DEFINE = re.compile(
@@ -228,6 +232,37 @@ def emit_package(pkg_name: str, files: list[Path]) -> str:
     return "\n".join(out)
 
 
+def build_symbol_index(all_entries: dict[str, list[Entry]]) -> dict:
+    """Bare-name symbol map for the VSCode extension's hover fallback.
+
+    Keys are the bare identifier the user types (`argv`, `exists`,
+    `length`). Values are arrays of candidates — the same name can
+    legitimately exist in multiple packages (e.g. `length` is on
+    many structs), so hover shows them all rather than picking one.
+
+    Each candidate carries `package`, `qualified` (StructName.method
+    or bare), `kind`, `signature`, and `doc` so the extension can
+    render a tooltip without re-reading source.
+    """
+    out: dict[str, list[dict]] = {}
+    for pkg_name, entries in all_entries.items():
+        for e in entries:
+            if not e.docstring and e.kind == "method":
+                # Skip undocumented methods to keep the index small;
+                # explicit module-level structs/funcs stay even
+                # without docstrings (the signature alone is useful).
+                continue
+            out.setdefault(e.name, []).append({
+                "package": pkg_name,
+                "qualified": e.qualified,
+                "kind": e.kind,
+                "signature": e.signature,
+                "doc": e.docstring,
+            })
+    # Deterministic ordering for clean diffs.
+    return {k: out[k] for k in sorted(out)}
+
+
 def main() -> int:
     if not PACKAGES_DIR.is_dir():
         print(f"ERR: packages dir not found at {PACKAGES_DIR}", file=sys.stderr)
@@ -236,6 +271,7 @@ def main() -> int:
 
     pkg_count = 0
     entry_count = 0
+    all_entries: dict[str, list[Entry]] = {}
     for pkg_path in sorted(PACKAGES_DIR.iterdir()):
         if not pkg_path.is_dir():
             continue
@@ -247,7 +283,11 @@ def main() -> int:
         out_path.write_text(md, encoding="utf-8")
         pkg_count += 1
         # Quick count for the summary line.
-        entry_count += sum(len(parse_file(f)) for f in files)
+        pkg_entries: list[Entry] = []
+        for f in files:
+            pkg_entries.extend(parse_file(f))
+        entry_count += len(pkg_entries)
+        all_entries[pkg_path.name] = pkg_entries
         print(f"  ✓ docs/stdlib/{pkg_path.name}.md")
 
     # Top-level index page.
@@ -265,6 +305,18 @@ def main() -> int:
         if pkg_path.is_dir() and (DOCS_DIR / f"{pkg_path.name}.md").exists():
             index_lines.append(f"- [`{pkg_path.name}`]({pkg_path.name}.md)")
     (DOCS_DIR / "index.md").write_text("\n".join(index_lines) + "\n", encoding="utf-8")
+
+    # Emit the JSON symbol index next to the VSCode extension source.
+    # The hover provider falls back to this when executeDefinitionProvider
+    # can't navigate to a stdlib symbol (most often: top-level functions
+    # accessed via module-alias like `sys.argv()` where the cursor lands
+    # on `argv` without an `from sys use { argv }` in scope).
+    if VSCODE_DATA.parent.exists():
+        VSCODE_DATA.mkdir(exist_ok=True)
+        index = build_symbol_index(all_entries)
+        idx_path = VSCODE_DATA / "stdlib-index.json"
+        idx_path.write_text(json.dumps(index, indent=0), encoding="utf-8")
+        print(f"  ✓ {idx_path.relative_to(REPO_ROOT.parent)} ({len(index)} symbols)")
 
     print(f"\nGenerated {pkg_count} packages, ~{entry_count} documented entries.")
     return 0

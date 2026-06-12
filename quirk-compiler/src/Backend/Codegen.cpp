@@ -2439,6 +2439,22 @@ class LLVMCodegen {
                     argVal = Builder.CreateBitCast(argVal, expectedType);
                 else if (argVal->getType()->isIntegerTy() && expectedType->isDoubleTy())
                     argVal = Builder.CreateSIToFP(argVal, expectedType);
+                // Double → i8* (Any-typed param). Sema accepts the
+                // call because Any takes anything, but Codegen needs
+                // to actually box the Double or LLVM rejects the
+                // `call ...(double %x)` against an `i8*` signature.
+                // Route through `Core_Primitives_Any_box_double` —
+                // matches what nonlocal-cell boxing does for the same
+                // shape.
+                else if (argVal->getType()->isDoubleTy() &&
+                         expectedType == Type::getInt8PtrTy(Context)) {
+                    FunctionCallee box = TheModule->getOrInsertFunction(
+                        "Core_Primitives_Any_box_double",
+                        Type::getInt8PtrTy(Context), Type::getDoubleTy(Context));
+                    argVal = Builder.CreateCall(box, {argVal}, "arg_dbl_box");
+                }
+                else if (argVal->getType()->isDoubleTy() && expectedType->isIntegerTy())
+                    argVal = Builder.CreateFPToSI(argVal, expectedType);
                 // ptr → int: e.g. a `nonlocal i: Int` cell loads as i8*
                 // but gets passed where an i32/i64 is expected
                 // (List.get(i)). Route through quirk_opaque_to_int so
@@ -2682,6 +2698,20 @@ class LLVMCodegen {
                 if (retVal->getType() != expectedType) {
                     if (retVal->getType()->isIntegerTy() && expectedType->isIntegerTy()) {
                         retVal = Builder.CreateIntCast(retVal, expectedType, true);
+                    }
+                    // Int → Double widening on return. Sema already
+                    // accepts `Int` where `Double` is declared (the
+                    // `isCompatibleTypes` widening rule); Codegen
+                    // needs to actually emit the conversion or LLVM
+                    // rejects `ret i32` against a `double` signature.
+                    else if (retVal->getType()->isIntegerTy() && expectedType->isDoubleTy()) {
+                        retVal = Builder.CreateSIToFP(retVal, expectedType, "ret_int_to_dbl");
+                    }
+                    // Double → Int narrowing on return. Symmetric to
+                    // the widening above; lossy but matches how
+                    // explicit casts elsewhere behave.
+                    else if (retVal->getType()->isDoubleTy() && expectedType->isIntegerTy()) {
+                        retVal = Builder.CreateFPToSI(retVal, expectedType, "ret_dbl_to_int");
                     }
                     else if (retVal->getType()->isPointerTy() && retVal->getType()->getPointerElementType()->isIntegerTy(8) &&
                              expectedType->isPointerTy() && expectedType->getPointerElementType()->isStructTy()) {
@@ -3027,6 +3057,14 @@ class LLVMCodegen {
                     else if (val->getType()->isPointerTy() && fieldType->isPointerTy()) val = Builder.CreateBitCast(val, fieldType);
                     else if (val->getType()->isIntegerTy() && fieldType->isPointerTy()) val = Builder.CreateIntToPtr(val, fieldType);
                     else if (val->getType()->isIntegerTy() && fieldType->isDoubleTy()) val = Builder.CreateSIToFP(val, fieldType);
+                    // Double → Int field. Sema allows the assignment
+                    // when the param is declared Double and the field
+                    // is Int (technically a narrowing, but it slips
+                    // through `isCompatibleTypes`'s widening branch
+                    // because either direction goes through "numeric").
+                    // Without the FPToSI here, Codegen emits
+                    // `store double, i32*` and LLVM's verifier rejects.
+                    else if (val->getType()->isDoubleTy() && fieldType->isIntegerTy()) val = Builder.CreateFPToSI(val, fieldType);
                     // i8* (Any-laundered value, e.g. list.get(i)) → Int / Double field.
                     // Without this, Codegen tried `store i8* into i32*` and the
                     // verifier aborted with "Stored value type does not match pointer".
@@ -3878,6 +3916,36 @@ Value* LLVMCodegen::handleExpression(Node* node) {
                 if (binOp->op == "!=")
                     asBool = Builder.CreateNot(asBool, "opaque_ne");
                 return asBool;
+            }
+        }
+
+        // i8* (type-erased generic-field read) vs typed struct
+        // pointer — same bridge as the eq-branch above, extended
+        // to ordered comparisons (`<`, `>`, `<=`, `>=`). The bridge
+        // is intentionally NOT applied to `+` / `-` / `*` / `/`:
+        // for those, an i8* operand against a String* is the
+        // string-concat path (`"" + actual` where actual is a
+        // tagged Int), and bitcasting the i8* to String* would
+        // turn the tagged int into a garbage pointer derefed by
+        // the concat helper. Without this `<`-and-friends gate,
+        // `b.value < "expected"` on `Box[String]` arrived at the
+        // operator-overloading dispatch with L as i8* (struct test
+        // fails) and fell through to MathGen's ICmp on mismatched
+        // operand types — LLVM verifier rejects.
+        {
+            const std::string& op = binOp->op;
+            bool isOrderedCmp = (op == "<" || op == ">" || op == "<=" || op == ">=");
+            if (isOrderedCmp) {
+                Type* i8p = Type::getInt8PtrTy(Context);
+                if (L->getType() == i8p && R->getType()->isPointerTy() &&
+                    R->getType() != i8p &&
+                    R->getType()->getPointerElementType()->isStructTy()) {
+                    L = Builder.CreateBitCast(L, R->getType(), "lhs_struct_unbox");
+                } else if (R->getType() == i8p && L->getType()->isPointerTy() &&
+                           L->getType() != i8p &&
+                           L->getType()->getPointerElementType()->isStructTy()) {
+                    R = Builder.CreateBitCast(R, L->getType(), "rhs_struct_unbox");
+                }
             }
         }
 

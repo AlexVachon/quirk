@@ -1399,8 +1399,16 @@ std::string Sema::checkBinaryOp(BinaryOpNode *node)
         // Arithmetic — both sides must be numeric (or unknown / deferred).
         // Enums are intentionally rejected: `Color.Red + 1` was silently
         // accepted before and produced a wrong-typed Bool/Int at codegen.
-        if (compatibleOperands(lType, rType) && !enumRegistry.count(lType)
-                                             && !enumRegistry.count(rType)) {
+        //
+        // The `a == b` shortcut in compatibleOperands accepts equal
+        // types (`String == String`, `Bool == Bool`) — fine for `==`
+        // but wrong for `*` / `-` / `/` / `%`, where only numerics
+        // (and unknown/generic placeholders) make sense. Without this
+        // explicit numeric check, `"x" * "y"` falls through to Codegen
+        // and emits `mul %String* %a, %b` → IR verifier rejection.
+        bool eachOk = (isNumeric(lType) || isUnknown(lType)) &&
+                      (isNumeric(rType) || isUnknown(rType));
+        if (eachOk && !enumRegistry.count(lType) && !enumRegistry.count(rType)) {
             if (lType == "Double" || rType == "Double")
                 return "Double";
             return "Int";

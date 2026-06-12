@@ -177,4 +177,18 @@ bootstrap-stdlib-clean:
 docs:
 	@python3 tools/gen_stdlib_docs.py
 
-.PHONY: all clean test bootstrap-stdlib bootstrap-stdlib-clean docs
+# Mutation-based compiler fuzzer (tools/fuzz.py). Picks random files
+# from tests/probes + tests/, mutates them (operator/literal/type
+# swaps, line drops/dups/swaps), runs the result, and saves any
+# crash (SIGSEGV / ICE / malformed IR) under tools/fuzz_findings/.
+# Use after touching Sema or Codegen — surfaces the next class of
+# input the compiler can't handle gracefully.
+#
+#   make fuzz                                  # 500 iters
+#   make fuzz FUZZ_ITERS=2000 FUZZ_SEED=42      # reproducible
+FUZZ_ITERS ?= 500
+FUZZ_SEED  ?=
+fuzz:
+	@python3 tools/fuzz.py --iters $(FUZZ_ITERS) $(if $(FUZZ_SEED),--seed $(FUZZ_SEED),) --quiet
+
+.PHONY: all clean test bootstrap-stdlib bootstrap-stdlib-clean docs fuzz

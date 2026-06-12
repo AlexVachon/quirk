@@ -5,6 +5,71 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [3.0.3] — 2026-06-12
+
+### Mutation-based fuzzer (`tools/fuzz.py` / `make fuzz`)
+
+```
+make fuzz                                  # 500 iterations
+make fuzz FUZZ_ITERS=2000 FUZZ_SEED=42      # reproducible
+```
+
+Picks random files from `tests/probes` + `tests/`, applies 1-3
+mutations (operator swaps, literal changes, type swaps, line
+drops/dups/swaps), runs the result, and saves any catastrophic
+failure (SIGSEGV, SIGABRT, "Internal compiler error", LLVM verifier
+assert) under `tools/fuzz_findings/` with the seed + mutation log
+embedded. Crashes are deduplicated by signature so repeats don't
+flood the output.
+
+Sema rejections (clean error + exit 1) are intentionally fine —
+the bar is "no mutation, however nonsensical, should crash the
+compiler."
+
+### Fixed: 5 crash classes the fuzzer surfaced
+
+**1. `String * String` → LLVM IR rejection.** The arithmetic
+operator-typing gate short-circuited on `lType == rType`, accepting
+matched-but-non-numeric operands. Codegen then emitted `mul
+%String*, %String*` and LLVM rejected. Tightened the gate: `-` /
+`*` / `/` / `%` now require each side to be numeric-or-unknown.
+`==` / `!=` on equal types is still fine via the dedicated eq-branch.
+
+**2. `Int → Double` widening on function return → IR mismatch.**
+Sema accepts the widening via `isCompatibleTypes`, but the
+return-statement Codegen had no `i32 → double` path — only
+`i32 → i32` (cast width) and `i8* → i32/double` (Any unbox). Added
+explicit `SIToFP` for `Int → Double` and `FPToSI` for the
+explicit-`as`-Int narrow.
+
+**3. Ordered comparison on a generic-field `i8*` vs typed
+`String*` → ICmp operand mismatch.** v2.4.3 added a Codegen
+bridge that bitcasts the erased side to the typed struct for
+`==` / `!=`. Extended the bridge to `<` / `>` / `<=` / `>=`.
+Intentionally not applied to arithmetic operators (`+` / `-` /
+`*` / `/`): for those, an i8* operand against a String* is the
+string-concat path and bitcasting would turn a tagged-int into a
+garbage pointer.
+
+**4. `Double → Int` field assignment → IR rejection.** Sema
+accepts `self.age = doubleVal` (where `age: Int`) because both
+types are numeric, but Codegen's field-assign coercion ladder had
+no `double → i32` step, only `i32 → double`. Added FPToSI.
+
+**5. `Double → Any` call-arg passing → IR rejection.** Calling
+`test.assert_eq(doubleVal, ...)` where the param is `Any` (i8*)
+emitted `call(double %x)` against an i8* signature. Added
+`Core_Primitives_Any_box_double` wrap in the call-arg coercion
+ladder.
+
+Probes `p46_string_mul_rejected.quirk`,
+`p47_int_to_double_return.quirk`,
+`p48_ordered_cmp_generic_field.quirk`, and
+`p49_double_to_int_field.quirk` lock the fixes.
+
+After all five fixes, a 1000-iter fuzz run with a fresh seed
+shows zero new crashes on the existing probe + test corpus.
+
 ## [3.0.2] — 2026-06-12
 
 ### "Did you mean ...?" hints on four common Sema errors

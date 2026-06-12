@@ -22,6 +22,11 @@ quirk-compiler/bin/quirk
 quirk-compiler/bin/runtime.so
 quirk-compiler/obj
 
+# Fuzz harness work artifacts (tools/fuzz.py). Findings get re-derived
+# on every `make fuzz` run; not worth committing.
+quirk-compiler/tools/fuzz_work/
+quirk-compiler/tools/fuzz_findings/
+
 # Editor / extension
 quirk-vscode/node_modules
 quirk-vscode/out

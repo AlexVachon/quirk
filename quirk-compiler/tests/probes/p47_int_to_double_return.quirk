@@ -1,0 +1,24 @@
+// p47 — Int → Double widening on function return (v3.0.3,
+// surfaced by tools/fuzz.py @ seed=99).
+//
+// Cause: Sema's `isCompatibleTypes` accepts Int where Double is
+// declared (per the widening rule used at parameter sites), but
+// Codegen's return-statement coercion didn't have a matching
+// `i32 → double` path — it emitted `ret i32 %x` against a `double`
+// function signature and LLVM's verifier crashed with "Function
+// return type does not match operand type". Fix: added explicit
+// SIToFP coercion in the return-emit branch (and the FPToSI inverse
+// for Double → Int).
+
+define as_double(n: Int) -> Double { return n }
+// Explicit narrow via `as` — exercises the FPToSI return-coercion
+// path. Sema rejects the implicit form `-> Int { return d }` (a
+// Double→Int implicit narrow), which is intentional; the codegen
+// path is still wired so explicit `(d as Int)` round-trips.
+define as_int(d: Double) -> Int { return (d as Int) }
+
+define main() -> void {
+    if as_double(42) != 42.0 { print("FAIL: Int→Double widen"); return }
+    if as_int(3.7)   != 3    { print("FAIL: Double→Int narrow"); return }
+    print("PASS: Int↔Double coercion on return")
+}

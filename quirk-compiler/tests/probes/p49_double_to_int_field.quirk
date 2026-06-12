@@ -1,0 +1,27 @@
+// p49 — Double → Int field-assign coercion (v3.0.3, surfaced by
+// tools/fuzz.py @ seed=7).
+//
+// Cause: when a struct field declared `Int` is assigned a `Double`
+// value (e.g. `__init(self, n: String, a: Double) -> void {
+// self.age = a }` where `age: Int`), Sema accepts it via
+// isCompatibleTypes' numeric coercion, but the field-assign
+// Codegen had no `double → i32` path — only `i32 → double`. The
+// store landed as `store double, i32*` and LLVM's verifier crashed.
+// Fix: added FPToSI to the field-assign coercion ladder.
+
+struct Profile {
+    name: String
+    age: Int
+
+    define __init(self, n: String, a: Double) -> void {
+        self.name = n
+        self.age = a            // Double → Int field
+    }
+}
+
+define main() -> void {
+    p := Profile("Alice", 27.6)
+    if p.age != 27 { print("FAIL: age expected 27, got ${p.age}"); return }
+    if p.name != "Alice" { print("FAIL: name"); return }
+    print("PASS: Double → Int field-assign coerces via FPToSI")
+}

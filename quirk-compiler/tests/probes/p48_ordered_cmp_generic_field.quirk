@@ -1,0 +1,29 @@
+// p48 — Ordered comparison (`<` / `>` / `<=` / `>=`) on a generic
+// struct field (lowered as i8*) vs a typed literal (v3.0.3,
+// surfaced by tools/fuzz.py @ seed=99).
+//
+// Cause: v2.4.3 added a Codegen bridge that bitcasts i8* → struct*
+// when one side of `==`/`!=` is a typed struct and the other is
+// the type-erased generic-field read. The bridge was scoped to
+// equality only; `b.value < "expected"` on a `Box[String]` fell
+// through to MathGen's ICmp on (i8*, %String*) and LLVM's verifier
+// rejected the mismatched operand types. Fix: extended the bridge
+// to ordered comparisons (`<` / `>` / `<=` / `>=`). Intentionally
+// kept narrow — `+` / `-` / `*` / `/` on i8*-vs-String* go through
+// string-concat / numeric-unbox respectively and need different
+// handling.
+
+struct Box[T] {
+    value: T
+    define __init(self, value: T) -> void { self.value = value }
+}
+
+define lt_str(b: Box[String]) -> Bool { return b.value < "m" }
+define gt_str(b: Box[String]) -> Bool { return b.value > "m" }
+
+define main() -> void {
+    if lt_str(Box("apple"))   != true  { print("FAIL: apple < m");   return }
+    if lt_str(Box("zebra"))   != false { print("FAIL: zebra < m");   return }
+    if gt_str(Box("zebra"))   != true  { print("FAIL: zebra > m");   return }
+    print("PASS: ordered cmp on generic-field i8*-vs-String*")
+}

@@ -94,6 +94,11 @@ class Sema {
     // avoid wild "did you mean Direction" for `print`. Caller is the
     // undefined-name error path.
     std::vector<std::string> suggestNames(const std::string& query, size_t maxN = 3);
+    // Top-N closest field/method names on a given struct (walks the
+    // parent chain). Used by the `member 'X' not found in 'Y'` path.
+    std::vector<std::string> suggestMembers(const std::string& structName,
+                                            const std::string& query,
+                                            size_t maxN = 3);
     void checkInitArgCount(const std::string& name, FunctionNode* init,
                            int provided, int line, int col, const std::string& filePath);
     // Type-check each positional arg against the corresponding init param.

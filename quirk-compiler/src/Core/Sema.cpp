@@ -290,6 +290,76 @@ std::vector<std::string> Sema::suggestNames(const std::string& query, size_t max
     return out;
 }
 
+// Top-N closest member names (fields + methods) on `structName` to
+// `query`. Walks the parent chain so inherited members are eligible.
+// Used by the member-not-found error path to turn "no member 'fls'
+// on List" into "did you mean `filter`?".
+std::vector<std::string> Sema::suggestMembers(const std::string& structName,
+                                              const std::string& query,
+                                              size_t maxN) {
+    const size_t cutoff = std::min<size_t>(query.size() <= 4 ? 1 : 2, 2);
+    std::vector<std::pair<size_t, std::string>> scored;
+    std::set<std::string> visited;
+
+    std::function<void(const std::string&)> walk = [&](const std::string& sn) {
+        if (visited.count(sn)) return;
+        visited.insert(sn);
+        auto sIt = structRegistry.find(sn);
+        if (sIt == structRegistry.end()) return;
+        StructNode* st = sIt->second;
+        // Fields: take the bare name (the field type isn't part of
+        // what the user typed).
+        for (const auto& f : st->fields) {
+            if (f.name.empty() || f.name == query) continue;
+            size_t d = editDistance(query, f.name);
+            if (d <= cutoff) scored.push_back({d, f.name});
+        }
+        // Methods: registered under `methodRegistry[sn]` keyed by
+        // mangled name `<sn>_<method>` or `<sn>__<dunder>`. Strip
+        // the prefix to recover the bare method the user types.
+        auto mIt = methodRegistry.find(sn);
+        if (mIt != methodRegistry.end()) {
+            for (const auto& kv : mIt->second) {
+                const std::string& full = kv.first;
+                std::string bare = full;
+                if (bare.rfind(sn + "__", 0) == 0) bare = bare.substr(sn.size() + 1); // dunder
+                else if (bare.rfind(sn + "_", 0) == 0) bare = bare.substr(sn.size() + 1);
+                if (bare.empty() || bare == query) continue;
+                size_t d = editDistance(query, bare);
+                if (d <= cutoff) scored.push_back({d, bare});
+            }
+        }
+        // Walk parents (single-line; multi-parent is fine, we dedup).
+        for (const auto& p : st->parents) walk(p);
+    };
+    walk(structName);
+
+    std::sort(scored.begin(), scored.end());
+    std::vector<std::string> out;
+    std::set<std::string> seen;
+    for (const auto& kv : scored) {
+        if (seen.insert(kv.second).second) out.push_back(kv.second);
+        if (out.size() >= maxN) break;
+    }
+    return out;
+}
+
+// Format a `did you mean` hint to append to a fatalError message.
+// Empty string when no suggestions match, so the caller can blindly
+// concatenate without branching.
+static std::string formatHint(const std::vector<std::string>& suggestions) {
+    if (suggestions.empty()) return "";
+    std::string out = "\n  hint: did you mean ";
+    for (size_t i = 0; i < suggestions.size(); i++) {
+        if (i > 0) out += (i + 1 == suggestions.size() ? " or " : ", ");
+        out += "`";
+        out += suggestions[i];
+        out += "`";
+    }
+    out += "?";
+    return out;
+}
+
 void Sema::flushErrors() {
     for (auto& e : errors)
         printSemaError(e.msg, e.line, e.col, e.filePath, sourceMap, e.suggestions);
@@ -407,8 +477,9 @@ bool Sema::analyze(const std::vector<std::unique_ptr<Node>> &nodes)
                     s->interfaces.push_back(parentName);
                     checkInterfaceConformance(s, interfaceRegistry[parentName]);
                 } else if (!structRegistry.count(parentName)) {
-                    fatalError("struct '" + s->name + "' inherits from undefined type '" + parentName + "'",
-                               s->line, s->col, s->filePath);
+                    std::string msg = "struct '" + s->name + "' inherits from undefined type '" + parentName + "'";
+                    msg += formatHint(suggestNames(parentName));
+                    fatalError(msg, s->line, s->col, s->filePath);
                 } else {
                     structParents.push_back(parentName);
                 }
@@ -472,9 +543,17 @@ void Sema::checkUse(UseNode *node)
             bool found = structRegistry.count(item) || methodRegistry[""].count(item)
                       || interfaceRegistry.count(item) || enumRegistry.count(item)
                       || moduleConstRegistry.count(item);
-            if (!found)
-                fatalError("module '" + node->moduleName + "' does not export symbol '" + item + "'",
-                           node->line, node->col, node->filePath);
+            if (!found) {
+                // Look across every registered symbol for a close
+                // match. We don't have a per-module index, so this is
+                // suggestNames-flavored — `from sys use { argz }`
+                // will pick up `argv` because it's the closest known
+                // global; `from typing use { Lest }` finds `List`.
+                std::string msg = "module '" + node->moduleName +
+                                  "' does not export symbol '" + item + "'";
+                msg += formatHint(suggestNames(item));
+                fatalError(msg, node->line, node->col, node->filePath);
+            }
             ctx.visibleSymbols.insert(item);
         }
     }
@@ -708,9 +787,11 @@ void Sema::checkVarDecl(VarDeclNode *node)
     else if (auto member = dynamic_cast<MemberAccessNode *>(node->lhs.get()))
     {
         std::string objType = checkExpression(member->object.get());
-        if (resolveMember(objType, member->memberName) == "unknown")
-            fatalError("member '" + member->memberName + "' not found in '" + objType + "'",
-                       member->line, member->col, member->filePath);
+        if (resolveMember(objType, member->memberName) == "unknown") {
+            std::string msg = "member '" + member->memberName + "' not found in '" + objType + "'";
+            msg += formatHint(suggestMembers(baseType(objType), member->memberName));
+            fatalError(msg, member->line, member->col, member->filePath);
+        }
     }
 }
 
@@ -739,9 +820,11 @@ void Sema::checkStatement(Node *node)
             auto& cb = t->catchBlocks[i];
             enterScope();
             for (const std::string& typeName : cb.types) {
-                if (!structRegistry.count(typeName))
-                    fatalError("catch type '" + typeName + "' is not defined",
-                               t->line, t->col, t->filePath);
+                if (!structRegistry.count(typeName)) {
+                    std::string msg = "catch type '" + typeName + "' is not defined";
+                    msg += formatHint(suggestNames(typeName));
+                    fatalError(msg, t->line, t->col, t->filePath);
+                }
                 if (structRegistry.count("Exception") && !inheritsFromException(typeName))
                     fatalError("catch type '" + typeName + "' does not inherit from 'Exception'",
                                t->line, t->col, t->filePath);
@@ -1472,6 +1555,11 @@ std::string Sema::checkMemberAccess(MemberAccessNode *node)
             msg += "\n  hint: 'Any' values (e.g. Callable returns, Map.get) "
                    "don't carry struct types; annotate the binding to unbox, "
                    "e.g. `resp: T := <expr>`";
+        } else {
+            // Concrete receiver: surface the closest field/method name
+            // so typos like `list.fls` (instead of `filter`) become a
+            // one-line fix.
+            msg += formatHint(suggestMembers(baseType(objType), node->memberName));
         }
         fatalError(msg, node->line, node->col, node->filePath);
     }

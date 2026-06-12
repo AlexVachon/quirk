@@ -5,6 +5,42 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [3.0.2] — 2026-06-12
+
+### "Did you mean ...?" hints on four common Sema errors
+
+The existing `suggestNames` Levenshtein helper was wired into one
+site (undefined-variable). Extended to four more high-traffic error
+paths where typos are the dominant root cause:
+
+```
+member 'nme' not found in 'User'
+  hint: did you mean `name`?
+```
+
+```
+module 'sys' does not export symbol 'argz'
+  hint: did you mean `argv`?
+```
+
+```
+catch type 'ValueErorr' is not defined
+  hint: did you mean `ValueError`?
+```
+
+```
+struct 'Box' inherits from undefined type 'Comparbale'
+  hint: did you mean `Comparable`?
+```
+
+New `suggestMembers(structName, query)` helper for the first one —
+walks fields + methods on the struct and its parent chain. Re-uses
+the existing edit-distance cutoff so we don't propose
+"Direction" for "print".
+
+Pure quality-of-life — no compiler behaviour change on the happy
+path. 45/45 probes still pass.
+
 ## [3.0.1] — 2026-06-12
 
 ### Fix: Test CI workflow was failing on every push since v2.3.4

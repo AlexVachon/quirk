@@ -34,6 +34,7 @@ The prelude — every Quirk source file gets these for free. You don't write `us
 **Collections**: `List`, `Map`, `Set`, `Queue`, `Tuple`
 **Exceptions**: `Exception`, `TypeError`, `ValueError`, `IndexError`, `KeyError`, `IOError`, `RuntimeError`, …
 **Interfaces**: `Printable`, `Comparable`, `Hashable`, `Iterable`, `Iterator`, `Primitive`, `Representable`
+**Sum types** *(v3.0.0+)*: `Option[T]`, `Some`, `None`, `Result[T, E]`, `Ok`, `Err`
 **Other**: `Callable` (function values), `File` (file handles)
 
 ```quirk
@@ -44,6 +45,27 @@ print(nums.map(fn(x) => x * 2)) // [2, 4, 6]
 m := {"a": 1, "b": 2}
 for (k, v) in m { print(k, "=", v) }
 ```
+
+**Sum types** (v3.0.0+ — must `from typing use { … }` explicitly):
+
+```quirk
+from typing use { Option, Some, None, Result, Ok, Err }
+
+define find(name: String) -> Option {
+    if known.has_key(name) { return Some(known.get(name)) }
+    return None()
+}
+
+match find("alice") {
+    case Some as s => print("got ${s.value}")
+    case None      => print("not found")
+}
+print(find("bob").unwrap_or("default"))
+```
+
+`Option` ships `is_some` / `is_none` / `unwrap_or`; `Result` ships
+`is_ok` / `is_err`. See [README §24](README.md#24-canonical-option--result)
+for the canonical patterns.
 
 See [`packages/typing/`](quirk-compiler/packages/typing/) for every method.
 

@@ -1,11 +1,13 @@
 # Quirk (.quirk) Language Reference
 
-**Compiler:** 1.0.0  
-**Language spec:** rev 2  
+**Compiler:** 3.0.0  
+**Language spec:** rev 3  
 **Extension:** `.quirk`  
 **Runtime:** LLVM JIT + native binary output
 
-Quirk is a compiled, statically-typed language with Python-like syntax, struct-based OOP, first-class functions, and a rich standard library. It compiles to native code via LLVM and uses the Boehm GC for memory management.
+Quirk is a compiled, statically-typed language with Python-like syntax, struct-based OOP, first-class functions, sum types (tagged unions + generics, since v3.0.0), and a rich standard library. It compiles to native code via LLVM and uses the Boehm GC for memory management.
+
+> **New in v3.0.0:** tagged unions (`type Result = Ok(...) | Err(...)`), generic types (`type Option[T] = Some(value: T) | None()`), exhaustive pattern matching with payload narrowing, per-variant methods, and a canonical `Option[T]` / `Result[T, E]` in the standard library. See [chapter 22](#22-tagged-unions--sum-types), [chapter 23](#23-generic-types), [chapter 24](#24-canonical-option--result), or the full [RELEASE_NOTES_v3.0.0.md](quirk-compiler/RELEASE_NOTES_v3.0.0.md).
 
 ---
 
@@ -50,6 +52,9 @@ Source builds, other platforms, and dependency lists: see [INSTALL.md](INSTALL.m
 19. [Operators](#19-operators)
 20. [Standard Library](#20-standard-library)
 21. [Compiler Usage](#21-compiler-usage)
+22. [Tagged Unions & Sum Types](#22-tagged-unions--sum-types) — *v3.0.0+*
+23. [Generic Types](#23-generic-types) — *v3.0.0+*
+24. [Canonical `Option` & `Result`](#24-canonical-option--result) — *v3.0.0+*
 
 ---
 
@@ -74,6 +79,10 @@ print(greet("Quirk"))
 ```bash
 quirk hello.quirk
 ```
+
+> **See it in a real app:** [`examples/todo_cli/`](examples/todo_cli/)
+> shows tagged unions, `Option`/`Result`, match narrowing, and
+> generics together in one ~140-line file.
 
 ---
 
@@ -1355,4 +1364,223 @@ try {
 } catch (e: WhereConditionError) {
     print("Error: ${e.message}")
 }
+```
+
+---
+
+## 22. Tagged Unions & Sum Types
+
+*Available since v3.0.0.*
+
+Tagged unions let you express "one of N named variants, each
+carrying its own typed payload":
+
+```quirk
+type Result = Ok(value: Int) | Err(msg: String)
+
+r1 := Ok(42)
+r2 := Err("bad input")
+
+print(r1.value)   // 42
+print(r2.msg)     // "bad input"
+```
+
+### Declaring
+
+```quirk
+// Each variant: `Name(field: Type, …)`. Zero-payload variants use `()`.
+type LoadStatus = Pending() | Loaded(data: String) | Failed(err: String)
+```
+
+The `()` on zero-payload variants disambiguates from the existing
+type-union syntax (`type T = Int | String`) — the latter says
+"either of these existing types"; the former says "a brand-new
+variant constructor with no fields".
+
+### Matching
+
+```quirk
+define describe(r: Result) -> String {
+    match r {
+        case Ok  as o => return "got ${o.value}"
+        case Err as e => return "error: ${e.msg}"
+    }
+    return "unknown"
+}
+```
+
+The `as v` binding **narrows** `v` to the matched variant —
+`o: Ok`, `e: Err` — so `o.value` GEPs against the right struct
+layout. Without `as`, the arm's body still runs but you can't
+access payload fields.
+
+### Exhaustiveness check
+
+The compiler warns when a `match` on a tagged-union scrutinee
+misses one or more variants (and no `_` wildcard is present):
+
+```
+[WARNING] non-exhaustive match on 'Result' — missing variant: Err.
+          Add an arm or a `_` wildcard.
+```
+
+Warning, not error — partial matches keep compiling, but the
+missed case surfaces at compile time.
+
+### Per-variant methods
+
+Add behaviour to individual variants with `extend`:
+
+```quirk
+extend Ok  { define is_ok(self) -> Bool { return true } }
+extend Err { define is_ok(self) -> Bool { return false } }
+
+print(Ok(1).is_ok())     // true
+print(Err("x").is_ok())  // false
+```
+
+### How it lowers
+
+Each variant is a regular struct that inherits from the union.
+`Ok` and `Err` both have an `__type_id` field at offset 0, and
+`match` dispatches via a direct `__type_id` comparison. This means
+the whole sum-type machinery reuses the existing vtable
+infrastructure — no separate runtime, no boxing on construction.
+
+---
+
+## 23. Generic Types
+
+*Available since v3.0.0.*
+
+Add type parameters to structs and tagged unions with `[T, U, ...]`:
+
+```quirk
+struct Box[T] {
+    value: T
+    define __init(self, value: T) -> void { self.value = value }
+    define triple(self) -> T { return self.value * 3 }
+}
+
+a := Box(42)             // Box[Int]   — T inferred from arg
+b := Box("hello")        // Box[String] — same code, different T
+
+print(a.triple())        // 126
+print(b.value)           // "hello"
+```
+
+### Generic functions
+
+```quirk
+define identity[T](x: T) -> T { return x }
+
+print(identity(42))       // 42
+print(identity("hello"))  // "hello"
+```
+
+### Substitution at use sites
+
+When you annotate a binding with a concrete type, the compiler
+substitutes the parameters at member access:
+
+```quirk
+define double_it(b: Box[Int]) -> Int {
+    return b.value * 2      // Sema knows b.value: Int (not T)
+}
+```
+
+### Generic tagged unions
+
+```quirk
+type Option[T]    = Some(value: T) | None()
+type Result[T, E] = Ok(value: T)   | Err(error: E)
+```
+
+The variant payloads pick up the type parameters in scope:
+`Some(value: T)` means the value field has whatever type the
+caller instantiates `T` to.
+
+### Constraints
+
+```quirk
+struct Stack[T] where T: Primitive {
+    items: List[T]
+    // ...
+}
+
+define filter[T](items: List[T], pred: Callable) -> List[T] where T: Comparable {
+    // ...
+}
+```
+
+### Limitation: uniform representation
+
+At the IR layer, every generic field currently lowers as `i8*`
+(an opaque pointer). Runtime ops dispatch on shape via
+`quirk_opaque_to_int` and `quirk_opaque_eq` so primitives, Any\*
+heap-boxes, and tagged ints all work correctly. A future v3.x
+release will add per-instantiation monomorphization so `Box[Int]`
+and `Box[String]` get distinct LLVM struct layouts; today's
+behaviour is correct but not maximally packed.
+
+---
+
+## 24. Canonical `Option` & `Result`
+
+*Available since v3.0.0.* Ships in the `typing` package starting v1.1.0.
+
+The two most common sum-type shapes are pre-defined and importable:
+
+```quirk
+from typing use { Option, Some, None, Result, Ok, Err }
+
+define lookup(k: String) -> Option {
+    if cached.has_key(k) {
+        return Some(cached.get(k))
+    }
+    return None()
+}
+
+define parse_int(s: String) -> Result {
+    if not s.is_numeric() {
+        return Err("not numeric: ${s}")
+    }
+    return Ok(s.to_int())
+}
+```
+
+### Helper methods
+
+Methods live on the **union type** (not the variants) because that's
+the shape callers actually hold:
+
+```quirk
+opt := lookup("name")
+
+print(opt.is_some())              // true / false
+print(opt.is_none())
+print(opt.unwrap_or("default"))   // returns value if Some, else "default"
+
+r := parse_int(input)
+print(r.is_ok())
+print(r.is_err())
+print(r.unwrap_or(0))
+```
+
+### When to use which
+
+- `Option[T]` — "value or absence." `null` is a special case;
+  prefer `Option` when downstream code branches on "did I get
+  something."
+- `Result[T, E]` — "success or named error." Use when the error
+  case carries information you want callers to handle, vs. an
+  unrecoverable failure (use `throw` for that).
+
+The canonical declarations live in the `typing` package; users
+roll their own variants when they need richer error payloads:
+
+```quirk
+type LoadResult = Ok(rows: List, took_ms: Int)
+                | Pending(progress: Double)
+                | Failed(stage: String, err: Exception)
 ```

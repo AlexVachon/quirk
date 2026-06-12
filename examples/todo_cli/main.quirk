@@ -1,0 +1,198 @@
+// A small TODO-list demo that drives every v3.0.0 type-system
+// feature end-to-end in one place. No file I/O so it stays
+// portable; the same patterns scale to a real persisted CLI.
+//
+// Run:
+//     quirk examples/todo_cli/main.quirk
+//
+// What it shows:
+//   • Tagged unions for the parsed command (`Command`)
+//   • Canonical Result[T, E] for the parse outcome
+//   • Canonical Option[T] for "no task with that id"
+//   • Match dispatch with payload narrowing (`case Add as a`)
+//   • Per-variant method via `extend` (Task.label)
+//   • Generic struct + method body using T (Box[T])
+
+from typing use { Option, Some, None, Result, Ok, Err }
+from console use { info, warn, error }
+
+// ─── Data model ────────────────────────────────────────────────
+
+struct Task {
+    id: Int
+    title: String
+    done: Bool
+
+    define __init(self, id: Int, title: String, done: Bool) -> void {
+        self.id = id
+        self.title = title
+        self.done = done
+    }
+}
+
+extend Task {
+    --- Human-readable single-line label, e.g. "[x] 3. Buy milk". ---
+    define label(self) -> String {
+        mark := "[x]"
+        if not self.done { mark = "[ ]" }
+        return "${mark} ${self.id}. ${self.title}"
+    }
+}
+
+// ─── Command parsing ───────────────────────────────────────────
+
+// One variant per CLI subcommand. Tagged union — each variant
+// carries the payload its operation needs.
+type Command = Add(title: String)
+             | ListAll()
+             | Done(id: Int)
+             | Remove(id: Int)
+             | Help()
+
+define parse_command(parts: List) -> Result {
+    if parts.length() < 1 { return Err("empty command") }
+    cmd := parts.get(0)
+    if cmd == "list" or cmd == "ls"   { return Ok(ListAll()) }
+    if cmd == "help"                  { return Ok(Help()) }
+    if cmd == "add" {
+        if parts.length() < 2 { return Err("usage: add <title>") }
+        title: String := parts.get(1)  // List.get returns Any; annotate to unbox
+        return Ok(Add(title))
+    }
+    if cmd == "done" {
+        if parts.length() < 2 { return Err("usage: done <id>") }
+        s: String := parts.get(1)
+        return Ok(Done(s.to_int()))
+    }
+    if cmd == "rm" {
+        if parts.length() < 2 { return Err("usage: rm <id>") }
+        s: String := parts.get(1)
+        return Ok(Remove(s.to_int()))
+    }
+    return Err("unknown command '${cmd}' — try help")
+}
+
+// ─── Task store helpers ────────────────────────────────────────
+
+define find_task(tasks: List, id: Int) -> Option {
+    for raw in tasks {
+        t: Task := raw
+        if t.id == id { return Some(t) }
+    }
+    return None()
+}
+
+define next_id(tasks: List) -> Int {
+    n := 1
+    for raw in tasks {
+        t: Task := raw
+        if t.id >= n { n = t.id + 1 }
+    }
+    return n
+}
+
+// ─── Generic helper struct — `Box[T]` showcasing v3 generics ───
+//
+// Not strictly needed for the TODO logic; included so the example
+// also demonstrates generic-type-substitution + method-body T ops.
+
+struct Box[T] {
+    value: T
+    define __init(self, value: T) -> void { self.value = value }
+    define get(self) -> T { return self.value }
+}
+
+// ─── Apply commands ────────────────────────────────────────────
+
+define cmd_list(tasks: List) -> void {
+    if tasks.length() == 0 {
+        info("No tasks — add one with `add \"...\"`.")
+        return
+    }
+    for raw in tasks {
+        t: Task := raw
+        print(t.label())
+    }
+}
+
+define cmd_add(tasks: List, title: String) -> List {
+    id := next_id(tasks)
+    tasks.append(Task(id, title, false))
+    info("added: ${id}. ${title}")
+    return tasks
+}
+
+define cmd_done(tasks: List, id: Int) -> List {
+    match find_task(tasks, id) {
+        case Some as s => {
+            // Option[T] payload is typed `T`; annotate to narrow.
+            t: Task := s.value
+            t.done = true
+            info("done: ${t.label()}")
+        }
+        case None => warn("no task with id ${id}")
+    }
+    return tasks
+}
+
+define cmd_remove(tasks: List, id: Int) -> List {
+    out := []
+    removed := false
+    for raw in tasks {
+        t: Task := raw
+        if t.id == id { removed = true; info("removed: ${t.label()}") }
+        else { out.append(t) }
+    }
+    if not removed { warn("no task with id ${id}") }
+    return out
+}
+
+define cmd_help() -> void {
+    print("commands: add <title> | list | done <id> | rm <id> | help")
+}
+
+define apply(tasks: List, cmd: Command) -> List {
+    match cmd {
+        case ListAll     => { cmd_list(tasks); return tasks }
+        case Help        => { cmd_help(); return tasks }
+        case Add  as a   => return cmd_add(tasks, a.title)
+        case Done as d   => return cmd_done(tasks, d.id)
+        case Remove as r => return cmd_remove(tasks, r.id)
+    }
+    return tasks
+}
+
+// ─── Demo run ──────────────────────────────────────────────────
+
+define run(tasks: List, raw: String) -> List {
+    parts := raw.split(" ")
+    match parse_command(parts) {
+        case Err as e => { error(e.error); return tasks }
+        case Ok  as o => return apply(tasks, o.value)
+    }
+    return tasks
+}
+
+define main() -> void {
+    print("=== Quirk v3 TODO demo ===\n")
+
+    // The generic Box[T] in action — substitution at use site.
+    int_box := Box(42)
+    str_box := Box("v3.0.0")
+    print("Box[Int]    .get() => ${int_box.get()}")
+    print("Box[String] .get() => ${str_box.get()}")
+    print("")
+
+    tasks := []
+    tasks = run(tasks, "help")
+    tasks = run(tasks, "list")
+    tasks = run(tasks, "add Buy milk")
+    tasks = run(tasks, "add Write docs")
+    tasks = run(tasks, "add Tag v3.0.0")
+    tasks = run(tasks, "list")
+    tasks = run(tasks, "done 2")
+    tasks = run(tasks, "rm 1")
+    tasks = run(tasks, "done 99")           // not found — Option:None branch
+    tasks = run(tasks, "rm")                // arg error — Result:Err branch
+    tasks = run(tasks, "list")
+}

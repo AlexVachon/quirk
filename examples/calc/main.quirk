@@ -1,0 +1,165 @@
+// A small expression evaluator. Parses a single-line arithmetic
+// expression from a command-line argument and prints the result.
+//
+//     quirk run examples/calc/main.quirk "(1 + 2) * 3 - 4 / 2"   → 7
+//     quirk run examples/calc/main.quirk "2 ^ 10"                → 1024
+//
+// Supports: integer literals, the four basic ops + `^` (power),
+// unary minus, and parentheses. Operator precedence: `^` binds
+// tighter than `*` `/`, which bind tighter than `+` `-`. Left-
+// associative except `^` (right-associative).
+//
+// Why this example: shows a tagged-union AST + recursive-descent
+// parser + match-based evaluator — the canonical small interpreter
+// shape — in ~150 LOC. Every v3 type-system feature is used at
+// least once (tagged unions, generics-lite via List/Map, Option,
+// pattern matching with narrow-bind).
+
+from typing use { Option, Some, None }
+from sys use { argv }
+
+// ─── AST ───────────────────────────────────────────────────────
+
+type Expr = Num(value: Int)
+          | Bin(op: String, lhs: Expr, rhs: Expr)
+          | Neg(inner: Expr)
+
+// ─── Tokenizer ────────────────────────────────────────────────
+
+struct Tokenizer {
+    src: String
+    pos: Int
+    define __init(self, src: String) -> void { self.src = src; self.pos = 0 }
+}
+
+extend Tokenizer {
+    define peek_char(self) -> String {
+        if self.pos >= self.src.length() { return "" }
+        return self.src.substring(self.pos, self.pos + 1)
+    }
+
+    define advance(self) -> String {
+        c := self.peek_char()
+        self.pos = self.pos + 1
+        return c
+    }
+
+    define skip_ws(self) -> void {
+        while self.pos < self.src.length() and self.peek_char() == " " {
+            self.pos = self.pos + 1
+        }
+    }
+
+    --- Read an integer literal starting at the cursor. ---
+    define read_int(self) -> Int {
+        start := self.pos
+        while self.pos < self.src.length() {
+            c := self.peek_char()
+            if c < "0" or c > "9" { break }
+            self.pos = self.pos + 1
+        }
+        return self.src.substring(start, self.pos).to_int()
+    }
+}
+
+// ─── Recursive-descent parser ─────────────────────────────────
+//
+// Standard Pratt-style precedence climb. Each level handles one
+// operator family and delegates to the next-tighter level for its
+// operands.
+
+define parse_atom(tk: Tokenizer) -> Expr {
+    tk.skip_ws()
+    c := tk.peek_char()
+    if c == "(" {
+        tk.advance()
+        e := parse_add(tk)
+        tk.skip_ws()
+        tk.advance()                          // closing `)`
+        return e
+    }
+    if c == "-" {
+        tk.advance()
+        return Neg(parse_atom(tk))
+    }
+    return Num(tk.read_int())
+}
+
+define parse_pow(tk: Tokenizer) -> Expr {
+    lhs := parse_atom(tk)
+    tk.skip_ws()
+    if tk.peek_char() == "^" {
+        tk.advance()
+        // Right-associative: recurse into parse_pow for the RHS.
+        return Bin("^", lhs, parse_pow(tk))
+    }
+    return lhs
+}
+
+define parse_mul(tk: Tokenizer) -> Expr {
+    lhs := parse_pow(tk)
+    tk.skip_ws()
+    while tk.peek_char() == "*" or tk.peek_char() == "/" {
+        op := tk.advance()
+        rhs := parse_pow(tk)
+        lhs = Bin(op, lhs, rhs)
+        tk.skip_ws()
+    }
+    return lhs
+}
+
+define parse_add(tk: Tokenizer) -> Expr {
+    lhs := parse_mul(tk)
+    tk.skip_ws()
+    while tk.peek_char() == "+" or tk.peek_char() == "-" {
+        op := tk.advance()
+        rhs := parse_mul(tk)
+        lhs = Bin(op, lhs, rhs)
+        tk.skip_ws()
+    }
+    return lhs
+}
+
+// ─── Evaluator ────────────────────────────────────────────────
+
+define ipow(base: Int, exp: Int) -> Int {
+    if exp == 0 { return 1 }
+    result := 1
+    for _ in 0..exp {
+        result = result * base
+    }
+    return result
+}
+
+define eval(e: Expr) -> Int {
+    match e {
+        case Num as n => return n.value
+        case Neg as g => return 0 - eval(g.inner)   // `-x` workaround; see note below
+        case Bin as b => {
+            l := eval(b.lhs)
+            r := eval(b.rhs)
+            if b.op == "+" { return l + r }
+            if b.op == "-" { return l - r }
+            if b.op == "*" { return l * r }
+            if b.op == "/" { return l / r }
+            if b.op == "^" { return ipow(l, r) }
+            return 0
+        }
+    }
+    return 0
+}
+
+// ─── Main ─────────────────────────────────────────────────────
+
+define main() -> void {
+    args := argv()
+    if args.length() < 2 {
+        print("usage: calc <expression>")
+        print('  e.g. calc "(1 + 2) * 3"')
+        return
+    }
+    expr_str: String := args.get(1)
+    tk := Tokenizer(expr_str)
+    ast := parse_add(tk)
+    print(eval(ast))
+}

@@ -1,0 +1,123 @@
+// A tiny Markdown → HTML converter (~100 LOC). Reads markdown from
+// stdin (or an `--example` flag) and prints HTML to stdout.
+//
+//     echo "# Hi" | quirk run examples/md2html/main.quirk
+//     quirk run examples/md2html/main.quirk --example
+//
+// Supported subset:
+//
+//   # …   ## …   ### …    → <h1>…</h1> .. <h3>…</h3>
+//   **bold**               → <strong>bold</strong>
+//   *italic*               → <em>italic</em>
+//   `code`                 → <code>code</code>
+//   [text](url)            → <a href="url">text</a>
+//   blank line             → paragraph break
+//
+// No nesting, no lists, no code blocks, no escaping — this is a
+// stylistic example, not a production converter. The point is to
+// show string manipulation in idiomatic Quirk.
+
+from sys use { argv }
+
+// ─── Inline replacements ─────────────────────────────────────
+//
+// Each pass walks the line and replaces one shape. They compose in
+// order: bold (`**…**`) must run before italic (`*…*`) so the
+// double-star doesn't get half-consumed by the single-star rule.
+
+define replace_pairs(s: String, marker: String, open_tag: String, close_tag: String) -> String {
+    out := ""
+    rest := s
+    open := true
+    idx := rest.find(marker)
+    while idx >= 0 {
+        out = out + rest.substring(0, idx)
+        if open { out = out + open_tag }
+        else    { out = out + close_tag }
+        open = not open
+        rest = rest.substring(idx + marker.length(), rest.length())
+        idx = rest.find(marker)
+    }
+    return out + rest
+}
+
+define replace_links(s: String) -> String {
+    // [text](url) — non-nesting, one pass.
+    out := ""
+    rest := s
+    while true {
+        lb := rest.find("[")
+        if lb < 0 { return out + rest }
+        rb := rest.find("]")
+        if rb < 0 or rb < lb { return out + rest }
+        lp := rest.find("(")
+        if lp < 0 or lp != rb + 1 {
+            // [text] with no following (url) — leave as-is, advance past it.
+            out = out + rest.substring(0, rb + 1)
+            rest = rest.substring(rb + 1, rest.length())
+            continue
+        }
+        rp := rest.find(")")
+        if rp < 0 or rp < lp { return out + rest }
+        text := rest.substring(lb + 1, rb)
+        url  := rest.substring(lp + 1, rp)
+        out = out + rest.substring(0, lb)
+        out = out + '<a href="' + url + '">' + text + '</a>'
+        rest = rest.substring(rp + 1, rest.length())
+    }
+    return out
+}
+
+define render_inline(s: String) -> String {
+    out := replace_pairs(s, "**", "<strong>", "</strong>")
+    out = replace_pairs(out, "*",  "<em>",     "</em>")
+    out = replace_pairs(out, "`",  "<code>",   "</code>")
+    out = replace_links(out)
+    return out
+}
+
+// ─── Block dispatch ──────────────────────────────────────────
+
+define render_line(line: String) -> String {
+    if line.length() == 0 { return "" }
+    if line.startswith("### ") {
+        return "<h3>" + render_inline(line.substring(4, line.length())) + "</h3>"
+    }
+    if line.startswith("## ") {
+        return "<h2>" + render_inline(line.substring(3, line.length())) + "</h2>"
+    }
+    if line.startswith("# ") {
+        return "<h1>" + render_inline(line.substring(2, line.length())) + "</h1>"
+    }
+    return "<p>" + render_inline(line) + "</p>"
+}
+
+define convert(markdown: String) -> String {
+    out := ""
+    for raw in markdown.split("\n") {
+        line: String := raw
+        rendered := render_line(line)
+        if rendered.length() > 0 {
+            out = out + rendered + "\n"
+        }
+    }
+    return out
+}
+
+// ─── Entrypoint ──────────────────────────────────────────────
+
+EXAMPLE := "# Quirk Markdown → HTML\n\nA *tiny* converter — try editing the **source**.\n\n## Features\n\nInline `code` and [links](https://example.com) work.\n\n### Limitations\n\nNo lists, no nesting. Use a real parser for that."
+
+define main() -> void {
+    args := argv()
+    src := EXAMPLE
+    if args.length() >= 2 {
+        flag: String := args.get(1)
+        if flag != "--example" {
+            print("usage: md2html [--example]")
+            print('  (no stdin reading — pass --example to render the canned demo)')
+            return
+        }
+    }
+    print(convert(src))
+}

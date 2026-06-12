@@ -1978,7 +1978,18 @@ std::string Sema::checkCall(CallNode *node)
                 if (sIt == structRegistry.end()) return "";
 
                 std::string funcName = currentType + "_" + m->memberName;
-                if (FunctionNode* func = findMethod(currentType, funcName)) {
+                // __init is stored as `<Type>__init` (single underscore
+                // connector swallowed by the double-underscore method
+                // name) while every other dunder lands at
+                // `<Type>___<dunder>` (triple). Without this fallback,
+                // `super().__init(complex_arg)` skipped the arg-type
+                // check entirely — and `"x" * msg` slipped past Sema
+                // → Codegen ICE on `mul %String*, %String*`.
+                FunctionNode* func = findMethod(currentType, funcName);
+                if (!func && m->memberName == "__init") {
+                    func = findMethod(currentType, currentType + "__init");
+                }
+                if (func) {
                     for (size_t i = 0; i < node->args.size() && i < func->parameters.size(); ++i) {
                         if (func->parameters[i].isVariadic) break;
                         std::string argType = checkExpression(node->args[i].value.get());

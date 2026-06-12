@@ -5,6 +5,40 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [3.0.4] — 2026-06-12
+
+### CI gates the fuzzer + Sema fixes its leftover hole
+
+`make fuzz FUZZ_ITERS=300 FUZZ_SEED=1` now runs as a Test
+workflow step on every push + PR. Deterministic seed so flakes
+don't erode confidence; 300 iters fits a ~30s budget on the
+ubuntu-20.04 container. Any unique crash promotes to a build
+failure.
+
+A first-run pass against the v3.0.3 binary surfaced one more
+class the v3.0.3 fixes didn't cover: **`super().__init(complex_arg)`
+bypassed Sema's arg-type checking** because the searchMethod
+dispatch looked up `<Type>___init` (triple underscore — the
+shape used for every *other* dunder) while `__init` is stored as
+`<Type>__init` (single underscore connector swallowed by the
+double-underscore method name). Without finding the method, the
+arg loop never ran, and `super().__init("x" * msg)` slipped past
+the Sema arith gate. Codegen then ICE'd on
+`mul %String*, %String*`. Fixed: added the `<Type>__init`
+fallback in `searchMethod` so dunder dispatch finds it.
+
+### Three more example projects under `examples/`
+
+| Directory                                                 | Shape                  | Highlights                                                       |
+|-----------------------------------------------------------|------------------------|------------------------------------------------------------------|
+| [`calc/`](../examples/calc/README.md)                     | Interpreter (~150 LOC) | Recursive AST tagged union, Pratt parser, match evaluator        |
+| [`md2html/`](../examples/md2html/README.md)               | Text transform (~100)  | String slicing, multi-pass token replacement, functional decomp  |
+| [`todo_cli/`](../examples/todo_cli/README.md) (prior)     | Data + dispatch (~140) | Tagged unions, Option/Result, match with payload narrowing       |
+
+Each example is self-contained and walks through which language
+feature each block exercises. See [`examples/README.md`](../examples/README.md)
+for the overview.
+
 ## [3.0.3] — 2026-06-12
 
 ### Mutation-based fuzzer (`tools/fuzz.py` / `make fuzz`)

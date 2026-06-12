@@ -132,6 +132,26 @@ jobs:
           echo "probe failures: $fails"
           exit $fails
 
+      - name: Run mutation fuzzer
+        working-directory: quirk-compiler
+        env:
+          QUIRK_HOME: ${{ github.workspace }}/quirk-compiler
+        # Deterministic seed so a given commit always exercises the
+        # same mutation tree — flakes would otherwise turn this into
+        # a quality-eroding step. 300 iters keeps CI under ~30s while
+        # still surfacing the kinds of bugs the fuzzer caught in
+        # v3.0.3 (Sema gate miss → ICE, missing Codegen coercion).
+        # Any unique crash (SIGSEGV / ICE / verifier abort) exits the
+        # fuzzer with rc=2; we promote that to a build failure.
+        run: |
+          python3 tools/fuzz.py --iters 300 --seed 1 --quiet
+          rc=$?
+          if [ $rc -ne 0 ]; then
+            echo "::error::fuzzer found new crash class(es) — see tools/fuzz_findings/"
+            ls tools/fuzz_findings/ 2>/dev/null
+          fi
+          exit $rc
+
   ubsan:
     # Same shape as `test` but builds the runtime under UBSan so latent
     # undefined behaviour surfaces with a stack trace instead of

@@ -1353,8 +1353,12 @@ std::unique_ptr<VarDeclNode> Parser::parseVarDecl() {
     auto lhs = parseExpression(35);
     std::string typeStr = "";
     if (match(TokenType::COLON)) {
-        typeStr = advance().value;
-        if (peek().type == TokenType::QUESTION) { advance(); typeStr += "?"; }
+        // Use parseTypeString so the annotation accepts the full
+        // grammar — generic args (`Box[Int]`), nullable (`Int?`),
+        // unions (`Int | String`). Without this, `b: Box[Int] :=
+        // Box(42)` errored at the `]` because the annotation reader
+        // only consumed one identifier + optional `?`.
+        typeStr = parseTypeString();
     }
     std::string opStr = advance().value;
     return std::make_unique<VarDeclNode>(std::move(lhs), parseExpression(0),

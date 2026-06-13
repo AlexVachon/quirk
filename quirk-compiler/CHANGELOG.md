@@ -5,6 +5,68 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [3.1.0] — 2026-06-12
+
+### Per-instantiation Codegen monomorphization — phase 1
+
+Last open item from the v3 roadmap. When a binding is annotated
+with a concrete generic type, Sema synthesizes a specialised
+struct with the type parameters substituted in the field list:
+
+```quirk
+struct Box[T] {
+    value: T
+    define __init(self, v: T) -> void { self.value = v }
+}
+
+define main() -> void {
+    a: Box[Int]    := Box(42)        // synth: Box__Int  { value: Int }
+    b: Box[String] := Box("hello")   // synth: Box__String { value: String }
+    p: Pair[String, Int] := Pair("age", 27)   // synth: Pair__String__Int
+
+    print(a.value + 1)        // 43       (Sema knows a.value: Int directly)
+    print(b.value + "!")      // "hello!"
+    print(a.get())            // 42       (method walks inheritance to Box)
+}
+```
+
+**How it works.** A new Sema Pass 0 runs before Pass 1
+registration: walk every type annotation in the AST
+(`VarDeclNode.typeAnnotation`, `Parameter.type`,
+`FunctionNode.returnType`, `StructField.type`), collect every
+`StructName[ConcreteArgs]` reference, synthesize one specialised
+`StructNode` per unique pair (with `T`-substituted field types
++ `parents = [original]` so method dispatch still resolves), and
+rewrite every annotation in place to the mangled name
+(`Box[Int]` → `Box__Int`). Downstream passes see only concrete
+structs.
+
+### Parser: var-decl annotations now accept the full type grammar
+
+`b: Box[Int] := …`, `b: List[Int]?`, `b: Int | String = …` all
+parse cleanly. Was a separate small bug — var-decl annotations
+only read one identifier + optional `?`; param-list types and
+return types had been using the richer `parseTypeString` for a
+while. Bringing them into alignment was the prerequisite for
+monomorphization being exercisable in idiomatic code.
+
+### Deferred to v3.1.x
+
+- **Constructor inference.** `b := Box(42)` (no annotation) keeps
+  the erased `Box` layout. Use `b: Box[Int] := Box(42)` for
+  specialisation. Inferring the type args from the constructor's
+  arg types is straightforward but interacts with method
+  dispatch + Sema's type-substitution logic; saving for a
+  follow-up.
+- **Method-body T-substitution.** Methods declared on the generic
+  dispatch via inheritance — they still see `T` as the erased
+  i8* layout. Field-level type safety improves; method-level
+  codegen is unchanged.
+
+Probe `p50_monomorph_struct.quirk` locks the field-substitution
+path for Box[Int] / Box[String] / Pair[K, V] simultaneously, plus
+method dispatch through the inheritance chain. 50/50 probes pass.
+
 ## [3.0.4] — 2026-06-12
 
 ### CI gates the fuzzer + Sema fixes its leftover hole

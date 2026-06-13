@@ -1,0 +1,55 @@
+// p50 — Per-instantiation Codegen monomorphization (v3.1.0, phase 1).
+//
+// When a binding is declared `b: Box[Int]`, Sema's Pass 0 (the
+// monomorphization pre-pass) synthesizes a specialised StructNode
+// named `Box__Int` whose `value` field carries the substituted
+// type (`Int`, not `T`). The annotation is rewritten in place to
+// the mangled name. Downstream Sema sees `b: Box__Int` and
+// resolves `b.value` to `Int` directly via the struct registry —
+// no `T → Int` deferred substitution needed at the use site.
+//
+// This slice covers:
+//   - Single-arg generic struct (Box[T])
+//   - Two-arg generic struct (Pair[K, V])
+//   - Multiple instantiations coexist (Box[Int] vs Box[String])
+//   - Methods on the generic still work via the inheritance chain
+//     (specialised structs inherit from the base generic)
+//
+// Deferred to phase 2:
+//   - Constructor inference: `b := Box(42)` (no annotation) keeps
+//     the erased Box layout. Use `b: Box[Int] := Box(42)` for
+//     specialisation.
+//   - Method-body T-substitution: methods declared on the generic
+//     dispatch via inheritance — they still see T as the erased
+//     i8* layout. Field-level type safety improves; method-level
+//     codegen is unchanged.
+
+struct Box[T] {
+    value: T
+    define __init(self, v: T) -> void { self.value = v }
+    define get(self) -> T { return self.value }
+}
+
+struct Pair[K, V] {
+    key: K
+    val: V
+    define __init(self, k: K, v: V) -> void { self.key = k; self.val = v }
+}
+
+define main() -> void {
+    a: Box[Int]    := Box(42)
+    b: Box[String] := Box("hello")
+    p: Pair[String, Int] := Pair("age", 27)
+
+    // Field access — substituted types in action.
+    if a.value + 1   != 43       { print("FAIL: a.value + 1");     return }
+    if b.value + "!" != "hello!" { print("FAIL: b.value + '!'");   return }
+    if p.key + ": "  != "age: "  { print("FAIL: p.key concat");    return }
+    if p.val * 2     != 54       { print("FAIL: p.val arithmetic");return }
+
+    // Method dispatch through the inheritance chain.
+    if a.get()       != 42       { print("FAIL: a.get()");         return }
+    if b.get()       != "hello"  { print("FAIL: b.get()");         return }
+
+    print("PASS: Box[Int] / Box[String] / Pair[String,Int] specialise correctly")
+}

@@ -24,7 +24,10 @@ struct VisibilityContext {
 
 class Sema {
    public:
-    bool analyze(const std::vector<std::unique_ptr<Node>>& nodes);
+    // Non-const so Pass 0 (monomorphization) can synthesize +
+    // append specialised StructNodes that downstream passes
+    // (including Codegen, which receives the same AST) then see.
+    bool analyze(std::vector<std::unique_ptr<Node>>& nodes);
     void setSourceMap(const std::map<std::string, std::string>& sm) { sourceMap = sm; }
     void setUserFile(const std::string& path) { userInputFile = path; }
     static std::string currentClass;
@@ -134,6 +137,25 @@ class Sema {
     // warns. The actual struct registration (one StructNode per
     // variant, parent=union) happens at parse time via desugaring.
     std::map<std::string, std::vector<std::string>> taggedUnionVariants;
+
+    // v3.1.0 — per-instantiation Codegen monomorphization. Runs as
+    // a Pass-0 (before structRegistry is built): walk the AST,
+    // collect every `StructName[ConcreteArgs]` in a type annotation,
+    // synthesize one specialized StructNode per (StructName, [Args])
+    // pair with `T`-substituted field types, and rewrite the
+    // annotations to the mangled name. The downstream passes see
+    // only concrete structs.
+    //
+    // Method specialization is the harder companion piece (requires
+    // deep-cloning FunctionNode bodies); deferred to a follow-up.
+    // Today's slice: field-level type safety + packed layouts for
+    // explicit-annotation use; method calls on the specialized
+    // type fall back to the erased version via bitcast.
+    std::set<std::pair<std::string, std::vector<std::string>>> monoInstantiations;
+    void runMonomorphizePrePass(std::vector<std::unique_ptr<Node>>& nodes);
+    void collectInstantiationsFromType(const std::string& type);
+    void collectInstantiationsInNode(Node* n);
+    void rewriteTypeAnnotations(Node* n);
     FunctionNode* findMethod(const std::string& cls, const std::string& name) {
         auto cit = methodRegistry.find(cls);
         if (cit == methodRegistry.end()) return nullptr;

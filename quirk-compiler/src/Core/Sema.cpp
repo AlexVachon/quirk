@@ -96,6 +96,212 @@ static std::string substituteTypeParams(const std::string& type,
     return out;
 }
 
+// v3.1.0 monomorphization helpers ──────────────────────────────────
+//
+// Pre-pass that runs before structRegistry is built. Walks the AST
+// for `StructName[ConcreteArgs]` annotations, synthesizes one
+// specialized StructNode per unique pair (with field types
+// T-substituted), and rewrites every annotation in place to the
+// mangled name. Downstream Sema + Codegen then see only concrete
+// structs.
+//
+// Method-body specialization is NOT done by this pass — that
+// requires deep-cloning FunctionNode bodies and substituting T
+// inside expressions, which needs an AST clone visitor we don't
+// have yet. As a result, methods declared on the generic struct
+// are NOT carried over to the specialized variants in this slice.
+// Member-field access works (Box[Int].value GEPs against the
+// specialized layout); method calls (Box[Int].method()) fall back
+// to the original via the inheritance walk.
+
+// Mangle `Box[Int]` → `Box__Int`. Recursive in args, so
+// `List[Box[Int]]` → `List__Box__Int`. Trailing `?` (nullable
+// marker) is preserved post-mangle.
+static std::string monoMangleType(const std::string& type) {
+    if (type.empty()) return type;
+    bool nullable = !type.empty() && type.back() == '?';
+    std::string t = nullable ? type.substr(0, type.size() - 1) : type;
+    auto pos = t.find('[');
+    if (pos == std::string::npos) return type;
+    std::string base = t.substr(0, pos);
+    auto args = extractTypeArgs(t);
+    std::string out = base;
+    for (const auto& a : args) {
+        out += "__";
+        out += monoMangleType(a);
+    }
+    if (nullable) out += "?";
+    return out;
+}
+
+// Strip nullable suffix for register lookups. `Box[Int]?` and
+// `Box[Int]` share the same specialized struct — the `?` just
+// means the binding can hold null in addition.
+static std::string stripNullable(const std::string& t) {
+    if (!t.empty() && t.back() == '?') return t.substr(0, t.size() - 1);
+    return t;
+}
+
+void Sema::collectInstantiationsFromType(const std::string& type) {
+    if (type.empty()) return;
+    std::string t = stripNullable(type);
+    auto pos = t.find('[');
+    if (pos == std::string::npos) return;
+    std::string base = t.substr(0, pos);
+    auto args = extractTypeArgs(t);
+    // Nested first so `List[Box[Int]]` registers `Box[Int]` before
+    // the outer `List[Box[Int]]`.
+    for (const auto& a : args) collectInstantiationsFromType(a);
+    if (!structRegistry.count(base)) return;
+    // Reject if any arg is itself a generic param still in scope.
+    // Those instantiations resolve at use sites, not at synthesis.
+    for (const auto& a : args) {
+        std::string aBase = stripNullable(baseType(a));
+        if (isGenericParam(aBase)) return;
+    }
+    monoInstantiations.insert({base, args});
+}
+
+void Sema::collectInstantiationsInNode(Node* n) {
+    if (!n) return;
+    if (auto* s = dynamic_cast<StructNode*>(n)) {
+        for (const auto& f : s->fields) collectInstantiationsFromType(f.type);
+        for (const auto& p : s->parents) collectInstantiationsFromType(p);
+        return;
+    }
+    if (auto* f = dynamic_cast<FunctionNode*>(n)) {
+        for (const auto& p : f->parameters) collectInstantiationsFromType(p.type);
+        collectInstantiationsFromType(f->returnType);
+        for (auto& s : f->body) collectInstantiationsInNode(s.get());
+        return;
+    }
+    if (auto* v = dynamic_cast<VarDeclNode*>(n)) {
+        collectInstantiationsFromType(v->typeAnnotation);
+        if (v->expression) collectInstantiationsInNode(v->expression.get());
+        return;
+    }
+    if (auto* i = dynamic_cast<IfNode*>(n)) {
+        for (auto& s : i->thenBranch) collectInstantiationsInNode(s.get());
+        for (auto& b : i->elIfBranches) for (auto& s : b.body) collectInstantiationsInNode(s.get());
+        for (auto& s : i->elseBranch) collectInstantiationsInNode(s.get());
+        return;
+    }
+    if (auto* w = dynamic_cast<WhileNode*>(n)) {
+        for (auto& s : w->body) collectInstantiationsInNode(s.get());
+        return;
+    }
+    if (auto* fr = dynamic_cast<ForNode*>(n)) {
+        for (auto& s : fr->body) collectInstantiationsInNode(s.get());
+        return;
+    }
+    if (auto* tc = dynamic_cast<TryCatchNode*>(n)) {
+        for (auto& s : tc->tryBlock) collectInstantiationsInNode(s.get());
+        for (auto& cb : tc->catchBlocks) for (auto& s : cb.body) collectInstantiationsInNode(s.get());
+        for (auto& s : tc->finallyBlock) collectInstantiationsInNode(s.get());
+        return;
+    }
+}
+
+// Walk the AST and rewrite every `StructName[ConcreteArgs]`
+// annotation to the mangled name (`StructName__Arg1__Arg2`).
+// Only the type-string fields are rewritten; expression bodies
+// keep their original types (the synthesised structs see them
+// via inheritance and field-type substitution).
+void Sema::rewriteTypeAnnotations(Node* n) {
+    if (!n) return;
+    if (auto* s = dynamic_cast<StructNode*>(n)) {
+        for (auto& f : s->fields) f.type = monoMangleType(f.type);
+        for (auto& p : s->parents) p = monoMangleType(p);
+        return;
+    }
+    if (auto* f = dynamic_cast<FunctionNode*>(n)) {
+        for (auto& p : f->parameters) p.type = monoMangleType(p.type);
+        f->returnType = monoMangleType(f->returnType);
+        for (auto& s : f->body) rewriteTypeAnnotations(s.get());
+        return;
+    }
+    if (auto* v = dynamic_cast<VarDeclNode*>(n)) {
+        v->typeAnnotation = monoMangleType(v->typeAnnotation);
+        if (v->expression) rewriteTypeAnnotations(v->expression.get());
+        return;
+    }
+    if (auto* i = dynamic_cast<IfNode*>(n)) {
+        for (auto& s : i->thenBranch) rewriteTypeAnnotations(s.get());
+        for (auto& b : i->elIfBranches) for (auto& s : b.body) rewriteTypeAnnotations(s.get());
+        for (auto& s : i->elseBranch) rewriteTypeAnnotations(s.get());
+        return;
+    }
+    if (auto* w = dynamic_cast<WhileNode*>(n)) {
+        for (auto& s : w->body) rewriteTypeAnnotations(s.get());
+        return;
+    }
+    if (auto* fr = dynamic_cast<ForNode*>(n)) {
+        for (auto& s : fr->body) rewriteTypeAnnotations(s.get());
+        return;
+    }
+    if (auto* tc = dynamic_cast<TryCatchNode*>(n)) {
+        for (auto& s : tc->tryBlock) rewriteTypeAnnotations(s.get());
+        for (auto& cb : tc->catchBlocks) for (auto& s : cb.body) rewriteTypeAnnotations(s.get());
+        for (auto& s : tc->finallyBlock) rewriteTypeAnnotations(s.get());
+        return;
+    }
+}
+
+void Sema::runMonomorphizePrePass(std::vector<std::unique_ptr<Node>>& nodes) {
+    // First pass: build a structRegistry SHADOW so the collector's
+    // `structRegistry.count(base)` check sees user structs that
+    // haven't been Pass-1-registered yet.
+    for (const auto& n : nodes) {
+        if (auto* s = dynamic_cast<StructNode*>(n.get())) {
+            structRegistry[s->name] = s;
+        }
+    }
+    // Second pass: collect every `Foo[Args]` annotation.
+    for (const auto& n : nodes) collectInstantiationsInNode(n.get());
+
+    // Third pass: synthesise one specialised StructNode per
+    // (StructName, [Args]) pair. Field types get T → Arg
+    // substituted; field names are preserved verbatim.
+    std::vector<std::unique_ptr<Node>> synthesised;
+    for (const auto& inst : monoInstantiations) {
+        const std::string& base = inst.first;
+        const std::vector<std::string>& args = inst.second;
+        std::string mangled = base;
+        for (const auto& a : args) { mangled += "__"; mangled += monoMangleType(a); }
+        if (structRegistry.count(mangled)) continue;   // already done
+        auto* src = structRegistry[base];
+        if (!src) continue;
+        if (src->typeParams.size() != args.size()) continue;
+        auto spec = std::make_unique<StructNode>();
+        spec->name = mangled;
+        spec->parents = { base };   // inherit from generic so methods reachable
+        spec->line = src->line; spec->col = src->col; spec->filePath = src->filePath;
+        for (const auto& f : src->fields) {
+            StructField sf;
+            sf.name = f.name;
+            sf.type = substituteTypeParams(f.type, src->typeParams, args);
+            // Recursively mangle nested instantiations in the
+            // substituted field type, so `Box[Box[Int]]` ends up
+            // with a `value: Box__Int` field that downstream
+            // resolution can find.
+            sf.type = monoMangleType(sf.type);
+            spec->fields.push_back(std::move(sf));
+        }
+        structRegistry[mangled] = spec.get();
+        synthesised.push_back(std::move(spec));
+    }
+    for (auto& n : synthesised) nodes.push_back(std::move(n));
+
+    // Fourth pass: rewrite every annotation in the original AST
+    // to the mangled form. After this, downstream passes never
+    // see `Foo[Args]` again — only concrete `Foo__Args`.
+    for (const auto& n : nodes) rewriteTypeAnnotations(n.get());
+
+    // Reset the shadow registry — Pass 1 will repopulate it via
+    // its normal walk over the (now-extended) nodes vector.
+    structRegistry.clear();
+}
+
 // Minimal JSON-string escaper for the NDJSON diagnostics mode. Quotes,
 // backslashes, and control bytes get escaped; everything else passes
 // through verbatim (we don't try to be Unicode-aware — Quirk file paths
@@ -384,7 +590,7 @@ void Sema::flushWarnings() {
     warnings.clear();
 }
 
-bool Sema::analyze(const std::vector<std::unique_ptr<Node>> &nodes)
+bool Sema::analyze(std::vector<std::unique_ptr<Node>> &nodes)
 {
     if (scopeStack.empty())
         enterScope();
@@ -413,6 +619,11 @@ bool Sema::analyze(const std::vector<std::unique_ptr<Node>> &nodes)
     }
     if (!structRegistry.count("Type")) structRegistry["Type"] = &builtinTypeNode;
 
+    // Pass 0 (v3.1.0): Monomorphize `StructName[ConcreteArgs]`
+    // annotations into synthesised specialised structs. After this
+    // runs, Pass 1 + downstream see only concrete struct names —
+    // no `Foo[Bar]` references survive in type annotations.
+    runMonomorphizePrePass(nodes);
 
     // Pass 1: Register Structs, Interfaces, and Signatures
     for (const auto &node : nodes)

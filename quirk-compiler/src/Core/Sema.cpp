@@ -892,6 +892,25 @@ void Sema::checkFunction(FunctionNode *f)
     for (const auto &param : f->parameters)
         defineVariable(param.name, param.type.empty() ? "Any" : param.type, false, true);
 
+    // Type-check default values against the declared parameter type.
+    // A mismatched default (`raw: Int = "Hello"`) used to slip past
+    // Sema and surface as an LLVM verifier abort in Codegen when the
+    // default expression's value type didn't fit the function param
+    // slot — fuzz #1 of v3.1.1 (`bitcast i8* to %String*` passed into
+    // an i32 slot). Catching it here turns the ICE into a clean
+    // Sema rejection.
+    for (const auto& param : f->parameters) {
+        if (!param.defaultValue || param.type.empty()) continue;
+        std::string dt = checkExpression(param.defaultValue.get());
+        if (dt.empty() || dt == "unknown") continue;
+        if (!isCompatibleTypes(param.type, dt)) {
+            fatalError("default value for parameter '" + param.name +
+                       "' has type '" + dt + "' but parameter is declared '" +
+                       param.type + "'",
+                       f->line, f->col, f->filePath);
+        }
+    }
+
     if (f->whereClause)
         checkExpression(f->whereClause.get());
 

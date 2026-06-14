@@ -207,11 +207,18 @@ def run(quirk_path: Path) -> Outcome:
 
 
 def collect_seeds() -> list[Path]:
+    # Sort so the `--seed N` reproducibility actually works across
+    # machines. `rglob` returns entries in filesystem-iteration order,
+    # which varies between local dev (ext4) and CI (overlay), so the
+    # same `--seed 1` could pick a different seed file in step 86
+    # depending on where we ran. Stable ordering removes that source
+    # of flake.
     seeds: list[Path] = []
     for d in SEED_DIRS:
         for p in d.rglob("*.quirk"):
             if p.is_file():
                 seeds.append(p)
+    seeds.sort()
     return seeds
 
 

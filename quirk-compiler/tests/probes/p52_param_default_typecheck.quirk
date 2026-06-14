@@ -1,0 +1,28 @@
+// A default value whose type doesn't match the parameter type used
+// to slip past Sema and reach Codegen, where it manifested as an
+// LLVM verifier abort ("Call parameter type does not match function
+// signature!"). Fuzz found it in v3.1.1 against:
+//
+//     struct CustomString : String {
+//         define __init(self, raw: Int = "Hello") {
+//             super().__init(raw)
+//         }
+//     }
+//
+// (the original was `raw: String = "Hello"` — a type mutation
+// flipped String → Int.)
+//
+// Probe passes when Sema rejects the function cleanly — error
+// message must mention 'default value' and 'parameter'. NO
+// "Internal compiler error" or "malformed IR".
+
+struct CustomString : String {
+    define __init(self, raw: Int = "Hello") {
+        super().__init(raw)
+    }
+}
+
+define main() {
+    c := CustomString()
+    print(c)
+}

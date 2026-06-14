@@ -1,0 +1,24 @@
+// Match-arm equality on a mistyped scrutinee must not emit invalid
+// IR. Fuzz found this in v3.1.0: annotating a List literal as `Map`
+// makes the for-loop variable a String*, then `n: Int := x` keeps
+// the binding pointer-shaped while the match's `case 3` literal is
+// an i32. The struct-eq path then tried to bitcast i32 → String*,
+// which LLVM rejected as malformed IR. Fix: when R is a primitive
+// and L is a struct ptr, return constant-false instead of forging
+// an impossible bitcast — the arm can't match at runtime anyway.
+//
+// Probe passes when the compiler does NOT report "malformed IR" or
+// "Internal compiler error". The program's runtime behavior is
+// undefined (it's mistyped), but it must not crash the compiler.
+
+define main() -> void {
+    items: Map = [1, 2, 3, 4, 5]
+    for x in items {
+        n: Int := x
+        match n {
+            case 3 { print("three") }
+            case 5 { print("five") }
+        }
+    }
+    print("ok")
+}

@@ -5,6 +5,48 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [3.1.1] — 2026-06-13
+
+### Param defaults: Sema rejects type-mismatched defaults
+
+`define __init(self, raw: Int = "Hello")` (Int param, String
+default) used to slip past Sema and surface as an LLVM verifier
+abort in Codegen — the default expression was lowered to a
+`String*` and passed into the Int parameter slot, producing
+"Call parameter type does not match function signature!". Fuzz
+finding #1 of this patch. checkFunction now type-checks each
+param's default against the declared param type and emits a
+clean Sema error pointing at the parameter. Probe
+`p52_param_default_typecheck` locks the regression.
+
+### Match-arm equality: no invalid bitcast on type-mismatched scrutinee
+
+When the match scrutinee was a struct pointer and a case pattern
+was a primitive (e.g. `match n { case 3 ... }` where `n` ended up
+typed as `String*` due to upstream type-mismatch from a mistyped
+container annotation), `emitMatchEq` forged a `bitcast i32 to
+String*`, which LLVM's verifier rejects as malformed IR. The fix:
+when R is a primitive and L is a struct ptr, return constant-false
+— the arm can't match at runtime anyway, and the program may still
+trip a Sema error or a different runtime check, but it no longer
+takes the compiler down. Probe `p51_match_eq_typemismatch` locks
+the regression.
+
+### Fuzz harness: deterministic seed-file order
+
+`tools/fuzz.py`'s seed corpus was iterated in `Path.rglob` order,
+which is filesystem-dependent. Same `--seed 1` could pick a
+different seed file on overlay-fs CI vs ext4 local — and the
+v3.1.0 CI run found a crash my local box wouldn't repro. Sort
+seeds for stable ordering. (Sorted seeds also surfaced the match-
+eq bitcast crash above on local — the fuzz finding is what drove
+the fix.)
+
+CI workflow also now uploads `tools/fuzz_findings/` as an
+artifact (and inlines the crash file's contents in the log) when
+the fuzz step fails — so a future flake-find is debuggable
+without an extra round-trip through CI.
+
 ## [3.1.0] — 2026-06-12
 
 ### Per-instantiation Codegen monomorphization — phase 1

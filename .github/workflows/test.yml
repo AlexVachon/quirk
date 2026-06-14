@@ -133,6 +133,7 @@ jobs:
           exit $fails
 
       - name: Run mutation fuzzer
+        id: fuzz
         working-directory: quirk-compiler
         env:
           QUIRK_HOME: ${{ github.workspace }}/quirk-compiler
@@ -147,10 +148,23 @@ jobs:
           python3 tools/fuzz.py --iters 300 --seed 1 --quiet
           rc=$?
           if [ $rc -ne 0 ]; then
-            echo "::error::fuzzer found new crash class(es) — see tools/fuzz_findings/"
-            ls tools/fuzz_findings/ 2>/dev/null
+            echo "::error::fuzzer found new crash class(es) — see uploaded fuzz-findings artifact"
+            for f in tools/fuzz_findings/*.quirk; do
+              echo "::group::$f"
+              cat "$f"
+              echo "::endgroup::"
+            done
           fi
           exit $rc
+
+      - name: Upload fuzz findings on failure
+        if: failure() && steps.fuzz.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-findings
+          path: quirk-compiler/tools/fuzz_findings/
+          if-no-files-found: ignore
+          retention-days: 7
 
   ubsan:
     # Same shape as `test` but builds the runtime under UBSan so latent

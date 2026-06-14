@@ -716,9 +716,20 @@ private:
                     if (F.getName().contains(target)) { eqFn = &F; break; }
             }
             if (eqFn) {
-                // Ensure R has the same type as L (both String* for example)
-                if (R->getType() != L->getType())
+                // R needs to share L's type for the struct-eq call.
+                // Bitcasting an i32 (a pattern literal like `case 3`)
+                // to a String* is invalid IR — surfaces when an arg's
+                // declared type is wrong (e.g. `items: Map = [...]`
+                // mis-typed as Map, the iteration variable becomes
+                // String*, and `case 3` then mismatches). When R is
+                // a primitive, this arm simply can't match the
+                // scrutinee at runtime; emit a constant false.
+                if (R->getType() != L->getType()) {
+                    if (!R->getType()->isPointerTy()) {
+                        return ConstantInt::getFalse(Context);
+                    }
                     R = Builder.CreateBitCast(R, L->getType(), "eq_cast");
+                }
                 return Builder.CreateCall(eqFn, {L, R}, "match_eq");
             }
         }

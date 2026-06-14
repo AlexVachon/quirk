@@ -2,6 +2,31 @@
 
 All notable changes to the extension land here. Versioning follows SemVer; minor bumps for new features, patches for fixes.
 
+## [0.2.13] — 2026-06-13
+
+### Stdlib index now covers tagged unions and extend-block methods
+
+The pre-built stdlib symbol index (`data/stdlib-index.json`) was
+missing the canonical v2.4.4+ types — `Option[T]`, `Result[T,E]`,
+their variants `Some` / `None` / `Ok` / `Err`, and every method
+declared inside an `extend X { ... }` block (e.g. `Option.is_some`,
+`Option.unwrap_or`, `Result.is_ok`). The generator only knew about
+`struct X { ... }`-style declarations.
+
+This release teaches `tools/gen_stdlib_docs.py` to recognize:
+
+- `type Name[T] = Variant1(...) | Variant2(...)` — emits the
+  union itself and each variant as a documented entry.
+- `extend Name { ... }` — methods inside qualify as `Name.method`
+  and end up in the index next to the struct they extend.
+- Inline single-line docstrings `--- text ---` (in addition to
+  the multi-line `--- ... ---` block form). Several stdlib files
+  use the inline shape; previously they yielded zero index entries.
+
+Index size jumped from 287 → 390 symbols, ~342 → ~467 documented
+entries. Hover now resolves `Option`, `unwrap_or`, `is_ok`, and
+the rest of the canonical sum-type API.
+
 ## [0.2.12] — 2026-06-12
 
 ### Hover for stdlib symbols, even when not explicitly `use`d

@@ -16,6 +16,14 @@ HTTP response.
   `text`         — decoded response body (chunked encoding handled).
   `ok`           — true iff `200 <= status_code < 300`.
 
+#### `define __init(self, status: Int, body: String, headers: Map) -> void`
+
+Construct a Response. Sets `ok` based on the status code range.
+
+#### `define __str(self) -> String`
+
+Compact form: `<Response [200]>`.
+
 #### `define request(method: String, target: String, data: String = "", headers: Map = Map(), params: Map = Map(), follow_redirects: Bool = true) -> Response`
 
 Send a single HTTP request and return the response. Lower-level form
@@ -119,6 +127,10 @@ A parsed incoming HTTP request — what `Server` hands to your handler.
   `headers`  — Map of header name → value (case-preserved as received).
   `body`     — request body for POST/PUT, "" otherwise.
 
+#### `define __str(self) -> String`
+
+Compact form: `<Request GET /path>`.
+
 #### `define listen(self, host: String, port: Int, handler: Callable) -> void`
 
 Block forever, accepting connections on `host:port` and dispatching
@@ -132,6 +144,10 @@ Exceptions raised by the handler are caught and converted to a plain
 Server().listen("0.0.0.0", 8080, fn(req: Request) -> Response {
     return Response(200, "hi", Map())
 })
+
+#### `define stop(self) -> void`
+
+Stop the accept-loop on the next iteration.
 
 ### `struct Server`
 
@@ -191,3 +207,11 @@ connection. Default buffer is 1024 bytes.
 #### `define close(self) -> void`
 
 Close the socket. Idempotent — calling close twice is a no-op.
+
+#### `define __enter(self) -> Socket { return self }`
+
+`with` enter — returns the Socket itself.
+
+#### `define __exit(self) -> void { self.close() }`
+
+`with` exit — closes the socket.

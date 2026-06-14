@@ -62,6 +62,15 @@
 "doc": "Implemented by types that support equality comparison.\nAll types that implement `Comparable` or `Hashable` extend `Equatable`.\n\n@example\nstruct Color : Equatable {\n    r: Int\n    g: Int\n    b: Int\n\n    define __eq(self, other: Color) -> Bool {\n        return self.r == other.r and self.g == other.g and self.b == other.b\n    }\n}"
 }
 ],
+"Err": [
+{
+"package": "typing",
+"qualified": "Err",
+"kind": "struct",
+"signature": "variant Err of Result",
+"doc": ""
+}
+],
 "Exception": [
 {
 "package": "typing",
@@ -224,6 +233,15 @@
 "doc": "Result of `Regex.find`. `start` and `end` are byte offsets into the input\nString; `text` is the substring `[start, end)`; `groups` is a `List<String>`\nof the captured groups (group 0 = full match is NOT included \u2014 `text` is\nthe whole match)."
 }
 ],
+"None": [
+{
+"package": "typing",
+"qualified": "None",
+"kind": "struct",
+"signature": "variant None of Option",
+"doc": ""
+}
+],
 "NotImplementedError": [
 {
 "package": "typing",
@@ -240,6 +258,24 @@
 "kind": "struct",
 "signature": "struct NullError : RuntimeError {",
 "doc": "Raised when a null value is accessed where a non-null value is required. Inherits from RuntimeError.\n\n@note Check for null explicitly before accessing fields or calling methods on optional values.\n\n@example:\ndefine get_name(user: Any) -> String {\n    if user == null {\n        throw NullError(\"user must not be null\")\n    }\n    return user.name\n}"
+}
+],
+"Ok": [
+{
+"package": "typing",
+"qualified": "Ok",
+"kind": "struct",
+"signature": "variant Ok of Result",
+"doc": ""
+}
+],
+"Option": [
+{
+"package": "typing",
+"qualified": "Option",
+"kind": "struct",
+"signature": "type Option[T] = Some(value: T) | None()",
+"doc": ""
 }
 ],
 "Parseable": [
@@ -314,6 +350,15 @@
 "doc": "HTTP response.\n  `status_code`  \u2014 numeric status (200, 404, ...).\n  `headers`      \u2014 Map of header name \u2192 value (header names are\n                   case-preserved as the server returned them).\n  `text`         \u2014 decoded response body (chunked encoding handled).\n  `ok`           \u2014 true iff `200 <= status_code < 300`."
 }
 ],
+"Result": [
+{
+"package": "typing",
+"qualified": "Result",
+"kind": "struct",
+"signature": "type Result[T, E] = Ok(value: T) | Err(error: E)",
+"doc": ""
+}
+],
 "RuntimeError": [
 {
 "package": "typing",
@@ -366,6 +411,15 @@
 "kind": "struct",
 "signature": "struct SocketError : Exception {",
 "doc": "Raised for socket and network operation failures such as connection\nrefused, timeout, or DNS resolution errors.\n\n@example:\ntry {\n    conn := Socket.connect(\"localhost\", 8080)\n} catch (e: SocketError) {\n    print(\"Connection failed: \" + e.message)\n}"
+}
+],
+"Some": [
+{
+"package": "typing",
+"qualified": "Some",
+"kind": "struct",
+"signature": "variant Some of Option",
+"doc": ""
 }
 ],
 "String": [
@@ -467,6 +521,63 @@
 "doc": "Raised when division or modulo by zero is attempted.\n\n@example:\ndefine divide(a: Int, b: Int) -> Int {\n    if b == 0 {\n        throw ZeroDivisionError(\"Cannot divide \" + a.str() + \" by zero\")\n    }\n    return a / b\n}"
 }
 ],
+"__add": [
+{
+"package": "math",
+"qualified": "Vector2.__add",
+"kind": "method",
+"signature": "define __add(self, other: Vector2) -> Vector2 {",
+"doc": "Componentwise addition: `a + b`."
+},
+{
+"package": "math",
+"qualified": "Vector2.__add",
+"kind": "method",
+"signature": "define __add(self, other: Vector3) -> Vector3 {",
+"doc": "Componentwise addition: `a + b`."
+}
+],
+"__enter": [
+{
+"package": "io",
+"qualified": "File.__enter",
+"kind": "method",
+"signature": "define __enter(self) -> File {",
+"doc": "`with` enter \u2014 returns the File itself."
+},
+{
+"package": "net",
+"qualified": "Socket.__enter",
+"kind": "method",
+"signature": "define __enter(self) -> Socket { return self }",
+"doc": "`with` enter \u2014 returns the Socket itself."
+}
+],
+"__eq": [
+{
+"package": "typing",
+"qualified": "__eq",
+"kind": "define",
+"signature": "define __eq(self, other: Self) -> Bool",
+"doc": "Returns true if this value is equal to `other`."
+}
+],
+"__exit": [
+{
+"package": "io",
+"qualified": "File.__exit",
+"kind": "method",
+"signature": "define __exit(self) -> void {",
+"doc": "`with` exit \u2014 closes the file."
+},
+{
+"package": "net",
+"qualified": "Socket.__exit",
+"kind": "method",
+"signature": "define __exit(self) -> void { self.close() }",
+"doc": "`with` exit \u2014 closes the socket."
+}
+],
 "__get": [
 {
 "package": "typing",
@@ -483,6 +594,31 @@
 "doc": "Returns the element at the given index.\n@param index: Int \u2014 zero-based position (negative indices not supported)\n@returns: Any \u2014 the element at that index\n@throws IndexError \u2014 if index is out of bounds"
 }
 ],
+"__has_next": [
+{
+"package": "io",
+"qualified": "File.__has_next",
+"kind": "method",
+"signature": "extern define __has_next(self) -> Bool",
+"doc": "True if more lines remain."
+},
+{
+"package": "typing",
+"qualified": "__has_next",
+"kind": "define",
+"signature": "define __has_next(self) -> Bool",
+"doc": "Returns true if there are more elements to yield."
+}
+],
+"__hash": [
+{
+"package": "typing",
+"qualified": "__hash",
+"kind": "define",
+"signature": "define __hash(self) -> Int",
+"doc": "Returns a stable integer hash of this value."
+}
+],
 "__init": [
 {
 "package": "io",
@@ -492,20 +628,98 @@
 "doc": "Open `path` in the requested `mode`. Sets `is_open` based on whether the\nunderlying `fopen` succeeded \u2014 check it before reading.\n@param path File path (absolute or relative to cwd).\n@param mode Standard fopen-style mode string."
 },
 {
+"package": "math",
+"qualified": "Vector2.__init",
+"kind": "method",
+"signature": "define __init(self, x: Double, y: Double) -> void {",
+"doc": "Construct a Vector2 from two Doubles."
+},
+{
+"package": "math",
+"qualified": "Vector2.__init",
+"kind": "method",
+"signature": "define __init(self, x: Double, y: Double, z: Double) -> void {",
+"doc": "Construct a Vector3 from three Doubles."
+},
+{
 "package": "net",
 "qualified": "Socket.__init",
 "kind": "method",
 "signature": "define __init(self, initial_fd: Int = -1) -> void {",
 "doc": "Create a new socket. Pass `initial_fd` only when wrapping a fd you\nalready own (e.g. inside `accept`). The default `-1` allocates a fresh\nsocket via the OS.\n@throws SocketError if the OS could not provide a socket fd."
+},
+{
+"package": "net",
+"qualified": "Response.__init",
+"kind": "method",
+"signature": "define __init(self, status: Int, body: String, headers: Map) -> void {",
+"doc": "Construct a Response. Sets `ok` based on the status code range."
 }
 ],
 "__iter": [
+{
+"package": "typing",
+"qualified": "__iter",
+"kind": "define",
+"signature": "define __iter(self) -> Iterator",
+"doc": "Returns an iterator over the elements of this collection."
+},
 {
 "package": "typing",
 "qualified": "TupleIterator.__iter",
 "kind": "method",
 "signature": "extern define __iter(self) -> TupleIterator",
 "doc": "Returns an iterator over the elements of this tuple.\n@returns: TupleIterator"
+}
+],
+"__lt": [
+{
+"package": "typing",
+"qualified": "__lt",
+"kind": "define",
+"signature": "define __lt(self, other: Self) -> Bool",
+"doc": "Returns true if this value is strictly less than `other`."
+}
+],
+"__mul": [
+{
+"package": "math",
+"qualified": "Vector2.__mul",
+"kind": "method",
+"signature": "define __mul(self, scalar: Double) -> Vector2 {",
+"doc": "Scalar multiplication: `v * s` scales each component."
+}
+],
+"__next": [
+{
+"package": "io",
+"qualified": "File.__next",
+"kind": "method",
+"signature": "extern define __next(self) -> String",
+"doc": "Returns the next line; trailing newline stripped."
+},
+{
+"package": "typing",
+"qualified": "__next",
+"kind": "define",
+"signature": "define __next(self) -> Any",
+"doc": "Returns the next element and advances the iterator."
+}
+],
+"__repr": [
+{
+"package": "math",
+"qualified": "Vector2.__repr",
+"kind": "method",
+"signature": "define __repr(self) -> String {",
+"doc": "Developer-readable form: `Vector2 { x: ..., y: ... }`."
+},
+{
+"package": "typing",
+"qualified": "__repr",
+"kind": "define",
+"signature": "define __repr(self) -> String",
+"doc": "Returns a developer-readable debug representation of this value."
 }
 ],
 "__set": [
@@ -518,6 +732,41 @@
 }
 ],
 "__str": [
+{
+"package": "datetime",
+"qualified": "DateTime.__str",
+"kind": "method",
+"signature": "define __str(self) -> String {",
+"doc": "Default str: ISO-8601."
+},
+{
+"package": "math",
+"qualified": "Vector2.__str",
+"kind": "method",
+"signature": "define __str(self) -> String {",
+"doc": "Compact human-readable form: `v(x, y)`."
+},
+{
+"package": "math",
+"qualified": "Vector2.__str",
+"kind": "method",
+"signature": "define __str(self) -> String {",
+"doc": "Compact human-readable form: `Vec3(x, y, z)`."
+},
+{
+"package": "net",
+"qualified": "Response.__str",
+"kind": "method",
+"signature": "define __str(self) -> String {",
+"doc": "Compact form: `<Response [200]>`."
+},
+{
+"package": "net",
+"qualified": "Request.__str",
+"kind": "method",
+"signature": "define __str(self) -> String {",
+"doc": "Compact form: `<Request GET /path>`."
+},
 {
 "package": "typing",
 "qualified": "Callable.__str",
@@ -540,6 +789,15 @@
 "doc": "Returns a human-readable string representation of this tuple.\n@returns: String \u2014 e.g. `\"(1, hello, true)\"`"
 }
 ],
+"__sub": [
+{
+"package": "math",
+"qualified": "Vector2.__sub",
+"kind": "method",
+"signature": "define __sub(self, other: Vector2) -> Vector2 {",
+"doc": "Componentwise subtraction: `a - b`."
+}
+],
 "_char": [
 {
 "package": "toml",
@@ -547,6 +805,24 @@
 "kind": "define",
 "signature": "define _char(s: String, i: Int) -> String {",
 "doc": "One character of `s` at byte offset `i`, returned as a length-1\nString. Quirk's String API doesn't expose `char_at` today, so we\nsimulate via substring \u2014 same semantics, slightly more allocation\nthat the parser absorbs in its inner loops."
+}
+],
+"_find_long": [
+{
+"package": "argparse",
+"qualified": "ArgSpec._find_long",
+"kind": "method",
+"signature": "define _find_long(self, long: String) -> ArgSpec {",
+"doc": "Find a spec by long name. Returns null if not found."
+}
+],
+"_find_short": [
+{
+"package": "argparse",
+"qualified": "ArgSpec._find_short",
+"kind": "method",
+"signature": "define _find_short(self, short: String) -> ArgSpec {",
+"doc": "Find a spec by short name. Returns null if not found."
 }
 ],
 "_index_outside_strings": [
@@ -565,6 +841,24 @@
 "kind": "method",
 "signature": "define _is_digit(c: String) -> Bool {",
 "doc": "True if `c` (a length-1 String) is an ASCII digit '0'..'9'. String\ncomparisons (`<=`, `>=`) are defined on the stdlib String type, so\nthis is a single comparison-pair on the host runtime."
+}
+],
+"_next_double": [
+{
+"package": "random",
+"qualified": "_next_double",
+"kind": "define",
+"signature": "extern define _next_double() -> Double",
+"doc": "Internal: returns a Double in [0.0, 1.0). Prefer `random()` below."
+}
+],
+"_next_int": [
+{
+"package": "random",
+"qualified": "_next_int",
+"kind": "define",
+"signature": "extern define _next_int(lo: Int, hi: Int) -> Int",
+"doc": "Internal: inclusive `[lo, hi]`. Used by `randint` and `choice`."
 }
 ],
 "_parse_string": [
@@ -605,6 +899,13 @@
 ],
 "abs": [
 {
+"package": "math",
+"qualified": "abs",
+"kind": "define",
+"signature": "extern define abs(x: Int) -> Int",
+"doc": "Absolute value of an Int. Use `abs_f` for Doubles."
+},
+{
 "package": "typing",
 "qualified": "Int.abs",
 "kind": "method",
@@ -637,6 +938,15 @@
 "doc": "Block until a client connects to listening socket `fd`, returning the new\nclient socket's fd. Negative on error."
 }
 ],
+"acos": [
+{
+"package": "math",
+"qualified": "acos",
+"kind": "define",
+"signature": "extern define acos(x: Double) -> Double",
+"doc": "Arc cosine \u2014 inverse of `cos`. Returns radians in `[0, pi]`. NaN if `|x| > 1`."
+}
+],
 "add": [
 {
 "package": "typing",
@@ -644,6 +954,15 @@
 "kind": "method",
 "signature": "extern define add(self, val: Any) -> void",
 "doc": "Adds a value to the set. Does nothing if already present.\n@param val: Any"
+}
+],
+"add_seconds": [
+{
+"package": "datetime",
+"qualified": "DateTime.add_seconds",
+"kind": "method",
+"signature": "define add_seconds(self, n: Int) -> DateTime {",
+"doc": "Returns a new DateTime offset by `n` seconds (can be negative)."
 }
 ],
 "all": [
@@ -709,6 +1028,15 @@
 "doc": "Returns a List of Strings representing the command-line arguments.\nIndex 0 is the name/path of the executing program.\n@example\nfor arg in sys.argv() { print(arg) }"
 }
 ],
+"asin": [
+{
+"package": "math",
+"qualified": "asin",
+"kind": "define",
+"signature": "extern define asin(x: Double) -> Double",
+"doc": "Arc sine \u2014 inverse of `sin`. Returns radians in `[-pi/2, pi/2]`. NaN if `|x| > 1`."
+}
+],
 "assert_approx": [
 {
 "package": "test",
@@ -736,6 +1064,24 @@
 "doc": "Asserts `actual == expected` by value. For primitive types and anything\nwith a `__str` method this matches stringified equality; for arbitrary\nstruct refs it amounts to pointer identity."
 }
 ],
+"assert_false": [
+{
+"package": "test",
+"qualified": "assert_false",
+"kind": "define",
+"signature": "define assert_false(cond: Bool, msg: String = \"\") -> void {",
+"doc": "Asserts `cond` is false."
+}
+],
+"assert_ne": [
+{
+"package": "test",
+"qualified": "assert_ne",
+"kind": "define",
+"signature": "define assert_ne(actual: Any, expected: Any, msg: String = \"\") -> void {",
+"doc": "Asserts `actual != expected` by value."
+}
+],
 "assert_throws": [
 {
 "package": "test",
@@ -743,6 +1089,24 @@
 "kind": "define",
 "signature": "define assert_throws(cb: Callable, expected_type: String = \"\", msg: String = \"\") -> void {",
 "doc": "Asserts `cb` throws an exception. If `expected_type` is non-empty, the\nthrown exception's type must match (e.g. `\"ValueError\"`)."
+}
+],
+"assert_true": [
+{
+"package": "test",
+"qualified": "assert_true",
+"kind": "define",
+"signature": "define assert_true(cond: Bool, msg: String = \"\") -> void {",
+"doc": "Asserts `cond` is true."
+}
+],
+"atan": [
+{
+"package": "math",
+"qualified": "atan",
+"kind": "define",
+"signature": "extern define atan(x: Double) -> Double",
+"doc": "Arc tangent \u2014 inverse of `tan`. Returns radians in `(-pi/2, pi/2)`."
 }
 ],
 "atan2": [
@@ -851,6 +1215,24 @@
 "doc": "Captures the C-level backtrace into an internal buffer. Subsequent calls\noverwrite. Used by exception handlers to attach traceback info."
 }
 ],
+"cbrt": [
+{
+"package": "math",
+"qualified": "cbrt",
+"kind": "define",
+"signature": "extern define cbrt(x: Double) -> Double",
+"doc": "Cube root. Defined for all reals (negative input returns negative root)."
+}
+],
+"ceil": [
+{
+"package": "math",
+"qualified": "ceil",
+"kind": "define",
+"signature": "extern define ceil(x: Double) -> Double",
+"doc": "Smallest integer \u2265 x, returned as Double. `ceil(2.1) == 3.0`."
+}
+],
 "chain": [
 {
 "package": "itertools",
@@ -876,6 +1258,13 @@
 "kind": "define",
 "signature": "define choice(items: List) -> Any {",
 "doc": "Pick one element of `list` uniformly at random.\n@throws ValueError if the list is empty."
+},
+{
+"package": "random",
+"qualified": "choice",
+"kind": "define",
+"signature": "extern define choice(items: List) -> Any",
+"doc": "Pick a random element from a non-empty list. Returns null if empty."
 }
 ],
 "clamp": [
@@ -885,6 +1274,15 @@
 "kind": "define",
 "signature": "define clamp(value: Int, lo: Int, hi: Int) -> Int {",
 "doc": "Restrict `value` to the closed range [lo, hi].\n@example math.clamp(150, 0, 100) // 100"
+}
+],
+"clamp_f": [
+{
+"package": "math",
+"qualified": "clamp_f",
+"kind": "define",
+"signature": "define clamp_f(value: Double, lo: Double, hi: Double) -> Double {",
+"doc": "Restrict a Double to the closed range `[lo, hi]`."
 }
 ],
 "clear": [
@@ -1015,6 +1413,24 @@
 "doc": "A short copyright string for the Quirk runtime."
 }
 ],
+"cos": [
+{
+"package": "math",
+"qualified": "cos",
+"kind": "define",
+"signature": "extern define cos(x: Double) -> Double",
+"doc": "Cosine of `x` (in radians)."
+}
+],
+"cosh": [
+{
+"package": "math",
+"qualified": "cosh",
+"kind": "define",
+"signature": "extern define cosh(x: Double) -> Double",
+"doc": "Hyperbolic cosine: `(e^x + e^-x) / 2`."
+}
+],
 "count": [
 {
 "package": "typing",
@@ -1024,6 +1440,15 @@
 "doc": "Returns the number of non-overlapping occurrences of `sub`.\n@param sub: String\n@returns: Int"
 }
 ],
+"cwd": [
+{
+"package": "fs",
+"qualified": "cwd",
+"kind": "define",
+"signature": "extern define cwd() -> String",
+"doc": "Current working directory as a String."
+}
+],
 "cycle": [
 {
 "package": "itertools",
@@ -1031,6 +1456,24 @@
 "kind": "define",
 "signature": "define cycle(items: List, total: Int) -> List {",
 "doc": "Cycle `items` to produce a List of length `total`. Empty input yields an\nempty list regardless of `total`.\n\n@example\ncycle([1, 2, 3], 7)   // [1, 2, 3, 1, 2, 3, 1]"
+}
+],
+"day": [
+{
+"package": "time",
+"qualified": "day",
+"kind": "define",
+"signature": "extern define day(epoch: Int, utc: Int) -> Int",
+"doc": "Day of month, 1-31."
+}
+],
+"day_name": [
+{
+"package": "datetime",
+"qualified": "DateTime.day_name",
+"kind": "method",
+"signature": "define day_name(dt: DateTime) -> String {",
+"doc": "Full English weekday name for `dt`. `weekday` is 0=Sunday \u2026 6=Saturday."
 }
 ],
 "days_in_month": [
@@ -1074,6 +1517,33 @@
 "kind": "method",
 "signature": "define diff_days(a: DateTime, b: DateTime) -> Int {",
 "doc": "Whole days between `a` and `b` (signed). Calendar-day boundaries\naren't honored \u2014 this is simply `seconds / 86400`."
+}
+],
+"diff_hours": [
+{
+"package": "datetime",
+"qualified": "DateTime.diff_hours",
+"kind": "method",
+"signature": "define diff_hours(a: DateTime, b: DateTime) -> Int {",
+"doc": "Whole hours between `a` and `b` (signed)."
+}
+],
+"diff_minutes": [
+{
+"package": "datetime",
+"qualified": "DateTime.diff_minutes",
+"kind": "method",
+"signature": "define diff_minutes(a: DateTime, b: DateTime) -> Int {",
+"doc": "Whole minutes between `a` and `b` (signed; `b - a`)."
+}
+],
+"diff_seconds": [
+{
+"package": "datetime",
+"qualified": "DateTime.diff_seconds",
+"kind": "method",
+"signature": "define diff_seconds(self, other: DateTime) -> Int {",
+"doc": "`self - other` in seconds. Negative if `self` is earlier."
 }
 ],
 "difference": [
@@ -1146,6 +1616,15 @@
 "kind": "define",
 "signature": "define dumps_pretty(val: Any, indent: Int = 2) -> String {",
 "doc": "Pretty-print `val` with `indent` spaces per nesting level. Indented JSON\nis much easier to read for config files and debug output; pass `indent=4`\nfor a more spacious layout.\n\n@example\nm := Map()\nm.put(\"name\", \"Alice\")\nm.put(\"scores\", [98, 87, 92])\nprint(json.dumps_pretty(m))\n// {\n//   \"name\": \"Alice\",\n//   \"scores\": [\n//     98,\n//     87,\n//     92\n//   ]\n// }"
+}
+],
+"e": [
+{
+"package": "math",
+"qualified": "e",
+"kind": "define",
+"signature": "extern define e() -> Double",
+"doc": "e \u2014 Euler's number. \u2248 2.71828182845905"
 }
 ],
 "each": [
@@ -1234,6 +1713,15 @@
 "doc": "Absolute path to the running quirk executable."
 }
 ],
+"exists": [
+{
+"package": "fs",
+"qualified": "exists",
+"kind": "define",
+"signature": "extern define exists(path: String) -> Bool",
+"doc": "True if anything (file, directory, symlink) exists at `path`."
+}
+],
 "exit": [
 {
 "package": "sys",
@@ -1243,6 +1731,15 @@
 "doc": "Immediately terminates the program with `code`. Skips finalizers.\nPrefer `terminate(code)` for the friendlier name."
 }
 ],
+"exp": [
+{
+"package": "math",
+"qualified": "exp",
+"kind": "define",
+"signature": "extern define exp(x: Double) -> Double",
+"doc": "`e ** x`."
+}
+],
 "extname": [
 {
 "package": "fs",
@@ -1250,6 +1747,15 @@
 "kind": "define",
 "signature": "define extname(path: String) -> String {",
 "doc": "File extension including the leading dot (`\".txt\"`), or \"\" when there\nis none. A leading dot in the basename (e.g. `.gitignore`) is NOT an\nextension \u2014 it's the filename."
+}
+],
+"fabs": [
+{
+"package": "math",
+"qualified": "fabs",
+"kind": "define",
+"signature": "extern define fabs(x: Double) -> Double",
+"doc": "Absolute value of a Double. (Wrapped by `abs_f` for naming symmetry.)"
 }
 ],
 "filter": [
@@ -1268,6 +1774,13 @@
 "kind": "method",
 "signature": "define find(self, s: String) -> Match {",
 "doc": "Find the first match starting at or after `from_offset`. Returns a Match\nwith `text` = full match string and `groups` = captured-group strings.\nReturns null when no match is found."
+},
+{
+"package": "regex",
+"qualified": "Match.find",
+"kind": "method",
+"signature": "define find(pattern: String, s: String) -> Match {",
+"doc": "One-shot find: compile + find."
 },
 {
 "package": "typing",
@@ -1307,8 +1820,24 @@
 "package": "argparse",
 "qualified": "ArgSpec.flag",
 "kind": "method",
+"signature": "define flag(self, long: String, short: String, help: String) -> void {",
+"doc": "Add a boolean flag with the given long and short names. Default false."
+},
+{
+"package": "argparse",
+"qualified": "ArgSpec.flag",
+"kind": "method",
 "signature": "define flag(args: Map, name: String) -> Bool {",
 "doc": "Convenience: read a flag from a parsed-args Map as a Bool. Equivalent to\n`args.get(name) == \"true\"`.\n@example  if argparse.flag(args, \"verbose\") { ... }"
+}
+],
+"floor": [
+{
+"package": "math",
+"qualified": "floor",
+"kind": "define",
+"signature": "extern define floor(x: Double) -> Double",
+"doc": "Largest integer \u2264 x, returned as Double. `floor(2.7) == 2.0`."
 }
 ],
 "fmod": [
@@ -1485,6 +2014,15 @@
 "doc": "HMAC-SHA256 \u2014 message authentication code. Use for signed cookies, JWT\nHS256, webhook signature verification, etc. Returns 64 hex chars."
 }
 ],
+"hour": [
+{
+"package": "time",
+"qualified": "hour",
+"kind": "define",
+"signature": "extern define hour(epoch: Int, utc: Int) -> Int",
+"doc": "Hour 0-23."
+}
+],
 "humanize": [
 {
 "package": "datetime",
@@ -1519,6 +2057,15 @@
 "kind": "method",
 "signature": "extern define index(self, sub: String) -> Int",
 "doc": "Like `find`, but throws `ValueError` if `sub` is not present.\n@param sub: String\n@returns: Int\n@throws ValueError \u2014 if `sub` is not found"
+}
+],
+"infinity": [
+{
+"package": "math",
+"qualified": "infinity",
+"kind": "define",
+"signature": "extern define infinity() -> Double",
+"doc": "Positive infinity (`1.0 / 0.0`)."
 }
 ],
 "input": [
@@ -1566,6 +2113,15 @@
 "doc": "Returns a new set containing only elements present in both sets.\n@param other: Set\n@returns: Set"
 }
 ],
+"is_dir": [
+{
+"package": "fs",
+"qualified": "is_dir",
+"kind": "define",
+"signature": "extern define is_dir(path: String) -> Bool",
+"doc": "True only if `path` is a directory."
+}
+],
 "is_empty": [
 {
 "package": "typing",
@@ -1596,6 +2152,33 @@
 "doc": "Returns `true` if the set has no elements.\n@returns: Bool"
 }
 ],
+"is_file": [
+{
+"package": "fs",
+"qualified": "is_file",
+"kind": "define",
+"signature": "extern define is_file(path: String) -> Bool",
+"doc": "True only if `path` is a regular file."
+}
+],
+"is_finite": [
+{
+"package": "math",
+"qualified": "is_finite",
+"kind": "define",
+"signature": "extern define is_finite(x: Double) -> Bool",
+"doc": "True if `x` is finite (not `inf`, `-inf`, or NaN)."
+}
+],
+"is_inf": [
+{
+"package": "math",
+"qualified": "is_inf",
+"kind": "define",
+"signature": "extern define is_inf(x: Double) -> Bool",
+"doc": "True if `x` is `+inf` or `-inf`."
+}
+],
 "is_leap": [
 {
 "package": "datetime",
@@ -1603,6 +2186,33 @@
 "kind": "method",
 "signature": "define is_leap(year: Int) -> Bool {",
 "doc": "Standard Gregorian leap-year rule: divisible by 4, except centuries that\naren't divisible by 400. 2000 was leap; 1900 wasn't.\n\n@example\nis_leap(2024)   // true\nis_leap(2023)   // false\nis_leap(2000)   // true\nis_leap(1900)   // false"
+}
+],
+"is_nan": [
+{
+"package": "math",
+"qualified": "is_nan",
+"kind": "define",
+"signature": "extern define is_nan(x: Double) -> Bool",
+"doc": "True if `x` is NaN (Not-a-Number)."
+}
+],
+"is_none": [
+{
+"package": "typing",
+"qualified": "Option.is_none",
+"kind": "method",
+"signature": "define is_none(self) -> Bool { return not self.is_some() }",
+"doc": "Returns true when the value is absent."
+}
+],
+"is_some": [
+{
+"package": "typing",
+"qualified": "Option.is_some",
+"kind": "method",
+"signature": "define is_some(self) -> Bool {",
+"doc": "Returns true when the value is present."
 }
 ],
 "is_valid": [
@@ -1630,6 +2240,15 @@
 "kind": "define",
 "signature": "extern define isatty(f: File) -> Bool",
 "doc": "Returns true if the given stream is a terminal (interactive). Use to decide\nwhether to emit ANSI codes \u2014 pipes/files should stay plain."
+}
+],
+"iso": [
+{
+"package": "datetime",
+"qualified": "DateTime.iso",
+"kind": "method",
+"signature": "define iso(self) -> String {",
+"doc": "ISO-8601 representation."
 }
 ],
 "iso_at": [
@@ -1673,6 +2292,13 @@
 "kind": "method",
 "signature": "extern define length(self) -> Int",
 "doc": "Returns `true` if the string has zero characters.\n@returns: Bool"
+},
+{
+"package": "typing",
+"qualified": "length",
+"kind": "define",
+"signature": "define length(self) -> Int",
+"doc": "Returns the number of elements in this collection."
 },
 {
 "package": "typing",
@@ -1755,6 +2381,33 @@
 "doc": "Parse a JSON string and return the corresponding Quirk value with\nreal types \u2014 no manual coercion required.\n\n  JSON object  \u2192 `Map`     (String keys, mixed-type values)\n  JSON array   \u2192 `List`    (mixed-type elements)\n  JSON string  \u2192 `String`\n  JSON number  \u2192 `Int` (no decimal/exponent) or `Double`\n  JSON boolean \u2192 `Bool`\n  JSON null    \u2192 null\n\n@param s  A valid JSON string.\n@returns  A Map, List, String, or boxed primitive.\n\n@example\ndata: Map = json.loads('{\"name\":\"Alice\",\"age\":30,\"active\":true}')\nprint(data.get(\"name\"))     // Alice  (String)\nprint(data.get(\"age\"))      // 30     (Int \u2014 usable in arithmetic)\nprint(data.get(\"active\"))   // true   (Bool)"
 }
 ],
+"log": [
+{
+"package": "math",
+"qualified": "log",
+"kind": "define",
+"signature": "extern define log(x: Double) -> Double",
+"doc": "Natural logarithm (base e). NaN if `x < 0`, `-inf` at 0."
+}
+],
+"log10": [
+{
+"package": "math",
+"qualified": "log10",
+"kind": "define",
+"signature": "extern define log10(x: Double) -> Double",
+"doc": "Base-10 logarithm."
+}
+],
+"log2": [
+{
+"package": "math",
+"qualified": "log2",
+"kind": "define",
+"signature": "extern define log2(x: Double) -> Double",
+"doc": "Base-2 logarithm."
+}
+],
 "make": [
 {
 "package": "datetime",
@@ -1782,6 +2435,24 @@
 "doc": "Larger of two Ints."
 }
 ],
+"max_f": [
+{
+"package": "math",
+"qualified": "max_f",
+"kind": "define",
+"signature": "define max_f(a: Double, b: Double) -> Double {",
+"doc": "Larger of two Doubles."
+}
+],
+"max_val": [
+{
+"package": "statistics",
+"qualified": "max_val",
+"kind": "define",
+"signature": "define max_val(items: List) -> Double {",
+"doc": "Largest value as Double. Throws on empty input."
+}
+],
 "maxsize": [
 {
 "package": "sys",
@@ -1789,6 +2460,15 @@
 "kind": "define",
 "signature": "extern define maxsize() -> Int",
 "doc": "Largest representable Int on this platform."
+}
+],
+"md5": [
+{
+"package": "crypto",
+"qualified": "md5",
+"kind": "define",
+"signature": "extern define md5(s: String) -> String",
+"doc": "MD5. Fast but cryptographically broken \u2014 use only for non-security checksums."
 }
 ],
 "mean": [
@@ -1836,6 +2516,33 @@
 "doc": "Smaller of two Ints."
 }
 ],
+"min_f": [
+{
+"package": "math",
+"qualified": "min_f",
+"kind": "define",
+"signature": "define min_f(a: Double, b: Double) -> Double {",
+"doc": "Smaller of two Doubles."
+}
+],
+"min_val": [
+{
+"package": "statistics",
+"qualified": "min_val",
+"kind": "define",
+"signature": "define min_val(items: List) -> Double {",
+"doc": "Smallest value as Double. Throws on empty input."
+}
+],
+"minute": [
+{
+"package": "time",
+"qualified": "minute",
+"kind": "define",
+"signature": "extern define minute(epoch: Int, utc: Int) -> Int",
+"doc": "Minute 0-59."
+}
+],
 "mkdir": [
 {
 "package": "fs",
@@ -1872,6 +2579,33 @@
 "doc": "Map of loaded modules. Currently a stub \u2014 returns empty until reflection lands."
 }
 ],
+"month": [
+{
+"package": "time",
+"qualified": "month",
+"kind": "define",
+"signature": "extern define month(epoch: Int, utc: Int) -> Int",
+"doc": "Month 1-12 (1=January)."
+}
+],
+"month_name": [
+{
+"package": "datetime",
+"qualified": "DateTime.month_name",
+"kind": "method",
+"signature": "define month_name(month: Int) -> String {",
+"doc": "Full English month name for `month` (1-12)."
+}
+],
+"mtime": [
+{
+"package": "fs",
+"qualified": "mtime",
+"kind": "define",
+"signature": "extern define mtime(path: String) -> Int",
+"doc": "Last-modified time as Unix epoch seconds. -1 on failure."
+}
+],
 "multiselect": [
 {
 "package": "prompt",
@@ -1879,6 +2613,15 @@
 "kind": "define",
 "signature": "define multiselect(message: String, options: List) -> List {",
 "doc": "Pick zero-or-more options from a numbered list. Renders the same as\n`select` but takes a comma-separated list of indices:\n\n    Tags?\n      1) urgent\n      2) blocked\n      3) needs-review\n    Pick (comma-separated, blank for none): 1,3\n\nReturns the chosen options as a List<String> in their original order.\nWhitespace and duplicates are tolerated; an empty reply returns []."
+}
+],
+"nan": [
+{
+"package": "math",
+"qualified": "nan",
+"kind": "define",
+"signature": "extern define nan() -> Double",
+"doc": "Not-a-Number (`0.0 / 0.0`). Distinguishable via `is_nan`; `nan != nan`."
 }
 ],
 "nil": [
@@ -1890,6 +2633,15 @@
 "doc": "The all-zero \"nil\" UUID \u2014 useful as a sentinel for \"no UUID yet\" in\nschemas that disallow nulls."
 }
 ],
+"now": [
+{
+"package": "datetime",
+"qualified": "DateTime.now",
+"kind": "method",
+"signature": "define now() -> DateTime {",
+"doc": "Current local DateTime."
+}
+],
 "now_ms": [
 {
 "package": "sys",
@@ -1897,6 +2649,15 @@
 "kind": "define",
 "signature": "extern define now_ms() -> Int",
 "doc": "Monotonic clock in milliseconds. Use deltas only \u2014 the absolute value is\nnot tied to the Unix epoch. Suitable for measuring elapsed time."
+}
+],
+"option": [
+{
+"package": "argparse",
+"qualified": "ArgSpec.option",
+"kind": "method",
+"signature": "define option(self, long: String, short: String, default: String, help: String) -> void {",
+"doc": "Add a value option with a default."
 }
 ],
 "parse": [
@@ -2045,6 +2806,15 @@
 "doc": "Returns the front element without removing it.\n@returns: Any"
 }
 ],
+"pi": [
+{
+"package": "math",
+"qualified": "pi",
+"kind": "define",
+"signature": "extern define pi() -> Double",
+"doc": "\u03c0 \u2014 circle's circumference / diameter. \u2248 3.14159265358979"
+}
+],
 "platform": [
 {
 "package": "sys",
@@ -2079,6 +2849,15 @@
 "kind": "method",
 "signature": "extern define pop_front(self) -> Any",
 "doc": "Removes and returns the front element. Returns `null` if empty.\n@returns: Any"
+}
+],
+"positional": [
+{
+"package": "argparse",
+"qualified": "ArgSpec.positional",
+"kind": "method",
+"signature": "define positional(self, name: String, help: String) -> void {",
+"doc": "Add a positional argument (required, consumed in declaration order)."
 }
 ],
 "post": [
@@ -2140,6 +2919,15 @@
 "kind": "define",
 "signature": "define progress(current: Int, total: Int, label: String = \"\") -> void {",
 "doc": "Render a one-line progress bar using `\\r` to overwrite. Width auto-fits the\nterminal (or 40 chars when not a TTY). Caller is responsible for printing a\nnewline after the final update (or call `console.log(\"\")` to advance).\n\n@example\nfor i in 0..101 {\n    console.progress(i, 100, \"Building\")\n    sys.sleep(20)\n}\nconsole.log(\"\")  // newline after final bar"
+}
+],
+"pstdev": [
+{
+"package": "statistics",
+"qualified": "pstdev",
+"kind": "define",
+"signature": "define pstdev(items: List) -> Double {",
+"doc": "Population standard deviation: `sqrt(pvariance(items))`."
 }
 ],
 "push_back": [
@@ -2375,6 +3163,13 @@
 "kind": "method",
 "signature": "define replace_all(self, s: String, replacement: String) -> String {",
 "doc": "Replace every match with `replacement`. Replacement supports `\\1`, `\\2`, ...\nbackrefs to captured groups. `\\0` is the entire match."
+},
+{
+"package": "regex",
+"qualified": "Match.replace_all",
+"kind": "method",
+"signature": "define replace_all(pattern: String, s: String, replacement: String) -> String {",
+"doc": "One-shot replace_all."
 }
 ],
 "replace_all_raw": [
@@ -2395,6 +3190,15 @@
 "doc": "Send a single HTTP request and return the response. Lower-level form\nbehind `get`/`post`/`delete`/`post_json`.\n\n@param method HTTP verb (GET, POST, DELETE, PUT, ...) \u2014 case-insensitive.\n@param target Full URL starting with `http://`. HTTPS is not supported.\n@param data Request body \u2014 pass \"\" for GET/DELETE.\n@param headers Extra headers to send (case-preserved). Caller-supplied\n       Host / User-Agent / Connection / Content-Length override the defaults.\n@param params Query-string parameters; merged into the URL's existing\n       query and percent-encoded via `url.build_query`.\n@param follow_redirects When true (the default), 3xx responses are\n       followed automatically up to 5 hops. Set to false if you want to\n       inspect or short-circuit the redirect yourself.\n@returns The final `Response`."
 }
 ],
+"required": [
+{
+"package": "argparse",
+"qualified": "ArgSpec.required",
+"kind": "method",
+"signature": "define required(self, long: String, short: String, help: String) -> void {",
+"doc": "Add a value option that MUST be provided."
+}
+],
 "rmdir_raw": [
 {
 "package": "fs",
@@ -2402,6 +3206,15 @@
 "kind": "define",
 "signature": "extern define rmdir_raw(path: String) -> Int",
 "doc": "Remove an empty directory. @throws IOError on failure (incl. non-empty dir)."
+}
+],
+"round": [
+{
+"package": "math",
+"qualified": "round",
+"kind": "define",
+"signature": "extern define round(x: Double) -> Double",
+"doc": "Round to nearest integer (half-away-from-zero). `round(2.5) == 3.0`."
 }
 ],
 "run": [
@@ -2431,6 +3244,15 @@
 "doc": "Return `k` distinct elements drawn from `items`. Throws if `k > items.length()`.\nImplemented as a partial Fisher-Yates over a copy so the caller's list\nisn't disturbed. O(k) work in the average case.\n\n@example\ndeck := [1,2,3,4,5,6,7,8,9,10]\nhand := random.sample(deck, 5)"
 }
 ],
+"second": [
+{
+"package": "time",
+"qualified": "second",
+"kind": "define",
+"signature": "extern define second(epoch: Int, utc: Int) -> Int",
+"doc": "Second 0-60 (60 for leap seconds, normally 0-59)."
+}
+],
 "seed": [
 {
 "package": "math",
@@ -2438,6 +3260,13 @@
 "kind": "define",
 "signature": "extern define seed(s: Int) -> void",
 "doc": "Seed the pseudo-random generator. The same seed always produces the same\nsequence of `random()` / `random_int()` results \u2014 useful for reproducible\ntests and procedural generation."
+},
+{
+"package": "random",
+"qualified": "seed",
+"kind": "define",
+"signature": "extern define seed(n: Int) -> void",
+"doc": "Re-seed the global RNG. Same `n` => same stream of values."
 }
 ],
 "select": [
@@ -2481,6 +3310,33 @@
 "doc": "Sets the maximum recursion depth. Use cautiously \u2014 too high can crash the host."
 }
 ],
+"sha1": [
+{
+"package": "crypto",
+"qualified": "sha1",
+"kind": "define",
+"signature": "extern define sha1(s: String) -> String",
+"doc": "SHA-1. Deprecated for new security work; ok for legacy compatibility."
+}
+],
+"sha256": [
+{
+"package": "crypto",
+"qualified": "sha256",
+"kind": "define",
+"signature": "extern define sha256(s: String) -> String",
+"doc": "SHA-256. Current default for integrity, file checksums, content hashes."
+}
+],
+"sha512": [
+{
+"package": "crypto",
+"qualified": "sha512",
+"kind": "define",
+"signature": "extern define sha512(s: String) -> String",
+"doc": "SHA-512. Larger output (128 hex chars); use when 256 bits aren't enough."
+}
+],
 "shadow_frame": [
 {
 "package": "sys",
@@ -2506,6 +3362,22 @@
 "kind": "define",
 "signature": "define shuffle(items: List) -> List {",
 "doc": "Shuffle `items` in place using Fisher-Yates. Returns the same list for chaining."
+},
+{
+"package": "random",
+"qualified": "shuffle",
+"kind": "define",
+"signature": "extern define shuffle(items: List) -> List",
+"doc": "In-place Fisher-Yates shuffle. Returns the same list."
+}
+],
+"sign": [
+{
+"package": "math",
+"qualified": "sign",
+"kind": "define",
+"signature": "extern define sign(x: Double) -> Double",
+"doc": "Signum of a Double: -1.0, 0.0, or +1.0. Returns 0 for NaN."
 }
 ],
 "sign_i": [
@@ -2517,6 +3389,33 @@
 "doc": "Sign of an Int: -1, 0, or 1."
 }
 ],
+"sign_int": [
+{
+"package": "math",
+"qualified": "sign_int",
+"kind": "define",
+"signature": "extern define sign_int(x: Int) -> Int",
+"doc": "Signum of an Int: -1 (negative), 0, or +1 (positive). Wrapped by `sign_i`."
+}
+],
+"sin": [
+{
+"package": "math",
+"qualified": "sin",
+"kind": "define",
+"signature": "extern define sin(x: Double) -> Double",
+"doc": "Sine of `x` (in radians)."
+}
+],
+"sinh": [
+{
+"package": "math",
+"qualified": "sinh",
+"kind": "define",
+"signature": "extern define sinh(x: Double) -> Double",
+"doc": "Hyperbolic sine: `(e^x - e^-x) / 2`."
+}
+],
 "size": [
 {
 "package": "console",
@@ -2524,6 +3423,13 @@
 "kind": "define",
 "signature": "define size() -> Tuple {",
 "doc": "Terminal dimensions as `(cols, rows)`. Falls back to (80, 24) when stdout\nis not a TTY or the syscall fails. Use `tuple[0]` and `tuple[1]` to access."
+},
+{
+"package": "fs",
+"qualified": "size",
+"kind": "define",
+"signature": "extern define size(path: String) -> Int",
+"doc": "File size in bytes. Returns -1 if `path` doesn't exist or stat fails."
 },
 {
 "package": "typing",
@@ -2594,6 +3500,13 @@
 ],
 "sqrt": [
 {
+"package": "math",
+"qualified": "sqrt",
+"kind": "define",
+"signature": "extern define sqrt(x: Double) -> Double",
+"doc": "Square root. NaN if `x < 0`."
+},
+{
 "package": "typing",
 "qualified": "Double.sqrt",
 "kind": "method",
@@ -2619,6 +3532,15 @@
 "doc": "Truncate `dt` to midnight. Returns a fresh DateTime with the same date\nbut `hour = minute = second = 0`."
 }
 ],
+"start_of_month": [
+{
+"package": "datetime",
+"qualified": "DateTime.start_of_month",
+"kind": "method",
+"signature": "define start_of_month(dt: DateTime) -> DateTime {",
+"doc": "First day of `dt`'s month, at midnight."
+}
+],
 "start_of_week": [
 {
 "package": "datetime",
@@ -2628,6 +3550,15 @@
 "doc": "Monday of the week containing `dt`, at midnight. Uses ISO weeks\n(Monday = first day). If `dt` already falls on Monday, returns midnight\nof the same day."
 }
 ],
+"start_of_year": [
+{
+"package": "datetime",
+"qualified": "DateTime.start_of_year",
+"kind": "method",
+"signature": "define start_of_year(dt: DateTime) -> DateTime {",
+"doc": "January 1 of `dt`'s year, at midnight."
+}
+],
 "stderr": [
 {
 "package": "sys",
@@ -2635,6 +3566,15 @@
 "kind": "define",
 "signature": "extern define stderr() -> File",
 "doc": "Standard error wrapped as a `File`. See `stdin()` for handle semantics."
+}
+],
+"stdev": [
+{
+"package": "statistics",
+"qualified": "stdev",
+"kind": "define",
+"signature": "define stdev(items: List) -> Double {",
+"doc": "Sample standard deviation: `sqrt(variance(items))`."
 }
 ],
 "stdin": [
@@ -2653,6 +3593,15 @@
 "kind": "define",
 "signature": "extern define stdout() -> File",
 "doc": "Standard output wrapped as a `File`. See `stdin()` for handle semantics."
+}
+],
+"stop": [
+{
+"package": "net",
+"qualified": "Request.stop",
+"kind": "method",
+"signature": "define stop(self) -> void {",
+"doc": "Stop the accept-loop on the next iteration."
 }
 ],
 "str": [
@@ -2691,6 +3640,33 @@
 "doc": "Take items from the front while `pred` is true; stop at the first false.\n\n@example\ntake_while(fn(x) => x < 5, [1, 3, 5, 4, 2])   // [1, 3]"
 }
 ],
+"tan": [
+{
+"package": "math",
+"qualified": "tan",
+"kind": "define",
+"signature": "extern define tan(x: Double) -> Double",
+"doc": "Tangent of `x` (in radians). Undefined at `pi/2 + k*pi`."
+}
+],
+"tanh": [
+{
+"package": "math",
+"qualified": "tanh",
+"kind": "define",
+"signature": "extern define tanh(x: Double) -> Double",
+"doc": "Hyperbolic tangent: `sinh(x) / cosh(x)`. Range `(-1, 1)`."
+}
+],
+"tau": [
+{
+"package": "math",
+"qualified": "tau",
+"kind": "define",
+"signature": "extern define tau() -> Double",
+"doc": "\u03c4 \u2014 full turn in radians. `tau == 2 * pi`. \u2248 6.28318530717959"
+}
+],
 "terminal_cols": [
 {
 "package": "sys",
@@ -2716,6 +3692,31 @@
 "kind": "define",
 "signature": "define terminate(code: Int) -> void {",
 "doc": "Immediately terminates the program with the given status code.\nEquivalent to `exit(code)` but with a more descriptive name."
+}
+],
+"test": [
+{
+"package": "regex",
+"qualified": "Match.test",
+"kind": "method",
+"signature": "define test(self, s: String) -> Bool {",
+"doc": "True if the pattern matches anywhere in `s`."
+},
+{
+"package": "regex",
+"qualified": "Match.test",
+"kind": "method",
+"signature": "define test(pattern: String, s: String) -> Bool {",
+"doc": "One-shot test: compile + test. Cheaper to keep a Regex around if reusing."
+}
+],
+"test_raw": [
+{
+"package": "regex",
+"qualified": "test_raw",
+"kind": "define",
+"signature": "extern define test_raw(handle: Any, s: String) -> Bool",
+"doc": "True iff the compiled pattern matches anywhere in `s`."
 }
 ],
 "time": [
@@ -2781,6 +3782,15 @@
 "doc": "Serialize this object to a JSON string.\nOverride this in every subclass.\n@returns A valid JSON string representing this object."
 }
 ],
+"to_string": [
+{
+"package": "url",
+"qualified": "URL.to_string",
+"kind": "method",
+"signature": "define to_string(self) -> String {",
+"doc": "Recompose into a canonical URL string."
+}
+],
 "to_unix": [
 {
 "package": "time",
@@ -2788,6 +3798,33 @@
 "kind": "define",
 "signature": "extern define to_unix(year: Int, month: Int, day: Int, hour: Int, minute: Int, second: Int, utc: Int) -> Int",
 "doc": "Convert calendar components to a Unix epoch. `utc=1` interprets the inputs\nas UTC; `utc=0` as the host's local time zone (DST handled).\nReturns -1 if the components are out of range."
+}
+],
+"today": [
+{
+"package": "datetime",
+"qualified": "DateTime.today",
+"kind": "method",
+"signature": "define today() -> DateTime {",
+"doc": "The current local date+time. Synonym for `now()`."
+}
+],
+"tomorrow": [
+{
+"package": "datetime",
+"qualified": "DateTime.tomorrow",
+"kind": "method",
+"signature": "define tomorrow() -> DateTime {",
+"doc": "One day in the future, same time-of-day."
+}
+],
+"trunc": [
+{
+"package": "math",
+"qualified": "trunc",
+"kind": "define",
+"signature": "extern define trunc(x: Double) -> Double",
+"doc": "Truncate toward zero. `trunc(-2.7) == -2.0`."
 }
 ],
 "uniform": [
@@ -2817,6 +3854,15 @@
 "doc": "Distinct elements, preserving the first-seen order. Items are deduped by\ntheir string representation, which matches the rest of Quirk's value-\nequality conventions.\n\n@example\nunique([3, 1, 4, 1, 5, 9, 2, 6, 5, 3])   // [3, 1, 4, 5, 9, 2, 6]"
 }
 ],
+"unix_now": [
+{
+"package": "time",
+"qualified": "unix_now",
+"kind": "define",
+"signature": "extern define unix_now() -> Int",
+"doc": "Current Unix epoch in seconds. -1 if the host clock is unavailable."
+}
+],
 "unquote": [
 {
 "package": "url",
@@ -2835,6 +3881,31 @@
 "doc": "Decode a form-encoded value: handles `%XX` AND maps `+` to space, matching\nthe `application/x-www-form-urlencoded` spec used by HTML forms."
 }
 ],
+"unwrap_or": [
+{
+"package": "typing",
+"qualified": "Option.unwrap_or",
+"kind": "method",
+"signature": "define unwrap_or(self, default_value: T) -> T {",
+"doc": "Returns the wrapped value if present, else `default_value`."
+},
+{
+"package": "typing",
+"qualified": "Result.unwrap_or",
+"kind": "method",
+"signature": "define unwrap_or(self, default_value: T) -> T {",
+"doc": "Returns the success value if `Ok`, else `default_value`."
+}
+],
+"utc_from_unix": [
+{
+"package": "datetime",
+"qualified": "DateTime.utc_from_unix",
+"kind": "method",
+"signature": "define utc_from_unix(epoch: Int) -> DateTime {",
+"doc": "Build a DateTime from an explicit Unix epoch, interpreted as UTC."
+}
+],
 "utc_make": [
 {
 "package": "datetime",
@@ -2842,6 +3913,15 @@
 "kind": "method",
 "signature": "define utc_make(year: Int, month: Int, day: Int, hour: Int = 0, minute: Int = 0, second: Int = 0) -> DateTime {",
 "doc": "Build a DateTime from explicit calendar components (UTC).\n@throws ValueError on out-of-range components."
+}
+],
+"utc_now": [
+{
+"package": "datetime",
+"qualified": "DateTime.utc_now",
+"kind": "method",
+"signature": "define utc_now() -> DateTime {",
+"doc": "Current UTC DateTime."
 }
 ],
 "uuid": [
@@ -2889,7 +3969,23 @@
 "doc": "Quirk version string, e.g. `\"0.1.0\"`."
 }
 ],
+"weekday": [
+{
+"package": "time",
+"qualified": "weekday",
+"kind": "define",
+"signature": "extern define weekday(epoch: Int, utc: Int) -> Int",
+"doc": "Day of week, 0-6 (0=Sunday, 6=Saturday)."
+}
+],
 "write": [
+{
+"package": "console",
+"qualified": "write",
+"kind": "define",
+"signature": "define write(msg: Any) -> void {",
+"doc": "Alias for `console.put`."
+},
 {
 "package": "io",
 "qualified": "File.write",
@@ -2914,6 +4010,33 @@
 "kind": "define",
 "signature": "define write_file(path: String, records: List, delim: String = \",\") -> void {",
 "doc": "Write `records` to `path` as CSV."
+}
+],
+"year": [
+{
+"package": "time",
+"qualified": "year",
+"kind": "define",
+"signature": "extern define year(epoch: Int, utc: Int) -> Int",
+"doc": "Year (e.g. 2026) for `epoch`. `utc=1` for UTC, `0` for local."
+}
+],
+"yearday": [
+{
+"package": "time",
+"qualified": "yearday",
+"kind": "define",
+"signature": "extern define yearday(epoch: Int, utc: Int) -> Int",
+"doc": "Day of year, 1-366."
+}
+],
+"yesterday": [
+{
+"package": "datetime",
+"qualified": "DateTime.yesterday",
+"kind": "method",
+"signature": "define yesterday() -> DateTime {",
+"doc": "One day in the past, same time-of-day."
 }
 ],
 "zip": [

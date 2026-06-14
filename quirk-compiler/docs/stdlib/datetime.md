@@ -13,6 +13,10 @@ Snapshot of a moment in time. Construct via `datetime.now()`,
 `datetime.from_unix(s)`, or `datetime.from_iso(s)` rather than calling
 `__init` directly.
 
+#### `define iso(self) -> String`
+
+ISO-8601 representation.
+
 #### `define format(self, fmt: String) -> String`
 
 Format using a strftime-style spec. Common codes:
@@ -21,10 +25,34 @@ Format using a strftime-style spec. Common codes:
   `%A` weekday name   `%a` short day      `%B` month name
   `%j` day-of-year    `%w` weekday 0-6
 
+#### `define add_seconds(self, n: Int) -> DateTime`
+
+Returns a new DateTime offset by `n` seconds (can be negative).
+
+#### `define diff_seconds(self, other: DateTime) -> Int`
+
+`self - other` in seconds. Negative if `self` is earlier.
+
+#### `define __str(self) -> String`
+
+Default str: ISO-8601.
+
+#### `define now() -> DateTime`
+
+Current local DateTime.
+
+#### `define utc_now() -> DateTime`
+
+Current UTC DateTime.
+
 #### `define from_unix(epoch: Int) -> DateTime`
 
 Build a DateTime from an explicit Unix epoch (seconds), interpreted in the
 local time zone.
+
+#### `define utc_from_unix(epoch: Int) -> DateTime`
+
+Build a DateTime from an explicit Unix epoch, interpreted as UTC.
 
 #### `define from_iso(s: String) -> DateTime`
 
@@ -40,6 +68,18 @@ Build a DateTime from explicit calendar components (local time).
 
 Build a DateTime from explicit calendar components (UTC).
 @throws ValueError on out-of-range components.
+
+#### `define today() -> DateTime`
+
+The current local date+time. Synonym for `now()`.
+
+#### `define tomorrow() -> DateTime`
+
+One day in the future, same time-of-day.
+
+#### `define yesterday() -> DateTime`
+
+One day in the past, same time-of-day.
 
 #### `define is_leap(year: Int) -> Bool`
 
@@ -61,6 +101,14 @@ adjustment via `is_leap`.
 
 True for Saturday and Sunday (where `weekday` is 0=Sunday … 6=Saturday).
 
+#### `define day_name(dt: DateTime) -> String`
+
+Full English weekday name for `dt`. `weekday` is 0=Sunday … 6=Saturday.
+
+#### `define month_name(month: Int) -> String`
+
+Full English month name for `month` (1-12).
+
 #### `define start_of_day(dt: DateTime) -> DateTime`
 
 Truncate `dt` to midnight. Returns a fresh DateTime with the same date
@@ -71,6 +119,22 @@ but `hour = minute = second = 0`.
 Monday of the week containing `dt`, at midnight. Uses ISO weeks
 (Monday = first day). If `dt` already falls on Monday, returns midnight
 of the same day.
+
+#### `define start_of_month(dt: DateTime) -> DateTime`
+
+First day of `dt`'s month, at midnight.
+
+#### `define start_of_year(dt: DateTime) -> DateTime`
+
+January 1 of `dt`'s year, at midnight.
+
+#### `define diff_minutes(a: DateTime, b: DateTime) -> Int`
+
+Whole minutes between `a` and `b` (signed; `b - a`).
+
+#### `define diff_hours(a: DateTime, b: DateTime) -> Int`
+
+Whole hours between `a` and `b` (signed).
 
 #### `define diff_days(a: DateTime, b: DateTime) -> Int`
 

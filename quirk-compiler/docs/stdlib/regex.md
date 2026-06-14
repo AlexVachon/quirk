@@ -14,6 +14,10 @@ String; `text` is the substring `[start, end)`; `groups` is a `List<String>`
 of the captured groups (group 0 = full match is NOT included — `text` is
 the whole match).
 
+#### `define test(self, s: String) -> Bool`
+
+True if the pattern matches anywhere in `s`.
+
 #### `define find(self, s: String) -> Match`
 
 Find the first match starting at or after `from_offset`. Returns a Match
@@ -39,6 +43,18 @@ empty-string element.
 
 Compile a pattern. Equivalent to `Regex(pattern, flags)`.
 
+#### `define test(pattern: String, s: String) -> Bool`
+
+One-shot test: compile + test. Cheaper to keep a Regex around if reusing.
+
+#### `define find(pattern: String, s: String) -> Match`
+
+One-shot find: compile + find.
+
+#### `define replace_all(pattern: String, s: String, replacement: String) -> String`
+
+One-shot replace_all.
+
 ### `struct Regex`
 
 A compiled regular expression. Construct via `regex.compile(pattern, flags)`.
@@ -50,6 +66,10 @@ A compiled regular expression. Construct via `regex.compile(pattern, flags)`.
 
 Compile a pattern. Returns an opaque handle stored in `Regex._handle`.
 @throws ValueError if the pattern fails to compile.
+
+#### `extern define test_raw(handle: Any, s: String) -> Bool`
+
+True iff the compiled pattern matches anywhere in `s`.
 
 #### `extern define find_at(handle: Any, s: String, from_offset: Int) -> Int`
 

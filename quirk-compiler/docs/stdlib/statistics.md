@@ -55,6 +55,22 @@ Sample variance (divides by `n - 1`, the unbiased estimator). Throws if
 Population variance (divides by `n`). Use when the input *is* the
 population, not a sample of it.
 
+#### `define stdev(items: List) -> Double`
+
+Sample standard deviation: `sqrt(variance(items))`.
+
+#### `define pstdev(items: List) -> Double`
+
+Population standard deviation: `sqrt(pvariance(items))`.
+
+#### `define min_val(items: List) -> Double`
+
+Smallest value as Double. Throws on empty input.
+
+#### `define max_val(items: List) -> Double`
+
+Largest value as Double. Throws on empty input.
+
 #### `define quantile(items: List, q: Double) -> Double`
 
 The `q`-th quantile of `items` for `q` in `[0.0, 1.0]`. Uses linear

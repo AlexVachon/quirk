@@ -44,6 +44,22 @@ No newline is appended — include `\n` in `data` if you want one.
 Close the file handle. Standard streams (`stdin`/`stdout`/`stderr`)
 are protected from being closed.
 
+#### `define __enter(self) -> File`
+
+`with` enter — returns the File itself.
+
+#### `define __exit(self) -> void`
+
+`with` exit — closes the file.
+
+#### `extern define __has_next(self) -> Bool`
+
+True if more lines remain.
+
+#### `extern define __next(self) -> String`
+
+Returns the next line; trailing newline stripped.
+
 ### `struct FileIterator`
 
 Iterator over a file's lines. Produced by `for line in file { ... }`.

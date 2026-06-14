@@ -19,6 +19,10 @@ URL omits them) so callers don't need null-checks.
   query:    raw query without the leading `?`
   fragment: raw fragment without the leading `#`
 
+#### `define to_string(self) -> String`
+
+Recompose into a canonical URL string.
+
 #### `define parse(raw: String) -> URL`
 
 Parse a URL string into a `URL` struct. Tolerates missing scheme and

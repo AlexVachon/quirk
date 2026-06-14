@@ -342,6 +342,13 @@ struct Temperature : Comparable {
 }
 
 
+### Module-level functions
+
+#### `define __lt(self, other: Self) -> Bool`
+
+Returns true if this value is strictly less than `other`.
+
+
 ## `typing/interfaces/equatable.quirk`
 
 ### `interface Equatable`
@@ -359,6 +366,13 @@ struct Color : Equatable {
         return self.r == other.r and self.g == other.g and self.b == other.b
     }
 }
+
+
+### Module-level functions
+
+#### `define __eq(self, other: Self) -> Bool`
+
+Returns true if this value is equal to `other`.
 
 
 ## `typing/interfaces/hashable.quirk`
@@ -384,6 +398,13 @@ struct Point : Hashable {
 }
 
 
+### Module-level functions
+
+#### `define __hash(self) -> Int`
+
+Returns a stable integer hash of this value.
+
+
 ## `typing/interfaces/iterable.quirk`
 
 ### `interface Iterable`
@@ -397,6 +418,13 @@ define print_all[T](col: T) where T: Iterable {
         print(item)
     }
 }
+
+
+### Module-level functions
+
+#### `define __iter(self) -> Iterator`
+
+Returns an iterator over the elements of this collection.
 
 
 ## `typing/interfaces/iterator.quirk`
@@ -415,6 +443,17 @@ define collect[T](it: Iterator) -> List {
     }
     return result
 }
+
+
+### Module-level functions
+
+#### `define __has_next(self) -> Bool`
+
+Returns true if there are more elements to yield.
+
+#### `define __next(self) -> Any`
+
+Returns the next element and advances the iterator.
 
 
 ## `typing/interfaces/parseable.quirk`
@@ -510,6 +549,13 @@ struct Token : Representable {
 }
 
 
+### Module-level functions
+
+#### `define __repr(self) -> String`
+
+Returns a developer-readable debug representation of this value.
+
+
 ## `typing/interfaces/serializable.quirk`
 
 ### `struct ISerializable`
@@ -555,6 +601,34 @@ Implemented by types that have a finite, countable number of elements.
 define is_empty[T](col: T) -> Bool where T: Sizeable {
     return col.length() == 0
 }
+
+
+### Module-level functions
+
+#### `define length(self) -> Int`
+
+Returns the number of elements in this collection.
+
+
+## `typing/option.quirk`
+
+### `type Option[T] = Some(value: T) | None()`
+
+#### `define is_some(self) -> Bool`
+
+Returns true when the value is present.
+
+#### `define is_none(self) -> Bool { return not self.is_some() }`
+
+Returns true when the value is absent.
+
+#### `define unwrap_or(self, default_value: T) -> T`
+
+Returns the wrapped value if present, else `default_value`.
+
+### `variant Some of Option`
+
+### `variant None of Option`
 
 
 ## `typing/primitives/bool.quirk`
@@ -647,3 +721,16 @@ print(s.upper())            // "HELLO, WORLD!"
 print(s.contains("world")) // true
 parts := s.split(", ")
 print(parts.length())       // 2
+
+
+## `typing/result.quirk`
+
+### `type Result[T, E] = Ok(value: T) | Err(error: E)`
+
+#### `define unwrap_or(self, default_value: T) -> T`
+
+Returns the success value if `Ok`, else `default_value`.
+
+### `variant Ok of Result`
+
+### `variant Err of Result`

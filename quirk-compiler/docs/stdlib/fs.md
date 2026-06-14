@@ -10,6 +10,26 @@
 
 ### Module-level functions
 
+#### `extern define exists(path: String) -> Bool`
+
+True if anything (file, directory, symlink) exists at `path`.
+
+#### `extern define is_file(path: String) -> Bool`
+
+True only if `path` is a regular file.
+
+#### `extern define is_dir(path: String) -> Bool`
+
+True only if `path` is a directory.
+
+#### `extern define size(path: String) -> Int`
+
+File size in bytes. Returns -1 if `path` doesn't exist or stat fails.
+
+#### `extern define mtime(path: String) -> Int`
+
+Last-modified time as Unix epoch seconds. -1 on failure.
+
 #### `extern define mkdir_raw(path: String, parents: Int) -> Int`
 
 Create the directory at `path`. Returns 0 on success, -1 on failure.
@@ -43,6 +63,10 @@ Excludes `.` and `..`. Returns an empty List if the path doesn't exist
 or isn't a directory.
 @example
 for name in fs.list_dir(".") { print(name) }
+
+#### `extern define cwd() -> String`
+
+Current working directory as a String.
 
 #### `extern define chdir_raw(path: String) -> Int`
 

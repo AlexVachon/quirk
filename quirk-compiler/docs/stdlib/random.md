@@ -10,6 +10,26 @@
 
 ### Module-level functions
 
+#### `extern define seed(n: Int) -> void`
+
+Re-seed the global RNG. Same `n` => same stream of values.
+
+#### `extern define _next_double() -> Double`
+
+Internal: returns a Double in [0.0, 1.0). Prefer `random()` below.
+
+#### `extern define _next_int(lo: Int, hi: Int) -> Int`
+
+Internal: inclusive `[lo, hi]`. Used by `randint` and `choice`.
+
+#### `extern define choice(items: List) -> Any`
+
+Pick a random element from a non-empty list. Returns null if empty.
+
+#### `extern define shuffle(items: List) -> List`
+
+In-place Fisher-Yates shuffle. Returns the same list.
+
 #### `define random() -> Double`
 
 Uniform double in `[0.0, 1.0)`. The fundamental float-valued primitive

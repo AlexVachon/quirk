@@ -10,6 +10,42 @@
 
 ### Module-level functions
 
+#### `extern define unix_now() -> Int`
+
+Current Unix epoch in seconds. -1 if the host clock is unavailable.
+
+#### `extern define year(epoch: Int, utc: Int) -> Int`
+
+Year (e.g. 2026) for `epoch`. `utc=1` for UTC, `0` for local.
+
+#### `extern define month(epoch: Int, utc: Int) -> Int`
+
+Month 1-12 (1=January).
+
+#### `extern define day(epoch: Int, utc: Int) -> Int`
+
+Day of month, 1-31.
+
+#### `extern define hour(epoch: Int, utc: Int) -> Int`
+
+Hour 0-23.
+
+#### `extern define minute(epoch: Int, utc: Int) -> Int`
+
+Minute 0-59.
+
+#### `extern define second(epoch: Int, utc: Int) -> Int`
+
+Second 0-60 (60 for leap seconds, normally 0-59).
+
+#### `extern define weekday(epoch: Int, utc: Int) -> Int`
+
+Day of week, 0-6 (0=Sunday, 6=Saturday).
+
+#### `extern define yearday(epoch: Int, utc: Int) -> Int`
+
+Day of year, 1-366.
+
 #### `extern define to_unix(year: Int, month: Int, day: Int, hour: Int, minute: Int, second: Int, utc: Int) -> Int`
 
 Convert calendar components to a Unix epoch. `utc=1` interprets the inputs

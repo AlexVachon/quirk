@@ -10,6 +10,22 @@
 
 ### Module-level functions
 
+#### `extern define md5(s: String) -> String`
+
+MD5. Fast but cryptographically broken — use only for non-security checksums.
+
+#### `extern define sha1(s: String) -> String`
+
+SHA-1. Deprecated for new security work; ok for legacy compatibility.
+
+#### `extern define sha256(s: String) -> String`
+
+SHA-256. Current default for integrity, file checksums, content hashes.
+
+#### `extern define sha512(s: String) -> String`
+
+SHA-512. Larger output (128 hex chars); use when 256 bits aren't enough.
+
 #### `extern define hmac_sha256(key: String, msg: String) -> String`
 
 HMAC-SHA256 — message authentication code. Use for signed cookies, JWT

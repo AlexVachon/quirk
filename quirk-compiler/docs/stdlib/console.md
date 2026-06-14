@@ -20,6 +20,10 @@ console.put("Loading")
 for i in 0..3 { console.put(".") }
 console.log("done")
 
+#### `define write(msg: Any) -> void`
+
+Alias for `console.put`.
+
 #### `define dir(value: Any) -> void`
 
 Pretty-dump a value with newlines and indentation. Mirrors JS console.dir —

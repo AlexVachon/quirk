@@ -54,6 +54,21 @@ RE_ENUM = re.compile(
 RE_INTERFACE = re.compile(
     r"^(\s*)interface\s+([A-Za-z_]\w*)\b"
 )
+# `type Name[T] = ...` — canonical sum types (Option, Result) and
+# plain aliases. Captures the LHS name and the (possibly variant-
+# shaped) RHS so we can pull out individual variants like
+# `Some(value: T)` / `None()`.
+RE_TYPE_DECL = re.compile(
+    r"^(\s*)type\s+([A-Za-z_]\w*)\s*(?:\[[^\]]*\])?\s*=\s*(.+?)\s*$"
+)
+# Each variant in a tagged-union RHS: `Name(...)` separated by `|`.
+RE_VARIANT = re.compile(
+    r"\b([A-Z][A-Za-z_]\w*)\s*\("
+)
+# `extend Name { ... }` — methods added to an existing type.
+RE_EXTEND = re.compile(
+    r"^(\s*)extend\s+([A-Za-z_]\w*)\b"
+)
 
 
 @dataclass
@@ -118,6 +133,23 @@ def parse_file(path: Path) -> list[Entry]:
             i = j + 1
             continue
 
+        # Inline single-line docstring: `--- text ---` followed
+        # immediately by a declaration. Common in concise stdlib
+        # files like typing/option.quirk, where each method's
+        # one-liner doc fits on one line.
+        if stripped.startswith("--- ") and stripped.endswith(" ---") and len(stripped) > 7:
+            doc_body = stripped[4:-4].strip()
+            k = i + 1
+            while k < len(lines) and lines[k].strip() == "":
+                k += 1
+            if k < len(lines):
+                entry = _classify_decl(lines[k], scope_stack)
+                if entry is not None:
+                    entry.docstring = doc_body
+                    entries.append(entry)
+            i += 1
+            continue
+
         # Even without a docstring, struct/enum/interface decls are
         # worth listing (they anchor sections). Module-level only —
         # nested defines without docstrings stay out of the index.
@@ -130,6 +162,31 @@ def parse_file(path: Path) -> list[Entry]:
         m = RE_ENUM.match(line)
         if m and not scope_stack:
             scope_stack.append((m.group(2), brace_depth - line.count("{") + line.count("}")))
+            continue
+        # `extend X { ... }` — methods inside become methods on X.
+        # Treated identically to `struct X { ... }` for scope purposes.
+        m = RE_EXTEND.match(line)
+        if m and not scope_stack:
+            scope_stack.append((m.group(2), brace_depth - line.count("{") + line.count("}")))
+            i += 1
+            continue
+        # `type Name[T] = Variant1(...) | Variant2(...)` — single-line
+        # sum-type decl. Emit the union and each variant as struct-
+        # kind entries so they show up in hover. No body/scope to
+        # push; the file usually follows with an `extend Name { ... }`
+        # block that contributes methods separately.
+        m = RE_TYPE_DECL.match(line)
+        if m and not scope_stack:
+            name = m.group(2)
+            rhs = m.group(3)
+            entries.append(Entry("struct", name, name, stripped, "", len(m.group(1))))
+            for vm in RE_VARIANT.finditer(rhs):
+                vname = vm.group(1)
+                if vname == name:
+                    continue
+                entries.append(Entry("struct", vname, vname,
+                                     f"variant {vname} of {name}", "", len(m.group(1))))
+            i += 1
             continue
         i += 1
 
@@ -155,6 +212,11 @@ def _classify_decl(line: str, scope_stack: list[tuple[str, int]]) -> Optional[En
     if m:
         name = m.group(2)
         return Entry("enum", name, name, stripped, "", indent)
+
+    m = RE_TYPE_DECL.match(line)
+    if m:
+        name = m.group(2)
+        return Entry("struct", name, name, stripped, "", indent)
 
     m = RE_DEFINE.match(line)
     if m:

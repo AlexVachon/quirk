@@ -27,6 +27,18 @@ Asserts `actual == expected` by value. For primitive types and anything
 with a `__str` method this matches stringified equality; for arbitrary
 struct refs it amounts to pointer identity.
 
+#### `define assert_ne(actual: Any, expected: Any, msg: String = "") -> void`
+
+Asserts `actual != expected` by value.
+
+#### `define assert_true(cond: Bool, msg: String = "") -> void`
+
+Asserts `cond` is true.
+
+#### `define assert_false(cond: Bool, msg: String = "") -> void`
+
+Asserts `cond` is false.
+
 #### `define assert_approx(actual: Double, expected: Double, tolerance: Double = 0.0001, msg: String = "") -> void`
 
 Asserts `actual` and `expected` differ by at most `tolerance`. Use for

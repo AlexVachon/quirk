@@ -5,6 +5,81 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [3.2.0] — 2026-06-14
+
+### typing v1.3.0 — Option/Result combinators + List.sort
+
+Bumps `STDLIB_TAG_typing` from v1.1.0 to v1.3.0. New stdlib API:
+
+- `Option[T]` gains `unwrap`, `unwrap_or_else(f)`, `map(f)`,
+  `and_then(f)`, `or_else(f)`, `filter(pred)`, `ok_or(err)`.
+- `Result[T, E]` gains `unwrap`, `unwrap_err`,
+  `unwrap_or_else(f)`, `map(f)`, `map_err(f)`, `and_then(f)`,
+  `or_else(f)`, `ok()`, `err()`.
+- `List.sort(cb: Callable) -> List` — in-place insertion sort
+  by comparator (negative/zero/positive Int, usual convention).
+
+Probe `p53_option_result_combinators` locks the combinator API.
+
+### prompt v1.1.0 — select_obj + select_index
+
+Bumps `STDLIB_TAG_prompt` from v1.0.3 to v1.1.0:
+
+- `select_index(message, options, default_idx)` returns the
+  zero-based index of the chosen option (carried alongside the
+  label inside a `_Pick`).
+- `select_obj(message, options, format, default_idx)` takes a
+  `format: Callable` row-renderer and returns the **original**
+  option object, not the rendered label. Drops the round-trip
+  through string parsing that callers used to do.
+
+### Codegen: Int-zero/null conflation in T-erased boxing
+
+`IntToPtr(0)` produces an i8* null pointer, indistinguishable
+from the absence-of-value sentinel — so
+`Option[Int].unwrap_or(0)` rendered as "null" instead of "0",
+and any Int 0 routed through Any-erasure was lost. New
+`src/Backend/BoxInt.hpp` factors a shared helper that routes
+Int 0 (static or dynamic) through `Core_Primitives_Any_box_int`
+for a real heap Any* with `ANY_INT` tag; non-zero stays on the
+inline-tag fast path. Applied at four sites: `boxToVoidPtr`
+(lambda env/return), the call-arg coercion in `Codegen.cpp`,
+and the method-init + field-store paths in `StructGen.hpp`.
+Probe `p54_int_zero_any_box` locks it.
+
+### Codegen: lambda Int/Double params unbox heap-Any safely
+
+`unboxLambdaParam` was using raw `PtrToInt` for Int and a
+similar bit-cast for Double, which returned the pointer
+address (not the contained value) when called with a heap
+Any* — exactly the shape the new BoxInt helper produces for
+zero, and the shape `Any_box_*` already produced for runtime-
+materialized values. Routed both through `quirk_opaque_to_int`
+and `quirk_opaque_to_double` so lambda params receive sane
+values regardless of inline-tag vs heap-Any encoding.
+
+Surfaced while shipping `List.sort` — comparators with `Int`
+params were getting 0 / pointer addresses for `__get`-sourced
+list elements.
+
+### Codegen: Double → opaque-ptr arg coercion
+
+`StructGen.hpp`'s init-arg coercion handled Int→ptr but not
+Double→ptr. A generic-T constructor like `Some(value: T)`
+called with a Double argument left the value at the call site
+without boxing, producing "Stored value type does not match
+pointer operand type! store double … i8** …" at verify time.
+Routed through `Core_Primitives_Any_box_double` (matching the
+`Codegen.cpp` call-arg path).
+
+### examples/recipe_search
+
+New example: an interactive fuzzy-search TUI over a hardcoded
+library of cookbooks. Dogfoods the new Option API for
+"best match or nothing", `List.sort` for ranking, `select_obj`
+for a discoverable `/` drawer of slash commands, and ANSI
+inline styling for a polished terminal feel.
+
 ## [3.1.1] — 2026-06-13
 
 ### Param defaults: Sema rejects type-mismatched defaults

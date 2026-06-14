@@ -10,6 +10,7 @@ Quirk in a real shape, then crib whatever you need.
 | [`todo_cli/`](todo_cli/README.md)     | Data + dispatch             | ~140  | Tagged unions, Option / Result, match with payload narrow-bind  |
 | [`calc/`](calc/README.md)             | Interpreter                 | ~150  | Recursive AST, Pratt-style parser, match-based evaluator        |
 | [`md2html/`](md2html/README.md)       | Text in, text out           | ~100  | String slicing, multi-pass replacement, functional decomposition|
+| [`recipe_search/`](recipe_search/README.md) | Fuzzy lookup CLI      | ~150  | `String.distance`, Option-returning lookups, plain struct records|
 
 ## Running
 
@@ -17,6 +18,7 @@ Quirk in a real shape, then crib whatever you need.
 quirk run examples/todo_cli/main.quirk
 quirk run examples/calc/main.quirk "(1 + 2) * 3"
 quirk run examples/md2html/main.quirk
+quirk run examples/recipe_search/main.quirk "lasagne de ricardo"
 ```
 
 ## Why these shapes

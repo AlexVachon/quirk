@@ -1,0 +1,37 @@
+// Int 0 must round-trip through Any (T-erased) boxing without
+// collapsing to "null". The naive `IntToPtr` fast-path produces
+// an i8* null pointer for Int 0 — indistinguishable from the
+// absence sentinel — so generic-typed slots (Option[Int],
+// Any-typed function args, lambda returns) would print "null"
+// instead of "0".
+//
+// Surfaced while shipping Option/Result combinators in v3.2.0:
+// `n.unwrap_or(0)` returned "null". Fix routes static-zero and
+// dynamic-zero through `Core_Primitives_Any_box_int` so the
+// boxed value carries a real ANY_INT tag.
+
+from typing use { Option, Some, None }
+
+define wrap(x: Any) -> Any { return x }
+
+define main() -> void {
+    // Static zero through an Any-typed param.
+    print(wrap(0))   // = 0
+    print(wrap(1))   // = 1
+    print(wrap(-1))  // = -1
+
+    // Static zero as Option's generic-T default.
+    n: Option := None()
+    print(n.unwrap_or(0))    // = 0
+    print(n.unwrap_or(99))   // = 99
+
+    // Dynamic zero — comes from a runtime computation, not a constant.
+    z := 5 - 5
+    print(wrap(z))           // = 0
+    print(n.unwrap_or(z))    // = 0
+
+    // Lambda returning Int 0 (boxToVoidPtr path).
+    print(n.unwrap_or_else(fn() => 0))   // = 0
+
+    print("done")            // = done
+}

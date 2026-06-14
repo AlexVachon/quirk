@@ -129,11 +129,11 @@ STDLIB_TAG   ?= v1.0.0
 # Per-package tag override. Set when a package has its own version
 # that doesn't match the global STDLIB_TAG (e.g. `prompt` was
 # renamed from `ask` and ships v1.0.1 with the rename baked in).
-STDLIB_TAG_prompt ?= v1.0.3
+STDLIB_TAG_prompt ?= v1.1.0
 # typing v1.1.0 adds the canonical Option[T] / Result[T, E] sum
 # types (requires compiler v2.4.4+ — tagged unions + variant methods
 # + return-upcast codegen).
-STDLIB_TAG_typing ?= v1.1.0
+STDLIB_TAG_typing ?= v1.3.0
 
 bootstrap-stdlib:
 	@mkdir -p packages

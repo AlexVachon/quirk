@@ -24,6 +24,7 @@
 #include "ast.hpp"
 
 #include "TypeGen.hpp"
+#include "BoxInt.hpp"
 #include "VariableGen.hpp"
 #include "MathGen.hpp"
 #include "StructGen.hpp"
@@ -1067,7 +1068,7 @@ class LLVMCodegen {
             return Builder.CreateCall(boxBool, {ext});
         }
         if (val->getType()->isIntegerTy())
-            return Builder.CreateIntToPtr(val, i8PtrTy);
+            return quirk::boxIntToOpaque(Context, TheModule.get(), Builder, val, i8PtrTy);
         if (val->getType()->isDoubleTy()) {
             Value* asInt = Builder.CreateBitCast(val, Type::getInt64Ty(Context));
             return Builder.CreateIntToPtr(asInt, i8PtrTy);
@@ -1077,13 +1078,28 @@ class LLVMCodegen {
 
     // Unbox an i8* argument to the expected type based on the lambda parameter annotation
     Value* unboxLambdaParam(Value* raw, const std::string& type) {
-        if (type == "Int" || type == "Int32")
-            return Builder.CreatePtrToInt(raw, Type::getInt32Ty(Context));
+        // Two Any encodings can show up here:
+        //   - Inline-tag (`IntToPtr(N)`) — fast path used for
+        //     non-zero ints. Raw PtrToInt round-trips the value.
+        //   - Heap Any* (from box_int / box_double) — used for
+        //     zero ints (v3.2.0 BoxInt fix) and any value that
+        //     went through `Any_box_*`. Raw PtrToInt would give
+        //     the pointer address, not the contained value.
+        // Route both through the runtime helpers so the lambda
+        // sees the same Int it was conceptually passed.
+        if (type == "Int" || type == "Int32") {
+            Type* i8p = Type::getInt8PtrTy(Context);
+            FunctionCallee toInt = TheModule->getOrInsertFunction(
+                "quirk_opaque_to_int", Type::getInt32Ty(Context), i8p);
+            return Builder.CreateCall(toInt, {raw}, "lambda_unbox_int");
+        }
         if (type == "Bool")
             return Builder.CreateICmpNE(raw, ConstantPointerNull::get(cast<PointerType>(raw->getType())), "lambdabool");
         if (type == "Float" || type == "Double") {
-            Value* asInt = Builder.CreatePtrToInt(raw, Type::getInt64Ty(Context));
-            return Builder.CreateBitCast(asInt, Type::getDoubleTy(Context));
+            Type* i8p = Type::getInt8PtrTy(Context);
+            FunctionCallee toDbl = TheModule->getOrInsertFunction(
+                "quirk_opaque_to_double", Type::getDoubleTy(Context), i8p);
+            return Builder.CreateCall(toDbl, {raw}, "lambda_unbox_dbl");
         }
         if (!type.empty() && StructTypes.count(type))
             return Builder.CreateBitCast(raw, PointerType::getUnqual(StructTypes[type]));
@@ -2434,7 +2450,7 @@ class LLVMCodegen {
                 if (argVal->getType()->isIntegerTy() && expectedType->isIntegerTy())
                     argVal = Builder.CreateIntCast(argVal, expectedType, true);
                 else if (argVal->getType()->isIntegerTy() && expectedType->isPointerTy())
-                    argVal = Builder.CreateIntToPtr(argVal, expectedType);
+                    argVal = quirk::boxIntToOpaque(Context, TheModule.get(), Builder, argVal, expectedType);
                 else if (argVal->getType()->isPointerTy() && expectedType->isPointerTy())
                     argVal = Builder.CreateBitCast(argVal, expectedType);
                 else if (argVal->getType()->isIntegerTy() && expectedType->isDoubleTy())

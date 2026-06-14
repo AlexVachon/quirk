@@ -8,6 +8,7 @@
 #include <functional>
 #include "ast.hpp"
 #include "llvm/IR/IRBuilder.h"
+#include "BoxInt.hpp"
 
 using namespace llvm;
 
@@ -235,7 +236,22 @@ class StructGen {
                         else if (argVal->getType()->isPointerTy() && expectedType->isPointerTy())
                             argVal = Builder.CreateBitCast(argVal, expectedType);
                         else if (argVal->getType()->isIntegerTy() && expectedType->isPointerTy())
-                            argVal = Builder.CreateIntToPtr(argVal, expectedType);
+                            argVal = quirk::boxIntToOpaque(Context, TheModule, Builder, argVal, expectedType);
+                        else if (argVal->getType()->isDoubleTy() && expectedType->isPointerTy()) {
+                            // Double → opaque ptr — box through the
+                            // runtime helper so the value carries a
+                            // real ANY_DOUBLE tag. Mirrors the
+                            // Codegen.cpp call-arg path. Surfaces in
+                            // generic-T constructor slots like
+                            // `Some(value: T)` when T is erased.
+                            Type* i8PtrTy = Type::getInt8PtrTy(Context);
+                            FunctionCallee box = TheModule->getOrInsertFunction(
+                                "Core_Primitives_Any_box_double",
+                                i8PtrTy, Type::getDoubleTy(Context));
+                            argVal = Builder.CreateCall(box, {argVal}, "arg_dbl_box");
+                            if (expectedType != i8PtrTy)
+                                argVal = Builder.CreateBitCast(argVal, expectedType);
+                        }
                     }
                 }
                 initArgs.push_back(argVal);
@@ -316,7 +332,7 @@ class StructGen {
                     }
                     else if (val->getType()->isIntegerTy() && expectedType->isIntegerTy()) val = Builder.CreateIntCast(val, expectedType, true);
                     else if (val->getType()->isPointerTy() && expectedType->isPointerTy()) val = Builder.CreateBitCast(val, expectedType);
-                    else if (val->getType()->isIntegerTy() && expectedType->isPointerTy()) val = Builder.CreateIntToPtr(val, expectedType);
+                    else if (val->getType()->isIntegerTy() && expectedType->isPointerTy()) val = quirk::boxIntToOpaque(Context, TheModule, Builder, val, expectedType);
                     else if (val->getType()->isIntegerTy() && expectedType->isDoubleTy()) val = Builder.CreateSIToFP(val, expectedType);
                 }
 

@@ -1,0 +1,449 @@
+// A fuzzy recipe-search interactive TUI. Type a query, see ranked
+// matches with the book + page where each recipe lives. Loops until
+// you enter an empty line or Ctrl-D.
+//
+// Run:
+//     quirk examples/recipe_search/main.quirk
+//
+// What it shows:
+//   • Interactive prompt loop with `prompt.input`
+//   • ANSI-colored output for visual hierarchy without HTML
+//   • Plain structs as records (Recipe, Book, Match)
+//   • Levenshtein fuzzy match via `String.distance`
+//   • Option-returning best-match for the "found / nothing" pattern
+
+from typing use { Option, Some, None }
+from prompt use { input_optional, select_obj }
+from random use { choice }
+
+// ─── Data model ────────────────────────────────────────────────
+
+struct Recipe {
+    title: String
+    page:  Int
+    define __init(self, title: String, page: Int) -> void {
+        self.title = title
+        self.page  = page
+    }
+}
+
+struct Book {
+    name:    String
+    recipes: List
+    define __init(self, name: String, recipes: List) -> void {
+        self.name    = name
+        self.recipes = recipes
+    }
+}
+
+struct Match {
+    book:     String
+    recipe:   String
+    page:     Int
+    distance: Int
+    define __init(self, book: String, recipe: String, page: Int, distance: Int) -> void {
+        self.book     = book
+        self.recipe   = recipe
+        self.page     = page
+        self.distance = distance
+    }
+}
+
+// ─── The library (mock data) ──────────────────────────────────
+
+define library() -> List {
+    ricardo := [Recipe("Lasagne classique", 47), Recipe("Lasagne aux legumes grilles", 51), Recipe("Lasagne au saumon fume", 53), Recipe("Pate a la bolognaise", 89), Recipe("Pizza margherita maison", 112), Recipe("Tarte aux pommes a l'ancienne", 201)]
+    joy     := [Recipe("Classic Lasagna Bolognese", 312), Recipe("Vegetable Lasagna with Spinach", 316), Recipe("Spaghetti and Meatballs", 298), Recipe("Beef Stroganoff", 421), Recipe("Roast Chicken with Lemon", 487)]
+    sfah    := [Recipe("Buttermilk-Brined Roast Chicken", 156), Recipe("Tomato-Braised Chickpeas", 203), Recipe("Caesar Salad", 88), Recipe("Pasta alla Carbonara", 241)]
+    plenty  := [Recipe("Roasted Butternut Squash with Lentils", 74), Recipe("Mushroom Lasagne", 128), Recipe("Aubergine with Buttermilk Sauce", 34)]
+    return [Book("Ricardo Vol. 2", ricardo), Book("Joy of Cooking", joy), Book("Salt, Fat, Acid, Heat", sfah), Book("Plenty (Ottolenghi)", plenty)]
+}
+
+// ─── Matching ──────────────────────────────────────────────────
+
+define score(query: String, title: String) -> Int {
+    return query.lower().distance(title.lower())
+}
+
+define search(query: String) -> List {
+    // Generous threshold — pure Levenshtein over-penalizes length
+    // asymmetry, so collect liberally and let the sort surface the
+    // real winners. The UI caps the visible list to 5.
+    threshold := query.length() * 3 + 10
+    matches := []
+    for book in library() {
+        b: Book := book
+        for r in b.recipes {
+            rec: Recipe := r
+            d := score(query, rec.title)
+            if d <= threshold {
+                matches.append(Match(b.name, rec.title, rec.page, d))
+            }
+        }
+    }
+    // Sort ascending by distance via List.sort + comparator.
+    return matches.sort(fn(a: Any, b: Any) -> Int {
+        ma: Match := a
+        mb: Match := b
+        return ma.distance - mb.distance
+    })
+}
+
+define best_match(query: String) -> Option {
+    results := search(query)
+    if results.length() == 0 { return None() }
+    return Some(results.get(0))
+}
+
+// ─── ANSI helpers ──────────────────────────────────────────────
+//
+// Pure strings — no external `console` styling needed. Modern
+// terminals all speak ANSI escapes; if the user pipes to a file,
+// the codes are visible but ignorable.
+
+define esc(code: String) -> String { return "[" + code + "m" }
+define reset() -> String { return esc("0") }
+define bold(s: String)   -> String { return esc("1") + s + reset() }
+define dim(s: String)    -> String { return esc("2") + s + reset() }
+define accent(s: String) -> String { return esc("38;5;208") + s + reset() }   // orange
+define faint(s: String)  -> String { return esc("38;5;244") + s + reset() }   // grey
+define book(s: String)   -> String { return esc("38;5;110") + s + reset() }   // soft blue
+
+// ─── Rendering ─────────────────────────────────────────────────
+
+define print_header() -> void {
+    print("")
+    print("  " + bold(accent("Recipe Search")))
+    print("  " + faint("fuzzy lookup across " + library().length().str() + " cookbooks"))
+    print("")
+}
+
+define print_results(query: String, results: List) -> void {
+    if results.length() == 0 {
+        print("  " + faint("no matches for '" + query + "' — try a different query"))
+        print("")
+        return
+    }
+
+    cap := 5
+    shown := results.length()
+    if shown > cap { shown = cap }
+
+    plural := " matches"
+    if shown == 1 { plural = " match" }
+    print("  " + faint("top " + shown.str() + plural + " for '" + query + "':"))
+    print("")
+
+    j := 0
+    while j < shown {
+        m: Match := results.get(j)
+        bullet := faint("  ·  ")
+        if j == 0 { bullet = accent("  ▸  ") }
+        print(bullet + bold(m.recipe))
+        print("       " + book(m.book) + faint(" · p.") + accent(m.page.str()) + faint("  (distance ") + m.distance.str() + faint(")"))
+        j = j + 1
+    }
+    print("")
+
+    // Bonus: the Option-returning "best match" path — shown
+    // separately so the API gets dogfooded even though `results[0]`
+    // says the same thing.
+    best := best_match(query)
+    if best.is_some() {
+        top: Match := best.unwrap()
+        print("  " + faint("best guess: ") + bold(top.recipe) + faint(" — " + top.book + " p.") + accent(top.page.str()))
+        print("")
+    }
+}
+
+// ─── Slash commands ────────────────────────────────────────────
+//
+// Anything starting with `/` is a command, not a search query.
+// Each command does its own thing and returns; the main loop
+// keeps going unless the command explicitly says to quit.
+//
+// The drawer (typed `/` alone, or `/<prefix>` that doesn't match
+// a known command) shows a numbered menu of matching commands via
+// `prompt.select`. Quirk's stdlib doesn't expose raw terminal
+// access, so we can't paint suggestions character-by-character
+// the way `fzf` or shell completion does — but a one-`/`-then-
+// numbered-pick is close in spirit and dramatically more
+// discoverable than memorizing names.
+
+struct Cmd {
+    name:   String      // "/help"
+    arg:    String      // "<name>" or "" for no-arg commands
+    desc:   String      // one-line drawer label
+    define __init(self, name: String, arg: String, desc: String) -> void {
+        self.name = name
+        self.arg  = arg
+        self.desc = desc
+    }
+    define label(self) -> String {
+        sig := self.name
+        if self.arg.length() > 0 { sig = sig + " " + self.arg }
+        // Pad the signature to a fixed column so descriptions line
+        // up — the drawer reads like a help table.
+        while sig.length() < 16 { sig = sig + " " }
+        return sig + self.desc
+    }
+}
+
+define all_commands() -> List {
+    // Quirk's parser doesn't yet accept trailing-comma + newline
+    // inside list literals, so each Cmd(...) stays on its own line.
+    return [Cmd("/help", "", "show available commands"), Cmd("/books", "", "list every cookbook in the library"), Cmd("/book", "<name>", "list every recipe in a specific book (fuzzy)"), Cmd("/random", "", "pick a recipe at random"), Cmd("/clear", "", "clear the screen"), Cmd("/quit", "", "leave the app")]
+}
+
+// Commands matching `prefix` (e.g. "/b" → /books, /book). When
+// prefix is just "/", returns all.
+define matching_commands(prefix: String) -> List {
+    out := []
+    for c in all_commands() {
+        cmd: Cmd := c
+        if cmd.name.startswith(prefix) {
+            out.append(cmd)
+        }
+    }
+    return out
+}
+
+// Open the drawer for `prefix`; return the chosen command line
+// (e.g. "/book" — caller is responsible for prompting for any
+// args the command needs). Returns "" if there's nothing to show.
+define open_drawer(prefix: String) -> String {
+    candidates := matching_commands(prefix)
+    if candidates.length() == 0 {
+        print("")
+        print("  " + faint("no commands match '" + prefix + "'"))
+        print("")
+        return ""
+    }
+    // Fast-path: one match → don't bother showing a one-item menu.
+    if candidates.length() == 1 {
+        only: Cmd := candidates.get(0)
+        return only.name
+    }
+    // `select_obj` returns the original `Cmd` directly — no
+    // string parsing to recover the name. Renderer is just
+    // `cmd.label()`.
+    chosen: Cmd := select_obj("  " + faint("commands:"), candidates, fn(c: Any) -> String {
+        cmd: Cmd := c
+        return cmd.label()
+    })
+    return chosen.name
+}
+
+define cmd_help() -> void {
+    print("")
+    print("  " + bold("commands"))
+    print("    " + accent("/help") + faint("            show this list"))
+    print("    " + accent("/books") + faint("           list every cookbook in the library"))
+    print("    " + accent("/book <name>") + faint("     list every recipe in a specific book (fuzzy)"))
+    print("    " + accent("/random") + faint("          pick a recipe at random — for when you can't decide"))
+    print("    " + accent("/clear") + faint("           clear the screen"))
+    print("    " + accent("/quit") + faint("            leave (Ctrl-D also works)"))
+    print("")
+    print("  " + faint("anything else is treated as a fuzzy search query."))
+    print("")
+}
+
+define cmd_books() -> void {
+    print("")
+    print("  " + bold("cookbooks in the library"))
+    print("")
+    lib := library()
+    i := 0
+    while i < lib.length() {
+        b: Book := lib.get(i)
+        print("  " + accent("· ") + bold(b.name) + faint("  (" + b.recipes.length().str() + " recipes)"))
+        i = i + 1
+    }
+    print("")
+}
+
+define cmd_book(name: String) -> void {
+    if name.length() == 0 {
+        print("")
+        print("  " + faint("usage: /book <name>   — try '/book ricardo' or '/book joy'"))
+        print("")
+        return
+    }
+    // Fuzzy-match the book name against the library.
+    lib  := library()
+    best_idx := -1
+    best_d   := 9999
+    i := 0
+    while i < lib.length() {
+        b: Book := lib.get(i)
+        d := name.lower().distance(b.name.lower())
+        if d < best_d {
+            best_d   = d
+            best_idx = i
+        }
+        i = i + 1
+    }
+    if best_idx == -1 {
+        print("")
+        print("  " + faint("no book matches '" + name + "'"))
+        print("")
+        return
+    }
+    target: Book := lib.get(best_idx)
+    print("")
+    print("  " + bold(target.name) + faint(" — " + target.recipes.length().str() + " recipes"))
+    print("")
+    j := 0
+    while j < target.recipes.length() {
+        rec: Recipe := target.recipes.get(j)
+        print("    " + accent("· ") + bold(rec.title) + faint(" — p.") + accent(rec.page.str()))
+        j = j + 1
+    }
+    print("")
+}
+
+define cmd_random() -> void {
+    // Build a flat list of (book_name, recipe) so `random.choice`
+    // can pick uniformly across the whole library.
+    flat := []
+    for b in library() {
+        bk: Book := b
+        for r in bk.recipes {
+            rec: Recipe := r
+            flat.append(Match(bk.name, rec.title, rec.page, 0))
+        }
+    }
+    pick: Match := choice(flat)
+    print("")
+    print("  " + faint("tonight's pick:"))
+    print("  " + accent("  ▸  ") + bold(pick.recipe))
+    print("       " + book(pick.book) + faint(" · p.") + accent(pick.page.str()))
+    print("")
+}
+
+define cmd_clear() -> void {
+    // ANSI: clear screen + home cursor.
+    print("[2J[H")
+    print_header()
+}
+
+// Returns true when the command tells the main loop to quit.
+define dispatch_command(line: String) -> Bool {
+    // Split off the head: `/book ricardo` → cmd="/book", rest="ricardo"
+    space := line.find(" ")
+    cmd := line
+    rest := ""
+    if space != -1 {
+        cmd  = line.substring(0, space)
+        rest = line.substring(space + 1, line.length()).trim()
+    }
+    if cmd == "/help" or cmd == "/?" {
+        cmd_help()
+        return false
+    }
+    if cmd == "/books" or cmd == "/list" {
+        cmd_books()
+        return false
+    }
+    if cmd == "/book" {
+        cmd_book(rest)
+        return false
+    }
+    if cmd == "/random" {
+        cmd_random()
+        return false
+    }
+    if cmd == "/clear" or cmd == "/cls" {
+        cmd_clear()
+        return false
+    }
+    if cmd == "/quit" or cmd == "/exit" or cmd == "/q" {
+        return true
+    }
+    print("")
+    print("  " + faint("unknown command '" + cmd + "' — try /help"))
+    print("")
+    return false
+}
+
+// ─── Entry: REPL-style loop ───────────────────────────────────
+
+define main() -> void {
+    print_header()
+    print("  " + faint("type a recipe name to search, or /help for commands."))
+    print("")
+
+    while true {
+        // input_optional returns null on empty / Ctrl-D, which is
+        // our quit signal. Plain `input` re-prompts on empty.
+        raw := input_optional(accent("?"))
+        if raw == null {
+            print("")
+            print("  " + faint("Bon appetit."))
+            print("")
+            return
+        }
+        line: String := raw
+
+        // Slash handling. Three shapes:
+        //   1. `/` alone or `/<prefix>` that doesn't match any
+        //      known command exactly → open the drawer filtered
+        //      to matching commands.
+        //   2. `/cmd` or `/cmd <args>` → dispatch directly.
+        //   3. anything else → fuzzy search query.
+        if line.startswith("/") {
+            // Pull the leading word (everything up to the first
+            // space) and check if it matches a known command exactly.
+            space := line.find(" ")
+            head  := line
+            if space != -1 { head = line.substring(0, space) }
+
+            is_known := false
+            for c in all_commands() {
+                cmd: Cmd := c
+                if cmd.name == head { is_known = true }
+            }
+
+            effective := line
+            if not is_known {
+                // Drawer-time. Use the typed text as the filter
+                // prefix so `/b` narrows to /book + /books.
+                chosen := open_drawer(head)
+                if chosen.length() == 0 { continue }
+                // For commands that take an arg, prompt for it
+                // separately so the drawer doesn't have to know
+                // how to ask. Look up the arg-shape in the
+                // command table.
+                arg_spec := ""
+                for c in all_commands() {
+                    cmd: Cmd := c
+                    if cmd.name == chosen { arg_spec = cmd.arg }
+                }
+                if arg_spec.length() > 0 {
+                    arg_in := input_optional(faint(chosen + " " + arg_spec))
+                    if arg_in == null {
+                        // User aborted the arg prompt — drop back
+                        // to the search line.
+                        continue
+                    }
+                    arg_text: String := arg_in
+                    effective = chosen + " " + arg_text
+                } else {
+                    effective = chosen
+                }
+            }
+            should_quit := dispatch_command(effective)
+            if should_quit {
+                print("")
+                print("  " + faint("Bon appetit."))
+                print("")
+                return
+            }
+            continue
+        }
+
+        results := search(line)
+        print("")
+        print_results(line, results)
+    }
+}

@@ -1,0 +1,89 @@
+// v3.2.0: Option/Result functional combinators (map, and_then,
+// or_else, filter, ok_or, unwrap, map_err, ok, err, ...). Locks
+// down the canonical FP API users will reach for once Option/Result
+// became the canonical sum types.
+//
+// Probe passes when every assertion below matches its expected
+// `// = X` comment. A failure here means a regression in either
+// the combinator body OR the tagged-union match-codegen path
+// they rely on.
+
+from typing use { Option, Some, None, Result, Ok, Err, NullError, ValueError }
+
+define main() -> void {
+    // ─── Option ─────────────────────────────────────────────
+    a: Option := Some(5)
+    b: Option := None()
+
+    print(a.map(fn(x: Int) => x * 2).unwrap())             // = 10
+    print(b.map(fn(x: Int) => x * 2).is_none())            // = true
+
+    print(a.and_then(fn(x: Int) => Some(x + 1)).unwrap())  // = 6
+    print(b.and_then(fn(x: Int) => Some(x + 1)).is_none()) // = true
+
+    print(a.or_else(fn() => Some(99)).unwrap())            // = 5
+    print(b.or_else(fn() => Some(99)).unwrap())            // = 99
+
+    print(a.filter(fn(x: Int) => x > 0).is_some())         // = true
+    print(a.filter(fn(x: Int) => x > 100).is_none())       // = true
+
+    print(a.unwrap_or_else(fn() => 0))                     // = 5
+    print(b.unwrap_or_else(fn() => 0))                     // = 0
+
+    // ok_or: Option → Result
+    r1: Result := a.ok_or("missing")
+    r2: Result := b.ok_or("missing")
+    print(r1.is_ok())                                       // = true
+    print(r2.is_err())                                      // = true
+
+    // unwrap on None throws NullError
+    try {
+        b.unwrap()
+        print("UNREACHABLE")
+    } catch (e: NullError) {
+        print("ok-null-throw")                              // = ok-null-throw
+    }
+
+    // ─── Result ─────────────────────────────────────────────
+    ok: Result  := Ok(10)
+    err: Result := Err("bad")
+
+    print(ok.map(fn(x: Int) => x + 1).unwrap())            // = 11
+    print(err.map(fn(x: Int) => x + 1).is_err())           // = true
+
+    print(err.map_err(fn(e: String) => e + "!").unwrap_err())   // = bad!
+    print(ok.map_err(fn(e: String) => e + "!").is_ok())          // = true
+
+    print(ok.and_then(fn(x: Int) => Ok(x * 2)).unwrap())   // = 20
+    print(err.and_then(fn(x: Int) => Ok(x * 2)).is_err())  // = true
+
+    print(ok.or_else(fn(e: String) => Ok(0)).unwrap())     // = 10
+    print(err.or_else(fn(e: String) => Ok(0)).unwrap())    // = 0
+
+    print(err.unwrap_or_else(fn(e: String) => 42))         // = 42
+    print(ok.unwrap_or_else(fn(e: String) => 42))          // = 10
+
+    // ok() / err(): Result → Option
+    print(ok.ok().unwrap())                                 // = 10
+    print(err.ok().is_none())                               // = true
+    print(err.err().unwrap())                               // = bad
+    print(ok.err().is_none())                               // = true
+
+    // unwrap on Err throws ValueError
+    try {
+        err.unwrap()
+        print("UNREACHABLE")
+    } catch (e: ValueError) {
+        print("ok-err-throw")                               // = ok-err-throw
+    }
+
+    // unwrap_err on Ok throws ValueError
+    try {
+        ok.unwrap_err()
+        print("UNREACHABLE")
+    } catch (e: ValueError) {
+        print("ok-okwrap-throw")                            // = ok-okwrap-throw
+    }
+
+    print("done")                                           // = done
+}

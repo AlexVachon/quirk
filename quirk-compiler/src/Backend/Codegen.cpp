@@ -1033,25 +1033,20 @@ class LLVMCodegen {
         if (val->getType() == i8PtrTy)
             return val;
         if (val->getType()->isPointerTy()) {
-            // Auto-call __str on user-defined structs so print(obj) works like print(obj.__str())
-            Type* pointee = val->getType()->getPointerElementType();
-            if (pointee->isStructTy()) {
-                std::string sName = cast<StructType>(pointee)->getName().str();
-                if (sName.find("struct.") == 0) sName = sName.substr(7);
-                // Only auto-str user-defined structs (not List, String, Map, Callable, etc.)
-                static const std::set<std::string> builtinStructs = {
-                    "String", "List", "Map", "Set", "Queue", "Callable", "Tuple",
-                    "Type", "Any", "Exception", "ListIterator", "File"
-                };
-                if (!builtinStructs.count(sName) && !sName.empty()) {
-                    Function* strFn = TheModule->getFunction(sName + "___str");
-                    if (!strFn) strFn = TheModule->getFunction(sName + "__str");
-                    if (strFn) {
-                        Value* strVal = Builder.CreateCall(strFn, {val}, sName + "_str");
-                        return Builder.CreateBitCast(strVal, i8PtrTy);
-                    }
-                }
-            }
+            // Plain bitcast — the value is already in pointer form,
+            // so we just reinterpret as i8*. NOTE: we intentionally
+            // do NOT auto-call `__str` on user structs here. An
+            // older version did, on the theory that boxToVoidPtr
+            // was always feeding `print()`, but it's also the
+            // canonical "send a value through a Callable return /
+            // generic i8* slot" path. Auto-stringifying a Response
+            // before handing it back to the caller of
+            // `srv.listen(..., handler)` corrupted the value: the
+            // caller bitcast the String* back to Response* and
+            // read garbage offsets. The print/format path has its
+            // own valueToString helper in BuiltinGen, so removing
+            // the auto-str here just routes stringification through
+            // the consumer that asked for it.
             return Builder.CreateBitCast(val, i8PtrTy);
         }
         // i1 booleans: box as Any_Bool so quirk_opaque_to_string returns "true"/"false"

@@ -1,0 +1,36 @@
+// A Callable whose body returns a user-defined struct must
+// hand the struct pointer back intact through the Callable ABI.
+// `boxToVoidPtr` used to auto-call `__str` on any user struct
+// being boxed to i8*, on the theory that boxToVoidPtr always fed
+// `print()` — but it's the same path the Callable return goes
+// through. The caller bitcast the resulting String* back to
+// e.g. Response* and read garbage offsets, which SIGSEGV'd
+// inside `net.server`'s _format_response on the first field
+// access.
+//
+// Probe passes when a Callable returning a user struct, called
+// behind an `apply`-style helper, surfaces the **original**
+// struct fields (not stringified garbage) at the call site.
+
+from typing.collections.map use { Map }
+from net.http use { Response }
+
+define apply(cb: Callable) -> Response {
+    return cb()
+}
+
+define main() -> void {
+    r: Response := apply(fn() -> Response {
+        return Response(201, "hi", Map())
+    })
+    print(r.status_code)              // = 201
+    print(r.text)                     // = hi
+
+    // Without an annotation too — Sema infers Response from
+    // apply's declared return type.
+    r2 := apply(fn() -> Response {
+        return Response(404, "missing", Map())
+    })
+    print(r2.status_code)             // = 404
+    print(r2.text)                    // = missing
+}

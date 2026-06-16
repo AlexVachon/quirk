@@ -5,6 +5,30 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [3.3.1] — 2026-06-16
+
+### Codegen: `boxToVoidPtr` no longer auto-stringifies user structs
+
+A long-standing shortcut in `boxToVoidPtr` auto-called `__str`
+on any user-defined struct being boxed to `i8*`, on the theory
+that boxToVoidPtr was always feeding `print()`. It isn't — it's
+also the canonical "send a value through a Callable return /
+generic Any slot" path. The result: `Server().listen(host,
+port, handler)` segfaulted on the first request because the
+handler's Response* got stringified to a String* mid-flight,
+the caller bitcast the String* back to Response*, and
+`_format_response` read garbage offsets.
+
+Removed the auto-str. Print and format already route through
+`BuiltinGen::valueToString`, which calls `__str` at the
+consumer site — no other call path relied on the silent
+conversion. Probe `p61_callable_returns_user_struct` locks
+both the annotated and inferred forms.
+
+This unblocks every `net.server` example (the canonical one
+in `packages/net/server.quirk` runs cleanly now) and any
+higher-order code passing user structs through Callables.
+
 ## [3.3.0] — 2026-06-16
 
 ### Sema: bare function name resolves to Callable in value contexts

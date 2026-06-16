@@ -1388,7 +1388,31 @@ std::string Sema::checkLiteral(LiteralNode *node)
         return "Bool";
     if (node->value == "null")
         return "Null";
-    return resolveVariable(node->value);
+    std::string t = resolveVariable(node->value);
+    // Bare function name used as a value (passed as an arg, stored
+    // in a variable, returned from a function) resolves to its
+    // **return type** by default — `apply(dbl, 5)` saw `dbl` typed
+    // as `Int` and rejected it against an `Callable` parameter.
+    // When the name belongs to a top-level function AND there's no
+    // local binding shadowing it, surface it as `Callable` so the
+    // call-site type-check passes. The direct-call path at
+    // `checkCall(node->callee == LiteralNode)` bypasses checkLiteral
+    // entirely and still gets the function's return type.
+    if (methodRegistry[""].count(node->value)) {
+        // Top-level functions ARE in scopeStack[0] (Pass 1 calls
+        // defineVariable with their return type) so a naive "any
+        // scope binding == shadowed" check would treat every
+        // function name as already-shadowed. Only deeper scopes
+        // represent a true local re-binding (`dbl := 42` inside a
+        // function body); the global registration is the function
+        // itself, not a shadow.
+        bool shadowed = false;
+        for (int i = (int)scopeStack.size() - 1; i >= 1; --i) {
+            if (scopeStack[i].count(node->value)) { shadowed = true; break; }
+        }
+        if (!shadowed) return "Callable";
+    }
+    return t;
 }
 
 std::string Sema::checkBinaryOp(BinaryOpNode *node)
@@ -1990,6 +2014,29 @@ std::string Sema::checkCall(CallNode *node)
                 // positional gate in that case.
                 bool anyKwarg = false;
                 for (auto& a : node->args) if (!a.name.empty()) { anyKwarg = true; break; }
+                // Arity gate: count required (no default) and total
+                // params, allow anywhere in between. Skip when the
+                // call uses kwargs (Codegen reorders) or when the
+                // function is variadic.
+                if (!anyKwarg) {
+                    int required = 0, total = 0;
+                    bool variadic = false;
+                    for (const auto& p : fn->parameters) {
+                        if (p.isVariadic) { variadic = true; break; }
+                        total++;
+                        if (!p.defaultValue) required++;
+                    }
+                    int provided = (int)node->args.size();
+                    if (!variadic && (provided < required || provided > total)) {
+                        std::string expect = (required == total)
+                            ? std::to_string(required) + " argument" + (required == 1 ? "" : "s")
+                            : "between " + std::to_string(required) + " and " + std::to_string(total) + " arguments";
+                        fatalError(l->value + "() takes " + expect +
+                                   " but " + std::to_string(provided) + " " +
+                                   (provided == 1 ? "was" : "were") + " given",
+                                   node->line, node->col, node->filePath);
+                    }
+                }
                 for (size_t i = 0; !anyKwarg && i < argTypes.size() && i < fn->parameters.size(); ++i) {
                     const auto& param = fn->parameters[i];
                     if (param.isVariadic) break;
@@ -2111,7 +2158,9 @@ std::string Sema::checkCall(CallNode *node)
 
         // --- THE FIX: Handle Module Constructor Calls (e.g. io.File) ---
         if (objType.rfind("MODULE$", 0) == 0) {
-            for (auto& a : node->args) checkExpression(a.value.get());
+            std::vector<std::string> argTypes;
+            argTypes.reserve(node->args.size());
+            for (auto& a : node->args) argTypes.push_back(checkExpression(a.value.get()));
             std::string funcName = m->memberName;
 
             // 1. Is it a Struct Constructor?
@@ -2121,7 +2170,45 @@ std::string Sema::checkCall(CallNode *node)
 
             // 2. Is it a standard Module Function?
             if (methodRegistry[""].count(funcName)) {
-                return methodRegistry[""][funcName]->returnType;
+                FunctionNode* fn = methodRegistry[""][funcName];
+                bool anyKwarg = false;
+                for (auto& a : node->args) if (!a.name.empty()) { anyKwarg = true; break; }
+                if (!anyKwarg) {
+                    // Arity gate — same shape as the free-fn check
+                    // above. Catches `test.assert_eq(x,)` (1 arg
+                    // when 2 required) before Codegen emits a call
+                    // with too few operands and trips the verifier.
+                    int required = 0, total = 0;
+                    bool variadic = false;
+                    for (const auto& p : fn->parameters) {
+                        if (p.isVariadic) { variadic = true; break; }
+                        total++;
+                        if (!p.defaultValue) required++;
+                    }
+                    int provided = (int)node->args.size();
+                    if (!variadic && (provided < required || provided > total)) {
+                        std::string expect = (required == total)
+                            ? std::to_string(required) + " argument" + (required == 1 ? "" : "s")
+                            : "between " + std::to_string(required) + " and " + std::to_string(total) + " arguments";
+                        fatalError(funcName + "() takes " + expect +
+                                   " but " + std::to_string(provided) + " " +
+                                   (provided == 1 ? "was" : "were") + " given",
+                                   node->line, node->col, node->filePath);
+                    }
+                    // Type-check matching positional args.
+                    for (size_t i = 0; i < argTypes.size() && i < fn->parameters.size(); ++i) {
+                        const auto& param = fn->parameters[i];
+                        if (param.isVariadic) break;
+                        const std::string& paramType = param.type;
+                        const std::string& argType   = argTypes[i];
+                        if (paramType.empty() || argType.empty()) continue;
+                        if (isCompatibleTypes(paramType, argType)) continue;
+                        fatalError("argument " + std::to_string(i + 1) + " of " + funcName +
+                                   "() expected '" + paramType + "' but got '" + argType + "'",
+                                   node->line, node->col, node->filePath);
+                    }
+                }
+                return fn->returnType;
             }
 
             return "void";

@@ -1,0 +1,31 @@
+// A bare function name passed where a `Callable` parameter is
+// expected used to fail Sema with "expected 'Callable' but got
+// '<return-type>'" — the literal resolved to the function's
+// return type (the binding put in scope by Pass 1) instead of
+// being surfaced as a first-class value.
+//
+// Surfaced while writing examples/recipe_search:
+//     srv.listen(host, port, handle)
+// where `handle: Request -> Response` had to be wrapped in
+// `fn(req: Request) => handle(req)` just to satisfy Sema.
+//
+// Probe passes when a bare function name flows through a
+// `Callable` parameter and the call returns the right value.
+
+define dbl(x: Int) -> Int { return x * 2 }
+
+define apply_int(cb: Callable, n: Int) -> Int {
+    return cb(n)
+}
+
+define main() -> void {
+    // bare function name passed as Callable arg
+    print(apply_int(dbl, 5))   // = 10
+
+    // bare function assigned to a variable first
+    f := dbl
+    print(f(7))                // = 14
+
+    // and again as a value passed through
+    print(apply_int(f, 21))    // = 42
+}

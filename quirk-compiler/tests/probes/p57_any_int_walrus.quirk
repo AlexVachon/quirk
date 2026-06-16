@@ -1,0 +1,35 @@
+// `a: Any := some_opaque_value` followed by `b: T := a` used to
+// silently corrupt the value. `emitBox` saw the raw i8* from
+// `List.__get` / `Map.get` / lambda returns, fell through the
+// struct-pointer branches, hit the "raw i8* — must be a String"
+// fallback at line 3262, and re-encoded the value as a heap
+// `Any-of-String`. Then `b: Int := a` decoded the String-tagged
+// wrapper via quirk_opaque_to_int and got 0 (default case in
+// the runtime switch).
+//
+// The same path was forcing the awkward "no annotation" workaround
+// in `List.sort` — `a: Any := self.__get(j - 1)` couldn't be
+// passed to a Callable expecting Int.
+//
+// Probe passes when each typed walrus through `Any` round-trips
+// the original primitive value.
+
+define main() -> void {
+    xs := [3, 1, 4, 1, 5]
+    a: Any := xs.__get(0)
+    ai: Int := a
+    print(ai)              // = 3
+
+    // Roundtrip through Any with a String — must still work since
+    // the old "i8* is a String" path was the only correct case.
+    ss := ["hello", "world"]
+    c: Any := ss.__get(0)
+    cs: String := c
+    print(cs)              // = hello
+
+    // Same shape from a Map lookup.
+    m := {"x": 42, "y": 99}
+    d: Any := m.get("x")
+    di: Int := d
+    print(di)              // = 42
+}

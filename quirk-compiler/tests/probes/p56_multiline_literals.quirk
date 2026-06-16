@@ -1,0 +1,58 @@
+// List/Map/Set/Tuple literals must accept a trailing comma so
+// readers can lay each element on its own line:
+//
+//     items := [
+//         Foo(...),
+//         Bar(...),
+//     ]
+//
+// Lex didn't (and still doesn't) emit newlines as tokens, so the
+// parser saw `, ]` directly and threw "Unexpected token: ]" once
+// the next element-parse landed on the closing bracket. Set and
+// tuple literals already had the peek-after-comma check; list
+// and map didn't.
+//
+// Probe passes when every multi-line literal below parses, prints
+// the expected shape, and the surrounding compiler doesn't ICE.
+
+struct Pt {
+    x: Int
+    y: Int
+    define __init(self, x: Int, y: Int) -> void {
+        self.x = x
+        self.y = y
+    }
+}
+
+define main() -> void {
+    // List with trailing comma + newlines + nested struct calls.
+    points := [
+        Pt(1, 2),
+        Pt(3, 4),
+        Pt(5, 6),
+    ]
+    print(points.length())              // = 3
+
+    // Map literal.
+    counts := {
+        "apples":  3,
+        "bananas": 7,
+    }
+    print(counts.length())              // = 2
+
+    // Set literal.
+    primes := {
+        2,
+        3,
+        5,
+    }
+    print(primes.length())              // = 3
+
+    // Tuple literal.
+    pair := (
+        "score",
+        42,
+    )
+    print(pair.0)                       // = score
+    print(pair.1)                       // = 42
+}

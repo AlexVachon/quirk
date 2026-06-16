@@ -3088,8 +3088,26 @@ class LLVMCodegen {
                     // raw-tagged-int path.
                     else if (val->getType()->isPointerTy() &&
                              val->getType()->getPointerElementType()->isIntegerTy(8) &&
-                             (fieldType->isIntegerTy() || fieldType->isDoubleTy())) {
+                             (fieldType->isIntegerTy(32) || fieldType->isDoubleTy())) {
                         val = emitUnboxToType(val, fieldType);
+                    }
+                    // i8* → Bool (i1) field. Route through
+                    // quirk_any_as_bool — the same helper used for
+                    // truthy-check on i8* values in if/while
+                    // conditions. Sema permits the assignment
+                    // because Any widens to anything; without this
+                    // Codegen tried a raw `bitcast i8* to i1`,
+                    // which the verifier rejects.
+                    else if (val->getType()->isPointerTy() &&
+                             val->getType()->getPointerElementType()->isIntegerTy(8) &&
+                             fieldType->isIntegerTy(1)) {
+                        Type* i8p = Type::getInt8PtrTy(Context);
+                        FunctionCallee toBool = TheModule->getOrInsertFunction(
+                            "quirk_any_as_bool",
+                            Type::getInt32Ty(Context), i8p);
+                        Value* asI32 = Builder.CreateCall(toBool, {val}, "field_unbox_bool");
+                        val = Builder.CreateICmpNE(
+                            asI32, ConstantInt::get(Type::getInt32Ty(Context), 0));
                     }
                 }
                 
@@ -3190,6 +3208,19 @@ class LLVMCodegen {
     Value* emitBox(Value* v) {
         if (!v) return Constant::getNullValue(Type::getInt8PtrTy(Context));
         if (isAnyType(v)) return v; // already boxed
+        // Raw i8* (the universal opaque shape — inline-tag int, heap
+        // Any*, String*, anything from `__get` / `Map.get` / lambda
+        // returns) is already a valid Any payload: every
+        // `quirk_opaque_to_*` decoder accepts i8* and dispatches on
+        // the runtime tag. Re-boxing as `Any_box_string` (the old
+        // fallback for "i8* that isn't a struct") corrupts the
+        // value — a tagged-int Int 3 came out as a heap Any-of-String
+        // "3", and `ai: Int := a` then quirk_opaque_to_int'd the
+        // string-tagged wrapper and returned 0.
+        if (v->getType()->isPointerTy() &&
+            v->getType()->getPointerElementType()->isIntegerTy(8)) {
+            return v;
+        }
 
         Type* ty = v->getType();
 

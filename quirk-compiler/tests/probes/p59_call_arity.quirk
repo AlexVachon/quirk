@@ -1,0 +1,27 @@
+// Sema must reject calls with the wrong arg count before Codegen
+// emits a malformed LLVM call.
+//
+// Fuzz #1 of v3.3.0 surfaced this on `test.assert_eq(crypto.sha256(""),)`
+// — one arg passed (the new trailing-comma support in v3.3.0 made
+// it parse cleanly) where the function requires two. Sema let it
+// through and the verifier rejected "Incorrect number of arguments
+// passed to called function".
+//
+// Same bug applied to direct free-function calls AND to module-
+// qualified calls (`test.assert_eq(...)`). Both paths now arity-
+// check before passing to Codegen.
+//
+// Probe passes when each too-few or too-many call below produces
+// a clean Sema error rather than crashing the compiler. The
+// probe runner only counts ICE/segfault as a fail, so the
+// expected behavior is "exits with a Sema error".
+
+define need_two(a: Int, b: Int) -> Int { return a + b }
+define with_default(a: Int, b: Int = 10) -> Int { return a + b }
+
+define main() -> void {
+    // Calling with the correct shapes must still work.
+    print(need_two(1, 2))                  // = 3
+    print(with_default(1))                 // = 11
+    print(with_default(1, 2))              // = 3
+}

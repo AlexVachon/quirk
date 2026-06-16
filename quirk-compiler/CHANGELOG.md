@@ -5,6 +5,88 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [3.3.0] — 2026-06-16
+
+### Sema: bare function name resolves to Callable in value contexts
+
+`apply(dbl, 5)` was rejected with "expected 'Callable' but got
+'Int'": Pass 1 binds top-level functions in the global scope
+with their **return type**, so a literal lookup got "Int" (dbl's
+return) instead of the function value. `checkLiteral` now
+detects function names that aren't shadowed by a deeper local
+scope and surfaces them as `Callable` — the direct-call path
+`checkCall(callee == LiteralNode)` bypasses checkLiteral and
+still gets the return type, so `dbl(5)` is unchanged. Probe
+`p55_bare_fn_as_callable` locks it.
+
+### Parser: trailing comma + newline in list and map literals
+
+Reader-friendly layout used to fail:
+```
+points := [
+    Pt(1, 2),
+    Pt(3, 4),
+]
+```
+Set and tuple literals already had the peek-after-comma break;
+list and map didn't. Same one-line check applied to both.
+Probe `p56_multiline_literals` covers all four shapes.
+
+### Codegen: emitBox preserves raw i8* opaque values
+
+`a: Any := xs.__get(0); b: Int := a` silently produced 0. The
+walrus with `Any` annotation routed val through `emitBox`,
+which had no special case for raw `i8*` (the universal opaque
+shape coming out of `__get` / `Map.get` / lambda returns) and
+fell through to the "must be a String" fallback — re-encoding
+an Int-tagged i8* as a heap `Any-of-String`. The downstream
+`b: Int := a` then quirk_opaque_to_int'd the string-tagged
+wrapper and hit the default case (0).
+
+Fix: emitBox now passes raw `i8*` through unchanged. Every
+`quirk_opaque_to_*` decoder already accepts `i8*` and dispatches
+on the runtime tag, so the universal-opaque shape is a valid
+Any payload as-is.
+
+Probe `p57_any_int_walrus`. The fix also lets `List.sort` drop
+the awkward "no annotation on `a` / `b` / `cmp`" workaround
+that v1.3.0 shipped with — comparators now read the way the
+docstring example claimed they did.
+
+### Codegen: Double → opaque-ptr in variant-field stores
+
+`Some(3.14)` (a generic-T variant constructed with a Double arg)
+tripped the verifier: "Stored value type does not match pointer
+operand type! store double, i8**". The init-arg coercion path
+got a Double → opaque-ptr branch in v3.2.0, but the no-`__init`
+fallback path in `StructGen.hpp`'s direct-field-store loop did
+not — and variant structs use that fallback. Same `Any_box_double`
+treatment now applied there. Probe `p58_double_field_in_variant`
+locks it.
+
+### Codegen: Any → Bool field assignment
+
+`h.n = items.get(0)` where `h.n: Bool` and `items.get(0)`
+returns Any used to fail the verifier with "Invalid bitcast
+i8* to i1". The field-assign coercion chain had Any→Int and
+Any→Double routes but no Any→Bool, so it fell through to a
+raw bitcast LLVM rejects. Routed through `quirk_any_as_bool`
+(same helper used for truthy checks on i8* values in if/while
+conditions). Probe `p60_any_to_bool_field`.
+
+### Sema: arity gate on free and module-qualified function calls
+
+`test.assert_eq(crypto.sha256(""),)` (the new v3.3.0 trailing-
+comma support let this parse as a 1-arg call) slipped past Sema
+and reached Codegen, which emitted a malformed
+`call void @"Test$assert_eq"(i8* %3)`. Sema's free-function path
+type-checked positional args but didn't gate count; the module-
+qualified path (`module.fn(...)`) didn't gate either count or
+types. Both paths now reject too-few / too-many calls with a
+clean message ("`assert_eq() takes between 2 and 3 arguments
+but 1 was given`") and the module-path also type-checks its
+matched positional args. Probe `p59_call_arity`.
+
 ## [3.2.0] — 2026-06-14
 
 ### typing v1.3.0 — Option/Result combinators + List.sort

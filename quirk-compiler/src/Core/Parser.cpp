@@ -455,8 +455,18 @@ std::unique_ptr<Node> Parser::parseExpression(int min_precedence) {
             } else {
                 std::vector<std::unique_ptr<Node>> elements;
                 elements.push_back(std::move(firstExpr));
-                while (match(TokenType::COMMA))
+                while (match(TokenType::COMMA)) {
+                    // Accept a trailing comma — common when each
+                    // element gets its own line for readability:
+                    //     [
+                    //         Foo(...),
+                    //         Bar(...),
+                    //     ]
+                    // The lexer doesn't surface newlines as tokens
+                    // so this purely a peek-after-comma check.
+                    if (peek().type == TokenType::RBRACKET) break;
                     elements.push_back(parseExpression(0));
+                }
                 consume(TokenType::RBRACKET, "Expected ']' after list elements");
                 left = std::make_unique<ListLiteralNode>(std::move(elements));
             }
@@ -518,6 +528,7 @@ std::unique_ptr<Node> Parser::parseExpression(int min_precedence) {
                     auto node = std::make_unique<MapLiteralNode>();
                     node->elements.push_back({std::move(keyExpr), std::move(valExpr)});
                     while (match(TokenType::COMMA)) {
+                        if (peek().type == TokenType::RBRACE) break; // trailing comma
                         auto k = parseExpression(0);
                         consume(TokenType::COLON, "Expected ':' after map key");
                         auto v = parseExpression(0);

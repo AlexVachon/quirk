@@ -1,0 +1,33 @@
+// A Double argument flowing into a generic-T variant field used
+// to trip the verifier with "Stored value type does not match
+// pointer operand type! store double, i8**". The no-`__init`
+// fallback path in StructGen lacked the Double → opaque-ptr
+// coercion (the regular __init-arg path already had it from
+// v3.2.0 — the variant-direct-field-store path didn't).
+//
+// Found while wiring v3.3.0:
+//     fn(x: Double) => Some(x + 1)
+// `Some(...)` for the generic variant doesn't have an explicit
+// __init, so StructGen falls through to its direct field-store
+// loop where Double was missing.
+//
+// Probe passes when the variant is constructed cleanly with no
+// ICE and the wrapped value round-trips.
+
+from typing use { Option, Some, None }
+
+define main() -> void {
+    // Direct construction with a Double arg.
+    o: Option := Some(3.14)
+    print(o.is_some())                     // = true
+
+    // Inside a Double-typed lambda body that returns Some(...).
+    b: Option := None()
+    c := b.and_then(fn(x: Double) => Some(x + 1))
+    print(c.is_none())                     // = true
+
+    // Same pattern, but the lambda actually runs.
+    d: Option := Some(2.5)
+    e := d.and_then(fn(x: Double) => Some(x * 2))
+    print(e.is_some())                     // = true
+}

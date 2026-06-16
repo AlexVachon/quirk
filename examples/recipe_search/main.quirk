@@ -322,8 +322,11 @@ define cmd_random() -> void {
 }
 
 define cmd_clear() -> void {
-    // ANSI: clear screen + home cursor.
-    print("[2J[H")
+    // ANSI: clear screen + home cursor. The "[" literals here
+    // include a leading ESC (0x1b) byte — same trick as `esc()`
+    // up top, just no trailing "m" since CSI codes 2J and H
+    // don't take one.
+    print("[2J" + "[H")
     print_header()
 }
 

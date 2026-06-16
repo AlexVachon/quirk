@@ -1,0 +1,31 @@
+// Storing an Any value (e.g. from `list.get(i)` or `map.get(k)`)
+// into a Bool field used to trip the verifier with "Invalid bitcast
+// i8* to i1" — the field-assignment coercion chain had Any→Int
+// and Any→Double routes but no Any→Bool, falling through to a
+// raw bitcast that LLVM rejects.
+//
+// Probe passes when the assignment compiles cleanly and the bool
+// reflects the underlying value's truthiness via
+// `quirk_any_as_bool` (same helper used for `if` conditions on
+// i8* values).
+
+from typing.collections.list use { List }
+
+struct H {
+    n: Bool
+    define __init(self, n: Bool) { self.n = n }
+}
+
+define main() -> void {
+    items: List = [1, 0, 1]
+    h := H(false)
+
+    h.n = items.get(0)             // truthy → true
+    print(h.n)                     // = true
+
+    h.n = items.get(1)             // 0 → false
+    print(h.n)                     // = false
+
+    h.n = items.get(2)             // truthy → true
+    print(h.n)                     // = true
+}

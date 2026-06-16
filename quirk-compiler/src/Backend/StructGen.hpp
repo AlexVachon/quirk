@@ -334,6 +334,20 @@ class StructGen {
                     else if (val->getType()->isPointerTy() && expectedType->isPointerTy()) val = Builder.CreateBitCast(val, expectedType);
                     else if (val->getType()->isIntegerTy() && expectedType->isPointerTy()) val = quirk::boxIntToOpaque(Context, TheModule, Builder, val, expectedType);
                     else if (val->getType()->isIntegerTy() && expectedType->isDoubleTy()) val = Builder.CreateSIToFP(val, expectedType);
+                    else if (val->getType()->isDoubleTy() && expectedType->isPointerTy()) {
+                        // Double → opaque ptr in the no-__init fallback
+                        // path. Mirrors the init-arg coercion above —
+                        // surfaces in variant-struct field stores like
+                        // `Some(x)` where x is Double and Some.value is
+                        // an erased generic T (i8*). Without this the
+                        // verifier rejected "store double, i8**".
+                        Type* i8p = Type::getInt8PtrTy(Context);
+                        FunctionCallee box = TheModule->getOrInsertFunction(
+                            "Core_Primitives_Any_box_double",
+                            i8p, Type::getDoubleTy(Context));
+                        val = Builder.CreateCall(box, {val}, "field_dbl_box");
+                        if (expectedType != i8p) val = Builder.CreateBitCast(val, expectedType);
+                    }
                 }
 
                 Builder.CreateStore(val, fieldPtr);

@@ -27,6 +27,10 @@ quirk-compiler/obj
 quirk-compiler/tools/fuzz_work/
 quirk-compiler/tools/fuzz_findings/
 
+# Python bytecode cache from running tools/fuzz.py and
+# tools/gen_stdlib_docs.py.
+__pycache__/
+
 # Editor / extension
 quirk-vscode/node_modules
 quirk-vscode/out

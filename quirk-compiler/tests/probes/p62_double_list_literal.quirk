@@ -1,0 +1,35 @@
+// `[1.5, 2.5, 3.5]` used to ICE with "Invalid bitcast double to
+// i8*". `createListFromValues` in StructGen had a Double-typed
+// element fall through to a raw bitcast to i8*, which LLVM
+// rejects (size + type-class mismatch). Routed through
+// `Core_Primitives_Any_box_double` so each element carries an
+// ANY_DOUBLE tag; the same Bool path was added defensively.
+//
+// `String.join` (used by `List.__repr` → print) also needed an
+// update: the old fast-path inlined the tagged-Int case and
+// assumed every non-Int item was a String*, which SIGSEGV'd on
+// heap-tagged Doubles. Now routes every item through
+// `quirk_opaque_to_string`.
+//
+// Probe passes when:
+//   - the list-literal compiles cleanly
+//   - print(list) shows the values, not garbage
+//   - direct index access via typed walrus round-trips
+
+define main() -> void {
+    xs := [1.5, 2.5, 3.5]
+    print(xs)                              // = [1.5, 2.5, 3.5]
+    print(xs.length())                     // = 3
+
+    a: Double := xs.__get(0)
+    b: Double := xs.__get(2)
+    print(a + b)                           // = 5.0
+
+    // Mixed Int + Double + Bool — each routes through the
+    // matching Any tag. Without the i1-before-isIntegerTy ordering
+    // in StructGen, Bool elements rendered as 1/0 instead of
+    // true/false because i1 also satisfies isIntegerTy().
+    mixed := [1, 2.5, true, 3, false]
+    print(mixed)                           // = [1, 2.5, true, 3, false]
+    print(mixed.length())                  // = 5
+}

@@ -479,7 +479,53 @@ class StructGen {
         for (size_t i = 0; i < values.size(); i++) {
             Value* slot = Builder.CreateGEP(voidPtr, bufferPtr, ConstantInt::get(Type::getInt32Ty(Context), i));
             Value* v = values[i];
-            if (v->getType()->isIntegerTy()) v = Builder.CreateIntToPtr(v, voidPtr);
+            if (v->getType()->isIntegerTy(1)) {
+                // i1 Bool → Any tag (matches boxToVoidPtr / emitBox).
+                // Checked BEFORE the wider `isIntegerTy()` since i1
+                // satisfies both — without this ordering Bool list
+                // elements would render as `1` / `0` via the int
+                // inline-tag path instead of `true` / `false`.
+                Value* ext = Builder.CreateZExt(v, Type::getInt32Ty(Context));
+                Function* box = TheModule->getFunction("Core_Primitives_Any_box_bool");
+                if (!box) {
+                    FunctionType* ft = FunctionType::get(
+                        voidPtr, {Type::getInt32Ty(Context)}, false);
+                    box = Function::Create(ft, Function::ExternalLinkage,
+                                           "Core_Primitives_Any_box_bool", TheModule);
+                }
+                Value* boxed = Builder.CreateCall(box, {ext}, "list_bool_box");
+                v = (boxed->getType() == voidPtr)
+                    ? boxed
+                    : Builder.CreateBitCast(boxed, voidPtr);
+            }
+            else if (v->getType()->isIntegerTy()) {
+                // Inline-tag the Int into the i8* slot — but route
+                // 0 through the heap helper (same BoxInt rationale
+                // as elsewhere: IntToPtr(0) → null sentinel).
+                v = quirk::boxIntToOpaque(Context, TheModule, Builder, v, voidPtr);
+            }
+            else if (v->getType()->isDoubleTy()) {
+                // `[1.5, 2.5]` used to fall through to a raw bitcast
+                // of `double` → `i8*`, which LLVM rejects (size and
+                // class mismatch). Route through
+                // `Core_Primitives_Any_box_double` so the element
+                // carries an ANY_DOUBLE tag readable by every
+                // `quirk_opaque_to_*` decoder.
+                Function* box = TheModule->getFunction("Core_Primitives_Any_box_double");
+                if (!box) {
+                    FunctionType* ft = FunctionType::get(
+                        voidPtr, {Type::getDoubleTy(Context)}, false);
+                    box = Function::Create(ft, Function::ExternalLinkage,
+                                           "Core_Primitives_Any_box_double", TheModule);
+                }
+                Value* boxed = Builder.CreateCall(box, {v}, "list_dbl_box");
+                // The existing forward-decl in BuiltinGen returns
+                // `Any*` while we want `i8*` for the list slot;
+                // bitcast to keep the store typed right.
+                v = (boxed->getType() == voidPtr)
+                    ? boxed
+                    : Builder.CreateBitCast(boxed, voidPtr);
+            }
             else if (v->getType() != voidPtr) v = Builder.CreateBitCast(v, voidPtr);
             Builder.CreateStore(v, slot);
         }

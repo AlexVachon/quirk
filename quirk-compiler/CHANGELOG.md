@@ -5,6 +5,45 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [3.3.2] — 2026-06-17
+
+### Codegen + runtime: list literals of Double / Bool
+
+`[1.5, 2.5]` used to ICE with "Invalid bitcast double to i8*"
+and `[true, false]` rendered as `[1, 0]`.
+`createListFromValues` in `StructGen.hpp` had a Double element
+fall through to a raw bitcast for the i8* list slot, which LLVM
+rejects on type-class mismatch — and Bool elements went through
+the inline-Int path because `isIntegerTy()` matches both `i32`
+and `i1`. Each non-Int element now routes through the matching
+`Core_Primitives_Any_box_*` runtime helper so it carries an
+`ANY_DOUBLE` / `ANY_BOOL` tag readable by every
+`quirk_opaque_to_*` decoder. (Bool is checked before the generic
+`isIntegerTy()` branch so `i1` doesn't silently take the
+inline-int path.)
+
+The companion `String.join` (used by `List.__repr` → print)
+also needed a fix: the old fast-path inlined the tagged-Int
+case and assumed every non-Int item was a String*, so heap-
+tagged Doubles segfaulted on the first dereference. Each item
+now routes through `quirk_opaque_to_string`, picking up
+ANY_INT / ANY_DOUBLE / ANY_STRING / ANY_LIST / ANY_MAP /
+ANY_TUPLE / ANY_CALLABLE / String* / raw-tagged-int safely.
+
+Probe `p62_double_list_literal` covers Double and the mixed
+`[Int, Double, Bool]` case.
+
+### examples/recipe_web
+
+Browser-served version of `recipe_search`. Boots an HTTP server
+on `127.0.0.1:8080` with an inline-styled search form; submitting
+a query returns ranked match cards with each recipe's book + page.
+Unblocked by v3.3.1's `boxToVoidPtr` fix — the handler's Response*
+now survives the Callable round-trip intact. Demonstrates
+`net.server`, inline HTML/CSS, `url.unquote_form` for GET form
+decoding, and the same `List.sort` + Option API as the TUI
+companion.
+
 ## [3.3.1] — 2026-06-16
 
 ### Codegen: `boxToVoidPtr` no longer auto-stringifies user structs

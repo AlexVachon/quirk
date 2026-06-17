@@ -1,0 +1,246 @@
+// Browser-served version of `recipe_search`. Boots a tiny HTTP
+// server on 127.0.0.1:8080 with an inline-styled search form;
+// submitting a query like `lasagne de ricardo` returns ranked
+// matches across the cookbook library, each with the book and
+// page where it lives.
+//
+// Run:
+//     quirk examples/recipe_web/main.quirk
+//     # then open http://127.0.0.1:8080/ in a browser
+//
+// What it shows:
+//   • net.server: full HTTP loop with Request/Response in ~30 LOC
+//   • Plain structs as records (Recipe, Book, Match)
+//   • Levenshtein fuzzy match via `String.distance`
+//   • `List.sort(cb)` + Option/Result combinators (v1.3.0)
+//   • Inline HTML/CSS for a usable UI with zero static assets
+
+from typing use { Option, Some, None }
+from typing.collections.map use { Map }
+from net.server use { Server, Request }
+from net.http use { Response }
+from url use { unquote_form }
+
+// ─── Data model ────────────────────────────────────────────────
+
+struct Recipe {
+    title: String
+    page:  Int
+    define __init(self, title: String, page: Int) -> void {
+        self.title = title
+        self.page  = page
+    }
+}
+
+struct Book {
+    name:    String
+    recipes: List
+    define __init(self, name: String, recipes: List) -> void {
+        self.name    = name
+        self.recipes = recipes
+    }
+}
+
+struct RMatch {
+    book:     String
+    recipe:   String
+    page:     Int
+    distance: Int
+    define __init(self, book: String, recipe: String, page: Int, distance: Int) -> void {
+        self.book     = book
+        self.recipe   = recipe
+        self.page     = page
+        self.distance = distance
+    }
+}
+
+// ─── The library (mock data) ──────────────────────────────────
+
+define library() -> List {
+    ricardo := [Recipe("Lasagne classique", 47), Recipe("Lasagne aux legumes grilles", 51), Recipe("Lasagne au saumon fume", 53), Recipe("Pate a la bolognaise", 89), Recipe("Pizza margherita maison", 112), Recipe("Tarte aux pommes a l'ancienne", 201)]
+    joy     := [Recipe("Classic Lasagna Bolognese", 312), Recipe("Vegetable Lasagna with Spinach", 316), Recipe("Spaghetti and Meatballs", 298), Recipe("Beef Stroganoff", 421), Recipe("Roast Chicken with Lemon", 487)]
+    sfah    := [Recipe("Buttermilk-Brined Roast Chicken", 156), Recipe("Tomato-Braised Chickpeas", 203), Recipe("Caesar Salad", 88), Recipe("Pasta alla Carbonara", 241)]
+    plenty  := [Recipe("Roasted Butternut Squash with Lentils", 74), Recipe("Mushroom Lasagne", 128), Recipe("Aubergine with Buttermilk Sauce", 34)]
+    return [Book("Ricardo Vol. 2", ricardo), Book("Joy of Cooking", joy), Book("Salt, Fat, Acid, Heat", sfah), Book("Plenty (Ottolenghi)", plenty)]
+}
+
+// ─── Matching ──────────────────────────────────────────────────
+
+define score(query: String, title: String) -> Int {
+    return query.lower().distance(title.lower())
+}
+
+define search(query: String) -> List {
+    threshold := query.length() * 3 + 10
+    matches := []
+    for book in library() {
+        b: Book := book
+        for r in b.recipes {
+            rec: Recipe := r
+            d := score(query, rec.title)
+            if d <= threshold {
+                matches.append(RMatch(b.name, rec.title, rec.page, d))
+            }
+        }
+    }
+    return matches.sort(fn(a: Any, b: Any) -> Int {
+        ma: RMatch := a
+        mb: RMatch := b
+        return ma.distance - mb.distance
+    })
+}
+
+define best_match(query: String) -> Option {
+    results := search(query)
+    if results.length() == 0 { return None() }
+    return Some(results.get(0))
+}
+
+// ─── HTML rendering ────────────────────────────────────────────
+
+define html_escape(s: String) -> String {
+    out := s.replace("&", "&amp;")
+    out = out.replace("<", "&lt;")
+    out = out.replace(">", "&gt;")
+    out = out.replace("\"", "&quot;")
+    return out
+}
+
+define render_results(query: String, results: List) -> String {
+    if query.length() == 0 {
+        return "<p class=\"hint\">Type a recipe name above (try \"lasagne de ricardo\" or \"roast chicken\").</p>"
+    }
+    if results.length() == 0 {
+        return "<p class=\"hint\">No matches for <em>" + html_escape(query) + "</em>. Try a different query.</p>"
+    }
+
+    cap := 5
+    shown := results.length()
+    if shown > cap { shown = cap }
+
+    plural := " matches"
+    if shown == 1 { plural = " match" }
+
+    cards := ""
+    j := 0
+    while j < shown {
+        m: RMatch := results.get(j)
+        rank_class := "card"
+        if j == 0 { rank_class = "card card-best" }
+        cards = cards + "<article class=\"" + rank_class + "\">"
+        cards = cards + "<h3>" + html_escape(m.recipe) + "</h3>"
+        cards = cards + "<p class=\"meta\">"
+        cards = cards + "<span class=\"book\">" + html_escape(m.book) + "</span>"
+        cards = cards + "<span class=\"page\">p." + m.page.str() + "</span>"
+        cards = cards + "<span class=\"score\">distance " + m.distance.str() + "</span>"
+        cards = cards + "</p>"
+        cards = cards + "</article>"
+        j = j + 1
+    }
+    return "<p class=\"count\">Top " + shown.str() + plural + " for <em>" + html_escape(query) + "</em>:</p>" + cards
+}
+
+define render_page(query: String, results_html: String) -> String {
+    escaped_q := html_escape(query)
+    return "<!doctype html>" +
+        "<html lang=\"en\"><head>" +
+        "<meta charset=\"utf-8\">" +
+        "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">" +
+        "<title>Recipe Search</title>" +
+        "<style>" +
+        "  :root { --bg:#fafaf7; --ink:#222; --muted:#777; --accent:#c2410c; --card:#fff; --border:#e5e1d8; }" +
+        "  * { box-sizing: border-box; }" +
+        "  body { font: 16px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; background: var(--bg); color: var(--ink); margin: 0; padding: 0; }" +
+        "  main { max-width: 720px; margin: 0 auto; padding: 48px 24px; }" +
+        "  h1 { font-size: 32px; margin: 0 0 8px; letter-spacing: -0.02em; }" +
+        "  .tagline { color: var(--muted); margin: 0 0 32px; }" +
+        "  form { display: flex; gap: 8px; margin-bottom: 24px; }" +
+        "  input[type=text] { flex: 1; padding: 12px 16px; font-size: 16px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); }" +
+        "  input[type=text]:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(194,65,12,0.15); }" +
+        "  button { padding: 12px 24px; font-size: 16px; font-weight: 500; background: var(--accent); color: white; border: none; border-radius: 8px; cursor: pointer; }" +
+        "  button:hover { background: #9a3412; }" +
+        "  .count { color: var(--muted); margin: 24px 0 12px; }" +
+        "  .hint  { color: var(--muted); font-style: italic; padding: 24px; background: var(--card); border: 1px dashed var(--border); border-radius: 8px; text-align: center; }" +
+        "  .card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 16px 20px; margin-bottom: 12px; transition: transform 0.1s; }" +
+        "  .card:hover { transform: translateX(2px); }" +
+        "  .card-best { border-left: 4px solid var(--accent); padding-left: 16px; }" +
+        "  .card h3 { margin: 0 0 6px; font-size: 18px; color: var(--ink); }" +
+        "  .meta { margin: 0; color: var(--muted); font-size: 14px; display: flex; gap: 16px; flex-wrap: wrap; }" +
+        "  .book  { font-weight: 500; color: #555; }" +
+        "  .page  { color: var(--accent); font-variant-numeric: tabular-nums; }" +
+        "  .score { margin-left: auto; font-size: 12px; opacity: 0.6; }" +
+        "  footer { margin-top: 48px; padding-top: 16px; border-top: 1px solid var(--border); color: var(--muted); font-size: 13px; text-align: center; }" +
+        "</style>" +
+        "</head><body><main>" +
+        "<h1>Recipe Search</h1>" +
+        "<p class=\"tagline\">Fuzzy lookup across your cookbook shelf.</p>" +
+        "<form action=\"/\" method=\"get\">" +
+        "  <input type=\"text\" name=\"q\" value=\"" + escaped_q + "\" placeholder=\"Try: lasagne de ricardo\" autofocus>" +
+        "  <button type=\"submit\">Search</button>" +
+        "</form>" +
+        results_html +
+        "<footer>Powered by Quirk · Levenshtein over " + library().length().str() + " cookbooks</footer>" +
+        "</main></body></html>"
+}
+
+// ─── HTTP handler ─────────────────────────────────────────────
+
+define handle(req: Request) -> Response {
+    // Log every hit so it's obvious from the terminal whether a
+    // browser request is actually reaching the server (helpful
+    // when running under WSL2 / Docker / a VM where localhost
+    // forwarding can swallow connections silently).
+    print("${req.method} ${req.path}")
+
+    if req.path == "/healthz" {
+        return Response(200, "ok", Map())
+    }
+    // Browsers ask for /favicon.ico after every page load. Return
+    // an empty 204 so the browser stops waiting on it and the
+    // request log stays readable.
+    if req.path == "/favicon.ico" {
+        return Response(204, "", Map())
+    }
+    if req.path != "/" {
+        return Response(404, "not found", Map())
+    }
+
+    // net.server's parse_query uses `unquote` (percent-decoding
+    // only), but browsers GET-encode spaces as `+`. Apply
+    // `unquote_form` to map `+` → space on top.
+    query := ""
+    if req.query.has("q") {
+        q_raw: String := req.query.get("q")
+        query = unquote_form(q_raw)
+    }
+
+    results_html := ""
+    if query.length() > 0 {
+        results := search(query)
+        results_html = render_results(query, results)
+    } else {
+        results_html = render_results(query, [])
+    }
+
+    html := render_page(query, results_html)
+    headers := Map()
+    headers.put("Content-Type", "text/html; charset=utf-8")
+    return Response(200, html, headers)
+}
+
+// ─── Entry ────────────────────────────────────────────────────
+
+define main() -> void {
+    // Bind to all interfaces (0.0.0.0) instead of just loopback —
+    // makes the server reachable through container / VM / WSL2
+    // network bridges where the Windows-side browser hits a
+    // forwarded address that isn't the same `127.0.0.1` the
+    // server bound to. Local-only setups still work via
+    // `http://127.0.0.1:8080/` or `http://localhost:8080/`.
+    host := "0.0.0.0"
+    port := 8080
+    print("Recipe Search running on http://127.0.0.1:${port}/")
+    print("  (Ctrl-C to stop)")
+    srv := Server()
+    srv.listen(host, port, handle)
+}

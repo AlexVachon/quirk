@@ -10,6 +10,7 @@
 String* Core_Primitives_Any_to_string(Any* a);
 double Core_Primitives_Any_to_float(Any* a);
 extern void quirk_throw_exception(const char* type_name, const char* message);
+extern String* quirk_opaque_to_string(void* val);
 
 #define MAX_SMALL_INT 0xFFFFF
 
@@ -696,18 +697,21 @@ List* Core_String_String_split(String* self, String* delim) {
 String* Core_String_String_join(String* self, List* items) {
     if (!items || !self || !self->buffer)
         return make_String("");
+    // Route every element through `quirk_opaque_to_string` so we
+    // correctly stringify each of the three opaque shapes:
+    //   - tagged-Int (low <= 0xFFFFFFFF)
+    //   - heap Any* (tag in ANY_INT..ANY_NULL) — needed for
+    //     `[1.5, 2.5].join(...)` and any list of boxed primitives
+    //   - real String* / other struct ptr
+    // The old fast-path inlined the tagged-Int case and assumed
+    // every non-Int item was a String*, which SIGSEGV'd on heap-
+    // tagged Doubles passed to `print([1.5, 2.5])`.
+    String** rendered = (String**)malloc(items->size * sizeof(String*));
     int total_len = 0;
     for (int i = 0; i < items->size; i++) {
-        void* item = items->data[i];
-        uintptr_t val = (uintptr_t)item;
-        if (val <= MAX_SMALL_INT) {
-            char temp[32];
-            total_len += sprintf(temp, "%d", (int)val);
-        } else {
-            String* s = (String*)item;
-            if (s && s->buffer)
-                total_len += s->length;
-        }
+        rendered[i] = quirk_opaque_to_string(items->data[i]);
+        if (rendered[i] && rendered[i]->buffer)
+            total_len += rendered[i]->length;
         if (i < items->size - 1)
             total_len += self->length;
     }
@@ -715,16 +719,10 @@ String* Core_String_String_join(String* self, List* items) {
     char* ptr = result;
     *ptr = '\0';
     for (int i = 0; i < items->size; i++) {
-        void* item = items->data[i];
-        uintptr_t val = (uintptr_t)item;
-        if (val <= MAX_SMALL_INT) {
-            ptr += sprintf(ptr, "%d", (int)val);
-        } else {
-            String* s = (String*)item;
-            if (s && s->buffer) {
-                strcpy(ptr, s->buffer);
-                ptr += s->length;
-            }
+        String* s = rendered[i];
+        if (s && s->buffer) {
+            memcpy(ptr, s->buffer, s->length);
+            ptr += s->length;
         }
         if (i < items->size - 1) {
             memcpy(ptr, self->buffer, self->length);
@@ -732,6 +730,7 @@ String* Core_String_String_join(String* self, List* items) {
         }
     }
     *ptr = '\0';
+    free(rendered);
     return make_String_taking_ownership(result);
 }
 

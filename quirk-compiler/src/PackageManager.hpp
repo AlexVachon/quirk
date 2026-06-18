@@ -9,7 +9,7 @@
 //    quirk remove <pkg>                     delete a package
 //    quirk list / packages                  list installed packages with versions
 //    quirk show <pkg>                       show details for one installed package
-//    quirk init                             scaffold a quirk.toml in cwd
+//    quirk init [--bin|--lib]               scaffold quirk.toml + src/ + tests/
 //    quirk version / --version              print compiler version
 //
 //  Storage:
@@ -64,7 +64,7 @@ static std::string self_binary();
 
 namespace qpm {
 
-constexpr const char* QUIRK_VERSION = "3.3.2";
+constexpr const char* QUIRK_VERSION = "3.4.0";
 
 namespace fs = std::filesystem;
 
@@ -959,7 +959,12 @@ static int cmd_init(const std::vector<std::string>& args = {}) {
     }
 
     bool yes = false;
-    for (auto& a : args) if (a == "-y" || a == "--yes") yes = true;
+    bool lib = false;
+    for (auto& a : args) {
+        if (a == "-y" || a == "--yes") yes = true;
+        else if (a == "--lib")         lib = true;
+        else if (a == "--bin")         lib = false;  // explicit, matches default
+    }
 
     Manifest m;
     m.name        = fs::current_path().filename().string();
@@ -982,7 +987,64 @@ static int cmd_init(const std::vector<std::string>& args = {}) {
         m.entry       = prompt_default("entry point",  m.entry);
     }
     write_manifest(mf.string(), m);
-    std::cout << "\nCreated quirk.toml for project '" << m.name << "'.\n";
+
+    // Scaffold src/ + tests/ unless they already exist. Empty
+    // dirs are worse than nothing, so we write a stub file in each
+    // — `quirk run` and `quirk test` work immediately on a fresh
+    // project without the user having to type anything.
+    //
+    //   default (--bin): src/index.quirk has a `main()` entry that
+    //   prints a greet; tests/index_test.quirk exercises a helper.
+    //
+    //   --lib: src/index.quirk exposes a public function, no main;
+    //   tests/index_test.quirk imports + asserts on it.
+    std::error_code ec;
+    fs::create_directories("src", ec);
+    fs::create_directories("tests", ec);
+
+    fs::path srcFile  = fs::path("src")   / "index.quirk";
+    fs::path testFile = fs::path("tests") / "index_test.quirk";
+
+    if (!fs::exists(srcFile)) {
+        std::ofstream out(srcFile);
+        if (lib) {
+            out << "// Library entry — public functions get re-exported from here.\n"
+                << "//\n"
+                << "// Pair with `from " << m.name << " use { greet }` once installed.\n\n"
+                << "define greet(name: String) -> String {\n"
+                << "    return \"Hello, ${name}!\"\n"
+                << "}\n";
+        } else {
+            out << "// `quirk run` enters here. Move shared logic into helper\n"
+                << "// modules next to this file and `use ./helper` when the\n"
+                << "// project grows past one file.\n\n"
+                << "define greet(name: String) -> String {\n"
+                << "    return \"Hello, ${name}!\"\n"
+                << "}\n\n"
+                << "define main() -> void {\n"
+                << "    print(greet(\"world\"))\n"
+                << "}\n";
+        }
+    }
+
+    if (!fs::exists(testFile)) {
+        std::ofstream out(testFile);
+        out << "use test\n"
+            << "from test use { TestCase }\n\n"
+            << "// `quirk test` discovers every `*_test.quirk` under tests/.\n"
+            << "// Add more TestCases below; each is a (name, lambda) pair.\n\n"
+            << "define main() -> void {\n"
+            << "    cases := [\n"
+            << "        TestCase(\"placeholder\", fn() { test.assert_eq(1 + 1, 2) }),\n"
+            << "    ]\n"
+            << "    test.run_all(cases)\n"
+            << "}\n";
+    }
+
+    std::cout << "\nCreated quirk.toml for project '" << m.name << "'"
+              << (lib ? " (library)" : "") << ".\n"
+              << "  src/index.quirk        — " << (lib ? "library entry" : "program entry (run with `quirk run`)") << "\n"
+              << "  tests/index_test.quirk — placeholder test (run with `quirk test`)\n";
     return 0;
 }
 
@@ -6031,10 +6093,19 @@ static std::string help_for(const std::string& cmdIn) {
                "quirk pkg registry url [<url>]\n"
                "    Show or set the registry URL (~/.quirk/config.toml).\n";
     if (cmd == "init")
-        return "quirk init [-y]\n"
-               "    Scaffold a quirk.toml in the current directory by prompting\n"
-               "    for each field. Use -y / --yes to skip the prompts and accept\n"
-               "    sensible defaults (dir name, MIT, git config for author/repo).\n";
+        return "quirk init [-y] [--bin | --lib]\n"
+               "    Scaffold a quirk.toml plus src/index.quirk and\n"
+               "    tests/index_test.quirk stubs in the current directory.\n"
+               "    The defaults give you a working `quirk run` and\n"
+               "    `quirk test` immediately.\n"
+               "\n"
+               "    Flags:\n"
+               "      -y / --yes   skip prompts, accept sensible defaults\n"
+               "                   (dir name, MIT, git config for author/repo)\n"
+               "      --bin        (default) scaffold src/index.quirk with a\n"
+               "                   `main()` entry — the binary shape\n"
+               "      --lib        scaffold src/index.quirk exposing a public\n"
+               "                   function (no main) — the library shape\n";
     if (cmd == "register")
         return "quirk pkg register [<alias>] [--skip-checks]\n"
                "    Register THIS project under a short name so others can\n"

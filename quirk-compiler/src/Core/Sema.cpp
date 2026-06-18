@@ -643,8 +643,25 @@ bool Sema::analyze(std::vector<std::unique_ptr<Node>> &nodes)
             defineVariable(f->name, f->returnType);
             if (!f->cls.empty())
                 methodRegistry[f->cls][f->name] = f;
-            else
-                methodRegistry[""][f->name] = f;
+            else {
+                // For top-level functions: keep the existing
+                // single-FunctionNode pointer for the 99% case where
+                // a name is unique. When a second package defines
+                // the same name (e.g. `html.input` after
+                // `console.input` is loaded), promote both into the
+                // overloads side-table so the call-site can pick by
+                // module visibility.
+                auto& slot = methodRegistry[""][f->name];
+                if (slot && slot->moduleName != f->moduleName) {
+                    auto& cands = topLevelOverloads[f->name];
+                    if (cands.empty()) cands.push_back(slot);
+                    // Avoid duplicate registration on Sema re-runs.
+                    bool already = false;
+                    for (auto* c : cands) if (c == f) { already = true; break; }
+                    if (!already) cands.push_back(f);
+                }
+                slot = f;
+            }
         }
         else if (auto e = dynamic_cast<EnumNode*>(node.get())) {
             enumRegistry[e->name] = e;
@@ -766,6 +783,12 @@ void Sema::checkUse(UseNode *node)
                 fatalError(msg, node->line, node->col, node->filePath);
             }
             ctx.visibleSymbols.insert(item);
+            // Record the source module so cross-package
+            // collisions on top-level function names can be
+            // resolved at lookup time. `node->moduleName` here is
+            // the fully-dotted path the user wrote, e.g. "html"
+            // or "typing.collections.list".
+            ctx.visibleSymbolSources[item] = node->moduleName;
         }
     }
     else
@@ -1985,9 +2008,9 @@ std::string Sema::checkCall(CallNode *node)
                         node->line, node->col, node->filePath);
                 }
                 // Explicitly imported AND module-aliased — prefer the function.
-                auto fnIt = methodRegistry[""].find(l->value);
-                if (fnIt != methodRegistry[""].end()) {
-                    return fnIt->second->returnType.empty() ? "void" : fnIt->second->returnType;
+                FunctionNode* fn = lookupTopLevel(l->value);
+                if (fn) {
+                    return fn->returnType.empty() ? "void" : fn->returnType;
                 }
             }
 
@@ -2001,13 +2024,12 @@ std::string Sema::checkCall(CallNode *node)
             // scope binding is never updated. Prefer the live registry
             // entry so callers see e.g. "String" for an inferred-return
             // function whose body returns a String.
-            auto fnIt = methodRegistry[""].find(l->value);
-            if (fnIt != methodRegistry[""].end()) {
+            FunctionNode* fn = lookupTopLevel(l->value);
+            if (fn) {
                 // Type-check positional arguments against the function's
                 // declared parameters. Same shape as the struct-ctor
                 // check that landed in 2.2.2 — catches things like
                 // `User(name, age, null)` for `age: Int`.
-                FunctionNode* fn = fnIt->second;
                 // If *any* arg has a name, the call uses keyword form
                 // (`f(x=1, y=2)`) and positional matching no longer
                 // applies — Codegen reorders by name. Skip the
@@ -2169,8 +2191,8 @@ std::string Sema::checkCall(CallNode *node)
             }
 
             // 2. Is it a standard Module Function?
-            if (methodRegistry[""].count(funcName)) {
-                FunctionNode* fn = methodRegistry[""][funcName];
+            FunctionNode* fn = lookupTopLevel(funcName);
+            if (fn) {
                 bool anyKwarg = false;
                 for (auto& a : node->args) if (!a.name.empty()) { anyKwarg = true; break; }
                 if (!anyKwarg) {
@@ -2475,6 +2497,70 @@ bool Sema::inheritsFromException(const std::string& typeName, const std::string&
     return false;
 }
 
+// Find the right top-level FunctionNode for `name` from the
+// perspective of the current call site. When two packages export
+// the same name (e.g. `html.input` vs `console.input`), the
+// single-slot `methodRegistry[""][name]` is whichever Pass 1 saw
+// last — so console's internal `input(prompt_str)` would route
+// through html's signature and trip arity. We track collisions in
+// `topLevelOverloads` and disambiguate here by preferring a
+// candidate visible from the calling function's module, falling
+// back to the single-slot entry.
+FunctionNode* Sema::lookupTopLevel(const std::string& name) {
+    auto cit = topLevelOverloads.find(name);
+    if (cit != topLevelOverloads.end() && cit->second.size() > 1) {
+        std::string contextModule = currentFunctionNode
+            ? currentFunctionNode->moduleName : "main";
+        // 1. Strong preference: same module as the caller. Console's
+        //    own `prompt_default` calling `input(...)` resolves here
+        //    directly to console.input regardless of which other
+        //    packages have the same function name.
+        for (FunctionNode* f : cit->second) {
+            if (f->moduleName == contextModule) return f;
+        }
+        // 2. Caller wrote `from X use { name }` — pick the
+        //    candidate whose package prefix matches the source
+        //    the user explicitly named.
+        //
+        //    The user-written source ("html") rarely equals the
+        //    canonical moduleName ("html.src.tag.index") because
+        //    Sema derives moduleName from the file path. A prefix
+        //    match keeps the comparison working: a candidate from
+        //    "html.<anything>" matches a `from html use { ... }`
+        //    import.
+        auto pkgOf = [](const std::string& m) -> std::string {
+            auto dot = m.find('.');
+            return dot == std::string::npos ? m : m.substr(0, dot);
+        };
+        auto mvIt = moduleVisibility.find(contextModule);
+        if (mvIt != moduleVisibility.end()) {
+            auto srcIt = mvIt->second.visibleSymbolSources.find(name);
+            if (srcIt != mvIt->second.visibleSymbolSources.end()) {
+                const std::string& src = srcIt->second;
+                std::string srcPkg = pkgOf(src);
+                for (FunctionNode* f : cit->second) {
+                    if (f->moduleName == src) return f;
+                    if (pkgOf(f->moduleName) == srcPkg) return f;
+                }
+            }
+            for (FunctionNode* f : cit->second) {
+                if (mvIt->second.visibleModules.count(f->moduleName))
+                    return f;
+            }
+        }
+        // 3. Fallback: any visible candidate.
+        for (FunctionNode* f : cit->second) {
+            if (isVisible(name, f->moduleName, contextModule)) return f;
+        }
+        // 4. No clear winner — fall through to the single-slot
+        //    entry below, which preserves the historical
+        //    last-write-wins behaviour for cases that worked
+        //    before this disambiguation existed.
+    }
+    auto it = methodRegistry[""].find(name);
+    return it == methodRegistry[""].end() ? nullptr : it->second;
+}
+
 void Sema::enterScope() { scopeStack.push_back({}); }
 void Sema::exitScope()
 {
@@ -2526,9 +2612,8 @@ std::string Sema::resolveVariable(const std::string &name)
         return name;
     }
 
-    if (methodRegistry[""].count(name))
+    if (FunctionNode* f = lookupTopLevel(name))
     {
-        FunctionNode *f = methodRegistry[""][name];
         if (!isVisible(name, f->moduleName, contextModule))
             fatalError("function '" + name + "' (from '" + f->moduleName + "') is not visible here — did you 'use' it?");
         std::string ret = f->returnType;

@@ -1696,15 +1696,24 @@ std::unique_ptr<Node> Parser::parseUse() {
     std::vector<std::string> filters;
 
     auto parsePath = [&]() {
-        // Consume leading dots for relative imports (e.g. '.' or '...' or ELLIPSIS)
-        while (peek().type == TokenType::DOT || peek().type == TokenType::ELLIPSIS) {
-            if (peek().type == TokenType::ELLIPSIS) {
-                advance();
-                path += "...";
-            } else {
-                advance();
-                path += ".";
-            }
+        // Consume leading dots for relative imports. The lexer
+        // collapses adjacent dots into single tokens:
+        //   `.`   → DOT             (sibling-of-current)
+        //   `..`  → DOTDOT          (parent — same shape as the
+        //                            range operator, distinguished
+        //                            here by being followed by an
+        //                            identifier rather than an int)
+        //   `...` → ELLIPSIS        (grandparent)
+        // We normalise everything into a string of literal dots and
+        // hand that to the resolver (Compiler.cpp:resolveImportPath),
+        // which counts leading dots and walks up parent_path the
+        // matching number of times.
+        while (peek().type == TokenType::DOT
+            || peek().type == TokenType::DOTDOT
+            || peek().type == TokenType::ELLIPSIS) {
+            if (peek().type == TokenType::ELLIPSIS)      { advance(); path += "..."; }
+            else if (peek().type == TokenType::DOTDOT)   { advance(); path += "..";  }
+            else                                          { advance(); path += ".";   }
         }
         if (peek().type == TokenType::IDENTIFIER) {
             path += advance().value;

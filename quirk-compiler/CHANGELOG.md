@@ -5,6 +5,75 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [3.4.0] — 2026-06-17
+
+### `quirk init` scaffolds src/ + tests/ stubs
+
+`quirk init` used to write only `quirk.toml` and leave you to
+remember the conventional layout. It now scaffolds a working
+project the first command can exercise:
+
+```
+my-project/
+├── quirk.toml
+├── src/
+│   └── index.quirk       # define main() — `quirk run` enters here
+└── tests/
+    └── index_test.quirk  # one TestCase — `quirk test` runs it
+```
+
+Pass `--lib` for the library shape (no `main`, `src/index.quirk`
+exposes a public function). Pass `--bin` (the default) explicitly
+if you want to be loud about it. Both shapes leave the project
+in a state where `quirk run` and `quirk test` both succeed
+immediately on a fresh `quirk init -y` directory.
+
+Existing `src/index.quirk` / `tests/index_test.quirk` files are
+left alone — the scaffolder only writes the stub if the target
+path doesn't exist yet.
+
+### Parser: `..element` (parent-of-current) relative imports
+
+`from ..element use { Element }` now parses — the lexer already
+collapsed `..` into a `DOTDOT` token (for the range operator
+`1..10`) but `parsePath` in the `use`-statement parser only
+accepted `DOT` and `ELLIPSIS`. Now `DOTDOT` is folded into the
+same leading-dots-string the resolver in
+`Compiler.cpp:resolveImportPath` already understood — it counts
+the dots and walks `parent_path()` once per dot beyond the
+first. `.`/`..`/`...` all resolve consistently.
+
+Use this for sub-package layouts where a file in
+`src/foo/index.quirk` wants its sibling-of-parent:
+```
+src/
+├── element/index.quirk
+└── tag/index.quirk      # from ..element use { Element }
+```
+
+### Sema: same-name top-level functions across packages
+
+`html.input` (HTML `<input>` tag) used to fight `console.input`
+because `methodRegistry[""]` was a flat global namespace —
+whichever package Pass 1 walked last won the slot, and the
+loser's own internal calls then routed through the winner's
+signature with confusing "expected List but got String" errors
+in unrelated code.
+
+A new `topLevelOverloads` side-table tracks every candidate
+when a name collides across modules. The new `lookupTopLevel`
+helper disambiguates at the call site by preferring (1) the
+candidate from the caller's own module, then (2) the candidate
+whose package prefix matches the user's explicit
+`from PKG use { name }`, then (3) any visible candidate, then
+falling back to the historical last-write-wins single slot.
+
+Codegen still has a parallel single-slot registry, so the bare
+`input` name in the html lib stays as `input_` for v3.4.x —
+the rename pattern matches the existing `select_`/`main_`/
+`html_` keyword-collision convention. Codegen disambiguation
+is queued for v3.5.0.
+
 ## [3.3.2] — 2026-06-17
 
 ### Codegen + runtime: list literals of Double / Bool

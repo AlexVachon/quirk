@@ -19,6 +19,12 @@ struct Symbol {
 struct VisibilityContext {
     std::set<std::string> visibleModules; // e.g. "core", "math"
     std::set<std::string> visibleSymbols; // e.g. "Vector2"
+    // For each named symbol the user explicitly imported via
+    // `from X use { name }`, record the package it came from.
+    // `lookupTopLevel` uses this to break collisions when two
+    // packages export the same function name and the caller's
+    // import list says which one they meant.
+    std::map<std::string, std::string> visibleSymbolSources; // name → module
 };
 // -------------------------------
 
@@ -125,6 +131,19 @@ class Sema {
     std::map<std::string, EnumNode*> enumRegistry;
     std::map<std::string, InterfaceNode*> interfaceRegistry;
     std::map<std::string, std::map<std::string, FunctionNode*>> methodRegistry;
+    // When two packages define the same top-level function name
+    // (e.g. `console.input` and `html.input`), `methodRegistry[""][name]`
+    // only stores the last one Pass 1 walked. The losing package's
+    // own internal calls to its `input(...)` then route through the
+    // winner's signature and trip the arity / type gate with a
+    // confusing "expected List but got String" error in unrelated code.
+    //
+    // This side table keeps every candidate so the call-site lookup
+    // can prefer one whose `moduleName` is visible from the calling
+    // function's module (via isVisible). Single-candidate names stay
+    // out of here — only true collisions are tracked.
+    std::map<std::string, std::vector<FunctionNode*>> topLevelOverloads;
+    FunctionNode* lookupTopLevel(const std::string& name);
     // Top-level `NAME := value` bindings that should be exportable across
     // modules. Sema fills this during the first walk; `from M use { NAME }`
     // accepts a name iff it's in here (or one of the other registries).

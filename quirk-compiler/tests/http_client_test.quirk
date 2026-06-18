@@ -1,14 +1,29 @@
 // http client improvements — custom headers, query params, post_json,
 // redirect following. Uses httpbin.org for the test endpoints (well-known
-// stable echo server). These tests need network; skip them in offline CI.
+// stable echo server).
+//
+// NETWORK TESTS — gated behind `QUIRK_NETWORK_TESTS=1`. CI doesn't
+// set this by default because httpbin.org goes through periodic
+// outages / rate-limits that drop 503s, and the per-test 30s
+// timeout in the stdlib-test runner can't tell a real bug from a
+// service hiccup. Run locally with:
+//
+//     QUIRK_NETWORK_TESTS=1 ./bin/quirk tests/http_client_test.quirk
+//
+// to exercise the real HTTP client against the live service.
 
 use console
 use net.http
 use encoding.json
 use test
+use sys
 from test use { TestCase }
 
 define main() -> void {
+    if sys.env("QUIRK_NETWORK_TESTS") != "1" {
+        print("http_client_test: skipped (set QUIRK_NETWORK_TESTS=1 to enable)")
+        return
+    }
 
     t_custom_headers := TestCase("custom headers reach the server", fn() {
         // httpbin.org/headers echoes back the headers it received as JSON

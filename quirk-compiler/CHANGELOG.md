@@ -5,6 +5,27 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [3.5.1] — 2026-06-18
+
+### Tests: gate network-dependent stdlib tests behind `QUIRK_NETWORK_TESTS=1`
+
+`tests/http_client_test.quirk` and `tests/http_test.quirk` make
+real HTTP calls to httpbin.org / example.com. The v3.5.0 CI
+Test run failed because httpbin.org returned `503` on one call
+during the run window — a real-world service hiccup that the
+stdlib-test runner had no way to distinguish from a code
+regression. Re-running CI passed (httpbin came back), but a
+release shouldn't be blocked by an upstream's mood.
+
+Both tests now check `sys.env("QUIRK_NETWORK_TESTS") == "1"` at
+the top of `main()` and print a "skipped" line + return when
+unset. The default-skip keeps CI green; local runs that want the
+real-network coverage stay one env-var away:
+
+```bash
+QUIRK_NETWORK_TESTS=1 ./bin/quirk tests/http_client_test.quirk
+```
+
 ## [3.5.0] — 2026-06-18
 
 ### Stdlib: new `html` package

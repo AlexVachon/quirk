@@ -8,8 +8,10 @@ use sys
 from typing.exceptions use { SocketError, Exception }
 
 define main() {
-    if sys.env("QUIRK_NETWORK_TESTS") != "1" {
-        print("http_test: skipped (set QUIRK_NETWORK_TESTS=1 to enable)")
+    // Skip in CI (GitHub Actions sets CI=true). Local invocations
+    // run by default; QUIRK_NETWORK_TESTS=1 forces a run from CI.
+    if sys.env("CI") == "true" and sys.env("QUIRK_NETWORK_TESTS") != "1" {
+        print("http_test: skipped in CI (set QUIRK_NETWORK_TESTS=1 to force)")
         return
     }
 

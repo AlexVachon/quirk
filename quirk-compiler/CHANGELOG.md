@@ -5,6 +5,40 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [3.5.2] — 2026-06-18
+
+### Tests: skip network suites only under `CI=true`
+
+v3.5.1's `QUIRK_NETWORK_TESTS=1` gate had inverted ergonomics —
+running `quirk run tests/http_client_test.quirk` locally
+silently skipped, which is the opposite of what a developer
+typing the command expects.
+
+The gate now flips to `CI=true and not QUIRK_NETWORK_TESTS=1`:
+
+  - Local `quirk run …` invocations run the test (your intent is
+    clear when you type the command).
+  - GitHub Actions (which sets `CI=true` automatically) skips by
+    default.
+  - `QUIRK_NETWORK_TESTS=1` in CI forces a real run when you want
+    to verify the network path manually.
+
+### Net: discovered limitation worth surfacing
+
+While debugging the http_client_test failures, confirmed that
+`packages/net/http.quirk` is plain-HTTP-only — its docstring
+already states "`https://` URLs will fail because there is no
+TLS in the runtime yet". An attempt to switch tests to
+`https://httpbin.dev` returned 301 because Quirk opens port 80
+regardless of the URL scheme; httpbin.dev's HTTP listener
+redirects everything to HTTPS.
+
+No fix in this patch — adding TLS is a runtime project (openssl
+linkage + handshake + SNI). Filed as a real follow-up. The
+tests stay on `http://httpbin.org` (gated by `CI=true`) until
+TLS lands or a self-hosted CI fixture replaces the external
+dependency.
+
 ## [3.5.1] — 2026-06-18
 
 ### Tests: gate network-dependent stdlib tests behind `QUIRK_NETWORK_TESTS=1`

@@ -20,8 +20,13 @@ use sys
 from test use { TestCase }
 
 define main() -> void {
-    if sys.env("QUIRK_NETWORK_TESTS") != "1" {
-        print("http_client_test: skipped (set QUIRK_NETWORK_TESTS=1 to enable)")
+    // Skip in CI (GitHub Actions / most providers set CI=true).
+    // Local `quirk run …` invocations run the test against the
+    // real service — your intent was clear when you typed the
+    // command. `QUIRK_NETWORK_TESTS=1` forces a run even from
+    // CI when you want to verify the network path manually.
+    if sys.env("CI") == "true" and sys.env("QUIRK_NETWORK_TESTS") != "1" {
+        print("http_client_test: skipped in CI (set QUIRK_NETWORK_TESTS=1 to force)")
         return
     }
 

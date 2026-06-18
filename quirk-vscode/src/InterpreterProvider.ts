@@ -37,8 +37,37 @@ const SKIP_DIRS = new Set([
     'bin', 'include', 'lib', 'libs', 'packages',   // never look INSIDE these for a venv
 ]);
 
+// System-level roots we refuse to scan even if a workspace folder or open
+// document points into one. The upward-walk from `/tmp/some-test/src/tag/`
+// would otherwise reach `/tmp/` and surface every stray `.venv` left there
+// by prior experiments — the picker grows to dozens of entries and stalls
+// on stat(). Match by absolute prefix; the root path itself ("/") matches
+// only when equal.
+const SCAN_BLOCKLIST = [
+    '/tmp', '/var', '/proc', '/sys', '/dev', '/run', '/snap', '/usr', '/opt',
+];
+function isBlockedScanRoot(dir: string): boolean {
+    const norm = path.resolve(dir);
+    if (norm === '/') return true;
+    for (const blocked of SCAN_BLOCKLIST) {
+        if (norm === blocked || norm.startsWith(blocked + path.sep)) {
+            // Allow the exact dir if it's actually a workspace folder —
+            // we trust the user's explicit choice over the blocklist.
+            const isWsFolder = (vscode.workspace.workspaceFolders ?? [])
+                .some(f => f.uri.fsPath === norm);
+            if (!isWsFolder) return true;
+        }
+    }
+    return false;
+}
+
 function scanForVenvs(root: string, depth: number, seen: Set<string>, out: Interpreter[]): void {
     if (depth < 0) return;
+    // Hard cap: never scan /tmp, /var, /usr, /, etc. — even when a
+    // workspace folder or open doc walks the parent chain through one.
+    // The picker surfaced every stale venv under /tmp/ otherwise, which
+    // both clutters the menu and makes the initial stat() pass slow.
+    if (isBlockedScanRoot(root)) return;
     let entries: string[] = [];
     try { entries = fs.readdirSync(root); } catch { return; }
     for (const name of entries) {
@@ -75,6 +104,13 @@ function findWorkspaceVenvs(): Interpreter[] {
     }
 
     // Walk up from every open Quirk doc; at each level scan that dir 1 deep.
+    // Bounded above by:
+    //   - 6 levels (cheap cap)
+    //   - the filesystem root (parent === dir)
+    //   - the user's $HOME — beyond that we're in system dirs that
+    //     `isBlockedScanRoot` will refuse anyway, so the walk is a no-op.
+    //     Stopping early just skips the wasted iterations.
+    const homeDir = process.env['HOME'] ?? '';
     for (const doc of vscode.workspace.textDocuments) {
         if (doc.languageId !== 'quirk') continue;
         let dir = path.dirname(doc.uri.fsPath);
@@ -82,6 +118,13 @@ function findWorkspaceVenvs(): Interpreter[] {
             scanForVenvs(dir, 1, seen, results);
             const parent = path.dirname(dir);
             if (parent === dir) break;
+            if (homeDir && parent === homeDir) {
+                // Scan $HOME once at depth 1, then stop — the user's
+                // home dir is the natural top of any project tree, and
+                // recursing higher reaches system paths.
+                scanForVenvs(parent, 1, seen, results);
+                break;
+            }
             dir = parent;
         }
     }

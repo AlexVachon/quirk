@@ -2,6 +2,31 @@
 
 All notable changes to the extension land here. Versioning follows SemVer; minor bumps for new features, patches for fixes.
 
+## [0.2.14] — 2026-06-18
+
+### Interpreter picker stops scanning /tmp and friends
+
+"Select Quirk Interpreter" was walking up to 6 directories above
+every open `.quirk` document and scanning each one for `.venv`
+dirs. Files opened from `/tmp/<something>/src/file.quirk` ended
+up triggering a scan of `/tmp` itself, which surfaced every
+stale `.venv` left there by prior experiments — the picker grew
+to dozens of entries and stalled on `stat()` calls.
+
+Two guards:
+- `SCAN_BLOCKLIST` — `scanForVenvs` refuses to descend into
+  system roots (`/tmp`, `/var`, `/proc`, `/sys`, `/dev`, `/run`,
+  `/snap`, `/usr`, `/opt`, and `/` itself), even when the
+  upward walk lands there. Exception: if the user explicitly
+  added one as a workspace folder, we honor it.
+- Upward walk caps at `$HOME` — for docs inside the user's
+  home, capping at home is the natural top of any project
+  tree; for docs outside, the blocklist catches the system
+  paths immediately.
+
+The picker now opens in roughly the time of a single stat()
+call regardless of how cluttered `/tmp` is.
+
 ## [0.2.13] — 2026-06-13
 
 ### Stdlib index now covers tagged unions and extend-block methods

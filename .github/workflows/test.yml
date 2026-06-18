@@ -109,6 +109,28 @@ jobs:
           echo "stdlib failures: $fails"
           exit $fails
 
+      - name: Run http client tests against in-repo fixture
+        working-directory: quirk-compiler
+        env:
+          QUIRK_HOME: ${{ github.workspace }}/quirk-compiler
+        # Spin up tests/fixtures/httpbin_lite.py and point
+        # http_client_test.quirk at it. No external network
+        # dependency — `http://httpbin.org` outages can no longer
+        # block a release. The wrapper script handles
+        # start / wait-for-ready / cleanup; if it exits 0 we
+        # treat the test as passed.
+        run: |
+          set +e
+          out=$(timeout 60 tests/fixtures/run_http_tests.sh 2>&1)
+          rc=$?
+          echo "$out"
+          if [ $rc -ne 0 ] \
+             || echo "$out" | grep -qE "Internal compiler error|malformed IR|core dumped|Aborted \(core|Segmentation fault" \
+             || echo "$out" | tail -5 | grep -qiE "^[0-9]+ failed|tests? failed"; then
+            echo "::error::http client tests failed"
+            exit 1
+          fi
+
       - name: Run probe suite
         working-directory: quirk-compiler
         env:

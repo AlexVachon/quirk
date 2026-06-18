@@ -5,6 +5,41 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [3.5.3] — 2026-06-18
+
+### Tests: in-repo httpbin fixture replaces external dependency
+
+`tests/http_client_test.quirk` was tied to `http://httpbin.org`,
+which goes through periodic 503 storms that turned the test into
+a coin flip. The CI=true gate from v3.5.2 kept releases moving
+but didn't fix the local-developer experience.
+
+Three new files take the public service out of the loop:
+
+  - `tests/fixtures/httpbin_lite.py` — ~150-line stdlib-only
+    Python HTTP server with the four endpoints the test needs
+    (`/headers`, `/get`, `/post`, `/redirect/N`). Mirrors
+    httpbin's response shapes closely enough that the existing
+    assertions work unchanged.
+
+  - `tests/fixtures/run_http_tests.sh` — bash wrapper that
+    starts the fixture, waits for readiness, runs the test
+    against `http://127.0.0.1:<port>`, and cleans up on exit.
+
+  - `tests/http_client_test.quirk` now reads `QUIRK_HTTP_BASE`
+    from the env, defaulting to `http://httpbin.org` so a bare
+    `quirk run tests/http_client_test.quirk` still works
+    against the real service when you want that. The wrapper
+    overrides it to the local fixture.
+
+CI Test workflow gains a dedicated "Run http client tests
+against in-repo fixture" step that invokes the wrapper. The
+existing stdlib-tests loop still walks `http_client_test.quirk`
+but it short-circuits on the `CI=true` gate (no QUIRK_HTTP_BASE
+set in that step), so it's the wrapper run that exercises the
+HTTP client end-to-end. No external network dependency on the
+release path.
+
 ## [3.5.2] — 2026-06-18
 
 ### Tests: skip network suites only under `CI=true`

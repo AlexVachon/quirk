@@ -20,64 +20,72 @@ use sys
 from test use { TestCase }
 
 define main() -> void {
-    // Skip in CI (GitHub Actions / most providers set CI=true).
-    // Local `quirk run …` invocations run the test against the
-    // real service — your intent was clear when you typed the
-    // command. `QUIRK_NETWORK_TESTS=1` forces a run even from
-    // CI when you want to verify the network path manually.
-    if sys.env("CI") == "true" and sys.env("QUIRK_NETWORK_TESTS") != "1" {
-        print("http_client_test: skipped in CI (set QUIRK_NETWORK_TESTS=1 to force)")
+    // Target base URL. Defaults to httpbin.org, but the wrapper
+    // script `tests/fixtures/run_http_tests.sh` overrides it to
+    // `http://127.0.0.1:<port>` and runs `tests/fixtures/httpbin_lite.py`
+    // alongside — no external network dependency, no flakiness from
+    // upstream outages. CI uses the wrapper unconditionally.
+    base := sys.env("QUIRK_HTTP_BASE")
+    if base.length() == 0 { base = "http://httpbin.org" }
+
+    // Skip in CI when neither the wrapper (which sets QUIRK_HTTP_BASE)
+    // nor an explicit `QUIRK_NETWORK_TESTS=1` override is set. Local
+    // `quirk run …` invocations always run.
+    if sys.env("CI") == "true"
+        and sys.env("QUIRK_NETWORK_TESTS") != "1"
+        and sys.env("QUIRK_HTTP_BASE").length() == 0 {
+        print("http_client_test: skipped in CI (use run_http_tests.sh or set QUIRK_NETWORK_TESTS=1)")
         return
     }
 
     t_custom_headers := TestCase("custom headers reach the server", fn() {
-        // httpbin.org/headers echoes back the headers it received as JSON
+        // /headers echoes back the headers it received as JSON
         // under the "headers" key.
         h := Map()
         h.put("X-Quirk-Token", "secret123")
         h.put("Accept", "application/json")
-        resp := http.get("http://httpbin.org/headers", h, Map())
+        resp := http.get(base + "/headers", h, Map())
         test.assert_true(resp.ok)
         test.assert_true(resp.text.contains("X-Quirk-Token"))
         test.assert_true(resp.text.contains("secret123"))
     })
 
     t_query_params := TestCase("params get percent-encoded into query string", fn() {
-        // httpbin.org/get echoes back the parsed args.
+        // /get echoes back the parsed args.
         p := Map()
         p.put("q", "hello world")
         p.put("count", "3")
-        resp := http.get("http://httpbin.org/get", Map(), p)
+        resp := http.get(base + "/get", Map(), p)
         test.assert_true(resp.ok)
-        // httpbin echoes args under "args" — the wire format had %20, but
-        // the server decoded it; we assert on the decoded value so the
-        // test stays meaningful even if httpbin re-renders the URL.
+        // Args land under "args" — the wire format has %20, but
+        // the server decodes it; we assert on the decoded value so
+        // the test stays meaningful regardless of representation.
         test.assert_true(resp.text.contains("\"q\""))
         test.assert_true(resp.text.contains("hello world"))
         test.assert_true(resp.text.contains("\"count\""))
     })
 
     t_post_json := TestCase("post_json sets Content-Type and sends body", fn() {
-        // httpbin.org/post echoes both the parsed JSON body and headers.
+        // /post echoes both the parsed JSON body and headers.
         body := Map()
         body.put("name", "Quirk")
         body.put("kind", "language")
-        resp := http.post_json("http://httpbin.org/post", body)
+        resp := http.post_json(base + "/post", body)
         test.assert_true(resp.ok)
         test.assert_true(resp.text.contains("\"Quirk\""))
         test.assert_true(resp.text.contains("application/json"))
     })
 
     t_redirect := TestCase("follow_redirects=true chases 302", fn() {
-        // httpbin.org/redirect/2 sends two 302s before landing on /get.
-        resp := http.get("http://httpbin.org/redirect/2")
+        // /redirect/2 sends two 302s before landing on /get.
+        resp := http.get(base + "/redirect/2")
         // After redirects, final status must be 200 (the /get endpoint).
         test.assert_eq(resp.status_code, 200)
     })
 
     t_no_redirect := TestCase("follow_redirects=false stops at 302", fn() {
         // Same endpoint but we opt out — should see the first 3xx directly.
-        resp := http.request("GET", "http://httpbin.org/redirect/1", "", Map(), Map(), false)
+        resp := http.request("GET", base + "/redirect/1", "", Map(), Map(), false)
         test.assert_true(resp.status_code >= 300 and resp.status_code < 400)
         loc := resp.headers.get("Location")
         test.assert_true(loc.length() > 0)

@@ -20,6 +20,14 @@ from typing.collections.map use { Map }
 from net.server use { Server, Request }
 from net.http use { Response }
 from url use { unquote_form }
+from html use {
+    Element, doctype,
+    html_a, head_, body_, title_, meta, style,
+    h1, h3, p_a, span_a, em, div, article_a, footer, form_a,
+    button_a, input_, main_,
+    raw,
+    attrs, attr, class_, name_, value, type_, lang
+}
 
 // ─── Data model ────────────────────────────────────────────────
 
@@ -98,57 +106,12 @@ define best_match(query: String) -> Option {
 
 // ─── HTML rendering ────────────────────────────────────────────
 
-define html_escape(s: String) -> String {
-    out := s.replace("&", "&amp;")
-    out = out.replace("<", "&lt;")
-    out = out.replace(">", "&gt;")
-    out = out.replace("\"", "&quot;")
-    return out
-}
-
-define render_results(query: String, results: List) -> String {
-    if query.length() == 0 {
-        return "<p class=\"hint\">Type a recipe name above (try \"lasagne de ricardo\" or \"roast chicken\").</p>"
-    }
-    if results.length() == 0 {
-        return "<p class=\"hint\">No matches for <em>" + html_escape(query) + "</em>. Try a different query.</p>"
-    }
-
-    cap := 5
-    shown := results.length()
-    if shown > cap { shown = cap }
-
-    plural := " matches"
-    if shown == 1 { plural = " match" }
-
-    cards := ""
-    j := 0
-    while j < shown {
-        m: RMatch := results.get(j)
-        rank_class := "card"
-        if j == 0 { rank_class = "card card-best" }
-        cards = cards + "<article class=\"" + rank_class + "\">"
-        cards = cards + "<h3>" + html_escape(m.recipe) + "</h3>"
-        cards = cards + "<p class=\"meta\">"
-        cards = cards + "<span class=\"book\">" + html_escape(m.book) + "</span>"
-        cards = cards + "<span class=\"page\">p." + m.page.str() + "</span>"
-        cards = cards + "<span class=\"score\">distance " + m.distance.str() + "</span>"
-        cards = cards + "</p>"
-        cards = cards + "</article>"
-        j = j + 1
-    }
-    return "<p class=\"count\">Top " + shown.str() + plural + " for <em>" + html_escape(query) + "</em>:</p>" + cards
-}
-
-define render_page(query: String, results_html: String) -> String {
-    escaped_q := html_escape(query)
-    return "<!doctype html>" +
-        "<html lang=\"en\"><head>" +
-        "<meta charset=\"utf-8\">" +
-        "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">" +
-        "<title>Recipe Search</title>" +
-        "<style>" +
-        "  :root { --bg:#fafaf7; --ink:#222; --muted:#777; --accent:#c2410c; --card:#fff; --border:#e5e1d8; }" +
+// `STYLES` is the inline CSS. Lives at module scope so the
+// render path stays focused on structure; the `style([raw(...)])`
+// node passes it through to the renderer unescaped (CSS isn't
+// HTML, escaping its braces would break it).
+define styles() -> String {
+    return "  :root { --bg:#fafaf7; --ink:#222; --muted:#777; --accent:#c2410c; --card:#fff; --border:#e5e1d8; }" +
         "  * { box-sizing: border-box; }" +
         "  body { font: 16px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; background: var(--bg); color: var(--ink); margin: 0; padding: 0; }" +
         "  main { max-width: 720px; margin: 0 auto; padding: 48px 24px; }" +
@@ -169,18 +132,90 @@ define render_page(query: String, results_html: String) -> String {
         "  .book  { font-weight: 500; color: #555; }" +
         "  .page  { color: var(--accent); font-variant-numeric: tabular-nums; }" +
         "  .score { margin-left: auto; font-size: 12px; opacity: 0.6; }" +
-        "  footer { margin-top: 48px; padding-top: 16px; border-top: 1px solid var(--border); color: var(--muted); font-size: 13px; text-align: center; }" +
-        "</style>" +
-        "</head><body><main>" +
-        "<h1>Recipe Search</h1>" +
-        "<p class=\"tagline\">Fuzzy lookup across your cookbook shelf.</p>" +
-        "<form action=\"/\" method=\"get\">" +
-        "  <input type=\"text\" name=\"q\" value=\"" + escaped_q + "\" placeholder=\"Try: lasagne de ricardo\" autofocus>" +
-        "  <button type=\"submit\">Search</button>" +
-        "</form>" +
-        results_html +
-        "<footer>Powered by Quirk · Levenshtein over " + library().length().str() + " cookbooks</footer>" +
-        "</main></body></html>"
+        "  footer { margin-top: 48px; padding-top: 16px; border-top: 1px solid var(--border); color: var(--muted); font-size: 13px; text-align: center; }"
+}
+
+// Build one result card. j==0 gets `card-best` (highlighted as
+// the top match). Note: every text node — recipe title, book
+// name, even the page number — is auto-escaped by `html.text()`
+// /` String children. No manual `html_escape` sprinkled around.
+define render_card(m: RMatch, is_best: Bool) -> Element {
+    cls := "card"
+    if is_best { cls = "card card-best" }
+    return article_a([class_(cls)], [
+        h3([m.recipe]),
+        p_a([class_("meta")], [
+            span_a([class_("book")], [m.book]),
+            span_a([class_("page")], ["p." + m.page.str()]),
+            span_a([class_("score")], ["distance " + m.distance.str()])
+        ])
+    ])
+}
+
+define render_results(query: String, results: List) -> Element {
+    if query.length() == 0 {
+        return p_a([class_("hint")], [
+            "Type a recipe name above (try ",
+            em(["lasagne de ricardo"]),
+            " or ",
+            em(["roast chicken"]),
+            ")."
+        ])
+    }
+    if results.length() == 0 {
+        return p_a([class_("hint")], [
+            "No matches for ", em([query]), ". Try a different query."
+        ])
+    }
+
+    cap := 5
+    shown := results.length()
+    if shown > cap { shown = cap }
+    plural := " matches"
+    if shown == 1 { plural = " match" }
+
+    children := [
+        p_a([class_("count")], [
+            "Top " + shown.str() + plural + " for ", em([query]), ":"
+        ])
+    ]
+    j := 0
+    while j < shown {
+        m: RMatch := results.get(j)
+        children.append(render_card(m, j == 0))
+        j = j + 1
+    }
+    return div(children)
+}
+
+define render_page(query: String, body_inner: Element) -> String {
+    head := head_([
+        meta([attr("charset", "utf-8")]),
+        meta([name_("viewport"), attr("content", "width=device-width, initial-scale=1")]),
+        title_(["Recipe Search"]),
+        style([raw(styles())])
+    ])
+    body := body_([main_([
+        h1(["Recipe Search"]),
+        p_a([class_("tagline")], ["Fuzzy lookup across your cookbook shelf."]),
+        form_a([attr("action", "/"), attr("method", "get")], [
+            input_([
+                type_("text"),
+                name_("q"),
+                value(query),
+                attr("placeholder", "Try: lasagne de ricardo"),
+                attr("autofocus", "")
+            ]),
+            button_a([type_("submit")], ["Search"])
+        ]),
+        body_inner,
+        footer([
+            "Powered by Quirk · Levenshtein over " +
+            library().length().str() + " cookbooks"
+        ])
+    ])])
+    page := html_a([lang("en")], [head, body])
+    return doctype().render() + page.render()
 }
 
 // ─── HTTP handler ─────────────────────────────────────────────
@@ -214,15 +249,11 @@ define handle(req: Request) -> Response {
         query = unquote_form(q_raw)
     }
 
-    results_html := ""
-    if query.length() > 0 {
-        results := search(query)
-        results_html = render_results(query, results)
-    } else {
-        results_html = render_results(query, [])
-    }
+    results: List = []
+    if query.length() > 0 { results = search(query) }
+    body: Element := render_results(query, results)
 
-    html := render_page(query, results_html)
+    html := render_page(query, body)
     headers := Map()
     headers.put("Content-Type", "text/html; charset=utf-8")
     return Response(200, html, headers)

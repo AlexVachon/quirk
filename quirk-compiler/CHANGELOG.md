@@ -5,6 +5,59 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [3.5.0] — 2026-06-18
+
+### Stdlib: new `html` package
+
+`make bootstrap-stdlib` now fetches `quirk-html` v1.0.0
+alongside the other 23 stdlib packages. `from html use { ... }`
+works on a fresh clone with no extra install.
+
+The package ships ~40 tag constructors (block, inline, heading,
+document, void), an `attrs([class_("c"), id("home")])` helper +
+13 one-entry attribute helpers, and `text()` / `raw()` /
+`escape()` text utilities. `Element.render()` walks the tree to
+a single `String` ready to drop into a `net.http.Response` body.
+21-case test suite covers escape rules, void elements, attribute
+escaping, nested rendering, and the raw escape hatch.
+
+```quirk
+from html use { html_, head_, body_, title_, h1, p_a, class_ }
+
+page := html_([
+    head_([title_(["Recipes"])]),
+    body_([h1(["Hello"]), p_a([class_("tag")], ["Fuzzy lookup."])])
+])
+print(page.render())
+```
+
+See `github.com/AlexVachon/quirk-html` for the full surface.
+
+### examples/recipe_web rewritten on the html lib
+
+The HTTP example previously built its response with ~70 lines
+of `+ "<div class=\"…\"` string concatenation and a hand-rolled
+`html_escape`. It now renders through the html lib:
+
+```quirk
+return article_a([class_(cls)], [
+    h3([m.recipe]),
+    p_a([class_("meta")], [
+        span_a([class_("book")], [m.book]),
+        span_a([class_("page")], ["p." + m.page.str()]),
+        span_a([class_("score")], ["distance " + m.distance.str()])
+    ])
+])
+```
+
+Every text node is auto-escaped by the lib — no more manual
+`&` / `<` / `"` sprinkled at every interpolation. The full
+page tree (doctype + html + head + body) reads top-to-bottom.
+Pulls in `html v1.0.1` for the generic `attr(name, value)`
+helper used for `placeholder` / `method` / `action` /
+`autofocus` (everything outside the 13 named attribute
+helpers).
+
 ## [3.4.0] — 2026-06-17
 
 ### `quirk init` scaffolds src/ + tests/ stubs

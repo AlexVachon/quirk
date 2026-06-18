@@ -121,7 +121,7 @@ test: all
 # stdlib_registry() versions baked into the compiler). To pull newer tags,
 # bump the version inline below and re-run.
 STDLIB_PACKAGES = \
-	argparse console crypto csv datetime debug encoding fs io itertools \
+	argparse console crypto csv datetime debug encoding fs html io itertools \
 	math net prompt random regex statistics sys test time toml typing url uuid
 STDLIB_OWNER ?= AlexVachon
 STDLIB_TAG   ?= v1.0.0
@@ -134,6 +134,10 @@ STDLIB_TAG_prompt ?= v1.1.0
 # types (requires compiler v2.4.4+ — tagged unions + variant methods
 # + return-upcast codegen).
 STDLIB_TAG_typing ?= v1.3.0
+# html v1.0.0 is the initial release (compiler v3.5.0+). The
+# explicit pin keeps a global STDLIB_TAG bump from accidentally
+# pulling a v2 with potentially breaking changes.
+STDLIB_TAG_html ?= v1.0.1
 
 bootstrap-stdlib:
 	@mkdir -p packages
@@ -146,6 +150,7 @@ bootstrap-stdlib:
 	    case "$$pkg" in                                                           \
 	        prompt) tag="$(STDLIB_TAG_prompt)" ;;                                 \
 	        typing) tag="$(STDLIB_TAG_typing)" ;;                                 \
+	        html)   tag="$(STDLIB_TAG_html)"   ;;                                 \
 	    esac;                                                                     \
 	    echo "  → cloning quirk-$$pkg@$$tag";                                     \
 	    tmp=$$(mktemp -d);                                                        \

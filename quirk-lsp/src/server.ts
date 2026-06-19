@@ -122,6 +122,7 @@ interface QuirkDiag {
 interface QuirkSymbol {
   kind: 'function' | 'method' | 'struct' | 'enum' | 'enumvariant'
       | 'interface' | 'field' | 'parameter' | 'variable' | 'module_const'
+      | 'type_alias'      // `type Foo = Bar` and tagged unions `type Opt = Some(...) | None()`
       | 'usage';
   name: string;
   scope: string;          // "module", a struct name, or an enclosing function name
@@ -373,7 +374,7 @@ async function refreshSymbols(document: TextDocument): Promise<void> {
 // Crucially TOP_LEVEL must NOT accept leading whitespace, otherwise
 // every method also matches as a top-level function and methods get
 // hoisted out of their enclosing struct in the outline.
-const TOP_LEVEL_RE = /^(define|struct|enum|interface)\s+([A-Za-z_][A-Za-z0-9_]*)/;
+const TOP_LEVEL_RE = /^(define|struct|enum|interface|extend|type)\s+([A-Za-z_][A-Za-z0-9_]*)/;
 const METHOD_RE    = /^[ \t]+define\s+([A-Za-z_][A-Za-z0-9_]*)/;
 
 function symbolKindFor(keyword: string): SymbolKind {
@@ -540,6 +541,14 @@ const DECL_PATTERNS: { re: RegExp; nameGroup: number }[] = [
   { re: /^[ \t]*struct\s+([A-Za-z_][A-Za-z0-9_]*)\b/,            nameGroup: 1 },
   { re: /^[ \t]*enum\s+([A-Za-z_][A-Za-z0-9_]*)\b/,              nameGroup: 1 },
   { re: /^[ \t]*interface\s+([A-Za-z_][A-Za-z0-9_]*)\b/,         nameGroup: 1 },
+  // `extend Option { define map(...) { ... } }` — methods added
+  // to an existing type. The name captured is the *target* type;
+  // child defines flow through the regular `define` pattern.
+  { re: /^[ \t]*extend\s+([A-Za-z_][A-Za-z0-9_]*)\b/,            nameGroup: 1 },
+  // `type Option[T] = Some(value: T) | None()` — tagged unions
+  // and plain aliases. Captures the alias / union name; variants
+  // are produced as struct decls elsewhere by the compiler.
+  { re: /^[ \t]*type\s+([A-Za-z_][A-Za-z0-9_]*)\b/,              nameGroup: 1 },
 ];
 
 function findDeclarations(doc: TextDocument, name: string): Location[] {
@@ -573,8 +582,13 @@ function findDeclarations(doc: TextDocument, name: string): Location[] {
 // Pull the module name out of `use X` or `from X use { ... }`. Returns
 // null when the line isn't an import. Module names are dotted, so we
 // match `[A-Za-z_][A-Za-z0-9_.]*`.
-const USE_RE  = /^[ \t]*use\s+([A-Za-z_][A-Za-z0-9_.]*)/;
-const FROM_RE = /^[ \t]*from\s+([A-Za-z_][A-Za-z0-9_.]*)\s+use\b/;
+// Import-path regexes — accept either an identifier-leading path
+// (`typing.collections.list`) or a dot-leading relative path
+// (`.element`, `..sibling`, `...grandparent`). The leading-dot
+// cluster is parsed by the compiler's `parsePath` and resolved by
+// `resolveImportPath`; this regex mirrors what the lexer accepts.
+const USE_RE  = /^[ \t]*use\s+(\.{1,3}[A-Za-z_][A-Za-z0-9_.]*|[A-Za-z_][A-Za-z0-9_.]*)/;
+const FROM_RE = /^[ \t]*from\s+(\.{1,3}[A-Za-z_][A-Za-z0-9_.]*|[A-Za-z_][A-Za-z0-9_.]*)\s+use\b/;
 
 interface ImportLine {
   module: string;
@@ -1040,6 +1054,10 @@ connection.onHover((params: HoverParams): Hover | null => {
 
 const QUIRK_KEYWORDS = [
   'define', 'struct', 'enum', 'interface', 'extern', 'use', 'from',
+  // `extend X { ... }` adds methods to existing types (Option/Result
+  // combinators ship via this shape); `type Foo = ...` declares aliases
+  // and tagged unions. Both became canonical in v2.4–v3.x.
+  'extend', 'type',
   'if', 'else', 'elif', 'while', 'for', 'in', 'return', 'break',
   'continue', 'with', 'as', 'try', 'catch', 'throw', 'finally',
   'and', 'or', 'not', 'is', 'where', 'match', 'case', 'super',
@@ -1051,6 +1069,11 @@ const QUIRK_BUILTINS = [
   'Any', 'void', 'List', 'Map', 'Set', 'Queue', 'Tuple', 'Callable',
   'Exception', 'TypeError', 'ValueError', 'IndexError', 'KeyError',
   'IOError', 'RuntimeError', 'NotImplementedError', 'AssertionError',
+  // Canonical v3.x sum types from `typing`. They're imported via
+  // `from typing use { Option, Some, None, Result, Ok, Err }` in
+  // practice, but completion should still suggest the bare names
+  // since they're so common — the user can import after picking.
+  'Option', 'Some', 'None', 'Result', 'Ok', 'Err',
 ];
 
 // Build a completion item set from declaration scans in `text`. Used

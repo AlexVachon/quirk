@@ -1,0 +1,57 @@
+// p42 — Match-exhaustiveness warnings for plain enums (v3.8.0).
+//
+// Tagged unions already had this: a match on Option[Int] that
+// only covers Some leaves a warning naming the missing None
+// variant. Plain enums had no parallel check before — writing
+// `case Color.Red =>` and forgetting Green silently produced a
+// no-op fall-through.
+//
+// The probe exercises three shapes:
+//
+//   1. Fully-covered enum (no warning expected)
+//   2. Partially-covered enum with NO wildcard (warning expected)
+//   3. Partially-covered enum WITH a `case _` wildcard (no warning)
+//
+// Per the tagged-union policy this stays a warning, not an
+// error — runtime fall-through is harmless. The probe doesn't
+// assert on warning text directly (compiler-error tests are
+// gated separately); it just confirms each shape still parses
+// and runs to completion without crashing.
+
+enum Color {
+    Red
+    Green
+    Blue
+}
+
+define test_full() -> void {
+    c := Color.Green
+    match c {
+        case Color.Red   => print("r")
+        case Color.Green => print("g")
+        case Color.Blue  => print("b")
+    }
+}
+
+define test_with_wildcard() -> void {
+    c := Color.Red
+    match c {
+        case Color.Red => print("r")
+        case _         => print("other")
+    }
+}
+
+define test_partial() -> void {
+    // Forgetting Blue should produce a Sema warning at compile
+    // time; at runtime the fall-through prints nothing for the
+    // missing case, which is fine for this probe.
+    c := Color.Green
+    match c {
+        case Color.Red   => print("r")
+        case Color.Green => print("g")
+    }
+}
+
+test_full()
+test_with_wildcard()
+test_partial()

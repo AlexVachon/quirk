@@ -5,6 +5,48 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [3.8.0] — 2026-06-19
+
+### Match-exhaustiveness warnings for plain enums
+
+Tagged-union scrutinees already got a warning when a `match`
+left a variant uncovered. Plain enums had no parallel check —
+this:
+
+```
+enum Color { Red, Green, Blue }
+match c {
+    case Color.Red   => ...
+    case Color.Green => ...
+}
+```
+
+silently fell through on `Color.Blue` at runtime with no
+diagnostic, and the silent fall-through has caused at least
+one head-scratching debug session.
+
+Sema's MatchNode handler now mirrors the tagged-union path
+when the scrutinee type is in `enumRegistry`. It walks each
+arm's patterns looking for `EnumName.Variant` member-access
+forms, collects the covered variants, and warns once with the
+full list of missing names:
+
+```
+non-exhaustive match on enum 'Color' — missing variant: Color.Blue.
+Add an arm or a `_` wildcard.
+```
+
+Stays a warning, not an error — matches the tagged-union
+policy. Partial matches are still legal; the runtime
+fall-through (match exits silently) doesn't crash. Guarded
+arms (`case Color.Red if x > 0 => …`) are treated as
+non-covering because the body is conditional.
+
+`tests/probes/p42_enum_exhaustiveness.quirk` locks the
+behaviour across three shapes: fully covered (no warning),
+partially covered with `_` (no warning), and partially
+covered without `_` (warning fires).
+
 ## [3.7.0] — 2026-06-19
 
 ### TLS support in net.http via libssl

@@ -1135,6 +1135,51 @@ void Sema::checkStatement(Node *node)
                 }
             }
         }
+        // v3.8.0: parallel exhaustiveness check for plain enums. A
+        // `match c` where `c: Color` and `Color` has variants {Red,
+        // Green, Blue} should warn when an arm is missing. Tagged
+        // unions already get this; plain enums had no coverage check
+        // before, so writing `case Color.Red => …` and forgetting
+        // Green silently fell through with no diagnostic.
+        //
+        // Variant arms are MemberAccess patterns of the form
+        // `Color.Red`. Skip arms with guards (they're conditional —
+        // the pattern matches but the body may not run) by treating
+        // guarded arms as non-covering. Match the tagged-union policy
+        // and keep this a warning, not an error: partial matches are
+        // legal Quirk, and the fall-through behaviour (match exits
+        // silently with no body) doesn't crash anything.
+        else if (enumRegistry.count(scrutType)) {
+            bool hasWildcard = false;
+            std::set<std::string> covered;
+            for (const auto& arm : m->arms) {
+                if (arm.isWildcard) { hasWildcard = true; break; }
+                if (arm.guard) continue;  // conditional — doesn't fully cover
+                for (const auto& pat : arm.patterns) {
+                    auto* ma = dynamic_cast<MemberAccessNode*>(pat.get());
+                    if (!ma) continue;
+                    auto* obj = dynamic_cast<LiteralNode*>(ma->object.get());
+                    if (!obj || obj->value != scrutType) continue;
+                    covered.insert(ma->memberName);
+                }
+            }
+            if (!hasWildcard) {
+                std::vector<std::string> missing;
+                for (const auto& v : enumRegistry[scrutType]->variants)
+                    if (!covered.count(v)) missing.push_back(v);
+                if (!missing.empty()) {
+                    std::string msg = "non-exhaustive match on enum '" + scrutType + "' — missing variant";
+                    if (missing.size() > 1) msg += "s";
+                    msg += ": ";
+                    for (size_t i = 0; i < missing.size(); i++) {
+                        if (i > 0) msg += ", ";
+                        msg += scrutType + "." + missing[i];
+                    }
+                    msg += ". Add an arm or a `_` wildcard.";
+                    reportWarning(msg, m->line, m->col, m->filePath);
+                }
+            }
+        }
         for (auto& arm : m->arms) {
             if (arm.isTypeMatch) {
                 enterScope();

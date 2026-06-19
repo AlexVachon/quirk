@@ -2,6 +2,39 @@
 
 All notable changes to the extension land here. Versioning follows SemVer; minor bumps for new features, patches for fixes.
 
+## [0.2.15] — 2026-06-19
+
+### TextMate grammar: `extend`, type aliases, and relative imports
+
+Three drift fixes against compiler v3.4.0+ syntax:
+
+  - `extend Foo { ... }` (used by user code that bolts methods
+    onto a struct from another module) is now highlighted as a
+    declaration the same way `struct Foo { ... }` is.
+
+  - `from ..element use { Element }` and similar parent-relative
+    imports — the form added in compiler v3.4.0 to support
+    multi-file packages like `html` — now syntax-highlight the
+    dotted path correctly. Same fix applied to `from .x use`,
+    `from x.y use`, and the bare `use ...` statement.
+
+  - `data/stdlib-index.json` regenerated. The `html` package's
+    488 symbols (Element, tag combinators, attribute helpers,
+    escape/raw) are now indexed for completion and hover.
+
+### LSP (quirk-lsp 0.19.0) sees `extend`, `type`, and `..` too
+
+Mirrors the grammar changes on the LSP side so document-symbol
+panels and Go-To-Definition pick up:
+
+  - `extend Foo { ... }` blocks (DECL_PATTERNS + TOP_LEVEL_RE)
+  - `type Name = T` type aliases (new `type_alias` symbol kind)
+  - `from ..pkg use` / `use ..pkg` (relative-import regex)
+
+Also adds the Option/Result combinator names (`Some`, `None`,
+`Ok`, `Err`) to the builtin-identifier set so they stop being
+reported as "unknown" in scope-resolution warnings.
+
 ## [0.2.14] — 2026-06-18
 
 ### Interpreter picker stops scanning /tmp and friends

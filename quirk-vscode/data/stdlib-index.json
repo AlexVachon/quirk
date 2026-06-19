@@ -1,6 +1,13 @@
 {
 "AssertionError": [
 {
+"package": "html",
+"qualified": "AssertionError",
+"kind": "struct",
+"signature": "struct AssertionError : Exception {",
+"doc": "Raised when an assertion fails.\nUse this to enforce invariants or preconditions in your code.\n\n@note Prefer specific exception types (ValueError, NullError, etc.) in library code so callers can catch them precisely.\n\n@example:\ndefine assert_positive(n: Int) -> void {\n    if n <= 0 {\n        throw AssertionError(\"Expected positive, got \" + n.str())\n    }\n}"
+},
+{
 "package": "typing",
 "qualified": "AssertionError",
 "kind": "struct",
@@ -9,6 +16,13 @@
 }
 ],
 "Bool": [
+{
+"package": "html",
+"qualified": "Bool",
+"kind": "struct",
+"signature": "struct Bool : Primitive, Comparable, Parseable {",
+"doc": "Boolean type. Only two values: `true` and `false`."
+},
 {
 "package": "typing",
 "qualified": "Bool",
@@ -19,6 +33,13 @@
 ],
 "Callable": [
 {
+"package": "html",
+"qualified": "Callable",
+"kind": "struct",
+"signature": "struct Callable {",
+"doc": "A first-class function value produced by a lambda expression (`fn(...) => ...`).\nCallables can be stored in variables, passed as arguments, and invoked\nby higher-order methods such as `List.map`, `List.filter`, and `List.each`.\n\n@example:\ndouble := fn(x: Int) => x * 2\nprint(double(21))                      // 42\nevens := [1, 2, 3, 4].filter(fn(x: Int) => x % 2 == 0)"
+},
+{
 "package": "typing",
 "qualified": "Callable",
 "kind": "struct",
@@ -27,6 +48,13 @@
 }
 ],
 "Comparable": [
+{
+"package": "html",
+"qualified": "Comparable",
+"kind": "interface",
+"signature": "interface Comparable : Equatable {",
+"doc": "Implemented by types that support ordering and equality comparisons.\nRequired for use in sorted collections, binary search, and generic\nfunctions that need to compare values.\n\n@example\nstruct Temperature : Comparable {\n    degrees: Double\n\n    define __lt(self, other: Temperature) -> Bool {\n        return self.degrees < other.degrees\n    }\n\n    define __eq(self, other: Temperature) -> Bool {\n        return self.degrees == other.degrees\n    }\n}"
+},
 {
 "package": "typing",
 "qualified": "Comparable",
@@ -42,9 +70,23 @@
 "kind": "struct",
 "signature": "struct DateTime {",
 "doc": "Snapshot of a moment in time. Construct via `datetime.now()`,\n`datetime.from_unix(s)`, or `datetime.from_iso(s)` rather than calling\n`__init` directly."
+},
+{
+"package": "html",
+"qualified": "DateTime",
+"kind": "struct",
+"signature": "struct DateTime {",
+"doc": "Snapshot of a moment in time. Construct via `datetime.now()`,\n`datetime.from_unix(s)`, or `datetime.from_iso(s)` rather than calling\n`__init` directly."
 }
 ],
 "Double": [
+{
+"package": "html",
+"qualified": "Double",
+"kind": "struct",
+"signature": "struct Double : Primitive, Comparable, Parseable {",
+"doc": "64-bit IEEE 754 floating-point number.\n\n@example:\nx := 3.14\nprint(x.ceil())    // 4.0\nprint(x.str())     // \"3.14\""
+},
 {
 "package": "typing",
 "qualified": "Double",
@@ -55,6 +97,13 @@
 ],
 "Equatable": [
 {
+"package": "html",
+"qualified": "Equatable",
+"kind": "interface",
+"signature": "interface Equatable {",
+"doc": "Implemented by types that support equality comparison.\nAll types that implement `Comparable` or `Hashable` extend `Equatable`.\n\n@example\nstruct Color : Equatable {\n    r: Int\n    g: Int\n    b: Int\n\n    define __eq(self, other: Color) -> Bool {\n        return self.r == other.r and self.g == other.g and self.b == other.b\n    }\n}"
+},
+{
 "package": "typing",
 "qualified": "Equatable",
 "kind": "interface",
@@ -63,6 +112,13 @@
 }
 ],
 "Err": [
+{
+"package": "html",
+"qualified": "Err",
+"kind": "struct",
+"signature": "variant Err of Result",
+"doc": ""
+},
 {
 "package": "typing",
 "qualified": "Err",
@@ -73,6 +129,13 @@
 ],
 "Exception": [
 {
+"package": "html",
+"qualified": "Exception",
+"kind": "struct",
+"signature": "struct Exception {",
+"doc": "Base class for all exceptions in Quirk.\nCatch this type to handle any exception regardless of its specific kind.\n\nFields: message, type, file, line, traceback, cause_trace\n\n@note Prefer catching a specific subclass (ValueError, IOError, etc.) over\ncatching Exception directly, so unrelated errors are not silently swallowed.\n\n@warning Catching Exception will also catch RuntimeError, NullError, and all\nother built-in exceptions \u2014 use with care in broad catch blocks.\n\n@example:\ntry {\n    throw ValueError(\"bad input\")\n} catch (e: Exception) {\n    print(e.type + \": \" + e.message)\n}"
+},
+{
 "package": "typing",
 "qualified": "Exception",
 "kind": "struct",
@@ -81,6 +144,13 @@
 }
 ],
 "File": [
+{
+"package": "html",
+"qualified": "File",
+"kind": "struct",
+"signature": "struct File {",
+"doc": "A handle for reading and writing to the OS file system.\nSupports the `with` statement for automatic close on scope exit.\n\nUse `sys.stdin()`, `sys.stdout()`, `sys.stderr()` to wrap the standard\nstreams as Files (those wrappers ignore `close()`)."
+},
 {
 "package": "io",
 "qualified": "File",
@@ -91,6 +161,13 @@
 ],
 "FileIterator": [
 {
+"package": "html",
+"qualified": "FileIterator",
+"kind": "struct",
+"signature": "struct FileIterator {",
+"doc": "Iterator over a file's lines. Produced by `for line in file { ... }`.\nEach `__next` call reads one line via `File.read_line`."
+},
+{
 "package": "io",
 "qualified": "FileIterator",
 "kind": "struct",
@@ -99,6 +176,13 @@
 }
 ],
 "FileNotFoundError": [
+{
+"package": "html",
+"qualified": "FileNotFoundError",
+"kind": "struct",
+"signature": "struct FileNotFoundError : IOError {",
+"doc": "Raised when a file or directory cannot be found at the given path.\nInherits from IOError.\n\n@note Catch IOError instead if you want to handle all I/O failures together.\n\n@example:\ntry {\n    f := File(\"config.json\", \"r\")\n} catch (e: FileNotFoundError) {\n    print(\"Missing file: \" + e.message)\n}"
+},
 {
 "package": "typing",
 "qualified": "FileNotFoundError",
@@ -109,6 +193,13 @@
 ],
 "Hashable": [
 {
+"package": "html",
+"qualified": "Hashable",
+"kind": "interface",
+"signature": "interface Hashable : Equatable {",
+"doc": "Implemented by types that can produce a stable integer hash of their value.\nRequired for use as keys in `Map` or elements in `Set`.\nAny `Hashable` type must also be `Equatable`: two equal values must hash identically.\n\n@example\nstruct Point : Hashable {\n    x: Int\n    y: Int\n\n    define __eq(self, other: Point) -> Bool {\n        return self.x == other.x and self.y == other.y\n    }\n\n    define __hash(self) -> Int {\n        return self.x * 31 + self.y\n    }\n}"
+},
+{
 "package": "typing",
 "qualified": "Hashable",
 "kind": "interface",
@@ -117,6 +208,13 @@
 }
 ],
 "IOError": [
+{
+"package": "html",
+"qualified": "IOError",
+"kind": "struct",
+"signature": "struct IOError : Exception {",
+"doc": "Raised for file and I/O operation failures such as permission errors,\nread/write failures, or other OS-level I/O problems.\nParent of FileNotFoundError.\n\n@example:\ntry {\n    f := File(\"output.log\", \"w\")\n} catch (e: IOError) {\n    print(\"I/O failed: \" + e.message)\n}"
+},
 {
 "package": "typing",
 "qualified": "IOError",
@@ -127,6 +225,13 @@
 ],
 "ISerializable": [
 {
+"package": "html",
+"qualified": "ISerializable",
+"kind": "struct",
+"signature": "struct ISerializable {",
+"doc": "Serialization interface for Quirk structs.\n\nInherit `ISerializable` and override `to_json()` to make any struct\nserializable \u2014 including as the `json:` argument to `net.http` requests.\n\n@example\nstruct User : ISerializable {\n    name: String\n    age: Int\n\n    define __init(self, name: String, age: Int) -> void {\n        self.name = name\n        self.age = age\n    }\n\n    define to_json(self) -> String {\n        return \"{\\\"name\\\":\\\"\" + self.name + \"\\\",\\\"age\\\":\" + self.age.str() + \"}\"\n    }\n}\n\nuser := User(\"Alice\", 30)\nres := http.post(\"http://api.example.com/users\", json: user)"
+},
+{
 "package": "typing",
 "qualified": "ISerializable",
 "kind": "struct",
@@ -135,6 +240,13 @@
 }
 ],
 "IndexError": [
+{
+"package": "html",
+"qualified": "IndexError",
+"kind": "struct",
+"signature": "struct IndexError : ValueError {",
+"doc": "Raised when a list or string index is out of range.\nInherits from ValueError.\n\n@note\n- The runtime throws this automatically on invalid list access.\n- Negative indices are supported: -1 refers to the last element.\n\n@example:\nitems := [1, 2, 3]\ntry {\n    _ := items[10]\n} catch (e: IndexError) {\n    print(\"Out of bounds: \" + e.message)\n}"
+},
 {
 "package": "typing",
 "qualified": "IndexError",
@@ -145,6 +257,13 @@
 ],
 "Int": [
 {
+"package": "html",
+"qualified": "Int",
+"kind": "struct",
+"signature": "struct Int : Primitive, Comparable, Parseable {",
+"doc": "32-bit signed integer.\nSupports arithmetic operators (`+`, `-`, `*`, `/`, `%`, `**`) and comparisons.\n\n@example:\nn := 42\nprint(n.str())       // \"42\"\nprint(n.is_even())   // true\nprint(n.pow(2))      // 1764"
+},
+{
 "package": "typing",
 "qualified": "Int",
 "kind": "struct",
@@ -154,6 +273,13 @@
 ],
 "Iterable": [
 {
+"package": "html",
+"qualified": "Iterable",
+"kind": "interface",
+"signature": "interface Iterable {",
+"doc": "Implemented by types that can be traversed with a `for` loop.\n`String`, `List`, `Map`, `Set`, `Queue`, and `Tuple` all implement `Iterable`.\n\n@example\ndefine print_all[T](col: T) where T: Iterable {\n    for item in col {\n        print(item)\n    }\n}"
+},
+{
 "package": "typing",
 "qualified": "Iterable",
 "kind": "interface",
@@ -162,6 +288,13 @@
 }
 ],
 "Iterator": [
+{
+"package": "html",
+"qualified": "Iterator",
+"kind": "interface",
+"signature": "interface Iterator {",
+"doc": "Protocol for types that produce values one at a time.\nAll built-in collection iterators implement `Iterator`.\nEnables the `for` loop and any code that calls `__has_next` / `__next` directly.\n\n@example\ndefine collect[T](it: Iterator) -> List {\n    result := []\n    while it.__has_next() {\n        result.append(it.__next())\n    }\n    return result\n}"
+},
 {
 "package": "typing",
 "qualified": "Iterator",
@@ -177,6 +310,13 @@
 "kind": "struct",
 "signature": "struct JsonList : ISerializable {",
 "doc": "Wraps a List as an ISerializable for net.http's `json:` parameter.\n\n@example\nhttp.post(url, json: JsonList(l))"
+},
+{
+"package": "html",
+"qualified": "JsonList",
+"kind": "struct",
+"signature": "struct JsonList : ISerializable {",
+"doc": "Wraps a List as an ISerializable for net.http's `json:` parameter.\n\n@example\nhttp.post(url, json: JsonList(l))"
 }
 ],
 "JsonMap": [
@@ -186,9 +326,23 @@
 "kind": "struct",
 "signature": "struct JsonMap : ISerializable {",
 "doc": "Wraps a Map as an ISerializable for net.http's `json:` parameter.\n\n@example\nhttp.post(url, json: JsonMap(m))"
+},
+{
+"package": "html",
+"qualified": "JsonMap",
+"kind": "struct",
+"signature": "struct JsonMap : ISerializable {",
+"doc": "Wraps a Map as an ISerializable for net.http's `json:` parameter.\n\n@example\nhttp.post(url, json: JsonMap(m))"
 }
 ],
 "KeyError": [
+{
+"package": "html",
+"qualified": "KeyError",
+"kind": "struct",
+"signature": "struct KeyError : ValueError {",
+"doc": "Raised when a map key does not exist.\nInherits from ValueError.\n\n@note\n- The runtime throws this automatically on missing key access.\n- Use map.has(key) to check before accessing if you want to avoid the exception.\n\n@example:\nm := {\"a\": 1}\ntry {\n    _ := m[\"missing\"]\n} catch (e: KeyError) {\n    print(\"No such key: \" + e.message)\n}"
+},
 {
 "package": "typing",
 "qualified": "KeyError",
@@ -199,6 +353,13 @@
 ],
 "KvResult": [
 {
+"package": "html",
+"qualified": "KvResult",
+"kind": "struct",
+"signature": "struct KvResult {",
+"doc": "Key + value extracted from a `key = value` line. Bare-key syntax only\nfor now (no quoted keys)."
+},
+{
 "package": "toml",
 "qualified": "KvResult",
 "kind": "struct",
@@ -207,6 +368,13 @@
 }
 ],
 "List": [
+{
+"package": "html",
+"qualified": "List",
+"kind": "struct",
+"signature": "struct List : Printable, Representable, Sizeable, Iterable {",
+"doc": "A dynamic, ordered sequence of values of any type.\nElements are zero-indexed. Lists grow automatically as items are appended.\n\n@example:\nnums := [1, 2, 3]\nnums.append(4)\nprint(nums.length())    // 4\nprint(nums[0])          // 1\ndoubled := nums.map(fn(x: Int) => x * 2)"
+},
 {
 "package": "typing",
 "qualified": "List",
@@ -217,6 +385,13 @@
 ],
 "Map": [
 {
+"package": "html",
+"qualified": "Map",
+"kind": "struct",
+"signature": "struct Map : Printable, Sizeable, Iterable {",
+"doc": "A hash map (dictionary) that associates `String` keys with values of any type.\nInsertion order is not guaranteed. All keys must be `String`.\n\n@example:\nm := {}\nm.put(\"name\", \"Alice\")\nm.put(\"age\", 30)\nprint(m.get(\"name\"))    // \"Alice\"\nprint(m.has(\"age\"))     // true\nm.remove(\"age\")\nprint(m.length())       // 1"
+},
+{
 "package": "typing",
 "qualified": "Map",
 "kind": "struct",
@@ -225,6 +400,13 @@
 }
 ],
 "Match": [
+{
+"package": "html",
+"qualified": "Match",
+"kind": "struct",
+"signature": "struct Match {",
+"doc": "Result of `Regex.find`. `start` and `end` are byte offsets into the input\nString; `text` is the substring `[start, end)`; `groups` is a `List<String>`\nof the captured groups (group 0 = full match is NOT included \u2014 `text` is\nthe whole match)."
+},
 {
 "package": "regex",
 "qualified": "Match",
@@ -235,6 +417,13 @@
 ],
 "None": [
 {
+"package": "html",
+"qualified": "None",
+"kind": "struct",
+"signature": "variant None of Option",
+"doc": ""
+},
+{
 "package": "typing",
 "qualified": "None",
 "kind": "struct",
@@ -243,6 +432,13 @@
 }
 ],
 "NotImplementedError": [
+{
+"package": "html",
+"qualified": "NotImplementedError",
+"kind": "struct",
+"signature": "struct NotImplementedError : RuntimeError {",
+"doc": "Raised when a method that must be overridden is called without a concrete implementation.\nInherits from RuntimeError.\n\n@note Use this as a sentinel in base struct methods to enforce that substructs override them.\n\n@example:\nstruct Animal {\n    define speak(self) -> void {\n        throw NotImplementedError(\"speak() must be overridden\")\n    }\n}"
+},
 {
 "package": "typing",
 "qualified": "NotImplementedError",
@@ -253,6 +449,13 @@
 ],
 "NullError": [
 {
+"package": "html",
+"qualified": "NullError",
+"kind": "struct",
+"signature": "struct NullError : RuntimeError {",
+"doc": "Raised when a null value is accessed where a non-null value is required. Inherits from RuntimeError.\n\n@note Check for null explicitly before accessing fields or calling methods on optional values.\n\n@example:\ndefine get_name(user: Any) -> String {\n    if user == null {\n        throw NullError(\"user must not be null\")\n    }\n    return user.name\n}"
+},
+{
 "package": "typing",
 "qualified": "NullError",
 "kind": "struct",
@@ -261,6 +464,13 @@
 }
 ],
 "Ok": [
+{
+"package": "html",
+"qualified": "Ok",
+"kind": "struct",
+"signature": "variant Ok of Result",
+"doc": ""
+},
 {
 "package": "typing",
 "qualified": "Ok",
@@ -271,6 +481,13 @@
 ],
 "Option": [
 {
+"package": "html",
+"qualified": "Option",
+"kind": "struct",
+"signature": "type Option[T] = Some(value: T) | None()",
+"doc": ""
+},
+{
 "package": "typing",
 "qualified": "Option",
 "kind": "struct",
@@ -279,6 +496,13 @@
 }
 ],
 "Parseable": [
+{
+"package": "html",
+"qualified": "Parseable",
+"kind": "interface",
+"signature": "interface Parseable {",
+"doc": "Implemented by types that can be constructed from a string representation.\nPairs naturally with `Printable` \u2014 a round-trip of `parse(val.str())` should\nreturn the original value.\n\n@example\nn := Int.parse(\"42\")     // 42\nd := Double.parse(\"3.14\") // 3.14\nb := Bool.parse(\"true\")   // true"
+},
 {
 "package": "typing",
 "qualified": "Parseable",
@@ -289,6 +513,13 @@
 ],
 "Primitive": [
 {
+"package": "html",
+"qualified": "Primitive",
+"kind": "interface",
+"signature": "interface Primitive : Printable, Comparable {",
+"doc": "Base interface for primitive value types.\n\nAll built-in scalar types (`Int`, `Double`, `Bool`, `String`) implement\n`Primitive`. Extends both `Printable` and `Comparable`, so any `where T: Primitive`\nconstraint guarantees string conversion (`__str`) and ordering (`__lt`, `__eq`).\n\nFor types that can be constructed from a string, see `Parseable`.\nFor types usable as collection keys, see `Hashable`.\n\n@example\nstruct Stack[T] where T: Primitive {\n    items: List[T]\n    ...\n}\n\ndefine echo[T](val: T) -> String where T: Primitive {\n    return val.__str()\n}"
+},
+{
 "package": "typing",
 "qualified": "Primitive",
 "kind": "interface",
@@ -297,6 +528,13 @@
 }
 ],
 "Printable": [
+{
+"package": "html",
+"qualified": "Printable",
+"kind": "interface",
+"signature": "interface Printable {",
+"doc": "Implemented by types that have a human-readable string representation.\nAny struct implementing `Printable` can be passed directly to `print()`.\n\n@example\nstruct Point : Printable {\n    x: Int\n    y: Int\n\n    define __str(self) -> String {\n        return \"(\" + self.x + \", \" + self.y + \")\"\n    }\n}\n\np := Point(3, 4)\nprint(p)   // (3, 4)"
+},
 {
 "package": "typing",
 "qualified": "Printable",
@@ -307,6 +545,13 @@
 ],
 "Queue": [
 {
+"package": "html",
+"qualified": "Queue",
+"kind": "struct",
+"signature": "struct Queue : Printable, Sizeable, Iterable {",
+"doc": "A double-ended queue (deque) supporting O(1) push/pop at both ends.\nUseful for BFS, sliding windows, and task scheduling.\n\n@example:\nq := Queue()\nq.push_back(1)\nq.push_back(2)\nq.push_front(0)\nprint(q.pop_front())  // 0\nprint(q.peek_front()) // 1\nprint(q.size())       // 2"
+},
+{
 "package": "typing",
 "qualified": "Queue",
 "kind": "struct",
@@ -315,6 +560,13 @@
 }
 ],
 "Regex": [
+{
+"package": "html",
+"qualified": "Regex",
+"kind": "struct",
+"signature": "struct Regex {",
+"doc": "A compiled regular expression. Construct via `regex.compile(pattern, flags)`."
+},
 {
 "package": "regex",
 "qualified": "Regex",
@@ -325,6 +577,13 @@
 ],
 "Representable": [
 {
+"package": "html",
+"qualified": "Representable",
+"kind": "interface",
+"signature": "interface Representable {",
+"doc": "Implemented by types that have a developer-facing debug representation,\ndistinct from the human-readable `__str`. Used by the REPL and logging tools.\n\n@example\nstruct Token : Representable {\n    kind: String\n    value: String\n\n    define __repr(self) -> String {\n        return \"Token(\" + self.kind + \", \" + self.value + \")\"\n    }\n}"
+},
+{
 "package": "typing",
 "qualified": "Representable",
 "kind": "interface",
@@ -333,6 +592,13 @@
 }
 ],
 "Request": [
+{
+"package": "html",
+"qualified": "Request",
+"kind": "struct",
+"signature": "struct Request {",
+"doc": "A parsed incoming HTTP request \u2014 what `Server` hands to your handler.\n\n  `method`   \u2014 uppercase verb (`GET`, `POST`, \u2026).\n  `path`     \u2014 request path with query stripped (e.g. `/users/42`).\n  `query`    \u2014 Map of query-string params (parsed via `url.parse_query`).\n  `headers`  \u2014 Map of header name \u2192 value (case-preserved as received).\n  `body`     \u2014 request body for POST/PUT, \"\" otherwise."
+},
 {
 "package": "net",
 "qualified": "Request",
@@ -343,6 +609,13 @@
 ],
 "Response": [
 {
+"package": "html",
+"qualified": "Response",
+"kind": "struct",
+"signature": "struct Response {",
+"doc": "HTTP response.\n  `status_code`  \u2014 numeric status (200, 404, ...).\n  `headers`      \u2014 Map of header name \u2192 value (header names are\n                   case-preserved as the server returned them).\n  `text`         \u2014 decoded response body (chunked encoding handled).\n  `ok`           \u2014 true iff `200 <= status_code < 300`."
+},
+{
 "package": "net",
 "qualified": "Response",
 "kind": "struct",
@@ -351,6 +624,13 @@
 }
 ],
 "Result": [
+{
+"package": "html",
+"qualified": "Result",
+"kind": "struct",
+"signature": "type Result[T, E] = Ok(value: T) | Err(error: E)",
+"doc": ""
+},
 {
 "package": "typing",
 "qualified": "Result",
@@ -361,6 +641,13 @@
 ],
 "RuntimeError": [
 {
+"package": "html",
+"qualified": "RuntimeError",
+"kind": "struct",
+"signature": "struct RuntimeError : Exception {",
+"doc": "Raised for generic runtime errors that don't fit a more specific category.\nParent of NotImplementedError and NullError.\n\n@warning Avoid throwing RuntimeError directly when a more specific subclass applies.\n\n@example:\ndefine run(mode: String) -> void {\n    if mode != \"fast\" and mode != \"slow\" {\n        throw RuntimeError(\"Unknown mode: \" + mode)\n    }\n}"
+},
+{
 "package": "typing",
 "qualified": "RuntimeError",
 "kind": "struct",
@@ -369,6 +656,13 @@
 }
 ],
 "Server": [
+{
+"package": "html",
+"qualified": "Server",
+"kind": "struct",
+"signature": "struct Server {",
+"doc": "A simple HTTP/1.1 server. Holds the listener socket and an exit flag so\n`stop()` can break the accept-loop from another thread once Quirk gains\nthat ability \u2014 for now `listen` runs forever."
+},
 {
 "package": "net",
 "qualified": "Server",
@@ -379,6 +673,13 @@
 ],
 "Set": [
 {
+"package": "html",
+"qualified": "Set",
+"kind": "struct",
+"signature": "struct Set : Printable, Sizeable, Iterable {",
+"doc": "An unordered collection of unique values. Insertion order is preserved for\niteration. Values are compared by their string representation.\n\n@example:\ns := {1, 2, 3}\ns.add(4)\nprint(s.has(2))      // true\ns.remove(2)\nprint(s.size())      // 3\nfor v in s { print(v) }"
+},
+{
 "package": "typing",
 "qualified": "Set",
 "kind": "struct",
@@ -387,6 +688,13 @@
 }
 ],
 "Sizeable": [
+{
+"package": "html",
+"qualified": "Sizeable",
+"kind": "interface",
+"signature": "interface Sizeable {",
+"doc": "Implemented by types that have a finite, countable number of elements.\n`String`, `List`, `Map`, `Set`, and `Queue` all implement `Sizeable`.\n\n@example\ndefine is_empty[T](col: T) -> Bool where T: Sizeable {\n    return col.length() == 0\n}"
+},
 {
 "package": "typing",
 "qualified": "Sizeable",
@@ -397,6 +705,13 @@
 ],
 "Socket": [
 {
+"package": "html",
+"qualified": "Socket",
+"kind": "struct",
+"signature": "struct Socket {",
+"doc": "TCP socket. Wraps an OS file descriptor and provides high-level\n`bind`/`listen`/`accept`/`connect`/`send`/`recv`/`close` operations.\nAll failure modes raise `SocketError`."
+},
+{
 "package": "net",
 "qualified": "Socket",
 "kind": "struct",
@@ -405,6 +720,13 @@
 }
 ],
 "SocketError": [
+{
+"package": "html",
+"qualified": "SocketError",
+"kind": "struct",
+"signature": "struct SocketError : Exception {",
+"doc": "Raised for socket and network operation failures such as connection\nrefused, timeout, or DNS resolution errors.\n\n@example:\ntry {\n    conn := Socket.connect(\"localhost\", 8080)\n} catch (e: SocketError) {\n    print(\"Connection failed: \" + e.message)\n}"
+},
 {
 "package": "typing",
 "qualified": "SocketError",
@@ -415,6 +737,13 @@
 ],
 "Some": [
 {
+"package": "html",
+"qualified": "Some",
+"kind": "struct",
+"signature": "variant Some of Option",
+"doc": ""
+},
+{
 "package": "typing",
 "qualified": "Some",
 "kind": "struct",
@@ -423,6 +752,13 @@
 }
 ],
 "String": [
+{
+"package": "html",
+"qualified": "String",
+"kind": "struct",
+"signature": "struct String : Primitive, Comparable, Sizeable, Iterable, Representable {",
+"doc": "An immutable UTF-8 string. String literals use double or single quotes.\nSupports interpolation with `\"Hello ${name}\"`, iteration over characters,\nand a rich set of transformation and query methods.\n\n@example:\ns := \"Hello, world!\"\nprint(s.upper())            // \"HELLO, WORLD!\"\nprint(s.contains(\"world\")) // true\nparts := s.split(\", \")\nprint(parts.length())       // 2"
+},
 {
 "package": "typing",
 "qualified": "String",
@@ -433,6 +769,13 @@
 ],
 "StringResult": [
 {
+"package": "html",
+"qualified": "StringResult",
+"kind": "struct",
+"signature": "struct StringResult {",
+"doc": "Parsed string result paired with the index of the closing quote so\nthe caller can detect trailing junk."
+},
+{
 "package": "toml",
 "qualified": "StringResult",
 "kind": "struct",
@@ -441,6 +784,13 @@
 }
 ],
 "TestCase": [
+{
+"package": "html",
+"qualified": "TestCase",
+"kind": "struct",
+"signature": "struct TestCase {",
+"doc": "A single named test. Construct with `TestCase(\"name\", fn() { ... })`.\nThe lambda body uses `test.assert_*` helpers; any AssertionError fails\nthe case. Other exceptions also fail it (their type is shown)."
+},
 {
 "package": "test",
 "qualified": "TestCase",
@@ -451,6 +801,13 @@
 ],
 "Tuple": [
 {
+"package": "html",
+"qualified": "Tuple",
+"kind": "struct",
+"signature": "struct Tuple : Printable, Sizeable, Iterable {",
+"doc": "An immutable, fixed-size ordered sequence of heterogeneous values.\nTuples are created with parenthesis syntax and support index access,\n`length()`, and destructuring assignment.\n\nA trailing comma is required for single-element tuples: `(x,)`.\nAn empty tuple is written as `()`.\n\n@example:\ncoords := (10, 20)\nprint(coords[0])        // 10\nprint(coords.length())  // 2\nx, y := coords          // destructuring\nnested := ((1, 2), \"outer\")\nprint(nested[1])        // \"outer\""
+},
+{
 "package": "typing",
 "qualified": "Tuple",
 "kind": "struct",
@@ -459,6 +816,13 @@
 }
 ],
 "TypeError": [
+{
+"package": "html",
+"qualified": "TypeError",
+"kind": "struct",
+"signature": "struct TypeError : Exception {",
+"doc": "Raised when an operation is applied to an object of the wrong type.\nUse this when a function receives an argument whose type is incompatible\nwith the expected type.\n\n@note Prefer ValueError when the type is correct but the value is invalid.\n\n@example:\ndefine require_int(n: Any) -> void {\n    if n.type != \"Int\" {\n        throw TypeError(\"Expected Int, got \" + n.type)\n    }\n}"
+},
 {
 "package": "typing",
 "qualified": "TypeError",
@@ -469,6 +833,13 @@
 ],
 "URL": [
 {
+"package": "html",
+"qualified": "URL",
+"kind": "struct",
+"signature": "struct URL {",
+"doc": "Parsed URL components. All fields are present (empty strings / 0 when the\nURL omits them) so callers don't need null-checks.\n\n  scheme:   `\"https\"`, `\"http\"`, `\"file\"`, `\"ftp\"`, ...\n  host:     hostname or IP literal (no port)\n  port:     port number, or 0 if absent\n  path:     `/path` portion (may be empty)\n  query:    raw query without the leading `?`\n  fragment: raw fragment without the leading `#`"
+},
+{
 "package": "url",
 "qualified": "URL",
 "kind": "struct",
@@ -477,6 +848,13 @@
 }
 ],
 "ValueError": [
+{
+"package": "html",
+"qualified": "ValueError",
+"kind": "struct",
+"signature": "struct ValueError : Exception {",
+"doc": "Raised when an argument has the right type but an unacceptable value.\nParent of IndexError and KeyError \u2014 catch ValueError to handle both.\n\n@example:\ndefine set_age(age: Int) -> void {\n    if age < 0 {\n        throw ValueError(\"Age cannot be negative: \" + age.str())\n    }\n}"
+},
 {
 "package": "typing",
 "qualified": "ValueError",
@@ -487,6 +865,13 @@
 ],
 "Vector2": [
 {
+"package": "html",
+"qualified": "Vector2",
+"kind": "struct",
+"signature": "struct Vector2 {",
+"doc": "A 2D vector with `Double` components and operator overloading for\n`+`, `-`, and scalar `*`."
+},
+{
 "package": "math",
 "qualified": "Vector2",
 "kind": "struct",
@@ -495,6 +880,13 @@
 }
 ],
 "Vector3": [
+{
+"package": "html",
+"qualified": "Vector3",
+"kind": "struct",
+"signature": "struct Vector3 {",
+"doc": "A 3D vector with `Double` components. Currently supports `+` only \u2014\nextend with `__sub`, `__mul`, `dot`, `cross` as needed."
+},
 {
 "package": "math",
 "qualified": "Vector3",
@@ -505,6 +897,13 @@
 ],
 "WhereConditionError": [
 {
+"package": "html",
+"qualified": "WhereConditionError",
+"kind": "struct",
+"signature": "struct WhereConditionError : RuntimeError {",
+"doc": "Raised when a function's `where` precondition is violated at runtime.\nInherits from RuntimeError.\n\n@example:\ndefine sqrt(x: Double) -> Double where x >= 0.0 {\n    return x\n}\n\ntry {\n    sqrt(-1.0)\n} catch (e: WhereConditionError) {\n    print(\"Precondition failed: \" + e.message)\n}"
+},
+{
 "package": "typing",
 "qualified": "WhereConditionError",
 "kind": "struct",
@@ -514,6 +913,13 @@
 ],
 "ZeroDivisionError": [
 {
+"package": "html",
+"qualified": "ZeroDivisionError",
+"kind": "struct",
+"signature": "struct ZeroDivisionError : Exception {",
+"doc": "Raised when division or modulo by zero is attempted.\n\n@example:\ndefine divide(a: Int, b: Int) -> Int {\n    if b == 0 {\n        throw ZeroDivisionError(\"Cannot divide \" + a.str() + \" by zero\")\n    }\n    return a / b\n}"
+},
+{
 "package": "typing",
 "qualified": "ZeroDivisionError",
 "kind": "struct",
@@ -522,6 +928,20 @@
 }
 ],
 "__add": [
+{
+"package": "html",
+"qualified": "Vector2.__add",
+"kind": "method",
+"signature": "define __add(self, other: Vector2) -> Vector2 {",
+"doc": "Componentwise addition: `a + b`."
+},
+{
+"package": "html",
+"qualified": "Vector2.__add",
+"kind": "method",
+"signature": "define __add(self, other: Vector3) -> Vector3 {",
+"doc": "Componentwise addition: `a + b`."
+},
 {
 "package": "math",
 "qualified": "Vector2.__add",
@@ -539,6 +959,20 @@
 ],
 "__enter": [
 {
+"package": "html",
+"qualified": "Socket.__enter",
+"kind": "method",
+"signature": "define __enter(self) -> Socket { return self }",
+"doc": "`with` enter \u2014 returns the Socket itself."
+},
+{
+"package": "html",
+"qualified": "File.__enter",
+"kind": "method",
+"signature": "define __enter(self) -> File {",
+"doc": "`with` enter \u2014 returns the File itself."
+},
+{
 "package": "io",
 "qualified": "File.__enter",
 "kind": "method",
@@ -555,6 +989,13 @@
 ],
 "__eq": [
 {
+"package": "html",
+"qualified": "__eq",
+"kind": "define",
+"signature": "define __eq(self, other: Self) -> Bool",
+"doc": "Returns true if this value is equal to `other`."
+},
+{
 "package": "typing",
 "qualified": "__eq",
 "kind": "define",
@@ -563,6 +1004,20 @@
 }
 ],
 "__exit": [
+{
+"package": "html",
+"qualified": "Socket.__exit",
+"kind": "method",
+"signature": "define __exit(self) -> void { self.close() }",
+"doc": "`with` exit \u2014 closes the socket."
+},
+{
+"package": "html",
+"qualified": "File.__exit",
+"kind": "method",
+"signature": "define __exit(self) -> void {",
+"doc": "`with` exit \u2014 closes the file."
+},
 {
 "package": "io",
 "qualified": "File.__exit",
@@ -580,6 +1035,20 @@
 ],
 "__get": [
 {
+"package": "html",
+"qualified": "TupleIterator.__get",
+"kind": "method",
+"signature": "extern define __get(self, index: Int) -> Any",
+"doc": "Returns the element at the given index.\n@param index: Int \u2014 zero-based position\n@returns: Any \u2014 the element at that index\n@throws IndexError \u2014 if index is out of bounds"
+},
+{
+"package": "html",
+"qualified": "ListIterator.__get",
+"kind": "method",
+"signature": "extern define __get(self, index: Int) -> Any",
+"doc": "Returns the element at the given index.\n@param index: Int \u2014 zero-based position (negative indices not supported)\n@returns: Any \u2014 the element at that index\n@throws IndexError \u2014 if index is out of bounds"
+},
+{
 "package": "typing",
 "qualified": "TupleIterator.__get",
 "kind": "method",
@@ -595,6 +1064,20 @@
 }
 ],
 "__has_next": [
+{
+"package": "html",
+"qualified": "File.__has_next",
+"kind": "method",
+"signature": "extern define __has_next(self) -> Bool",
+"doc": "True if more lines remain."
+},
+{
+"package": "html",
+"qualified": "__has_next",
+"kind": "define",
+"signature": "define __has_next(self) -> Bool",
+"doc": "Returns true if there are more elements to yield."
+},
 {
 "package": "io",
 "qualified": "File.__has_next",
@@ -612,6 +1095,13 @@
 ],
 "__hash": [
 {
+"package": "html",
+"qualified": "__hash",
+"kind": "define",
+"signature": "define __hash(self) -> Int",
+"doc": "Returns a stable integer hash of this value."
+},
+{
 "package": "typing",
 "qualified": "__hash",
 "kind": "define",
@@ -620,6 +1110,41 @@
 }
 ],
 "__init": [
+{
+"package": "html",
+"qualified": "Socket.__init",
+"kind": "method",
+"signature": "define __init(self, initial_fd: Int = -1) -> void {",
+"doc": "Create a new socket. Pass `initial_fd` only when wrapping a fd you\nalready own (e.g. inside `accept`). The default `-1` allocates a fresh\nsocket via the OS.\n@throws SocketError if the OS could not provide a socket fd."
+},
+{
+"package": "html",
+"qualified": "Response.__init",
+"kind": "method",
+"signature": "define __init(self, status: Int, body: String, headers: Map) -> void {",
+"doc": "Construct a Response. Sets `ok` based on the status code range."
+},
+{
+"package": "html",
+"qualified": "File.__init",
+"kind": "method",
+"signature": "extern define __init(self, path: String, mode: String) -> void",
+"doc": "Open `path` in the requested `mode`. Sets `is_open` based on whether the\nunderlying `fopen` succeeded \u2014 check it before reading.\n@param path File path (absolute or relative to cwd).\n@param mode Standard fopen-style mode string."
+},
+{
+"package": "html",
+"qualified": "Vector2.__init",
+"kind": "method",
+"signature": "define __init(self, x: Double, y: Double) -> void {",
+"doc": "Construct a Vector2 from two Doubles."
+},
+{
+"package": "html",
+"qualified": "Vector2.__init",
+"kind": "method",
+"signature": "define __init(self, x: Double, y: Double, z: Double) -> void {",
+"doc": "Construct a Vector3 from three Doubles."
+},
 {
 "package": "io",
 "qualified": "File.__init",
@@ -658,6 +1183,20 @@
 ],
 "__iter": [
 {
+"package": "html",
+"qualified": "__iter",
+"kind": "define",
+"signature": "define __iter(self) -> Iterator",
+"doc": "Returns an iterator over the elements of this collection."
+},
+{
+"package": "html",
+"qualified": "TupleIterator.__iter",
+"kind": "method",
+"signature": "extern define __iter(self) -> TupleIterator",
+"doc": "Returns an iterator over the elements of this tuple.\n@returns: TupleIterator"
+},
+{
 "package": "typing",
 "qualified": "__iter",
 "kind": "define",
@@ -674,6 +1213,13 @@
 ],
 "__lt": [
 {
+"package": "html",
+"qualified": "__lt",
+"kind": "define",
+"signature": "define __lt(self, other: Self) -> Bool",
+"doc": "Returns true if this value is strictly less than `other`."
+},
+{
 "package": "typing",
 "qualified": "__lt",
 "kind": "define",
@@ -683,6 +1229,13 @@
 ],
 "__mul": [
 {
+"package": "html",
+"qualified": "Vector2.__mul",
+"kind": "method",
+"signature": "define __mul(self, scalar: Double) -> Vector2 {",
+"doc": "Scalar multiplication: `v * s` scales each component."
+},
+{
 "package": "math",
 "qualified": "Vector2.__mul",
 "kind": "method",
@@ -691,6 +1244,20 @@
 }
 ],
 "__next": [
+{
+"package": "html",
+"qualified": "File.__next",
+"kind": "method",
+"signature": "extern define __next(self) -> String",
+"doc": "Returns the next line; trailing newline stripped."
+},
+{
+"package": "html",
+"qualified": "__next",
+"kind": "define",
+"signature": "define __next(self) -> Any",
+"doc": "Returns the next element and advances the iterator."
+},
 {
 "package": "io",
 "qualified": "File.__next",
@@ -708,6 +1275,20 @@
 ],
 "__repr": [
 {
+"package": "html",
+"qualified": "__repr",
+"kind": "define",
+"signature": "define __repr(self) -> String",
+"doc": "Returns a developer-readable debug representation of this value."
+},
+{
+"package": "html",
+"qualified": "Vector2.__repr",
+"kind": "method",
+"signature": "define __repr(self) -> String {",
+"doc": "Developer-readable form: `Vector2 { x: ..., y: ... }`."
+},
+{
 "package": "math",
 "qualified": "Vector2.__repr",
 "kind": "method",
@@ -724,6 +1305,13 @@
 ],
 "__set": [
 {
+"package": "html",
+"qualified": "ListIterator.__set",
+"kind": "method",
+"signature": "extern define __set(self, index: Int, item: Any) -> void",
+"doc": "Sets the element at the given index.\n@param index: Int \u2014 zero-based position\n@param item: Any \u2014 the new value\n@throws IndexError if index is out of bounds"
+},
+{
 "package": "typing",
 "qualified": "ListIterator.__set",
 "kind": "method",
@@ -738,6 +1326,62 @@
 "kind": "method",
 "signature": "define __str(self) -> String {",
 "doc": "Default str: ISO-8601."
+},
+{
+"package": "html",
+"qualified": "Response.__str",
+"kind": "method",
+"signature": "define __str(self) -> String {",
+"doc": "Compact form: `<Response [200]>`."
+},
+{
+"package": "html",
+"qualified": "Request.__str",
+"kind": "method",
+"signature": "define __str(self) -> String {",
+"doc": "Compact form: `<Request GET /path>`."
+},
+{
+"package": "html",
+"qualified": "DateTime.__str",
+"kind": "method",
+"signature": "define __str(self) -> String {",
+"doc": "Default str: ISO-8601."
+},
+{
+"package": "html",
+"qualified": "Callable.__str",
+"kind": "method",
+"signature": "extern define __str(self) -> String",
+"doc": "String representation of this callable.\n@returns:\n    String \u2014 always `\"<Callable>\"`"
+},
+{
+"package": "html",
+"qualified": "__str",
+"kind": "define",
+"signature": "define __str(self) -> String",
+"doc": "Returns a human-readable string representation of this value."
+},
+{
+"package": "html",
+"qualified": "TupleIterator.__str",
+"kind": "method",
+"signature": "extern define __str(self) -> String",
+"doc": "Returns a human-readable string representation of this tuple.\n@returns: String \u2014 e.g. `\"(1, hello, true)\"`"
+},
+{
+"package": "html",
+"qualified": "Vector2.__str",
+"kind": "method",
+"signature": "define __str(self) -> String {",
+"doc": "Compact human-readable form: `v(x, y)`."
+},
+{
+"package": "html",
+"qualified": "Vector2.__str",
+"kind": "method",
+"signature": "define __str(self) -> String {",
+"doc": "Compact human-readable form: `Vec3(x, y, z)`."
 },
 {
 "package": "math",
@@ -791,6 +1435,13 @@
 ],
 "__sub": [
 {
+"package": "html",
+"qualified": "Vector2.__sub",
+"kind": "method",
+"signature": "define __sub(self, other: Vector2) -> Vector2 {",
+"doc": "Componentwise subtraction: `a - b`."
+},
+{
 "package": "math",
 "qualified": "Vector2.__sub",
 "kind": "method",
@@ -799,6 +1450,13 @@
 }
 ],
 "_char": [
+{
+"package": "html",
+"qualified": "_char",
+"kind": "define",
+"signature": "define _char(s: String, i: Int) -> String {",
+"doc": "One character of `s` at byte offset `i`, returned as a length-1\nString. Quirk's String API doesn't expose `char_at` today, so we\nsimulate via substring \u2014 same semantics, slightly more allocation\nthat the parser absorbs in its inner loops."
+},
 {
 "package": "toml",
 "qualified": "_char",
@@ -814,6 +1472,13 @@
 "kind": "method",
 "signature": "define _find_long(self, long: String) -> ArgSpec {",
 "doc": "Find a spec by long name. Returns null if not found."
+},
+{
+"package": "html",
+"qualified": "ArgSpec._find_long",
+"kind": "method",
+"signature": "define _find_long(self, long: String) -> ArgSpec {",
+"doc": "Find a spec by long name. Returns null if not found."
 }
 ],
 "_find_short": [
@@ -823,9 +1488,23 @@
 "kind": "method",
 "signature": "define _find_short(self, short: String) -> ArgSpec {",
 "doc": "Find a spec by short name. Returns null if not found."
+},
+{
+"package": "html",
+"qualified": "ArgSpec._find_short",
+"kind": "method",
+"signature": "define _find_short(self, short: String) -> ArgSpec {",
+"doc": "Find a spec by short name. Returns null if not found."
 }
 ],
 "_index_outside_strings": [
+{
+"package": "html",
+"qualified": "_index_outside_strings",
+"kind": "define",
+"signature": "define _index_outside_strings(hay: String, needle: String, start_idx: Int) -> Int {",
+"doc": "Index of `needle` in `hay` starting from `start_idx`, or -1. Skips\noccurrences inside double/single-quoted strings so a `#` inside\n`\"foo # bar\"` doesn't get mistaken for a comment marker."
+},
 {
 "package": "toml",
 "qualified": "_index_outside_strings",
@@ -836,6 +1515,13 @@
 ],
 "_is_digit": [
 {
+"package": "html",
+"qualified": "StringResult._is_digit",
+"kind": "method",
+"signature": "define _is_digit(c: String) -> Bool {",
+"doc": "True if `c` (a length-1 String) is an ASCII digit '0'..'9'. String\ncomparisons (`<=`, `>=`) are defined on the stdlib String type, so\nthis is a single comparison-pair on the host runtime."
+},
+{
 "package": "toml",
 "qualified": "StringResult._is_digit",
 "kind": "method",
@@ -844,6 +1530,13 @@
 }
 ],
 "_next_double": [
+{
+"package": "html",
+"qualified": "_next_double",
+"kind": "define",
+"signature": "extern define _next_double() -> Double",
+"doc": "Internal: returns a Double in [0.0, 1.0). Prefer `random()` below."
+},
 {
 "package": "random",
 "qualified": "_next_double",
@@ -854,6 +1547,13 @@
 ],
 "_next_int": [
 {
+"package": "html",
+"qualified": "_next_int",
+"kind": "define",
+"signature": "extern define _next_int(lo: Int, hi: Int) -> Int",
+"doc": "Internal: inclusive `[lo, hi]`. Used by `randint` and `choice`."
+},
+{
 "package": "random",
 "qualified": "_next_int",
 "kind": "define",
@@ -863,6 +1563,13 @@
 ],
 "_parse_string": [
 {
+"package": "html",
+"qualified": "StringResult._parse_string",
+"kind": "method",
+"signature": "define _parse_string(line: String, start_idx: Int) -> StringResult {",
+"doc": "Parse a string literal starting at `start_idx` in `line`. Supports\nbasic (`\"...\"` with escapes) and literal (`'...'`, no escapes) forms.\nRaises ValueError on an unterminated string."
+},
+{
 "package": "toml",
 "qualified": "StringResult._parse_string",
 "kind": "method",
@@ -871,6 +1578,13 @@
 }
 ],
 "_parse_value": [
+{
+"package": "html",
+"qualified": "StringResult._parse_value",
+"kind": "method",
+"signature": "define _parse_value(raw: String) -> Any {",
+"doc": "Parse a single value (right-hand side of `key = ...`). Handles\nstrings, integers, booleans, and one-line arrays."
+},
 {
 "package": "toml",
 "qualified": "StringResult._parse_value",
@@ -886,9 +1600,23 @@
 "kind": "define",
 "signature": "define _quote_if_needed(field: String, delim: String) -> String {",
 "doc": "Wraps `field` in quotes and doubles internal quotes IF it contains\nthe delimiter, a quote, or a newline. Otherwise returns it unchanged."
+},
+{
+"package": "html",
+"qualified": "_quote_if_needed",
+"kind": "define",
+"signature": "define _quote_if_needed(field: String, delim: String) -> String {",
+"doc": "Wraps `field` in quotes and doubles internal quotes IF it contains\nthe delimiter, a quote, or a newline. Otherwise returns it unchanged."
 }
 ],
 "_strip_comment": [
+{
+"package": "html",
+"qualified": "_strip_comment",
+"kind": "define",
+"signature": "define _strip_comment(line: String) -> String {",
+"doc": "Strip a trailing `# ...` comment from a logical line, respecting\nquoted strings."
+},
 {
 "package": "toml",
 "qualified": "_strip_comment",
@@ -898,6 +1626,20 @@
 }
 ],
 "abs": [
+{
+"package": "html",
+"qualified": "Int.abs",
+"kind": "method",
+"signature": "extern define abs(self) -> Int",
+"doc": "Returns the absolute value.\n@returns: Int"
+},
+{
+"package": "html",
+"qualified": "abs",
+"kind": "define",
+"signature": "extern define abs(x: Int) -> Int",
+"doc": "Absolute value of an Int. Use `abs_f` for Doubles."
+},
 {
 "package": "math",
 "qualified": "abs",
@@ -915,6 +1657,13 @@
 ],
 "abs_f": [
 {
+"package": "html",
+"qualified": "abs_f",
+"kind": "define",
+"signature": "define abs_f(x: Double) -> Double { return fabs(x) }",
+"doc": "Absolute value of a Double. (`abs` is the Int version.)"
+},
+{
 "package": "math",
 "qualified": "abs_f",
 "kind": "define",
@@ -923,6 +1672,20 @@
 }
 ],
 "accept": [
+{
+"package": "html",
+"qualified": "Socket.accept",
+"kind": "method",
+"signature": "define accept(self) -> Socket {",
+"doc": "Block until a client connects, then return a new Socket wrapping that\nclient's fd. The returned socket should be closed when done (or use\n`with`).\n@throws SocketError if the accept syscall fails."
+},
+{
+"package": "html",
+"qualified": "accept",
+"kind": "define",
+"signature": "extern define accept(fd: Int) -> Int",
+"doc": "Block until a client connects to listening socket `fd`, returning the new\nclient socket's fd. Negative on error."
+},
 {
 "package": "net",
 "qualified": "Socket.accept",
@@ -940,6 +1703,13 @@
 ],
 "acos": [
 {
+"package": "html",
+"qualified": "acos",
+"kind": "define",
+"signature": "extern define acos(x: Double) -> Double",
+"doc": "Arc cosine \u2014 inverse of `cos`. Returns radians in `[0, pi]`. NaN if `|x| > 1`."
+},
+{
 "package": "math",
 "qualified": "acos",
 "kind": "define",
@@ -948,6 +1718,13 @@
 }
 ],
 "add": [
+{
+"package": "html",
+"qualified": "SetIterator.add",
+"kind": "method",
+"signature": "extern define add(self, val: Any) -> void",
+"doc": "Adds a value to the set. Does nothing if already present.\n@param val: Any"
+},
 {
 "package": "typing",
 "qualified": "SetIterator.add",
@@ -963,9 +1740,23 @@
 "kind": "method",
 "signature": "define add_seconds(self, n: Int) -> DateTime {",
 "doc": "Returns a new DateTime offset by `n` seconds (can be negative)."
+},
+{
+"package": "html",
+"qualified": "DateTime.add_seconds",
+"kind": "method",
+"signature": "define add_seconds(self, n: Int) -> DateTime {",
+"doc": "Returns a new DateTime offset by `n` seconds (can be negative)."
 }
 ],
 "all": [
+{
+"package": "html",
+"qualified": "ListIterator.all",
+"kind": "method",
+"signature": "extern define all(self, cb: Callable) -> Bool",
+"doc": "Returns `true` if every element satisfies the predicate.\n@param cb: Callable \u2014 `fn(element: T) => Bool`\n@returns: Bool"
+},
 {
 "package": "typing",
 "qualified": "ListIterator.all",
@@ -974,7 +1765,44 @@
 "doc": "Returns `true` if every element satisfies the predicate.\n@param cb: Callable \u2014 `fn(element: T) => Bool`\n@returns: Bool"
 }
 ],
+"and_then": [
+{
+"package": "html",
+"qualified": "Option.and_then",
+"kind": "method",
+"signature": "define and_then(self, f: Callable) -> Option {",
+"doc": "Monadic bind: `f` must return an `Option`. Chains lookups: `cache.get(k).and_then(parse)`."
+},
+{
+"package": "html",
+"qualified": "Result.and_then",
+"kind": "method",
+"signature": "define and_then(self, f: Callable) -> Result {",
+"doc": "Monadic bind: `f` must return a `Result`. Chains fallible steps."
+},
+{
+"package": "typing",
+"qualified": "Option.and_then",
+"kind": "method",
+"signature": "define and_then(self, f: Callable) -> Option {",
+"doc": "Monadic bind: `f` must return an `Option`. Chains lookups: `cache.get(k).and_then(parse)`."
+},
+{
+"package": "typing",
+"qualified": "Result.and_then",
+"kind": "method",
+"signature": "define and_then(self, f: Callable) -> Result {",
+"doc": "Monadic bind: `f` must return a `Result`. Chains fallible steps."
+}
+],
 "ansi": [
+{
+"package": "html",
+"qualified": "ansi",
+"kind": "define",
+"signature": "extern define ansi(name: String) -> String",
+"doc": "Returns the ANSI SGR sequence for a named effect, or \"\" if unknown.\nNames: `reset`, `bold`, `dim`, `red`, `green`, `yellow`, `blue`, `cyan`,\n`gray`, and `clear` (full screen clear)."
+},
 {
 "package": "sys",
 "qualified": "ansi",
@@ -985,6 +1813,13 @@
 ],
 "any": [
 {
+"package": "html",
+"qualified": "ListIterator.any",
+"kind": "method",
+"signature": "extern define any(self, cb: Callable) -> Bool",
+"doc": "Returns `true` if at least one element satisfies the predicate.\n@param cb: Callable \u2014 `fn(element: T) => Bool`\n@returns: Bool"
+},
+{
 "package": "typing",
 "qualified": "ListIterator.any",
 "kind": "method",
@@ -993,6 +1828,13 @@
 }
 ],
 "append": [
+{
+"package": "html",
+"qualified": "ListIterator.append",
+"kind": "method",
+"signature": "extern define append(self, item: Any) -> void",
+"doc": "Appends a value to the end of the list.\n@param item: Any \u2014 the value to add"
+},
 {
 "package": "typing",
 "qualified": "ListIterator.append",
@@ -1003,6 +1845,13 @@
 ],
 "arg_count": [
 {
+"package": "html",
+"qualified": "arg_count",
+"kind": "define",
+"signature": "extern define arg_count() -> Int",
+"doc": "Number of command-line arguments. Prefer `argv()` for the parsed List."
+},
+{
 "package": "sys",
 "qualified": "arg_count",
 "kind": "define",
@@ -1011,6 +1860,13 @@
 }
 ],
 "arg_get": [
+{
+"package": "html",
+"qualified": "arg_get",
+"kind": "define",
+"signature": "extern define arg_get(index: Int) -> String",
+"doc": "Argument at `index` (0-based; 0 is the program name).\n@throws IndexError if index is out of range."
+},
 {
 "package": "sys",
 "qualified": "arg_get",
@@ -1021,6 +1877,13 @@
 ],
 "argv": [
 {
+"package": "html",
+"qualified": "argv",
+"kind": "define",
+"signature": "define argv() -> List {",
+"doc": "Returns a List of Strings representing the command-line arguments.\nIndex 0 is the name/path of the executing program.\n@example\nfor arg in sys.argv() { print(arg) }"
+},
+{
 "package": "sys",
 "qualified": "argv",
 "kind": "define",
@@ -1029,6 +1892,13 @@
 }
 ],
 "asin": [
+{
+"package": "html",
+"qualified": "asin",
+"kind": "define",
+"signature": "extern define asin(x: Double) -> Double",
+"doc": "Arc sine \u2014 inverse of `sin`. Returns radians in `[-pi/2, pi/2]`. NaN if `|x| > 1`."
+},
 {
 "package": "math",
 "qualified": "asin",
@@ -1039,6 +1909,13 @@
 ],
 "assert_approx": [
 {
+"package": "html",
+"qualified": "assert_approx",
+"kind": "define",
+"signature": "define assert_approx(actual: Double, expected: Double, tolerance: Double = 0.0001, msg: String = \"\") -> void {",
+"doc": "Asserts `actual` and `expected` differ by at most `tolerance`. Use for\nDoubles where exact equality is fragile."
+},
+{
 "package": "test",
 "qualified": "assert_approx",
 "kind": "define",
@@ -1047,6 +1924,13 @@
 }
 ],
 "assert_contains": [
+{
+"package": "html",
+"qualified": "assert_contains",
+"kind": "define",
+"signature": "define assert_contains(haystack: Any, needle: Any, msg: String = \"\") -> void {",
+"doc": "Asserts `haystack` contains `needle` (substring for Strings, element for\nLists, or anything else with a `.contains` method)."
+},
 {
 "package": "test",
 "qualified": "assert_contains",
@@ -1057,6 +1941,13 @@
 ],
 "assert_eq": [
 {
+"package": "html",
+"qualified": "assert_eq",
+"kind": "define",
+"signature": "define assert_eq(actual: Any, expected: Any, msg: String = \"\") -> void {",
+"doc": "Asserts `actual == expected` by value. For primitive types and anything\nwith a `__str` method this matches stringified equality; for arbitrary\nstruct refs it amounts to pointer identity."
+},
+{
 "package": "test",
 "qualified": "assert_eq",
 "kind": "define",
@@ -1065,6 +1956,13 @@
 }
 ],
 "assert_false": [
+{
+"package": "html",
+"qualified": "assert_false",
+"kind": "define",
+"signature": "define assert_false(cond: Bool, msg: String = \"\") -> void {",
+"doc": "Asserts `cond` is false."
+},
 {
 "package": "test",
 "qualified": "assert_false",
@@ -1075,6 +1973,13 @@
 ],
 "assert_ne": [
 {
+"package": "html",
+"qualified": "assert_ne",
+"kind": "define",
+"signature": "define assert_ne(actual: Any, expected: Any, msg: String = \"\") -> void {",
+"doc": "Asserts `actual != expected` by value."
+},
+{
 "package": "test",
 "qualified": "assert_ne",
 "kind": "define",
@@ -1083,6 +1988,13 @@
 }
 ],
 "assert_throws": [
+{
+"package": "html",
+"qualified": "assert_throws",
+"kind": "define",
+"signature": "define assert_throws(cb: Callable, expected_type: String = \"\", msg: String = \"\") -> void {",
+"doc": "Asserts `cb` throws an exception. If `expected_type` is non-empty, the\nthrown exception's type must match (e.g. `\"ValueError\"`)."
+},
 {
 "package": "test",
 "qualified": "assert_throws",
@@ -1093,6 +2005,13 @@
 ],
 "assert_true": [
 {
+"package": "html",
+"qualified": "assert_true",
+"kind": "define",
+"signature": "define assert_true(cond: Bool, msg: String = \"\") -> void {",
+"doc": "Asserts `cond` is true."
+},
+{
 "package": "test",
 "qualified": "assert_true",
 "kind": "define",
@@ -1101,6 +2020,13 @@
 }
 ],
 "atan": [
+{
+"package": "html",
+"qualified": "atan",
+"kind": "define",
+"signature": "extern define atan(x: Double) -> Double",
+"doc": "Arc tangent \u2014 inverse of `tan`. Returns radians in `(-pi/2, pi/2)`."
+},
 {
 "package": "math",
 "qualified": "atan",
@@ -1111,6 +2037,13 @@
 ],
 "atan2": [
 {
+"package": "html",
+"qualified": "atan2",
+"kind": "define",
+"signature": "extern define atan2(y: Double, x: Double) -> Double",
+"doc": "Two-argument arctangent \u2014 angle of the point `(x, y)` from the origin.\nReturns radians in `(-pi, pi]`. Handles all four quadrants correctly.\n@example math.atan2(1.0, 0.0)  // pi/2"
+},
+{
 "package": "math",
 "qualified": "atan2",
 "kind": "define",
@@ -1120,6 +2053,13 @@
 ],
 "backtrace_frame": [
 {
+"package": "html",
+"qualified": "backtrace_frame",
+"kind": "define",
+"signature": "extern define backtrace_frame(index: Int) -> String",
+"doc": "Returns one captured C backtrace frame as a formatted string."
+},
+{
 "package": "sys",
 "qualified": "backtrace_frame",
 "kind": "define",
@@ -1128,6 +2068,13 @@
 }
 ],
 "backtrace_size": [
+{
+"package": "html",
+"qualified": "backtrace_size",
+"kind": "define",
+"signature": "extern define backtrace_size() -> Int",
+"doc": "Number of frames in the buffer captured by the most recent `capture_backtrace()`."
+},
 {
 "package": "sys",
 "qualified": "backtrace_size",
@@ -1143,9 +2090,30 @@
 "kind": "define",
 "signature": "define basename(path: String) -> String {",
 "doc": "Final component of `path` \u2014 strips any trailing slash and returns the\nlast segment. `\"a/b/c.txt\"` \u2192 `\"c.txt\"`; `\"/etc/\"` \u2192 `\"etc\"`."
+},
+{
+"package": "html",
+"qualified": "basename",
+"kind": "define",
+"signature": "define basename(path: String) -> String {",
+"doc": "Final component of `path` \u2014 strips any trailing slash and returns the\nlast segment. `\"a/b/c.txt\"` \u2192 `\"c.txt\"`; `\"/etc/\"` \u2192 `\"etc\"`."
 }
 ],
 "bind": [
+{
+"package": "html",
+"qualified": "Socket.bind",
+"kind": "method",
+"signature": "define bind(self, host: String, port: Int) -> void {",
+"doc": "Bind this socket to `host:port`. Use `\"0.0.0.0\"` to listen on all\ninterfaces, or `\"127.0.0.1\"` for loopback only.\n@throws SocketError on bind failure (port in use, permission denied, ...)."
+},
+{
+"package": "html",
+"qualified": "bind",
+"kind": "define",
+"signature": "extern define bind(fd: Int, host: String, port: Int) -> Int",
+"doc": "Bind socket `fd` to `host:port`. Returns 0 on success, negative on error.\n@example bind(fd, \"0.0.0.0\", 8080)"
+},
 {
 "package": "net",
 "qualified": "Socket.bind",
@@ -1163,6 +2131,13 @@
 ],
 "bool": [
 {
+"package": "html",
+"qualified": "bool",
+"kind": "define",
+"signature": "define bool() -> Bool {",
+"doc": "True or False with 50/50 odds. One-liner around `_next_int(0, 1)`; the\nsugar pays off because it reads better at call sites (`if random.bool()`)."
+},
+{
 "package": "random",
 "qualified": "bool",
 "kind": "define",
@@ -1177,9 +2152,23 @@
 "kind": "define",
 "signature": "extern define breakpoint(label: String = \"\") -> void",
 "doc": "Pause execution at this line and prompt for a debugger command. `label`\nshows up in the banner so multiple breakpoints in the same file stay\ndistinguishable. Defaults to \"\" \u2014 fine when you only have one.\n\n@example\ndebug.breakpoint()                      // unlabeled, simplest form\ndebug.breakpoint(\"before db write\")     // labeled"
+},
+{
+"package": "html",
+"qualified": "breakpoint",
+"kind": "define",
+"signature": "extern define breakpoint(label: String = \"\") -> void",
+"doc": "Pause execution at this line and prompt for a debugger command. `label`\nshows up in the banner so multiple breakpoints in the same file stay\ndistinguishable. Defaults to \"\" \u2014 fine when you only have one.\n\n@example\ndebug.breakpoint()                      // unlabeled, simplest form\ndebug.breakpoint(\"before db write\")     // labeled"
 }
 ],
 "build_query": [
+{
+"package": "html",
+"qualified": "build_query",
+"kind": "define",
+"signature": "define build_query(m: Map) -> String {",
+"doc": "Build a `&`-joined query string from a Map. Each key and value is\npercent-encoded."
+},
 {
 "package": "url",
 "qualified": "build_query",
@@ -1190,6 +2179,13 @@
 ],
 "builtin_module_names": [
 {
+"package": "html",
+"qualified": "builtin_module_names",
+"kind": "define",
+"signature": "define builtin_module_names() -> List {",
+"doc": "Names of modules compiled into this Quirk distribution."
+},
+{
 "package": "sys",
 "qualified": "builtin_module_names",
 "kind": "define",
@@ -1198,6 +2194,13 @@
 }
 ],
 "byteorder": [
+{
+"package": "html",
+"qualified": "byteorder",
+"kind": "define",
+"signature": "extern define byteorder() -> String",
+"doc": "The host machine's byte order: `\"little\"` or `\"big\"`."
+},
 {
 "package": "sys",
 "qualified": "byteorder",
@@ -1208,6 +2211,13 @@
 ],
 "capture_backtrace": [
 {
+"package": "html",
+"qualified": "capture_backtrace",
+"kind": "define",
+"signature": "extern define capture_backtrace() -> void",
+"doc": "Captures the C-level backtrace into an internal buffer. Subsequent calls\noverwrite. Used by exception handlers to attach traceback info."
+},
+{
 "package": "sys",
 "qualified": "capture_backtrace",
 "kind": "define",
@@ -1216,6 +2226,13 @@
 }
 ],
 "cbrt": [
+{
+"package": "html",
+"qualified": "cbrt",
+"kind": "define",
+"signature": "extern define cbrt(x: Double) -> Double",
+"doc": "Cube root. Defined for all reals (negative input returns negative root)."
+},
 {
 "package": "math",
 "qualified": "cbrt",
@@ -1226,6 +2243,13 @@
 ],
 "ceil": [
 {
+"package": "html",
+"qualified": "ceil",
+"kind": "define",
+"signature": "extern define ceil(x: Double) -> Double",
+"doc": "Smallest integer \u2265 x, returned as Double. `ceil(2.1) == 3.0`."
+},
+{
 "package": "math",
 "qualified": "ceil",
 "kind": "define",
@@ -1234,6 +2258,13 @@
 }
 ],
 "chain": [
+{
+"package": "html",
+"qualified": "chain",
+"kind": "define",
+"signature": "define chain(a: List, b: List) -> List {",
+"doc": "Concatenate two Lists in order.\n@example chain([1, 2], [3, 4])   // [1, 2, 3, 4]"
+},
 {
 "package": "itertools",
 "qualified": "chain",
@@ -1249,9 +2280,30 @@
 "kind": "define",
 "signature": "extern define chdir_raw(path: String) -> Int",
 "doc": "Change current working directory. @throws IOError on failure."
+},
+{
+"package": "html",
+"qualified": "chdir_raw",
+"kind": "define",
+"signature": "extern define chdir_raw(path: String) -> Int",
+"doc": "Change current working directory. @throws IOError on failure."
 }
 ],
 "choice": [
+{
+"package": "html",
+"qualified": "choice",
+"kind": "define",
+"signature": "extern define choice(items: List) -> Any",
+"doc": "Pick a random element from a non-empty list. Returns null if empty."
+},
+{
+"package": "html",
+"qualified": "choice",
+"kind": "define",
+"signature": "define choice(items: List) -> Any {",
+"doc": "Pick one element of `list` uniformly at random.\n@throws ValueError if the list is empty."
+},
 {
 "package": "math",
 "qualified": "choice",
@@ -1269,6 +2321,13 @@
 ],
 "clamp": [
 {
+"package": "html",
+"qualified": "clamp",
+"kind": "define",
+"signature": "define clamp(value: Int, lo: Int, hi: Int) -> Int {",
+"doc": "Restrict `value` to the closed range [lo, hi].\n@example math.clamp(150, 0, 100) // 100"
+},
+{
 "package": "math",
 "qualified": "clamp",
 "kind": "define",
@@ -1277,6 +2336,13 @@
 }
 ],
 "clamp_f": [
+{
+"package": "html",
+"qualified": "clamp_f",
+"kind": "define",
+"signature": "define clamp_f(value: Double, lo: Double, hi: Double) -> Double {",
+"doc": "Restrict a Double to the closed range `[lo, hi]`."
+},
 {
 "package": "math",
 "qualified": "clamp_f",
@@ -1288,6 +2354,41 @@
 "clear": [
 {
 "package": "console",
+"qualified": "clear",
+"kind": "define",
+"signature": "define clear() -> void {",
+"doc": "Clear the terminal screen."
+},
+{
+"package": "html",
+"qualified": "ListIterator.clear",
+"kind": "method",
+"signature": "extern define clear(self) -> void",
+"doc": "Removes all elements from the list."
+},
+{
+"package": "html",
+"qualified": "QueueIterator.clear",
+"kind": "method",
+"signature": "extern define clear(self) -> void",
+"doc": "Removes all elements."
+},
+{
+"package": "html",
+"qualified": "MapIterator.clear",
+"kind": "method",
+"signature": "extern define clear(self) -> void",
+"doc": "Removes all entries from the map."
+},
+{
+"package": "html",
+"qualified": "SetIterator.clear",
+"kind": "method",
+"signature": "extern define clear(self) -> void",
+"doc": "Removes all elements."
+},
+{
+"package": "html",
 "qualified": "clear",
 "kind": "define",
 "signature": "define clear() -> void {",
@@ -1329,9 +2430,37 @@
 "kind": "define",
 "signature": "define clear_line() -> void {",
 "doc": "Erase the current line and move the cursor to column 0.\nPairs with `put` for in-place updates (progress bars, spinners)."
+},
+{
+"package": "html",
+"qualified": "clear_line",
+"kind": "define",
+"signature": "define clear_line() -> void {",
+"doc": "Erase the current line and move the cursor to column 0.\nPairs with `put` for in-place updates (progress bars, spinners)."
 }
 ],
 "close": [
+{
+"package": "html",
+"qualified": "Socket.close",
+"kind": "method",
+"signature": "define close(self) -> void {",
+"doc": "Close the socket. Idempotent \u2014 calling close twice is a no-op."
+},
+{
+"package": "html",
+"qualified": "close",
+"kind": "define",
+"signature": "extern define close(fd: Int) -> void",
+"doc": "Close socket `fd`, releasing the OS resource."
+},
+{
+"package": "html",
+"qualified": "File.close",
+"kind": "method",
+"signature": "extern define close(self) -> void",
+"doc": "Close the file handle. Standard streams (`stdin`/`stdout`/`stderr`)\nare protected from being closed."
+},
 {
 "package": "io",
 "qualified": "File.close",
@@ -1356,6 +2485,13 @@
 ],
 "compile": [
 {
+"package": "html",
+"qualified": "Match.compile",
+"kind": "method",
+"signature": "define compile(pattern: String, flags: String = \"\") -> Regex {",
+"doc": "Compile a pattern. Equivalent to `Regex(pattern, flags)`."
+},
+{
 "package": "regex",
 "qualified": "Match.compile",
 "kind": "method",
@@ -1364,6 +2500,13 @@
 }
 ],
 "compile_raw": [
+{
+"package": "html",
+"qualified": "compile_raw",
+"kind": "define",
+"signature": "extern define compile_raw(pattern: String, flags: String) -> Any",
+"doc": "Compile a pattern. Returns an opaque handle stored in `Regex._handle`.\n@throws ValueError if the pattern fails to compile."
+},
 {
 "package": "regex",
 "qualified": "compile_raw",
@@ -1381,6 +2524,20 @@
 "doc": "Yes/no prompt with a default answer. Pressing Enter uses the default.\n@example\nif console.confirm(\"Continue?\", default: false) { ... }"
 },
 {
+"package": "html",
+"qualified": "confirm",
+"kind": "define",
+"signature": "define confirm(message: String, default: Bool = true) -> Bool {",
+"doc": "Yes/no question. `default=true` means an empty reply (pressing Enter)\naccepts; `default=false` means it rejects. The prompt suffix is\n`[Y/n]` / `[y/N]` matching most CLI conventions."
+},
+{
+"package": "html",
+"qualified": "confirm",
+"kind": "define",
+"signature": "define confirm(prompt: String, default: Bool = true) -> Bool {",
+"doc": "Yes/no prompt with a default answer. Pressing Enter uses the default.\n@example\nif console.confirm(\"Continue?\", default: false) { ... }"
+},
+{
 "package": "prompt",
 "qualified": "confirm",
 "kind": "define",
@@ -1389,6 +2546,20 @@
 }
 ],
 "connect": [
+{
+"package": "html",
+"qualified": "Socket.connect",
+"kind": "method",
+"signature": "define connect(self, host: String, port: Int) -> void {",
+"doc": "Connect this socket to a remote `host:port`.\n@throws SocketError on connect failure (DNS, refused, timeout, ...)."
+},
+{
+"package": "html",
+"qualified": "connect",
+"kind": "define",
+"signature": "extern define connect(fd: Int, host: String, port: Int) -> Int",
+"doc": "Connect socket `fd` to a remote `host:port`. Returns 0 on success.\n@example connect(fd, \"example.com\", 80)"
+},
 {
 "package": "net",
 "qualified": "Socket.connect",
@@ -1406,6 +2577,13 @@
 ],
 "copyright": [
 {
+"package": "html",
+"qualified": "copyright",
+"kind": "define",
+"signature": "extern define copyright() -> String",
+"doc": "A short copyright string for the Quirk runtime."
+},
+{
 "package": "sys",
 "qualified": "copyright",
 "kind": "define",
@@ -1414,6 +2592,13 @@
 }
 ],
 "cos": [
+{
+"package": "html",
+"qualified": "cos",
+"kind": "define",
+"signature": "extern define cos(x: Double) -> Double",
+"doc": "Cosine of `x` (in radians)."
+},
 {
 "package": "math",
 "qualified": "cos",
@@ -1424,6 +2609,13 @@
 ],
 "cosh": [
 {
+"package": "html",
+"qualified": "cosh",
+"kind": "define",
+"signature": "extern define cosh(x: Double) -> Double",
+"doc": "Hyperbolic cosine: `(e^x + e^-x) / 2`."
+},
+{
 "package": "math",
 "qualified": "cosh",
 "kind": "define",
@@ -1432,6 +2624,13 @@
 }
 ],
 "count": [
+{
+"package": "html",
+"qualified": "StringIterator.count",
+"kind": "method",
+"signature": "extern define count(self, sub: String) -> Int",
+"doc": "Returns the number of non-overlapping occurrences of `sub`.\n@param sub: String\n@returns: Int"
+},
 {
 "package": "typing",
 "qualified": "StringIterator.count",
@@ -1447,9 +2646,23 @@
 "kind": "define",
 "signature": "extern define cwd() -> String",
 "doc": "Current working directory as a String."
+},
+{
+"package": "html",
+"qualified": "cwd",
+"kind": "define",
+"signature": "extern define cwd() -> String",
+"doc": "Current working directory as a String."
 }
 ],
 "cycle": [
+{
+"package": "html",
+"qualified": "cycle",
+"kind": "define",
+"signature": "define cycle(items: List, total: Int) -> List {",
+"doc": "Cycle `items` to produce a List of length `total`. Empty input yields an\nempty list regardless of `total`.\n\n@example\ncycle([1, 2, 3], 7)   // [1, 2, 3, 1, 2, 3, 1]"
+},
 {
 "package": "itertools",
 "qualified": "cycle",
@@ -1459,6 +2672,13 @@
 }
 ],
 "day": [
+{
+"package": "html",
+"qualified": "day",
+"kind": "define",
+"signature": "extern define day(epoch: Int, utc: Int) -> Int",
+"doc": "Day of month, 1-31."
+},
 {
 "package": "time",
 "qualified": "day",
@@ -1474,11 +2694,25 @@
 "kind": "method",
 "signature": "define day_name(dt: DateTime) -> String {",
 "doc": "Full English weekday name for `dt`. `weekday` is 0=Sunday \u2026 6=Saturday."
+},
+{
+"package": "html",
+"qualified": "DateTime.day_name",
+"kind": "method",
+"signature": "define day_name(dt: DateTime) -> String {",
+"doc": "Full English weekday name for `dt`. `weekday` is 0=Sunday \u2026 6=Saturday."
 }
 ],
 "days_in_month": [
 {
 "package": "datetime",
+"qualified": "DateTime.days_in_month",
+"kind": "method",
+"signature": "define days_in_month(year: Int, month: Int) -> Int {",
+"doc": "Number of days in `month` (1-12) of `year`. Handles February's leap-year\nadjustment via `is_leap`."
+},
+{
+"package": "html",
 "qualified": "DateTime.days_in_month",
 "kind": "method",
 "signature": "define days_in_month(year: Int, month: Int) -> Int {",
@@ -1499,9 +2733,30 @@
 "kind": "define",
 "signature": "extern define decode(data: String) -> String",
 "doc": "Decode a Base64 String back to the original. Tolerant of whitespace and\nmissing padding; returns \"\" on malformed input."
+},
+{
+"package": "html",
+"qualified": "decode",
+"kind": "define",
+"signature": "extern define decode(data: String) -> String",
+"doc": "Decode a hex String back to its original bytes. Accepts mixed case.\nReturns \"\" if the input length is odd or contains non-hex characters."
+},
+{
+"package": "html",
+"qualified": "decode",
+"kind": "define",
+"signature": "extern define decode(data: String) -> String",
+"doc": "Decode a Base64 String back to the original. Tolerant of whitespace and\nmissing padding; returns \"\" on malformed input."
 }
 ],
 "delete": [
+{
+"package": "html",
+"qualified": "Response.delete",
+"kind": "method",
+"signature": "define delete(target: String, headers: Map = Map()) -> Response {",
+"doc": "HTTP DELETE.\n@example resp := http.delete(\"http://api/users/42\")"
+},
 {
 "package": "net",
 "qualified": "Response.delete",
@@ -1517,11 +2772,25 @@
 "kind": "method",
 "signature": "define diff_days(a: DateTime, b: DateTime) -> Int {",
 "doc": "Whole days between `a` and `b` (signed). Calendar-day boundaries\naren't honored \u2014 this is simply `seconds / 86400`."
+},
+{
+"package": "html",
+"qualified": "DateTime.diff_days",
+"kind": "method",
+"signature": "define diff_days(a: DateTime, b: DateTime) -> Int {",
+"doc": "Whole days between `a` and `b` (signed). Calendar-day boundaries\naren't honored \u2014 this is simply `seconds / 86400`."
 }
 ],
 "diff_hours": [
 {
 "package": "datetime",
+"qualified": "DateTime.diff_hours",
+"kind": "method",
+"signature": "define diff_hours(a: DateTime, b: DateTime) -> Int {",
+"doc": "Whole hours between `a` and `b` (signed)."
+},
+{
+"package": "html",
 "qualified": "DateTime.diff_hours",
 "kind": "method",
 "signature": "define diff_hours(a: DateTime, b: DateTime) -> Int {",
@@ -1535,6 +2804,13 @@
 "kind": "method",
 "signature": "define diff_minutes(a: DateTime, b: DateTime) -> Int {",
 "doc": "Whole minutes between `a` and `b` (signed; `b - a`)."
+},
+{
+"package": "html",
+"qualified": "DateTime.diff_minutes",
+"kind": "method",
+"signature": "define diff_minutes(a: DateTime, b: DateTime) -> Int {",
+"doc": "Whole minutes between `a` and `b` (signed; `b - a`)."
 }
 ],
 "diff_seconds": [
@@ -1544,9 +2820,23 @@
 "kind": "method",
 "signature": "define diff_seconds(self, other: DateTime) -> Int {",
 "doc": "`self - other` in seconds. Negative if `self` is earlier."
+},
+{
+"package": "html",
+"qualified": "DateTime.diff_seconds",
+"kind": "method",
+"signature": "define diff_seconds(self, other: DateTime) -> Int {",
+"doc": "`self - other` in seconds. Negative if `self` is earlier."
 }
 ],
 "difference": [
+{
+"package": "html",
+"qualified": "SetIterator.difference",
+"kind": "method",
+"signature": "extern define difference(self, other: Set) -> Set",
+"doc": "Returns a new set with elements in this set that are not in `other`.\n@param other: Set\n@returns: Set"
+},
 {
 "package": "typing",
 "qualified": "SetIterator.difference",
@@ -1562,6 +2852,13 @@
 "kind": "define",
 "signature": "define dir(value: Any) -> void {",
 "doc": "Pretty-dump a value with newlines and indentation. Mirrors JS console.dir \u2014\nuseful when `log` (single-line) hides structure."
+},
+{
+"package": "html",
+"qualified": "dir",
+"kind": "define",
+"signature": "define dir(value: Any) -> void {",
+"doc": "Pretty-dump a value with newlines and indentation. Mirrors JS console.dir \u2014\nuseful when `log` (single-line) hides structure."
 }
 ],
 "dirname": [
@@ -1571,9 +2868,23 @@
 "kind": "define",
 "signature": "define dirname(path: String) -> String {",
 "doc": "Everything before the final path component. `\"a/b/c.txt\"` \u2192 `\"a/b\"`.\nReturns \"\" if the path has no separators."
+},
+{
+"package": "html",
+"qualified": "dirname",
+"kind": "define",
+"signature": "define dirname(path: String) -> String {",
+"doc": "Everything before the final path component. `\"a/b/c.txt\"` \u2192 `\"a/b\"`.\nReturns \"\" if the path has no separators."
 }
 ],
 "distance": [
+{
+"package": "html",
+"qualified": "StringIterator.distance",
+"kind": "method",
+"signature": "extern define distance(self, other: String) -> Int",
+"doc": "Computes the Levenshtein edit distance between this string and `other`.\n@param other: String\n@returns: Int \u2014 number of single-character edits needed"
+},
 {
 "package": "typing",
 "qualified": "StringIterator.distance",
@@ -1584,6 +2895,13 @@
 ],
 "dot": [
 {
+"package": "html",
+"qualified": "Vector2.dot",
+"kind": "method",
+"signature": "define dot(self, other: Vector2) -> Double {",
+"doc": "Dot product: `a \u00b7 b = a.x*b.x + a.y*b.y`. Useful for projections,\nangle calculations (`cos \u03b8 = dot(a, b) / (|a| * |b|)`), and detecting\northogonality (dot == 0)."
+},
+{
 "package": "math",
 "qualified": "Vector2.dot",
 "kind": "method",
@@ -1592,6 +2910,13 @@
 }
 ],
 "drop_while": [
+{
+"package": "html",
+"qualified": "drop_while",
+"kind": "define",
+"signature": "define drop_while(pred: Callable, items: List) -> List {",
+"doc": "Drop items from the front while `pred` is true, return the remainder.\n@example drop_while(fn(x) => x < 5, [1, 3, 5, 4, 2])   // [5, 4, 2]"
+},
 {
 "package": "itertools",
 "qualified": "drop_while",
@@ -1607,6 +2932,13 @@
 "kind": "define",
 "signature": "define dump(val: Any, file: File) -> void {",
 "doc": "Serialize `val` and write the JSON string to an open File.\n\n@example\nwith File(\"config.json\", \"w\") as f {\n    json.dump(config_map, f)\n}"
+},
+{
+"package": "html",
+"qualified": "dump",
+"kind": "define",
+"signature": "define dump(val: Any, file: File) -> void {",
+"doc": "Serialize `val` and write the JSON string to an open File.\n\n@example\nwith File(\"config.json\", \"w\") as f {\n    json.dump(config_map, f)\n}"
 }
 ],
 "dumps_pretty": [
@@ -1616,9 +2948,23 @@
 "kind": "define",
 "signature": "define dumps_pretty(val: Any, indent: Int = 2) -> String {",
 "doc": "Pretty-print `val` with `indent` spaces per nesting level. Indented JSON\nis much easier to read for config files and debug output; pass `indent=4`\nfor a more spacious layout.\n\n@example\nm := Map()\nm.put(\"name\", \"Alice\")\nm.put(\"scores\", [98, 87, 92])\nprint(json.dumps_pretty(m))\n// {\n//   \"name\": \"Alice\",\n//   \"scores\": [\n//     98,\n//     87,\n//     92\n//   ]\n// }"
+},
+{
+"package": "html",
+"qualified": "dumps_pretty",
+"kind": "define",
+"signature": "define dumps_pretty(val: Any, indent: Int = 2) -> String {",
+"doc": "Pretty-print `val` with `indent` spaces per nesting level. Indented JSON\nis much easier to read for config files and debug output; pass `indent=4`\nfor a more spacious layout.\n\n@example\nm := Map()\nm.put(\"name\", \"Alice\")\nm.put(\"scores\", [98, 87, 92])\nprint(json.dumps_pretty(m))\n// {\n//   \"name\": \"Alice\",\n//   \"scores\": [\n//     98,\n//     87,\n//     92\n//   ]\n// }"
 }
 ],
 "e": [
+{
+"package": "html",
+"qualified": "e",
+"kind": "define",
+"signature": "extern define e() -> Double",
+"doc": "e \u2014 Euler's number. \u2248 2.71828182845905"
+},
 {
 "package": "math",
 "qualified": "e",
@@ -1628,6 +2974,20 @@
 }
 ],
 "each": [
+{
+"package": "html",
+"qualified": "ListIterator.each",
+"kind": "method",
+"signature": "extern define each(self, cb: Callable) -> void",
+"doc": "Calls `cb` for each element. Returns nothing.\n@param cb: Callable \u2014 `fn(element: T) => void`\n\n@example:\n[1, 2, 3].each(fn(x: Int) => print(x))"
+},
+{
+"package": "html",
+"qualified": "MapIterator.each",
+"kind": "method",
+"signature": "extern define each(self, cb: Callable) -> void",
+"doc": "Calls `cb` for each key-value pair.\n@param cb: Callable \u2014 `fn(key: String, value: Any)`\n\n@example:\nm.each(fn(k: String, v: Any) => print(k + \": \" + v))"
+},
 {
 "package": "typing",
 "qualified": "ListIterator.each",
@@ -1645,6 +3005,13 @@
 ],
 "each_key": [
 {
+"package": "html",
+"qualified": "MapIterator.each_key",
+"kind": "method",
+"signature": "extern define each_key(self, cb: Callable) -> void",
+"doc": "Calls `cb` for each key only.\n@param cb: Callable \u2014 `fn(key: String)`"
+},
+{
 "package": "typing",
 "qualified": "MapIterator.each_key",
 "kind": "method",
@@ -1653,6 +3020,13 @@
 }
 ],
 "each_value": [
+{
+"package": "html",
+"qualified": "MapIterator.each_value",
+"kind": "method",
+"signature": "extern define each_value(self, cb: Callable) -> void",
+"doc": "Calls `cb` for each value only.\n@param cb: Callable \u2014 `fn(value: Any)`"
+},
 {
 "package": "typing",
 "qualified": "MapIterator.each_value",
@@ -1675,9 +3049,30 @@
 "kind": "define",
 "signature": "extern define encode(data: String) -> String",
 "doc": "Encode `data` to a Base64 String. Output length is roughly 4/3 of input,\nrounded up to a multiple of 4 with `=` padding."
+},
+{
+"package": "html",
+"qualified": "encode",
+"kind": "define",
+"signature": "extern define encode(data: String) -> String",
+"doc": "Encode each byte of `data` as two lowercase hex digits.\nOutput length is exactly `2 * data.length()`."
+},
+{
+"package": "html",
+"qualified": "encode",
+"kind": "define",
+"signature": "extern define encode(data: String) -> String",
+"doc": "Encode `data` to a Base64 String. Output length is roughly 4/3 of input,\nrounded up to a multiple of 4 with `=` padding."
 }
 ],
 "enumerate": [
+{
+"package": "html",
+"qualified": "enumerate",
+"kind": "define",
+"signature": "define enumerate(items: List, start: Int = 0) -> List {",
+"doc": "Pair each value with a running index, returning `(idx, value)` tuples.\n`start` defaults to 0 \u2014 pass `start=1` for 1-based numbering. Access the\nreturned pairs with `t.0` / `t.1` or `t[0]` / `t[1]`.\n\n@example\nfor pair in enumerate([\"a\", \"b\", \"c\"]) {\n    print(\"${pair.0}: ${pair.1}\")\n}"
+},
 {
 "package": "itertools",
 "qualified": "enumerate",
@@ -1688,6 +3083,13 @@
 ],
 "env": [
 {
+"package": "html",
+"qualified": "env",
+"kind": "define",
+"signature": "define env(key: String) -> String {",
+"doc": "Retrieves the value of an environment variable. Returns the empty string\nwhen the variable is unset.\n@example\nhome := sys.env(\"HOME\")"
+},
+{
 "package": "sys",
 "qualified": "env",
 "kind": "define",
@@ -1695,7 +3097,30 @@
 "doc": "Retrieves the value of an environment variable. Returns the empty string\nwhen the variable is unset.\n@example\nhome := sys.env(\"HOME\")"
 }
 ],
+"err": [
+{
+"package": "html",
+"qualified": "Result.err",
+"kind": "method",
+"signature": "define err(self) -> Option {",
+"doc": "Converts to `Option` of the error: `Err(e)` \u2192 `Some(e)`; `Ok(_)` \u2192 `None`."
+},
+{
+"package": "typing",
+"qualified": "Result.err",
+"kind": "method",
+"signature": "define err(self) -> Option {",
+"doc": "Converts to `Option` of the error: `Err(e)` \u2192 `Some(e)`; `Ok(_)` \u2192 `None`."
+}
+],
 "exc_info": [
+{
+"package": "html",
+"qualified": "exc_info",
+"kind": "define",
+"signature": "extern define exc_info() -> Any",
+"doc": "Information about the most recently caught exception, or null if none.\nUsed by debugging tools."
+},
 {
 "package": "sys",
 "qualified": "exc_info",
@@ -1705,6 +3130,13 @@
 }
 ],
 "executable": [
+{
+"package": "html",
+"qualified": "executable",
+"kind": "define",
+"signature": "extern define executable() -> String",
+"doc": "Absolute path to the running quirk executable."
+},
 {
 "package": "sys",
 "qualified": "executable",
@@ -1720,9 +3152,23 @@
 "kind": "define",
 "signature": "extern define exists(path: String) -> Bool",
 "doc": "True if anything (file, directory, symlink) exists at `path`."
+},
+{
+"package": "html",
+"qualified": "exists",
+"kind": "define",
+"signature": "extern define exists(path: String) -> Bool",
+"doc": "True if anything (file, directory, symlink) exists at `path`."
 }
 ],
 "exit": [
+{
+"package": "html",
+"qualified": "exit",
+"kind": "define",
+"signature": "extern define exit(code: Int) -> void",
+"doc": "Immediately terminates the program with `code`. Skips finalizers.\nPrefer `terminate(code)` for the friendlier name."
+},
 {
 "package": "sys",
 "qualified": "exit",
@@ -1732,6 +3178,13 @@
 }
 ],
 "exp": [
+{
+"package": "html",
+"qualified": "exp",
+"kind": "define",
+"signature": "extern define exp(x: Double) -> Double",
+"doc": "`e ** x`."
+},
 {
 "package": "math",
 "qualified": "exp",
@@ -1747,9 +3200,23 @@
 "kind": "define",
 "signature": "define extname(path: String) -> String {",
 "doc": "File extension including the leading dot (`\".txt\"`), or \"\" when there\nis none. A leading dot in the basename (e.g. `.gitignore`) is NOT an\nextension \u2014 it's the filename."
+},
+{
+"package": "html",
+"qualified": "extname",
+"kind": "define",
+"signature": "define extname(path: String) -> String {",
+"doc": "File extension including the leading dot (`\".txt\"`), or \"\" when there\nis none. A leading dot in the basename (e.g. `.gitignore`) is NOT an\nextension \u2014 it's the filename."
 }
 ],
 "fabs": [
+{
+"package": "html",
+"qualified": "fabs",
+"kind": "define",
+"signature": "extern define fabs(x: Double) -> Double",
+"doc": "Absolute value of a Double. (Wrapped by `abs_f` for naming symmetry.)"
+},
 {
 "package": "math",
 "qualified": "fabs",
@@ -1760,6 +3227,27 @@
 ],
 "filter": [
 {
+"package": "html",
+"qualified": "Option.filter",
+"kind": "method",
+"signature": "define filter(self, pred: Callable) -> Option {",
+"doc": "Keeps `Some(v)` only if `pred(v)` is true; otherwise `None`."
+},
+{
+"package": "html",
+"qualified": "ListIterator.filter",
+"kind": "method",
+"signature": "extern define filter(self, cb: Callable) -> List",
+"doc": "Returns a new list containing only elements for which `cb` returns `true`.\n@param cb: Callable \u2014 `fn(element: T) => Bool`\n@returns: List \u2014 filtered list\n\n@example:\nevens := [1, 2, 3, 4].filter(fn(x: Int) => x % 2 == 0)  // [2, 4]"
+},
+{
+"package": "typing",
+"qualified": "Option.filter",
+"kind": "method",
+"signature": "define filter(self, pred: Callable) -> Option {",
+"doc": "Keeps `Some(v)` only if `pred(v)` is true; otherwise `None`."
+},
+{
 "package": "typing",
 "qualified": "ListIterator.filter",
 "kind": "method",
@@ -1768,6 +3256,34 @@
 }
 ],
 "find": [
+{
+"package": "html",
+"qualified": "StringIterator.find",
+"kind": "method",
+"signature": "extern define find(self, sub: String) -> Int",
+"doc": "Returns the index of the first occurrence of `sub`, or `-1` if not found.\n@param sub: String\n@returns: Int"
+},
+{
+"package": "html",
+"qualified": "ListIterator.find",
+"kind": "method",
+"signature": "extern define find(self, cb: Callable) -> Any",
+"doc": "Returns the first element that satisfies the predicate, or `null` if none found.\n@param cb: Callable \u2014 `fn(element: T) => Bool`\n@returns: Any \u2014 the matching element, or `null`"
+},
+{
+"package": "html",
+"qualified": "Match.find",
+"kind": "method",
+"signature": "define find(self, s: String) -> Match {",
+"doc": "Find the first match starting at or after `from_offset`. Returns a Match\nwith `text` = full match string and `groups` = captured-group strings.\nReturns null when no match is found."
+},
+{
+"package": "html",
+"qualified": "Match.find",
+"kind": "method",
+"signature": "define find(pattern: String, s: String) -> Match {",
+"doc": "One-shot find: compile + find."
+},
 {
 "package": "regex",
 "qualified": "Match.find",
@@ -1799,6 +3315,13 @@
 ],
 "find_all": [
 {
+"package": "html",
+"qualified": "Match.find_all",
+"kind": "method",
+"signature": "define find_all(self, s: String) -> List {",
+"doc": "Find every non-overlapping match. Returns a List<Match>.\nEmpty matches advance one byte to avoid infinite loops."
+},
+{
 "package": "regex",
 "qualified": "Match.find_all",
 "kind": "method",
@@ -1807,6 +3330,13 @@
 }
 ],
 "find_at": [
+{
+"package": "html",
+"qualified": "find_at",
+"kind": "define",
+"signature": "extern define find_at(handle: Any, s: String, from_offset: Int) -> Int",
+"doc": "Searches `s` starting at `from_offset` and caches the match groups in the\nhandle. Returns the start offset of the full match, or -1 if no match.\nQuirk wrappers then read group_count/group_start/group_end to assemble Match."
+},
 {
 "package": "regex",
 "qualified": "find_at",
@@ -1829,9 +3359,30 @@
 "kind": "method",
 "signature": "define flag(args: Map, name: String) -> Bool {",
 "doc": "Convenience: read a flag from a parsed-args Map as a Bool. Equivalent to\n`args.get(name) == \"true\"`.\n@example  if argparse.flag(args, \"verbose\") { ... }"
+},
+{
+"package": "html",
+"qualified": "ArgSpec.flag",
+"kind": "method",
+"signature": "define flag(self, long: String, short: String, help: String) -> void {",
+"doc": "Add a boolean flag with the given long and short names. Default false."
+},
+{
+"package": "html",
+"qualified": "ArgSpec.flag",
+"kind": "method",
+"signature": "define flag(args: Map, name: String) -> Bool {",
+"doc": "Convenience: read a flag from a parsed-args Map as a Bool. Equivalent to\n`args.get(name) == \"true\"`.\n@example  if argparse.flag(args, \"verbose\") { ... }"
 }
 ],
 "floor": [
+{
+"package": "html",
+"qualified": "floor",
+"kind": "define",
+"signature": "extern define floor(x: Double) -> Double",
+"doc": "Largest integer \u2264 x, returned as Double. `floor(2.7) == 2.0`."
+},
 {
 "package": "math",
 "qualified": "floor",
@@ -1841,6 +3392,13 @@
 }
 ],
 "fmod": [
+{
+"package": "html",
+"qualified": "fmod",
+"kind": "define",
+"signature": "extern define fmod(a: Double, b: Double) -> Double",
+"doc": "Floating-point remainder of `a / b` with the sign of `a`.\n@example math.fmod(10.0, 3.0)  // 1.0"
+},
 {
 "package": "math",
 "qualified": "fmod",
@@ -1858,6 +3416,20 @@
 "doc": "Format using a strftime-style spec. Common codes:\n  `%Y` 4-digit year   `%m` month 01-12   `%d` day 01-31\n  `%H` hour 00-23     `%M` minute 00-59  `%S` second 00-59\n  `%A` weekday name   `%a` short day      `%B` month name\n  `%j` day-of-year    `%w` weekday 0-6"
 },
 {
+"package": "html",
+"qualified": "DateTime.format",
+"kind": "method",
+"signature": "define format(self, fmt: String) -> String {",
+"doc": "Format using a strftime-style spec. Common codes:\n  `%Y` 4-digit year   `%m` month 01-12   `%d` day 01-31\n  `%H` hour 00-23     `%M` minute 00-59  `%S` second 00-59\n  `%A` weekday name   `%a` short day      `%B` month name\n  `%j` day-of-year    `%w` weekday 0-6"
+},
+{
+"package": "html",
+"qualified": "StringIterator.format",
+"kind": "method",
+"signature": "extern define format(self, ...args: List) -> String",
+"doc": "Returns a new string with each `{0}`, `{1}`, \u2026 placeholder replaced by the\ncorresponding argument.\n@param args: List \u2014 positional values to interpolate\n@returns: String\n@example:\n\"Hello {0}, you are {1}!\".format([\"Alice\", 30])"
+},
+{
 "package": "typing",
 "qualified": "StringIterator.format",
 "kind": "method",
@@ -1866,6 +3438,13 @@
 }
 ],
 "format_at": [
+{
+"package": "html",
+"qualified": "format_at",
+"kind": "define",
+"signature": "extern define format_at(epoch: Int, fmt: String, utc: Int) -> String",
+"doc": "Format `epoch` with a strftime-style spec. Empty spec falls back to\n`\"%Y-%m-%dT%H:%M:%S\"`."
+},
 {
 "package": "time",
 "qualified": "format_at",
@@ -1881,6 +3460,13 @@
 "kind": "method",
 "signature": "define from_iso(s: String) -> DateTime {",
 "doc": "Parse an ISO-8601 string (`\"YYYY-MM-DD[Thh:mm:ss[Z]]\"`).\nTrailing `Z` \u2192 UTC; otherwise local. Throws `ValueError` on bad input."
+},
+{
+"package": "html",
+"qualified": "DateTime.from_iso",
+"kind": "method",
+"signature": "define from_iso(s: String) -> DateTime {",
+"doc": "Parse an ISO-8601 string (`\"YYYY-MM-DD[Thh:mm:ss[Z]]\"`).\nTrailing `Z` \u2192 UTC; otherwise local. Throws `ValueError` on bad input."
 }
 ],
 "from_unix": [
@@ -1890,9 +3476,30 @@
 "kind": "method",
 "signature": "define from_unix(epoch: Int) -> DateTime {",
 "doc": "Build a DateTime from an explicit Unix epoch (seconds), interpreted in the\nlocal time zone."
+},
+{
+"package": "html",
+"qualified": "DateTime.from_unix",
+"kind": "method",
+"signature": "define from_unix(epoch: Int) -> DateTime {",
+"doc": "Build a DateTime from an explicit Unix epoch (seconds), interpreted in the\nlocal time zone."
 }
 ],
 "get": [
+{
+"package": "html",
+"qualified": "Response.get",
+"kind": "method",
+"signature": "define get(target: String, headers: Map = Map(), params: Map = Map()) -> Response {",
+"doc": "HTTP GET.\n@param headers Extra request headers (optional).\n@param params Query-string parameters merged into the URL (optional).\n@example resp := http.get(\"http://example.com\")\n@example resp := http.get(\"http://api/search\", params: { \"q\": \"quirk\" })"
+},
+{
+"package": "html",
+"qualified": "MapIterator.get",
+"kind": "method",
+"signature": "extern define get(self, key: String) -> Any",
+"doc": "Returns the value for the given key, or `null` if not found.\n@param key: String \u2014 the key to look up\n@returns: Any \u2014 the associated value, or `null`"
+},
 {
 "package": "net",
 "qualified": "Response.get",
@@ -1910,6 +3517,13 @@
 ],
 "getdefaultencoding": [
 {
+"package": "html",
+"qualified": "getdefaultencoding",
+"kind": "define",
+"signature": "extern define getdefaultencoding() -> String",
+"doc": "Default text encoding (e.g. `\"utf-8\"`)."
+},
+{
 "package": "sys",
 "qualified": "getdefaultencoding",
 "kind": "define",
@@ -1918,6 +3532,13 @@
 }
 ],
 "getenv": [
+{
+"package": "html",
+"qualified": "getenv",
+"kind": "define",
+"signature": "extern define getenv(name: String) -> String",
+"doc": "Reads an environment variable. Returns the empty string when unset.\nPrefer `env(key)` for the same behavior with a friendlier name."
+},
 {
 "package": "sys",
 "qualified": "getenv",
@@ -1928,6 +3549,13 @@
 ],
 "getrecursionlimit": [
 {
+"package": "html",
+"qualified": "getrecursionlimit",
+"kind": "define",
+"signature": "extern define getrecursionlimit() -> Int",
+"doc": "Maximum recursion depth before a stack-overflow is raised."
+},
+{
 "package": "sys",
 "qualified": "getrecursionlimit",
 "kind": "define",
@@ -1936,6 +3564,13 @@
 }
 ],
 "getsizeof": [
+{
+"package": "html",
+"qualified": "getsizeof",
+"kind": "define",
+"signature": "extern define getsizeof(obj: Any) -> Int",
+"doc": "Approximate size of `obj` in bytes (best-effort)."
+},
 {
 "package": "sys",
 "qualified": "getsizeof",
@@ -1951,9 +3586,23 @@
 "kind": "define",
 "signature": "define group(label: String) -> void {",
 "doc": "Start an indented log group. Subsequent log/info/warn/etc. calls are indented\n2 spaces per group level. Pair with `group_end()` to close.\n@example\nconsole.group(\"Build\")\nconsole.log(\"step 1\")\nconsole.log(\"step 2\")\nconsole.group_end()"
+},
+{
+"package": "html",
+"qualified": "group",
+"kind": "define",
+"signature": "define group(label: String) -> void {",
+"doc": "Start an indented log group. Subsequent log/info/warn/etc. calls are indented\n2 spaces per group level. Pair with `group_end()` to close.\n@example\nconsole.group(\"Build\")\nconsole.log(\"step 1\")\nconsole.log(\"step 2\")\nconsole.group_end()"
 }
 ],
 "group_depth_dec": [
+{
+"package": "html",
+"qualified": "group_depth_dec",
+"kind": "define",
+"signature": "extern define group_depth_dec() -> void",
+"doc": "Decrement group-indent depth (clamped at 0)."
+},
 {
 "package": "sys",
 "qualified": "group_depth_dec",
@@ -1964,6 +3613,13 @@
 ],
 "group_depth_get": [
 {
+"package": "html",
+"qualified": "group_depth_get",
+"kind": "define",
+"signature": "extern define group_depth_get() -> Int",
+"doc": "Current group-indent depth (0 at the top level). Used by `console.group`."
+},
+{
 "package": "sys",
 "qualified": "group_depth_get",
 "kind": "define",
@@ -1972,6 +3628,13 @@
 }
 ],
 "group_depth_inc": [
+{
+"package": "html",
+"qualified": "group_depth_inc",
+"kind": "define",
+"signature": "extern define group_depth_inc() -> void",
+"doc": "Increment group-indent depth. Paired with `group_depth_dec()` by `console.group`."
+},
 {
 "package": "sys",
 "qualified": "group_depth_inc",
@@ -1982,6 +3645,13 @@
 ],
 "groupby": [
 {
+"package": "html",
+"qualified": "groupby",
+"kind": "define",
+"signature": "define groupby(key_fn: Callable, items: List) -> Map {",
+"doc": "Group items by the value produced by `key_fn`. Returns a Map from\nstringified key to a List of items with that key. Order of insertion in\neach group is preserved.\n\n@example\nwords := [\"pear\", \"plum\", \"apple\", \"peach\", \"apricot\"]\ngroupby(fn(w) => w.substring(0, 1), words)\n// {\"p\": [\"pear\", \"plum\", \"peach\"], \"a\": [\"apple\", \"apricot\"]}"
+},
+{
 "package": "itertools",
 "qualified": "groupby",
 "kind": "define",
@@ -1990,6 +3660,20 @@
 }
 ],
 "has": [
+{
+"package": "html",
+"qualified": "MapIterator.has",
+"kind": "method",
+"signature": "extern define has(self, key: String) -> Bool",
+"doc": "Returns `true` if the key exists in the map.\n@param key: String\n@returns: Bool"
+},
+{
+"package": "html",
+"qualified": "SetIterator.has",
+"kind": "method",
+"signature": "extern define has(self, val: Any) -> Bool",
+"doc": "Returns `true` if the value is in the set.\n@param val: Any\n@returns: Bool"
+},
 {
 "package": "typing",
 "qualified": "MapIterator.has",
@@ -2012,9 +3696,23 @@
 "kind": "define",
 "signature": "extern define hmac_sha256(key: String, msg: String) -> String",
 "doc": "HMAC-SHA256 \u2014 message authentication code. Use for signed cookies, JWT\nHS256, webhook signature verification, etc. Returns 64 hex chars."
+},
+{
+"package": "html",
+"qualified": "hmac_sha256",
+"kind": "define",
+"signature": "extern define hmac_sha256(key: String, msg: String) -> String",
+"doc": "HMAC-SHA256 \u2014 message authentication code. Use for signed cookies, JWT\nHS256, webhook signature verification, etc. Returns 64 hex chars."
 }
 ],
 "hour": [
+{
+"package": "html",
+"qualified": "hour",
+"kind": "define",
+"signature": "extern define hour(epoch: Int, utc: Int) -> Int",
+"doc": "Hour 0-23."
+},
 {
 "package": "time",
 "qualified": "hour",
@@ -2030,9 +3728,23 @@
 "kind": "method",
 "signature": "define humanize(dt: DateTime, relative_to: DateTime = now()) -> String {",
 "doc": "Approximate relative time vs `relative_to`, e.g. \"2 hours ago\" or\n\"in 3 days\". `relative_to` defaults to \"now\" via `now()`.\nGranularity grows with the gap: seconds \u2192 minutes \u2192 hours \u2192 days \u2192\nweeks \u2192 months \u2192 years.\n\n@example\nhumanize(yesterday())          // \"1 day ago\"\nhumanize(tomorrow())           // \"in 1 day\""
+},
+{
+"package": "html",
+"qualified": "DateTime.humanize",
+"kind": "method",
+"signature": "define humanize(dt: DateTime, relative_to: DateTime = now()) -> String {",
+"doc": "Approximate relative time vs `relative_to`, e.g. \"2 hours ago\" or\n\"in 3 days\". `relative_to` defaults to \"now\" via `now()`.\nGranularity grows with the gap: seconds \u2192 minutes \u2192 hours \u2192 days \u2192\nweeks \u2192 months \u2192 years.\n\n@example\nhumanize(yesterday())          // \"1 day ago\"\nhumanize(tomorrow())           // \"in 1 day\""
 }
 ],
 "hypot": [
+{
+"package": "html",
+"qualified": "hypot",
+"kind": "define",
+"signature": "extern define hypot(x: Double, y: Double) -> Double",
+"doc": "Euclidean distance from origin: `sqrt(x*x + y*y)` without intermediate overflow.\n@example math.hypot(3.0, 4.0)  // 5.0"
+},
 {
 "package": "math",
 "qualified": "hypot",
@@ -2043,6 +3755,13 @@
 ],
 "implementation": [
 {
+"package": "html",
+"qualified": "implementation",
+"kind": "define",
+"signature": "define implementation() -> Map {",
+"doc": "Implementation info: `name`, `cache_tag`, `version`.\n@example\nsys.implementation().get(\"version\")"
+},
+{
 "package": "sys",
 "qualified": "implementation",
 "kind": "define",
@@ -2051,6 +3770,13 @@
 }
 ],
 "index": [
+{
+"package": "html",
+"qualified": "StringIterator.index",
+"kind": "method",
+"signature": "extern define index(self, sub: String) -> Int",
+"doc": "Like `find`, but throws `ValueError` if `sub` is not present.\n@param sub: String\n@returns: Int\n@throws ValueError \u2014 if `sub` is not found"
+},
 {
 "package": "typing",
 "qualified": "StringIterator.index",
@@ -2061,6 +3787,13 @@
 ],
 "infinity": [
 {
+"package": "html",
+"qualified": "infinity",
+"kind": "define",
+"signature": "extern define infinity() -> Double",
+"doc": "Positive infinity (`1.0 / 0.0`)."
+},
+{
 "package": "math",
 "qualified": "infinity",
 "kind": "define",
@@ -2069,6 +3802,13 @@
 }
 ],
 "input": [
+{
+"package": "html",
+"qualified": "input",
+"kind": "define",
+"signature": "define input(message: String, default: String = \"\") -> String {",
+"doc": "Free-text input. Appends ` [default]: ` when a default is provided so\nthe user knows what an empty reply gets them. An empty reply with\na default returns the default; an empty reply with no default\nre-prompts (mirrors `read -p` behaviour in shells)."
+},
 {
 "package": "prompt",
 "qualified": "input",
@@ -2084,6 +3824,13 @@
 "kind": "define",
 "signature": "define input_float(prompt: String = \"\") -> Double {",
 "doc": "Prompt for a Double, retrying until the user enters a valid number."
+},
+{
+"package": "html",
+"qualified": "input_float",
+"kind": "define",
+"signature": "define input_float(prompt: String = \"\") -> Double {",
+"doc": "Prompt for a Double, retrying until the user enters a valid number."
 }
 ],
 "input_int": [
@@ -2093,9 +3840,23 @@
 "kind": "define",
 "signature": "define input_int(prompt: String = \"\") -> Int {",
 "doc": "Prompt for an Int, retrying until the user enters a valid number.\n@example\nage := console.input_int(\"Your age: \")"
+},
+{
+"package": "html",
+"qualified": "input_int",
+"kind": "define",
+"signature": "define input_int(prompt: String = \"\") -> Int {",
+"doc": "Prompt for an Int, retrying until the user enters a valid number.\n@example\nage := console.input_int(\"Your age: \")"
 }
 ],
 "input_optional": [
+{
+"package": "html",
+"qualified": "input_optional",
+"kind": "define",
+"signature": "define input_optional(message: String) -> String? {",
+"doc": "Like `input` but returns `null` on an empty reply instead of re-prompting.\nUse when the caller wants to handle the \"user didn't say anything\" branch\nitself \u2014 e.g. asking a custom follow-up before re-prompting, or skipping\nthe field entirely.\n\n    name := prompt.input_optional(\"Your name\")\n    match name {\n        case null => print(\"(skipped)\")\n        case _    => print(\"hi, \" + name)\n    }"
+},
 {
 "package": "prompt",
 "qualified": "input_optional",
@@ -2105,6 +3866,13 @@
 }
 ],
 "intersection": [
+{
+"package": "html",
+"qualified": "SetIterator.intersection",
+"kind": "method",
+"signature": "extern define intersection(self, other: Set) -> Set",
+"doc": "Returns a new set containing only elements present in both sets.\n@param other: Set\n@returns: Set"
+},
 {
 "package": "typing",
 "qualified": "SetIterator.intersection",
@@ -2120,9 +3888,44 @@
 "kind": "define",
 "signature": "extern define is_dir(path: String) -> Bool",
 "doc": "True only if `path` is a directory."
+},
+{
+"package": "html",
+"qualified": "is_dir",
+"kind": "define",
+"signature": "extern define is_dir(path: String) -> Bool",
+"doc": "True only if `path` is a directory."
 }
 ],
 "is_empty": [
+{
+"package": "html",
+"qualified": "ListIterator.is_empty",
+"kind": "method",
+"signature": "extern define is_empty(self) -> Bool",
+"doc": "Returns `true` if the list has no elements.\n@returns: Bool"
+},
+{
+"package": "html",
+"qualified": "QueueIterator.is_empty",
+"kind": "method",
+"signature": "extern define is_empty(self) -> Bool",
+"doc": "Returns `true` if the queue is empty.\n@returns: Bool"
+},
+{
+"package": "html",
+"qualified": "MapIterator.is_empty",
+"kind": "method",
+"signature": "define is_empty(self) -> Bool { return self.length() == 0 }",
+"doc": "Returns `true` if the map has no entries.\n@returns: Bool"
+},
+{
+"package": "html",
+"qualified": "SetIterator.is_empty",
+"kind": "method",
+"signature": "extern define is_empty(self) -> Bool",
+"doc": "Returns `true` if the set has no elements.\n@returns: Bool"
+},
 {
 "package": "typing",
 "qualified": "ListIterator.is_empty",
@@ -2152,6 +3955,22 @@
 "doc": "Returns `true` if the set has no elements.\n@returns: Bool"
 }
 ],
+"is_err": [
+{
+"package": "html",
+"qualified": "Result.is_err",
+"kind": "method",
+"signature": "define is_err(self) -> Bool { return not self.is_ok() }",
+"doc": "Returns true when the result is `Err`."
+},
+{
+"package": "typing",
+"qualified": "Result.is_err",
+"kind": "method",
+"signature": "define is_err(self) -> Bool { return not self.is_ok() }",
+"doc": "Returns true when the result is `Err`."
+}
+],
 "is_file": [
 {
 "package": "fs",
@@ -2159,9 +3978,23 @@
 "kind": "define",
 "signature": "extern define is_file(path: String) -> Bool",
 "doc": "True only if `path` is a regular file."
+},
+{
+"package": "html",
+"qualified": "is_file",
+"kind": "define",
+"signature": "extern define is_file(path: String) -> Bool",
+"doc": "True only if `path` is a regular file."
 }
 ],
 "is_finite": [
+{
+"package": "html",
+"qualified": "is_finite",
+"kind": "define",
+"signature": "extern define is_finite(x: Double) -> Bool",
+"doc": "True if `x` is finite (not `inf`, `-inf`, or NaN)."
+},
 {
 "package": "math",
 "qualified": "is_finite",
@@ -2171,6 +4004,13 @@
 }
 ],
 "is_inf": [
+{
+"package": "html",
+"qualified": "is_inf",
+"kind": "define",
+"signature": "extern define is_inf(x: Double) -> Bool",
+"doc": "True if `x` is `+inf` or `-inf`."
+},
 {
 "package": "math",
 "qualified": "is_inf",
@@ -2186,9 +4026,23 @@
 "kind": "method",
 "signature": "define is_leap(year: Int) -> Bool {",
 "doc": "Standard Gregorian leap-year rule: divisible by 4, except centuries that\naren't divisible by 400. 2000 was leap; 1900 wasn't.\n\n@example\nis_leap(2024)   // true\nis_leap(2023)   // false\nis_leap(2000)   // true\nis_leap(1900)   // false"
+},
+{
+"package": "html",
+"qualified": "DateTime.is_leap",
+"kind": "method",
+"signature": "define is_leap(year: Int) -> Bool {",
+"doc": "Standard Gregorian leap-year rule: divisible by 4, except centuries that\naren't divisible by 400. 2000 was leap; 1900 wasn't.\n\n@example\nis_leap(2024)   // true\nis_leap(2023)   // false\nis_leap(2000)   // true\nis_leap(1900)   // false"
 }
 ],
 "is_nan": [
+{
+"package": "html",
+"qualified": "is_nan",
+"kind": "define",
+"signature": "extern define is_nan(x: Double) -> Bool",
+"doc": "True if `x` is NaN (Not-a-Number)."
+},
 {
 "package": "math",
 "qualified": "is_nan",
@@ -2199,6 +4053,13 @@
 ],
 "is_none": [
 {
+"package": "html",
+"qualified": "Option.is_none",
+"kind": "method",
+"signature": "define is_none(self) -> Bool { return not self.is_some() }",
+"doc": "Returns true when the value is absent."
+},
+{
 "package": "typing",
 "qualified": "Option.is_none",
 "kind": "method",
@@ -2206,7 +4067,30 @@
 "doc": "Returns true when the value is absent."
 }
 ],
+"is_ok": [
+{
+"package": "html",
+"qualified": "Result.is_ok",
+"kind": "method",
+"signature": "define is_ok(self) -> Bool {",
+"doc": "Returns true when the result is `Ok`."
+},
+{
+"package": "typing",
+"qualified": "Result.is_ok",
+"kind": "method",
+"signature": "define is_ok(self) -> Bool {",
+"doc": "Returns true when the result is `Ok`."
+}
+],
 "is_some": [
+{
+"package": "html",
+"qualified": "Option.is_some",
+"kind": "method",
+"signature": "define is_some(self) -> Bool {",
+"doc": "Returns true when the value is present."
+},
 {
 "package": "typing",
 "qualified": "Option.is_some",
@@ -2216,6 +4100,13 @@
 }
 ],
 "is_valid": [
+{
+"package": "html",
+"qualified": "is_valid",
+"kind": "define",
+"signature": "define is_valid(s: String) -> Bool {",
+"doc": "Lightweight format check. Returns true iff `s` matches the canonical\n36-char shape with dashes at positions 8 / 13 / 18 / 23 and hex\ncharacters everywhere else. The version / variant nibbles aren't\nenforced \u2014 anything you parse cleanly via `v4()` will round-trip.\n\n@example\nuuid.is_valid(\"550e8400-e29b-41d4-a716-446655440000\")   // true\nuuid.is_valid(\"not-a-uuid\")                             // false\nuuid.is_valid(\"550E8400-E29B-41D4-A716-446655440000\")   // true (case-insensitive)"
+},
 {
 "package": "uuid",
 "qualified": "is_valid",
@@ -2231,9 +4122,23 @@
 "kind": "method",
 "signature": "define is_weekend(dt: DateTime) -> Bool {",
 "doc": "True for Saturday and Sunday (where `weekday` is 0=Sunday \u2026 6=Saturday)."
+},
+{
+"package": "html",
+"qualified": "DateTime.is_weekend",
+"kind": "method",
+"signature": "define is_weekend(dt: DateTime) -> Bool {",
+"doc": "True for Saturday and Sunday (where `weekday` is 0=Sunday \u2026 6=Saturday)."
 }
 ],
 "isatty": [
+{
+"package": "html",
+"qualified": "isatty",
+"kind": "define",
+"signature": "extern define isatty(f: File) -> Bool",
+"doc": "Returns true if the given stream is a terminal (interactive). Use to decide\nwhether to emit ANSI codes \u2014 pipes/files should stay plain."
+},
 {
 "package": "sys",
 "qualified": "isatty",
@@ -2249,9 +4154,23 @@
 "kind": "method",
 "signature": "define iso(self) -> String {",
 "doc": "ISO-8601 representation."
+},
+{
+"package": "html",
+"qualified": "DateTime.iso",
+"kind": "method",
+"signature": "define iso(self) -> String {",
+"doc": "ISO-8601 representation."
 }
 ],
 "iso_at": [
+{
+"package": "html",
+"qualified": "iso_at",
+"kind": "define",
+"signature": "extern define iso_at(epoch: Int, utc: Int) -> String",
+"doc": "ISO-8601 form. UTC: `2026-01-15T12:34:56Z`. Local: `...+05:30` style offset."
+},
 {
 "package": "time",
 "qualified": "iso_at",
@@ -2269,6 +4188,20 @@
 "doc": "Join two path components with `/`. Avoids double-slashes when `a` already\nends with one. (Forward slashes work on Windows in modern paths.)\n@example fs.join(\"/etc\", \"hosts\")  // \"/etc/hosts\""
 },
 {
+"package": "html",
+"qualified": "StringIterator.join",
+"kind": "method",
+"signature": "extern define join(self, items: List) -> String",
+"doc": "Joins a list of strings, inserting `self` between each element.\n@param items: List \u2014 list of String values\n@returns: String\n@example:\n\", \".join([\"a\", \"b\", \"c\"])  // \"a, b, c\""
+},
+{
+"package": "html",
+"qualified": "join",
+"kind": "define",
+"signature": "define join(a: String, b: String) -> String {",
+"doc": "Join two path components with `/`. Avoids double-slashes when `a` already\nends with one. (Forward slashes work on Windows in modern paths.)\n@example fs.join(\"/etc\", \"hosts\")  // \"/etc/hosts\""
+},
+{
 "package": "typing",
 "qualified": "StringIterator.join",
 "kind": "method",
@@ -2278,6 +4211,13 @@
 ],
 "keys": [
 {
+"package": "html",
+"qualified": "MapIterator.keys",
+"kind": "method",
+"signature": "extern define keys(self) -> List",
+"doc": "Returns all keys as a `List` of `String`.\n@returns: List"
+},
+{
 "package": "typing",
 "qualified": "MapIterator.keys",
 "kind": "method",
@@ -2286,6 +4226,41 @@
 }
 ],
 "length": [
+{
+"package": "html",
+"qualified": "StringIterator.length",
+"kind": "method",
+"signature": "extern define length(self) -> Int",
+"doc": "Returns `true` if the string has zero characters.\n@returns: Bool"
+},
+{
+"package": "html",
+"qualified": "length",
+"kind": "define",
+"signature": "define length(self) -> Int",
+"doc": "Returns the number of elements in this collection."
+},
+{
+"package": "html",
+"qualified": "TupleIterator.length",
+"kind": "method",
+"signature": "extern define length(self) -> Int",
+"doc": "Returns the number of elements in this tuple.\n@returns: Int \u2014 element count"
+},
+{
+"package": "html",
+"qualified": "ListIterator.length",
+"kind": "method",
+"signature": "extern define length(self) -> Int",
+"doc": "Returns the number of elements.\n@returns: Int \u2014 element count"
+},
+{
+"package": "html",
+"qualified": "MapIterator.length",
+"kind": "method",
+"signature": "extern define length(self) -> Int",
+"doc": "Returns the number of key-value pairs.\n@returns: Int"
+},
 {
 "package": "typing",
 "qualified": "StringIterator.length",
@@ -2324,6 +4299,13 @@
 ],
 "lines": [
 {
+"package": "html",
+"qualified": "StringIterator.lines",
+"kind": "method",
+"signature": "extern define lines(self) -> List",
+"doc": "Splits on newlines and returns each line as a list element.\n@returns: List"
+},
+{
 "package": "typing",
 "qualified": "StringIterator.lines",
 "kind": "method",
@@ -2338,9 +4320,37 @@
 "kind": "define",
 "signature": "extern define list_dir(path: String) -> List",
 "doc": "List the immediate entries of directory `path` as a List<String>.\nExcludes `.` and `..`. Returns an empty List if the path doesn't exist\nor isn't a directory.\n@example\nfor name in fs.list_dir(\".\") { print(name) }"
+},
+{
+"package": "html",
+"qualified": "list_dir",
+"kind": "define",
+"signature": "extern define list_dir(path: String) -> List",
+"doc": "List the immediate entries of directory `path` as a List<String>.\nExcludes `.` and `..`. Returns an empty List if the path doesn't exist\nor isn't a directory.\n@example\nfor name in fs.list_dir(\".\") { print(name) }"
 }
 ],
 "listen": [
+{
+"package": "html",
+"qualified": "Socket.listen",
+"kind": "method",
+"signature": "define listen(self, backlog: Int = 5) -> void {",
+"doc": "Mark this socket as listening for incoming connections. Must follow `bind`.\n@param backlog Pending-connection queue size (default 5)."
+},
+{
+"package": "html",
+"qualified": "Request.listen",
+"kind": "method",
+"signature": "define listen(self, host: String, port: Int, handler: Callable) -> void {",
+"doc": "Block forever, accepting connections on `host:port` and dispatching\neach parsed `Request` to `handler`. The handler returns a `Response`\nwhich is sent back and the connection is closed.\n\nExceptions raised by the handler are caught and converted to a plain\n500 \u2014 they don't take the server down.\n\n@example\nServer().listen(\"0.0.0.0\", 8080, fn(req: Request) -> Response {\n    return Response(200, \"hi\", Map())\n})"
+},
+{
+"package": "html",
+"qualified": "listen",
+"kind": "define",
+"signature": "extern define listen(fd: Int, backlog: Int) -> Int",
+"doc": "Mark `fd` as a listening socket with the given pending-connection backlog.\nMust be called after `bind`. Returns 0 on success."
+},
 {
 "package": "net",
 "qualified": "Socket.listen",
@@ -2370,6 +4380,13 @@
 "kind": "define",
 "signature": "define load(file: File) -> Any {",
 "doc": "Read the entire contents of `file` and parse as JSON.\n\n@example\nwith File(\"config.json\", \"r\") as f {\n    config: Map = json.load(f)\n    print(config.get(\"host\"))\n}"
+},
+{
+"package": "html",
+"qualified": "load",
+"kind": "define",
+"signature": "define load(file: File) -> Any {",
+"doc": "Read the entire contents of `file` and parse as JSON.\n\n@example\nwith File(\"config.json\", \"r\") as f {\n    config: Map = json.load(f)\n    print(config.get(\"host\"))\n}"
 }
 ],
 "loads": [
@@ -2379,9 +4396,23 @@
 "kind": "define",
 "signature": "define loads(s: String) -> Any {",
 "doc": "Parse a JSON string and return the corresponding Quirk value with\nreal types \u2014 no manual coercion required.\n\n  JSON object  \u2192 `Map`     (String keys, mixed-type values)\n  JSON array   \u2192 `List`    (mixed-type elements)\n  JSON string  \u2192 `String`\n  JSON number  \u2192 `Int` (no decimal/exponent) or `Double`\n  JSON boolean \u2192 `Bool`\n  JSON null    \u2192 null\n\n@param s  A valid JSON string.\n@returns  A Map, List, String, or boxed primitive.\n\n@example\ndata: Map = json.loads('{\"name\":\"Alice\",\"age\":30,\"active\":true}')\nprint(data.get(\"name\"))     // Alice  (String)\nprint(data.get(\"age\"))      // 30     (Int \u2014 usable in arithmetic)\nprint(data.get(\"active\"))   // true   (Bool)"
+},
+{
+"package": "html",
+"qualified": "loads",
+"kind": "define",
+"signature": "define loads(s: String) -> Any {",
+"doc": "Parse a JSON string and return the corresponding Quirk value with\nreal types \u2014 no manual coercion required.\n\n  JSON object  \u2192 `Map`     (String keys, mixed-type values)\n  JSON array   \u2192 `List`    (mixed-type elements)\n  JSON string  \u2192 `String`\n  JSON number  \u2192 `Int` (no decimal/exponent) or `Double`\n  JSON boolean \u2192 `Bool`\n  JSON null    \u2192 null\n\n@param s  A valid JSON string.\n@returns  A Map, List, String, or boxed primitive.\n\n@example\ndata: Map = json.loads('{\"name\":\"Alice\",\"age\":30,\"active\":true}')\nprint(data.get(\"name\"))     // Alice  (String)\nprint(data.get(\"age\"))      // 30     (Int \u2014 usable in arithmetic)\nprint(data.get(\"active\"))   // true   (Bool)"
 }
 ],
 "log": [
+{
+"package": "html",
+"qualified": "log",
+"kind": "define",
+"signature": "extern define log(x: Double) -> Double",
+"doc": "Natural logarithm (base e). NaN if `x < 0`, `-inf` at 0."
+},
 {
 "package": "math",
 "qualified": "log",
@@ -2392,6 +4423,13 @@
 ],
 "log10": [
 {
+"package": "html",
+"qualified": "log10",
+"kind": "define",
+"signature": "extern define log10(x: Double) -> Double",
+"doc": "Base-10 logarithm."
+},
+{
 "package": "math",
 "qualified": "log10",
 "kind": "define",
@@ -2400,6 +4438,13 @@
 }
 ],
 "log2": [
+{
+"package": "html",
+"qualified": "log2",
+"kind": "define",
+"signature": "extern define log2(x: Double) -> Double",
+"doc": "Base-2 logarithm."
+},
 {
 "package": "math",
 "qualified": "log2",
@@ -2415,9 +4460,51 @@
 "kind": "method",
 "signature": "define make(year: Int, month: Int, day: Int, hour: Int = 0, minute: Int = 0, second: Int = 0) -> DateTime {",
 "doc": "Build a DateTime from explicit calendar components (local time).\n@throws ValueError if the components are out of range."
+},
+{
+"package": "html",
+"qualified": "DateTime.make",
+"kind": "method",
+"signature": "define make(year: Int, month: Int, day: Int, hour: Int = 0, minute: Int = 0, second: Int = 0) -> DateTime {",
+"doc": "Build a DateTime from explicit calendar components (local time).\n@throws ValueError if the components are out of range."
 }
 ],
 "map": [
+{
+"package": "html",
+"qualified": "Option.map",
+"kind": "method",
+"signature": "define map(self, f: Callable) -> Option {",
+"doc": "Maps `Some(v)` to `Some(f(v))`; `None` stays `None`."
+},
+{
+"package": "html",
+"qualified": "Result.map",
+"kind": "method",
+"signature": "define map(self, f: Callable) -> Result {",
+"doc": "Maps `Ok(v)` to `Ok(f(v))`; `Err(e)` stays `Err(e)`."
+},
+{
+"package": "html",
+"qualified": "ListIterator.map",
+"kind": "method",
+"signature": "extern define map(self, cb: Callable) -> List",
+"doc": "Transforms each element and returns a new list.\n@param cb: Callable \u2014 `fn(element: T) => U`\n@returns: List \u2014 new list of transformed values\n\n@example:\ndoubled := [1, 2, 3].map(fn(x: Int) => x * 2)  // [2, 4, 6]"
+},
+{
+"package": "typing",
+"qualified": "Option.map",
+"kind": "method",
+"signature": "define map(self, f: Callable) -> Option {",
+"doc": "Maps `Some(v)` to `Some(f(v))`; `None` stays `None`."
+},
+{
+"package": "typing",
+"qualified": "Result.map",
+"kind": "method",
+"signature": "define map(self, f: Callable) -> Result {",
+"doc": "Maps `Ok(v)` to `Ok(f(v))`; `Err(e)` stays `Err(e)`."
+},
 {
 "package": "typing",
 "qualified": "ListIterator.map",
@@ -2426,7 +4513,30 @@
 "doc": "Transforms each element and returns a new list.\n@param cb: Callable \u2014 `fn(element: T) => U`\n@returns: List \u2014 new list of transformed values\n\n@example:\ndoubled := [1, 2, 3].map(fn(x: Int) => x * 2)  // [2, 4, 6]"
 }
 ],
+"map_err": [
+{
+"package": "html",
+"qualified": "Result.map_err",
+"kind": "method",
+"signature": "define map_err(self, f: Callable) -> Result {",
+"doc": "Maps `Err(e)` to `Err(f(e))`; `Ok(v)` stays `Ok(v)`."
+},
+{
+"package": "typing",
+"qualified": "Result.map_err",
+"kind": "method",
+"signature": "define map_err(self, f: Callable) -> Result {",
+"doc": "Maps `Err(e)` to `Err(f(e))`; `Ok(v)` stays `Ok(v)`."
+}
+],
 "max": [
+{
+"package": "html",
+"qualified": "max",
+"kind": "define",
+"signature": "define max(a: Int, b: Int) -> Int {",
+"doc": "Larger of two Ints."
+},
 {
 "package": "math",
 "qualified": "max",
@@ -2437,6 +4547,13 @@
 ],
 "max_f": [
 {
+"package": "html",
+"qualified": "max_f",
+"kind": "define",
+"signature": "define max_f(a: Double, b: Double) -> Double {",
+"doc": "Larger of two Doubles."
+},
+{
 "package": "math",
 "qualified": "max_f",
 "kind": "define",
@@ -2446,6 +4563,13 @@
 ],
 "max_val": [
 {
+"package": "html",
+"qualified": "max_val",
+"kind": "define",
+"signature": "define max_val(items: List) -> Double {",
+"doc": "Largest value as Double. Throws on empty input."
+},
+{
 "package": "statistics",
 "qualified": "max_val",
 "kind": "define",
@@ -2454,6 +4578,13 @@
 }
 ],
 "maxsize": [
+{
+"package": "html",
+"qualified": "maxsize",
+"kind": "define",
+"signature": "extern define maxsize() -> Int",
+"doc": "Largest representable Int on this platform."
+},
 {
 "package": "sys",
 "qualified": "maxsize",
@@ -2469,9 +4600,23 @@
 "kind": "define",
 "signature": "extern define md5(s: String) -> String",
 "doc": "MD5. Fast but cryptographically broken \u2014 use only for non-security checksums."
+},
+{
+"package": "html",
+"qualified": "md5",
+"kind": "define",
+"signature": "extern define md5(s: String) -> String",
+"doc": "MD5. Fast but cryptographically broken \u2014 use only for non-security checksums."
 }
 ],
 "mean": [
+{
+"package": "html",
+"qualified": "mean",
+"kind": "define",
+"signature": "define mean(items: List) -> Double {",
+"doc": "Arithmetic mean. Throws `ValueError` on empty input.\n\n@example\nmean([1, 2, 3, 4])   // 2.5"
+},
 {
 "package": "statistics",
 "qualified": "mean",
@@ -2482,6 +4627,13 @@
 ],
 "median": [
 {
+"package": "html",
+"qualified": "median",
+"kind": "define",
+"signature": "define median(items: List) -> Double {",
+"doc": "Median value (50th percentile). For even-length inputs returns the\naverage of the two middle values.\n\n@example\nmedian([1, 2, 3, 4, 5])   // 3.0\nmedian([1, 2, 3, 4])      // 2.5"
+},
+{
 "package": "statistics",
 "qualified": "median",
 "kind": "define",
@@ -2490,6 +4642,13 @@
 }
 ],
 "median_high": [
+{
+"package": "html",
+"qualified": "median_high",
+"kind": "define",
+"signature": "define median_high(items: List) -> Double {",
+"doc": "Upper median. Mirror of `median_low`: for even n returns the upper\nmidpoint."
+},
 {
 "package": "statistics",
 "qualified": "median_high",
@@ -2500,6 +4659,13 @@
 ],
 "median_low": [
 {
+"package": "html",
+"qualified": "median_low",
+"kind": "define",
+"signature": "define median_low(items: List) -> Double {",
+"doc": "Lower median (no averaging \u2014 returns one of the input values). For odd\nn this matches `median`; for even n it returns the lower of the two\nmidpoints."
+},
+{
 "package": "statistics",
 "qualified": "median_low",
 "kind": "define",
@@ -2508,6 +4674,13 @@
 }
 ],
 "min": [
+{
+"package": "html",
+"qualified": "min",
+"kind": "define",
+"signature": "define min(a: Int, b: Int) -> Int {",
+"doc": "Smaller of two Ints."
+},
 {
 "package": "math",
 "qualified": "min",
@@ -2518,6 +4691,13 @@
 ],
 "min_f": [
 {
+"package": "html",
+"qualified": "min_f",
+"kind": "define",
+"signature": "define min_f(a: Double, b: Double) -> Double {",
+"doc": "Smaller of two Doubles."
+},
+{
 "package": "math",
 "qualified": "min_f",
 "kind": "define",
@@ -2527,6 +4707,13 @@
 ],
 "min_val": [
 {
+"package": "html",
+"qualified": "min_val",
+"kind": "define",
+"signature": "define min_val(items: List) -> Double {",
+"doc": "Smallest value as Double. Throws on empty input."
+},
+{
 "package": "statistics",
 "qualified": "min_val",
 "kind": "define",
@@ -2535,6 +4722,13 @@
 }
 ],
 "minute": [
+{
+"package": "html",
+"qualified": "minute",
+"kind": "define",
+"signature": "extern define minute(epoch: Int, utc: Int) -> Int",
+"doc": "Minute 0-59."
+},
 {
 "package": "time",
 "qualified": "minute",
@@ -2550,6 +4744,13 @@
 "kind": "define",
 "signature": "define mkdir(path: String, parents: Bool = false) -> void {",
 "doc": "Create a directory.\n@param parents If true, intermediate directories are also created and an\n              existing directory is not an error (`mkdir -p` semantics).\n@throws IOError on failure."
+},
+{
+"package": "html",
+"qualified": "mkdir",
+"kind": "define",
+"signature": "define mkdir(path: String, parents: Bool = false) -> void {",
+"doc": "Create a directory.\n@param parents If true, intermediate directories are also created and an\n              existing directory is not an error (`mkdir -p` semantics).\n@throws IOError on failure."
 }
 ],
 "mkdir_raw": [
@@ -2559,9 +4760,23 @@
 "kind": "define",
 "signature": "extern define mkdir_raw(path: String, parents: Int) -> Int",
 "doc": "Create the directory at `path`. Returns 0 on success, -1 on failure.\n@param parents If true, also creates any missing intermediate directories\n              (like `mkdir -p`) and treats \"already exists\" as success."
+},
+{
+"package": "html",
+"qualified": "mkdir_raw",
+"kind": "define",
+"signature": "extern define mkdir_raw(path: String, parents: Int) -> Int",
+"doc": "Create the directory at `path`. Returns 0 on success, -1 on failure.\n@param parents If true, also creates any missing intermediate directories\n              (like `mkdir -p`) and treats \"already exists\" as success."
 }
 ],
 "mode": [
+{
+"package": "html",
+"qualified": "mode",
+"kind": "define",
+"signature": "define mode(items: List) -> String {",
+"doc": "Most common element. Ties resolve to the first-seen value. Returns the\nstringified form (since elements can be heterogeneous types).\n\n@example\nmode([1, 2, 2, 3, 3, 3])   // \"3\""
+},
 {
 "package": "statistics",
 "qualified": "mode",
@@ -2572,6 +4787,13 @@
 ],
 "modules": [
 {
+"package": "html",
+"qualified": "modules",
+"kind": "define",
+"signature": "define modules() -> Map {",
+"doc": "Map of loaded modules. Currently a stub \u2014 returns empty until reflection lands."
+},
+{
 "package": "sys",
 "qualified": "modules",
 "kind": "define",
@@ -2580,6 +4802,13 @@
 }
 ],
 "month": [
+{
+"package": "html",
+"qualified": "month",
+"kind": "define",
+"signature": "extern define month(epoch: Int, utc: Int) -> Int",
+"doc": "Month 1-12 (1=January)."
+},
 {
 "package": "time",
 "qualified": "month",
@@ -2595,6 +4824,13 @@
 "kind": "method",
 "signature": "define month_name(month: Int) -> String {",
 "doc": "Full English month name for `month` (1-12)."
+},
+{
+"package": "html",
+"qualified": "DateTime.month_name",
+"kind": "method",
+"signature": "define month_name(month: Int) -> String {",
+"doc": "Full English month name for `month` (1-12)."
 }
 ],
 "mtime": [
@@ -2604,18 +4840,39 @@
 "kind": "define",
 "signature": "extern define mtime(path: String) -> Int",
 "doc": "Last-modified time as Unix epoch seconds. -1 on failure."
+},
+{
+"package": "html",
+"qualified": "mtime",
+"kind": "define",
+"signature": "extern define mtime(path: String) -> Int",
+"doc": "Last-modified time as Unix epoch seconds. -1 on failure."
 }
 ],
 "multiselect": [
 {
+"package": "html",
+"qualified": "_Pick.multiselect",
+"kind": "method",
+"signature": "define multiselect(message: String, options: List) -> List {",
+"doc": "Pick zero-or-more options from a numbered list. Renders the same as\n`select` but takes a comma-separated list of indices:\n\n    Tags?\n      1) urgent\n      2) blocked\n      3) needs-review\n    Pick (comma-separated, blank for none): 1,3\n\nReturns the chosen options as a List<String> in their original order.\nWhitespace and duplicates are tolerated; an empty reply returns []."
+},
+{
 "package": "prompt",
-"qualified": "multiselect",
-"kind": "define",
+"qualified": "_Pick.multiselect",
+"kind": "method",
 "signature": "define multiselect(message: String, options: List) -> List {",
 "doc": "Pick zero-or-more options from a numbered list. Renders the same as\n`select` but takes a comma-separated list of indices:\n\n    Tags?\n      1) urgent\n      2) blocked\n      3) needs-review\n    Pick (comma-separated, blank for none): 1,3\n\nReturns the chosen options as a List<String> in their original order.\nWhitespace and duplicates are tolerated; an empty reply returns []."
 }
 ],
 "nan": [
+{
+"package": "html",
+"qualified": "nan",
+"kind": "define",
+"signature": "extern define nan() -> Double",
+"doc": "Not-a-Number (`0.0 / 0.0`). Distinguishable via `is_nan`; `nan != nan`."
+},
 {
 "package": "math",
 "qualified": "nan",
@@ -2625,6 +4882,13 @@
 }
 ],
 "nil": [
+{
+"package": "html",
+"qualified": "nil",
+"kind": "define",
+"signature": "define nil() -> String {",
+"doc": "The all-zero \"nil\" UUID \u2014 useful as a sentinel for \"no UUID yet\" in\nschemas that disallow nulls."
+},
 {
 "package": "uuid",
 "qualified": "nil",
@@ -2640,15 +4904,61 @@
 "kind": "method",
 "signature": "define now() -> DateTime {",
 "doc": "Current local DateTime."
+},
+{
+"package": "html",
+"qualified": "DateTime.now",
+"kind": "method",
+"signature": "define now() -> DateTime {",
+"doc": "Current local DateTime."
 }
 ],
 "now_ms": [
+{
+"package": "html",
+"qualified": "now_ms",
+"kind": "define",
+"signature": "extern define now_ms() -> Int",
+"doc": "Monotonic clock in milliseconds. Use deltas only \u2014 the absolute value is\nnot tied to the Unix epoch. Suitable for measuring elapsed time."
+},
 {
 "package": "sys",
 "qualified": "now_ms",
 "kind": "define",
 "signature": "extern define now_ms() -> Int",
 "doc": "Monotonic clock in milliseconds. Use deltas only \u2014 the absolute value is\nnot tied to the Unix epoch. Suitable for measuring elapsed time."
+}
+],
+"ok": [
+{
+"package": "html",
+"qualified": "Result.ok",
+"kind": "method",
+"signature": "define ok(self) -> Option {",
+"doc": "Converts to `Option`: `Ok(v)` \u2192 `Some(v)`; `Err(_)` \u2192 `None`."
+},
+{
+"package": "typing",
+"qualified": "Result.ok",
+"kind": "method",
+"signature": "define ok(self) -> Option {",
+"doc": "Converts to `Option`: `Ok(v)` \u2192 `Some(v)`; `Err(_)` \u2192 `None`."
+}
+],
+"ok_or": [
+{
+"package": "html",
+"qualified": "Option.ok_or",
+"kind": "method",
+"signature": "define ok_or(self, err: Any) -> Result {",
+"doc": "Converts to `Result`: `Some(v)` \u2192 `Ok(v)`; `None` \u2192 `Err(err)`."
+},
+{
+"package": "typing",
+"qualified": "Option.ok_or",
+"kind": "method",
+"signature": "define ok_or(self, err: Any) -> Result {",
+"doc": "Converts to `Result`: `Some(v)` \u2192 `Ok(v)`; `None` \u2192 `Err(err)`."
 }
 ],
 "option": [
@@ -2658,6 +4968,43 @@
 "kind": "method",
 "signature": "define option(self, long: String, short: String, default: String, help: String) -> void {",
 "doc": "Add a value option with a default."
+},
+{
+"package": "html",
+"qualified": "ArgSpec.option",
+"kind": "method",
+"signature": "define option(self, long: String, short: String, default: String, help: String) -> void {",
+"doc": "Add a value option with a default."
+}
+],
+"or_else": [
+{
+"package": "html",
+"qualified": "Option.or_else",
+"kind": "method",
+"signature": "define or_else(self, f: Callable) -> Option {",
+"doc": "Returns `self` if `Some`, else calls `f()` for an alternative `Option`."
+},
+{
+"package": "html",
+"qualified": "Result.or_else",
+"kind": "method",
+"signature": "define or_else(self, f: Callable) -> Result {",
+"doc": "Returns `self` if `Ok`, else calls `f(error)` for recovery."
+},
+{
+"package": "typing",
+"qualified": "Option.or_else",
+"kind": "method",
+"signature": "define or_else(self, f: Callable) -> Option {",
+"doc": "Returns `self` if `Some`, else calls `f()` for an alternative `Option`."
+},
+{
+"package": "typing",
+"qualified": "Result.or_else",
+"kind": "method",
+"signature": "define or_else(self, f: Callable) -> Result {",
+"doc": "Returns `self` if `Ok`, else calls `f(error)` for recovery."
 }
 ],
 "parse": [
@@ -2674,6 +5021,62 @@
 "kind": "define",
 "signature": "define parse(text: String, delim: String = \",\") -> List {",
 "doc": "Parse `text` into a `List<List<String>>` \u2014 each outer item is a record,\neach inner item is a field. Empty input returns an empty list.\n\nField rules (RFC 4180):\n  - Fields are delimited by `delim` (default `,`).\n  - Records end at LF or CRLF.\n  - A field can be wrapped in `\"...\"`. Inside such a field:\n      - the delimiter and newlines are taken literally\n      - a literal quote is written as `\"\"`\n  - Trailing newline at the very end is ignored (no empty extra record)."
+},
+{
+"package": "html",
+"qualified": "Double.parse",
+"kind": "method",
+"signature": "extern define parse(s: String) -> Double",
+"doc": "Parses a string as a floating-point number.\n@param s: String\n@returns: Double\n@throws ValueError \u2014 if `s` is not a valid number"
+},
+{
+"package": "html",
+"qualified": "Int.parse",
+"kind": "method",
+"signature": "extern define parse(s: String) -> Int",
+"doc": "Parses a string as an integer.\n@param s: String\n@returns: Int\n@throws ValueError \u2014 if `s` is not a valid integer"
+},
+{
+"package": "html",
+"qualified": "Bool.parse",
+"kind": "method",
+"signature": "extern define parse(s: String) -> Bool",
+"doc": "Parses `\"true\"` or `\"false\"`.\n@param s: String\n@returns: Bool\n@throws ValueError \u2014 if `s` is not `\"true\"` or `\"false\"`"
+},
+{
+"package": "html",
+"qualified": "parse",
+"kind": "define",
+"signature": "define parse(s: String) -> Self",
+"doc": "Parses `s` and returns the corresponding value.\n@param s: String \u2014 the string to parse\n@throws ValueError \u2014 if `s` is not a valid representation"
+},
+{
+"package": "html",
+"qualified": "ArgSpec.parse",
+"kind": "method",
+"signature": "define parse(self) -> Map {",
+"doc": "Parse `sys.argv()`, returning a Map<String, String> (or \"true\"/\"false\"\nfor flags \u2014 call `.to_bool()` to convert). On `--help` or `-h`, prints\nusage and exits 0. On any error, prints the error + usage and exits 2."
+},
+{
+"package": "html",
+"qualified": "URL.parse",
+"kind": "method",
+"signature": "define parse(raw: String) -> URL {",
+"doc": "Parse a URL string into a `URL` struct. Tolerates missing scheme and\nmissing host: e.g. `\"/path?x=1\"` parses with scheme=\"\" and host=\"\"."
+},
+{
+"package": "html",
+"qualified": "parse",
+"kind": "define",
+"signature": "define parse(text: String, delim: String = \",\") -> List {",
+"doc": "Parse `text` into a `List<List<String>>` \u2014 each outer item is a record,\neach inner item is a field. Empty input returns an empty list.\n\nField rules (RFC 4180):\n  - Fields are delimited by `delim` (default `,`).\n  - Records end at LF or CRLF.\n  - A field can be wrapped in `\"...\"`. Inside such a field:\n      - the delimiter and newlines are taken literally\n      - a literal quote is written as `\"\"`\n  - Trailing newline at the very end is ignored (no empty extra record)."
+},
+{
+"package": "html",
+"qualified": "StringResult.parse",
+"kind": "method",
+"signature": "define parse(text: String) -> Map {",
+"doc": "Parse a complete TOML document into a Map. Sections become nested\nMaps; `[[name]]` headers accumulate Lists of Maps under `name` in\nthe root.\n\nErrors raise ValueError annotated with the offending line number."
 },
 {
 "package": "toml",
@@ -2725,9 +5128,23 @@
 "kind": "define",
 "signature": "define parse_dicts(text: String, delim: String = \",\") -> List {",
 "doc": "Parse `text` taking the first row as a header, returning a\n`List<Map<String,String>>`. Each record's keys come from the header row;\nmissing trailing fields map to the empty String."
+},
+{
+"package": "html",
+"qualified": "parse_dicts",
+"kind": "define",
+"signature": "define parse_dicts(text: String, delim: String = \",\") -> List {",
+"doc": "Parse `text` taking the first row as a header, returning a\n`List<Map<String,String>>`. Each record's keys come from the header row;\nmissing trailing fields map to the empty String."
 }
 ],
 "parse_iso": [
+{
+"package": "html",
+"qualified": "parse_iso",
+"kind": "define",
+"signature": "extern define parse_iso(s: String) -> Int",
+"doc": "Parse an ISO-8601 string. Trailing `Z` means UTC; absent \u2192 local. Returns\n-1 on malformed input."
+},
 {
 "package": "time",
 "qualified": "parse_iso",
@@ -2737,6 +5154,13 @@
 }
 ],
 "parse_query": [
+{
+"package": "html",
+"qualified": "parse_query",
+"kind": "define",
+"signature": "define parse_query(q: String) -> Map {",
+"doc": "Parse a query string `\"k1=v1&k2=v2\"` into a Map. Both keys and values are\npercent-decoded. Keys with no `=` map to the empty String."
+},
 {
 "package": "url",
 "qualified": "parse_query",
@@ -2752,9 +5176,23 @@
 "kind": "method",
 "signature": "define parser(name: String, description: String) -> Parser {",
 "doc": "Construct a new Parser. `name` is shown in the usage line; `description` is\nprinted under it."
+},
+{
+"package": "html",
+"qualified": "ArgSpec.parser",
+"kind": "method",
+"signature": "define parser(name: String, description: String) -> Parser {",
+"doc": "Construct a new Parser. `name` is shown in the usage line; `description` is\nprinted under it."
 }
 ],
 "partition": [
+{
+"package": "html",
+"qualified": "partition",
+"kind": "define",
+"signature": "define partition(pred: Callable, items: List) -> Tuple {",
+"doc": "Split into `(matching, non_matching)` based on `pred`. Useful for \"yes/no\"\nsplits where you want both halves at once.\n\n@example\np := partition(fn(x) => x > 0, [-2, 3, -1, 7])\nprint(p.0)   // [3, 7]\nprint(p.1)   // [-2, -1]"
+},
 {
 "package": "itertools",
 "qualified": "partition",
@@ -2772,6 +5210,20 @@
 "doc": "Read a line from stdin with echo disabled. Useful for password prompts.\nA newline is echoed automatically after the user presses Enter so the next\noutput starts on a fresh line."
 },
 {
+"package": "html",
+"qualified": "password",
+"kind": "define",
+"signature": "define password(message: String) -> String {",
+"doc": "Hidden input. Shells out to console.password, which already disables\nterminal echo via termios in the C runtime. Single-call wrapper so\nclient code doesn't need to know which stdlib module owns the helper."
+},
+{
+"package": "html",
+"qualified": "password",
+"kind": "define",
+"signature": "define password(prompt: String = \"\") -> String {",
+"doc": "Read a line from stdin with echo disabled. Useful for password prompts.\nA newline is echoed automatically after the user presses Enter so the next\noutput starts on a fresh line."
+},
+{
 "package": "prompt",
 "qualified": "password",
 "kind": "define",
@@ -2780,6 +5232,13 @@
 }
 ],
 "path": [
+{
+"package": "html",
+"qualified": "path",
+"kind": "define",
+"signature": "define path() -> List {",
+"doc": "Search path for `use` / `from ... use` resolution.\nOrder: `<prefix>/libs`, `<prefix>/packages`, current directory."
+},
 {
 "package": "sys",
 "qualified": "path",
@@ -2790,6 +5249,13 @@
 ],
 "peek_back": [
 {
+"package": "html",
+"qualified": "QueueIterator.peek_back",
+"kind": "method",
+"signature": "extern define peek_back(self) -> Any",
+"doc": "Returns the back element without removing it.\n@returns: Any"
+},
+{
 "package": "typing",
 "qualified": "QueueIterator.peek_back",
 "kind": "method",
@@ -2798,6 +5264,13 @@
 }
 ],
 "peek_front": [
+{
+"package": "html",
+"qualified": "QueueIterator.peek_front",
+"kind": "method",
+"signature": "extern define peek_front(self) -> Any",
+"doc": "Returns the front element without removing it.\n@returns: Any"
+},
 {
 "package": "typing",
 "qualified": "QueueIterator.peek_front",
@@ -2808,6 +5281,13 @@
 ],
 "pi": [
 {
+"package": "html",
+"qualified": "pi",
+"kind": "define",
+"signature": "extern define pi() -> Double",
+"doc": "\u03c0 \u2014 circle's circumference / diameter. \u2248 3.14159265358979"
+},
+{
 "package": "math",
 "qualified": "pi",
 "kind": "define",
@@ -2816,6 +5296,13 @@
 }
 ],
 "platform": [
+{
+"package": "html",
+"qualified": "platform",
+"kind": "define",
+"signature": "extern define platform() -> String",
+"doc": "Platform identifier, e.g. `\"linux\"`, `\"darwin\"`, `\"win32\"`."
+},
 {
 "package": "sys",
 "qualified": "platform",
@@ -2826,6 +5313,13 @@
 ],
 "pop": [
 {
+"package": "html",
+"qualified": "ListIterator.pop",
+"kind": "method",
+"signature": "extern define pop(self) -> Any",
+"doc": "Removes and returns the last element.\n@returns: Any \u2014 the removed element\n@throws IndexError \u2014 if the list is empty"
+},
+{
 "package": "typing",
 "qualified": "ListIterator.pop",
 "kind": "method",
@@ -2835,6 +5329,13 @@
 ],
 "pop_back": [
 {
+"package": "html",
+"qualified": "QueueIterator.pop_back",
+"kind": "method",
+"signature": "extern define pop_back(self) -> Any",
+"doc": "Removes and returns the back element. Returns `null` if empty.\n@returns: Any"
+},
+{
 "package": "typing",
 "qualified": "QueueIterator.pop_back",
 "kind": "method",
@@ -2843,6 +5344,13 @@
 }
 ],
 "pop_front": [
+{
+"package": "html",
+"qualified": "QueueIterator.pop_front",
+"kind": "method",
+"signature": "extern define pop_front(self) -> Any",
+"doc": "Removes and returns the front element. Returns `null` if empty.\n@returns: Any"
+},
 {
 "package": "typing",
 "qualified": "QueueIterator.pop_front",
@@ -2858,9 +5366,23 @@
 "kind": "method",
 "signature": "define positional(self, name: String, help: String) -> void {",
 "doc": "Add a positional argument (required, consumed in declaration order)."
+},
+{
+"package": "html",
+"qualified": "ArgSpec.positional",
+"kind": "method",
+"signature": "define positional(self, name: String, help: String) -> void {",
+"doc": "Add a positional argument (required, consumed in declaration order)."
 }
 ],
 "post": [
+{
+"package": "html",
+"qualified": "Response.post",
+"kind": "method",
+"signature": "define post(target: String, data: String, headers: Map = Map()) -> Response {",
+"doc": "HTTP POST with a raw body. The body is sent as-is \u2014 set the matching\n`Content-Type` in `headers` if it isn't `application/octet-stream`.\n@example resp := http.post(\"http://api/echo\", \"name=Quirk\")\n@example resp := http.post(url, \"raw\", headers: { \"Content-Type\": \"text/plain\" })"
+},
 {
 "package": "net",
 "qualified": "Response.post",
@@ -2871,6 +5393,13 @@
 ],
 "post_json": [
 {
+"package": "html",
+"qualified": "Response.post_json",
+"kind": "method",
+"signature": "define post_json(target: String, body: Any, headers: Map = Map()) -> Response {",
+"doc": "POST a value as JSON. Serializes `body` via `json.dumps` and sets\n`Content-Type: application/json` unless the caller already supplied one.\nAccepts anything `json.dumps` does: Map, List, ISerializable structs, or\na String.\n@example resp := http.post_json(\"http://api/users\", { \"name\": \"Quirk\" })"
+},
+{
 "package": "net",
 "qualified": "Response.post_json",
 "kind": "method",
@@ -2879,6 +5408,20 @@
 }
 ],
 "pow": [
+{
+"package": "html",
+"qualified": "Int.pow",
+"kind": "method",
+"signature": "extern define pow(self, exp: Int) -> Int",
+"doc": "Returns `self` raised to the power `exp`.\n@param exp: Int \u2014 exponent (must be \u2265 0)\n@returns: Int"
+},
+{
+"package": "html",
+"qualified": "pow",
+"kind": "define",
+"signature": "extern define pow(base: Double, exponent: Double) -> Double",
+"doc": "`base ** exponent`. Handles fractional and negative exponents.\nFor Int powers prefer `Int.pow`, which avoids floating-point rounding."
+},
 {
 "package": "math",
 "qualified": "pow",
@@ -2896,6 +5439,13 @@
 ],
 "prefix": [
 {
+"package": "html",
+"qualified": "prefix",
+"kind": "define",
+"signature": "extern define prefix() -> String",
+"doc": "Installation prefix \u2014 directory containing `bin/quirk` and `libs/`."
+},
+{
 "package": "sys",
 "qualified": "prefix",
 "kind": "define",
@@ -2910,6 +5460,13 @@
 "kind": "method",
 "signature": "define print_help(self) -> void {",
 "doc": "Print usage to stdout. Called automatically by `parse()` when `--help`\nor `-h` is seen."
+},
+{
+"package": "html",
+"qualified": "ArgSpec.print_help",
+"kind": "method",
+"signature": "define print_help(self) -> void {",
+"doc": "Print usage to stdout. Called automatically by `parse()` when `--help`\nor `-h` is seen."
 }
 ],
 "progress": [
@@ -2919,9 +5476,23 @@
 "kind": "define",
 "signature": "define progress(current: Int, total: Int, label: String = \"\") -> void {",
 "doc": "Render a one-line progress bar using `\\r` to overwrite. Width auto-fits the\nterminal (or 40 chars when not a TTY). Caller is responsible for printing a\nnewline after the final update (or call `console.log(\"\")` to advance).\n\n@example\nfor i in 0..101 {\n    console.progress(i, 100, \"Building\")\n    sys.sleep(20)\n}\nconsole.log(\"\")  // newline after final bar"
+},
+{
+"package": "html",
+"qualified": "progress",
+"kind": "define",
+"signature": "define progress(current: Int, total: Int, label: String = \"\") -> void {",
+"doc": "Render a one-line progress bar using `\\r` to overwrite. Width auto-fits the\nterminal (or 40 chars when not a TTY). Caller is responsible for printing a\nnewline after the final update (or call `console.log(\"\")` to advance).\n\n@example\nfor i in 0..101 {\n    console.progress(i, 100, \"Building\")\n    sys.sleep(20)\n}\nconsole.log(\"\")  // newline after final bar"
 }
 ],
 "pstdev": [
+{
+"package": "html",
+"qualified": "pstdev",
+"kind": "define",
+"signature": "define pstdev(items: List) -> Double {",
+"doc": "Population standard deviation: `sqrt(pvariance(items))`."
+},
 {
 "package": "statistics",
 "qualified": "pstdev",
@@ -2932,6 +5503,13 @@
 ],
 "push_back": [
 {
+"package": "html",
+"qualified": "QueueIterator.push_back",
+"kind": "method",
+"signature": "extern define push_back(self, val: Any) -> void",
+"doc": "Appends a value to the back of the queue.\n@param val: Any"
+},
+{
 "package": "typing",
 "qualified": "QueueIterator.push_back",
 "kind": "method",
@@ -2940,6 +5518,13 @@
 }
 ],
 "push_front": [
+{
+"package": "html",
+"qualified": "QueueIterator.push_front",
+"kind": "method",
+"signature": "extern define push_front(self, val: Any) -> void",
+"doc": "Prepends a value to the front of the queue.\n@param val: Any"
+},
 {
 "package": "typing",
 "qualified": "QueueIterator.push_front",
@@ -2957,6 +5542,20 @@
 "doc": "Write `msg` to stdout WITHOUT a trailing newline. Available as both\n`console.put` and `console.write` (the latter shadows the top-level\n`write` builtin only in the `console.` namespace).\n@example\nconsole.put(\"Loading\")\nfor i in 0..3 { console.put(\".\") }\nconsole.log(\"done\")"
 },
 {
+"package": "html",
+"qualified": "MapIterator.put",
+"kind": "method",
+"signature": "extern define put(self, key: String, value: Any) -> void",
+"doc": "Inserts or updates a key-value pair.\n@param key: String \u2014 the key\n@param value: Any \u2014 the value to associate"
+},
+{
+"package": "html",
+"qualified": "put",
+"kind": "define",
+"signature": "define put(msg: Any) -> void {",
+"doc": "Write `msg` to stdout WITHOUT a trailing newline. Available as both\n`console.put` and `console.write` (the latter shadows the top-level\n`write` builtin only in the `console.` namespace).\n@example\nconsole.put(\"Loading\")\nfor i in 0..3 { console.put(\".\") }\nconsole.log(\"done\")"
+},
+{
 "package": "typing",
 "qualified": "MapIterator.put",
 "kind": "method",
@@ -2965,6 +5564,13 @@
 }
 ],
 "pvariance": [
+{
+"package": "html",
+"qualified": "pvariance",
+"kind": "define",
+"signature": "define pvariance(items: List) -> Double {",
+"doc": "Population variance (divides by `n`). Use when the input *is* the\npopulation, not a sample of it."
+},
 {
 "package": "statistics",
 "qualified": "pvariance",
@@ -2975,6 +5581,13 @@
 ],
 "quantile": [
 {
+"package": "html",
+"qualified": "quantile",
+"kind": "define",
+"signature": "define quantile(items: List, q: Double) -> Double {",
+"doc": "The `q`-th quantile of `items` for `q` in `[0.0, 1.0]`. Uses linear\ninterpolation between the two surrounding sample points. `quantile(xs,\n0.5)` is the median; `0.25` is the lower quartile; `0.75` the upper.\n\n@example\nquantile([1, 2, 3, 4, 5], 0.25)   // 2.0\nquantile([1, 2, 3, 4, 5], 0.75)   // 4.0"
+},
+{
 "package": "statistics",
 "qualified": "quantile",
 "kind": "define",
@@ -2983,6 +5596,13 @@
 }
 ],
 "quote": [
+{
+"package": "html",
+"qualified": "quote",
+"kind": "define",
+"signature": "define quote(s: String) -> String {",
+"doc": "Percent-encode `s` for safe use in a URL component. Every byte that is not\nin the unreserved set (A-Z a-z 0-9 - _ . ~) becomes `%XX` (uppercase hex).\nSpaces are encoded as `%20`, NOT `+`.\n@example  url.quote(\"Hello, world!\")  // \"Hello%2C%20world%21\""
+},
 {
 "package": "url",
 "qualified": "quote",
@@ -2993,6 +5613,13 @@
 ],
 "randint": [
 {
+"package": "html",
+"qualified": "randint",
+"kind": "define",
+"signature": "define randint(lo: Int, hi: Int) -> Int {",
+"doc": "Inclusive integer in `[lo, hi]`. Matches Python's `random.randint`.\nOrder of arguments doesn't matter \u2014 the runtime swaps if `hi < lo`.\n\n@example\ndie := random.randint(1, 6)"
+},
+{
 "package": "random",
 "qualified": "randint",
 "kind": "define",
@@ -3001,6 +5628,20 @@
 }
 ],
 "random": [
+{
+"package": "html",
+"qualified": "random",
+"kind": "define",
+"signature": "define random() -> Double {",
+"doc": "Uniform double in `[0.0, 1.0)`. The fundamental float-valued primitive\n\u2014 all higher-level Double helpers build on this.\n\n@example\nif random.random() < 0.5 { print(\"heads\") }"
+},
+{
+"package": "html",
+"qualified": "random",
+"kind": "define",
+"signature": "extern define random() -> Double",
+"doc": "Uniform Double in `[0.0, 1.0)`. 53 bits of precision."
+},
 {
 "package": "math",
 "qualified": "random",
@@ -3023,9 +5664,23 @@
 "kind": "define",
 "signature": "extern define random_hex(n: Int) -> String",
 "doc": "Cryptographically-strong random bytes, returned as a 2n-character lowercase\nhex String. Suitable for tokens, salts, session IDs.\n@example  token := crypto.random_hex(32)   // 64 hex chars = 256 random bits"
+},
+{
+"package": "html",
+"qualified": "random_hex",
+"kind": "define",
+"signature": "extern define random_hex(n: Int) -> String",
+"doc": "Cryptographically-strong random bytes, returned as a 2n-character lowercase\nhex String. Suitable for tokens, salts, session IDs.\n@example  token := crypto.random_hex(32)   // 64 hex chars = 256 random bits"
 }
 ],
 "random_int": [
+{
+"package": "html",
+"qualified": "random_int",
+"kind": "define",
+"signature": "extern define random_int(lo: Int, hi: Int) -> Int",
+"doc": "Uniform Int in `[lo, hi]` (inclusive on both ends).\nReturns `lo` if `hi <= lo`.\n@example math.random_int(1, 6)  // dice roll"
+},
 {
 "package": "math",
 "qualified": "random_int",
@@ -3036,6 +5691,13 @@
 ],
 "range_list": [
 {
+"package": "html",
+"qualified": "range_list",
+"kind": "define",
+"signature": "define range_list(start: Int, count: Int = -1, step: Int = 1) -> List {",
+"doc": "List of `n` arithmetic-progression values starting at `start`, stepping\nby `step`. `range_list(5)` \u2192 [0,1,2,3,4]; `range_list(2, 5)` \u2192\n[2,3,4,5,6]; `range_list(0, 10, 2)` \u2192 [0,2,4,6,8,10,12,14,16,18]."
+},
+{
 "package": "itertools",
 "qualified": "range_list",
 "kind": "define",
@@ -3044,6 +5706,13 @@
 }
 ],
 "read": [
+{
+"package": "html",
+"qualified": "File.read",
+"kind": "method",
+"signature": "extern define read(self) -> String",
+"doc": "Read the entire file into a String. Returns \"\" on error or empty file.\n@returns The file contents as a String."
+},
 {
 "package": "io",
 "qualified": "File.read",
@@ -3059,9 +5728,23 @@
 "kind": "define",
 "signature": "define read_file(path: String, delim: String = \",\") -> List {",
 "doc": "Read `path` as CSV and parse. Returns `List<List<String>>`."
+},
+{
+"package": "html",
+"qualified": "read_file",
+"kind": "define",
+"signature": "define read_file(path: String, delim: String = \",\") -> List {",
+"doc": "Read `path` as CSV and parse. Returns `List<List<String>>`."
 }
 ],
 "read_key": [
+{
+"package": "html",
+"qualified": "read_key",
+"kind": "define",
+"signature": "extern define read_key() -> Int",
+"doc": "Reads ONE keypress from stdin without waiting for Enter. Returns the byte\nvalue as an Int (e.g. 13 for Enter, 27 for ESC, 0x41 for 'A').\nArrow keys produce a 3-byte sequence: `27, 91, 65/66/67/68`."
+},
 {
 "package": "sys",
 "qualified": "read_key",
@@ -3072,6 +5755,13 @@
 ],
 "read_line": [
 {
+"package": "html",
+"qualified": "File.read_line",
+"kind": "method",
+"signature": "extern define read_line(self) -> String",
+"doc": "Read one line from the file. The trailing `\\n` is stripped.\nReturns the empty string at EOF; check both for empty content and EOF\nby comparing against `\"\"` plus a separate `is_open` check if needed.\nMaximum line length is 2048 characters."
+},
+{
 "package": "io",
 "qualified": "File.read_line",
 "kind": "method",
@@ -3081,6 +5771,13 @@
 ],
 "read_password": [
 {
+"package": "html",
+"qualified": "read_password",
+"kind": "define",
+"signature": "extern define read_password() -> String",
+"doc": "Reads one line from stdin with echo disabled. The trailing newline is stripped.\nUsed by `console.password`."
+},
+{
 "package": "sys",
 "qualified": "read_password",
 "kind": "define",
@@ -3089,6 +5786,20 @@
 }
 ],
 "recv": [
+{
+"package": "html",
+"qualified": "Socket.recv",
+"kind": "method",
+"signature": "define recv(self, size: Int = 1024) -> String {",
+"doc": "Receive up to `size` bytes. Returns \"\" when the peer has closed the\nconnection. Default buffer is 1024 bytes."
+},
+{
+"package": "html",
+"qualified": "recv",
+"kind": "define",
+"signature": "extern define recv(fd: Int, size: Int) -> String",
+"doc": "Read up to `size` bytes from socket `fd`. Returns the data received as\na String. An empty string indicates the peer closed the connection."
+},
 {
 "package": "net",
 "qualified": "Socket.recv",
@@ -3106,6 +5817,13 @@
 ],
 "reduce": [
 {
+"package": "html",
+"qualified": "ListIterator.reduce",
+"kind": "method",
+"signature": "extern define reduce(self, initial: Any, cb: Callable) -> Any",
+"doc": "Folds all elements into a single accumulated value.\n@param initial: Any \u2014 the starting accumulator value\n@param cb: Callable \u2014 `fn(acc: T, element: T) => T`\n@returns: Any \u2014 final accumulated value\n\n@example:\nsum := [1, 2, 3].reduce(0, fn(acc: Int, x: Int) => acc + x)  // 6"
+},
+{
 "package": "typing",
 "qualified": "ListIterator.reduce",
 "kind": "method",
@@ -3114,6 +5832,20 @@
 }
 ],
 "remove": [
+{
+"package": "html",
+"qualified": "MapIterator.remove",
+"kind": "method",
+"signature": "extern define remove(self, key: String) -> void",
+"doc": "Removes the entry with the given key. Does nothing if the key is absent.\n@param key: String"
+},
+{
+"package": "html",
+"qualified": "SetIterator.remove",
+"kind": "method",
+"signature": "extern define remove(self, val: Any) -> void",
+"doc": "Removes a value from the set. Does nothing if absent.\n@param val: Any"
+},
 {
 "package": "typing",
 "qualified": "MapIterator.remove",
@@ -3136,6 +5868,13 @@
 "kind": "define",
 "signature": "extern define remove_raw(path: String) -> Int",
 "doc": "Delete a file. @throws IOError on failure."
+},
+{
+"package": "html",
+"qualified": "remove_raw",
+"kind": "define",
+"signature": "extern define remove_raw(path: String) -> Int",
+"doc": "Delete a file. @throws IOError on failure."
 }
 ],
 "rename_raw": [
@@ -3145,9 +5884,23 @@
 "kind": "define",
 "signature": "extern define rename_raw(src: String, dst: String) -> Int",
 "doc": "Rename / move from one path to another. Atomic on the same filesystem.\n@throws IOError on failure."
+},
+{
+"package": "html",
+"qualified": "rename_raw",
+"kind": "define",
+"signature": "extern define rename_raw(src: String, dst: String) -> Int",
+"doc": "Rename / move from one path to another. Atomic on the same filesystem.\n@throws IOError on failure."
 }
 ],
 "repeat": [
+{
+"package": "html",
+"qualified": "repeat",
+"kind": "define",
+"signature": "define repeat(value: Any, n: Int) -> List {",
+"doc": "List of `n` copies of `value`.\n@example repeat(\"x\", 3)   // [\"x\", \"x\", \"x\"]"
+},
 {
 "package": "itertools",
 "qualified": "repeat",
@@ -3157,6 +5910,20 @@
 }
 ],
 "replace_all": [
+{
+"package": "html",
+"qualified": "Match.replace_all",
+"kind": "method",
+"signature": "define replace_all(self, s: String, replacement: String) -> String {",
+"doc": "Replace every match with `replacement`. Replacement supports `\\1`, `\\2`, ...\nbackrefs to captured groups. `\\0` is the entire match."
+},
+{
+"package": "html",
+"qualified": "Match.replace_all",
+"kind": "method",
+"signature": "define replace_all(pattern: String, s: String, replacement: String) -> String {",
+"doc": "One-shot replace_all."
+},
 {
 "package": "regex",
 "qualified": "Match.replace_all",
@@ -3174,6 +5941,13 @@
 ],
 "replace_all_raw": [
 {
+"package": "html",
+"qualified": "replace_all_raw",
+"kind": "define",
+"signature": "extern define replace_all_raw(handle: Any, s: String, replacement: String) -> String",
+"doc": "Returns a fresh String with every match of `handle`'s pattern replaced\nby `replacement`. The replacement may reference captured groups via\n`\\1`, `\\2`, ... (`\\0` is the entire match)."
+},
+{
 "package": "regex",
 "qualified": "replace_all_raw",
 "kind": "define",
@@ -3182,6 +5956,13 @@
 }
 ],
 "request": [
+{
+"package": "html",
+"qualified": "Response.request",
+"kind": "method",
+"signature": "define request(method: String, target: String, data: String = \"\", headers: Map = Map(), params: Map = Map(), follow_redirects: Bool = true) -> Response {",
+"doc": "Send a single HTTP request and return the response. Lower-level form\nbehind `get`/`post`/`delete`/`post_json`.\n\n@param method HTTP verb (GET, POST, DELETE, PUT, ...) \u2014 case-insensitive.\n@param target Full URL starting with `http://`. HTTPS is not supported.\n@param data Request body \u2014 pass \"\" for GET/DELETE.\n@param headers Extra headers to send (case-preserved). Caller-supplied\n       Host / User-Agent / Connection / Content-Length override the defaults.\n@param params Query-string parameters; merged into the URL's existing\n       query and percent-encoded via `url.build_query`.\n@param follow_redirects When true (the default), 3xx responses are\n       followed automatically up to 5 hops. Set to false if you want to\n       inspect or short-circuit the redirect yourself.\n@returns The final `Response`."
+},
 {
 "package": "net",
 "qualified": "Response.request",
@@ -3197,6 +5978,13 @@
 "kind": "method",
 "signature": "define required(self, long: String, short: String, help: String) -> void {",
 "doc": "Add a value option that MUST be provided."
+},
+{
+"package": "html",
+"qualified": "ArgSpec.required",
+"kind": "method",
+"signature": "define required(self, long: String, short: String, help: String) -> void {",
+"doc": "Add a value option that MUST be provided."
 }
 ],
 "rmdir_raw": [
@@ -3206,9 +5994,23 @@
 "kind": "define",
 "signature": "extern define rmdir_raw(path: String) -> Int",
 "doc": "Remove an empty directory. @throws IOError on failure (incl. non-empty dir)."
+},
+{
+"package": "html",
+"qualified": "rmdir_raw",
+"kind": "define",
+"signature": "extern define rmdir_raw(path: String) -> Int",
+"doc": "Remove an empty directory. @throws IOError on failure (incl. non-empty dir)."
 }
 ],
 "round": [
+{
+"package": "html",
+"qualified": "round",
+"kind": "define",
+"signature": "extern define round(x: Double) -> Double",
+"doc": "Round to nearest integer (half-away-from-zero). `round(2.5) == 3.0`."
+},
 {
 "package": "math",
 "qualified": "round",
@@ -3219,6 +6021,13 @@
 ],
 "run": [
 {
+"package": "html",
+"qualified": "run",
+"kind": "define",
+"signature": "define run(command: String) -> Int {",
+"doc": "Executes a shell command and returns the OS exit status (0 = success).\n@example\nif sys.run(\"git status\") != 0 { print(\"not a repo\") }"
+},
+{
 "package": "sys",
 "qualified": "run",
 "kind": "define",
@@ -3227,6 +6036,13 @@
 }
 ],
 "run_all": [
+{
+"package": "html",
+"qualified": "TestCase.run_all",
+"kind": "method",
+"signature": "define run_all(cases: List) -> Int {",
+"doc": "Run every case in `cases`, printing pass/fail marks and a final summary.\nReturns the number of failures (0 == all green)."
+},
 {
 "package": "test",
 "qualified": "TestCase.run_all",
@@ -3237,6 +6053,13 @@
 ],
 "sample": [
 {
+"package": "html",
+"qualified": "sample",
+"kind": "define",
+"signature": "define sample(items: List, k: Int) -> List {",
+"doc": "Return `k` distinct elements drawn from `items`. Throws if `k > items.length()`.\nImplemented as a partial Fisher-Yates over a copy so the caller's list\nisn't disturbed. O(k) work in the average case.\n\n@example\ndeck := [1,2,3,4,5,6,7,8,9,10]\nhand := random.sample(deck, 5)"
+},
+{
 "package": "random",
 "qualified": "sample",
 "kind": "define",
@@ -3246,6 +6069,13 @@
 ],
 "second": [
 {
+"package": "html",
+"qualified": "second",
+"kind": "define",
+"signature": "extern define second(epoch: Int, utc: Int) -> Int",
+"doc": "Second 0-60 (60 for leap seconds, normally 0-59)."
+},
+{
 "package": "time",
 "qualified": "second",
 "kind": "define",
@@ -3254,6 +6084,20 @@
 }
 ],
 "seed": [
+{
+"package": "html",
+"qualified": "seed",
+"kind": "define",
+"signature": "extern define seed(n: Int) -> void",
+"doc": "Re-seed the global RNG. Same `n` => same stream of values."
+},
+{
+"package": "html",
+"qualified": "seed",
+"kind": "define",
+"signature": "extern define seed(s: Int) -> void",
+"doc": "Seed the pseudo-random generator. The same seed always produces the same\nsequence of `random()` / `random_int()` results \u2014 useful for reproducible\ntests and procedural generation."
+},
 {
 "package": "math",
 "qualified": "seed",
@@ -3278,6 +6122,20 @@
 "doc": "Render an arrow-key menu and return the selected option string. Up/Down or\nj/k navigate; Enter accepts; q/Esc cancels (returns the empty string).\nFalls back to a numeric prompt when stdin is not a TTY.\n\n@example\nchoice := console.select(\"Pick a fruit\", [\"apple\", \"banana\", \"cherry\"])\nconsole.log(\"You chose:\", choice)"
 },
 {
+"package": "html",
+"qualified": "select",
+"kind": "define",
+"signature": "define select(message: String, options: List, default_idx: Int = 0) -> String {",
+"doc": "Pick one option from a numbered list. Renders:\n\n    Mode?\n      1) fast        [default]\n      2) thorough\n      3) debug\n    Choice (1-3, default 1): _\n\nReturns the selected option's text. `default_idx` is zero-based; out-\nof-range values fall back to the first option."
+},
+{
+"package": "html",
+"qualified": "select",
+"kind": "define",
+"signature": "define select(prompt: String, options: List) -> String {",
+"doc": "Render an arrow-key menu and return the selected option string. Up/Down or\nj/k navigate; Enter accepts; q/Esc cancels (returns the empty string).\nFalls back to a numeric prompt when stdin is not a TTY.\n\n@example\nchoice := console.select(\"Pick a fruit\", [\"apple\", \"banana\", \"cherry\"])\nconsole.log(\"You chose:\", choice)"
+},
+{
 "package": "prompt",
 "qualified": "select",
 "kind": "define",
@@ -3285,7 +6143,53 @@
 "doc": "Pick one option from a numbered list. Renders:\n\n    Mode?\n      1) fast        [default]\n      2) thorough\n      3) debug\n    Choice (1-3, default 1): _\n\nReturns the selected option's text. `default_idx` is zero-based; out-\nof-range values fall back to the first option."
 }
 ],
+"select_index": [
+{
+"package": "html",
+"qualified": "_Pick.select_index",
+"kind": "method",
+"signature": "define select_index(message: String, options: List, default_idx: Int = 0) -> _Pick {",
+"doc": "Same numbered menu as `select`, but returns the zero-based **index** of\nthe chosen option rather than its display string. Useful when you want\nto look up an original object in the caller's data \u2014 paired with\n`select_obj` when you'd rather hand the object back directly."
+},
+{
+"package": "prompt",
+"qualified": "_Pick.select_index",
+"kind": "method",
+"signature": "define select_index(message: String, options: List, default_idx: Int = 0) -> _Pick {",
+"doc": "Same numbered menu as `select`, but returns the zero-based **index** of\nthe chosen option rather than its display string. Useful when you want\nto look up an original object in the caller's data \u2014 paired with\n`select_obj` when you'd rather hand the object back directly."
+}
+],
+"select_obj": [
+{
+"package": "html",
+"qualified": "_Pick.select_obj",
+"kind": "method",
+"signature": "define select_obj(message: String, options: List, format: Callable, default_idx: Int = 0) -> Any {",
+"doc": "Numbered menu over arbitrary objects with a caller-supplied formatter.\nAvoids the \"options must already be strings\" constraint of `select`,\nand returns the **original** option (the actual `Cmd`, `Recipe`,\nwhatever) instead of its rendered label.\n\n@param message: String \u2014 header line shown above the menu\n@param options: List \u2014 arbitrary objects to pick from\n@param format: Callable \u2014 `fn(opt: Any) => String` rendering each row\n@param default_idx: Int \u2014 zero-based default; out-of-range falls to 0\n@returns: Any \u2014 the chosen original option (not the rendered label)\n\n@example:\nchosen: Cmd := select_obj(\"commands:\", commands, fn(c: Any) -> String {\n    cmd: Cmd := c\n    return cmd.label()\n})"
+},
+{
+"package": "prompt",
+"qualified": "_Pick.select_obj",
+"kind": "method",
+"signature": "define select_obj(message: String, options: List, format: Callable, default_idx: Int = 0) -> Any {",
+"doc": "Numbered menu over arbitrary objects with a caller-supplied formatter.\nAvoids the \"options must already be strings\" constraint of `select`,\nand returns the **original** option (the actual `Cmd`, `Recipe`,\nwhatever) instead of its rendered label.\n\n@param message: String \u2014 header line shown above the menu\n@param options: List \u2014 arbitrary objects to pick from\n@param format: Callable \u2014 `fn(opt: Any) => String` rendering each row\n@param default_idx: Int \u2014 zero-based default; out-of-range falls to 0\n@returns: Any \u2014 the chosen original option (not the rendered label)\n\n@example:\nchosen: Cmd := select_obj(\"commands:\", commands, fn(c: Any) -> String {\n    cmd: Cmd := c\n    return cmd.label()\n})"
+}
+],
 "send": [
+{
+"package": "html",
+"qualified": "Socket.send",
+"kind": "method",
+"signature": "define send(self, data: String) -> Int {",
+"doc": "Send `data` over the socket. Returns the number of bytes actually sent \u2014\ncallers should retry on short writes for large payloads."
+},
+{
+"package": "html",
+"qualified": "send",
+"kind": "define",
+"signature": "extern define send(fd: Int, data: String) -> Int",
+"doc": "Send `data` over socket `fd`. Returns the number of bytes sent (may be\nless than `data.length()` for partial sends)."
+},
 {
 "package": "net",
 "qualified": "Socket.send",
@@ -3303,6 +6207,13 @@
 ],
 "setrecursionlimit": [
 {
+"package": "html",
+"qualified": "setrecursionlimit",
+"kind": "define",
+"signature": "extern define setrecursionlimit(limit: Int) -> void",
+"doc": "Sets the maximum recursion depth. Use cautiously \u2014 too high can crash the host."
+},
+{
 "package": "sys",
 "qualified": "setrecursionlimit",
 "kind": "define",
@@ -3317,11 +6228,25 @@
 "kind": "define",
 "signature": "extern define sha1(s: String) -> String",
 "doc": "SHA-1. Deprecated for new security work; ok for legacy compatibility."
+},
+{
+"package": "html",
+"qualified": "sha1",
+"kind": "define",
+"signature": "extern define sha1(s: String) -> String",
+"doc": "SHA-1. Deprecated for new security work; ok for legacy compatibility."
 }
 ],
 "sha256": [
 {
 "package": "crypto",
+"qualified": "sha256",
+"kind": "define",
+"signature": "extern define sha256(s: String) -> String",
+"doc": "SHA-256. Current default for integrity, file checksums, content hashes."
+},
+{
+"package": "html",
 "qualified": "sha256",
 "kind": "define",
 "signature": "extern define sha256(s: String) -> String",
@@ -3335,9 +6260,23 @@
 "kind": "define",
 "signature": "extern define sha512(s: String) -> String",
 "doc": "SHA-512. Larger output (128 hex chars); use when 256 bits aren't enough."
+},
+{
+"package": "html",
+"qualified": "sha512",
+"kind": "define",
+"signature": "extern define sha512(s: String) -> String",
+"doc": "SHA-512. Larger output (128 hex chars); use when 256 bits aren't enough."
 }
 ],
 "shadow_frame": [
+{
+"package": "html",
+"qualified": "shadow_frame",
+"kind": "define",
+"signature": "extern define shadow_frame(index: Int) -> String",
+"doc": "Returns one shadow-stack frame as a formatted string. Index 0 is the bottom\nof the stack (`main`); higher indices are deeper calls."
+},
 {
 "package": "sys",
 "qualified": "shadow_frame",
@@ -3348,6 +6287,13 @@
 ],
 "shadow_size": [
 {
+"package": "html",
+"qualified": "shadow_size",
+"kind": "define",
+"signature": "extern define shadow_size() -> Int",
+"doc": "Number of frames currently on the Quirk shadow stack (per-thread call depth)."
+},
+{
 "package": "sys",
 "qualified": "shadow_size",
 "kind": "define",
@@ -3356,6 +6302,20 @@
 }
 ],
 "shuffle": [
+{
+"package": "html",
+"qualified": "shuffle",
+"kind": "define",
+"signature": "extern define shuffle(items: List) -> List",
+"doc": "In-place Fisher-Yates shuffle. Returns the same list."
+},
+{
+"package": "html",
+"qualified": "shuffle",
+"kind": "define",
+"signature": "define shuffle(items: List) -> List {",
+"doc": "Shuffle `items` in place using Fisher-Yates. Returns the same list for chaining."
+},
 {
 "package": "math",
 "qualified": "shuffle",
@@ -3373,6 +6333,13 @@
 ],
 "sign": [
 {
+"package": "html",
+"qualified": "sign",
+"kind": "define",
+"signature": "extern define sign(x: Double) -> Double",
+"doc": "Signum of a Double: -1.0, 0.0, or +1.0. Returns 0 for NaN."
+},
+{
 "package": "math",
 "qualified": "sign",
 "kind": "define",
@@ -3381,6 +6348,13 @@
 }
 ],
 "sign_i": [
+{
+"package": "html",
+"qualified": "sign_i",
+"kind": "define",
+"signature": "define sign_i(x: Int) -> Int { return sign_int(x) }",
+"doc": "Sign of an Int: -1, 0, or 1."
+},
 {
 "package": "math",
 "qualified": "sign_i",
@@ -3391,6 +6365,13 @@
 ],
 "sign_int": [
 {
+"package": "html",
+"qualified": "sign_int",
+"kind": "define",
+"signature": "extern define sign_int(x: Int) -> Int",
+"doc": "Signum of an Int: -1 (negative), 0, or +1 (positive). Wrapped by `sign_i`."
+},
+{
 "package": "math",
 "qualified": "sign_int",
 "kind": "define",
@@ -3400,6 +6381,13 @@
 ],
 "sin": [
 {
+"package": "html",
+"qualified": "sin",
+"kind": "define",
+"signature": "extern define sin(x: Double) -> Double",
+"doc": "Sine of `x` (in radians)."
+},
+{
 "package": "math",
 "qualified": "sin",
 "kind": "define",
@@ -3408,6 +6396,13 @@
 }
 ],
 "sinh": [
+{
+"package": "html",
+"qualified": "sinh",
+"kind": "define",
+"signature": "extern define sinh(x: Double) -> Double",
+"doc": "Hyperbolic sine: `(e^x - e^-x) / 2`."
+},
 {
 "package": "math",
 "qualified": "sinh",
@@ -3432,6 +6427,34 @@
 "doc": "File size in bytes. Returns -1 if `path` doesn't exist or stat fails."
 },
 {
+"package": "html",
+"qualified": "QueueIterator.size",
+"kind": "method",
+"signature": "extern define size(self) -> Int",
+"doc": "Returns the number of elements.\n@returns: Int"
+},
+{
+"package": "html",
+"qualified": "SetIterator.size",
+"kind": "method",
+"signature": "extern define size(self) -> Int",
+"doc": "Returns the number of elements.\n@returns: Int"
+},
+{
+"package": "html",
+"qualified": "size",
+"kind": "define",
+"signature": "extern define size(path: String) -> Int",
+"doc": "File size in bytes. Returns -1 if `path` doesn't exist or stat fails."
+},
+{
+"package": "html",
+"qualified": "size",
+"kind": "define",
+"signature": "define size() -> Tuple {",
+"doc": "Terminal dimensions as `(cols, rows)`. Falls back to (80, 24) when stdout\nis not a TTY or the syscall fails. Use `tuple[0]` and `tuple[1]` to access."
+},
+{
 "package": "typing",
 "qualified": "QueueIterator.size",
 "kind": "method",
@@ -3448,6 +6471,13 @@
 ],
 "sleep": [
 {
+"package": "html",
+"qualified": "sleep",
+"kind": "define",
+"signature": "extern define sleep(ms: Int) -> void",
+"doc": "Suspend the current thread for `ms` milliseconds. Negative values are no-ops."
+},
+{
 "package": "sys",
 "qualified": "sleep",
 "kind": "define",
@@ -3457,6 +6487,13 @@
 ],
 "socket": [
 {
+"package": "html",
+"qualified": "socket",
+"kind": "define",
+"signature": "extern define socket() -> Int",
+"doc": "Create a new TCP/IPv4 socket. Returns the OS file descriptor as an Int,\nor a negative value on error."
+},
+{
 "package": "net",
 "qualified": "socket",
 "kind": "define",
@@ -3464,7 +6501,37 @@
 "doc": "Create a new TCP/IPv4 socket. Returns the OS file descriptor as an Int,\nor a negative value on error."
 }
 ],
+"sort": [
+{
+"package": "html",
+"qualified": "ListIterator.sort",
+"kind": "method",
+"signature": "define sort(self, cb: Callable) -> List {",
+"doc": "Sorts the list in place using `cb` as the comparator and returns\n`self` so calls can chain. The comparator follows the usual\nconvention: return a negative Int when `a` should come before `b`,\npositive when `a` should come after, and zero when they're equal.\n\nImplementation is insertion sort \u2014 small N is the common stdlib\ncase and we don't yet have a quicksort runtime helper. For now,\nif you need to sort 10k+ items, do it via C-side `extern`\nplumbing.\n\n@param cb: Callable \u2014 `fn(a: T, b: T) => Int`\n@returns: List \u2014 the (now-sorted) self, for chaining\n\n@example:\nsorted := [3, 1, 2].sort(fn(a: Int, b: Int) => a - b)  // [1, 2, 3]"
+},
+{
+"package": "typing",
+"qualified": "ListIterator.sort",
+"kind": "method",
+"signature": "define sort(self, cb: Callable) -> List {",
+"doc": "Sorts the list in place using `cb` as the comparator and returns\n`self` so calls can chain. The comparator follows the usual\nconvention: return a negative Int when `a` should come before `b`,\npositive when `a` should come after, and zero when they're equal.\n\nImplementation is insertion sort \u2014 small N is the common stdlib\ncase and we don't yet have a quicksort runtime helper. For now,\nif you need to sort 10k+ items, do it via C-side `extern`\nplumbing.\n\n@param cb: Callable \u2014 `fn(a: T, b: T) => Int`\n@returns: List \u2014 the (now-sorted) self, for chaining\n\n@example:\nsorted := [3, 1, 2].sort(fn(a: Int, b: Int) => a - b)  // [1, 2, 3]"
+}
+],
 "split": [
+{
+"package": "html",
+"qualified": "StringIterator.split",
+"kind": "method",
+"signature": "extern define split(self, delimiter: String) -> List",
+"doc": "Splits the string on `delimiter` and returns a list of substrings.\n@param delimiter: String\n@returns: List \u2014 list of String parts"
+},
+{
+"package": "html",
+"qualified": "Match.split",
+"kind": "method",
+"signature": "define split(self, s: String) -> List {",
+"doc": "Split `s` on every match of the pattern. Empty input yields a single\nempty-string element."
+},
 {
 "package": "regex",
 "qualified": "Match.split",
@@ -3487,9 +6554,23 @@
 "kind": "define",
 "signature": "define split_ext(path: String) -> Tuple {",
 "doc": "Splits `path` into `(stem, ext)`.\n`\"foo.tar.gz\"` \u2192 `(\"foo.tar\", \".gz\")`. `\"README\"` \u2192 `(\"README\", \"\")`."
+},
+{
+"package": "html",
+"qualified": "split_ext",
+"kind": "define",
+"signature": "define split_ext(path: String) -> Tuple {",
+"doc": "Splits `path` into `(stem, ext)`.\n`\"foo.tar.gz\"` \u2192 `(\"foo.tar\", \".gz\")`. `\"README\"` \u2192 `(\"README\", \"\")`."
 }
 ],
 "split_raw": [
+{
+"package": "html",
+"qualified": "split_raw",
+"kind": "define",
+"signature": "extern define split_raw(handle: Any, s: String) -> List",
+"doc": "Splits `s` on every match of `handle`'s pattern. Empty matches advance one\nbyte to prevent infinite loops."
+},
 {
 "package": "regex",
 "qualified": "split_raw",
@@ -3499,6 +6580,20 @@
 }
 ],
 "sqrt": [
+{
+"package": "html",
+"qualified": "Double.sqrt",
+"kind": "method",
+"signature": "extern define sqrt(self) -> Double",
+"doc": "Returns the square root.\n@returns: Double\n@throws ValueError \u2014 if the value is negative"
+},
+{
+"package": "html",
+"qualified": "sqrt",
+"kind": "define",
+"signature": "extern define sqrt(x: Double) -> Double",
+"doc": "Square root. NaN if `x < 0`."
+},
 {
 "package": "math",
 "qualified": "sqrt",
@@ -3516,6 +6611,13 @@
 ],
 "srcline": [
 {
+"package": "html",
+"qualified": "srcline",
+"kind": "define",
+"signature": "extern define srcline(filename: Any, line: Int) -> Any",
+"doc": "Returns the source line at `filename:line` as a String, or null on failure.\nUsed by exception printers to render code snippets in tracebacks."
+},
+{
 "package": "sys",
 "qualified": "srcline",
 "kind": "define",
@@ -3530,11 +6632,25 @@
 "kind": "method",
 "signature": "define start_of_day(dt: DateTime) -> DateTime {",
 "doc": "Truncate `dt` to midnight. Returns a fresh DateTime with the same date\nbut `hour = minute = second = 0`."
+},
+{
+"package": "html",
+"qualified": "DateTime.start_of_day",
+"kind": "method",
+"signature": "define start_of_day(dt: DateTime) -> DateTime {",
+"doc": "Truncate `dt` to midnight. Returns a fresh DateTime with the same date\nbut `hour = minute = second = 0`."
 }
 ],
 "start_of_month": [
 {
 "package": "datetime",
+"qualified": "DateTime.start_of_month",
+"kind": "method",
+"signature": "define start_of_month(dt: DateTime) -> DateTime {",
+"doc": "First day of `dt`'s month, at midnight."
+},
+{
+"package": "html",
 "qualified": "DateTime.start_of_month",
 "kind": "method",
 "signature": "define start_of_month(dt: DateTime) -> DateTime {",
@@ -3548,6 +6664,13 @@
 "kind": "method",
 "signature": "define start_of_week(dt: DateTime) -> DateTime {",
 "doc": "Monday of the week containing `dt`, at midnight. Uses ISO weeks\n(Monday = first day). If `dt` already falls on Monday, returns midnight\nof the same day."
+},
+{
+"package": "html",
+"qualified": "DateTime.start_of_week",
+"kind": "method",
+"signature": "define start_of_week(dt: DateTime) -> DateTime {",
+"doc": "Monday of the week containing `dt`, at midnight. Uses ISO weeks\n(Monday = first day). If `dt` already falls on Monday, returns midnight\nof the same day."
 }
 ],
 "start_of_year": [
@@ -3557,9 +6680,23 @@
 "kind": "method",
 "signature": "define start_of_year(dt: DateTime) -> DateTime {",
 "doc": "January 1 of `dt`'s year, at midnight."
+},
+{
+"package": "html",
+"qualified": "DateTime.start_of_year",
+"kind": "method",
+"signature": "define start_of_year(dt: DateTime) -> DateTime {",
+"doc": "January 1 of `dt`'s year, at midnight."
 }
 ],
 "stderr": [
+{
+"package": "html",
+"qualified": "stderr",
+"kind": "define",
+"signature": "extern define stderr() -> File",
+"doc": "Standard error wrapped as a `File`. See `stdin()` for handle semantics."
+},
 {
 "package": "sys",
 "qualified": "stderr",
@@ -3570,6 +6707,13 @@
 ],
 "stdev": [
 {
+"package": "html",
+"qualified": "stdev",
+"kind": "define",
+"signature": "define stdev(items: List) -> Double {",
+"doc": "Sample standard deviation: `sqrt(variance(items))`."
+},
+{
 "package": "statistics",
 "qualified": "stdev",
 "kind": "define",
@@ -3578,6 +6722,13 @@
 }
 ],
 "stdin": [
+{
+"package": "html",
+"qualified": "stdin",
+"kind": "define",
+"signature": "extern define stdin() -> File",
+"doc": "Standard input wrapped as a `File`. Multiple calls return fresh wrappers\naround the same underlying handle; closing one does not close stdin."
+},
 {
 "package": "sys",
 "qualified": "stdin",
@@ -3588,6 +6739,13 @@
 ],
 "stdout": [
 {
+"package": "html",
+"qualified": "stdout",
+"kind": "define",
+"signature": "extern define stdout() -> File",
+"doc": "Standard output wrapped as a `File`. See `stdin()` for handle semantics."
+},
+{
 "package": "sys",
 "qualified": "stdout",
 "kind": "define",
@@ -3596,6 +6754,13 @@
 }
 ],
 "stop": [
+{
+"package": "html",
+"qualified": "Request.stop",
+"kind": "method",
+"signature": "define stop(self) -> void {",
+"doc": "Stop the accept-loop on the next iteration."
+},
 {
 "package": "net",
 "qualified": "Request.stop",
@@ -3606,6 +6771,13 @@
 ],
 "str": [
 {
+"package": "html",
+"qualified": "Int.str",
+"kind": "method",
+"signature": "extern define str(self) -> String",
+"doc": "Returns the string representation of this integer.\n@returns: String"
+},
+{
 "package": "typing",
 "qualified": "Int.str",
 "kind": "method",
@@ -3614,6 +6786,13 @@
 }
 ],
 "substring": [
+{
+"package": "html",
+"qualified": "StringIterator.substring",
+"kind": "method",
+"signature": "extern define substring(self, start: Int, end: Int) -> String",
+"doc": "Returns the substring from `start` (inclusive) to `end` (exclusive).\n@param start: Int \u2014 start index\n@param end: Int \u2014 end index\n@returns: String\n@throws IndexError \u2014 if indices are out of range"
+},
 {
 "package": "typing",
 "qualified": "StringIterator.substring",
@@ -3624,6 +6803,13 @@
 ],
 "system": [
 {
+"package": "html",
+"qualified": "system",
+"kind": "define",
+"signature": "extern define system(cmd: String) -> Int",
+"doc": "Runs `cmd` via the OS shell and returns the exit status.\nPrefer `run(cmd)` for the same behavior with a friendlier name."
+},
+{
 "package": "sys",
 "qualified": "system",
 "kind": "define",
@@ -3632,6 +6818,13 @@
 }
 ],
 "take_while": [
+{
+"package": "html",
+"qualified": "take_while",
+"kind": "define",
+"signature": "define take_while(pred: Callable, items: List) -> List {",
+"doc": "Take items from the front while `pred` is true; stop at the first false.\n\n@example\ntake_while(fn(x) => x < 5, [1, 3, 5, 4, 2])   // [1, 3]"
+},
 {
 "package": "itertools",
 "qualified": "take_while",
@@ -3642,6 +6835,13 @@
 ],
 "tan": [
 {
+"package": "html",
+"qualified": "tan",
+"kind": "define",
+"signature": "extern define tan(x: Double) -> Double",
+"doc": "Tangent of `x` (in radians). Undefined at `pi/2 + k*pi`."
+},
+{
 "package": "math",
 "qualified": "tan",
 "kind": "define",
@@ -3650,6 +6850,13 @@
 }
 ],
 "tanh": [
+{
+"package": "html",
+"qualified": "tanh",
+"kind": "define",
+"signature": "extern define tanh(x: Double) -> Double",
+"doc": "Hyperbolic tangent: `sinh(x) / cosh(x)`. Range `(-1, 1)`."
+},
 {
 "package": "math",
 "qualified": "tanh",
@@ -3660,6 +6867,13 @@
 ],
 "tau": [
 {
+"package": "html",
+"qualified": "tau",
+"kind": "define",
+"signature": "extern define tau() -> Double",
+"doc": "\u03c4 \u2014 full turn in radians. `tau == 2 * pi`. \u2248 6.28318530717959"
+},
+{
 "package": "math",
 "qualified": "tau",
 "kind": "define",
@@ -3668,6 +6882,13 @@
 }
 ],
 "terminal_cols": [
+{
+"package": "html",
+"qualified": "terminal_cols",
+"kind": "define",
+"signature": "extern define terminal_cols() -> Int",
+"doc": "Width of the terminal in columns. Returns 80 when stdout is not a TTY."
+},
 {
 "package": "sys",
 "qualified": "terminal_cols",
@@ -3678,6 +6899,13 @@
 ],
 "terminal_rows": [
 {
+"package": "html",
+"qualified": "terminal_rows",
+"kind": "define",
+"signature": "extern define terminal_rows() -> Int",
+"doc": "Height of the terminal in rows. Returns 24 when stdout is not a TTY."
+},
+{
 "package": "sys",
 "qualified": "terminal_rows",
 "kind": "define",
@@ -3687,6 +6915,13 @@
 ],
 "terminate": [
 {
+"package": "html",
+"qualified": "terminate",
+"kind": "define",
+"signature": "define terminate(code: Int) -> void {",
+"doc": "Immediately terminates the program with the given status code.\nEquivalent to `exit(code)` but with a more descriptive name."
+},
+{
 "package": "sys",
 "qualified": "terminate",
 "kind": "define",
@@ -3695,6 +6930,20 @@
 }
 ],
 "test": [
+{
+"package": "html",
+"qualified": "Match.test",
+"kind": "method",
+"signature": "define test(self, s: String) -> Bool {",
+"doc": "True if the pattern matches anywhere in `s`."
+},
+{
+"package": "html",
+"qualified": "Match.test",
+"kind": "method",
+"signature": "define test(pattern: String, s: String) -> Bool {",
+"doc": "One-shot test: compile + test. Cheaper to keep a Regex around if reusing."
+},
 {
 "package": "regex",
 "qualified": "Match.test",
@@ -3712,6 +6961,13 @@
 ],
 "test_raw": [
 {
+"package": "html",
+"qualified": "test_raw",
+"kind": "define",
+"signature": "extern define test_raw(handle: Any, s: String) -> Bool",
+"doc": "True iff the compiled pattern matches anywhere in `s`."
+},
+{
 "package": "regex",
 "qualified": "test_raw",
 "kind": "define",
@@ -3726,6 +6982,13 @@
 "kind": "define",
 "signature": "define time(label: String) -> void {",
 "doc": "Start a named timer."
+},
+{
+"package": "html",
+"qualified": "time",
+"kind": "define",
+"signature": "define time(label: String) -> void {",
+"doc": "Start a named timer."
 }
 ],
 "time_end": [
@@ -3735,9 +6998,23 @@
 "kind": "define",
 "signature": "define time_end(label: String) -> void {",
 "doc": "Stop a named timer and log the elapsed milliseconds.\n@example\nconsole.time(\"fetch\")\ndata := http.get(\"http://example.com\")\nconsole.time_end(\"fetch\")  // logs: fetch: 123 ms"
+},
+{
+"package": "html",
+"qualified": "time_end",
+"kind": "define",
+"signature": "define time_end(label: String) -> void {",
+"doc": "Stop a named timer and log the elapsed milliseconds.\n@example\nconsole.time(\"fetch\")\ndata := http.get(\"http://example.com\")\nconsole.time_end(\"fetch\")  // logs: fetch: 123 ms"
 }
 ],
 "timer_end": [
+{
+"package": "html",
+"qualified": "timer_end",
+"kind": "define",
+"signature": "extern define timer_end(label: String) -> Int",
+"doc": "Stop a named timer and return elapsed ms since `timer_start(label)`.\nReturns -1 if the label was never started or has already ended."
+},
 {
 "package": "sys",
 "qualified": "timer_end",
@@ -3748,6 +7025,13 @@
 ],
 "timer_start": [
 {
+"package": "html",
+"qualified": "timer_start",
+"kind": "define",
+"signature": "extern define timer_start(label: String) -> void",
+"doc": "Start a named timer. Subsequent `timer_end(label)` returns elapsed ms.\nUp to 32 timers can be active at once."
+},
+{
 "package": "sys",
 "qualified": "timer_start",
 "kind": "define",
@@ -3756,6 +7040,13 @@
 }
 ],
 "to_float": [
+{
+"package": "html",
+"qualified": "StringIterator.to_float",
+"kind": "method",
+"signature": "extern define to_float(self) -> Double",
+"doc": "Parses the string as a floating-point number.\n@returns: Double\n@throws ValueError \u2014 if the string is not a valid number"
+},
 {
 "package": "typing",
 "qualified": "StringIterator.to_float",
@@ -3766,6 +7057,13 @@
 ],
 "to_int": [
 {
+"package": "html",
+"qualified": "StringIterator.to_int",
+"kind": "method",
+"signature": "extern define to_int(self) -> Int",
+"doc": "Parses the string as an integer.\n@returns: Int\n@throws ValueError \u2014 if the string is not a valid integer"
+},
+{
 "package": "typing",
 "qualified": "StringIterator.to_int",
 "kind": "method",
@@ -3774,6 +7072,13 @@
 }
 ],
 "to_json": [
+{
+"package": "html",
+"qualified": "ISerializable.to_json",
+"kind": "method",
+"signature": "define to_json(self) -> String {",
+"doc": "Serialize this object to a JSON string.\nOverride this in every subclass.\n@returns A valid JSON string representing this object."
+},
 {
 "package": "typing",
 "qualified": "ISerializable.to_json",
@@ -3784,6 +7089,13 @@
 ],
 "to_string": [
 {
+"package": "html",
+"qualified": "URL.to_string",
+"kind": "method",
+"signature": "define to_string(self) -> String {",
+"doc": "Recompose into a canonical URL string."
+},
+{
 "package": "url",
 "qualified": "URL.to_string",
 "kind": "method",
@@ -3792,6 +7104,13 @@
 }
 ],
 "to_unix": [
+{
+"package": "html",
+"qualified": "to_unix",
+"kind": "define",
+"signature": "extern define to_unix(year: Int, month: Int, day: Int, hour: Int, minute: Int, second: Int, utc: Int) -> Int",
+"doc": "Convert calendar components to a Unix epoch. `utc=1` interprets the inputs\nas UTC; `utc=0` as the host's local time zone (DST handled).\nReturns -1 if the components are out of range."
+},
 {
 "package": "time",
 "qualified": "to_unix",
@@ -3807,6 +7126,13 @@
 "kind": "method",
 "signature": "define today() -> DateTime {",
 "doc": "The current local date+time. Synonym for `now()`."
+},
+{
+"package": "html",
+"qualified": "DateTime.today",
+"kind": "method",
+"signature": "define today() -> DateTime {",
+"doc": "The current local date+time. Synonym for `now()`."
 }
 ],
 "tomorrow": [
@@ -3816,9 +7142,23 @@
 "kind": "method",
 "signature": "define tomorrow() -> DateTime {",
 "doc": "One day in the future, same time-of-day."
+},
+{
+"package": "html",
+"qualified": "DateTime.tomorrow",
+"kind": "method",
+"signature": "define tomorrow() -> DateTime {",
+"doc": "One day in the future, same time-of-day."
 }
 ],
 "trunc": [
+{
+"package": "html",
+"qualified": "trunc",
+"kind": "define",
+"signature": "extern define trunc(x: Double) -> Double",
+"doc": "Truncate toward zero. `trunc(-2.7) == -2.0`."
+},
 {
 "package": "math",
 "qualified": "trunc",
@@ -3829,6 +7169,13 @@
 ],
 "uniform": [
 {
+"package": "html",
+"qualified": "uniform",
+"kind": "define",
+"signature": "define uniform(lo: Double, hi: Double) -> Double {",
+"doc": "Uniform Double in `[lo, hi)`. Useful for sampling continuous ranges\n(positions, weights, etc.).\n\n@example\nangle := random.uniform(0.0, 6.28318)"
+},
+{
 "package": "random",
 "qualified": "uniform",
 "kind": "define",
@@ -3837,6 +7184,13 @@
 }
 ],
 "union": [
+{
+"package": "html",
+"qualified": "SetIterator.union",
+"kind": "method",
+"signature": "extern define union(self, other: Set) -> Set",
+"doc": "Returns a new set containing all elements from both sets.\n@param other: Set\n@returns: Set"
+},
 {
 "package": "typing",
 "qualified": "SetIterator.union",
@@ -3847,6 +7201,13 @@
 ],
 "unique": [
 {
+"package": "html",
+"qualified": "unique",
+"kind": "define",
+"signature": "define unique(items: List) -> List {",
+"doc": "Distinct elements, preserving the first-seen order. Items are deduped by\ntheir string representation, which matches the rest of Quirk's value-\nequality conventions.\n\n@example\nunique([3, 1, 4, 1, 5, 9, 2, 6, 5, 3])   // [3, 1, 4, 5, 9, 2, 6]"
+},
+{
 "package": "itertools",
 "qualified": "unique",
 "kind": "define",
@@ -3855,6 +7216,13 @@
 }
 ],
 "unix_now": [
+{
+"package": "html",
+"qualified": "unix_now",
+"kind": "define",
+"signature": "extern define unix_now() -> Int",
+"doc": "Current Unix epoch in seconds. -1 if the host clock is unavailable."
+},
 {
 "package": "time",
 "qualified": "unix_now",
@@ -3865,6 +7233,13 @@
 ],
 "unquote": [
 {
+"package": "html",
+"qualified": "unquote",
+"kind": "define",
+"signature": "define unquote(s: String) -> String {",
+"doc": "Decode `%XX` byte escapes. `+` is NOT converted to space (use\n`url.unquote_form` if you need application/x-www-form-urlencoded behavior)."
+},
+{
 "package": "url",
 "qualified": "unquote",
 "kind": "define",
@@ -3874,6 +7249,13 @@
 ],
 "unquote_form": [
 {
+"package": "html",
+"qualified": "unquote_form",
+"kind": "define",
+"signature": "define unquote_form(s: String) -> String {",
+"doc": "Decode a form-encoded value: handles `%XX` AND maps `+` to space, matching\nthe `application/x-www-form-urlencoded` spec used by HTML forms."
+},
+{
 "package": "url",
 "qualified": "unquote_form",
 "kind": "define",
@@ -3881,7 +7263,67 @@
 "doc": "Decode a form-encoded value: handles `%XX` AND maps `+` to space, matching\nthe `application/x-www-form-urlencoded` spec used by HTML forms."
 }
 ],
+"unwrap": [
+{
+"package": "html",
+"qualified": "Option.unwrap",
+"kind": "method",
+"signature": "define unwrap(self) -> T {",
+"doc": "Returns the wrapped value if present; throws `NullError` if `None`."
+},
+{
+"package": "html",
+"qualified": "Result.unwrap",
+"kind": "method",
+"signature": "define unwrap(self) -> T {",
+"doc": "Returns the success value if `Ok`; throws `ValueError` if `Err`."
+},
+{
+"package": "typing",
+"qualified": "Option.unwrap",
+"kind": "method",
+"signature": "define unwrap(self) -> T {",
+"doc": "Returns the wrapped value if present; throws `NullError` if `None`."
+},
+{
+"package": "typing",
+"qualified": "Result.unwrap",
+"kind": "method",
+"signature": "define unwrap(self) -> T {",
+"doc": "Returns the success value if `Ok`; throws `ValueError` if `Err`."
+}
+],
+"unwrap_err": [
+{
+"package": "html",
+"qualified": "Result.unwrap_err",
+"kind": "method",
+"signature": "define unwrap_err(self) -> E {",
+"doc": "Returns the error payload if `Err`; throws `ValueError` if `Ok`."
+},
+{
+"package": "typing",
+"qualified": "Result.unwrap_err",
+"kind": "method",
+"signature": "define unwrap_err(self) -> E {",
+"doc": "Returns the error payload if `Err`; throws `ValueError` if `Ok`."
+}
+],
 "unwrap_or": [
+{
+"package": "html",
+"qualified": "Option.unwrap_or",
+"kind": "method",
+"signature": "define unwrap_or(self, default_value: T) -> T {",
+"doc": "Returns the wrapped value if present, else `default_value`."
+},
+{
+"package": "html",
+"qualified": "Result.unwrap_or",
+"kind": "method",
+"signature": "define unwrap_or(self, default_value: T) -> T {",
+"doc": "Returns the success value if `Ok`, else `default_value`."
+},
 {
 "package": "typing",
 "qualified": "Option.unwrap_or",
@@ -3897,9 +7339,46 @@
 "doc": "Returns the success value if `Ok`, else `default_value`."
 }
 ],
+"unwrap_or_else": [
+{
+"package": "html",
+"qualified": "Option.unwrap_or_else",
+"kind": "method",
+"signature": "define unwrap_or_else(self, f: Callable) -> T {",
+"doc": "Returns the wrapped value if present, else calls `f()` for a lazy default."
+},
+{
+"package": "html",
+"qualified": "Result.unwrap_or_else",
+"kind": "method",
+"signature": "define unwrap_or_else(self, f: Callable) -> T {",
+"doc": "Returns the success value if `Ok`, else calls `f(error)` for a lazy default."
+},
+{
+"package": "typing",
+"qualified": "Option.unwrap_or_else",
+"kind": "method",
+"signature": "define unwrap_or_else(self, f: Callable) -> T {",
+"doc": "Returns the wrapped value if present, else calls `f()` for a lazy default."
+},
+{
+"package": "typing",
+"qualified": "Result.unwrap_or_else",
+"kind": "method",
+"signature": "define unwrap_or_else(self, f: Callable) -> T {",
+"doc": "Returns the success value if `Ok`, else calls `f(error)` for a lazy default."
+}
+],
 "utc_from_unix": [
 {
 "package": "datetime",
+"qualified": "DateTime.utc_from_unix",
+"kind": "method",
+"signature": "define utc_from_unix(epoch: Int) -> DateTime {",
+"doc": "Build a DateTime from an explicit Unix epoch, interpreted as UTC."
+},
+{
+"package": "html",
 "qualified": "DateTime.utc_from_unix",
 "kind": "method",
 "signature": "define utc_from_unix(epoch: Int) -> DateTime {",
@@ -3913,11 +7392,25 @@
 "kind": "method",
 "signature": "define utc_make(year: Int, month: Int, day: Int, hour: Int = 0, minute: Int = 0, second: Int = 0) -> DateTime {",
 "doc": "Build a DateTime from explicit calendar components (UTC).\n@throws ValueError on out-of-range components."
+},
+{
+"package": "html",
+"qualified": "DateTime.utc_make",
+"kind": "method",
+"signature": "define utc_make(year: Int, month: Int, day: Int, hour: Int = 0, minute: Int = 0, second: Int = 0) -> DateTime {",
+"doc": "Build a DateTime from explicit calendar components (UTC).\n@throws ValueError on out-of-range components."
 }
 ],
 "utc_now": [
 {
 "package": "datetime",
+"qualified": "DateTime.utc_now",
+"kind": "method",
+"signature": "define utc_now() -> DateTime {",
+"doc": "Current UTC DateTime."
+},
+{
+"package": "html",
 "qualified": "DateTime.utc_now",
 "kind": "method",
 "signature": "define utc_now() -> DateTime {",
@@ -3931,9 +7424,23 @@
 "kind": "define",
 "signature": "extern define uuid() -> String",
 "doc": "RFC 4122 v4 UUID. 36 chars: `xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx` where\nthe version is fixed at 4 and `y` is one of {8, 9, a, b}."
+},
+{
+"package": "html",
+"qualified": "uuid",
+"kind": "define",
+"signature": "extern define uuid() -> String",
+"doc": "RFC 4122 v4 UUID. 36 chars: `xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx` where\nthe version is fixed at 4 and `y` is one of {8, 9, a, b}."
 }
 ],
 "v4": [
+{
+"package": "html",
+"qualified": "v4",
+"kind": "define",
+"signature": "define v4() -> String {",
+"doc": "Generate a random RFC 4122 v4 UUID. Two calls back-to-back return\ndifferent values (with overwhelming probability \u2014 122 random bits of\nentropy each).\n\n@example\nid := uuid.v4()\nprint(id.length())           // 36"
+},
 {
 "package": "uuid",
 "qualified": "v4",
@@ -3944,6 +7451,13 @@
 ],
 "values": [
 {
+"package": "html",
+"qualified": "MapIterator.values",
+"kind": "method",
+"signature": "extern define values(self) -> List",
+"doc": "Returns all values as a `List`.\n@returns: List"
+},
+{
 "package": "typing",
 "qualified": "MapIterator.values",
 "kind": "method",
@@ -3952,6 +7466,13 @@
 }
 ],
 "variance": [
+{
+"package": "html",
+"qualified": "variance",
+"kind": "define",
+"signature": "define variance(items: List) -> Double {",
+"doc": "Sample variance (divides by `n - 1`, the unbiased estimator). Throws if\n`n < 2`. Use `pvariance` when treating the input as the entire population."
+},
 {
 "package": "statistics",
 "qualified": "variance",
@@ -3962,6 +7483,13 @@
 ],
 "version": [
 {
+"package": "html",
+"qualified": "version",
+"kind": "define",
+"signature": "extern define version() -> String",
+"doc": "Quirk version string, e.g. `\"0.1.0\"`."
+},
+{
 "package": "sys",
 "qualified": "version",
 "kind": "define",
@@ -3970,6 +7498,13 @@
 }
 ],
 "weekday": [
+{
+"package": "html",
+"qualified": "weekday",
+"kind": "define",
+"signature": "extern define weekday(epoch: Int, utc: Int) -> Int",
+"doc": "Day of week, 0-6 (0=Sunday, 6=Saturday)."
+},
 {
 "package": "time",
 "qualified": "weekday",
@@ -3981,6 +7516,20 @@
 "write": [
 {
 "package": "console",
+"qualified": "write",
+"kind": "define",
+"signature": "define write(msg: Any) -> void {",
+"doc": "Alias for `console.put`."
+},
+{
+"package": "html",
+"qualified": "File.write",
+"kind": "method",
+"signature": "extern define write(self, data: String) -> void",
+"doc": "Write `data` to the file at the current position and flush immediately.\nNo newline is appended \u2014 include `\\n` in `data` if you want one."
+},
+{
+"package": "html",
 "qualified": "write",
 "kind": "define",
 "signature": "define write(msg: Any) -> void {",
@@ -4001,6 +7550,13 @@
 "kind": "define",
 "signature": "define write_dicts(records: List, delim: String = \",\") -> String {",
 "doc": "Serialize a `List<Map<String,String>>` with a header row drawn from the\nkeys of the first record. Records with missing keys emit empty fields.\nReturns the empty String for an empty input."
+},
+{
+"package": "html",
+"qualified": "write_dicts",
+"kind": "define",
+"signature": "define write_dicts(records: List, delim: String = \",\") -> String {",
+"doc": "Serialize a `List<Map<String,String>>` with a header row drawn from the\nkeys of the first record. Records with missing keys emit empty fields.\nReturns the empty String for an empty input."
 }
 ],
 "write_file": [
@@ -4010,9 +7566,23 @@
 "kind": "define",
 "signature": "define write_file(path: String, records: List, delim: String = \",\") -> void {",
 "doc": "Write `records` to `path` as CSV."
+},
+{
+"package": "html",
+"qualified": "write_file",
+"kind": "define",
+"signature": "define write_file(path: String, records: List, delim: String = \",\") -> void {",
+"doc": "Write `records` to `path` as CSV."
 }
 ],
 "year": [
+{
+"package": "html",
+"qualified": "year",
+"kind": "define",
+"signature": "extern define year(epoch: Int, utc: Int) -> Int",
+"doc": "Year (e.g. 2026) for `epoch`. `utc=1` for UTC, `0` for local."
+},
 {
 "package": "time",
 "qualified": "year",
@@ -4022,6 +7592,13 @@
 }
 ],
 "yearday": [
+{
+"package": "html",
+"qualified": "yearday",
+"kind": "define",
+"signature": "extern define yearday(epoch: Int, utc: Int) -> Int",
+"doc": "Day of year, 1-366."
+},
 {
 "package": "time",
 "qualified": "yearday",
@@ -4037,9 +7614,23 @@
 "kind": "method",
 "signature": "define yesterday() -> DateTime {",
 "doc": "One day in the past, same time-of-day."
+},
+{
+"package": "html",
+"qualified": "DateTime.yesterday",
+"kind": "method",
+"signature": "define yesterday() -> DateTime {",
+"doc": "One day in the past, same time-of-day."
 }
 ],
 "zip": [
+{
+"package": "html",
+"qualified": "zip",
+"kind": "define",
+"signature": "define zip(a: List, b: List) -> List {",
+"doc": "Pair up two Lists element-wise as tuples. Stops at the shorter length \u2014\nmatches Python's `zip`, not `zip_longest`.\n\n@example\nzip([1, 2, 3], [\"a\", \"b\"])   // [(1, \"a\"), (2, \"b\")]"
+},
 {
 "package": "itertools",
 "qualified": "zip",

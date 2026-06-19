@@ -5,6 +5,64 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [3.7.0] — 2026-06-19
+
+### TLS support in net.http via libssl
+
+`net.http.get("https://...")` works. Until this release the HTTP
+client could only talk to plain http:// URLs because the runtime
+had no TLS path — the CI httpbin fixture from v3.5.3 was the
+workaround. v3.7.0 closes the loop.
+
+Runtime side (this repo):
+
+  - `src/Runtime/libs/net.c` gains four C symbols:
+    `Net_tls_connect`, `Net_tls_send`, `Net_tls_recv`,
+    `Net_tls_close`. `tls_connect` allocates a fresh socket,
+    performs TCP connect + TLS handshake (with SNI), and
+    verifies the cert against the system CA bundle. Hands the
+    Quirk side an Int handle that indexes into a 256-slot
+    table.
+
+  - SSL_CTX is lazily allocated process-wide; min protocol is
+    TLS 1.2, peer verification is mandatory.
+    `SSL_VERIFY_PEER` + `SSL_CTX_set_default_verify_paths` +
+    `SSL_set1_host` means hostname mismatches and expired
+    certs both fail at connect time, before any plaintext data
+    moves.
+
+  - Makefile links `-lssl` alongside the existing `-lcrypto`.
+    `libssl-dev` is already in the CI base image, so no
+    workflow change beyond the ubsan rebuild line.
+
+Library side (`quirk-net` v1.1.0):
+
+  - Four matching externs in `packages/net/index.quirk`.
+
+  - `packages/net/http.quirk` dispatches on `u.scheme`. Default
+    port is 443 for https, 80 for http. A new `_send_and_read`
+    helper owns the socket / TLS lifetime + read loop so the
+    two paths share one body — the rest of `_request_with_depth`
+    (headers, redirect chain, chunked transfer) is unchanged.
+
+  - Relative-Location redirect resolution now preserves the
+    original scheme so an https→relative→https chain doesn't
+    accidentally downgrade.
+
+Makefile pins `STDLIB_TAG_net = v1.1.0`. Anyone running
+`make bootstrap-stdlib` against v3.7.0 picks up the matching
+library automatically.
+
+`tests/probes/p41_tls.quirk` is the regression lock: when
+`QUIRK_NETWORK_TESTS=1` it hits `https://example.com/`,
+verifies the cert, parses HTTP/1.1, and asserts status=200 +
+non-empty body. Off by default in CI (per v3.5.x policy —
+public internet is not a CI dependency).
+
+No `verify: false` opt-out exists today. If you have a
+self-signed staging host that actually needs it, file an
+issue and we'll add a kwarg.
+
 ## [3.6.0] — 2026-06-19
 
 ### Codegen overload disambiguation for cross-package bare-name calls

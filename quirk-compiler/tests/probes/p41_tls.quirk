@@ -1,0 +1,31 @@
+// p41 — TLS in net.http (v3.7.0).
+//
+// Until v3.7.0, http.get/post against an https:// URL would
+// either hang on the handshake or fail at parse time. The
+// runtime now links libssl and exposes tls_connect/send/recv/
+// close primitives; net.http dispatches on URL scheme.
+//
+// This probe hits a real HTTPS endpoint, so it costs a DNS
+// query + a public-internet round-trip. Network-dependent
+// probes are gated behind QUIRK_NETWORK_TESTS=1 the same way
+// http_client_test.quirk is — CI doesn't fail when github
+// can't reach example.com, but the gate is opt-in for
+// developers verifying TLS locally.
+//
+// The probe passes when:
+//   - the TLS handshake succeeds against example.com:443
+//     (cert verified against system CA bundle, SNI sent)
+//   - the response starts with "HTTP/1.1 200" via http.get
+//   - the response body is non-empty
+
+use sys
+use net.http
+
+if sys.env("QUIRK_NETWORK_TESTS") != "1" {
+    print("p41_tls: skipped (set QUIRK_NETWORK_TESTS=1 to enable)")
+} else {
+    resp := http.get("https://example.com/")
+    print(resp.status_code)        // = 200
+    print(resp.ok)                 // = true
+    print(resp.text.length() > 0)  // = true
+}

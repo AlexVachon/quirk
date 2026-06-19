@@ -675,11 +675,36 @@ function resolveModule(moduleName: string): string | null {
 // docs in `documents`. Returns [] on read failure (file moved/deleted
 // since the import was written).
 function findDeclarationsInFile(absPath: string, name: string): Location[] {
+  return findDeclarationsTransitively(absPath, name, 0, new Set());
+}
+
+// Multi-file stdlib packages (e.g. `html`) re-export across submodules:
+// `html/index.quirk` is just `from .tag use { div, h1, ... }`, with the
+// actual `define div(...)` living in `html/tag/index.quirk`. A jump on
+// `html.div` lands in `html/index.quirk` first; if no `define div` is
+// there, walk the file's `from .X use { name }` and `from html.X use
+// { name }` blocks and recurse into the source modules.
+//
+// Depth-bounded at 4 because each hop is one file open + scan; pkgs
+// don't nest re-exports deeper than that in practice. `visited` is
+// per-call so the same package can re-export the same name through
+// multiple sources without an infinite loop.
+function findDeclarationsTransitively(
+  absPath: string,
+  name: string,
+  depth: number,
+  visited: Set<string>,
+): Location[] {
+  if (depth > 4) return [];
+  const canonical = path.resolve(absPath);
+  if (visited.has(canonical)) return [];
+  visited.add(canonical);
+
   let text: string;
-  try { text = fs.readFileSync(absPath, 'utf8'); }
+  try { text = fs.readFileSync(canonical, 'utf8'); }
   catch { return []; }
   const lines = text.split(/\r?\n/);
-  const uri = new URL('file://' + path.resolve(absPath)).toString();
+  const uri = pathToUri(canonical);
   const out: Location[] = [];
   for (let i = 0; i < lines.length; i++) {
     for (const { re, nameGroup } of DECL_PATTERNS) {
@@ -697,14 +722,107 @@ function findDeclarationsInFile(absPath: string, name: string): Location[] {
       }
     }
   }
-  return out;
+  if (out.length) return out;
+
+  // No direct declaration — look for `from <mod> use { ..., name, ... }`
+  // re-export blocks. Multi-line blocks are flattened first so a name
+  // sitting on its own line inside `{ ... }` still matches.
+  const body = text.replace(/\r?\n/g, ' ');
+  const reExport = /\bfrom\s+(\.{1,3}[A-Za-z_][\w.]*|[A-Za-z_][\w.]*)\s+use\s*\{([^}]*)\}/g;
+  const dir = path.dirname(canonical);
+  let m: RegExpExecArray | null;
+  while ((m = reExport.exec(body)) !== null) {
+    const modRef  = m[1];
+    const entries = m[2];
+    // Match the unaliased name on the import line (`name`) or the
+    // alias side of `original as name` — the latter means this file
+    // is exporting `original` under the local name `name`, so we
+    // recurse looking for `original`.
+    const directHit = new RegExp(`(?:^|[,\\s])${name}(?=\\s*(?:,|}|$))`).test(entries);
+    const aliasOf   = entries.match(
+      new RegExp(`([A-Za-z_]\\w*)\\s+as\\s+${name}(?=\\s*(?:,|}|$))`)
+    );
+    if (!directHit && !aliasOf) continue;
+    const sourceName = aliasOf ? aliasOf[1] : name;
+    let nextPath: string | null = null;
+    if (modRef.startsWith('.')) {
+      // Relative: `.tag` → ./tag, `..element` → ../element. Try
+      // both `<base>.quirk` and `<base>/index.quirk` since either
+      // shape is legal for a Quirk module.
+      const dots = modRef.match(/^\.+/)![0].length;
+      const tail = modRef.slice(dots).replace(/\./g, '/');
+      let base = dir;
+      for (let k = 1; k < dots; k++) base = path.dirname(base);
+      const candidate = tail ? path.join(base, tail) : base;
+      for (const p of [candidate + '.quirk', path.join(candidate, 'index.quirk')]) {
+        if (fs.existsSync(p)) { nextPath = p; break; }
+      }
+    } else {
+      // Absolute: `html.tag`, `typing.collections.map`, etc.
+      const resolved = resolveModule(modRef);
+      if (resolved) nextPath = resolved;
+    }
+    if (!nextPath) continue;
+    const hits = findDeclarationsTransitively(nextPath, sourceName, depth + 1, visited);
+    if (hits.length) return hits;
+  }
+  return [];
+}
+
+// Return the dotted receiver immediately before column `startCol` on
+// `line`, or null if nothing dotted is there. `startCol` MUST be the
+// column where the trailing identifier begins (the character just
+// after the dot, ignoring whitespace). For example, in
+// `http.get(args)` callers pass `5` (the start of `get`) and this
+// returns `"http"`; for `net.http.get(args)` callers pass `9` and
+// this returns `"net.http"`. Whitespace between the dot and either
+// side is tolerated — `foo  .  bar` resolves the receiver as `foo`.
+//
+// Walks backward from `startCol`: expect a dot (after optional
+// whitespace), then greedily consume one or more `ident (\.ident)*`
+// segments separated by dots and optional whitespace.
+function dottedReceiverBefore(line: string, startCol: number): string | null {
+  let i = startCol;
+  while (i > 0 && /\s/.test(line[i - 1] ?? '')) i--;
+  if (i === 0 || line[i - 1] !== '.') return null;
+  i--; // step over the dot
+  const parts: string[] = [];
+  while (i > 0) {
+    while (i > 0 && /\s/.test(line[i - 1] ?? '')) i--;
+    const end = i;
+    while (i > 0 && /[A-Za-z0-9_]/.test(line[i - 1] ?? '')) i--;
+    if (i === end) break;            // didn't consume an identifier
+    parts.unshift(line.slice(i, end));
+    while (i > 0 && /\s/.test(line[i - 1] ?? '')) i--;
+    if (i === 0 || line[i - 1] !== '.') break;
+    i--; // step over the next dot
+  }
+  if (!parts.length) return null;
+  // Reject if the first identifier starts with a digit (`1.foo`
+  // isn't a member access, it's a numeric literal followed by a
+  // member access on the literal — way outside what this LSP
+  // tries to navigate).
+  if (/^[0-9]/.test(parts[0])) return null;
+  return parts.join('.');
+}
+
+// Find the start column of the identifier covering `character` on
+// `line`. Returns `character` itself if no identifier is at that
+// position. Used by the definition handler so it can pass an accurate
+// "where does the identifier start" hint to `dottedReceiverBefore`
+// regardless of where in the identifier the cursor actually clicked.
+function identifierStart(line: string, character: number): number {
+  let i = Math.min(character, line.length);
+  while (i > 0 && /[A-Za-z0-9_]/.test(line[i - 1] ?? '')) i--;
+  return i;
 }
 
 connection.onDefinition((params: DefinitionParams): Location[] => {
   const doc = documents.get(params.textDocument.uri);
   if (!doc) return [];
   const text = doc.getText();
-  const lineText = text.split(/\r?\n/)[params.position.line] ?? '';
+  const lines = text.split(/\r?\n/);
+  const lineText = lines[params.position.line] ?? '';
   const ident = identifierAt(lineText, params.position.character);
   if (!ident) return [];
 
@@ -717,21 +835,50 @@ connection.onDefinition((params: DefinitionParams): Location[] => {
   // could be either the module itself or a name imported from one.
   const { byName, modules } = scanImports(text);
   const moduleHit = byName.get(ident) ?? (modules.has(ident) ? ident : null);
-  if (!moduleHit) return [];
-
-  const resolved = resolveModule(moduleHit);
-  if (!resolved) return [];
-
-  // If we landed because the cursor was the module name itself, jump
-  // to the top of the resolved file. Otherwise look for a declaration
-  // matching `ident` *inside* the resolved module.
-  if (ident === moduleHit.split('.').pop()) {
-    return [{
-      uri: new URL('file://' + path.resolve(resolved)).toString(),
-      range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
-    }];
+  if (moduleHit) {
+    const resolved = resolveModule(moduleHit);
+    if (!resolved) return [];
+    // If we landed because the cursor was the module name itself, jump
+    // to the top of the resolved file. Otherwise look for a declaration
+    // matching `ident` *inside* the resolved module.
+    if (ident === moduleHit.split('.').pop()) {
+      return [{
+        uri: pathToUri(resolved),
+        range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
+      }];
+    }
+    const hits = findDeclarationsInFile(resolved, ident);
+    if (hits.length) return hits;
   }
-  return findDeclarationsInFile(resolved, ident);
+
+  // 3. Member access on a known imported module: `http.get(...)`,
+  // `net.http.request(...)`, `Map.from(...)`, etc. Cursor is on
+  // the member (`get`/`request`/`from`); the receiver immediately
+  // before it tells us which file to search.
+  //
+  // Receiver resolution chain:
+  //   - byName  → user wrote `use net.http` → byName('http') === 'net.http'
+  //   - modules → bare `use net.http` adds 'net.http' to modules
+  //   - literal → final fallback: pass through verbatim, so a
+  //     receiver that matches a stdlib module name (e.g. `Map`,
+  //     `http`) but wasn't found through the import scan still
+  //     gets a chance.
+  const receiver = dottedReceiverBefore(
+    lineText,
+    identifierStart(lineText, params.position.character)
+  );
+  if (receiver) {
+    const resolved =
+      (byName.has(receiver) ? resolveModule(byName.get(receiver)!) : null) ??
+      (modules.has(receiver) ? resolveModule(receiver) : null) ??
+      resolveModule(receiver);
+    if (resolved) {
+      const hits = findDeclarationsInFile(resolved, ident);
+      if (hits.length) return hits;
+    }
+  }
+
+  return [];
 });
 
 // ──────────────────────────────────────────────────────────────────────

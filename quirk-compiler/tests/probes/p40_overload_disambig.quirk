@@ -1,0 +1,28 @@
+// p40 — Cross-package overload disambiguation (v3.6.0).
+//
+// Two stdlib packages both export a bare top-level `parse`:
+//   - url.parse(String) -> URL
+//   - toml.parse(String) -> Map
+//
+// Before v3.6.0 Sema's `lookupTopLevel` correctly picked the
+// imported candidate, but Codegen's `functionDeclarations` map
+// is last-write-wins by bare name: whichever package was loaded
+// last won, regardless of which import the caller wrote. The
+// fix wires `CallNode::resolvedLinkageName` from Sema into
+// Codegen's bare-name dispatch.
+//
+// This probe imports url.parse explicitly and confirms the
+// URL-shaped return arrives. If Codegen dispatched to toml.parse
+// instead, the host access would either ICE or land on a Map and
+// fail the assertion. Either failure mode is what the probe
+// catches.
+
+from url use { parse, URL }
+use toml  // forces toml.parse into the same program
+
+u: URL := parse("https://example.com/path")
+print(u.host)    // = example.com
+print(u.scheme)  // = https
+// Touch toml so the package isn't pruned by dead-code analysis.
+m: Map := toml.parse("k = 1")
+print(m.get("k"))  // = 1

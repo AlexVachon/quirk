@@ -5,6 +5,50 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [3.6.0] — 2026-06-19
+
+### Codegen overload disambiguation for cross-package bare-name calls
+
+When two stdlib packages exported the same top-level function name
+(e.g. `console.input` and `prompt.input`, or `url.parse` and
+`toml.parse`), Sema's `lookupTopLevel` already picked the right
+candidate at type-check time by matching the caller's module
+against `visibleSymbolSources`. Codegen, however, kept a separate
+`functionDeclarations` map keyed by bare name — last write wins —
+so the LLVM call site dispatched to whichever package was loaded
+last regardless of which import the caller wrote. The v3.4.0
+CHANGELOG promised this would be fixed for v3.5.0; it wasn't —
+this release closes that gap.
+
+The fix routes Sema's chosen overload to Codegen explicitly:
+
+  - `CallNode` gains a `resolvedLinkageName` field. Sema stamps
+    it on every bare-name call it resolves through
+    `lookupTopLevel` when the chosen function has a non-empty
+    linkage name (i.e. it's package-prefixed). Single-slot calls
+    still set it harmlessly — Codegen treats that as a hint, not
+    a constraint.
+
+  - Codegen's bare-name dispatch in `handleCall` checks
+    `call->resolvedLinkageName` first and looks the LLVM function
+    up directly by linkage name. Falls back to the historical
+    `resolveFunction(name, classPrefix)` path when unset, so
+    non-collision callers see no behaviour change.
+
+`tests/probes/p40_overload_disambig.quirk` locks the regression
+by importing `parse` from `url` while also pulling `toml` into
+the same program (both export top-level `parse`). Before the fix,
+Codegen could dispatch the bare `parse(...)` call into
+`toml.parse` and either ICE on the type mismatch or land on a
+Map at runtime. The probe confirms the URL-shaped result.
+
+Note: the `html.input` ↔ `console.input` collision that
+motivated this work was previously dodged by renaming
+`html.input` to `input_` (shipped in html v1.0.0). The rename
+stays in place — disambiguation lets us un-rename in a future
+html release without breaking callers, but that's a separate
+package bump.
+
 ## [3.5.3] — 2026-06-18
 
 ### Tests: in-repo httpbin fixture replaces external dependency

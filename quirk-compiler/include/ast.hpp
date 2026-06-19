@@ -264,6 +264,23 @@ class CallNode : public Node {
     std::unique_ptr<Node> callee;
     std::vector<Arg> args;
 
+    // Codegen overload disambiguation (v3.6.0).
+    //
+    // When two packages export the same top-level function name
+    // (e.g. `html.input` and `console.input`), Sema's `lookupTopLevel`
+    // already picks the right candidate at type-check time by
+    // matching the caller's module against `visibleSymbolSources`.
+    // Codegen has a parallel single-slot `functionDeclarations` map
+    // that's last-write-wins by name — it can't repeat the same
+    // disambiguation cheaply, but it CAN follow a hint Sema leaves
+    // behind: the linkage name of the chosen FunctionNode.
+    //
+    // Sema sets this on bare-name CallNode resolution; Codegen
+    // checks for it first and skips the name-based lookup entirely
+    // when set. Empty by default — non-collision calls go through
+    // the existing path unchanged.
+    std::string resolvedLinkageName;
+
     CallNode(std::unique_ptr<Node> callTarget)
         : callee(std::move(callTarget)) {}
 

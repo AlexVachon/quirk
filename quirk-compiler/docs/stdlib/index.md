@@ -14,6 +14,7 @@
 - [`debug`](debug.md)
 - [`encoding`](encoding.md)
 - [`fs`](fs.md)
+- [`html`](html.md)
 - [`io`](io.md)
 - [`itertools`](itertools.md)
 - [`math`](math.md)

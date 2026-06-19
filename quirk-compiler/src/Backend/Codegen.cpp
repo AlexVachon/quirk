@@ -1568,7 +1568,19 @@ class LLVMCodegen {
                 return structGen->allocateAndInit(lit->value, args);
             }
 
-            Function* func = resolveFunction(lit->value, currentCodegenClass);
+            // v3.6.0: cross-package overload disambiguation. When two
+            // packages export the same top-level function name (e.g.
+            // `html.input` and `console.input`), Sema's `lookupTopLevel`
+            // picks the right candidate at type-check time and stamps
+            // its linkage name onto the CallNode. Codegen's
+            // `functionDeclarations` map is last-write-wins by name —
+            // honour Sema's choice when present, fall back to the
+            // historical name-based lookup otherwise.
+            Function* func = nullptr;
+            if (!call->resolvedLinkageName.empty()) {
+                func = TheModule->getFunction(call->resolvedLinkageName);
+            }
+            if (!func) func = resolveFunction(lit->value, currentCodegenClass);
             if (func) return generateGlobalCall(func, call);
 
             // Check if identifier resolves to a Callable variable (lambda stored in variable)

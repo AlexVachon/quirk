@@ -2010,6 +2010,8 @@ std::string Sema::checkCall(CallNode *node)
                 // Explicitly imported AND module-aliased — prefer the function.
                 FunctionNode* fn = lookupTopLevel(l->value);
                 if (fn) {
+                    if (!fn->linkageName.empty() && fn->linkageName != l->value)
+                        node->resolvedLinkageName = fn->linkageName;
                     return fn->returnType.empty() ? "void" : fn->returnType;
                 }
             }
@@ -2026,6 +2028,8 @@ std::string Sema::checkCall(CallNode *node)
             // function whose body returns a String.
             FunctionNode* fn = lookupTopLevel(l->value);
             if (fn) {
+                if (!fn->linkageName.empty() && fn->linkageName != l->value)
+                    node->resolvedLinkageName = fn->linkageName;
                 // Type-check positional arguments against the function's
                 // declared parameters. Same shape as the struct-ctor
                 // check that landed in 2.2.2 — catches things like

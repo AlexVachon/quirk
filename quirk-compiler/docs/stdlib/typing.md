@@ -626,6 +626,34 @@ Returns true when the value is absent.
 
 Returns the wrapped value if present, else `default_value`.
 
+#### `define unwrap(self) -> T`
+
+Returns the wrapped value if present; throws `NullError` if `None`.
+
+#### `define unwrap_or_else(self, f: Callable) -> T`
+
+Returns the wrapped value if present, else calls `f()` for a lazy default.
+
+#### `define map(self, f: Callable) -> Option`
+
+Maps `Some(v)` to `Some(f(v))`; `None` stays `None`.
+
+#### `define and_then(self, f: Callable) -> Option`
+
+Monadic bind: `f` must return an `Option`. Chains lookups: `cache.get(k).and_then(parse)`.
+
+#### `define or_else(self, f: Callable) -> Option`
+
+Returns `self` if `Some`, else calls `f()` for an alternative `Option`.
+
+#### `define filter(self, pred: Callable) -> Option`
+
+Keeps `Some(v)` only if `pred(v)` is true; otherwise `None`.
+
+#### `define ok_or(self, err: Any) -> Result`
+
+Converts to `Result`: `Some(v)` → `Ok(v)`; `None` → `Err(err)`.
+
 ### `variant Some of Option`
 
 ### `variant None of Option`
@@ -727,9 +755,53 @@ print(parts.length())       // 2
 
 ### `type Result[T, E] = Ok(value: T) | Err(error: E)`
 
+#### `define is_ok(self) -> Bool`
+
+Returns true when the result is `Ok`.
+
+#### `define is_err(self) -> Bool { return not self.is_ok() }`
+
+Returns true when the result is `Err`.
+
 #### `define unwrap_or(self, default_value: T) -> T`
 
 Returns the success value if `Ok`, else `default_value`.
+
+#### `define unwrap(self) -> T`
+
+Returns the success value if `Ok`; throws `ValueError` if `Err`.
+
+#### `define unwrap_err(self) -> E`
+
+Returns the error payload if `Err`; throws `ValueError` if `Ok`.
+
+#### `define unwrap_or_else(self, f: Callable) -> T`
+
+Returns the success value if `Ok`, else calls `f(error)` for a lazy default.
+
+#### `define map(self, f: Callable) -> Result`
+
+Maps `Ok(v)` to `Ok(f(v))`; `Err(e)` stays `Err(e)`.
+
+#### `define map_err(self, f: Callable) -> Result`
+
+Maps `Err(e)` to `Err(f(e))`; `Ok(v)` stays `Ok(v)`.
+
+#### `define and_then(self, f: Callable) -> Result`
+
+Monadic bind: `f` must return a `Result`. Chains fallible steps.
+
+#### `define or_else(self, f: Callable) -> Result`
+
+Returns `self` if `Ok`, else calls `f(error)` for recovery.
+
+#### `define ok(self) -> Option`
+
+Converts to `Option`: `Ok(v)` → `Some(v)`; `Err(_)` → `None`.
+
+#### `define err(self) -> Option`
+
+Converts to `Option` of the error: `Err(e)` → `Some(e)`; `Ok(_)` → `None`.
 
 ### `variant Ok of Result`
 

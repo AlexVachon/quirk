@@ -54,17 +54,3 @@ Pick one option from a numbered list. Renders:
 
 Returns the selected option's text. `default_idx` is zero-based; out-
 of-range values fall back to the first option.
-
-#### `define multiselect(message: String, options: List) -> List`
-
-Pick zero-or-more options from a numbered list. Renders the same as
-`select` but takes a comma-separated list of indices:
-
-    Tags?
-      1) urgent
-      2) blocked
-      3) needs-review
-    Pick (comma-separated, blank for none): 1,3
-
-Returns the chosen options as a List<String> in their original order.
-Whitespace and duplicates are tolerated; an empty reply returns [].

@@ -5,6 +5,64 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [3.11.0] — 2026-06-19
+
+### Import aliases: `from X use { y as local }`
+
+The parser used to reject `as` inside a `from X use { ... }` block
+with a bare `Expected '}' (found 'as')`, even though every other
+piece of the toolchain already understood the concept — the LSP's
+`scanImports` records aliases (line 631 of quirk-lsp/src/server.ts
+predates this release), the runtime symbol table is name-keyed, and
+the whole-module form `from X as alias` already worked. This
+release fills in the missing parser/Sema path.
+
+The classic motivating case: two same-named exports from sibling
+stdlib packages. `url` and `toml` both expose `parse(String)`;
+without aliases the second `from … use { parse }` collides with the
+first. With aliases each lands under a distinct local name:
+
+```
+from url use { parse as url_parse, URL }
+from toml use { parse as toml_parse }
+
+u: URL := url_parse("https://example.com/")    // dispatches to url.parse
+m: Map := toml_parse("k = 1")                  // dispatches to toml.parse
+```
+
+Implementation:
+
+  - `UseNode` gains a `filterAliases: vector<string>` parallel
+    to `filterList`. Empty entry = no alias; non-empty = the
+    local name the user wrote after `as`.
+
+  - Parser reads optional `AS <ident>` after each filter name
+    inside the `{ ... }` body. Backward-compatible: bare
+    `from X use { y }` keeps working unchanged because the
+    alias slot stays empty.
+
+  - Sema's `VisibilityContext` gains `importAliases:
+    map<local, source>`. `checkUse` records the mapping when
+    `filterAliases[i]` is non-empty and uses the local name
+    for visibility checks; the source name continues to flow
+    into `visibleSymbolSources` so cross-package overload
+    disambiguation (v3.6.0) keeps working.
+
+  - `lookupTopLevel` checks `importAliases` first and
+    dereferences the local name to the source before the
+    rest of the resolution chain runs. The chosen
+    `FunctionNode` carries its canonical linkage name, which
+    Codegen reads via the same `CallNode::resolvedLinkageName`
+    slot v3.6.0 already wired up. No Codegen changes needed.
+
+Limitation: this release aliases top-level functions only.
+Aliasing structs / enums / interfaces would require type-name
+substitution everywhere those names appear in annotations —
+larger surface, queued for a follow-up if anyone needs it.
+
+`tests/probes/p70_import_aliases.quirk` exercises the two-package
+collision case (`url.parse` + `toml.parse` aliased side-by-side).
+
 ## [3.10.1] — 2026-06-19
 
 ### Pin stdlib net to v1.2.0 (Response.json() convenience method)

@@ -25,6 +25,13 @@ struct VisibilityContext {
     // packages export the same function name and the caller's
     // import list says which one they meant.
     std::map<std::string, std::string> visibleSymbolSources; // name → module
+    // Per-module alias map (`from X use { y as local }` records
+    // `local → y`). Sema dereferences the alias to the source name
+    // when looking the symbol up so Codegen sees the canonical
+    // FunctionNode / StructNode and the linkage name is preserved.
+    // Scoped per-module so two different files can alias the same
+    // symbol to different local names without colliding.
+    std::map<std::string, std::string> importAliases; // local → source
 };
 // -------------------------------
 

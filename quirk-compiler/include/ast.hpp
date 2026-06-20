@@ -30,6 +30,12 @@ class UseNode : public Node {
    public:
     std::string moduleName;
     std::vector<std::string> filterList;
+    // Per-filter local alias (`from url use { parse as url_parse }`).
+    // Parallel to `filterList`; entry is empty when no `as` was
+    // written. The user-visible name is `filterAliases[i]` when
+    // non-empty, otherwise `filterList[i]`. Sema dereferences the
+    // alias to the source name when looking the symbol up.
+    std::vector<std::string> filterAliases;
     std::string alias; // from .path as alias
 
     UseNode(std::string mod, std::vector<std::string> filters = {}, std::string alias = "")
@@ -40,7 +46,12 @@ class UseNode : public Node {
         if (!alias.empty()) std::cout << " as " << alias;
         if (!filterList.empty()) {
             std::cout << " (Only: ";
-            for (auto& s : filterList) std::cout << s << " ";
+            for (size_t i = 0; i < filterList.size(); i++) {
+                std::cout << filterList[i];
+                if (i < filterAliases.size() && !filterAliases[i].empty())
+                    std::cout << " as " << filterAliases[i];
+                std::cout << " ";
+            }
             std::cout << ")";
         }
         std::cout << std::endl;

@@ -837,8 +837,14 @@ void Sema::checkUse(UseNode *node)
 
     if (!node->filterList.empty())
     {
-        for (const auto &item : node->filterList)
+        for (size_t i = 0; i < node->filterList.size(); i++)
         {
+            const std::string& item = node->filterList[i];
+            const std::string localName =
+                (i < node->filterAliases.size() && !node->filterAliases[i].empty())
+                    ? node->filterAliases[i]
+                    : item;
+
             bool found = structRegistry.count(item) || methodRegistry[""].count(item)
                       || interfaceRegistry.count(item) || enumRegistry.count(item)
                       || moduleConstRegistry.count(item);
@@ -853,13 +859,17 @@ void Sema::checkUse(UseNode *node)
                 msg += formatHint(suggestNames(item));
                 fatalError(msg, node->line, node->col, node->filePath);
             }
-            ctx.visibleSymbols.insert(item);
-            // Record the source module so cross-package
-            // collisions on top-level function names can be
-            // resolved at lookup time. `node->moduleName` here is
-            // the fully-dotted path the user wrote, e.g. "html"
-            // or "typing.collections.list".
-            ctx.visibleSymbolSources[item] = node->moduleName;
+            // The user-visible name in this module is `localName`
+            // (either the bare import or the explicit `as` alias).
+            // visibleSymbols tracks the local name for visibility
+            // checks; importAliases records the alias → source
+            // mapping so lookupTopLevel can dereference at
+            // call-site resolution time.
+            ctx.visibleSymbols.insert(localName);
+            ctx.visibleSymbolSources[localName] = node->moduleName;
+            if (localName != item) {
+                ctx.importAliases[localName] = item;
+            }
         }
     }
     else
@@ -2645,7 +2655,26 @@ bool Sema::inheritsFromException(const std::string& typeName, const std::string&
 // candidate visible from the calling function's module, falling
 // back to the single-slot entry.
 FunctionNode* Sema::lookupTopLevel(const std::string& name) {
-    auto cit = topLevelOverloads.find(name);
+    // v3.11.0: dereference import aliases from the caller's module.
+    // `from url use { parse as url_parse }` records `url_parse →
+    // parse` in the current module's importAliases; resolving
+    // `url_parse(args)` substitutes the source name so the rest of
+    // the lookup chain (overload disambig + methodRegistry) finds
+    // the canonical FunctionNode and its linkage name.
+    std::string effective = name;
+    {
+        const std::string& ctxMod = currentFunctionNode
+            ? currentFunctionNode->moduleName : "main";
+        auto mvIt = moduleVisibility.find(ctxMod);
+        if (mvIt != moduleVisibility.end()) {
+            auto aIt = mvIt->second.importAliases.find(name);
+            if (aIt != mvIt->second.importAliases.end()) {
+                effective = aIt->second;
+            }
+        }
+    }
+    const std::string& lookupName = effective;
+    auto cit = topLevelOverloads.find(lookupName);
     if (cit != topLevelOverloads.end() && cit->second.size() > 1) {
         std::string contextModule = currentFunctionNode
             ? currentFunctionNode->moduleName : "main";

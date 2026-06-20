@@ -1,0 +1,31 @@
+// p70 — `from X use { y as local }` import aliases (v3.11.0).
+//
+// Until v3.11.0 the parser rejected `as` inside a `from X use { ... }`
+// block (`Expected '}' (found 'as')`), even though every other piece
+// of the toolchain — LSP scanImports, runtime resolver, the
+// whole-module `from X as alias` form — already understood the
+// concept. This release closes that gap.
+//
+// The classic motivating case: two same-named exports from sibling
+// stdlib packages. `url` and `toml` both export `parse(String)`; without
+// aliases the second `from url use { parse }` collides with the first
+// `from toml use { parse }` in the same file. With aliases each lands
+// under a distinct local name and dispatches to the right module.
+//
+// Sema records each alias in the module's VisibilityContext.importAliases
+// map; `lookupTopLevel` checks that map first and dereferences the local
+// name to the source name before the rest of the resolution chain runs.
+// The chosen FunctionNode carries its canonical linkage name, which
+// Codegen reads via the same `CallNode::resolvedLinkageName` slot v3.6.0
+// added for cross-package overload disambiguation.
+
+from url use { parse as url_parse, URL }
+from toml use { parse as toml_parse }
+
+u: URL := url_parse("https://example.com/path?q=1")
+print(u.host)    // = example.com
+print(u.scheme)  // = https
+
+m: Map := toml_parse("k = 1\nname = \"q\"")
+print(m.get("k"))     // = 1
+print(m.get("name"))  // = q

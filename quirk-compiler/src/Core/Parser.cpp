@@ -1694,6 +1694,7 @@ std::unique_ptr<EnumNode> Parser::parseEnum() {
 std::unique_ptr<Node> Parser::parseUse() {
     std::string path = "";
     std::vector<std::string> filters;
+    std::vector<std::string> aliases;  // parallel to `filters`; empty entry = no alias
 
     auto parsePath = [&]() {
         // Consume leading dots for relative imports. The lexer
@@ -1734,7 +1735,18 @@ std::unique_ptr<Node> Parser::parseUse() {
         consume(TokenType::USE, "Expected 'use' or 'as' after module path");
         consume(TokenType::LBRACE, "Expected '{'");
         do {
-            filters.push_back(advance().value);
+            std::string name = advance().value;
+            std::string localAlias;
+            // Optional `as <alias>` to rebind the imported symbol
+            // under a different name in the current scope. Common
+            // pattern: two same-named exports from sibling
+            // packages (`from url use { parse as url_parse }`).
+            if (peek().type == TokenType::AS) {
+                advance();  // consume `as`
+                localAlias = advance().value;
+            }
+            filters.push_back(name);
+            aliases.push_back(localAlias);
         } while (match(TokenType::COMMA));
         consume(TokenType::RBRACE, "Expected '}'");
     }
@@ -1743,7 +1755,9 @@ std::unique_ptr<Node> Parser::parseUse() {
         parsePath();
     }
 
-    return std::make_unique<UseNode>(path, filters);
+    auto node = std::make_unique<UseNode>(path, filters);
+    node->filterAliases = std::move(aliases);
+    return node;
 }
 
 std::unique_ptr<Node> Parser::parseWith() {

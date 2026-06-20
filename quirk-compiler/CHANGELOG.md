@@ -5,6 +5,47 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [3.9.0] — 2026-06-19
+
+### Python-style format specs in f-strings
+
+C-style specs (`.2f`, `05d`, `x`) already passed through to printf
+via `append_formatted` in the runtime. Python-style alignment
+(`<`, `>`, `^`), thousand separators (`,`), and bare alignment
+without an explicit type (`${name:>10}` on a String) all
+silently emitted raw `%>10` text into the output.
+
+This release lands a Python→printf translation layer in
+`src/Runtime/core/string.c`:
+
+  - **Alignment** — `<N` (left), `>N` (right), `^N` (centre).
+    `<` maps to printf's `-` flag; `>` is the printf default;
+    `^` is post-processed by redistributing the leading
+    padding to both sides. Works for ints, floats, and
+    strings.
+
+  - **Thousand separators** — `,d`, `,`, `,.2f`. The comma is
+    stripped from the printf spec and inserted into the
+    integer portion of the result post-hoc, walking from
+    right to left. Handles negative numbers and floats with
+    the comma confined to the int part.
+
+  - **Default type suffix** — `${name:>10}` (no type char)
+    used to invoke undefined behaviour in `snprintf("%10",
+    arg)`. The translator now appends `d`/`g`/`s` based on
+    the value's runtime type so the spec is well-formed in
+    every branch.
+
+Custom fill chars (`*>10` to pad with asterisks) and Python's
+`=` alignment for signed numbers are deferred — printf can't
+do either without manual post-processing and there are no
+known users blocked on them today.
+
+`tests/probes/p43_fstring_python_specs.quirk` locks the
+behaviour: 15 cases covering numeric + string alignment in
+all three directions, thousands on int + float, and the
+canonical C-style passthroughs (which keep working).
+
 ## [3.8.0] — 2026-06-19
 
 ### Match-exhaustiveness warnings for plain enums

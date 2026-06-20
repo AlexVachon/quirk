@@ -1,0 +1,43 @@
+// p43 — Python-style format specs in f-strings (v3.9.0).
+//
+// Before v3.9.0 the runtime's `append_formatted` just passed the
+// fmt_spec through to printf with a `%` prefix. C-style specs like
+// `.2f` and `05d` worked; Python-style alignment chars (`<`, `>`, `^`)
+// and thousand separators (`,`) did not — `${x:>10}` produced raw
+// `%>10` in the output.
+//
+// The runtime now translates the Python mini-language to printf at
+// format time: `<`/`>` map to printf's `-`/(default) flags, `^` and
+// `,` are post-processed manually, and a missing type char gets a
+// sane default (`d`/`g`/`s`) so e.g. `${name:>10}` works on a String.
+//
+// Probe covers alignment for both numerics and strings, thousand
+// separators, combined alignment+precision, and the canonical
+// already-working C-style specs (which must keep working).
+
+x: Double := 3.14159
+n := 42
+s := "hi"
+big := 1234567
+money: Double := 1234567.89
+
+// Alignment + width
+print("[${x:>10.2f}]")     // = [      3.14]
+print("[${x:<10.2f}]")     // = [3.14      ]
+print("[${x:^10.2f}]")     // = [   3.14   ]
+print("[${n:>10d}]")       // = [        42]
+print("[${n:<10d}]")       // = [42        ]
+print("[${n:^10d}]")       // = [    42    ]
+print("[${s:>10}]")        // = [        hi]
+print("[${s:<10}]")        // = [hi        ]
+print("[${s:^10}]")        // = [    hi    ]
+
+// Thousand separators
+print("[${big:,d}]")       // = [1,234,567]
+print("[${big:,}]")        // = [1,234,567]
+print("[${money:,.2f}]")   // = [1,234,567.89]
+
+// C-style passthroughs still work
+print("[${x:.2f}]")        // = [3.14]
+print("[${n:05d}]")        // = [00042]
+print("[${n:x}]")          // = [2a]

@@ -72,6 +72,173 @@ static void append_any(char** buf, int* cap, int* len, void* item) {
     }
 }
 
+// Parse a Python-style format spec into a printf-compatible spec and
+// two post-process flags. The Python mini-language allows things printf
+// doesn't:
+//
+//   - `<`, `>`, `^` alignment chars (printf only knows `-` for left).
+//     `>` maps to printf's default right-align; `<` becomes `-`.
+//     `^` (center) has no printf equivalent, so we post-process the
+//     final string by padding equally on both sides.
+//
+//   - `,` thousand separators (Python: `:,d`, `:,.2f`). printf's `'`
+//     flag is locale-dependent and not portable. We strip the comma
+//     out of the printf spec and insert commas into the result
+//     after the integer portion is formatted.
+//
+// `out` receives the printf-side spec without the leading `%` (so the
+// caller does `"%" + out`). `*center` and `*commas` are set to 1 when
+// those post-process steps are required, 0 otherwise.
+//
+// Specs that don't trigger any Python-specific feature pass through
+// verbatim — `.2f` and `05d` and `x` all reach `out` unchanged.
+static void translate_python_spec(const char* py,
+                                  char* out, size_t out_size,
+                                  int* center, int* commas) {
+    *center = 0;
+    *commas = 0;
+    if (!py || !*py || out_size == 0) {
+        if (out_size) out[0] = '\0';
+        return;
+    }
+    const char* p = py;
+    char align = 0;
+    // [[fill]align] — fill char is any non-`}` char immediately
+    // followed by an align char. To avoid mis-detecting `+d` etc, we
+    // ONLY treat position 0 as a fill candidate if position 1 is one
+    // of `<>=^`. Default fill stays implicit (space, or `0` when the
+    // 0-flag is set).
+    if (p[0] && p[1] && (p[1] == '<' || p[1] == '>' || p[1] == '^')) {
+        // Custom fill char would go here; printf only supports ' '
+        // and '0' as pad chars, so a non-space-non-zero fill needs
+        // manual post-processing. v3.9.0 honours `>` / `<` / `^`
+        // with space-fill only — a future release can add custom
+        // fill via post-processing.
+        align = p[1];
+        p += 2;
+    } else if (*p == '<' || *p == '>' || *p == '^') {
+        align = *p;
+        p++;
+    }
+
+    size_t oi = 0;
+    // printf's `-` flag means "left-align". Python's `<` is left-align,
+    // `>` is right-align (printf default), `^` is centred (no printf
+    // equivalent — we post-process).
+    if (align == '<') {
+        if (oi + 1 < out_size) out[oi++] = '-';
+    } else if (align == '^') {
+        *center = 1;
+        // No flag emitted — print right-aligned, then center the
+        // padding manually after the fact.
+    }
+    // `>` is printf's default; no flag needed.
+
+    // Copy the rest of the spec, dropping `,` (thousand separators)
+    // and re-emitting everything else. Numeric flags and the type
+    // suffix pass straight through.
+    while (*p && oi + 1 < out_size) {
+        if (*p == ',') { *commas = 1; p++; continue; }
+        out[oi++] = *p++;
+    }
+    out[oi] = '\0';
+}
+
+// Insert commas into the integer portion of a freshly-formatted
+// numeric string. Handles a leading sign or `-` and stops at the
+// decimal point. Called only when the spec used Python `,` and the
+// underlying type is numeric.
+static void insert_thousand_commas(char* buf, size_t buf_size) {
+    if (!buf || !*buf) return;
+    // Locate the int part: skip optional sign, then count digits up
+    // to a `.` or end-of-string.
+    char* start = buf;
+    if (*start == '+' || *start == '-' || *start == ' ') start++;
+    char* digits_end = start;
+    while (*digits_end && *digits_end >= '0' && *digits_end <= '9') digits_end++;
+    size_t int_len = (size_t)(digits_end - start);
+    if (int_len <= 3) return;
+    size_t commas_to_add = (int_len - 1) / 3;
+    size_t total = strlen(buf);
+    if (total + commas_to_add + 1 > buf_size) return;
+    // Slide everything from digits_end onward to the right by
+    // `commas_to_add` bytes, then insert commas from the right.
+    memmove(digits_end + commas_to_add, digits_end,
+            strlen(digits_end) + 1);
+    char* src = digits_end - 1;
+    char* dst = digits_end + commas_to_add - 1;
+    size_t since_comma = 0;
+    while (src >= start) {
+        *dst-- = *src--;
+        since_comma++;
+        if (since_comma == 3 && src >= start) {
+            *dst-- = ',';
+            since_comma = 0;
+        }
+    }
+}
+
+// Centre a printf-right-aligned result in a field of `width` chars by
+// shifting up to half of the padding to the trailing side. The buffer
+// already has the requested width (printf padded on the left), so we
+// only need to redistribute the leading spaces.
+static void center_in_field(char* buf, size_t buf_size, int width) {
+    if (!buf || width <= 0) return;
+    size_t cur = strlen(buf);
+    // If the formatted text already exceeds the field, printf didn't
+    // pad — nothing to redistribute.
+    if ((int)cur > width) return;
+    int lead = 0;
+    while (buf[lead] == ' ') lead++;
+    if (lead == 0) return;
+    int trail = lead / 2;
+    int new_lead = lead - trail;
+    // Move the non-pad text left by `trail`, then pad the tail.
+    size_t text_len = cur - lead;
+    memmove(buf + new_lead, buf + lead, text_len);
+    for (int i = 0; i < trail && (size_t)(new_lead + text_len + i) < buf_size - 1; i++) {
+        buf[new_lead + text_len + i] = ' ';
+    }
+    if ((size_t)(new_lead + text_len + trail) < buf_size) {
+        buf[new_lead + text_len + trail] = '\0';
+    }
+}
+
+// Ensure a printf spec ends in a recognised type char. Quirk's user-
+// facing format syntax lets people write `{x:>10}` (alignment only,
+// no type) which Python interprets as "default the type to the value's
+// repr." Printf has no such default — we'd snprintf("%10", x) which is
+// undefined behaviour. This helper appends `default_type` when the
+// spec lacks a type suffix so the snprintf is well-formed.
+static void ensure_type_suffix(char* fmt, size_t fmt_size, char default_type) {
+    if (!fmt || !*fmt) return;
+    size_t n = strlen(fmt);
+    char last = fmt[n - 1];
+    // Already a recognised type char? Leave it.
+    if (last == 'd' || last == 'i' || last == 'u' || last == 'x' ||
+        last == 'X' || last == 'o' || last == 'b' || last == 'f' ||
+        last == 'F' || last == 'g' || last == 'G' || last == 'e' ||
+        last == 'E' || last == 's' || last == 'c') {
+        return;
+    }
+    if (n + 2 > fmt_size) return;
+    fmt[n]     = default_type;
+    fmt[n + 1] = '\0';
+}
+
+// Pull the explicit width number out of a printf spec (the digits
+// between the alignment flag and the type char or precision dot).
+// Returns 0 if there's no width specified. Used to size the centring
+// pass.
+static int extract_width(const char* spec) {
+    if (!spec) return 0;
+    const char* p = spec;
+    while (*p == '-' || *p == '+' || *p == ' ' || *p == '#' || *p == '0') p++;
+    int w = 0;
+    while (*p >= '0' && *p <= '9') { w = w * 10 + (*p - '0'); p++; }
+    return w;
+}
+
 static void append_formatted(char** buf,
                       int* cap,
                       int* len,
@@ -82,19 +249,34 @@ static void append_formatted(char** buf,
         return;
     }
 
-    char format_string[32];
+    char format_string[80];
     char output_buffer[256];
+
+    // Pre-translate any Python-only features (alignment chars, `,`
+    // thousand separators) into a printf-clean spec plus two post-
+    // process flags. Empty spec falls through to per-branch defaults.
+    char translated[64];
+    int  center = 0;
+    int  commas = 0;
+    translated[0] = '\0';
+    if (fmt_spec && strlen(fmt_spec) > 0) {
+        translate_python_spec(fmt_spec, translated, sizeof(translated),
+                              &center, &commas);
+    }
 
     // Tagged integer passed as pointer
     if ((uintptr_t)item <= 0xFFFFFFFFUL) {
         int ival = (int)(uintptr_t)item;
-        if (fmt_spec && strlen(fmt_spec) > 0) {
-            snprintf(format_string, 32, "%%%s", fmt_spec);
+        if (translated[0]) {
+            snprintf(format_string, sizeof(format_string), "%%%s", translated);
             if (strchr(format_string, 's')) strcpy(format_string, "%d");
+            ensure_type_suffix(format_string, sizeof(format_string), 'd');
             snprintf(output_buffer, 256, format_string, ival);
         } else {
             snprintf(output_buffer, 256, "%d", ival);
         }
+        if (commas) insert_thousand_commas(output_buffer, sizeof(output_buffer));
+        if (center) center_in_field(output_buffer, sizeof(output_buffer), extract_width(translated));
         buffer_append(buf, cap, len, output_buffer);
         return;
     }
@@ -103,10 +285,12 @@ static void append_formatted(char** buf,
     if (!is_valid_any_ptr(item)) {
         String* s = (String*)item;
         const char* cstr = (s && s->buffer) ? s->buffer : "(null)";
-        if (fmt_spec && strlen(fmt_spec) > 0) {
-            snprintf(format_string, 32, "%%%s", fmt_spec);
+        if (translated[0]) {
+            snprintf(format_string, sizeof(format_string), "%%%s", translated);
             if (strpbrk(format_string, "dxfge")) strcpy(format_string, "%s");
+            ensure_type_suffix(format_string, sizeof(format_string), 's');
             snprintf(output_buffer, 256, format_string, cstr);
+            if (center) center_in_field(output_buffer, sizeof(output_buffer), extract_width(translated));
             buffer_append(buf, cap, len, output_buffer);
         } else {
             buffer_append(buf, cap, len, cstr);
@@ -119,9 +303,12 @@ static void append_formatted(char** buf,
     // Float format spec (%f, %g, %e)?
     if (fmt_spec && (strchr(fmt_spec, 'f') || strchr(fmt_spec, 'g') ||
                      strchr(fmt_spec, 'e'))) {
-        snprintf(format_string, 32, "%%%s", fmt_spec);
+        snprintf(format_string, sizeof(format_string), "%%%s", translated[0] ? translated : fmt_spec);
+        ensure_type_suffix(format_string, sizeof(format_string), 'f');
         double d = Core_Primitives_Any_to_float(a);
         snprintf(output_buffer, 256, format_string, d);
+        if (commas) insert_thousand_commas(output_buffer, sizeof(output_buffer));
+        if (center) center_in_field(output_buffer, sizeof(output_buffer), extract_width(translated));
         buffer_append(buf, cap, len, output_buffer);
         return;
     }
@@ -135,24 +322,30 @@ static void append_formatted(char** buf,
         }
         case ANY_INT:
         case ANY_CHAR: {
-            if (fmt_spec && strlen(fmt_spec) > 0) {
-                snprintf(format_string, 32, "%%%s", fmt_spec);
+            if (translated[0]) {
+                snprintf(format_string, sizeof(format_string), "%%%s", translated);
                 if (strchr(format_string, 's'))
                     strcpy(format_string, "%d");
+                ensure_type_suffix(format_string, sizeof(format_string), 'd');
                 snprintf(output_buffer, 256, format_string, a->ival);
             } else {
                 snprintf(output_buffer, 256, "%d", a->ival);
             }
+            if (commas) insert_thousand_commas(output_buffer, sizeof(output_buffer));
+            if (center) center_in_field(output_buffer, sizeof(output_buffer), extract_width(translated));
             buffer_append(buf, cap, len, output_buffer);
             break;
         }
         case ANY_DOUBLE: {
-            if (fmt_spec && strlen(fmt_spec) > 0) {
-                snprintf(format_string, 32, "%%%s", fmt_spec);
+            if (translated[0]) {
+                snprintf(format_string, sizeof(format_string), "%%%s", translated);
+                ensure_type_suffix(format_string, sizeof(format_string), 'g');
                 snprintf(output_buffer, 256, format_string, a->dval);
             } else {
                 snprintf(output_buffer, 256, "%g", a->dval);
             }
+            if (commas) insert_thousand_commas(output_buffer, sizeof(output_buffer));
+            if (center) center_in_field(output_buffer, sizeof(output_buffer), extract_width(translated));
             buffer_append(buf, cap, len, output_buffer);
             break;
         }
@@ -160,11 +353,13 @@ static void append_formatted(char** buf,
             // String, List, Map, Ptr, Null — convert to string then format
             String* s = Core_Primitives_Any_to_string(a);
             const char* cstr = (s && s->buffer) ? s->buffer : "(null)";
-            if (fmt_spec && strlen(fmt_spec) > 0) {
-                snprintf(format_string, 32, "%%%s", fmt_spec);
+            if (translated[0]) {
+                snprintf(format_string, sizeof(format_string), "%%%s", translated);
                 if (strpbrk(format_string, "dxfge"))
                     strcpy(format_string, "%s");
+                ensure_type_suffix(format_string, sizeof(format_string), 's');
                 snprintf(output_buffer, 256, format_string, cstr);
+                if (center) center_in_field(output_buffer, sizeof(output_buffer), extract_width(translated));
                 buffer_append(buf, cap, len, output_buffer);
             } else {
                 buffer_append(buf, cap, len, cstr);

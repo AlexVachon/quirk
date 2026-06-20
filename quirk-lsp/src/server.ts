@@ -1428,6 +1428,12 @@ connection.onCompletion((params: CompletionParams): CompletionItem[] => {
 
 interface CallContext {
   callee: string;
+  // When the call site is `mod.fn(...)`, `receiver` is `mod`. Null
+  // for bare calls. The signature-help handler uses it as a fallback
+  // resolution path when symbolCache doesn't have an entry for the
+  // callee (typical mid-edit case: open `(` makes the file
+  // unparseable, so `--symbols-json` returns nothing).
+  receiver: string | null;
   activeParameter: number;
 }
 
@@ -1455,10 +1461,14 @@ function findCallContext(text: string, line: number, character: number): CallCon
           while (start > 0 && /[A-Za-z0-9_.]/.test(lineText[start - 1])) start--;
           const callee = lineText.slice(start, end);
           if (!callee) return null;
-          // For `mod.fn(...)` we only want the last segment.
+          // For `mod.fn(...)`, split callee into receiver + member.
+          // The receiver lets the handler walk the import map when
+          // the per-document symbol cache is empty (e.g. the open
+          // `(` makes the file unparseable mid-edit).
           const dot = callee.lastIndexOf('.');
           return {
             callee: dot >= 0 ? callee.slice(dot + 1) : callee,
+            receiver: dot >= 0 ? callee.slice(0, dot) : null,
             activeParameter: activeParam,
           };
         }
@@ -1501,13 +1511,162 @@ function signaturesFor(callee: string, symbols: QuirkSymbol[]): SignatureInforma
   return sigs;
 }
 
+// Parse a single `define foo(a: T, b: U = d) -> R` line into a
+// SignatureInformation. Used by the regex fallback path that runs
+// when the per-document symbol cache is empty — typically because
+// the file is mid-edit (an open `(` makes it unparseable, so
+// `--symbols-json` produced nothing).
+//
+// Multi-line signatures aren't handled — Quirk's stdlib + sample
+// code keep the parameter list on one line, which is enough for the
+// signature-help payoff to land. A future iteration can stitch
+// continuation lines if it becomes useful.
+function signatureFromDeclLine(line: string): SignatureInformation | null {
+  const m = line.match(/define\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)\s*(?:->\s*([^\s{]+))?/);
+  if (!m) return null;
+  const name = m[1];
+  const paramsRaw = m[2].trim();
+  const ret = m[3];
+  const params: ParameterInformation[] = [];
+  if (paramsRaw) {
+    // Split on top-level commas — Quirk param types are simple
+    // enough today that nested commas (e.g. `Map[K, V]`) are rare,
+    // but a depth counter keeps us safe if they appear.
+    let depth = 0;
+    let start = 0;
+    const pieces: string[] = [];
+    for (let i = 0; i <= paramsRaw.length; i++) {
+      const c = paramsRaw[i] ?? '';
+      if (c === '(' || c === '[' || c === '{') depth++;
+      else if (c === ')' || c === ']' || c === '}') depth--;
+      else if ((c === ',' && depth === 0) || i === paramsRaw.length) {
+        const piece = paramsRaw.slice(start, i).trim();
+        if (piece) pieces.push(piece);
+        start = i + 1;
+      }
+    }
+    for (const p of pieces) {
+      // Skip the implicit `self` parameter on methods — Quirk's
+      // call sites don't pass it explicitly, so showing it would
+      // misalign the highlighted active parameter.
+      if (p === 'self' || p.startsWith('self:') || p.startsWith('self ')) continue;
+      params.push({ label: p });
+    }
+  }
+  const label = `${name}(${params.map((p) => p.label as string).join(', ')})${ret ? ` -> ${ret}` : ''}`;
+  return { label, parameters: params };
+}
+
+// Find a `define <name>(...)` line in the file at `absPath`,
+// following `from .X use { name }` re-exports up to depth 4 the
+// same way go-to-definition does. Returns the parsed signature or
+// null. Decoupled from findDeclarationsInFile so the parser logic
+// stays self-contained.
+function findSignatureTransitively(
+  absPath: string,
+  name: string,
+  depth: number,
+  visited: Set<string>,
+): SignatureInformation | null {
+  if (depth > 4) return null;
+  const canonical = path.resolve(absPath);
+  if (visited.has(canonical)) return null;
+  visited.add(canonical);
+
+  let text: string;
+  try { text = fs.readFileSync(canonical, 'utf8'); } catch { return null; }
+  const lines = text.split(/\r?\n/);
+  const declRe = new RegExp(`^[ \\t]*define\\s+${name}\\s*\\(`);
+  for (const line of lines) {
+    if (declRe.test(line)) {
+      const sig = signatureFromDeclLine(line);
+      if (sig) return sig;
+    }
+  }
+  // Walk re-exports for transitive lookup (multi-file packages).
+  const body = text.replace(/\r?\n/g, ' ');
+  const reExport = /\bfrom\s+(\.{1,3}[A-Za-z_][\w.]*|[A-Za-z_][\w.]*)\s+use\s*\{([^}]*)\}/g;
+  const dir = path.dirname(canonical);
+  let m: RegExpExecArray | null;
+  while ((m = reExport.exec(body)) !== null) {
+    const modRef = m[1];
+    const entries = m[2];
+    const directHit = new RegExp(`(?:^|[,\\s])${name}(?=\\s*(?:,|}|$))`).test(entries);
+    const aliasOf = entries.match(new RegExp(`([A-Za-z_]\\w*)\\s+as\\s+${name}(?=\\s*(?:,|}|$))`));
+    if (!directHit && !aliasOf) continue;
+    const sourceName = aliasOf ? aliasOf[1] : name;
+    let nextPath: string | null = null;
+    if (modRef.startsWith('.')) {
+      const dots = modRef.match(/^\.+/)![0].length;
+      const tail = modRef.slice(dots).replace(/\./g, '/');
+      let base = dir;
+      for (let k = 1; k < dots; k++) base = path.dirname(base);
+      const candidate = tail ? path.join(base, tail) : base;
+      for (const p of [candidate + '.quirk', path.join(candidate, 'index.quirk')]) {
+        if (fs.existsSync(p)) { nextPath = p; break; }
+      }
+    } else {
+      const resolved = resolveModule(modRef);
+      if (resolved) nextPath = resolved;
+    }
+    if (!nextPath) continue;
+    const sig = findSignatureTransitively(nextPath, sourceName, depth + 1, visited);
+    if (sig) return sig;
+  }
+  return null;
+}
+
 connection.onSignatureHelp((params: SignatureHelpParams): SignatureHelp | null => {
   const doc = documents.get(params.textDocument.uri);
   if (!doc) return null;
   const ctx = findCallContext(doc.getText(), params.position.line, params.position.character);
   if (!ctx) return null;
+
+  // 1. Symbol-cache path. Works when the file currently parses
+  // (most useful for previously-good code being re-edited).
   const symbols = symbolCache.get(params.textDocument.uri) ?? [];
-  const signatures = signaturesFor(ctx.callee, symbols);
+  let signatures = signaturesFor(ctx.callee, symbols);
+
+  // 2. Regex fallback. The common signature-help case is "I'm
+  // typing the call right now, the file doesn't parse." Symbol
+  // cache is empty; resolve the callee via the same import-walking
+  // path go-to-definition uses, then parse the decl line.
+  if (!signatures.length) {
+    const text = doc.getText();
+    const lines = text.split(/\r?\n/);
+    let sig: SignatureInformation | null = null;
+    // 2a. Same-file decl — scan the open document text directly
+    // so unsaved edits to the calling file still surface their
+    // own signatures.
+    const declRe = new RegExp(`^[ \\t]*define\\s+${ctx.callee}\\s*\\(`);
+    for (const line of lines) {
+      if (declRe.test(line)) {
+        sig = signatureFromDeclLine(line);
+        if (sig) break;
+      }
+    }
+    // 2b. Cross-file. Resolve receiver (for `mod.fn`) or the
+    // callee itself (for `name(...)` where `name` is imported via
+    // `from X use { name }`) through the file's import map.
+    if (!sig) {
+      const { byName, modules } = scanImports(text);
+      let resolved: string | null = null;
+      if (ctx.receiver) {
+        resolved =
+          (byName.has(ctx.receiver) ? resolveModule(byName.get(ctx.receiver)!) : null) ??
+          (modules.has(ctx.receiver) ? resolveModule(ctx.receiver) : null) ??
+          resolveModule(ctx.receiver);
+      } else {
+        const modHit = byName.get(ctx.callee);
+        if (modHit) resolved = resolveModule(modHit);
+      }
+      if (resolved) {
+        sig = findSignatureTransitively(resolved, ctx.callee, 0, new Set());
+      }
+    }
+    if (sig) signatures = [sig];
+  }
+
   if (!signatures.length) return null;
   return {
     signatures,

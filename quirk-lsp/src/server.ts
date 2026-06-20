@@ -1138,49 +1138,92 @@ function hoverFromDecl(lines: string[], declLine: number): string {
   return body;
 }
 
+// Build a hover payload from a Location returned by the same lookup
+// chain go-to-definition uses. Reads the target file off disk, lifts
+// the signature line + any preceding `---`/`//` docstring, and tags
+// the result with the source filename when the decl came from a
+// different file than the cursor's. Returns null on a stale Location
+// (file moved/deleted since the import scan) or when the line at the
+// stored offset doesn't look like a recognised declaration.
+function hoverFromLocation(loc: Location, sameFileUri: string): Hover | null {
+  const absPath = uriToPath(loc.uri);
+  if (!absPath) return null;
+  let text: string;
+  try { text = fs.readFileSync(absPath, 'utf8'); } catch { return null; }
+  const lines = text.split(/\r?\n/);
+  const declLine = loc.range.start.line;
+  if (declLine < 0 || declLine >= lines.length) return null;
+  let body = hoverFromDecl(lines, declLine);
+  if (loc.uri !== sameFileUri) {
+    body += `\n\n*from \`${path.basename(absPath)}\`*`;
+  }
+  return { contents: { kind: MarkupKind.Markdown, value: body } };
+}
+
 connection.onHover((params: HoverParams): Hover | null => {
   const doc = documents.get(params.textDocument.uri);
   if (!doc) return null;
   const text = doc.getText();
-  const docLines = text.split(/\r?\n/);
-  const lineText = docLines[params.position.line] ?? '';
+  const lines = text.split(/\r?\n/);
+  const lineText = lines[params.position.line] ?? '';
   const ident = identifierAt(lineText, params.position.character);
   if (!ident) return null;
 
-  // 1. Same-file decl.
-  for (let i = 0; i < docLines.length; i++) {
-    for (const { re, nameGroup } of DECL_PATTERNS) {
-      const m = docLines[i].match(re);
-      if (m && m[nameGroup] === ident) {
-        return {
-          contents: { kind: MarkupKind.Markdown, value: hoverFromDecl(docLines, i) },
-        };
+  // Reuse the go-to-definition lookup chain so hover is consistent
+  // with where Ctrl-Click jumps. Three steps, falling through:
+  //   1. Same-file decl (immediate, no I/O).
+  //   2. Cross-file via the file's import map.
+  //   3. Member access on an imported module — `http.get`, `html.div`,
+  //      etc. — with the receiver resolved through byName/modules and
+  //      transitive re-export walking handled by
+  //      `findDeclarationsTransitively`.
+
+  const same = findDeclarations(doc, ident);
+  if (same.length) return hoverFromLocation(same[0], params.textDocument.uri);
+
+  const { byName, modules } = scanImports(text);
+  const moduleHit = byName.get(ident) ?? (modules.has(ident) ? ident : null);
+  if (moduleHit) {
+    const resolved = resolveModule(moduleHit);
+    if (resolved) {
+      // Module name itself — show the file's top docstring (the
+      // module-level `---` block at the head of the file). We
+      // synthesize a Location pointing at line 0 and lift whatever
+      // comment block sits there.
+      if (ident === moduleHit.split('.').pop()) {
+        let modText: string;
+        try { modText = fs.readFileSync(resolved, 'utf8'); } catch { return null; }
+        const importedLines = modText.split(/\r?\n/);
+        let header = '';
+        if (importedLines[0]?.trim() === '---') {
+          let end = 1;
+          while (end < importedLines.length && importedLines[end].trim() !== '---') end++;
+          header = importedLines.slice(1, end).join('\n');
+        }
+        const tag = `\`module ${moduleHit}\``;
+        const body = header ? `${tag}\n\n${header}` : tag;
+        return { contents: { kind: MarkupKind.Markdown, value: body } };
       }
+      const hits = findDeclarationsInFile(resolved, ident);
+      if (hits.length) return hoverFromLocation(hits[0], params.textDocument.uri);
     }
   }
 
-  // 2. Cross-file via import map.
-  const { byName, modules } = scanImports(text);
-  const moduleHit = byName.get(ident) ?? (modules.has(ident) ? ident : null);
-  if (!moduleHit) return null;
-  const resolved = resolveModule(moduleHit);
-  if (!resolved) return null;
-  let imported: string;
-  try { imported = fs.readFileSync(resolved, 'utf8'); } catch { return null; }
-  const importedLines = imported.split(/\r?\n/);
-  for (let i = 0; i < importedLines.length; i++) {
-    for (const { re, nameGroup } of DECL_PATTERNS) {
-      const m = importedLines[i].match(re);
-      if (m && m[nameGroup] === ident) {
-        const body = hoverFromDecl(importedLines, i);
-        // Suffix the source path so the user knows which file the
-        // signature was lifted from (handy when several stdlib
-        // modules export same-named types).
-        const trailer = `\n\n*from \`${path.basename(resolved)}\`*`;
-        return { contents: { kind: MarkupKind.Markdown, value: body + trailer } };
-      }
+  const receiver = dottedReceiverBefore(
+    lineText,
+    identifierStart(lineText, params.position.character)
+  );
+  if (receiver) {
+    const resolved =
+      (byName.has(receiver) ? resolveModule(byName.get(receiver)!) : null) ??
+      (modules.has(receiver) ? resolveModule(receiver) : null) ??
+      resolveModule(receiver);
+    if (resolved) {
+      const hits = findDeclarationsInFile(resolved, ident);
+      if (hits.length) return hoverFromLocation(hits[0], params.textDocument.uri);
     }
   }
+
   return null;
 });
 

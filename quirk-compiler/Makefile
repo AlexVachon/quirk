@@ -138,11 +138,12 @@ STDLIB_TAG_typing ?= v1.3.0
 # explicit pin keeps a global STDLIB_TAG bump from accidentally
 # pulling a v2 with potentially breaking changes.
 STDLIB_TAG_html ?= v1.0.1
-# net v1.1.0 adds TLS support: `tls_connect/send/recv/close`
-# externs + scheme dispatch in net.http for `https://` URLs.
-# Requires the runtime in compiler v3.7.0+ (Net_tls_* C symbols
-# in src/Runtime/libs/net.c linked against -lssl).
-STDLIB_TAG_net ?= v1.1.0
+# net v1.2.0 adds Response.json() convenience method on top of
+# v1.1.0's TLS support. Earlier v1.1.0 baseline still requires the
+# v3.7.0+ runtime (Net_tls_* C symbols + -lssl); .json() is a
+# pure-Quirk one-liner so v1.2.0 has no additional compiler
+# requirement beyond what v1.1.0 already needed.
+STDLIB_TAG_net ?= v1.2.0
 
 bootstrap-stdlib:
 	@mkdir -p packages

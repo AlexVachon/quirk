@@ -5,6 +5,30 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [3.10.1] — 2026-06-19
+
+### Pin stdlib net to v1.2.0 (Response.json() convenience method)
+
+Patch release: bumps `STDLIB_TAG_net` from v1.1.0 to v1.2.0 so
+`make bootstrap-stdlib` picks up the new `.json()` method on the
+HTTP Response struct:
+
+```
+resp := http.get("https://api.example.com/user/42")
+if resp.ok {
+    data: Map := resp.json()
+    print(data.get("name"))
+}
+```
+
+The method is a one-liner around `encoding.json.parse(self.text)`
+— no runtime work on this side. v1.1.0's TLS support is
+preserved unchanged.
+
+The release exists as a patch (not minor) because no compiler
+code changed; the only thing v3.10.0 → v3.10.1 carries is the
+Makefile tag pin so a clean clone picks the updated net library.
+
 ## [3.10.0] — 2026-06-19
 
 ### Typo-suggestion hints for module functions and enum variants

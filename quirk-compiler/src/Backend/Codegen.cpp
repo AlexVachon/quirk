@@ -58,6 +58,11 @@ class LLVMCodegen {
     // even when another module also defines a top-level `write`. The bare-
     // name map can only hold one entry per name; this disambiguates.
     std::map<std::pair<std::string, std::string>, FunctionNode*> moduleFunctionIndex;
+    // Per-struct method registry: structName → methodName → FunctionNode.
+    // Used by the binary-op overload dispatch to find e.g.
+    // `Core_Collections_List_List___add` from a bare-`List` operand
+    // type without having to know the module prefix at the call site.
+    std::map<std::string, std::map<std::string, FunctionNode*>> structMethodNodes;
     std::map<std::string, StructType*> StructTypes;
 
     std::map<std::string, std::vector<std::string>> structHierarchy;
@@ -388,6 +393,29 @@ class LLVMCodegen {
                 // for default-arg filling on library functions.
                 if (!func->linkageName.empty() && func->linkageName != func->name) {
                     functionDeclarations[func->linkageName] = func;
+                }
+                // Per-struct method registry. Lets the operator-overload
+                // dispatch path resolve `List.__add` to its full linkage
+                // name (`Core_Collections_List_List___add`) without
+                // walking every function in the module. Without this,
+                // dispatch fell back to `getFunction("List___add")`
+                // (bare struct + dunder) which only matched user
+                // structs defined at module root with no package
+                // prefix — every stdlib overload silently routed
+                // through raw integer add, SIGSEGV-ing on the
+                // dereference of List pointers as ints.
+                if (!func->cls.empty()) {
+                    // Index by the bare dunder/method name (strip the
+                    // `<cls>_` prefix that parser preprends to
+                    // func->name). e.g. for List's __add, func->name
+                    // is "List___add" and func->cls is "List"; we
+                    // store it under "___add" so the operator-overload
+                    // dispatch can look it up via the opMethods
+                    // table directly.
+                    std::string raw = func->name;
+                    std::string prefix = func->cls + "_";
+                    if (raw.rfind(prefix, 0) == 0) raw = raw.substr(prefix.size());
+                    structMethodNodes[func->cls][raw] = func;
                 }
                 if (!func->moduleName.empty() && func->cls.empty()) {
                     // Original PascalCase key (from computeModulePrefix).
@@ -4027,7 +4055,43 @@ Value* LLVMCodegen::handleExpression(Node* node) {
             };
             auto it = opMethods.find(binOp->op);
             if (it != opMethods.end()) {
-                Function* magicFn = TheModule->getFunction(sName + it->second);
+                // Resolve through the per-struct method registry first
+                // (gets the full linkage name including any module
+                // prefix); fall back to the bare-name form for user
+                // structs that live at module root with no prefix.
+                Function* magicFn = nullptr;
+                // Only consult the per-struct method registry when
+                // BOTH operands are pointers to the SAME struct type.
+                // This keeps the dispatch targeted: `xs + ys` on two
+                // Lists picks up `Core_Collections_List_List___add`,
+                // while `s + d` (String + Double) falls through to
+                // the legacy coercion paths below. Without the same-
+                // struct gate, mixed-type binary ops routed into a
+                // magic method that expected matching types and
+                // failed IR verification.
+                bool sameStructBothSides =
+                    R && R->getType()->isPointerTy() &&
+                    R->getType()->getPointerElementType()->isStructTy() &&
+                    R->getType()->getPointerElementType() == st;
+                if (sameStructBothSides) {
+                    // opMethods value is the post-mangled dunder
+                    // (`___add` — designed to be appended to the
+                    // struct name to form `List___add`). The
+                    // per-struct map is keyed by the BARE dunder
+                    // (`__add`, one fewer underscore), so strip
+                    // the leading `_` here.
+                    std::string bareDunder = it->second;
+                    if (!bareDunder.empty() && bareDunder[0] == '_') bareDunder = bareDunder.substr(1);
+                    auto sIt = structMethodNodes.find(sName);
+                    if (sIt != structMethodNodes.end()) {
+                        auto mIt = sIt->second.find(bareDunder);
+                        if (mIt != sIt->second.end()) {
+                            const std::string& ln = mIt->second->linkageName;
+                            magicFn = TheModule->getFunction(ln.empty() ? it->second : ln);
+                        }
+                    }
+                }
+                if (!magicFn) magicFn = TheModule->getFunction(sName + it->second);
                 if (magicFn && magicFn->arg_size() >= 2) {
                     Value* rArg = R;
                     Type* expectedTy = magicFn->getFunctionType()->getParamType(1);

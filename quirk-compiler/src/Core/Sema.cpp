@@ -1836,6 +1836,15 @@ std::string Sema::checkBinaryOp(BinaryOpNode *node)
         // is allowed; numeric + numeric is allowed; otherwise error.
         if (lType == "String" || rType == "String")
             return "String";
+        // List concatenation (v3.15.0): `xs + ys` dispatches to
+        // `List.__add` and produces a fresh List with `self` ahead of
+        // `other`. Pre-v3.15.0 Sema fell through to the numeric
+        // compatible-operands branch and typed the expression as Int,
+        // which both surfaced wrong types downstream and caused
+        // Codegen to emit raw integer add — at runtime it SIGSEGV'd
+        // dereferencing the List pointers as integers.
+        if (lType == "List" && rType == "List")
+            return "List";
         if (compatibleOperands(lType, rType)) {
             if (lType == "Double" || rType == "Double")
                 return "Double";

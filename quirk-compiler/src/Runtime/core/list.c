@@ -238,6 +238,36 @@ int Core_Collections_List_List_contains(List* self, void* elem) {
 typedef void* (*LambdaFn1)(void* env, void* arg);
 typedef void* (*LambdaFn2)(void* env, void* acc, void* arg);
 
+// Append every element of `other` to `self`, mutating in place.
+// Quirk: `xs.extend(ys)`. Returns void — Pythonic semantics, not
+// a fluent chain. Use `__add` (below) if you want a fresh List.
+void Core_Collections_List_List_append_all(List* self, List* other) {
+    if (!self || !other) return;
+    Core_Collections_List_List_ensure_capacity(self, self->size + other->size);
+    for (int i = 0; i < other->size; i++)
+        Core_Collections_List_List_append(self, other->data[i]);
+}
+
+// `xs + ys` — fresh List containing every element of self followed
+// by every element of other. Neither input is mutated. Sema picks
+// up the call via the `__add` dunder on the receiver type.
+List* Core_Collections_List_List___add(List* self, List* other) {
+    List* result = (List*)GC_malloc(sizeof(List));
+    Core_Collections_List_List___init(result);
+    if (!self && !other) return result;
+    int total = (self ? self->size : 0) + (other ? other->size : 0);
+    Core_Collections_List_List_ensure_capacity(result, total);
+    if (self) {
+        for (int i = 0; i < self->size; i++)
+            Core_Collections_List_List_append(result, self->data[i]);
+    }
+    if (other) {
+        for (int i = 0; i < other->size; i++)
+            Core_Collections_List_List_append(result, other->data[i]);
+    }
+    return result;
+}
+
 List* Core_Collections_List_List_map(List* self, Callable* cb) {
     LambdaFn1 fn = (LambdaFn1)cb->fn;
     List* result = (List*)GC_malloc(sizeof(List));

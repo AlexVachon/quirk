@@ -1,0 +1,47 @@
+// p74 — List + List concatenation + List.append_all (v3.15.0).
+//
+// Before v3.15.0, `xs + ys` on two Lists SIGSEGV'd at runtime
+// (Sema typed the operator as Int via the numeric compatible-
+// operands fallback; Codegen emitted raw integer add against
+// what were actually List pointers, dereferencing them as ints).
+// The user-side workaround was a manual loop over `__get` +
+// `append`.
+//
+// v3.15.0 lands three pieces:
+//
+//   - Runtime: Core_Collections_List_List___add (fresh result)
+//     and Core_Collections_List_List_append_all (in-place mutate).
+//
+//   - Library: extern bindings in
+//     packages/typing/collections/list.quirk. `extend` is reserved
+//     in Quirk for `extend Foo { ... }` declarations, so the
+//     mutating form is `append_all` — descriptive, no name
+//     collision.
+//
+//   - Sema: `+` on two List operands now types as `List` instead
+//     of falling through to Int. Codegen gains a per-struct
+//     method registry (`structMethodNodes`) so the operator-
+//     overload dispatch can find `Core_Collections_List_List___add`
+//     from a bare `List` operand-struct name. Same-struct gate
+//     prevents the dispatch from misfiring on mixed-type ops
+//     like `String + Double` (which still goes through the
+//     legacy coercion paths).
+
+xs := [1, 2, 3]
+ys := [4, 5, 6]
+
+// `+` returns a fresh List, leaves originals intact.
+zs := xs + ys
+print(zs)              // = [1, 2, 3, 4, 5, 6]
+print(zs.length())     // = 6
+print(xs)              // = [1, 2, 3]
+print(ys)              // = [4, 5, 6]
+
+// append_all mutates the receiver in place.
+xs.append_all(ys)
+print(xs)              // = [1, 2, 3, 4, 5, 6]
+print(xs.length())     // = 6
+
+// `+` works on empty operands too.
+print([] + [1, 2])     // = [1, 2]
+print([3] + [])        // = [3]

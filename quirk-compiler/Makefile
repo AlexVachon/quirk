@@ -130,10 +130,12 @@ STDLIB_TAG   ?= v1.0.0
 # that doesn't match the global STDLIB_TAG (e.g. `prompt` was
 # renamed from `ask` and ships v1.0.1 with the rename baked in).
 STDLIB_TAG_prompt ?= v1.1.0
-# typing v1.1.0 adds the canonical Option[T] / Result[T, E] sum
-# types (requires compiler v2.4.4+ — tagged unions + variant methods
-# + return-upcast codegen).
-STDLIB_TAG_typing ?= v1.3.0
+# typing v1.4.0 adds List.__add (operator+ concat) and
+# List.append_all (mutating concat). Requires compiler v3.15.0+
+# for the runtime List___add / List_append_all symbols and the
+# Codegen per-struct method registry used by the operator-overload
+# dispatch.
+STDLIB_TAG_typing ?= v1.4.0
 # html v1.0.0 is the initial release (compiler v3.5.0+). The
 # explicit pin keeps a global STDLIB_TAG bump from accidentally
 # pulling a v2 with potentially breaking changes.

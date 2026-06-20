@@ -5,6 +5,52 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [3.15.0] — 2026-06-20
+
+### `xs + ys` List concatenation + List.append_all + struct method dispatch fix
+
+Before this release, `xs + ys` on two Lists SIGSEGV'd at runtime —
+Sema typed the operator as Int via the numeric compatible-operands
+fallback, and Codegen emitted raw integer add against actual List
+pointers (dereferencing pointers as integers). User-side workaround
+was a manual `for i in 0..ys.length() { xs.append(ys.__get(i)) }`
+loop.
+
+Three changes land:
+
+  - Runtime gains `Core_Collections_List_List___add` (fresh
+    result) and `Core_Collections_List_List_append_all` (mutate
+    in place). Pinned in quirk-typing v1.4.0; STDLIB_TAG_typing
+    bumps accordingly.
+
+  - Sema: `+` on two `List` operands now types as `List` instead
+    of falling through to Int. Other operand combinations
+    (String+anything, numeric+numeric, generic-param erasure)
+    take their existing paths unchanged.
+
+  - Codegen gains a per-struct method registry
+    (`structMethodNodes: structName → method → FunctionNode`)
+    populated during Pass 3. The binary-op overload dispatch
+    queries the registry first to recover the full linkage name
+    (`Core_Collections_List_List___add`) from the bare `List`
+    operand-struct type — without the registry, the dispatch
+    was falling back to `getFunction("List___add")` (struct +
+    dunder, no module prefix), which only matched user structs
+    defined at module root.
+
+The dispatch is gated to "both operands have the SAME struct
+type" so mixed-type binary ops like `String + Double` keep
+flowing through the legacy coercion paths instead of misfiring
+into a magic method that expected matching argument shapes.
+
+The mutating form is named `append_all`, not `extend`, because
+`extend` is a reserved keyword in Quirk for `extend Foo { ... }`
+declarations that bolt methods onto an existing struct. The name
+is descriptive enough — `xs.append_all(ys)` reads cleanly.
+
+`tests/probes/p74_list_concat.quirk` exercises both API shapes
+plus empty-operand edge cases.
+
 ## [3.14.0] — 2026-06-20
 
 ### Type aliases work in function parameter + return types

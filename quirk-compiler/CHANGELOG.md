@@ -5,6 +5,56 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [3.12.0] — 2026-06-20
+
+### Type aliases dispatch to the underlying type's methods
+
+`type Name = T` declarations have been parsed and registered in
+`Sema::typeAliases` since v2.x, but the map was only consulted for
+generic-param erasure (`T → Any`). User-written aliases over
+concrete types — `type Headers = Map`, `type IntList = List`,
+`type Age = Int` — were silently defined and never dereferenced
+at use sites:
+
+```
+type Headers = Map
+h: Headers := Map()
+h.put("a", "1")     // → Unknown method 'String.put'
+h.length()          // → 8 (garbage read from wrong struct slot)
+```
+
+`h: Headers` landed `h` in scope under the literal type name
+"Headers"; Codegen's `typeGen->getLLVMType("Headers")` fell back to
+an opaque shape; method dispatch either errored at Sema or
+returned wrong values at runtime.
+
+v3.12.0 dereferences each alias at variable-binding time in
+`checkVarDecl`:
+
+  - `finalType` is replaced with the alias's target before
+    `defineVariable` is called, so the scope entry carries the
+    canonical type and Sema's method-lookup chain works.
+
+  - `node->typeAnnotation` is rewritten to the same target so
+    Codegen — which reads it verbatim for LLVM-type lookup and
+    Any-unboxing decisions — allocates the right struct and
+    dispatches through the right method table.
+
+Both pieces are required; the Sema-side fix alone leaves Codegen
+allocating the wrong shape. Skips rewriting when the target is
+the special `"Any"` sentinel used by generic-param erasure so
+existing `Box[T]` machinery stays intact.
+
+Limitation: this release covers value-side aliases (Map, List,
+Int, Bool, etc.). Aliases over String trip a pre-existing edge
+case in Codegen's top-level VarDecl path (string-typed bindings
+as the first AST node ICE the LLVM verifier) that's unrelated
+to alias work and queued for a follow-up.
+
+`tests/probes/p71_type_alias_dispatch.quirk` exercises Map, List,
+and Int aliases through realistic call shapes (`.put`/`.get`/
+`.length`/arithmetic).
+
 ## [3.11.0] — 2026-06-19
 
 ### Import aliases: `from X use { y as local }`

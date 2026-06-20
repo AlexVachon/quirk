@@ -1107,6 +1107,30 @@ void Sema::checkVarDecl(VarDeclNode *node)
         if (isDecl || !alreadyDefined) {
             std::string finalType =
                 node->typeAnnotation.empty() ? exprType : node->typeAnnotation;
+            // Type-alias substitution (v3.12.0). `type Headers = Map`
+            // means `h: Headers := Map()` should land `h` in scope
+            // as the underlying type AND have the AST annotation
+            // rewritten so Codegen — which reads
+            // `vdecl->typeAnnotation` verbatim for its LLVM type
+            // lookup and Any-unboxing decisions — sees the
+            // canonical type too. Without the AST rewrite,
+            // Codegen would query `getLLVMType("Headers")` and
+            // fall back to an opaque shape, producing garbage
+            // method dispatch downstream (`h.length()` returning
+            // 8 instead of 0 on an empty Map).
+            //
+            // Only rewrite when the alias target is a real type,
+            // not a `T → Any` generic-param erasure marker (those
+            // are intentionally opaque).
+            {
+                std::string base = baseType(finalType);
+                auto aIt = typeAliases.find(base);
+                if (aIt != typeAliases.end() && aIt->second != "Any") {
+                    finalType = aIt->second;
+                    if (!node->typeAnnotation.empty())
+                        node->typeAnnotation = finalType;
+                }
+            }
             // Stash the inferred type on the node so post-Sema walkers
             // (notably `--symbols-json`) can publish it as an inlay
             // hint at the binding site. Only meaningful when the user

@@ -1,0 +1,47 @@
+// p71 — Type aliases dispatch to the underlying type's methods
+// (v3.12.0).
+//
+// `type Name = T` declarations were registered in `Sema::typeAliases`
+// since v2.x but only used for generic-param erasure (`T → Any`).
+// Real aliases — `type Headers = Map`, `type IntList = List`,
+// `type Age = Int` — were defined but never dereferenced at use
+// sites: `h: Headers := Map()` landed `h` in scope as "Headers",
+// Codegen looked up an unknown type and fell back to an opaque
+// shape, and `h.put(...)` either errored at Sema (`Unknown method
+// 'String.put'`) or returned garbage at runtime (`h.length()` on an
+// empty Map reading the wrong slot and printing 8).
+//
+// v3.12.0 dereferences the alias to its target at variable-binding
+// time in checkVarDecl, AND rewrites the AST's typeAnnotation field
+// so Codegen — which reads it verbatim for LLVM-type lookup —
+// sees the canonical type. Both pieces are required: the scope
+// dereferencing makes Sema's method lookup work; the AST rewrite
+// makes Codegen allocate the right LLVM struct + dispatch through
+// the right method table.
+//
+// Limitation: this release covers value-side aliases (Map, List,
+// Int, Bool, etc.). Aliases over String (`type Name = String`)
+// run into a pre-existing Codegen edge case in the top-level
+// VarDecl path that's unrelated to alias work and queued for a
+// follow-up.
+
+// Need at least one non-VarDecl statement first to dodge the
+// pre-existing Codegen edge case on first-AST-node string bindings.
+print("p71 start")
+
+type Headers = Map
+type IntList = List
+type Age = Int
+
+h: Headers := Map()
+h.put("a", "1")
+h.put("b", "2")
+print(h.length())         // = 2
+print(h.get("a"))         // = 1
+
+xs: IntList := [10, 20, 30]
+print(xs.length())        // = 3
+print(xs.get(1))          // = 20
+
+age: Age := 42
+print(age + 1)            // = 43

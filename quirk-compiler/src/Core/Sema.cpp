@@ -433,23 +433,32 @@ void Sema::reportError(const std::string& msg,
     errors.push_back({msg, path, line, col, suggestions});
 }
 
-// Levenshtein distance via the classic two-row DP. Used only on
-// short identifier comparisons (names rarely exceed ~30 chars), so
-// the allocation overhead is negligible.
+// Damerau-Levenshtein distance — counts single-char transpositions as
+// one edit instead of two (plain Levenshtein would score `gte` vs
+// `get` as distance 2, missing the common keyboard-finger-swap typo).
+// Uses a three-row DP so transpositions across positions i-2/j-2 are
+// in scope; the matrix is small enough (identifier names rarely
+// exceed ~30 chars) that the allocation cost is irrelevant.
 static size_t editDistance(const std::string& a, const std::string& b) {
     if (a.empty()) return b.size();
     if (b.empty()) return a.size();
-    std::vector<size_t> prev(b.size() + 1), cur(b.size() + 1);
-    for (size_t j = 0; j <= b.size(); j++) prev[j] = j;
-    for (size_t i = 1; i <= a.size(); i++) {
-        cur[0] = i;
-        for (size_t j = 1; j <= b.size(); j++) {
+    size_t na = a.size(), nb = b.size();
+    std::vector<std::vector<size_t>> d(na + 1, std::vector<size_t>(nb + 1));
+    for (size_t i = 0; i <= na; i++) d[i][0] = i;
+    for (size_t j = 0; j <= nb; j++) d[0][j] = j;
+    for (size_t i = 1; i <= na; i++) {
+        for (size_t j = 1; j <= nb; j++) {
             size_t cost = (a[i - 1] == b[j - 1]) ? 0 : 1;
-            cur[j] = std::min({prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost});
+            d[i][j] = std::min({d[i - 1][j] + 1,
+                                d[i][j - 1] + 1,
+                                d[i - 1][j - 1] + cost});
+            if (i >= 2 && j >= 2 &&
+                a[i - 1] == b[j - 2] && a[i - 2] == b[j - 1]) {
+                d[i][j] = std::min(d[i][j], d[i - 2][j - 2] + 1);
+            }
         }
-        std::swap(prev, cur);
     }
-    return prev[b.size()];
+    return d[na][nb];
 }
 
 std::vector<std::string> Sema::suggestNames(const std::string& query, size_t maxN) {
@@ -540,6 +549,68 @@ std::vector<std::string> Sema::suggestMembers(const std::string& structName,
     };
     walk(structName);
 
+    std::sort(scored.begin(), scored.end());
+    std::vector<std::string> out;
+    std::set<std::string> seen;
+    for (const auto& kv : scored) {
+        if (seen.insert(kv.second).second) out.push_back(kv.second);
+        if (out.size() >= maxN) break;
+    }
+    return out;
+}
+
+// Top-N closest top-level functions in a specific module by edit
+// distance. Walks `methodRegistry[""]` (the top-level slot) and
+// keeps candidates whose owning FunctionNode->moduleName matches
+// `modName`. Used by the `module 'X' has no function 'Y'` path to
+// surface `net.gte(...)` → `did you mean 'get'?`.
+std::vector<std::string> Sema::suggestModuleFunctions(
+        const std::string& modName, const std::string& query, size_t maxN) {
+    const size_t cutoff = std::min<size_t>(query.size() <= 4 ? 1 : 2, 2);
+    // Match by package prefix the same way lookupTopLevel does:
+    // `modName` is what the user typed (e.g. `net`), candidate
+    // FunctionNodes have canonical module names like `net.http`.
+    auto pkgOf = [](const std::string& m) -> std::string {
+        auto dot = m.find('.');
+        return dot == std::string::npos ? m : m.substr(0, dot);
+    };
+    std::vector<std::pair<size_t, std::string>> scored;
+    auto top = methodRegistry.find("");
+    if (top != methodRegistry.end()) {
+        for (const auto& kv : top->second) {
+            if (kv.first.empty() || kv.first == query) continue;
+            FunctionNode* fn = kv.second;
+            if (!fn) continue;
+            if (fn->moduleName != modName && pkgOf(fn->moduleName) != modName)
+                continue;
+            size_t d = editDistance(query, kv.first);
+            if (d <= cutoff) scored.push_back({d, kv.first});
+        }
+    }
+    std::sort(scored.begin(), scored.end());
+    std::vector<std::string> out;
+    std::set<std::string> seen;
+    for (const auto& kv : scored) {
+        if (seen.insert(kv.second).second) out.push_back(kv.second);
+        if (out.size() >= maxN) break;
+    }
+    return out;
+}
+
+// Top-N closest enum-variant names by edit distance. Used by the
+// `'X' is not a variant of enum 'Y'` path so `Color.Reed` surfaces
+// `did you mean 'Red'?`.
+std::vector<std::string> Sema::suggestEnumVariants(
+        const std::string& enumName, const std::string& query, size_t maxN) {
+    const size_t cutoff = std::min<size_t>(query.size() <= 4 ? 1 : 2, 2);
+    auto it = enumRegistry.find(enumName);
+    if (it == enumRegistry.end()) return {};
+    std::vector<std::pair<size_t, std::string>> scored;
+    for (const auto& v : it->second->variants) {
+        if (v.empty() || v == query) continue;
+        size_t d = editDistance(query, v);
+        if (d <= cutoff) scored.push_back({d, v});
+    }
     std::sort(scored.begin(), scored.end());
     std::vector<std::string> out;
     std::set<std::string> seen;
@@ -1790,9 +1861,11 @@ std::string Sema::checkMemberAccess(MemberAccessNode *node)
             }
             if (node->memberName == "str") return "String";
             auto it = std::find(en->variants.begin(), en->variants.end(), node->memberName);
-            if (it == en->variants.end())
-                fatalError("'" + node->memberName + "' is not a variant of enum '" + lit->value + "'",
-                           node->line, node->col, node->filePath);
+            if (it == en->variants.end()) {
+                std::string msg = "'" + node->memberName + "' is not a variant of enum '" + lit->value + "'";
+                msg += formatHint(suggestEnumVariants(lit->value, node->memberName));
+                fatalError(msg, node->line, node->col, node->filePath);
+            }
             return en->name;
         }
     }
@@ -1841,8 +1914,11 @@ std::string Sema::checkMemberAccess(MemberAccessNode *node)
         const std::string& funcName = node->memberName;
         if (auto* fn = findMethod("", funcName))
             return fn->returnType;
-        fatalError("module '" + modName + "' has no function '" + funcName + "'",
-                   node->line, node->col, node->filePath);
+        {
+            std::string msg = "module '" + modName + "' has no function '" + funcName + "'";
+            msg += formatHint(suggestModuleFunctions(modName, funcName));
+            fatalError(msg, node->line, node->col, node->filePath);
+        }
     }
 
     std::string type = resolveMember(objType, node->memberName);
@@ -2282,6 +2358,19 @@ std::string Sema::checkCall(CallNode *node)
                 return fn->returnType;
             }
 
+            // Neither a struct constructor nor a known top-level
+            // function in any loaded module. Before v3.10.0 Sema
+            // silently returned "void" here and Codegen failed late
+            // with `Unknown function 'X'` and no hint. Surfacing the
+            // error at Sema time lets us suggest near-by names from
+            // the actual module the user wrote (`net.gte` → `get`).
+            {
+                std::string modName = objType.substr(7);  // strip MODULE$
+                std::replace(modName.begin(), modName.end(), '/', '.');
+                std::string msg = "module '" + modName + "' has no function '" + funcName + "'";
+                msg += formatHint(suggestModuleFunctions(modName, funcName));
+                fatalError(msg, node->line, node->col, node->filePath);
+            }
             return "void";
         }
         // ---------------------------------------------------------------

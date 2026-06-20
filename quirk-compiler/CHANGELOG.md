@@ -5,6 +5,51 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [3.10.0] — 2026-06-19
+
+### Typo-suggestion hints for module functions and enum variants
+
+Sema already emitted `did you mean X?` hints for undefined
+identifiers, missing struct members, parent struct names, and
+`from X use { y }` imports. Two common typo paths still produced
+bare errors:
+
+  - `net.gte("...")` — used to fail at *Codegen* time with
+    plain `Unknown function 'gte'` (no hint, error reported at
+    the wrong source location). Sema's `MODULE$X.fn(...)`
+    handler used to silently return `void` when the function
+    didn't resolve, deferring the error to Codegen.
+
+  - `Color.Reed` — used to fail at Sema with `'Reed' is not a
+    variant of enum 'Color'` but no suggestion.
+
+This release adds two helpers — `suggestModuleFunctions` and
+`suggestEnumVariants` — and wires them into the matching error
+sites:
+
+```
+module 'net' has no function 'gte'
+  hint: did you mean `get`?
+
+'Reed' is not a variant of enum 'Color'
+  hint: did you mean `Red`?
+```
+
+The Sema-time error on missing module functions also moves the
+error report to the correct source location (the call site)
+instead of Codegen's late diagnostic.
+
+`editDistance` upgraded from plain Levenshtein to
+Damerau-Levenshtein so single-char transpositions count as one
+edit. Without this, `gte` ↔ `get` scored as distance 2 (two
+substitutions) and missed the existing cutoff of 1 for short
+queries — `gte` would have produced no hint despite being the
+canonical keyboard-finger-swap typo.
+
+`tests/probes/p44_typo_hints.quirk` documents the feature and
+keeps the happy-path enum construction working so a future
+regression in the new Sema branch surfaces in CI as an ICE.
+
 ## [3.9.0] — 2026-06-19
 
 ### Python-style format specs in f-strings

@@ -108,6 +108,18 @@ class Sema {
     std::vector<std::string> suggestMembers(const std::string& structName,
                                             const std::string& query,
                                             size_t maxN = 3);
+    // Top-N closest top-level function names in a specific module.
+    // Used by the `module 'X' has no function 'Y'` path so a typo
+    // like `net.gte("...")` surfaces `did you mean 'get'?`.
+    std::vector<std::string> suggestModuleFunctions(const std::string& modName,
+                                                    const std::string& query,
+                                                    size_t maxN = 3);
+    // Top-N closest variant names for an enum. Used by the
+    // `'X' is not a variant of enum 'Y'` path so `Color.Reed`
+    // surfaces `did you mean 'Red'?`.
+    std::vector<std::string> suggestEnumVariants(const std::string& enumName,
+                                                 const std::string& query,
+                                                 size_t maxN = 3);
     void checkInitArgCount(const std::string& name, FunctionNode* init,
                            int provided, int line, int col, const std::string& filePath);
     // Type-check each positional arg against the corresponding init param.

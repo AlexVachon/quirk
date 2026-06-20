@@ -1,0 +1,48 @@
+// p73 — Type aliases work in function parameter and return types
+// (v3.14.0).
+//
+// v3.12.0 dereferenced type aliases at variable-binding time so
+// `h: Headers := Map()` correctly bound `h` to the underlying Map
+// shape. Function signatures were a separate code path that never
+// got the same treatment:
+//
+//   type Headers = Map
+//   define add_header(h: Headers, k: String, v: String) -> Headers { ... }
+//
+// `h: Headers` inside the function body was registered through
+// `param.type` (the raw alias name) instead of going through
+// checkVarDecl's substitution. Downstream method dispatch on `h`
+// fell back to Any, and return-type checks compared "Headers" to
+// the concrete inferred type — frequently mismatching.
+//
+// v3.14.0 mirrors the checkVarDecl substitution onto FunctionNode
+// parameters and return type at checkFunction entry. The rewrite
+// mutates the AST in place so Codegen — which reads
+// `f->parameters[i].type` and `f->returnType` verbatim for LLVM
+// signature emission — sees the canonical type.
+//
+// Limitation: function bodies that combine aliased params with
+// operators Sema doesn't model (e.g. `List + List` for concat —
+// Sema types `+` on two same-typed non-numeric, non-String
+// operands as Int, which fights the declared `-> List` return).
+// This isn't an alias issue; it's a separate Sema gap that
+// pre-dates aliases.
+
+type Headers = Map
+type Score = Int
+
+define add_header(h: Headers, k: String, v: String) -> Headers {
+    h.put(k, v)
+    return h
+}
+
+define double_score(s: Score) -> Score {
+    return s * 2
+}
+
+h: Headers := Map()
+h2 := add_header(h, "auth", "token")
+print(h2.length())          // = 1
+print(h2.get("auth"))       // = token
+
+print(double_score(21))     // = 42

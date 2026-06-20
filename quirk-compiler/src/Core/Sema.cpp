@@ -993,6 +993,30 @@ void Sema::checkFunction(FunctionNode *f)
 
     if (!f->cls.empty() && !f->isStatic)
         defineVariable("self", f->cls, false, true);
+    // Type-alias substitution on parameter + return types (v3.14.0).
+    // Mirrors the checkVarDecl path from v3.12.0: rewrite the
+    // declared type in-place on the FunctionNode so Codegen reads the
+    // canonical type when emitting function signatures and uses.
+    // Without this, `define dup(xs: IntList) -> IntList` parameters
+    // bind under the literal "IntList" alias name, downstream method
+    // dispatch falls back to Any, and the LLVM body materialises as
+    // garbage (List append failing silently, return values dropping
+    // to 0, etc.).
+    for (auto &param : f->parameters) {
+        if (param.type.empty()) continue;
+        std::string base = baseType(param.type);
+        auto aIt = typeAliases.find(base);
+        if (aIt != typeAliases.end() && aIt->second != "Any") {
+            param.type = aIt->second;
+        }
+    }
+    {
+        std::string base = baseType(f->returnType);
+        auto aIt = typeAliases.find(base);
+        if (aIt != typeAliases.end() && aIt->second != "Any") {
+            f->returnType = aIt->second;
+        }
+    }
     for (const auto &param : f->parameters)
         defineVariable(param.name, param.type.empty() ? "Any" : param.type, false, true);
 

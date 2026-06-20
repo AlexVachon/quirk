@@ -5,6 +5,53 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [3.14.0] — 2026-06-20
+
+### Type aliases work in function parameter + return types
+
+v3.12.0 dereferenced type aliases at variable-binding time in
+`checkVarDecl`, but function signatures were a separate code path.
+Declarations like
+
+```
+type Headers = Map
+define add_header(h: Headers, k: String, v: String) -> Headers { ... }
+```
+
+bound `h` inside the function body under the raw alias name
+"Headers", downstream method dispatch fell back to Any, and the
+return-type check at the `return h` statement compared "Headers"
+against the inferred concrete type — frequently mismatching.
+
+`checkFunction` now mirrors the substitution onto FunctionNode
+parameters and return type at entry:
+
+```cpp
+for (auto &param : f->parameters) {
+    auto aIt = typeAliases.find(baseType(param.type));
+    if (aIt != typeAliases.end() && aIt->second != "Any")
+        param.type = aIt->second;
+}
+// same for f->returnType
+```
+
+The rewrite mutates the AST in place so Codegen — which reads
+`f->parameters[i].type` and `f->returnType` verbatim for LLVM
+signature emission — sees the canonical type. Methods registered
+in `methodRegistry` point at the same FunctionNode, so the
+overload-resolution and arity-checking paths pick up the rewrite
+automatically.
+
+Limitation: function bodies that combine aliased params with
+operators Sema doesn't model (e.g. `List + List` for concat —
+Sema types `+` on two same-typed non-numeric operands as Int,
+which fights a declared `-> List` return) still fail. That's a
+separate Sema gap that pre-dates aliases.
+
+`tests/probes/p73_alias_in_signatures.quirk` exercises `Headers`
+(Map alias) and `Score` (Int alias) flowing through param +
+return positions with realistic call/return shapes.
+
 ## [3.13.0] — 2026-06-20
 
 ### Function-body locals shadow module-level globals

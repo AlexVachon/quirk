@@ -2,6 +2,38 @@
 
 All notable changes to the extension land here. Versioning follows SemVer; minor bumps for new features, patches for fixes.
 
+## [0.2.16] — 2026-06-20
+
+### Stop flagging parameters after a function-call default value
+
+`DiagnosticsProvider` split the parameter list with a single regex
+whose default-value alternative `\([^)]*\)` doesn't handle nested
+parens. For a signature like
+
+```
+define request(method: String, ..., params: Map = Map(),
+               follow_redirects: Bool = true) -> Response
+```
+
+the matcher consumed `headers: Map = Map(`, then the fallback
+alternative `[^,)]+` collapsed everything from there to the next
+top-level `)`, swallowing `params` and `follow_redirects`. Both
+got flagged `'params' is not defined.` and `'follow_redirects' is
+not defined.` everywhere they were used inside the body, even
+though the compiler accepted the code without complaint.
+
+Replaced with a paren/bracket/brace depth-aware hand-coded
+splitter that walks the parameter string and emits one segment
+per top-level comma. Default values containing function calls,
+nested lists, or tuples now split correctly:
+
+  - `headers: Map = Map()`   ✓ now recognised
+  - `pairs: List = [1, 2]`   ✓
+  - `pos: Tuple = (1, 2)`    ✓
+
+The regex stays for the per-segment name extraction (a single
+identifier at the start), which is simple and bounded.
+
 ## [0.2.15] — 2026-06-19
 
 ### TextMate grammar: `extend`, type aliases, and relative imports

@@ -392,14 +392,39 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
             // Params of bodyless functions are never "used" in Quirk source — don't track them.
             const isBodyless = !maskedLine.includes('{');
             const paramsStr = funcMatch[2];
-            // Type annotation allows generic params: List[T], Map[K, V], etc.
-            // Optional `= <default>` between the type annotation and the
-            // comma — without consuming it, only the first parameter of a
-            // signature like `(a, b: Int = 0, c: Int = 1)` matched, and
-            // every subsequent name was flagged "not defined".
-            const paramMatches = [...paramsStr.matchAll(/(?:\.\.\.)?([a-zA-Z_]\w*)\s*(?::\s*[a-zA-Z_][\w.?]*(?:\[[^\]]*\])?)?(?:\s*=\s*(?:"[^"]*"|'[^']*'|\[[^\]]*\]|\([^)]*\)|[^,)]+))?(?:\s*,|\s*$)/g)];
-            for (const pm of paramMatches) {
-                const pName = pm[1];
+            // Walk the parameter list with a paren/bracket depth counter
+            // so default values that contain function calls or nested
+            // generics (`headers: Map = Map()`, `body: List = [1, 2]`,
+            // `cfg: Tuple = (1, 2)`) split correctly. The previous
+            // regex used `\([^)]*\)` for the default's parens
+            // alternative, which doesn't handle nesting and falls
+            // through to a `[^,)]+` fallback that stops at the first
+            // `)` of an inner call — collapsing the rest of the
+            // signature into one unmatchable piece. Every parameter
+            // after such a default got flagged "not defined" in the
+            // editor even though the compiler accepted the code
+            // fine. A small hand-coded scanner is simpler and
+            // correct.
+            const segments: string[] = [];
+            {
+                let depth = 0;
+                let start = 0;
+                for (let pi = 0; pi <= paramsStr.length; pi++) {
+                    const ch = paramsStr[pi] ?? '';
+                    if (ch === '(' || ch === '[' || ch === '{') depth++;
+                    else if (ch === ')' || ch === ']' || ch === '}') depth--;
+                    else if ((ch === ',' && depth === 0) || pi === paramsStr.length) {
+                        const seg = paramsStr.slice(start, pi).trim();
+                        if (seg) segments.push(seg);
+                        start = pi + 1;
+                    }
+                }
+            }
+            const NAME_RE = /^(?:\.\.\.)?\s*([a-zA-Z_]\w*)/;
+            for (const seg of segments) {
+                const nameMatch = NAME_RE.exec(seg);
+                if (!nameMatch) continue;
+                const pName = nameMatch[1];
                 locals.add(pName);
 
                 // extern define and bodyless signatures are implemented outside Quirk source

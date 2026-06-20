@@ -3020,6 +3020,17 @@ class LLVMCodegen {
                     GlobalValue::InternalLinkage, initVal, lhs->value);
                 Builder.CreateStore(val, gv);
                 varGen->defineGlobal(lhs->value, gv);
+            } else if (!inModuleScope && vdecl->op == ":=" && !varGen->hasLocal(lhs->value)) {
+                // Inside a function body, a fresh `name := value`
+                // declaration always creates a LOCAL that shadows any
+                // module-level same-named binding. Without this guard,
+                // a stdlib method whose body does `n := self.length()`
+                // ends up writing its Int return through the user's
+                // top-level `n := "alex"` global slot, leaving the
+                // global typed String* but storing an Int — and
+                // downstream `i < n` ICmp-mismatches in the LLVM
+                // verifier.
+                varGen->defineLocalVariable(lhs->value, val);
             } else if (!varGen->exists(lhs->value)) {
                 varGen->defineLocalVariable(lhs->value, val);
             } else {

@@ -236,6 +236,18 @@ class VariableGen {
     bool exists(const std::string& name) {
         return NamedValues.count(name) || globalVars.count(name);
     }
+    // True iff `name` is a local in the current function (an alloca,
+    // a parameter slot, or a captured nonlocal cell). Doesn't consult
+    // globalVars. Lets the var-decl codegen distinguish "this name is
+    // already a local — update it" from "this name only exists as a
+    // global — declare a fresh local that shadows the global." Without
+    // the distinction, a top-level `n := "alex"` made stdlib methods
+    // (e.g. `List.sort` with its internal `n := self.length()`) write
+    // a String*-typed Int through the user's `n` global, producing an
+    // ICmp type mismatch the LLVM verifier catches.
+    bool hasLocal(const std::string& name) const {
+        return NamedValues.count(name) > 0;
+    }
     bool isNonlocal(const std::string& name) const { return nonlocalVars.count(name) > 0; }
 
     // Register a nonlocal variable backed by a GC heap cell.

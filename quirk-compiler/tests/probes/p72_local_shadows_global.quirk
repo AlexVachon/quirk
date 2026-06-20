@@ -1,0 +1,42 @@
+// p72 — Function-body locals shadow module-level globals (v3.13.0).
+//
+// Before v3.13.0, a top-level `n := "alex"` materialised as an LLVM
+// GlobalVariable typed String*. When ANY stdlib method's body did
+// `n := self.length()` (e.g. List.sort's inner sort loop), the
+// codegen's var-decl path checked `varGen->exists("n")` — which
+// returned true thanks to the global — and routed the local
+// declaration through `updateLocalVariable`, writing an Int
+// (self.length()) through the String*-typed global slot.
+// Downstream `i < n` then tripped LLVM's ICmp operand-type
+// assertion at IR verification:
+//
+//   Both operands to ICmp instruction are not of the same type!
+//
+// The fix is local — inside a function body, a fresh `name := value`
+// declaration always allocates a new local that shadows any
+// module-level same-named binding. The bug only fired for
+// short identifiers (`i`, `j`, `n`) because those happen to
+// appear as locals across the stdlib; longer names dodged it
+// by accident.
+//
+// Probe trips the original repro: a top-level `n := <String>`
+// followed by any code that touches a stdlib method using `n`
+// internally. Without the v3.13.0 fix the program ICEs before
+// printing anything; with the fix both the global and the
+// method-local read their declared types cleanly.
+
+n := "alex"
+print(n)                              // = alex
+
+// Touch List.sort which has `n := self.length()` in its body.
+// Pre-v3.13.0 this caused the LLVM verifier to abort at compile
+// time, before any code ran. Post-fix the inner `n` is a local
+// scoped to sort()'s frame and doesn't disturb the global.
+xs := [3, 1, 2]
+xs.sort(fn(a: Int, b: Int) => a - b)
+print(xs)                             // = [1, 2, 3]
+
+// Confirm the top-level `n` retained its String value through
+// the sort call.
+print(n)                              // = alex
+print(n.length())                     // = 4

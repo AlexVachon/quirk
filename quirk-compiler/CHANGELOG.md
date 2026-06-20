@@ -5,6 +5,52 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [3.13.0] — 2026-06-20
+
+### Function-body locals shadow module-level globals
+
+Closes the pre-existing edge case I flagged as a known limitation in
+v3.12.0's `type Name = String` work. Before this release a top-level
+`n := "alex"` materialised as an LLVM GlobalVariable typed `String*`,
+and then ANY stdlib method whose body did `n := self.length()` (e.g.
+`List.sort` with its inner sort loop) routed the local declaration
+through `updateLocalVariable` — writing an Int through the
+`String*`-typed global slot. Downstream `i < n` ICmp asserted in
+the LLVM verifier:
+
+```
+Both operands to ICmp instruction are not of the same type!
+```
+
+The bug only fired for short identifiers (`i`, `j`, `n`) because
+those happen to appear as locals across the stdlib; longer names
+like `config_name` dodged it by accident.
+
+Root cause: the var-decl codegen path used `varGen->exists(name)`
+to decide between "create a fresh local" and "update an existing
+binding", but `exists()` returns true for either a local OR a
+global. So inside a function body, `name := value` where `name`
+existed as a global slipped into the "update existing" branch and
+overwrote the global instead of allocating a fresh stack slot.
+
+The fix adds `VariableGen::hasLocal(name)` (NamedValues-only, no
+globalVars consultation) and uses it in the var-decl path: when
+`!inModuleScope && vdecl->op == ":="` AND the name isn't already a
+local in this function, allocate a fresh local that shadows the
+global. The existing fallback branches handle the "reuse local"
+and "assign-not-declare" cases unchanged.
+
+Side benefit: `type Name = String` aliases now work end-to-end —
+v3.12.0 routed them through the same broken path and produced
+this exact ICE. The probe re-tests Map/List/Int aliases (still
+working) plus the previously-broken String case.
+
+`tests/probes/p72_local_shadows_global.quirk` exercises the
+canonical repro: top-level `n := "alex"`, then `xs.sort(...)`
+which forces `List.sort`'s body to materialise its own `n :=
+self.length()` local. Both run cleanly and the global retains
+its String value across the sort call.
+
 ## [3.12.0] — 2026-06-20
 
 ### Type aliases dispatch to the underlying type's methods

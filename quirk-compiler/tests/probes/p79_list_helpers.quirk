@@ -1,0 +1,34 @@
+// p79 — List.first / .last / .reverse helpers (v3.20.0).
+//
+// Common Python-list ergonomics that were missing. All three are
+// Quirk-level wrappers around existing primitives (`__get`,
+// `length`, `append`) — no runtime work needed.
+//
+// .first() and .last() are null-safe — empty list returns null
+// instead of throwing IndexError, which matches how stdlib
+// `Option.get_or` patterns assume the helper returns. The
+// underlying `__get(0)` on an empty list would otherwise throw.
+//
+// .reverse() returns a fresh List and leaves self untouched —
+// matches the immutable-by-default convention List.__add and
+// List.__mul established.
+
+xs := [10, 20, 30]
+print(xs.first())     // = 10
+print(xs.last())      // = 30
+print(xs.reverse())   // = [30, 20, 10]
+
+// Originals untouched after reverse.
+print(xs)             // = [10, 20, 30]
+
+// Empty list null-safety.
+empty := List()
+print(empty.first())  // = null
+print(empty.last())   // = null
+print(empty.reverse()) // = []
+
+// Single-element edge case.
+one := [42]
+print(one.first())    // = 42
+print(one.last())     // = 42
+print(one.reverse())  // = [42]

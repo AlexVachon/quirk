@@ -5,6 +5,31 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [3.20.0] — 2026-06-20
+
+### List.first / .last / .reverse — pure stdlib
+
+Carrier release for quirk-typing v1.9.0. Three Quirk-side helpers
+on `List`, all wrappers around existing primitives:
+
+  - `first()` → first element, or `null` when empty
+  - `last()`  → last element, or `null` when empty
+  - `reverse()` → fresh reversed List, doesn't mutate self
+
+No compiler code changed. Bumping the compiler version pins the
+typing tag so a clean `make bootstrap-stdlib` against v3.20.0
+picks up the helpers automatically.
+
+`.first` and `.last` are null-safe — empty list returns null
+instead of throwing IndexError. Matches the Option/get-or-default
+convention. `.reverse()` follows the immutable-by-default pattern
+List.__add and List.__mul established (fresh result, self
+unchanged).
+
+`tests/probes/p79_list_helpers.quirk` covers happy path, empty-
+list null-safety, single-element edge case, and the originals-
+unchanged invariant after `.reverse()`.
+
 ## [3.19.0] — 2026-06-20
 
 ### Set operator overloads + member-access dispatch fix + set-runtime fixes

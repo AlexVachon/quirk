@@ -1,0 +1,30 @@
+// p76 — String * Int repetition (v3.17.0).
+//
+// Common Python pattern (`"-" * 40` for separators, `"  " * depth`
+// for indentation, etc.) wasn't supported. Sema rejected the
+// operator type combination and probe p46 explicitly locked
+// out `String * String` to prevent an IR-verifier crash.
+//
+// v3.17.0 lands four pieces:
+//
+//   - Runtime: Core_String_String___mul(self, n) — fresh String
+//     of self repeated n times. n<=0 returns "" (Python).
+//   - Library: extern declaration on the String struct.
+//   - Sema: types `String * Int → String` and `Int * String →
+//     String` in the equality-shortcut block and the arithmetic
+//     branch (both gates have to allow it).
+//   - Codegen: gate-loosen + commutative swap. The v3.15.0
+//     dispatch required same-struct on both sides; that's now
+//     "either same-struct OR the method's RHS param type matches
+//     R as-is" — so `__mul(self: String, n: Int)` qualifies when
+//     R is i32. And when the user writes `3 * "ab"` (Int on the
+//     left), Codegen swaps L↔R for commutative operators
+//     (`+`, `*`, `==`, `!=`) so the magic-method dispatch sees
+//     the struct as receiver.
+
+print("-" * 40)
+print("ab" * 3)
+print("x" * 0)         // empty
+print(("y" * 5).length())  // = 5
+print(3 * "ab")        // = ababab (commutative)
+print(0 * "z")         // = (empty)

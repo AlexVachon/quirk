@@ -1735,6 +1735,11 @@ std::string Sema::checkBinaryOp(BinaryOpNode *node)
             else if (isNumericEarly(lType) && isNumericEarly(rType)) ok = true;
             // `+` with String operand is concat — handled below.
             else if (node->op == "+" && (lType == "String" || rType == "String")) ok = true;
+            // `*` with String + Int is repetition (v3.17.0):
+            // `"-" * 40` and `3 * "ab"`. Routes to String.__mul.
+            else if (node->op == "*" &&
+                     ((lType == "String" && rType == "Int") ||
+                      (lType == "Int"    && rType == "String"))) ok = true;
             // Struct on the LHS with a user-defined __op overload —
             // trust the overload. Built-in primitives (Int / Double /
             // Bool / Char / String) are registered as structs and have
@@ -1860,6 +1865,17 @@ std::string Sema::checkBinaryOp(BinaryOpNode *node)
     }
     if (node->op == "-" || node->op == "*" || node->op == "/" || node->op == "%")
     {
+        // String repetition (v3.17.0): `s * n` and `n * s` both
+        // route to `String.__mul(self, n)` and yield a fresh
+        // String. Python-style — useful for separators ("-" * 40)
+        // and ASCII art. Sema typing has to land here before the
+        // numeric-only gate below; otherwise the gate rejects
+        // String * Int as a type mismatch.
+        if (node->op == "*" &&
+            ((lType == "String" && rType == "Int") ||
+             (lType == "Int"    && rType == "String"))) {
+            return "String";
+        }
         // Arithmetic — both sides must be numeric (or unknown / deferred).
         // Enums are intentionally rejected: `Color.Red + 1` was silently
         // accepted before and produced a wrong-typed Bool/Int at codegen.

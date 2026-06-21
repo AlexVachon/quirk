@@ -4042,6 +4042,25 @@ Value* LLVMCodegen::handleExpression(Node* node) {
             }
         }
 
+        // Commutative-operator swap: when the RHS is a struct pointer
+        // and the LHS isn't, but the operator is commutative
+        // (`+`, `*`, `==`, `!=`), swap L↔R so the magic-method
+        // dispatch below can resolve through the struct's overload.
+        // The motivating case is `3 * "ab"` (Int * String) — Sema
+        // accepts it as String repetition (v3.17.0), and we want
+        // Codegen to dispatch to `String.__mul(self: String, n: Int)`
+        // with the String as receiver. Without the swap, L is i32
+        // (not a struct pointer), the dispatch skips entirely, and
+        // mathGen emits raw `mul %String*, i32` — IR verifier abort.
+        if ((binOp->op == "*" || binOp->op == "+" ||
+             binOp->op == "==" || binOp->op == "!=") &&
+            R && R->getType()->isPointerTy() &&
+            R->getType()->getPointerElementType()->isStructTy() &&
+            !(L->getType()->isPointerTy() &&
+              L->getType()->getPointerElementType()->isStructTy())) {
+            std::swap(L, R);
+        }
+
         // Operator overloading: check for magic methods on the left operand struct
         if (L->getType()->isPointerTy() &&
             L->getType()->getPointerElementType()->isStructTy()) {
@@ -4060,34 +4079,55 @@ Value* LLVMCodegen::handleExpression(Node* node) {
                 // prefix); fall back to the bare-name form for user
                 // structs that live at module root with no prefix.
                 Function* magicFn = nullptr;
-                // Only consult the per-struct method registry when
-                // BOTH operands are pointers to the SAME struct type.
-                // This keeps the dispatch targeted: `xs + ys` on two
-                // Lists picks up `Core_Collections_List_List___add`,
-                // while `s + d` (String + Double) falls through to
-                // the legacy coercion paths below. Without the same-
-                // struct gate, mixed-type binary ops routed into a
-                // magic method that expected matching types and
-                // failed IR verification.
-                bool sameStructBothSides =
-                    R && R->getType()->isPointerTy() &&
-                    R->getType()->getPointerElementType()->isStructTy() &&
-                    R->getType()->getPointerElementType() == st;
-                if (sameStructBothSides) {
-                    // opMethods value is the post-mangled dunder
-                    // (`___add` — designed to be appended to the
-                    // struct name to form `List___add`). The
-                    // per-struct map is keyed by the BARE dunder
-                    // (`__add`, one fewer underscore), so strip
-                    // the leading `_` here.
-                    std::string bareDunder = it->second;
-                    if (!bareDunder.empty() && bareDunder[0] == '_') bareDunder = bareDunder.substr(1);
-                    auto sIt = structMethodNodes.find(sName);
-                    if (sIt != structMethodNodes.end()) {
-                        auto mIt = sIt->second.find(bareDunder);
-                        if (mIt != sIt->second.end()) {
-                            const std::string& ln = mIt->second->linkageName;
-                            magicFn = TheModule->getFunction(ln.empty() ? it->second : ln);
+                // Consult the per-struct method registry, but ONLY
+                // dispatch when the method's declared RHS param type
+                // can take the actual R value as-is. This keeps the
+                // dispatch targeted:
+                //
+                //   - `xs + ys` (List + List): __add(self, other: List)
+                //     — both struct ptrs match. Dispatch fires.
+                //   - `s * n`  (String * Int):  __mul(self, n: Int)
+                //     — param[1] is i32 and R is i32. Dispatch fires.
+                //   - `s + d`  (String + Double): __add(self,
+                //     other: String) — param[1] is String*, R is
+                //     double. Skip; legacy coercion paths handle it.
+                //
+                // Before v3.17.0 the gate required both operands be
+                // pointers to the SAME struct type — that worked for
+                // List + List but ruled out asymmetric ops like
+                // String * Int even though their magic methods accept
+                // exactly that shape.
+                //
+                // opMethods value is the post-mangled dunder
+                // (`___add` — designed to be appended to the struct
+                // name to form `List___add`). The per-struct map is
+                // keyed by the BARE dunder (`__add`, one fewer
+                // underscore), so strip the leading `_` here.
+                std::string bareDunder = it->second;
+                if (!bareDunder.empty() && bareDunder[0] == '_') bareDunder = bareDunder.substr(1);
+                auto sIt = structMethodNodes.find(sName);
+                if (sIt != structMethodNodes.end()) {
+                    auto mIt = sIt->second.find(bareDunder);
+                    if (mIt != sIt->second.end()) {
+                        const std::string& ln = mIt->second->linkageName;
+                        Function* candidate = TheModule->getFunction(ln.empty() ? it->second : ln);
+                        if (candidate && candidate->arg_size() >= 2 && R) {
+                            Type* rhsParam = candidate->getFunctionType()->getParamType(1);
+                            bool rhsFits = false;
+                            if (R->getType() == rhsParam) {
+                                rhsFits = true;
+                            } else if (R->getType()->isPointerTy() && rhsParam->isPointerTy()) {
+                                // Same-struct pointers (e.g. List* vs
+                                // List*) reach here after the type
+                                // equality check above; this branch
+                                // catches bitcast-compatible pointer
+                                // shapes (struct* ↔ struct* where
+                                // both wrap the same StructType).
+                                Type* re = R->getType()->getPointerElementType();
+                                Type* pe = rhsParam->getPointerElementType();
+                                if (re == pe) rhsFits = true;
+                            }
+                            if (rhsFits) magicFn = candidate;
                         }
                     }
                 }

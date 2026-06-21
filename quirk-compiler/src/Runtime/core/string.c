@@ -450,6 +450,22 @@ static inline String* quirk_ensure_string(String* val) {
     return val;
 }
 
+// `s * n` — fresh String with self repeated n times. `n <= 0`
+// returns the empty string (Python semantics). Called by the
+// `__mul` magic method dispatch on String * Int.
+String* Core_String_String___mul(String* self, int n) {
+    if (!self || !self->buffer || n <= 0) return make_String("");
+    size_t len = strlen(self->buffer);
+    if (len == 0) return make_String("");
+    size_t total = len * (size_t)n;
+    char* buf = (char*)GC_malloc(total + 1);
+    for (int i = 0; i < n; i++) {
+        memcpy(buf + i * len, self->buffer, len);
+    }
+    buf[total] = '\0';
+    return make_String_taking_ownership(buf);
+}
+
 String* Core_String_String___add(String* self, String* other) {
     self = quirk_ensure_string(self);
     other = quirk_ensure_string(other);

@@ -5,6 +5,47 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [3.17.0] — 2026-06-20
+
+### `s * n` String repetition
+
+`"-" * 40` for separators, `"  " * depth` for indentation,
+`"!" * count` for emphasis — all common Python patterns that
+rejected at Sema with `operator '*' incompatible types`. probe
+p46 explicitly locked out `String * String` as a foot-gun
+(prevents an IR-verifier crash from `mul %String*, %String*`),
+but `String * Int` is a different operation that should work.
+
+Four pieces:
+
+  - Runtime: `Core_String_String___mul(self, n)` returns a
+    fresh String of self repeated n times. n<=0 returns "".
+
+  - Library: extern declaration on the String struct
+    (quirk-typing v1.6.0).
+
+  - Sema: `String * Int → String` and `Int * String → String`
+    typing rules in both the equality-shortcut block (which
+    runs before the arithmetic gate) and the arithmetic
+    branch.
+
+  - Codegen: two changes. First, the per-struct dispatch gate
+    from v3.15.0 loosened — "either both same struct OR the
+    method's RHS param type matches R as-is." This lets
+    `__mul(self: String, n: Int)` dispatch when R is i32
+    without misfiring for unrelated mixed-type ops (the type
+    check before dispatch confirms compatibility). Second, a
+    commutative L↔R swap when the user writes `3 * "ab"`
+    (Int on the left, String on the right) — without the swap
+    the dispatch looks at L (Int) and never reaches the magic
+    method on the String receiver. Applies to `+`, `*`, `==`,
+    `!=` (the symmetric operators).
+
+`tests/probes/p76_string_repeat.quirk` covers both directions,
+zero-count, length round-trip, and the empty-product edge
+case. p46 (the explicit `String * String` rejection) still
+holds — different operation entirely.
+
 ## [3.16.0] — 2026-06-20
 
 ### `m1 + m2` Map merge + Map.put_all

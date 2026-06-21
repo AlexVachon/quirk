@@ -130,10 +130,11 @@ STDLIB_TAG   ?= v1.0.0
 # that doesn't match the global STDLIB_TAG (e.g. `prompt` was
 # renamed from `ask` and ships v1.0.1 with the rename baked in).
 STDLIB_TAG_prompt ?= v1.1.0
-# typing v1.10.0 adds List.sum / .min / .max numeric reductions
-# on top of v1.9.0's first/last/reverse. Pure Quirk-side helpers
-# composed from reduce / __get / length — no runtime work.
-STDLIB_TAG_typing ?= v1.10.0
+# typing v1.11.0 adds List.unique / .count + Map.get_or on top
+# of v1.10.0's sum/min/max reductions. Requires compiler v3.22.0+
+# for the updateLocalVariable fix (local wins over same-named
+# global on reassignment) that List.count depends on.
+STDLIB_TAG_typing ?= v1.11.0
 # html v1.0.0 is the initial release (compiler v3.5.0+). The
 # explicit pin keeps a global STDLIB_TAG bump from accidentally
 # pulling a v2 with potentially breaking changes.

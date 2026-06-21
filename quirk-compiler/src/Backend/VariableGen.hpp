@@ -164,11 +164,21 @@ class VariableGen {
 
     // Handle 'x = 20' (Reassignment)
     void updateLocalVariable(const std::string& name, Value* val) {
+        // Local wins over global (v3.22.0). A function body that does
+        // `n := 0` then `n = n + 1` should keep `n` in its own stack
+        // slot; without this guard the second assignment falls
+        // through to the global lookup below and writes an Int into
+        // a top-level String-typed `n := "alex"` slot — same bug
+        // shape v3.13.0 fixed for `:=` declarations, just on the
+        // reassign side.
+        if (NamedValues.count(name)) {
+            // Fall through to the standard local-update path below
+            // (handled after both the global and nonlocal branches).
+        }
         // Module-level global: write through the GlobalVariable. Check
-        // before locals because a top-level name may have been re-bound in
-        // an inner scope as a Callable (lambdas in main do this); we want
-        // assignments to flow back to the canonical module slot.
-        if (globalVars.count(name)) {
+        // after locals so a local shadow takes precedence, but before
+        // nonlocal cell handling.
+        else if (globalVars.count(name)) {
             GlobalVariable* gv = globalVars[name];
             Type* gvTy = gv->getValueType();
             if (val->getType() != gvTy) {

@@ -1,0 +1,46 @@
+// p81 — List.unique / .count + reassign-side local-shadow-global
+// fix (v3.22.0).
+//
+// Two Quirk-side List helpers:
+//
+//   .unique() — fresh List with duplicates removed, first-
+//               occurrence-wins order. Uses `not in` (which
+//               dispatches to the existing List.contains
+//               runtime) for the membership test.
+//   .count(v) — count of elements that `== v`.
+//
+// Surfaced a real Codegen bug in the process: `count`'s body
+// has `n := 0` followed by `n = n + 1`. The v3.13.0 fix made
+// `n :=` create a local that shadows any global `n`, but the
+// REASSIGN side (`n = n + 1`) still routed through
+// updateLocalVariable which checked globalVars FIRST and wrote
+// through. If the user's top-level code happened to have
+// `n := "alex"` (creating @n typed String*), `n = n + 1` inside
+// count() stored an Int through @n — LLVM verifier abort.
+//
+// updateLocalVariable now prefers a local NamedValues entry
+// over a global one. Same precedence resolveVariable already
+// used; the asymmetry between the two was the bug.
+
+xs := [1, 2, 1, 3, 2, 1]
+print(xs.unique())       // = [1, 2, 3]
+print(xs.count(1))       // = 3
+print(xs.count(2))       // = 2
+print(xs.count(99))      // = 0
+
+// Strings dedup correctly.
+ys := ["a", "b", "a", "c", "b"]
+print(ys.unique())       // = [a, b, c]
+
+// Empty list — both safe.
+empty := List()
+print(empty.unique())    // = []
+print(empty.count(1))    // = 0
+
+// Top-level `n := "alex"` PLUS calling `count` (which has its
+// own internal `n` local) — would have crashed pre-v3.22.0
+// because count's `n = n + 1` wrote i32 into the String global.
+n := "alex"
+print(n)                 // = alex
+print([1, 1, 2].count(1)) // = 2
+print(n)                 // = alex (global unaffected)

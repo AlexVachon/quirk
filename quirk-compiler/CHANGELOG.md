@@ -5,6 +5,41 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [3.22.0] — 2026-06-20
+
+### List.unique / .count, Map.get_or, plus reassign-side local-shadow fix
+
+The user-facing addition is three Quirk-side helpers shipping in
+quirk-typing v1.11.0:
+
+  - `List.unique()` — first-occurrence-wins dedup. Uses
+    `not in` so user structs with `__eq` overloads dedup
+    correctly.
+  - `List.count(value)` — count of elements equal to `value`.
+  - `Map.get_or(key, default)` — Python's `dict.get(k, d)`.
+    Collapses the `if m.has(k) { m.get(k) } else { d }` idiom.
+
+The compiler-side change is a symmetric counterpart to v3.13.0's
+local-shadow-global fix. v3.13.0 made `name := value` declarations
+inside a function body always allocate a fresh local that shadows
+any module-level binding with the same name. But the reassign
+side (`name = value`) still went through `updateLocalVariable`
+which checked globalVars FIRST and wrote through. If a stdlib
+method body did `n := 0; n = n + 1` while a user's top-level
+code happened to declare `n := "alex"` (creating @n typed
+String*), the second line stored an Int through the String
+global — LLVM verifier abort.
+
+`updateLocalVariable` now checks `NamedValues` (locals) first
+and only falls through to the global path when no local exists.
+Same precedence `resolveVariable` already had on reads; the
+asymmetry between the two was the underlying bug, and
+List.count's internal `n` counter happened to surface it.
+
+`tests/probes/p81_list_unique_count.quirk` exercises both
+helpers and the canonical `n := "alex"` / `xs.count(1)`
+collision case that pre-v3.22.0 would crash.
+
 ## [3.21.0] — 2026-06-20
 
 ### List.sum / .min / .max (carrier for quirk-typing v1.10.0)

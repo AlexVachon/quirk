@@ -1845,6 +1845,10 @@ std::string Sema::checkBinaryOp(BinaryOpNode *node)
         // dereferencing the List pointers as integers.
         if (lType == "List" && rType == "List")
             return "List";
+        // Map merge (v3.16.0): same pattern as list concat above.
+        // Routes to `Map.__add`. Right side wins on key collision.
+        if (lType == "Map" && rType == "Map")
+            return "Map";
         if (compatibleOperands(lType, rType)) {
             if (lType == "Double" || rType == "Double")
                 return "Double";

@@ -5,6 +5,37 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [3.16.0] — 2026-06-20
+
+### `m1 + m2` Map merge + Map.put_all
+
+Natural follow-up to v3.15.0's List concat. Same operator-overload
+dispatch path (no Codegen changes — the per-struct method registry
+from v3.15.0 handles Map the same way it handles List). Three
+pieces:
+
+  - Runtime: `Core_Collections_Map_Map___add` (fresh result,
+    right side wins on key collision — matches Python's
+    `{**m1, **m2}` precedence) and
+    `Core_Collections_Map_Map_put_all` (in-place merge). Pinned
+    in quirk-typing v1.5.0; STDLIB_TAG_typing bumps accordingly.
+
+  - Library: extern declarations on the Map struct in
+    quirk-typing's `packages/typing/collections/map.quirk`.
+
+  - Sema: `+` on two `Map` operands now types as `Map` (parallel
+    to the `List + List → List` rule from v3.15.0).
+
+Use cases this targets:
+
+  - HTTP header merging: `merged := defaults + caller_headers`
+  - Config layering: `final := base + env_overrides + cli_flags`
+  - Builder patterns where each step contributes a few entries
+
+`tests/probes/p75_map_merge.quirk` exercises the merge operator,
+right-wins collision semantics, originals-unchanged invariant,
+put_all mutation, and empty-operand edge cases.
+
 ## [3.15.0] — 2026-06-20
 
 ### `xs + ys` List concatenation + List.append_all + struct method dispatch fix

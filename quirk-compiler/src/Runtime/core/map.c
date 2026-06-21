@@ -178,6 +178,37 @@ void Core_Collections_Map_Map_clear(Map* self) {
     self->size = 0;
 }
 
+// Copy every entry from `other` into `self`, overwriting same-key
+// values with other's. Quirk: `m.put_all(other)`. Returns void —
+// Python-`update`-style semantics. Use `__add` (below) for a fresh
+// merged Map instead of mutating.
+void Core_Collections_Map_Map_put_all(Map* self, Map* other) {
+    if (!self || !other) return;
+    for (int i = 0; i < other->order_size; i++) {
+        const char* rawKey = other->key_order[i];
+        if (!rawKey) continue;
+        MapEntry* src = Map__find_entry(other->entries, other->capacity, rawKey);
+        if (!src || !src->is_occupied) continue;
+        // Wrap the C string back into a Quirk String* so the existing
+        // put() logic owns its own copy of the key. Avoids any
+        // shared-key lifetime entanglement between the two maps.
+        String* keyObj = make_String(rawKey);
+        Core_Collections_Map_Map_put(self, keyObj, src->value);
+    }
+}
+
+// `m1 + m2` — fresh Map containing every entry of self, then every
+// entry of other (right side wins on key collision — matches the
+// `{**m1, **m2}` precedence Python uses). Neither input mutated.
+Map* Core_Collections_Map_Map___add(Map* self, Map* other) {
+    extern void Core_Collections_Map_Map___init(Map*);
+    Map* result = (Map*)GC_malloc(sizeof(Map));
+    Core_Collections_Map_Map___init(result);
+    if (self)  Core_Collections_Map_Map_put_all(result, self);
+    if (other) Core_Collections_Map_Map_put_all(result, other);
+    return result;
+}
+
 // ==========================================
 //  COLLECTION VIEWS
 // ==========================================

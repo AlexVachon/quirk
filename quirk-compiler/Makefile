@@ -130,12 +130,11 @@ STDLIB_TAG   ?= v1.0.0
 # that doesn't match the global STDLIB_TAG (e.g. `prompt` was
 # renamed from `ask` and ships v1.0.1 with the rename baked in).
 STDLIB_TAG_prompt ?= v1.1.0
-# typing v1.4.0 adds List.__add (operator+ concat) and
-# List.append_all (mutating concat). Requires compiler v3.15.0+
-# for the runtime List___add / List_append_all symbols and the
-# Codegen per-struct method registry used by the operator-overload
-# dispatch.
-STDLIB_TAG_typing ?= v1.4.0
+# typing v1.5.0 adds Map.__add (operator+ merge) and Map.put_all
+# (mutating merge) on top of v1.4.0's List concat. Requires
+# compiler v3.16.0+ for the runtime Map___add / Map_put_all
+# symbols and the Sema typing of Map + Map → Map.
+STDLIB_TAG_typing ?= v1.5.0
 # html v1.0.0 is the initial release (compiler v3.5.0+). The
 # explicit pin keeps a global STDLIB_TAG bump from accidentally
 # pulling a v2 with potentially breaking changes.

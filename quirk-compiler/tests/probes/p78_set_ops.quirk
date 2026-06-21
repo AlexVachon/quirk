@@ -1,0 +1,46 @@
+// p78 — Set operator overloads: union (`s1 + s2`) and difference
+// (`s1 - s2`). Also a latent dispatch bug fixed (v3.19.0).
+//
+// Set has had `.union(other)`, `.intersection(other)`, and
+// `.difference(other)` as named methods since v2.x. v3.19.0 adds
+// operator-overload aliases as Quirk-side wrappers:
+//
+//   define __add(self, other: Set) -> Set { return self.union(other) }
+//   define __sub(self, other: Set) -> Set { return self.difference(other) }
+//
+// Sema is taught `Set + Set → Set` and `Set - Set → Set` so the
+// arithmetic gate doesn't reject the operator types. The Codegen
+// dispatch picks up __add/__sub through the per-struct method
+// registry from v3.15.0.
+//
+// One latent Codegen bug surfaced during this work and got fixed
+// alongside: the member-access dispatch had a "triple-underscore
+// fallback" (`getFunction(typeName + "___" + memberName)`) that
+// was intended to find dunder methods like `__get`/`__init` but
+// matched anything if a same-name magic method existed. With
+// `__add` introduced, `s1.add(1)` started routing to `Set___add`
+// (taking an Int and a Set) — SIGSEGV. The fallback now only
+// fires when memberName already starts with `_`, so dunder
+// lookups still resolve and bare-name calls hit the right method.
+
+s1 := Set()
+s1.add(1); s1.add(2)
+s2 := Set()
+s2.add(2); s2.add(3)
+
+u: Set := s1 + s2
+print(u.size())     // = 3 (union of {1,2,3})
+
+d: Set := s1 - s2
+print(d.size())     // = 1 ({1})
+print(d.has(1))     // = true
+print(d.has(2))     // = false (in s1 AND s2, removed by diff)
+
+// Operands left intact.
+print(s1.size())    // = 2
+print(s2.size())    // = 2
+
+// Original named methods still work.
+print(s1.union(s2).size())       // = 3
+print(s1.intersection(s2).size()) // = 1 ({2})
+print(s1.difference(s2).size())   // = 1

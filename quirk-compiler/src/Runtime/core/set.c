@@ -150,7 +150,7 @@ int Core_Collections_Set_Set_is_empty(Set* self) { return !self || self->size ==
 // ===== SET OPERATIONS =====
 
 Set* Core_Collections_Set_Set_union(Set* self, Set* other) {
-    Set* result = (Set*)malloc(sizeof(Set));
+    Set* result = (Set*)GC_malloc(sizeof(Set));
     Core_Collections_Set_Set___init(result);
     for (int i = 0; i < self->order_size; i++) {
         SetEntry* e = Set__find_entry(self->entries, self->capacity, self->key_order[i]);
@@ -164,17 +164,22 @@ Set* Core_Collections_Set_Set_union(Set* self, Set* other) {
 }
 
 Set* Core_Collections_Set_Set_intersection(Set* self, Set* other) {
-    Set* result = (Set*)malloc(sizeof(Set));
+    Set* result = (Set*)GC_malloc(sizeof(Set));
     Core_Collections_Set_Set___init(result);
+    // Iterate self via key_order (the dense insertion-order view),
+    // not entries[i] (which indexes hash slots — many empty,
+    // wrong values). Difference (below) walks the same way; this
+    // was just inconsistent in the original implementation.
     for (int i = 0; i < self->order_size; i++) {
-        if (Core_Collections_Set_Set_has(other, self->entries[i].value))
-            Core_Collections_Set_Set_add(result, self->entries[i].value);
+        SetEntry* e = Set__find_entry(self->entries, self->capacity, self->key_order[i]);
+        if (e && e->is_occupied && Core_Collections_Set_Set_has(other, e->value))
+            Core_Collections_Set_Set_add(result, e->value);
     }
     return result;
 }
 
 Set* Core_Collections_Set_Set_difference(Set* self, Set* other) {
-    Set* result = (Set*)malloc(sizeof(Set));
+    Set* result = (Set*)GC_malloc(sizeof(Set));
     Core_Collections_Set_Set___init(result);
     for (int i = 0; i < self->order_size; i++) {
         SetEntry* e = Set__find_entry(self->entries, self->capacity, self->key_order[i]);
@@ -202,7 +207,7 @@ void* Core_Collections_Set_SetIterator___next(SetIterator* self) {
 }
 
 SetIterator* Core_Collections_Set_Set___iter(Set* self) {
-    SetIterator* it = (SetIterator*)malloc(sizeof(SetIterator));
+    SetIterator* it = (SetIterator*)GC_malloc(sizeof(SetIterator));
     Core_Collections_Set_SetIterator___init(it, self);
     return it;
 }

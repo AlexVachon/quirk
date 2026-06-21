@@ -5,6 +5,59 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [3.19.0] — 2026-06-20
+
+### Set operator overloads + member-access dispatch fix + set-runtime fixes
+
+Three pieces shipped together because they all surfaced (or were
+needed) while wiring up `s1 + s2` / `s1 - s2`:
+
+**Set operator overloads (the user-facing feature).** Quirk-typing
+v1.8.0 adds Quirk-side wrappers around the existing
+union/difference methods:
+
+  ```
+  define __add(self, other: Set) -> Set { return self.union(other) }
+  define __sub(self, other: Set) -> Set { return self.difference(other) }
+  ```
+
+Sema gains `Set + Set → Set` and `Set - Set → Set` typing rules.
+The Codegen operator-overload dispatch picks up `__add`/`__sub`
+through the per-struct method registry from v3.15.0.
+
+**Member-access dispatch fix (a real latent bug).** The
+member-access codegen had a "triple-underscore fallback":
+
+  ```
+  // tried as fallback
+  TheModule->getFunction(typeName + "___" + memberName)
+  ```
+
+intended to find dunder methods like `__get`/`__init`. With
+v1.8.0 adding `__add` to Set, calling the existing
+`s1.add(1)` started routing to `Set___add` (which expects two
+Sets — Int-as-Set crash). The fallback now only fires when
+`memberName` already starts with `_`, so dunder lookups still
+resolve and bare-name calls land on the right method.
+
+**Set runtime fixes (pre-existing, surfaced now).** Two latent
+issues in `src/Runtime/core/set.c`:
+
+  - `Set_union`/`intersection`/`difference` allocated their
+    result via `malloc(sizeof(Set))` instead of `GC_malloc`. The
+    GC didn't track the result; later collections sometimes
+    freed it out from under live code → SIGSEGV.
+
+  - `Set_intersection` iterated `self->entries[i]` (raw hash
+    slots, mostly empty) instead of `self->key_order[i]`
+    (insertion-order dense view). `intersection({1,2}, {2,3})`
+    returned size 0 instead of 1. Difference already did the
+    iteration correctly.
+
+`tests/probes/p78_set_ops.quirk` exercises `+`, `-`, the
+original named methods (union/intersection/difference now all
+correct), and the operands-untouched invariant.
+
 ## [3.18.0] — 2026-06-20
 
 ### `xs * n` List repetition

@@ -1860,6 +1860,13 @@ std::string Sema::checkBinaryOp(BinaryOpNode *node)
         // Routes to `Map.__add`. Right side wins on key collision.
         if (lType == "Map" && rType == "Map")
             return "Map";
+        // Set union (v3.19.0): `s1 + s2` returns a fresh Set
+        // containing every element of either. Set difference
+        // `s1 - s2` is handled in the arithmetic branch below.
+        // Both route through the Quirk-side __add / __sub
+        // operator-overload methods that wrap union/difference.
+        if (lType == "Set" && rType == "Set")
+            return "Set";
         if (compatibleOperands(lType, rType)) {
             if (lType == "Double" || rType == "Double")
                 return "Double";
@@ -1888,6 +1895,13 @@ std::string Sema::checkBinaryOp(BinaryOpNode *node)
             ((lType == "List" && rType == "Int") ||
              (lType == "Int"  && rType == "List"))) {
             return "List";
+        }
+        // Set difference (v3.19.0): `s1 - s2` routes to
+        // `Set.__sub` which wraps the existing Set.difference
+        // method. Sema needs the explicit rule because the
+        // arithmetic gate below rejects non-numeric operands.
+        if (node->op == "-" && lType == "Set" && rType == "Set") {
+            return "Set";
         }
         // Arithmetic — both sides must be numeric (or unknown / deferred).
         // Enums are intentionally rejected: `Color.Red + 1` was silently

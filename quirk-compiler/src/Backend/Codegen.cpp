@@ -1952,8 +1952,19 @@ class LLVMCodegen {
             std::string funcName = typeName + "_" + member->memberName;
             Function* func = TheModule->getFunction(funcName);
 
-            // Fallback: try triple-underscore operator convention (e.g. List___get, Map___get)
-            if (!func) func = TheModule->getFunction(typeName + "___" + member->memberName);
+            // Fallback: try triple-underscore operator convention
+            // (e.g. List___get, Map___get). This form arises when the
+            // method's source name was a dunder like `__get` and the
+            // parser mangled it to `<Type>___get` (struct + `_` +
+            // `__get` = 3 underscores). Restrict the fallback to
+            // member names that *already* start with `_` — without
+            // the gate, `.add(...)` happily matches `Set___add` (a
+            // user-defined `__add` magic method), and the call's
+            // (self, Int) args get jammed into the magic method's
+            // (self, Set) signature — Int-as-Set crashes at runtime.
+            if (!func && !member->memberName.empty() && member->memberName[0] == '_') {
+                func = TheModule->getFunction(typeName + "___" + member->memberName);
+            }
 
             // Constructor fallback: super().__init(v)
             // Parser stores __init under "TypeName__init" (no separator), while

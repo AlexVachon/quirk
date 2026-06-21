@@ -130,11 +130,12 @@ STDLIB_TAG   ?= v1.0.0
 # that doesn't match the global STDLIB_TAG (e.g. `prompt` was
 # renamed from `ask` and ships v1.0.1 with the rename baked in).
 STDLIB_TAG_prompt ?= v1.1.0
-# typing v1.7.0 adds List.__mul (operator* repetition) on top of
-# v1.6.0's String repeat. Requires compiler v3.18.0+ for the
-# runtime Core_Collections_List_List___mul symbol and the Sema
-# typing of `List * Int → List` / `Int * List → List`.
-STDLIB_TAG_typing ?= v1.7.0
+# typing v1.8.0 adds Set.__add (union) + Set.__sub (difference)
+# operator overloads. Requires compiler v3.19.0+ for the Sema
+# typing rules, the member-access dispatch fix (triple-underscore
+# fallback restricted to dunder member names), and GC_malloc/
+# order-iteration corrections in the set runtime.
+STDLIB_TAG_typing ?= v1.8.0
 # html v1.0.0 is the initial release (compiler v3.5.0+). The
 # explicit pin keeps a global STDLIB_TAG bump from accidentally
 # pulling a v2 with potentially breaking changes.

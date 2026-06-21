@@ -5,6 +5,25 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [3.21.0] — 2026-06-20
+
+### List.sum / .min / .max (carrier for quirk-typing v1.10.0)
+
+Three numeric reductions on `List`, all Quirk-side:
+
+  - `sum()` — reduce starting from 0. Empty list returns 0
+    (Python convention).
+  - `min()` — seeds from the first element, walks for smaller
+    via `<`. Empty list returns `null`. Works on any type
+    with a `<` overload — once `__lt` is defined on a struct,
+    `xs.min()` picks it up for free.
+  - `max()` — same shape via `>` / `__gt`.
+
+No compiler code changed. Carrier release pins
+`STDLIB_TAG_typing = v1.10.0`. `tests/probes/p80_list_reductions
+.quirk` covers happy path, empty-list null/zero semantics,
+single-element, and negative numbers.
+
 ## [3.20.0] — 2026-06-20
 
 ### List.first / .last / .reverse — pure stdlib

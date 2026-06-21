@@ -1,0 +1,37 @@
+// p80 — List.sum / .min / .max reductions (v3.21.0).
+//
+// Common numeric reductions that were missing from List. All
+// three Quirk-side:
+//
+//   .sum()  → reduce(0, fn(a, x) => a + x)
+//   .min()  → seed = first element, walk for smaller via `<`
+//   .max()  → seed = first element, walk for larger via `>`
+//
+// sum seeds from 0 so an empty list returns 0 (Python semantics).
+// min/max seed from the first element instead of a sentinel like
+// Int.MAX_VALUE so they work with non-numeric Comparable types
+// too — once `<` is overloaded on a struct via `__lt`, that struct
+// flows through naturally. Empty list returns null.
+
+xs := [3, 1, 4, 1, 5, 9, 2, 6]
+print(xs.sum())     // = 31
+print(xs.min())     // = 1
+print(xs.max())     // = 9
+
+// Empty list — sum is 0, min/max are null.
+empty := List()
+print(empty.sum())  // = 0
+print(empty.min())  // = null
+print(empty.max())  // = null
+
+// Single element.
+one := [42]
+print(one.sum())    // = 42
+print(one.min())    // = 42
+print(one.max())    // = 42
+
+// Negative numbers.
+mixed := [-3, -1, -4, -1]
+print(mixed.sum())  // = -9
+print(mixed.min())  // = -4
+print(mixed.max())  // = -1

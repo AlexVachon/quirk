@@ -130,11 +130,10 @@ STDLIB_TAG   ?= v1.0.0
 # that doesn't match the global STDLIB_TAG (e.g. `prompt` was
 # renamed from `ask` and ships v1.0.1 with the rename baked in).
 STDLIB_TAG_prompt ?= v1.1.0
-# typing v1.9.0 adds List.first / .last / .reverse — pure Quirk-
-# side helpers, no runtime symbols required. Pinned on top of
-# v1.8.0's Set operator overloads. Compatible with any compiler
-# from v3.5.0 onward, but v3.20.0 is the carrier release.
-STDLIB_TAG_typing ?= v1.9.0
+# typing v1.10.0 adds List.sum / .min / .max numeric reductions
+# on top of v1.9.0's first/last/reverse. Pure Quirk-side helpers
+# composed from reduce / __get / length — no runtime work.
+STDLIB_TAG_typing ?= v1.10.0
 # html v1.0.0 is the initial release (compiler v3.5.0+). The
 # explicit pin keeps a global STDLIB_TAG bump from accidentally
 # pulling a v2 with potentially breaking changes.

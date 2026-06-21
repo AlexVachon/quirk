@@ -238,6 +238,22 @@ int Core_Collections_List_List_contains(List* self, void* elem) {
 typedef void* (*LambdaFn1)(void* env, void* arg);
 typedef void* (*LambdaFn2)(void* env, void* acc, void* arg);
 
+// `xs * n` — fresh List with self's elements repeated n times.
+// `[0] * 5` → `[0, 0, 0, 0, 0]`. n<=0 returns the empty list.
+// Element values are shared (not deep-copied) — same shape as
+// Python's list-repeat operator.
+List* Core_Collections_List_List___mul(List* self, int n) {
+    List* result = (List*)GC_malloc(sizeof(List));
+    Core_Collections_List_List___init(result);
+    if (!self || n <= 0 || self->size == 0) return result;
+    Core_Collections_List_List_ensure_capacity(result, self->size * n);
+    for (int rep = 0; rep < n; rep++) {
+        for (int i = 0; i < self->size; i++)
+            Core_Collections_List_List_append(result, self->data[i]);
+    }
+    return result;
+}
+
 // Append every element of `other` to `self`, mutating in place.
 // Quirk: `xs.extend(ys)`. Returns void — Pythonic semantics, not
 // a fluent chain. Use `__add` (below) if you want a fresh List.

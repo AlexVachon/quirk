@@ -1740,6 +1740,12 @@ std::string Sema::checkBinaryOp(BinaryOpNode *node)
             else if (node->op == "*" &&
                      ((lType == "String" && rType == "Int") ||
                       (lType == "Int"    && rType == "String"))) ok = true;
+            // `*` with List + Int is list repetition (v3.18.0):
+            // `[0] * 5` for zero-init, `[1, 2] * 3` for tiling.
+            // Routes to List.__mul.
+            else if (node->op == "*" &&
+                     ((lType == "List" && rType == "Int") ||
+                      (lType == "Int"  && rType == "List"))) ok = true;
             // Struct on the LHS with a user-defined __op overload —
             // trust the overload. Built-in primitives (Int / Double /
             // Bool / Char / String) are registered as structs and have
@@ -1875,6 +1881,13 @@ std::string Sema::checkBinaryOp(BinaryOpNode *node)
             ((lType == "String" && rType == "Int") ||
              (lType == "Int"    && rType == "String"))) {
             return "String";
+        }
+        // List repetition (v3.18.0): same pattern as String above.
+        // Routes to `List.__mul(self, n)`.
+        if (node->op == "*" &&
+            ((lType == "List" && rType == "Int") ||
+             (lType == "Int"  && rType == "List"))) {
+            return "List";
         }
         // Arithmetic — both sides must be numeric (or unknown / deferred).
         // Enums are intentionally rejected: `Color.Red + 1` was silently

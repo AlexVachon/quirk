@@ -1,0 +1,24 @@
+// p77 — List * Int repetition (v3.18.0).
+//
+// Natural follow-up to v3.17.0's `String * Int`. Same operator
+// dispatch (the v3.17.0 gate-loosen and commutative swap both
+// generalize to List). `[0] * 5` for zero-init arrays, `[1, 2]
+// * 3` for tile patterns. n<=0 returns the empty list (Python
+// semantics).
+//
+// Element values are shared between repetitions — same shape
+// as Python's list-repeat. Reassigning a row via index is fine;
+// mutating a shared inner object propagates. That's not unique
+// to Quirk and not something to fight; document it.
+
+print([0] * 5)         // = [0, 0, 0, 0, 0]
+zs: List := [0] * 5
+print(zs.length())     // = 5
+
+print([1, 2] * 3)      // = [1, 2, 1, 2, 1, 2]
+print([7] * 0)         // = []
+print([] * 99)         // = []
+
+// Commutative — n on the left works too.
+print(3 * [1, 2])      // = [1, 2, 1, 2, 1, 2]
+print(0 * [9])         // = []

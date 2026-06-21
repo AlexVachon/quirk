@@ -5,6 +5,37 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [3.18.0] — 2026-06-20
+
+### `xs * n` List repetition
+
+Natural follow-up to v3.17.0's `String * Int`. Same operator-
+overload dispatch path (no Codegen changes — the v3.17.0 gate-
+loosen and commutative swap both generalize cleanly to List).
+Three pieces:
+
+  - Runtime: `Core_Collections_List_List___mul(self, n)` returns
+    a fresh List with self repeated n times. n<=0 returns the
+    empty list. Element values are SHARED between repetitions
+    (same shape as Python's list-repeat) — reassigning one row
+    via index is fine, mutating a shared inner object would
+    propagate.
+
+  - Library: extern declaration in quirk-typing v1.7.0.
+
+  - Sema: `List * Int → List` and `Int * List → List` typing in
+    both the equality-shortcut block and the arithmetic branch.
+
+Use cases:
+
+  - Zero-init arrays: `zs := [0] * n`
+  - Tile patterns: `print(["─"] * width)`
+  - Test fixtures: `rows := [default_row] * 10` (sharing is
+    fine when the default isn't mutated)
+
+`tests/probes/p77_list_repeat.quirk` covers both directions,
+zero-count, empty-base, and the commutative form.
+
 ## [3.17.0] — 2026-06-20
 
 ### `s * n` String repetition

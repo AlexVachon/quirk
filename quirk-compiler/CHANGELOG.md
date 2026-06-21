@@ -5,6 +5,29 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [3.23.0] — 2026-06-20
+
+### List.to_set / Set.to_list — collection conversions
+
+Two complementary conversions shipping in quirk-typing v1.12.0:
+
+  - `List.to_set()` — pure Quirk helper. Loops over self, calls
+    Set.add. Dedups with set semantics; the resulting Set gives
+    O(1) membership.
+
+  - `Set.to_list()` — runtime export
+    `Core_Collections_Set_Set_to_list`. Walks the set's
+    insertion-order key array and appends each value to a fresh
+    List. Lets downstream code use List-only operations
+    (`__get(i)`, `sort`, `slice`) over a set's contents.
+
+Insertion order matches the existing SetIterator view — same
+order user code would see iterating with `for v in s`.
+
+`tests/probes/p82_collection_conversions.quirk` exercises both
+directions, including the round-trip `list → set → list` dedup
+shape.
+
 ## [3.22.0] — 2026-06-20
 
 ### List.unique / .count, Map.get_or, plus reassign-side local-shadow fix

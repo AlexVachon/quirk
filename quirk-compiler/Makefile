@@ -130,11 +130,11 @@ STDLIB_TAG   ?= v1.0.0
 # that doesn't match the global STDLIB_TAG (e.g. `prompt` was
 # renamed from `ask` and ships v1.0.1 with the rename baked in).
 STDLIB_TAG_prompt ?= v1.1.0
-# typing v1.11.0 adds List.unique / .count + Map.get_or on top
-# of v1.10.0's sum/min/max reductions. Requires compiler v3.22.0+
-# for the updateLocalVariable fix (local wins over same-named
-# global on reassignment) that List.count depends on.
-STDLIB_TAG_typing ?= v1.11.0
+# typing v1.12.0 adds List.to_set / Set.to_list conversions. Set
+# side is a runtime export (Core_Collections_Set_Set_to_list);
+# List side is pure Quirk. Requires compiler v3.23.0+ which
+# carries the runtime symbol.
+STDLIB_TAG_typing ?= v1.12.0
 # html v1.0.0 is the initial release (compiler v3.5.0+). The
 # explicit pin keeps a global STDLIB_TAG bump from accidentally
 # pulling a v2 with potentially breaking changes.

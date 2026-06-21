@@ -189,6 +189,25 @@ Set* Core_Collections_Set_Set_difference(Set* self, Set* other) {
     return result;
 }
 
+// Materialise the set's elements into a fresh List in insertion
+// order. Useful when downstream code wants to index/sort/iterate
+// with a stable order — Set itself is hash-keyed so iteration via
+// the iterator is order-stable but List operations (`__get`,
+// `sort`, `slice`) require a List receiver.
+List* Core_Collections_Set_Set_to_list(Set* self) {
+    extern void Core_Collections_List_List___init(List*);
+    extern void Core_Collections_List_List_append(List*, void*);
+    List* result = (List*)GC_malloc(sizeof(List));
+    Core_Collections_List_List___init(result);
+    if (!self) return result;
+    for (int i = 0; i < self->order_size; i++) {
+        SetEntry* e = Set__find_entry(self->entries, self->capacity, self->key_order[i]);
+        if (e && e->is_occupied)
+            Core_Collections_List_List_append(result, e->value);
+    }
+    return result;
+}
+
 // ===== ITERATOR =====
 
 void Core_Collections_Set_SetIterator___init(SetIterator* self, Set* s) {

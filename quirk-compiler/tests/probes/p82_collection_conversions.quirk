@@ -1,0 +1,38 @@
+// p82 — List.to_set / Set.to_list collection conversions (v3.23.0).
+//
+// Two complementary conversions:
+//
+//   List.to_set() — drops duplicates with O(1) lookup semantics
+//                   afterward. Useful for membership tests over
+//                   a known list.
+//
+//   Set.to_list() — fresh List of the set's elements in
+//                   INSERTION order. Sets are hash-keyed and
+//                   don't support `__get(i)` / `slice` / `sort`;
+//                   converting to a List exposes those.
+//
+// Set.to_list lives in the C runtime (clean iterator-shaped
+// implementation that reads `key_order`). List.to_set is a
+// pure Quirk helper that loops over self and calls Set.add.
+
+// List.to_set drops duplicates.
+xs := [1, 2, 3, 2, 1]
+s := xs.to_set()
+print(s.size())          // = 3
+print(s.has(1))          // = true
+print(s.has(4))          // = false
+
+// Set.to_list preserves insertion order.
+src := Set()
+src.add("alpha")
+src.add("beta")
+src.add("gamma")
+ys := src.to_list()
+print(ys.length())       // = 3
+print(ys.__get(0))       // = alpha
+print(ys.__get(2))       // = gamma
+
+// Round-trip: list → set → list dedups and re-orders by first-
+// insertion.
+dedup := [3, 1, 2, 1, 3, 4].to_set().to_list()
+print(dedup.length())    // = 4

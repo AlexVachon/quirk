@@ -403,6 +403,28 @@ run "append returns to fn" \
 define main() -> Int { xs := fill(); return xs.length() + xs[8] + 24 }" \
     42
 
+# Phase 4.16: primitive `.str()` methods. Int / Double via
+# snprintf into a malloc'd buffer; Bool via select between
+# two interned string globals. Unblocks diagnostic-message
+# building (`"line " + ln.str() + ":" + col.str()`) used
+# pervasively in selfhost source.
+run_with_stdout "int.str() print" \
+    'define main() -> Int { print((42).str()); return 0 }' \
+    0 "42"
+run_with_stdout "bool.str() true/false" \
+    'define main() -> Int { print(true.str()); print(false.str()); return 0 }' \
+    0 "true
+false"
+run_with_stdout "double.str() print" \
+    'define main() -> Int { print((3.14).str()); return 0 }' \
+    0 "3.14"
+run_with_stdout "concat int.str()" \
+    'define main() -> Int { n := 7; print("count is " + n.str()); return 0 }' \
+    0 "count is 7"
+run_with_stdout "diagnostic message" \
+    'define main() -> Int { ln := 12; col := 5; print("error at " + ln.str() + ":" + col.str()); return 42 }' \
+    42 "error at 12:5"
+
 # Phase 4.3: string literals + print() via puts().
 run_with_stdout "print literal" \
     'define main() -> Int { print("hello"); return 42 }' \
@@ -426,4 +448,4 @@ if [ "$fails" -gt 0 ]; then
     exit 1
 fi
 echo ""
-echo "all 79/79 cases passed"
+echo "all 84/84 cases passed"

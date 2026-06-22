@@ -823,6 +823,62 @@ define _gen_method_call(cg: FnCG, c: Call) -> String {
         // _gen_field_set).
         return _gen_list_append(cg, recv_reg, c.args)
     }
+    if fg.name == "str" {
+        // Int.str(): snprintf("%d", x) into a 12-byte buffer
+        // (max i32 in decimal is 11 chars + null).
+        if recv_ty == "i32" {
+            cg.mod.ensure_decl("malloc", "declare i8* @malloc(i64)")
+            cg.mod.ensure_decl("snprintf",
+                "declare i32 @snprintf(i8*, i64, i8*, ...)")
+            fmt := cg.mod.alloc_string("%d")
+            buf := cg.fresh()
+            cg.emit(buf + " = call i8* @malloc(i64 12)")
+            fmt_gep := cg.fresh()
+            cg.emit(fmt_gep + " = getelementptr inbounds [3 x i8], [3 x i8]* " +
+                    fmt + ", i64 0, i64 0")
+            ret := cg.fresh()
+            cg.emit(ret + " = call i32 (i8*, i64, i8*, ...) @snprintf(i8* " + buf +
+                    ", i64 12, i8* " + fmt_gep + ", i32 " + recv_reg + ")")
+            return buf
+        }
+        // Double.str(): snprintf("%g", x) into a 32-byte buffer.
+        // %g picks a compact representation (no trailing zeros).
+        if recv_ty == "double" {
+            cg.mod.ensure_decl("malloc", "declare i8* @malloc(i64)")
+            cg.mod.ensure_decl("snprintf",
+                "declare i32 @snprintf(i8*, i64, i8*, ...)")
+            fmt := cg.mod.alloc_string("%g")
+            buf := cg.fresh()
+            cg.emit(buf + " = call i8* @malloc(i64 32)")
+            fmt_gep := cg.fresh()
+            cg.emit(fmt_gep + " = getelementptr inbounds [3 x i8], [3 x i8]* " +
+                    fmt + ", i64 0, i64 0")
+            ret := cg.fresh()
+            cg.emit(ret + " = call i32 (i8*, i64, i8*, ...) @snprintf(i8* " + buf +
+                    ", i64 32, i8* " + fmt_gep + ", double " + recv_reg + ")")
+            return buf
+        }
+        // Bool.str(): branch-free `select i1 b, "true"*, "false"*`.
+        // The two literals are interned via the same `alloc_string`
+        // path string literals use, so they get folded into the
+        // module's global table cleanly.
+        if recv_ty == "i1" {
+            t_name := cg.mod.alloc_string("true")
+            f_name := cg.mod.alloc_string("false")
+            // `true` is 4 chars + null = 5; `false` is 5 + null = 6.
+            // GEP both to their first byte so they share an i8* type.
+            t_gep := cg.fresh()
+            cg.emit(t_gep + " = getelementptr inbounds [5 x i8], [5 x i8]* " +
+                    t_name + ", i64 0, i64 0")
+            f_gep := cg.fresh()
+            cg.emit(f_gep + " = getelementptr inbounds [6 x i8], [6 x i8]* " +
+                    f_name + ", i64 0, i64 0")
+            sel := cg.fresh()
+            cg.emit(sel + " = select i1 " + recv_reg + ", i8* " + t_gep +
+                    ", i8* " + f_gep)
+            return sel
+        }
+    }
     return "<bad-method:" + fg.name + ">"
 }
 

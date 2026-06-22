@@ -5,6 +5,60 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.20] — 2026-06-22
+
+### Self-hosting Phase 4.16: primitive `.str()` methods
+
+`Int.str()`, `Bool.str()`, `Double.str()` all return `String`.
+The selfhost source uses these constantly for diagnostic-
+message building — `"line " + ln.str() + ":" + col.str()`
+appears in nearly every `s.report(...)` call. Small phase
+with outsized unblock value.
+
+**Sema.** New top-level arm in `_check_method_call`: when
+the method name is `"str"` and the receiver is `TInt`,
+`TBool`, or `TDouble`, return `TString`. Unknown receivers
+report a typed diagnostic.
+
+**Codegen.** Three patterns share `.str()`:
+
+  - `Int.str()` lowers to `snprintf(buf, 12, "%d", x)` —
+    max i32 in decimal is 11 chars + null, so 12 bytes is
+    safe.
+  - `Double.str()` lowers to `snprintf(buf, 32, "%g", x)`
+    — `%g` picks compact representation (no trailing
+    zeros, scientific notation for extremes). 32 bytes
+    is comfortably above the worst-case `%g` width.
+  - `Bool.str()` is branch-free: intern `"true"` and
+    `"false"` as private string globals via the existing
+    `alloc_string` path, then `select i1 %b, i8* %true,
+    i8* %false`. No allocation per call.
+
+The `Int.str()` and `Double.str()` buffers leak — same
+trade-off as every other allocation in this codegen. Bool
+shares the interned globals across all `Bool.str()`
+call sites in the module.
+
+`codegen_e2e.sh` gains 5 new cases (all stdout-checked):
+
+```
+ok  int.str() print           `print((42).str())` → "42"
+ok  bool.str() true/false     `print(true.str()); print(false.str())`
+ok  double.str() print        `print((3.14).str())` → "3.14"
+ok  concat int.str()           `"count is " + n.str()`
+ok  diagnostic message         `"error at " + ln.str() + ":" + col.str()`
+
+all 84/84 cases passed
+```
+
+Next phases will pick up String methods (`.substring`,
+`.startswith`, `.endswith`, `.to_int`) and equality on
+strings — together with `.str()` those are enough to write
+real diagnostic + token-text matching code.
+
+Phase 4.x left: enum, tagged unions + match, Map, generic
+list element types, module imports, throw/catch.
+
 ## [4.0.0-alpha.19] — 2026-06-22
 
 ### Self-hosting Phase 4.15: `List.append()` + capacity + realloc growth

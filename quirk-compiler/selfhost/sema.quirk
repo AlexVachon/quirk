@@ -379,6 +379,25 @@ define _check_method_call(s: Sema, c: Call) -> Ty {
     match ot { case TList as _ => is_list = true case _ => {} }
     is_str := false
     match ot { case TString as _ => is_str = true case _ => {} }
+    // `.str()` on Int / Bool / Double → String, no args.
+    // The selfhost source uses this constantly for diagnostic
+    // messages (`"line " + line.str() + ":" + col.str()`),
+    // so it's the smallest unblock-everything piece.
+    if fg.name == "str" {
+        if c.args.length() != 0 {
+            s.report(".str() takes no arguments")
+            return TError("method arity")
+        }
+        is_int := false
+        match ot { case TInt as _ => is_int = true case _ => {} }
+        is_bool := false
+        match ot { case TBool as _ => is_bool = true case _ => {} }
+        is_dbl := false
+        match ot { case TDouble as _ => is_dbl = true case _ => {} }
+        if is_int or is_bool or is_dbl { return TString() }
+        s.report(".str() not defined on '" + ty_to_string(ot) + "'")
+        return TError("method receiver")
+    }
     // `.length()` on List or String → Int, no args.
     if fg.name == "length" {
         if c.args.length() != 0 {

@@ -109,17 +109,20 @@ clean:
 test: all
 	./$(TARGET) tests/encoding_test.quirk
 
-# Self-host smoke — runs the in-Quirk lexer (Phase 1) and parser
-# (Phase 2) against a small corpus. Doesn't yet assert byte-for-
-# byte equality with the C++ tokenizer/parser (Phase 5 does);
-# this is here so regressions in selfhost/*.quirk surface in CI
-# before they bitrot silently.
+# Self-host smoke — runs the in-Quirk lexer (Phase 1), parser
+# (Phase 2), and sema (Phase 3) against a small corpus. Doesn't
+# yet assert byte-for-byte equality with the C++ tokenizer /
+# parser / sema (Phase 5 does); this is here so regressions in
+# selfhost/*.quirk surface in CI before they bitrot silently.
 test-selfhost: all
 	@echo "--- Phase 1: lexer ---"
 	QUIRK_HOME=$(shell pwd) ./$(TARGET) --no-aot --no-cache selfhost/lexer_test.quirk
 	@echo ""
 	@echo "--- Phase 2: parser ---"
 	QUIRK_HOME=$(shell pwd) ./$(TARGET) --no-aot --no-cache selfhost/parser_test.quirk
+	@echo ""
+	@echo "--- Phase 3: sema ---"
+	QUIRK_HOME=$(shell pwd) ./$(TARGET) --no-aot --no-cache selfhost/sema_test.quirk
 
 # --- STDLIB BOOTSTRAP -------------------------------------------------------
 # Fetch the 21 canonical stdlib repos into ./packages/. Required for:

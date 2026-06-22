@@ -1,0 +1,317 @@
+---
+Quirk semantic analyser in Quirk — Phase 3 of self-hosting.
+
+Walks the AST produced by Phase 2's parser, builds a symbol
+table, resolves identifiers, and type-checks expressions and
+statements. Returns a list of diagnostic strings (empty on
+success).
+
+Two-pass design mirroring the C++ compiler:
+
+  Pass 1: register every top-level function's signature so
+          body checks can call forward.
+  Pass 2: type-check each body. Per-function scope stack tracks
+          local bindings (parameters + var-decls). Identifier
+          resolution walks the stack innermost-out, then falls
+          back to the function table.
+
+Things deferred to Phase 3.x:
+
+  - Struct / enum / interface declarations
+  - Generics + type-param inference
+  - Sum-type variant lookup (Some / Ok / Err / etc.)
+  - Implicit numeric widening (Int → Double)
+  - Argument arity / type checks at call sites (the parser
+    accepts call exprs but Sema only verifies the callee exists)
+---
+
+from .ast use { Expr, Stmt, Param, FunctionDecl, TopLevel }
+from .ast use { IntLit, StringLit, BoolLit, NullLit, Ident, BinOp, Call }
+from .ast use { Return, ExprStmt, VarDecl, Assign, Func }
+from .types use { Ty, TInt, TString, TBool, TVoid, TAny, TError }
+from .types use { ty_to_string, ty_from_annot, ty_compatible }
+
+struct Sema {
+    // name → Ty (function return type). v3.x will graduate to
+    // a richer signature record once arity / arg-type checking
+    // lands.
+    functions: Map
+    // Stack of scope frames (List<Map<String, Ty>>). The
+    // innermost frame is the back element; resolution walks
+    // back-to-front.
+    scopes: List
+    // Diagnostic messages collected during the walk. Empty
+    // List == clean check.
+    errors: List
+
+    define __init(self) -> void {
+        self.functions = Map()
+        self.scopes = List()
+        self.errors = List()
+    }
+
+    define push_scope(self) -> void {
+        self.scopes.append(Map())
+    }
+
+    define pop_scope(self) -> void {
+        // List.pop returns the last element + shrinks size.
+        self.scopes.pop()
+    }
+
+    define define_local(self, name: String, t: Ty) -> void {
+        n := self.scopes.length()
+        if n == 0 {
+            self.scopes.append(Map())
+            n = 1
+        }
+        top: Map := self.scopes.__get(n - 1)
+        // Store the Ty boxed via a wrapper struct so Map's
+        // value slot (Any) round-trips it; Ty itself is a sum
+        // type that can't be the direct Map value without
+        // tripping the open Any-boxing bug for tagged unions.
+        // The wrapper is a single-field struct, retrieved
+        // via .ty in resolve_local.
+        top.put(name, _TyHolder(t))
+    }
+
+    define resolve_local(self, name: String) -> Ty {
+        i := self.scopes.length() - 1
+        while i >= 0 {
+            scope: Map := self.scopes.__get(i)
+            if scope.has(name) {
+                holder: _TyHolder := scope.get(name)
+                return holder.ty
+            }
+            i = i - 1
+        }
+        return TError("undefined variable '" + name + "'")
+    }
+
+    define report(self, msg: String) -> void {
+        self.errors.append(msg)
+    }
+}
+
+---
+Wrapper struct that pins a `Ty` into a Map value slot. Quirk's
+collection slots type-erase to `Any` (i8*) and tagged unions
+flowing through Any-typed extern params currently hit boxing
+gaps; wrapping in a single-field struct dodges the issue by
+giving the value a stable heap shape.
+---
+struct _TyHolder {
+    ty: Ty
+    define __init(self, t: Ty) -> void { self.ty = t }
+}
+
+// -----------------------------------------------------------------
+// Expression typing
+// -----------------------------------------------------------------
+
+define _check_expr(s: Sema, e: Expr) -> Ty {
+    match e {
+        case IntLit as _    => return TInt()
+        case StringLit as _ => return TString()
+        case BoolLit as _   => return TBool()
+        case NullLit as _   => return TAny()
+        case Ident as id    => {
+            t: Ty := s.resolve_local(id.name)
+            // Resolution surfaces a TError for undefined names —
+            // report it here so the diagnostic lands in
+            // s.errors. Without this, the cascade-suppression
+            // in Return swallows the only signal we had.
+            match t { case TError as e => s.report(e.msg) case _ => {} }
+            return t
+        }
+        case BinOp as b     => return _check_binop(s, b)
+        case Call as c      => return _check_call(s, c)
+        case _              => return TError("unknown expression kind")
+    }
+}
+
+define _check_binop(s: Sema, b: BinOp) -> Ty {
+    lt: Ty := _check_expr(s, b.left)
+    rt: Ty := _check_expr(s, b.right)
+    op := b.op
+
+    // Propagate inner errors verbatim so the user sees the
+    // root cause, not a derived "wrong types for +" wrapper
+    // on top.
+    match lt { case TError as e => { s.report(e.msg); return lt } case _ => {} }
+    match rt { case TError as e => { s.report(e.msg); return rt } case _ => {} }
+
+    // `+` works on Int+Int and String+String (concat); the others
+    // are arithmetic-only (Int+Int).
+    if op == "+" {
+        // String concat
+        is_str_l := false
+        match lt { case TString as _ => is_str_l = true case _ => {} }
+        is_str_r := false
+        match rt { case TString as _ => is_str_r = true case _ => {} }
+        if is_str_l and is_str_r { return TString() }
+    }
+    if op == "+" or op == "-" or op == "*" or op == "/" {
+        is_int_l := false
+        match lt { case TInt as _ => is_int_l = true case _ => {} }
+        is_int_r := false
+        match rt { case TInt as _ => is_int_r = true case _ => {} }
+        if is_int_l and is_int_r { return TInt() }
+        s.report("operator '" + op + "' expects matching numeric or String operands; got '" +
+                 ty_to_string(lt) + "' and '" + ty_to_string(rt) + "'")
+        return TError("operator mismatch")
+    }
+    s.report("unsupported operator '" + op + "'")
+    return TError("unsupported op")
+}
+
+define _check_call(s: Sema, c: Call) -> Ty {
+    // Phase 3: the callee must be a bare identifier — `foo(...)`.
+    // Member-access call (`x.foo(...)`) and computed callees
+    // come later.
+    name := ""
+    match c.callee {
+        case Ident as id => name = id.name
+        case _ => {
+            s.report("call target must be a bare identifier in Phase 3")
+            return TError("complex callee")
+        }
+    }
+    if s.functions.has(name) == false {
+        s.report("call to undefined function '" + name + "'")
+        return TError("unknown function")
+    }
+    // Argument types are checked individually for unknown
+    // identifiers but not yet matched against the callee's
+    // parameter signature — that's Phase 3.x.
+    i := 0
+    while i < c.args.length() {
+        ai: Expr := c.args.__get(i)
+        _check_expr(s, ai)
+        i = i + 1
+    }
+    holder: _TyHolder := s.functions.get(name)
+    return holder.ty
+}
+
+// -----------------------------------------------------------------
+// Statement typing
+// -----------------------------------------------------------------
+
+define _check_stmt(s: Sema, st: Stmt, ret: Ty) -> void {
+    match st {
+        case Return as r => {
+            t: Ty := _check_expr(s, r.value)
+            // Suppress the cascade: if the value already
+            // reported a TError, the upstream diagnostic is the
+            // root cause and a derived "return wants X, got
+            // <error>" line just adds noise. Same suppression
+            // pattern in Assign below.
+            cascaded := false
+            match t { case TError as _ => cascaded = true case _ => {} }
+            if cascaded == false and ty_compatible(ret, t) == false {
+                s.report("return type mismatch — expected '" + ty_to_string(ret) +
+                         "', got '" + ty_to_string(t) + "'")
+            }
+        }
+        case ExprStmt as es => {
+            _check_expr(s, es.expr)
+        }
+        case VarDecl as v => {
+            rhs: Ty := _check_expr(s, v.value)
+            annot: Ty := ty_from_annot(v.type_annot)
+            // Annotation drives the binding's type when present;
+            // otherwise inference uses the RHS type. Either way,
+            // the value's type has to fit the binding.
+            target: Ty := annot
+            match annot { case TAny as _ => target = rhs case _ => {} }
+            if ty_compatible(target, rhs) == false {
+                s.report("var '" + v.name + "' declared '" + ty_to_string(annot) +
+                         "' but initialised with '" + ty_to_string(rhs) + "'")
+            }
+            s.define_local(v.name, target)
+        }
+        case Assign as a => {
+            existing: Ty := s.resolve_local(a.name)
+            rhs: Ty := _check_expr(s, a.value)
+            match existing {
+                case TError as _ => {
+                    s.report("assign to undefined variable '" + a.name + "'")
+                }
+                case _ => {
+                    if ty_compatible(existing, rhs) == false {
+                        s.report("assignment to '" + a.name + "' — expected '" +
+                                 ty_to_string(existing) + "', got '" +
+                                 ty_to_string(rhs) + "'")
+                    }
+                }
+            }
+        }
+        case _ => {}
+    }
+}
+
+// -----------------------------------------------------------------
+// Function-level entry
+// -----------------------------------------------------------------
+
+define _check_function(s: Sema, fdecl: FunctionDecl) -> void {
+    s.push_scope()
+    // Bind parameters.
+    i := 0
+    while i < fdecl.params.length() {
+        p: Param := fdecl.params.__get(i)
+        pt: Ty := ty_from_annot(p.type_annot)
+        s.define_local(p.name, pt)
+        i = i + 1
+    }
+    ret: Ty := ty_from_annot(fdecl.ret_type)
+    // Statement body.
+    j := 0
+    while j < fdecl.body.length() {
+        st: Stmt := fdecl.body.__get(j)
+        _check_stmt(s, st, ret)
+        j = j + 1
+    }
+    s.pop_scope()
+}
+
+---
+Top-level entry. Takes the parser's output (`List<TopLevel>`)
+and returns the diagnostic list. Empty list == no errors.
+---
+define check(decls: List) -> List {
+    s := Sema()
+
+    // Pass 1: register every function's return type so call
+    // sites can resolve forward.
+    i := 0
+    while i < decls.length() {
+        d: TopLevel := decls.__get(i)
+        match d {
+            case Func as f => {
+                fd: FunctionDecl := f.decl
+                rt: Ty := ty_from_annot(fd.ret_type)
+                s.functions.put(fd.name, _TyHolder(rt))
+            }
+            case _ => {}
+        }
+        i = i + 1
+    }
+
+    // Pass 2: check each body.
+    j := 0
+    while j < decls.length() {
+        d: TopLevel := decls.__get(j)
+        match d {
+            case Func as f => {
+                fd: FunctionDecl := f.decl
+                _check_function(s, fd)
+            }
+            case _ => {}
+        }
+        j = j + 1
+    }
+
+    return s.errors
+}

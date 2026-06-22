@@ -5,6 +5,65 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.3] — 2026-06-22
+
+### Self-hosting Phase 3: sema in Quirk
+
+The parser (Phase 2) feeds the type checker. The type checker
+walks the AST, builds a symbol table, resolves identifiers, and
+emits diagnostics. Returns an empty list on a clean check.
+
+What landed:
+
+  - [`selfhost/types.quirk`](selfhost/types.quirk) — `Ty`
+    tagged union (TInt/TString/TBool/TVoid/TAny/TError), plus
+    `ty_to_string`, `ty_from_annot`, and `ty_compatible`
+    helpers. TError carries the diagnostic inline so a
+    downstream Return / Assign check can suppress cascaded
+    noise.
+
+  - [`selfhost/sema.quirk`](selfhost/sema.quirk) — two-pass
+    checker mirroring the C++ Sema:
+
+    1. Register every top-level function's return type in a
+       Map keyed by name so call sites can resolve forward.
+    2. Walk each body. Per-function scope stack tracks
+       parameters + local var-decls. `_check_expr` dispatches
+       on the Expr variant and returns a Ty; `_check_stmt`
+       enforces return-type compatibility and var-decl
+       annotation matches.
+
+  - [`selfhost/sema_test.quirk`](selfhost/sema_test.quirk) —
+    13 cases covering identity, arithmetic, string concat,
+    annotated var-decls, void returns, cross-function calls,
+    plus six intentional-error cases (undefined variable,
+    return type mismatch, String+Int, annotation-vs-value
+    mismatch, assign-to-undefined, call to undefined fn).
+    All 13 pass.
+
+Wired into `make test-selfhost` alongside Phase 1 + Phase 2.
+
+Open friction in Quirk surfaced this phase:
+
+  - **Tagged-union values can't go directly into Map slots.**
+    The Map's value type is Any (i8*); storing a `Ty` tagged-
+    union value through the box-on-store path trips the same
+    raw-vs-Any-tagged shape problem v3.25.0 worked around for
+    Tuples. Worked around in sema.quirk with a single-field
+    `_TyHolder` struct that pins each Ty into the slot. Real
+    fix queued — sum-type values need first-class boxing for
+    storage in Any-typed slots.
+
+  - **Nested match dispatch on sum-typed scrutinees has gaps.**
+    Wrote `ty_compatible` as a flat string compare rather
+    than a nested match because nested-match coverage isn't
+    fully working. Also queued.
+
+Phase 4 (Codegen → LLVM IR text) is next. With Sema producing
+a typed, validated AST, Codegen has enough information to
+emit IR — no more "I'll figure out the type later" wiggle
+room.
+
 ## [4.0.0-alpha.2] — 2026-06-22
 
 ### Self-hosting Phase 2: parser in Quirk

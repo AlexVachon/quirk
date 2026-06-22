@@ -1,0 +1,89 @@
+---
+Phase 3 sema smoke. Lex + parse + check a corpus of programs;
+print pass/fail per case and the diagnostics on fails.
+
+Each case is `(label, source, expected_error_count)`. Cases
+that should type-check cleanly use `expected = 0`; cases that
+exercise an intentional error use `expected = N`.
+---
+
+from .lexer use { tokenize }
+from .parser use { parse }
+from .sema use { check }
+
+define run_case(label: String, src: String, expected: Int) -> void {
+    tokens := tokenize(src)
+    decls := parse(tokens)
+    errors := check(decls)
+    n := errors.length()
+    ok := n == expected
+    status: String := "ok  "
+    if ok == false { status = "FAIL" }
+    print(status + "  " + label + " (errors=" + n.str() + ", expected=" + expected.str() + ")")
+    // On failure, surface the diagnostics so a developer
+    // running this test can see the regression at a glance.
+    if ok == false {
+        k := 0
+        while k < errors.length() {
+            e: String := errors.__get(k)
+            print("      " + e)
+            k = k + 1
+        }
+    }
+}
+
+// --- Should pass type checking ---
+
+run_case("identity Int",
+    "define id(x: Int) -> Int { return x }",
+    0)
+
+run_case("arithmetic precedence",
+    "define f(a: Int, b: Int) -> Int { return a + b * 2 }",
+    0)
+
+run_case("string concat",
+    "define greet(name: String) -> String { return \"hi \" + name }",
+    0)
+
+run_case("var-decl then return",
+    "define total(a: Int, b: Int) -> Int { sum := a + b; return sum }",
+    0)
+
+run_case("annotated var-decl",
+    "define f() -> Int { x: Int := 42; return x }",
+    0)
+
+run_case("void return",
+    "define noop() { return null }",
+    0)
+
+run_case("call to known function",
+    "define one() -> Int { return 1 }\ndefine two() -> Int { return one() + 1 }",
+    0)
+
+// --- Should surface errors ---
+
+run_case("undefined variable in return",
+    "define bad() -> Int { return y }",
+    1)
+
+run_case("return type mismatch",
+    "define bad() -> Int { return \"x\" }",
+    1)
+
+run_case("string + int",
+    "define bad() -> String { return \"x\" + 1 }",
+    1)
+
+run_case("annotation/value mismatch",
+    "define bad() -> Int { x: Int := \"hi\"; return x }",
+    1)
+
+run_case("assign to undefined",
+    "define bad() -> Int { y = 1; return y }",
+    2)  // one from `y = 1` Assign, one from `return y` Ident
+
+run_case("call to undefined fn",
+    "define bad() -> Int { return missing() }",
+    1)

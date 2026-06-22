@@ -1,0 +1,78 @@
+---
+Type representation for the self-hosted Sema.
+
+Quirk-typed values that flow through the type checker. The set is
+intentionally small for Phase 3 — primitives + Any + Void plus a
+sentinel for inference failures. Phase 3.x will add generic
+parameters, nullable wrappers, and user-defined struct names once
+the surface ground is solid.
+
+A tagged union (rather than just strings) buys us:
+
+  - Pattern-match dispatch in the checker — match the lhs/rhs
+    types and let the compiler enforce coverage.
+  - A typed error variant that carries the diagnostic message
+    inline; downstream code doesn't have to coordinate via a
+    separate errors list for trivial mismatches.
+---
+
+type Ty =
+    TInt()
+    | TString()
+    | TBool()
+    | TVoid()
+    | TAny()
+    | TError(msg: String)
+
+---
+Stringify a `Ty` for use in diagnostics. Matches the names a
+user would write in source (`Int` / `String` / `Bool` / `Any`),
+falling back to `<error: ...>` for the inference-failure variant.
+---
+define ty_to_string(t: Ty) -> String {
+    match t {
+        case TInt as _    => return "Int"
+        case TString as _ => return "String"
+        case TBool as _   => return "Bool"
+        case TVoid as _   => return "Void"
+        case TAny as _    => return "Any"
+        case TError as e  => return "<error: " + e.msg + ">"
+        case _            => return "?"
+    }
+}
+
+---
+Parse a Quirk source type annotation (`Int`, `String`, `Bool`,
+empty, ...) into a Ty. Empty maps to TAny — the absence of an
+annotation is treated as "I'll trust the inferred type." Unknown
+names land in TError so a downstream check can flag them.
+---
+define ty_from_annot(name: String) -> Ty {
+    if name == ""       { return TAny() }
+    if name == "Int"    { return TInt() }
+    if name == "String" { return TString() }
+    if name == "Bool"   { return TBool() }
+    if name == "Void"   { return TVoid() }
+    if name == "Any"    { return TAny() }
+    return TError("unknown type '" + name + "'")
+}
+
+---
+Two types are "compatible" for assignment / return purposes when
+either side is Any, or when they're the same primitive. Generic
+constraints and inheritance come later — this is the Phase 3
+minimum.
+---
+define ty_compatible(expected: Ty, actual: Ty) -> Bool {
+    // Any on either side is permissive.
+    a_any := false
+    match expected { case TAny as _ => a_any = true case _ => {} }
+    if a_any { return true }
+    match actual { case TAny as _ => a_any = true case _ => {} }
+    if a_any { return true }
+    // Otherwise require identical canonical kinds. Comparing the
+    // string forms is the smallest amount of code that gets us
+    // there without nested match dispatch (which trips a Sema
+    // gap for nested tagged-union scrutinees today).
+    return ty_to_string(expected) == ty_to_string(actual)
+}

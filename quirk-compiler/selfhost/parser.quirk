@@ -34,7 +34,7 @@ worked around in tokens.quirk's `__str` impl.
 
 from .tokens use { TokenKind, Token }
 from .ast use { Expr, Stmt, Param, FunctionDecl, TopLevel }
-from .ast use { IntLit, StringLit, BoolLit, NullLit, Ident, UnaryOp, BinOp, Call }
+from .ast use { IntLit, FloatLit, StringLit, BoolLit, NullLit, Ident, UnaryOp, BinOp, Call }
 from .ast use { Return, ExprStmt, VarDecl, Assign, If, While, Func }
 
 struct ParserState {
@@ -99,6 +99,14 @@ define _parse_primary(s: ParserState) -> Expr {
         s.advance()
         v: Int := t.value.to_int()
         return IntLit(v)
+    }
+    if t.kind == TokenKind.FloatLiteral {
+        // Preserve the textual form. Codegen passes it through
+        // to LLVM IR verbatim — LLVM accepts decimal forms
+        // (`3.14`, `1.0`) and folds them into the IEEE-754
+        // bit pattern for `double` at parse time.
+        s.advance()
+        return FloatLit(t.value)
     }
     if t.kind == TokenKind.StringLiteral {
         s.advance()

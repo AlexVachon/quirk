@@ -26,9 +26,9 @@ Things deferred to Phase 3.x:
 ---
 
 from .ast use { Expr, Stmt, Param, FunctionDecl, TopLevel }
-from .ast use { IntLit, StringLit, BoolLit, NullLit, Ident, UnaryOp, BinOp, Call }
+from .ast use { IntLit, FloatLit, StringLit, BoolLit, NullLit, Ident, UnaryOp, BinOp, Call }
 from .ast use { Return, ExprStmt, VarDecl, Assign, If, While, Func }
-from .types use { Ty, TInt, TString, TBool, TVoid, TAny, TError }
+from .types use { Ty, TInt, TDouble, TString, TBool, TVoid, TAny, TError }
 from .types use { ty_to_string, ty_from_annot, ty_compatible }
 
 struct Sema {
@@ -112,6 +112,7 @@ struct _TyHolder {
 define _check_expr(s: Sema, e: Expr) -> Ty {
     match e {
         case IntLit as _    => return TInt()
+        case FloatLit as _  => return TDouble()
         case StringLit as _ => return TString()
         case BoolLit as _   => return TBool()
         case NullLit as _   => return TAny()
@@ -141,7 +142,10 @@ define _check_unary(s: Sema, u: UnaryOp) -> Ty {
         is_int := false
         match ot { case TInt as _ => is_int = true case _ => {} }
         if is_int { return TInt() }
-        s.report("unary '-' expects Int, got '" + ty_to_string(ot) + "'")
+        is_dbl := false
+        match ot { case TDouble as _ => is_dbl = true case _ => {} }
+        if is_dbl { return TDouble() }
+        s.report("unary '-' expects Int or Double, got '" + ty_to_string(ot) + "'")
         return TError("unary minus type mismatch")
     }
     if op == "not" {
@@ -182,20 +186,30 @@ define _check_binop(s: Sema, b: BinOp) -> Ty {
         is_int_r := false
         match rt { case TInt as _ => is_int_r = true case _ => {} }
         if is_int_l and is_int_r { return TInt() }
+        is_dbl_l := false
+        match lt { case TDouble as _ => is_dbl_l = true case _ => {} }
+        is_dbl_r := false
+        match rt { case TDouble as _ => is_dbl_r = true case _ => {} }
+        if is_dbl_l and is_dbl_r { return TDouble() }
         s.report("operator '" + op + "' expects matching numeric or String operands; got '" +
                  ty_to_string(lt) + "' and '" + ty_to_string(rt) + "'")
         return TError("operator mismatch")
     }
     // Comparison operators take same-kind operands and produce
-    // Bool. Phase 4.1 supports Int comparisons only; String /
-    // Bool / user-struct ordering will follow.
+    // Bool. Int and Double are both supported; mixed-kind
+    // comparisons are rejected (no implicit widening yet).
     if op == "==" or op == "!=" or op == "<" or op == "<=" or op == ">" or op == ">=" {
         is_int_l := false
         match lt { case TInt as _ => is_int_l = true case _ => {} }
         is_int_r := false
         match rt { case TInt as _ => is_int_r = true case _ => {} }
         if is_int_l and is_int_r { return TBool() }
-        s.report("comparison '" + op + "' expects matching Int operands; got '" +
+        is_dbl_l := false
+        match lt { case TDouble as _ => is_dbl_l = true case _ => {} }
+        is_dbl_r := false
+        match rt { case TDouble as _ => is_dbl_r = true case _ => {} }
+        if is_dbl_l and is_dbl_r { return TBool() }
+        s.report("comparison '" + op + "' expects matching Int or Double operands; got '" +
                  ty_to_string(lt) + "' and '" + ty_to_string(rt) + "'")
         return TError("comparison operand mismatch")
     }

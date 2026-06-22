@@ -34,7 +34,7 @@ Deferred:
 ---
 
 from .ast use { Expr, Stmt, Param, FunctionDecl, TopLevel }
-from .ast use { IntLit, StringLit, BoolLit, NullLit, Ident, UnaryOp, BinOp, Call }
+from .ast use { IntLit, FloatLit, StringLit, BoolLit, NullLit, Ident, UnaryOp, BinOp, Call }
 from .ast use { Return, ExprStmt, VarDecl, Assign, If, While, Func }
 
 ---
@@ -53,10 +53,11 @@ can dedup by helper name.
 ---
 // Source-level Quirk type name → LLVM type. Defaults to `i32`
 // (every non-Bool scalar in the self-hosted subset compiles to
-// i32 today). When Double / String values become first-class
-// at the call boundary this is where they hook in.
+// i32 today). When String values become first-class at the
+// call boundary they hook in here.
 define _q_ty_to_llvm(qty: String) -> String {
-    if qty == "Bool" { return "i1" }
+    if qty == "Bool"   { return "i1" }
+    if qty == "Double" { return "double" }
     return "i32"
 }
 
@@ -235,6 +236,15 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
             if bl.value { return "1" }
             return "0"
         }
+        case FloatLit as fl => {
+            // Pass the textual literal through to LLVM. The IR
+            // parser accepts decimal forms (`3.14`, `1.0`, `0.5`)
+            // and converts them to IEEE-754 internally. Hex
+            // form (`0x4009...`) would be needed for values
+            // that don't round-trip, but the corpus today is
+            // small exact-decimal values only.
+            return fl.value
+        }
         case Ident as id => {
             if cg.locals.has(id.name) {
                 holder: _Slot := cg.locals.get(id.name)
@@ -250,13 +260,18 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
             return "<undef:" + id.name + ">"
         }
         case UnaryOp as u => {
+            opd_ty := _expr_static_ty(cg, u.operand)
             v := _gen_expr(cg, u.operand)
             if u.op == "-" {
-                // 0 - x is the standard lowering of unary
-                // negation. LLVM has no dedicated `neg`
-                // instruction; sub-from-zero is the idiom.
+                // Integer: `sub nsw i32 0, x` is the standard
+                // negation idiom (LLVM has no dedicated `neg`).
+                // Double: LLVM 14 has a real `fneg double`.
                 reg := cg.fresh()
-                cg.emit(reg + " = sub nsw i32 0, " + v)
+                if opd_ty == "double" {
+                    cg.emit(reg + " = fneg double " + v)
+                } else {
+                    cg.emit(reg + " = sub nsw i32 0, " + v)
+                }
                 return reg
             }
             if u.op == "not" {
@@ -272,31 +287,45 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
         }
         case BinOp as b => {
             // Arithmetic vs comparison split on operator: the
-            // former returns i32, the latter returns i1. We emit
-            // i1 directly; callers that need an integer
-            // truthiness (e.g. `if expr` where expr is a bare
-            // Int) zero-extend up-stream.
+            // former returns the operand type (i32 or double),
+            // the latter returns i1. Operand type is taken from
+            // the left side — sema has already required both
+            // sides to agree.
+            opd_ty := _expr_static_ty(cg, b.left)
+            is_dbl := opd_ty == "double"
             l := _gen_expr(cg, b.left)
             r := _gen_expr(cg, b.right)
             op := b.op
-            cmp_pred := ""
-            if op == "==" { cmp_pred = "eq" }
-            if op == "!=" { cmp_pred = "ne" }
-            if op == "<"  { cmp_pred = "slt" }
-            if op == "<=" { cmp_pred = "sle" }
-            if op == ">"  { cmp_pred = "sgt" }
-            if op == ">=" { cmp_pred = "sge" }
-            if cmp_pred.length() > 0 {
+            // Comparison.
+            int_pred := ""
+            dbl_pred := ""
+            if op == "==" { int_pred = "eq"  dbl_pred = "oeq" }
+            if op == "!=" { int_pred = "ne"  dbl_pred = "one" }
+            if op == "<"  { int_pred = "slt" dbl_pred = "olt" }
+            if op == "<=" { int_pred = "sle" dbl_pred = "ole" }
+            if op == ">"  { int_pred = "sgt" dbl_pred = "ogt" }
+            if op == ">=" { int_pred = "sge" dbl_pred = "oge" }
+            if int_pred.length() > 0 {
                 reg := cg.fresh()
-                cg.emit(reg + " = icmp " + cmp_pred + " i32 " + l + ", " + r)
+                if is_dbl {
+                    cg.emit(reg + " = fcmp " + dbl_pred + " double " + l + ", " + r)
+                } else {
+                    cg.emit(reg + " = icmp " + int_pred + " i32 " + l + ", " + r)
+                }
                 return reg
             }
-            instr := "add"
-            if op == "-" { instr = "sub" }
-            if op == "*" { instr = "mul" }
-            if op == "/" { instr = "sdiv" }
+            // Arithmetic.
+            int_instr := "add"
+            dbl_instr := "fadd"
+            if op == "-" { int_instr = "sub"  dbl_instr = "fsub" }
+            if op == "*" { int_instr = "mul"  dbl_instr = "fmul" }
+            if op == "/" { int_instr = "sdiv" dbl_instr = "fdiv" }
             reg := cg.fresh()
-            cg.emit(reg + " = " + instr + " nsw i32 " + l + ", " + r)
+            if is_dbl {
+                cg.emit(reg + " = " + dbl_instr + " double " + l + ", " + r)
+            } else {
+                cg.emit(reg + " = " + int_instr + " nsw i32 " + l + ", " + r)
+            }
             return reg
         }
         case Call as c => {
@@ -400,6 +429,7 @@ struct _Slot {
 define _expr_static_ty(cg: FnCG, e: Expr) -> String {
     match e {
         case BoolLit as _ => return "i1"
+        case FloatLit as _ => return "double"
         case Ident as id => {
             if cg.locals.has(id.name) {
                 s: _Slot := cg.locals.get(id.name)
@@ -409,13 +439,23 @@ define _expr_static_ty(cg: FnCG, e: Expr) -> String {
         }
         case UnaryOp as u => {
             if u.op == "not" { return "i1" }
-            return "i32"
+            // `-x` follows the operand's type — `i32` for Int,
+            // `double` for Double. Anything else is a sema bug.
+            return _expr_static_ty(cg, u.operand)
         }
         case BinOp as b => {
             op := b.op
             if op == "==" or op == "!=" or op == "<" or op == "<=" or op == ">" or op == ">=" {
                 return "i1"
             }
+            // Arithmetic: result type follows operand type. If
+            // either operand is `double` the result is `double`
+            // (sema rejects mixed-kind arithmetic, so both should
+            // agree); otherwise `i32`.
+            lt := _expr_static_ty(cg, b.left)
+            if lt == "double" { return "double" }
+            rt := _expr_static_ty(cg, b.right)
+            if rt == "double" { return "double" }
             return "i32"
         }
         case Call as c => {

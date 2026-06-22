@@ -189,6 +189,21 @@ run "forward reference (caller above callee)" \
 define helper(n: Int) -> Bool { return n == 7 }" \
     42
 
+# Phase 4.6: Double scalar — float literals, double arithmetic
+# (fadd/fsub/fmul/fdiv), comparisons (fcmp ordered predicates),
+# unary fneg, Double locals (slot type `double`), and Double at
+# the call boundary.
+run "double literal cmp"   "define main() -> Int { if 3.14 > 3.0 { return 42 } return 0 }"          42
+run "double binding cmp"   "define main() -> Int { pi := 3.14; if pi > 3.0 { return 42 } return 0 }" 42
+run "double add"           "define main() -> Int { a := 1.5; b := 2.5; if a + b == 4.0 { return 42 } return 0 }" 42
+run "double sub mul div"   "define main() -> Int { x := 10.0; y := 3.0; q := x / y; if q > 3.0 { return 42 } return 0 }" 42
+run "double unary minus"   "define main() -> Int { d := -2.5; if d < 0.0 { return 42 } return 0 }"  42
+run "double param + return" \
+    "define area(r: Double) -> Double { return r * r * 3.14 }
+define main() -> Int { a := area(2.0); if a > 12.0 { return 42 } return 0 }" \
+    42
+run "double inequality"    "define main() -> Int { if 1.5 != 2.5 { return 42 } return 0 }"          42
+
 # Phase 4.3: string literals + print() via puts().
 run_with_stdout "print literal" \
     'define main() -> Int { print("hello"); return 42 }' \
@@ -212,4 +227,4 @@ if [ "$fails" -gt 0 ]; then
     exit 1
 fi
 echo ""
-echo "all 29/29 cases passed"
+echo "all 36/36 cases passed"

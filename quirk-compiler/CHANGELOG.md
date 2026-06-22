@@ -5,6 +5,65 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.10] — 2026-06-22
+
+### Self-hosting Phase 4.6: Double scalar
+
+A second numeric type lands in the self-hosted compiler. Source
+can now contain `Double` annotations and float literals; codegen
+emits real `double` arithmetic, `fcmp` comparisons, `fneg`, and
+slot-typed Double locals.
+
+**Lexer was ready; the rest of the stack catches up.** The
+lexer already produced `FloatLiteral` tokens (since alpha.1) —
+nothing else consumed them. This phase adds the wiring:
+
+  - `types.quirk`: new `TDouble()` variant; `ty_to_string` and
+    `ty_from_annot` recognise `"Double"`.
+  - `ast.quirk`: new `FloatLit(value: String)` expression node.
+    The text is preserved verbatim from the source so codegen
+    can pass it through to LLVM unchanged.
+  - `parser.quirk`: `_parse_primary` consumes `FloatLiteral`
+    tokens and emits `FloatLit` nodes.
+  - `sema.quirk`: `FloatLit` types as `TDouble`; `-x` accepts
+    `TDouble`; `+ - * /` and the comparison ops accept matching
+    `TDouble` operands (mixed-kind arithmetic and mixed-kind
+    comparison stay rejected — no implicit widening yet).
+  - `codegen.quirk`: `_q_ty_to_llvm("Double") → "double"`;
+    `_expr_static_ty` returns `"double"` for `FloatLit`, for
+    `BinOp` whose either operand is `double`, and for `UnaryOp`
+    whose operand is `double`. `BinOp` and `UnaryOp` dispatch
+    on operand type — `fadd/fsub/fmul/fdiv double`, `fcmp` with
+    the ordered predicates (`oeq/one/olt/ole/ogt/oge`), and
+    `fneg double` for unary minus. The Phase 4.4 slot-typing
+    machinery (`_Slot { name, ty }`) handles Double locals
+    without changes — `_ensure_slot(cg, name, "double")`
+    allocates `alloca double` and reads/writes route through.
+
+**Side effect: Bool params now appear in test output.** The
+new `area(r: Double) -> Double` test case exercises Double on
+both sides of the call boundary — combined with the Phase 4.5
+signature table, the IR has typed args + return throughout.
+
+`codegen_e2e.sh` gains 7 new cases:
+
+```
+ok  double literal cmp       `if 3.14 > 3.0 { 42 }`
+ok  double binding cmp       `pi := 3.14; if pi > 3.0 { 42 }`
+ok  double add               `a := 1.5; b := 2.5; a + b == 4.0`
+ok  double sub mul div       `q := 10.0 / 3.0; q > 3.0`
+ok  double unary minus       `d := -2.5; d < 0.0`
+ok  double param + return    `area(2.0) > 12.0`
+ok  double inequality        `1.5 != 2.5`
+
+all 36/36 cases passed
+```
+
+Phase 4.x continues toward String values at the call boundary
+(`print(s)` for a String local, string concat returning a
+real `String*`) and then structs/lists/maps — the runtime side
+of the language.
+
 ## [4.0.0-alpha.9] — 2026-06-22
 
 ### Self-hosting Phase 4.5: Bool at the call boundary

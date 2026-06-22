@@ -18,6 +18,7 @@ A tagged union (rather than just strings) buys us:
 
 type Ty =
     TInt()
+    | TDouble()
     | TString()
     | TBool()
     | TVoid()
@@ -32,6 +33,7 @@ falling back to `<error: ...>` for the inference-failure variant.
 define ty_to_string(t: Ty) -> String {
     match t {
         case TInt as _    => return "Int"
+        case TDouble as _ => return "Double"
         case TString as _ => return "String"
         case TBool as _   => return "Bool"
         case TVoid as _   => return "Void"
@@ -50,6 +52,7 @@ names land in TError so a downstream check can flag them.
 define ty_from_annot(name: String) -> Ty {
     if name == ""       { return TAny() }
     if name == "Int"    { return TInt() }
+    if name == "Double" { return TDouble() }
     if name == "String" { return TString() }
     if name == "Bool"   { return TBool() }
     if name == "Void"   { return TVoid() }

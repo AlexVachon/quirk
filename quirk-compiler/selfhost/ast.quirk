@@ -27,6 +27,7 @@ expression (Return, ExprStmt, VarDecl rhs) embeds one of these.
 ---
 type Expr =
     IntLit(value: Int)
+    | FloatLit(value: String)
     | StringLit(value: String)
     | BoolLit(value: Bool)
     | NullLit()

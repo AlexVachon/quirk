@@ -624,6 +624,30 @@ run "init then method call" \
 define main() -> Int { b := Box(20); return b.get_plus(2) }" \
     42
 
+# Phase 4.23: `from .X use { Y, Z }` import statements. Parsed
+# and skipped at the AST level — cross-file visibility is the
+# driver's job (concatenate sources before invoking the
+# self-hosted pipeline). This phase just lets per-file source
+# pass through the parser cleanly.
+run "single import skipped" \
+    "from .ast use { Expr }
+define main() -> Int { return 42 }" \
+    42
+run "multi import skipped" \
+    "from .tokens use { TokenKind, Token, EofToken }
+from .ast use { Expr, Stmt, IntLit, BinOp }
+struct Pt { x: Int; y: Int }
+define main() -> Int { p := Pt(40, 2); return p.x + p.y }" \
+    42
+run "absolute import skipped" \
+    "from quirklib use { read_file }
+define main() -> Int { return 42 }" \
+    42
+run "empty import skipped" \
+    "from .util use { }
+define main() -> Int { return 42 }" \
+    42
+
 # Phase 4.3: string literals + print() via puts().
 run_with_stdout "print literal" \
     'define main() -> Int { print("hello"); return 42 }' \
@@ -647,4 +671,4 @@ if [ "$fails" -gt 0 ]; then
     exit 1
 fi
 echo ""
-echo "all 124/124 cases passed"
+echo "all 128/128 cases passed"

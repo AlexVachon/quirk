@@ -5,6 +5,45 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.27] — 2026-06-22
+
+### Self-hosting Phase 4.23: `from .X use { … }` import statement parsing
+
+Selfhost source uses `from .lexer use { tokenize }` etc. at
+the top of every file. This release lets those statements
+pass the parser. The actual cross-file visibility happens
+via a concatenate-and-compile driver (the imports are
+informational at the AST level — sema sees every decl across
+all files as if they were one module).
+
+**Parser.** New `_skip_import` consumes `from … use { … }`:
+`from` keyword, optional leading `.` for relative imports,
+module identifier, `use`, `{`, identifier-comma-list (empty
+allowed), `}`. Top-level `parse()` dispatches to it when
+peeking sees `TokenKind.From`. No AST node is produced —
+the statement is discarded.
+
+This is the minimum viable shape: real multi-file compilation
+needs a driver that reads each imported file, concatenates,
+and pipes the combined source through the existing
+tokenize → parse → check → emit pipeline. That driver lives
+outside the per-file pipeline and is queued for a follow-on
+phase.
+
+`codegen_e2e.sh` gains 4 new cases:
+
+```
+ok  single import skipped        `from .ast use { Expr }`
+ok  multi import skipped         two `from` lines, mixed structs
+ok  absolute import skipped      `from quirklib use { … }` (no leading dot)
+ok  empty import skipped         `from .util use { }` — empty brace list
+
+all 128/128 cases passed
+```
+
+Phase 4.x left: throw/catch (or rewrite to result-list returns),
+string escapes (`\n`, `\t`, `\"`), file I/O + multi-file driver.
+
 ## [4.0.0-alpha.26] — 2026-06-22
 
 ### Self-hosting Phase 4.22: methods inside struct blocks + `__init` ctor dispatch

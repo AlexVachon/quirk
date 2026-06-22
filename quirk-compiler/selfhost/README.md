@@ -43,6 +43,7 @@ toolchain dependency from anyone wanting to hack on the compiler.
 |  4.20 | Map (`.put`/`.get`/`.has`/`.length`) + `List()` ctor + VarDecl annotation bitcast | landed (v4.0.0-alpha.24) |
 |  4.21 | Generic `List<T>` element types — `%QListP` for pointer lists + `ListP()` ctor | landed (v4.0.0-alpha.25) |
 |  4.22 | Inside-struct methods + `__init` ctor dispatch | landed (v4.0.0-alpha.26) |
+|  4.23 | `from .X use { … }` import statement parsing (concatenate-and-compile model) | landed (v4.0.0-alpha.27) |
 |  5    | Bootstrap — Quirk compiler compiles itself, byte-identical | not started |
 
 The Codegen phase deliberately targets *text-form* LLVM IR (`.ll`)

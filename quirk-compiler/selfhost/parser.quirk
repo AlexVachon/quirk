@@ -625,11 +625,36 @@ define _parse_enum_decl(s: ParserState) -> EnumDecl {
     return EnumDecl(name, variants)
 }
 
+// Skip a `from .X use { A, B, C }` import statement. Imports
+// don't produce AST nodes — the driver concatenates source
+// files for compilation, so cross-file visibility is handled
+// at that layer. This parser-level skip just lets the
+// per-file source pass through cleanly.
+define _skip_import(s: ParserState) -> void {
+    s.expect(TokenKind.From, "'from'")
+    // Optional leading `.` for relative imports.
+    s.match_kind(TokenKind.Dot)
+    s.expect(TokenKind.Identifier, "module name after 'from'")
+    s.expect(TokenKind.Use, "'use' after module name")
+    s.expect(TokenKind.LBrace, "'{' to open import name list")
+    if s.check(TokenKind.RBrace) == false {
+        s.expect(TokenKind.Identifier, "imported name")
+        while s.match_kind(TokenKind.Comma) {
+            s.expect(TokenKind.Identifier, "imported name")
+        }
+    }
+    s.expect(TokenKind.RBrace, "'}' to close import name list")
+}
+
 define parse(tokens: List) -> List {
     s := ParserState(tokens)
     out := List()
     while s.check(TokenKind.EofToken) == false {
         t: Token := s.peek()
+        if t.kind == TokenKind.From {
+            _skip_import(s)
+            continue
+        }
         if t.kind == TokenKind.Define {
             out.append(Func(_parse_function_decl(s)))
         } elif t.kind == TokenKind.Struct {

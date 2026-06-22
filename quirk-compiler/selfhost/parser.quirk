@@ -41,10 +41,34 @@ from .ast use { StructField, StructDecl, EnumDecl, MatchArm, Variant, UnionDecl 
 struct ParserState {
     tokens: List   // List<Token>
     pos: Int       // index into tokens
+    // Error-accumulation fields. Previously the parser used
+    // `throw ValueError(...)` for unrecoverable parse errors,
+    // but the self-hosted compiler doesn't support exception
+    // handling. Instead we set `had_error` + record the first
+    // message; every helper short-circuits on `had_error` and
+    // returns a sentinel so parsing peters out gracefully.
+    // The top-level `parse()` prints the error message and
+    // returns whatever (likely-partial) decls it managed to
+    // build before the fault.
+    had_error: Bool
+    error_msg: String
 
     define __init(self, tokens: List) -> void {
         self.tokens = tokens
         self.pos = 0
+        self.had_error = false
+        self.error_msg = ""
+    }
+
+    // Record a parse error and stop accepting new ones. The
+    // first error wins — diagnostics list-style would be
+    // nicer but `had_error`/`error_msg` is enough for the
+    // bootstrap.
+    define fail(self, msg: String) -> void {
+        if self.had_error == false {
+            self.had_error = true
+            self.error_msg = msg
+        }
     }
 
     define peek(self) -> Token {
@@ -83,7 +107,12 @@ struct ParserState {
         if t.kind != kind {
             line_s := t.line.str()
             col_s := t.col.str()
-            throw ValueError("Expected " + what + " at line " + line_s + ":" + col_s + ", got '" + t.value + "'")
+            self.fail("Expected " + what + " at line " + line_s + ":" + col_s + ", got '" + t.value + "'")
+            // Advance anyway so the surrounding loop makes
+            // progress; otherwise unrecoverable errors would
+            // spin forever. The returned token is the (wrong)
+            // one we just consumed.
+            return self.advance()
         }
         return self.advance()
     }
@@ -165,7 +194,10 @@ define _parse_primary(s: ParserState) -> Expr {
         s.expect(TokenKind.RBracket, "']' to close list literal")
         return ListLit(elems)
     }
-    throw ValueError("Expected expression at line " + t.line.str() + ":" + t.col.str() + ", got '" + t.value + "'")
+    s.fail("Expected expression at line " + t.line.str() + ":" + t.col.str() + ", got '" + t.value + "'")
+    // Sentinel: a zero IntLit. Caller will check `s.had_error`
+    // and abandon further parsing of the surrounding expr.
+    return IntLit(0)
 }
 
 ---
@@ -363,7 +395,8 @@ define _parse_stmt(s: ParserState) -> Stmt {
             case Ident as id => return Assign(id.name, rhs)
             case FieldGet as fg => return FieldSet(fg.obj, fg.name, rhs)
             case _ => {
-                throw ValueError("invalid assignment target at line " + t.line.str() + ":" + t.col.str())
+                s.fail("invalid assignment target at line " + t.line.str() + ":" + t.col.str())
+                return ExprStmt(lhs)
             }
         }
     }
@@ -443,6 +476,7 @@ define _parse_block(s: ParserState) -> List {
     s.expect(TokenKind.LBrace, "'{' to open block")
     stmts := List()
     while s.check(TokenKind.RBrace) == false {
+        if s.had_error { break }
         stmts.append(_parse_stmt(s))
         // Optional `;` separator between statements. Quirk's
         // surface syntax is whitespace-separated, but the
@@ -675,8 +709,17 @@ define parse(tokens: List) -> List {
         } elif t.kind == TokenKind.TypeKw {
             out.append(UnionTL(_parse_union_decl(s)))
         } else {
-            throw ValueError("Unexpected top-level token '" + t.value + "' at line " + t.line.str() + ":" + t.col.str())
+            s.fail("Unexpected top-level token '" + t.value + "' at line " + t.line.str() + ":" + t.col.str())
         }
+        if s.had_error { break }
+    }
+    if s.had_error {
+        // Surface the first error to the driver. Going to
+        // stdout (not stderr) matches the SEMA-error reporting
+        // shape — the test harness greps for "PARSE FAILED" /
+        // "SEMA FAILED" prefixes.
+        print("PARSE FAILED:")
+        print("  " + s.error_msg)
     }
     return out
 }

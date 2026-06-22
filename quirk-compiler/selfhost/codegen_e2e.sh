@@ -63,6 +63,13 @@ EOF
         rm -f "$ir_path" "$driver"
         return
     fi
+    if grep -q "PARSE FAILED" "$ir_path"; then
+        echo "FAIL  $label  (parse rejected)"
+        cat "$ir_path"
+        fails+=1
+        rm -f "$ir_path" "$driver"
+        return
+    fi
     "$LLI" "$ir_path"
     local got=$?
     if [ "$got" -eq "$expected" ]; then
@@ -114,6 +121,13 @@ EOF
     rm -f "$driver"
     if grep -q "SEMA FAILED" "$ir_path"; then
         echo "FAIL  $label  (sema rejected)"
+        cat "$ir_path"
+        fails+=1
+        rm -f "$ir_path"
+        return
+    fi
+    if grep -q "PARSE FAILED" "$ir_path"; then
+        echo "FAIL  $label  (parse rejected)"
         cat "$ir_path"
         fails+=1
         rm -f "$ir_path"

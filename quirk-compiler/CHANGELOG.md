@@ -5,6 +5,52 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.29] — 2026-06-22
+
+### Self-hosting Phase 4.25: parser.quirk rewritten to error accumulation
+
+`throw ValueError(...)` had four sites in [parser.quirk](selfhost/parser.quirk):
+the `s.expect` fallthrough, `_parse_primary`'s no-expression
+case, the assignment-target dispatch, and the top-level
+unknown-token. All four blocked self-hosting because the
+self-hosted compiler doesn't implement exception handling.
+Rather than implementing landingpad-based exceptions
+(complex), this phase rewrites parser.quirk to accumulate
+errors via state instead of throwing.
+
+**`ParserState` gains `had_error: Bool` + `error_msg: String`.**
+The new `fail(msg)` method records the first error and stops
+accepting further ones. Each previously-throwing site sets
+the flag and returns a sentinel — `s.expect` returns the
+wrong token (advancing past it so loops make forward
+progress), `_parse_primary` returns `IntLit(0)`, the
+assignment-target dispatch returns an `ExprStmt` of the LHS,
+the top-level loop just breaks.
+
+**Forward progress on error.** `s.expect` now always
+advances even when the token doesn't match — without this,
+the top-level `parse()` loop would spin forever on a
+malformed token. The `_parse_block` loop also breaks on
+`had_error` for safety.
+
+**Diagnostic surfacing.** `parse()` checks `had_error` at
+the end and prints `PARSE FAILED:` followed by the message
+to stdout — matching the existing `SEMA FAILED:` convention
+the test harness already greps for. The e2e harness gained
+a parallel `PARSE FAILED` check so a parse error fails the
+case cleanly with `(parse rejected)` rather than producing
+empty IR + lli's "Symbols not found: main" cascade.
+
+All 133 e2e cases still pass — the rewrite is invisible
+to the working source the harness exercises. A manual probe
+confirms the failure path: feeding `define main() -> Int
+{ return @ }` produces `PARSE FAILED:\n  Expected expression
+at line 1:31, got '@'`.
+
+Phase 4.x left: file I/O + multi-file concatenate-and-compile
+driver. Then Phase 5 — point the self-hosted compiler at
+the selfhost source files and run.
+
 ## [4.0.0-alpha.28] — 2026-06-22
 
 ### Self-hosting Phase 4.24: string escape sequences

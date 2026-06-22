@@ -5,6 +5,77 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.4] — 2026-06-22
+
+### Self-hosting Phase 4: codegen emits LLVM IR + runs via lli-14
+
+End-to-end works: Quirk source → tokens → AST → typed AST →
+LLVM IR text → `lli-14` interprets → correct exit code.
+
+What landed:
+
+  - [`selfhost/codegen.quirk`](selfhost/codegen.quirk) — text
+    LLVM IR emitter. `FnCG` struct tracks per-function state
+    (output buffer, monotonic SSA counter, locals map).
+    `emit_module` writes the module header + every function's
+    IR body.
+
+  - [`selfhost/codegen_test.quirk`](selfhost/codegen_test.quirk) —
+    prints the emitted IR for four programs (literal return,
+    arithmetic with precedence, vars + reassign, cross-function
+    call). Useful for eyeballing the IR shape.
+
+  - [`selfhost/codegen_e2e.sh`](selfhost/codegen_e2e.sh) — the
+    real verification. For each case, writes a per-case driver
+    .quirk file inside selfhost/ (relative imports require it
+    to live alongside the other selfhost modules), runs it to
+    produce a .ll file, pipes through `lli-14`, asserts the
+    process exit code matches the expected value. 4/4 pass:
+
+    ```
+    ok    return literal  (exit=42)
+    ok    arithmetic      (exit=23)    // 3 + 4 * 5 with precedence
+    ok    vars + reassign (exit=42)    // n := 10; n = n * 4; return n + 2
+    ok    call            (exit=42)    // double_(21)
+    ```
+
+What's covered:
+
+  - `define name(p1: Int, ...) -> Int { ... }` (Int-typed only)
+  - Integer literals, identifiers, function calls
+  - `+`, `-`, `*`, `/` lower to `add nsw` / `sub nsw` / `mul nsw`
+    / `sdiv` on `i32`
+  - `:=` declares a local; `=` rebinds. SSA-style — no allocas
+    yet, the locals map just tracks the current SSA reg per
+    Quirk-name (works while there's no control flow)
+  - `return <expr>`
+
+What's deferred to Phase 4.x:
+
+  - String type (needs global constant tables + `i8*` threading
+    + `printf`/`puts` declarations)
+  - Bool / Double / null (need their LLVM widths + boxing)
+  - Control flow (`if` / `while` / `for` → basic-block emission
+    + φ nodes at merge points)
+  - Struct / Tuple / List / Map (need GC allocator wiring)
+
+Bug surfaced in passing — `sys.argv` doesn't carry CLI args
+through to the script (driver invocation produced empty argv
+even when args were passed). Worked around by writing per-case
+driver .quirk files instead of a single argv-driven shim;
+real sys.argv fix queued.
+
+Wired into `make test-selfhost`.
+
+Phase 5 (bootstrap — Quirk compiler compiles itself, output
+byte-identical to the C++ build) is the remaining milestone.
+Realistically that's a long road from Phase 4's Int-only
+arithmetic: the actual Quirk compiler uses strings, lists,
+structs, control flow, generics, and ~3000 lines of source
+across compiler + runtime. Phase 4.x will iteratively expand
+the codegen's coverage until the bootstrap test can
+plausibly run.
+
 ## [4.0.0-alpha.3] — 2026-06-22
 
 ### Self-hosting Phase 3: sema in Quirk

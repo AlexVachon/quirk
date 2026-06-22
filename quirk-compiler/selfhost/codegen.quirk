@@ -1,0 +1,234 @@
+---
+Quirk codegen in Quirk — Phase 4 of self-hosting.
+
+Walks the typed AST (parser output + sema validation upstream)
+and emits LLVM IR as text. The result is a `.ll` string that
+`lli-14` can execute directly, or `llc-14 → clang` can lower to
+a native binary.
+
+Why text IR instead of FFI'ing to LLVM's C API:
+
+  - The C API has hundreds of entry points and a brittle ownership
+    model. Binding all of it from Quirk would be larger than the
+    codegen itself.
+  - Text IR is human-readable, so diffing the Quirk-emitted output
+    against the C++ compiler's `--emit-ir` output is the natural
+    bootstrap check.
+  - Rust + Swift both started here. We can graduate to JIT/FFI
+    later when there's a real perf reason.
+
+Phase 4 coverage:
+
+  - `define name(p1: Int, p2: Int, ...) -> Int { ... }`
+  - Integer literals, identifiers, function calls
+  - `+`, `-`, `*`, `/` on Int (signed)
+  - `:=` and `=` for Int-typed locals (SSA-style — no allocas yet)
+  - `return <expr>`
+
+Deferred:
+
+  - String type (needs global constants + i8* threading)
+  - Bool / Double / null
+  - Control flow (if/while/for → basic-block emission + φ nodes)
+  - Struct / Tuple / List / Map types
+---
+
+from .ast use { Expr, Stmt, Param, FunctionDecl, TopLevel }
+from .ast use { IntLit, StringLit, BoolLit, NullLit, Ident, BinOp, Call }
+from .ast use { Return, ExprStmt, VarDecl, Assign, Func }
+
+---
+Codegen state per-function. `out` accumulates the IR text;
+`next_reg` is the monotonic SSA counter; `locals` maps Quirk
+variable names to their current SSA register name (e.g. `x` →
+`%5`). Parameters land here too at function entry.
+---
+struct FnCG {
+    out: String
+    next_reg: Int
+    locals: Map
+
+    define __init(self) -> void {
+        self.out = ""
+        self.next_reg = 0
+        self.locals = Map()
+    }
+
+    define fresh(self) -> String {
+        r := "%" + self.next_reg.str()
+        self.next_reg = self.next_reg + 1
+        return r
+    }
+
+    define emit(self, line: String) -> void {
+        self.out = self.out + "  " + line + "\n"
+    }
+}
+
+// -----------------------------------------------------------------
+// Expression codegen — returns the SSA reg/literal holding the value.
+// -----------------------------------------------------------------
+
+define _gen_expr(cg: FnCG, e: Expr) -> String {
+    match e {
+        case IntLit as lit => {
+            // Literal flows inline as `i32 N` at the use site.
+            // Returning the bare number works because all uses
+            // (binop operands, return value, call args) accept a
+            // constant in place of an SSA register.
+            return lit.value.str()
+        }
+        case Ident as id => {
+            if cg.locals.has(id.name) {
+                holder: _Str := cg.locals.get(id.name)
+                return holder.s
+            }
+            // Should have been caught by Sema; surface as a
+            // diagnostic comment in the IR so a broken pipeline
+            // is at least readable.
+            return "<undef:" + id.name + ">"
+        }
+        case BinOp as b => {
+            l := _gen_expr(cg, b.left)
+            r := _gen_expr(cg, b.right)
+            instr := "add"
+            if b.op == "-" { instr = "sub" }
+            if b.op == "*" { instr = "mul" }
+            if b.op == "/" { instr = "sdiv" }
+            reg := cg.fresh()
+            cg.emit(reg + " = " + instr + " nsw i32 " + l + ", " + r)
+            return reg
+        }
+        case Call as c => {
+            name := ""
+            match c.callee {
+                case Ident as id => name = id.name
+                case _ => name = "<bad-callee>"
+            }
+            // Emit each arg first, then the call.
+            args := List()
+            i := 0
+            while i < c.args.length() {
+                ai: Expr := c.args.__get(i)
+                args.append(_gen_expr(cg, ai))
+                i = i + 1
+            }
+            // Build "(i32 %a, i32 %b, ...)"
+            sig := "("
+            j := 0
+            while j < args.length() {
+                if j > 0 { sig = sig + ", " }
+                av: String := args.__get(j)
+                sig = sig + "i32 " + av
+                j = j + 1
+            }
+            sig = sig + ")"
+            reg := cg.fresh()
+            cg.emit(reg + " = call i32 @" + name + sig)
+            return reg
+        }
+        case _ => return "0"
+    }
+}
+
+// Map-friendly wrapper for String values (same pattern as
+// _TyHolder in sema.quirk — tagged-union values don't survive
+// raw Map slot storage yet).
+struct _Str {
+    s: String
+    define __init(self, s: String) -> void { self.s = s }
+}
+
+// -----------------------------------------------------------------
+// Statement codegen
+// -----------------------------------------------------------------
+
+define _gen_stmt(cg: FnCG, st: Stmt) -> void {
+    match st {
+        case Return as r => {
+            v := _gen_expr(cg, r.value)
+            cg.emit("ret i32 " + v)
+        }
+        case ExprStmt as es => {
+            _gen_expr(cg, es.expr)
+        }
+        case VarDecl as v => {
+            rhs := _gen_expr(cg, v.value)
+            // SSA-style: bind the variable name to whichever
+            // register/literal _gen_expr produced. No alloca
+            // needed while Phase 4 has no control flow.
+            cg.locals.put(v.name, _Str(rhs))
+        }
+        case Assign as a => {
+            rhs := _gen_expr(cg, a.value)
+            cg.locals.put(a.name, _Str(rhs))
+        }
+        case _ => {}
+    }
+}
+
+// -----------------------------------------------------------------
+// Function codegen
+// -----------------------------------------------------------------
+
+define _gen_function(fdecl: FunctionDecl) -> String {
+    cg := FnCG()
+
+    // Build the param signature `i32 %x, i32 %y` and bind each
+    // parameter as a local mapping to its SSA name.
+    sig := ""
+    i := 0
+    while i < fdecl.params.length() {
+        p: Param := fdecl.params.__get(i)
+        if i > 0 { sig = sig + ", " }
+        // Parameter SSA names match the source name with a `%`
+        // prefix. LLVM disallows reusing them once bound, but
+        // we never reuse since fresh() uses the integer counter.
+        reg := "%" + p.name
+        sig = sig + "i32 " + reg
+        cg.locals.put(p.name, _Str(reg))
+        i = i + 1
+    }
+
+    header := "define i32 @" + fdecl.name + "(" + sig + ") {\nentry:\n"
+    // Body.
+    j := 0
+    while j < fdecl.body.length() {
+        st: Stmt := fdecl.body.__get(j)
+        _gen_stmt(cg, st)
+        j = j + 1
+    }
+    // Functions without an explicit return at the end fall
+    // through here; emit `ret i32 0` so the IR is well-formed.
+    // Phase 5 will tighten this to the function's declared
+    // return type once Sema's typed-AST output is available
+    // upstream.
+    if cg.out.length() == 0 or cg.out.contains("ret i32") == false {
+        cg.emit("ret i32 0")
+    }
+    return header + cg.out + "}\n"
+}
+
+---
+Emit the full IR module for a list of top-level declarations.
+Includes the LLVM module header and any helper declarations the
+emitted bodies reference (none today — Phase 4.1 will add
+`declare i32 @printf(i8*, ...)` etc. when print/string lands).
+---
+define emit_module(decls: List) -> String {
+    out := "; ModuleID = 'selfhost'\n"
+    out = out + "target triple = \"x86_64-pc-linux-gnu\"\n\n"
+    i := 0
+    while i < decls.length() {
+        d: TopLevel := decls.__get(i)
+        match d {
+            case Func as f => {
+                fd: FunctionDecl := f.decl
+                out = out + _gen_function(fd) + "\n"
+            }
+            case _ => {}
+        }
+        i = i + 1
+    }
+    return out
+}

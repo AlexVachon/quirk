@@ -1,0 +1,58 @@
+---
+Phase 4 codegen smoke. Lex + parse + check + emit IR for a
+few small programs, write each to `/tmp/selfhost_*.ll`, then
+print the IR so the surrounding shell wrapper can pipe it to
+`lli-14` and assert the exit code.
+
+We deliberately keep the test programs Int-returning so `lli`
+can use the `main` function's return value as the process
+exit code (an LLVM convention).
+
+Each example contains a `main() -> Int { ... }` that exercises
+the feature under test and returns the value we expect to see
+in `$?` afterwards.
+---
+
+from .lexer use { tokenize }
+from .parser use { parse }
+from .sema use { check }
+from .codegen use { emit_module }
+
+define run_case(label: String, src: String, expected_exit: Int) -> void {
+    print("--- " + label + " (expect exit " + expected_exit.str() + ") ---")
+    tokens := tokenize(src)
+    decls := parse(tokens)
+    errors := check(decls)
+    if errors.length() > 0 {
+        print("SEMA FAILED:")
+        k := 0
+        while k < errors.length() {
+            e: String := errors.__get(k)
+            print("  " + e)
+            k = k + 1
+        }
+        return
+    }
+    ir := emit_module(decls)
+    print(ir)
+}
+
+// Case 1: return a literal. lli should exit with 42.
+run_case("return literal",
+    "define main() -> Int { return 42 }",
+    42)
+
+// Case 2: arithmetic. (3 + 4) * 5 = 35.
+run_case("arithmetic",
+    "define main() -> Int { return 3 + 4 * 5 }",
+    23)
+
+// Case 3: variable then return. n := 10; n = n * 4; return n + 2 = 42.
+run_case("vars + reassign",
+    "define main() -> Int { n := 10; n = n * 4; return n + 2 }",
+    42)
+
+// Case 4: cross-function call.
+run_case("call",
+    "define double_(x: Int) -> Int { return x * 2 }\ndefine main() -> Int { return double_(21) }",
+    42)

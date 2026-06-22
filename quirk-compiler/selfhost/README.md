@@ -20,7 +20,7 @@ toolchain dependency from anyone wanting to hack on the compiler.
 |  1    | Lexer in Quirk — tokenize `.quirk` source | landed (v4.0.0-alpha.1) |
 |  2    | Parser in Quirk — AST construction        | landed (v4.0.0-alpha.2) |
 |  3    | Sema in Quirk — type-check + transforms   | landed (v4.0.0-alpha.3) |
-|  4    | Codegen — emit LLVM IR as text + shell to `llc` | not started |
+|  4    | Codegen — emit LLVM IR as text + run via `lli` | landed (v4.0.0-alpha.4) |
 |  5    | Bootstrap — Quirk compiler compiles itself, byte-identical | not started |
 
 The Codegen phase deliberately targets *text-form* LLVM IR (`.ll`)

@@ -123,6 +123,9 @@ test-selfhost: all
 	@echo ""
 	@echo "--- Phase 3: sema ---"
 	QUIRK_HOME=$(shell pwd) ./$(TARGET) --no-aot --no-cache selfhost/sema_test.quirk
+	@echo ""
+	@echo "--- Phase 4: codegen + lli ---"
+	bash selfhost/codegen_e2e.sh
 
 # --- STDLIB BOOTSTRAP -------------------------------------------------------
 # Fetch the 21 canonical stdlib repos into ./packages/. Required for:

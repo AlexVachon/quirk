@@ -39,6 +39,7 @@ toolchain dependency from anyone wanting to hack on the compiler.
 |  4.16 | Primitive `.str()` — Int / Bool / Double → String | landed (v4.0.0-alpha.20) |
 |  4.17 | String methods (`.substring`, `.startswith`, `.endswith`, `.to_int`) + String `==` / `!=` | landed (v4.0.0-alpha.21) |
 |  4.18 | Enums — `enum Name { A; B; C }` + `Name.Variant` (ordinal lowering) | landed (v4.0.0-alpha.22) |
+|  4.19 | Tagged unions + `match` — `type T = A(...) \| B(...)` with payload binding | landed (v4.0.0-alpha.23) |
 |  5    | Bootstrap — Quirk compiler compiles itself, byte-identical | not started |
 
 The Codegen phase deliberately targets *text-form* LLVM IR (`.ll`)

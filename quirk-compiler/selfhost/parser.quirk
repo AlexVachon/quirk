@@ -35,8 +35,8 @@ worked around in tokens.quirk's `__str` impl.
 from .tokens use { TokenKind, Token }
 from .ast use { Expr, Stmt, Param, FunctionDecl, TopLevel }
 from .ast use { IntLit, FloatLit, StringLit, BoolLit, NullLit, Ident, UnaryOp, BinOp, Call, FieldGet, ListLit, Index }
-from .ast use { Return, ExprStmt, VarDecl, Assign, FieldSet, If, While, Func, StructTL, EnumTL }
-from .ast use { StructField, StructDecl, EnumDecl }
+from .ast use { Return, ExprStmt, VarDecl, Assign, FieldSet, If, While, Match, Func, StructTL, EnumTL, UnionTL }
+from .ast use { StructField, StructDecl, EnumDecl, MatchArm, Variant, UnionDecl }
 
 struct ParserState {
     tokens: List   // List<Token>
@@ -293,6 +293,39 @@ define _parse_stmt(s: ParserState) -> Stmt {
         body := _parse_block(s)
         return While(cond, body)
     }
+    if t.kind == TokenKind.Match {
+        s.advance()
+        scrutinee := _parse_expr(s)
+        s.expect(TokenKind.LBrace, "'{' to open match body")
+        arms := List()
+        while s.check(TokenKind.RBrace) == false {
+            s.expect(TokenKind.Case, "'case' to open match arm")
+            // Pattern: either `_` (wildcard) or an identifier
+            // (variant name). `_` lexes as a plain Identifier
+            // with value "_" — distinguish by value, not kind.
+            ptok: Token := s.expect(TokenKind.Identifier, "variant name or '_'")
+            pattern := ""
+            if ptok.value != "_" { pattern = ptok.value }
+            // `as <binder>` is optional. Binder defaults to "_"
+            // (meaning the arm body doesn't bind anything).
+            binder := "_"
+            if s.match_kind(TokenKind.As) {
+                btok: Token := s.expect(TokenKind.Identifier, "binder name after 'as'")
+                binder = btok.value
+            }
+            s.expect(TokenKind.FatArrow, "'=>' after match-arm pattern")
+            // Body is either a `{ ... }` block or a single statement.
+            arm_body := List()
+            if s.check(TokenKind.LBrace) {
+                arm_body = _parse_block(s)
+            } else {
+                arm_body.append(_parse_stmt(s))
+            }
+            arms.append(MatchArm(pattern, binder, arm_body))
+        }
+        s.expect(TokenKind.RBrace, "'}' to close match body")
+        return Match(scrutinee, arms)
+    }
 
     // Look-ahead: `name :=` / `name : Type :=` are var-decl
     // shapes that require an identifier as the LHS. The
@@ -493,6 +526,41 @@ define _parse_struct_decl(s: ParserState) -> StructDecl {
     return StructDecl(name, fields)
 }
 
+// Parse a single tagged-union declaration:
+//   type Name = V1(f: T1, g: T2) | V2 | V3()
+// Variants are separated by `|`. Each variant is an
+// identifier optionally followed by a parenthesized field
+// list (empty `()` allowed, same as bare identifier).
+define _parse_union_decl(s: ParserState) -> UnionDecl {
+    s.expect(TokenKind.TypeKw, "'type'")
+    name := s.expect(TokenKind.Identifier, "union name").value
+    s.expect(TokenKind.Assign, "'=' after union name")
+    variants := List()
+    keep_going := true
+    while keep_going {
+        vname := s.expect(TokenKind.Identifier, "variant name").value
+        vfields := List()
+        if s.match_kind(TokenKind.LParen) {
+            if s.check(TokenKind.RParen) == false {
+                fn1 := s.expect(TokenKind.Identifier, "field name").value
+                s.expect(TokenKind.Colon, "':' after field name")
+                ft1 := s.expect(TokenKind.Identifier, "field type").value
+                vfields.append(StructField(fn1, ft1))
+                while s.match_kind(TokenKind.Comma) {
+                    fnn := s.expect(TokenKind.Identifier, "field name").value
+                    s.expect(TokenKind.Colon, "':' after field name")
+                    ftn := s.expect(TokenKind.Identifier, "field type").value
+                    vfields.append(StructField(fnn, ftn))
+                }
+            }
+            s.expect(TokenKind.RParen, "')' to close variant fields")
+        }
+        variants.append(Variant(vname, vfields))
+        if s.match_kind(TokenKind.Pipe) == false { keep_going = false }
+    }
+    return UnionDecl(name, variants)
+}
+
 // Parse a single `enum Name { Variant1; Variant2; ... }` block.
 // Variants are bare identifiers separated by `;` or newlines;
 // trailing separators are tolerated. Phase 4.18 only supports
@@ -522,6 +590,8 @@ define parse(tokens: List) -> List {
             out.append(StructTL(_parse_struct_decl(s)))
         } elif t.kind == TokenKind.Enum {
             out.append(EnumTL(_parse_enum_decl(s)))
+        } elif t.kind == TokenKind.TypeKw {
+            out.append(UnionTL(_parse_union_decl(s)))
         } else {
             throw ValueError("Unexpected top-level token '" + t.value + "' at line " + t.line.str() + ":" + t.col.str())
         }

@@ -25,6 +25,7 @@ type Ty =
     | TAny()
     | TStruct(name: String)
     | TEnum(name: String)
+    | TUnion(name: String)
     | TList()
     | TError(msg: String)
 
@@ -43,6 +44,7 @@ define ty_to_string(t: Ty) -> String {
         case TAny as _    => return "Any"
         case TStruct as s => return s.name
         case TEnum as e   => return e.name
+        case TUnion as u  => return u.name
         case TList as _   => return "List"
         case TError as e  => return "<error: " + e.msg + ">"
         case _            => return "?"

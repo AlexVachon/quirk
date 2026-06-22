@@ -27,9 +27,9 @@ Things deferred to Phase 3.x:
 
 from .ast use { Expr, Stmt, Param, FunctionDecl, TopLevel }
 from .ast use { IntLit, FloatLit, StringLit, BoolLit, NullLit, Ident, UnaryOp, BinOp, Call, FieldGet, ListLit, Index }
-from .ast use { Return, ExprStmt, VarDecl, Assign, FieldSet, If, While, Func, StructTL, EnumTL }
-from .ast use { StructField, StructDecl, EnumDecl }
-from .types use { Ty, TInt, TDouble, TString, TBool, TVoid, TAny, TStruct, TEnum, TList, TError }
+from .ast use { Return, ExprStmt, VarDecl, Assign, FieldSet, If, While, Match, Func, StructTL, EnumTL, UnionTL }
+from .ast use { StructField, StructDecl, EnumDecl, MatchArm, Variant, UnionDecl }
+from .types use { Ty, TInt, TDouble, TString, TBool, TVoid, TAny, TStruct, TEnum, TUnion, TList, TError }
 from .types use { ty_to_string, ty_from_annot, ty_compatible }
 
 struct Sema {
@@ -45,6 +45,14 @@ struct Sema {
     // `TokenKind.Identifier` expressions (FieldGet whose obj is
     // an Ident matching an enum name) resolve to a TEnum value.
     enums: Map
+    // name → UnionDecl. Each variant's name maps separately
+    // into `variants` so constructor calls (`V1(args)`) and
+    // match-arm patterns can resolve.
+    unions: Map
+    // variantName → _VariantInfo. Tells `_check_call` whether
+    // a bare identifier is a variant constructor and gives the
+    // union it belongs to + the variant's declared fields.
+    variants: Map
     // structName → Map<methodName, FunctionDecl>. Populated by
     // the same pre-pass; method-call dispatch consults this
     // before falling back to builtins.
@@ -61,6 +69,8 @@ struct Sema {
         self.functions = Map()
         self.structs = Map()
         self.enums = Map()
+        self.unions = Map()
+        self.variants = Map()
         self.struct_methods = Map()
         self.scopes = List()
         self.errors = List()
@@ -122,7 +132,24 @@ struct Sema {
         if sname != "" and self.enums.has(sname) {
             return TEnum(sname)
         }
+        if sname != "" and self.unions.has(sname) {
+            return TUnion(sname)
+        }
         return t
+    }
+}
+
+// Variant metadata stashed in `s.variants` so a bare identifier
+// like `IntLit` resolves to (a) its parent union and (b) the
+// payload fields the constructor takes. Match-arm field lookup
+// also consults this — the binder's static type is essentially
+// "the variant's struct shape" rather than the whole union.
+struct _VariantInfo {
+    union_name: String
+    fields: List
+    define __init(self, union_name: String, fields: List) -> void {
+        self.union_name = union_name
+        self.fields = fields
     }
 }
 
@@ -268,6 +295,17 @@ define _check_binop(s: Sema, b: BinOp) -> Ty {
     return TError("unsupported op")
 }
 
+define _check_variant_ctor(s: Sema, name: String, args: List) -> Ty {
+    info: _VariantInfo := s.variants.get(name)
+    ai := 0
+    while ai < args.length() {
+        aexpr: Expr := args.__get(ai)
+        _check_expr(s, aexpr)
+        ai = ai + 1
+    }
+    return TUnion(info.union_name)
+}
+
 define _check_call(s: Sema, c: Call) -> Ty {
     // Method-call form `obj.method(args)` parses as
     // Call(FieldGet(obj, method), args). Phase 4.13 supports
@@ -323,6 +361,15 @@ define _check_call(s: Sema, c: Call) -> Ty {
             return TError("len type")
         }
         return TInt()
+    }
+    // Variant constructor: `V1(a, b, ...)` produces TUnion(T)
+    // where V1 is a registered variant. Extracted into its own
+    // helper because _check_call already recurses into
+    // _check_expr in multiple branches (print / len / struct
+    // ctor / function call) and stacking a fourth inner-
+    // recursion site here tripped the self-compiler.
+    if s.variants.has(name) {
+        return _check_variant_ctor(s, name, c.args)
     }
     // Struct constructor: `Foo(a, b, ...)` produces TStruct("Foo").
     // We still type-check each argument expression individually
@@ -619,6 +666,61 @@ define _check_field_set(s: Sema, fs: FieldSet) -> void {
     s.report("struct '" + sname + "' has no field '" + fs.name + "'")
 }
 
+// Type-check a `match` statement. The scrutinee must be a
+// known tagged union; each arm's pattern must be either `_`
+// (wildcard) or a variant of that union. Inside the arm body,
+// the binder (when not `_`) is typed via a synthetic struct
+// shape — fields of the variant become accessible as
+// `binder.field`. Reports diagnostics for unknown variants,
+// arm patterns from the wrong union, and bad scrutinee types.
+define _check_match(s: Sema, m: Match, ret: Ty) -> void {
+    scrut_ty: Ty := _check_expr(s, m.scrutinee)
+    uname := ""
+    is_err := false
+    match scrut_ty {
+        case TUnion as tu => uname = tu.name
+        case TError as _ => is_err = true
+        case _ => {}
+    }
+    if is_err { return }
+    if uname == "" {
+        s.report("'match' scrutinee must be a tagged-union value, got '" +
+                 ty_to_string(scrut_ty) + "'")
+        return
+    }
+    i := 0
+    while i < m.arms.length() {
+        arm: MatchArm := m.arms.__get(i)
+        s.push_scope()
+        if arm.pattern != "" {
+            // Variant arm — verify the variant belongs to this union.
+            if s.variants.has(arm.pattern) == false {
+                s.report("unknown variant '" + arm.pattern + "' in match")
+            } else {
+                vi: _VariantInfo := s.variants.get(arm.pattern)
+                if vi.union_name != uname {
+                    s.report("variant '" + arm.pattern +
+                             "' is not part of union '" + uname + "'")
+                }
+                // Bind the arm-local name as a synthetic struct
+                // (registered in pre-pass) so `binder.field`
+                // resolves through normal field-access typing.
+                if arm.binder != "_" {
+                    s.define_local(arm.binder, TStruct(uname + "__" + arm.pattern))
+                }
+            }
+        }
+        j := 0
+        while j < arm.body.length() {
+            st: Stmt := arm.body.__get(j)
+            _check_stmt(s, st, ret)
+            j = j + 1
+        }
+        s.pop_scope()
+        i = i + 1
+    }
+}
+
 // -----------------------------------------------------------------
 // Statement typing
 // -----------------------------------------------------------------
@@ -727,6 +829,9 @@ define _check_stmt(s: Sema, st: Stmt, ret: Ty) -> void {
             }
             s.pop_scope()
         }
+        case Match as m => {
+            _check_match(s, m, ret)
+        }
         case _ => {}
     }
 }
@@ -776,9 +881,10 @@ define check(decls: List) -> List {
     // so a function defined above the struct it uses (via
     // `Foo(...)` constructor or `f.x` field access) still
     // type-checks.
-    // Sub-pass 1a: register type declarations (structs + enums)
-    // so that any subsequent resolve_ty call against a function
-    // ret_type or param type can find the right kind.
+    // Sub-pass 1a: register type declarations (structs + enums
+    // + unions + variants) so that any subsequent resolve_ty
+    // call against a function ret_type or param type can find
+    // the right kind.
     pi := 0
     while pi < decls.length() {
         d0: TopLevel := decls.__get(pi)
@@ -790,6 +896,31 @@ define check(decls: List) -> List {
             case EnumTL as et => {
                 ed: EnumDecl := et.decl
                 s.enums.put(ed.name, ed)
+            }
+            case UnionTL as ut => {
+                ud: UnionDecl := ut.decl
+                s.unions.put(ud.name, ud)
+                vi := 0
+                while vi < ud.variants.length() {
+                    v: Variant := ud.variants.__get(vi)
+                    s.variants.put(v.name, _VariantInfo(ud.name, v.fields))
+                    // Synthetic struct for the variant: `T__V`
+                    // with `__tag: Int` prepended to the user-
+                    // declared fields. Match-arm field access
+                    // (`binder.field`) routes through normal
+                    // struct-field lookup.
+                    syn_fields := List()
+                    syn_fields.append(StructField("__tag", "Int"))
+                    fi := 0
+                    while fi < v.fields.length() {
+                        f: StructField := v.fields.__get(fi)
+                        syn_fields.append(f)
+                        fi = fi + 1
+                    }
+                    s.structs.put(ud.name + "__" + v.name,
+                                  StructDecl(ud.name + "__" + v.name, syn_fields))
+                    vi = vi + 1
+                }
             }
             case _ => {}
         }

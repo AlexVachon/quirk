@@ -461,6 +461,55 @@ run "enum via param"        "enum Tag { On; Off } define accept(t: Tag) -> Int {
 run "enum returned by fn"   "enum Mode { Idle; Run; Stop } define pick() -> Mode { return Mode.Stop } define main() -> Int { m := pick(); if m == Mode.Stop { return 42 } return 0 }" 42
 run "enum field on struct"  "enum Kind { Alpha; Beta; Gamma } struct Box { k: Kind; n: Int } define main() -> Int { b := Box(Kind.Beta, 0); b.n = 41; if b.k == Kind.Beta { return b.n + 1 } return 0 }" 42
 
+# Phase 4.19: tagged unions + match statement. `type T = A | B(...)
+# | C(...)` declares a sum type; each variant's call produces a
+# union value (%struct.T* with the discriminator at offset 0);
+# `match` dispatches on the tag and binds the synthetic variant
+# struct in the arm body.
+run "tagged union basic match" \
+    "type E = IntLit(v: Int) | StrLit(s: String)
+define main() -> Int {
+    e := IntLit(42)
+    match e {
+        case IntLit as lit => return lit.v
+        case StrLit as _ => return 0
+        case _ => return 0
+    }
+}" \
+    42
+run "tagged union second variant" \
+    "type Shape = Square(side: Int) | Circle(r: Int)
+define area(s: Shape) -> Int {
+    match s {
+        case Square as sq => return sq.side * sq.side
+        case Circle as c => return c.r * 3
+        case _ => return 0
+    }
+}
+define main() -> Int { return area(Circle(14)) }" \
+    42
+run "tagged union nullary variant" \
+    "type Opt = Some(v: Int) | None
+define unwrap(o: Opt) -> Int {
+    match o {
+        case Some as s => return s.v
+        case None as _ => return -1
+        case _ => return -1
+    }
+}
+define main() -> Int { return unwrap(Some(42)) }" \
+    42
+run "tagged union via param + field write" \
+    "type Box = Wrap(n: Int)
+define bump(b: Box) -> Int {
+    match b {
+        case Wrap as w => return w.n + 1
+        case _ => return 0
+    }
+}
+define main() -> Int { return bump(Wrap(41)) }" \
+    42
+
 # Phase 4.3: string literals + print() via puts().
 run_with_stdout "print literal" \
     'define main() -> Int { print("hello"); return 42 }' \
@@ -484,4 +533,4 @@ if [ "$fails" -gt 0 ]; then
     exit 1
 fi
 echo ""
-echo "all 103/103 cases passed"
+echo "all 107/107 cases passed"

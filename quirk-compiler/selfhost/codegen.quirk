@@ -35,8 +35,8 @@ Deferred:
 
 from .ast use { Expr, Stmt, Param, FunctionDecl, TopLevel }
 from .ast use { IntLit, FloatLit, StringLit, BoolLit, NullLit, Ident, UnaryOp, BinOp, Call, FieldGet, ListLit, Index }
-from .ast use { Return, ExprStmt, VarDecl, Assign, FieldSet, If, While, Func, StructTL, EnumTL }
-from .ast use { StructField, StructDecl, EnumDecl }
+from .ast use { Return, ExprStmt, VarDecl, Assign, FieldSet, If, While, Match, Func, StructTL, EnumTL, UnionTL }
+from .ast use { StructField, StructDecl, EnumDecl, MatchArm, Variant, UnionDecl }
 
 ---
 Module-level codegen state. Right now its only job is the
@@ -73,14 +73,31 @@ define _q_ty_to_llvm(qty: String) -> String {
 }
 
 // Resolve any source-level type name to an LLVM type using
-// the module's struct + enum registries. A registered struct
-// `Foo` maps to `%struct.Foo*` (struct values are heap
-// pointers); a registered enum `K` maps to `i32` (the runtime
-// rep is the variant's ordinal).
+// the module's struct + enum + union registries. A registered
+// struct or union name `Foo` maps to `%struct.Foo*` (heap
+// pointer with the tag at offset 0 for unions); a registered
+// enum `K` maps to `i32` (the variant ordinal IS the value).
+// Union takes priority over struct because the pre-pass also
+// registers a struct named after the union for the shared
+// `{ tag }` prefix layout.
 define _resolve_ty(mod: ModuleCG, qty: String) -> String {
+    if mod.unions.has(qty)  { return "%struct." + qty + "*" }
     if mod.structs.has(qty) { return "%struct." + qty + "*" }
     if mod.enums.has(qty)   { return "i32" }
     return _q_ty_to_llvm(qty)
+}
+
+// Variant codegen metadata. `tag` is the discriminator
+// ordinal (variant's position in the union's variant list);
+// the synthetic `T__V` struct that holds the variant's
+// fields lives in `mod.structs` under that name.
+struct _VarCgInfo {
+    union_name: String
+    tag: Int
+    define __init(self, union_name: String, tag: Int) -> void {
+        self.union_name = union_name
+        self.tag = tag
+    }
 }
 
 // Function signature record kept in ModuleCG.sigs. `param_tys`
@@ -126,6 +143,13 @@ struct ModuleCG {
     // an i32 ordinal looked up by walking the variants list;
     // the enum-typed value at runtime is just the ordinal.
     enums: Map
+    // name → UnionDecl. Tagged unions: each variant becomes a
+    // synthetic struct `T__V` in `structs`; the union value is
+    // a `%struct.T*` heap pointer with the tag at offset 0.
+    unions: Map
+    // variantName → _VarCgInfo. Lets `_gen_call` recognise
+    // `V(args)` and route to the variant-ctor lowering.
+    variants: Map
 
     define __init(self) -> void {
         self.globals = List()
@@ -134,6 +158,8 @@ struct ModuleCG {
         self.sigs = Map()
         self.structs = Map()
         self.enums = Map()
+        self.unions = Map()
+        self.variants = Map()
     }
 
     // Register a struct's layout. The `%struct.Name = type {...}`
@@ -591,6 +617,15 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
                 cg.emit(reg + " = load i32, i32* " + gep)
                 return reg
             }
+            // Variant constructor: `V(args)` where V is a
+            // registered tagged-union variant. malloc the
+            // synthetic `T__V` struct, store tag at field 0
+            // and user args at fields 1..N, then bitcast back
+            // to `%struct.T*` so the caller sees a value of
+            // the union's base pointer type.
+            if cg.mod.variants.has(name) {
+                return _gen_variant_ctor(cg, name, c.args)
+            }
             // Struct constructor: `Foo(a, b, ...)`. malloc a
             // %struct.Foo, then GEP + store each arg into its
             // field slot. Sizing uses the GEP-of-null trick —
@@ -720,6 +755,12 @@ define _expr_static_ty(cg: FnCG, e: Expr) -> String {
             }
             // Builtin `len()` returns Int regardless of arg type.
             if cname == "len" { return "i32" }
+            // Variant constructor returns the union's base
+            // pointer type, not the synthetic per-variant struct.
+            if cg.mod.variants.has(cname) {
+                vci: _VarCgInfo := cg.mod.variants.get(cname)
+                return "%struct." + vci.union_name + "*"
+            }
             if cg.mod.structs.has(cname) {
                 return "%struct." + cname + "*"
             }
@@ -1172,6 +1213,149 @@ define _gen_list_lit(cg: FnCG, elems: List) -> String {
     return base
 }
 
+// Lower a `match` statement. Strategy:
+//   1. Evaluate the scrutinee once (`%struct.T*`).
+//   2. Load the tag (field 0) out of the union's base struct.
+//   3. For each variant arm: compare tag, conditional branch
+//      to an arm-body label or the next-check label.
+//   4. Wildcard arm (if present) catches the remaining flow.
+//   5. Each arm body bitcasts the scrutinee to the synthetic
+//      `%struct.T__V*` and stores it into a fresh local slot
+//      so `binder.field` works through normal field-access
+//      codegen. After the body, branch to the join label.
+// Sema has already validated that pattern names are real
+// variants of the scrutinee's union.
+define _gen_match(cg: FnCG, m: Match) -> void {
+    // Pre-resolve scrutinee type and value. Type is some
+    // `%struct.T*`; we only need T's name to look up the
+    // union's variant list for tag values.
+    scrut_ty := _expr_static_ty(cg, m.scrutinee)
+    scrut_reg := _gen_expr(cg, m.scrutinee)
+    uname := _strip_struct_ptr(scrut_ty)
+    udecl: UnionDecl := cg.mod.unions.get(uname)
+    // Load the tag once. All arms compare against this.
+    tag_gep := cg.fresh()
+    cg.emit(tag_gep + " = getelementptr inbounds %struct." + uname +
+            ", %struct." + uname + "* " + scrut_reg + ", i32 0, i32 0")
+    tag := cg.fresh()
+    cg.emit(tag + " = load i32, i32* " + tag_gep)
+    end_lbl := cg.fresh_label("match.end")
+    // Walk arms. For each variant arm, emit a tag check and
+    // a body block. Wildcard takes the final fall-through.
+    i := 0
+    while i < m.arms.length() {
+        arm: MatchArm := m.arms.__get(i)
+        body_lbl := cg.fresh_label("match.arm")
+        next_lbl := cg.fresh_label("match.next")
+        if arm.pattern == "" {
+            // Wildcard: unconditional jump into the body.
+            cg.emit("br label %" + body_lbl)
+        } else {
+            // Find the variant's tag ordinal.
+            tag_val := 0
+            vi := 0
+            while vi < udecl.variants.length() {
+                v: Variant := udecl.variants.__get(vi)
+                if v.name == arm.pattern { tag_val = vi }
+                vi = vi + 1
+            }
+            cmp := cg.fresh()
+            cg.emit(cmp + " = icmp eq i32 " + tag + ", " + tag_val.str())
+            cg.emit("br i1 " + cmp + ", label %" + body_lbl + ", label %" + next_lbl)
+        }
+        cg.emit_raw(body_lbl + ":")
+        // Bind the binder (if any): bitcast scrutinee to the
+        // synthetic variant struct and store into a slot. The
+        // user's `binder.field` codegen reaches it through the
+        // normal Ident → load → FieldGet path.
+        if arm.pattern != "" and arm.binder != "_" {
+            syn := uname + "__" + arm.pattern
+            syn_ty := "%struct." + syn + "*"
+            cast_reg := cg.fresh()
+            cg.emit(cast_reg + " = bitcast %struct." + uname + "* " + scrut_reg +
+                    " to " + syn_ty)
+            // _ensure_slot emits the alloca into the entry
+            // block (where it dominates every use) and seeds
+            // cg.locals so subsequent `Ident(binder)` reads
+            // route through the slot.
+            slot := _ensure_slot(cg, arm.binder, syn_ty)
+            cg.emit("store " + syn_ty + " " + cast_reg + ", " + syn_ty + "* " + slot.name)
+        }
+        // Arm body.
+        bi := 0
+        while bi < arm.body.length() {
+            bs: Stmt := arm.body.__get(bi)
+            _gen_stmt(cg, bs)
+            bi = bi + 1
+        }
+        // Fall through to the join label unless the body
+        // already terminated (return / unconditional br).
+        cg.emit("br label %" + end_lbl)
+        // Open the next-check block. If this was a wildcard,
+        // the next block is just unreachable scaffolding —
+        // emit a `br label %end_lbl` so LLVM doesn't complain.
+        cg.emit_raw(next_lbl + ":")
+        if arm.pattern == "" {
+            cg.emit("br label %" + end_lbl)
+        }
+        i = i + 1
+    }
+    // Default fall-through if no wildcard arm was provided —
+    // the last `next_lbl` block has no terminator yet.
+    cg.emit("br label %" + end_lbl)
+    cg.emit_raw(end_lbl + ":")
+}
+
+// Lower a variant constructor `V(args)`. Mallocs the
+// synthetic `T__V` struct (sized via GEP-of-null), stores
+// the discriminator tag at field 0 and user args at fields
+// 1..N, then bitcasts the result to `%struct.T*` so callers
+// see the union's base pointer type. Bitcast vs `_gen_struct_ctor`
+// is the only structural difference.
+define _gen_variant_ctor(cg: FnCG, name: String, ctor_args: List) -> String {
+    vci: _VarCgInfo := cg.mod.variants.get(name)
+    syn_name := vci.union_name + "__" + name
+    sd: _StructDef := cg.mod.structs.get(syn_name)
+    cg.mod.ensure_decl("malloc", "declare i8* @malloc(i64)")
+    // sizeof(%struct.T__V) via GEP-of-null.
+    size_gep := cg.fresh()
+    cg.emit(size_gep + " = getelementptr %struct." + syn_name +
+            ", %struct." + syn_name + "* null, i64 1")
+    size_i := cg.fresh()
+    cg.emit(size_i + " = ptrtoint %struct." + syn_name +
+            "* " + size_gep + " to i64")
+    raw := cg.fresh()
+    cg.emit(raw + " = call i8* @malloc(i64 " + size_i + ")")
+    obj := cg.fresh()
+    cg.emit(obj + " = bitcast i8* " + raw + " to %struct." + syn_name + "*")
+    // Tag at field 0.
+    tag_gep := cg.fresh()
+    cg.emit(tag_gep + " = getelementptr inbounds %struct." + syn_name +
+            ", %struct." + syn_name + "* " + obj +
+            ", i32 0, i32 0")
+    cg.emit("store i32 " + vci.tag.str() + ", i32* " + tag_gep)
+    // User fields at 1..N (synthetic struct's field_llvm_tys
+    // is [i32 (tag), ...userTys]).
+    ai := 0
+    while ai < ctor_args.length() {
+        aexpr: Expr := ctor_args.__get(ai)
+        aval := _gen_expr(cg, aexpr)
+        fty: String := sd.field_llvm_tys.__get(ai + 1)
+        fgep := cg.fresh()
+        cg.emit(fgep + " = getelementptr inbounds %struct." + syn_name +
+                ", %struct." + syn_name + "* " + obj +
+                ", i32 0, i32 " + (ai + 1).str())
+        cg.emit("store " + fty + " " + aval + ", " + fty + "* " + fgep)
+        ai = ai + 1
+    }
+    // Bitcast to the union's base pointer type so external
+    // callers see `%struct.T*`.
+    upcast := cg.fresh()
+    cg.emit(upcast + " = bitcast %struct." + syn_name + "* " + obj +
+            " to %struct." + vci.union_name + "*")
+    return upcast
+}
+
 // Lower a field assignment `obj.name = value`. Symmetric to
 // FieldGet's lowering in `_gen_expr` — GEP the field address,
 // then `store` the RHS at the field's LLVM type. Extracted from
@@ -1295,6 +1479,9 @@ define _gen_stmt(cg: FnCG, st: Stmt) -> void {
             // shape simple — see the same dodge in
             // `_gen_struct_ctor` for why.
             _gen_field_set(cg, fs.obj, fs.name, fs.value)
+        }
+        case Match as m => {
+            _gen_match(cg, m)
         }
         case If as iff => {
             cond := _gen_expr(cg, iff.cond)
@@ -1470,6 +1657,39 @@ define emit_module(decls: List) -> String {
             case EnumTL as et => {
                 ed: EnumDecl := et.decl
                 mod.enums.put(ed.name, ed)
+            }
+            case UnionTL as ut => {
+                ud: UnionDecl := ut.decl
+                mod.unions.put(ud.name, ud)
+                // Register a `%struct.T = { i32 }` shape so the
+                // shared tag-only prefix has a name; union
+                // values are `%struct.T*` and bitcast to a
+                // specific variant struct on match.
+                base_names := List()
+                base_names.append("__tag")
+                base_tys := List()
+                base_tys.append("i32")
+                mod.register_struct(_StructDef(ud.name, base_names, base_tys))
+                vi := 0
+                while vi < ud.variants.length() {
+                    v: Variant := ud.variants.__get(vi)
+                    mod.variants.put(v.name, _VarCgInfo(ud.name, vi))
+                    // Synthetic struct `T__V` with __tag first.
+                    fnames := List()
+                    fnames.append("__tag")
+                    ftys := List()
+                    ftys.append("i32")
+                    fi := 0
+                    while fi < v.fields.length() {
+                        f: StructField := v.fields.__get(fi)
+                        fnames.append(f.name)
+                        ftys.append(_q_ty_to_llvm(f.type_annot))
+                        fi = fi + 1
+                    }
+                    mod.register_struct(_StructDef(ud.name + "__" + v.name,
+                                                   fnames, ftys))
+                    vi = vi + 1
+                }
             }
             case _ => {}
         }

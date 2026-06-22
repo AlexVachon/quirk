@@ -5,6 +5,84 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.23] — 2026-06-22
+
+### Self-hosting Phase 4.19: tagged unions + `match`
+
+The largest single phase yet. `type Expr = IntLit(v: Int) |
+StrLit(s: String) | ...` declares a tagged union with payload-
+carrying variants; `match` dispatches on the discriminator
+and binds the variant in the arm body. The selfhost source's
+AST taxonomy ([ast.quirk](selfhost/ast.quirk)) — `type Expr =
+IntLit | FloatLit | ... | Match | ...` — is finally expressible
+in the self-hosted compiler.
+
+**Runtime layout.** Each tagged union `T` gets:
+  - `%struct.T = type { i32 }` — the shared tag-only prefix.
+    Union values are always `%struct.T*` heap pointers.
+  - `%struct.T__V = type { i32, ...field_tys }` for each
+    variant V — tag at offset 0, user fields at 1..N. The
+    union pointer bitcasts cleanly to a specific variant
+    pointer because all start with the same `i32 tag`.
+
+**Construction.** `_gen_variant_ctor` mallocs the synthetic
+variant struct (sized via the GEP-of-null trick), stores the
+discriminator at field 0, user args at 1..N, then bitcasts
+to `%struct.T*` so callers see the union's base pointer
+type. Symmetric to `_gen_struct_ctor` with two extra
+ops (tag store + upcast).
+
+**Match.** `_gen_match` evaluates the scrutinee once, loads
+the tag from `i32 0, i32 0`, then walks the arms emitting a
+chain of `icmp eq` + `br i1 %ok, label %arm, label %next`
+blocks. Each variant arm bitcasts the scrutinee to its
+`%struct.T__V*` and seeds a slot of that type into the
+arm's scope — the binder reads via the normal `Ident → load
+→ FieldGet` path, no special-casing in field codegen.
+Wildcard arms are an unconditional `br` into the body.
+After each arm body, an unconditional `br label %match.end`
+joins control flow.
+
+**Sema parallel.** `_check_match` validates scrutinee is a
+TUnion, each arm's pattern is a real variant of that union,
+and seeds the binder as a `TStruct(T__V)` synthetic. The
+pre-pass registers each variant's struct shape (with
+`__tag` prepended) in `s.structs` so `binder.field`
+resolves through the standard field-access path. New
+`TUnion(name)` Ty variant, new `s.resolve_ty` arm,
+`_check_binop` extended to accept matching `TUnion` for
+`==`/`!=`.
+
+**Self-compiler workaround.** Extracted `_check_variant_ctor`
+out of `_check_call` for the same recursion-pairing pattern
+that surfaced in Phase 4.9 — `_check_call` had four inner
+`_check_expr` recursion sites already (print, len, struct
+ctor, function call); adding a fifth tripped a SIGSEGV on
+the function's *entry*. The extracted helper isolates the
+recursion site cleanly. Documented in
+[feedback_selfcompiler_gaps.md](.claude/projects/-home-alex-programs-quirk/memory/feedback_selfcompiler_gaps.md).
+
+`codegen_e2e.sh` gains 4 new cases:
+
+```
+ok  tagged union basic match           IntLit(42); match → lit.v
+ok  tagged union second variant        Circle(14).r * 3 via match
+ok  tagged union nullary variant       Some(42) | None — unwrap
+ok  tagged union via param             bump(b: Box) returns inner+1
+
+all 107/107 cases passed
+```
+
+The shape used in those cases is the same shape used
+throughout the selfhost source — `type Expr = IntLit(...)
+| BinOp(...)` with `match e { case IntLit as lit => ... }`.
+Modulo Map (the next big piece), the selfhost AST + sema
++ codegen are now compilable in principle by the self-
+hosted compiler.
+
+Phase 4.x left: Map, generic List element types, module
+imports, throw/catch.
+
 ## [4.0.0-alpha.22] — 2026-06-22
 
 ### Self-hosting Phase 4.18: enums

@@ -60,6 +60,25 @@ type Stmt =
     | FieldSet(obj: Expr, name: String, value: Expr)
     | If(cond: Expr, then_body: List, else_body: List)
     | While(cond: Expr, body: List)
+    | Match(scrutinee: Expr, arms: List)
+
+---
+A single arm of a match statement. `pattern` is the variant
+name or empty (for `_` wildcard). `binder` is the name the
+arm body uses to refer to the matched value — `_` means the
+arm body doesn't bind anything.
+---
+struct MatchArm {
+    pattern: String
+    binder: String
+    body: List
+
+    define __init(self, pattern: String, binder: String, body: List) -> void {
+        self.pattern = pattern
+        self.binder = binder
+        self.body = body
+    }
+}
 
 ---
 Function parameter. Plain struct — no variants needed; both
@@ -145,10 +164,41 @@ struct EnumDecl {
 }
 
 ---
-Top-level node — what `parse_top_level` returns. Phase 4.18
-adds enums; interface / use / import follow.
+A single variant in a tagged union. `fields` is a
+`List<StructField>` — possibly empty for nullary variants
+like `NullLit()` or `case _ => …`-style sentinels.
+---
+struct Variant {
+    name: String
+    fields: List
+
+    define __init(self, name: String, fields: List) -> void {
+        self.name = name
+        self.fields = fields
+    }
+}
+
+---
+Top-level tagged union declaration. `type T = V1(f: U) | V2 | V3(g: U)`.
+`variants` is a `List<Variant>` in declaration order — codegen
+assigns each its ordinal as the discriminator tag.
+---
+struct UnionDecl {
+    name: String
+    variants: List
+
+    define __init(self, name: String, variants: List) -> void {
+        self.name = name
+        self.variants = variants
+    }
+}
+
+---
+Top-level node — what `parse_top_level` returns. Phase 4.19
+adds tagged unions; interface / use / import follow.
 ---
 type TopLevel =
     Func(decl: FunctionDecl)
     | StructTL(decl: StructDecl)
     | EnumTL(decl: EnumDecl)
+    | UnionTL(decl: UnionDecl)

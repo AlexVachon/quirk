@@ -1,0 +1,153 @@
+---
+Token taxonomy for the self-hosted Quirk compiler.
+
+Mirrors the `TokenType` enum in `include/lexer.hpp` of the
+current C++ implementation. Keep the variant set in sync — the
+Phase 5 bootstrap test compares token-by-token output between
+the two implementations, and a mismatched kind makes the diff
+unreadable.
+
+Token kinds are grouped by semantic category in the order:
+keywords, literals, operators, punctuation, special. The
+enum is unbacked (ordinal-only) — values don't cross runtime
+boundaries today; we'll add a backed-int form (or migrate to
+backed-String for debug printing) once the bootstrap is
+running and we can measure the comparison cost.
+---
+
+// Keep this list mirrored to include/lexer.hpp. The full set is
+// large; we ship them all so the parser can refer to any kind
+// the C++ lexer might produce, even if Phase 1's tokenize() only
+// emits a subset.
+enum TokenKind {
+    // Keywords
+    Define
+    Struct
+    Super
+    Init
+    Extern
+    Extend
+    Const
+    Return
+    If
+    Else
+    Elif
+    And
+    Or
+    Not
+    While
+    For
+    Ref
+    Move
+    Del
+    Use
+    From
+    In
+    With
+    As
+    Is
+    Enum
+    Match
+    Case
+    Where
+    TypeKw
+    Try
+    Catch
+    Throw
+    Finally
+    Break
+    Continue
+    Fn
+    Nonlocal
+    Global
+    Interface
+    True_
+    False_
+    Null_
+
+    // Literals
+    Identifier
+    IntLiteral
+    FloatLiteral
+    StringLiteral
+    CharLiteral
+
+    // Punctuation + operators
+    LBrace        // {
+    RBrace        // }
+    LParen        // (
+    RParen        // )
+    LBracket      // [
+    RBracket      // ]
+    Colon         // :
+    Semicolon     // ;
+    Comma         // ,
+    Dot           // .
+    DotDot        // ..
+    Ellipsis      // ...
+    At            // @
+    Question      // ?
+    QuestionDot   // ?.
+    NullCoalesce  // ??
+    Pipe          // |
+    Ampersand     // &
+
+    // Operators
+    Plus
+    Minus
+    Star
+    Slash
+    Percent
+    Equal         // ==
+    Assign        // =
+    AssignInit    // :=
+    Arrow         // ->
+    FatArrow      // =>
+    Greater
+    Less
+    GreaterEqual
+    LessEqual
+    NotEqual      // !=
+    PlusAssign
+    MinusAssign
+    StarAssign
+    SlashAssign
+    PercentAssign
+    TripleMinus
+
+    // Special
+    EofToken
+    Error
+}
+
+---
+A lexed token. `value` carries the source text verbatim for
+literals and identifiers; punctuation tokens leave it empty so
+the parser can match on `kind` alone. `line` / `col` are
+1-indexed, matching the convention `--diagnostics-json` emits.
+---
+struct Token {
+    kind: TokenKind
+    value: String
+    line: Int
+    col: Int
+
+    define __init(self, kind: TokenKind, value: String, line: Int, col: Int) -> void {
+        self.kind = kind
+        self.value = value
+        self.line = line
+        self.col = col
+    }
+
+    define __str(self) -> String {
+        // Diagnostic form `<kind_ordinal|value@line:col>`.
+        // We'd prefer the kind's name string, but TokenKind read
+        // back through `self.kind` (a struct-field access) loses
+        // its enum-typed identity in Sema today and `.name()`
+        // dispatches against an Int — SIGSEGV. The ordinal is
+        // enough to diff against the C++ tokenizer; we'll switch
+        // to names once that Sema gap is closed.
+        k_ord := self.kind
+        return "<" + k_ord.str() + "|" + self.value + "@" + self.line.str() + ":" + self.col.str() + ">"
+    }
+}

@@ -109,6 +109,14 @@ clean:
 test: all
 	./$(TARGET) tests/encoding_test.quirk
 
+# Phase 1 self-host smoke — runs the in-Quirk lexer against a
+# small corpus and dumps its token stream. Doesn't yet assert
+# byte-for-byte equality with the C++ tokenizer (Phase 5 does);
+# this is here so a regression in selfhost/lexer.quirk surfaces
+# in CI before it bitrots silently.
+test-selfhost: all
+	QUIRK_HOME=$(shell pwd) ./$(TARGET) --no-aot --no-cache selfhost/lexer_test.quirk
+
 # --- STDLIB BOOTSTRAP -------------------------------------------------------
 # Fetch the 21 canonical stdlib repos into ./packages/. Required for:
 #   - fresh contributor checkouts (the source tree no longer ships bundled

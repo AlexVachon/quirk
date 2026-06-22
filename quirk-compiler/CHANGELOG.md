@@ -5,6 +5,67 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.1] — 2026-06-22
+
+### Self-hosting begins — Phase 1: lexer in Quirk
+
+This is the opening commit of the Quirk 4.0 cycle: re-implement
+the compiler in Quirk itself. Months of work ahead; this alpha
+ships the first concrete piece — a Quirk lexer that tokenises
+real Quirk source.
+
+What landed:
+
+  - [`selfhost/README.md`](selfhost/README.md) — the roadmap.
+    Phases 1 (lexer) → 2 (parser) → 3 (sema) → 4 (codegen as
+    text LLVM IR) → 5 (full bootstrap, byte-identical output).
+
+  - [`selfhost/tokens.quirk`](selfhost/tokens.quirk) — token
+    taxonomy mirroring `include/lexer.hpp`. `TokenKind` enum
+    + `Token { kind, value, line, col }` struct.
+
+  - [`selfhost/lexer.quirk`](selfhost/lexer.quirk) — the
+    tokenize routine. Handles identifiers + the full keyword
+    set, int + float literals, double-quoted strings,
+    `//` + `/* */` comments, the punctuation + operator set
+    (including multi-char forms like `:=`, `==`, `->`, `=>`,
+    `..`, `?.`, `??`).
+
+  - [`selfhost/lexer_test.quirk`](selfhost/lexer_test.quirk) —
+    smoke that lexes five short corpora and prints the token
+    stream. Wired into the Makefile as `make test-selfhost`.
+
+What's deferred:
+
+  - F-string desugaring (`"${x}"` → `.format(x)` at lex time)
+  - Triple-quoted dedented strings
+  - Char literals
+  - Most escape sequences
+
+Phase 2 (parser) starts once these are stable. The Phase 5
+bootstrap goal — Quirk compiles Quirk — has no committed date;
+it'll land when every layer below it is correct.
+
+### Codegen narrowing: `quirk_opaque_to_struct` restricted to Tuple
+
+A precondition for the self-host lexer was field access on
+struct elements stored in a List. v3.25.0's
+`quirk_opaque_to_struct` dispatch was too eager — it sniffed
+the first 4 bytes of any non-String struct target looking for
+an Any tag (0..10). User structs whose first field is a small
+enum or int (e.g. `Token { kind: TokenKind, ... }` where
+TokenKind variants start at 0) got misclassified as
+Any-wrapped, returned the wrong pointer, and SIGSEGV'd on the
+next field access.
+
+The dispatch is now narrowed to Tuple targets specifically.
+Tuples are the one struct type we Any-box at store time
+(v3.25.0); the others all flow through as raw struct
+pointers and want the original bare bitcast. The probe set
+that was passing on v3.25.0 (p83 tuple-in-list, p84
+tuple-with-Double) still passes; the self-host lexer also
+now passes.
+
 ## [3.25.1] — 2026-06-20
 
 ### Tuples containing Double elements no longer SIGSEGV

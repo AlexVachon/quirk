@@ -1,0 +1,282 @@
+---
+Quirk lexer in Quirk (Phase 1 of self-hosting).
+
+Walks a source string character by character and produces a
+`List<Token>`. The shape mirrors `src/Core/Lexer.cpp` of the
+current C++ implementation closely enough that the Phase 5
+bootstrap diff stays small — we want the two lexers to emit
+the *same* token sequence on the *same* input.
+
+Coverage right now is intentionally a subset:
+
+  - identifiers + keywords (the full keyword set, mapped via
+    the `_keyword_kind` helper)
+  - integer + float literals (no scientific notation yet)
+  - basic double-quoted strings (no interpolation, no triple-
+    quote, no raw mode)
+  - single-line `//` comments + block `/* */` comments
+  - the punctuation + operator set the C++ lexer recognises
+
+Things deliberately deferred:
+
+  - F-string desugaring (`"${x}"` → `.format(x)`)
+  - Triple-quoted dedented strings
+  - Char literals — minor wart, low usage
+  - Escape sequences beyond the four common ones (`\n`, `\t`,
+    `\\`, `\"`)
+
+When Phase 2 starts, the parser will consume whatever this
+lexer emits. If a missing token shape blocks the parser, we
+patch the lexer first and re-run the diff against the C++
+tokenizer to confirm the addition didn't drift.
+---
+
+from .tokens use { TokenKind, Token }
+
+define _is_digit(c: String) -> Bool {
+    return c >= "0" and c <= "9"
+}
+
+define _is_alpha(c: String) -> Bool {
+    return (c >= "a" and c <= "z") or (c >= "A" and c <= "Z") or c == "_"
+}
+
+define _is_alnum(c: String) -> Bool {
+    return _is_digit(c) or _is_alpha(c)
+}
+
+define _keyword_kind(word: String) -> TokenKind {
+    // One central place to map keyword text → kind. Returns
+    // `Identifier` when the word isn't a keyword — the caller
+    // uses that to fall back to the identifier path.
+    if word == "define"   { return TokenKind.Define }
+    if word == "struct"   { return TokenKind.Struct }
+    if word == "super"    { return TokenKind.Super }
+    if word == "init"     { return TokenKind.Init }
+    if word == "extern"   { return TokenKind.Extern }
+    if word == "extend"   { return TokenKind.Extend }
+    if word == "const"    { return TokenKind.Const }
+    if word == "return"   { return TokenKind.Return }
+    if word == "if"       { return TokenKind.If }
+    if word == "else"     { return TokenKind.Else }
+    if word == "elif"     { return TokenKind.Elif }
+    if word == "and"      { return TokenKind.And }
+    if word == "or"       { return TokenKind.Or }
+    if word == "not"      { return TokenKind.Not }
+    if word == "while"    { return TokenKind.While }
+    if word == "for"      { return TokenKind.For }
+    if word == "ref"      { return TokenKind.Ref }
+    if word == "move"     { return TokenKind.Move }
+    if word == "del"      { return TokenKind.Del }
+    if word == "use"      { return TokenKind.Use }
+    if word == "from"     { return TokenKind.From }
+    if word == "in"       { return TokenKind.In }
+    if word == "with"     { return TokenKind.With }
+    if word == "as"       { return TokenKind.As }
+    if word == "is"       { return TokenKind.Is }
+    if word == "enum"     { return TokenKind.Enum }
+    if word == "match"    { return TokenKind.Match }
+    if word == "case"     { return TokenKind.Case }
+    if word == "where"    { return TokenKind.Where }
+    if word == "type"     { return TokenKind.TypeKw }
+    if word == "try"      { return TokenKind.Try }
+    if word == "catch"    { return TokenKind.Catch }
+    if word == "throw"    { return TokenKind.Throw }
+    if word == "finally"  { return TokenKind.Finally }
+    if word == "break"    { return TokenKind.Break }
+    if word == "continue" { return TokenKind.Continue }
+    if word == "fn"       { return TokenKind.Fn }
+    if word == "nonlocal" { return TokenKind.Nonlocal }
+    if word == "global"   { return TokenKind.Global }
+    if word == "interface"{ return TokenKind.Interface }
+    if word == "true"     { return TokenKind.True_ }
+    if word == "false"    { return TokenKind.False_ }
+    if word == "null"     { return TokenKind.Null_ }
+    return TokenKind.Identifier
+}
+
+---
+Tokenize `source` into a List of Tokens, ending with an
+`EofToken` sentinel. Positions are 1-indexed lines/columns.
+---
+define tokenize(source: String) -> List {
+    out := List()
+    n := source.length()
+    pos := 0
+    line := 1
+    col := 1
+
+    while pos < n {
+        c := source.substring(pos, pos + 1)
+
+        // Skip whitespace, tracking line/col.
+        if c == " " or c == "\t" or c == "\r" {
+            pos = pos + 1
+            col = col + 1
+            continue
+        }
+        if c == "\n" {
+            pos = pos + 1
+            line = line + 1
+            col = 1
+            continue
+        }
+
+        // `//` line comment — eat to end of line.
+        if c == "/" and pos + 1 < n and source.substring(pos + 1, pos + 2) == "/" {
+            while pos < n and source.substring(pos, pos + 1) != "\n" {
+                pos = pos + 1
+            }
+            continue
+        }
+        // `/* ... */` block comment.
+        if c == "/" and pos + 1 < n and source.substring(pos + 1, pos + 2) == "*" {
+            pos = pos + 2
+            col = col + 2
+            while pos + 1 < n and source.substring(pos, pos + 2) != "*/" {
+                if source.substring(pos, pos + 1) == "\n" {
+                    line = line + 1
+                    col = 1
+                } else {
+                    col = col + 1
+                }
+                pos = pos + 1
+            }
+            pos = pos + 2
+            col = col + 2
+            continue
+        }
+
+        start_col := col
+
+        // Identifier / keyword: starts with letter or underscore.
+        if _is_alpha(c) {
+            start := pos
+            while pos < n and _is_alnum(source.substring(pos, pos + 1)) {
+                pos = pos + 1
+            }
+            word := source.substring(start, pos)
+            col = col + (pos - start)
+            kind := _keyword_kind(word)
+            out.append(Token(kind, word, line, start_col))
+            continue
+        }
+
+        // Number literal: integer or float.
+        if _is_digit(c) {
+            start := pos
+            while pos < n and _is_digit(source.substring(pos, pos + 1)) {
+                pos = pos + 1
+            }
+            // Optional fractional part. Look-ahead for `.` followed by
+            // a digit — bare `.` is the member-access operator and a
+            // leading `..` is the range operator, neither of which
+            // should attach to the integer.
+            is_float := false
+            if pos + 1 < n and source.substring(pos, pos + 1) == "." and _is_digit(source.substring(pos + 1, pos + 2)) {
+                is_float = true
+                pos = pos + 1
+                while pos < n and _is_digit(source.substring(pos, pos + 1)) {
+                    pos = pos + 1
+                }
+            }
+            text := source.substring(start, pos)
+            col = col + (pos - start)
+            kind: TokenKind := TokenKind.IntLiteral
+            if is_float { kind = TokenKind.FloatLiteral }
+            out.append(Token(kind, text, line, start_col))
+            continue
+        }
+
+        // Double-quoted string. Phase 1.1 will handle escape
+        // sequences + interpolation; for now we capture the raw
+        // content, stopping at the first unescaped `"`.
+        if c == "\"" {
+            pos = pos + 1
+            col = col + 1
+            content := ""
+            while pos < n and source.substring(pos, pos + 1) != "\"" {
+                ch := source.substring(pos, pos + 1)
+                if ch == "\\" and pos + 1 < n {
+                    // Two-char escape — preserve verbatim for now.
+                    content = content + ch + source.substring(pos + 1, pos + 2)
+                    pos = pos + 2
+                    col = col + 2
+                    continue
+                }
+                content = content + ch
+                if ch == "\n" {
+                    line = line + 1
+                    col = 1
+                } else {
+                    col = col + 1
+                }
+                pos = pos + 1
+            }
+            // Skip closing `"`.
+            if pos < n { pos = pos + 1; col = col + 1 }
+            out.append(Token(TokenKind.StringLiteral, content, line, start_col))
+            continue
+        }
+
+        // Punctuation + multi-char operators. Order matters —
+        // check the 3-char forms before the 2-char ones before
+        // the 1-char ones.
+        if pos + 2 < n {
+            three := source.substring(pos, pos + 3)
+            if three == "..." {
+                out.append(Token(TokenKind.Ellipsis, "...", line, start_col))
+                pos = pos + 3; col = col + 3; continue
+            }
+        }
+        if pos + 1 < n {
+            two := source.substring(pos, pos + 2)
+            if two == ":=" { out.append(Token(TokenKind.AssignInit,   ":=", line, start_col)); pos = pos + 2; col = col + 2; continue }
+            if two == "==" { out.append(Token(TokenKind.Equal,        "==", line, start_col)); pos = pos + 2; col = col + 2; continue }
+            if two == "!=" { out.append(Token(TokenKind.NotEqual,     "!=", line, start_col)); pos = pos + 2; col = col + 2; continue }
+            if two == "<=" { out.append(Token(TokenKind.LessEqual,    "<=", line, start_col)); pos = pos + 2; col = col + 2; continue }
+            if two == ">=" { out.append(Token(TokenKind.GreaterEqual, ">=", line, start_col)); pos = pos + 2; col = col + 2; continue }
+            if two == "->" { out.append(Token(TokenKind.Arrow,        "->", line, start_col)); pos = pos + 2; col = col + 2; continue }
+            if two == "=>" { out.append(Token(TokenKind.FatArrow,     "=>", line, start_col)); pos = pos + 2; col = col + 2; continue }
+            if two == "+=" { out.append(Token(TokenKind.PlusAssign,   "+=", line, start_col)); pos = pos + 2; col = col + 2; continue }
+            if two == "-=" { out.append(Token(TokenKind.MinusAssign,  "-=", line, start_col)); pos = pos + 2; col = col + 2; continue }
+            if two == "*=" { out.append(Token(TokenKind.StarAssign,   "*=", line, start_col)); pos = pos + 2; col = col + 2; continue }
+            if two == "/=" { out.append(Token(TokenKind.SlashAssign,  "/=", line, start_col)); pos = pos + 2; col = col + 2; continue }
+            if two == "%=" { out.append(Token(TokenKind.PercentAssign,"%=", line, start_col)); pos = pos + 2; col = col + 2; continue }
+            if two == ".." { out.append(Token(TokenKind.DotDot,       "..", line, start_col)); pos = pos + 2; col = col + 2; continue }
+            if two == "?." { out.append(Token(TokenKind.QuestionDot,  "?.", line, start_col)); pos = pos + 2; col = col + 2; continue }
+            if two == "??" { out.append(Token(TokenKind.NullCoalesce, "??", line, start_col)); pos = pos + 2; col = col + 2; continue }
+        }
+
+        // Single-char tokens.
+        kind1: TokenKind := TokenKind.Error
+        if      c == "{" { kind1 = TokenKind.LBrace }
+        elif    c == "}" { kind1 = TokenKind.RBrace }
+        elif    c == "(" { kind1 = TokenKind.LParen }
+        elif    c == ")" { kind1 = TokenKind.RParen }
+        elif    c == "[" { kind1 = TokenKind.LBracket }
+        elif    c == "]" { kind1 = TokenKind.RBracket }
+        elif    c == ":" { kind1 = TokenKind.Colon }
+        elif    c == ";" { kind1 = TokenKind.Semicolon }
+        elif    c == "," { kind1 = TokenKind.Comma }
+        elif    c == "." { kind1 = TokenKind.Dot }
+        elif    c == "@" { kind1 = TokenKind.At }
+        elif    c == "?" { kind1 = TokenKind.Question }
+        elif    c == "|" { kind1 = TokenKind.Pipe }
+        elif    c == "&" { kind1 = TokenKind.Ampersand }
+        elif    c == "+" { kind1 = TokenKind.Plus }
+        elif    c == "-" { kind1 = TokenKind.Minus }
+        elif    c == "*" { kind1 = TokenKind.Star }
+        elif    c == "/" { kind1 = TokenKind.Slash }
+        elif    c == "%" { kind1 = TokenKind.Percent }
+        elif    c == "=" { kind1 = TokenKind.Assign }
+        elif    c == "<" { kind1 = TokenKind.Less }
+        elif    c == ">" { kind1 = TokenKind.Greater }
+        out.append(Token(kind1, c, line, start_col))
+        pos = pos + 1
+        col = col + 1
+    }
+
+    out.append(Token(TokenKind.EofToken, "", line, col))
+    return out
+}

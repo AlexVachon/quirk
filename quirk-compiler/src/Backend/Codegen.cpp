@@ -3476,21 +3476,24 @@ class LLVMCodegen {
                     asI8 = Builder.CreateBitCast(anyPtr, Type::getInt8PtrTy(Context));
                 return Builder.CreateCall(f, {asI8});
             }
-            // For non-String struct targets (Tuple, List, Map, Set,
-            // Callable, user structs), route through
-            // `quirk_opaque_to_struct` which sniffs the runtime shape
-            // and either:
-            //   - extracts `Any->ptr` when the value is an Any-tagged
-            //     wrapper (the case `xs.get(0)` returns when the list
-            //     stores Any-boxed elements), or
-            //   - returns the value unchanged when it's already a
-            //     raw struct pointer.
+            // For Tuple targets specifically, route through
+            // `quirk_opaque_to_struct` — Tuples are the one type
+            // we now Any-box at store time (v3.25.0), so the
+            // value at read time might be Any-wrapped or raw, and
+            // the helper sniffs which it is and unwraps as needed.
             //
-            // Without this, a bare bitcast Any* → Tuple* below would
-            // line up the Any's `tag` field with the Tuple's `data`
-            // pointer (4 bytes vs 8) and corrupt every subsequent
-            // field access.
-            if (name != "Any" && name != "struct.Any") {
+            // We deliberately do NOT extend this dispatch to other
+            // struct types. The helper's heuristic — "is the first
+            // 4 bytes a valid Any tag (0..10)?" — collides with
+            // user structs whose first field happens to be a small
+            // int or enum variant. e.g. a `Token { kind: TokenKind
+            // = 0..50; ... }` would be misread as an Any-tagged
+            // box, return its `value` field as the "raw ptr", and
+            // corrupt every subsequent access. The bitcast below
+            // is safe for the raw struct-pointer shape every
+            // non-Tuple struct type takes today.
+            bool isTuple = (name == "Tuple" || name.rfind("Tuple.", 0) == 0);
+            if (isTuple) {
                 FunctionCallee f = TheModule->getOrInsertFunction(
                     "quirk_opaque_to_struct",
                     FunctionType::get(Type::getInt8PtrTy(Context),

@@ -1,0 +1,46 @@
+---
+Phase 1 lexer smoke. Lex a short corpus of Quirk source and
+print the token stream; CI compares the output to a golden file
+once Phase 2 has anything to consume.
+
+Right now this just exercises the lexer end-to-end so a future
+regression in lexer.quirk surfaces as a diff in the printed
+token list. Once Phase 2's parser exists, we'll replace this
+print loop with structured assertions.
+---
+
+from .lexer use { tokenize }
+from .tokens use { TokenKind, Token }
+
+define dump(label: String, src: String) -> void {
+    print("--- " + label + " ---")
+    tokens: List := tokenize(src)
+    i := 0
+    while i < tokens.length() {
+        t: Token := tokens.__get(i)
+        // Skip the trailing Eof for readable output.
+        if t.kind == TokenKind.EofToken { i = i + 1; continue }
+        print(t.__str())
+        i = i + 1
+    }
+    print("")
+}
+
+// Case 1: minimal define + return + arithmetic.
+dump("define + return", "define foo(x: Int) -> Int { return x * 2 }")
+
+// Case 2: keywords + operators + literals mixed.
+dump("control flow + comparisons",
+    "if x >= 10 and y != 0 { return x - y } else { return null }")
+
+// Case 3: walrus + integer + float + string.
+dump("literals + walrus",
+    "name := \"alex\"\npi := 3.14\nn := 42")
+
+// Case 4: line comment + block comment + range operator.
+dump("comments + range",
+    "// header\nfor i in 0..10 { print(i) /* inline */ }")
+
+// Case 5: import-style syntax with dotted paths.
+dump("imports",
+    "from typing.collections.list use { List }\nuse net.http")

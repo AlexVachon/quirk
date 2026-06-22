@@ -51,15 +51,47 @@ splice into the module header. `decls` collects helper
 `declare` lines (printf / puts / etc.) — kept separate so we
 can dedup by helper name.
 ---
+// Source-level Quirk type name → LLVM type. Defaults to `i32`
+// (every non-Bool scalar in the self-hosted subset compiles to
+// i32 today). When Double / String values become first-class
+// at the call boundary this is where they hook in.
+define _q_ty_to_llvm(qty: String) -> String {
+    if qty == "Bool" { return "i1" }
+    return "i32"
+}
+
+// Function signature record kept in ModuleCG.sigs. `param_tys`
+// is a List of LLVM type strings; `ret_ty` is the LLVM return
+// type. Populated by emit_module's pre-pass so call-site
+// codegen can render the right param + return types without
+// having to know each function's body order.
+struct _Sig {
+    param_tys: List
+    ret_ty: String
+    define __init(self, param_tys: List, ret_ty: String) -> void {
+        self.param_tys = param_tys
+        self.ret_ty = ret_ty
+    }
+}
+
 struct ModuleCG {
     globals: List
     decls: Map
     next_str: Int
+    sigs: Map
 
     define __init(self) -> void {
         self.globals = List()
         self.decls = Map()
         self.next_str = 0
+        self.sigs = Map()
+    }
+
+    // Register a user-defined function's signature so call-site
+    // codegen can render typed args and a typed call. Called
+    // by emit_module's pre-pass before any body codegen runs.
+    define register_sig(self, name: String, sig: _Sig) -> void {
+        self.sigs.put(name, sig)
     }
 
     // Allocate a private string constant. `text` is the raw
@@ -126,6 +158,11 @@ struct FnCG {
     locals: Map
     block_terminated: Bool
     mod: ModuleCG
+    // LLVM return type of the function currently being lowered.
+    // Set by _gen_function before the body runs so `Return`
+    // statements and the synthetic fall-through terminator can
+    // emit the matching `ret <ty>` instruction.
+    ret_ty: String
 
     define __init(self, m: ModuleCG) -> void {
         self.entry_out = ""
@@ -135,6 +172,7 @@ struct FnCG {
         self.locals = Map()
         self.block_terminated = false
         self.mod = m
+        self.ret_ty = "i32"
     }
 
     define fresh(self) -> String {
@@ -301,7 +339,9 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
                     return reg
                 }
             }
-            // Emit each arg first, then the call.
+            // Emit each arg first, then the call. Look up the
+            // callee's typed signature so each arg + the return
+            // is rendered with the matching LLVM type.
             args := List()
             i := 0
             while i < c.args.length() {
@@ -309,18 +349,28 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
                 args.append(_gen_expr(cg, ai))
                 i = i + 1
             }
-            // Build "(i32 %a, i32 %b, ...)"
+            ret_llvm := "i32"
+            param_llvm := List()
+            if cg.mod.sigs.has(name) {
+                msig: _Sig := cg.mod.sigs.get(name)
+                ret_llvm = msig.ret_ty
+                param_llvm = msig.param_tys
+            }
             sig := "("
             j := 0
             while j < args.length() {
                 if j > 0 { sig = sig + ", " }
                 av: String := args.__get(j)
-                sig = sig + "i32 " + av
+                pty := "i32"
+                if j < param_llvm.length() {
+                    pty = param_llvm.__get(j)
+                }
+                sig = sig + pty + " " + av
                 j = j + 1
             }
             sig = sig + ")"
             reg := cg.fresh()
-            cg.emit(reg + " = call i32 @" + name + sig)
+            cg.emit(reg + " = call " + ret_llvm + " @" + name + sig)
             return reg
         }
         case _ => return "0"
@@ -368,6 +418,24 @@ define _expr_static_ty(cg: FnCG, e: Expr) -> String {
             }
             return "i32"
         }
+        case Call as c => {
+            // User-defined call: signature was pre-registered by
+            // emit_module, so the return type is known here.
+            // `print` and other special-cased builtins fall
+            // through to the default `i32` — `print(...)` lowers
+            // to `puts` which returns i32, and binding its value
+            // isn't a supported pattern.
+            cname := ""
+            match c.callee {
+                case Ident as id => cname = id.name
+                case _ => {}
+            }
+            if cg.mod.sigs.has(cname) {
+                sig: _Sig := cg.mod.sigs.get(cname)
+                return sig.ret_ty
+            }
+            return "i32"
+        }
         case _ => return "i32"
     }
 }
@@ -396,7 +464,7 @@ define _gen_stmt(cg: FnCG, st: Stmt) -> void {
     match st {
         case Return as r => {
             v := _gen_expr(cg, r.value)
-            cg.emit("ret i32 " + v)
+            cg.emit("ret " + cg.ret_ty + " " + v)
         }
         case ExprStmt as es => {
             _gen_expr(cg, es.expr)
@@ -479,8 +547,10 @@ define _gen_stmt(cg: FnCG, st: Stmt) -> void {
 
 define _gen_function(fdecl: FunctionDecl, mod: ModuleCG) -> String {
     cg := FnCG(mod)
+    ret_llvm := _q_ty_to_llvm(fdecl.ret_type)
+    cg.ret_ty = ret_llvm
 
-    // Build the param signature `i32 %arg0, i32 %arg1, ...`
+    // Build the param signature `<ty> %arg0, <ty> %arg1, ...`
     // (we don't reuse the user's name in the LLVM param slot
     // because every name needs its own alloca; the param
     // identifier itself lives in that alloca after we store
@@ -491,18 +561,20 @@ define _gen_function(fdecl: FunctionDecl, mod: ModuleCG) -> String {
         p: Param := fdecl.params.__get(i)
         if i > 0 { sig = sig + ", " }
         arg_reg := "%arg" + i.str()
-        sig = sig + "i32 " + arg_reg
+        pty := _q_ty_to_llvm(p.type_annot)
+        sig = sig + pty + " " + arg_reg
         i = i + 1
     }
 
     // Entry block: alloca each parameter, store the incoming
-    // value in. Params are i32-only today; Bool params are a
-    // follow-on phase.
+    // value in. Slot type follows the param's declared type so
+    // Bool params live in `i1` slots and Int params in `i32`.
     k := 0
     while k < fdecl.params.length() {
         p: Param := fdecl.params.__get(k)
-        slot := _ensure_slot(cg, p.name, "i32")
-        cg.emit_entry("store i32 %arg" + k.str() + ", i32* " + slot.name)
+        pty := _q_ty_to_llvm(p.type_annot)
+        slot := _ensure_slot(cg, p.name, pty)
+        cg.emit_entry("store " + pty + " %arg" + k.str() + ", " + pty + "* " + slot.name)
         k = k + 1
     }
 
@@ -518,10 +590,10 @@ define _gen_function(fdecl: FunctionDecl, mod: ModuleCG) -> String {
     // The emit() helper itself skips when the block is already
     // terminated, so we can call unconditionally — the dead
     // `ret i32 0` that previously trailed a real `return` no
-    // longer slips through.
-    cg.emit("ret i32 0")
+    // longer slips through. `0` works for both i1 and i32.
+    cg.emit("ret " + ret_llvm + " 0")
 
-    header := "define i32 @" + fdecl.name + "(" + sig + ") {\nentry:\n"
+    header := "define " + ret_llvm + " @" + fdecl.name + "(" + sig + ") {\nentry:\n"
     return header + cg.entry_out + cg.out + "}\n"
 }
 
@@ -533,7 +605,31 @@ emitted bodies reference (none today — Phase 4.1 will add
 ---
 define emit_module(decls: List) -> String {
     mod := ModuleCG()
-    // Emit functions first so module-level globals / decls
+    // Pre-pass: register every user-defined function's typed
+    // signature so call-site codegen can render argument and
+    // return types correctly — including for forward references
+    // where the callee's body is emitted after the call site.
+    pp := 0
+    while pp < decls.length() {
+        dp: TopLevel := decls.__get(pp)
+        match dp {
+            case Func as fp => {
+                fdp: FunctionDecl := fp.decl
+                ptys := List()
+                pi := 0
+                while pi < fdp.params.length() {
+                    pp_param: Param := fdp.params.__get(pi)
+                    ptys.append(_q_ty_to_llvm(pp_param.type_annot))
+                    pi = pi + 1
+                }
+                rty := _q_ty_to_llvm(fdp.ret_type)
+                mod.register_sig(fdp.name, _Sig(ptys, rty))
+            }
+            case _ => {}
+        }
+        pp = pp + 1
+    }
+    // Emit functions next so module-level globals / decls
     // (collected into `mod` as a side-effect of codegen) are
     // populated by the time we render the header.
     bodies := ""

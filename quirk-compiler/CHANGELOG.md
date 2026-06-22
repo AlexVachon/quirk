@@ -5,6 +5,52 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.9] — 2026-06-22
+
+### Self-hosting Phase 4.5: Bool at the call boundary
+
+Phase 4.4 made `b := x > 0` work inside a function. Phase 4.5
+extends the same treatment across the *call boundary*: a
+function can declare a `Bool` param, a `Bool` return type, or
+both, and other functions can call it with the right LLVM
+types on both sides of the wire.
+
+**`ModuleCG.sigs`.** A new `_Sig { param_tys, ret_ty }` record
+lives in `ModuleCG.sigs`, keyed by function name. `emit_module`
+now does a pre-pass over the top-level decls that registers
+every function's signature *before* any body codegen runs.
+That fixes forward references: caller-above-callee already
+parses and type-checks; what was missing was that the caller's
+codegen had no way to look up the callee's typed signature
+when their bodies emit in source order.
+
+**Param + return types flow through.** `_gen_function` reads
+`fdecl.ret_type` and each `param.type_annot`, converts via the
+new `_q_ty_to_llvm` helper (`"Bool" → "i1"`, default `"i32"`),
+and uses those types for the function header, the param-store
+alloca slots, the synthetic `ret <ty> 0` fall-through, and
+every `Return` statement (via a new `FnCG.ret_ty` field set by
+`_gen_function` before the body runs). Call sites consult
+`mod.sigs` to render `<ret_ty>` on the `call` instruction and
+`<arg_ty>` on each argument. `_expr_static_ty` learned the
+same lookup, so `x := returns_bool()` allocates an `i1` slot
+without any extra annotation.
+
+`codegen_e2e.sh` gains 5 new cases:
+
+```
+ok  bool return helper                       is_pos(5) → true
+ok  bool return false path                   is_pos(-3) → false
+ok  bool param + return                      flip(false) → true
+ok  bool round-trip                          accept(1 == 1) → 42
+ok  forward reference (caller above callee)  main calls helper defined below
+
+all 29/29 cases passed
+```
+
+Phase 4.x continues toward Double and then the big one —
+structs/lists/maps.
+
 ## [4.0.0-alpha.8] — 2026-06-22
 
 ### Self-hosting Phase 4.4: Bool as a first-class binding type

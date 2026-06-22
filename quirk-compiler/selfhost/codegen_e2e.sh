@@ -164,6 +164,31 @@ run "not binding"           "define main() -> Int { b := not (1 == 2); if b { re
 run "bool reassign"         "define main() -> Int { b := false; b = true; if b { return 42 } return 0 }" 42
 run "bool in while cond"    "define main() -> Int { i := 0; cont := i < 3; while cont { i = i + 1; cont = i < 3 } return i + 39 }" 42
 
+# Phase 4.5: Bool at the call boundary — Bool-returning helpers,
+# Bool params, forward references where the callee is defined
+# after the caller (the signature pre-pass must register both
+# names before any body codegen runs).
+run "bool return helper" \
+    "define is_pos(x: Int) -> Bool { return x > 0 }
+define main() -> Int { if is_pos(5) { return 42 } return 0 }" \
+    42
+run "bool return false path" \
+    "define is_pos(x: Int) -> Bool { return x > 0 }
+define main() -> Int { if is_pos(-3) { return 0 } return 42 }" \
+    42
+run "bool param + return" \
+    "define flip(b: Bool) -> Bool { return not b }
+define main() -> Int { if flip(false) { return 42 } return 0 }" \
+    42
+run "bool round-trip" \
+    "define accept(b: Bool) -> Int { if b { return 42 } return 0 }
+define main() -> Int { return accept(1 == 1) }" \
+    42
+run "forward reference (caller above callee)" \
+    "define main() -> Int { if helper(7) { return 42 } return 0 }
+define helper(n: Int) -> Bool { return n == 7 }" \
+    42
+
 # Phase 4.3: string literals + print() via puts().
 run_with_stdout "print literal" \
     'define main() -> Int { print("hello"); return 42 }' \
@@ -187,4 +212,4 @@ if [ "$fails" -gt 0 ]; then
     exit 1
 fi
 echo ""
-echo "all 24/24 cases passed"
+echo "all 29/29 cases passed"

@@ -64,6 +64,13 @@ class BuiltinGen {
         Function::Create(FunctionType::get(anyPtrTy, {anyPtrTy},  false), Function::ExternalLinkage, "Core_Primitives_Any_box_string", TheModule);
         Function::Create(FunctionType::get(anyPtrTy, {anyPtrTy},  false), Function::ExternalLinkage, "Core_Primitives_Any_box_list",   TheModule);
         Function::Create(FunctionType::get(anyPtrTy, {anyPtrTy},  false), Function::ExternalLinkage, "Core_Primitives_Any_box_map",    TheModule);
+        // box_tuple — missing from this block before v3.24.0,
+        // which made emitBox's Tuple branch silently fall back to
+        // a null Constant when the helper couldn't be looked up
+        // in the LLVM module. Tuples flowing through `Any` slots
+        // (List.append items, etc.) lost their identity and
+        // `print(xs)` rendered them as empty / "null" / garbage.
+        Function::Create(FunctionType::get(anyPtrTy, {anyPtrTy},  false), Function::ExternalLinkage, "Core_Primitives_Any_box_tuple",  TheModule);
         Function::Create(FunctionType::get(anyPtrTy, {anyPtrTy},  false), Function::ExternalLinkage, "Core_Primitives_Any_box_ptr",    TheModule);
         Function::Create(FunctionType::get(anyPtrTy, {},           false), Function::ExternalLinkage, "Core_Primitives_Any_box_null",   TheModule);
 

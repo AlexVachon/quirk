@@ -5,6 +5,61 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [3.23.1] — 2026-06-20
+
+### Runtime stability: GC tracking + tuple/callable opaque dispatch
+
+Patch release. Three latent runtime issues that don't surface in
+the existing test suite but can corrupt long-running programs
+once the GC has reason to scan:
+
+  - `Core_Primitives_Any_box_*` (int, double, list, map, tuple,
+    callable, ...) used libc `malloc` instead of `GC_malloc`. The
+    Boehm GC's conservative scan walks GC-allocated memory looking
+    for pointers; `malloc`'d Any* boxes weren't part of that view,
+    so the values they wrapped could be collected while still
+    reachable through the Any. Manifests as garbage reads in
+    long-running programs that build Any-typed values through
+    box helpers. Switched all boxes to `GC_malloc`.
+
+  - `quirk_tuple_new` allocated the Tuple struct + its data array
+    via libc `malloc`. Same exposure as above — a tuple created
+    by `(1, "a")` literals stayed live through the local
+    binding but a `GC_collect` triggered by other allocations
+    could free its data array. Switched to `GC_malloc`.
+
+  - `quirk_opaque_to_string` (and three sibling
+    `quirk_opaque_to_*` helpers) used the tag-range check
+    `tag >= ANY_INT && tag <= ANY_NULL` to recognize an
+    Any-boxed value. `ANY_NULL` is 8; `ANY_TUPLE` is 9 and
+    `ANY_CALLABLE` is 10 — both outside the range. Boxed
+    tuples and callables passed through these decoders were
+    misclassified as raw `String*` and read garbage from
+    `s->buffer`. Range widened to `<= ANY_CALLABLE`.
+
+  - `Core_Primitives_Any_box_tuple` was missing from
+    `BuiltinGen.hpp`'s prototype-declaration block, so
+    `emitBox`'s Tuple branch silently fell back to a null
+    Constant whenever Codegen tried to box a tuple via the
+    helper. Declared alongside the existing box helpers so the
+    lookup succeeds.
+
+All four fixes are conservative — the test suite passes 80/80
+probes + 59/59 stdlib both before and after. They harden the
+runtime against GC-triggered corruption that no current probe
+reliably reproduces but the v3.21+ added stdlib helpers (sum,
+min, max, reduce composition) make more likely to hit in user
+code.
+
+Note: this does NOT fix the user-visible "tuple-in-list display"
+bug (`xs.append((1, "a")); print(xs)` shows `[]` instead of
+`[(1, "a")]`). That requires a larger Codegen change to box
+tuples passing through `Any`-typed extern slots, plus matching
+unboxing on assignment to a `Tuple`-typed binding. Tried in
+this release, reverted because the unbox path missed
+`itertools.enumerate`/`zip`'s pre-existing raw-tuple storage
+shape. Queued for a future release.
+
 ## [3.23.0] — 2026-06-20
 
 ### List.to_set / Set.to_list — collection conversions

@@ -14,67 +14,67 @@ String* Core_Callable_Callable___str(Callable* self);
 // ===================================================
 
 Any* Core_Primitives_Any_box_int(int32_t v) {
-    Any* a = (Any*)malloc(sizeof(Any));
+    Any* a = (Any*)GC_malloc(sizeof(Any));
     a->tag = ANY_INT; a->ival = v; a->dval = 0.0; a->ptr = NULL;
     return a;
 }
 
 Any* Core_Primitives_Any_box_double(double v) {
-    Any* a = (Any*)malloc(sizeof(Any));
+    Any* a = (Any*)GC_malloc(sizeof(Any));
     a->tag = ANY_DOUBLE; a->ival = 0; a->dval = v; a->ptr = NULL;
     return a;
 }
 
 Any* Core_Primitives_Any_box_bool(int32_t v) {
-    Any* a = (Any*)malloc(sizeof(Any));
+    Any* a = (Any*)GC_malloc(sizeof(Any));
     a->tag = ANY_BOOL; a->ival = v ? 1 : 0; a->dval = 0.0; a->ptr = NULL;
     return a;
 }
 
 Any* Core_Primitives_Any_box_char(int32_t v) {
-    Any* a = (Any*)malloc(sizeof(Any));
+    Any* a = (Any*)GC_malloc(sizeof(Any));
     a->tag = ANY_CHAR; a->ival = v; a->dval = 0.0; a->ptr = NULL;
     return a;
 }
 
 Any* Core_Primitives_Any_box_string(String* v) {
-    Any* a = (Any*)malloc(sizeof(Any));
+    Any* a = (Any*)GC_malloc(sizeof(Any));
     a->tag = ANY_STRING; a->ival = 0; a->dval = 0.0; a->ptr = v;
     return a;
 }
 
 Any* Core_Primitives_Any_box_list(List* v) {
-    Any* a = (Any*)malloc(sizeof(Any));
+    Any* a = (Any*)GC_malloc(sizeof(Any));
     a->tag = ANY_LIST; a->ival = 0; a->dval = 0.0; a->ptr = v;
     return a;
 }
 
 Any* Core_Primitives_Any_box_map(Map* v) {
-    Any* a = (Any*)malloc(sizeof(Any));
+    Any* a = (Any*)GC_malloc(sizeof(Any));
     a->tag = ANY_MAP; a->ival = 0; a->dval = 0.0; a->ptr = v;
     return a;
 }
 
 Any* Core_Primitives_Any_box_ptr(void* v) {
-    Any* a = (Any*)malloc(sizeof(Any));
+    Any* a = (Any*)GC_malloc(sizeof(Any));
     a->tag = ANY_PTR; a->ival = 0; a->dval = 0.0; a->ptr = v;
     return a;
 }
 
 Any* Core_Primitives_Any_box_null(void) {
-    Any* a = (Any*)malloc(sizeof(Any));
+    Any* a = (Any*)GC_malloc(sizeof(Any));
     a->tag = ANY_NULL; a->ival = 0; a->dval = 0.0; a->ptr = NULL;
     return a;
 }
 
 Any* Core_Primitives_Any_box_tuple(Tuple* v) {
-    Any* a = (Any*)malloc(sizeof(Any));
+    Any* a = (Any*)GC_malloc(sizeof(Any));
     a->tag = ANY_TUPLE; a->ival = 0; a->dval = 0.0; a->ptr = v;
     return a;
 }
 
 Any* Core_Primitives_Any_box_callable(Callable* v) {
-    Any* a = (Any*)malloc(sizeof(Any));
+    Any* a = (Any*)GC_malloc(sizeof(Any));
     a->tag = ANY_CALLABLE; a->ival = 0; a->dval = 0.0; a->ptr = v;
     return a;
 }

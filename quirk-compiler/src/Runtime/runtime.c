@@ -80,9 +80,9 @@ String* quirk_opaque_to_string(void* val) {
         snprintf(buf, sizeof(buf), "%d", (int)uval);
         return make_String(buf);
     }
-    // Case 2: Any* — first 4 bytes are tag in 0..ANY_NULL
+    // Case 2: Any* — first 4 bytes are tag in 0..ANY_CALLABLE (10)
     int32_t possible_tag = *(int32_t*)val;
-    if (possible_tag >= ANY_INT && possible_tag <= ANY_NULL) {
+    if (possible_tag >= ANY_INT && possible_tag <= ANY_CALLABLE) {
         return Core_Primitives_Any_to_string((Any*)val);
     }
     // Case 3: String* — use buffer directly
@@ -116,7 +116,7 @@ int32_t quirk_opaque_to_int(void* val) {
     uintptr_t u = (uintptr_t)val;
     if (u <= 0xFFFFFFFFUL) return (int32_t)u;
     int32_t possible_tag = *(int32_t*)val;
-    if (possible_tag >= ANY_INT && possible_tag <= ANY_NULL) {
+    if (possible_tag >= ANY_INT && possible_tag <= ANY_CALLABLE) {
         Any* a = (Any*)val;
         switch (a->tag) {
             case ANY_INT:
@@ -134,7 +134,7 @@ double quirk_opaque_to_double(void* val) {
     uintptr_t u = (uintptr_t)val;
     if (u <= 0xFFFFFFFFUL) return (double)(int32_t)u;
     int32_t possible_tag = *(int32_t*)val;
-    if (possible_tag >= ANY_INT && possible_tag <= ANY_NULL) {
+    if (possible_tag >= ANY_INT && possible_tag <= ANY_CALLABLE) {
         Any* a = (Any*)val;
         switch (a->tag) {
             case ANY_DOUBLE: return a->dval;
@@ -221,7 +221,7 @@ void* quirk_opaque_check_struct_or_null(void* val, const char* type_name) {
         return NULL;
     }
     int32_t possible_tag = *(int32_t*)val;
-    if (possible_tag >= ANY_INT && possible_tag <= ANY_NULL) {
+    if (possible_tag >= ANY_INT && possible_tag <= ANY_CALLABLE) {
         char buf[128];
         snprintf(buf, sizeof(buf),
                  "expected %s but got Any-wrapped value",
@@ -245,7 +245,7 @@ void* quirk_opaque_unwrap_or_null(void* val, int32_t expected_tag,
         return NULL;  // unreachable
     }
     int32_t possible_tag = *(int32_t*)val;
-    if (possible_tag >= ANY_INT && possible_tag <= ANY_NULL) {
+    if (possible_tag >= ANY_INT && possible_tag <= ANY_CALLABLE) {
         Any* a = (Any*)val;
         if (a->tag == expected_tag) return a->ptr;
         char buf[128];
@@ -265,7 +265,7 @@ int32_t quirk_any_as_bool(void* val) {
     uintptr_t uval = (uintptr_t)val;
     if (uval <= 0xFFFFFFFFUL) return uval != 0;  // tagged int: 0 = false
     int32_t possible_tag = *(int32_t*)val;
-    if (possible_tag >= ANY_INT && possible_tag <= ANY_NULL) {
+    if (possible_tag >= ANY_INT && possible_tag <= ANY_CALLABLE) {
         Any* a = (Any*)val;
         switch (a->tag) {
             case ANY_BOOL:   return a->ival != 0;
@@ -291,7 +291,7 @@ String* quirk_opaque_get_type(void* val) {
     uintptr_t uval = (uintptr_t)val;
     if (uval <= 0xFFFFFFFFUL) return make_String("Int");
     int32_t possible_tag = *(int32_t*)val;
-    if (possible_tag >= ANY_INT && possible_tag <= ANY_NULL)
+    if (possible_tag >= ANY_INT && possible_tag <= ANY_CALLABLE)
         return Core_Primitives_Any_get_type((Any*)val);
     // Assume String* (most common non-Any heap value in opaque slots)
     return make_String("String");

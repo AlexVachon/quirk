@@ -1,16 +1,24 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <gc.h>
 #include "../types.h"
 
 // Defined in runtime.c after the include chain
 String* quirk_opaque_to_string(void* val);
 
+// GC_malloc for both the Tuple struct AND its data array — the GC's
+// conservative scan needs to see the pointers through one of its
+// own allocations. Before v3.24.0 these used libc malloc; tuples
+// passed through Any-typed slots (List.append etc.) were the
+// canonical way to get freed-out-from-under and render as empty
+// strings when the containing collection was printed.
 Tuple* quirk_tuple_new(int size) {
-    Tuple* t = (Tuple*)malloc(sizeof(Tuple));
+    Tuple* t = (Tuple*)GC_malloc(sizeof(Tuple));
     t->size = size;
-    t->data = (void**)malloc(sizeof(void*) * (size > 0 ? size : 1));
-    if (t->data) memset(t->data, 0, sizeof(void*) * (size > 0 ? size : 1));
+    int cap = (size > 0 ? size : 1);
+    t->data = (void**)GC_malloc(sizeof(void*) * cap);
+    if (t->data) memset(t->data, 0, sizeof(void*) * cap);
     return t;
 }
 

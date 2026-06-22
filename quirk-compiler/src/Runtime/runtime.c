@@ -102,6 +102,29 @@ String* quirk_opaque_to_string_or_null(void* val) {
     return quirk_opaque_to_string(val);
 }
 
+// Unwrap an opaque value to its raw struct pointer. Used when a
+// `Foo`-typed binding receives an `Any`-typed value (e.g.
+// `t: Tuple = xs.get(0)` where the list stores Any-boxed tuples).
+//
+// Three shapes flow in:
+//   - tagged-int (low 32 bits) → returns NULL, the caller's
+//     binding will then store null/0 (Tuple/List/etc. annotations
+//     against an Int are user error anyway).
+//   - heap Any* (tag in range) → returns `Any->ptr`, the
+//     underlying struct.
+//   - raw struct pointer (List*/Map*/Tuple*/...) → returns val
+//     unchanged.
+void* quirk_opaque_to_struct(void* val) {
+    if (!val) return NULL;
+    uintptr_t uval = (uintptr_t)val;
+    if (uval <= 0xFFFFFFFFUL) return NULL;
+    int32_t tag = *(int32_t*)val;
+    if (tag >= ANY_INT && tag <= ANY_CALLABLE) {
+        return ((Any*)val)->ptr;
+    }
+    return val;
+}
+
 // Coerce an opaque i8* (whatever shape it has) to an int32. Same
 // heuristic as quirk_opaque_to_string but for the Int target:
 //   null                 → 0       (legit "no value" fallback)

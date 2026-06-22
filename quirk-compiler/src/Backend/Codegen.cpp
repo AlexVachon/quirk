@@ -2400,6 +2400,35 @@ class LLVMCodegen {
                     continue;
                 }
             }
+            // Tuple boxing for `Any`-typed extern params whose LLVM
+            // signature uses `i8*` (v3.25.0). Without this, a Tuple
+            // passed to `xs.append((1, "a"))` stores the raw Tuple*
+            // and `quirk_opaque_to_string` can't classify it for
+            // display.
+            //
+            // Pairs with `quirk_opaque_to_struct` (emitted by
+            // `emitUnboxToType`) so the symmetric assignment
+            // `p: Tuple = xs.get(0)` extracts `Any->ptr` back to a
+            // genuine Tuple* — keeps itertools' raw-tuple storage
+            // shape working alongside the new boxed-tuple shape.
+            if (funcNode && astIdx < funcNode->parameters.size() &&
+                funcNode->parameters[astIdx].type == "Any" &&
+                expectedType == Type::getInt8PtrTy(Context) &&
+                argVal->getType()->isPointerTy() &&
+                argVal->getType()->getPointerElementType()->isStructTy()) {
+                StructType* st = cast<StructType>(argVal->getType()->getPointerElementType());
+                std::string sName = st->getName().str();
+                if (sName.find("struct.") == 0) sName = sName.substr(7);
+                if (sName == "Tuple" || sName.rfind("Tuple.", 0) == 0) {
+                    Value* asPtr = Builder.CreateBitCast(argVal, Type::getInt8PtrTy(Context));
+                    Function* boxFn = TheModule->getFunction("Core_Primitives_Any_box_tuple");
+                    if (boxFn) {
+                        Value* boxed = Builder.CreateCall(boxFn, {asPtr});
+                        finalArgs.push_back(boxed);
+                        continue;
+                    }
+                }
+            }
 
             if (argVal->getType()->isIntegerTy(1) && expectedType->isIntegerTy(32)) {
                 argVal = Builder.CreateZExt(argVal, Type::getInt32Ty(Context));
@@ -2990,8 +3019,20 @@ class LLVMCodegen {
                         val = emitUnboxToType(val, targetType);
                     } else if (targetType->isIntegerTy())
                         val = Builder.CreatePtrToInt(val, targetType);
-                    else if (targetType->isPointerTy() && targetType->getPointerElementType()->isStructTy())
-                        val = Builder.CreateBitCast(val, targetType);
+                    else if (targetType->isPointerTy() && targetType->getPointerElementType()->isStructTy()) {
+                        // Struct-pointer target from an i8* source (the
+                        // canonical shape returned by Map.get / List.get
+                        // / lambda return / Any-typed slot). Route
+                        // through emitUnboxToType so a heap-Any-boxed
+                        // value gets its `ptr` field extracted via
+                        // `quirk_opaque_to_struct`; a raw struct
+                        // pointer passes through unchanged. Bare
+                        // bitcast (the previous behaviour) was wrong
+                        // for Any-wrapped values — it aligned the
+                        // Any's `tag` field with the target struct's
+                        // first field, corrupting every access.
+                        val = emitUnboxToType(val, targetType);
+                    }
                 }
                 // General numeric/pointer coercions
                 else if (val->getType() != targetType) {
@@ -3402,8 +3443,46 @@ class LLVMCodegen {
             std::string name = cast<StructType>(targetType->getPointerElementType())->getName().str();
             if (name.find("struct.") == 0) name = name.substr(7);
             if (name.find("String") != std::string::npos) {
-                Function* f = TheModule->getFunction("Core_Primitives_Any_to_str");
-                if (f) return Builder.CreateCall(f, {anyPtr});
+                // quirk_opaque_to_string already handles the three
+                // shapes we might see at this point — tagged-int Any
+                // (stringifies to "N"), heap Any* (dispatches via
+                // tag), or raw String* (passes through). The
+                // previously-used `Any_to_str` only handled the
+                // tagged-Any case; raw String* cast to Any* read
+                // garbage from the tag slot.
+                FunctionCallee f = TheModule->getOrInsertFunction(
+                    "quirk_opaque_to_string",
+                    FunctionType::get(targetType,
+                                      {Type::getInt8PtrTy(Context)}, false));
+                Value* asI8 = anyPtr;
+                if (anyPtr->getType() != Type::getInt8PtrTy(Context))
+                    asI8 = Builder.CreateBitCast(anyPtr, Type::getInt8PtrTy(Context));
+                return Builder.CreateCall(f, {asI8});
+            }
+            // For non-String struct targets (Tuple, List, Map, Set,
+            // Callable, user structs), route through
+            // `quirk_opaque_to_struct` which sniffs the runtime shape
+            // and either:
+            //   - extracts `Any->ptr` when the value is an Any-tagged
+            //     wrapper (the case `xs.get(0)` returns when the list
+            //     stores Any-boxed elements), or
+            //   - returns the value unchanged when it's already a
+            //     raw struct pointer.
+            //
+            // Without this, a bare bitcast Any* → Tuple* below would
+            // line up the Any's `tag` field with the Tuple's `data`
+            // pointer (4 bytes vs 8) and corrupt every subsequent
+            // field access.
+            if (name != "Any" && name != "struct.Any") {
+                FunctionCallee f = TheModule->getOrInsertFunction(
+                    "quirk_opaque_to_struct",
+                    FunctionType::get(Type::getInt8PtrTy(Context),
+                                      {Type::getInt8PtrTy(Context)}, false));
+                Value* asI8 = anyPtr;
+                if (anyPtr->getType() != Type::getInt8PtrTy(Context))
+                    asI8 = Builder.CreateBitCast(anyPtr, Type::getInt8PtrTy(Context));
+                Value* raw = Builder.CreateCall(f, {asI8});
+                return Builder.CreateBitCast(raw, targetType);
             }
         }
         return Builder.CreateBitCast(anyPtr, targetType);

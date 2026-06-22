@@ -1,0 +1,55 @@
+// p83 — Tuples stored in collections display and read back
+// correctly (v3.25.0).
+//
+// Long-standing bug: `xs.append((1, "a")); print(xs)` displayed
+// `[]` instead of `[(1, "a")]`. The tuple was stored as a raw
+// `Tuple*` in the List, and `quirk_opaque_to_string` had no way
+// to distinguish it from a `String*` (no runtime tag on the
+// struct), so it interpreted the tuple's `data` pointer as a
+// String buffer and printed garbage / empty.
+//
+// Fix is two-piece:
+//
+//   1. Boxing on store. The Codegen call-arg processor sees a
+//      Tuple value flowing into an `Any`-typed extern parameter
+//      (List.append's `item: Any`, etc.) and wraps it in an
+//      Any-tagged-ANY_TUPLE box via `Core_Primitives_Any_box_tuple`
+//      so `quirk_opaque_to_string` can classify it correctly via
+//      the tag-range check.
+//
+//   2. Unboxing on read. The Codegen var-decl path for `p: Tuple
+//      = xs.get(0)` now routes the i8* result through
+//      `quirk_opaque_to_struct` (new runtime helper) which extracts
+//      `Any->ptr` when the value is an Any wrapper and passes it
+//      through unchanged when it's a raw struct pointer. Bare
+//      bitcast (the previous behaviour) was wrong for Any-wrapped
+//      values — it aligned the Any's `tag` field with the target
+//      struct's first field and corrupted every subsequent access.
+//
+// Both halves are required: without (2), itertools.enumerate's
+// pre-existing raw-tuple storage shape would have broken on
+// `p: Tuple = r.get(0)` (the regression my first attempt hit).
+// The opaque-to-struct dispatch handles both shapes transparently.
+//
+// Same machinery now also makes `v: String = m.get(k)` route
+// through `quirk_opaque_to_string` (handles tagged-int / Any /
+// raw String shapes — broader than the previous `Any_to_str`
+// which only worked on genuine Any* boxes).
+
+xs := List()
+xs.append((1, "a"))
+xs.append((2, "b"))
+xs.append((42, "answer"))
+
+print(xs.length())        // = 3
+print(xs)                 // = [(1, a), (2, b), (42, answer)]
+
+// Field access on the unboxed Tuple element.
+p: Tuple := xs.__get(0)
+print(p.0)                // = 1
+print(p.1)                // = a
+
+// And later positions.
+last: Tuple := xs.__get(2)
+print(last.0)             // = 42
+print(last.1)             // = answer

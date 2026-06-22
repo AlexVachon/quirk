@@ -5,6 +5,55 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [3.25.0] — 2026-06-20
+
+### Tuples in collections display and read back correctly
+
+Long-standing bug closed: `xs.append((1, "a")); print(xs)`
+displayed `[]` instead of `[(1, "a")]`. The tuple was stored as
+a raw `Tuple*` in the list, and `quirk_opaque_to_string` had no
+way to distinguish it from a `String*` (no runtime tag on the
+struct itself), so it interpreted the tuple's data pointer as a
+String buffer and printed garbage / empty.
+
+Fix is two pieces, neither would work alone:
+
+  1. **Boxing on store.** The Codegen call-arg processor now
+     detects a Tuple value flowing into an `Any`-typed extern
+     parameter (`List.append`'s `item: Any`, etc.) and wraps
+     it in an Any-tagged-`ANY_TUPLE` box via
+     `Core_Primitives_Any_box_tuple`. The wrapper has a real
+     tag in its first 4 bytes, so `quirk_opaque_to_string`'s
+     range check (extended in v3.23.1 to include ANY_TUPLE)
+     classifies it correctly.
+
+  2. **Unboxing on read.** New runtime helper
+     `quirk_opaque_to_struct` sniffs the value's runtime shape:
+     extracts `Any->ptr` for Any wrappers, passes raw struct
+     pointers through unchanged. The Codegen var-decl path for
+     `p: Tuple := xs.get(0)` now routes through it instead of
+     a bare `bitcast i8* → Tuple*`. The bitcast was the
+     destruction path — it aligned the Any's tag field with
+     the target struct's first field and corrupted every
+     subsequent access.
+
+Both halves are required. Boxing alone broke
+`itertools.enumerate`'s pre-existing raw-tuple storage shape
+because field access on the boxed result tried to bitcast the
+Any wrapper to a Tuple. With the unbox helper, both shapes
+flow through transparently.
+
+The String path in `emitUnboxToType` also got an upgrade —
+switched from `Any_to_str` (which only handled actual Any*
+boxes) to `quirk_opaque_to_string` (handles tagged-int / heap
+Any / raw String* uniformly). That closes a related class of
+bugs where `v: String = m.get(k)` against a raw String* slot
+read garbage from a tag field that wasn't there.
+
+`tests/probes/p83_tuple_in_list.quirk` covers store + display +
+field-access at multiple positions. Full regression: 80/80
+probes + 59/59 stdlib pass.
+
 ## [3.24.0] — 2026-06-20
 
 ### Map.items() (carrier for quirk-typing v1.14.0)

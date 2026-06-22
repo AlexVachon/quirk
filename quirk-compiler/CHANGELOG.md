@@ -5,6 +5,70 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.18] — 2026-06-22
+
+### Self-hosting Phase 4.14: user-defined struct methods
+
+`define Foo.method(args) -> T { … }` declares a method on
+struct Foo. Inside the body, `self` is an implicit local of
+type `Foo`. Callers invoke it via the Phase 4.13 method-call
+syntax: `f.method(args)`.
+
+**Parser.** `_parse_function_decl` now peeks for a `.` after
+the first identifier — present → method (the first identifier
+becomes the receiver, the next identifier is the method name);
+absent → free function. The `define`-then-identifier-then-`.`
+shape unambiguously distinguishes methods from regular
+functions without a new keyword.
+
+**AST.** `FunctionDecl` grew a `receiver: String` field —
+empty for free functions, struct-name for methods. That single
+flag drives every downstream decision (sema scoping, codegen
+naming, sig registration).
+
+**Sema.** Pre-pass routes methods into a new
+`Sema.struct_methods: Map<structName, Map<methodName, FunctionDecl>>`
+instead of `Sema.functions`. `_check_function` seeds an
+implicit `self` local of type `TStruct(receiver)` before
+binding the declared params, so method bodies can read +
+write `self.field` like any other local. `_check_method_call`
+now checks the user-method table first (so `Foo.length()`
+shadows the builtin `.length()`) before falling back to the
+Phase 4.13 receiver-keyed builtins.
+
+**Codegen.** Methods get a mangled LLVM name `Foo__method`
+and a prepended `%struct.Foo* %arg0` param. The pre-pass
+registers the typed signature under that mangled name with
+the receiver as `param_tys[0]`. `_gen_function` emits the
+`self` alloca + param-store before the user params, and
+shifts every other arg index by one. `_gen_method_call`
+strips the receiver-pointer suffix off the static type to
+get the struct name, mangles to `Foo__method`, looks up the
+sig in `mod.sigs`, and renders a typed call threading the
+receiver as the first LLVM arg. User-defined methods are
+checked before the builtin shape table.
+
+`codegen_e2e.sh` gains 5 new cases:
+
+```
+ok  method reads self field            `Pt.sum() = self.x + self.y`
+ok  method with arg                    `Box.add(k) = self.n + k`
+ok  method mutates self field          `Box.bump() { self.n = self.n + 1; ... }`
+ok  method called twice                `b.bump(); return b.bump()`  → 42
+ok  method shadows builtin .length     user-defined `.length()` wins
+
+all 74/74 cases passed
+```
+
+The "called twice" case verifies the reference-pass-through
+property from Phase 4.10 still holds — `b.bump()` mutates
+the heap struct, and the second call sees the first's
+effect.
+
+Phase 4.x left: `.append()` on lists (capacity field +
+realloc), generic list element types, and bounds-checked
+subscript.
+
 ## [4.0.0-alpha.17] — 2026-06-22
 
 ### Self-hosting Phase 4.13: method-call syntax

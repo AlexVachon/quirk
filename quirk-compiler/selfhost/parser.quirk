@@ -438,7 +438,18 @@ define _parse_param(s: ParserState) -> Param {
 
 define _parse_function_decl(s: ParserState) -> FunctionDecl {
     s.expect(TokenKind.Define, "'define'")
-    name := s.expect(TokenKind.Identifier, "function name").value
+    first := s.expect(TokenKind.Identifier, "function name").value
+    // Optional `.method` form: `define Foo.method(...)` is a
+    // method on struct Foo. `self` is implicit — codegen will
+    // inject it as the first param of LLVM type `%struct.Foo*`,
+    // and sema seeds it as a local of `TStruct("Foo")` before
+    // checking the body.
+    name := first
+    receiver := ""
+    if s.match_kind(TokenKind.Dot) {
+        receiver = first
+        name = s.expect(TokenKind.Identifier, "method name after '.'").value
+    }
     s.expect(TokenKind.LParen, "'(' before parameter list")
     params := List()
     if s.check(TokenKind.RParen) == false {
@@ -453,7 +464,7 @@ define _parse_function_decl(s: ParserState) -> FunctionDecl {
         ret_type = s.expect(TokenKind.Identifier, "return type after '->'").value
     }
     body := _parse_block(s)
-    return FunctionDecl(name, params, ret_type, body)
+    return FunctionDecl(name, params, ret_type, body, receiver)
 }
 
 ---

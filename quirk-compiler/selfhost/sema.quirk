@@ -41,6 +41,10 @@ struct Sema {
     // any expression typing runs so constructor calls and
     // field accesses can resolve regardless of source order.
     structs: Map
+    // structName → Map<methodName, FunctionDecl>. Populated by
+    // the same pre-pass; method-call dispatch consults this
+    // before falling back to builtins.
+    struct_methods: Map
     // Stack of scope frames (List<Map<String, Ty>>). The
     // innermost frame is the back element; resolution walks
     // back-to-front.
@@ -52,6 +56,7 @@ struct Sema {
     define __init(self) -> void {
         self.functions = Map()
         self.structs = Map()
+        self.struct_methods = Map()
         self.scopes = List()
         self.errors = List()
     }
@@ -349,6 +354,26 @@ define _check_field_get(s: Sema, fg: FieldGet) -> Ty {
 define _check_method_call(s: Sema, c: Call) -> Ty {
     fg: FieldGet := c.callee
     ot: Ty := _check_expr(s, fg.obj)
+    // User-defined struct method takes priority over the
+    // builtin table — `define Foo.length(...)` shadows the
+    // builtin `.length()` for Foo. Each arg expression is
+    // type-checked individually (catches undefined-name
+    // errors); strict arity / per-param matching is deferred.
+    sname := ""
+    match ot { case TStruct as ts => sname = ts.name case _ => {} }
+    if sname != "" and s.struct_methods.has(sname) {
+        methods: Map := s.struct_methods.get(sname)
+        if methods.has(fg.name) {
+            mdecl: FunctionDecl := methods.get(fg.name)
+            ai := 0
+            while ai < c.args.length() {
+                aexpr: Expr := c.args.__get(ai)
+                _check_expr(s, aexpr)
+                ai = ai + 1
+            }
+            return ty_from_annot(mdecl.ret_type)
+        }
+    }
     // Each receiver type defines its own method namespace.
     is_list := false
     match ot { case TList as _ => is_list = true case _ => {} }
@@ -569,6 +594,13 @@ define _check_stmt(s: Sema, st: Stmt, ret: Ty) -> void {
 
 define _check_function(s: Sema, fdecl: FunctionDecl) -> void {
     s.push_scope()
+    // Methods get an implicit `self` of type TStruct(receiver)
+    // available throughout the body. This must be bound before
+    // the declared params so user code can use `self` like any
+    // other local.
+    if fdecl.receiver != "" {
+        s.define_local("self", TStruct(fdecl.receiver))
+    }
     // Bind parameters.
     i := 0
     while i < fdecl.params.length() {
@@ -608,7 +640,18 @@ define check(decls: List) -> List {
             case Func as f => {
                 fd: FunctionDecl := f.decl
                 rt: Ty := ty_from_annot(fd.ret_type)
-                s.functions.put(fd.name, _TyHolder(rt))
+                if fd.receiver == "" {
+                    s.functions.put(fd.name, _TyHolder(rt))
+                } else {
+                    // Method: stash in struct_methods[receiver][name].
+                    // The inner Map is lazily created the first
+                    // time a receiver gets a method.
+                    if s.struct_methods.has(fd.receiver) == false {
+                        s.struct_methods.put(fd.receiver, Map())
+                    }
+                    inner: Map := s.struct_methods.get(fd.receiver)
+                    inner.put(fd.name, fd)
+                }
             }
             case StructTL as st => {
                 sd: StructDecl := st.decl

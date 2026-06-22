@@ -349,6 +349,37 @@ run "list.length() via param" \
 define main() -> Int { return cnt([1, 2, 3]) * 14 }" \
     42
 
+# Phase 4.14: user-defined struct methods. `define Foo.method(...)`
+# at top level adds a method to struct Foo with implicit `self`
+# (typed `%struct.Foo*`). Method calls `f.method(args)` thread the
+# receiver as the first LLVM arg, look up `Foo__method` in the
+# signature table, and render a typed call.
+run "method reads self field" \
+    "struct Pt { x: Int; y: Int }
+define Pt.sum() -> Int { return self.x + self.y }
+define main() -> Int { p := Pt(40, 2); return p.sum() }" \
+    42
+run "method with arg" \
+    "struct Box { n: Int }
+define Box.add(k: Int) -> Int { return self.n + k }
+define main() -> Int { b := Box(40); return b.add(2) }" \
+    42
+run "method mutates self field" \
+    "struct Box { n: Int }
+define Box.bump() -> Int { self.n = self.n + 1; return self.n }
+define main() -> Int { b := Box(41); return b.bump() }" \
+    42
+run "method called twice" \
+    "struct Box { n: Int }
+define Box.bump() -> Int { self.n = self.n + 1; return self.n }
+define main() -> Int { b := Box(40); b.bump(); return b.bump() }" \
+    42
+run "method shadows builtin .length" \
+    "struct Tag { n: Int }
+define Tag.length() -> Int { return self.n * 6 }
+define main() -> Int { t := Tag(7); return t.length() }" \
+    42
+
 # Phase 4.3: string literals + print() via puts().
 run_with_stdout "print literal" \
     'define main() -> Int { print("hello"); return 42 }' \
@@ -372,4 +403,4 @@ if [ "$fails" -gt 0 ]; then
     exit 1
 fi
 echo ""
-echo "all 69/69 cases passed"
+echo "all 74/74 cases passed"

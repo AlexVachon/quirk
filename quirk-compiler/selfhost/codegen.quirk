@@ -749,6 +749,44 @@ define _gen_method_call(cg: FnCG, c: Call) -> String {
     fg: FieldGet := c.callee
     recv_ty := _expr_static_ty(cg, fg.obj)
     recv_reg := _gen_expr(cg, fg.obj)
+    // User struct method dispatch: receiver type is
+    // `%struct.Foo*`; look up the mangled `Foo__method`
+    // signature in mod.sigs. Found → render a typed call
+    // threading the receiver as %arg0.
+    sname := _strip_struct_ptr(recv_ty)
+    if cg.mod.structs.has(sname) {
+        full := sname + "__" + fg.name
+        if cg.mod.sigs.has(full) {
+            mtsig: _Sig := cg.mod.sigs.get(full)
+            // Build "(self_ty %recv, pty %arg, ...)" using the
+            // pre-registered param tys (which already include
+            // the self param at index 0).
+            arg_vals := List()
+            ai := 0
+            while ai < c.args.length() {
+                aexpr: Expr := c.args.__get(ai)
+                arg_vals.append(_gen_expr(cg, aexpr))
+                ai = ai + 1
+            }
+            sig := "(" + recv_ty + " " + recv_reg
+            j := 0
+            while j < arg_vals.length() {
+                sig = sig + ", "
+                pty := "i32"
+                pi := j + 1
+                if pi < mtsig.param_tys.length() {
+                    pty = mtsig.param_tys.__get(pi)
+                }
+                av: String := arg_vals.__get(j)
+                sig = sig + pty + " " + av
+                j = j + 1
+            }
+            sig = sig + ")"
+            reg := cg.fresh()
+            cg.emit(reg + " = call " + mtsig.ret_ty + " @" + full + sig)
+            return reg
+        }
+    }
     if fg.name == "length" {
         if recv_ty == "%QList*" {
             gep := cg.fresh()
@@ -968,34 +1006,51 @@ define _gen_function(fdecl: FunctionDecl, mod: ModuleCG) -> String {
     cg := FnCG(mod)
     ret_llvm := _resolve_ty(mod, fdecl.ret_type)
     cg.ret_ty = ret_llvm
+    is_method := fdecl.receiver != ""
+    self_ty := ""
+    if is_method { self_ty = "%struct." + fdecl.receiver + "*" }
 
     // Build the param signature `<ty> %arg0, <ty> %arg1, ...`
     // (we don't reuse the user's name in the LLVM param slot
     // because every name needs its own alloca; the param
     // identifier itself lives in that alloca after we store
-    // the incoming SSA value below). _resolve_ty consults the
-    // struct registry so `f: Foo` becomes `%struct.Foo*`.
+    // the incoming SSA value below). Methods prepend a `self`
+    // param of type `%struct.Foo*`.
     sig := ""
+    arg_idx := 0
+    if is_method {
+        sig = sig + self_ty + " %arg0"
+        arg_idx = 1
+    }
     i := 0
     while i < fdecl.params.length() {
         p: Param := fdecl.params.__get(i)
-        if i > 0 { sig = sig + ", " }
-        arg_reg := "%arg" + i.str()
+        if arg_idx > 0 { sig = sig + ", " }
+        arg_reg := "%arg" + arg_idx.str()
         pty := _resolve_ty(mod, p.type_annot)
         sig = sig + pty + " " + arg_reg
+        arg_idx = arg_idx + 1
         i = i + 1
     }
 
     // Entry block: alloca each parameter, store the incoming
     // value in. Slot type follows the param's declared type so
     // Bool params live in `i1` slots, Int params in `i32`,
-    // struct params in `%struct.Foo*`.
+    // struct params in `%struct.Foo*`. Methods seed `self`
+    // first so body code can read/write it as a normal local.
+    next_arg := 0
+    if is_method {
+        slot := _ensure_slot(cg, "self", self_ty)
+        cg.emit_entry("store " + self_ty + " %arg0, " + self_ty + "* " + slot.name)
+        next_arg = 1
+    }
     k := 0
     while k < fdecl.params.length() {
         p: Param := fdecl.params.__get(k)
         pty := _resolve_ty(mod, p.type_annot)
         slot := _ensure_slot(cg, p.name, pty)
-        cg.emit_entry("store " + pty + " %arg" + k.str() + ", " + pty + "* " + slot.name)
+        cg.emit_entry("store " + pty + " %arg" + next_arg.str() + ", " + pty + "* " + slot.name)
+        next_arg = next_arg + 1
         k = k + 1
     }
 
@@ -1014,7 +1069,12 @@ define _gen_function(fdecl: FunctionDecl, mod: ModuleCG) -> String {
     // longer slips through. `0` works for both i1 and i32.
     cg.emit("ret " + ret_llvm + " 0")
 
-    header := "define " + ret_llvm + " @" + fdecl.name + "(" + sig + ") {\nentry:\n"
+    // Methods get a mangled LLVM name `Foo__method` so the
+    // receiver is recoverable from the symbol and free
+    // functions can't collide.
+    full_name := fdecl.name
+    if is_method { full_name = fdecl.receiver + "__" + fdecl.name }
+    header := "define " + ret_llvm + " @" + full_name + "(" + sig + ") {\nentry:\n"
     return header + cg.entry_out + cg.out + "}\n"
 }
 
@@ -1069,6 +1129,12 @@ define emit_module(decls: List) -> String {
             case Func as fp => {
                 fdp: FunctionDecl := fp.decl
                 ptys := List()
+                // Methods prepend `%struct.Foo*` as the self
+                // param so call-site rendering threads the
+                // receiver into arg0 without special-casing.
+                if fdp.receiver != "" {
+                    ptys.append("%struct." + fdp.receiver + "*")
+                }
                 pi := 0
                 while pi < fdp.params.length() {
                     pp_param: Param := fdp.params.__get(pi)
@@ -1076,7 +1142,11 @@ define emit_module(decls: List) -> String {
                     pi = pi + 1
                 }
                 rty := _resolve_ty(mod, fdp.ret_type)
-                mod.register_sig(fdp.name, _Sig(ptys, rty))
+                full_name := fdp.name
+                if fdp.receiver != "" {
+                    full_name = fdp.receiver + "__" + fdp.name
+                }
+                mod.register_sig(full_name, _Sig(ptys, rty))
             }
             case _ => {}
         }

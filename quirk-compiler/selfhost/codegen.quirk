@@ -499,6 +499,16 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
             return reg
         }
         case Call as c => {
+            // Method call form: `obj.method(args)` parsed as
+            // Call(FieldGet(obj, method), args). Dispatched
+            // before the identifier-callee path so the bare
+            // `name = "<bad-callee>"` fallthrough never fires
+            // for valid method calls.
+            is_method := false
+            match c.callee { case FieldGet as _ => is_method = true case _ => {} }
+            if is_method {
+                return _gen_method_call(cg, c)
+            }
             name := ""
             match c.callee {
                 case Ident as id => name = id.name
@@ -725,6 +735,42 @@ define _gen_struct_ctor(cg: FnCG, name: String, ctor_args: List) -> String {
         ai = ai + 1
     }
     return obj
+}
+
+// Lower a method call `obj.method(args)`. Phase 4.13 wires
+// a fixed receiver-keyed set:
+//   List.length()    →  GEP %QList field 0 + load i32
+//   String.length()  →  call i64 @strlen + trunc to i32
+// Extracted into its own helper to keep the recursive
+// `_gen_expr(cg, fg.obj)` separate from the other recursion
+// sites in `_gen_expr`'s arms — the same self-compiler
+// workaround pattern as `_gen_struct_ctor` and `_gen_list_lit`.
+define _gen_method_call(cg: FnCG, c: Call) -> String {
+    fg: FieldGet := c.callee
+    recv_ty := _expr_static_ty(cg, fg.obj)
+    recv_reg := _gen_expr(cg, fg.obj)
+    if fg.name == "length" {
+        if recv_ty == "%QList*" {
+            gep := cg.fresh()
+            cg.emit(gep + " = getelementptr inbounds %QList, %QList* " + recv_reg +
+                    ", i32 0, i32 0")
+            reg := cg.fresh()
+            cg.emit(reg + " = load i32, i32* " + gep)
+            return reg
+        }
+        if recv_ty == "i8*" {
+            cg.mod.ensure_decl("strlen", "declare i64 @strlen(i8*)")
+            len64 := cg.fresh()
+            cg.emit(len64 + " = call i64 @strlen(i8* " + recv_reg + ")")
+            // Int is i32 in this codegen — truncate. Strings
+            // longer than INT_MAX bytes would wrap; not a
+            // realistic concern for self-host source files.
+            reg := cg.fresh()
+            cg.emit(reg + " = trunc i64 " + len64 + " to i32")
+            return reg
+        }
+    }
+    return "<bad-method:" + fg.name + ">"
 }
 
 // Lower a list literal `[a, b, c]` to a heap-allocated

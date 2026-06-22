@@ -180,9 +180,11 @@ The unary form only matches at the start of an expression
 position (where `_parse_unary` is called); the binary form is
 handled later by `_parse_addsub`.
 ---
-// Postfix chain — `obj.field`, `obj.field.subfield`, and
-// `xs[i]`, `xs[i].field`, etc. Loops until neither a `.`
-// nor a `[` follows.
+// Postfix chain — `obj.field`, `obj.field.subfield`,
+// `xs[i]`, `xs[i].field`, and `obj.method(args)`. Loops
+// until none of `.`, `[`, `(` follow. The `(` arm lets a
+// FieldGet immediately become the callee of a Call, which
+// is how method-call syntax flows through.
 define _parse_postfix(s: ParserState) -> Expr {
     e := _parse_primary(s)
     keep_going := true
@@ -196,6 +198,20 @@ define _parse_postfix(s: ParserState) -> Expr {
             idx := _parse_expr(s)
             s.expect(TokenKind.RBracket, "']' to close index")
             e = Index(e, idx)
+        } elif s.check(TokenKind.LParen) {
+            // Call applied to whatever expression `e` is —
+            // typically a FieldGet for method-call syntax,
+            // but any expression that's already callable.
+            s.advance()
+            args := List()
+            if s.check(TokenKind.RParen) == false {
+                args.append(_parse_expr(s))
+                while s.match_kind(TokenKind.Comma) {
+                    args.append(_parse_expr(s))
+                }
+            }
+            s.expect(TokenKind.RParen, "')' to close call args")
+            e = Call(e, args)
         } else {
             keep_going = false
         }

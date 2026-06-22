@@ -5,6 +5,65 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.17] — 2026-06-22
+
+### Self-hosting Phase 4.13: method-call syntax
+
+`xs.length()` and `s.length()` now parse, type-check, and
+lower. The parser change is small; the dispatch flows
+through new sema + codegen helpers keyed on the receiver's
+static type.
+
+**Parser.** `_parse_postfix` grew an `LParen` arm next to its
+existing `Dot` and `LBracket` arms — when a `(` follows any
+postfix expression, the running `e` becomes the callee of a
+fresh `Call(e, args)`. That single change is what makes
+`xs.length()` parse: `xs.length` is a `FieldGet`, and the
+trailing `()` wraps it. The identifier-call shortcut in
+`_parse_primary` remains for the common `foo(args)` path; the
+postfix `(` arm only fires when the call follows a `.field`
+or `[i]` chain.
+
+**Sema.** `_check_call` now dispatches at the top: if the
+callee is a `FieldGet`, route to `_check_method_call` instead
+of the identifier-callee path. The new helper resolves the
+receiver type and looks up methods by name in a
+receiver-keyed table. Phase 4.13 wires exactly one method:
+`.length() → Int` on both `List` and `String`. Unknown
+methods produce typed diagnostics.
+
+**Codegen.** Symmetric `_gen_method_call` (extracted into its
+own function — same self-compiler workaround pattern as
+`_gen_struct_ctor` / `_gen_list_lit`):
+
+  - `%QList*` receiver + `length` → GEP `i32 0, i32 0` +
+    `load i32` (same shape as the `len()` builtin).
+  - `i8*` receiver + `length` → `call i64 @strlen(i8* %s)` +
+    `trunc i64 → i32`. Int is i32 in this codegen so the
+    truncation matches; strings longer than INT_MAX would
+    wrap but that's not a realistic concern for self-host
+    source files.
+
+The builtin `len()` from Phase 4.12 stays — `len(xs)` and
+`xs.length()` are now aliases producing identical IR.
+
+`codegen_e2e.sh` gains 5 new cases:
+
+```
+ok  list.length()                `xs.length() * 6`
+ok  string.length()              `s.length() + 37`
+ok  list.length() in while       `while i < xs.length() { ... }`
+ok  string.length() literal      `"hello, quirk!!!".length() + 27`
+ok  list.length() via param      `cnt(xs) -> Int { return xs.length() }`
+
+all 69/69 cases passed
+```
+
+Phase 4.x left: user-defined struct methods (`define
+Point.translate(dx, dy)`), `.append()` on lists (needs a
+real capacity field + realloc), and generic list element
+types.
+
 ## [4.0.0-alpha.16] — 2026-06-22
 
 ### Self-hosting Phase 4.12: list header layout + `len()` builtin

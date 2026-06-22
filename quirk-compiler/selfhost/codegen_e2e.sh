@@ -327,6 +327,28 @@ define main() -> Int { return summing([10, 12, 20]) }" \
     42
 run "len of single" "define main() -> Int { return len([42]) + 41 }"                            42
 
+# Phase 4.13: method-call syntax. `obj.method(args)` parses as
+# Call(FieldGet(obj, method), args); a new dispatch arm in sema
+# and codegen routes by receiver type. Phase 4.13 wires the
+# `.length()` method on both List (reads the %QList header)
+# and String (calls strlen + truncates to i32).
+run "list.length()" \
+    "define main() -> Int { xs := [10, 20, 30, 40, 50, 6, 1]; return xs.length() * 6 }" \
+    42
+run "string.length()" \
+    'define main() -> Int { s := "12345"; return s.length() + 37 }' \
+    42
+run "list.length() in while" \
+    "define main() -> Int { xs := [3, 4, 5, 6, 7, 8, 9]; i := 0; n := 0; while i < xs.length() { n = n + xs[i]; i = i + 1 } return n }" \
+    42
+run "string.length() literal" \
+    'define main() -> Int { return "hello, quirk!!!".length() + 27 }' \
+    42
+run "list.length() via param" \
+    "define cnt(xs: List) -> Int { return xs.length() }
+define main() -> Int { return cnt([1, 2, 3]) * 14 }" \
+    42
+
 # Phase 4.3: string literals + print() via puts().
 run_with_stdout "print literal" \
     'define main() -> Int { print("hello"); return 42 }' \
@@ -350,4 +372,4 @@ if [ "$fails" -gt 0 ]; then
     exit 1
 fi
 echo ""
-echo "all 64/64 cases passed"
+echo "all 69/69 cases passed"

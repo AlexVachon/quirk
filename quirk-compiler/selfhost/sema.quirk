@@ -227,14 +227,22 @@ define _check_binop(s: Sema, b: BinOp) -> Ty {
 }
 
 define _check_call(s: Sema, c: Call) -> Ty {
-    // Phase 3: the callee must be a bare identifier — `foo(...)`.
-    // Member-access call (`x.foo(...)`) and computed callees
-    // come later.
+    // Method-call form `obj.method(args)` parses as
+    // Call(FieldGet(obj, method), args). Phase 4.13 supports
+    // a small fixed set: `.length()` on List + String. User-
+    // defined struct methods come with the method-decl phase.
+    is_method := false
+    match c.callee { case FieldGet as _ => is_method = true case _ => {} }
+    if is_method {
+        return _check_method_call(s, c)
+    }
+    // Identifier-callee path: `foo(args)` (free function,
+    // builtin, or struct constructor).
     name := ""
     match c.callee {
         case Ident as id => name = id.name
         case _ => {
-            s.report("call target must be a bare identifier in Phase 3")
+            s.report("call target must be a bare identifier or method call")
             return TError("complex callee")
         }
     }
@@ -333,6 +341,31 @@ define _check_field_get(s: Sema, fg: FieldGet) -> Ty {
     }
     s.report("struct '" + sname + "' has no field '" + fg.name + "'")
     return TError("unknown field")
+}
+
+// Method-call dispatch: `obj.method(args)`. Phase 4.13 wires
+// a fixed set of receiver-type-keyed methods; once user-defined
+// methods land this routes through a per-struct method table.
+define _check_method_call(s: Sema, c: Call) -> Ty {
+    fg: FieldGet := c.callee
+    ot: Ty := _check_expr(s, fg.obj)
+    // Each receiver type defines its own method namespace.
+    is_list := false
+    match ot { case TList as _ => is_list = true case _ => {} }
+    is_str := false
+    match ot { case TString as _ => is_str = true case _ => {} }
+    // `.length()` on List or String → Int, no args.
+    if fg.name == "length" {
+        if c.args.length() != 0 {
+            s.report("." + fg.name + "() takes no arguments")
+            return TError("method arity")
+        }
+        if is_list or is_str { return TInt() }
+        s.report("." + fg.name + "() not defined on '" + ty_to_string(ot) + "'")
+        return TError("method receiver")
+    }
+    s.report("unknown method '." + fg.name + "()' on '" + ty_to_string(ot) + "'")
+    return TError("unknown method")
 }
 
 // List literal `[a, b, c]`. Phase 4.11 only supports Int

@@ -5,6 +5,66 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.26] — 2026-06-22
+
+### Self-hosting Phase 4.22: methods inside struct blocks + `__init` ctor dispatch
+
+`struct Foo { field: T; define __init(self, …) { … } }` now
+parses, type-checks, and lowers. The selfhost source shape
+`struct ParserState { tokens: List; pos: Int; define
+__init(self, tokens) { self.tokens = tokens; self.pos = 0 } }`
+is now expressible — that's roughly every struct in the
+selfhost compiler.
+
+**Parser.** `_parse_struct_decl` now interleaves field lines
+and `define …` blocks inside the struct body. Each inside-
+struct method is parsed via the existing `_parse_function_decl`
+(reusing every method-parsing capability we already have),
+then post-processed:
+
+  - Strip an explicit `self` first param if present — our
+    method machinery treats `self` as implicit and injects
+    it at codegen. Selfhost source writes `self` explicitly
+    in inside-struct methods; external `define Foo.method(…)`
+    keeps the implicit-self convention.
+  - Set the method's `receiver` field to the struct's name.
+
+The methods land in a `List<FunctionDecl>` filled by reference
+(`out_methods` param) and the top-level `parse()` spreads
+them into the decls list as ordinary `Func` TopLevel entries.
+Sema + codegen for inside-struct methods route through the
+exact same code path as external `define Foo.method(…)`.
+
+**Constructor dispatch.** `_gen_struct_ctor` now checks
+`mod.sigs.has("Foo____init")` (mangled name for `Foo`'s
+`__init`). When found: malloc + bitcast as before, then
+`call <ret> @Foo____init(%struct.Foo* %self, …args)` and
+return `%self` — the args run through the user's `__init`
+body which mutates the fields. When `__init` is absent the
+old direct-positional-field-store path is used, so all
+existing tests (e.g. `Pt(40, 2)` with no `__init`) continue
+to work unchanged.
+
+`codegen_e2e.sh` gains 5 new cases:
+
+```
+ok  init copies arg               `Box(42); b.n` → 42
+ok  init derives field             `Box(21); b.doubled = n * 2` → 42
+ok  init zeroes implicit field     `Counter(42)` sets tick = 0 + max = 42
+ok  init holds list param          `ParserState([10,20,30])` round-trips list
+ok  init then method call          `Box(20); b.get_plus(2)` — __init + sibling
+
+all 124/124 cases passed
+```
+
+The "init then method call" case proves inside-struct
+methods compose cleanly with the existing `define Foo.method`
+machinery — the codegen path is unified.
+
+Phase 4.x left: module imports (multi-file selfhost), throw/
+catch (or rewrite to result-list returns), string escapes
+(`\n`, `\t`, `\"`).
+
 ## [4.0.0-alpha.25] — 2026-06-22
 
 ### Self-hosting Phase 4.21: generic `List<T>` element types

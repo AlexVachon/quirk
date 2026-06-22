@@ -522,8 +522,14 @@ Stops at the EofToken sentinel.
 // Parse a single `struct Name { f1: T1; f2: T2; ... }` block.
 // Fields are separated by `;` or newlines; trailing separators
 // are tolerated. Methods / `__init` are deferred to a later
-// phase — only data fields are recognised here.
-define _parse_struct_decl(s: ParserState) -> StructDecl {
+// phase — fields and inside-struct `define …` method blocks.
+// Returns the StructDecl; the methods land in `out_methods`
+// (a `List<FunctionDecl>` the caller spreads into the top-
+// level decls list, each method's receiver set to this
+// struct's name). When `__init` is among the methods, the
+// constructor `Name(args)` lowers to a call into it
+// (Phase 4.22 codegen change).
+define _parse_struct_decl(s: ParserState, out_methods: List) -> StructDecl {
     s.expect(TokenKind.Struct, "'struct'")
     name := s.expect(TokenKind.Identifier, "struct name").value
     s.expect(TokenKind.LBrace, "'{' to open struct body")
@@ -532,6 +538,31 @@ define _parse_struct_decl(s: ParserState) -> StructDecl {
         // Tolerate leading / interleaved `;` so the user can
         // write either `x: Int; y: Int` or one-per-line forms.
         if s.match_kind(TokenKind.Semicolon) { continue }
+        // Method body inside the struct.
+        if s.check(TokenKind.Define) {
+            mfd: FunctionDecl := _parse_function_decl(s)
+            // Strip an explicit `self` first param (selfhost
+            // source writes it; our method machinery treats
+            // `self` as implicit and injects it at codegen).
+            if mfd.params.length() > 0 {
+                p0: Param := mfd.params.__get(0)
+                if p0.name == "self" {
+                    new_params := List()
+                    pi := 1
+                    while pi < mfd.params.length() {
+                        new_params.append(mfd.params.__get(pi))
+                        pi = pi + 1
+                    }
+                    mfd.params = new_params
+                }
+            }
+            // Re-target the method to this struct. The existing
+            // _parse_function_decl produces receiver="" for
+            // bare-name forms; we set it post-hoc.
+            mfd.receiver = name
+            out_methods.append(mfd)
+            continue
+        }
         fname := s.expect(TokenKind.Identifier, "field name").value
         s.expect(TokenKind.Colon, "':' after field name")
         ftype := _parse_type_annot(s, "field type")
@@ -602,7 +633,18 @@ define parse(tokens: List) -> List {
         if t.kind == TokenKind.Define {
             out.append(Func(_parse_function_decl(s)))
         } elif t.kind == TokenKind.Struct {
-            out.append(StructTL(_parse_struct_decl(s)))
+            inside_methods := List()
+            sd: StructDecl := _parse_struct_decl(s, inside_methods)
+            out.append(StructTL(sd))
+            // Spread inside-struct `define …` blocks into the
+            // top-level decls so sema + codegen treat them as
+            // regular `Name.method(…)` declarations.
+            mi := 0
+            while mi < inside_methods.length() {
+                mfd: FunctionDecl := inside_methods.__get(mi)
+                out.append(Func(mfd))
+                mi = mi + 1
+            }
         } elif t.kind == TokenKind.Enum {
             out.append(EnumTL(_parse_enum_decl(s)))
         } elif t.kind == TokenKind.TypeKw {

@@ -587,6 +587,43 @@ run_with_stdout "listp iterate strings" \
     0 "alpha
 beta"
 
+# Phase 4.22: `__init` constructors inside struct blocks.
+# Parser strips explicit `self` first param; methods land in
+# top-level decls with receiver = struct name. Codegen
+# dispatches `Foo(args)` through `Foo__init` when it's defined,
+# falling back to direct positional field stores otherwise.
+run "init copies arg" \
+    "struct Box { n: Int
+    define __init(self, n: Int) -> void { self.n = n }
+}
+define main() -> Int { b := Box(42); return b.n }" \
+    42
+run "init derives field" \
+    "struct Box { n: Int; doubled: Int
+    define __init(self, n: Int) -> void { self.n = n; self.doubled = n * 2 }
+}
+define main() -> Int { b := Box(21); return b.doubled }" \
+    42
+run "init zeroes implicit field" \
+    "struct Counter { tick: Int; max: Int
+    define __init(self, max: Int) -> void { self.tick = 0; self.max = max }
+}
+define main() -> Int { c := Counter(42); return c.tick + c.max }" \
+    42
+run "init holds list param" \
+    "struct ParserState { tokens: List; pos: Int
+    define __init(self, tokens: List) -> void { self.tokens = tokens; self.pos = 0 }
+}
+define main() -> Int { s := ParserState([10, 20, 30]); return s.pos + s.tokens[2] + 12 }" \
+    42
+run "init then method call" \
+    "struct Box { n: Int
+    define __init(self, x: Int) -> void { self.n = x * 2 }
+    define get_plus(self, k: Int) -> Int { return self.n + k }
+}
+define main() -> Int { b := Box(20); return b.get_plus(2) }" \
+    42
+
 # Phase 4.3: string literals + print() via puts().
 run_with_stdout "print literal" \
     'define main() -> Int { print("hello"); return 42 }' \
@@ -610,4 +647,4 @@ if [ "$fails" -gt 0 ]; then
     exit 1
 fi
 echo ""
-echo "all 119/119 cases passed"
+echo "all 124/124 cases passed"

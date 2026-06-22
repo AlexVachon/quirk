@@ -886,8 +886,34 @@ define _gen_struct_ctor(cg: FnCG, name: String, ctor_args: List) -> String {
     cg.emit(raw + " = call i8* @malloc(i64 " + size_i + ")")
     obj := cg.fresh()
     cg.emit(obj + " = bitcast i8* " + raw + " to %struct." + name + "*")
-    // Eval each constructor arg, then GEP + store into its
-    // field slot. Args match field order positionally.
+    // If the struct has an `__init` method, dispatch ctor
+    // through it: pass `self` (just-allocated obj) + the
+    // user's args, ignore the return value. Otherwise fall
+    // back to direct positional field stores.
+    init_name := name + "__" + "__init"
+    if cg.mod.sigs.has(init_name) {
+        msig: _Sig := cg.mod.sigs.get(init_name)
+        sig := "(%struct." + name + "* " + obj
+        ai := 0
+        while ai < ctor_args.length() {
+            aexpr: Expr := ctor_args.__get(ai)
+            aval := _gen_expr(cg, aexpr)
+            // param_tys[0] is `%struct.Foo*` (the implicit
+            // self); user-visible args start at index 1.
+            pty := "i32"
+            sigi := ai + 1
+            if sigi < msig.param_tys.length() {
+                pty = msig.param_tys.__get(sigi)
+            }
+            sig = sig + ", " + pty + " " + aval
+            ai = ai + 1
+        }
+        sig = sig + ")"
+        ret := cg.fresh()
+        cg.emit(ret + " = call " + msig.ret_ty + " @" + init_name + sig)
+        return obj
+    }
+    // No __init — direct positional field stores.
     ai := 0
     while ai < ctor_args.length() {
         aexpr: Expr := ctor_args.__get(ai)

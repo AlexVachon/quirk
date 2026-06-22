@@ -305,12 +305,40 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
         }
         case BinOp as b => {
             // Arithmetic vs comparison split on operator: the
-            // former returns the operand type (i32 or double),
-            // the latter returns i1. Operand type is taken from
-            // the left side — sema has already required both
-            // sides to agree.
+            // former returns the operand type (i32 / double /
+            // i8*), the latter returns i1. Operand type is taken
+            // from the left side — sema has already required
+            // both sides to agree.
             opd_ty := _expr_static_ty(cg, b.left)
             is_dbl := opd_ty == "double"
+            // String concat: `+` on two i8* operands. Lower to
+            // malloc(strlen(a) + strlen(b) + 1) + strcpy + strcat,
+            // and return the malloc'd buffer. The result leaks
+            // — the self-hosted compiler is short-lived enough
+            // that explicit free / a GC layer can wait.
+            if b.op == "+" and opd_ty == "i8*" {
+                l := _gen_expr(cg, b.left)
+                r := _gen_expr(cg, b.right)
+                cg.mod.ensure_decl("malloc", "declare i8* @malloc(i64)")
+                cg.mod.ensure_decl("strlen", "declare i64 @strlen(i8*)")
+                cg.mod.ensure_decl("strcpy", "declare i8* @strcpy(i8*, i8*)")
+                cg.mod.ensure_decl("strcat", "declare i8* @strcat(i8*, i8*)")
+                la := cg.fresh()
+                cg.emit(la + " = call i64 @strlen(i8* " + l + ")")
+                lb := cg.fresh()
+                cg.emit(lb + " = call i64 @strlen(i8* " + r + ")")
+                sum := cg.fresh()
+                cg.emit(sum + " = add i64 " + la + ", " + lb)
+                total := cg.fresh()
+                cg.emit(total + " = add i64 " + sum + ", 1")
+                buf := cg.fresh()
+                cg.emit(buf + " = call i8* @malloc(i64 " + total + ")")
+                cpy := cg.fresh()
+                cg.emit(cpy + " = call i8* @strcpy(i8* " + buf + ", i8* " + l + ")")
+                cat := cg.fresh()
+                cg.emit(cat + " = call i8* @strcat(i8* " + buf + ", i8* " + r + ")")
+                return buf
+            }
             l := _gen_expr(cg, b.left)
             r := _gen_expr(cg, b.right)
             op := b.op
@@ -451,11 +479,15 @@ define _expr_static_ty(cg: FnCG, e: Expr) -> String {
             if op == "==" or op == "!=" or op == "<" or op == "<=" or op == ">" or op == ">=" {
                 return "i1"
             }
-            // Arithmetic: result type follows operand type. If
-            // either operand is `double` the result is `double`
-            // (sema rejects mixed-kind arithmetic, so both should
-            // agree); otherwise `i32`.
+            // Arithmetic / concat: result type follows operand
+            // type. Sema rejects mixed-kind operations, so the
+            // left operand's static type is enough to decide.
+            //   `+` on String → i8*  (allocated via malloc in
+            //   _gen_expr; see the BinOp case there)
+            //   either side is `double` → double
+            //   otherwise → i32
             lt := _expr_static_ty(cg, b.left)
+            if lt == "i8*" and op == "+" { return "i8*" }
             if lt == "double" { return "double" }
             rt := _expr_static_ty(cg, b.right)
             if rt == "double" { return "double" }

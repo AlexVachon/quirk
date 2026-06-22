@@ -223,6 +223,27 @@ run_with_stdout "string reassign" \
     42 "first
 second"
 
+# Phase 4.8: String concat via `+`. Lowered to malloc(strlen +
+# strlen + 1) + strcpy + strcat — leaks the buffer, which is
+# fine for short-lived compiler runs.
+run_with_stdout "concat two literals" \
+    'define main() -> Int { print("hello, " + "world"); return 42 }' \
+    42 "hello, world"
+run_with_stdout "concat literal + local" \
+    'define main() -> Int { name := "Quirk"; print("hi, " + name); return 42 }' \
+    42 "hi, Quirk"
+run_with_stdout "concat into local + reuse" \
+    'define main() -> Int { greeting := "hi, " + "there"; print(greeting); print(greeting); return 42 }' \
+    42 "hi, there
+hi, there"
+run_with_stdout "concat chain" \
+    'define main() -> Int { print("a" + "b" + "c"); return 42 }' \
+    42 "abc"
+run_with_stdout "concat through call" \
+    'define greet(who: String) -> String { return "hello, " + who }
+define main() -> Int { print(greet("Quirk")); return 42 }' \
+    42 "hello, Quirk"
+
 # Phase 4.3: string literals + print() via puts().
 run_with_stdout "print literal" \
     'define main() -> Int { print("hello"); return 42 }' \
@@ -246,4 +267,4 @@ if [ "$fails" -gt 0 ]; then
     exit 1
 fi
 echo ""
-echo "all 40/40 cases passed"
+echo "all 45/45 cases passed"

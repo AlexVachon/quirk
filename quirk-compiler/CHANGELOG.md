@@ -5,6 +5,55 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.12] — 2026-06-22
+
+### Self-hosting Phase 4.8: String concat via `+`
+
+Sema already accepted `String + String → TString` (it has
+since Phase 3) but codegen had no lowering, so the operator
+parsed and type-checked but produced an undefined IR
+instruction at the BinOp arm. This phase wires the runtime
+side.
+
+**`+` on two `i8*` operands → malloc + strcpy + strcat.** A
+new branch at the top of `_gen_expr`'s BinOp arm fires when
+the left operand's static type is `i8*` and the operator is
+`+`. It declares libc helpers via `ModuleCG.ensure_decl` —
+`malloc`, `strlen`, `strcpy`, `strcat` — then emits the
+straightforward sequence:
+
+  - `%la = call i64 @strlen(i8* %left)`
+  - `%lb = call i64 @strlen(i8* %right)`
+  - `%total = add i64 %la, %lb` + `add i64 %total, 1`
+  - `%buf = call i8* @malloc(i64 %total)`
+  - `%c1 = call i8* @strcpy(i8* %buf, i8* %left)`
+  - `%c2 = call i8* @strcat(i8* %buf, i8* %right)`
+  - returns `%buf`
+
+The buffer leaks — the self-hosted compiler is short-lived
+enough that explicit `free` or a Boehm-GC integration can
+wait. `_expr_static_ty` for `BinOp` with `+` on `i8*` returns
+`"i8*"`, so a chain like `"a" + "b" + "c"` types right
+through and a String-returning function can `return "hello, "
++ who` without any extra wiring at the call boundary.
+
+`codegen_e2e.sh` gains 5 new cases:
+
+```
+ok  concat two literals          `print("hello, " + "world")`
+ok  concat literal + local       `print("hi, " + name)`
+ok  concat into local + reuse    `g := "hi, " + "there"; print(g); print(g)`
+ok  concat chain                 `print("a" + "b" + "c")`
+ok  concat through call          `greet(who) -> String = "hello, " + who`
+
+all 45/45 cases passed
+```
+
+Phase 4.x left: the big one — structs/lists/maps. That's
+where the runtime allocator pattern from this release gets
+generalised: every aggregate type lands as a `call i8*
+@malloc(...)` + typed field GEPs.
+
 ## [4.0.0-alpha.11] — 2026-06-22
 
 ### Self-hosting Phase 4.7: String at the call boundary

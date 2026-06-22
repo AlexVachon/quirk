@@ -223,7 +223,16 @@ define _check_binop(s: Sema, b: BinOp) -> Ty {
         is_dbl_r := false
         match rt { case TDouble as _ => is_dbl_r = true case _ => {} }
         if is_dbl_l and is_dbl_r { return TBool() }
-        s.report("comparison '" + op + "' expects matching Int or Double operands; got '" +
+        // String equality / inequality only — ordering comparisons
+        // on strings are deferred.
+        if op == "==" or op == "!=" {
+            is_str_l := false
+            match lt { case TString as _ => is_str_l = true case _ => {} }
+            is_str_r := false
+            match rt { case TString as _ => is_str_r = true case _ => {} }
+            if is_str_l and is_str_r { return TBool() }
+        }
+        s.report("comparison '" + op + "' expects matching Int / Double / String operands; got '" +
                  ty_to_string(lt) + "' and '" + ty_to_string(rt) + "'")
         return TError("comparison operand mismatch")
     }
@@ -397,6 +406,50 @@ define _check_method_call(s: Sema, c: Call) -> Ty {
         if is_int or is_bool or is_dbl { return TString() }
         s.report(".str() not defined on '" + ty_to_string(ot) + "'")
         return TError("method receiver")
+    }
+    // `.substring(Int, Int) → String` on String.
+    if fg.name == "substring" and is_str {
+        if c.args.length() != 2 {
+            s.report(".substring() takes 2 arguments")
+            return TError("method arity")
+        }
+        a0: Expr := c.args.__get(0)
+        a1: Expr := c.args.__get(1)
+        at0 := _check_expr(s, a0)
+        at1 := _check_expr(s, a1)
+        is_int_a := false
+        match at0 { case TInt as _ => is_int_a = true case _ => {} }
+        is_int_b := false
+        match at1 { case TInt as _ => is_int_b = true case _ => {} }
+        if is_int_a == false or is_int_b == false {
+            s.report(".substring() expects two Int arguments")
+            return TError("method arg")
+        }
+        return TString()
+    }
+    // `.startswith(String) → Bool` and `.endswith(String) → Bool` on String.
+    if (fg.name == "startswith" or fg.name == "endswith") and is_str {
+        if c.args.length() != 1 {
+            s.report("." + fg.name + "() takes 1 argument")
+            return TError("method arity")
+        }
+        a0: Expr := c.args.__get(0)
+        at0 := _check_expr(s, a0)
+        is_str_a := false
+        match at0 { case TString as _ => is_str_a = true case _ => {} }
+        if is_str_a == false {
+            s.report("." + fg.name + "() expects a String argument")
+            return TError("method arg")
+        }
+        return TBool()
+    }
+    // `.to_int() → Int` on String.
+    if fg.name == "to_int" and is_str {
+        if c.args.length() != 0 {
+            s.report(".to_int() takes no arguments")
+            return TError("method arity")
+        }
+        return TInt()
     }
     // `.length()` on List or String → Int, no args.
     if fg.name == "length" {

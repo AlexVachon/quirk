@@ -425,6 +425,30 @@ run_with_stdout "diagnostic message" \
     'define main() -> Int { ln := 12; col := 5; print("error at " + ln.str() + ":" + col.str()); return 42 }' \
     42 "error at 12:5"
 
+# Phase 4.17: String methods + String ==/!=. Each method
+# lowers to a libc helper (memcpy / strncmp / strcmp / atoi /
+# strlen) and is dispatched in _gen_string_method. Equality
+# on strings extends BinOp's comparison arm.
+run_with_stdout "substring middle" \
+    'define main() -> Int { s := "hello, world"; print(s.substring(7, 12)); return 0 }' \
+    0 "world"
+run_with_stdout "substring full" \
+    'define main() -> Int { s := "quirk"; print(s.substring(0, 5)); return 0 }' \
+    0 "quirk"
+run "startswith hit"  'define main() -> Int { s := "quirk-compiler"; if s.startswith("quirk") { return 42 } return 0 }' 42
+run "startswith miss" 'define main() -> Int { s := "quirk-compiler"; if s.startswith("rust") { return 0 } return 42 }' 42
+run "endswith hit"    'define main() -> Int { s := "selfhost.quirk"; if s.endswith(".quirk") { return 42 } return 0 }' 42
+run "endswith miss"   'define main() -> Int { s := "selfhost.quirk"; if s.endswith(".rs") { return 0 } return 42 }' 42
+run "endswith too long" 'define main() -> Int { s := "ab"; if s.endswith("xxxxxx") { return 0 } return 42 }' 42
+run "to_int parse"    'define main() -> Int { return "40".to_int() + 2 }' 42
+run "to_int via var"  'define main() -> Int { s := "30"; return s.to_int() + 12 }' 42
+run "string eq hit"   'define main() -> Int { kw := "let"; if kw == "let" { return 42 } return 0 }' 42
+run "string eq miss"  'define main() -> Int { kw := "let"; if kw == "const" { return 0 } return 42 }' 42
+run "string neq hit"  'define main() -> Int { kw := "let"; if kw != "const" { return 42 } return 0 }' 42
+run "substring + eq" \
+    'define main() -> Int { s := "answer: 42"; if s.substring(0, 6) == "answer" { return 42 } return 0 }' \
+    42
+
 # Phase 4.3: string literals + print() via puts().
 run_with_stdout "print literal" \
     'define main() -> Int { print("hello"); return 42 }' \
@@ -448,4 +472,4 @@ if [ "$fails" -gt 0 ]; then
     exit 1
 fi
 echo ""
-echo "all 84/84 cases passed"
+echo "all 97/97 cases passed"

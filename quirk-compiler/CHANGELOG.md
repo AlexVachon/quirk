@@ -5,6 +5,73 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.21] — 2026-06-22
+
+### Self-hosting Phase 4.17: String methods + String equality
+
+Four String methods land — `.substring(a, b)`, `.startswith(p)`,
+`.endswith(s)`, `.to_int()` — plus `==` / `!=` on String
+operands. Together with Phase 4.16's `.str()` this is enough
+to write the lexer's keyword recognition + token-text
+extraction in pure Quirk.
+
+**Method dispatch type fix.** `_expr_static_ty`'s Call arm
+previously returned `i32` for any FieldGet-callee Call — meaning
+`s := ln.str()` typed the slot as i32 and stored an i8* into
+it, producing IR that LLVM accepted but ran wrong. A new
+`_method_ret_ty(cg, recv_ty, method)` helper centralises the
+mapping (`length → i32`, `str → i8*`, `substring → i8*`,
+`startswith/endswith → i1`, `to_int → i32`, etc.) and is
+consulted by both `_expr_static_ty` and `_gen_method_call`.
+User-defined struct methods route through `mod.sigs` for
+their pre-registered return type. The `len()` Ident-callee
+builtin also needs its own special-case (it's not in
+`mod.sigs`).
+
+**Lowering.** All four methods extracted into
+`_gen_string_method` (the recursion-pairing dodge again):
+
+  - **`.substring(a, b)`** — `sub` len, `sext` to i64, `malloc(len+1)`,
+    `memcpy(buf, recv + a, len)`, null-terminate at `buf[len]`.
+  - **`.startswith(p)`** — `strncmp(s, p, strlen(p)) == 0`.
+  - **`.endswith(p)`** — `strlen` both, branch on `sufl > slen`
+    → false; else `strncmp(s + (slen - sufl), p, sufl) == 0`.
+    Joined via a real `phi i1`.
+  - **`.to_int()`** — `atoi(s)`.
+
+**String `==` / `!=`.** Sema's BinOp comparison arm accepts
+matching `TString` operands for `==` and `!=` only (ordering
+ops still rejected). Codegen routes i8* operands through
+`strcmp` + `icmp eq/ne` against zero. Handled before the
+int/double cmp paths so the `strcmp` result reg gets the
+earlier SSA number — `cg.fresh()` assigns in call order and
+emit order must match, an SSA-numbering trap that's bit me
+twice now and is covered in the feedback memory.
+
+`codegen_e2e.sh` gains 13 new cases:
+
+```
+ok  substring middle              `"hello, world".substring(7, 12)` → "world"
+ok  substring full                `"quirk".substring(0, 5)` → "quirk"
+ok  startswith hit / miss         prefix-match `"quirk-compiler"`
+ok  endswith hit / miss / too long
+ok  to_int parse / via var        `"40".to_int() + 2` → 42
+ok  string eq hit / miss          `"let" == "let"` / `"let" == "const"`
+ok  string neq hit                `"let" != "const"`
+ok  substring + eq                `s.substring(0, 6) == "answer"` (composed)
+
+all 97/97 cases passed
+```
+
+The composed `s.substring(0, 6) == "answer"` case is the
+critical shape — a string sliced out of source text being
+matched against a keyword literal. That's exactly what
+[lexer.quirk](selfhost/lexer.quirk)'s keyword recognition
+will look like once selfhost can compile itself.
+
+Phase 4.x left: enum, tagged unions + match, Map, generic
+list element types, module imports, throw/catch.
+
 ## [4.0.0-alpha.20] — 2026-06-22
 
 ### Self-hosting Phase 4.16: primitive `.str()` methods

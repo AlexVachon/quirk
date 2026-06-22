@@ -37,6 +37,7 @@ toolchain dependency from anyone wanting to hack on the compiler.
 |  4.14 | User-defined struct methods — `define Foo.method(...)` with implicit `self` | landed (v4.0.0-alpha.18) |
 |  4.15 | `List.append()` + capacity field + realloc growth | landed (v4.0.0-alpha.19) |
 |  4.16 | Primitive `.str()` — Int / Bool / Double → String | landed (v4.0.0-alpha.20) |
+|  4.17 | String methods (`.substring`, `.startswith`, `.endswith`, `.to_int`) + String `==` / `!=` | landed (v4.0.0-alpha.21) |
 |  5    | Bootstrap — Quirk compiler compiles itself, byte-identical | not started |
 
 The Codegen phase deliberately targets *text-form* LLVM IR (`.ll`)

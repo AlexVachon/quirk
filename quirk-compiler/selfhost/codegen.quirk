@@ -484,6 +484,21 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
             if op == ">"  { int_pred = "sgt" dbl_pred = "ogt" }
             if op == ">=" { int_pred = "sge" dbl_pred = "oge" }
             if int_pred.length() > 0 {
+                // String equality only — `==` / `!=` on i8*
+                // route through strcmp. Handled first so the
+                // strcmp result reg gets the earlier SSA
+                // number (cg.fresh() assigns in call order,
+                // emit order must match).
+                if opd_ty == "i8*" {
+                    cg.mod.ensure_decl("strcmp", "declare i32 @strcmp(i8*, i8*)")
+                    cmp := cg.fresh()
+                    cg.emit(cmp + " = call i32 @strcmp(i8* " + l + ", i8* " + r + ")")
+                    reg := cg.fresh()
+                    pred := "eq"
+                    if op == "!=" { pred = "ne" }
+                    cg.emit(reg + " = icmp " + pred + " i32 " + cmp + ", 0")
+                    return reg
+                }
                 reg := cg.fresh()
                 if is_dbl {
                     cg.emit(reg + " = fcmp " + dbl_pred + " double " + l + ", " + r)
@@ -666,11 +681,22 @@ define _expr_static_ty(cg: FnCG, e: Expr) -> String {
             // and other special-cased builtins fall through to
             // the default `i32` — `print(...)` lowers to `puts`
             // which returns i32 and isn't a useful binding shape.
+            // Method calls (`obj.m(args)`) route to _method_ret_ty
+            // so `s := ln.str()` gets the right slot type.
+            is_method := false
+            match c.callee { case FieldGet as _ => is_method = true case _ => {} }
+            if is_method {
+                fg: FieldGet := c.callee
+                rcv := _expr_static_ty(cg, fg.obj)
+                return _method_ret_ty(cg, rcv, fg.name)
+            }
             cname := ""
             match c.callee {
                 case Ident as id => cname = id.name
                 case _ => {}
             }
+            // Builtin `len()` returns Int regardless of arg type.
+            if cname == "len" { return "i32" }
             if cg.mod.structs.has(cname) {
                 return "%struct." + cname + "*"
             }
@@ -823,6 +849,17 @@ define _gen_method_call(cg: FnCG, c: Call) -> String {
         // _gen_field_set).
         return _gen_list_append(cg, recv_reg, c.args)
     }
+    // String methods. Each lowers to a libc helper call;
+    // extracted into _gen_string_method so the recursive
+    // _gen_expr calls live in a separate function — the same
+    // recursion-pairing dodge used by _gen_struct_ctor /
+    // _gen_list_lit / _gen_list_append.
+    if recv_ty == "i8*" {
+        if fg.name == "substring" or fg.name == "startswith" or
+           fg.name == "endswith" or fg.name == "to_int" {
+            return _gen_string_method(cg, fg.name, recv_reg, c.args)
+        }
+    }
     if fg.name == "str" {
         // Int.str(): snprintf("%d", x) into a 12-byte buffer
         // (max i32 in decimal is 11 chars + null).
@@ -945,6 +982,114 @@ define _gen_list_append(cg: FnCG, recv_reg: String, args: List) -> String {
     return "0"
 }
 
+// String method lowering. All four route through libc:
+//   .substring(a, b) — malloc(b-a+1), memcpy, null-terminate
+//   .startswith(p)   — strncmp(s, p, strlen(p)) == 0
+//   .endswith(p)     — compare last strlen(p) bytes of s
+//   .to_int()        — atoi
+// Extracted into its own helper for the recursion-pairing
+// dodge.
+define _gen_string_method(cg: FnCG, name: String, recv_reg: String, args: List) -> String {
+    if name == "substring" {
+        a0e: Expr := args.__get(0)
+        a1e: Expr := args.__get(1)
+        a := _gen_expr(cg, a0e)
+        b := _gen_expr(cg, a1e)
+        cg.mod.ensure_decl("malloc", "declare i8* @malloc(i64)")
+        cg.mod.ensure_decl("memcpy",
+            "declare i8* @memcpy(i8*, i8*, i64)")
+        // len = b - a (i32), as i64 for malloc/memcpy sizes.
+        len_i32 := cg.fresh()
+        cg.emit(len_i32 + " = sub nsw i32 " + b + ", " + a)
+        len_i64 := cg.fresh()
+        cg.emit(len_i64 + " = sext i32 " + len_i32 + " to i64")
+        // +1 for null terminator.
+        bytes_i64 := cg.fresh()
+        cg.emit(bytes_i64 + " = add nsw i64 " + len_i64 + ", 1")
+        buf := cg.fresh()
+        cg.emit(buf + " = call i8* @malloc(i64 " + bytes_i64 + ")")
+        // Source pointer = recv + a.
+        a_i64 := cg.fresh()
+        cg.emit(a_i64 + " = sext i32 " + a + " to i64")
+        src := cg.fresh()
+        cg.emit(src + " = getelementptr inbounds i8, i8* " + recv_reg +
+                ", i64 " + a_i64)
+        // memcpy copies len bytes (the null is set separately so
+        // we don't depend on the source having one mid-string).
+        cpy := cg.fresh()
+        cg.emit(cpy + " = call i8* @memcpy(i8* " + buf + ", i8* " + src +
+                ", i64 " + len_i64 + ")")
+        // Null-terminate at buf[len].
+        nul_slot := cg.fresh()
+        cg.emit(nul_slot + " = getelementptr inbounds i8, i8* " + buf +
+                ", i64 " + len_i64)
+        cg.emit("store i8 0, i8* " + nul_slot)
+        return buf
+    }
+    if name == "startswith" {
+        ae: Expr := args.__get(0)
+        prefix := _gen_expr(cg, ae)
+        cg.mod.ensure_decl("strlen", "declare i64 @strlen(i8*)")
+        cg.mod.ensure_decl("strncmp",
+            "declare i32 @strncmp(i8*, i8*, i64)")
+        plen := cg.fresh()
+        cg.emit(plen + " = call i64 @strlen(i8* " + prefix + ")")
+        cmp := cg.fresh()
+        cg.emit(cmp + " = call i32 @strncmp(i8* " + recv_reg +
+                ", i8* " + prefix + ", i64 " + plen + ")")
+        reg := cg.fresh()
+        cg.emit(reg + " = icmp eq i32 " + cmp + ", 0")
+        return reg
+    }
+    if name == "endswith" {
+        ae: Expr := args.__get(0)
+        suffix := _gen_expr(cg, ae)
+        cg.mod.ensure_decl("strlen", "declare i64 @strlen(i8*)")
+        cg.mod.ensure_decl("strncmp",
+            "declare i32 @strncmp(i8*, i8*, i64)")
+        slen := cg.fresh()
+        cg.emit(slen + " = call i64 @strlen(i8* " + recv_reg + ")")
+        sufl := cg.fresh()
+        cg.emit(sufl + " = call i64 @strlen(i8* " + suffix + ")")
+        // suffix longer than s → false. The `select` branchless
+        // form would also work, but a real `br i1` clarifies
+        // the IR shape.
+        too_long := cg.fresh()
+        cg.emit(too_long + " = icmp ugt i64 " + sufl + ", " + slen)
+        false_lbl := cg.fresh_label("ends.short")
+        cmp_lbl   := cg.fresh_label("ends.cmp")
+        end_lbl   := cg.fresh_label("ends.done")
+        cg.emit("br i1 " + too_long + ", label %" + false_lbl + ", label %" + cmp_lbl)
+        cg.emit_raw(cmp_lbl + ":")
+        // tail pointer = s + (slen - sufl).
+        delta := cg.fresh()
+        cg.emit(delta + " = sub nsw i64 " + slen + ", " + sufl)
+        tail := cg.fresh()
+        cg.emit(tail + " = getelementptr inbounds i8, i8* " + recv_reg +
+                ", i64 " + delta)
+        cmpres := cg.fresh()
+        cg.emit(cmpres + " = call i32 @strncmp(i8* " + tail +
+                ", i8* " + suffix + ", i64 " + sufl + ")")
+        cmp_ok := cg.fresh()
+        cg.emit(cmp_ok + " = icmp eq i32 " + cmpres + ", 0")
+        cg.emit("br label %" + end_lbl)
+        cg.emit_raw(false_lbl + ":")
+        cg.emit("br label %" + end_lbl)
+        cg.emit_raw(end_lbl + ":")
+        phi := cg.fresh()
+        cg.emit(phi + " = phi i1 [ " + cmp_ok + ", %" + cmp_lbl +
+                " ], [ false, %" + false_lbl + " ]")
+        return phi
+    }
+    if name == "to_int" {
+        cg.mod.ensure_decl("atoi", "declare i32 @atoi(i8*)")
+        reg := cg.fresh()
+        cg.emit(reg + " = call i32 @atoi(i8* " + recv_reg + ")")
+        return reg
+    }
+    return "0"
+}
+
 // Lower a list literal `[a, b, c]` to a heap-allocated
 // `%QList { length, capacity, data* }` plus a separate
 // element-array allocation. Two mallocs: one 12-byte header,
@@ -1026,6 +1171,33 @@ define _gen_field_set(cg: FnCG, obj: Expr, name: String, value: Expr) -> void {
             ", %struct." + sname + "* " + obj_reg +
             ", i32 0, i32 " + idx.str())
     cg.emit("store " + field_ty + " " + val_reg + ", " + field_ty + "* " + gep)
+}
+
+// Return type of a method call given the receiver's LLVM type
+// and the method name. Used by both `_gen_method_call` (the
+// lowering side) and `_expr_static_ty` (so a `s := ln.str()`
+// binding gets the right slot type). Returns "i32" as a
+// conservative default for unknown methods — sema will have
+// already rejected them, so this fallthrough should be
+// unreachable at compile time of valid programs.
+define _method_ret_ty(cg: FnCG, recv_ty: String, method: String) -> String {
+    // User-defined struct method: look up the mangled signature.
+    sname := _strip_struct_ptr(recv_ty)
+    if cg.mod.structs.has(sname) {
+        full := sname + "__" + method
+        if cg.mod.sigs.has(full) {
+            sig: _Sig := cg.mod.sigs.get(full)
+            return sig.ret_ty
+        }
+    }
+    if method == "length" { return "i32" }
+    if method == "append" { return "i32" }
+    if method == "to_int" { return "i32" }
+    if method == "str" { return "i8*" }
+    if method == "substring" { return "i8*" }
+    if method == "startswith" { return "i1" }
+    if method == "endswith" { return "i1" }
+    return "i32"
 }
 
 // Extract `"Foo"` from `"%struct.Foo*"`. Returns the input

@@ -34,7 +34,7 @@ Deferred:
 ---
 
 from .ast use { Expr, Stmt, Param, FunctionDecl, TopLevel }
-from .ast use { IntLit, StringLit, BoolLit, NullLit, Ident, BinOp, Call }
+from .ast use { IntLit, StringLit, BoolLit, NullLit, Ident, UnaryOp, BinOp, Call }
 from .ast use { Return, ExprStmt, VarDecl, Assign, If, While, Func }
 
 ---
@@ -53,6 +53,13 @@ struct FnCG {
     next_reg: Int
     next_label: Int
     locals: Map
+    // True once the current block has emitted a terminator
+    // (`br`, `ret`). Subsequent instructions in the same
+    // block would be dead code — LLVM accepts but rejects on
+    // strict verifier modes, and `lli-14 -strict` flags it.
+    // We track this and skip emit() until a new label opens
+    // a fresh block.
+    block_terminated: Bool
 
     define __init(self) -> void {
         self.entry_out = ""
@@ -60,6 +67,7 @@ struct FnCG {
         self.next_reg = 0
         self.next_label = 0
         self.locals = Map()
+        self.block_terminated = false
     }
 
     define fresh(self) -> String {
@@ -75,13 +83,32 @@ struct FnCG {
     }
 
     define emit(self, line: String) -> void {
+        // Suppress dead code after a terminator. Without this,
+        // a `return` followed by anything else (or the
+        // unconditional `ret i32 0` fall-through after every
+        // block) emits unreachable IR that fails strict
+        // verification.
+        if self.block_terminated { return }
         self.out = self.out + "  " + line + "\n"
+        // `ret` / `br` / `unreachable` mark the block as
+        // terminated. We check for the first token of the
+        // line — anything else is a normal instruction.
+        if line.startswith("ret ") or line.startswith("br ") or line == "unreachable" {
+            self.block_terminated = true
+        }
     }
 
     // Raw — no leading indent. Used for basic-block labels and
     // explicit `br` lines that should align flush-left in IR.
+    // Labels reopen the block, so emitting one clears the
+    // terminated flag.
     define emit_raw(self, line: String) -> void {
         self.out = self.out + line + "\n"
+        // A label line (`some.label.0:`) opens a fresh block,
+        // so prior terminator status no longer applies.
+        if line.endswith(":") {
+            self.block_terminated = false
+        }
     }
 
     define emit_entry(self, line: String) -> void {
@@ -115,6 +142,27 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
                 return reg
             }
             return "<undef:" + id.name + ">"
+        }
+        case UnaryOp as u => {
+            v := _gen_expr(cg, u.operand)
+            if u.op == "-" {
+                // 0 - x is the standard lowering of unary
+                // negation. LLVM has no dedicated `neg`
+                // instruction; sub-from-zero is the idiom.
+                reg := cg.fresh()
+                cg.emit(reg + " = sub nsw i32 0, " + v)
+                return reg
+            }
+            if u.op == "not" {
+                // `not` operates on i1. The operand came from
+                // a comparison or another `not`, so it's
+                // already i1. `xor i1 b, 1` is the idiom for
+                // logical negation.
+                reg := cg.fresh()
+                cg.emit(reg + " = xor i1 " + v + ", 1")
+                return reg
+            }
+            return "0"
         }
         case BinOp as b => {
             // Arithmetic vs comparison split on operator: the
@@ -315,10 +363,12 @@ define _gen_function(fdecl: FunctionDecl) -> String {
         _gen_stmt(cg, st)
         j = j + 1
     }
-    // Functions without an explicit return at the end fall
-    // through here; emit `ret i32 0` so every basic block has a
-    // terminator. Without this, LLVM rejects the IR — every
-    // basic block must end in a branch / ret / unreachable.
+    // Functions without an explicit return at the end need a
+    // synthetic terminator so every basic block ends cleanly.
+    // The emit() helper itself skips when the block is already
+    // terminated, so we can call unconditionally — the dead
+    // `ret i32 0` that previously trailed a real `return` no
+    // longer slips through.
     cg.emit("ret i32 0")
 
     header := "define i32 @" + fdecl.name + "(" + sig + ") {\nentry:\n"

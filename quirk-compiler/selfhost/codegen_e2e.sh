@@ -84,11 +84,17 @@ define main() -> Int { return double_(21) }"                                    
 
 # Phase 4.1: control flow + comparisons.
 run "if true branch"   "define main() -> Int { x := 5; if x > 0 { return 42 } else { return 0 } }"        42
-# Unary minus is parser-deferred; use `0 - 5` for a negative seed.
-run "if false branch"  "define main() -> Int { x := 0 - 5; if x > 0 { return 0 } else { return 42 } }"   42
+run "if false branch"  "define main() -> Int { x := -5; if x > 0 { return 0 } else { return 42 } }"     42
 run "if without else"  "define main() -> Int { y := 10; if y == 10 { y = 42 } return y }"                42
 run "while accumulate" "define main() -> Int { n := 0; i := 0; while i < 7 { n = n + 6; i = i + 1 } return n }"  42
 run "while early exit via mutated bound" "define main() -> Int { n := 0; cap := 10; while n < cap { n = n + 1; if n == 5 { cap = n } } return n + 37 }"  42
+
+# Phase 4.2: unary `-` and `not`.
+run "unary minus literal" "define main() -> Int { return -(-42) }"                                                      42
+run "unary minus in expr" "define main() -> Int { x := -10; return -x + 32 }"                                          42
+run "not flips false"     "define main() -> Int { x := 5; if not (x > 100) { return 42 } return 0 }"                   42
+run "not flips true"      "define main() -> Int { x := 5; if not (x > 0) { return 0 } return 42 }"                     42
+run "double not"          "define main() -> Int { if not not (1 == 1) { return 42 } return 0 }"                        42
 
 if [ "$fails" -gt 0 ]; then
     echo ""
@@ -96,4 +102,4 @@ if [ "$fails" -gt 0 ]; then
     exit 1
 fi
 echo ""
-echo "all 9/9 cases passed"
+echo "all 14/14 cases passed"

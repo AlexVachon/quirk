@@ -31,6 +31,7 @@ type Expr =
     | BoolLit(value: Bool)
     | NullLit()
     | Ident(name: String)
+    | UnaryOp(op: String, operand: Expr)
     | BinOp(op: String, left: Expr, right: Expr)
     | Call(callee: Expr, args: List)
 

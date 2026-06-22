@@ -5,6 +5,52 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.6] — 2026-06-22
+
+### Self-hosting Phase 4.2: unary `-` / `not` + clean IR (no dead code)
+
+Two surface-syntax pickups plus a Codegen cleanup that surfaced
+in passing:
+
+**Unary `-` and `not`.** Added a `_parse_unary` precedence tier
+between primary and mul; `-x` and `not x` are right-associative
+(so `not not b` is `not (not b)`). New `UnaryOp(op, operand)`
+AST variant. Sema accepts `-Int → Int` and `not Bool → Bool`,
+rejects everything else with a typed diagnostic. Codegen lowers
+`-x` to `sub nsw i32 0, x` (LLVM has no dedicated `neg`) and
+`not b` to `xor i1 b, 1`. The Phase 4.1 e2e workaround
+`x := 0 - 5` is now just `x := -5`.
+
+**Block-termination tracker.** Every `_gen_function` previously
+ended with an unconditional `cg.emit("ret i32 0")` to guarantee
+every block has a terminator. For functions with an explicit
+`return`, that produced a trailing dead `ret i32 0` inside the
+same basic block as the real `ret` — LLVM tolerated it (first
+terminator wins) but strict verifiers flagged it and the IR
+read like a bug. `FnCG` now carries a `block_terminated` flag
+that emit() consults: instructions skip when the current block
+has already emitted `ret` / `br` / `unreachable`. Label
+emission (`emit_raw` with a `:`-suffixed line) clears the flag
+because a new label opens a fresh block. Net result: the
+fall-through `ret i32 0` only emits when it actually needs to,
+and the IR has zero dead trailing instructions.
+
+`codegen_e2e.sh` gains five new cases:
+
+```
+ok  unary minus literal      `-(-42)`
+ok  unary minus in expr      `x := -10; return -x + 32`
+ok  not flips false          `if not (x > 100) { ... }`
+ok  not flips true           `if not (x > 0) { ... }`
+ok  double not               `if not not (1 == 1) { ... }`
+
+all 14/14 cases passed
+```
+
+Phase 4.x continues toward strings, Bool as a first-class
+binding type, and structs/lists/maps. Each increment shrinks
+the gap to a real bootstrap.
+
 ## [4.0.0-alpha.5] — 2026-06-22
 
 ### Self-hosting Phase 4.1: control flow + comparisons + alloca-based locals

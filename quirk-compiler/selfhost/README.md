@@ -22,6 +22,7 @@ toolchain dependency from anyone wanting to hack on the compiler.
 |  3    | Sema in Quirk — type-check + transforms   | landed (v4.0.0-alpha.3) |
 |  4    | Codegen — emit LLVM IR as text + run via `lli` | landed (v4.0.0-alpha.4) |
 |  4.1  | Codegen — comparison ops + `if`/`else`/`while` + alloca locals | landed (v4.0.0-alpha.5) |
+|  4.2  | Unary `-` / `not` + block-termination tracker | landed (v4.0.0-alpha.6) |
 |  5    | Bootstrap — Quirk compiler compiles itself, byte-identical | not started |
 
 The Codegen phase deliberately targets *text-form* LLVM IR (`.ll`)

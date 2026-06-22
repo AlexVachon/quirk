@@ -34,7 +34,7 @@ worked around in tokens.quirk's `__str` impl.
 
 from .tokens use { TokenKind, Token }
 from .ast use { Expr, Stmt, Param, FunctionDecl, TopLevel }
-from .ast use { IntLit, StringLit, BoolLit, NullLit, Ident, BinOp, Call }
+from .ast use { IntLit, StringLit, BoolLit, NullLit, Ident, UnaryOp, BinOp, Call }
 from .ast use { Return, ExprStmt, VarDecl, Assign, If, While, Func }
 
 struct ParserState {
@@ -142,11 +142,35 @@ define _parse_primary(s: ParserState) -> Expr {
     throw ValueError("Expected expression at line " + t.line.str() + ":" + t.col.str() + ", got '" + t.value + "'")
 }
 
+---
+Unary prefix operators. `-x` is arithmetic negation; `not x` is
+logical negation. Right-associative — `not not b` is
+`not (not b)`. Sits just above the primary level so multi-char
+operators with lower precedence (`*`, `/`, `+`, `-`, comparisons)
+all see a fully-unary'd operand.
+
+Note: binary `-` is distinguished from unary `-` by context.
+The unary form only matches at the start of an expression
+position (where `_parse_unary` is called); the binary form is
+handled later by `_parse_addsub`.
+---
+define _parse_unary(s: ParserState) -> Expr {
+    if s.check(TokenKind.Minus) {
+        s.advance()
+        return UnaryOp("-", _parse_unary(s))
+    }
+    if s.check(TokenKind.Not) {
+        s.advance()
+        return UnaryOp("not", _parse_unary(s))
+    }
+    return _parse_primary(s)
+}
+
 define _parse_mul(s: ParserState) -> Expr {
-    left := _parse_primary(s)
+    left := _parse_unary(s)
     while s.check(TokenKind.Star) or s.check(TokenKind.Slash) {
         op_tok: Token := s.advance()
-        right := _parse_primary(s)
+        right := _parse_unary(s)
         left = BinOp(op_tok.value, left, right)
     }
     return left

@@ -26,7 +26,7 @@ Things deferred to Phase 3.x:
 ---
 
 from .ast use { Expr, Stmt, Param, FunctionDecl, TopLevel }
-from .ast use { IntLit, StringLit, BoolLit, NullLit, Ident, BinOp, Call }
+from .ast use { IntLit, StringLit, BoolLit, NullLit, Ident, UnaryOp, BinOp, Call }
 from .ast use { Return, ExprStmt, VarDecl, Assign, If, While, Func }
 from .types use { Ty, TInt, TString, TBool, TVoid, TAny, TError }
 from .types use { ty_to_string, ty_from_annot, ty_compatible }
@@ -124,10 +124,35 @@ define _check_expr(s: Sema, e: Expr) -> Ty {
             match t { case TError as e => s.report(e.msg) case _ => {} }
             return t
         }
+        case UnaryOp as u   => return _check_unary(s, u)
         case BinOp as b     => return _check_binop(s, b)
         case Call as c      => return _check_call(s, c)
         case _              => return TError("unknown expression kind")
     }
+}
+
+define _check_unary(s: Sema, u: UnaryOp) -> Ty {
+    ot: Ty := _check_expr(s, u.operand)
+    // Propagate inner errors so we don't add a derived
+    // "unary op on <error>" diagnostic on top.
+    match ot { case TError as _ => return ot case _ => {} }
+    op := u.op
+    if op == "-" {
+        is_int := false
+        match ot { case TInt as _ => is_int = true case _ => {} }
+        if is_int { return TInt() }
+        s.report("unary '-' expects Int, got '" + ty_to_string(ot) + "'")
+        return TError("unary minus type mismatch")
+    }
+    if op == "not" {
+        is_bool := false
+        match ot { case TBool as _ => is_bool = true case _ => {} }
+        if is_bool { return TBool() }
+        s.report("unary 'not' expects Bool, got '" + ty_to_string(ot) + "'")
+        return TError("unary not type mismatch")
+    }
+    s.report("unsupported unary operator '" + op + "'")
+    return TError("unsupported unary")
 }
 
 define _check_binop(s: Sema, b: BinOp) -> Ty {

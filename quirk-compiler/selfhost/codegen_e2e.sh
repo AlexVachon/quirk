@@ -152,6 +152,18 @@ run "not flips false"     "define main() -> Int { x := 5; if not (x > 100) { ret
 run "not flips true"      "define main() -> Int { x := 5; if not (x > 0) { return 0 } return 42 }"                     42
 run "double not"          "define main() -> Int { if not not (1 == 1) { return 42 } return 0 }"                        42
 
+# Phase 4.4: Bool as a first-class binding type. The slot type
+# now follows the RHS expression — `i1` for comparisons, `not`,
+# and BoolLits; `i32` for everything else. `lli` would reject
+# any mismatched store/load, so an `exit=42` here also implies
+# the IR is well-typed.
+run "bool literal binding"  "define main() -> Int { b := true; if b { return 42 } return 0 }"           42
+run "bool literal false"    "define main() -> Int { b := false; if b { return 0 } return 42 }"          42
+run "comparison binding"    "define main() -> Int { x := 5; b := x > 0; if b { return 42 } return 0 }"  42
+run "not binding"           "define main() -> Int { b := not (1 == 2); if b { return 42 } return 0 }"   42
+run "bool reassign"         "define main() -> Int { b := false; b = true; if b { return 42 } return 0 }" 42
+run "bool in while cond"    "define main() -> Int { i := 0; cont := i < 3; while cont { i = i + 1; cont = i < 3 } return i + 39 }" 42
+
 # Phase 4.3: string literals + print() via puts().
 run_with_stdout "print literal" \
     'define main() -> Int { print("hello"); return 42 }' \
@@ -175,4 +187,4 @@ if [ "$fails" -gt 0 ]; then
     exit 1
 fi
 echo ""
-echo "all 18/18 cases passed"
+echo "all 24/24 cases passed"

@@ -199,13 +199,14 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
         }
         case Ident as id => {
             if cg.locals.has(id.name) {
-                holder: _Str := cg.locals.get(id.name)
-                slot := holder.s
+                holder: _Slot := cg.locals.get(id.name)
                 // Locals live in alloca slots. Read = `load`
                 // through the slot pointer; LLVM's mem2reg
                 // pass collapses these to SSA + phi at -O1.
+                // The slot's stored type (`i1` for Bool, `i32`
+                // for Int) must match the load instruction.
                 reg := cg.fresh()
-                cg.emit(reg + " = load i32, i32* " + slot)
+                cg.emit(reg + " = load " + holder.ty + ", " + holder.ty + "* " + holder.name)
                 return reg
             }
             return "<undef:" + id.name + ">"
@@ -326,29 +327,69 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
     }
 }
 
-// Map-friendly wrapper for String values (same pattern as
-// _TyHolder in sema.quirk — tagged-union values don't survive
-// raw Map slot storage yet).
-struct _Str {
-    s: String
-    define __init(self, s: String) -> void { self.s = s }
+// Per-local alloca metadata. `name` is the SSA pointer (e.g.
+// `%x.addr`); `ty` is the LLVM type the slot holds — `i32` for
+// Int locals (and all params today), `i1` for Bool locals.
+// Stored in `cg.locals`; the Map can't yet carry tagged-union
+// values directly so we wrap in a struct.
+struct _Slot {
+    name: String
+    ty: String
+    define __init(self, name: String, ty: String) -> void {
+        self.name = name
+        self.ty = ty
+    }
+}
+
+// Static type of an expression for slot-typing purposes. Returns
+// `"i1"` when the expression is statically Bool (BoolLit, an
+// `i1` slot read, a comparison BinOp, or `not` over an `i1`);
+// `"i32"` otherwise. Sema has already rejected obvious type
+// mismatches by the time we get here, so this only needs to be
+// right on the well-typed subset.
+define _expr_static_ty(cg: FnCG, e: Expr) -> String {
+    match e {
+        case BoolLit as _ => return "i1"
+        case Ident as id => {
+            if cg.locals.has(id.name) {
+                s: _Slot := cg.locals.get(id.name)
+                return s.ty
+            }
+            return "i32"
+        }
+        case UnaryOp as u => {
+            if u.op == "not" { return "i1" }
+            return "i32"
+        }
+        case BinOp as b => {
+            op := b.op
+            if op == "==" or op == "!=" or op == "<" or op == "<=" or op == ">" or op == ">=" {
+                return "i1"
+            }
+            return "i32"
+        }
+        case _ => return "i32"
+    }
 }
 
 // -----------------------------------------------------------------
 // Statement codegen
 // -----------------------------------------------------------------
 
-// Ensure a local has an alloca slot. Called the first time a
-// VarDecl emits for a name. Returns the slot's SSA pointer name.
-define _ensure_slot(cg: FnCG, name: String) -> String {
+// Ensure a local has an alloca slot of the requested type.
+// Returns the populated `_Slot`. First call wins: an Assign /
+// subsequent read reuses the existing slot's type rather than
+// trying to change it (sema has already enforced consistency).
+define _ensure_slot(cg: FnCG, name: String, ty: String) -> _Slot {
     if cg.locals.has(name) {
-        holder: _Str := cg.locals.get(name)
-        return holder.s
+        holder: _Slot := cg.locals.get(name)
+        return holder
     }
-    slot := "%" + name + ".addr"
-    cg.emit_entry(slot + " = alloca i32")
-    cg.locals.put(name, _Str(slot))
-    return slot
+    slot_name := "%" + name + ".addr"
+    cg.emit_entry(slot_name + " = alloca " + ty)
+    s := _Slot(slot_name, ty)
+    cg.locals.put(name, s)
+    return s
 }
 
 define _gen_stmt(cg: FnCG, st: Stmt) -> void {
@@ -361,14 +402,21 @@ define _gen_stmt(cg: FnCG, st: Stmt) -> void {
             _gen_expr(cg, es.expr)
         }
         case VarDecl as v => {
+            // Slot type follows the RHS's static type at the
+            // point of declaration. Once chosen, it's fixed for
+            // the binding's lifetime.
+            ty := _expr_static_ty(cg, v.value)
             rhs := _gen_expr(cg, v.value)
-            slot := _ensure_slot(cg, v.name)
-            cg.emit("store i32 " + rhs + ", i32* " + slot)
+            slot := _ensure_slot(cg, v.name, ty)
+            cg.emit("store " + slot.ty + " " + rhs + ", " + slot.ty + "* " + slot.name)
         }
         case Assign as a => {
+            // Re-bind: slot must already exist; reuse its type.
+            // The arg passed to _ensure_slot only matters on
+            // first-use and won't be hit here.
             rhs := _gen_expr(cg, a.value)
-            slot := _ensure_slot(cg, a.name)
-            cg.emit("store i32 " + rhs + ", i32* " + slot)
+            slot := _ensure_slot(cg, a.name, "i32")
+            cg.emit("store " + slot.ty + " " + rhs + ", " + slot.ty + "* " + slot.name)
         }
         case If as iff => {
             cond := _gen_expr(cg, iff.cond)
@@ -448,12 +496,13 @@ define _gen_function(fdecl: FunctionDecl, mod: ModuleCG) -> String {
     }
 
     // Entry block: alloca each parameter, store the incoming
-    // value in.
+    // value in. Params are i32-only today; Bool params are a
+    // follow-on phase.
     k := 0
     while k < fdecl.params.length() {
         p: Param := fdecl.params.__get(k)
-        slot := _ensure_slot(cg, p.name)
-        cg.emit_entry("store i32 %arg" + k.str() + ", i32* " + slot)
+        slot := _ensure_slot(cg, p.name, "i32")
+        cg.emit_entry("store i32 %arg" + k.str() + ", i32* " + slot.name)
         k = k + 1
     }
 

@@ -24,6 +24,7 @@ toolchain dependency from anyone wanting to hack on the compiler.
 |  4.1  | Codegen — comparison ops + `if`/`else`/`while` + alloca locals | landed (v4.0.0-alpha.5) |
 |  4.2  | Unary `-` / `not` + block-termination tracker | landed (v4.0.0-alpha.6) |
 |  4.3  | String literals + `print()` lowered to `puts` | landed (v4.0.0-alpha.7) |
+|  4.4  | Bool as a first-class binding type (`i1` slots) | landed (v4.0.0-alpha.8) |
 |  5    | Bootstrap — Quirk compiler compiles itself, byte-identical | not started |
 
 The Codegen phase deliberately targets *text-form* LLVM IR (`.ll`)

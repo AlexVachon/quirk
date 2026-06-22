@@ -5,6 +5,55 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.8] — 2026-06-22
+
+### Self-hosting Phase 4.4: Bool as a first-class binding type
+
+Before this release the self-hosted codegen treated *every*
+alloca slot as `i32`. That was fine for `if x > 0 { ... }`
+because the comparison's `i1` flowed directly into a `br i1` —
+it never had to land in a slot. But the moment you wrote
+`b := x > 0` or `b := not c`, the next instruction was
+`store i32 %icmp_reg, i32* %b.addr`, which is a type mismatch
+LLVM rejects. Locals couldn't actually be Bool.
+
+**Slot type follows the binding's static type.** The locals
+map now stores a `_Slot { name, ty }` (replacing the bare
+`_Str` wrapper). `_expr_static_ty(cg, e)` returns `"i1"` for
+`BoolLit`, comparison `BinOp`s, `not` `UnaryOp`s, and any
+identifier whose slot is already `i1`; `"i32"` otherwise. On
+`VarDecl` the slot is allocated at that type. On `Assign` the
+existing slot's type wins (sema rejects type-changing
+re-binds). On `Ident` reads the load is emitted with the
+slot's type. The IR is now well-typed end-to-end — `lli`
+refuses anything else, so passing tests *also* implies the
+typing is right.
+
+**Params stay `i32`.** Function parameters and return values
+are still i32-only; Bool params / returns need the same slot
+treatment at the call-boundary and are queued for a follow-on
+phase. The `_ensure_slot(cg, name, ty)` signature is the
+forcing function — when we add Bool params, the only change
+needed at this layer is passing `"i1"` for those params'
+slots.
+
+`codegen_e2e.sh` gains 6 Bool-binding cases:
+
+```
+ok  bool literal binding  `b := true; if b { ... }`
+ok  bool literal false    `b := false; if b { 0 } else { 42 }`
+ok  comparison binding    `b := x > 0; if b { 42 }`
+ok  not binding           `b := not (1 == 2); if b { 42 }`
+ok  bool reassign         `b := false; b = true; if b { 42 }`
+ok  bool in while cond    `cont := i < 3; while cont { ... }`
+
+all 24/24 cases passed
+```
+
+Phase 4.x continues toward Double, Bool params/returns, and
+structs/lists/maps. The slot-typed locals shape from this
+release is the same shape every future scalar type plugs into.
+
 ## [4.0.0-alpha.7] — 2026-06-22
 
 ### Self-hosting Phase 4.3: string literals + `print()` lowered to `puts`

@@ -188,9 +188,11 @@ define tokenize(source: String) -> List {
             continue
         }
 
-        // Double-quoted string. Phase 1.1 will handle escape
-        // sequences + interpolation; for now we capture the raw
-        // content, stopping at the first unescaped `"`.
+        // Double-quoted string. Escape sequences are decoded
+        // *here* — the token's value holds the actual byte
+        // sequence (e.g. a real newline for `\n`), and codegen
+        // re-encodes those bytes for LLVM IR's `c"..."` form.
+        // Triple-quoted + interpolation are still deferred.
         if c == "\"" {
             pos = pos + 1
             col = col + 1
@@ -198,8 +200,27 @@ define tokenize(source: String) -> List {
             while pos < n and source.substring(pos, pos + 1) != "\"" {
                 ch := source.substring(pos, pos + 1)
                 if ch == "\\" and pos + 1 < n {
-                    // Two-char escape — preserve verbatim for now.
-                    content = content + ch + source.substring(pos + 1, pos + 2)
+                    esc := source.substring(pos + 1, pos + 2)
+                    if esc == "n" {
+                        content = content + "\n"
+                    } elif esc == "t" {
+                        content = content + "\t"
+                    } elif esc == "r" {
+                        content = content + "\r"
+                    } elif esc == "0" {
+                        // Embed a literal NUL is dangerous (it
+                        // would terminate the C string early)
+                        // but accept it for completeness.
+                        content = content + "\0"
+                    } elif esc == "\\" {
+                        content = content + "\\"
+                    } elif esc == "\"" {
+                        content = content + "\""
+                    } else {
+                        // Unknown escape — pass through verbatim
+                        // so the source's intent is recoverable.
+                        content = content + ch + esc
+                    }
                     pos = pos + 2
                     col = col + 2
                     continue

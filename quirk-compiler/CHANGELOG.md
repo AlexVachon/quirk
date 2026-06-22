@@ -5,6 +5,56 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.28] — 2026-06-22
+
+### Self-hosting Phase 4.24: string escape sequences
+
+`"\n"`, `"\t"`, `"\r"`, `"\""`, `"\\"`, `"\0"` in source
+literals all now produce the expected byte at runtime.
+
+**Lexer.** The string-literal parser previously preserved
+backslash escapes verbatim (`\n` came through as two chars).
+Now it decodes — `\n` → newline, `\t` → tab, `\r` → CR,
+`\"` → double-quote, `\\` → backslash, `\0` → NUL. Unknown
+escapes pass through (backslash + char) so the source's
+intent is recoverable.
+
+**Codegen.** `_llvm_encode_string` re-encodes the lexer's
+decoded bytes for LLVM IR's `c"..."` constant form. The
+six bytes that can't appear verbatim (newline, tab, CR,
+double-quote, backslash, plus whatever else the user shoves
+in) get the `\HH` two-digit-hex escape. Printable ASCII
+passes through unchanged.
+
+**Array sizing.** The `[N x i8]` array length uses the
+*decoded* byte count, not the source-literal length —
+each `\HH` in IR represents one byte regardless of how it
+was written. The `_llvm_encode_string` output is purely a
+text-form re-spelling; LLVM's parser unfolds it back to
+the same bytes the lexer produced.
+
+`codegen_e2e.sh` gains 5 new cases (all stdout-checked):
+
+```
+ok  newline escape           `"alpha\nbeta"` → two lines
+ok  tab escape               `"col1\tcol2"`
+ok  quote escape             `"she said \"hi\""`
+ok  backslash escape         `"path: a\\b\\c"`
+ok  concat with newline       `"error at " + ln.str() + "\nin source"`
+
+all 133/133 cases passed
+```
+
+The "concat with newline" case is the canonical diagnostic-
+message shape — exactly what selfhost's `s.report(...)`
+calls produce. With this phase landed, selfhost source's
+error messages render correctly through the self-hosted
+pipeline.
+
+Phase 4.x left: `throw` / exception handling (or rewrite
+selfhost's parse-error paths to result-list returns), file
+I/O + concatenate-and-compile driver — then Phase 5 itself.
+
 ## [4.0.0-alpha.27] — 2026-06-22
 
 ### Self-hosting Phase 4.23: `from .X use { … }` import statement parsing

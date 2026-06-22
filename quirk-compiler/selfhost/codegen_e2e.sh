@@ -648,6 +648,28 @@ run "empty import skipped" \
 define main() -> Int { return 42 }" \
     42
 
+# Phase 4.24: string escape sequences. Lexer decodes `\n` /
+# `\t` / `\r` / `\"` / `\\` into their literal bytes; codegen
+# `alloc_string` re-encodes the resulting raw bytes for LLVM
+# IR's `c"..."` form as `\HH` hex pairs.
+run_with_stdout "newline escape" \
+    'define main() -> Int { print("alpha\nbeta"); return 0 }' \
+    0 "alpha
+beta"
+run_with_stdout "tab escape" \
+    'define main() -> Int { print("col1\tcol2"); return 0 }' \
+    0 "col1	col2"
+run_with_stdout "quote escape" \
+    'define main() -> Int { print("she said \"hi\""); return 0 }' \
+    0 "she said \"hi\""
+run_with_stdout "backslash escape" \
+    'define main() -> Int { print("path: a\\b\\c"); return 0 }' \
+    0 "path: a\\b\\c"
+run_with_stdout "concat with newline" \
+    'define main() -> Int { ln := 12; print("error at " + ln.str() + "\nin source"); return 0 }' \
+    0 "error at 12
+in source"
+
 # Phase 4.3: string literals + print() via puts().
 run_with_stdout "print literal" \
     'define main() -> Int { print("hello"); return 42 }' \
@@ -671,4 +693,4 @@ if [ "$fails" -gt 0 ]; then
     exit 1
 fi
 echo ""
-echo "all 128/128 cases passed"
+echo "all 133/133 cases passed"

@@ -52,6 +52,36 @@ splice into the module header. `decls` collects helper
 `declare` lines (printf / puts / etc.) — kept separate so we
 can dedup by helper name.
 ---
+// Re-encode a string's raw bytes for LLVM IR's `c"..."`
+// constant form. Bytes that need escaping become `\HH` (two
+// hex digits); everything else passes through literally. The
+// lexer already decoded source escapes into their byte
+// values, so this only handles the small set of bytes that
+// can't appear inside a `c"..."` verbatim — newline, tab,
+// CR, the double-quote and backslash themselves.
+define _llvm_encode_string(text: String) -> String {
+    out := ""
+    i := 0
+    while i < text.length() {
+        ch := text.substring(i, i + 1)
+        if ch == "\n" {
+            out = out + "\\0A"
+        } elif ch == "\t" {
+            out = out + "\\09"
+        } elif ch == "\r" {
+            out = out + "\\0D"
+        } elif ch == "\"" {
+            out = out + "\\22"
+        } elif ch == "\\" {
+            out = out + "\\5C"
+        } else {
+            out = out + ch
+        }
+        i = i + 1
+    }
+    return out
+}
+
 // Source-level Quirk type name → LLVM type, **for primitives
 // only**. User-defined struct types must go through
 // `_resolve_ty(mod, qty)` because the lookup requires the
@@ -191,19 +221,20 @@ struct ModuleCG {
         self.sigs.put(name, sig)
     }
 
-    // Allocate a private string constant. `text` is the raw
-    // content (no escapes processed yet — Phase 1.1 will
-    // teach the lexer to fold `\n` / `\t` / `\\` properly).
-    // Returns the LLVM name `@.str.N` so callers can refer
-    // to it via a getelementptr.
+    // Allocate a private string constant. `text` holds the
+    // decoded byte sequence (lexer has already folded `\n` /
+    // `\t` / `\\` / `\"` into their literal bytes). Returns
+    // the LLVM name `@.str.N` so callers can refer to it via
+    // a getelementptr. The byte count for the `[N x i8]`
+    // type uses the decoded length — IR's `\HH` escapes each
+    // represent a single byte regardless of source width.
     define alloc_string(self, text: String) -> String {
         name := "@.str." + self.next_str.str()
         self.next_str = self.next_str + 1
-        // Null-terminated; +1 for the trailing \00.
         n := text.length() + 1
-        // Build the literal: `private unnamed_addr constant [N x i8] c"...\00"`
+        encoded := _llvm_encode_string(text)
         line := name + " = private unnamed_addr constant [" + n.str() +
-                " x i8] c\"" + text + "\\00\""
+                " x i8] c\"" + encoded + "\\00\""
         self.globals.append(line)
         return name
     }

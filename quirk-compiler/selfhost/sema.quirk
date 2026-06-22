@@ -215,6 +215,24 @@ define _check_call(s: Sema, c: Call) -> Ty {
             return TError("complex callee")
         }
     }
+    // Builtin: `print(String) -> void`. Phase 4.3 lowers calls of
+    // this shape directly to `puts`; sema's job here is only to
+    // accept it and to type-check the single argument.
+    if name == "print" {
+        if c.args.length() != 1 {
+            s.report("print() takes exactly one argument")
+            return TError("print arity")
+        }
+        a0: Expr := c.args.__get(0)
+        at := _check_expr(s, a0)
+        is_str := false
+        match at { case TString as _ => is_str = true case _ => {} }
+        if is_str == false {
+            s.report("print() expects a String argument; got '" + ty_to_string(at) + "'")
+            return TError("print type")
+        }
+        return TVoid()
+    }
     if s.functions.has(name) == false {
         s.report("call to undefined function '" + name + "'")
         return TError("unknown function")

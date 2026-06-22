@@ -38,6 +38,75 @@ from .ast use { IntLit, StringLit, BoolLit, NullLit, Ident, UnaryOp, BinOp, Call
 from .ast use { Return, ExprStmt, VarDecl, Assign, If, While, Func }
 
 ---
+Module-level codegen state. Right now its only job is the
+string-literal pool: each unique literal becomes a private
+constant global with a fresh `.str.N` name, and the module-
+header emit walks the pool to declare them all up front. As we
+add more cross-function global needs (e.g. external decls for
+runtime helpers), they accumulate here too.
+
+`globals` collects fully-emitted lines verbatim — each entry
+is a complete `@name = ... constant ...` declaration ready to
+splice into the module header. `decls` collects helper
+`declare` lines (printf / puts / etc.) — kept separate so we
+can dedup by helper name.
+---
+struct ModuleCG {
+    globals: List
+    decls: Map
+    next_str: Int
+
+    define __init(self) -> void {
+        self.globals = List()
+        self.decls = Map()
+        self.next_str = 0
+    }
+
+    // Allocate a private string constant. `text` is the raw
+    // content (no escapes processed yet — Phase 1.1 will
+    // teach the lexer to fold `\n` / `\t` / `\\` properly).
+    // Returns the LLVM name `@.str.N` so callers can refer
+    // to it via a getelementptr.
+    define alloc_string(self, text: String) -> String {
+        name := "@.str." + self.next_str.str()
+        self.next_str = self.next_str + 1
+        // Null-terminated; +1 for the trailing \00.
+        n := text.length() + 1
+        // Build the literal: `private unnamed_addr constant [N x i8] c"...\00"`
+        line := name + " = private unnamed_addr constant [" + n.str() +
+                " x i8] c\"" + text + "\\00\""
+        self.globals.append(line)
+        return name
+    }
+
+    define ensure_decl(self, key: String, line: String) -> void {
+        if self.decls.has(key) { return }
+        self.decls.put(key, line)
+    }
+
+    define render_header(self) -> String {
+        out := ""
+        i := 0
+        while i < self.globals.length() {
+            line: String := self.globals.__get(i)
+            out = out + line + "\n"
+            i = i + 1
+        }
+        if self.globals.length() > 0 { out = out + "\n" }
+        keys := self.decls.keys()
+        j := 0
+        while j < keys.length() {
+            k: String := keys.__get(j)
+            line: String := self.decls.get(k)
+            out = out + line + "\n"
+            j = j + 1
+        }
+        if keys.length() > 0 { out = out + "\n" }
+        return out
+    }
+}
+
+---
 Codegen state per-function. Two output buffers — `entry_out`
 holds the allocas at function entry, `out` holds the body
 instructions and labels. We concatenate the two at the end so
@@ -45,7 +114,9 @@ allocas always sit before their first use (LLVM domination
 rule). `next_reg` is the monotonic SSA counter; `next_label` is
 the monotonic basic-block label counter for branches. `locals`
 maps Quirk variable names to their alloca slot's SSA pointer
-name (e.g. `x` → `%x.addr`).
+name (e.g. `x` → `%x.addr`). `mod` points back at the
+module-level state for string-literal interning + runtime
+helper declarations.
 ---
 struct FnCG {
     entry_out: String
@@ -53,21 +124,17 @@ struct FnCG {
     next_reg: Int
     next_label: Int
     locals: Map
-    // True once the current block has emitted a terminator
-    // (`br`, `ret`). Subsequent instructions in the same
-    // block would be dead code — LLVM accepts but rejects on
-    // strict verifier modes, and `lli-14 -strict` flags it.
-    // We track this and skip emit() until a new label opens
-    // a fresh block.
     block_terminated: Bool
+    mod: ModuleCG
 
-    define __init(self) -> void {
+    define __init(self, m: ModuleCG) -> void {
         self.entry_out = ""
         self.out = ""
         self.next_reg = 0
         self.next_label = 0
         self.locals = Map()
         self.block_terminated = false
+        self.mod = m
     }
 
     define fresh(self) -> String {
@@ -199,6 +266,40 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
                 case Ident as id => name = id.name
                 case _ => name = "<bad-callee>"
             }
+            // print(stringLit) lowers to `call i32 @puts(i8*
+            // %.strN)`. Phase 4.3 supports the bare-string form
+            // only — `print(x)` against a variable will need
+            // either inferred-type runtime dispatch (Phase 5+)
+            // or a printf-with-format-spec call.
+            if name == "print" and c.args.length() == 1 {
+                arg0: Expr := c.args.__get(0)
+                handled := false
+                str_name := ""
+                str_len := 0
+                match arg0 {
+                    case StringLit as sl => {
+                        str_name = cg.mod.alloc_string(sl.value)
+                        str_len = sl.value.length() + 1
+                        handled = true
+                    }
+                    case _ => {}
+                }
+                if handled {
+                    cg.mod.ensure_decl("puts", "declare i32 @puts(i8*)")
+                    // GEP the i8* base out of the [N x i8]* global.
+                    gep := cg.fresh()
+                    cg.emit(gep + " = getelementptr inbounds [" + str_len.str() +
+                            " x i8], [" + str_len.str() + " x i8]* " +
+                            str_name + ", i64 0, i64 0")
+                    reg := cg.fresh()
+                    cg.emit(reg + " = call i32 @puts(i8* " + gep + ")")
+                    // print returns void in Quirk-side; our
+                    // Stmt path discards the value at ExprStmt,
+                    // but to keep _gen_expr's contract uniform
+                    // we still return the i32 reg from puts.
+                    return reg
+                }
+            }
             // Emit each arg first, then the call.
             args := List()
             i := 0
@@ -328,8 +429,8 @@ define _gen_stmt(cg: FnCG, st: Stmt) -> void {
 // Function codegen
 // -----------------------------------------------------------------
 
-define _gen_function(fdecl: FunctionDecl) -> String {
-    cg := FnCG()
+define _gen_function(fdecl: FunctionDecl, mod: ModuleCG) -> String {
+    cg := FnCG(mod)
 
     // Build the param signature `i32 %arg0, i32 %arg1, ...`
     // (we don't reuse the user's name in the LLVM param slot
@@ -382,19 +483,26 @@ emitted bodies reference (none today — Phase 4.1 will add
 `declare i32 @printf(i8*, ...)` etc. when print/string lands).
 ---
 define emit_module(decls: List) -> String {
-    out := "; ModuleID = 'selfhost'\n"
-    out = out + "target triple = \"x86_64-pc-linux-gnu\"\n\n"
+    mod := ModuleCG()
+    // Emit functions first so module-level globals / decls
+    // (collected into `mod` as a side-effect of codegen) are
+    // populated by the time we render the header.
+    bodies := ""
     i := 0
     while i < decls.length() {
         d: TopLevel := decls.__get(i)
         match d {
             case Func as f => {
                 fd: FunctionDecl := f.decl
-                out = out + _gen_function(fd) + "\n"
+                bodies = bodies + _gen_function(fd, mod) + "\n"
             }
             case _ => {}
         }
         i = i + 1
     }
+    out := "; ModuleID = 'selfhost'\n"
+    out = out + "target triple = \"x86_64-pc-linux-gnu\"\n\n"
+    out = out + mod.render_header()
+    out = out + bodies
     return out
 }

@@ -5,6 +5,59 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.7] — 2026-06-22
+
+### Self-hosting Phase 4.3: string literals + `print()` lowered to `puts`
+
+The first piece of stdlib reaches the self-hosted codegen. Quirk
+source can now contain string literals and call `print(...)`, and
+the emitter lowers it to real LLVM IR you can `lli`.
+
+**`ModuleCG`.** Codegen split into two layers. `FnCG` still owns
+per-function state (alloca buffer, instruction buffer, fresh-name
+counter, label counter, block-termination flag), but it now holds
+a reference to a new `ModuleCG` that owns module-level state:
+the list of string-constant globals and a dedup'd map of helper
+`declare` lines. `_gen_function` takes a `ModuleCG` so calls
+inside a function body can register globals/decls as a
+side-effect. `emit_module` builds every function body first, then
+prepends `ModuleCG.render_header()` (string `@.str.N` globals
+followed by `declare i32 @puts(i8*)` etc.) before the bodies —
+the header sees the final, complete set of constants.
+
+**String literal interning.** `ModuleCG.alloc_string(text)`
+returns `@.str.N` and stashes a private `unnamed_addr constant
+[N x i8] c"..."` line into `mod.globals`. Each literal allocates
+a fresh global — no de-dup yet; cheap to add later if it matters.
+
+**`print(StringLit)` → `puts`.** In `_gen_expr`'s `Call` arm,
+the special case fires when the callee is the bare identifier
+`print` with one `StringLit` argument: allocate the string,
+ensure `declare i32 @puts(i8*)` is registered, emit a
+`getelementptr inbounds [N x i8], [N x i8]* @.str.N, i64 0, i64
+0` to get the `i8*`, then `call i32 @puts(i8* %gep)`. Sema
+accepts `print(String) → void` as a builtin so the call type-
+checks without needing a real `print` function declared in scope.
+Non-literal string arguments are deferred — they need a `String`
+runtime first; the lowering shape will fit when it arrives.
+
+`codegen_e2e.sh` gains a `run_with_stdout` driver alongside the
+existing exit-code-only `run`, and four new cases that assert
+both exit code and printed stdout:
+
+```
+ok  print literal      `print("hello"); return 42`           stdout=hello
+ok  print twice        `print("first"); print("second")`     stdout=first\nsecond
+ok  print inside if    `if x > 0 { print("positive") } ...`  stdout=positive
+ok  print in loop      `while i < 3 { print("tick"); ... }`  stdout=tick\ntick\ntick
+
+all 18/18 cases passed
+```
+
+Phase 4.x continues toward Bool as a first-class binding type,
+Double, and structs/lists/maps. Each increment shrinks the gap
+to a real bootstrap.
+
 ## [4.0.0-alpha.6] — 2026-06-22
 
 ### Self-hosting Phase 4.2: unary `-` / `not` + clean IR (no dead code)

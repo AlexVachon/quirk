@@ -510,6 +510,19 @@ define bump(b: Box) -> Int {
 define main() -> Int { return bump(Wrap(41)) }" \
     42
 
+# Phase 4.20: Map runtime + List() ctor + VarDecl annotation
+# honoring. Map() / List() build empty containers; .put/.get/
+# .has linear-scan the entry array (overwrites on duplicate
+# key, reallocs on growth). `holder: T := m.get("k")` emits a
+# bitcast from i8* to T*.
+run "map basic"             'struct S { n: Int } define main() -> Int { m := Map(); m.put("a", S(40)); h: S := m.get("a"); return h.n + 2 }' 42
+run "map .has miss + hit"   'define main() -> Int { m := Map(); h: Int := 7; if m.has("k") { return 0 } m.put("k", "x"); if m.has("k") { return 42 } return 0 }' 42
+run "map length grows"      'define main() -> Int { m := Map(); m.put("a", "1"); m.put("b", "2"); m.put("c", "3"); return m.length() * 14 }' 42
+run "map put overwrite"     'struct S { n: Int } define main() -> Int { m := Map(); m.put("k", S(0)); m.put("k", S(42)); h: S := m.get("k"); return h.n }' 42
+run "list ctor + append"    'define main() -> Int { xs := List(); xs.append(20); xs.append(22); return xs[0] + xs[1] }' 42
+run "map values via struct" 'struct Sig { ret: Int } define main() -> Int { m := Map(); m.put("foo", Sig(40)); s: Sig := m.get("foo"); return s.ret + 2 }' 42
+run "map across grow"       'define main() -> Int { m := Map(); i := 0; while i < 10 { m.put("k" + i.str(), "v"); i = i + 1 } return m.length() * 4 + 2 }' 42
+
 # Phase 4.3: string literals + print() via puts().
 run_with_stdout "print literal" \
     'define main() -> Int { print("hello"); return 42 }' \
@@ -533,4 +546,4 @@ if [ "$fails" -gt 0 ]; then
     exit 1
 fi
 echo ""
-echo "all 107/107 cases passed"
+echo "all 114/114 cases passed"

@@ -29,7 +29,7 @@ from .ast use { Expr, Stmt, Param, FunctionDecl, TopLevel }
 from .ast use { IntLit, FloatLit, StringLit, BoolLit, NullLit, Ident, UnaryOp, BinOp, Call, FieldGet, ListLit, Index }
 from .ast use { Return, ExprStmt, VarDecl, Assign, FieldSet, If, While, Match, Func, StructTL, EnumTL, UnionTL }
 from .ast use { StructField, StructDecl, EnumDecl, MatchArm, Variant, UnionDecl }
-from .types use { Ty, TInt, TDouble, TString, TBool, TVoid, TAny, TStruct, TEnum, TUnion, TList, TError }
+from .types use { Ty, TInt, TDouble, TString, TBool, TVoid, TAny, TStruct, TEnum, TUnion, TList, TMap, TError }
 from .types use { ty_to_string, ty_from_annot, ty_compatible }
 
 struct Sema {
@@ -362,6 +362,23 @@ define _check_call(s: Sema, c: Call) -> Ty {
         }
         return TInt()
     }
+    // Builtin collection constructors. `Map()` and `List()`
+    // make empty containers; both reject any positional args
+    // (use `[1, 2, 3]` for prefilled lists).
+    if name == "Map" {
+        if c.args.length() != 0 {
+            s.report("Map() takes no arguments")
+            return TError("Map() arity")
+        }
+        return TMap()
+    }
+    if name == "List" {
+        if c.args.length() != 0 {
+            s.report("List() takes no arguments; use `[…]` literal for prefilled")
+            return TError("List() arity")
+        }
+        return TList()
+    }
     // Variant constructor: `V1(a, b, ...)` produces TUnion(T)
     // where V1 is a registered variant. Extracted into its own
     // helper because _check_call already recurses into
@@ -547,15 +564,71 @@ define _check_method_call(s: Sema, c: Call) -> Ty {
         }
         return TInt()
     }
-    // `.length()` on List or String → Int, no args.
+    is_map := false
+    match ot { case TMap as _ => is_map = true case _ => {} }
+    // `.length()` on List / String / Map → Int, no args.
     if fg.name == "length" {
         if c.args.length() != 0 {
             s.report("." + fg.name + "() takes no arguments")
             return TError("method arity")
         }
-        if is_list or is_str { return TInt() }
+        if is_list or is_str or is_map { return TInt() }
         s.report("." + fg.name + "() not defined on '" + ty_to_string(ot) + "'")
         return TError("method receiver")
+    }
+    // Map methods: `.put(key, val)`, `.get(key)`, `.has(key)`.
+    // Keys are always String in this codegen; values are Any.
+    if is_map {
+        if fg.name == "put" {
+            if c.args.length() != 2 {
+                s.report(".put() takes 2 arguments (key, value)")
+                return TError("method arity")
+            }
+            ke: Expr := c.args.__get(0)
+            kt := _check_expr(s, ke)
+            ve: Expr := c.args.__get(1)
+            _check_expr(s, ve)
+            is_str_k := false
+            match kt { case TString as _ => is_str_k = true case _ => {} }
+            if is_str_k == false {
+                s.report(".put() key must be String, got '" + ty_to_string(kt) + "'")
+                return TError("method arg")
+            }
+            return TVoid()
+        }
+        if fg.name == "get" {
+            if c.args.length() != 1 {
+                s.report(".get() takes 1 argument (key)")
+                return TError("method arity")
+            }
+            ke: Expr := c.args.__get(0)
+            kt := _check_expr(s, ke)
+            is_str_k := false
+            match kt { case TString as _ => is_str_k = true case _ => {} }
+            if is_str_k == false {
+                s.report(".get() key must be String, got '" + ty_to_string(kt) + "'")
+                return TError("method arg")
+            }
+            // Value type is opaque — TAny lets callers bind
+            // the result to any pointer-typed slot (VarDecl
+            // codegen inserts the bitcast).
+            return TAny()
+        }
+        if fg.name == "has" {
+            if c.args.length() != 1 {
+                s.report(".has() takes 1 argument (key)")
+                return TError("method arity")
+            }
+            ke: Expr := c.args.__get(0)
+            kt := _check_expr(s, ke)
+            is_str_k := false
+            match kt { case TString as _ => is_str_k = true case _ => {} }
+            if is_str_k == false {
+                s.report(".has() key must be String, got '" + ty_to_string(kt) + "'")
+                return TError("method arg")
+            }
+            return TBool()
+        }
     }
     // `.append(Int)` on List → Int. The Int return is a stand-in
     // for void; callers typically discard it. Growth (cap *= 2 +

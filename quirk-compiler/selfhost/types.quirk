@@ -27,6 +27,7 @@ type Ty =
     | TEnum(name: String)
     | TUnion(name: String)
     | TList()
+    | TMap()
     | TError(msg: String)
 
 ---
@@ -46,6 +47,7 @@ define ty_to_string(t: Ty) -> String {
         case TEnum as e   => return e.name
         case TUnion as u  => return u.name
         case TList as _   => return "List"
+        case TMap as _    => return "Map"
         case TError as e  => return "<error: " + e.msg + ">"
         case _            => return "?"
     }
@@ -66,6 +68,7 @@ define ty_from_annot(name: String) -> Ty {
     if name == "Void"   { return TVoid() }
     if name == "Any"    { return TAny() }
     if name == "List"   { return TList() }
+    if name == "Map"    { return TMap() }
     // Anything else is treated as a user-defined struct name.
     // Sema's struct-registry pass validates that the name
     // actually exists before any field-access typing runs.

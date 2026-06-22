@@ -69,6 +69,12 @@ define _q_ty_to_llvm(qty: String) -> String {
     // at i32 for Phase 4.12; generic-element-type lists land
     // when method-call syntax does.
     if qty == "List"   { return "%QList*" }
+    // `Map` value is a `%QMap*` — header `{ length, capacity,
+    // %QMapKV* entries }` with the entry array separately
+    // malloc'd so .put can realloc on growth. Keys are i8*
+    // (String); values are i8* (Any heap pointer, downcast
+    // by VarDecl annotation honoring).
+    if qty == "Map"    { return "%QMap*" }
     return "i32"
 }
 
@@ -208,7 +214,14 @@ struct ModuleCG {
         // hold. Always emitted (cheap, and avoids a "used a
         // list?" tracking flag); LLVM's verifier accepts unused
         // type defs.
-        out = out + "%QList = type { i32, i32, i32* }\n\n"
+        out = out + "%QList = type { i32, i32, i32* }\n"
+        // Internal map types. `%QMapKV` is a single key/value
+        // pair (both i8*); `%QMap` is the header — length,
+        // capacity, and a pointer to the entry array. Linear
+        // scan on lookup; fine for the small per-scope tables
+        // selfhost uses.
+        out = out + "%QMapKV = type { i8*, i8* }\n"
+        out = out + "%QMap = type { i32, i32, %QMapKV* }\n\n"
         // %struct.Name type defs first so subsequent globals /
         // function signatures can reference them by name.
         snames := self.structs.keys()
@@ -617,6 +630,15 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
                 cg.emit(reg + " = load i32, i32* " + gep)
                 return reg
             }
+            // Builtin collection constructors. `Map()` and
+            // `List()` produce empty containers; sema has
+            // already validated arity == 0.
+            if name == "Map" {
+                return _gen_map_new(cg)
+            }
+            if name == "List" {
+                return _gen_list_new(cg)
+            }
             // Variant constructor: `V(args)` where V is a
             // registered tagged-union variant. malloc the
             // synthetic `T__V` struct, store tag at field 0
@@ -755,6 +777,9 @@ define _expr_static_ty(cg: FnCG, e: Expr) -> String {
             }
             // Builtin `len()` returns Int regardless of arg type.
             if cname == "len" { return "i32" }
+            // Builtin collection constructors.
+            if cname == "Map"  { return "%QMap*" }
+            if cname == "List" { return "%QList*" }
             // Variant constructor returns the union's base
             // pointer type, not the synthetic per-variant struct.
             if cg.mod.variants.has(cname) {
@@ -919,6 +944,21 @@ define _gen_method_call(cg: FnCG, c: Call) -> String {
         // (same dodge as _gen_struct_ctor, _gen_list_lit,
         // _gen_field_set).
         return _gen_list_append(cg, recv_reg, c.args)
+    }
+    // Map methods. Each routes into _gen_map_method for the
+    // recursion-pairing dodge.
+    if recv_ty == "%QMap*" {
+        if fg.name == "put" or fg.name == "get" or fg.name == "has" {
+            return _gen_map_method(cg, fg.name, recv_reg, c.args)
+        }
+        if fg.name == "length" {
+            gep := cg.fresh()
+            cg.emit(gep + " = getelementptr inbounds %QMap, %QMap* " + recv_reg +
+                    ", i32 0, i32 0")
+            reg := cg.fresh()
+            cg.emit(reg + " = load i32, i32* " + gep)
+            return reg
+        }
     }
     // String methods. Each lowers to a libc helper call;
     // extracted into _gen_string_method so the recursive
@@ -1159,6 +1199,254 @@ define _gen_string_method(cg: FnCG, name: String, recv_reg: String, args: List) 
         return reg
     }
     return "0"
+}
+
+// Map method lowering. `.put`, `.get`, `.has` all linearly
+// scan the entries array via strcmp on each key. .put grows
+// via realloc when length == capacity. Values flow as i8*
+// (Any) — callers' VarDecl annotation honoring inserts the
+// bitcast to the binding's type.
+//
+// Extracted from `_gen_method_call` for the recursion-pairing
+// dodge: each helper has its own `_gen_expr(arg)` site so
+// the parent function doesn't carry the same nested-call
+// shape multiple times.
+//
+// Update method semantics: .put overwrites an existing key's
+// value rather than inserting a duplicate (so map state stays
+// internally consistent across re-puts).
+define _gen_map_method(cg: FnCG, name: String, recv_reg: String, args: List) -> String {
+    cg.mod.ensure_decl("malloc", "declare i8* @malloc(i64)")
+    cg.mod.ensure_decl("realloc", "declare i8* @realloc(i8*, i64)")
+    cg.mod.ensure_decl("strcmp", "declare i32 @strcmp(i8*, i8*)")
+    // Gen the key arg first. Common to all three.
+    key_expr: Expr := args.__get(0)
+    key_reg := _gen_expr(cg, key_expr)
+    // For .put, also gen the value arg and coerce to i8* via
+    // bitcast (it's always a pointer because String/struct/
+    // union values lower to pointers in this codegen).
+    val_reg := ""
+    val_ty := ""
+    if name == "put" {
+        val_expr: Expr := args.__get(1)
+        val_reg = _gen_expr(cg, val_expr)
+        val_ty = _expr_static_ty(cg, val_expr)
+    }
+    // Load the entries pointer + length once.
+    len_gep := cg.fresh()
+    cg.emit(len_gep + " = getelementptr inbounds %QMap, %QMap* " + recv_reg +
+            ", i32 0, i32 0")
+    cap_gep := cg.fresh()
+    cg.emit(cap_gep + " = getelementptr inbounds %QMap, %QMap* " + recv_reg +
+            ", i32 0, i32 1")
+    ent_gep := cg.fresh()
+    cg.emit(ent_gep + " = getelementptr inbounds %QMap, %QMap* " + recv_reg +
+            ", i32 0, i32 2")
+    cur_len := cg.fresh()
+    cg.emit(cur_len + " = load i32, i32* " + len_gep)
+    ents := cg.fresh()
+    cg.emit(ents + " = load %QMapKV*, %QMapKV** " + ent_gep)
+    // Coerce value to i8* before any branching so the
+    // bitcast register has a stable SSA position.
+    val_i8 := ""
+    if name == "put" {
+        if val_ty == "i8*" {
+            val_i8 = val_reg
+        } else {
+            val_i8 = cg.fresh()
+            cg.emit(val_i8 + " = bitcast " + val_ty + " " + val_reg + " to i8*")
+        }
+    }
+    // Linear scan: walk i from 0 to len, compare keys.
+    // Allocate stack slots for loop state. NAMED slots
+    // (`%map.idx.N`) instead of `cg.fresh()` numbered slots
+    // because the numbered counter is shared across entry +
+    // body buffers — entry-block allocations issued later than
+    // body work would land "out of order" in the final IR
+    // and LLVM rejects with "instruction expected to be
+    // numbered '%X'". Named slots dodge the issue.
+    idx_slot := "%" + cg.fresh_label("map.idx")
+    cg.emit_entry(idx_slot + " = alloca i32")
+    cg.emit("store i32 0, i32* " + idx_slot)
+    // Result slot (used for .get and .has).
+    res_slot := ""
+    if name == "get" {
+        res_slot = "%" + cg.fresh_label("map.res")
+        cg.emit_entry(res_slot + " = alloca i8*")
+        cg.emit("store i8* null, i8** " + res_slot)
+    }
+    if name == "has" {
+        res_slot = "%" + cg.fresh_label("map.res")
+        cg.emit_entry(res_slot + " = alloca i1")
+        cg.emit("store i1 0, i1* " + res_slot)
+    }
+    head := cg.fresh_label("map.scan.head")
+    body := cg.fresh_label("map.scan.body")
+    hit  := cg.fresh_label("map.scan.hit")
+    miss := cg.fresh_label("map.scan.miss")
+    cont := cg.fresh_label("map.scan.next")
+    done := cg.fresh_label("map.scan.done")
+    cg.emit("br label %" + head)
+    cg.emit_raw(head + ":")
+    i_cur := cg.fresh()
+    cg.emit(i_cur + " = load i32, i32* " + idx_slot)
+    in_range := cg.fresh()
+    cg.emit(in_range + " = icmp slt i32 " + i_cur + ", " + cur_len)
+    cg.emit("br i1 " + in_range + ", label %" + body + ", label %" + miss)
+    cg.emit_raw(body + ":")
+    // Compare entries[i].key to the lookup key.
+    kgep := cg.fresh()
+    cg.emit(kgep + " = getelementptr inbounds %QMapKV, %QMapKV* " + ents +
+            ", i32 " + i_cur + ", i32 0")
+    kcur := cg.fresh()
+    cg.emit(kcur + " = load i8*, i8** " + kgep)
+    cmp := cg.fresh()
+    cg.emit(cmp + " = call i32 @strcmp(i8* " + kcur + ", i8* " + key_reg + ")")
+    iseq := cg.fresh()
+    cg.emit(iseq + " = icmp eq i32 " + cmp + ", 0")
+    cg.emit("br i1 " + iseq + ", label %" + hit + ", label %" + cont)
+    cg.emit_raw(hit + ":")
+    if name == "put" {
+        // Overwrite existing entry's value.
+        vgep := cg.fresh()
+        cg.emit(vgep + " = getelementptr inbounds %QMapKV, %QMapKV* " + ents +
+                ", i32 " + i_cur + ", i32 1")
+        cg.emit("store i8* " + val_i8 + ", i8** " + vgep)
+    }
+    if name == "get" {
+        // Return the matching value.
+        vgep := cg.fresh()
+        cg.emit(vgep + " = getelementptr inbounds %QMapKV, %QMapKV* " + ents +
+                ", i32 " + i_cur + ", i32 1")
+        vval := cg.fresh()
+        cg.emit(vval + " = load i8*, i8** " + vgep)
+        cg.emit("store i8* " + vval + ", i8** " + res_slot)
+    }
+    if name == "has" {
+        cg.emit("store i1 1, i1* " + res_slot)
+    }
+    cg.emit("br label %" + done)
+    cg.emit_raw(cont + ":")
+    next_i := cg.fresh()
+    cg.emit(next_i + " = add nsw i32 " + i_cur + ", 1")
+    cg.emit("store i32 " + next_i + ", i32* " + idx_slot)
+    cg.emit("br label %" + head)
+    cg.emit_raw(miss + ":")
+    // Key not in map. For .put, append (growing if needed).
+    if name == "put" {
+        cur_cap := cg.fresh()
+        cg.emit(cur_cap + " = load i32, i32* " + cap_gep)
+        full := cg.fresh()
+        cg.emit(full + " = icmp eq i32 " + cur_len + ", " + cur_cap)
+        grow := cg.fresh_label("map.put.grow")
+        write := cg.fresh_label("map.put.write")
+        cg.emit("br i1 " + full + ", label %" + grow + ", label %" + write)
+        cg.emit_raw(grow + ":")
+        new_cap := cg.fresh()
+        cg.emit(new_cap + " = mul nsw i32 " + cur_cap + ", 2")
+        new_cap64 := cg.fresh()
+        cg.emit(new_cap64 + " = sext i32 " + new_cap + " to i64")
+        // Each entry is 16 bytes (two i8* on x86_64).
+        new_bytes := cg.fresh()
+        cg.emit(new_bytes + " = mul nsw i64 " + new_cap64 + ", 16")
+        old_i8 := cg.fresh()
+        cg.emit(old_i8 + " = bitcast %QMapKV* " + ents + " to i8*")
+        new_raw := cg.fresh()
+        cg.emit(new_raw + " = call i8* @realloc(i8* " + old_i8 +
+                ", i64 " + new_bytes + ")")
+        new_ents := cg.fresh()
+        cg.emit(new_ents + " = bitcast i8* " + new_raw + " to %QMapKV*")
+        cg.emit("store %QMapKV* " + new_ents + ", %QMapKV** " + ent_gep)
+        cg.emit("store i32 " + new_cap + ", i32* " + cap_gep)
+        cg.emit("br label %" + write)
+        cg.emit_raw(write + ":")
+        // Re-load the (possibly relocated) entries pointer.
+        ents2 := cg.fresh()
+        cg.emit(ents2 + " = load %QMapKV*, %QMapKV** " + ent_gep)
+        // Store key + value at entries[cur_len], bump length.
+        kslot := cg.fresh()
+        cg.emit(kslot + " = getelementptr inbounds %QMapKV, %QMapKV* " + ents2 +
+                ", i32 " + cur_len + ", i32 0")
+        cg.emit("store i8* " + key_reg + ", i8** " + kslot)
+        vslot := cg.fresh()
+        cg.emit(vslot + " = getelementptr inbounds %QMapKV, %QMapKV* " + ents2 +
+                ", i32 " + cur_len + ", i32 1")
+        cg.emit("store i8* " + val_i8 + ", i8** " + vslot)
+        bumped := cg.fresh()
+        cg.emit(bumped + " = add nsw i32 " + cur_len + ", 1")
+        cg.emit("store i32 " + bumped + ", i32* " + len_gep)
+    }
+    cg.emit("br label %" + done)
+    cg.emit_raw(done + ":")
+    if name == "get" {
+        result := cg.fresh()
+        cg.emit(result + " = load i8*, i8** " + res_slot)
+        return result
+    }
+    if name == "has" {
+        result := cg.fresh()
+        cg.emit(result + " = load i1, i1* " + res_slot)
+        return result
+    }
+    return "0"
+}
+
+// Create an empty `%QList` (length=0, capacity=1, a 4-byte
+// data buffer) so .append has somewhere to land before its
+// first growth.
+define _gen_list_new(cg: FnCG) -> String {
+    cg.mod.ensure_decl("malloc", "declare i8* @malloc(i64)")
+    raw := cg.fresh()
+    cg.emit(raw + " = call i8* @malloc(i64 12)")
+    base := cg.fresh()
+    cg.emit(base + " = bitcast i8* " + raw + " to %QList*")
+    data_raw := cg.fresh()
+    cg.emit(data_raw + " = call i8* @malloc(i64 4)")
+    data_ptr := cg.fresh()
+    cg.emit(data_ptr + " = bitcast i8* " + data_raw + " to i32*")
+    len_gep := cg.fresh()
+    cg.emit(len_gep + " = getelementptr inbounds %QList, %QList* " + base +
+            ", i32 0, i32 0")
+    cg.emit("store i32 0, i32* " + len_gep)
+    cap_gep := cg.fresh()
+    cg.emit(cap_gep + " = getelementptr inbounds %QList, %QList* " + base +
+            ", i32 0, i32 1")
+    cg.emit("store i32 1, i32* " + cap_gep)
+    dat_gep := cg.fresh()
+    cg.emit(dat_gep + " = getelementptr inbounds %QList, %QList* " + base +
+            ", i32 0, i32 2")
+    cg.emit("store i32* " + data_ptr + ", i32** " + dat_gep)
+    return base
+}
+
+// Create an empty `%QMap` (length=0, capacity=4, an entry
+// buffer big enough for 4 KV pairs).
+define _gen_map_new(cg: FnCG) -> String {
+    cg.mod.ensure_decl("malloc", "declare i8* @malloc(i64)")
+    // Header: i32 length + i32 capacity + %QMapKV* entries = 16 bytes.
+    raw := cg.fresh()
+    cg.emit(raw + " = call i8* @malloc(i64 16)")
+    base := cg.fresh()
+    cg.emit(base + " = bitcast i8* " + raw + " to %QMap*")
+    // Initial entry buffer: 4 entries × 16 bytes (2 i8* per
+    // entry) = 64 bytes.
+    ent_raw := cg.fresh()
+    cg.emit(ent_raw + " = call i8* @malloc(i64 64)")
+    ent_ptr := cg.fresh()
+    cg.emit(ent_ptr + " = bitcast i8* " + ent_raw + " to %QMapKV*")
+    len_gep := cg.fresh()
+    cg.emit(len_gep + " = getelementptr inbounds %QMap, %QMap* " + base +
+            ", i32 0, i32 0")
+    cg.emit("store i32 0, i32* " + len_gep)
+    cap_gep := cg.fresh()
+    cg.emit(cap_gep + " = getelementptr inbounds %QMap, %QMap* " + base +
+            ", i32 0, i32 1")
+    cg.emit("store i32 4, i32* " + cap_gep)
+    ent_gep := cg.fresh()
+    cg.emit(ent_gep + " = getelementptr inbounds %QMap, %QMap* " + base +
+            ", i32 0, i32 2")
+    cg.emit("store %QMapKV* " + ent_ptr + ", %QMapKV** " + ent_gep)
+    return base
 }
 
 // Lower a list literal `[a, b, c]` to a heap-allocated
@@ -1411,7 +1699,20 @@ define _method_ret_ty(cg: FnCG, recv_ty: String, method: String) -> String {
     if method == "substring" { return "i8*" }
     if method == "startswith" { return "i1" }
     if method == "endswith" { return "i1" }
+    // Map: .get returns i8* (Any), .has returns i1, .put i32.
+    if method == "get" { return "i8*" }
+    if method == "has" { return "i1" }
+    if method == "put" { return "i32" }
     return "i32"
+}
+
+// Quick test for "is this LLVM type a pointer kind?" Used
+// by VarDecl annotation honoring to decide when a bitcast
+// is a legal coercion. The four pointer-shaped types in this
+// codegen are `i8*`, `%struct.X*`, `%QList*`, `%QMap*` —
+// detect via trailing `*`.
+define _is_ptr_ty(ty: String) -> Bool {
+    return ty.endswith("*")
 }
 
 // Extract `"Foo"` from `"%struct.Foo*"`. Returns the input
@@ -1456,13 +1757,45 @@ define _gen_stmt(cg: FnCG, st: Stmt) -> void {
             _gen_expr(cg, es.expr)
         }
         case VarDecl as v => {
-            // Slot type follows the RHS's static type at the
-            // point of declaration. Once chosen, it's fixed for
-            // the binding's lifetime.
-            ty := _expr_static_ty(cg, v.value)
+            // Slot type follows either the user's annotation
+            // (when present + concrete) or the RHS's static
+            // type. When the annotation names a pointer type
+            // and the RHS is `i8*` (e.g. Map.get returns Any),
+            // emit a bitcast so the slot stores the typed
+            // pointer. This is what makes `holder: _Slot :=
+            // map.get(name)` work end-to-end.
+            rhs_ty := _expr_static_ty(cg, v.value)
             rhs := _gen_expr(cg, v.value)
+            ty := rhs_ty
+            if v.type_annot != "" {
+                annot_ty := _resolve_ty(cg.mod, v.type_annot)
+                // Skip "Any" / "Void" — codegen has no slot
+                // type for those, so we fall back to RHS type.
+                if annot_ty != "i32" or v.type_annot == "Int" {
+                    // Use the annotation. The `annot != "i32"
+                    // or annot == Int` guard distinguishes a
+                    // user-written `Int` annotation from a
+                    // default fallthrough.
+                    ty = annot_ty
+                }
+            }
+            // Insert a bitcast when annotation widens / narrows
+            // a pointer relationship. Pointer ↔ pointer
+            // conversions can route through bitcast; primitive
+            // ↔ primitive needs a different instruction (none
+            // expected here, since sema has accepted the
+            // assignment).
+            store_val := rhs
+            if ty != rhs_ty {
+                if _is_ptr_ty(ty) and _is_ptr_ty(rhs_ty) {
+                    cast := cg.fresh()
+                    cg.emit(cast + " = bitcast " + rhs_ty + " " + rhs +
+                            " to " + ty)
+                    store_val = cast
+                }
+            }
             slot := _ensure_slot(cg, v.name, ty)
-            cg.emit("store " + slot.ty + " " + rhs + ", " + slot.ty + "* " + slot.name)
+            cg.emit("store " + slot.ty + " " + store_val + ", " + slot.ty + "* " + slot.name)
         }
         case Assign as a => {
             // Re-bind: slot must already exist; reuse its type.

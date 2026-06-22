@@ -5,6 +5,85 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.24] — 2026-06-22
+
+### Self-hosting Phase 4.20: Map runtime + `List()` ctor + VarDecl annotation honoring
+
+The biggest stdlib piece lands. `Map()` constructs an empty
+map; `.put(k, v)`, `.get(k)`, `.has(k)`, `.length()` all work.
+Plus `List()` for empty lists and — critically — VarDecl
+annotation honoring with bitcast, so `holder: _Slot :=
+m.get(key)` actually works end-to-end. Selfhost's
+`s.functions: Map<String, _TyHolder>`-style usage is now
+expressible by the self-hosted compiler.
+
+**Layout.** `%QMap = type { i32 length, i32 capacity, %QMapKV*
+entries }` with the entry array in its own allocation so
+`.put` can `realloc` on growth. `%QMapKV = type { i8*, i8* }`
+— two opaque pointers. Keys are always String (i8*); values
+are Any (i8*) and downcast at the binding site.
+
+**Methods.** Single helper `_gen_map_method` for `.put`,
+`.get`, `.has` (the recursion-pairing dodge). Linear scan
+via `strcmp` on each entry's key. `.put` finds an existing
+key and overwrites its value; only if not found does it
+append, growing capacity 2× via realloc when full. `.get`
+stores the matched value into a stack slot and returns it
+at the join label (avoids phi nodes). `.has` is the same
+shape with an `i1` result slot. `.length()` is one GEP +
+load, hooked into the existing `.length()` dispatch
+alongside List and String.
+
+Builtin constructor calls `Map()` and `List()` lower in
+`_gen_expr`'s Call arm to `_gen_map_new` / `_gen_list_new`
+— both malloc the header + an initial entry/data buffer
+and seed the header fields. Sema recognises both as
+zero-arg builtins returning TMap / TList.
+
+**VarDecl annotation honoring.** Previously codegen ignored
+the user's type annotation on `:=` and inferred the slot
+type from the RHS. That broke `holder: _Slot := m.get(k)`
+because `m.get(k)`'s static return type is `i8*` and the
+slot would store an `i8*` instead of the typed pointer.
+Now codegen consults `v.type_annot` first; when it
+resolves to a pointer LLVM type (`%struct.X*`, `%QList*`,
+`%QMap*`, `i8*`) and the RHS yields a different pointer
+type, emit a `bitcast` between them before storing. New
+`_is_ptr_ty` helper (cheap: just `ty.endswith("*")`).
+
+**Self-compiler trap (5th time).** SSA register numbering
+in `_gen_map_method`'s entry-block allocas: `cg.fresh()`
+assigns numbers from the shared counter across `emit_entry`
++ `emit` buffers, but the entry buffer prints *before* the
+body. Numbered allocas issued later than body instructions
+end up textually preceding lower-numbered body regs in the
+final IR, and LLVM rejects with "instruction expected to
+be numbered '%X'". Fix: use NAMED slots (`%map.idx.N`
+from `fresh_label`) for entry-block allocations — named
+and numbered SSA names coexist freely.
+
+`codegen_e2e.sh` gains 7 new cases:
+
+```
+ok  map basic                    `m.put("a", S(40)); h: S := m.get("a"); h.n + 2`
+ok  map .has miss + hit          False before put, true after
+ok  map length grows              `m.length() * 14` after 3 puts
+ok  map put overwrite             Second put overwrites first
+ok  list ctor + append            `xs := List(); xs.append(...)`
+ok  map values via struct         struct-typed values round-trip
+ok  map across grow                `while i < 10 { m.put("k" + i.str(), "v") }`
+
+all 114/114 cases passed
+```
+
+The `map across grow` case is the workhorse — building up a
+map inside a loop with realloc growth, exactly the shape
+selfhost's `s.functions.put(name, _TyHolder(rt))` uses.
+
+Phase 4.x left: generic List element types, module imports,
+throw/catch. With Map landed, sema is implementable in
+self-hosted Quirk.
+
 ## [4.0.0-alpha.23] — 2026-06-22
 
 ### Self-hosting Phase 4.19: tagged unions + `match`

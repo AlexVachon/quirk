@@ -5,6 +5,33 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [3.25.1] — 2026-06-20
+
+### Tuples containing Double elements no longer SIGSEGV
+
+Pre-existing bug surfaced while reviewing the v3.25.0 probe:
+`t := (1, 3.14); print(t)` crashed with SIGSEGV.
+
+`boxToVoidPtr` for Double values did `bitcast double → i64 →
+inttoptr i8*`. That stuffs the double's raw IEEE bit pattern
+into a fake pointer. When the tuple was later printed,
+`quirk_opaque_to_string` dereferenced that pseudo-pointer to
+read its tag field — 3.14's bit pattern reads as a wild
+memory address and crashed the process.
+
+The Double path now routes through `Core_Primitives_Any_box_double`,
+producing a real heap Any* with `ANY_DOUBLE` tag.
+`quirk_opaque_to_string`'s tag-range check (already in place
+since v3.23.1 was widened) recognizes it and dispatches to
+`Any_to_string` which formats the value correctly.
+
+Same fix benefits Lists and Maps containing Doubles when
+they're accessed through Any-typed slots — `boxToVoidPtr` is
+the shared "store anything as void*" helper.
+
+`tests/probes/p84_tuple_with_double.quirk` covers 2-element /
+4-element / double-first / all-doubles shapes.
+
 ## [3.25.0] — 2026-06-20
 
 ### Tuples in collections display and read back correctly

@@ -1,0 +1,41 @@
+// p84 — Tuples containing Double elements display and read
+// back correctly (v3.25.1).
+//
+// Pre-fix: `t := (1, 3.14); print(t)` SIGSEGV. `boxToVoidPtr`
+// for Double values used `bitcast double → i64 → inttoptr i8*`,
+// which stuffs the double's raw bit pattern into a fake pointer.
+// When the tuple was later printed, `quirk_opaque_to_string`
+// tried to deref that pseudo-pointer to read a tag field —
+// 3.14's bit pattern reads as a wild address and crashed the
+// process.
+//
+// Fix: route Doubles through `Core_Primitives_Any_box_double` so
+// the value lives in a real heap Any* with `ANY_DOUBLE` tag
+// (already declared as a runtime builtin). `quirk_opaque_to_string`
+// detects the tag and dispatches to `Any_to_string` which formats
+// the double correctly.
+//
+// Same shape change benefits Lists and Maps containing Doubles
+// when those are accessed via Any-typed slots — boxToVoidPtr is
+// the universal "store anything as void*" helper.
+
+// 2-element with Double.
+t := (1, 3.14)
+print(t)               // = (1, 3.14)
+print(t.0)             // = 1
+print(t.1)             // = 3.14
+
+// Bigger tuples mixing primitives.
+t4 := (1, "a", 3.14, true)
+print(t4)              // = (1, a, 3.14, true)
+print(t4.2)            // = 3.14
+
+// Double-first.
+df := (2.71, 42)
+print(df)              // = (2.71, 42)
+print(df.0)            // = 2.71
+
+// Pure-double tuple.
+dd := (1.5, 2.5, 3.5)
+print(dd)              // = (1.5, 2.5, 3.5)
+print(dd.1)            // = 2.5

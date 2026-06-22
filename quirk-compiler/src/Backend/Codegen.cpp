@@ -1093,8 +1093,25 @@ class LLVMCodegen {
         if (val->getType()->isIntegerTy())
             return quirk::boxIntToOpaque(Context, TheModule.get(), Builder, val, i8PtrTy);
         if (val->getType()->isDoubleTy()) {
-            Value* asInt = Builder.CreateBitCast(val, Type::getInt64Ty(Context));
-            return Builder.CreateIntToPtr(asInt, i8PtrTy);
+            // Route through `Any_box_double` so the value survives a
+            // round-trip through `quirk_opaque_to_string`. The
+            // previous `bitcast → inttoptr` trick stored the double's
+            // raw bit pattern as a fake pointer; when a Double was
+            // stored in a tuple, list, or map and the container was
+            // printed later, the renderer tried to dereference that
+            // pretend-pointer (3.14's bit pattern reads as a wild
+            // memory address) and SIGSEGV'd. Boxing produces a real
+            // heap Any* with ANY_DOUBLE tag that the runtime can
+            // safely inspect.
+            Function* boxDbl = TheModule->getFunction("Core_Primitives_Any_box_double");
+            if (!boxDbl) {
+                FunctionType* ft = FunctionType::get(
+                    i8PtrTy, {Type::getDoubleTy(Context)}, false);
+                boxDbl = Function::Create(ft, Function::ExternalLinkage,
+                                          "Core_Primitives_Any_box_double",
+                                          TheModule.get());
+            }
+            return Builder.CreateCall(boxDbl, {val});
         }
         return ConstantPointerNull::get(cast<PointerType>(i8PtrTy));
     }

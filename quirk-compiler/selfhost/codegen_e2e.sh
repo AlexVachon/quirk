@@ -315,6 +315,18 @@ run "list returned by fn" \
 define main() -> Int { xs := mk(); return xs[0] + xs[1] + xs[2] }" \
     42
 
+# Phase 4.12: list header layout + len() builtin. Lists now
+# carry a length field in a `%QList` header; len(xs) reads
+# it. Index access GEPs through the embedded data array.
+run "len literal"     "define main() -> Int { return len([1, 2, 3, 4, 5, 6, 7]) * 6 }"          42
+run "len of local"    "define main() -> Int { xs := [10, 20, 30]; return len(xs) + 39 }"        42
+run "len drives loop" "define main() -> Int { xs := [3, 4, 5, 6, 7, 8, 9]; i := 0; n := 0; while i < len(xs) { n = n + xs[i]; i = i + 1 } return n }" 42
+run "len via param" \
+    "define summing(xs: List) -> Int { i := 0; n := 0; while i < len(xs) { n = n + xs[i]; i = i + 1 } return n }
+define main() -> Int { return summing([10, 12, 20]) }" \
+    42
+run "len of single" "define main() -> Int { return len([42]) + 41 }"                            42
+
 # Phase 4.3: string literals + print() via puts().
 run_with_stdout "print literal" \
     'define main() -> Int { print("hello"); return 42 }' \
@@ -338,4 +350,4 @@ if [ "$fails" -gt 0 ]; then
     exit 1
 fi
 echo ""
-echo "all 59/59 cases passed"
+echo "all 64/64 cases passed"

@@ -5,6 +5,61 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.16] — 2026-06-22
+
+### Self-hosting Phase 4.12: list header layout + `len()` builtin
+
+Phase 4.11's lists were bare `i32*` arrays — the language could
+*create* and *index* them but couldn't know how big they were.
+This release upgrades the runtime layout to a real header
+struct and adds the `len()` builtin that reads from it.
+
+**`%QList` header layout.** `_q_ty_to_llvm("List") → "%QList*"`
+where `%QList = type { i32, [0 x i32] }` — an i32 length
+followed by an embedded flexible-array of i32 elements. Both
+fields live in the same heap allocation (single malloc),
+which beats a header-plus-separate-data-pointer scheme on
+locality and GC friendliness. `ModuleCG.render_header`
+emits the `%QList` type def unconditionally at the top of
+every module; LLVM accepts unused type defs and the
+"track whether any list was actually used" plumbing isn't
+worth the conditional.
+
+**Updated lowering.** `_gen_list_lit` mallocs `4 + N*4`
+bytes, stores the length at GEP `i32 0, i32 0`, then
+populates each element at GEP `i32 0, i32 1, i32 <i>`.
+`Index` similarly walks the chain `i32 0, i32 1, i32 <idx>`
+to reach the data array. Every existing list use-site (locals,
+params, returns) inherits the new pointer type automatically
+via `_q_ty_to_llvm`'s mapping — no per-list-call code
+changes needed.
+
+**`len(xs)` builtin.** Sema accepts `len(List) → Int` as a
+builtin alongside `print` (rejects non-list arg, rejects
+non-arity-1 calls). Codegen lowers `len(xs)` to a GEP of
+`i32 0, i32 0` followed by `load i32` — two instructions.
+The builtin form is a placeholder for the eventual
+`xs.length()` method-call once member-call syntax lands.
+
+`codegen_e2e.sh` gains 5 new cases:
+
+```
+ok  len literal       `len([1..7]) * 6`
+ok  len of local      `xs := [10, 20, 30]; len(xs) + 39`
+ok  len drives loop   `while i < len(xs) { n = n + xs[i]; i = i + 1 }`
+ok  len via param     `summing(xs) sums via while i < len(xs)`
+ok  len of single     `len([42]) + 41`
+
+all 64/64 cases passed
+```
+
+The `len drives loop` case is the first to exercise idiomatic
+list iteration — the workhorse pattern most callers will use.
+
+Phase 4.x left: list element-type generality (Bool / Double /
+String / struct payloads), method-call syntax for `.append()`
+/ `.length()`, and bounds-checked subscript.
+
 ## [4.0.0-alpha.15] — 2026-06-22
 
 ### Self-hosting Phase 4.11: list literals + subscript

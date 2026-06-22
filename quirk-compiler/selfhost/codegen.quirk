@@ -63,10 +63,12 @@ define _q_ty_to_llvm(qty: String) -> String {
     if qty == "Bool"   { return "i1" }
     if qty == "Double" { return "double" }
     if qty == "String" { return "i8*" }
-    // `List` in Phase 4.11 is an i32 array with no length
-    // tracking — the value is a bare `i32*`. A real `{ length,
-    // capacity, data }` header layout lands when methods do.
-    if qty == "List"   { return "i32*" }
+    // `List` value is a `%QList*` — a heap-allocated header
+    // `{ i32 length, [0 x i32] data }` with the element
+    // array embedded after the length. Element type is fixed
+    // at i32 for Phase 4.12; generic-element-type lists land
+    // when method-call syntax does.
+    if qty == "List"   { return "%QList*" }
     return "i32"
 }
 
@@ -165,6 +167,12 @@ struct ModuleCG {
 
     define render_header(self) -> String {
         out := ""
+        // Internal list-header type. `length` then a
+        // flexible array `[0 x i32]` for the elements — a
+        // single allocation holds both. Always emitted (cheap,
+        // and avoids a "used a list?" tracking flag); LLVM's
+        // verifier accepts unused type defs.
+        out = out + "%QList = type { i32, [0 x i32] }\n\n"
         // %struct.Name type defs first so subsequent globals /
         // function signatures can reference them by name.
         snames := self.structs.keys()
@@ -351,11 +359,15 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
             return _gen_list_lit(cg, ll.elems)
         }
         case Index as ix => {
-            // GEP the i32* base by the i32 index, then load.
+            // GEP through the %QList header's data array.
+            // The chain `i32 0, i32 1, i32 <idx>` walks: into
+            // the single struct instance, into field 1 (the
+            // [0 x i32] data array), then by element index.
             base_reg := _gen_expr(cg, ix.obj)
             idx_reg := _gen_expr(cg, ix.idx)
             gep := cg.fresh()
-            cg.emit(gep + " = getelementptr inbounds i32, i32* " + base_reg + ", i32 " + idx_reg)
+            cg.emit(gep + " = getelementptr inbounds %QList, %QList* " + base_reg +
+                    ", i32 0, i32 1, i32 " + idx_reg)
             reg := cg.fresh()
             cg.emit(reg + " = load i32, i32* " + gep)
             return reg
@@ -510,6 +522,19 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
                 // the i32 reg from puts.
                 return reg
             }
+            // Builtin: `len(xs)` reads the i32 length field
+            // out of the %QList header. GEP `i32 0, i32 0` is
+            // the length slot.
+            if name == "len" and c.args.length() == 1 {
+                la0: Expr := c.args.__get(0)
+                la_reg := _gen_expr(cg, la0)
+                gep := cg.fresh()
+                cg.emit(gep + " = getelementptr inbounds %QList, %QList* " + la_reg +
+                        ", i32 0, i32 0")
+                reg := cg.fresh()
+                cg.emit(reg + " = load i32, i32* " + gep)
+                return reg
+            }
             // Struct constructor: `Foo(a, b, ...)`. malloc a
             // %struct.Foo, then GEP + store each arg into its
             // field slot. Sizing uses the GEP-of-null trick —
@@ -581,7 +606,7 @@ define _expr_static_ty(cg: FnCG, e: Expr) -> String {
         case BoolLit as _ => return "i1"
         case FloatLit as _ => return "double"
         case StringLit as _ => return "i8*"
-        case ListLit as _ => return "i32*"
+        case ListLit as _ => return "%QList*"
         case Index as _ => return "i32"
         case Ident as id => {
             if cg.locals.has(id.name) {
@@ -702,30 +727,35 @@ define _gen_struct_ctor(cg: FnCG, name: String, ctor_args: List) -> String {
     return obj
 }
 
-// Lower a list literal `[a, b, c]` to a heap-allocated i32
-// array. Each element is `_gen_expr`'d in turn (sema has
-// already enforced TInt) and stored at the matching GEP'd
-// slot. Returns the `i32*` base pointer. The buffer leaks —
-// same short-lived-process trade-off as the string concat
-// allocator.
+// Lower a list literal `[a, b, c]` to a heap-allocated
+// `%QList` — single allocation holding `{ i32 length, [N x
+// i32] data }`. Returns the `%QList*` base. The buffer leaks
+// (same short-lived-process trade-off as the string concat
+// allocator).
 define _gen_list_lit(cg: FnCG, elems: List) -> String {
     cg.mod.ensure_decl("malloc", "declare i8* @malloc(i64)")
     n := elems.length()
-    // 4 bytes per i32 — fixed for Phase 4.11's Int-only lists.
-    // Generic element-type sizing will route through a
-    // GEP-of-null trick like _gen_struct_ctor's once lists
-    // carry element-type metadata.
-    bytes := n * 4
+    // 4 bytes for the i32 length header + 4 bytes per i32
+    // element. Element-type generality will switch this to a
+    // GEP-of-null sizing trick (same as _gen_struct_ctor).
+    bytes := 4 + n * 4
     raw := cg.fresh()
     cg.emit(raw + " = call i8* @malloc(i64 " + bytes.str() + ")")
     base := cg.fresh()
-    cg.emit(base + " = bitcast i8* " + raw + " to i32*")
+    cg.emit(base + " = bitcast i8* " + raw + " to %QList*")
+    // Store length into field 0.
+    len_gep := cg.fresh()
+    cg.emit(len_gep + " = getelementptr inbounds %QList, %QList* " + base +
+            ", i32 0, i32 0")
+    cg.emit("store i32 " + n.str() + ", i32* " + len_gep)
+    // Populate the data array (field 1).
     i := 0
     while i < elems.length() {
         ei: Expr := elems.__get(i)
         ev := _gen_expr(cg, ei)
         gep := cg.fresh()
-        cg.emit(gep + " = getelementptr inbounds i32, i32* " + base + ", i32 " + i.str())
+        cg.emit(gep + " = getelementptr inbounds %QList, %QList* " + base +
+                ", i32 0, i32 1, i32 " + i.str())
         cg.emit("store i32 " + ev + ", i32* " + gep)
         i = i + 1
     }

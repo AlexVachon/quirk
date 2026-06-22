@@ -256,6 +256,24 @@ define _check_call(s: Sema, c: Call) -> Ty {
         }
         return TVoid()
     }
+    // Builtin: `len(List) -> Int`. Reads the i32 length field
+    // out of the %QList header. Will graduate to method-call
+    // form `xs.length()` once member-call syntax lands.
+    if name == "len" {
+        if c.args.length() != 1 {
+            s.report("len() takes exactly one argument")
+            return TError("len arity")
+        }
+        la: Expr := c.args.__get(0)
+        lt := _check_expr(s, la)
+        is_list := false
+        match lt { case TList as _ => is_list = true case _ => {} }
+        if is_list == false {
+            s.report("len() expects a List argument; got '" + ty_to_string(lt) + "'")
+            return TError("len type")
+        }
+        return TInt()
+    }
     // Struct constructor: `Foo(a, b, ...)` produces TStruct("Foo").
     // We still type-check each argument expression individually
     // (catches undefined-name errors in the args), but strict

@@ -380,6 +380,29 @@ define Tag.length() -> Int { return self.n * 6 }
 define main() -> Int { t := Tag(7); return t.length() }" \
     42
 
+# Phase 4.15: List.append() + capacity field + realloc growth.
+# Layout switches to %QList = { length, capacity, i32* data }
+# with the data array in its own allocation so append can
+# realloc without invalidating the header pointer that
+# callers hold. Capacity doubles on full.
+run "append grows past cap" \
+    "define main() -> Int { xs := [1]; xs.append(2); xs.append(3); return xs[0] + xs[1] + xs[2] + 36 }" \
+    42
+run "append updates length" \
+    "define main() -> Int { xs := [10]; xs.append(20); xs.append(12); return xs.length() * 14 }" \
+    42
+run "build via loop" \
+    "define main() -> Int { xs := [0]; i := 1; while i < 7 { xs.append(i * 2); i = i + 1 } sum := 0; j := 0; while j < xs.length() { sum = sum + xs[j]; j = j + 1 } return sum }" \
+    42
+run "append seen by callee" \
+    "define total(xs: List) -> Int { i := 0; n := 0; while i < xs.length() { n = n + xs[i]; i = i + 1 } return n }
+define main() -> Int { xs := [10]; xs.append(20); xs.append(12); return total(xs) }" \
+    42
+run "append returns to fn" \
+    "define fill() -> List { xs := [0]; i := 1; while i < 10 { xs.append(i); i = i + 1 } return xs }
+define main() -> Int { xs := fill(); return xs.length() + xs[8] + 24 }" \
+    42
+
 # Phase 4.3: string literals + print() via puts().
 run_with_stdout "print literal" \
     'define main() -> Int { print("hello"); return 42 }' \
@@ -403,4 +426,4 @@ if [ "$fails" -gt 0 ]; then
     exit 1
 fi
 echo ""
-echo "all 74/74 cases passed"
+echo "all 79/79 cases passed"

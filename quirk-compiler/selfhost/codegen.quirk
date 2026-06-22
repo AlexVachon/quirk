@@ -167,12 +167,14 @@ struct ModuleCG {
 
     define render_header(self) -> String {
         out := ""
-        // Internal list-header type. `length` then a
-        // flexible array `[0 x i32]` for the elements — a
-        // single allocation holds both. Always emitted (cheap,
-        // and avoids a "used a list?" tracking flag); LLVM's
-        // verifier accepts unused type defs.
-        out = out + "%QList = type { i32, [0 x i32] }\n\n"
+        // Internal list-header type. `{ length, capacity,
+        // i32* data }` — the data array lives in its own
+        // allocation so `.append` can `realloc` the buffer
+        // without invalidating the header pointer that callers
+        // hold. Always emitted (cheap, and avoids a "used a
+        // list?" tracking flag); LLVM's verifier accepts unused
+        // type defs.
+        out = out + "%QList = type { i32, i32, i32* }\n\n"
         // %struct.Name type defs first so subsequent globals /
         // function signatures can reference them by name.
         snames := self.structs.keys()
@@ -359,17 +361,23 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
             return _gen_list_lit(cg, ll.elems)
         }
         case Index as ix => {
-            // GEP through the %QList header's data array.
-            // The chain `i32 0, i32 1, i32 <idx>` walks: into
-            // the single struct instance, into field 1 (the
-            // [0 x i32] data array), then by element index.
+            // Load the data pointer from %QList field 2,
+            // GEP by the i32 index, then load. The header
+            // and the data buffer are separate allocations
+            // since 4.15, so we can't reach the element
+            // with a single GEP through the struct.
             base_reg := _gen_expr(cg, ix.obj)
             idx_reg := _gen_expr(cg, ix.idx)
-            gep := cg.fresh()
-            cg.emit(gep + " = getelementptr inbounds %QList, %QList* " + base_reg +
-                    ", i32 0, i32 1, i32 " + idx_reg)
+            data_gep := cg.fresh()
+            cg.emit(data_gep + " = getelementptr inbounds %QList, %QList* " + base_reg +
+                    ", i32 0, i32 2")
+            data_ptr := cg.fresh()
+            cg.emit(data_ptr + " = load i32*, i32** " + data_gep)
+            elem_gep := cg.fresh()
+            cg.emit(elem_gep + " = getelementptr inbounds i32, i32* " + data_ptr +
+                    ", i32 " + idx_reg)
             reg := cg.fresh()
-            cg.emit(reg + " = load i32, i32* " + gep)
+            cg.emit(reg + " = load i32, i32* " + elem_gep)
             return reg
         }
         case FieldGet as fg => {
@@ -808,38 +816,125 @@ define _gen_method_call(cg: FnCG, c: Call) -> String {
             return reg
         }
     }
+    if fg.name == "append" and recv_ty == "%QList*" {
+        // Recursive `_gen_expr` for the arg lives inside the
+        // helper to keep this function's recursion shape simple
+        // (same dodge as _gen_struct_ctor, _gen_list_lit,
+        // _gen_field_set).
+        return _gen_list_append(cg, recv_reg, c.args)
+    }
     return "<bad-method:" + fg.name + ">"
 }
 
+// Lower `xs.append(v)`. Reads the header's length + capacity;
+// if they're equal, doubles capacity, reallocs the data
+// buffer, and stores the new pointer back. Then writes `v`
+// at data[length] and bumps length.
+define _gen_list_append(cg: FnCG, recv_reg: String, args: List) -> String {
+    cg.mod.ensure_decl("realloc", "declare i8* @realloc(i8*, i64)")
+    cg.mod.ensure_decl("malloc", "declare i8* @malloc(i64)")
+    aexpr: Expr := args.__get(0)
+    aval := _gen_expr(cg, aexpr)
+    // GEPs into header fields.
+    len_gep := cg.fresh()
+    cg.emit(len_gep + " = getelementptr inbounds %QList, %QList* " + recv_reg +
+            ", i32 0, i32 0")
+    cap_gep := cg.fresh()
+    cg.emit(cap_gep + " = getelementptr inbounds %QList, %QList* " + recv_reg +
+            ", i32 0, i32 1")
+    data_gep := cg.fresh()
+    cg.emit(data_gep + " = getelementptr inbounds %QList, %QList* " + recv_reg +
+            ", i32 0, i32 2")
+    len0 := cg.fresh()
+    cg.emit(len0 + " = load i32, i32* " + len_gep)
+    cap0 := cg.fresh()
+    cg.emit(cap0 + " = load i32, i32* " + cap_gep)
+    full := cg.fresh()
+    cg.emit(full + " = icmp eq i32 " + len0 + ", " + cap0)
+    grow_lbl := cg.fresh_label("append.grow")
+    write_lbl := cg.fresh_label("append.write")
+    cg.emit("br i1 " + full + ", label %" + grow_lbl + ", label %" + write_lbl)
+    // Growth block: new_cap = cap0 * 2, realloc data, store.
+    cg.emit_raw(grow_lbl + ":")
+    new_cap := cg.fresh()
+    cg.emit(new_cap + " = mul nsw i32 " + cap0 + ", 2")
+    // sext i32 → i64, then multiply by 4 (bytes per element).
+    // `cg.fresh()` assigns SSA numbers in call order, so the
+    // sext must be freshed *before* the multiply.
+    new_cap64 := cg.fresh()
+    cg.emit(new_cap64 + " = sext i32 " + new_cap + " to i64")
+    new_bytes64 := cg.fresh()
+    cg.emit(new_bytes64 + " = mul nsw i64 " + new_cap64 + ", 4")
+    old_data := cg.fresh()
+    cg.emit(old_data + " = load i32*, i32** " + data_gep)
+    old_i8 := cg.fresh()
+    cg.emit(old_i8 + " = bitcast i32* " + old_data + " to i8*")
+    new_raw := cg.fresh()
+    cg.emit(new_raw + " = call i8* @realloc(i8* " + old_i8 + ", i64 " + new_bytes64 + ")")
+    new_data := cg.fresh()
+    cg.emit(new_data + " = bitcast i8* " + new_raw + " to i32*")
+    cg.emit("store i32* " + new_data + ", i32** " + data_gep)
+    cg.emit("store i32 " + new_cap + ", i32* " + cap_gep)
+    cg.emit("br label %" + write_lbl)
+    // Write block: store at data[len], len++.
+    cg.emit_raw(write_lbl + ":")
+    data_ptr := cg.fresh()
+    cg.emit(data_ptr + " = load i32*, i32** " + data_gep)
+    slot := cg.fresh()
+    cg.emit(slot + " = getelementptr inbounds i32, i32* " + data_ptr + ", i32 " + len0)
+    cg.emit("store i32 " + aval + ", i32* " + slot)
+    new_len := cg.fresh()
+    cg.emit(new_len + " = add nsw i32 " + len0 + ", 1")
+    cg.emit("store i32 " + new_len + ", i32* " + len_gep)
+    return "0"
+}
+
 // Lower a list literal `[a, b, c]` to a heap-allocated
-// `%QList` — single allocation holding `{ i32 length, [N x
-// i32] data }`. Returns the `%QList*` base. The buffer leaks
-// (same short-lived-process trade-off as the string concat
-// allocator).
+// `%QList { length, capacity, data* }` plus a separate
+// element-array allocation. Two mallocs: one 12-byte header,
+// one N*4-byte data buffer pointed to by `data`. Capacity
+// starts at N (or 1 for the empty literal so the first
+// append has somewhere to land before growth). Returns the
+// `%QList*` header pointer. Both buffers leak (same trade-off
+// as the string-concat allocator).
 define _gen_list_lit(cg: FnCG, elems: List) -> String {
     cg.mod.ensure_decl("malloc", "declare i8* @malloc(i64)")
     n := elems.length()
-    // 4 bytes for the i32 length header + 4 bytes per i32
-    // element. Element-type generality will switch this to a
-    // GEP-of-null sizing trick (same as _gen_struct_ctor).
-    bytes := 4 + n * 4
+    cap := n
+    if cap < 1 { cap = 1 }
+    // 12-byte header: i32 length + i32 capacity + i32* data.
     raw := cg.fresh()
-    cg.emit(raw + " = call i8* @malloc(i64 " + bytes.str() + ")")
+    cg.emit(raw + " = call i8* @malloc(i64 12)")
     base := cg.fresh()
     cg.emit(base + " = bitcast i8* " + raw + " to %QList*")
-    // Store length into field 0.
+    // Allocate the data buffer separately so .append can
+    // realloc it without invalidating the header pointer.
+    data_bytes := cap * 4
+    data_raw := cg.fresh()
+    cg.emit(data_raw + " = call i8* @malloc(i64 " + data_bytes.str() + ")")
+    data_ptr := cg.fresh()
+    cg.emit(data_ptr + " = bitcast i8* " + data_raw + " to i32*")
+    // Store length, capacity, data into header fields.
     len_gep := cg.fresh()
     cg.emit(len_gep + " = getelementptr inbounds %QList, %QList* " + base +
             ", i32 0, i32 0")
     cg.emit("store i32 " + n.str() + ", i32* " + len_gep)
-    // Populate the data array (field 1).
+    cap_gep := cg.fresh()
+    cg.emit(cap_gep + " = getelementptr inbounds %QList, %QList* " + base +
+            ", i32 0, i32 1")
+    cg.emit("store i32 " + cap.str() + ", i32* " + cap_gep)
+    data_field_gep := cg.fresh()
+    cg.emit(data_field_gep + " = getelementptr inbounds %QList, %QList* " + base +
+            ", i32 0, i32 2")
+    cg.emit("store i32* " + data_ptr + ", i32** " + data_field_gep)
+    // Populate the data buffer.
     i := 0
     while i < elems.length() {
         ei: Expr := elems.__get(i)
         ev := _gen_expr(cg, ei)
         gep := cg.fresh()
-        cg.emit(gep + " = getelementptr inbounds %QList, %QList* " + base +
-                ", i32 0, i32 1, i32 " + i.str())
+        cg.emit(gep + " = getelementptr inbounds i32, i32* " + data_ptr +
+                ", i32 " + i.str())
         cg.emit("store i32 " + ev + ", i32* " + gep)
         i = i + 1
     }

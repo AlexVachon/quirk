@@ -35,6 +35,7 @@ toolchain dependency from anyone wanting to hack on the compiler.
 |  4.12 | List header layout `{ length, data }` + `len()` builtin | landed (v4.0.0-alpha.16) |
 |  4.13 | Method-call syntax — `xs.length()`, `s.length()` | landed (v4.0.0-alpha.17) |
 |  4.14 | User-defined struct methods — `define Foo.method(...)` with implicit `self` | landed (v4.0.0-alpha.18) |
+|  4.15 | `List.append()` + capacity field + realloc growth | landed (v4.0.0-alpha.19) |
 |  5    | Bootstrap — Quirk compiler compiles itself, byte-identical | not started |
 
 The Codegen phase deliberately targets *text-form* LLVM IR (`.ll`)

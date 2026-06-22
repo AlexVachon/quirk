@@ -389,6 +389,28 @@ define _check_method_call(s: Sema, c: Call) -> Ty {
         s.report("." + fg.name + "() not defined on '" + ty_to_string(ot) + "'")
         return TError("method receiver")
     }
+    // `.append(Int)` on List → Int. The Int return is a stand-in
+    // for void; callers typically discard it. Growth (cap *= 2 +
+    // realloc) is handled in codegen.
+    if fg.name == "append" {
+        if is_list == false {
+            s.report(".append() not defined on '" + ty_to_string(ot) + "'")
+            return TError("method receiver")
+        }
+        if c.args.length() != 1 {
+            s.report(".append() takes exactly one argument")
+            return TError("method arity")
+        }
+        a0: Expr := c.args.__get(0)
+        at := _check_expr(s, a0)
+        is_int := false
+        match at { case TInt as _ => is_int = true case _ => {} }
+        if is_int == false {
+            s.report(".append() expects an Int element, got '" + ty_to_string(at) + "'")
+            return TError("method arg")
+        }
+        return TInt()
+    }
     s.report("unknown method '." + fg.name + "()' on '" + ty_to_string(ot) + "'")
     return TError("unknown method")
 }

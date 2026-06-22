@@ -5,6 +5,72 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.19] — 2026-06-22
+
+### Self-hosting Phase 4.15: `List.append()` + capacity + realloc growth
+
+The last missing list operation. `xs.append(v)` adds an element
+to the end and grows the data buffer if needed. Combined with
+Phase 4.13's `.length()` and Phase 4.11/4.12's literals +
+subscript, lists are now usable as dynamic arrays.
+
+**Layout switch: header + separate data buffer.** `%QList`
+goes from `{ length, [0 x i32] data }` (embedded data) to
+`{ length, capacity, i32* data }` (split). Two allocations
+per list — a 12-byte header and an N-element data buffer
+— so `.append`'s `realloc` can grow the data buffer
+without invalidating the header pointer callers hold. The
+header keeps a permanent identity even as `data` moves; a
+caller passing a list by reference to a function that
+appends sees the new contents through the same `%QList*`
+slot.
+
+**`_gen_list_lit` updated.** Two mallocs (header + data),
+capacity starts at N (or 1 for the empty literal so the
+first append has room before growth), data field populated
+via straight GEP+store on the data pointer (no longer
+walking through the struct).
+
+**`Index` walks through the data pointer.** GEP into field 2
+of the struct, `load i32*`, then GEP that pointer by the
+element index, then `load i32`. One extra load compared to
+the embedded-array form — a small price for the realloc
+semantics it unlocks.
+
+**`.append(v)` lowering.** A new `_gen_list_append` helper
+(extracted for the recursion-dodge pattern) emits:
+
+  - Load `length`, `capacity`, `data*` from the header.
+  - `icmp eq` length vs capacity. `br i1` to either a
+    growth block or a write block.
+  - Growth block: new_cap = cap * 2, `realloc(data,
+    new_cap*4)`, store the new data pointer + new capacity
+    back into the header.
+  - Write block (label join point): store the new element
+    at `data[length]`, bump `length` by 1.
+
+Sema accepts `.append(Int) → Int` on List (the Int return
+is a stand-in for void; callers discard).
+
+`codegen_e2e.sh` gains 5 new cases:
+
+```
+ok  append grows past cap        `xs := [1]; xs.append(2); xs.append(3); sum`
+ok  append updates length        `xs.length()` reflects each append
+ok  build via loop                `while i < 7 { xs.append(i * 2); ... }`
+ok  append seen by callee        caller appends, callee sees new len via param
+ok  append returns to fn          callee fills + returns list, caller reads it
+
+all 79/79 cases passed
+```
+
+The "build via loop" case is the workhorse pattern — building
+a list incrementally inside a loop — which is what selfhost
+code will use everywhere once the bootstrap runs.
+
+Phase 4.x left: generic list element types (Bool / Double /
+String / structs in lists) and bounds-checked subscript.
+
 ## [4.0.0-alpha.18] — 2026-06-22
 
 ### Self-hosting Phase 4.14: user-defined struct methods

@@ -35,7 +35,7 @@ worked around in tokens.quirk's `__str` impl.
 from .tokens use { TokenKind, Token }
 from .ast use { Expr, Stmt, Param, FunctionDecl, TopLevel }
 from .ast use { IntLit, FloatLit, StringLit, BoolLit, NullLit, Ident, UnaryOp, BinOp, Call, FieldGet }
-from .ast use { Return, ExprStmt, VarDecl, Assign, If, While, Func, StructTL }
+from .ast use { Return, ExprStmt, VarDecl, Assign, FieldSet, If, While, Func, StructTL }
 from .ast use { StructField, StructDecl }
 
 struct ParserState {
@@ -252,20 +252,18 @@ define _parse_stmt(s: ParserState) -> Stmt {
         return While(cond, body)
     }
 
-    // Look-ahead: `name :=` / `name =` / `name : Type :=` are
-    // var-decl / assign shapes; anything else is a plain
-    // expression statement.
+    // Look-ahead: `name :=` / `name : Type :=` are var-decl
+    // shapes that require an identifier as the LHS. The
+    // assignment forms (`name = expr` and `obj.field = expr`)
+    // fall through to the expression parser below — that way
+    // the LHS comes out of `_parse_postfix` already shaped as
+    // an `Ident` or `FieldGet`, and we dispatch in one place.
     if t.kind == TokenKind.Identifier {
         t2: Token := s.peek_at(1)
         if t2.kind == TokenKind.AssignInit {
             name := s.advance().value
             s.advance()  // consume :=
             return VarDecl(name, "", _parse_expr(s))
-        }
-        if t2.kind == TokenKind.Assign {
-            name := s.advance().value
-            s.advance()  // consume =
-            return Assign(name, _parse_expr(s))
         }
         if t2.kind == TokenKind.Colon {
             name := s.advance().value
@@ -278,7 +276,23 @@ define _parse_stmt(s: ParserState) -> Stmt {
         }
     }
 
-    return ExprStmt(_parse_expr(s))
+    // Parse the leading expression, then look for `=` to decide
+    // if this is an assignment or a bare expression statement.
+    // The LHS must be addressable: a bare identifier (→ Assign)
+    // or a field access (→ FieldSet).
+    lhs: Expr := _parse_expr(s)
+    if s.check(TokenKind.Assign) {
+        s.advance()  // consume =
+        rhs: Expr := _parse_expr(s)
+        match lhs {
+            case Ident as id => return Assign(id.name, rhs)
+            case FieldGet as fg => return FieldSet(fg.obj, fg.name, rhs)
+            case _ => {
+                throw ValueError("invalid assignment target at line " + t.line.str() + ":" + t.col.str())
+            }
+        }
+    }
+    return ExprStmt(lhs)
 }
 
 ---

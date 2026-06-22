@@ -5,6 +5,66 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.14] — 2026-06-22
+
+### Self-hosting Phase 4.10: field write + struct at the call boundary
+
+Phase 4.9 shipped struct decls, the positional constructor, and
+field reads. This release closes the surface: field writes
+(`f.x = v`) parse, type-check, and lower correctly; struct
+values flow through function params and returns by reference.
+
+**Field write.** A new `FieldSet(obj, name, value)` Stmt
+variant lands in the AST. The parser stops handling `=` in
+its identifier-lookahead shortcut and instead routes through
+the expression parser, dispatching on the LHS kind once the
+`=` token shows up — `Ident` → `Assign`, `FieldGet` →
+`FieldSet`, anything else throws a syntax error at the
+assignment-target position. Sema's `_check_field_set`
+mirrors `_check_field_get` on the receiver, then validates
+the RHS type against the field's declared type using
+`ty_compatible`. Codegen's `_gen_field_set` symmetrically
+GEPs the field address and `store`s the value at the
+registered field LLVM type — extracted into its own helper
+to keep `_gen_stmt`'s recursion shape simple (same dodge
+pattern as `_gen_struct_ctor`).
+
+**Struct at the call boundary already worked.** The Phase 4.4
+`_Slot { name, ty }` machinery + Phase 4.9's
+`_resolve_ty(mod, qty)` plug `%struct.Foo*` into every
+type-rendering site — function headers, alloca slots, the
+`_Sig` signature pre-pass, call-site arg rendering. So
+`define area(p: Point) -> Double` and `define make() -> Point
+{ return Point(...) }` work without any new codegen — the
+slot is `alloca %struct.Point*`, the return ABI is `ret
+%struct.Point* %v`, and callers thread the pointer through.
+
+**Reference semantics.** Because struct values live on the
+heap and are passed/returned as pointers, mutation via a
+parameter is visible to the caller. The new `mutate via
+param sees outside` e2e case locks that behavior in: a
+`bump(b: Box)` callee writes `b.n = b.n + 1` and the caller
+observes the change. That's *not* yet a deliberate language
+decision — it's what falls out of the simplest pointer-based
+lowering. Value semantics (copy on call) would be a later
+choice if it matters.
+
+`codegen_e2e.sh` gains 5 new cases:
+
+```
+ok  field write                       `b.n = 42; return b.n`
+ok  field write then read             `p.x = 40; p.y = 2; p.x + p.y`
+ok  struct as param (by ref)          `sum(p: Pt)` reading p.x + p.y
+ok  struct returned then read         `make() -> Pt`, read fields
+ok  mutate via param sees outside     bump() mutates caller's struct
+
+all 54/54 cases passed
+```
+
+Phase 4.x left: lists/maps via runtime helpers — the same
+malloc + GEP pattern from Phase 4.8/4.9 extends to a header
+(length + capacity) + element-array layout.
+
 ## [4.0.0-alpha.13] — 2026-06-22
 
 ### Self-hosting Phase 4.9: structs

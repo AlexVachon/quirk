@@ -35,7 +35,7 @@ Deferred:
 
 from .ast use { Expr, Stmt, Param, FunctionDecl, TopLevel }
 from .ast use { IntLit, FloatLit, StringLit, BoolLit, NullLit, Ident, UnaryOp, BinOp, Call, FieldGet }
-from .ast use { Return, ExprStmt, VarDecl, Assign, If, While, Func, StructTL }
+from .ast use { Return, ExprStmt, VarDecl, Assign, FieldSet, If, While, Func, StructTL }
 from .ast use { StructField, StructDecl }
 
 ---
@@ -678,6 +678,37 @@ define _gen_struct_ctor(cg: FnCG, name: String, ctor_args: List) -> String {
     return obj
 }
 
+// Lower a field assignment `obj.name = value`. Symmetric to
+// FieldGet's lowering in `_gen_expr` — GEP the field address,
+// then `store` the RHS at the field's LLVM type. Extracted from
+// `_gen_stmt` so the inner recursive `_gen_expr` calls
+// (for `obj` and `value`) sit in a function of their own,
+// matching the same self-compiler workaround pattern as
+// `_gen_struct_ctor`.
+define _gen_field_set(cg: FnCG, obj: Expr, name: String, value: Expr) -> void {
+    obj_ty := _expr_static_ty(cg, obj)
+    obj_reg := _gen_expr(cg, obj)
+    val_reg := _gen_expr(cg, value)
+    sname := _strip_struct_ptr(obj_ty)
+    sd: _StructDef := cg.mod.structs.get(sname)
+    idx := 0
+    field_ty := "i32"
+    fi := 0
+    while fi < sd.field_names.length() {
+        fname: String := sd.field_names.__get(fi)
+        if fname == name {
+            idx = fi
+            field_ty = sd.field_llvm_tys.__get(fi)
+        }
+        fi = fi + 1
+    }
+    gep := cg.fresh()
+    cg.emit(gep + " = getelementptr inbounds %struct." + sname +
+            ", %struct." + sname + "* " + obj_reg +
+            ", i32 0, i32 " + idx.str())
+    cg.emit("store " + field_ty + " " + val_reg + ", " + field_ty + "* " + gep)
+}
+
 // Extract `"Foo"` from `"%struct.Foo*"`. Returns the input
 // unchanged when it doesn't look like a struct pointer — the
 // callers use the result as a lookup key in mod.structs, which
@@ -735,6 +766,14 @@ define _gen_stmt(cg: FnCG, st: Stmt) -> void {
             rhs := _gen_expr(cg, a.value)
             slot := _ensure_slot(cg, a.name, "i32")
             cg.emit("store " + slot.ty + " " + rhs + ", " + slot.ty + "* " + slot.name)
+        }
+        case FieldSet as fs => {
+            // Symmetric to FieldGet (in _gen_expr): GEP the
+            // field's address, then `store` instead of `load`.
+            // Extracted to a helper to keep _gen_stmt's recursion
+            // shape simple — see the same dodge in
+            // `_gen_struct_ctor` for why.
+            _gen_field_set(cg, fs.obj, fs.name, fs.value)
         }
         case If as iff => {
             cond := _gen_expr(cg, iff.cond)

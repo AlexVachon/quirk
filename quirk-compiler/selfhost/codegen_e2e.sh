@@ -270,6 +270,35 @@ run "two struct instances" \
 define main() -> Int { a := Box(20); b := Box(22); return a.n + b.n }" \
     42
 
+# Phase 4.10: struct field write + struct-typed params/returns.
+# The slot/ctor machinery from 4.9 already produced `%struct.Foo*`
+# at every other site; this phase exposes that to the surface
+# via `f.x = v` and shows it round-trips through the call
+# boundary by reference.
+run "field write" \
+    "struct Box { n: Int }
+define main() -> Int { b := Box(0); b.n = 42; return b.n }" \
+    42
+run "field write then read" \
+    "struct Pt { x: Int; y: Int }
+define main() -> Int { p := Pt(1, 2); p.x = 40; p.y = 2; return p.x + p.y }" \
+    42
+run "struct as param (by ref)" \
+    "struct Pt { x: Int; y: Int }
+define sum(p: Pt) -> Int { return p.x + p.y }
+define main() -> Int { p := Pt(40, 2); return sum(p) }" \
+    42
+run "struct returned then read" \
+    "struct Pt { x: Int; y: Int }
+define make() -> Pt { return Pt(10, 32) }
+define main() -> Int { p := make(); return p.x + p.y }" \
+    42
+run "mutate via param sees outside" \
+    "struct Box { n: Int }
+define bump(b: Box) -> Int { b.n = b.n + 1; return 0 }
+define main() -> Int { b := Box(41); bump(b); return b.n }" \
+    42
+
 # Phase 4.3: string literals + print() via puts().
 run_with_stdout "print literal" \
     'define main() -> Int { print("hello"); return 42 }' \
@@ -293,4 +322,4 @@ if [ "$fails" -gt 0 ]; then
     exit 1
 fi
 echo ""
-echo "all 49/49 cases passed"
+echo "all 54/54 cases passed"

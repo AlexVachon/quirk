@@ -27,7 +27,7 @@ Things deferred to Phase 3.x:
 
 from .ast use { Expr, Stmt, Param, FunctionDecl, TopLevel }
 from .ast use { IntLit, FloatLit, StringLit, BoolLit, NullLit, Ident, UnaryOp, BinOp, Call, FieldGet }
-from .ast use { Return, ExprStmt, VarDecl, Assign, If, While, Func, StructTL }
+from .ast use { Return, ExprStmt, VarDecl, Assign, FieldSet, If, While, Func, StructTL }
 from .ast use { StructField, StructDecl }
 from .types use { Ty, TInt, TDouble, TString, TBool, TVoid, TAny, TStruct, TError }
 from .types use { ty_to_string, ty_from_annot, ty_compatible }
@@ -315,6 +315,45 @@ define _check_field_get(s: Sema, fg: FieldGet) -> Ty {
     return TError("unknown field")
 }
 
+// Field assignment: `obj.name = value`. Mirrors _check_field_get
+// on the receiver side, then validates the RHS type matches the
+// field's declared type. Returns void — diagnostics go into
+// s.errors via s.report.
+define _check_field_set(s: Sema, fs: FieldSet) -> void {
+    ot: Ty := _check_expr(s, fs.obj)
+    rhs: Ty := _check_expr(s, fs.value)
+    is_err := false
+    match ot { case TError as _ => is_err = true case _ => {} }
+    if is_err { return }
+    sname := ""
+    match ot {
+        case TStruct as ts => sname = ts.name
+        case _ => {
+            s.report("field assignment '." + fs.name + " =' on non-struct '" + ty_to_string(ot) + "'")
+            return
+        }
+    }
+    if s.structs.has(sname) == false {
+        s.report("field assignment on unknown struct '" + sname + "'")
+        return
+    }
+    decl: StructDecl := s.structs.get(sname)
+    i := 0
+    while i < decl.fields.length() {
+        f: StructField := decl.fields.__get(i)
+        if f.name == fs.name {
+            declared: Ty := ty_from_annot(f.type_annot)
+            if ty_compatible(declared, rhs) == false {
+                s.report("field '" + sname + "." + fs.name + "' expects '" +
+                         ty_to_string(declared) + "', got '" + ty_to_string(rhs) + "'")
+            }
+            return
+        }
+        i = i + 1
+    }
+    s.report("struct '" + sname + "' has no field '" + fs.name + "'")
+}
+
 // -----------------------------------------------------------------
 // Statement typing
 // -----------------------------------------------------------------
@@ -367,6 +406,13 @@ define _check_stmt(s: Sema, st: Stmt, ret: Ty) -> void {
                     }
                 }
             }
+        }
+        case FieldSet as fs => {
+            // Look up the struct, find the field, ensure the
+            // RHS type matches the declared field type. Reports
+            // are accumulated into s.errors via s.report; the
+            // shape mirrors _check_field_get on the read side.
+            _check_field_set(s, fs)
         }
         case If as iff => {
             ct: Ty := _check_expr(s, iff.cond)

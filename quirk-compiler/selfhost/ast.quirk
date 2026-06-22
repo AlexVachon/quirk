@@ -55,6 +55,7 @@ type Stmt =
     | ExprStmt(expr: Expr)
     | VarDecl(name: String, type_annot: String, value: Expr)
     | Assign(name: String, value: Expr)
+    | FieldSet(obj: Expr, name: String, value: Expr)
     | If(cond: Expr, then_body: List, else_body: List)
     | While(cond: Expr, body: List)
 

@@ -1,0 +1,272 @@
+---
+Quirk parser in Quirk — Phase 2 of self-hosting.
+
+Recursive descent over the token stream emitted by Phase 1's
+lexer. Returns a list of `TopLevel` nodes representing the
+file's top-level declarations.
+
+The parser is intentionally narrow right now — enough shapes to
+parse the kind of small programs the lexer was tested against:
+
+  - `define name(params) -> retType { body }` function decls
+  - parameters with `: type` annotations
+  - return + expression statements + `:=` / `=` assignments
+  - integer + string + bool + null literals
+  - identifiers + function calls
+  - `+`, `-`, `*`, `/` arithmetic with conventional precedence
+
+Things deliberately deferred to Phase 2.x:
+
+  - structs / enums / interfaces / `type` aliases / `extend`
+  - control flow (`if` / `while` / `for` / `match`)
+  - `use` / `from … use { … }` imports
+  - lambdas (`fn(x) => …`) + closures
+  - list / map / tuple literals
+  - `?` / `?.` / `??` null-handling operators
+  - operator overload methods (`__add`, etc.)
+
+State machine is a `ParserState` struct passed through each
+parse_* function. Comparisons use the `TokenKind` enum directly
+(`t.kind == TokenKind.Define` etc.) — that path was verified to
+work; only the `kind.name()` method call hits a Sema gap and is
+worked around in tokens.quirk's `__str` impl.
+---
+
+from .tokens use { TokenKind, Token }
+from .ast use { Expr, Stmt, Param, FunctionDecl, TopLevel }
+from .ast use { IntLit, StringLit, BoolLit, NullLit, Ident, BinOp, Call }
+from .ast use { Return, ExprStmt, VarDecl, Assign, Func }
+
+struct ParserState {
+    tokens: List   // List<Token>
+    pos: Int       // index into tokens
+
+    define __init(self, tokens: List) -> void {
+        self.tokens = tokens
+        self.pos = 0
+    }
+
+    define peek(self) -> Token {
+        return self.tokens.__get(self.pos)
+    }
+
+    define peek_at(self, offset: Int) -> Token {
+        idx := self.pos + offset
+        if idx >= self.tokens.length() {
+            return self.tokens.__get(self.tokens.length() - 1)
+        }
+        return self.tokens.__get(idx)
+    }
+
+    define advance(self) -> Token {
+        t: Token := self.peek()
+        self.pos = self.pos + 1
+        return t
+    }
+
+    define check(self, kind: TokenKind) -> Bool {
+        t: Token := self.peek()
+        return t.kind == kind
+    }
+
+    define match_kind(self, kind: TokenKind) -> Bool {
+        if self.check(kind) {
+            self.advance()
+            return true
+        }
+        return false
+    }
+
+    define expect(self, kind: TokenKind, what: String) -> Token {
+        t: Token := self.peek()
+        if t.kind != kind {
+            line_s := t.line.str()
+            col_s := t.col.str()
+            throw ValueError("Expected " + what + " at line " + line_s + ":" + col_s + ", got '" + t.value + "'")
+        }
+        return self.advance()
+    }
+}
+
+// -----------------------------------------------------------------
+// Expressions — precedence climbing.
+// -----------------------------------------------------------------
+
+define _parse_primary(s: ParserState) -> Expr {
+    t: Token := s.peek()
+
+    if t.kind == TokenKind.IntLiteral {
+        s.advance()
+        v: Int := t.value.to_int()
+        return IntLit(v)
+    }
+    if t.kind == TokenKind.StringLiteral {
+        s.advance()
+        return StringLit(t.value)
+    }
+    if t.kind == TokenKind.True_ {
+        s.advance()
+        return BoolLit(true)
+    }
+    if t.kind == TokenKind.False_ {
+        s.advance()
+        return BoolLit(false)
+    }
+    if t.kind == TokenKind.Null_ {
+        s.advance()
+        return NullLit()
+    }
+    if t.kind == TokenKind.Identifier {
+        s.advance()
+        // Function call?  `name(args)`
+        if s.check(TokenKind.LParen) {
+            s.advance()  // consume `(`
+            args := List()
+            if s.check(TokenKind.RParen) == false {
+                args.append(_parse_expr(s))
+                while s.match_kind(TokenKind.Comma) {
+                    args.append(_parse_expr(s))
+                }
+            }
+            s.expect(TokenKind.RParen, "')' to close call args")
+            return Call(Ident(t.value), args)
+        }
+        return Ident(t.value)
+    }
+    if t.kind == TokenKind.LParen {
+        s.advance()
+        e := _parse_expr(s)
+        s.expect(TokenKind.RParen, "')' to close paren-expr")
+        return e
+    }
+    throw ValueError("Expected expression at line " + t.line.str() + ":" + t.col.str() + ", got '" + t.value + "'")
+}
+
+define _parse_mul(s: ParserState) -> Expr {
+    left := _parse_primary(s)
+    while s.check(TokenKind.Star) or s.check(TokenKind.Slash) {
+        op_tok: Token := s.advance()
+        right := _parse_primary(s)
+        left = BinOp(op_tok.value, left, right)
+    }
+    return left
+}
+
+define _parse_expr(s: ParserState) -> Expr {
+    left := _parse_mul(s)
+    while s.check(TokenKind.Plus) or s.check(TokenKind.Minus) {
+        op_tok: Token := s.advance()
+        right := _parse_mul(s)
+        left = BinOp(op_tok.value, left, right)
+    }
+    return left
+}
+
+// -----------------------------------------------------------------
+// Statements
+// -----------------------------------------------------------------
+
+define _parse_stmt(s: ParserState) -> Stmt {
+    t: Token := s.peek()
+
+    if t.kind == TokenKind.Return {
+        s.advance()
+        return Return(_parse_expr(s))
+    }
+
+    // Look-ahead: `name :=` / `name =` / `name : Type :=` are
+    // var-decl / assign shapes; anything else is a plain
+    // expression statement.
+    if t.kind == TokenKind.Identifier {
+        t2: Token := s.peek_at(1)
+        if t2.kind == TokenKind.AssignInit {
+            name := s.advance().value
+            s.advance()  // consume :=
+            return VarDecl(name, "", _parse_expr(s))
+        }
+        if t2.kind == TokenKind.Assign {
+            name := s.advance().value
+            s.advance()  // consume =
+            return Assign(name, _parse_expr(s))
+        }
+        if t2.kind == TokenKind.Colon {
+            name := s.advance().value
+            s.advance()  // consume :
+            type_annot := s.expect(TokenKind.Identifier, "type after ':'").value
+            if s.match_kind(TokenKind.AssignInit) == false {
+                s.expect(TokenKind.Assign, "':=' or '=' after annotated variable name")
+            }
+            return VarDecl(name, type_annot, _parse_expr(s))
+        }
+    }
+
+    return ExprStmt(_parse_expr(s))
+}
+
+define _parse_block(s: ParserState) -> List {
+    s.expect(TokenKind.LBrace, "'{' to open block")
+    stmts := List()
+    while s.check(TokenKind.RBrace) == false {
+        stmts.append(_parse_stmt(s))
+        // Optional `;` separator between statements. Quirk's
+        // surface syntax is whitespace-separated, but the
+        // tokenizer emits `Semicolon` tokens when source uses
+        // them — eat them between statements so single-line
+        // programs (`a := 1; b := 2`) work without a separate
+        // statement-separator rule.
+        while s.match_kind(TokenKind.Semicolon) {}
+    }
+    s.advance()  // consume }
+    return stmts
+}
+
+// -----------------------------------------------------------------
+// Top-level
+// -----------------------------------------------------------------
+
+define _parse_param(s: ParserState) -> Param {
+    name := s.expect(TokenKind.Identifier, "parameter name").value
+    type_annot := ""
+    if s.match_kind(TokenKind.Colon) {
+        type_annot = s.expect(TokenKind.Identifier, "parameter type").value
+    }
+    return Param(name, type_annot)
+}
+
+define _parse_function_decl(s: ParserState) -> FunctionDecl {
+    s.expect(TokenKind.Define, "'define'")
+    name := s.expect(TokenKind.Identifier, "function name").value
+    s.expect(TokenKind.LParen, "'(' before parameter list")
+    params := List()
+    if s.check(TokenKind.RParen) == false {
+        params.append(_parse_param(s))
+        while s.match_kind(TokenKind.Comma) {
+            params.append(_parse_param(s))
+        }
+    }
+    s.expect(TokenKind.RParen, "')' to close parameter list")
+    ret_type := ""
+    if s.match_kind(TokenKind.Arrow) {
+        ret_type = s.expect(TokenKind.Identifier, "return type after '->'").value
+    }
+    body := _parse_block(s)
+    return FunctionDecl(name, params, ret_type, body)
+}
+
+---
+Parse the token stream into a list of top-level declarations.
+Stops at the EofToken sentinel.
+---
+define parse(tokens: List) -> List {
+    s := ParserState(tokens)
+    out := List()
+    while s.check(TokenKind.EofToken) == false {
+        t: Token := s.peek()
+        if t.kind == TokenKind.Define {
+            out.append(Func(_parse_function_decl(s)))
+        } else {
+            throw ValueError("Unexpected top-level token '" + t.value + "' at line " + t.line.str() + ":" + t.col.str())
+        }
+    }
+    return out
+}

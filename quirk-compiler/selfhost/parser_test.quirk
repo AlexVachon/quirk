@@ -1,0 +1,82 @@
+---
+Phase 2 parser smoke. Lex + parse a short corpus, walk the AST
+and dump each function's name + arity + body-statement count.
+
+The walk uses tagged-union match arms so a future regression
+(e.g. a new Stmt variant the dumper doesn't handle) shows up as
+a "?" line rather than a silent miss.
+---
+
+from .lexer use { tokenize }
+from .parser use { parse }
+from .ast use { Expr, Stmt, Param, FunctionDecl, TopLevel }
+from .ast use { IntLit, StringLit, BoolLit, NullLit, Ident, BinOp, Call }
+from .ast use { Return, ExprStmt, VarDecl, Assign, Func }
+
+define expr_kind(e: Expr) -> String {
+    match e {
+        case IntLit as _    => return "IntLit"
+        case StringLit as _ => return "StringLit"
+        case BoolLit as _   => return "BoolLit"
+        case NullLit as _   => return "NullLit"
+        case Ident as _     => return "Ident"
+        case BinOp as _     => return "BinOp"
+        case Call as _      => return "Call"
+        case _              => return "?"
+    }
+}
+
+define stmt_kind(st: Stmt) -> String {
+    match st {
+        case Return as _   => return "Return"
+        case ExprStmt as _ => return "ExprStmt"
+        case VarDecl as _  => return "VarDecl"
+        case Assign as _   => return "Assign"
+        case _             => return "?"
+    }
+}
+
+define dump(label: String, src: String) -> void {
+    print("--- " + label + " ---")
+    tokens := tokenize(src)
+    decls := parse(tokens)
+    i := 0
+    while i < decls.length() {
+        d: TopLevel := decls.__get(i)
+        match d {
+            case Func as f => {
+                fdecl: FunctionDecl := f.decl
+                print("fn " + fdecl.name + " params=" + fdecl.params.length().str() + " ret=" + fdecl.ret_type + " stmts=" + fdecl.body.length().str())
+                j := 0
+                while j < fdecl.body.length() {
+                    s: Stmt := fdecl.body.__get(j)
+                    print("  stmt[" + j.str() + "] " + stmt_kind(s))
+                    j = j + 1
+                }
+            }
+            case _ => print("?")
+        }
+        i = i + 1
+    }
+    print("")
+}
+
+// Case 1: simplest function.
+dump("identity",
+    "define id(x: Int) -> Int { return x }")
+
+// Case 2: arithmetic with precedence.
+dump("arithmetic",
+    "define f(a: Int, b: Int) -> Int { return a + b * 2 }")
+
+// Case 3: var-decl + reassign + call.
+dump("var + call",
+    "define greet(name: String) -> String { msg := \"hi \"; msg = msg + name; return msg }")
+
+// Case 4: no params, no return type.
+dump("void",
+    "define noop() { return null }")
+
+// Case 5: literals.
+dump("literals",
+    "define lits() -> Int { t := true; f := false; n := null; return 1 + 2 }")

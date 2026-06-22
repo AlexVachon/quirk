@@ -5,6 +5,64 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.2] — 2026-06-22
+
+### Self-hosting Phase 2: parser in Quirk
+
+The lexer (Phase 1, v4.0.0-alpha.1) feeds the parser. The
+parser produces an AST. The AST is the input Phase 3 (Sema)
+will consume.
+
+What landed:
+
+  - [`selfhost/ast.quirk`](selfhost/ast.quirk) — AST node
+    taxonomy using Quirk's tagged-union syntax:
+
+    ```
+    type Expr = IntLit(value: Int)
+              | StringLit(value: String)
+              | BoolLit(value: Bool)
+              | NullLit()
+              | Ident(name: String)
+              | BinOp(op: String, left: Expr, right: Expr)
+              | Call(callee: Expr, args: List)
+
+    type Stmt = Return(value: Expr)
+              | ExprStmt(expr: Expr)
+              | VarDecl(name: String, type_annot: String, value: Expr)
+              | Assign(name: String, value: Expr)
+
+    struct FunctionDecl { name, params: List, ret_type, body: List }
+    type TopLevel = Func(decl: FunctionDecl)
+    ```
+
+  - [`selfhost/parser.quirk`](selfhost/parser.quirk) — recursive
+    descent. ParserState struct tracks position; per-precedence
+    expression methods (`_parse_primary` → `_parse_mul` →
+    `_parse_expr`) climb up `*`/`/` then `+`/`-`. Statement
+    dispatch with look-ahead distinguishes `name :=` /
+    `name =` / `name : Type :=` from a plain expression
+    statement.
+
+  - [`selfhost/parser_test.quirk`](selfhost/parser_test.quirk) —
+    five corpora covering identity functions, arithmetic with
+    precedence, var-decl + reassign + call chains, void returns,
+    and all the literal kinds.
+
+Wired into `make test-selfhost` alongside the Phase 1 lexer
+smoke.
+
+Phase 3 (Sema) is the next milestone. Scope: walk the AST,
+build a symbol table, resolve identifiers, check types. The
+codegen-as-text-LLVM (Phase 4) follows.
+
+Sema gap surfaced and noted: `t.kind.name()` on an enum field
+read through a struct member access loses the enum-typed
+identity and SIGSEGV's. Worked around in `tokens.quirk`'s
+`__str` by formatting the ordinal instead. Real fix queued —
+Sema needs to track struct-field type info through member
+access for enum-typed fields.
+
 ## [4.0.0-alpha.1] — 2026-06-22
 
 ### Self-hosting begins — Phase 1: lexer in Quirk

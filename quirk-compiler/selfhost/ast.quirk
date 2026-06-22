@@ -1,0 +1,86 @@
+---
+AST node taxonomy for the self-hosted Quirk compiler
+(Phase 2 of self-hosting).
+
+Mirrors the C++ AST in `include/ast.hpp` at a coarse level but
+deliberately stays smaller — Phase 2's parser only emits the
+nodes Phase 3+ will need to consume, and we'll expand the
+taxonomy as the parser learns more shapes.
+
+Quirk's tagged-union syntax (`type Expr = IntLit(...) | ...`)
+gives us proper sum types with payloads. `match expr` on these
+dispatches cleanly to per-variant handlers. Codegen lowers each
+variant as a struct with a tag discriminator, so storage is
+compact and pattern matching is O(1) dispatch.
+
+Why two top-level shapes (Stmt + TopLevel) instead of one big
+Node enum? It keeps the parser entry points narrow — `parse_stmt`
+returns Stmt, `parse_top_level` returns TopLevel. The C++
+implementation gets away with one Node base class because of
+inheritance + dynamic_cast; Quirk's tagged unions trade that
+for a tighter, statically-checked split.
+---
+
+---
+Expression nodes — produce a value. Every Stmt that holds an
+expression (Return, ExprStmt, VarDecl rhs) embeds one of these.
+---
+type Expr =
+    IntLit(value: Int)
+    | StringLit(value: String)
+    | BoolLit(value: Bool)
+    | NullLit()
+    | Ident(name: String)
+    | BinOp(op: String, left: Expr, right: Expr)
+    | Call(callee: Expr, args: List)
+
+---
+Statement nodes — sequenced inside a function body. No value
+required at the position they appear.
+---
+type Stmt =
+    Return(value: Expr)
+    | ExprStmt(expr: Expr)
+    | VarDecl(name: String, type_annot: String, value: Expr)
+    | Assign(name: String, value: Expr)
+
+---
+Function parameter. Plain struct — no variants needed; both
+fields are always present in source.
+
+`type_annot` is empty when the parameter has no `: T` clause.
+---
+struct Param {
+    name: String
+    type_annot: String
+
+    define __init(self, name: String, type_annot: String) -> void {
+        self.name = name
+        self.type_annot = type_annot
+    }
+}
+
+---
+Top-level function declaration. `body` is `List<Stmt>`.
+`ret_type` is empty when no `-> T` clause.
+---
+struct FunctionDecl {
+    name: String
+    params: List
+    ret_type: String
+    body: List
+
+    define __init(self, name: String, params: List, ret_type: String, body: List) -> void {
+        self.name = name
+        self.params = params
+        self.ret_type = ret_type
+        self.body = body
+    }
+}
+
+---
+Top-level node — what `parse_top_level` returns. Right now
+only function declarations are supported; struct / enum /
+interface / use / import will land as Phase 2 expands.
+---
+type TopLevel = Func(decl: FunctionDecl)

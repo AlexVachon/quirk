@@ -130,11 +130,11 @@ STDLIB_TAG   ?= v1.0.0
 # that doesn't match the global STDLIB_TAG (e.g. `prompt` was
 # renamed from `ask` and ships v1.0.1 with the rename baked in).
 STDLIB_TAG_prompt ?= v1.1.0
-# typing v1.12.0 adds List.to_set / Set.to_list conversions. Set
-# side is a runtime export (Core_Collections_Set_Set_to_list);
-# List side is pure Quirk. Requires compiler v3.23.0+ which
-# carries the runtime symbol.
-STDLIB_TAG_typing ?= v1.12.0
+# typing v1.13.0 adds Set.first / .last parallel to List.first /
+# .last from v1.9.0. Pure Quirk wrappers around Set.to_list
+# (v1.12.0). No runtime work — compatible with any compiler from
+# v3.23.0 onward.
+STDLIB_TAG_typing ?= v1.13.0
 # html v1.0.0 is the initial release (compiler v3.5.0+). The
 # explicit pin keeps a global STDLIB_TAG bump from accidentally
 # pulling a v2 with potentially breaking changes.

@@ -5,6 +5,15 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [3.23.2] — 2026-06-20
+
+### Set.first / .last (carrier for quirk-typing v1.13.0)
+
+Two null-safe accessors on Set parallel to List.first/.last
+from v3.20.0. Pure Quirk-side, route through Set.to_list (v3.23.0)
+since Set itself is hash-keyed. No compiler changes; bump pins
+the typing tag.
+
 ## [3.23.1] — 2026-06-20
 
 ### Runtime stability: GC tracking + tuple/callable opaque dispatch

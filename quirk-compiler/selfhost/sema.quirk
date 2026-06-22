@@ -27,9 +27,9 @@ Things deferred to Phase 3.x:
 
 from .ast use { Expr, Stmt, Param, FunctionDecl, TopLevel }
 from .ast use { IntLit, FloatLit, StringLit, BoolLit, NullLit, Ident, UnaryOp, BinOp, Call, FieldGet, ListLit, Index }
-from .ast use { Return, ExprStmt, VarDecl, Assign, FieldSet, If, While, Func, StructTL }
-from .ast use { StructField, StructDecl }
-from .types use { Ty, TInt, TDouble, TString, TBool, TVoid, TAny, TStruct, TList, TError }
+from .ast use { Return, ExprStmt, VarDecl, Assign, FieldSet, If, While, Func, StructTL, EnumTL }
+from .ast use { StructField, StructDecl, EnumDecl }
+from .types use { Ty, TInt, TDouble, TString, TBool, TVoid, TAny, TStruct, TEnum, TList, TError }
 from .types use { ty_to_string, ty_from_annot, ty_compatible }
 
 struct Sema {
@@ -41,6 +41,10 @@ struct Sema {
     // any expression typing runs so constructor calls and
     // field accesses can resolve regardless of source order.
     structs: Map
+    // name → EnumDecl. Populated alongside structs so that
+    // `TokenKind.Identifier` expressions (FieldGet whose obj is
+    // an Ident matching an enum name) resolve to a TEnum value.
+    enums: Map
     // structName → Map<methodName, FunctionDecl>. Populated by
     // the same pre-pass; method-call dispatch consults this
     // before falling back to builtins.
@@ -56,6 +60,7 @@ struct Sema {
     define __init(self) -> void {
         self.functions = Map()
         self.structs = Map()
+        self.enums = Map()
         self.struct_methods = Map()
         self.scopes = List()
         self.errors = List()
@@ -101,6 +106,23 @@ struct Sema {
 
     define report(self, msg: String) -> void {
         self.errors.append(msg)
+    }
+
+    // ty_from_annot returns TStruct(name) for any non-builtin
+    // identifier — it has no view of the sema state, so it
+    // can't tell whether "Kind" is a struct or an enum. This
+    // helper post-processes: if a TStruct(N) names a registered
+    // enum, swap to TEnum(N). Used wherever an annotation
+    // string crosses into the type system (param types, field
+    // types, return types).
+    define resolve_ty(self, annot: String) -> Ty {
+        t: Ty := ty_from_annot(annot)
+        sname := ""
+        match t { case TStruct as ts => sname = ts.name case _ => {} }
+        if sname != "" and self.enums.has(sname) {
+            return TEnum(sname)
+        }
+        return t
     }
 }
 
@@ -231,6 +253,12 @@ define _check_binop(s: Sema, b: BinOp) -> Ty {
             is_str_r := false
             match rt { case TString as _ => is_str_r = true case _ => {} }
             if is_str_l and is_str_r { return TBool() }
+            // Same-typed enums compare by ordinal.
+            ename_l := ""
+            match lt { case TEnum as el => ename_l = el.name case _ => {} }
+            ename_r := ""
+            match rt { case TEnum as er => ename_r = er.name case _ => {} }
+            if ename_l != "" and ename_l == ename_r { return TBool() }
         }
         s.report("comparison '" + op + "' expects matching Int / Double / String operands; got '" +
                  ty_to_string(lt) + "' and '" + ty_to_string(rt) + "'")
@@ -330,6 +358,27 @@ define _check_call(s: Sema, c: Call) -> Ty {
 // type to be a known struct; look the field up by name and
 // return its declared type.
 define _check_field_get(s: Sema, fg: FieldGet) -> Ty {
+    // Enum-variant access: `TokenKind.Identifier`. The receiver
+    // is an Ident whose name matches a registered enum; the
+    // "field" is the variant name. Bypasses the normal
+    // value-typing path because there's no actual value on the
+    // left, just a type-name namespace.
+    match fg.obj {
+        case Ident as enum_id => {
+            if s.enums.has(enum_id.name) {
+                ed: EnumDecl := s.enums.get(enum_id.name)
+                vi := 0
+                while vi < ed.variants.length() {
+                    vn: String := ed.variants.__get(vi)
+                    if vn == fg.name { return TEnum(enum_id.name) }
+                    vi = vi + 1
+                }
+                s.report("enum '" + enum_id.name + "' has no variant '" + fg.name + "'")
+                return TError("unknown variant")
+            }
+        }
+        case _ => {}
+    }
     ot: Ty := _check_expr(s, fg.obj)
     match ot { case TError as _ => return ot case _ => {} }
     sname := ""
@@ -349,7 +398,7 @@ define _check_field_get(s: Sema, fg: FieldGet) -> Ty {
     while i < decl.fields.length() {
         f: StructField := decl.fields.__get(i)
         if f.name == fg.name {
-            return ty_from_annot(f.type_annot)
+            return s.resolve_ty(f.type_annot)
         }
         i = i + 1
     }
@@ -380,7 +429,7 @@ define _check_method_call(s: Sema, c: Call) -> Ty {
                 _check_expr(s, aexpr)
                 ai = ai + 1
             }
-            return ty_from_annot(mdecl.ret_type)
+            return s.resolve_ty(mdecl.ret_type)
         }
     }
     // Each receiver type defines its own method namespace.
@@ -558,7 +607,7 @@ define _check_field_set(s: Sema, fs: FieldSet) -> void {
     while i < decl.fields.length() {
         f: StructField := decl.fields.__get(i)
         if f.name == fs.name {
-            declared: Ty := ty_from_annot(f.type_annot)
+            declared: Ty := s.resolve_ty(f.type_annot)
             if ty_compatible(declared, rhs) == false {
                 s.report("field '" + sname + "." + fs.name + "' expects '" +
                          ty_to_string(declared) + "', got '" + ty_to_string(rhs) + "'")
@@ -595,7 +644,7 @@ define _check_stmt(s: Sema, st: Stmt, ret: Ty) -> void {
         }
         case VarDecl as v => {
             rhs: Ty := _check_expr(s, v.value)
-            annot: Ty := ty_from_annot(v.type_annot)
+            annot: Ty := s.resolve_ty(v.type_annot)
             // Annotation drives the binding's type when present;
             // otherwise inference uses the RHS type. Either way,
             // the value's type has to fit the binding.
@@ -699,11 +748,11 @@ define _check_function(s: Sema, fdecl: FunctionDecl) -> void {
     i := 0
     while i < fdecl.params.length() {
         p: Param := fdecl.params.__get(i)
-        pt: Ty := ty_from_annot(p.type_annot)
+        pt: Ty := s.resolve_ty(p.type_annot)
         s.define_local(p.name, pt)
         i = i + 1
     }
-    ret: Ty := ty_from_annot(fdecl.ret_type)
+    ret: Ty := s.resolve_ty(fdecl.ret_type)
     // Statement body.
     j := 0
     while j < fdecl.body.length() {
@@ -727,13 +776,33 @@ define check(decls: List) -> List {
     // so a function defined above the struct it uses (via
     // `Foo(...)` constructor or `f.x` field access) still
     // type-checks.
+    // Sub-pass 1a: register type declarations (structs + enums)
+    // so that any subsequent resolve_ty call against a function
+    // ret_type or param type can find the right kind.
+    pi := 0
+    while pi < decls.length() {
+        d0: TopLevel := decls.__get(pi)
+        match d0 {
+            case StructTL as st => {
+                sd: StructDecl := st.decl
+                s.structs.put(sd.name, sd)
+            }
+            case EnumTL as et => {
+                ed: EnumDecl := et.decl
+                s.enums.put(ed.name, ed)
+            }
+            case _ => {}
+        }
+        pi = pi + 1
+    }
+    // Sub-pass 1b: register function + method signatures.
     i := 0
     while i < decls.length() {
         d: TopLevel := decls.__get(i)
         match d {
             case Func as f => {
                 fd: FunctionDecl := f.decl
-                rt: Ty := ty_from_annot(fd.ret_type)
+                rt: Ty := s.resolve_ty(fd.ret_type)
                 if fd.receiver == "" {
                     s.functions.put(fd.name, _TyHolder(rt))
                 } else {
@@ -746,10 +815,6 @@ define check(decls: List) -> List {
                     inner: Map := s.struct_methods.get(fd.receiver)
                     inner.put(fd.name, fd)
                 }
-            }
-            case StructTL as st => {
-                sd: StructDecl := st.decl
-                s.structs.put(sd.name, sd)
             }
             case _ => {}
         }

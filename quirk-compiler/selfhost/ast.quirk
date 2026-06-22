@@ -129,10 +129,26 @@ struct StructDecl {
 }
 
 ---
-Top-level node — what `parse_top_level` returns. Functions and
-structs are the only forms Phase 4.9 supports; enum / interface
-/ use / import follow.
+Top-level enum declaration. `variants` is a `List<String>` of
+variant names in declaration order — codegen assigns each its
+ordinal (0..N-1) as the i32 representation. Phase 4.18 only
+supports unbacked enums (no payloads, no explicit values).
+---
+struct EnumDecl {
+    name: String
+    variants: List
+
+    define __init(self, name: String, variants: List) -> void {
+        self.name = name
+        self.variants = variants
+    }
+}
+
+---
+Top-level node — what `parse_top_level` returns. Phase 4.18
+adds enums; interface / use / import follow.
 ---
 type TopLevel =
     Func(decl: FunctionDecl)
     | StructTL(decl: StructDecl)
+    | EnumTL(decl: EnumDecl)

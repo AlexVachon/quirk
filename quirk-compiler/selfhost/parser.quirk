@@ -35,8 +35,8 @@ worked around in tokens.quirk's `__str` impl.
 from .tokens use { TokenKind, Token }
 from .ast use { Expr, Stmt, Param, FunctionDecl, TopLevel }
 from .ast use { IntLit, FloatLit, StringLit, BoolLit, NullLit, Ident, UnaryOp, BinOp, Call, FieldGet, ListLit, Index }
-from .ast use { Return, ExprStmt, VarDecl, Assign, FieldSet, If, While, Func, StructTL }
-from .ast use { StructField, StructDecl }
+from .ast use { Return, ExprStmt, VarDecl, Assign, FieldSet, If, While, Func, StructTL, EnumTL }
+from .ast use { StructField, StructDecl, EnumDecl }
 
 struct ParserState {
     tokens: List   // List<Token>
@@ -493,6 +493,24 @@ define _parse_struct_decl(s: ParserState) -> StructDecl {
     return StructDecl(name, fields)
 }
 
+// Parse a single `enum Name { Variant1; Variant2; ... }` block.
+// Variants are bare identifiers separated by `;` or newlines;
+// trailing separators are tolerated. Phase 4.18 only supports
+// unbacked enums — no payloads, no explicit ordinal values.
+define _parse_enum_decl(s: ParserState) -> EnumDecl {
+    s.expect(TokenKind.Enum, "'enum'")
+    name := s.expect(TokenKind.Identifier, "enum name").value
+    s.expect(TokenKind.LBrace, "'{' to open enum body")
+    variants := List()
+    while s.check(TokenKind.RBrace) == false {
+        if s.match_kind(TokenKind.Semicolon) { continue }
+        vtok: Token := s.expect(TokenKind.Identifier, "variant name")
+        variants.append(vtok.value)
+    }
+    s.expect(TokenKind.RBrace, "'}' to close enum body")
+    return EnumDecl(name, variants)
+}
+
 define parse(tokens: List) -> List {
     s := ParserState(tokens)
     out := List()
@@ -502,6 +520,8 @@ define parse(tokens: List) -> List {
             out.append(Func(_parse_function_decl(s)))
         } elif t.kind == TokenKind.Struct {
             out.append(StructTL(_parse_struct_decl(s)))
+        } elif t.kind == TokenKind.Enum {
+            out.append(EnumTL(_parse_enum_decl(s)))
         } else {
             throw ValueError("Unexpected top-level token '" + t.value + "' at line " + t.line.str() + ":" + t.col.str())
         }

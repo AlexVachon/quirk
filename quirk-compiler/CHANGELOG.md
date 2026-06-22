@@ -5,6 +5,79 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.22] — 2026-06-22
+
+### Self-hosting Phase 4.18: enums
+
+Unbacked enums — `enum Color { Red; Green; Blue }` — parse,
+type-check, and lower. `Color.Green` is an expression that
+evaluates to the variant's ordinal (i32 1 in this case);
+equality `c == Color.Green` is a plain `icmp eq i32`.
+
+**AST + parser.** New `EnumDecl { name, variants }` struct
+and `EnumTL(decl)` arm in `TopLevel`. `_parse_enum_decl`
+mirrors `_parse_struct_decl` — `;`-tolerant separators, bare
+identifiers for variants, no payloads (Phase 4.18 scope).
+
+**Sema** stores enums in `Sema.enums: Map<name, EnumDecl>`,
+populated alongside structs in the pre-pass. Splits the
+pre-pass into two sub-passes so that function signatures
+(sub-pass 1b) resolve against an already-complete struct +
+enum registry (sub-pass 1a) — previously the loop interleaved
+sig registration with type registration, breaking
+forward-referenced enum types in function return positions.
+
+`_check_field_get` got a new top branch: if the receiver is
+an `Ident` matching a registered enum name, treat the `.X`
+access as variant lookup and return `TEnum(name)` directly —
+no value-typing on the receiver because there's no value,
+just a namespace. Unknown variant names report a typed
+diagnostic.
+
+**`TStruct` vs `TEnum` resolution.** `ty_from_annot` has no
+view of the sema state, so it returns `TStruct(name)` for
+every non-builtin identifier. A new `Sema.resolve_ty(annot)`
+method post-processes: if the resulting `TStruct(N)` names
+a registered enum, swap to `TEnum(N)`. Every `ty_from_annot`
+call site in sema (param types, return types, field types,
+struct-field write type) routed through `resolve_ty`. That's
+what makes `b.k == Kind.Beta` type-check when `Box.k` is
+declared as `Kind`.
+
+`_check_binop` extends `==` / `!=` to accept matching
+`TEnum(N)` operands. Ordering ops on enums stay rejected.
+
+**Codegen.** `ModuleCG.enums` holds the registry. `_resolve_ty`
+maps registered enum names to `i32` so the existing slot
+machinery handles enum-typed locals, params, and returns
+unchanged. The FieldGet codegen arm short-circuits on
+enum-variant access: when the receiver is an `Ident` matching
+an enum, walk the variants list and emit the ordinal as a
+literal i32 — no GEP, no load. `_expr_static_ty`'s FieldGet
+arm gets the symmetric short-circuit so binding-slot types
+come out right.
+
+`codegen_e2e.sh` gains 6 new cases:
+
+```
+ok  enum basic                Color.Green == Color.Green
+ok  enum neq path             Color.Red != Color.Green
+ok  enum third variant        K.G (ordinal 6)
+ok  enum via param            accept(t: Tag) sees Tag.On
+ok  enum returned by fn       pick() -> Mode returns Mode.Stop
+ok  enum field on struct      Box { k: Kind; n: Int }, b.k == Kind.Beta
+
+all 103/103 cases passed
+```
+
+The `enum field on struct` case is the most important — it
+proves the `TStruct`/`TEnum` normalization works end-to-end,
+which is what [tokens.quirk](selfhost/tokens.quirk)'s
+`Token { kind: TokenKind; ... }` shape needs.
+
+Phase 4.x left: tagged unions + `match`, Map, generic list
+element types, module imports, throw/catch.
+
 ## [4.0.0-alpha.21] — 2026-06-22
 
 ### Self-hosting Phase 4.17: String methods + String equality

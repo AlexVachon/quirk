@@ -449,6 +449,18 @@ run "substring + eq" \
     'define main() -> Int { s := "answer: 42"; if s.substring(0, 6) == "answer" { return 42 } return 0 }' \
     42
 
+# Phase 4.18: enum declarations + TypeName.Variant access.
+# Unbacked enums only (Phase 4.18): each variant gets its
+# ordinal as the i32 value. _q_ty_to_llvm maps the enum
+# name to i32 so locals/params/returns flow through the
+# existing slot machinery.
+run "enum basic"            "enum Color { Red; Green; Blue } define main() -> Int { c := Color.Green; if c == Color.Green { return 42 } return 0 }" 42
+run "enum neq path"         "enum Color { Red; Green; Blue } define main() -> Int { c := Color.Red; if c != Color.Green { return 42 } return 0 }" 42
+run "enum third variant"    "enum K { A; B; C; D; E; F; G } define main() -> Int { k := K.G; if k == K.G { return 42 } return 0 }" 42
+run "enum via param"        "enum Tag { On; Off } define accept(t: Tag) -> Int { if t == Tag.On { return 42 } return 0 } define main() -> Int { return accept(Tag.On) }" 42
+run "enum returned by fn"   "enum Mode { Idle; Run; Stop } define pick() -> Mode { return Mode.Stop } define main() -> Int { m := pick(); if m == Mode.Stop { return 42 } return 0 }" 42
+run "enum field on struct"  "enum Kind { Alpha; Beta; Gamma } struct Box { k: Kind; n: Int } define main() -> Int { b := Box(Kind.Beta, 0); b.n = 41; if b.k == Kind.Beta { return b.n + 1 } return 0 }" 42
+
 # Phase 4.3: string literals + print() via puts().
 run_with_stdout "print literal" \
     'define main() -> Int { print("hello"); return 42 }' \
@@ -472,4 +484,4 @@ if [ "$fails" -gt 0 ]; then
     exit 1
 fi
 echo ""
-echo "all 97/97 cases passed"
+echo "all 103/103 cases passed"

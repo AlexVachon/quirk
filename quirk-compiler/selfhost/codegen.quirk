@@ -35,8 +35,8 @@ Deferred:
 
 from .ast use { Expr, Stmt, Param, FunctionDecl, TopLevel }
 from .ast use { IntLit, FloatLit, StringLit, BoolLit, NullLit, Ident, UnaryOp, BinOp, Call, FieldGet, ListLit, Index }
-from .ast use { Return, ExprStmt, VarDecl, Assign, FieldSet, If, While, Func, StructTL }
-from .ast use { StructField, StructDecl }
+from .ast use { Return, ExprStmt, VarDecl, Assign, FieldSet, If, While, Func, StructTL, EnumTL }
+from .ast use { StructField, StructDecl, EnumDecl }
 
 ---
 Module-level codegen state. Right now its only job is the
@@ -73,10 +73,13 @@ define _q_ty_to_llvm(qty: String) -> String {
 }
 
 // Resolve any source-level type name to an LLVM type using
-// the module's struct registry. A registered struct `Foo` maps
-// to `%struct.Foo*` (struct values are always heap pointers).
+// the module's struct + enum registries. A registered struct
+// `Foo` maps to `%struct.Foo*` (struct values are heap
+// pointers); a registered enum `K` maps to `i32` (the runtime
+// rep is the variant's ordinal).
 define _resolve_ty(mod: ModuleCG, qty: String) -> String {
     if mod.structs.has(qty) { return "%struct." + qty + "*" }
+    if mod.enums.has(qty)   { return "i32" }
     return _q_ty_to_llvm(qty)
 }
 
@@ -119,6 +122,10 @@ struct ModuleCG {
     // before any function body codegen runs so constructor and
     // field-access lowering can reach forward.
     structs: Map
+    // name → EnumDecl. Variant access `Name.Variant` lowers to
+    // an i32 ordinal looked up by walking the variants list;
+    // the enum-typed value at runtime is just the ordinal.
+    enums: Map
 
     define __init(self) -> void {
         self.globals = List()
@@ -126,6 +133,7 @@ struct ModuleCG {
         self.next_str = 0
         self.sigs = Map()
         self.structs = Map()
+        self.enums = Map()
     }
 
     // Register a struct's layout. The `%struct.Name = type {...}`
@@ -381,11 +389,26 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
             return reg
         }
         case FieldGet as fg => {
-            // GEP the field's address from the struct pointer,
-            // then load. We need both the receiver's struct
-            // name (for the GEP base type) and the field index
-            // (for the i32 index). Both come from the module's
-            // struct registry.
+            // Enum-variant access: `TokenKind.Identifier`. The
+            // receiver is an Ident matching a registered enum;
+            // the result is the variant's ordinal as a literal
+            // i32 — no GEP, no load.
+            match fg.obj {
+                case Ident as enum_id => {
+                    if cg.mod.enums.has(enum_id.name) {
+                        ed: EnumDecl := cg.mod.enums.get(enum_id.name)
+                        vi := 0
+                        while vi < ed.variants.length() {
+                            vn: String := ed.variants.__get(vi)
+                            if vn == fg.name { return vi.str() }
+                            vi = vi + 1
+                        }
+                        return "0"
+                    }
+                }
+                case _ => {}
+            }
+            // Struct field access: GEP + load.
             obj_ty := _expr_static_ty(cg, fg.obj)
             obj_reg := _gen_expr(cg, fg.obj)
             sname := _strip_struct_ptr(obj_ty)
@@ -707,10 +730,17 @@ define _expr_static_ty(cg: FnCG, e: Expr) -> String {
             return "i32"
         }
         case FieldGet as fg => {
-            // Look up the receiver's struct and find the field
-            // by name. The field's LLVM type lives in the
-            // _StructDef.field_llvm_tys list parallel to
-            // field_names.
+            // Enum-variant access: receiver Ident matches a
+            // registered enum → result is i32.
+            match fg.obj {
+                case Ident as enum_id => {
+                    if cg.mod.enums.has(enum_id.name) { return "i32" }
+                }
+                case _ => {}
+            }
+            // Struct field access: look up the field's LLVM
+            // type in the parallel field_names / field_llvm_tys
+            // lists.
             ot := _expr_static_ty(cg, fg.obj)
             sname := _strip_struct_ptr(ot)
             if cg.mod.structs.has(sname) {
@@ -1436,6 +1466,10 @@ define emit_module(decls: List) -> String {
                     fi = fi + 1
                 }
                 mod.register_struct(_StructDef(sd.name, fnames, ftys))
+            }
+            case EnumTL as et => {
+                ed: EnumDecl := et.decl
+                mod.enums.put(ed.name, ed)
             }
             case _ => {}
         }

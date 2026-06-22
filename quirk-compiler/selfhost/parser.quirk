@@ -343,7 +343,7 @@ define _parse_stmt(s: ParserState) -> Stmt {
         if t2.kind == TokenKind.Colon {
             name := s.advance().value
             s.advance()  // consume :
-            type_annot := s.expect(TokenKind.Identifier, "type after ':'").value
+            type_annot := _parse_type_annot(s, "type after ':'")
             if s.match_kind(TokenKind.AssignInit) == false {
                 s.expect(TokenKind.Assign, "':=' or '=' after annotated variable name")
             }
@@ -460,11 +460,26 @@ define _parse_block(s: ParserState) -> List {
 // Top-level
 // -----------------------------------------------------------------
 
+// Parse a type annotation. Single identifier (`Int`, `Foo`)
+// or a generic `Name<T>` form (`List<Token>`). Returns the
+// flat string the rest of the pipeline expects — sema's
+// `ty_from_annot` decodes `<…>` to choose between `TList`
+// and `TListP(elem)`.
+define _parse_type_annot(s: ParserState, what: String) -> String {
+    name := s.expect(TokenKind.Identifier, what).value
+    if s.match_kind(TokenKind.Less) {
+        inner := s.expect(TokenKind.Identifier, "generic type argument").value
+        s.expect(TokenKind.Greater, "'>' to close generic type")
+        return name + "<" + inner + ">"
+    }
+    return name
+}
+
 define _parse_param(s: ParserState) -> Param {
     name := s.expect(TokenKind.Identifier, "parameter name").value
     type_annot := ""
     if s.match_kind(TokenKind.Colon) {
-        type_annot = s.expect(TokenKind.Identifier, "parameter type").value
+        type_annot = _parse_type_annot(s, "parameter type")
     }
     return Param(name, type_annot)
 }
@@ -494,7 +509,7 @@ define _parse_function_decl(s: ParserState) -> FunctionDecl {
     s.expect(TokenKind.RParen, "')' to close parameter list")
     ret_type := ""
     if s.match_kind(TokenKind.Arrow) {
-        ret_type = s.expect(TokenKind.Identifier, "return type after '->'").value
+        ret_type = _parse_type_annot(s, "return type after '->'")
     }
     body := _parse_block(s)
     return FunctionDecl(name, params, ret_type, body, receiver)
@@ -519,7 +534,7 @@ define _parse_struct_decl(s: ParserState) -> StructDecl {
         if s.match_kind(TokenKind.Semicolon) { continue }
         fname := s.expect(TokenKind.Identifier, "field name").value
         s.expect(TokenKind.Colon, "':' after field name")
-        ftype := s.expect(TokenKind.Identifier, "field type").value
+        ftype := _parse_type_annot(s, "field type")
         fields.append(StructField(fname, ftype))
     }
     s.expect(TokenKind.RBrace, "'}' to close struct body")
@@ -544,12 +559,12 @@ define _parse_union_decl(s: ParserState) -> UnionDecl {
             if s.check(TokenKind.RParen) == false {
                 fn1 := s.expect(TokenKind.Identifier, "field name").value
                 s.expect(TokenKind.Colon, "':' after field name")
-                ft1 := s.expect(TokenKind.Identifier, "field type").value
+                ft1 := _parse_type_annot(s, "field type")
                 vfields.append(StructField(fn1, ft1))
                 while s.match_kind(TokenKind.Comma) {
                     fnn := s.expect(TokenKind.Identifier, "field name").value
                     s.expect(TokenKind.Colon, "':' after field name")
-                    ftn := s.expect(TokenKind.Identifier, "field type").value
+                    ftn := _parse_type_annot(s, "field type")
                     vfields.append(StructField(fnn, ftn))
                 }
             }

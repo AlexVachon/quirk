@@ -29,7 +29,7 @@ from .ast use { Expr, Stmt, Param, FunctionDecl, TopLevel }
 from .ast use { IntLit, FloatLit, StringLit, BoolLit, NullLit, Ident, UnaryOp, BinOp, Call, FieldGet, ListLit, Index }
 from .ast use { Return, ExprStmt, VarDecl, Assign, FieldSet, If, While, Match, Func, StructTL, EnumTL, UnionTL }
 from .ast use { StructField, StructDecl, EnumDecl, MatchArm, Variant, UnionDecl }
-from .types use { Ty, TInt, TDouble, TString, TBool, TVoid, TAny, TStruct, TEnum, TUnion, TList, TMap, TError }
+from .types use { Ty, TInt, TDouble, TString, TBool, TVoid, TAny, TStruct, TEnum, TUnion, TList, TListP, TMap, TError }
 from .types use { ty_to_string, ty_from_annot, ty_compatible }
 
 struct Sema {
@@ -379,6 +379,13 @@ define _check_call(s: Sema, c: Call) -> Ty {
         }
         return TList()
     }
+    if name == "ListP" {
+        if c.args.length() != 0 {
+            s.report("ListP() takes no arguments; pointer lists grow via .append()")
+            return TError("ListP() arity")
+        }
+        return TListP("Any")
+    }
     // Variant constructor: `V1(a, b, ...)` produces TUnion(T)
     // where V1 is a registered variant. Extracted into its own
     // helper because _check_call already recurses into
@@ -497,8 +504,12 @@ define _check_method_call(s: Sema, c: Call) -> Ty {
         }
     }
     // Each receiver type defines its own method namespace.
+    // Both Int-element and pointer-element lists share the
+    // method surface — length / append / subscript — so we
+    // collapse them under one `is_list` flag here.
     is_list := false
     match ot { case TList as _ => is_list = true case _ => {} }
+    match ot { case TListP as _ => is_list = true case _ => {} }
     is_str := false
     match ot { case TString as _ => is_str = true case _ => {} }
     // `.str()` on Int / Bool / Double → String, no args.
@@ -630,9 +641,10 @@ define _check_method_call(s: Sema, c: Call) -> Ty {
             return TBool()
         }
     }
-    // `.append(Int)` on List → Int. The Int return is a stand-in
-    // for void; callers typically discard it. Growth (cap *= 2 +
-    // realloc) is handled in codegen.
+    // `.append(elem)` on List → Int (void stand-in).
+    // For Int-element lists, the element must be Int; for
+    // pointer-element lists, any pointer-typed expression
+    // is allowed and codegen bitcasts it to i8*.
     if fg.name == "append" {
         if is_list == false {
             s.report(".append() not defined on '" + ty_to_string(ot) + "'")
@@ -644,12 +656,20 @@ define _check_method_call(s: Sema, c: Call) -> Ty {
         }
         a0: Expr := c.args.__get(0)
         at := _check_expr(s, a0)
-        is_int := false
-        match at { case TInt as _ => is_int = true case _ => {} }
-        if is_int == false {
-            s.report(".append() expects an Int element, got '" + ty_to_string(at) + "'")
-            return TError("method arg")
+        is_int_list := false
+        match ot { case TList as _ => is_int_list = true case _ => {} }
+        if is_int_list {
+            is_int := false
+            match at { case TInt as _ => is_int = true case _ => {} }
+            if is_int == false {
+                s.report(".append() expects an Int element, got '" + ty_to_string(at) + "'")
+                return TError("method arg")
+            }
         }
+        // Pointer-list element-type matching is deferred — sema
+        // accepts any pointer-typed expression and codegen
+        // bitcasts to i8*. Strict element-type check vs the
+        // list's declared `List<T>` parameter is queued.
         return TInt()
     }
     s.report("unknown method '." + fg.name + "()' on '" + ty_to_string(ot) + "'")
@@ -683,9 +703,11 @@ define _check_list_lit(s: Sema, ll: ListLit) -> Ty {
 define _check_index(s: Sema, ix: Index) -> Ty {
     ot: Ty := _check_expr(s, ix.obj)
     it: Ty := _check_expr(s, ix.idx)
-    is_list := false
-    match ot { case TList as _ => is_list = true case _ => {} }
-    if is_list == false {
+    is_int_list := false
+    match ot { case TList as _ => is_int_list = true case _ => {} }
+    is_ptr_list := false
+    match ot { case TListP as _ => is_ptr_list = true case _ => {} }
+    if is_int_list == false and is_ptr_list == false {
         match ot { case TError as _ => return ot case _ => {} }
         s.report("subscript '[...]' on non-list '" + ty_to_string(ot) + "'")
         return TError("index on non-list")
@@ -697,7 +719,11 @@ define _check_index(s: Sema, ix: Index) -> Ty {
         s.report("subscript index must be Int, got '" + ty_to_string(it) + "'")
         return TError("non-int index")
     }
-    return TInt()
+    // Int-list: element is TInt. Pointer-list: element is
+    // TAny so a `: T := xs[i]` binding can downcast through
+    // the VarDecl annotation honoring path.
+    if is_int_list { return TInt() }
+    return TAny()
 }
 
 // Field assignment: `obj.name = value`. Mirrors _check_field_get

@@ -523,6 +523,70 @@ run "list ctor + append"    'define main() -> Int { xs := List(); xs.append(20);
 run "map values via struct" 'struct Sig { ret: Int } define main() -> Int { m := Map(); m.put("foo", Sig(40)); s: Sig := m.get("foo"); return s.ret + 2 }' 42
 run "map across grow"       'define main() -> Int { m := Map(); i := 0; while i < 10 { m.put("k" + i.str(), "v"); i = i + 1 } return m.length() * 4 + 2 }' 42
 
+# Phase 4.21: generic pointer-element lists. `ListP()`
+# constructs an empty %QListP* (separate from int-element
+# %QList*). Param/field annotations like `List<Tok>` route
+# through the same %QListP* type. .append/.length/index
+# dispatch on receiver type at codegen.
+run "listp append + index" \
+    'struct Tok { kind: Int; val: String }
+define main() -> Int {
+    xs := ListP()
+    xs.append(Tok(1, "hi"))
+    xs.append(Tok(2, "yo"))
+    t: Tok := xs[1]
+    return t.kind * 21
+}' \
+    42
+run "listp length" \
+    'define main() -> Int {
+    xs := ListP()
+    xs.append("a"); xs.append("b"); xs.append("c"); xs.append("d"); xs.append("e"); xs.append("f")
+    return xs.length() * 7
+}' \
+    42
+run "list<T> param annotation" \
+    'struct Tok { kind: Int }
+define sum_kinds(xs: List<Tok>) -> Int {
+    i := 0
+    n := 0
+    while i < xs.length() {
+        t: Tok := xs[i]
+        n = n + t.kind
+        i = i + 1
+    }
+    return n
+}
+define main() -> Int {
+    xs := ListP()
+    xs.append(Tok(20))
+    xs.append(Tok(22))
+    return sum_kinds(xs)
+}' \
+    42
+run "list<String> of literals" \
+    'define count(xs: List<String>) -> Int { return xs.length() }
+define main() -> Int {
+    xs := ListP()
+    xs.append("first"); xs.append("second"); xs.append("third")
+    return count(xs) * 14
+}' \
+    42
+run_with_stdout "listp iterate strings" \
+    'define main() -> Int {
+    xs := ListP()
+    xs.append("alpha"); xs.append("beta")
+    i := 0
+    while i < xs.length() {
+        s: String := xs[i]
+        print(s)
+        i = i + 1
+    }
+    return 0
+}' \
+    0 "alpha
+beta"
+
 # Phase 4.3: string literals + print() via puts().
 run_with_stdout "print literal" \
     'define main() -> Int { print("hello"); return 42 }' \
@@ -546,4 +610,4 @@ if [ "$fails" -gt 0 ]; then
     exit 1
 fi
 echo ""
-echo "all 114/114 cases passed"
+echo "all 119/119 cases passed"

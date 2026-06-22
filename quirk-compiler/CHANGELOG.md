@@ -5,6 +5,71 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.25] — 2026-06-22
+
+### Self-hosting Phase 4.21: generic `List<T>` element types
+
+Lists were i32-only since Phase 4.11. Selfhost source needs
+`List<Token>`, `List<Expr>`, etc. — lists of pointers. This
+release adds a second list runtime alongside the existing
+one and the syntax to ask for it.
+
+**New runtime: `%QListP`.** Same header shape as `%QList`
+(`{ length, capacity, data* }`) but the data buffer is
+`i8**` — each element is a pointer slot. Subscript, append,
+and length all dispatch on the receiver's LLVM type
+(`%QList*` vs `%QListP*`); the GEP shapes diverge but the
+control flow is otherwise identical.
+
+**Type-system shape.** New `TListP(elem: String)` Ty variant
+carrying the element name (for diagnostics; runtime layout is
+fixed). `ty_from_annot("List<Int>")` returns the existing
+`TList()`; `ty_from_annot("List<T>")` for any other T returns
+`TListP(T)`. Bare `List` keeps int-list semantics for
+backwards compat. `_check_index` extended to accept both list
+flavours — Int-list returns `TInt`, pointer-list returns
+`TAny` so callers can downcast through VarDecl annotation
+honoring.
+
+**Parser.** New `_parse_type_annot(s, what)` helper consumes
+either a bare identifier (`Int`, `Foo`) or a generic
+`Name<T>` form. Routed all 6 type-annotation sites through
+it — param types, field types, return types, variant field
+types, var-decl annotations. The helper produces a flat
+string (`"List<Token>"`) that sema's `ty_from_annot` parses.
+
+**Constructor.** New `ListP()` builtin builds an empty
+`%QListP*`. `List()` stays as Int-list (`%QList*`). Both
+construct via fresh malloc — `_gen_listp_new` mirrors
+`_gen_list_new` with `i8**` storage and an 8-byte
+initial data buffer.
+
+**Append.** New `_gen_listp_append` symmetric to
+`_gen_list_append` but with 8-byte element stride and an
+automatic `bitcast` from the value's static pointer type
+to `i8*` (so callers can pass struct pointers / String /
+union pointers directly without explicit casting).
+
+`codegen_e2e.sh` gains 5 new cases:
+
+```
+ok  listp append + index           `ListP()`, push Tok structs, read back
+ok  listp length                    6 string appends → .length() * 7
+ok  list<T> param annotation        `xs: List<Tok>` walked via while-len
+ok  list<String> of literals        param-typed pointer list of strings
+ok  listp iterate strings           `while i < xs.length() { print(xs[i]) }`
+
+all 119/119 cases passed
+```
+
+The "listp iterate strings" case is the workhorse iteration
+shape selfhost will use — `while i < xs.length() { s: T :=
+xs[i]; … }` — now expressible for any pointer element type.
+
+Phase 4.x left: `__init` constructors (struct method bodies
++ ctor invocation), module imports, throw/catch (or rewrite
+selfhost to result-style returns), string escapes.
+
 ## [4.0.0-alpha.24] — 2026-06-22
 
 ### Self-hosting Phase 4.20: Map runtime + `List()` ctor + VarDecl annotation honoring

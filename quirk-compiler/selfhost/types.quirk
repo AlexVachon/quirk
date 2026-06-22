@@ -27,6 +27,7 @@ type Ty =
     | TEnum(name: String)
     | TUnion(name: String)
     | TList()
+    | TListP(elem: String)
     | TMap()
     | TError(msg: String)
 
@@ -47,6 +48,7 @@ define ty_to_string(t: Ty) -> String {
         case TEnum as e   => return e.name
         case TUnion as u  => return u.name
         case TList as _   => return "List"
+        case TListP as lp => return "List<" + lp.elem + ">"
         case TMap as _    => return "Map"
         case TError as e  => return "<error: " + e.msg + ">"
         case _            => return "?"
@@ -69,6 +71,16 @@ define ty_from_annot(name: String) -> Ty {
     if name == "Any"    { return TAny() }
     if name == "List"   { return TList() }
     if name == "Map"    { return TMap() }
+    // Generic list annotation `List<T>`. `List<Int>` is the
+    // existing i32-element list; any other parameter is a
+    // pointer-element list (TListP) whose runtime layout is
+    // `%QListP*`. We keep the parameter for diagnostics.
+    if name.startswith("List<") and name.endswith(">") {
+        // Strip "List<" prefix (5 chars) and ">" suffix (1 char).
+        inner := name.substring(5, name.length() - 1)
+        if inner == "Int" { return TList() }
+        return TListP(inner)
+    }
     // Anything else is treated as a user-defined struct name.
     // Sema's struct-registry pass validates that the name
     // actually exists before any field-access typing runs.

@@ -41,6 +41,7 @@ toolchain dependency from anyone wanting to hack on the compiler.
 |  4.18 | Enums — `enum Name { A; B; C }` + `Name.Variant` (ordinal lowering) | landed (v4.0.0-alpha.22) |
 |  4.19 | Tagged unions + `match` — `type T = A(...) \| B(...)` with payload binding | landed (v4.0.0-alpha.23) |
 |  4.20 | Map (`.put`/`.get`/`.has`/`.length`) + `List()` ctor + VarDecl annotation bitcast | landed (v4.0.0-alpha.24) |
+|  4.21 | Generic `List<T>` element types — `%QListP` for pointer lists + `ListP()` ctor | landed (v4.0.0-alpha.25) |
 |  5    | Bootstrap — Quirk compiler compiles itself, byte-identical | not started |
 
 The Codegen phase deliberately targets *text-form* LLVM IR (`.ll`)

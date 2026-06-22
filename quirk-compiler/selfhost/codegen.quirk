@@ -75,6 +75,14 @@ define _q_ty_to_llvm(qty: String) -> String {
     // (String); values are i8* (Any heap pointer, downcast
     // by VarDecl annotation honoring).
     if qty == "Map"    { return "%QMap*" }
+    // Generic list annotation `List<T>`. `List<Int>` stays
+    // on the i32-element track (%QList*); any other parameter
+    // is a pointer-element list (%QListP*) with i8* data.
+    if qty.startswith("List<") and qty.endswith(">") {
+        inner := qty.substring(5, qty.length() - 1)
+        if inner == "Int" { return "%QList*" }
+        return "%QListP*"
+    }
     return "i32"
 }
 
@@ -215,6 +223,11 @@ struct ModuleCG {
         // list?" tracking flag); LLVM's verifier accepts unused
         // type defs.
         out = out + "%QList = type { i32, i32, i32* }\n"
+        // Pointer-element list. Same shape as %QList but the
+        // data buffer holds i8* slots. `List<T>` where T is
+        // anything other than `Int` resolves to this type;
+        // bare `List` annotation defaults to %QList (i32).
+        out = out + "%QListP = type { i32, i32, i8** }\n"
         // Internal map types. `%QMapKV` is a single key/value
         // pair (both i8*); `%QMap` is the header — length,
         // capacity, and a pointer to the entry array. Linear
@@ -408,13 +421,28 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
             return _gen_list_lit(cg, ll.elems)
         }
         case Index as ix => {
-            // Load the data pointer from %QList field 2,
-            // GEP by the i32 index, then load. The header
-            // and the data buffer are separate allocations
-            // since 4.15, so we can't reach the element
-            // with a single GEP through the struct.
+            // Load the data pointer from the list's field 2,
+            // GEP by the i32 index, then load. The header and
+            // data buffer are separate allocations (Phase 4.15+)
+            // so we can't reach the element via a single GEP.
+            // Dispatch on receiver type: %QList* uses i32
+            // storage, %QListP* uses i8* storage.
+            base_ty := _expr_static_ty(cg, ix.obj)
             base_reg := _gen_expr(cg, ix.obj)
             idx_reg := _gen_expr(cg, ix.idx)
+            if base_ty == "%QListP*" {
+                data_gep := cg.fresh()
+                cg.emit(data_gep + " = getelementptr inbounds %QListP, %QListP* " + base_reg +
+                        ", i32 0, i32 2")
+                data_ptr := cg.fresh()
+                cg.emit(data_ptr + " = load i8**, i8*** " + data_gep)
+                elem_gep := cg.fresh()
+                cg.emit(elem_gep + " = getelementptr inbounds i8*, i8** " + data_ptr +
+                        ", i32 " + idx_reg)
+                reg := cg.fresh()
+                cg.emit(reg + " = load i8*, i8** " + elem_gep)
+                return reg
+            }
             data_gep := cg.fresh()
             cg.emit(data_gep + " = getelementptr inbounds %QList, %QList* " + base_reg +
                     ", i32 0, i32 2")
@@ -639,6 +667,9 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
             if name == "List" {
                 return _gen_list_new(cg)
             }
+            if name == "ListP" {
+                return _gen_listp_new(cg)
+            }
             // Variant constructor: `V(args)` where V is a
             // registered tagged-union variant. malloc the
             // synthetic `T__V` struct, store tag at field 0
@@ -720,7 +751,11 @@ define _expr_static_ty(cg: FnCG, e: Expr) -> String {
         case FloatLit as _ => return "double"
         case StringLit as _ => return "i8*"
         case ListLit as _ => return "%QList*"
-        case Index as _ => return "i32"
+        case Index as ix => {
+            obj_ty := _expr_static_ty(cg, ix.obj)
+            if obj_ty == "%QListP*" { return "i8*" }
+            return "i32"
+        }
         case Ident as id => {
             if cg.locals.has(id.name) {
                 s: _Slot := cg.locals.get(id.name)
@@ -780,6 +815,7 @@ define _expr_static_ty(cg: FnCG, e: Expr) -> String {
             // Builtin collection constructors.
             if cname == "Map"  { return "%QMap*" }
             if cname == "List" { return "%QList*" }
+            if cname == "ListP" { return "%QListP*" }
             // Variant constructor returns the union's base
             // pointer type, not the synthetic per-variant struct.
             if cg.mod.variants.has(cname) {
@@ -926,6 +962,14 @@ define _gen_method_call(cg: FnCG, c: Call) -> String {
             cg.emit(reg + " = load i32, i32* " + gep)
             return reg
         }
+        if recv_ty == "%QListP*" {
+            gep := cg.fresh()
+            cg.emit(gep + " = getelementptr inbounds %QListP, %QListP* " + recv_reg +
+                    ", i32 0, i32 0")
+            reg := cg.fresh()
+            cg.emit(reg + " = load i32, i32* " + gep)
+            return reg
+        }
         if recv_ty == "i8*" {
             cg.mod.ensure_decl("strlen", "declare i64 @strlen(i8*)")
             len64 := cg.fresh()
@@ -944,6 +988,9 @@ define _gen_method_call(cg: FnCG, c: Call) -> String {
         // (same dodge as _gen_struct_ctor, _gen_list_lit,
         // _gen_field_set).
         return _gen_list_append(cg, recv_reg, c.args)
+    }
+    if fg.name == "append" and recv_ty == "%QListP*" {
+        return _gen_listp_append(cg, recv_reg, c.args)
     }
     // Map methods. Each routes into _gen_map_method for the
     // recursion-pairing dodge.
@@ -1034,6 +1081,76 @@ define _gen_method_call(cg: FnCG, c: Call) -> String {
 // if they're equal, doubles capacity, reallocs the data
 // buffer, and stores the new pointer back. Then writes `v`
 // at data[length] and bumps length.
+// Pointer-list append. Same shape as `_gen_list_append` but
+// the data slot is `i8**` (8-byte elements) and we coerce
+// any pointer-typed input to `i8*` via bitcast before
+// storing. Sema has already accepted the value as a pointer
+// shape for `%QListP*` receivers.
+define _gen_listp_append(cg: FnCG, recv_reg: String, args: List) -> String {
+    cg.mod.ensure_decl("realloc", "declare i8* @realloc(i8*, i64)")
+    cg.mod.ensure_decl("malloc", "declare i8* @malloc(i64)")
+    aexpr: Expr := args.__get(0)
+    a_ty := _expr_static_ty(cg, aexpr)
+    a_val := _gen_expr(cg, aexpr)
+    // Coerce to i8* if the static type is some other pointer.
+    val_i8 := a_val
+    if a_ty != "i8*" {
+        if _is_ptr_ty(a_ty) {
+            cast := cg.fresh()
+            cg.emit(cast + " = bitcast " + a_ty + " " + a_val + " to i8*")
+            val_i8 = cast
+        }
+    }
+    // GEPs into the %QListP header.
+    len_gep := cg.fresh()
+    cg.emit(len_gep + " = getelementptr inbounds %QListP, %QListP* " + recv_reg +
+            ", i32 0, i32 0")
+    cap_gep := cg.fresh()
+    cg.emit(cap_gep + " = getelementptr inbounds %QListP, %QListP* " + recv_reg +
+            ", i32 0, i32 1")
+    data_gep := cg.fresh()
+    cg.emit(data_gep + " = getelementptr inbounds %QListP, %QListP* " + recv_reg +
+            ", i32 0, i32 2")
+    len0 := cg.fresh()
+    cg.emit(len0 + " = load i32, i32* " + len_gep)
+    cap0 := cg.fresh()
+    cg.emit(cap0 + " = load i32, i32* " + cap_gep)
+    full := cg.fresh()
+    cg.emit(full + " = icmp eq i32 " + len0 + ", " + cap0)
+    grow_lbl := cg.fresh_label("appendp.grow")
+    write_lbl := cg.fresh_label("appendp.write")
+    cg.emit("br i1 " + full + ", label %" + grow_lbl + ", label %" + write_lbl)
+    cg.emit_raw(grow_lbl + ":")
+    new_cap := cg.fresh()
+    cg.emit(new_cap + " = mul nsw i32 " + cap0 + ", 2")
+    new_cap64 := cg.fresh()
+    cg.emit(new_cap64 + " = sext i32 " + new_cap + " to i64")
+    // 8 bytes per i8* (pointer-sized on the test target).
+    new_bytes := cg.fresh()
+    cg.emit(new_bytes + " = mul nsw i64 " + new_cap64 + ", 8")
+    old_data := cg.fresh()
+    cg.emit(old_data + " = load i8**, i8*** " + data_gep)
+    old_i8 := cg.fresh()
+    cg.emit(old_i8 + " = bitcast i8** " + old_data + " to i8*")
+    new_raw := cg.fresh()
+    cg.emit(new_raw + " = call i8* @realloc(i8* " + old_i8 + ", i64 " + new_bytes + ")")
+    new_data := cg.fresh()
+    cg.emit(new_data + " = bitcast i8* " + new_raw + " to i8**")
+    cg.emit("store i8** " + new_data + ", i8*** " + data_gep)
+    cg.emit("store i32 " + new_cap + ", i32* " + cap_gep)
+    cg.emit("br label %" + write_lbl)
+    cg.emit_raw(write_lbl + ":")
+    data_ptr := cg.fresh()
+    cg.emit(data_ptr + " = load i8**, i8*** " + data_gep)
+    slot := cg.fresh()
+    cg.emit(slot + " = getelementptr inbounds i8*, i8** " + data_ptr + ", i32 " + len0)
+    cg.emit("store i8* " + val_i8 + ", i8** " + slot)
+    new_len := cg.fresh()
+    cg.emit(new_len + " = add nsw i32 " + len0 + ", 1")
+    cg.emit("store i32 " + new_len + ", i32* " + len_gep)
+    return "0"
+}
+
 define _gen_list_append(cg: FnCG, recv_reg: String, args: List) -> String {
     cg.mod.ensure_decl("realloc", "declare i8* @realloc(i8*, i64)")
     cg.mod.ensure_decl("malloc", "declare i8* @malloc(i64)")
@@ -1416,6 +1533,37 @@ define _gen_list_new(cg: FnCG) -> String {
     cg.emit(dat_gep + " = getelementptr inbounds %QList, %QList* " + base +
             ", i32 0, i32 2")
     cg.emit("store i32* " + data_ptr + ", i32** " + dat_gep)
+    return base
+}
+
+// Create an empty `%QListP` (pointer-element list, length=0,
+// capacity=1, an 8-byte initial data buffer for a single
+// i8* slot). Symmetric to `_gen_list_new` but with pointer-
+// sized element storage so .append can push struct/string
+// pointers without boxing.
+define _gen_listp_new(cg: FnCG) -> String {
+    cg.mod.ensure_decl("malloc", "declare i8* @malloc(i64)")
+    raw := cg.fresh()
+    cg.emit(raw + " = call i8* @malloc(i64 12)")
+    base := cg.fresh()
+    cg.emit(base + " = bitcast i8* " + raw + " to %QListP*")
+    // Initial data: 1 slot × 8 bytes (one i8*).
+    data_raw := cg.fresh()
+    cg.emit(data_raw + " = call i8* @malloc(i64 8)")
+    data_ptr := cg.fresh()
+    cg.emit(data_ptr + " = bitcast i8* " + data_raw + " to i8**")
+    len_gep := cg.fresh()
+    cg.emit(len_gep + " = getelementptr inbounds %QListP, %QListP* " + base +
+            ", i32 0, i32 0")
+    cg.emit("store i32 0, i32* " + len_gep)
+    cap_gep := cg.fresh()
+    cg.emit(cap_gep + " = getelementptr inbounds %QListP, %QListP* " + base +
+            ", i32 0, i32 1")
+    cg.emit("store i32 1, i32* " + cap_gep)
+    dat_gep := cg.fresh()
+    cg.emit(dat_gep + " = getelementptr inbounds %QListP, %QListP* " + base +
+            ", i32 0, i32 2")
+    cg.emit("store i8** " + data_ptr + ", i8*** " + dat_gep)
     return base
 }
 

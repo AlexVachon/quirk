@@ -5,6 +5,33 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [3.24.0] — 2026-06-20
+
+### Map.items() (carrier for quirk-typing v1.14.0)
+
+`Map.items() -> List` returns the map's entries as a List of
+two-element Lists `[[k, v], ...]` in insertion order. Common
+iteration helper:
+
+  ```
+  for pair in m.items() {
+      k := pair.__get(0)
+      v := pair.__get(1)
+      ...
+  }
+  ```
+
+Pure Quirk-side helper that walks `keys()` and pairs each key
+with its `get(key)`. No compiler changes.
+
+Known limitation: printing a List of nested Lists currently
+displays as `[]` — raw struct pointers stored in Any-typed
+collection slots aren't recognized by `quirk_opaque_to_string`.
+Storage and iteration work fine; only `print(items)` rendering
+is wrong. Tracked for a future release once the boxing path
+can be straightened out without breaking itertools' existing
+raw-tuple shape.
+
 ## [3.23.2] — 2026-06-20
 
 ### Set.first / .last (carrier for quirk-typing v1.13.0)

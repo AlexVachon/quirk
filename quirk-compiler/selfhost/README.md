@@ -27,6 +27,7 @@ toolchain dependency from anyone wanting to hack on the compiler.
 |  4.4  | Bool as a first-class binding type (`i1` slots) | landed (v4.0.0-alpha.8) |
 |  4.5  | Bool at the call boundary (params + returns + forward refs) | landed (v4.0.0-alpha.9) |
 |  4.6  | Double scalar — float literals, arithmetic, cmp, locals, call boundary | landed (v4.0.0-alpha.10) |
+|  4.7  | String at the call boundary — locals, params, returns, generic print | landed (v4.0.0-alpha.11) |
 |  5    | Bootstrap — Quirk compiler compiles itself, byte-identical | not started |
 
 The Codegen phase deliberately targets *text-form* LLVM IR (`.ll`)

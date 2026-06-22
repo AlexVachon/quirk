@@ -5,6 +5,57 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.11] — 2026-06-22
+
+### Self-hosting Phase 4.7: String at the call boundary
+
+Phase 4.3 lowered `print("literal")` to `puts` but the
+StringLit-allocation logic was buried inside the `print`
+special-case in `_gen_expr`'s Call arm. That meant a String
+*couldn't escape* — `s := "hello"` had no slot path, `print(s)`
+had no handler, and `define greet(s: String)` couldn't actually
+receive an `i8*`. This release breaks the literal out.
+
+**StringLit becomes a regular i8*-producing expression.** A new
+top-level `case StringLit` in `_gen_expr` does what the print
+special-case used to do inline: intern the literal as a
+`[N x i8]*` global via `ModuleCG.alloc_string`, GEP it to an
+`i8*`, return the GEP register. That value flows like any
+other scalar — through `_ensure_slot(cg, name, "i8*")` for
+locals, through the typed param-store at function entry,
+through `ret i8* %v` for String-returning functions, and
+through `call <ret> @callee(i8* %arg, ...)` for argument
+passing.
+
+**`_q_ty_to_llvm("String") → "i8*"`.** That single mapping is
+enough to plug String into every Phase 4.4 / 4.5 pathway —
+the slot-typed locals, the `_Sig` signature table, the
+typed call rendering, and the `_expr_static_ty` propagation
+all consume the type string opaquely.
+
+**`print(...)` becomes generic.** The Call arm now lowers
+`print(<arg>)` for any String-typed argument by gen'ing the
+arg (which returns an `i8*` via whatever path applies) and
+emitting `call i32 @puts(i8* %arg)`. The StringLit special-
+case is gone — the literal and the local now go through the
+same lowering. Sema's builtin-print check still requires a
+TString argument, so non-String calls reject at the type
+level.
+
+`codegen_e2e.sh` gains 4 new cases:
+
+```
+ok  print string local         `s := "..."; print(s)`
+ok  string param round-trip    `say(msg: String) { print(msg) }`
+ok  string return              `greeting() -> String { return "..." }`
+ok  string reassign            `s := "a"; print(s); s = "b"; print(s)`
+
+all 40/40 cases passed
+```
+
+Phase 4.x left: string concat / interpolation (needs a real
+runtime allocator), then the big one — structs/lists/maps.
+
 ## [4.0.0-alpha.10] — 2026-06-22
 
 ### Self-hosting Phase 4.6: Double scalar

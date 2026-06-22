@@ -58,6 +58,7 @@ can dedup by helper name.
 define _q_ty_to_llvm(qty: String) -> String {
     if qty == "Bool"   { return "i1" }
     if qty == "Double" { return "double" }
+    if qty == "String" { return "i8*" }
     return "i32"
 }
 
@@ -245,6 +246,23 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
             // small exact-decimal values only.
             return fl.value
         }
+        case StringLit as sl => {
+            // Intern the literal as a `[N x i8]*` global, then
+            // GEP it to an `i8*` value that flows like any
+            // other scalar. The resulting i8* can be stored in
+            // an alloca slot (for `s := "hello"`), passed as a
+            // call argument (`print(s)`, user-defined String
+            // params), or returned from a String-returning
+            // function. Phase 4.3 only handled the inlined
+            // `print(StringLit)` form; this case generalises it.
+            str_name := cg.mod.alloc_string(sl.value)
+            str_len := sl.value.length() + 1
+            gep := cg.fresh()
+            cg.emit(gep + " = getelementptr inbounds [" + str_len.str() +
+                    " x i8], [" + str_len.str() + " x i8]* " +
+                    str_name + ", i64 0, i64 0")
+            return gep
+        }
         case Ident as id => {
             if cg.locals.has(id.name) {
                 holder: _Slot := cg.locals.get(id.name)
@@ -334,39 +352,23 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
                 case Ident as id => name = id.name
                 case _ => name = "<bad-callee>"
             }
-            // print(stringLit) lowers to `call i32 @puts(i8*
-            // %.strN)`. Phase 4.3 supports the bare-string form
-            // only — `print(x)` against a variable will need
-            // either inferred-type runtime dispatch (Phase 5+)
-            // or a printf-with-format-spec call.
+            // print(<String expr>) lowers to `call i32 @puts(i8* %arg)`.
+            // The argument codegen path already produces an i8*
+            // for any String-typed expression (StringLit GEP,
+            // load from a String slot, return from a String
+            // function), so this case just consumes whatever
+            // _gen_expr returned without caring about the shape.
             if name == "print" and c.args.length() == 1 {
                 arg0: Expr := c.args.__get(0)
-                handled := false
-                str_name := ""
-                str_len := 0
-                match arg0 {
-                    case StringLit as sl => {
-                        str_name = cg.mod.alloc_string(sl.value)
-                        str_len = sl.value.length() + 1
-                        handled = true
-                    }
-                    case _ => {}
-                }
-                if handled {
-                    cg.mod.ensure_decl("puts", "declare i32 @puts(i8*)")
-                    // GEP the i8* base out of the [N x i8]* global.
-                    gep := cg.fresh()
-                    cg.emit(gep + " = getelementptr inbounds [" + str_len.str() +
-                            " x i8], [" + str_len.str() + " x i8]* " +
-                            str_name + ", i64 0, i64 0")
-                    reg := cg.fresh()
-                    cg.emit(reg + " = call i32 @puts(i8* " + gep + ")")
-                    // print returns void in Quirk-side; our
-                    // Stmt path discards the value at ExprStmt,
-                    // but to keep _gen_expr's contract uniform
-                    // we still return the i32 reg from puts.
-                    return reg
-                }
+                arg_reg := _gen_expr(cg, arg0)
+                cg.mod.ensure_decl("puts", "declare i32 @puts(i8*)")
+                reg := cg.fresh()
+                cg.emit(reg + " = call i32 @puts(i8* " + arg_reg + ")")
+                // print returns void Quirk-side; our Stmt path
+                // discards the value at ExprStmt, but to keep
+                // _gen_expr's contract uniform we still return
+                // the i32 reg from puts.
+                return reg
             }
             // Emit each arg first, then the call. Look up the
             // callee's typed signature so each arg + the return
@@ -430,6 +432,7 @@ define _expr_static_ty(cg: FnCG, e: Expr) -> String {
     match e {
         case BoolLit as _ => return "i1"
         case FloatLit as _ => return "double"
+        case StringLit as _ => return "i8*"
         case Ident as id => {
             if cg.locals.has(id.name) {
                 s: _Slot := cg.locals.get(id.name)

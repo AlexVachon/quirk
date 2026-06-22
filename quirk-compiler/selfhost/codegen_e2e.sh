@@ -204,6 +204,25 @@ define main() -> Int { a := area(2.0); if a > 12.0 { return 42 } return 0 }" \
     42
 run "double inequality"    "define main() -> Int { if 1.5 != 2.5 { return 42 } return 0 }"          42
 
+# Phase 4.7: String at the call boundary — String locals,
+# String params, String returns, and print() consuming any
+# String-typed expression (not just inline literals).
+run_with_stdout "print string local" \
+    'define main() -> Int { s := "hello local"; print(s); return 42 }' \
+    42 "hello local"
+run_with_stdout "string param round-trip" \
+    'define say(msg: String) -> Int { print(msg); return 0 }
+define main() -> Int { return say("via param") + 42 }' \
+    42 "via param"
+run_with_stdout "string return" \
+    'define greeting() -> String { return "hi from return" }
+define main() -> Int { print(greeting()); return 42 }' \
+    42 "hi from return"
+run_with_stdout "string reassign" \
+    'define main() -> Int { s := "first"; print(s); s = "second"; print(s); return 42 }' \
+    42 "first
+second"
+
 # Phase 4.3: string literals + print() via puts().
 run_with_stdout "print literal" \
     'define main() -> Int { print("hello"); return 42 }' \
@@ -227,4 +246,4 @@ if [ "$fails" -gt 0 ]; then
     exit 1
 fi
 echo ""
-echo "all 36/36 cases passed"
+echo "all 40/40 cases passed"

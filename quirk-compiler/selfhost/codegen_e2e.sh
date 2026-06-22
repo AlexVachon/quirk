@@ -299,6 +299,22 @@ define bump(b: Box) -> Int { b.n = b.n + 1; return 0 }
 define main() -> Int { b := Box(41); bump(b); return b.n }" \
     42
 
+# Phase 4.11: Int array literals + subscript read. Lists are
+# bare `i32*` for now (no length tracking, no bounds check).
+# Each `[a, b, c]` mallocs N*4 bytes and stores the elements;
+# `xs[i]` GEPs + loads. Buffer leaks (deliberate).
+run "list literal + index"  "define main() -> Int { xs := [10, 20, 32]; return xs[0] + xs[2] }" 42
+run "list index expr"       "define main() -> Int { xs := [1, 2, 3, 4]; i := 2; return xs[i] + 39 }" 42
+run "list of one element"   "define main() -> Int { xs := [42]; return xs[0] }" 42
+run "list via param" \
+    "define second(xs: List) -> Int { return xs[1] }
+define main() -> Int { return second([100, 42, 200]) }" \
+    42
+run "list returned by fn" \
+    "define mk() -> List { return [10, 12, 20] }
+define main() -> Int { xs := mk(); return xs[0] + xs[1] + xs[2] }" \
+    42
+
 # Phase 4.3: string literals + print() via puts().
 run_with_stdout "print literal" \
     'define main() -> Int { print("hello"); return 42 }' \
@@ -322,4 +338,4 @@ if [ "$fails" -gt 0 ]; then
     exit 1
 fi
 echo ""
-echo "all 54/54 cases passed"
+echo "all 59/59 cases passed"

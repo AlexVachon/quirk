@@ -5,6 +5,81 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.15] — 2026-06-22
+
+### Self-hosting Phase 4.11: list literals + subscript
+
+The first aggregate of more than fixed shape. `[a, b, c]`
+parses, type-checks, and lowers to a heap-allocated `i32`
+array; `xs[i]` GEPs + loads. Lists flow as bare `i32*` —
+through locals, params, returns, every call-boundary site —
+so the surface is small but the slice is end-to-end.
+
+**Phase 4.11 scope: Int element type, no length tracking.**
+Lists are typed `TList()` (no parameter — element type is
+implicitly Int) and lower to `i32*`. There's no length
+field, no bounds checking, no `xs.append(...)`. Callers
+either know the length statically or the program walks past
+the end. That's deliberate — once methods land, the runtime
+layout will switch to `{ length, capacity, data }` and
+bounds-checked subscript, but the simpler bare-array form
+is what gets list literals into the language *now*.
+
+**End-to-end wiring.**
+
+  - **AST**: `ListLit(elems: List)` for the literal,
+    `Index(obj, idx)` for subscript.
+  - **Parser**: `_parse_primary` consumes `[...]` (trailing
+    comma tolerated). `_parse_postfix` grew an `LBracket`
+    arm parallel to its `Dot` arm — `xs[i]`, `xs[i].field`,
+    and `foo().items[j]` all flow through the same chain.
+  - **Types**: `TList()` variant; `ty_from_annot("List")`
+    returns it; `ty_to_string` renders as `"List"` so the
+    string-equality path in `ty_compatible` matches across
+    annotations.
+  - **Sema**: `_check_list_lit` walks elements and rejects
+    non-Int members; `_check_index` requires a `TList`
+    receiver and a `TInt` index, returning `TInt`. The
+    empty `[]` literal type-checks vacuously and lands as
+    `TList()` so the slot type is fixed at the declaration
+    site.
+  - **Codegen**: `_q_ty_to_llvm("List") → "i32*"`. Locals,
+    params, and returns get `alloca i32*` / `store i32*` /
+    `ret i32*` paths via the existing slot + `_resolve_ty`
+    machinery — no per-list-call special cases. `ListLit`
+    routes to `_gen_list_lit`, which `malloc`s `N*4` bytes
+    and stores each element via GEP + store. `Index`
+    lowers in-place: GEP the base by the i32 index, then
+    `load i32`. The buffer leaks — same trade-off as
+    Phase 4.8's concat allocator.
+
+**Two self-compiler gaps surfaced, both worked around.**
+The recursive `_gen_expr` calls in `_gen_list_lit`'s loop
+were extracted into the helper to keep the inline `Index`
+arm from coexisting with another inner recursion site —
+same dodge pattern as `_gen_struct_ctor`. Separately,
+naming the SSA-register local `idx` in the `Index` arm
+broke `FieldGet`'s `idx` integer in a *different* match
+arm — variable names appear to leak across `match` arms
+when the same name is used at different types. Renamed to
+`idx_reg` and the regression cleared.
+
+`codegen_e2e.sh` gains 5 new cases:
+
+```
+ok  list literal + index    `xs := [10, 20, 32]; xs[0] + xs[2]`
+ok  list index expr         `xs := [1, 2, 3, 4]; i := 2; xs[i] + 39`
+ok  list of one element     `xs := [42]; xs[0]`
+ok  list via param          `second(xs: List) -> Int = xs[1]`
+ok  list returned by fn     `mk() -> List = [10, 12, 20]`
+
+all 59/59 cases passed
+```
+
+Phase 4.x left: list element-type generality (Bool / Double /
+String / struct payloads), real length tracking + bounds
+checks, and method-call syntax for `.append` / `.length()`.
+
 ## [4.0.0-alpha.14] — 2026-06-22
 
 ### Self-hosting Phase 4.10: field write + struct at the call boundary

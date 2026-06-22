@@ -34,7 +34,7 @@ Deferred:
 ---
 
 from .ast use { Expr, Stmt, Param, FunctionDecl, TopLevel }
-from .ast use { IntLit, FloatLit, StringLit, BoolLit, NullLit, Ident, UnaryOp, BinOp, Call, FieldGet }
+from .ast use { IntLit, FloatLit, StringLit, BoolLit, NullLit, Ident, UnaryOp, BinOp, Call, FieldGet, ListLit, Index }
 from .ast use { Return, ExprStmt, VarDecl, Assign, FieldSet, If, While, Func, StructTL }
 from .ast use { StructField, StructDecl }
 
@@ -63,6 +63,10 @@ define _q_ty_to_llvm(qty: String) -> String {
     if qty == "Bool"   { return "i1" }
     if qty == "Double" { return "double" }
     if qty == "String" { return "i8*" }
+    // `List` in Phase 4.11 is an i32 array with no length
+    // tracking — the value is a bare `i32*`. A real `{ length,
+    // capacity, data }` header layout lands when methods do.
+    if qty == "List"   { return "i32*" }
     return "i32"
 }
 
@@ -338,6 +342,24 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
             }
             return "<undef:" + id.name + ">"
         }
+        case ListLit as ll => {
+            // Extracted helper — keeps the inner recursive
+            // _gen_expr (per element) in its own function so
+            // the same self-compiler gap as _gen_struct_ctor
+            // doesn't fire from coexisting with the other
+            // recursive arms here.
+            return _gen_list_lit(cg, ll.elems)
+        }
+        case Index as ix => {
+            // GEP the i32* base by the i32 index, then load.
+            base_reg := _gen_expr(cg, ix.obj)
+            idx_reg := _gen_expr(cg, ix.idx)
+            gep := cg.fresh()
+            cg.emit(gep + " = getelementptr inbounds i32, i32* " + base_reg + ", i32 " + idx_reg)
+            reg := cg.fresh()
+            cg.emit(reg + " = load i32, i32* " + gep)
+            return reg
+        }
         case FieldGet as fg => {
             // GEP the field's address from the struct pointer,
             // then load. We need both the receiver's struct
@@ -559,6 +581,8 @@ define _expr_static_ty(cg: FnCG, e: Expr) -> String {
         case BoolLit as _ => return "i1"
         case FloatLit as _ => return "double"
         case StringLit as _ => return "i8*"
+        case ListLit as _ => return "i32*"
+        case Index as _ => return "i32"
         case Ident as id => {
             if cg.locals.has(id.name) {
                 s: _Slot := cg.locals.get(id.name)
@@ -676,6 +700,36 @@ define _gen_struct_ctor(cg: FnCG, name: String, ctor_args: List) -> String {
         ai = ai + 1
     }
     return obj
+}
+
+// Lower a list literal `[a, b, c]` to a heap-allocated i32
+// array. Each element is `_gen_expr`'d in turn (sema has
+// already enforced TInt) and stored at the matching GEP'd
+// slot. Returns the `i32*` base pointer. The buffer leaks —
+// same short-lived-process trade-off as the string concat
+// allocator.
+define _gen_list_lit(cg: FnCG, elems: List) -> String {
+    cg.mod.ensure_decl("malloc", "declare i8* @malloc(i64)")
+    n := elems.length()
+    // 4 bytes per i32 — fixed for Phase 4.11's Int-only lists.
+    // Generic element-type sizing will route through a
+    // GEP-of-null trick like _gen_struct_ctor's once lists
+    // carry element-type metadata.
+    bytes := n * 4
+    raw := cg.fresh()
+    cg.emit(raw + " = call i8* @malloc(i64 " + bytes.str() + ")")
+    base := cg.fresh()
+    cg.emit(base + " = bitcast i8* " + raw + " to i32*")
+    i := 0
+    while i < elems.length() {
+        ei: Expr := elems.__get(i)
+        ev := _gen_expr(cg, ei)
+        gep := cg.fresh()
+        cg.emit(gep + " = getelementptr inbounds i32, i32* " + base + ", i32 " + i.str())
+        cg.emit("store i32 " + ev + ", i32* " + gep)
+        i = i + 1
+    }
+    return base
 }
 
 // Lower a field assignment `obj.name = value`. Symmetric to

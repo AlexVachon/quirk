@@ -26,10 +26,10 @@ Things deferred to Phase 3.x:
 ---
 
 from .ast use { Expr, Stmt, Param, FunctionDecl, TopLevel }
-from .ast use { IntLit, FloatLit, StringLit, BoolLit, NullLit, Ident, UnaryOp, BinOp, Call, FieldGet }
+from .ast use { IntLit, FloatLit, StringLit, BoolLit, NullLit, Ident, UnaryOp, BinOp, Call, FieldGet, ListLit, Index }
 from .ast use { Return, ExprStmt, VarDecl, Assign, FieldSet, If, While, Func, StructTL }
 from .ast use { StructField, StructDecl }
-from .types use { Ty, TInt, TDouble, TString, TBool, TVoid, TAny, TStruct, TError }
+from .types use { Ty, TInt, TDouble, TString, TBool, TVoid, TAny, TStruct, TList, TError }
 from .types use { ty_to_string, ty_from_annot, ty_compatible }
 
 struct Sema {
@@ -135,6 +135,8 @@ define _check_expr(s: Sema, e: Expr) -> Ty {
         case BinOp as b     => return _check_binop(s, b)
         case Call as c      => return _check_call(s, c)
         case FieldGet as fg => return _check_field_get(s, fg)
+        case ListLit as ll  => return _check_list_lit(s, ll)
+        case Index as ix    => return _check_index(s, ix)
         case _              => return TError("unknown expression kind")
     }
 }
@@ -313,6 +315,50 @@ define _check_field_get(s: Sema, fg: FieldGet) -> Ty {
     }
     s.report("struct '" + sname + "' has no field '" + fg.name + "'")
     return TError("unknown field")
+}
+
+// List literal `[a, b, c]`. Phase 4.11 only supports Int
+// elements — all members must type-check as TInt. Empty `[]`
+// defaults to Int as well. Result type is `TList()` (untyped
+// list; codegen treats the value as `i32*`).
+define _check_list_lit(s: Sema, ll: ListLit) -> Ty {
+    i := 0
+    while i < ll.elems.length() {
+        ei: Expr := ll.elems.__get(i)
+        et := _check_expr(s, ei)
+        is_int := false
+        match et { case TInt as _ => is_int = true case _ => {} }
+        is_err := false
+        match et { case TError as _ => is_err = true case _ => {} }
+        if is_int == false and is_err == false {
+            s.report("list literal element " + i.str() +
+                     " must be Int, got '" + ty_to_string(et) + "'")
+        }
+        i = i + 1
+    }
+    return TList()
+}
+
+// Subscript access `xs[i]`. Receiver must be a list; index
+// must be Int. Returns the element type (Int for Phase 4.11).
+define _check_index(s: Sema, ix: Index) -> Ty {
+    ot: Ty := _check_expr(s, ix.obj)
+    it: Ty := _check_expr(s, ix.idx)
+    is_list := false
+    match ot { case TList as _ => is_list = true case _ => {} }
+    if is_list == false {
+        match ot { case TError as _ => return ot case _ => {} }
+        s.report("subscript '[...]' on non-list '" + ty_to_string(ot) + "'")
+        return TError("index on non-list")
+    }
+    is_int_idx := false
+    match it { case TInt as _ => is_int_idx = true case _ => {} }
+    if is_int_idx == false {
+        match it { case TError as _ => return it case _ => {} }
+        s.report("subscript index must be Int, got '" + ty_to_string(it) + "'")
+        return TError("non-int index")
+    }
+    return TInt()
 }
 
 // Field assignment: `obj.name = value`. Mirrors _check_field_get

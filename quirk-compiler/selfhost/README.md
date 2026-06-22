@@ -31,6 +31,7 @@ toolchain dependency from anyone wanting to hack on the compiler.
 |  4.8  | String concat via `+` — malloc + strcpy + strcat lowering | landed (v4.0.0-alpha.12) |
 |  4.9  | Structs — decls + positional ctor + field read | landed (v4.0.0-alpha.13) |
 |  4.10 | Field write + struct-typed params / returns (by ref) | landed (v4.0.0-alpha.14) |
+|  4.11 | List literals + subscript read (Int elems, no length) | landed (v4.0.0-alpha.15) |
 |  5    | Bootstrap — Quirk compiler compiles itself, byte-identical | not started |
 
 The Codegen phase deliberately targets *text-form* LLVM IR (`.ll`)

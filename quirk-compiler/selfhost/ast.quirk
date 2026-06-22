@@ -36,6 +36,8 @@ type Expr =
     | BinOp(op: String, left: Expr, right: Expr)
     | Call(callee: Expr, args: List)
     | FieldGet(obj: Expr, name: String)
+    | ListLit(elems: List)
+    | Index(obj: Expr, idx: Expr)
 
 ---
 Statement nodes — sequenced inside a function body. No value

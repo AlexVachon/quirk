@@ -34,7 +34,7 @@ worked around in tokens.quirk's `__str` impl.
 
 from .tokens use { TokenKind, Token }
 from .ast use { Expr, Stmt, Param, FunctionDecl, TopLevel }
-from .ast use { IntLit, FloatLit, StringLit, BoolLit, NullLit, Ident, UnaryOp, BinOp, Call, FieldGet }
+from .ast use { IntLit, FloatLit, StringLit, BoolLit, NullLit, Ident, UnaryOp, BinOp, Call, FieldGet, ListLit, Index }
 from .ast use { Return, ExprStmt, VarDecl, Assign, FieldSet, If, While, Func, StructTL }
 from .ast use { StructField, StructDecl }
 
@@ -148,6 +148,23 @@ define _parse_primary(s: ParserState) -> Expr {
         s.expect(TokenKind.RParen, "')' to close paren-expr")
         return e
     }
+    if t.kind == TokenKind.LBracket {
+        // List literal `[a, b, c]`. Trailing comma tolerated.
+        // Empty list `[]` is allowed at parse-time; sema /
+        // codegen decide what element type to assume from
+        // context (Phase 4.11 assumes Int when empty).
+        s.advance()
+        elems := List()
+        if s.check(TokenKind.RBracket) == false {
+            elems.append(_parse_expr(s))
+            while s.match_kind(TokenKind.Comma) {
+                if s.check(TokenKind.RBracket) { break }
+                elems.append(_parse_expr(s))
+            }
+        }
+        s.expect(TokenKind.RBracket, "']' to close list literal")
+        return ListLit(elems)
+    }
     throw ValueError("Expected expression at line " + t.line.str() + ":" + t.col.str() + ", got '" + t.value + "'")
 }
 
@@ -163,16 +180,25 @@ The unary form only matches at the start of an expression
 position (where `_parse_unary` is called); the binary form is
 handled later by `_parse_addsub`.
 ---
-// Postfix field access — `obj.field.subfield` chains. Each `.`
-// after a primary wraps the running expression in a FieldGet.
-// Sits between primary and unary so unary prefixes apply to
-// the fully-resolved field expression.
+// Postfix chain — `obj.field`, `obj.field.subfield`, and
+// `xs[i]`, `xs[i].field`, etc. Loops until neither a `.`
+// nor a `[` follows.
 define _parse_postfix(s: ParserState) -> Expr {
     e := _parse_primary(s)
-    while s.check(TokenKind.Dot) {
-        s.advance()
-        name_tok: Token := s.expect(TokenKind.Identifier, "field name after '.'")
-        e = FieldGet(e, name_tok.value)
+    keep_going := true
+    while keep_going {
+        if s.check(TokenKind.Dot) {
+            s.advance()
+            name_tok: Token := s.expect(TokenKind.Identifier, "field name after '.'")
+            e = FieldGet(e, name_tok.value)
+        } elif s.check(TokenKind.LBracket) {
+            s.advance()
+            idx := _parse_expr(s)
+            s.expect(TokenKind.RBracket, "']' to close index")
+            e = Index(e, idx)
+        } else {
+            keep_going = false
+        }
     }
     return e
 }

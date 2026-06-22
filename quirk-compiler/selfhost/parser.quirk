@@ -35,7 +35,7 @@ worked around in tokens.quirk's `__str` impl.
 from .tokens use { TokenKind, Token }
 from .ast use { Expr, Stmt, Param, FunctionDecl, TopLevel }
 from .ast use { IntLit, StringLit, BoolLit, NullLit, Ident, BinOp, Call }
-from .ast use { Return, ExprStmt, VarDecl, Assign, Func }
+from .ast use { Return, ExprStmt, VarDecl, Assign, If, While, Func }
 
 struct ParserState {
     tokens: List   // List<Token>
@@ -152,11 +152,32 @@ define _parse_mul(s: ParserState) -> Expr {
     return left
 }
 
-define _parse_expr(s: ParserState) -> Expr {
+define _parse_addsub(s: ParserState) -> Expr {
     left := _parse_mul(s)
     while s.check(TokenKind.Plus) or s.check(TokenKind.Minus) {
         op_tok: Token := s.advance()
         right := _parse_mul(s)
+        left = BinOp(op_tok.value, left, right)
+    }
+    return left
+}
+
+---
+Comparison precedence sits below add/sub so `a + b < c + d` is
+`(a + b) < (c + d)`. Treated left-associative for simplicity —
+Quirk's surface syntax doesn't admit chained comparisons
+(`a < b < c`) as a single expression yet.
+---
+define _parse_expr(s: ParserState) -> Expr {
+    left := _parse_addsub(s)
+    while s.check(TokenKind.Equal)
+       or s.check(TokenKind.NotEqual)
+       or s.check(TokenKind.Less)
+       or s.check(TokenKind.LessEqual)
+       or s.check(TokenKind.Greater)
+       or s.check(TokenKind.GreaterEqual) {
+        op_tok: Token := s.advance()
+        right := _parse_addsub(s)
         left = BinOp(op_tok.value, left, right)
     }
     return left
@@ -172,6 +193,16 @@ define _parse_stmt(s: ParserState) -> Stmt {
     if t.kind == TokenKind.Return {
         s.advance()
         return Return(_parse_expr(s))
+    }
+
+    if t.kind == TokenKind.If {
+        return _parse_if(s)
+    }
+    if t.kind == TokenKind.While {
+        s.advance()
+        cond := _parse_expr(s)
+        body := _parse_block(s)
+        return While(cond, body)
     }
 
     // Look-ahead: `name :=` / `name =` / `name : Type :=` are
@@ -201,6 +232,75 @@ define _parse_stmt(s: ParserState) -> Stmt {
     }
 
     return ExprStmt(_parse_expr(s))
+}
+
+---
+Parse an if statement, possibly with `else` / `elif` / `else { … }`
+clauses. The `elif` chain desugars into a nested If inside the
+parent's else_body — same shape Python and most C-likes use.
+
+  if c { A }                       → If(c, A, [])
+  if c { A } else { B }            → If(c, A, B)
+  if c { A } elif d { B } else { C } → If(c, A, [If(d, B, C)])
+---
+define _parse_if(s: ParserState) -> Stmt {
+    s.expect(TokenKind.If, "'if'")
+    cond := _parse_expr(s)
+    then_body := _parse_block(s)
+    else_body := List()
+    if s.match_kind(TokenKind.Else) {
+        // Could be `else { … }` or `else if …` (rare —
+        // Quirk's surface form is `elif`).
+        if s.check(TokenKind.If) {
+            else_body.append(_parse_if(s))
+        } else {
+            else_body = _parse_block(s)
+        }
+    } elif s.check(TokenKind.Elif) {
+        // Swap `elif` for `if` and recurse — the resulting
+        // nested If becomes this If's sole else statement.
+        // Without this transform we'd need a separate Elif AST
+        // node; the recursion keeps the AST shape uniform.
+        s.advance()  // consume elif
+        // Re-shape by treating what follows like the body of
+        // an `if cond { … } else { … }` chain.
+        sub_cond := _parse_expr(s)
+        sub_then := _parse_block(s)
+        sub_else := List()
+        if s.match_kind(TokenKind.Else) {
+            sub_else = _parse_block(s)
+        } elif s.check(TokenKind.Elif) {
+            // Nested chain — recurse through the same path by
+            // injecting a synthetic `if` and letting the next
+            // level handle it. Build the elif chain by
+            // recursive call to _parse_if after an
+            // artificially-inserted If token isn't possible
+            // here (we don't have a token rewriter), so we
+            // emit the elif via the same shape inline.
+            sub_else.append(_parse_if_chain(s))
+        }
+        else_body.append(If(sub_cond, sub_then, sub_else))
+    }
+    return If(cond, then_body, else_body)
+}
+
+---
+Continuation helper for `elif` chains — produces a single If
+statement representing the rest of the chain. Internal entry
+point used by `_parse_if`.
+---
+define _parse_if_chain(s: ParserState) -> Stmt {
+    // Expect we've just consumed an `elif` keyword.
+    cond := _parse_expr(s)
+    then_body := _parse_block(s)
+    else_body := List()
+    if s.match_kind(TokenKind.Else) {
+        else_body = _parse_block(s)
+    } elif s.check(TokenKind.Elif) {
+        s.advance()
+        else_body.append(_parse_if_chain(s))
+    }
+    return If(cond, then_body, else_body)
 }
 
 define _parse_block(s: ParserState) -> List {

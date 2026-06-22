@@ -27,7 +27,7 @@ Things deferred to Phase 3.x:
 
 from .ast use { Expr, Stmt, Param, FunctionDecl, TopLevel }
 from .ast use { IntLit, StringLit, BoolLit, NullLit, Ident, BinOp, Call }
-from .ast use { Return, ExprStmt, VarDecl, Assign, Func }
+from .ast use { Return, ExprStmt, VarDecl, Assign, If, While, Func }
 from .types use { Ty, TInt, TString, TBool, TVoid, TAny, TError }
 from .types use { ty_to_string, ty_from_annot, ty_compatible }
 
@@ -161,6 +161,19 @@ define _check_binop(s: Sema, b: BinOp) -> Ty {
                  ty_to_string(lt) + "' and '" + ty_to_string(rt) + "'")
         return TError("operator mismatch")
     }
+    // Comparison operators take same-kind operands and produce
+    // Bool. Phase 4.1 supports Int comparisons only; String /
+    // Bool / user-struct ordering will follow.
+    if op == "==" or op == "!=" or op == "<" or op == "<=" or op == ">" or op == ">=" {
+        is_int_l := false
+        match lt { case TInt as _ => is_int_l = true case _ => {} }
+        is_int_r := false
+        match rt { case TInt as _ => is_int_r = true case _ => {} }
+        if is_int_l and is_int_r { return TBool() }
+        s.report("comparison '" + op + "' expects matching Int operands; got '" +
+                 ty_to_string(lt) + "' and '" + ty_to_string(rt) + "'")
+        return TError("comparison operand mismatch")
+    }
     s.report("unsupported operator '" + op + "'")
     return TError("unsupported op")
 }
@@ -246,6 +259,54 @@ define _check_stmt(s: Sema, st: Stmt, ret: Ty) -> void {
                     }
                 }
             }
+        }
+        case If as iff => {
+            ct: Ty := _check_expr(s, iff.cond)
+            // Conditions must be Bool. Allow TError to pass
+            // through silently — the inner diagnostic already
+            // landed and "if `<error>` then …" would just be
+            // noise on top.
+            is_bool := false
+            match ct { case TBool as _ => is_bool = true case _ => {} }
+            is_err := false
+            match ct { case TError as _ => is_err = true case _ => {} }
+            if is_bool == false and is_err == false {
+                s.report("'if' condition must be Bool, got '" + ty_to_string(ct) + "'")
+            }
+            s.push_scope()
+            k := 0
+            while k < iff.then_body.length() {
+                ts: Stmt := iff.then_body.__get(k)
+                _check_stmt(s, ts, ret)
+                k = k + 1
+            }
+            s.pop_scope()
+            s.push_scope()
+            k2 := 0
+            while k2 < iff.else_body.length() {
+                es: Stmt := iff.else_body.__get(k2)
+                _check_stmt(s, es, ret)
+                k2 = k2 + 1
+            }
+            s.pop_scope()
+        }
+        case While as w => {
+            ct: Ty := _check_expr(s, w.cond)
+            is_bool := false
+            match ct { case TBool as _ => is_bool = true case _ => {} }
+            is_err := false
+            match ct { case TError as _ => is_err = true case _ => {} }
+            if is_bool == false and is_err == false {
+                s.report("'while' condition must be Bool, got '" + ty_to_string(ct) + "'")
+            }
+            s.push_scope()
+            k := 0
+            while k < w.body.length() {
+                bs: Stmt := w.body.__get(k)
+                _check_stmt(s, bs, ret)
+                k = k + 1
+            }
+            s.pop_scope()
         }
         case _ => {}
     }

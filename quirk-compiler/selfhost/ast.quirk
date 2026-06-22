@@ -37,12 +37,23 @@ type Expr =
 ---
 Statement nodes — sequenced inside a function body. No value
 required at the position they appear.
+
+`If` carries an optional `else_body` — an empty list means
+"no else clause". The parser models the bare-else and
+`else if` chain as a single else_body containing a nested
+If statement.
+
+`While` is the only loop form Phase 4.1 supports. `for x in
+xs { … }` lowers to a desugared While in a later phase once
+iterators land.
 ---
 type Stmt =
     Return(value: Expr)
     | ExprStmt(expr: Expr)
     | VarDecl(name: String, type_annot: String, value: Expr)
     | Assign(name: String, value: Expr)
+    | If(cond: Expr, then_body: List, else_body: List)
+    | While(cond: Expr, body: List)
 
 ---
 Function parameter. Plain struct — no variants needed; both

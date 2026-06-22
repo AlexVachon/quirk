@@ -35,22 +35,30 @@ Deferred:
 
 from .ast use { Expr, Stmt, Param, FunctionDecl, TopLevel }
 from .ast use { IntLit, StringLit, BoolLit, NullLit, Ident, BinOp, Call }
-from .ast use { Return, ExprStmt, VarDecl, Assign, Func }
+from .ast use { Return, ExprStmt, VarDecl, Assign, If, While, Func }
 
 ---
-Codegen state per-function. `out` accumulates the IR text;
-`next_reg` is the monotonic SSA counter; `locals` maps Quirk
-variable names to their current SSA register name (e.g. `x` →
-`%5`). Parameters land here too at function entry.
+Codegen state per-function. Two output buffers — `entry_out`
+holds the allocas at function entry, `out` holds the body
+instructions and labels. We concatenate the two at the end so
+allocas always sit before their first use (LLVM domination
+rule). `next_reg` is the monotonic SSA counter; `next_label` is
+the monotonic basic-block label counter for branches. `locals`
+maps Quirk variable names to their alloca slot's SSA pointer
+name (e.g. `x` → `%x.addr`).
 ---
 struct FnCG {
+    entry_out: String
     out: String
     next_reg: Int
+    next_label: Int
     locals: Map
 
     define __init(self) -> void {
+        self.entry_out = ""
         self.out = ""
         self.next_reg = 0
+        self.next_label = 0
         self.locals = Map()
     }
 
@@ -60,8 +68,24 @@ struct FnCG {
         return r
     }
 
+    define fresh_label(self, prefix: String) -> String {
+        n := self.next_label
+        self.next_label = n + 1
+        return prefix + "." + n.str()
+    }
+
     define emit(self, line: String) -> void {
         self.out = self.out + "  " + line + "\n"
+    }
+
+    // Raw — no leading indent. Used for basic-block labels and
+    // explicit `br` lines that should align flush-left in IR.
+    define emit_raw(self, line: String) -> void {
+        self.out = self.out + line + "\n"
+    }
+
+    define emit_entry(self, line: String) -> void {
+        self.entry_out = self.entry_out + "  " + line + "\n"
     }
 }
 
@@ -73,28 +97,50 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
     match e {
         case IntLit as lit => {
             // Literal flows inline as `i32 N` at the use site.
-            // Returning the bare number works because all uses
-            // (binop operands, return value, call args) accept a
-            // constant in place of an SSA register.
             return lit.value.str()
+        }
+        case BoolLit as bl => {
+            if bl.value { return "1" }
+            return "0"
         }
         case Ident as id => {
             if cg.locals.has(id.name) {
                 holder: _Str := cg.locals.get(id.name)
-                return holder.s
+                slot := holder.s
+                // Locals live in alloca slots. Read = `load`
+                // through the slot pointer; LLVM's mem2reg
+                // pass collapses these to SSA + phi at -O1.
+                reg := cg.fresh()
+                cg.emit(reg + " = load i32, i32* " + slot)
+                return reg
             }
-            // Should have been caught by Sema; surface as a
-            // diagnostic comment in the IR so a broken pipeline
-            // is at least readable.
             return "<undef:" + id.name + ">"
         }
         case BinOp as b => {
+            // Arithmetic vs comparison split on operator: the
+            // former returns i32, the latter returns i1. We emit
+            // i1 directly; callers that need an integer
+            // truthiness (e.g. `if expr` where expr is a bare
+            // Int) zero-extend up-stream.
             l := _gen_expr(cg, b.left)
             r := _gen_expr(cg, b.right)
+            op := b.op
+            cmp_pred := ""
+            if op == "==" { cmp_pred = "eq" }
+            if op == "!=" { cmp_pred = "ne" }
+            if op == "<"  { cmp_pred = "slt" }
+            if op == "<=" { cmp_pred = "sle" }
+            if op == ">"  { cmp_pred = "sgt" }
+            if op == ">=" { cmp_pred = "sge" }
+            if cmp_pred.length() > 0 {
+                reg := cg.fresh()
+                cg.emit(reg + " = icmp " + cmp_pred + " i32 " + l + ", " + r)
+                return reg
+            }
             instr := "add"
-            if b.op == "-" { instr = "sub" }
-            if b.op == "*" { instr = "mul" }
-            if b.op == "/" { instr = "sdiv" }
+            if op == "-" { instr = "sub" }
+            if op == "*" { instr = "mul" }
+            if op == "/" { instr = "sdiv" }
             reg := cg.fresh()
             cg.emit(reg + " = " + instr + " nsw i32 " + l + ", " + r)
             return reg
@@ -143,6 +189,19 @@ struct _Str {
 // Statement codegen
 // -----------------------------------------------------------------
 
+// Ensure a local has an alloca slot. Called the first time a
+// VarDecl emits for a name. Returns the slot's SSA pointer name.
+define _ensure_slot(cg: FnCG, name: String) -> String {
+    if cg.locals.has(name) {
+        holder: _Str := cg.locals.get(name)
+        return holder.s
+    }
+    slot := "%" + name + ".addr"
+    cg.emit_entry(slot + " = alloca i32")
+    cg.locals.put(name, _Str(slot))
+    return slot
+}
+
 define _gen_stmt(cg: FnCG, st: Stmt) -> void {
     match st {
         case Return as r => {
@@ -154,14 +213,64 @@ define _gen_stmt(cg: FnCG, st: Stmt) -> void {
         }
         case VarDecl as v => {
             rhs := _gen_expr(cg, v.value)
-            // SSA-style: bind the variable name to whichever
-            // register/literal _gen_expr produced. No alloca
-            // needed while Phase 4 has no control flow.
-            cg.locals.put(v.name, _Str(rhs))
+            slot := _ensure_slot(cg, v.name)
+            cg.emit("store i32 " + rhs + ", i32* " + slot)
         }
         case Assign as a => {
             rhs := _gen_expr(cg, a.value)
-            cg.locals.put(a.name, _Str(rhs))
+            slot := _ensure_slot(cg, a.name)
+            cg.emit("store i32 " + rhs + ", i32* " + slot)
+        }
+        case If as iff => {
+            cond := _gen_expr(cg, iff.cond)
+            then_lbl := cg.fresh_label("if.then")
+            else_lbl := cg.fresh_label("if.else")
+            end_lbl  := cg.fresh_label("if.end")
+            has_else := iff.else_body.length() > 0
+            if has_else {
+                cg.emit("br i1 " + cond + ", label %" + then_lbl + ", label %" + else_lbl)
+            } else {
+                cg.emit("br i1 " + cond + ", label %" + then_lbl + ", label %" + end_lbl)
+            }
+            // then block
+            cg.emit_raw(then_lbl + ":")
+            i := 0
+            while i < iff.then_body.length() {
+                ts: Stmt := iff.then_body.__get(i)
+                _gen_stmt(cg, ts)
+                i = i + 1
+            }
+            cg.emit("br label %" + end_lbl)
+            // else block (only if present)
+            if has_else {
+                cg.emit_raw(else_lbl + ":")
+                j := 0
+                while j < iff.else_body.length() {
+                    es: Stmt := iff.else_body.__get(j)
+                    _gen_stmt(cg, es)
+                    j = j + 1
+                }
+                cg.emit("br label %" + end_lbl)
+            }
+            cg.emit_raw(end_lbl + ":")
+        }
+        case While as w => {
+            head_lbl := cg.fresh_label("while.head")
+            body_lbl := cg.fresh_label("while.body")
+            end_lbl  := cg.fresh_label("while.end")
+            cg.emit("br label %" + head_lbl)
+            cg.emit_raw(head_lbl + ":")
+            cond := _gen_expr(cg, w.cond)
+            cg.emit("br i1 " + cond + ", label %" + body_lbl + ", label %" + end_lbl)
+            cg.emit_raw(body_lbl + ":")
+            i := 0
+            while i < w.body.length() {
+                bs: Stmt := w.body.__get(i)
+                _gen_stmt(cg, bs)
+                i = i + 1
+            }
+            cg.emit("br label %" + head_lbl)
+            cg.emit_raw(end_lbl + ":")
         }
         case _ => {}
     }
@@ -174,23 +283,31 @@ define _gen_stmt(cg: FnCG, st: Stmt) -> void {
 define _gen_function(fdecl: FunctionDecl) -> String {
     cg := FnCG()
 
-    // Build the param signature `i32 %x, i32 %y` and bind each
-    // parameter as a local mapping to its SSA name.
+    // Build the param signature `i32 %arg0, i32 %arg1, ...`
+    // (we don't reuse the user's name in the LLVM param slot
+    // because every name needs its own alloca; the param
+    // identifier itself lives in that alloca after we store
+    // the incoming SSA value below).
     sig := ""
     i := 0
     while i < fdecl.params.length() {
         p: Param := fdecl.params.__get(i)
         if i > 0 { sig = sig + ", " }
-        // Parameter SSA names match the source name with a `%`
-        // prefix. LLVM disallows reusing them once bound, but
-        // we never reuse since fresh() uses the integer counter.
-        reg := "%" + p.name
-        sig = sig + "i32 " + reg
-        cg.locals.put(p.name, _Str(reg))
+        arg_reg := "%arg" + i.str()
+        sig = sig + "i32 " + arg_reg
         i = i + 1
     }
 
-    header := "define i32 @" + fdecl.name + "(" + sig + ") {\nentry:\n"
+    // Entry block: alloca each parameter, store the incoming
+    // value in.
+    k := 0
+    while k < fdecl.params.length() {
+        p: Param := fdecl.params.__get(k)
+        slot := _ensure_slot(cg, p.name)
+        cg.emit_entry("store i32 %arg" + k.str() + ", i32* " + slot)
+        k = k + 1
+    }
+
     // Body.
     j := 0
     while j < fdecl.body.length() {
@@ -199,14 +316,13 @@ define _gen_function(fdecl: FunctionDecl) -> String {
         j = j + 1
     }
     // Functions without an explicit return at the end fall
-    // through here; emit `ret i32 0` so the IR is well-formed.
-    // Phase 5 will tighten this to the function's declared
-    // return type once Sema's typed-AST output is available
-    // upstream.
-    if cg.out.length() == 0 or cg.out.contains("ret i32") == false {
-        cg.emit("ret i32 0")
-    }
-    return header + cg.out + "}\n"
+    // through here; emit `ret i32 0` so every basic block has a
+    // terminator. Without this, LLVM rejects the IR — every
+    // basic block must end in a branch / ret / unreachable.
+    cg.emit("ret i32 0")
+
+    header := "define i32 @" + fdecl.name + "(" + sig + ") {\nentry:\n"
+    return header + cg.entry_out + cg.out + "}\n"
 }
 
 ---

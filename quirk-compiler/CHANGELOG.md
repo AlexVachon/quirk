@@ -5,6 +5,85 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.5] — 2026-06-22
+
+### Self-hosting Phase 4.1: control flow + comparisons + alloca-based locals
+
+The Int-arithmetic codegen from alpha.4 grows control flow.
+`if`/`elif`/`else`/`while` now parse, type-check, and codegen
+to real basic blocks with `br i1` branches.
+
+What landed across the four selfhost files:
+
+  - `ast.quirk` — `Stmt` gains `If(cond, then_body, else_body)`
+    and `While(cond, body)`. `elif` chains desugar to a nested
+    `If` inside the parent's `else_body`.
+
+  - `parser.quirk` — comparison-operator precedence (`==`,
+    `!=`, `<`, `<=`, `>`, `>=`) added below add/sub so
+    `a + b < c + d` is `(a + b) < (c + d)`. Statement
+    dispatch routes to `_parse_if` / `while` keyword handlers.
+    `_parse_if_chain` continuation handles `elif` cascades.
+
+  - `sema.quirk` — comparison ops type Int+Int as Bool. New
+    `If` and `While` arms enforce that the condition is Bool
+    (or TError — cascade-suppress in the latter case).
+    Per-branch scope frames so `then` and `else` don't leak
+    locals to each other.
+
+  - `codegen.quirk` — three significant changes:
+
+    1. Allocas. Locals now live in stack slots
+       (`%name.addr = alloca i32`) instead of SSA-direct
+       registers. Reads `load`, writes `store`. Needed
+       because control flow creates multiple basic blocks
+       that read a variable last written in a different
+       block; phi-node insertion is mem2reg's job (LLVM
+       runs that at `-O1`).
+
+    2. Two-buffer emission. `entry_out` collects allocas to
+       guarantee they precede their first use; `out`
+       collects the body instructions and labels. The two
+       concatenate at function end.
+
+    3. Basic blocks for control flow. `If` emits a `br i1
+       cond, %then, %else`, then `then:` / `else:` /
+       `end:` labels with `br label %end` joins. `While`
+       emits the classic `head` / `body` / `end` triple.
+       Label allocation is monotonic per-function via a new
+       `next_label` counter on `FnCG`.
+
+`codegen_e2e.sh` grows five new cases that exercise the new
+shapes:
+
+```
+ok  return literal
+ok  arithmetic
+ok  vars + reassign
+ok  call
+ok  if true branch
+ok  if false branch       (uses `0 - 5` for negative — unary `-` not parsed yet)
+ok  if without else
+ok  while accumulate
+ok  while early exit via mutated bound
+
+all 9/9 cases passed
+```
+
+Forcing-function finds:
+
+  - **Unary minus is not parsed.** `x := -5` errors. Worked
+    around with `x := 0 - 5` in the e2e. Phase 4.2 should
+    add unary-prefix parsing alongside `not`.
+
+  - **The `ret i32 0` fall-through is in the same basic
+    block as the meaningful `ret`.** LLVM accepts it (first
+    terminator wins, rest is dead code that mem2reg /
+    SimplifyCFG remove). A "did this block already
+    terminate" tracker would emit cleaner IR; queued.
+
+Phase 4.x continues toward string/bool/double/struct support.
+
 ## [4.0.0-alpha.4] — 2026-06-22
 
 ### Self-hosting Phase 4: codegen emits LLVM IR + runs via lli-14

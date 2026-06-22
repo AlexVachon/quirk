@@ -5,6 +5,79 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.13] — 2026-06-22
+
+### Self-hosting Phase 4.9: structs
+
+The first aggregate type. `struct Foo { x: Int; y: Int }`
+declarations parse, type-check, and lower to real LLVM struct
+types with heap-allocated instances and typed field access.
+
+**End-to-end wiring.** The slice this release ships:
+
+  - **AST**: `StructField { name, type_annot }`, `StructDecl
+    { name, fields }`, a new `StructTL(decl)` arm in
+    `type TopLevel`, and `FieldGet(obj, name)` in `type Expr`.
+  - **`types.quirk`**: `TStruct(name: String)` variant.
+    `ty_from_annot` now treats any non-builtin name as a
+    struct annotation (validated lazily by sema's struct
+    registry); `ty_to_string` renders `TStruct.name`
+    verbatim, so `ty_compatible`'s string-equality path
+    matches same-named structs without nested-match dispatch
+    (which still trips a Sema gap).
+  - **Parser**: `_parse_postfix` between primary and unary
+    chains `obj.field` accesses into nested `FieldGet`s. The
+    top-level dispatch grew a `Struct` arm that parses
+    `struct Name { f1: T1; f2: T2; ... }` with `;`-tolerant
+    separators.
+  - **Sema**: `Sema.structs: Map<name, StructDecl>` populated
+    by `check()`'s pre-pass alongside function signatures.
+    `_check_call` routes `Foo(...)` to a constructor type
+    `TStruct("Foo")`; `_check_field_get` resolves the
+    field's type by walking `StructDecl.fields`. Strict
+    arity / per-field type matching is deferred — sema
+    currently accepts any positional arguments.
+  - **Codegen**: `ModuleCG.structs: Map<name, _StructDef>`
+    holds the field name/LLVM-type lists. `render_header`
+    emits `%struct.Foo = type { i32, i32 }` declarations
+    ahead of globals + `declare` lines. A new
+    `_resolve_ty(mod, qty)` consults the registry so a
+    `Foo`-typed param/return resolves to `%struct.Foo*`
+    everywhere — function headers, alloca slots, signature
+    pre-pass, and call-site argument rendering. `_gen_expr`'s
+    `Call` arm routes constructor calls to
+    `_gen_struct_ctor`, which mallocs the struct (size via
+    the GEP-of-null trick: `getelementptr %struct.Foo,
+    %struct.Foo* null, i64 1` then `ptrtoint to i64`) and
+    stores each arg into its field by `getelementptr
+    inbounds` + `store`. `FieldGet` lowers symmetrically:
+    GEP the field address, `load` it at the registered
+    field type.
+
+**Compiler workaround: ctor extracted into its own function.**
+The struct-constructor lowering started life inline in
+`_gen_expr`'s Call arm but tripped a self-compiler gap — two
+recursive `_gen_expr` calls in different positions within
+the same outer function caused a SIGBUS at module load.
+Extracting the constructor body into `_gen_struct_ctor` —
+which owns the inner recursion site exclusively — sidesteps
+the bug cleanly and leaves the inline call as a
+single-line dispatch.
+
+`codegen_e2e.sh` gains 4 new cases:
+
+```
+ok  struct ctor + field read   `p := Point(40, 2); p.x + p.y`
+ok  struct field order         `p := Pair(10, 32); p.b + p.a`
+ok  struct with Bool field     `f := Flag(true, 30); if f.ok { f.n + 12 }`
+ok  two struct instances       `a := Box(20); b := Box(22); a.n + b.n`
+
+all 49/49 cases passed
+```
+
+Phase 4.x left: field write (`f.x = v`), struct-typed params
+and returns, then lists/maps via runtime helpers.
+
 ## [4.0.0-alpha.12] — 2026-06-22
 
 ### Self-hosting Phase 4.8: String concat via `+`

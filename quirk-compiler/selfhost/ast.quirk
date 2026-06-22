@@ -35,6 +35,7 @@ type Expr =
     | UnaryOp(op: String, operand: Expr)
     | BinOp(op: String, left: Expr, right: Expr)
     | Call(callee: Expr, args: List)
+    | FieldGet(obj: Expr, name: String)
 
 ---
 Statement nodes — sequenced inside a function body. No value
@@ -92,8 +93,39 @@ struct FunctionDecl {
 }
 
 ---
-Top-level node — what `parse_top_level` returns. Right now
-only function declarations are supported; struct / enum /
-interface / use / import will land as Phase 2 expands.
+A single field of a struct declaration. Plain struct itself
+(no variants).
 ---
-type TopLevel = Func(decl: FunctionDecl)
+struct StructField {
+    name: String
+    type_annot: String
+
+    define __init(self, name: String, type_annot: String) -> void {
+        self.name = name
+        self.type_annot = type_annot
+    }
+}
+
+---
+Top-level struct declaration. `fields` is `List<StructField>`
+in declaration order — the positional constructor matches
+this order verbatim.
+---
+struct StructDecl {
+    name: String
+    fields: List
+
+    define __init(self, name: String, fields: List) -> void {
+        self.name = name
+        self.fields = fields
+    }
+}
+
+---
+Top-level node — what `parse_top_level` returns. Functions and
+structs are the only forms Phase 4.9 supports; enum / interface
+/ use / import follow.
+---
+type TopLevel =
+    Func(decl: FunctionDecl)
+    | StructTL(decl: StructDecl)

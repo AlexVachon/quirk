@@ -23,6 +23,7 @@ type Ty =
     | TBool()
     | TVoid()
     | TAny()
+    | TStruct(name: String)
     | TError(msg: String)
 
 ---
@@ -38,6 +39,7 @@ define ty_to_string(t: Ty) -> String {
         case TBool as _   => return "Bool"
         case TVoid as _   => return "Void"
         case TAny as _    => return "Any"
+        case TStruct as s => return s.name
         case TError as e  => return "<error: " + e.msg + ">"
         case _            => return "?"
     }
@@ -57,7 +59,10 @@ define ty_from_annot(name: String) -> Ty {
     if name == "Bool"   { return TBool() }
     if name == "Void"   { return TVoid() }
     if name == "Any"    { return TAny() }
-    return TError("unknown type '" + name + "'")
+    // Anything else is treated as a user-defined struct name.
+    // Sema's struct-registry pass validates that the name
+    // actually exists before any field-access typing runs.
+    return TStruct(name)
 }
 
 ---

@@ -244,6 +244,32 @@ run_with_stdout "concat through call" \
 define main() -> Int { print(greet("Quirk")); return 42 }' \
     42 "hello, Quirk"
 
+# Phase 4.9: structs — `struct` declarations + positional
+# constructor + field read. Slot type for struct values is
+# `%struct.Foo*` (heap-allocated via malloc, sized by the
+# GEP-of-null trick). Field-write and struct-typed
+# params/returns ride the existing _Slot machinery, but exposing
+# *param* support to the surface (the Foo-typed `f:` param)
+# requires updating sema's `ty_compatible` for cross-call
+# struct types — covered indirectly via field-access type
+# propagation here.
+run "struct ctor + field read" \
+    "struct Point { x: Int; y: Int }
+define main() -> Int { p := Point(40, 2); return p.x + p.y }" \
+    42
+run "struct field order" \
+    "struct Pair { a: Int; b: Int }
+define main() -> Int { p := Pair(10, 32); return p.b + p.a }" \
+    42
+run "struct with Bool field" \
+    "struct Flag { ok: Bool; n: Int }
+define main() -> Int { f := Flag(true, 30); if f.ok { return f.n + 12 } return 0 }" \
+    42
+run "two struct instances" \
+    "struct Box { n: Int }
+define main() -> Int { a := Box(20); b := Box(22); return a.n + b.n }" \
+    42
+
 # Phase 4.3: string literals + print() via puts().
 run_with_stdout "print literal" \
     'define main() -> Int { print("hello"); return 42 }' \
@@ -267,4 +293,4 @@ if [ "$fails" -gt 0 ]; then
     exit 1
 fi
 echo ""
-echo "all 45/45 cases passed"
+echo "all 49/49 cases passed"

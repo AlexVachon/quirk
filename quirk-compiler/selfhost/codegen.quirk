@@ -34,8 +34,9 @@ Deferred:
 ---
 
 from .ast use { Expr, Stmt, Param, FunctionDecl, TopLevel }
-from .ast use { IntLit, FloatLit, StringLit, BoolLit, NullLit, Ident, UnaryOp, BinOp, Call }
-from .ast use { Return, ExprStmt, VarDecl, Assign, If, While, Func }
+from .ast use { IntLit, FloatLit, StringLit, BoolLit, NullLit, Ident, UnaryOp, BinOp, Call, FieldGet }
+from .ast use { Return, ExprStmt, VarDecl, Assign, If, While, Func, StructTL }
+from .ast use { StructField, StructDecl }
 
 ---
 Module-level codegen state. Right now its only job is the
@@ -51,15 +52,26 @@ splice into the module header. `decls` collects helper
 `declare` lines (printf / puts / etc.) — kept separate so we
 can dedup by helper name.
 ---
-// Source-level Quirk type name → LLVM type. Defaults to `i32`
-// (every non-Bool scalar in the self-hosted subset compiles to
-// i32 today). When String values become first-class at the
-// call boundary they hook in here.
+// Source-level Quirk type name → LLVM type, **for primitives
+// only**. User-defined struct types must go through
+// `_resolve_ty(mod, qty)` because the lookup requires the
+// module's struct registry. This helper stays primitive-only
+// so callers that don't have a ModuleCG handy (e.g.
+// `_expr_static_ty` short-circuiting on literals) can still
+// use it.
 define _q_ty_to_llvm(qty: String) -> String {
     if qty == "Bool"   { return "i1" }
     if qty == "Double" { return "double" }
     if qty == "String" { return "i8*" }
     return "i32"
+}
+
+// Resolve any source-level type name to an LLVM type using
+// the module's struct registry. A registered struct `Foo` maps
+// to `%struct.Foo*` (struct values are always heap pointers).
+define _resolve_ty(mod: ModuleCG, qty: String) -> String {
+    if mod.structs.has(qty) { return "%struct." + qty + "*" }
+    return _q_ty_to_llvm(qty)
 }
 
 // Function signature record kept in ModuleCG.sigs. `param_tys`
@@ -76,17 +88,46 @@ struct _Sig {
     }
 }
 
+// Per-struct codegen metadata. `field_names` / `field_llvm_tys`
+// are aligned by index — the positional constructor stores
+// each arg into the GEP at its index. Stored in ModuleCG.structs
+// so call-site codegen and field-access codegen share a single
+// source of truth.
+struct _StructDef {
+    name: String
+    field_names: List
+    field_llvm_tys: List
+    define __init(self, name: String, field_names: List, field_llvm_tys: List) -> void {
+        self.name = name
+        self.field_names = field_names
+        self.field_llvm_tys = field_llvm_tys
+    }
+}
+
 struct ModuleCG {
     globals: List
     decls: Map
     next_str: Int
     sigs: Map
+    // name → _StructDef. Populated by emit_module's pre-pass
+    // before any function body codegen runs so constructor and
+    // field-access lowering can reach forward.
+    structs: Map
 
     define __init(self) -> void {
         self.globals = List()
         self.decls = Map()
         self.next_str = 0
         self.sigs = Map()
+        self.structs = Map()
+    }
+
+    // Register a struct's layout. The `%struct.Name = type {...}`
+    // declaration is rendered by render_header in registration
+    // order so dependent code (constructor + field GEPs) can
+    // reference the type by name.
+    define register_struct(self, sd: _StructDef) -> void {
+        self.structs.put(sd.name, sd)
     }
 
     // Register a user-defined function's signature so call-site
@@ -120,6 +161,26 @@ struct ModuleCG {
 
     define render_header(self) -> String {
         out := ""
+        // %struct.Name type defs first so subsequent globals /
+        // function signatures can reference them by name.
+        snames := self.structs.keys()
+        si := 0
+        while si < snames.length() {
+            sname: String := snames.__get(si)
+            sd: _StructDef := self.structs.get(sname)
+            line := "%struct." + sd.name + " = type { "
+            fi := 0
+            while fi < sd.field_llvm_tys.length() {
+                if fi > 0 { line = line + ", " }
+                ft: String := sd.field_llvm_tys.__get(fi)
+                line = line + ft
+                fi = fi + 1
+            }
+            line = line + " }"
+            out = out + line + "\n"
+            si = si + 1
+        }
+        if snames.length() > 0 { out = out + "\n" }
         i := 0
         while i < self.globals.length() {
             line: String := self.globals.__get(i)
@@ -277,6 +338,35 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
             }
             return "<undef:" + id.name + ">"
         }
+        case FieldGet as fg => {
+            // GEP the field's address from the struct pointer,
+            // then load. We need both the receiver's struct
+            // name (for the GEP base type) and the field index
+            // (for the i32 index). Both come from the module's
+            // struct registry.
+            obj_ty := _expr_static_ty(cg, fg.obj)
+            obj_reg := _gen_expr(cg, fg.obj)
+            sname := _strip_struct_ptr(obj_ty)
+            sd: _StructDef := cg.mod.structs.get(sname)
+            idx := 0
+            field_ty := "i32"
+            fi := 0
+            while fi < sd.field_names.length() {
+                fname: String := sd.field_names.__get(fi)
+                if fname == fg.name {
+                    idx = fi
+                    field_ty = sd.field_llvm_tys.__get(fi)
+                }
+                fi = fi + 1
+            }
+            gep := cg.fresh()
+            cg.emit(gep + " = getelementptr inbounds %struct." + sname +
+                    ", %struct." + sname + "* " + obj_reg +
+                    ", i32 0, i32 " + idx.str())
+            reg := cg.fresh()
+            cg.emit(reg + " = load " + field_ty + ", " + field_ty + "* " + gep)
+            return reg
+        }
         case UnaryOp as u => {
             opd_ty := _expr_static_ty(cg, u.operand)
             v := _gen_expr(cg, u.operand)
@@ -398,6 +488,14 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
                 // the i32 reg from puts.
                 return reg
             }
+            // Struct constructor: `Foo(a, b, ...)`. malloc a
+            // %struct.Foo, then GEP + store each arg into its
+            // field slot. Sizing uses the GEP-of-null trick —
+            // a typed nullptr offset by 1 yields the byte size
+            // of the struct without compile-time layout math.
+            if cg.mod.structs.has(name) {
+                return _gen_struct_ctor(cg, name, c.args)
+            }
             // Emit each arg first, then the call. Look up the
             // callee's typed signature so each arg + the return
             // is rendered with the matching LLVM type.
@@ -496,14 +594,18 @@ define _expr_static_ty(cg: FnCG, e: Expr) -> String {
         case Call as c => {
             // User-defined call: signature was pre-registered by
             // emit_module, so the return type is known here.
-            // `print` and other special-cased builtins fall
-            // through to the default `i32` — `print(...)` lowers
-            // to `puts` which returns i32, and binding its value
-            // isn't a supported pattern.
+            // A struct constructor call (`Foo(...)`) returns the
+            // struct's heap-pointer type `%struct.Foo*`. `print`
+            // and other special-cased builtins fall through to
+            // the default `i32` — `print(...)` lowers to `puts`
+            // which returns i32 and isn't a useful binding shape.
             cname := ""
             match c.callee {
                 case Ident as id => cname = id.name
                 case _ => {}
+            }
+            if cg.mod.structs.has(cname) {
+                return "%struct." + cname + "*"
             }
             if cg.mod.sigs.has(cname) {
                 sig: _Sig := cg.mod.sigs.get(cname)
@@ -511,8 +613,81 @@ define _expr_static_ty(cg: FnCG, e: Expr) -> String {
             }
             return "i32"
         }
+        case FieldGet as fg => {
+            // Look up the receiver's struct and find the field
+            // by name. The field's LLVM type lives in the
+            // _StructDef.field_llvm_tys list parallel to
+            // field_names.
+            ot := _expr_static_ty(cg, fg.obj)
+            sname := _strip_struct_ptr(ot)
+            if cg.mod.structs.has(sname) {
+                sd: _StructDef := cg.mod.structs.get(sname)
+                fi := 0
+                while fi < sd.field_names.length() {
+                    fname: String := sd.field_names.__get(fi)
+                    if fname == fg.name {
+                        return sd.field_llvm_tys.__get(fi)
+                    }
+                    fi = fi + 1
+                }
+            }
+            return "i32"
+        }
         case _ => return "i32"
     }
+}
+
+// Lower a struct constructor call `Foo(a, b, ...)` to a heap
+// allocation. Extracted from `_gen_expr` so the recursive
+// `_gen_expr(cg, aexpr)` for each arg sits in its own
+// function — keeping the inner-vs-outer recursion sites apart
+// works around a self-compiler gap that surfaced when two
+// recursive `_gen_expr` calls coexisted in different positions
+// within the same outer function.
+define _gen_struct_ctor(cg: FnCG, name: String, ctor_args: List) -> String {
+    sd: _StructDef := cg.mod.structs.get(name)
+    cg.mod.ensure_decl("malloc", "declare i8* @malloc(i64)")
+    // Sizing via GEP-of-null: `getelementptr T, T* null, i64 1`
+    // is a typed nullptr offset by one element, whose
+    // ptrtoint gives the byte size without any compile-time
+    // layout knowledge.
+    size_gep := cg.fresh()
+    cg.emit(size_gep + " = getelementptr %struct." + name +
+            ", %struct." + name + "* null, i64 1")
+    size_i := cg.fresh()
+    cg.emit(size_i + " = ptrtoint %struct." + name +
+            "* " + size_gep + " to i64")
+    raw := cg.fresh()
+    cg.emit(raw + " = call i8* @malloc(i64 " + size_i + ")")
+    obj := cg.fresh()
+    cg.emit(obj + " = bitcast i8* " + raw + " to %struct." + name + "*")
+    // Eval each constructor arg, then GEP + store into its
+    // field slot. Args match field order positionally.
+    ai := 0
+    while ai < ctor_args.length() {
+        aexpr: Expr := ctor_args.__get(ai)
+        aval := _gen_expr(cg, aexpr)
+        fty: String := sd.field_llvm_tys.__get(ai)
+        fgep := cg.fresh()
+        cg.emit(fgep + " = getelementptr inbounds %struct." + name +
+                ", %struct." + name + "* " + obj +
+                ", i32 0, i32 " + ai.str())
+        cg.emit("store " + fty + " " + aval + ", " + fty + "* " + fgep)
+        ai = ai + 1
+    }
+    return obj
+}
+
+// Extract `"Foo"` from `"%struct.Foo*"`. Returns the input
+// unchanged when it doesn't look like a struct pointer — the
+// callers use the result as a lookup key in mod.structs, which
+// safely misses for non-struct types.
+define _strip_struct_ptr(ty: String) -> String {
+    prefix := "%struct."
+    if ty.startswith(prefix) and ty.endswith("*") {
+        return ty.substring(prefix.length(), ty.length() - 1)
+    }
+    return ty
 }
 
 // -----------------------------------------------------------------
@@ -622,32 +797,34 @@ define _gen_stmt(cg: FnCG, st: Stmt) -> void {
 
 define _gen_function(fdecl: FunctionDecl, mod: ModuleCG) -> String {
     cg := FnCG(mod)
-    ret_llvm := _q_ty_to_llvm(fdecl.ret_type)
+    ret_llvm := _resolve_ty(mod, fdecl.ret_type)
     cg.ret_ty = ret_llvm
 
     // Build the param signature `<ty> %arg0, <ty> %arg1, ...`
     // (we don't reuse the user's name in the LLVM param slot
     // because every name needs its own alloca; the param
     // identifier itself lives in that alloca after we store
-    // the incoming SSA value below).
+    // the incoming SSA value below). _resolve_ty consults the
+    // struct registry so `f: Foo` becomes `%struct.Foo*`.
     sig := ""
     i := 0
     while i < fdecl.params.length() {
         p: Param := fdecl.params.__get(i)
         if i > 0 { sig = sig + ", " }
         arg_reg := "%arg" + i.str()
-        pty := _q_ty_to_llvm(p.type_annot)
+        pty := _resolve_ty(mod, p.type_annot)
         sig = sig + pty + " " + arg_reg
         i = i + 1
     }
 
     // Entry block: alloca each parameter, store the incoming
     // value in. Slot type follows the param's declared type so
-    // Bool params live in `i1` slots and Int params in `i32`.
+    // Bool params live in `i1` slots, Int params in `i32`,
+    // struct params in `%struct.Foo*`.
     k := 0
     while k < fdecl.params.length() {
         p: Param := fdecl.params.__get(k)
-        pty := _q_ty_to_llvm(p.type_annot)
+        pty := _resolve_ty(mod, p.type_annot)
         slot := _ensure_slot(cg, p.name, pty)
         cg.emit_entry("store " + pty + " %arg" + k.str() + ", " + pty + "* " + slot.name)
         k = k + 1
@@ -680,7 +857,39 @@ emitted bodies reference (none today — Phase 4.1 will add
 ---
 define emit_module(decls: List) -> String {
     mod := ModuleCG()
-    // Pre-pass: register every user-defined function's typed
+    // Pre-pass 1: register every struct's layout. Must happen
+    // before the function-signature pass so a function whose
+    // param or return type is a struct can resolve to the
+    // right `%struct.Foo*` LLVM type.
+    sp := 0
+    while sp < decls.length() {
+        ds: TopLevel := decls.__get(sp)
+        match ds {
+            case StructTL as st => {
+                sd: StructDecl := st.decl
+                fnames := List()
+                ftys := List()
+                fi := 0
+                while fi < sd.fields.length() {
+                    f: StructField := sd.fields.__get(fi)
+                    fnames.append(f.name)
+                    // Field types may themselves be struct
+                    // names — _resolve_ty handles both, but
+                    // we haven't registered all structs yet at
+                    // this point in the loop. _q_ty_to_llvm
+                    // suffices today because field types in the
+                    // test corpus are all primitives; nested-
+                    // struct fields are queued for a follow-on.
+                    ftys.append(_q_ty_to_llvm(f.type_annot))
+                    fi = fi + 1
+                }
+                mod.register_struct(_StructDef(sd.name, fnames, ftys))
+            }
+            case _ => {}
+        }
+        sp = sp + 1
+    }
+    // Pre-pass 2: register every user-defined function's typed
     // signature so call-site codegen can render argument and
     // return types correctly — including for forward references
     // where the callee's body is emitted after the call site.
@@ -694,10 +903,10 @@ define emit_module(decls: List) -> String {
                 pi := 0
                 while pi < fdp.params.length() {
                     pp_param: Param := fdp.params.__get(pi)
-                    ptys.append(_q_ty_to_llvm(pp_param.type_annot))
+                    ptys.append(_resolve_ty(mod, pp_param.type_annot))
                     pi = pi + 1
                 }
-                rty := _q_ty_to_llvm(fdp.ret_type)
+                rty := _resolve_ty(mod, fdp.ret_type)
                 mod.register_sig(fdp.name, _Sig(ptys, rty))
             }
             case _ => {}

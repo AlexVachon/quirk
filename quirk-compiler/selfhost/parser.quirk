@@ -34,8 +34,9 @@ worked around in tokens.quirk's `__str` impl.
 
 from .tokens use { TokenKind, Token }
 from .ast use { Expr, Stmt, Param, FunctionDecl, TopLevel }
-from .ast use { IntLit, FloatLit, StringLit, BoolLit, NullLit, Ident, UnaryOp, BinOp, Call }
-from .ast use { Return, ExprStmt, VarDecl, Assign, If, While, Func }
+from .ast use { IntLit, FloatLit, StringLit, BoolLit, NullLit, Ident, UnaryOp, BinOp, Call, FieldGet }
+from .ast use { Return, ExprStmt, VarDecl, Assign, If, While, Func, StructTL }
+from .ast use { StructField, StructDecl }
 
 struct ParserState {
     tokens: List   // List<Token>
@@ -162,6 +163,20 @@ The unary form only matches at the start of an expression
 position (where `_parse_unary` is called); the binary form is
 handled later by `_parse_addsub`.
 ---
+// Postfix field access — `obj.field.subfield` chains. Each `.`
+// after a primary wraps the running expression in a FieldGet.
+// Sits between primary and unary so unary prefixes apply to
+// the fully-resolved field expression.
+define _parse_postfix(s: ParserState) -> Expr {
+    e := _parse_primary(s)
+    while s.check(TokenKind.Dot) {
+        s.advance()
+        name_tok: Token := s.expect(TokenKind.Identifier, "field name after '.'")
+        e = FieldGet(e, name_tok.value)
+    }
+    return e
+}
+
 define _parse_unary(s: ParserState) -> Expr {
     if s.check(TokenKind.Minus) {
         s.advance()
@@ -171,7 +186,7 @@ define _parse_unary(s: ParserState) -> Expr {
         s.advance()
         return UnaryOp("not", _parse_unary(s))
     }
-    return _parse_primary(s)
+    return _parse_postfix(s)
 }
 
 define _parse_mul(s: ParserState) -> Expr {
@@ -389,6 +404,28 @@ define _parse_function_decl(s: ParserState) -> FunctionDecl {
 Parse the token stream into a list of top-level declarations.
 Stops at the EofToken sentinel.
 ---
+// Parse a single `struct Name { f1: T1; f2: T2; ... }` block.
+// Fields are separated by `;` or newlines; trailing separators
+// are tolerated. Methods / `__init` are deferred to a later
+// phase — only data fields are recognised here.
+define _parse_struct_decl(s: ParserState) -> StructDecl {
+    s.expect(TokenKind.Struct, "'struct'")
+    name := s.expect(TokenKind.Identifier, "struct name").value
+    s.expect(TokenKind.LBrace, "'{' to open struct body")
+    fields := List()
+    while s.check(TokenKind.RBrace) == false {
+        // Tolerate leading / interleaved `;` so the user can
+        // write either `x: Int; y: Int` or one-per-line forms.
+        if s.match_kind(TokenKind.Semicolon) { continue }
+        fname := s.expect(TokenKind.Identifier, "field name").value
+        s.expect(TokenKind.Colon, "':' after field name")
+        ftype := s.expect(TokenKind.Identifier, "field type").value
+        fields.append(StructField(fname, ftype))
+    }
+    s.expect(TokenKind.RBrace, "'}' to close struct body")
+    return StructDecl(name, fields)
+}
+
 define parse(tokens: List) -> List {
     s := ParserState(tokens)
     out := List()
@@ -396,6 +433,8 @@ define parse(tokens: List) -> List {
         t: Token := s.peek()
         if t.kind == TokenKind.Define {
             out.append(Func(_parse_function_decl(s)))
+        } elif t.kind == TokenKind.Struct {
+            out.append(StructTL(_parse_struct_decl(s)))
         } else {
             throw ValueError("Unexpected top-level token '" + t.value + "' at line " + t.line.str() + ":" + t.col.str())
         }

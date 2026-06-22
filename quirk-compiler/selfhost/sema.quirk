@@ -26,9 +26,10 @@ Things deferred to Phase 3.x:
 ---
 
 from .ast use { Expr, Stmt, Param, FunctionDecl, TopLevel }
-from .ast use { IntLit, FloatLit, StringLit, BoolLit, NullLit, Ident, UnaryOp, BinOp, Call }
-from .ast use { Return, ExprStmt, VarDecl, Assign, If, While, Func }
-from .types use { Ty, TInt, TDouble, TString, TBool, TVoid, TAny, TError }
+from .ast use { IntLit, FloatLit, StringLit, BoolLit, NullLit, Ident, UnaryOp, BinOp, Call, FieldGet }
+from .ast use { Return, ExprStmt, VarDecl, Assign, If, While, Func, StructTL }
+from .ast use { StructField, StructDecl }
+from .types use { Ty, TInt, TDouble, TString, TBool, TVoid, TAny, TStruct, TError }
 from .types use { ty_to_string, ty_from_annot, ty_compatible }
 
 struct Sema {
@@ -36,6 +37,10 @@ struct Sema {
     // a richer signature record once arity / arg-type checking
     // lands.
     functions: Map
+    // name → StructDecl. Populated by check()'s pre-pass before
+    // any expression typing runs so constructor calls and
+    // field accesses can resolve regardless of source order.
+    structs: Map
     // Stack of scope frames (List<Map<String, Ty>>). The
     // innermost frame is the back element; resolution walks
     // back-to-front.
@@ -46,6 +51,7 @@ struct Sema {
 
     define __init(self) -> void {
         self.functions = Map()
+        self.structs = Map()
         self.scopes = List()
         self.errors = List()
     }
@@ -128,6 +134,7 @@ define _check_expr(s: Sema, e: Expr) -> Ty {
         case UnaryOp as u   => return _check_unary(s, u)
         case BinOp as b     => return _check_binop(s, b)
         case Call as c      => return _check_call(s, c)
+        case FieldGet as fg => return _check_field_get(s, fg)
         case _              => return TError("unknown expression kind")
     }
 }
@@ -247,6 +254,19 @@ define _check_call(s: Sema, c: Call) -> Ty {
         }
         return TVoid()
     }
+    // Struct constructor: `Foo(a, b, ...)` produces TStruct("Foo").
+    // We still type-check each argument expression individually
+    // (catches undefined-name errors in the args), but strict
+    // arity / field-type matching is deferred.
+    if s.structs.has(name) {
+        i := 0
+        while i < c.args.length() {
+            ai: Expr := c.args.__get(i)
+            _check_expr(s, ai)
+            i = i + 1
+        }
+        return TStruct(name)
+    }
     if s.functions.has(name) == false {
         s.report("call to undefined function '" + name + "'")
         return TError("unknown function")
@@ -262,6 +282,37 @@ define _check_call(s: Sema, c: Call) -> Ty {
     }
     holder: _TyHolder := s.functions.get(name)
     return holder.ty
+}
+
+// Field access: `obj.name`. Type the object first; require its
+// type to be a known struct; look the field up by name and
+// return its declared type.
+define _check_field_get(s: Sema, fg: FieldGet) -> Ty {
+    ot: Ty := _check_expr(s, fg.obj)
+    match ot { case TError as _ => return ot case _ => {} }
+    sname := ""
+    match ot {
+        case TStruct as ts => sname = ts.name
+        case _ => {
+            s.report("field access '." + fg.name + "' on non-struct '" + ty_to_string(ot) + "'")
+            return TError("field on non-struct")
+        }
+    }
+    if s.structs.has(sname) == false {
+        s.report("field access on unknown struct '" + sname + "'")
+        return TError("unknown struct")
+    }
+    decl: StructDecl := s.structs.get(sname)
+    i := 0
+    while i < decl.fields.length() {
+        f: StructField := decl.fields.__get(i)
+        if f.name == fg.name {
+            return ty_from_annot(f.type_annot)
+        }
+        i = i + 1
+    }
+    s.report("struct '" + sname + "' has no field '" + fg.name + "'")
+    return TError("unknown field")
 }
 
 // -----------------------------------------------------------------
@@ -401,8 +452,12 @@ and returns the diagnostic list. Empty list == no errors.
 define check(decls: List) -> List {
     s := Sema()
 
-    // Pass 1: register every function's return type so call
-    // sites can resolve forward.
+    // Pass 1: register every struct and every function's
+    // return type so forward references resolve regardless of
+    // top-level source order. Struct registration happens here
+    // so a function defined above the struct it uses (via
+    // `Foo(...)` constructor or `f.x` field access) still
+    // type-checks.
     i := 0
     while i < decls.length() {
         d: TopLevel := decls.__get(i)
@@ -411,6 +466,10 @@ define check(decls: List) -> List {
                 fd: FunctionDecl := f.decl
                 rt: Ty := ty_from_annot(fd.ret_type)
                 s.functions.put(fd.name, _TyHolder(rt))
+            }
+            case StructTL as st => {
+                sd: StructDecl := st.decl
+                s.structs.put(sd.name, sd)
             }
             case _ => {}
         }

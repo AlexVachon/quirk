@@ -2905,6 +2905,14 @@ std::string Sema::resolveVariable(const std::string &name)
         return "Any";
     if (name == "strlen")
         return "Int";
+    // File I/O builtins — match selfhost compiler's lowering
+    // shape. read_file(path) → String (entire file contents,
+    // empty on open failure); write_file(path, content) → Int
+    // (0 on success, byte-count fwrite returned).
+    if (name == "read_file")
+        return "String";
+    if (name == "write_file")
+        return "Int";
         
     // --- NEW: Super keyword support ---
     if (name == "super") {

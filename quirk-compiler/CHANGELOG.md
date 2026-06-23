@@ -5,6 +5,77 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.40] — 2026-06-23
+
+### Self-hosting Phase 5i: 🎉 **`read_file` + `write_file` are first-class builtins**
+
+`read_file(path: String) -> String` and `write_file(path:
+String, content: String) -> Int` are now built into BOTH
+compilers (C++ via BuiltinGen, selfhost via `_gen_read_file`/
+`_gen_write_file`). Both lower to the same libc fopen +
+fseek/ftell/fseek + malloc + fread + null-terminate + fclose
+chain (read) and fopen + strlen + fwrite + fclose (write).
+The IR shape is interchangeable.
+
+Concretely landed:
+
+**1. C++ Sema (`src/Core/Sema.cpp`).** Builtin return-type
+table extended: `read_file → String`, `write_file → Int`.
+The selfhost compiler had these for a while; now both
+compilers agree on the typing.
+
+**2. C++ BuiltinGen (`src/Backend/BuiltinGen.hpp`).**
+`isBuiltin` + `handleBuiltin` recognise the new names;
+`generateReadFile` and `generateWriteFile` emit the libc
+call sequence. `stringBuffer(Value*)` helper extracts the
+underlying `i8*` from a `String*` argument (going through
+the existing `_buffer` member-pointer + load). `fopen`,
+`fclose`, `fseek`, `ftell`, `fread`, `fwrite` are declared
+as externs in `Initialize()` so user code anywhere can call
+them too.
+
+**3. build.quirk (`selfhost/build.quirk`).** `_slurp`
+rewritten to call `read_file(path)` directly; the
+`from io use { File }` import is gone. The driver is now
+self-compileable.
+
+**4. 🎉 build.quirk bootstrap (Phase 5i).** New e2e probe
+copies all six selfhost modules + build.quirk into a
+tmpdir, stages a tiny `work/main.quirk` + `work/inc.quirk`
+pair as input, then runs `build_combined(main.quirk,
+work)` through the selfhost-compiled bootstrap pipeline.
+The IR runs via lli and exits with the byte length of the
+combined source — exit=93 confirms the bootstrapped
+driver actually performed file I/O via the libc-backed
+`read_file` lowering and produced real combined output.
+
+### Bootstrap status
+
+| Module / Component | Self-compiles | Bootstrap probe |
+| ------ | :-----------: | :-------------: |
+| tokens / ast / types | ✅ | (consumed by others) |
+| lexer.quirk   | ✅ | tokenize() returns 9 |
+| parser.quirk  | ✅ | parse() returns 1 |
+| sema.quirk    | ✅ | check() returns 0 |
+| codegen.quirk | ✅ | emit_module() returns IR |
+| **build.quirk** (driver) | ✅ | **build_combined() reads files + concats** |
+| selfhost IR → standalone ELF | ✅ | llc + clang -no-pie + run |
+
+All seven selfhost modules now self-compile, and the
+driver itself runs end-to-end through the bootstrap
+pipeline including real libc file I/O. What's left for
+100% standalone:
+
+- a true `main()` entry point on the selfhost side
+  (today's bootstrap probes hard-code paths in the test
+  source; argv handling is the missing primitive)
+- byte-identical fixed-point verification
+  (`IR_v1 == IR_v2`)
+
+### Test count
+
+160 cases up from 159.
+
 ## [4.0.0-alpha.39] — 2026-06-23
 
 ### Self-hosting Phase 5h: 🎉 **standalone ELF linkage**

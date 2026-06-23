@@ -87,22 +87,139 @@ class BuiltinGen {
         // Pre-declaring with i8* causes a type conflict that makes all Bool→String calls return i8*.
         auto strPtrTy = Type::getInt8PtrTy(Context);
         Function::Create(FunctionType::get(i32Ty, {strPtrTy, strPtrTy}, false), Function::ExternalLinkage, "Core_Primitives_Quirk_isinstance", TheModule);
+
+        // libc file I/O — backing the read_file/write_file builtins.
+        // Signatures match the selfhost compiler's `ensure_decl`
+        // calls so both compilers emit interchangeable IR.
+        Type* i64Ty = Type::getInt64Ty(Context);
+        Function::Create(FunctionType::get(voidPtrTy, {voidPtrTy, voidPtrTy}, false),
+                         Function::ExternalLinkage, "fopen", TheModule);
+        Function::Create(FunctionType::get(i32Ty, {voidPtrTy}, false),
+                         Function::ExternalLinkage, "fclose", TheModule);
+        Function::Create(FunctionType::get(i32Ty, {voidPtrTy, i64Ty, i32Ty}, false),
+                         Function::ExternalLinkage, "fseek", TheModule);
+        Function::Create(FunctionType::get(i64Ty, {voidPtrTy}, false),
+                         Function::ExternalLinkage, "ftell", TheModule);
+        Function::Create(FunctionType::get(i64Ty, {voidPtrTy, i64Ty, i64Ty, voidPtrTy}, false),
+                         Function::ExternalLinkage, "fread", TheModule);
+        Function::Create(FunctionType::get(i64Ty, {voidPtrTy, i64Ty, i64Ty, voidPtrTy}, false),
+                         Function::ExternalLinkage, "fwrite", TheModule);
     }
 
     bool isBuiltin(const std::string& name) {
         return name == "print" || name == "printf" || name == "malloc" || name == "free"
-            || name == "type" || name == "str" || name == "write" || name == "writeln";
+            || name == "type" || name == "str" || name == "write" || name == "writeln"
+            || name == "read_file" || name == "write_file";
     }
 
     Value* handleBuiltin(const std::string& name, CallNode* call,
                          std::function<Value*(Node*)> exprHandler) {
-        if (name == "print")   return generatePrint(call, exprHandler);
-        if (name == "printf")  return generatePrintf(call, exprHandler);
-        if (name == "type")    return generateType(call, exprHandler);
-        if (name == "str")     return generateStr(call, exprHandler);
-        if (name == "write")   return generateWrite(call, exprHandler, false);
-        if (name == "writeln") return generateWrite(call, exprHandler, true);
+        if (name == "print")      return generatePrint(call, exprHandler);
+        if (name == "printf")     return generatePrintf(call, exprHandler);
+        if (name == "type")       return generateType(call, exprHandler);
+        if (name == "str")        return generateStr(call, exprHandler);
+        if (name == "write")      return generateWrite(call, exprHandler, false);
+        if (name == "writeln")    return generateWrite(call, exprHandler, true);
+        if (name == "read_file")  return generateReadFile(call, exprHandler);
+        if (name == "write_file") return generateWriteFile(call, exprHandler);
         return nullptr;
+    }
+
+    // Extract the underlying i8* buffer from a Quirk-String value.
+    // The compiler routes String literals/locals as `%String*`
+    // (a struct with `_buffer: i8*`). For raw i8* values that
+    // somehow slipped through, return as-is.
+    Value* stringBuffer(Value* v) {
+        if (!v) return nullptr;
+        Type* ty = v->getType();
+        if (ty->isPointerTy()) {
+            Type* elem = ty->getPointerElementType();
+            if (elem->isStructTy()) {
+                Value* bufPtr = structGen->getMemberPtr(v, "_buffer");
+                if (bufPtr)
+                    return Builder.CreateLoad(Type::getInt8PtrTy(Context), bufPtr);
+            }
+            if (elem->isIntegerTy(8)) return v;
+        }
+        return v;
+    }
+
+    // read_file(path: String) -> String
+    // Lowers to fopen + fseek/ftell/fseek + malloc + fread + null-
+    // terminate + fclose, then wraps the resulting i8* into a
+    // freshly allocated String. Matches `_gen_read_file` in
+    // selfhost/codegen.quirk so the C++ binary and a self-hosted
+    // standalone binary emit interchangeable IR for the same
+    // source.
+    Value* generateReadFile(CallNode* call, std::function<Value*(Node*)> exprHandler) {
+        if (call->args.size() != 1) return nullptr;
+        Value* pathVal = exprHandler(call->args[0].value.get());
+        Value* pathBuf = stringBuffer(pathVal);
+        if (!pathBuf) return nullptr;
+
+        Type* i8PtrTy = Type::getInt8PtrTy(Context);
+        Type* i64Ty   = Type::getInt64Ty(Context);
+        Type* i32Ty   = Type::getInt32Ty(Context);
+
+        Function* fopenFn  = TheModule->getFunction("fopen");
+        Function* fcloseFn = TheModule->getFunction("fclose");
+        Function* fseekFn  = TheModule->getFunction("fseek");
+        Function* ftellFn  = TheModule->getFunction("ftell");
+        Function* freadFn  = TheModule->getFunction("fread");
+        Function* mallocFn = TheModule->getFunction("malloc");
+        if (!fopenFn || !fcloseFn || !fseekFn || !ftellFn || !freadFn || !mallocFn)
+            return nullptr;
+
+        Value* mode = Builder.CreateGlobalStringPtr("r");
+        Value* fp   = Builder.CreateCall(fopenFn, {pathBuf, mode});
+        Builder.CreateCall(fseekFn, {fp, ConstantInt::get(i64Ty, 0), ConstantInt::get(i32Ty, 2)});
+        Value* size = Builder.CreateCall(ftellFn, {fp});
+        Builder.CreateCall(fseekFn, {fp, ConstantInt::get(i64Ty, 0), ConstantInt::get(i32Ty, 0)});
+        Value* allocSize = Builder.CreateAdd(size, ConstantInt::get(i64Ty, 1));
+        Value* buf = Builder.CreateCall(mallocFn, {allocSize});
+        Builder.CreateCall(freadFn,
+            {buf, ConstantInt::get(i64Ty, 1), size, fp});
+        Value* nulSlot = Builder.CreateGEP(Type::getInt8Ty(Context), buf, size);
+        Builder.CreateStore(ConstantInt::get(Type::getInt8Ty(Context), 0), nulSlot);
+        Builder.CreateCall(fcloseFn, {fp});
+        // Wrap raw i8* into a String object so callers (typed
+        // `String`) can use string methods.
+        (void)i8PtrTy;
+        return structGen->allocateAndInit("String", {buf});
+    }
+
+    // write_file(path: String, content: String) -> Int
+    // Lowers to fopen("w") + strlen(content) + fwrite + fclose.
+    // Returns 0 (the value the selfhost lowering also returns).
+    Value* generateWriteFile(CallNode* call, std::function<Value*(Node*)> exprHandler) {
+        if (call->args.size() != 2) return nullptr;
+        Value* pathVal    = exprHandler(call->args[0].value.get());
+        Value* contentVal = exprHandler(call->args[1].value.get());
+        Value* pathBuf    = stringBuffer(pathVal);
+        Value* contentBuf = stringBuffer(contentVal);
+        if (!pathBuf || !contentBuf) return nullptr;
+
+        Type* i64Ty = Type::getInt64Ty(Context);
+
+        Function* fopenFn  = TheModule->getFunction("fopen");
+        Function* fcloseFn = TheModule->getFunction("fclose");
+        Function* fwriteFn = TheModule->getFunction("fwrite");
+        Function* strlenFn = TheModule->getFunction("strlen");
+        if (!strlenFn) {
+            FunctionType* ft = FunctionType::get(i64Ty,
+                {Type::getInt8PtrTy(Context)}, false);
+            strlenFn = Function::Create(ft, Function::ExternalLinkage,
+                                        "strlen", TheModule);
+        }
+        if (!fopenFn || !fcloseFn || !fwriteFn) return nullptr;
+
+        Value* mode = Builder.CreateGlobalStringPtr("w");
+        Value* fp   = Builder.CreateCall(fopenFn, {pathBuf, mode});
+        Value* len  = Builder.CreateCall(strlenFn, {contentBuf});
+        Builder.CreateCall(fwriteFn,
+            {contentBuf, ConstantInt::get(i64Ty, 1), len, fp});
+        Builder.CreateCall(fcloseFn, {fp});
+        return ConstantInt::get(Type::getInt32Ty(Context), 0);
     }
 
     // Convert an already-evaluated LLVM Value* to a String*.

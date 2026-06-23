@@ -1064,6 +1064,74 @@ EOF
 
 bootstrap_codegen_test
 
+# Phase 5i bootstrap: build.quirk — the multi-file driver
+# itself — now self-compiles. read_file/write_file are
+# shared builtins (C++ side via BuiltinGen, selfhost side
+# via _gen_read_file/_gen_write_file). build.quirk's _slurp
+# routes through read_file; compile_combined() compiles
+# itself end-to-end without io.File.
+bootstrap_build_test() {
+    local label="bootstrap: self-compiled build driver"
+    local tmpdir
+    tmpdir=$(mktemp -d --suffix=.buildbs)
+    cp selfhost/tokens.quirk selfhost/ast.quirk selfhost/types.quirk \
+       selfhost/lexer.quirk selfhost/parser.quirk selfhost/sema.quirk \
+       selfhost/codegen.quirk selfhost/build.quirk "$tmpdir/"
+    # Stage a tiny "library" + "main" pair under tmpdir/work so
+    # the bootstrapped build_combined has real files to read.
+    mkdir -p "$tmpdir/work"
+    cat > "$tmpdir/work/inc.quirk" <<'EOF'
+define triple_(x: Int) -> Int { return x * 3 }
+EOF
+    cat > "$tmpdir/work/main.quirk" <<'EOF'
+from .inc use { triple_ }
+define main() -> Int { return triple_(14) }
+EOF
+    cat > "$tmpdir/run_build.quirk" <<EOF
+from .build use { build_combined }
+define main() -> Int {
+    src := build_combined("$tmpdir/work/main.quirk", "$tmpdir/work")
+    return src.length()
+}
+EOF
+    local driver="selfhost/_bsbuild_case.quirk"
+    cat > "$driver" <<EOF
+from .build use { compile_combined }
+ir := compile_combined("$tmpdir/run_build.quirk", "$tmpdir")
+print(ir)
+EOF
+    local ir_path
+    ir_path=$(mktemp --suffix=.ll)
+    "$QUIRK" --no-aot --no-cache "$driver" > "$ir_path" 2>/dev/null
+    rm -f "$driver"
+    if grep -qE "^(SEMA|PARSE) FAILED" "$ir_path"; then
+        echo "FAIL  $label  (selfhost compile rejected)"
+        cat "$ir_path"
+        fails+=1
+        rm -rf "$tmpdir"
+        rm -f "$ir_path"
+        return
+    fi
+    "$LLI" "$ir_path"
+    local got=$?
+    # build_combined output is two file bodies concatenated +
+    # newlines, with the import line stripped. Real source size
+    # is ~80-100 bytes; exit code is the low 8 bits, so any
+    # value in 30..120 indicates the driver produced a
+    # plausible combined output.
+    if [ "$got" -gt 30 ] && [ "$got" -lt 120 ]; then
+        echo "ok    $label  (exit=$got, build_combined produced source)"
+        rm -f "$ir_path"
+    else
+        echo "FAIL  $label  (exit=$got, expected 30-120)"
+        echo "      ir at $ir_path"
+        fails+=1
+    fi
+    rm -rf "$tmpdir"
+}
+
+bootstrap_build_test
+
 # Phase 5h: standalone binary linkage. Take the selfhost-produced
 # IR, lower it via llc-14, link with clang into a real ELF, and
 # run the binary directly (no lli). This is the proof that the
@@ -1168,4 +1236,4 @@ if [ "$fails" -gt 0 ]; then
     exit 1
 fi
 echo ""
-echo "all 159/159 cases passed"
+echo "all 160/160 cases passed"

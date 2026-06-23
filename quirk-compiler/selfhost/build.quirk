@@ -25,20 +25,15 @@ from .lexer use { tokenize }
 from .parser use { parse }
 from .sema use { check }
 from .codegen use { emit_module }
-from io use { File }
 
-// File-reading helper. The C++ Quirk compiler is what runs
-// this driver, so we use the stdlib `File` struct rather
-// than the self-hosted compiler's `read_file` builtin —
-// the driver itself isn't compiled through the self-hosted
-// pipeline (yet). Returns the entire file contents as a
-// String.
+// File-reading helper. Uses the `read_file` builtin which
+// both compilers (C++ and selfhost) lower identically to a
+// libc `fopen + fseek + ftell + fseek + malloc + fread +
+// fclose` sequence. This is what makes build.quirk
+// self-compileable — io.File would have pulled in extern
+// FFI that the selfhost compiler doesn't recognise.
 define _slurp(path: String) -> String {
-    f := File(path, "r")
-    if f.is_open == false { return "" }
-    content := f.read()
-    f.close()
-    return content
+    return read_file(path)
 }
 
 // Walk one line of `src` starting at `i`. Returns the

@@ -1,0 +1,61 @@
+---
+Quirk standalone-binary entry point. Reads a source path from
+`argv[1]`, resolves its `from .X use { … }` imports relative
+to the source's directory via `build_combined`, runs the full
+`tokenize → parse → check → emit_module` pipeline, and writes
+the resulting LLVM IR to stdout.
+
+Usage:
+  quirk-selfhost <source.quirk>           # IR → stdout
+  quirk-selfhost <source.quirk> <out.ll>  # IR → file
+
+With argv[2] supplied, the IR is written via `write_file`
+instead of printed. Empty IR (sema failure) returns exit 1;
+otherwise 0.
+
+Diagnostics: sema errors flow through `compile_combined`'s
+existing print-to-stdout shape. A future polish phase will
+route them to stderr so output redirection captures just IR.
+---
+
+from .build use { compile_combined }
+
+// Strip everything after (and including) the last `/` so we
+// produce the source's directory. Returns "." for bare
+// filenames with no path component — `compile_combined` then
+// resolves `from .X use { … }` against the current working
+// directory.
+define _dirname(path: String) -> String {
+    last_slash := -1
+    i := 0
+    n := path.length()
+    while i < n {
+        if path.substring(i, i + 1) == "/" {
+            last_slash = i
+        }
+        i = i + 1
+    }
+    if last_slash < 0 { return "." }
+    return path.substring(0, last_slash)
+}
+
+define main() -> Int {
+    if arg_count() < 2 {
+        print("usage: quirk-selfhost <source.quirk> [out.ll]")
+        return 1
+    }
+    path := arg_get(1)
+    base := _dirname(path)
+    ir := compile_combined(path, base)
+    if ir.length() == 0 {
+        // compile_combined already printed sema errors.
+        return 1
+    }
+    if arg_count() >= 3 {
+        out_path := arg_get(2)
+        write_file(out_path, ir)
+        return 0
+    }
+    print(ir)
+    return 0
+}

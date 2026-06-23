@@ -1275,10 +1275,60 @@ EOF
 
 standalone_argv_test
 
+# Phase 5k: the full bootstrap loop. Build the standalone
+# Quirk binary (bin/quirk-selfhost) from selfhost/quirk_main.quirk,
+# then USE THAT BINARY to compile a fresh user program into IR,
+# link + run. Two layers of selfhost-produced code: the compiler
+# itself is built from Quirk source, and the user program goes
+# through that compiler.
+bootstrap_full_loop_test() {
+    local label="bootstrap: quirk-selfhost binary compiles user code"
+    if [ ! -x bin/quirk-selfhost ]; then
+        echo "skip  $label  (bin/quirk-selfhost not built; run \`make selfhost-binary\`)"
+        return
+    fi
+    local src_path ll_path s_path bin_path
+    src_path=$(mktemp --suffix=.quirk)
+    ll_path=$(mktemp --suffix=.ll)
+    s_path=$(mktemp --suffix=.s)
+    bin_path=$(mktemp --suffix=.bin)
+    cat > "$src_path" <<'EOF'
+define triple_(x: Int) -> Int { return x * 3 }
+define main() -> Int { print("compiled by selfhost"); return triple_(14) }
+EOF
+    bin/quirk-selfhost "$src_path" "$ll_path" 2>/dev/null
+    if [ ! -s "$ll_path" ]; then
+        echo "FAIL  $label  (quirk-selfhost produced empty IR)"
+        fails+=1
+        rm -f "$src_path" "$ll_path" "$s_path" "$bin_path"
+        return
+    fi
+    llc-14 "$ll_path" -o "$s_path" 2>/dev/null
+    "${CLANG:-clang-14}" -no-pie "$s_path" -o "$bin_path" 2>/dev/null
+    if [ ! -x "$bin_path" ]; then
+        echo "FAIL  $label  (clang link failed on selfhost-emitted IR)"
+        fails+=1
+        rm -f "$src_path" "$ll_path" "$s_path" "$bin_path"
+        return
+    fi
+    local got_out got_exit
+    got_out=$("$bin_path")
+    got_exit=$?
+    if [ "$got_exit" -eq 42 ] && [ "$got_out" = "compiled by selfhost" ]; then
+        echo "ok    $label  (exit=$got_exit, stdout=$got_out)"
+        rm -f "$src_path" "$ll_path" "$s_path" "$bin_path"
+    else
+        echo "FAIL  $label  (exit=$got_exit, expected 42; stdout='$got_out')"
+        fails+=1
+    fi
+}
+
+bootstrap_full_loop_test
+
 if [ "$fails" -gt 0 ]; then
     echo ""
     echo "$fails case(s) failed"
     exit 1
 fi
 echo ""
-echo "all 161/161 cases passed"
+echo "all 162/162 cases passed"

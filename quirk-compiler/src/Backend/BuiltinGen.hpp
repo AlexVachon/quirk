@@ -145,15 +145,19 @@ class BuiltinGen {
     }
 
     // arg_get(i: Int) -> String — forwards to Sys_arg_get,
-    // which returns a String* (allocated in the runtime). The
-    // selfhost-emitted shape returns a raw i8* via the
-    // @quirk_argv global; both shape-match `String` at the
-    // Quirk type system level.
+    // which already returns String* (allocated in the
+    // runtime). The C-side signature declares the return as
+    // i8* for ABI simplicity — we bitcast back to the
+    // module's String pointer type so user code can call
+    // .length() / .substring() etc. directly. Wrapping in a
+    // fresh String would produce a String-of-String, with
+    // _buffer pointing at a struct instead of a c-string —
+    // any subsequent libc-backed builtin (read_file, etc.)
+    // would silently read garbage from the path.
     Value* generateArgGet(CallNode* call, std::function<Value*(Node*)> exprHandler) {
         if (call->args.size() != 1) return nullptr;
         Value* idx = exprHandler(call->args[0].value.get());
         if (!idx) return nullptr;
-        // Sys_arg_get expects i32; coerce if needed.
         Type* i32Ty = Type::getInt32Ty(Context);
         if (idx->getType() != i32Ty) {
             if (idx->getType()->isIntegerTy())
@@ -164,11 +168,10 @@ class BuiltinGen {
         Function* fn = TheModule->getFunction("Sys_arg_get");
         if (!fn) return nullptr;
         Value* raw = Builder.CreateCall(fn, {idx});
-        // Sys_arg_get returns String* (boxed) — but the C
-        // signature in this module is declared i8* for ABI
-        // simplicity. Wrap the raw i8* into a fresh String so
-        // user code can call .length() / .substring() etc.
-        return structGen->allocateAndInit("String", {raw});
+        Type* strPtrTy = structGen->getStringPtrType();
+        if (raw->getType() != strPtrTy)
+            raw = Builder.CreateBitCast(raw, strPtrTy);
+        return raw;
     }
 
     // Extract the underlying i8* buffer from a Quirk-String value.

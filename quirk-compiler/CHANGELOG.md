@@ -5,6 +5,111 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.42] — 2026-06-23
+
+### Self-hosting Phase 5k: 🎉🎉🎉 **standalone Quirk compiler binary exists**
+
+`bin/quirk-selfhost` is a real, standalone Quirk compiler
+binary — written in Quirk, compiled to LLVM IR by `bin/quirk`
+(the C++ compiler), and linked into an ELF via llc-14 +
+clang-14 -no-pie. **Two layers of selfhost-produced code:
+the compiler itself was built from Quirk source, and user
+programs run through it.**
+
+End-to-end demo:
+```
+$ make selfhost-binary
+$ cat > fib.quirk <<EOF
+define fib(n: Int) -> Int {
+    if n < 2 { return n }
+    return fib(n - 1) + fib(n - 2)
+}
+define main() -> Int {
+    print("fib(10) = " + fib(10).str())
+    return fib(8)
+}
+EOF
+$ ./bin/quirk-selfhost fib.quirk fib.ll
+$ llc-14 fib.ll -o fib.s && clang-14 -no-pie fib.s -o fib
+$ ./fib
+fib(10) = 55
+$ echo $?
+21
+```
+
+**`selfhost/quirk_main.quirk`** — the entry point. ~60
+lines. Reads `argv[1]` for source path, calls `_dirname`
+helper to find the import base, runs `compile_combined`
+(which threads the full tokenize → parse → check →
+emit_module pipeline plus build_combined's recursive
+import resolution), prints IR to stdout or — when
+`argv[2]` is supplied — writes it via `write_file`.
+
+**`make selfhost-binary`** — chains `bin/quirk` →
+`build/quirk_selfhost.ll` (the IR) → `build/quirk_selfhost.s`
+(llc-14 output) → `bin/quirk-selfhost` (clang-14 -no-pie
+ELF). The resulting binary is ~200KB and depends only on
+libc.
+
+**C++-side gotcha caught.** Wrapping `Sys_arg_get`'s
+`String*` result in another `String` (via `allocateAndInit`)
+produced a String-of-String — its `_buffer` field pointed
+at the inner String struct instead of a c-string. Any
+subsequent libc-backed builtin (`read_file`, `write_file`)
+silently read garbage from the path. Fixed by `bitcast`ing
+the raw i8* directly to `String*` instead of wrapping. The
+selfhost compiler doesn't have this bug — `arg_get`'s
+selfhost lowering returns a raw i8* that flows directly
+into libc.
+
+### Bootstrap status — the visualization
+
+```
+            C++ compiler (bin/quirk)
+                     |
+                     v
+            +---------------+
+            | tokenize     | <- selfhost/lexer.quirk
+            | parse        | <- selfhost/parser.quirk
+            | check        | <- selfhost/sema.quirk
+            | emit_module  | <- selfhost/codegen.quirk
+            | + driver     | <- selfhost/quirk_main.quirk
+            | + builder    | <- selfhost/build.quirk
+            +---------------+
+                     |
+                     v  ~1.6 MB LLVM IR text
+            +---------------+
+            | llc-14        |
+            +---------------+
+                     |
+                     v  ~54k lines x86_64 asm
+            +---------------+
+            | clang-14      |
+            | -no-pie + libc|
+            +---------------+
+                     |
+                     v
+            bin/quirk-selfhost  (200 KB ELF)
+                     |
+                     v
+            ./bin/quirk-selfhost any_program.quirk → IR
+```
+
+### What's left for byte-identical fixed point
+
+- **alpha.43**: run `quirk-selfhost` over `selfhost/quirk_main.quirk`
+  itself, compare to the bin/quirk-produced IR. Differences
+  are real bugs (or naming-shape divergence — see commit
+  message in alpha.41 for context on why we expect some
+  shape mismatches between the two compilers).
+- **alpha.44+**: feed `quirk-selfhost` real-size selfhost
+  source (codegen.quirk is ~2400 lines) — the bootstrap
+  probes today still test tiny inputs.
+
+### Test count
+
+162 cases up from 161.
+
 ## [4.0.0-alpha.41] — 2026-06-23
 
 ### Self-hosting Phase 5j: 🎉 **`arg_count()` + `arg_get(i)` as shared builtins**

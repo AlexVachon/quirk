@@ -109,6 +109,52 @@ clean:
 test: all
 	./$(TARGET) tests/encoding_test.quirk
 
+# --- SELFHOST BINARY -------------------------------------------------------
+# Build a standalone Quirk compiler binary from the self-hosted source.
+# Pipeline: bin/quirk (C++ compiler) → selfhost/quirk_main.quirk → IR text
+# → llc-14 → x86_64 assembly → clang-14 -no-pie → bin/quirk-selfhost ELF.
+#
+# The resulting binary is a fully usable CLI compiler:
+#   ./bin/quirk-selfhost source.quirk           # IR to stdout
+#   ./bin/quirk-selfhost source.quirk out.ll    # IR to file
+#
+# Note: requires llc-14 and clang-14 on PATH. The intermediate .ll is
+# kept under build/ for inspection. To reproduce the byte-identical
+# fixed point, run `make selfhost-fixedpoint` (alpha.43+).
+SELFHOST_LL  = build/quirk_selfhost.ll
+SELFHOST_S   = build/quirk_selfhost.s
+SELFHOST_BIN = $(BIN_DIR)/quirk-selfhost
+
+$(SELFHOST_LL): $(TARGET) selfhost/quirk_main.quirk selfhost/build.quirk \
+                selfhost/codegen.quirk selfhost/sema.quirk \
+                selfhost/parser.quirk selfhost/lexer.quirk \
+                selfhost/ast.quirk selfhost/tokens.quirk selfhost/types.quirk
+	@mkdir -p build
+	# stdout-redirect rather than the driver's argv[2] file-write
+	# path: the C++ compiler has a known wrapping bug where a
+	# String returned by `arg_get` reaches `write_file` as a
+	# String-of-String (its `_buffer` points at a struct, not a
+	# c-string). The selfhost-compiled binary doesn't have this
+	# bug — once the standalone binary is built, file-output via
+	# argv[2] works correctly there.
+	./$(TARGET) --no-aot --no-cache selfhost/quirk_main.quirk \
+		selfhost/quirk_main.quirk > $@ \
+		|| (rm -f $@ && echo "selfhost IR emission failed" && exit 1)
+
+$(SELFHOST_S): $(SELFHOST_LL)
+	llc-14 $< -o $@
+
+$(SELFHOST_BIN): $(SELFHOST_S)
+	@mkdir -p $(BIN_DIR)
+	clang-14 -no-pie $< -o $@
+
+selfhost-binary: $(SELFHOST_BIN)
+	@echo ""
+	@echo "  built: $(SELFHOST_BIN)"
+	@echo "  size:  $$(stat -c%s $(SELFHOST_BIN)) bytes"
+	@echo ""
+	@echo "  usage: $(SELFHOST_BIN) <source.quirk> [out.ll]"
+
 # Self-host smoke — runs the in-Quirk lexer (Phase 1), parser
 # (Phase 2), and sema (Phase 3) against a small corpus. Doesn't
 # yet assert byte-for-byte equality with the C++ tokenizer /
@@ -220,4 +266,4 @@ FUZZ_SEED  ?=
 fuzz:
 	@python3 tools/fuzz.py --iters $(FUZZ_ITERS) $(if $(FUZZ_SEED),--seed $(FUZZ_SEED),) --quiet
 
-.PHONY: all clean test bootstrap-stdlib bootstrap-stdlib-clean docs fuzz
+.PHONY: all clean test selfhost-binary bootstrap-stdlib bootstrap-stdlib-clean docs fuzz

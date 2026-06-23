@@ -722,6 +722,35 @@ run_with_stdout "rewrite overwrites" \
 }' \
     0 "second"
 
+# Phase 5 (partial): bootstrap-driven feature additions —
+# the gaps surfaced when pointing the self-hosted compiler
+# at lexer.quirk + tokens.quirk via the multi-file driver.
+run "doc comment skipped" \
+    "---
+This is a module-level doc comment.
+It spans multiple lines and contains arbitrary text.
+---
+define main() -> Int { return 42 }" \
+    42
+run "logical and" \
+    "define main() -> Int { x := 5; if x > 0 and x < 10 { return 42 } return 0 }" \
+    42
+run "logical or" \
+    "define main() -> Int { x := -3; if x > 100 or x < 0 { return 42 } return 0 }" \
+    42
+run "and short-circuit-eager both sides" \
+    "define main() -> Int { a := true; b := false; if a and (b or true) { return 42 } return 0 }" \
+    42
+run "continue skips" \
+    "define main() -> Int { i := 0; n := 0; while i < 10 { i = i + 1; if i == 5 { continue } if i == 8 { continue } n = n + i } return n }" \
+    42
+run "break exits early" \
+    "define main() -> Int { i := 0; n := 0; while i < 100 { if n >= 42 { break } n = n + 1; i = i + 1 } return n }" \
+    42
+run "elif chain (4 arms)" \
+    'define main() -> Int { tag := "c"; if tag == "a" { return 1 } elif tag == "b" { return 2 } elif tag == "c" { return 42 } elif tag == "d" { return 4 } return 0 }' \
+    42
+
 # Phase 4.3: string literals + print() via puts().
 run_with_stdout "print literal" \
     'define main() -> Int { print("hello"); return 42 }' \
@@ -801,4 +830,4 @@ if [ "$fails" -gt 0 ]; then
     exit 1
 fi
 echo ""
-echo "all 138/138 cases passed"
+echo "all 145/145 cases passed"

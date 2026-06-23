@@ -35,7 +35,7 @@ worked around in tokens.quirk's `__str` impl.
 from .tokens use { TokenKind, Token }
 from .ast use { Expr, Stmt, Param, FunctionDecl, TopLevel }
 from .ast use { IntLit, FloatLit, StringLit, BoolLit, NullLit, Ident, UnaryOp, BinOp, Call, FieldGet, ListLit, Index }
-from .ast use { Return, ExprStmt, VarDecl, Assign, FieldSet, If, While, Match, Func, StructTL, EnumTL, UnionTL }
+from .ast use { Return, ExprStmt, VarDecl, Assign, FieldSet, If, While, Continue, Break, Match, Func, StructTL, EnumTL, UnionTL }
 from .ast use { StructField, StructDecl, EnumDecl, MatchArm, Variant, UnionDecl }
 
 struct ParserState {
@@ -289,7 +289,7 @@ Comparison precedence sits below add/sub so `a + b < c + d` is
 Quirk's surface syntax doesn't admit chained comparisons
 (`a < b < c`) as a single expression yet.
 ---
-define _parse_expr(s: ParserState) -> Expr {
+define _parse_cmp(s: ParserState) -> Expr {
     left := _parse_addsub(s)
     while s.check(TokenKind.Equal)
        or s.check(TokenKind.NotEqual)
@@ -300,6 +300,31 @@ define _parse_expr(s: ParserState) -> Expr {
         op_tok: Token := s.advance()
         right := _parse_addsub(s)
         left = BinOp(op_tok.value, left, right)
+    }
+    return left
+}
+
+// `and` binds tighter than `or`. Both produce a normal
+// BinOp node; sema accepts only Bool/Bool operands and
+// codegen lowers to `and i1` / `or i1`. Phase 5 left these
+// non-short-circuit (both sides eager); selfhost source
+// doesn't rely on short-circuit semantics for correctness.
+define _parse_and(s: ParserState) -> Expr {
+    left := _parse_cmp(s)
+    while s.check(TokenKind.And) {
+        s.advance()
+        right := _parse_cmp(s)
+        left = BinOp("and", left, right)
+    }
+    return left
+}
+
+define _parse_expr(s: ParserState) -> Expr {
+    left := _parse_and(s)
+    while s.check(TokenKind.Or) {
+        s.advance()
+        right := _parse_and(s)
+        left = BinOp("or", left, right)
     }
     return left
 }
@@ -324,6 +349,14 @@ define _parse_stmt(s: ParserState) -> Stmt {
         cond := _parse_expr(s)
         body := _parse_block(s)
         return While(cond, body)
+    }
+    if t.kind == TokenKind.Continue {
+        s.advance()
+        return Continue()
+    }
+    if t.kind == TokenKind.Break {
+        s.advance()
+        return Break()
     }
     if t.kind == TokenKind.Match {
         s.advance()
@@ -439,13 +472,13 @@ define _parse_if(s: ParserState) -> Stmt {
         if s.match_kind(TokenKind.Else) {
             sub_else = _parse_block(s)
         } elif s.check(TokenKind.Elif) {
-            // Nested chain — recurse through the same path by
-            // injecting a synthetic `if` and letting the next
-            // level handle it. Build the elif chain by
-            // recursive call to _parse_if after an
-            // artificially-inserted If token isn't possible
-            // here (we don't have a token rewriter), so we
-            // emit the elif via the same shape inline.
+            // Nested chain — consume the `elif` keyword and
+            // recurse into _parse_if_chain, which expects to
+            // start on the cond expression directly. (Without
+            // the explicit advance() the inner call would see
+            // `elif` as the next token and try to parse it
+            // as an expression.)
+            s.advance()
             sub_else.append(_parse_if_chain(s))
         }
         else_body.append(If(sub_cond, sub_then, sub_else))

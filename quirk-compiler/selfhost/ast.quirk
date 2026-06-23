@@ -60,6 +60,8 @@ type Stmt =
     | FieldSet(obj: Expr, name: String, value: Expr)
     | If(cond: Expr, then_body: List, else_body: List)
     | While(cond: Expr, body: List)
+    | Continue()
+    | Break()
     | Match(scrutinee: Expr, arms: List)
 
 ---

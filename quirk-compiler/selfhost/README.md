@@ -48,7 +48,8 @@ toolchain dependency from anyone wanting to hack on the compiler.
 |  4.25 | parser.quirk rewritten to error-accumulation (drops `throw`) | landed (v4.0.0-alpha.29) |
 |  4.26 | `read_file` + `write_file` builtins via libc fopen/fread/fwrite/fclose | landed (v4.0.0-alpha.30) |
 |  4.27 | Multi-file driver — `build.quirk` resolves imports + assembles combined source | landed (v4.0.0-alpha.31) |
-|  5    | Bootstrap — Quirk compiler compiles itself, byte-identical | not started |
+|  5a   | Bootstrap pass 1 — doc comments, `and`/`or`, `continue`/`break`, multi-elif | landed (v4.0.0-alpha.32) |
+|  5    | Bootstrap — Quirk compiler compiles itself, byte-identical | in progress |
 
 The Codegen phase deliberately targets *text-form* LLVM IR (`.ll`)
 rather than FFI'ing to LLVM's C API. Quirk doesn't have C-binding

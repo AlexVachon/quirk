@@ -5,6 +5,82 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.32] — 2026-06-22
+
+### Self-hosting Phase 5a: first bootstrap pass — closing four gaps
+
+Pointed the multi-file driver at the real selfhost source
+(`compile_combined("selfhost/lexer.quirk", "selfhost")`) and
+read off the failures one by one. This release closes the
+top four: doc comments, `and`/`or` operators, `continue`/
+`break`, and a latent bug in multi-arm `elif` chains.
+
+**`---…---` doc comments.** Selfhost source begins every
+file with a `---` block — the C++ compiler parses these as
+docstrings and discards them. Our lexer didn't know about
+them so the opening `---` was lexing as three Minus tokens
+and the parser choked at byte 0. New lexer arm: when `-`
+starts and the next two chars are also `-`, eat until the
+closing `---`. Same shape as the existing `/* … */` block-
+comment handler, just with a different delimiter.
+
+**`and` / `or` operators.** Selfhost (and most non-trivial
+Quirk) uses these constantly — `if a > 0 and b < n`, etc.
+Our compiler had the lexer producing `And` / `Or` tokens
+but the parser, sema, and codegen ignored them. New
+precedence levels: `_parse_and` sits between `_parse_cmp`
+(the old `_parse_expr`) and the renamed `_parse_expr`
+which now handles `or` (loosest binding). Sema's
+`_check_binop` accepts matching Bool/Bool returning Bool;
+codegen lowers to `and i1` / `or i1` (non-short-circuit —
+both sides eager, selfhost's usage doesn't rely on
+short-circuit for correctness).
+
+**`continue` / `break`.** The selfhost lexer uses
+`continue` extensively to skip whitespace and comments
+within its main loop. New `Continue()` / `Break()` Stmt
+variants; parser recognises both as bare keywords; FnCG
+grows parallel `loop_head: List<String>` / `loop_end:
+List<String>` stacks pushed by While body codegen on
+enter and popped on exit. `Continue` emits `br label %<top
+of loop_head>` (re-checks the while condition); `Break`
+targets `loop_end`. Sema accepts both via the existing
+catch-all `case _ => {}` arm.
+
+**Multi-arm `elif` chains.** Existing parser handled `if
+{} elif {} else {}` but the second `elif` recursive call
+forgot to consume the `elif` keyword first — `_parse_if_chain`
+was documented as "expects we've just consumed elif" but
+the caller didn't oblige. Three-or-more-arm chains in
+selfhost source (e.g. lexer's escape-sequence dispatch
+with six `elif` arms) tripped this. One-line fix in
+`_parse_if`'s nested-elif branch.
+
+`codegen_e2e.sh` gains 7 new cases:
+
+```
+ok  doc comment skipped               `---\n...\n---` ignored
+ok  logical and                       `x > 0 and x < 10`
+ok  logical or                        `x > 100 or x < 0`
+ok  and short-circuit-eager both sides   nested `(b or true)` ok
+ok  continue skips                    while-i-1..10, skip 5 + 8, sum
+ok  break exits early                  `if n >= 42 { break }`
+ok  elif chain (4 arms)                tag-string dispatch
+
+all 145/145 cases passed
+```
+
+**Bootstrap probe status.** After this phase, pointing
+`compile_combined` at `lexer.quirk` still fails — but the
+errors are now visible and concrete: `.str() not defined
+on 'TokenKind'` (enum stringification), `comparison '>=' …
+got String String` (String ordering for char-range checks),
+`'.append() expects Int, got Token'` (selfhost source's
+bare `List` annotation for pointer lists), and a few
+`if` conditions on i32 (truthy-int coercion). Each is a
+small phase of its own. Phase 5 isn't a single release —
+it's the punch list of these gaps.
+
 ## [4.0.0-alpha.31] — 2026-06-22
 
 ### Self-hosting Phase 4.27: multi-file driver

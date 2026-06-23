@@ -35,7 +35,7 @@ Deferred:
 
 from .ast use { Expr, Stmt, Param, FunctionDecl, TopLevel }
 from .ast use { IntLit, FloatLit, StringLit, BoolLit, NullLit, Ident, UnaryOp, BinOp, Call, FieldGet, ListLit, Index }
-from .ast use { Return, ExprStmt, VarDecl, Assign, FieldSet, If, While, Match, Func, StructTL, EnumTL, UnionTL }
+from .ast use { Return, ExprStmt, VarDecl, Assign, FieldSet, If, While, Continue, Break, Match, Func, StructTL, EnumTL, UnionTL }
 from .ast use { StructField, StructDecl, EnumDecl, MatchArm, Variant, UnionDecl }
 
 ---
@@ -331,6 +331,13 @@ struct FnCG {
     // statements and the synthetic fall-through terminator can
     // emit the matching `ret <ty>` instruction.
     ret_ty: String
+    // Loop-label stacks (parallel `List<String>`). `loop_head`
+    // is the target of `continue` (the cond-check block);
+    // `loop_end` is the target of `break` (the post-loop join).
+    // While codegen pushes on entry and pops on exit so nested
+    // loops route through the innermost.
+    loop_head: List
+    loop_end: List
 
     define __init(self, m: ModuleCG) -> void {
         self.entry_out = ""
@@ -341,6 +348,8 @@ struct FnCG {
         self.block_terminated = false
         self.mod = m
         self.ret_ty = "i32"
+        self.loop_head = List()
+        self.loop_end = List()
     }
 
     define fresh(self) -> String {
@@ -628,6 +637,17 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
                 }
                 return reg
             }
+            // Logical and / or — Bool/Bool → Bool, lowered as
+            // bitwise `and i1` / `or i1`. Non-short-circuit
+            // semantics: both sides eagerly evaluated, fine for
+            // selfhost's usage (logical guards on already-computed
+            // boolean state). True short-circuit would route
+            // through basic blocks + phi.
+            if op == "and" or op == "or" {
+                reg := cg.fresh()
+                cg.emit(reg + " = " + op + " i1 " + l + ", " + r)
+                return reg
+            }
             // Arithmetic.
             int_instr := "add"
             dbl_instr := "fadd"
@@ -814,6 +834,7 @@ define _expr_static_ty(cg: FnCG, e: Expr) -> String {
             if op == "==" or op == "!=" or op == "<" or op == "<=" or op == ">" or op == ">=" {
                 return "i1"
             }
+            if op == "and" or op == "or" { return "i1" }
             // Arithmetic / concat: result type follows operand
             // type. Sema rejects mixed-kind operations, so the
             // left operand's static type is enough to decide.
@@ -2149,14 +2170,34 @@ define _gen_stmt(cg: FnCG, st: Stmt) -> void {
             cond := _gen_expr(cg, w.cond)
             cg.emit("br i1 " + cond + ", label %" + body_lbl + ", label %" + end_lbl)
             cg.emit_raw(body_lbl + ":")
+            // Push loop labels so `continue` / `break` inside
+            // the body know where to branch.
+            cg.loop_head.append(head_lbl)
+            cg.loop_end.append(end_lbl)
             i := 0
             while i < w.body.length() {
                 bs: Stmt := w.body.__get(i)
                 _gen_stmt(cg, bs)
                 i = i + 1
             }
+            cg.loop_head.pop()
+            cg.loop_end.pop()
             cg.emit("br label %" + head_lbl)
             cg.emit_raw(end_lbl + ":")
+        }
+        case Continue as _ => {
+            n := cg.loop_head.length()
+            if n > 0 {
+                head: String := cg.loop_head.__get(n - 1)
+                cg.emit("br label %" + head)
+            }
+        }
+        case Break as _ => {
+            n := cg.loop_end.length()
+            if n > 0 {
+                tail: String := cg.loop_end.__get(n - 1)
+                cg.emit("br label %" + tail)
+            }
         }
         case _ => {}
     }

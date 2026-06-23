@@ -122,6 +122,33 @@ define tokenize(source: String) -> List {
             continue
         }
 
+        // `---` doc comment. Three consecutive dashes open
+        // a block that runs until the next `---`. Used for
+        // module and item docstrings throughout the selfhost
+        // source — without this the leading `---` of any
+        // selfhost file lexes as three Minus tokens and the
+        // parser chokes immediately.
+        if c == "-" and pos + 2 < n and source.substring(pos, pos + 3) == "---" {
+            pos = pos + 3
+            col = col + 3
+            // Eat until the closing `---` (or EOF as a safety
+            // valve — unclosed doc comments swallow the rest
+            // of the file silently rather than looping).
+            while pos + 2 < n and source.substring(pos, pos + 3) != "---" {
+                if source.substring(pos, pos + 1) == "\n" {
+                    line = line + 1
+                    col = 1
+                } else {
+                    col = col + 1
+                }
+                pos = pos + 1
+            }
+            if pos + 2 < n {
+                pos = pos + 3
+                col = col + 3
+            }
+            continue
+        }
         // `//` line comment — eat to end of line.
         if c == "/" and pos + 1 < n and source.substring(pos + 1, pos + 2) == "/" {
             while pos < n and source.substring(pos, pos + 1) != "\n" {

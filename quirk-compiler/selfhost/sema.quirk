@@ -27,7 +27,7 @@ Things deferred to Phase 3.x:
 
 from .ast use { Expr, Stmt, Param, FunctionDecl, TopLevel }
 from .ast use { IntLit, FloatLit, StringLit, BoolLit, NullLit, Ident, UnaryOp, BinOp, Call, FieldGet, ListLit, Index }
-from .ast use { Return, ExprStmt, VarDecl, Assign, FieldSet, If, While, Match, Func, StructTL, EnumTL, UnionTL }
+from .ast use { Return, ExprStmt, VarDecl, Assign, FieldSet, If, While, Continue, Break, Match, Func, StructTL, EnumTL, UnionTL }
 from .ast use { StructField, StructDecl, EnumDecl, MatchArm, Variant, UnionDecl }
 from .types use { Ty, TInt, TDouble, TString, TBool, TVoid, TAny, TStruct, TEnum, TUnion, TList, TListP, TMap, TError }
 from .types use { ty_to_string, ty_from_annot, ty_compatible }
@@ -290,6 +290,19 @@ define _check_binop(s: Sema, b: BinOp) -> Ty {
         s.report("comparison '" + op + "' expects matching Int / Double / String operands; got '" +
                  ty_to_string(lt) + "' and '" + ty_to_string(rt) + "'")
         return TError("comparison operand mismatch")
+    }
+    // `and` / `or`: Bool/Bool → Bool. Sits below comparison
+    // in the precedence chain. Codegen lowers to `and i1` /
+    // `or i1` (non-short-circuit).
+    if op == "and" or op == "or" {
+        is_bl := false
+        match lt { case TBool as _ => is_bl = true case _ => {} }
+        is_br := false
+        match rt { case TBool as _ => is_br = true case _ => {} }
+        if is_bl and is_br { return TBool() }
+        s.report("'" + op + "' expects matching Bool operands; got '" +
+                 ty_to_string(lt) + "' and '" + ty_to_string(rt) + "'")
+        return TError("logical operand mismatch")
     }
     s.report("unsupported operator '" + op + "'")
     return TError("unsupported op")

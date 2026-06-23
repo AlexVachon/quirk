@@ -1004,10 +1004,70 @@ EOF
 
 bootstrap_sema_test
 
+# Phase 5g bootstrap: codegen self-compiles + runs.
+# emit_module(parse(tokenize("..."))) on a valid program returns
+# a non-empty IR string — the self-hosted codegen produces real
+# LLVM IR from its own source.
+bootstrap_codegen_test() {
+    local label="bootstrap: self-compiled codegen"
+    local tmpdir
+    tmpdir=$(mktemp -d --suffix=.cgbs)
+    cp selfhost/tokens.quirk selfhost/ast.quirk selfhost/types.quirk \
+       selfhost/lexer.quirk selfhost/parser.quirk selfhost/sema.quirk \
+       selfhost/codegen.quirk "$tmpdir/"
+    cat > "$tmpdir/run_codegen.quirk" <<'EOF'
+from .lexer use { tokenize }
+from .parser use { parse }
+from .sema use { check }
+from .codegen use { emit_module }
+define main() -> Int {
+    src := "define foo(x: Int) -> Int { return x * 2 }"
+    decls := parse(tokenize(src))
+    errors := check(decls)
+    if errors.length() > 0 { return 99 }
+    ir := emit_module(decls)
+    if ir.length() > 0 { return 7 }
+    return 0
+}
+EOF
+    local driver="selfhost/_bscg_case.quirk"
+    cat > "$driver" <<EOF
+from .build use { compile_combined }
+ir := compile_combined("$tmpdir/run_codegen.quirk", "$tmpdir")
+print(ir)
+EOF
+    local ir_path
+    ir_path=$(mktemp --suffix=.ll)
+    "$QUIRK" --no-aot --no-cache "$driver" > "$ir_path" 2>/dev/null
+    rm -f "$driver"
+    if grep -qE "^(SEMA|PARSE) FAILED" "$ir_path"; then
+        echo "FAIL  $label  (selfhost compile rejected)"
+        cat "$ir_path"
+        fails+=1
+        rm -rf "$tmpdir"
+        rm -f "$ir_path"
+        return
+    fi
+    "$LLI" "$ir_path"
+    local got=$?
+    # emit_module() returns a non-empty IR string → sentinel 7.
+    if [ "$got" -eq 7 ]; then
+        echo "ok    $label  (exit=$got, emit_module produced IR)"
+        rm -f "$ir_path"
+    else
+        echo "FAIL  $label  (exit=$got, expected 7)"
+        echo "      ir at $ir_path"
+        fails+=1
+    fi
+    rm -rf "$tmpdir"
+}
+
+bootstrap_codegen_test
+
 if [ "$fails" -gt 0 ]; then
     echo ""
     echo "$fails case(s) failed"
     exit 1
 fi
 echo ""
-echo "all 153/153 cases passed"
+echo "all 154/154 cases passed"

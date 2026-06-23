@@ -754,6 +754,14 @@ define _check_method_call(s: Sema, c: Call) -> Ty {
             }
             return TBool()
         }
+        // `.keys()` returns a List<String> of all keys in insertion order.
+        if fg.name == "keys" {
+            if c.args.length() != 0 {
+                s.report(".keys() takes no arguments")
+                return TError("method arity")
+            }
+            return TListP("String")
+        }
     }
     // `.append(elem)` on List → Int (void stand-in).
     // For Int-element lists, the element must be Int; for

@@ -1186,6 +1186,9 @@ define _gen_method_call(cg: FnCG, c: Call) -> String {
             cg.emit(reg + " = load i32, i32* " + gep)
             return reg
         }
+        if fg.name == "keys" {
+            return _gen_map_keys(cg, recv_reg)
+        }
     }
     // String methods. Each lowers to a libc helper call;
     // extracted into _gen_string_method so the recursive
@@ -1820,6 +1823,86 @@ define _gen_listp_new(cg: FnCG) -> String {
     return base
 }
 
+// Build a fresh `%QListP*` of `i8*` keys from a `%QMap*`.
+// Reads the map's length + entries, allocates a list with
+// capacity = max(length+1, 1), then walks i ∈ [0, length)
+// and copies each entry's key into the list's data buffer.
+define _gen_map_keys(cg: FnCG, recv_reg: String) -> String {
+    cg.mod.ensure_decl("malloc", "declare i8* @malloc(i64)")
+    // Load map length + entries.
+    mlen_gep := cg.fresh()
+    cg.emit(mlen_gep + " = getelementptr inbounds %QMap, %QMap* " + recv_reg +
+            ", i32 0, i32 0")
+    mlen := cg.fresh()
+    cg.emit(mlen + " = load i32, i32* " + mlen_gep)
+    ment_gep := cg.fresh()
+    cg.emit(ment_gep + " = getelementptr inbounds %QMap, %QMap* " + recv_reg +
+            ", i32 0, i32 2")
+    ents := cg.fresh()
+    cg.emit(ents + " = load %QMapKV*, %QMapKV** " + ment_gep)
+    // Allocate the %QListP* header (12 bytes).
+    raw := cg.fresh()
+    cg.emit(raw + " = call i8* @malloc(i64 12)")
+    base := cg.fresh()
+    cg.emit(base + " = bitcast i8* " + raw + " to %QListP*")
+    // Allocate the data buffer. cap = mlen + 1 (always >= 1 slot)
+    // bytes = cap * 8 (i8* on x86_64).
+    cap_plus := cg.fresh()
+    cg.emit(cap_plus + " = add nsw i32 " + mlen + ", 1")
+    cap64 := cg.fresh()
+    cg.emit(cap64 + " = sext i32 " + cap_plus + " to i64")
+    bytes := cg.fresh()
+    cg.emit(bytes + " = mul nsw i64 " + cap64 + ", 8")
+    data_raw := cg.fresh()
+    cg.emit(data_raw + " = call i8* @malloc(i64 " + bytes + ")")
+    data_ptr := cg.fresh()
+    cg.emit(data_ptr + " = bitcast i8* " + data_raw + " to i8**")
+    // Fill header: length, capacity, data.
+    lp_len_gep := cg.fresh()
+    cg.emit(lp_len_gep + " = getelementptr inbounds %QListP, %QListP* " + base +
+            ", i32 0, i32 0")
+    cg.emit("store i32 " + mlen + ", i32* " + lp_len_gep)
+    lp_cap_gep := cg.fresh()
+    cg.emit(lp_cap_gep + " = getelementptr inbounds %QListP, %QListP* " + base +
+            ", i32 0, i32 1")
+    cg.emit("store i32 " + cap_plus + ", i32* " + lp_cap_gep)
+    lp_dat_gep := cg.fresh()
+    cg.emit(lp_dat_gep + " = getelementptr inbounds %QListP, %QListP* " + base +
+            ", i32 0, i32 2")
+    cg.emit("store i8** " + data_ptr + ", i8*** " + lp_dat_gep)
+    // Loop i from 0 to mlen-1, copy keys into data buffer.
+    // Entry-block alloca + named slot to match the map.idx pattern.
+    idx_slot := "%" + cg.fresh_label("keys.idx")
+    cg.emit_entry(idx_slot + " = alloca i32")
+    cg.emit("store i32 0, i32* " + idx_slot)
+    head := cg.fresh_label("keys.scan.head")
+    body := cg.fresh_label("keys.scan.body")
+    done := cg.fresh_label("keys.scan.done")
+    cg.emit("br label %" + head)
+    cg.emit_raw(head + ":")
+    i_cur := cg.fresh()
+    cg.emit(i_cur + " = load i32, i32* " + idx_slot)
+    in_range := cg.fresh()
+    cg.emit(in_range + " = icmp slt i32 " + i_cur + ", " + mlen)
+    cg.emit("br i1 " + in_range + ", label %" + body + ", label %" + done)
+    cg.emit_raw(body + ":")
+    kgep := cg.fresh()
+    cg.emit(kgep + " = getelementptr inbounds %QMapKV, %QMapKV* " + ents +
+            ", i32 " + i_cur + ", i32 0")
+    key := cg.fresh()
+    cg.emit(key + " = load i8*, i8** " + kgep)
+    slot := cg.fresh()
+    cg.emit(slot + " = getelementptr inbounds i8*, i8** " + data_ptr +
+            ", i32 " + i_cur)
+    cg.emit("store i8* " + key + ", i8** " + slot)
+    next_i := cg.fresh()
+    cg.emit(next_i + " = add nsw i32 " + i_cur + ", 1")
+    cg.emit("store i32 " + next_i + ", i32* " + idx_slot)
+    cg.emit("br label %" + head)
+    cg.emit_raw(done + ":")
+    return base
+}
+
 // Create an empty `%QMap` (length=0, capacity=4, an entry
 // buffer big enough for 4 KV pairs).
 define _gen_map_new(cg: FnCG) -> String {
@@ -2135,10 +2218,12 @@ define _method_ret_ty(cg: FnCG, recv_ty: String, method: String) -> String {
     if method == "substring" { return "i8*" }
     if method == "startswith" { return "i1" }
     if method == "endswith" { return "i1" }
-    // Map: .get returns i8* (Any), .has returns i1, .put i32.
+    // Map: .get returns i8* (Any), .has returns i1, .put i32,
+    // .keys returns a fresh %QListP* of i8* keys.
     if method == "get" { return "i8*" }
     if method == "has" { return "i1" }
     if method == "put" { return "i32" }
+    if method == "keys" { return "%QListP*" }
     return "i32"
 }
 

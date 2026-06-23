@@ -5,6 +5,78 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.38] — 2026-06-23
+
+### Self-hosting Phase 5g: 🎉 **codegen self-compiles too**
+
+`codegen.quirk` — the biggest selfhost module at ~2,400 lines —
+joins lexer + parser + sema in the self-compiled tier. Lexer,
+parser, sema, and codegen.quirk now all flow through the
+self-hosted pipeline; the produced IR for codegen.quirk is
+954KB / ~35,651 lines of x86-64 assembly after `llc-14`, and
+`emit_module()` invoked through the bootstrap pipeline
+returns a non-empty IR string for a valid input program.
+
+**Root gap fixed.** The selfhost compiler used `mod.structs.keys()`
+extensively (and similar map-keys iteration in 6+ other call
+sites), but `.keys()` on `Map` wasn't implemented. Pointing
+the bootstrap at codegen.quirk crashed sema with 7+ cascading
+`unknown method '.keys()' on 'Map'` errors.
+
+Three pieces wired together:
+
+**1. Sema.** Inside the `is_map` block in `_check_method_call`,
+`.keys()` is a no-arg method returning `TListP("String")` —
+a pointer-list of String keys. Keys in this codegen are
+always String (linear-scan via strcmp), so the result type
+is fixed.
+
+**2. Codegen.** New `_gen_map_keys(cg, recv_reg)` helper —
+allocates a fresh `%QListP*`, sizes its data buffer to
+`(map.length + 1) * 8` bytes (always ≥ 1 slot to keep the
+empty case sane), then runs an entry-block-alloca'd loop
+from `0` to `map.length`, GEP'ing each `%QMapKV*` entry's
+key field and storing it into the listp's data buffer.
+Uses the same named-slot pattern as `_gen_map_method`
+(`%keys.idx.N`) to dodge the SSA numbering gotcha that
+bit `.put`/`.get`/`.has`.
+
+**3. Static type inference.** `_method_ret_ty` learned that
+`.keys()` returns `"%QListP*"` so VarDecl slot inference
+allocates a pointer slot (was defaulting to `i32*`, producing
+`llc` errors like `'%45' defined with type '%QListP*' but
+expected 'i32'`). The selfhost compiler doesn't run `llc`
+internally — it emits IR text — so this kind of mismatch
+sailed past tokenize/parse/sema/emit and only surfaced
+under the post-emit `llc-14 codegen_boot.ll` validation.
+
+### Bootstrap status
+
+| Module | Self-compiles | Bootstrap probe |
+| ------ | :-----------: | :-------------: |
+| tokens.quirk  | ✅ | (no entry) |
+| ast.quirk     | ✅ | (no entry) |
+| types.quirk   | ✅ | (no entry) |
+| lexer.quirk   | ✅ | tokenize() returns 9 for 9-token input |
+| parser.quirk  | ✅ | parse() returns 1 for single decl |
+| sema.quirk    | ✅ | check() returns 0 for valid program |
+| codegen.quirk | ✅ | emit_module() returns non-empty IR |
+
+All six selfhost modules now self-compile and produce
+working LLVM IR for their own source. What's left for
+100% standalone self-hosting:
+
+- `build.quirk` bootstrap (driver itself — currently uses
+  C++-extern `io.File`; needs to switch to our `read_file`
+  / `write_file` builtins)
+- standalone-binary plumbing (a real `main()` + argv +
+  llc/clang linkage script)
+- byte-identical fixed-point verification (`IR_v1 == IR_v2`)
+
+### Test count
+
+154 cases up from 153.
+
 ## [4.0.0-alpha.37] — 2026-06-23
 
 ### Self-hosting Phase 5f: **sema self-compiles too**

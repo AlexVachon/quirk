@@ -5,6 +5,73 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.31] — 2026-06-22
+
+### Self-hosting Phase 4.27: multi-file driver
+
+[selfhost/build.quirk](selfhost/build.quirk) is a small Quirk
+program that takes a top-level `.quirk` file, recursively
+resolves its `from .X use { … }` imports by reading each
+referenced file under a `base_dir`, strips the import lines
+from the source bodies, concatenates the result in
+dependency pre-order, and pipes the combined source through
+the existing `tokenize → parse → check → emit_module`
+pipeline.
+
+This is what makes the bootstrap (Phase 5) possible — point
+`compile_combined("lexer.quirk", "selfhost")` at the actual
+selfhost source tree and you get back IR. Whether the IR
+*runs* is the next chapter.
+
+**API.**
+
+```quirk
+from .build use { build_combined, compile_combined }
+
+// Just assemble: returns the combined source string.
+src := build_combined("path/to/main.quirk", "path/to/dir")
+
+// Or assemble + compile: returns IR text (or "" + a
+// "SEMA FAILED" / "PARSE FAILED" diagnostic on stdout).
+ir := compile_combined("path/to/main.quirk", "path/to/dir")
+```
+
+**Implementation details.**
+
+  - The driver runs through the *C++* Quirk compiler — it
+    isn't compiled by the self-hosted pipeline itself. So
+    it uses the stdlib `io.File` API for file reads rather
+    than the Phase 4.26 `read_file` builtin. The self-hosted
+    pipeline (lexer/parser/sema/codegen) is imported via
+    normal `from .X use { … }` statements and used as a
+    library.
+  - Imports are resolved by NAME relative to `base_dir` —
+    `from .lexer use { … }` looks for `base_dir/lexer.quirk`.
+    Subdirectories aren't supported and absolute / package
+    imports (no leading `.`) are stripped without loading.
+  - A `visited: Map<String, String>` set prevents cycles
+    and double-loads — first occurrence wins.
+  - Decls accumulate in dep-pre-order: imported files come
+    before the importer. Order isn't strictly required for
+    correctness (sema's pre-pass forward-resolves types)
+    but the combined source reads nicer.
+
+**E2E coverage.** A new `multi-file driver` case in
+`codegen_e2e.sh` writes two temp files — `inc.quirk` with
+`add_two(x)` and `main.quirk` that imports it and calls
+`add_two(40)` — pipes them through `compile_combined`, then
+runs the result via `lli`. Returns 42 as expected. The
+existing 137 single-file cases still pass alongside.
+
+```
+all 138/138 cases passed
+```
+
+The runway is clear for Phase 5 — pointing this driver at
+`codegen.quirk` (and its transitive deps) and seeing
+whether the self-hosted compiler can compile its own
+source.
+
 ## [4.0.0-alpha.30] — 2026-06-22
 
 ### Self-hosting Phase 4.26: `read_file` + `write_file` builtins

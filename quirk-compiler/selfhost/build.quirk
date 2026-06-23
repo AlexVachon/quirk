@@ -1,0 +1,172 @@
+---
+Multi-file driver: takes a top-level `.quirk` source path,
+recursively resolves `from .X use { … }` imports by reading
+each referenced file, strips the import statements (parser
+skips them but they'd be redundant), and concatenates the
+resulting source bodies into one big module string.
+
+The output is suitable for piping through the same
+`tokenize → parse → check → emit_module` pipeline the
+single-file e2e harness uses. Combined with `read_file`
+(Phase 4.26) this is what makes Phase 5 — running the
+self-hosted compiler over its own source — possible.
+
+Limitations:
+  - Imports are resolved by NAME relative to `base_dir`,
+    not by path. `from .lexer use { … }` looks for
+    `base_dir/lexer.quirk`. Subdirectories aren't supported.
+  - Only relative imports (`from .X use { … }`) are followed.
+    Absolute / package imports are stripped but not loaded.
+  - A `visited: Map<String, String>` set prevents cycles and
+    double-loads. The first file wins.
+---
+
+from .lexer use { tokenize }
+from .parser use { parse }
+from .sema use { check }
+from .codegen use { emit_module }
+from io use { File }
+
+// File-reading helper. The C++ Quirk compiler is what runs
+// this driver, so we use the stdlib `File` struct rather
+// than the self-hosted compiler's `read_file` builtin —
+// the driver itself isn't compiled through the self-hosted
+// pipeline (yet). Returns the entire file contents as a
+// String.
+define _slurp(path: String) -> String {
+    f := File(path, "r")
+    if f.is_open == false { return "" }
+    content := f.read()
+    f.close()
+    return content
+}
+
+// Walk one line of `src` starting at `i`. Returns the
+// index of the next byte after the line (past the `\n`),
+// or `src.length()` if EOL is the end of input.
+define _end_of_line(src: String, i: Int) -> Int {
+    n := src.length()
+    while i < n and src.substring(i, i + 1) != "\n" {
+        i = i + 1
+    }
+    if i < n { return i + 1 }
+    return i
+}
+
+// Extract the module name from a `from .X use { … }` line.
+// Returns the empty String for non-relative or malformed
+// imports (which are simply skipped — not an error).
+define _module_name_of(line: String) -> String {
+    if line.startswith("from .") == false { return "" }
+    rest := line.substring(6, line.length())
+    sp := 0
+    n := rest.length()
+    while sp < n and rest.substring(sp, sp + 1) != " " {
+        sp = sp + 1
+    }
+    return rest.substring(0, sp)
+}
+
+// Build `src` with every `from …` line removed. The parser
+// already skips imports, but keeping the surface clean
+// makes the combined source easier to inspect and avoids
+// duplicate imports of the same module across files.
+define _strip_imports(src: String) -> String {
+    out := ""
+    i := 0
+    n := src.length()
+    while i < n {
+        start := i
+        next_i := _end_of_line(src, i)
+        // The line spans [start, next_i - 1] (excluding the
+        // trailing \n) when one is present; otherwise the
+        // tail of src.
+        line_end := next_i
+        if line_end > start {
+            if next_i <= n and next_i > 0 and src.substring(next_i - 1, next_i) == "\n" {
+                line_end = next_i - 1
+            }
+        }
+        line := src.substring(start, line_end)
+        if line.startswith("from ") == false {
+            out = out + line + "\n"
+        }
+        i = next_i
+    }
+    return out
+}
+
+// Recursive expansion. `visited` is keyed by absolute path
+// (or however the caller chose to spell it) — a non-empty
+// value marks "seen". `parts` accumulates the de-imported
+// source bodies in dependency-pre-order so imported decls
+// come before the body that references them. (Order isn't
+// strictly required since sema's pre-pass forward-resolves
+// types, but it's nicer to read.)
+define _expand(path: String, base_dir: String, visited: Map, parts: List) -> Int {
+    if visited.has(path) { return 0 }
+    visited.put(path, "y")
+    src := _slurp(path)
+    // Walk lines, find `from .X` imports, recurse first.
+    i := 0
+    n := src.length()
+    while i < n {
+        start := i
+        next_i := _end_of_line(src, i)
+        line_end := next_i
+        if line_end > start {
+            if next_i <= n and next_i > 0 and src.substring(next_i - 1, next_i) == "\n" {
+                line_end = next_i - 1
+            }
+        }
+        line := src.substring(start, line_end)
+        module := _module_name_of(line)
+        if module != "" {
+            sub_path := base_dir + "/" + module + ".quirk"
+            _expand(sub_path, base_dir, visited, parts)
+        }
+        i = next_i
+    }
+    parts.append(_strip_imports(src))
+    return 0
+}
+
+// Public entry point. Returns the fully-combined source
+// (imports stripped) for the file at `entry_path` plus all
+// its transitive `from .X use { … }` dependencies under
+// `base_dir`. The driver caller can hand the result to
+// `tokenize → parse → check → emit_module` directly.
+define build_combined(entry_path: String, base_dir: String) -> String {
+    visited := Map()
+    parts := List()
+    _expand(entry_path, base_dir, visited, parts)
+    combined := ""
+    i := 0
+    while i < parts.length() {
+        p: String := parts.__get(i)
+        combined = combined + p + "\n"
+        i = i + 1
+    }
+    return combined
+}
+
+// Convenience: run the full pipeline (combined source →
+// IR text). Returns the IR string. Diagnostic output (sema
+// errors etc.) goes to stdout via the existing reporting
+// shape.
+define compile_combined(entry_path: String, base_dir: String) -> String {
+    combined := build_combined(entry_path, base_dir)
+    decls := parse(tokenize(combined))
+    errors := check(decls)
+    if errors.length() > 0 {
+        print("SEMA FAILED:")
+        k := 0
+        while k < errors.length() {
+            e: String := errors.__get(k)
+            print("  " + e)
+            k = k + 1
+        }
+        return ""
+    }
+    return emit_module(decls)
+}

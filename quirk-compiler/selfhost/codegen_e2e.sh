@@ -739,10 +739,66 @@ run_with_stdout "print in loop" \
 tick
 tick"
 
+# Phase 4.27: multi-file driver — write two source files,
+# concatenate them via `build_combined`, then pipe through
+# the rest of the selfhost pipeline. Verifies end-to-end
+# that file I/O + import-resolution + the existing
+# tokenize → parse → check → emit_module flow compose.
+build_driver_test() {
+    local label="multi-file driver"
+    local tmpdir
+    tmpdir=$(mktemp -d --suffix=.quirkbuild)
+    # Module: a free function the main file will call.
+    cat > "$tmpdir/inc.quirk" <<'EOF'
+define add_two(x: Int) -> Int { return x + 2 }
+EOF
+    # Main: imports `inc` and calls `add_two`. The import-
+    # resolver in build.quirk reads inc.quirk, strips its
+    # imports (none), and prepends it to the combined source.
+    cat > "$tmpdir/main.quirk" <<'EOF'
+from .inc use { add_two }
+define main() -> Int { return add_two(40) }
+EOF
+    # The actual driver script — runs through quirk via the
+    # C++ compiler, uses the selfhost-built build_combined
+    # to assemble + compile.
+    local driver="selfhost/_build_case.quirk"
+    cat > "$driver" <<EOF
+from .build use { compile_combined }
+ir := compile_combined("$tmpdir/main.quirk", "$tmpdir")
+print(ir)
+EOF
+    local ir_path
+    ir_path=$(mktemp --suffix=.ll)
+    "$QUIRK" --no-aot --no-cache "$driver" > "$ir_path" 2>/dev/null
+    rm -f "$driver"
+    if grep -q "SEMA FAILED\|PARSE FAILED" "$ir_path"; then
+        echo "FAIL  $label  (compile rejected)"
+        cat "$ir_path"
+        fails+=1
+        rm -rf "$tmpdir"
+        rm -f "$ir_path"
+        return
+    fi
+    "$LLI" "$ir_path"
+    local got=$?
+    if [ "$got" -eq 42 ]; then
+        echo "ok    $label  (exit=$got)"
+        rm -f "$ir_path"
+    else
+        echo "FAIL  $label  (exit=$got, expected 42)"
+        echo "      ir at $ir_path"
+        fails+=1
+    fi
+    rm -rf "$tmpdir"
+}
+
+build_driver_test
+
 if [ "$fails" -gt 0 ]; then
     echo ""
     echo "$fails case(s) failed"
     exit 1
 fi
 echo ""
-echo "all 137/137 cases passed"
+echo "all 138/138 cases passed"

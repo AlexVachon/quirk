@@ -676,6 +676,15 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
                 // the i32 reg from puts.
                 return reg
             }
+            // Builtin file I/O. Extracted into helpers because
+            // both lowerings emit a multi-call sequence — the
+            // recursion-pairing dodge applies.
+            if name == "read_file" and c.args.length() == 1 {
+                return _gen_read_file(cg, c.args)
+            }
+            if name == "write_file" and c.args.length() == 2 {
+                return _gen_write_file(cg, c.args)
+            }
             // Builtin: `len(xs)` reads the i32 length field
             // out of the %QList header. GEP `i32 0, i32 0` is
             // the length slot.
@@ -843,6 +852,10 @@ define _expr_static_ty(cg: FnCG, e: Expr) -> String {
             }
             // Builtin `len()` returns Int regardless of arg type.
             if cname == "len" { return "i32" }
+            // Builtin file I/O. read_file returns the malloc'd
+            // buffer (i8*); write_file returns i32 0.
+            if cname == "read_file"  { return "i8*" }
+            if cname == "write_file" { return "i32" }
             // Builtin collection constructors.
             if cname == "Map"  { return "%QMap*" }
             if cname == "List" { return "%QList*" }
@@ -1372,6 +1385,79 @@ define _gen_string_method(cg: FnCG, name: String, recv_reg: String, args: List) 
         cg.emit(reg + " = call i32 @atoi(i8* " + recv_reg + ")")
         return reg
     }
+    return "0"
+}
+
+// Read an entire file into a heap-allocated null-terminated
+// buffer. Sequence: fopen("r") → fseek end → ftell size →
+// fseek back → malloc(size+1) → fread → null-terminate →
+// fclose → return buf. No error handling yet — a missing
+// file is undefined behaviour for now.
+define _gen_read_file(cg: FnCG, args: List) -> String {
+    cg.mod.ensure_decl("fopen",  "declare i8* @fopen(i8*, i8*)")
+    cg.mod.ensure_decl("fclose", "declare i32 @fclose(i8*)")
+    cg.mod.ensure_decl("fseek",  "declare i32 @fseek(i8*, i64, i32)")
+    cg.mod.ensure_decl("ftell",  "declare i64 @ftell(i8*)")
+    cg.mod.ensure_decl("fread",  "declare i64 @fread(i8*, i64, i64, i8*)")
+    cg.mod.ensure_decl("malloc", "declare i8* @malloc(i64)")
+    pexpr: Expr := args.__get(0)
+    path := _gen_expr(cg, pexpr)
+    // "r" mode string interned as a private global.
+    mode_name := cg.mod.alloc_string("r")
+    mode_gep := cg.fresh()
+    cg.emit(mode_gep + " = getelementptr inbounds [2 x i8], [2 x i8]* " +
+            mode_name + ", i64 0, i64 0")
+    fp := cg.fresh()
+    cg.emit(fp + " = call i8* @fopen(i8* " + path + ", i8* " + mode_gep + ")")
+    // Seek to end, ftell for size, seek back.
+    seek_end := cg.fresh()
+    cg.emit(seek_end + " = call i32 @fseek(i8* " + fp + ", i64 0, i32 2)")
+    size := cg.fresh()
+    cg.emit(size + " = call i64 @ftell(i8* " + fp + ")")
+    seek_start := cg.fresh()
+    cg.emit(seek_start + " = call i32 @fseek(i8* " + fp + ", i64 0, i32 0)")
+    // Allocate size+1 bytes, fread the content.
+    alloc_size := cg.fresh()
+    cg.emit(alloc_size + " = add nsw i64 " + size + ", 1")
+    buf := cg.fresh()
+    cg.emit(buf + " = call i8* @malloc(i64 " + alloc_size + ")")
+    read_n := cg.fresh()
+    cg.emit(read_n + " = call i64 @fread(i8* " + buf + ", i64 1, i64 " +
+            size + ", i8* " + fp + ")")
+    // Null-terminate at buf[size].
+    nul_slot := cg.fresh()
+    cg.emit(nul_slot + " = getelementptr inbounds i8, i8* " + buf +
+            ", i64 " + size)
+    cg.emit("store i8 0, i8* " + nul_slot)
+    closed := cg.fresh()
+    cg.emit(closed + " = call i32 @fclose(i8* " + fp + ")")
+    return buf
+}
+
+// Write a String to a file. Sequence: fopen("w") → strlen
+// → fwrite → fclose → return 0.
+define _gen_write_file(cg: FnCG, args: List) -> String {
+    cg.mod.ensure_decl("fopen",  "declare i8* @fopen(i8*, i8*)")
+    cg.mod.ensure_decl("fclose", "declare i32 @fclose(i8*)")
+    cg.mod.ensure_decl("fwrite", "declare i64 @fwrite(i8*, i64, i64, i8*)")
+    cg.mod.ensure_decl("strlen", "declare i64 @strlen(i8*)")
+    p_expr: Expr := args.__get(0)
+    c_expr: Expr := args.__get(1)
+    path := _gen_expr(cg, p_expr)
+    content := _gen_expr(cg, c_expr)
+    mode_name := cg.mod.alloc_string("w")
+    mode_gep := cg.fresh()
+    cg.emit(mode_gep + " = getelementptr inbounds [2 x i8], [2 x i8]* " +
+            mode_name + ", i64 0, i64 0")
+    fp := cg.fresh()
+    cg.emit(fp + " = call i8* @fopen(i8* " + path + ", i8* " + mode_gep + ")")
+    len_i := cg.fresh()
+    cg.emit(len_i + " = call i64 @strlen(i8* " + content + ")")
+    written := cg.fresh()
+    cg.emit(written + " = call i64 @fwrite(i8* " + content + ", i64 1, i64 " +
+            len_i + ", i8* " + fp + ")")
+    closed := cg.fresh()
+    cg.emit(closed + " = call i32 @fclose(i8* " + fp + ")")
     return "0"
 }
 

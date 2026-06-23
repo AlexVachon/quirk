@@ -344,6 +344,45 @@ define _check_call(s: Sema, c: Call) -> Ty {
         }
         return TVoid()
     }
+    // Builtin: `read_file(path: String) -> String`. Lowers to
+    // fopen + fseek/ftell + fread + fclose.
+    if name == "read_file" {
+        if c.args.length() != 1 {
+            s.report("read_file() takes 1 argument (path)")
+            return TError("read_file arity")
+        }
+        pe: Expr := c.args.__get(0)
+        pt := _check_expr(s, pe)
+        is_str := false
+        match pt { case TString as _ => is_str = true case _ => {} }
+        if is_str == false {
+            s.report("read_file() expects a String path; got '" + ty_to_string(pt) + "'")
+            return TError("read_file arg")
+        }
+        return TString()
+    }
+    // Builtin: `write_file(path: String, content: String) -> Int`.
+    // Returns 0 on success (no error handling yet).
+    if name == "write_file" {
+        if c.args.length() != 2 {
+            s.report("write_file() takes 2 arguments (path, content)")
+            return TError("write_file arity")
+        }
+        a0: Expr := c.args.__get(0)
+        a1: Expr := c.args.__get(1)
+        at0 := _check_expr(s, a0)
+        at1 := _check_expr(s, a1)
+        is_str_a := false
+        match at0 { case TString as _ => is_str_a = true case _ => {} }
+        is_str_b := false
+        match at1 { case TString as _ => is_str_b = true case _ => {} }
+        if is_str_a == false or is_str_b == false {
+            s.report("write_file() expects (String, String); got '" +
+                     ty_to_string(at0) + "' and '" + ty_to_string(at1) + "'")
+            return TError("write_file arg")
+        }
+        return TInt()
+    }
     // Builtin: `len(List) -> Int`. Reads the i32 length field
     // out of the %QList header. Will graduate to method-call
     // form `xs.length()` once member-call syntax lands.

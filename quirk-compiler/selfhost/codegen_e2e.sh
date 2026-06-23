@@ -684,6 +684,44 @@ run_with_stdout "concat with newline" \
     0 "error at 12
 in source"
 
+# Phase 4.26: read_file + write_file builtins. fopen + fseek
+# + ftell + fread + fclose for reads; fopen + strlen + fwrite
+# + fclose for writes. No error handling yet.
+run_with_stdout "write+read round-trip" \
+    'define main() -> Int {
+    write_file("/tmp/quirk_e2e_a.txt", "round-trip ok")
+    s := read_file("/tmp/quirk_e2e_a.txt")
+    print(s)
+    return 0
+}' \
+    0 "round-trip ok"
+run_with_stdout "read multi-line" \
+    'define main() -> Int {
+    write_file("/tmp/quirk_e2e_b.txt", "line one\nline two\nline three")
+    s := read_file("/tmp/quirk_e2e_b.txt")
+    print(s)
+    return 0
+}' \
+    0 "line one
+line two
+line three"
+run "read returns length-correct buffer" \
+    'define main() -> Int {
+    write_file("/tmp/quirk_e2e_c.txt", "exactly42charactersinthisteststringpadding!")
+    s := read_file("/tmp/quirk_e2e_c.txt")
+    return s.length() - 1
+}' \
+    42
+run_with_stdout "rewrite overwrites" \
+    'define main() -> Int {
+    write_file("/tmp/quirk_e2e_d.txt", "first content here")
+    write_file("/tmp/quirk_e2e_d.txt", "second")
+    s := read_file("/tmp/quirk_e2e_d.txt")
+    print(s)
+    return 0
+}' \
+    0 "second"
+
 # Phase 4.3: string literals + print() via puts().
 run_with_stdout "print literal" \
     'define main() -> Int { print("hello"); return 42 }' \
@@ -707,4 +745,4 @@ if [ "$fails" -gt 0 ]; then
     exit 1
 fi
 echo ""
-echo "all 133/133 cases passed"
+echo "all 137/137 cases passed"

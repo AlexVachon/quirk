@@ -46,6 +46,7 @@ toolchain dependency from anyone wanting to hack on the compiler.
 |  4.23 | `from .X use { … }` import statement parsing (concatenate-and-compile model) | landed (v4.0.0-alpha.27) |
 |  4.24 | String escape sequences (`\n` / `\t` / `\"` / `\\` / `\r` / `\0`) | landed (v4.0.0-alpha.28) |
 |  4.25 | parser.quirk rewritten to error-accumulation (drops `throw`) | landed (v4.0.0-alpha.29) |
+|  4.26 | `read_file` + `write_file` builtins via libc fopen/fread/fwrite/fclose | landed (v4.0.0-alpha.30) |
 |  5    | Bootstrap — Quirk compiler compiles itself, byte-identical | not started |
 
 The Codegen phase deliberately targets *text-form* LLVM IR (`.ll`)

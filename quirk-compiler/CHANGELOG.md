@@ -5,6 +5,59 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.30] — 2026-06-22
+
+### Self-hosting Phase 4.26: `read_file` + `write_file` builtins
+
+`read_file(path: String) -> String` and `write_file(path:
+String, content: String) -> Int`. With these the self-hosted
+compiler can finally consume on-disk source files — the last
+runtime piece before a multi-file driver.
+
+**`read_file` lowering.** `_gen_read_file` emits the standard
+libc sequence: `fopen(path, "r")` → `fseek(fp, 0, SEEK_END)`
+→ `ftell(fp)` for size → `fseek(fp, 0, SEEK_SET)` →
+`malloc(size + 1)` → `fread(buf, 1, size, fp)` → null-
+terminate at `buf[size]` → `fclose(fp)`. The mode string
+`"r"` interns through the existing `alloc_string` path.
+Returns the `i8*` buffer.
+
+**`write_file` lowering.** `_gen_write_file` is simpler:
+`fopen(path, "w")` → `strlen(content)` → `fwrite(content,
+1, len, fp)` → `fclose(fp)`. Returns i32 0.
+
+**No error handling yet.** A missing file or fopen failure
+is undefined behaviour — the resulting buffer will be junk.
+Selfhost source's bootstrap driver controls paths
+explicitly, so this is acceptable for the immediate use
+case.
+
+**Sema.** Both builtins recognised in `_check_call`'s ident-
+callee path alongside `print` / `len` / `read_file`. Arg-type
+checks reject non-String paths or contents.
+
+**`_expr_static_ty`.** Added entries for `read_file` (→ i8*)
+and `write_file` (→ i32) so `s := read_file(p)` types the
+slot correctly.
+
+`codegen_e2e.sh` gains 4 new cases:
+
+```
+ok  write+read round-trip            write "round-trip ok", read it back
+ok  read multi-line                   write "line one\nline two\n...", read all
+ok  read returns length-correct buffer  s.length() reflects file size
+ok  rewrite overwrites                  second write replaces first
+
+all 137/137 cases passed
+```
+
+The next (and last!) blocker before Phase 5: a
+concatenate-and-compile driver written in Quirk that takes
+a top-level file, resolves `from .X use { … }` imports,
+reads each referenced file via `read_file`, concatenates,
+and pipes through the existing tokenize/parse/check/emit
+pipeline.
+
 ## [4.0.0-alpha.29] — 2026-06-22
 
 ### Self-hosting Phase 4.25: parser.quirk rewritten to error accumulation

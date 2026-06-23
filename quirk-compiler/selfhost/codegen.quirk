@@ -93,21 +93,20 @@ define _q_ty_to_llvm(qty: String) -> String {
     if qty == "Bool"   { return "i1" }
     if qty == "Double" { return "double" }
     if qty == "String" { return "i8*" }
-    // `List` value is a `%QList*` — a heap-allocated header
-    // `{ i32 length, [0 x i32] data }` with the element
-    // array embedded after the length. Element type is fixed
-    // at i32 for Phase 4.12; generic-element-type lists land
-    // when method-call syntax does.
-    if qty == "List"   { return "%QList*" }
+    // Bare `List` defaults to the pointer-element layout
+    // `%QListP* = { i32 length, i32 capacity, i8** data }`.
+    // For Int-element storage, use the explicit `List<Int>`
+    // annotation which routes to `%QList*`.
+    if qty == "List"   { return "%QListP*" }
     // `Map` value is a `%QMap*` — header `{ length, capacity,
     // %QMapKV* entries }` with the entry array separately
     // malloc'd so .put can realloc on growth. Keys are i8*
     // (String); values are i8* (Any heap pointer, downcast
     // by VarDecl annotation honoring).
     if qty == "Map"    { return "%QMap*" }
-    // Generic list annotation `List<T>`. `List<Int>` stays
-    // on the i32-element track (%QList*); any other parameter
-    // is a pointer-element list (%QListP*) with i8* data.
+    // Generic list annotation `List<T>`. `List<Int>` is the
+    // i32-element list (%QList*); any other parameter is
+    // pointer-element (%QListP*).
     if qty.startswith("List<") and qty.endswith(">") {
         inner := qty.substring(5, qty.length() - 1)
         if inner == "Int" { return "%QList*" }
@@ -732,10 +731,11 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
             if name == "Map" {
                 return _gen_map_new(cg)
             }
-            if name == "List" {
-                return _gen_list_new(cg)
-            }
-            if name == "ListP" {
+            // Both `List()` and `ListP()` build an empty
+            // pointer-element list — the int-element variant
+            // doesn't have a no-arg constructor; use a literal
+            // `[1, 2, 3]` seed instead.
+            if name == "List" or name == "ListP" {
                 return _gen_listp_new(cg)
             }
             // Variant constructor: `V(args)` where V is a
@@ -887,8 +887,10 @@ define _expr_static_ty(cg: FnCG, e: Expr) -> String {
             if cname == "write_file" { return "i32" }
             // Builtin collection constructors.
             if cname == "Map"  { return "%QMap*" }
-            if cname == "List" { return "%QList*" }
-            if cname == "ListP" { return "%QListP*" }
+            // Both `List()` and `ListP()` produce
+            // pointer-element lists. Phase 5c flipped the
+            // default to match selfhost source's usage.
+            if cname == "List" or cname == "ListP" { return "%QListP*" }
             // Variant constructor returns the union's base
             // pointer type, not the synthetic per-variant struct.
             if cg.mod.variants.has(cname) {

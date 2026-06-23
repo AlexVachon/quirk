@@ -50,6 +50,7 @@ toolchain dependency from anyone wanting to hack on the compiler.
 |  4.27 | Multi-file driver — `build.quirk` resolves imports + assembles combined source | landed (v4.0.0-alpha.31) |
 |  5a   | Bootstrap pass 1 — doc comments, `and`/`or`, `continue`/`break`, multi-elif | landed (v4.0.0-alpha.32) |
 |  5b   | Bootstrap pass 2 — String ordering (`<`, `<=`, `>`, `>=`) via strcmp | landed (v4.0.0-alpha.33) |
+|  5c   | Bootstrap pass 3 — flip bare `List` default to pointer-list | landed (v4.0.0-alpha.34) |
 |  5    | Bootstrap — Quirk compiler compiles itself, byte-identical | in progress |
 
 The Codegen phase deliberately targets *text-form* LLVM IR (`.ll`)

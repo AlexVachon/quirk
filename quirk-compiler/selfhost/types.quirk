@@ -69,12 +69,16 @@ define ty_from_annot(name: String) -> Ty {
     if name == "Bool"   { return TBool() }
     if name == "Void"   { return TVoid() }
     if name == "Any"    { return TAny() }
-    if name == "List"   { return TList() }
+    // Bare `List` annotation defaults to the pointer-element
+    // list (`%QListP*`). Selfhost source overwhelmingly uses
+    // `List` for what are really `List<Token>` /
+    // `List<String>` / `List<Stmt>` etc. — pointer lists. For
+    // Int-element lists, the explicit `List<Int>` annotation
+    // routes through the i32-storage `TList` branch below.
+    if name == "List"   { return TListP("Any") }
     if name == "Map"    { return TMap() }
     // Generic list annotation `List<T>`. `List<Int>` is the
-    // existing i32-element list; any other parameter is a
-    // pointer-element list (TListP) whose runtime layout is
-    // `%QListP*`. We keep the parameter for diagnostics.
+    // i32-element list; any other parameter is pointer-element.
     if name.startswith("List<") and name.endswith(">") {
         // Strip "List<" prefix (5 chars) and ">" suffix (1 char).
         inner := name.substring(5, name.length() - 1)

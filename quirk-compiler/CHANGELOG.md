@@ -5,6 +5,66 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.34] — 2026-06-23
+
+### Self-hosting Phase 5c: flip bare `List` default to pointer-list
+
+Selfhost source uses bare `List` annotation everywhere for
+what are really pointer-element lists (`List<Token>`,
+`List<Stmt>`, `List<String>`, etc.). Our default mapping
+made bare `List` mean i32-storage, causing ~20 `.append()
+expects Int, got Token` bootstrap diagnostics. This release
+flips the default: bare `List` and the `List()` constructor
+both produce `%QListP*` (pointer-element). For Int-element
+lists, use the explicit `List<Int>` annotation or
+`[1, 2, 3]` literal inference.
+
+**`ty_from_annot`** in [types.quirk](selfhost/types.quirk):
+`"List"` now returns `TListP("Any")` instead of `TList()`.
+The `"List<T>"` generic-annotation branch is unchanged
+(`List<Int>` → `TList()`, anything else → `TListP(T)`).
+
+**`_q_ty_to_llvm`** in [codegen.quirk](selfhost/codegen.quirk):
+`"List"` now resolves to `"%QListP*"`. The `"List<T>"` path
+is unchanged.
+
+**`List()` constructor.** Sema's `_check_call` and
+codegen's Call arm both fold the `List` and `ListP` builtin
+constructor names — both build an empty `%QListP*` via
+`_gen_listp_new`. There's no longer a no-arg constructor
+for Int-element lists; use a literal seed instead
+(`xs := [0]`, then `xs.append(...)`).
+
+**E2e updates.** Five existing test cases used bare `List`
+annotation or `List()` constructor with Int semantics —
+mechanically updated:
+
+  - `define second(xs: List)` → `xs: List<Int>`
+  - `define mk() -> List` → `-> List<Int>`
+  - `define summing(xs: List)` → `xs: List<Int>`
+  - `define cnt(xs: List)` → `xs: List<Int>`
+  - `define total(xs: List)` → `xs: List<Int>`
+  - `define fill() -> List` → `-> List<Int>`
+  - `tokens: List` (in struct field) → `List<Int>`
+  - `xs := List()` (Int-list ctor) → `xs := [0]` literal seed
+
+All 150 e2e cases continue to pass.
+
+**Bootstrap probe.** Pointing `compile_combined` at
+`lexer.quirk` now produces just 9 remaining diagnostics —
+all variants of `.str() not defined on 'TokenKind'` (enum
+stringification). Down from 30+ before this phase.
+
+```
+SEMA FAILED:
+  .str() not defined on 'TokenKind'   (1 + 8 method receiver lines)
+```
+
+Enum stringification is the last punch-list item. Each
+declared enum needs a generated `T_to_str(i32) -> i8*`
+helper that maps the ordinal back to the variant name's
+string.
+
 ## [4.0.0-alpha.33] — 2026-06-23
 
 ### Self-hosting Phase 5b: String ordering operators

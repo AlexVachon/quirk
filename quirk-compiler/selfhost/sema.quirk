@@ -427,17 +427,14 @@ define _check_call(s: Sema, c: Call) -> Ty {
         }
         return TMap()
     }
-    if name == "List" {
+    // `List()` and `ListP()` both build an empty pointer-
+    // element list (`%QListP*`) — selfhost source's typical
+    // usage. For an Int-element list, use `[1, 2, 3]`
+    // literal initialisation (or seed with `[0]` and append).
+    if name == "List" or name == "ListP" {
         if c.args.length() != 0 {
-            s.report("List() takes no arguments; use `[…]` literal for prefilled")
+            s.report(name + "() takes no arguments; use `[…]` literal for prefilled")
             return TError("List() arity")
-        }
-        return TList()
-    }
-    if name == "ListP" {
-        if c.args.length() != 0 {
-            s.report("ListP() takes no arguments; pointer lists grow via .append()")
-            return TError("ListP() arity")
         }
         return TListP("Any")
     }

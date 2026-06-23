@@ -321,11 +321,11 @@ run "list literal + index"  "define main() -> Int { xs := [10, 20, 32]; return x
 run "list index expr"       "define main() -> Int { xs := [1, 2, 3, 4]; i := 2; return xs[i] + 39 }" 42
 run "list of one element"   "define main() -> Int { xs := [42]; return xs[0] }" 42
 run "list via param" \
-    "define second(xs: List) -> Int { return xs[1] }
+    "define second(xs: List<Int>) -> Int { return xs[1] }
 define main() -> Int { return second([100, 42, 200]) }" \
     42
 run "list returned by fn" \
-    "define mk() -> List { return [10, 12, 20] }
+    "define mk() -> List<Int> { return [10, 12, 20] }
 define main() -> Int { xs := mk(); return xs[0] + xs[1] + xs[2] }" \
     42
 
@@ -336,7 +336,7 @@ run "len literal"     "define main() -> Int { return len([1, 2, 3, 4, 5, 6, 7]) 
 run "len of local"    "define main() -> Int { xs := [10, 20, 30]; return len(xs) + 39 }"        42
 run "len drives loop" "define main() -> Int { xs := [3, 4, 5, 6, 7, 8, 9]; i := 0; n := 0; while i < len(xs) { n = n + xs[i]; i = i + 1 } return n }" 42
 run "len via param" \
-    "define summing(xs: List) -> Int { i := 0; n := 0; while i < len(xs) { n = n + xs[i]; i = i + 1 } return n }
+    "define summing(xs: List<Int>) -> Int { i := 0; n := 0; while i < len(xs) { n = n + xs[i]; i = i + 1 } return n }
 define main() -> Int { return summing([10, 12, 20]) }" \
     42
 run "len of single" "define main() -> Int { return len([42]) + 41 }"                            42
@@ -359,7 +359,7 @@ run "string.length() literal" \
     'define main() -> Int { return "hello, quirk!!!".length() + 27 }' \
     42
 run "list.length() via param" \
-    "define cnt(xs: List) -> Int { return xs.length() }
+    "define cnt(xs: List<Int>) -> Int { return xs.length() }
 define main() -> Int { return cnt([1, 2, 3]) * 14 }" \
     42
 
@@ -409,11 +409,11 @@ run "build via loop" \
     "define main() -> Int { xs := [0]; i := 1; while i < 7 { xs.append(i * 2); i = i + 1 } sum := 0; j := 0; while j < xs.length() { sum = sum + xs[j]; j = j + 1 } return sum }" \
     42
 run "append seen by callee" \
-    "define total(xs: List) -> Int { i := 0; n := 0; while i < xs.length() { n = n + xs[i]; i = i + 1 } return n }
+    "define total(xs: List<Int>) -> Int { i := 0; n := 0; while i < xs.length() { n = n + xs[i]; i = i + 1 } return n }
 define main() -> Int { xs := [10]; xs.append(20); xs.append(12); return total(xs) }" \
     42
 run "append returns to fn" \
-    "define fill() -> List { xs := [0]; i := 1; while i < 10 { xs.append(i); i = i + 1 } return xs }
+    "define fill() -> List<Int> { xs := [0]; i := 1; while i < 10 { xs.append(i); i = i + 1 } return xs }
 define main() -> Int { xs := fill(); return xs.length() + xs[8] + 24 }" \
     42
 
@@ -533,7 +533,7 @@ run "map basic"             'struct S { n: Int } define main() -> Int { m := Map
 run "map .has miss + hit"   'define main() -> Int { m := Map(); h: Int := 7; if m.has("k") { return 0 } m.put("k", "x"); if m.has("k") { return 42 } return 0 }' 42
 run "map length grows"      'define main() -> Int { m := Map(); m.put("a", "1"); m.put("b", "2"); m.put("c", "3"); return m.length() * 14 }' 42
 run "map put overwrite"     'struct S { n: Int } define main() -> Int { m := Map(); m.put("k", S(0)); m.put("k", S(42)); h: S := m.get("k"); return h.n }' 42
-run "list ctor + append"    'define main() -> Int { xs := List(); xs.append(20); xs.append(22); return xs[0] + xs[1] }' 42
+run "list seed + append"    'define main() -> Int { xs := [0]; xs.append(20); xs.append(22); return xs[1] + xs[2] }' 42
 run "map values via struct" 'struct Sig { ret: Int } define main() -> Int { m := Map(); m.put("foo", Sig(40)); s: Sig := m.get("foo"); return s.ret + 2 }' 42
 run "map across grow"       'define main() -> Int { m := Map(); i := 0; while i < 10 { m.put("k" + i.str(), "v"); i = i + 1 } return m.length() * 4 + 2 }' 42
 
@@ -625,8 +625,8 @@ run "init zeroes implicit field" \
 define main() -> Int { c := Counter(42); return c.tick + c.max }" \
     42
 run "init holds list param" \
-    "struct ParserState { tokens: List; pos: Int
-    define __init(self, tokens: List) -> void { self.tokens = tokens; self.pos = 0 }
+    "struct ParserState { tokens: List<Int>; pos: Int
+    define __init(self, tokens: List<Int>) -> void { self.tokens = tokens; self.pos = 0 }
 }
 define main() -> Int { s := ParserState([10, 20, 30]); return s.pos + s.tokens[2] + 12 }" \
     42

@@ -2556,6 +2556,27 @@ define _gen_function(fdecl: FunctionDecl, mod: ModuleCG) -> String {
     self_ty := ""
     if is_method { self_ty = "%struct." + fdecl.receiver + "*" }
 
+    // Extern: emit an LLVM `declare`, no body. Param signature
+    // for `declare` lists types only (no SSA names), and there's
+    // no entry block to seed alloca slots into. The sig table
+    // is already populated by emit_module's pre-pass so call
+    // sites resolve via the same lookup as normal functions.
+    if fdecl.is_extern {
+        dsig := ""
+        di := 0
+        while di < fdecl.params.length() {
+            if di > 0 { dsig = dsig + ", " }
+            dp: Param := fdecl.params.__get(di)
+            dty := _resolve_ty(mod, dp.type_annot)
+            dsig = dsig + dty
+            di = di + 1
+        }
+        full_name := fdecl.name
+        if is_method { full_name = fdecl.receiver + "__" + fdecl.name }
+        else { full_name = _llvm_fn_name(fdecl.name) }
+        return "declare " + ret_llvm + " @" + full_name + "(" + dsig + ")\n"
+    }
+
     // Build the param signature `<ty> %arg0, <ty> %arg1, ...`
     // (we don't reuse the user's name in the LLVM param slot
     // because every name needs its own alloca; the param

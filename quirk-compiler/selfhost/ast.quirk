@@ -99,10 +99,13 @@ struct Param {
 }
 
 ---
-Top-level function declaration. `body` is `List<Stmt>`.
-`ret_type` is empty when no `-> T` clause. `receiver` is the
-struct name for methods (`define Foo.method(...)`) and empty
-for free functions.
+Top-level function declaration. `body` is `List<Stmt>`
+(empty for `is_extern == true`). `ret_type` is empty when no
+`-> T` clause. `receiver` is the struct name for methods
+(`define Foo.method(...)`) and empty for free functions.
+`is_extern == true` marks a body-less FFI declaration —
+codegen emits an LLVM `declare` rather than a `define`,
+linkage is satisfied at link time by the runtime.
 ---
 struct FunctionDecl {
     name: String
@@ -110,13 +113,15 @@ struct FunctionDecl {
     ret_type: String
     body: List
     receiver: String
+    is_extern: Bool
 
-    define __init(self, name: String, params: List, ret_type: String, body: List, receiver: String) -> void {
+    define __init(self, name: String, params: List, ret_type: String, body: List, receiver: String, is_extern: Bool) -> void {
         self.name = name
         self.params = params
         self.ret_type = ret_type
         self.body = body
         self.receiver = receiver
+        self.is_extern = is_extern
     }
 }
 

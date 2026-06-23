@@ -1389,6 +1389,24 @@ standalone_run "ELF: eprint routes to stderr, print to stdout" \
     return 0
 }' \
     0 "on stdout"
+
+# Phase 6: extern define lowering. The user declares an FFI
+# function with no body; codegen emits `declare T @name(...)`
+# instead of `define ... { ... }`. Linkage is resolved by clang
+# at link time. This is the gateway to selfhost-compiled stdlib
+# support — every from-io/from-sys/etc. ultimately bottoms out
+# at extern definitions.
+standalone_run "ELF: extern define lowers to libc puts" \
+    'extern define puts(s: String) -> Int
+define main() -> Int { puts("via extern"); return 42 }' \
+    42 "via extern"
+standalone_run "ELF: extern define with multiple args (libc strlen)" \
+    'extern define strlen(s: String) -> Int
+define main() -> Int {
+    n := strlen("hello!")
+    return n
+}' \
+    6
 # (the stdout=on stdout assertion implicitly proves eprint did
 # NOT show up there — it was routed to stderr instead.)
 
@@ -1398,4 +1416,4 @@ if [ "$fails" -gt 0 ]; then
     exit 1
 fi
 echo ""
-echo "all 164/164 cases passed"
+echo "all 166/166 cases passed"

@@ -559,6 +559,15 @@ define _parse_param(s: ParserState) -> Param {
 }
 
 define _parse_function_decl(s: ParserState) -> FunctionDecl {
+    // Optional `extern` prefix: `extern define name(...) -> T`
+    // declares an FFI function with no body. Codegen emits an
+    // LLVM `declare` instead of a `define`; the runtime supplies
+    // the symbol at link time. Used pervasively by the stdlib
+    // (io.File, sys.argv, net.http, etc.) to bind C functions.
+    is_extern := false
+    if s.match_kind(TokenKind.Extern) {
+        is_extern = true
+    }
     s.expect(TokenKind.Define, "'define'")
     first := s.expect(TokenKind.Identifier, "function name").value
     // Optional `.method` form: `define Foo.method(...)` is a
@@ -585,8 +594,12 @@ define _parse_function_decl(s: ParserState) -> FunctionDecl {
     if s.match_kind(TokenKind.Arrow) {
         ret_type = _parse_type_annot(s, "return type after '->'")
     }
-    body := _parse_block(s)
-    return FunctionDecl(name, params, ret_type, body, receiver)
+    // Extern functions have no body — return an empty stmt list.
+    body := List()
+    if is_extern == false {
+        body = _parse_block(s)
+    }
+    return FunctionDecl(name, params, ret_type, body, receiver, is_extern)
 }
 
 ---
@@ -729,7 +742,7 @@ define parse(tokens: List) -> List {
             _skip_import(s)
             continue
         }
-        if t.kind == TokenKind.Define {
+        if t.kind == TokenKind.Define or t.kind == TokenKind.Extern {
             out.append(Func(_parse_function_decl(s)))
         } elif t.kind == TokenKind.Struct {
             inside_methods := List()

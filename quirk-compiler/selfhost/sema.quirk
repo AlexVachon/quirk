@@ -1243,14 +1243,18 @@ define check(decls: List) -> List {
         i = i + 1
     }
 
-    // Pass 2: check each body.
+    // Pass 2: check each body. Extern functions have no body so
+    // we skip the body-check entirely — the signature is already
+    // in the sig table from pass 1, which is all callers need.
     j := 0
     while j < decls.length() {
         d: TopLevel := decls.__get(j)
         match d {
             case Func as f => {
                 fd: FunctionDecl := f.decl
-                _check_function(s, fd)
+                if fd.is_extern == false {
+                    _check_function(s, fd)
+                }
             }
             case _ => {}
         }

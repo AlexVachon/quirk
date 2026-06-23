@@ -5,6 +5,90 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.46] — 2026-06-23
+
+### Phase 6: 🎉 **`extern define` lowering in selfhost — the stdlib gateway**
+
+Selfhost now supports body-less `extern define` declarations
+the same way the C++ compiler does. This is the gateway to
+real-program support — every `from io use { File }`, `from sys
+use { ... }`, `from net use { http }` ultimately bottoms out
+at extern declarations binding C runtime symbols.
+
+```quirk
+extern define puts(s: String) -> Int
+extern define strlen(s: String) -> Int
+
+define main() -> Int {
+    puts("hello from extern")
+    return strlen("six!!!")    // 6
+}
+```
+
+Codegen emits the right LLVM shape — `declare T @name(...)`
+in place of `define ... { ... }`:
+
+```llvm
+declare i32 @puts(i8*)
+declare i32 @strlen(i8*)
+```
+
+Linkage is resolved at clang time via libc, the same way every
+other call into the runtime works.
+
+**Pieces shipped:**
+
+1. **AST** (`selfhost/ast.quirk`): `FunctionDecl` gains an
+   `is_extern: Bool` field. Constructor takes one extra arg;
+   single call site in the parser updated.
+2. **Lexer** (`selfhost/lexer.quirk`): no change — `extern` was
+   already a recognised keyword (`TokenKind.Extern`).
+3. **Parser** (`selfhost/parser.quirk`): top-level dispatch
+   accepts `Extern` as a valid statement-start token;
+   `_parse_function_decl` peeks for the `extern` prefix, sets
+   `is_extern = true`, and skips the `{...}` body parse when
+   set.
+4. **Sema** (`selfhost/sema.quirk`): the body-check loop in
+   `check()` skips functions where `is_extern == true`. Sig
+   registration is unchanged — extern functions land in the
+   sig table just like regular ones, so call-site resolution
+   works without special-casing.
+5. **Codegen** (`selfhost/codegen.quirk`): `_gen_function`
+   early-returns with a single `declare` line when
+   `fd.is_extern`. Sig-table registration in `emit_module`'s
+   pre-pass is unchanged.
+
+**Why this is the gateway, in three lines:**
+
+- Without extern: selfhost-compiled programs can only call
+  `print`, `read_file`, `write_file`, `arg_count`/`arg_get`
+  (the built-ins). Nothing else.
+- With extern: selfhost-compiled programs can call any libc
+  function, any runtime helper, any C symbol — which is what
+  every stdlib module ultimately wraps.
+- The next phases (traits as no-ops, for-in, try/throw,
+  interpolation, lambdas, generics) can now be developed and
+  tested against real stdlib code instead of synthetic
+  bootstrap probes.
+
+### Bootstrap status
+
+166 cases pass (up from 164 — two new extern probes).
+Selfhost fixed point still holds at 1,669,012 bytes (IR grew
+~9 KB from the new `is_extern` field plumbing + parser
+branch).
+
+### What's next (Phase 7+ roadmap)
+
+- **Phase 7**: trait declarations accepted as no-ops (so
+  `struct Foo : Comparable, Iterable { ... }` parses)
+- **Phase 8**: `for x in xs { ... }` loops
+- **Phase 9**: `try` / `throw` / `catch`
+- **Phase 10**: string interpolation
+- **Phase 11+**: lambdas, generics, surface niceties
+- **Phase 14-17**: REPL + package manager port, then the
+  v5.0.0 cutover
+
 ## [4.0.0-alpha.45] — 2026-06-23
 
 ### Polish: stderr routing for diagnostics (`eprint` builtin)

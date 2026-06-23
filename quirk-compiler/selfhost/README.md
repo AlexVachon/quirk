@@ -55,6 +55,7 @@ toolchain dependency from anyone wanting to hack on the compiler.
 |  5e   | **🎉 Parser bootstrap** — Bool ==, .__get(), Return/Assign coerce, two-pass type reg | landed (v4.0.0-alpha.36) |
 |  5f   | **🎉 Sema bootstrap** — bare `return`, `.pop()`, variant-name annot, ret null, fresh slot | landed (v4.0.0-alpha.37) |
 |  5g   | **🎉 Codegen bootstrap** — `Map.keys() → List<String>` + `_gen_map_keys` helper | landed (v4.0.0-alpha.38) |
+|  5h   | **🎉 Standalone ELF** — selfhost IR → llc + clang -no-pie → real `a.out` runs | landed (v4.0.0-alpha.39) |
 |  5    | Bootstrap — Quirk compiler compiles itself, byte-identical | in progress |
 
 The Codegen phase deliberately targets *text-form* LLVM IR (`.ll`)

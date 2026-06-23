@@ -1064,10 +1064,108 @@ EOF
 
 bootstrap_codegen_test
 
+# Phase 5h: standalone binary linkage. Take the selfhost-produced
+# IR, lower it via llc-14, link with clang into a real ELF, and
+# run the binary directly (no lli). This is the proof that the
+# IR isn't lli-specific — it works as a static ELF with libc.
+# Variant lets the caller pick the input source + expected exit
+# + (optional) expected stdout substring.
+standalone_run() {
+    local label="$1"
+    local src="$2"
+    local expected="$3"
+    local expected_out="${4:-}"
+    local driver="selfhost/_standalone.quirk"
+    local quoted
+    quoted=$(printf %s "$src" | python3 -c 'import sys, json; print(json.dumps(sys.stdin.read()))')
+    cat > "$driver" <<EOF
+from .lexer use { tokenize }
+from .parser use { parse }
+from .sema use { check }
+from .codegen use { emit_module }
+src := $quoted
+print(emit_module(parse(tokenize(src))))
+EOF
+    local ll_path s_path bin_path
+    ll_path=$(mktemp --suffix=.ll)
+    s_path=$(mktemp --suffix=.s)
+    bin_path=$(mktemp --suffix=.bin)
+    "$QUIRK" --no-aot --no-cache "$driver" > "$ll_path" 2>/dev/null
+    rm -f "$driver"
+    if grep -qE "^(SEMA|PARSE) FAILED" "$ll_path"; then
+        echo "FAIL  $label  (selfhost compile rejected)"
+        cat "$ll_path"
+        fails+=1
+        rm -f "$ll_path" "$s_path" "$bin_path"
+        return
+    fi
+    llc-14 "$ll_path" -o "$s_path" 2>/dev/null
+    if [ ! -s "$s_path" ]; then
+        echo "FAIL  $label  (llc rejected IR)"
+        echo "      ir at $ll_path"
+        fails+=1
+        rm -f "$ll_path" "$s_path" "$bin_path"
+        return
+    fi
+    "${CLANG:-clang-14}" -no-pie "$s_path" -o "$bin_path" 2>/dev/null
+    if [ ! -x "$bin_path" ]; then
+        echo "FAIL  $label  (clang link failed)"
+        echo "      asm at $s_path"
+        fails+=1
+        rm -f "$ll_path" "$s_path" "$bin_path"
+        return
+    fi
+    local got_out
+    got_out=$("$bin_path")
+    local got_exit=$?
+    if [ "$got_exit" -ne "$expected" ]; then
+        echo "FAIL  $label  (exit=$got_exit, expected $expected; out='$got_out')"
+        echo "      bin at $bin_path"
+        fails+=1
+        return
+    fi
+    if [ -n "$expected_out" ] && [ "$got_out" != "$expected_out" ]; then
+        echo "FAIL  $label  (stdout='$got_out', expected '$expected_out')"
+        echo "      bin at $bin_path"
+        fails+=1
+        return
+    fi
+    echo "ok    $label  (exit=$got_exit)"
+    rm -f "$ll_path" "$s_path" "$bin_path"
+}
+
+# Coverage: simple arithmetic (no runtime helpers), libc lowering
+# via print/puts, malloc'd lists + index, and the standard
+# "tagged union + match" shape that touches sub-allocations.
+standalone_run "ELF: arithmetic" \
+    'define double_(x: Int) -> Int { return x * 2 }
+define main() -> Int { return double_(21) }' \
+    42
+standalone_run "ELF: puts via print" \
+    'define main() -> Int { print("hello standalone"); return 42 }' \
+    42 "hello standalone"
+standalone_run "ELF: malloc'd list" \
+    'define main() -> Int { xs := [10, 20, 12]; sum := 0; i := 0; while i < xs.length() { sum = sum + xs[i]; i = i + 1 } return sum }' \
+    42
+standalone_run "ELF: tagged union match" \
+    'type R = Ok(v: Int) | Err(m: String)
+define unwrap(r: R) -> Int {
+    match r {
+        case Ok as o => return o.v
+        case Err as _ => return -1
+        case _ => return -1
+    }
+}
+define main() -> Int { return unwrap(Ok(42)) }' \
+    42
+standalone_run "ELF: int.str() + strcat" \
+    'define main() -> Int { n := 7; print("count is " + n.str()); return 0 }' \
+    0 "count is 7"
+
 if [ "$fails" -gt 0 ]; then
     echo ""
     echo "$fails case(s) failed"
     exit 1
 fi
 echo ""
-echo "all 154/154 cases passed"
+echo "all 159/159 cases passed"

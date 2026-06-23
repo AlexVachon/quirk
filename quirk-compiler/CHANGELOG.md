@@ -5,6 +5,60 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.39] — 2026-06-23
+
+### Self-hosting Phase 5h: 🎉 **standalone ELF linkage**
+
+The selfhost-produced IR now links into a real standalone ELF
+binary via `llc-14 → clang-14 -no-pie` — no `lli` JIT in the
+loop. This is the proof that selfhost's IR isn't lli-specific:
+it works as a static ELF resolving libc (`puts`, `malloc`,
+`strcmp`, `snprintf`, etc.) at link time.
+
+**No compiler changes** — the IR was already correct. This
+phase adds an `e2e` runner shape (`standalone_run`) that
+takes a source string, runs it through the selfhost pipeline
+(`tokenize → parse → check → emit_module`), then pipes the
+IR through `llc-14` for assembly + `clang-14 -no-pie` for
+linkage + runs the resulting binary directly. Five coverage
+cases:
+
+1. **Arithmetic** — no runtime helpers, smallest possible
+   selfhost ELF (~14KB). Verifies the bare entry shape +
+   return-code passes through.
+2. **`print` via libc `puts`** — string globals + the
+   `declare i8* @puts(i8*)` extern resolve cleanly.
+3. **Malloc'd list + loop** — `%QList*` heap allocation +
+   index + length walk + `mul` accumulator.
+4. **Tagged union + match** — variant ctor + tag dispatch +
+   binder slot, exercising the most complex selfhost-side
+   codegen shape.
+5. **`int.str()` + strcat** — snprintf + strcat libc chain
+   end-to-end, validating the diagnostic-message lowering
+   path that selfhost source uses everywhere.
+
+### Bootstrap status
+
+| Pipeline stage | Status |
+| -------------- | ------ |
+| selfhost compiles itself (lexer/parser/sema/codegen.quirk) | ✅ landed alpha.35-38 |
+| selfhost IR runs via lli  | ✅ landed alpha.4+ |
+| selfhost IR runs via llc + clang as standalone ELF | ✅ **landed alpha.39** |
+| selfhost IR == C++-compiler IR (byte-identical fixed-point) | open |
+| build.quirk self-compiles (driver itself) | open |
+
+**One thin layer above 100%.** The remaining work is mostly
+plumbing: build.quirk needs its `io.File`-based `_slurp`
+rewritten to `read_file` builtin (which requires adding
+`read_file`/`write_file` to the C++ compiler too, since
+build.quirk is currently invoked by the C++ binary). Then
+a real `main()` entry point + argv handling, then byte-
+identical fixed point.
+
+### Test count
+
+159 cases up from 154.
+
 ## [4.0.0-alpha.38] — 2026-06-23
 
 ### Self-hosting Phase 5g: 🎉 **codegen self-compiles too**

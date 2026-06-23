@@ -272,15 +272,18 @@ define _check_binop(s: Sema, b: BinOp) -> Ty {
         is_dbl_r := false
         match rt { case TDouble as _ => is_dbl_r = true case _ => {} }
         if is_dbl_l and is_dbl_r { return TBool() }
-        // String equality / inequality only — ordering comparisons
-        // on strings are deferred.
+        // String comparison: equality + ordering. Ordering
+        // routes through strcmp at codegen; lexicographic
+        // order matches strcmp's byte semantics, which is
+        // what the lexer's `c >= "0" and c <= "9"` checks
+        // expect.
+        is_str_l := false
+        match lt { case TString as _ => is_str_l = true case _ => {} }
+        is_str_r := false
+        match rt { case TString as _ => is_str_r = true case _ => {} }
+        if is_str_l and is_str_r { return TBool() }
         if op == "==" or op == "!=" {
-            is_str_l := false
-            match lt { case TString as _ => is_str_l = true case _ => {} }
-            is_str_r := false
-            match rt { case TString as _ => is_str_r = true case _ => {} }
-            if is_str_l and is_str_r { return TBool() }
-            // Same-typed enums compare by ordinal.
+            // Same-typed enums compare by ordinal (==/!= only).
             ename_l := ""
             match lt { case TEnum as el => ename_l = el.name case _ => {} }
             ename_r := ""

@@ -614,11 +614,15 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
             if op == ">"  { int_pred = "sgt" dbl_pred = "ogt" }
             if op == ">=" { int_pred = "sge" dbl_pred = "oge" }
             if int_pred.length() > 0 {
-                // String equality only — `==` / `!=` on i8*
-                // route through strcmp. Handled first so the
-                // strcmp result reg gets the earlier SSA
-                // number (cg.fresh() assigns in call order,
-                // emit order must match).
+                // String comparisons — all six predicates
+                // route through strcmp. Equality (`==` / `!=`)
+                // compares the strcmp result against zero;
+                // ordering (`<` / `<=` / `>` / `>=`) uses the
+                // signed icmp form against zero too (strcmp's
+                // return is sign-bearing). Handled first so
+                // the strcmp result reg gets the earlier SSA
+                // number — cg.fresh() assigns in call order
+                // and emit order must match.
                 if opd_ty == "i8*" {
                     cg.mod.ensure_decl("strcmp", "declare i32 @strcmp(i8*, i8*)")
                     cmp := cg.fresh()
@@ -626,6 +630,10 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
                     reg := cg.fresh()
                     pred := "eq"
                     if op == "!=" { pred = "ne" }
+                    if op == "<"  { pred = "slt" }
+                    if op == "<=" { pred = "sle" }
+                    if op == ">"  { pred = "sgt" }
+                    if op == ">=" { pred = "sge" }
                     cg.emit(reg + " = icmp " + pred + " i32 " + cmp + ", 0")
                     return reg
                 }

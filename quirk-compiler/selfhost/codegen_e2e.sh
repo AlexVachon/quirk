@@ -751,6 +751,27 @@ run "elif chain (4 arms)" \
     'define main() -> Int { tag := "c"; if tag == "a" { return 1 } elif tag == "b" { return 2 } elif tag == "c" { return 42 } elif tag == "d" { return 4 } return 0 }' \
     42
 
+# Phase 5b: String ordering. `<`, `<=`, `>`, `>=` on String
+# operands route through strcmp + the matching signed icmp
+# predicate. Used in the selfhost lexer's `c >= "0" and
+# c <= "9"` char-range checks.
+run "string less-than" \
+    'define main() -> Int { if "apple" < "banana" { return 42 } return 0 }' \
+    42
+run "string greater-equal" \
+    'define main() -> Int { c := "5"; if c >= "0" and c <= "9" { return 42 } return 0 }' \
+    42
+run "string less-equal" \
+    'define main() -> Int { if "Q" <= "Q" { return 42 } return 0 }' \
+    42
+run "string greater-than miss" \
+    'define main() -> Int { if "z" > "a" { return 42 } return 0 }' \
+    42
+run "char-range alpha lower" \
+    'define is_alpha(c: String) -> Bool { return (c >= "a" and c <= "z") or (c >= "A" and c <= "Z") }
+define main() -> Int { if is_alpha("m") and is_alpha("Z") { return 42 } return 0 }' \
+    42
+
 # Phase 4.3: string literals + print() via puts().
 run_with_stdout "print literal" \
     'define main() -> Int { print("hello"); return 42 }' \
@@ -830,4 +851,4 @@ if [ "$fails" -gt 0 ]; then
     exit 1
 fi
 echo ""
-echo "all 145/145 cases passed"
+echo "all 150/150 cases passed"

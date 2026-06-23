@@ -5,6 +5,64 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.33] — 2026-06-23
+
+### Self-hosting Phase 5b: String ordering operators
+
+`<`, `<=`, `>`, `>=` on String operands now route through
+`strcmp` + the matching signed `icmp` predicate. This
+unblocks the lexer's char-range checks (`c >= "0" and
+c <= "9"`, `c >= "a" and c <= "z"`, etc.) — eight bootstrap
+diagnostics dropped at once.
+
+**Sema.** The existing String-equality branch in
+`_check_binop` now accepts all six comparison ops on
+matching `TString`/`TString` operands. The same-typed-enum
+equality branch stays narrow at `==` / `!=` (no ordinal
+ordering on enums for now).
+
+**Codegen.** The `i8*`-comparison branch in `_gen_expr`'s
+BinOp arm extends the predicate map:
+
+  - `==` → `eq`        `<`  → `slt`
+  - `!=` → `ne`        `<=` → `sle`
+                       `>`  → `sgt`
+                       `>=` → `sge`
+
+Each lowers to a single `strcmp` call followed by `icmp
+<pred> i32 %cmp, 0`. The signed icmp form is correct
+because `strcmp` returns a sign-bearing i32 (negative if
+less, zero if equal, positive if greater).
+
+`codegen_e2e.sh` gains 5 new cases:
+
+```
+ok  string less-than           `"apple" < "banana"`
+ok  string greater-equal       `c >= "0" and c <= "9"`
+ok  string less-equal          `"Q" <= "Q"`
+ok  string greater-than miss   `"z" > "a"`
+ok  char-range alpha lower     `is_alpha("m")` + `is_alpha("Z")`
+
+all 150/150 cases passed
+```
+
+**Bootstrap probe.** After this phase, pointing
+`compile_combined` at `lexer.quirk` still rejects, but the
+shrinking diagnostic list reads cleanly:
+
+```
+SEMA FAILED:
+  .str() not defined on 'TokenKind'                (× 9 sites)
+  .append() expects an Int element, got 'Token'    (× ~20)
+  …
+```
+
+Two punch-list items left after this: enum stringification
+and polymorphic-`List` annotation. The latter is the larger
+chunk — selfhost source uses bare `List` for what are
+actually pointer-element lists, and our default maps `List`
+to i32-storage.
+
 ## [4.0.0-alpha.32] — 2026-06-22
 
 ### Self-hosting Phase 5a: first bootstrap pass — closing four gaps

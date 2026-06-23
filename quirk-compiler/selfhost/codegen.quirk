@@ -127,6 +127,13 @@ define _resolve_ty(mod: ModuleCG, qty: String) -> String {
     if mod.unions.has(qty)  { return "%struct." + qty + "*" }
     if mod.structs.has(qty) { return "%struct." + qty + "*" }
     if mod.enums.has(qty)   { return "i32" }
+    // Variant name used as a type annotation: resolves to the
+    // synthetic `T__V` struct pointer (same shape match-arm
+    // binders use).
+    if mod.variants.has(qty) {
+        vci: _VarCgInfo := mod.variants.get(qty)
+        return "%struct." + vci.union_name + "__" + qty + "*"
+    }
     return _q_ty_to_llvm(qty)
 }
 
@@ -1102,6 +1109,38 @@ define _gen_method_call(cg: FnCG, c: Call) -> String {
     if fg.name == "append" and recv_ty == "%QListP*" {
         return _gen_listp_append(cg, recv_reg, c.args)
     }
+    // `.pop()` — decrement the list's length, then load +
+    // return the element that was at (new) length. No
+    // resize, no zeroing of the slot — same trade-off as
+    // append's leak-the-old-buffer behaviour.
+    if fg.name == "pop" and (recv_ty == "%QList*" or recv_ty == "%QListP*") {
+        is_p := recv_ty == "%QListP*"
+        list_ty := "%QList"
+        if is_p { list_ty = "%QListP" }
+        elem_llvm := "i32"
+        elem_ptr := "i32*"
+        elem_ptrptr := "i32**"
+        if is_p { elem_llvm = "i8*"  elem_ptr = "i8**"  elem_ptrptr = "i8***" }
+        len_gep := cg.fresh()
+        cg.emit(len_gep + " = getelementptr inbounds " + list_ty + ", " + list_ty + "* " + recv_reg +
+                ", i32 0, i32 0")
+        cur_len := cg.fresh()
+        cg.emit(cur_len + " = load i32, i32* " + len_gep)
+        new_len := cg.fresh()
+        cg.emit(new_len + " = sub nsw i32 " + cur_len + ", 1")
+        cg.emit("store i32 " + new_len + ", i32* " + len_gep)
+        data_gep := cg.fresh()
+        cg.emit(data_gep + " = getelementptr inbounds " + list_ty + ", " + list_ty + "* " + recv_reg +
+                ", i32 0, i32 2")
+        data_ptr := cg.fresh()
+        cg.emit(data_ptr + " = load " + elem_ptr + ", " + elem_ptrptr + " " + data_gep)
+        elem_gep := cg.fresh()
+        cg.emit(elem_gep + " = getelementptr inbounds " + elem_llvm + ", " + elem_ptr + " " + data_ptr +
+                ", i32 " + new_len)
+        reg := cg.fresh()
+        cg.emit(reg + " = load " + elem_llvm + ", " + elem_ptr + " " + elem_gep)
+        return reg
+    }
     // `.__get(i)` — method form of subscript. Mirrors the
     // Index expr's lowering exactly; selfhost source uses
     // this shape in many iteration loops.
@@ -1918,18 +1957,30 @@ define _gen_match(cg: FnCG, m: Match) -> void {
         // synthetic variant struct and store into a slot. The
         // user's `binder.field` codegen reaches it through the
         // normal Ident → load → FieldGet path.
+        // Save any prior cg.locals binding for `binder` so
+        // nested matches don't permanently shadow the outer
+        // scope's slot.
+        had_prior := false
+        prior_slot := _Slot("", "")
         if arm.pattern != "" and arm.binder != "_" {
+            if cg.locals.has(arm.binder) {
+                had_prior = true
+                prior_slot = cg.locals.get(arm.binder)
+            }
             syn := uname + "__" + arm.pattern
             syn_ty := "%struct." + syn + "*"
             cast_reg := cg.fresh()
             cg.emit(cast_reg + " = bitcast %struct." + uname + "* " + scrut_reg +
                     " to " + syn_ty)
-            // _ensure_slot emits the alloca into the entry
-            // block (where it dominates every use) and seeds
-            // cg.locals so subsequent `Ident(binder)` reads
-            // route through the slot.
-            slot := _ensure_slot(cg, arm.binder, syn_ty)
-            cg.emit("store " + syn_ty + " " + cast_reg + ", " + syn_ty + "* " + slot.name)
+            // Each arm needs its OWN alloca — re-using the
+            // same `%binder.addr` slot across arms with
+            // different variant types produces type-mismatched
+            // stores. Derive a unique slot name from the arm's
+            // body label so distinct arms get distinct allocas.
+            slot_name := "%" + body_lbl + "." + arm.binder + ".addr"
+            cg.emit_entry(slot_name + " = alloca " + syn_ty)
+            cg.locals.put(arm.binder, _Slot(slot_name, syn_ty))
+            cg.emit("store " + syn_ty + " " + cast_reg + ", " + syn_ty + "* " + slot_name)
         }
         // Arm body.
         bi := 0
@@ -1937,6 +1988,18 @@ define _gen_match(cg: FnCG, m: Match) -> void {
             bs: Stmt := arm.body.__get(bi)
             _gen_stmt(cg, bs)
             bi = bi + 1
+        }
+        // Restore the binder's prior cg.locals entry if there
+        // was one — without this, a nested match arm whose
+        // pattern reuses an outer binder name would leave the
+        // inner slot in place. We don't actively remove the
+        // entry when there was no prior binding because the
+        // ambient `_ensure_slot` logic detects type mismatch
+        // and allocates a fresh slot anyway.
+        if arm.pattern != "" and arm.binder != "_" {
+            if had_prior {
+                cg.locals.put(arm.binder, prior_slot)
+            }
         }
         // Fall through to the join label unless the body
         // already terminated (return / unconditional br).
@@ -2064,6 +2127,10 @@ define _method_ret_ty(cg: FnCG, recv_ty: String, method: String) -> String {
         if recv_ty == "%QListP*" { return "i8*" }
         return "i32"
     }
+    if method == "pop" {
+        if recv_ty == "%QListP*" { return "i8*" }
+        return "i32"
+    }
     if method == "str" { return "i8*" }
     if method == "substring" { return "i8*" }
     if method == "startswith" { return "i1" }
@@ -2114,6 +2181,27 @@ define _ensure_slot(cg: FnCG, name: String, ty: String) -> _Slot {
     s := _Slot(slot_name, ty)
     cg.locals.put(name, s)
     return s
+}
+
+// VarDecl variant: if a slot for `name` already exists but
+// with a different LLVM type than requested, allocate a fresh
+// label-disambiguated slot and rebind cg.locals. Used by
+// VarDecl so that re-introducing a name with a new type
+// (typical after a match arm bound that name with a variant
+// struct type) shadows the old slot cleanly. Assign keeps
+// using the plain `_ensure_slot` shape since it intends to
+// reuse the existing slot regardless of declared type.
+define _ensure_fresh_slot(cg: FnCG, name: String, ty: String) -> _Slot {
+    if cg.locals.has(name) {
+        holder: _Slot := cg.locals.get(name)
+        if holder.ty == ty { return holder }
+        unique := "%" + name + "." + cg.fresh_label("rebind") + ".addr"
+        cg.emit_entry(unique + " = alloca " + ty)
+        s := _Slot(unique, ty)
+        cg.locals.put(name, s)
+        return s
+    }
+    return _ensure_slot(cg, name, ty)
 }
 
 define _gen_stmt(cg: FnCG, st: Stmt) -> void {
@@ -2176,7 +2264,7 @@ define _gen_stmt(cg: FnCG, st: Stmt) -> void {
                     store_val = cast
                 }
             }
-            slot := _ensure_slot(cg, v.name, ty)
+            slot := _ensure_fresh_slot(cg, v.name, ty)
             cg.emit("store " + slot.ty + " " + store_val + ", " + slot.ty + "* " + slot.name)
         }
         case Assign as a => {
@@ -2347,11 +2435,16 @@ define _gen_function(fdecl: FunctionDecl, mod: ModuleCG) -> String {
     }
     // Functions without an explicit return at the end need a
     // synthetic terminator so every basic block ends cleanly.
-    // The emit() helper itself skips when the block is already
-    // terminated, so we can call unconditionally — the dead
-    // `ret i32 0` that previously trailed a real `return` no
-    // longer slips through. `0` works for both i1 and i32.
-    cg.emit("ret " + ret_llvm + " 0")
+    // emit() skips when the block is already terminated. For
+    // pointer return types, LLVM IR requires `null` rather
+    // than the integer literal `0`. The same dead-ret no
+    // longer slips through real returns thanks to
+    // block_terminated tracking.
+    if _is_ptr_ty(ret_llvm) {
+        cg.emit("ret " + ret_llvm + " null")
+    } else {
+        cg.emit("ret " + ret_llvm + " 0")
+    }
 
     // Methods get a mangled LLVM name `Foo__method` so the
     // receiver is recoverable from the symbol and free

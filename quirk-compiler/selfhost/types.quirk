@@ -67,7 +67,7 @@ define ty_from_annot(name: String) -> Ty {
     if name == "Double" { return TDouble() }
     if name == "String" { return TString() }
     if name == "Bool"   { return TBool() }
-    if name == "Void"   { return TVoid() }
+    if name == "Void" or name == "void"   { return TVoid() }
     if name == "Any"    { return TAny() }
     // Bare `List` annotation defaults to the pointer-element
     // list (`%QListP*`). Selfhost source overwhelmingly uses

@@ -950,10 +950,64 @@ EOF
 
 bootstrap_parser_test
 
+# Phase 5f bootstrap: sema self-compiles + runs.
+# check(parse(tokenize("..."))) on a valid program returns 0
+# errors — the self-hosted sema type-checks code correctly.
+bootstrap_sema_test() {
+    local label="bootstrap: self-compiled sema"
+    local tmpdir
+    tmpdir=$(mktemp -d --suffix=.semabs)
+    cp selfhost/tokens.quirk selfhost/ast.quirk selfhost/types.quirk \
+       selfhost/lexer.quirk selfhost/parser.quirk selfhost/sema.quirk "$tmpdir/"
+    cat > "$tmpdir/run_sema.quirk" <<'EOF'
+from .lexer use { tokenize }
+from .parser use { parse }
+from .sema use { check }
+define main() -> Int {
+    src := "define foo(x: Int) -> Int { return x * 2 }"
+    decls := parse(tokenize(src))
+    errors := check(decls)
+    return errors.length()
+}
+EOF
+    local driver="selfhost/_bssema_case.quirk"
+    cat > "$driver" <<EOF
+from .build use { compile_combined }
+ir := compile_combined("$tmpdir/run_sema.quirk", "$tmpdir")
+print(ir)
+EOF
+    local ir_path
+    ir_path=$(mktemp --suffix=.ll)
+    "$QUIRK" --no-aot --no-cache "$driver" > "$ir_path" 2>/dev/null
+    rm -f "$driver"
+    if grep -qE "^(SEMA|PARSE) FAILED" "$ir_path"; then
+        echo "FAIL  $label  (selfhost compile rejected)"
+        cat "$ir_path"
+        fails+=1
+        rm -rf "$tmpdir"
+        rm -f "$ir_path"
+        return
+    fi
+    "$LLI" "$ir_path"
+    local got=$?
+    # check() on a valid program returns 0 errors.
+    if [ "$got" -eq 0 ]; then
+        echo "ok    $label  (exit=$got, check returned 0 errors)"
+        rm -f "$ir_path"
+    else
+        echo "FAIL  $label  (exit=$got, expected 0)"
+        echo "      ir at $ir_path"
+        fails+=1
+    fi
+    rm -rf "$tmpdir"
+}
+
+bootstrap_sema_test
+
 if [ "$fails" -gt 0 ]; then
     echo ""
     echo "$fails case(s) failed"
     exit 1
 fi
 echo ""
-echo "all 152/152 cases passed"
+echo "all 153/153 cases passed"

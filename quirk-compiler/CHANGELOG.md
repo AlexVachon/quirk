@@ -5,6 +5,78 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.37] — 2026-06-23
+
+### Self-hosting Phase 5f: **sema self-compiles too**
+
+`sema.quirk` joins lexer + parser as a self-compiled
+selfhost module. `check(parse(tokenize("...")))` runs end-
+to-end through the self-hosted pipeline and correctly
+returns 0 errors for a valid program.
+
+Six gaps closed in this pass:
+
+**1. Bare `return` in void functions.** Selfhost's
+`_check_field_set`, `_check_match`, etc. use `return` with
+no value as an early-exit. Parser was demanding an
+expression after `return`. Now peeks for `}` or `;` and
+synthesises `Return(IntLit(0))` — codegen's existing `ret
+<ty> 0` shape handles the lowering.
+
+**2. `xs.pop()` on lists.** Decrement the length field,
+load + return the element that was at (new) length. Works
+on both `%QList*` and `%QListP*` flavours. Sema returns
+`TInt` for int-list, `TAny` for pointer-list (so callers
+bind via VarDecl annotation).
+
+**3. Variant names as type annotations.** `define _check_unary(
+s: Sema, u: UnaryOp) -> Ty` — `UnaryOp` here is a variant of
+union `Expr`, not a standalone type. Both `Sema.resolve_ty`
+and `_resolve_ty` (codegen) now check `s.variants` /
+`mod.variants`; when matched, return `TStruct(union + "__" +
+variant)` (sema) or `"%struct." + union + "__" + variant + "*"`
+(codegen) — pointing at the synthetic variant struct that
+match-arm binders also use.
+
+**4. Lowercase `void` annotation.** Selfhost source uses
+`-> void` (lowercase); `ty_from_annot` only recognised `Void`.
+Now accepts either form so a void function's return-type
+check actually finds `TVoid`.
+
+**5. Union → variant downcast in VarDecl.** `fg: FieldGet
+:= c.callee` where `c.callee` is `TUnion("Expr")` — the
+binding "narrows" to a specific variant. Sema accepts this
+when the annotation type is `TStruct(union + "__" + variant)`;
+codegen's VarDecl pointer-bitcast already handles the LLVM
+side.
+
+**6. Synthetic ret `null` for pointer return types.** A
+function declared to return a pointer needs `ret <ptr_ty>
+null` as its synthetic fall-through, not `ret <ptr_ty> 0`
+(LLVM rejects the integer literal at a pointer slot).
+
+**7. Per-arm match-binder slots + VarDecl shadow handling.**
+Match arms sharing a binder name across variants with
+different types produced type-mismatched stores. Each arm
+now allocates a label-disambiguated slot
+(`%arm_label.binder.addr`) and overwrites `cg.locals`;
+when the arm exits, the prior binding (if any) is
+restored. VarDecl uses a new `_ensure_fresh_slot` variant
+that allocates a fresh `%name.rebind.N.addr` slot when the
+name exists with a different LLVM type — handles the case
+where a match arm bound `e` to a variant struct and a later
+VarDecl binds `e: SomethingElse`.
+
+New e2e case:
+
+```
+ok  bootstrap: self-compiled sema   (exit=0, check returned 0 errors)
+```
+
+Bootstrap scope so far: **lexer ✅ + parser ✅ + sema ✅**.
+Remaining: `codegen.quirk` (the biggest module by line count),
+and `build.quirk` (the driver itself). 153/153 cases.
+
 ## [4.0.0-alpha.36] — 2026-06-23
 
 ### Self-hosting Phase 5e: **parser self-compiles too**

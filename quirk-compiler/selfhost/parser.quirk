@@ -338,6 +338,13 @@ define _parse_stmt(s: ParserState) -> Stmt {
 
     if t.kind == TokenKind.Return {
         s.advance()
+        // Bare `return` in void functions — peek for a
+        // statement-terminating token (`}`, `;`) and emit a
+        // synthetic zero literal. Codegen's existing
+        // `ret <ret_ty> 0` shape works for any ret_ty.
+        if s.check(TokenKind.RBrace) or s.check(TokenKind.Semicolon) {
+            return Return(IntLit(0))
+        }
         return Return(_parse_expr(s))
     }
 

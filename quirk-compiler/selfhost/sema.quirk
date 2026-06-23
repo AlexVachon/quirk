@@ -135,6 +135,16 @@ struct Sema {
         if sname != "" and self.unions.has(sname) {
             return TUnion(sname)
         }
+        // Variant name used as a type annotation (e.g.
+        // `u: UnaryOp` where UnaryOp is a variant of `Expr`).
+        // Map to the synthetic struct `T__V` so field access
+        // (`u.operand`) resolves through the normal struct
+        // path. Selfhost source uses this shape in
+        // `define _check_unary(s: Sema, u: UnaryOp) -> Ty`.
+        if sname != "" and self.variants.has(sname) {
+            info: _VariantInfo := self.variants.get(sname)
+            return TStruct(info.union_name + "__" + sname)
+        }
         return t
     }
 }
@@ -645,6 +655,20 @@ define _check_method_call(s: Sema, c: Call) -> Ty {
     }
     is_map := false
     match ot { case TMap as _ => is_map = true case _ => {} }
+    // `.pop()` on List — removes + returns the last element.
+    // For Int-list returns TInt; for pointer-list returns TAny
+    // so the caller can bind via VarDecl annotation. Sema-side
+    // it's effectively no-arg, returns-the-element-type.
+    if fg.name == "pop" and is_list {
+        if c.args.length() != 0 {
+            s.report(".pop() takes no arguments")
+            return TError("method arity")
+        }
+        is_int_list := false
+        match ot { case TList as _ => is_int_list = true case _ => {} }
+        if is_int_list { return TInt() }
+        return TAny()
+    }
     // `.__get(Int)` method form of subscript on List (both
     // int- and pointer-element). Returns the element type
     // — TInt for int-list, TAny for pointer-list. Selfhost
@@ -925,7 +949,13 @@ define _check_stmt(s: Sema, st: Stmt, ret: Ty) -> void {
             // pattern in Assign below.
             cascaded := false
             match t { case TError as _ => cascaded = true case _ => {} }
-            if cascaded == false and ty_compatible(ret, t) == false {
+            // Void return type: the parser synthesises
+            // `Return(IntLit(0))` for bare `return` (no value),
+            // and an explicit `return some_void_call()` is also
+            // legal. Either way, skip the value-type check.
+            is_void_ret := false
+            match ret { case TVoid as _ => is_void_ret = true case _ => {} }
+            if cascaded == false and is_void_ret == false and ty_compatible(ret, t) == false {
                 s.report("return type mismatch — expected '" + ty_to_string(ret) +
                          "', got '" + ty_to_string(t) + "'")
             }
@@ -941,7 +971,23 @@ define _check_stmt(s: Sema, st: Stmt, ret: Ty) -> void {
             // the value's type has to fit the binding.
             target: Ty := annot
             match annot { case TAny as _ => target = rhs case _ => {} }
-            if ty_compatible(target, rhs) == false {
+            // Allow union → variant downcast at the binding
+            // site: `fg: FieldGet := c.callee` where c.callee
+            // is TUnion("Expr"). The annotation is the
+            // synthetic `TStruct("Expr__FieldGet")` (via
+            // resolve_ty's variant-name handling). Codegen's
+            // pointer bitcast handles the LLVM-level
+            // conversion. Selfhost source uses this for
+            // shape-discriminated parsing.
+            narrows := false
+            ann_name := ""
+            match target { case TStruct as ts => ann_name = ts.name case _ => {} }
+            rhs_union := ""
+            match rhs { case TUnion as tu => rhs_union = tu.name case _ => {} }
+            if ann_name != "" and rhs_union != "" {
+                if ann_name.startswith(rhs_union + "__") { narrows = true }
+            }
+            if narrows == false and ty_compatible(target, rhs) == false {
                 s.report("var '" + v.name + "' declared '" + ty_to_string(annot) +
                          "' but initialised with '" + ty_to_string(rhs) + "'")
             }

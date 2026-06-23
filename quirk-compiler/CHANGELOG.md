@@ -5,6 +5,77 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.41] — 2026-06-23
+
+### Self-hosting Phase 5j: 🎉 **`arg_count()` + `arg_get(i)` as shared builtins**
+
+The last language primitive missing from the bootstrap.
+`arg_count() -> Int` and `arg_get(i: Int) -> String` are now
+builtins on both compilers — selfhost-emitted standalone
+ELFs can finally read their own argv. With this, a real
+`main()` driver can read a source path from argv[1] and
+produce IR for an arbitrary file at runtime.
+
+**Selfhost compiler.** The codegen now wraps user's
+`define main()` with a synthetic LLVM entry: user's `main`
+is renamed to `@__quirk_user_main`, and a `define i32
+@main(i32 %argc, i8** %argv)` is appended that stashes
+both into module-level globals (`@quirk_argc`, `@quirk_argv`)
+before calling the user function. `arg_count()` lowers to
+a `load i32` from `@quirk_argc`; `arg_get(i)` lowers to a
+GEP + load through `@quirk_argv`. The rename routes through
+a single `_llvm_fn_name(name)` helper so call-site lowering,
+sig-table key, and function-decl emission stay consistent.
+
+**Self-compiler gap dodge.** `arg_get`'s inline `_gen_expr`
+call for the index expression hit the same known
+"two-recursions-in-one-outer-fn" pattern that bites
+`_gen_struct_ctor` / `_gen_list_lit` / `_gen_list_append`
+— the index register came out as a garbage number
+(`i32 -894862080`) and produced a SIGSEGV at runtime.
+Extracted into `_gen_arg_get` helper to isolate the
+recursion site; output goes back to `i32 1`. Same
+workaround already used by `_gen_read_file` /
+`_gen_write_file`. Worth filing as a separate self-compiler
+issue.
+
+**C++ compiler.** `BuiltinGen.hpp` declares
+`Sys_arg_count` + `Sys_arg_get` (already implemented in
+`src/Runtime/libs/sys.c`) as externs and adds dispatch
+arms that forward to them. `Sema.cpp` lists the new
+builtins in the return-type table (`arg_count → Int`,
+`arg_get → String`). For Quirk programs invoked via the
+C++ JIT, `bin/quirk foo.quirk a b c` makes `arg_count() == 4`
+and `arg_get(0) == "foo.quirk"` — same shape as the
+selfhost ELF.
+
+**E2E.** New `standalone_argv_test` probe: selfhost emits
+IR for `main() { print(arg_get(1)); return arg_count() }`,
+llc + clang-14 -no-pie link into ELF, invoke with `hello
+world from quirk`. Verifies stdout == "hello" + exit == 5
+(argv[0] + 4 user args).
+
+### Bootstrap status
+
+| Pipeline stage | Status |
+| -------------- | ------ |
+| Seven selfhost modules self-compile (lexer/parser/sema/codegen/build + 3 data) | ✅ alpha.35-40 |
+| Selfhost IR runs via lli  | ✅ alpha.4+ |
+| Selfhost IR links as standalone ELF | ✅ alpha.39 |
+| `read_file` / `write_file` shared builtins | ✅ alpha.40 |
+| **`arg_count` / `arg_get` shared builtins + wrapper main** | ✅ **alpha.41** |
+| `quirk_main.quirk` driver reads argv[1] for source path | open |
+| Makefile target `make selfhost-binary` | open |
+| Byte-identical fixed-point verification | open |
+
+Three items left. The next one (`quirk_main.quirk` +
+Makefile target) is now a single coherent ~30-line
+addition since the language has every primitive it needs.
+
+### Test count
+
+161 cases up from 160.
+
 ## [4.0.0-alpha.40] — 2026-06-23
 
 ### Self-hosting Phase 5i: 🎉 **`read_file` + `write_file` are first-class builtins**

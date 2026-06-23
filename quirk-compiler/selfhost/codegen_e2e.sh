@@ -1230,10 +1230,55 @@ standalone_run "ELF: int.str() + strcat" \
     'define main() -> Int { n := 7; print("count is " + n.str()); return 0 }' \
     0 "count is 7"
 
+# Phase 5j: argv access from a standalone selfhost ELF.
+# Test the full chain: selfhost emits a wrapper main(argc, argv)
+# that stashes them in module globals; arg_count() + arg_get(i)
+# read those back. We invoke the ELF with extra args and verify
+# both the count and a positional read.
+standalone_argv_test() {
+    local label="ELF: arg_count() + arg_get(i) via stashed globals"
+    local src='define main() -> Int {
+    print(arg_get(1))
+    return arg_count()
+}'
+    local driver="selfhost/_argvcase.quirk"
+    local quoted
+    quoted=$(printf %s "$src" | python3 -c 'import sys, json; print(json.dumps(sys.stdin.read()))')
+    cat > "$driver" <<EOF
+from .lexer use { tokenize }
+from .parser use { parse }
+from .codegen use { emit_module }
+src := $quoted
+print(emit_module(parse(tokenize(src))))
+EOF
+    local ll_path s_path bin_path
+    ll_path=$(mktemp --suffix=.ll)
+    s_path=$(mktemp --suffix=.s)
+    bin_path=$(mktemp --suffix=.bin)
+    "$QUIRK" --no-aot --no-cache "$driver" > "$ll_path" 2>/dev/null
+    rm -f "$driver"
+    llc-14 "$ll_path" -o "$s_path" 2>/dev/null
+    "${CLANG:-clang-14}" -no-pie "$s_path" -o "$bin_path" 2>/dev/null
+    local got_out
+    got_out=$("$bin_path" hello world from quirk)
+    local got_exit=$?
+    # Expected: argc = 5 (argv[0] + 4 user args), argv[1] = "hello"
+    if [ "$got_exit" -eq 5 ] && [ "$got_out" = "hello" ]; then
+        echo "ok    $label  (exit=$got_exit, stdout=$got_out)"
+        rm -f "$ll_path" "$s_path" "$bin_path"
+    else
+        echo "FAIL  $label  (exit=$got_exit, expected 5; stdout='$got_out', expected 'hello')"
+        echo "      bin at $bin_path"
+        fails+=1
+    fi
+}
+
+standalone_argv_test
+
 if [ "$fails" -gt 0 ]; then
     echo ""
     echo "$fails case(s) failed"
     exit 1
 fi
 echo ""
-echo "all 160/160 cases passed"
+echo "all 161/161 cases passed"

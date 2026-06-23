@@ -416,6 +416,35 @@ define _check_call(s: Sema, c: Call) -> Ty {
         }
         return TInt()
     }
+    // Builtin: `arg_count() -> Int`. Reads the i32 argc that
+    // the wrapper main(argc, argv) stashes into a module
+    // global at startup.
+    if name == "arg_count" {
+        if c.args.length() != 0 {
+            s.report("arg_count() takes no arguments")
+            return TError("arg_count arity")
+        }
+        return TInt()
+    }
+    // Builtin: `arg_get(i: Int) -> String`. Reads argv[i] from
+    // the stashed i8** global. Out-of-range index is the
+    // caller's responsibility — no bounds check at the IR
+    // level (mirrors how libc `argv` works).
+    if name == "arg_get" {
+        if c.args.length() != 1 {
+            s.report("arg_get() takes 1 argument (index)")
+            return TError("arg_get arity")
+        }
+        ae: Expr := c.args.__get(0)
+        at := _check_expr(s, ae)
+        is_int := false
+        match at { case TInt as _ => is_int = true case _ => {} }
+        if is_int == false {
+            s.report("arg_get() index must be Int; got '" + ty_to_string(at) + "'")
+            return TError("arg_get arg")
+        }
+        return TString()
+    }
     // Builtin: `len(List) -> Int`. Reads the i32 length field
     // out of the %QList header. Will graduate to method-call
     // form `xs.length()` once member-call syntax lands.

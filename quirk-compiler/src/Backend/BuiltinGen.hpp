@@ -104,12 +104,21 @@ class BuiltinGen {
                          Function::ExternalLinkage, "fread", TheModule);
         Function::Create(FunctionType::get(i64Ty, {voidPtrTy, i64Ty, i64Ty, voidPtrTy}, false),
                          Function::ExternalLinkage, "fwrite", TheModule);
+
+        // argv-access builtins forward to the runtime helpers
+        // in src/Runtime/libs/sys.c, which already track argc/argv
+        // populated at process startup.
+        Function::Create(FunctionType::get(i32Ty, {}, false),
+                         Function::ExternalLinkage, "Sys_arg_count", TheModule);
+        Function::Create(FunctionType::get(voidPtrTy, {i32Ty}, false),
+                         Function::ExternalLinkage, "Sys_arg_get", TheModule);
     }
 
     bool isBuiltin(const std::string& name) {
         return name == "print" || name == "printf" || name == "malloc" || name == "free"
             || name == "type" || name == "str" || name == "write" || name == "writeln"
-            || name == "read_file" || name == "write_file";
+            || name == "read_file" || name == "write_file"
+            || name == "arg_count" || name == "arg_get";
     }
 
     Value* handleBuiltin(const std::string& name, CallNode* call,
@@ -122,7 +131,44 @@ class BuiltinGen {
         if (name == "writeln")    return generateWrite(call, exprHandler, true);
         if (name == "read_file")  return generateReadFile(call, exprHandler);
         if (name == "write_file") return generateWriteFile(call, exprHandler);
+        if (name == "arg_count")  return generateArgCount(call, exprHandler);
+        if (name == "arg_get")    return generateArgGet(call, exprHandler);
         return nullptr;
+    }
+
+    // arg_count() -> Int — forwards to Sys_arg_count (sys.c)
+    Value* generateArgCount(CallNode* call, std::function<Value*(Node*)>) {
+        if (!call->args.empty()) return nullptr;
+        Function* fn = TheModule->getFunction("Sys_arg_count");
+        if (!fn) return nullptr;
+        return Builder.CreateCall(fn, {});
+    }
+
+    // arg_get(i: Int) -> String — forwards to Sys_arg_get,
+    // which returns a String* (allocated in the runtime). The
+    // selfhost-emitted shape returns a raw i8* via the
+    // @quirk_argv global; both shape-match `String` at the
+    // Quirk type system level.
+    Value* generateArgGet(CallNode* call, std::function<Value*(Node*)> exprHandler) {
+        if (call->args.size() != 1) return nullptr;
+        Value* idx = exprHandler(call->args[0].value.get());
+        if (!idx) return nullptr;
+        // Sys_arg_get expects i32; coerce if needed.
+        Type* i32Ty = Type::getInt32Ty(Context);
+        if (idx->getType() != i32Ty) {
+            if (idx->getType()->isIntegerTy())
+                idx = Builder.CreateIntCast(idx, i32Ty, true);
+            else
+                return nullptr;
+        }
+        Function* fn = TheModule->getFunction("Sys_arg_get");
+        if (!fn) return nullptr;
+        Value* raw = Builder.CreateCall(fn, {idx});
+        // Sys_arg_get returns String* (boxed) — but the C
+        // signature in this module is declared i8* for ABI
+        // simplicity. Wrap the raw i8* into a fresh String so
+        // user code can call .length() / .substring() etc.
+        return structGen->allocateAndInit("String", {raw});
     }
 
     // Extract the underlying i8* buffer from a Quirk-String value.

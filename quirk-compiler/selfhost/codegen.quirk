@@ -728,6 +728,25 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
             if name == "write_file" and c.args.length() == 2 {
                 return _gen_write_file(cg, c.args)
             }
+            // Builtin: `arg_count()` → loads i32 from
+            // @quirk_argc global; the wrapper main(argc, argv)
+            // stashes it at program start.
+            if name == "arg_count" and c.args.length() == 0 {
+                cg.mod.ensure_decl("quirk_argc", "@quirk_argc = global i32 0")
+                reg := cg.fresh()
+                cg.emit(reg + " = load i32, i32* @quirk_argc")
+                return reg
+            }
+            // Builtin: `arg_get(i)` → loads i8* from
+            // @quirk_argv[i]. Both globals are populated by the
+            // synthetic main wrapper emitted by emit_module.
+            // Extracted into a helper (`_gen_arg_get`) because
+            // the inner `_gen_expr` recursion next to the
+            // outer-function recursion sites trips a known
+            // self-compiler corruption pattern.
+            if name == "arg_get" and c.args.length() == 1 {
+                return _gen_arg_get(cg, c.args)
+            }
             // Builtin: `len(xs)` reads the i32 length field
             // out of the %QList header. GEP `i32 0, i32 0` is
             // the length slot.
@@ -783,8 +802,9 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
             }
             ret_llvm := "i32"
             param_llvm := List()
-            if cg.mod.sigs.has(name) {
-                msig: _Sig := cg.mod.sigs.get(name)
+            llvm_name := _llvm_fn_name(name)
+            if cg.mod.sigs.has(llvm_name) {
+                msig: _Sig := cg.mod.sigs.get(llvm_name)
                 ret_llvm = msig.ret_ty
                 param_llvm = msig.param_tys
             }
@@ -802,11 +822,21 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
             }
             sig = sig + ")"
             reg := cg.fresh()
-            cg.emit(reg + " = call " + ret_llvm + " @" + name + sig)
+            cg.emit(reg + " = call " + ret_llvm + " @" + _llvm_fn_name(name) + sig)
             return reg
         }
         case _ => return "0"
     }
+}
+
+// User's `define main()` becomes `@__quirk_user_main` in LLVM
+// IR so we can synthesize a wrapper `@main(i32 %argc, i8** %argv)`
+// that stashes argv into module globals before delegating.
+// Call sites + sig table both route through this helper so
+// the rename is invisible to callers.
+define _llvm_fn_name(name: String) -> String {
+    if name == "main" { return "__quirk_user_main" }
+    return name
 }
 
 // Per-local alloca metadata. `name` is the SSA pointer (e.g.
@@ -901,6 +931,9 @@ define _expr_static_ty(cg: FnCG, e: Expr) -> String {
             // buffer (i8*); write_file returns i32 0.
             if cname == "read_file"  { return "i8*" }
             if cname == "write_file" { return "i32" }
+            // arg_count() → Int; arg_get(i) → String pointer.
+            if cname == "arg_count" { return "i32" }
+            if cname == "arg_get"   { return "i8*" }
             // Builtin collection constructors.
             if cname == "Map"  { return "%QMap*" }
             // Both `List()` and `ListP()` produce
@@ -916,8 +949,9 @@ define _expr_static_ty(cg: FnCG, e: Expr) -> String {
             if cg.mod.structs.has(cname) {
                 return "%struct." + cname + "*"
             }
-            if cg.mod.sigs.has(cname) {
-                sig: _Sig := cg.mod.sigs.get(cname)
+            cn_llvm := _llvm_fn_name(cname)
+            if cg.mod.sigs.has(cn_llvm) {
+                sig: _Sig := cg.mod.sigs.get(cn_llvm)
                 return sig.ret_ty
             }
             return "i32"
@@ -1506,6 +1540,24 @@ define _gen_string_method(cg: FnCG, name: String, recv_reg: String, args: List) 
 // fseek back → malloc(size+1) → fread → null-terminate →
 // fclose → return buf. No error handling yet — a missing
 // file is undefined behaviour for now.
+// arg_get(i) — GEP into @quirk_argv. Lives in its own
+// function so the inline `_gen_expr` call for the index
+// expression is isolated from the outer-function recursion
+// sites in `_gen_expr` itself.
+define _gen_arg_get(cg: FnCG, args: List) -> String {
+    cg.mod.ensure_decl("quirk_argv", "@quirk_argv = global i8** null")
+    ie: Expr := args.__get(0)
+    idx := _gen_expr(cg, ie)
+    av := cg.fresh()
+    cg.emit(av + " = load i8**, i8*** @quirk_argv")
+    slot := cg.fresh()
+    cg.emit(slot + " = getelementptr inbounds i8*, i8** " + av +
+            ", i32 " + idx)
+    reg := cg.fresh()
+    cg.emit(reg + " = load i8*, i8** " + slot)
+    return reg
+}
+
 define _gen_read_file(cg: FnCG, args: List) -> String {
     cg.mod.ensure_decl("fopen",  "declare i8* @fopen(i8*, i8*)")
     cg.mod.ensure_decl("fclose", "declare i32 @fclose(i8*)")
@@ -2533,9 +2585,12 @@ define _gen_function(fdecl: FunctionDecl, mod: ModuleCG) -> String {
 
     // Methods get a mangled LLVM name `Foo__method` so the
     // receiver is recoverable from the symbol and free
-    // functions can't collide.
+    // functions can't collide. User-defined `main()` is
+    // renamed to `__quirk_user_main` so the wrapper main can
+    // own the ELF entry symbol.
     full_name := fdecl.name
     if is_method { full_name = fdecl.receiver + "__" + fdecl.name }
+    else { full_name = _llvm_fn_name(fdecl.name) }
     header := "define " + ret_llvm + " @" + full_name + "(" + sig + ") {\nentry:\n"
     return header + cg.entry_out + cg.out + "}\n"
 }
@@ -2665,6 +2720,8 @@ define emit_module(decls: List) -> String {
                 full_name := fdp.name
                 if fdp.receiver != "" {
                     full_name = fdp.receiver + "__" + fdp.name
+                } else {
+                    full_name = _llvm_fn_name(fdp.name)
                 }
                 mod.register_sig(full_name, _Sig(ptys, rty))
             }
@@ -2688,9 +2745,27 @@ define emit_module(decls: List) -> String {
         }
         i = i + 1
     }
+    // If the user defined a `main()` function, emit the
+    // ELF-entry wrapper that stashes argc/argv into module
+    // globals (so arg_count/arg_get can read them) and
+    // delegates to the renamed `@__quirk_user_main`. The two
+    // globals are declared on demand by the arg_count /
+    // arg_get builtins — emit them here unconditionally too
+    // since the wrapper writes to them.
+    if mod.sigs.has("__quirk_user_main") {
+        mod.ensure_decl("quirk_argc", "@quirk_argc = global i32 0")
+        mod.ensure_decl("quirk_argv", "@quirk_argv = global i8** null")
+    }
     out := "; ModuleID = 'selfhost'\n"
     out = out + "target triple = \"x86_64-pc-linux-gnu\"\n\n"
     out = out + mod.render_header()
     out = out + bodies
+    if mod.sigs.has("__quirk_user_main") {
+        out = out + "define i32 @main(i32 %argc, i8** %argv) {\nentry:\n"
+        out = out + "  store i32 %argc, i32* @quirk_argc\n"
+        out = out + "  store i8** %argv, i8*** @quirk_argv\n"
+        out = out + "  %r = call i32 @__quirk_user_main()\n"
+        out = out + "  ret i32 %r\n}\n"
+    }
     return out
 }

@@ -2913,6 +2913,14 @@ std::string Sema::resolveVariable(const std::string &name)
         return "String";
     if (name == "write_file")
         return "Int";
+    // argv access — selfhost-side lowers via stashed globals
+    // populated by the wrapper main(argc, argv); C++ side
+    // forwards to the existing Sys_arg_count / Sys_arg_get
+    // runtime helpers. Both compilers expose the same names.
+    if (name == "arg_count")
+        return "Int";
+    if (name == "arg_get")
+        return "String";
         
     // --- NEW: Super keyword support ---
     if (name == "super") {

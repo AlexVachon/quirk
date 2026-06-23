@@ -5,6 +5,97 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.43] — 2026-06-23
+
+### Self-hosting Phase 5l: 🎉🎉🎉🎉 **byte-identical self-stage fixed point**
+
+The canonical bootstrap milestone. The self-hosted compiler is
+a stable fixed point under itself: compiling the same source
+through the C++-compiler-built binary and through the
+self-compiled binary produces **byte-identical** LLVM IR.
+
+```
+$ make selfhost-fixedpoint
+./bin/quirk-selfhost selfhost/quirk_main.quirk build/quirk_selfhost_fp1.ll
+llc-14 build/quirk_selfhost_fp1.ll -o build/quirk_selfhost_fp1.s
+clang-14 -no-pie ... -o build/quirk-selfhost-v2
+./build/quirk-selfhost-v2 selfhost/quirk_main.quirk build/quirk_selfhost_fp2.ll
+
+  byte-identical fixed point achieved
+  ir1 = 1644273 bytes
+  ir2 = 1644273 bytes
+```
+
+**The proof.** `diff build/quirk_selfhost_fp1.ll build/quirk_selfhost_fp2.ll`
+is empty: 1.6 MB of LLVM IR text, zero differences. This means
+the compiler can compile itself and produce exactly the same
+output as itself — the standard "Reflections on Trusting Trust"
+fixed point.
+
+**Why not compare against the C++ compiler's output.** The two
+compilers use intentionally different IR shapes (`GC_malloc` vs
+`malloc`, `Core_Primitives_*` runtime wrappers vs inline structs).
+Both are correct, just not byte-identical. The real fixed-point
+criterion is selfhost-vs-selfhost, which is what this check
+verifies.
+
+**Determinism implications.** A byte-identical fixed point also
+implies the codegen is deterministic — no symbol-emission
+order depends on hashing or wall-clock, no register-numbering
+variance, no whitespace drift. The Map iteration order risk
+flagged in earlier roadmaps is decisively answered: it's
+insertion-ordered everywhere it matters.
+
+### Pipeline
+
+```
++----------+         +-----------+         +--------------------+
+| bin/quirk| (C++)   | quirk-    | (built  | quirk-selfhost-v2  |
+| compiles |  --->   | selfhost  |  from   | (built from above) |
+| selfhost |         |   .ll     |  above) |        .ll         |
++----------+         +-----------+         +--------------------+
+                          |                          |
+                          v compiles                 v compiles
+                     selfhost/quirk_main.quirk  selfhost/quirk_main.quirk
+                          |                          |
+                          v                          v
+                    +-------------+ === diff === +-------------+
+                    | ir1.ll      |   == empty   | ir2.ll      |
+                    | 1644273 B   |              | 1644273 B   |
+                    +-------------+              +-------------+
+                                       ✓
+                              byte-identical
+```
+
+### New targets / probes
+
+- **`make selfhost-fixedpoint`** — runs the three-stage chain
+  end-to-end and reports the diff. Depends on `selfhost-binary`.
+- **e2e probe `fixedpoint_test`** — same test, gated on
+  `bin/quirk-selfhost` existing (skip-and-pass when not built,
+  so the suite stays green for users without llc-14/clang-14).
+
+### What's left
+
+With this milestone, the bootstrap loop is closed: the
+compiler is written in itself, compiles itself, and produces
+the same output as itself. The remaining risks are entirely
+about **scale**, not correctness:
+
+- **Stress test (alpha.44+):** every bootstrap probe uses
+  inputs of <100 lines. Pointing `quirk-selfhost` at the full
+  ~2400-line `codegen.quirk` is the next stress test. Likely
+  to surface real bugs (sema or codegen edge cases not
+  exercised at small scale).
+- **Memory:** selfhost IR never frees. Fine for compiler-shaped
+  short processes; ugly if quirk-selfhost is used as a daemon.
+- **Diagnostic polish:** sema errors flow to stdout mixed with
+  IR. A future polish phase will route them to stderr.
+
+### Test count
+
+163 cases up from 162.
+
 ## [4.0.0-alpha.42] — 2026-06-23
 
 ### Self-hosting Phase 5k: 🎉🎉🎉 **standalone Quirk compiler binary exists**

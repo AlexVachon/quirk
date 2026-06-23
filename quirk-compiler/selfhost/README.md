@@ -59,7 +59,8 @@ toolchain dependency from anyone wanting to hack on the compiler.
 |  5i   | **🎉 Driver bootstrap** — `read_file`/`write_file` shared builtins, build.quirk self-compiles | landed (v4.0.0-alpha.40) |
 |  5j   | **🎉 argv access** — `arg_count`/`arg_get` builtins + wrapper main(argc,argv) | landed (v4.0.0-alpha.41) |
 |  5k   | **🎉🎉🎉 Standalone binary** — `make selfhost-binary` → `bin/quirk-selfhost` compiles user code | landed (v4.0.0-alpha.42) |
-|  5    | Bootstrap — Quirk compiler compiles itself, byte-identical | in progress |
+|  5l   | **🎉🎉🎉🎉 Fixed point** — `make selfhost-fixedpoint`, 1.6MB IR byte-identical across stages | landed (v4.0.0-alpha.43) |
+|  5    | Bootstrap — Quirk compiler compiles itself, byte-identical | **landed** |
 
 The Codegen phase deliberately targets *text-form* LLVM IR (`.ll`)
 rather than FFI'ing to LLVM's C API. Quirk doesn't have C-binding

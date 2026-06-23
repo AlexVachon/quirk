@@ -155,6 +155,51 @@ selfhost-binary: $(SELFHOST_BIN)
 	@echo ""
 	@echo "  usage: $(SELFHOST_BIN) <source.quirk> [out.ll]"
 
+# --- SELFHOST FIXED-POINT VERIFICATION -------------------------------------
+# The canonical bootstrap proof: the self-hosted compiler is a stable
+# fixed point under itself. Pipeline:
+#
+#   bin/quirk-selfhost compiles selfhost/quirk_main.quirk  → ir1.ll
+#   ir1.ll + llc-14 + clang-14                              → quirk-selfhost-v2
+#   quirk-selfhost-v2 compiles selfhost/quirk_main.quirk    → ir2.ll
+#   diff ir1.ll ir2.ll  → must be byte-identical (zero diff)
+#
+# Why not compare against `bin/quirk` (the C++ compiler) output: the two
+# compilers use intentionally different IR shapes (GC_malloc vs malloc,
+# Core_Primitives_* vs inline structs) — they're both correct, just not
+# byte-identical. The real fixed-point criterion is selfhost-vs-selfhost.
+SELFHOST_FP_IR1 = build/quirk_selfhost_fp1.ll
+SELFHOST_FP_IR2 = build/quirk_selfhost_fp2.ll
+SELFHOST_FP_BIN = build/quirk-selfhost-v2
+
+$(SELFHOST_FP_IR1): $(SELFHOST_BIN)
+	@mkdir -p build
+	./$(SELFHOST_BIN) selfhost/quirk_main.quirk $@
+
+$(SELFHOST_FP_BIN): $(SELFHOST_FP_IR1)
+	@mkdir -p build
+	llc-14 $< -o build/quirk_selfhost_fp1.s
+	clang-14 -no-pie build/quirk_selfhost_fp1.s -o $@
+
+$(SELFHOST_FP_IR2): $(SELFHOST_FP_BIN)
+	./$(SELFHOST_FP_BIN) selfhost/quirk_main.quirk $@
+
+selfhost-fixedpoint: $(SELFHOST_FP_IR1) $(SELFHOST_FP_IR2)
+	@if diff -q $(SELFHOST_FP_IR1) $(SELFHOST_FP_IR2) > /dev/null; then       \
+	    echo "";                                                                \
+	    echo "  byte-identical fixed point achieved";                           \
+	    echo "  ir1 = $$(wc -c < $(SELFHOST_FP_IR1)) bytes";                    \
+	    echo "  ir2 = $$(wc -c < $(SELFHOST_FP_IR2)) bytes";                    \
+	    echo "";                                                                \
+	    echo "  bin/quirk-selfhost compiled itself, the resulting binary";      \
+	    echo "  recompiled the same source, output is identical.";              \
+	    echo "  this is the canonical bootstrap milestone.";                    \
+	else                                                                        \
+	    echo "FAIL: fixed-point verification";                                  \
+	    diff -u $(SELFHOST_FP_IR1) $(SELFHOST_FP_IR2) | head -50;               \
+	    exit 1;                                                                 \
+	fi
+
 # Self-host smoke — runs the in-Quirk lexer (Phase 1), parser
 # (Phase 2), and sema (Phase 3) against a small corpus. Doesn't
 # yet assert byte-for-byte equality with the C++ tokenizer /
@@ -266,4 +311,4 @@ FUZZ_SEED  ?=
 fuzz:
 	@python3 tools/fuzz.py --iters $(FUZZ_ITERS) $(if $(FUZZ_SEED),--seed $(FUZZ_SEED),) --quiet
 
-.PHONY: all clean test selfhost-binary bootstrap-stdlib bootstrap-stdlib-clean docs fuzz
+.PHONY: all clean test selfhost-binary selfhost-fixedpoint bootstrap-stdlib bootstrap-stdlib-clean docs fuzz

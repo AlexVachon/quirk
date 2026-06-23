@@ -154,11 +154,14 @@ define compile_combined(entry_path: String, base_dir: String) -> String {
     decls := parse(tokenize(combined))
     errors := check(decls)
     if errors.length() > 0 {
-        print("SEMA FAILED:")
+        // Diagnostics route to stderr (via `eprint`) so callers
+        // can pipe `compile_combined`'s stdout directly to llc-14
+        // without sema noise contaminating the IR.
+        eprint("SEMA FAILED:")
         k := 0
         while k < errors.length() {
             e: String := errors.__get(k)
-            print("  " + e)
+            eprint("  " + e)
             k = k + 1
         }
         return ""

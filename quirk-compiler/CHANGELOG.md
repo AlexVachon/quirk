@@ -5,6 +5,63 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.45] — 2026-06-23
+
+### Polish: stderr routing for diagnostics (`eprint` builtin)
+
+`compile_combined`'s sema-failure output now flows to stderr
+instead of stdout — so callers can pipe the compiler's stdout
+directly to llc-14 without sema noise contaminating the IR.
+
+New shared builtin: **`eprint(s: String) -> Int`**. Same shape
+as `print`, but routes to fd 2 via libc `write(2, s,
+strlen(s))` + `write(2, "\n", 1)`. Returns `Int 0` for
+parity; the value isn't observed at call sites.
+
+Wired on both compilers:
+- **selfhost**: `_gen_eprint` helper (extracted to dodge the
+  recursion-pairing gap that bit `arg_get`/`read_file`/
+  `write_file` before). Sema adds the type entry; codegen
+  adds dispatch + static-type entry for `_method_ret_ty`.
+- **C++**: `BuiltinGen.generateEPrint` emits the same libc
+  call chain. `stringBuffer` already handled `String*` arg
+  unwrapping correctly.
+
+Driver change: `selfhost/build.quirk`'s `compile_combined`
+replaces `print("SEMA FAILED:")` + per-error `print("  " +
+e)` with their `eprint` counterparts. Before:
+
+```
+$ bin/quirk-selfhost broken.quirk > out.ll
+$ head -2 out.ll
+SEMA FAILED:
+  undefined variable 'x'                  # IR polluted
+```
+
+After:
+
+```
+$ bin/quirk-selfhost broken.quirk > out.ll
+$ cat out.ll                              # empty
+$ bin/quirk-selfhost broken.quirk 2>/dev/null   # also empty
+$ bin/quirk-selfhost broken.quirk >/dev/null
+SEMA FAILED:
+  undefined variable 'x'
+```
+
+### Bootstrap status
+
+164 cases pass (up from 163). Fixed point still holds at
+1,660,189 bytes (IR grew ~16 KB from the `_gen_eprint` helper
++ the four call sites in `build.quirk`).
+
+### What's left
+
+- Stress-test `quirk-selfhost` against the `tests/` corpus.
+- Document the supported selfhost language subset.
+- (Distribution) ship a pre-built `quirk-selfhost` binary so
+  the C++ compiler isn't required for first-stage bootstrap.
+
 ## [4.0.0-alpha.44] — 2026-06-23
 
 ### Fix: C++-side `arg_get → write_file` corruption (the garbage-file bug)

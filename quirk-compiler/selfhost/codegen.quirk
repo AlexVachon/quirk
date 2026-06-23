@@ -719,6 +719,16 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
                 // the i32 reg from puts.
                 return reg
             }
+            // Builtin: `eprint(s)` — like print, but to stderr
+            // (fd 2). Lowers to `write(2, s, strlen(s))` then a
+            // single-byte `write(2, "\n", 1)`. Extracted to a
+            // helper because the inner `_gen_expr` recursion
+            // pairs badly with other recursion sites in this
+            // outer fn (same self-compiler gap that bit
+            // arg_get / read_file / write_file).
+            if name == "eprint" and c.args.length() == 1 {
+                return _gen_eprint(cg, c.args)
+            }
             // Builtin file I/O. Extracted into helpers because
             // both lowerings emit a multi-call sequence — the
             // recursion-pairing dodge applies.
@@ -934,6 +944,8 @@ define _expr_static_ty(cg: FnCG, e: Expr) -> String {
             // arg_count() → Int; arg_get(i) → String pointer.
             if cname == "arg_count" { return "i32" }
             if cname == "arg_get"   { return "i8*" }
+            // eprint(s) → Int (0); the actual return is never used.
+            if cname == "eprint"    { return "i32" }
             // Builtin collection constructors.
             if cname == "Map"  { return "%QMap*" }
             // Both `List()` and `ListP()` produce
@@ -1540,6 +1552,31 @@ define _gen_string_method(cg: FnCG, name: String, recv_reg: String, args: List) 
 // fseek back → malloc(size+1) → fread → null-terminate →
 // fclose → return buf. No error handling yet — a missing
 // file is undefined behaviour for now.
+// eprint(s) — write(2, s, strlen(s)) then write a "\n".
+// Extracted helper for the same recursion-pairing reason as
+// _gen_arg_get / _gen_read_file. Returns "0" to satisfy
+// _gen_expr's String-typed contract; the actual return value
+// is never consumed since eprint is used statement-side.
+define _gen_eprint(cg: FnCG, args: List) -> String {
+    cg.mod.ensure_decl("write",  "declare i64 @write(i32, i8*, i64)")
+    cg.mod.ensure_decl("strlen", "declare i64 @strlen(i8*)")
+    se: Expr := args.__get(0)
+    s := _gen_expr(cg, se)
+    slen := cg.fresh()
+    cg.emit(slen + " = call i64 @strlen(i8* " + s + ")")
+    w1 := cg.fresh()
+    cg.emit(w1 + " = call i64 @write(i32 2, i8* " + s + ", i64 " + slen + ")")
+    // The "\n" lives in a private global; alloc_string interns
+    // it the same way print's string literals are interned.
+    nl_name := cg.mod.alloc_string("\n")
+    nl_gep := cg.fresh()
+    cg.emit(nl_gep + " = getelementptr inbounds [2 x i8], [2 x i8]* " +
+            nl_name + ", i64 0, i64 0")
+    w2 := cg.fresh()
+    cg.emit(w2 + " = call i64 @write(i32 2, i8* " + nl_gep + ", i64 1)")
+    return "0"
+}
+
 // arg_get(i) — GEP into @quirk_argv. Lives in its own
 // function so the inline `_gen_expr` call for the index
 // expression is isolated from the outer-function recursion

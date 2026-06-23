@@ -123,7 +123,8 @@ class BuiltinGen {
         return name == "print" || name == "printf" || name == "malloc" || name == "free"
             || name == "type" || name == "str" || name == "write" || name == "writeln"
             || name == "read_file" || name == "write_file"
-            || name == "arg_count" || name == "arg_get";
+            || name == "arg_count" || name == "arg_get"
+            || name == "eprint";
     }
 
     Value* handleBuiltin(const std::string& name, CallNode* call,
@@ -138,7 +139,44 @@ class BuiltinGen {
         if (name == "write_file") return generateWriteFile(call, exprHandler);
         if (name == "arg_count")  return generateArgCount(call, exprHandler);
         if (name == "arg_get")    return generateArgGet(call, exprHandler);
+        if (name == "eprint")     return generateEPrint(call, exprHandler);
         return nullptr;
+    }
+
+    // eprint(s: String) -> Int. Mirrors the selfhost lowering:
+    // libc `write(2, buf, strlen(buf))` then a single-byte
+    // newline `write(2, "\n", 1)`. Returns i32 0; the value
+    // isn't observed at the call site since eprint is used
+    // statement-side.
+    Value* generateEPrint(CallNode* call, std::function<Value*(Node*)> exprHandler) {
+        if (call->args.size() != 1) return nullptr;
+        Value* strVal = exprHandler(call->args[0].value.get());
+        Value* buf    = stringBuffer(strVal);
+        if (!buf) return nullptr;
+
+        Type* i32Ty = Type::getInt32Ty(Context);
+        Type* i64Ty = Type::getInt64Ty(Context);
+        Type* i8PtrTy = Type::getInt8PtrTy(Context);
+
+        Function* writeFn = TheModule->getFunction("write");
+        if (!writeFn) {
+            FunctionType* ft = FunctionType::get(i64Ty,
+                {i32Ty, i8PtrTy, i64Ty}, false);
+            writeFn = Function::Create(ft, Function::ExternalLinkage,
+                                       "write", TheModule);
+        }
+        Function* strlenFn = TheModule->getFunction("strlen");
+        if (!strlenFn) {
+            FunctionType* ft = FunctionType::get(i64Ty, {i8PtrTy}, false);
+            strlenFn = Function::Create(ft, Function::ExternalLinkage,
+                                        "strlen", TheModule);
+        }
+        Value* fdStderr = ConstantInt::get(i32Ty, 2);
+        Value* len = Builder.CreateCall(strlenFn, {buf});
+        Builder.CreateCall(writeFn, {fdStderr, buf, len});
+        Value* nl = Builder.CreateGlobalStringPtr("\n");
+        Builder.CreateCall(writeFn, {fdStderr, nl, ConstantInt::get(i64Ty, 1)});
+        return ConstantInt::get(i32Ty, 0);
     }
 
     // arg_count() -> Int — forwards to Sys_arg_count (sys.c)

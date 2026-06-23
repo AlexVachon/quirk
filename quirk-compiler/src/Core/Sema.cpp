@@ -2921,6 +2921,12 @@ std::string Sema::resolveVariable(const std::string &name)
         return "Int";
     if (name == "arg_get")
         return "String";
+    // stderr-routed counterpart of print(). Lowers to
+    // write(2, s, strlen(s)) + write(2, "\n", 1) on both
+    // compilers so diagnostics don't pollute stdout when
+    // IR is piped to a file.
+    if (name == "eprint")
+        return "Int";
         
     // --- NEW: Super keyword support ---
     if (name == "super") {

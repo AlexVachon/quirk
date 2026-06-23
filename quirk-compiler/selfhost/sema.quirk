@@ -416,6 +416,25 @@ define _check_call(s: Sema, c: Call) -> Ty {
         }
         return TInt()
     }
+    // Builtin: `eprint(s: String) -> Int`. Same shape as
+    // `print()` but routes to stderr (fd 2) via libc
+    // `write()`, so diagnostics don't get tangled in stdout
+    // when IR is piped to a file. Returns 0 for parity.
+    if name == "eprint" {
+        if c.args.length() != 1 {
+            s.report("eprint() takes exactly one argument")
+            return TError("eprint arity")
+        }
+        ae: Expr := c.args.__get(0)
+        at := _check_expr(s, ae)
+        is_str := false
+        match at { case TString as _ => is_str = true case _ => {} }
+        if is_str == false {
+            s.report("eprint() expects a String argument; got '" + ty_to_string(at) + "'")
+            return TError("eprint type")
+        }
+        return TInt()
+    }
     // Builtin: `arg_count() -> Int`. Reads the i32 argc that
     // the wrapper main(argc, argv) stashes into a module
     // global at startup.

@@ -1378,10 +1378,24 @@ fixedpoint_test() {
 
 fixedpoint_test
 
+# Phase 5m: stderr routing. Build an ELF that prints to both
+# streams, then verify stdout/stderr are independently
+# capturable. Without this, piping IR through llc would be
+# poisoned by any diagnostic output.
+standalone_run "ELF: eprint routes to stderr, print to stdout" \
+    'define main() -> Int {
+    print("on stdout")
+    eprint("on stderr")
+    return 0
+}' \
+    0 "on stdout"
+# (the stdout=on stdout assertion implicitly proves eprint did
+# NOT show up there — it was routed to stderr instead.)
+
 if [ "$fails" -gt 0 ]; then
     echo ""
     echo "$fails case(s) failed"
     exit 1
 fi
 echo ""
-echo "all 163/163 cases passed"
+echo "all 164/164 cases passed"

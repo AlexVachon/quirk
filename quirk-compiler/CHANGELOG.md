@@ -5,6 +5,66 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.44] — 2026-06-23
+
+### Fix: C++-side `arg_get → write_file` corruption (the garbage-file bug)
+
+The "garbage filename" symptom alpha.42 thought it had fixed
+was actually only PARTIALLY fixed. The real root cause:
+
+`BuiltinGen.Initialize` was pre-declaring `Sys_arg_get` with
+return type `i8*` (voidPtrTy). LLVM honours the FIRST
+declaration of a function symbol — so when `sys.quirk`'s
+auto-imported `extern define arg_get(...) -> String` tried
+to declare the same symbol with `%String*` return type, the
+pre-declared `i8*` won. The user-visible result: `arg_get(i)`
+returned a value typed `i8*` at the IR level (the actual
+String* pointer cast). When that flowed into `write_file`,
+`stringBuffer`'s `elem->isIntegerTy(8)` branch fired and
+returned the raw pointer instead of GEPing into the
+struct's `_buffer` field. `fopen` then read the first 8
+bytes of the String struct (which is a pointer to the
+c-string) and interpreted those bytes as the filename —
+hence the random-named ~1.6 MB files that appeared in the
+working directory each time the Makefile ran.
+
+**Fix.** Remove the redundant `Sys_arg_count`/`Sys_arg_get`
+pre-declarations from `BuiltinGen.Initialize`. The
+`extern define` declarations from `sys.quirk` handle them
+with the correct `String*` signature, and the dispatch in
+`Codegen.cpp` already prefers user-defined / extern
+overrides over builtins (the `isBuiltin → resolveFunction
+→ fall-through` pattern at handleCall).
+
+**Regression-tested.**
+
+```
+$ cat /tmp/wf.quirk
+write_file(arg_get(1), "from quirk\n")
+$ bin/quirk --no-aot --no-cache /tmp/wf.quirk /tmp/out.txt
+$ cat /tmp/out.txt
+from quirk
+$ ls -la cwd | grep -v "^total\|^d"     # no orphan files
+```
+
+All 163/163 e2e cases still pass. `make selfhost-fixedpoint`
+still produces the same byte-identical 1.6 MB IR (the
+selfhost compiler doesn't use this code path, so its IR was
+unaffected).
+
+### What's left
+
+- Document the supported selfhost subset (the bootstrap is
+  done; what user code actually works through it is the
+  next clarification).
+- stderr routing for `compile_combined`'s sema errors.
+- Stress-test `quirk-selfhost` against the `tests/` corpus
+  to surface edge cases the small bootstrap probes miss.
+
+### Test count
+
+163 cases (unchanged).
+
 ## [4.0.0-alpha.43] — 2026-06-23
 
 ### Self-hosting Phase 5l: 🎉🎉🎉🎉 **byte-identical self-stage fixed point**

@@ -105,13 +105,18 @@ class BuiltinGen {
         Function::Create(FunctionType::get(i64Ty, {voidPtrTy, i64Ty, i64Ty, voidPtrTy}, false),
                          Function::ExternalLinkage, "fwrite", TheModule);
 
-        // argv-access builtins forward to the runtime helpers
-        // in src/Runtime/libs/sys.c, which already track argc/argv
-        // populated at process startup.
-        Function::Create(FunctionType::get(i32Ty, {}, false),
-                         Function::ExternalLinkage, "Sys_arg_count", TheModule);
-        Function::Create(FunctionType::get(voidPtrTy, {i32Ty}, false),
-                         Function::ExternalLinkage, "Sys_arg_get", TheModule);
+        // NOTE: Sys_arg_count / Sys_arg_get are intentionally NOT
+        // pre-declared here. sys.quirk auto-imports `extern define
+        // arg_count() -> Int` and `arg_get(i: Int) -> String`,
+        // which produce LLVM declarations with the correct
+        // `String*` return type. Pre-declaring with `i8*` would
+        // win (first declaration set the type), making the call
+        // result flow through codegen as an i8* — write_file's
+        // stringBuffer would then bypass the struct-field GEP
+        // and pass the raw String*-cast-to-i8* to fopen, which
+        // interprets the first 8 bytes (a pointer) as the
+        // pathname. That's exactly the "garbage filename"
+        // symptom alpha.42 thought it had fixed.
     }
 
     bool isBuiltin(const std::string& name) {

@@ -845,10 +845,62 @@ EOF
 
 build_driver_test
 
+# Phase 5 (partial bootstrap): self-compile the lexer + tokens
+# modules through the self-hosted pipeline. This is the
+# bootstrap milestone — the lexer's tokenize() function is
+# compiled BY ITSELF and then RUN via lli on real input.
+bootstrap_lexer_test() {
+    local label="bootstrap: self-compiled lexer"
+    local tmpdir
+    tmpdir=$(mktemp -d --suffix=.bootstrap)
+    cp selfhost/tokens.quirk selfhost/ast.quirk selfhost/types.quirk selfhost/lexer.quirk "$tmpdir/"
+    cat > "$tmpdir/run_lexer.quirk" <<'EOF'
+from .lexer use { tokenize }
+define main() -> Int {
+    src := "define foo() { return 42 }"
+    tokens := tokenize(src)
+    return tokens.length()
+}
+EOF
+    local driver="selfhost/_bootstrap_case.quirk"
+    cat > "$driver" <<EOF
+from .build use { compile_combined }
+ir := compile_combined("$tmpdir/run_lexer.quirk", "$tmpdir")
+print(ir)
+EOF
+    local ir_path
+    ir_path=$(mktemp --suffix=.ll)
+    "$QUIRK" --no-aot --no-cache "$driver" > "$ir_path" 2>/dev/null
+    rm -f "$driver"
+    if grep -q "SEMA FAILED\|PARSE FAILED" "$ir_path"; then
+        echo "FAIL  $label  (selfhost compile rejected)"
+        cat "$ir_path"
+        fails+=1
+        rm -rf "$tmpdir"
+        rm -f "$ir_path"
+        return
+    fi
+    "$LLI" "$ir_path"
+    local got=$?
+    # tokenize produces: `define`, `foo`, `(`, `)`, `{`, `return`,
+    # `42`, `}`, EofToken — 9 tokens.
+    if [ "$got" -eq 9 ]; then
+        echo "ok    $label  (exit=$got, tokenize returned 9 tokens)"
+        rm -f "$ir_path"
+    else
+        echo "FAIL  $label  (exit=$got, expected 9)"
+        echo "      ir at $ir_path"
+        fails+=1
+    fi
+    rm -rf "$tmpdir"
+}
+
+bootstrap_lexer_test
+
 if [ "$fails" -gt 0 ]; then
     echo ""
     echo "$fails case(s) failed"
     exit 1
 fi
 echo ""
-echo "all 150/150 cases passed"
+echo "all 151/151 cases passed"

@@ -5,6 +5,60 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.35] — 2026-06-23
+
+### 🎉 Self-hosting Phase 5d: LEXER BOOTSTRAP MILESTONE
+
+The self-hosted compiler compiles its own [lexer.quirk](selfhost/lexer.quirk)
++ [tokens.quirk](selfhost/tokens.quirk) to valid LLVM IR, and the
+resulting program runs correctly. `tokenize("define foo() { return
+42 }")` returns 9 — exactly the right token count (`define`, `foo`,
+`(`, `)`, `{`, `return`, `42`, `}`, EofToken).
+
+**The unlock.** Last gap was sema rejecting `.str()` on `TEnum`
+receivers. Selfhost's `tokens.quirk` calls `k_ord.str()` on what
+the source comments describe as "the ordinal" — its workaround
+for the C++ compiler losing enum identity through struct-field
+access. Our self-hosted sema preserves enum identity (via the
+Phase 4.18 `resolve_ty` normalization), so the call hit `.str()
+not defined on 'TokenKind'`.
+
+One-line fix in `_check_method_call`: accept `TEnum` alongside
+`TInt`/`TBool`/`TDouble`. Codegen needs no change — enum
+values are i32 at the LLVM level, and the existing Int.str()
+path (`snprintf %d`) produces the ordinal as a decimal string,
+which is exactly what selfhost's diagnostic format expects.
+
+**End-to-end verified.** New `bootstrap: self-compiled lexer`
+e2e case copies `tokens.quirk` + `ast.quirk` + `types.quirk` +
+`lexer.quirk` into a temp directory, writes a `main()` that
+imports lexer and calls `tokenize("...")`, runs the whole
+thing through `compile_combined`, pipes the resulting IR
+through `lli-14`, and checks the exit code matches the
+expected token count.
+
+```
+ok  bootstrap: self-compiled lexer  (exit=9, tokenize returned 9 tokens)
+
+all 151/151 cases passed
+```
+
+**Scope of this milestone.** Lexer + tokens compile and run.
+What's still ahead:
+
+  - The other selfhost modules — `parser.quirk`, `sema.quirk`,
+    `codegen.quirk`, `ast.quirk`, `build.quirk` — haven't been
+    pointed at the self-hosted pipeline yet. They'll surface
+    their own gaps.
+  - Byte-identical fixed point — compile selfhost source via the
+    C++ compiler, save IR_v1; recompile via the IR_v1 binary,
+    save IR_v2; verify `IR_v1 == IR_v2`. The deepest validation
+    that the compiler is truly self-hosting.
+
+But this is the real milestone: the self-hosted compiler runs
+its own lexer correctly. 35 alpha releases from `4.0.0-alpha.0`
+to here.
+
 ## [4.0.0-alpha.34] — 2026-06-23
 
 ### Self-hosting Phase 5c: flip bare `List` default to pointer-list

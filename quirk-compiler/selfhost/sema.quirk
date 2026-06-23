@@ -579,7 +579,16 @@ define _check_method_call(s: Sema, c: Call) -> Ty {
         match ot { case TBool as _ => is_bool = true case _ => {} }
         is_dbl := false
         match ot { case TDouble as _ => is_dbl = true case _ => {} }
-        if is_int or is_bool or is_dbl { return TString() }
+        is_enum := false
+        match ot { case TEnum as _ => is_enum = true case _ => {} }
+        // Enum.str() returns the variant's ordinal as a decimal
+        // string — the selfhost source's tokens.quirk explicitly
+        // expects this shape (the diagnostic format uses the
+        // ordinal as a stand-in for the variant name). Codegen
+        // sees the receiver's LLVM type as `i32` and routes
+        // through the existing Int.str() path (snprintf "%d"),
+        // so no codegen change is needed.
+        if is_int or is_bool or is_dbl or is_enum { return TString() }
         s.report(".str() not defined on '" + ty_to_string(ot) + "'")
         return TError("method receiver")
     }

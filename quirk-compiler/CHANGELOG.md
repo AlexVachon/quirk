@@ -5,6 +5,80 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.36] — 2026-06-23
+
+### Self-hosting Phase 5e: **parser self-compiles too**
+
+`parser.quirk` now joins `lexer.quirk` in being compiled by the
+self-hosted compiler — and the resulting program runs, parsing
+real input via the self-compiled tokenize + parse pipeline.
+
+Four gaps surfaced when pointing the multi-file driver at
+`parser.quirk`:
+
+**Bool `==` / `!=`.** Sema rejected `b == true` / `is_open ==
+false`-style comparisons with "expects matching Int / Double /
+String operands". Added `TBool/TBool` acceptance to the
+String/Enum equality branch in `_check_binop`. Codegen
+extends the i8* string-cmp dispatch to also handle `i1`
+operands directly via `icmp eq i1`/`icmp ne i1`.
+
+**`xs.__get(i)` method form.** Selfhost uses `list.__get(i)`
+syntax (the method form of subscript) extensively in
+iteration loops. Sema accepts it on both List flavours
+returning the element type (TInt for int-list, TAny for
+pointer-list). Codegen mirrors the Index expression's
+lowering exactly — GEP through `field 2` (the data pointer)
+then by index. `_method_ret_ty` dispatches on receiver type
+so `s := xs.__get(i)` slots correctly.
+
+**Return / Assign pointer coercion.** Same bitcast-on-pointer-
+mismatch treatment VarDecl already had since Phase 4.20 now
+applies to `Return` and `Assign` too. A function declared to
+return `%struct.Token*` can return an `i8*` (e.g. a value
+loaded out of a `%QListP*` data buffer) and codegen inserts
+the bitcast. Symmetric for assignments where the slot type
+differs from the RHS expression's static type.
+
+**Two-pass type registration.** Variant field types were
+falling back to `i32` via `_q_ty_to_llvm` (primitive-only)
+when they should have resolved to user-defined types. Split
+the codegen pre-pass into two sub-passes:
+
+  - **1a** registers all type *names* (structs, enums, unions,
+    variant constructors) with placeholder empty field tables.
+  - **1b** fills in field types via `_resolve_ty(mod, …)`,
+    which now sees every user-defined type and resolves
+    correctly. Fixes the canonical
+    `type Expr = … | BinOp(left: Expr, right: Expr)` shape —
+    the variant's `left: Expr` field was being recorded as
+    `i32` because Expr hadn't yet been registered when its
+    own variants were processed in the single-pass form.
+
+**E2E harness anchor fix.** Compiled selfhost IR contains
+`"PARSE FAILED:"` / `"SEMA FAILED:"` as string constants
+(used inside parser/sema's own error reporting). The
+harness's `grep -q "SEMA FAILED"` was false-positive
+matching these. Anchored at line start (`^SEMA FAILED` /
+`^PARSE FAILED`) so only actual diagnostic output triggers.
+
+**Bootstrap milestone extended.** New e2e case copies
+tokens/ast/types/lexer/parser into a temp dir, writes a
+main that does `parse(tokenize("define foo(a: Int, b: Int)
+-> Int { return a + b }"))`, runs through `compile_combined`,
+executes via lli. Returns **1** — exactly one top-level
+`FunctionDecl` parsed.
+
+```
+ok  bootstrap: self-compiled lexer   (exit=9, tokenize returned 9 tokens)
+ok  bootstrap: self-compiled parser  (exit=1, parse returned 1 decl)
+
+all 152/152 cases passed
+```
+
+**Selfhost compiler scope so far:** lexer ✅ + parser ✅
+Remaining: sema, codegen, build (the driver itself).
+
 ## [4.0.0-alpha.35] — 2026-06-23
 
 ### 🎉 Self-hosting Phase 5d: LEXER BOOTSTRAP MILESTONE

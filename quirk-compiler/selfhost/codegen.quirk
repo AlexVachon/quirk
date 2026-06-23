@@ -636,6 +636,15 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
                     cg.emit(reg + " = icmp " + pred + " i32 " + cmp + ", 0")
                     return reg
                 }
+                // Bool ==/!= Bool — operate on i1 directly.
+                // Ordering ops on Bool stay rejected by sema.
+                if opd_ty == "i1" {
+                    reg := cg.fresh()
+                    pred := "eq"
+                    if op == "!=" { pred = "ne" }
+                    cg.emit(reg + " = icmp " + pred + " i1 " + l + ", " + r)
+                    return reg
+                }
                 reg := cg.fresh()
                 if is_dbl {
                     cg.emit(reg + " = fcmp " + dbl_pred + " double " + l + ", " + r)
@@ -1092,6 +1101,37 @@ define _gen_method_call(cg: FnCG, c: Call) -> String {
     }
     if fg.name == "append" and recv_ty == "%QListP*" {
         return _gen_listp_append(cg, recv_reg, c.args)
+    }
+    // `.__get(i)` — method form of subscript. Mirrors the
+    // Index expr's lowering exactly; selfhost source uses
+    // this shape in many iteration loops.
+    if fg.name == "__get" and (recv_ty == "%QList*" or recv_ty == "%QListP*") {
+        idx_expr: Expr := c.args.__get(0)
+        idx_reg := _gen_expr(cg, idx_expr)
+        if recv_ty == "%QListP*" {
+            data_gep := cg.fresh()
+            cg.emit(data_gep + " = getelementptr inbounds %QListP, %QListP* " + recv_reg +
+                    ", i32 0, i32 2")
+            data_ptr := cg.fresh()
+            cg.emit(data_ptr + " = load i8**, i8*** " + data_gep)
+            elem_gep := cg.fresh()
+            cg.emit(elem_gep + " = getelementptr inbounds i8*, i8** " + data_ptr +
+                    ", i32 " + idx_reg)
+            reg := cg.fresh()
+            cg.emit(reg + " = load i8*, i8** " + elem_gep)
+            return reg
+        }
+        data_gep := cg.fresh()
+        cg.emit(data_gep + " = getelementptr inbounds %QList, %QList* " + recv_reg +
+                ", i32 0, i32 2")
+        data_ptr := cg.fresh()
+        cg.emit(data_ptr + " = load i32*, i32** " + data_gep)
+        elem_gep := cg.fresh()
+        cg.emit(elem_gep + " = getelementptr inbounds i32, i32* " + data_ptr +
+                ", i32 " + idx_reg)
+        reg := cg.fresh()
+        cg.emit(reg + " = load i32, i32* " + elem_gep)
+        return reg
     }
     // Map methods. Each routes into _gen_map_method for the
     // recursion-pairing dodge.
@@ -2017,6 +2057,13 @@ define _method_ret_ty(cg: FnCG, recv_ty: String, method: String) -> String {
     if method == "length" { return "i32" }
     if method == "append" { return "i32" }
     if method == "to_int" { return "i32" }
+    // `.__get(i)` returns i32 for `%QList*` (Int-element) and
+    // i8* for `%QListP*` (pointer-element). The receiver's
+    // LLVM type tells us which.
+    if method == "__get" {
+        if recv_ty == "%QListP*" { return "i8*" }
+        return "i32"
+    }
     if method == "str" { return "i8*" }
     if method == "substring" { return "i8*" }
     if method == "startswith" { return "i1" }
@@ -2072,7 +2119,20 @@ define _ensure_slot(cg: FnCG, name: String, ty: String) -> _Slot {
 define _gen_stmt(cg: FnCG, st: Stmt) -> void {
     match st {
         case Return as r => {
+            // Coerce pointer-typed return values when the
+            // expression's static LLVM type doesn't exactly
+            // match the function's declared return type
+            // (e.g. an i8* loaded out of a `%QListP*` data
+            // buffer being returned as `%struct.Token*`).
+            // Mirrors the bitcast that VarDecl annotation
+            // honoring inserts at the binding site.
+            v_ty := _expr_static_ty(cg, r.value)
             v := _gen_expr(cg, r.value)
+            if v_ty != cg.ret_ty and _is_ptr_ty(v_ty) and _is_ptr_ty(cg.ret_ty) {
+                cast := cg.fresh()
+                cg.emit(cast + " = bitcast " + v_ty + " " + v + " to " + cg.ret_ty)
+                v = cast
+            }
             cg.emit("ret " + cg.ret_ty + " " + v)
         }
         case ExprStmt as es => {
@@ -2122,9 +2182,18 @@ define _gen_stmt(cg: FnCG, st: Stmt) -> void {
         case Assign as a => {
             // Re-bind: slot must already exist; reuse its type.
             // The arg passed to _ensure_slot only matters on
-            // first-use and won't be hit here.
+            // first-use and won't be hit here. Pointer-type
+            // mismatch between RHS and slot is bridged with a
+            // bitcast — same pattern as VarDecl / Return.
+            rhs_ty := _expr_static_ty(cg, a.value)
             rhs := _gen_expr(cg, a.value)
             slot := _ensure_slot(cg, a.name, "i32")
+            if rhs_ty != slot.ty and _is_ptr_ty(rhs_ty) and _is_ptr_ty(slot.ty) {
+                cast := cg.fresh()
+                cg.emit(cast + " = bitcast " + rhs_ty + " " + rhs +
+                        " to " + slot.ty)
+                rhs = cast
+            }
             cg.emit("store " + slot.ty + " " + rhs + ", " + slot.ty + "* " + slot.name)
         }
         case FieldSet as fs => {
@@ -2301,10 +2370,54 @@ emitted bodies reference (none today — Phase 4.1 will add
 ---
 define emit_module(decls: List) -> String {
     mod := ModuleCG()
-    // Pre-pass 1: register every struct's layout. Must happen
-    // before the function-signature pass so a function whose
-    // param or return type is a struct can resolve to the
-    // right `%struct.Foo*` LLVM type.
+    // Pre-pass 1a: register NAMES of all user-defined types
+    // (structs, enums, unions, variants) before resolving any
+    // field types. Without this, cross-type references like
+    // `struct Foo { e: Expr }` where Expr is declared later
+    // — or a variant payload referencing another union —
+    // would fall back to the i32 default because _resolve_ty
+    // wouldn't yet know the name. Each entry is registered
+    // with a placeholder empty field list; pass 1b fills in
+    // the real types.
+    na := 0
+    while na < decls.length() {
+        dn: TopLevel := decls.__get(na)
+        match dn {
+            case StructTL as st => {
+                sd: StructDecl := st.decl
+                mod.register_struct(_StructDef(sd.name, List(), List()))
+            }
+            case EnumTL as et => {
+                ed: EnumDecl := et.decl
+                mod.enums.put(ed.name, ed)
+            }
+            case UnionTL as ut => {
+                ud: UnionDecl := ut.decl
+                mod.unions.put(ud.name, ud)
+                // Base struct for the shared `{ i32 tag }` prefix.
+                base_names := List()
+                base_names.append("__tag")
+                base_tys := List()
+                base_tys.append("i32")
+                mod.register_struct(_StructDef(ud.name, base_names, base_tys))
+                vi := 0
+                while vi < ud.variants.length() {
+                    v: Variant := ud.variants.__get(vi)
+                    mod.variants.put(v.name, _VarCgInfo(ud.name, vi))
+                    // Placeholder T__V struct; fields filled in 1b.
+                    mod.register_struct(_StructDef(ud.name + "__" + v.name,
+                                                   List(), List()))
+                    vi = vi + 1
+                }
+            }
+            case _ => {}
+        }
+        na = na + 1
+    }
+    // Pre-pass 1b: now that every user-defined type name is
+    // registered, fill in struct + variant field types via
+    // _resolve_ty (which consults mod.structs / mod.unions /
+    // mod.enums for non-primitive names).
     sp := 0
     while sp < decls.length() {
         ds: TopLevel := decls.__get(sp)
@@ -2317,39 +2430,16 @@ define emit_module(decls: List) -> String {
                 while fi < sd.fields.length() {
                     f: StructField := sd.fields.__get(fi)
                     fnames.append(f.name)
-                    // Field types may themselves be struct
-                    // names — _resolve_ty handles both, but
-                    // we haven't registered all structs yet at
-                    // this point in the loop. _q_ty_to_llvm
-                    // suffices today because field types in the
-                    // test corpus are all primitives; nested-
-                    // struct fields are queued for a follow-on.
-                    ftys.append(_q_ty_to_llvm(f.type_annot))
+                    ftys.append(_resolve_ty(mod, f.type_annot))
                     fi = fi + 1
                 }
                 mod.register_struct(_StructDef(sd.name, fnames, ftys))
             }
-            case EnumTL as et => {
-                ed: EnumDecl := et.decl
-                mod.enums.put(ed.name, ed)
-            }
             case UnionTL as ut => {
                 ud: UnionDecl := ut.decl
-                mod.unions.put(ud.name, ud)
-                // Register a `%struct.T = { i32 }` shape so the
-                // shared tag-only prefix has a name; union
-                // values are `%struct.T*` and bitcast to a
-                // specific variant struct on match.
-                base_names := List()
-                base_names.append("__tag")
-                base_tys := List()
-                base_tys.append("i32")
-                mod.register_struct(_StructDef(ud.name, base_names, base_tys))
                 vi := 0
                 while vi < ud.variants.length() {
                     v: Variant := ud.variants.__get(vi)
-                    mod.variants.put(v.name, _VarCgInfo(ud.name, vi))
-                    // Synthetic struct `T__V` with __tag first.
                     fnames := List()
                     fnames.append("__tag")
                     ftys := List()
@@ -2358,7 +2448,7 @@ define emit_module(decls: List) -> String {
                     while fi < v.fields.length() {
                         f: StructField := v.fields.__get(fi)
                         fnames.append(f.name)
-                        ftys.append(_q_ty_to_llvm(f.type_annot))
+                        ftys.append(_resolve_ty(mod, f.type_annot))
                         fi = fi + 1
                     }
                     mod.register_struct(_StructDef(ud.name + "__" + v.name,

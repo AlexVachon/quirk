@@ -56,14 +56,14 @@ if errors.length() > 0 {
 EOF
 
     "$QUIRK" --no-aot --no-cache "$driver" > "$ir_path" 2>/dev/null
-    if grep -q "SEMA FAILED" "$ir_path"; then
+    if grep -q "^SEMA FAILED" "$ir_path"; then
         echo "FAIL  $label  (sema rejected)"
         cat "$ir_path"
         fails+=1
         rm -f "$ir_path" "$driver"
         return
     fi
-    if grep -q "PARSE FAILED" "$ir_path"; then
+    if grep -q "^PARSE FAILED" "$ir_path"; then
         echo "FAIL  $label  (parse rejected)"
         cat "$ir_path"
         fails+=1
@@ -119,14 +119,14 @@ if errors.length() > 0 {
 EOF
     "$QUIRK" --no-aot --no-cache "$driver" > "$ir_path" 2>/dev/null
     rm -f "$driver"
-    if grep -q "SEMA FAILED" "$ir_path"; then
+    if grep -q "^SEMA FAILED" "$ir_path"; then
         echo "FAIL  $label  (sema rejected)"
         cat "$ir_path"
         fails+=1
         rm -f "$ir_path"
         return
     fi
-    if grep -q "PARSE FAILED" "$ir_path"; then
+    if grep -q "^PARSE FAILED" "$ir_path"; then
         echo "FAIL  $label  (parse rejected)"
         cat "$ir_path"
         fails+=1
@@ -822,7 +822,7 @@ EOF
     ir_path=$(mktemp --suffix=.ll)
     "$QUIRK" --no-aot --no-cache "$driver" > "$ir_path" 2>/dev/null
     rm -f "$driver"
-    if grep -q "SEMA FAILED\|PARSE FAILED" "$ir_path"; then
+    if grep -qE "^(SEMA|PARSE) FAILED" "$ir_path"; then
         echo "FAIL  $label  (compile rejected)"
         cat "$ir_path"
         fails+=1
@@ -872,7 +872,7 @@ EOF
     ir_path=$(mktemp --suffix=.ll)
     "$QUIRK" --no-aot --no-cache "$driver" > "$ir_path" 2>/dev/null
     rm -f "$driver"
-    if grep -q "SEMA FAILED\|PARSE FAILED" "$ir_path"; then
+    if grep -qE "^(SEMA|PARSE) FAILED" "$ir_path"; then
         echo "FAIL  $label  (selfhost compile rejected)"
         cat "$ir_path"
         fails+=1
@@ -897,10 +897,63 @@ EOF
 
 bootstrap_lexer_test
 
+# Phase 5e bootstrap: parser.quirk now compiles + runs too.
+# Uses lexer's output as input — parse(tokenize(src)) producing
+# a List<TopLevel> of declarations.
+bootstrap_parser_test() {
+    local label="bootstrap: self-compiled parser"
+    local tmpdir
+    tmpdir=$(mktemp -d --suffix=.parsbs)
+    cp selfhost/tokens.quirk selfhost/ast.quirk selfhost/types.quirk \
+       selfhost/lexer.quirk selfhost/parser.quirk "$tmpdir/"
+    cat > "$tmpdir/run_parser.quirk" <<'EOF'
+from .lexer use { tokenize }
+from .parser use { parse }
+define main() -> Int {
+    src := "define foo(a: Int, b: Int) -> Int { return a + b }"
+    decls := parse(tokenize(src))
+    return decls.length()
+}
+EOF
+    local driver="selfhost/_bspars_case.quirk"
+    cat > "$driver" <<EOF
+from .build use { compile_combined }
+ir := compile_combined("$tmpdir/run_parser.quirk", "$tmpdir")
+print(ir)
+EOF
+    local ir_path
+    ir_path=$(mktemp --suffix=.ll)
+    "$QUIRK" --no-aot --no-cache "$driver" > "$ir_path" 2>/dev/null
+    rm -f "$driver"
+    if grep -qE "^(SEMA|PARSE) FAILED" "$ir_path"; then
+        echo "FAIL  $label  (selfhost compile rejected)"
+        cat "$ir_path"
+        fails+=1
+        rm -rf "$tmpdir"
+        rm -f "$ir_path"
+        return
+    fi
+    "$LLI" "$ir_path"
+    local got=$?
+    # parse() produces 1 top-level FunctionDecl from a single
+    # `define foo(...) { ... }`.
+    if [ "$got" -eq 1 ]; then
+        echo "ok    $label  (exit=$got, parse returned 1 decl)"
+        rm -f "$ir_path"
+    else
+        echo "FAIL  $label  (exit=$got, expected 1)"
+        echo "      ir at $ir_path"
+        fails+=1
+    fi
+    rm -rf "$tmpdir"
+}
+
+bootstrap_parser_test
+
 if [ "$fails" -gt 0 ]; then
     echo ""
     echo "$fails case(s) failed"
     exit 1
 fi
 echo ""
-echo "all 151/151 cases passed"
+echo "all 152/152 cases passed"

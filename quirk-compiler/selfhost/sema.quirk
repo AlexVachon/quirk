@@ -289,6 +289,13 @@ define _check_binop(s: Sema, b: BinOp) -> Ty {
             ename_r := ""
             match rt { case TEnum as er => ename_r = er.name case _ => {} }
             if ename_l != "" and ename_l == ename_r { return TBool() }
+            // Bool ==/!= Bool. Selfhost source uses this for
+            // flag comparisons (`is_open == false` etc.).
+            is_bl_l := false
+            match lt { case TBool as _ => is_bl_l = true case _ => {} }
+            is_bl_r := false
+            match rt { case TBool as _ => is_bl_r = true case _ => {} }
+            if is_bl_l and is_bl_r { return TBool() }
         }
         s.report("comparison '" + op + "' expects matching Int / Double / String operands; got '" +
                  ty_to_string(lt) + "' and '" + ty_to_string(rt) + "'")
@@ -638,6 +645,28 @@ define _check_method_call(s: Sema, c: Call) -> Ty {
     }
     is_map := false
     match ot { case TMap as _ => is_map = true case _ => {} }
+    // `.__get(Int)` method form of subscript on List (both
+    // int- and pointer-element). Returns the element type
+    // — TInt for int-list, TAny for pointer-list. Selfhost
+    // source uses this shape extensively in iteration loops.
+    if fg.name == "__get" and is_list {
+        if c.args.length() != 1 {
+            s.report(".__get() takes 1 argument (index)")
+            return TError("method arity")
+        }
+        ie: Expr := c.args.__get(0)
+        it := _check_expr(s, ie)
+        is_int_idx := false
+        match it { case TInt as _ => is_int_idx = true case _ => {} }
+        if is_int_idx == false {
+            s.report(".__get() index must be Int, got '" + ty_to_string(it) + "'")
+            return TError("method arg")
+        }
+        is_int_list := false
+        match ot { case TList as _ => is_int_list = true case _ => {} }
+        if is_int_list { return TInt() }
+        return TAny()
+    }
     // `.length()` on List / String / Map → Int, no args.
     if fg.name == "length" {
         if c.args.length() != 0 {

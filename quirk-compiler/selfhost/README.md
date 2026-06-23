@@ -52,6 +52,7 @@ toolchain dependency from anyone wanting to hack on the compiler.
 |  5b   | Bootstrap pass 2 — String ordering (`<`, `<=`, `>`, `>=`) via strcmp | landed (v4.0.0-alpha.33) |
 |  5c   | Bootstrap pass 3 — flip bare `List` default to pointer-list | landed (v4.0.0-alpha.34) |
 |  5d   | **🎉 Lexer bootstrap milestone** — selfhost compiler compiles + runs its own lexer | landed (v4.0.0-alpha.35) |
+|  5e   | **🎉 Parser bootstrap** — Bool ==, .__get(), Return/Assign coerce, two-pass type reg | landed (v4.0.0-alpha.36) |
 |  5    | Bootstrap — Quirk compiler compiles itself, byte-identical | in progress |
 
 The Codegen phase deliberately targets *text-form* LLVM IR (`.ll`)

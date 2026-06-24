@@ -5,6 +5,75 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.53] — 2026-06-24
+
+### Phase 10: 🎉 **string interpolation `"hello ${name}!"`**
+
+Selfhost now handles template-literal interpolation. Implementation
+is **lexer-level desugaring**: when a string literal contains
+`${expr}`, the lexer emits a paren-wrapped concat chain instead
+of a single StringLiteral token:
+
+```
+"hello ${name}!"
+```
+
+lexes to the equivalent of:
+
+```
+( "hello " + ( name ).str() + "!" )
+```
+
+The inner `expr` between `${...}` is **re-tokenized** by a
+recursive `tokenize()` call, so method calls, field accesses, and
+arithmetic all work inside `${...}`:
+
+```quirk
+print("length=${xs.length()}")     // method call inside
+print("${obj.field}")               // field access
+print("${a + b}")                   // arbitrary expression
+```
+
+Pieces:
+- **Lexer** (`selfhost/lexer.quirk`): new `_emit_string_or_interp`
+  helper walks the accumulated string content, splits on `${...}`,
+  and emits `LParen StringLit Plus (tokens) RParen Dot Identifier
+  LParen RParen ...` etc. The auto-appended `.str()` makes
+  non-String inner expressions coerce uniformly.
+- **Codegen** (`selfhost/codegen.quirk`): added `String.str()` as
+  a no-op — receiver returned as-is. Without this, the auto-`.str()`
+  on already-String segments would fail dispatch.
+- **Sema** (`selfhost/sema.quirk`): `.str()` now accepts `TString`
+  and `TAny` receivers (returns `TString`); the `+` operator's
+  String-concat rule accepts `String + Any` and `Any + String`
+  (Any flows as i8* at the LLVM level, same shape as String).
+
+Also fixed the **e2e helper** (`selfhost/codegen_e2e.sh`): the
+`standalone_run` shell function now stages the test source in a
+sibling file and has the driver read it via `read_file` instead of
+inlining as a Quirk string literal. Otherwise the OUTER C++ Quirk
+compiler running the driver would interpolate any `${name}` markers
+in the test source BEFORE selfhost got to see them.
+
+### Stdlib coverage progress
+
+| Module | Status |
+| --- | --- |
+| `typing/primitives/string.quirk` | ✅ |
+| `typing/primitives/{int,bool,double}.quirk` | ✅ |
+| `typing/interfaces/*` (8 files) | ✅ |
+| `typing/callable.quirk` | ✅ |
+| `typing/collections/set.quirk` | ✅ |
+| `io/file.quirk` | ✅ |
+| `packages/test/index.quirk` | parses past concat — blocked on **throw** (Phase 9) |
+| `typing/{option,result}.quirk` | blocked on **generic union** (`type Opt<T> = ...`) |
+| `math/index.quirk` | blocked on **throw** (Phase 9) |
+
+### Test count
+
+180 cases (up from 178 — two new interpolation probes: String+Int, method-call inside).
+Selfhost fixed point still byte-identical at **1,830,162 bytes** (IR grew ~34 KB).
+
 ## [4.0.0-alpha.52] — 2026-06-24
 
 ### Phase 6.w: default argument values (parse-only MVP)

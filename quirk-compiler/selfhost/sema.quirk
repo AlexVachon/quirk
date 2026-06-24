@@ -246,12 +246,23 @@ define _check_binop(s: Sema, b: BinOp) -> Ty {
     // `+` works on Int+Int and String+String (concat); the others
     // are arithmetic-only (Int+Int).
     if op == "+" {
-        // String concat
+        // String concat. Also accepts `String + Any` and
+        // `Any + String` because `Any` flows as i8* at the
+        // LLVM level — same shape as String. Stdlib code uses
+        // this as a string-coercion pattern (`"" + value`).
+        // Codegen's existing strcat lowering doesn't care
+        // about the static type, only that the values are i8*.
         is_str_l := false
         match lt { case TString as _ => is_str_l = true case _ => {} }
         is_str_r := false
         match rt { case TString as _ => is_str_r = true case _ => {} }
+        is_any_l := false
+        match lt { case TAny as _ => is_any_l = true case _ => {} }
+        is_any_r := false
+        match rt { case TAny as _ => is_any_r = true case _ => {} }
         if is_str_l and is_str_r { return TString() }
+        if is_str_l and is_any_r { return TString() }
+        if is_any_l and is_str_r { return TString() }
     }
     if op == "+" or op == "-" or op == "*" or op == "/" {
         is_int_l := false
@@ -654,6 +665,19 @@ define _check_method_call(s: Sema, c: Call) -> Ty {
         // through the existing Int.str() path (snprintf "%d"),
         // so no codegen change is needed.
         if is_int or is_bool or is_dbl or is_enum { return TString() }
+        // String.str() — already a String, no-op. Lets the
+        // interpolation lowering auto-call `.str()` on every
+        // segment uniformly.
+        if is_str { return TString() }
+        // Any.str() — receiver flows as i8* at the LLVM level,
+        // same as String. The runtime contract is "Any-typed
+        // values being str()'d already point at a c-string"
+        // (which is what Map.get / List.__get of pointer-list
+        // produce). Allow with a TString result so interpolation
+        // doesn't trip on `${m.get("k")}` patterns.
+        is_any := false
+        match ot { case TAny as _ => is_any = true case _ => {} }
+        if is_any { return TString() }
         s.report(".str() not defined on '" + ty_to_string(ot) + "'")
         return TError("method receiver")
     }

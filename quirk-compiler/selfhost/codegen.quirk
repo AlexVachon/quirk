@@ -1261,6 +1261,12 @@ define _gen_method_call(cg: FnCG, c: Call) -> String {
         }
     }
     if fg.name == "str" {
+        // String.str() is a no-op — the receiver IS already a
+        // string. Lets interpolation auto-call `.str()` on every
+        // segment without special-casing the String case.
+        if recv_ty == "i8*" {
+            return recv_reg
+        }
         // Int.str(): snprintf("%d", x) into a 12-byte buffer
         // (max i32 in decimal is 11 chars + null).
         if recv_ty == "i32" {

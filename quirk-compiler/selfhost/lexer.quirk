@@ -95,6 +95,97 @@ define _keyword_kind(word: String) -> TokenKind {
     return TokenKind.Identifier
 }
 
+// Emit either a single StringLiteral token (fast path, no
+// `${...}` markers) or a paren-wrapped concat chain that
+// re-tokenizes each interpolation segment as a regular
+// expression. The shape we emit is:
+//
+//   ( seg0 + ( expr0 ) + seg1 + ( expr1 ) + ... + segN )
+//
+// The outer parens guard against precedence interactions
+// with surrounding ops; the inner parens around each expr
+// let arbitrary expressions live inside ${...} (method calls,
+// field access, arithmetic, etc.) without parser surprises.
+// Each emitted token carries the original string's start
+// line/col so diagnostics still point at the source spot.
+define _emit_string_or_interp(out: List, content: String, line: Int, start_col: Int) -> Int {
+    // Fast path: no `${` in content → one literal token.
+    has_interp := false
+    nn := content.length()
+    si := 0
+    while si + 1 < nn {
+        if content.substring(si, si + 1) == "$" and content.substring(si + 1, si + 2) == "{" {
+            has_interp = true
+            si = nn
+        } else {
+            si = si + 1
+        }
+    }
+    if has_interp == false {
+        out.append(Token(TokenKind.StringLiteral, content, line, start_col))
+        return 0
+    }
+    // Slow path: split on `${...}` and tokenize each inner
+    // expression independently. We walk the content once,
+    // emitting StringLiteral / Plus / re-tokenized-expr /
+    // Plus tokens as we go.
+    out.append(Token(TokenKind.LParen, "(", line, start_col))
+    first_emitted := false
+    i := 0
+    seg_start := 0
+    while i < nn {
+        ch := content.substring(i, i + 1)
+        if ch == "$" and i + 1 < nn and content.substring(i + 1, i + 2) == "{" {
+            // Emit the literal segment so far (always — even
+            // if empty — so the parser sees a balanced chain).
+            seg := content.substring(seg_start, i)
+            if first_emitted { out.append(Token(TokenKind.Plus, "+", line, start_col)) }
+            out.append(Token(TokenKind.StringLiteral, seg, line, start_col))
+            first_emitted = true
+            // Find closing `}`. Nested interpolation is not
+            // supported; the first `}` wins.
+            j := i + 2
+            while j < nn and content.substring(j, j + 1) != "}" {
+                j = j + 1
+            }
+            inner := content.substring(i + 2, j)
+            // Re-tokenize the inner expression. Append all
+            // tokens except the trailing EofToken so the parser
+            // sees a continuous stream.
+            inner_toks := tokenize(inner)
+            out.append(Token(TokenKind.Plus, "+", line, start_col))
+            out.append(Token(TokenKind.LParen, "(", line, start_col))
+            ti := 0
+            while ti < inner_toks.length() {
+                tk: Token := inner_toks.__get(ti)
+                if tk.kind == TokenKind.EofToken {
+                    ti = inner_toks.length()
+                } else {
+                    out.append(tk)
+                    ti = ti + 1
+                }
+            }
+            out.append(Token(TokenKind.RParen, ")", line, start_col))
+            // Auto-call `.str()` so concat with String works
+            // regardless of the inner expression's type.
+            out.append(Token(TokenKind.Dot, ".", line, start_col))
+            out.append(Token(TokenKind.Identifier, "str", line, start_col))
+            out.append(Token(TokenKind.LParen, "(", line, start_col))
+            out.append(Token(TokenKind.RParen, ")", line, start_col))
+            i = j + 1
+            seg_start = i
+            continue
+        }
+        i = i + 1
+    }
+    // Trailing literal segment.
+    tail := content.substring(seg_start, nn)
+    if first_emitted { out.append(Token(TokenKind.Plus, "+", line, start_col)) }
+    out.append(Token(TokenKind.StringLiteral, tail, line, start_col))
+    out.append(Token(TokenKind.RParen, ")", line, start_col))
+    return 0
+}
+
 ---
 Tokenize `source` into a List of Tokens, ending with an
 `EofToken` sentinel. Positions are 1-indexed lines/columns.
@@ -263,7 +354,12 @@ define tokenize(source: String) -> List {
             }
             // Skip closing `"`.
             if pos < n { pos = pos + 1; col = col + 1 }
-            out.append(Token(TokenKind.StringLiteral, content, line, start_col))
+            // Interpolation: `"hello ${name}!"` desugars at lex
+            // time to the equivalent concat chain. If `${` does
+            // not appear in `content`, emit a single StringLiteral
+            // (the fast path). Otherwise build a sequence of
+            // tokens: ( seg0 + tokens(expr0) + seg1 + ... + segN ).
+            _emit_string_or_interp(out, content, line, start_col)
             continue
         }
 

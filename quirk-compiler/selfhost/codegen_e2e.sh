@@ -1144,14 +1144,21 @@ standalone_run() {
     local expected="$3"
     local expected_out="${4:-}"
     local driver="selfhost/_standalone.quirk"
-    local quoted
-    quoted=$(printf %s "$src" | python3 -c 'import sys, json; print(json.dumps(sys.stdin.read()))')
+    # Write the test source to a sibling file and have the
+    # driver read it via `read_file`. This avoids `${...}`
+    # interpolation surprises — if we inlined `src` as a
+    # Quirk string literal, the outer C++ compiler running
+    # the driver would try to interpolate any `${name}`
+    # markers BEFORE selfhost gets to see them.
+    local src_file
+    src_file=$(mktemp --suffix=.quirk)
+    printf %s "$src" > "$src_file"
     cat > "$driver" <<EOF
 from .lexer use { tokenize }
 from .parser use { parse }
 from .sema use { check }
 from .codegen use { emit_module }
-src := $quoted
+src := read_file("$src_file")
 print(emit_module(parse(tokenize(src))))
 EOF
     local ll_path s_path bin_path
@@ -1190,16 +1197,18 @@ EOF
         echo "FAIL  $label  (exit=$got_exit, expected $expected; out='$got_out')"
         echo "      bin at $bin_path"
         fails+=1
+        rm -f "$src_file"
         return
     fi
     if [ -n "$expected_out" ] && [ "$got_out" != "$expected_out" ]; then
         echo "FAIL  $label  (stdout='$got_out', expected '$expected_out')"
         echo "      bin at $bin_path"
         fails+=1
+        rm -f "$src_file"
         return
     fi
     echo "ok    $label  (exit=$got_exit)"
-    rm -f "$ll_path" "$s_path" "$bin_path"
+    rm -f "$ll_path" "$s_path" "$bin_path" "$src_file"
 }
 
 # Coverage: simple arithmetic (no runtime helpers), libc lowering
@@ -1518,6 +1527,28 @@ standalone_run "ELF: default arg value parsed (call passes both)" \
     'define greet(name: String, prefix: String = "hi") -> Int { return name.length() + prefix.length() }
 define main() -> Int { return greet("world", "hello") + 32 }' \
     42
+
+# Phase 10: string interpolation via ${expr} markers. Lexer
+# desugars at tokenize time into a paren-wrapped concat chain
+# where each ${expr} becomes `(expr).str()`. Inner expression
+# is re-tokenized as a regular expression so method calls,
+# field accesses, etc. all work inside ${...}.
+standalone_run "ELF: interpolation with String + Int" \
+    'define main() -> Int {
+    name := "Quirk"
+    age := 4
+    print("Hello ${name}, version ${age}!")
+    s := "${name}/${age}"
+    return s.length() + 35
+}' \
+    42 "Hello Quirk, version 4!"
+standalone_run "ELF: interpolation with method call inside" \
+    'define main() -> Int {
+    xs := [10, 20, 12]
+    print("len=${xs.length()}")
+    return xs.length() + 39
+}' \
+    42 "len=3"
 # (the stdout=on stdout assertion implicitly proves eprint did
 # NOT show up there — it was routed to stderr instead.)
 
@@ -1527,4 +1558,4 @@ if [ "$fails" -gt 0 ]; then
     exit 1
 fi
 echo ""
-echo "all 178/178 cases passed"
+echo "all 180/180 cases passed"

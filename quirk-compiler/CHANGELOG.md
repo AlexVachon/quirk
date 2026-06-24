@@ -5,6 +5,56 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.52] — 2026-06-24
+
+### Phase 6.w: default argument values (parse-only MVP)
+
+`define foo(x: Int, y: String = "hi") -> ...` now parses. The
+default value expression is consumed by the parser and
+**discarded** — call sites must still pass every argument
+explicitly. Auto-fill of omitted trailing args is deferred to
+a follow-up phase (would need the sig table to track defaults
++ the call-site codegen to inject them).
+
+This is enough to unlock parsing of every stdlib function that
+uses defaults — which is pervasive. Probing the typing +
+math + datetime + regex + collections packages with this fix:
+
+| Module | Status |
+| --- | --- |
+| `typing/primitives/string.quirk` | ✅ 4,146 bytes |
+| `typing/primitives/double.quirk` | ✅ 820 bytes |
+| `typing/callable.quirk` | ✅ 274 bytes |
+| `typing/collections/set.quirk` | ✅ 3,711 bytes |
+| `math/index.quirk` | parses past defaults — blocked on `throw` (Phase 9) |
+| `typing/collections/list.quirk` | sema gap ("call target must be bare identifier") |
+| `datetime/index.quirk` | sema gap (untracked stdlib types) |
+| `regex/index.quirk` | sema gap (comparison-op typing) |
+
+Combined with previously-landed work:
+- ✅ `io/file.quirk` (alpha.47)
+- ✅ `typing/interfaces/*` (8 files, alpha.51)
+- ✅ `typing/primitives/{int,bool,double,string}.quirk` (4/4)
+- ✅ `typing/{callable,collections/set}.quirk`
+
+### Test count
+
+178 cases (up from 177 — one new default-arg probe).
+
+Selfhost fixed point still byte-identical at **1,796,125
+bytes** (IR grew ~360 bytes from the parser branch).
+
+### What's left for stdlib coverage
+
+| Gap | Severity | Effort |
+| --- | --- | --- |
+| Generic type params (`type Option<T> = ...`) | high | medium |
+| `throw` / `try` (Phase 9) | medium | large |
+| String interpolation (Phase 10) | high | medium |
+| Lambdas (Phase 11) | medium | large |
+| Sema for stdlib type tracking (typing as extension) | low | medium |
+| Auto-fill omitted args at call sites | low | small |
+
 ## [4.0.0-alpha.51] — 2026-06-24
 
 ### Phase 7: traits as no-ops + interface skip + read_file NULL-safety

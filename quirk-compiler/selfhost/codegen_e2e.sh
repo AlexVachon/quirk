@@ -1508,6 +1508,16 @@ standalone_run "ELF: read_file on missing path returns empty" \
     return 0
 }' \
     42
+
+# Default arg values: parsed and discarded. Callers must still
+# pass every arg explicitly — auto-fill of omitted trailing
+# args is a follow-up phase. Unlocks parsing of stdlib
+# functions whose signatures pervasively use `= ""`, `= 0`,
+# `= false`, etc.
+standalone_run "ELF: default arg value parsed (call passes both)" \
+    'define greet(name: String, prefix: String = "hi") -> Int { return name.length() + prefix.length() }
+define main() -> Int { return greet("world", "hello") + 32 }' \
+    42
 # (the stdout=on stdout assertion implicitly proves eprint did
 # NOT show up there — it was routed to stderr instead.)
 
@@ -1517,4 +1527,4 @@ if [ "$fails" -gt 0 ]; then
     exit 1
 fi
 echo ""
-echo "all 177/177 cases passed"
+echo "all 178/178 cases passed"

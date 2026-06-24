@@ -622,6 +622,17 @@ define _parse_param(s: ParserState) -> Param {
     if s.match_kind(TokenKind.Colon) {
         type_annot = _parse_type_annot(s, "parameter type")
     }
+    // Optional default value: `x: Int = 0`, `raw: Any = ""`,
+    // etc. Selfhost parses the expression so the stdlib's
+    // pervasive default-arg signatures don't choke parse —
+    // but the default is currently DISCARDED. Call sites must
+    // still pass every arg explicitly. Auto-fill of omitted
+    // trailing args is deferred to a follow-up phase (would
+    // need the sig table to track defaults + the call-site
+    // codegen to inject them).
+    if s.match_kind(TokenKind.Assign) {
+        _parse_expr(s)
+    }
     return Param(name, type_annot, is_variadic)
 }
 

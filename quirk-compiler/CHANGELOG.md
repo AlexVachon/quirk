@@ -5,6 +5,97 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.47] — 2026-06-24
+
+### Phase 6.x: 🎉 **`packages/io/file.quirk` compiles cleanly through selfhost**
+
+First real stdlib file end-to-end through selfhost: 93 lines
+of `packages/io/file.quirk` → 1,119 bytes of LLVM IR → 34
+lines of x86-64 asm via llc-14. Verified the IR shape is what
+the C runtime expects:
+
+```llvm
+%struct.File = type { i8*, i1 }
+%struct.FileIterator = type { %struct.File*, i8* }
+
+declare i32 @File____init(%struct.File*, i8*, i8*)
+declare i8* @File__read(%struct.File*)
+declare i8* @File__read_line(%struct.File*)
+declare i32 @File__write(%struct.File*, i8*)
+declare i32 @File__close(%struct.File*)
+
+define %struct.File* @File____enter(%struct.File* %arg0) { ... }
+define i32 @File____exit(%struct.File* %arg0) { ... }
+```
+
+Four small gaps fell out, all fixed:
+
+**1. Inside-struct `extern define` methods.**
+The selfhost struct parser only accepted `define …` as a
+method-start token; `extern define …` inside a struct
+choked. Now `_parse_struct_decl` accepts both. Required for
+every stdlib struct that wraps a C type (`File`, `Socket`,
+`HttpClient`, etc.).
+
+**2. `self` parameter on extern struct methods.**
+The parser strips the explicit `self` first-param so codegen
+can re-inject it (regular methods worked already). For
+extern methods, `_gen_function` wasn't re-injecting `self_ty`
+in its `declare` emission — the result was a runtime ABI
+mismatch (`declare … (i8*, i8*)` when the C runtime expected
+`(%struct.File*, i8*, i8*)`). Now prepends `self_ty` for
+extern method declarations.
+
+**3. `Any` type → `i8*`.**
+The selfhost type-mapping table treated unknown types as
+`i32`. `Any`-typed struct fields (like `File._handle: Any`)
+were emitting `%struct.File = type { i32, i1 }` — 4 bytes
+instead of 8 for the handle pointer. Added a single arm to
+`_q_ty_to_llvm`: `Any → i8*`. Field reads/writes through
+the existing VarDecl annotation-honoring path do the right
+downcast at use sites.
+
+**4. Compound assignments `+= -= *= /= %=`.**
+Stdlib code uses `i += 1` pervasively in loops. Tokens
+already existed; the parser now desugars `x += rhs` to
+`x = x + rhs` (load + add + store via the existing Assign
+path) and `obj.f += rhs` to the matching FieldSet shape.
+
+**5. Dotted module paths + bare `use foo.bar`.**
+The `_skip_import` parser only accepted single-identifier
+modules: `from io use { File }`. Stdlib uses dotted forms:
+`from io.file use { File }`, `from typing.collections.list
+use { List }`. And `use typing.collections.list` (no
+braces) is also common for typing-extension side-effects.
+Both now parse cleanly. Selfhost doesn't track stdlib types
+yet, so they're skipped — the gateway is the lowering, not
+the type system.
+
+### Remaining gaps (revealed by trying `packages/sys/index.quirk`)
+
+| Gap | Severity | Effort |
+| --- | --- | --- |
+| `[]` defaults to `List<Int>` not polymorphic | high | small |
+| `["a", "b"]` (String list literal) | high | small |
+| `{}` empty map literal | high | small |
+| Variadic params (`...args`) | medium | medium |
+| Default argument values | medium | medium |
+| Operator overloading via dunder methods | low | large |
+
+These get tackled iteratively as we point selfhost at more
+stdlib files. The pattern is: each file surfaces 2-5 gaps;
+fixing the gaps unlocks the next ~3-10 files of the stdlib.
+
+### Test count
+
+168 cases (up from 166 — three new probes: extern struct
+method with Any field, compound assignment, plus the
+existing two extern probes from alpha.46).
+
+Selfhost fixed point still holds at **1,685,113 bytes**
+(IR grew ~16 KB from the parser additions + codegen
+extern-self injection).
+
 ## [4.0.0-alpha.46] — 2026-06-23
 
 ### Phase 6: 🎉 **`extern define` lowering in selfhost — the stdlib gateway**

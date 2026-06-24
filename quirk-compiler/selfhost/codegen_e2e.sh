@@ -1407,6 +1407,20 @@ define main() -> Int {
     return n
 }' \
     6
+standalone_run "ELF: extern method inside struct (Any-typed field)" \
+    'struct Box {
+    _data: Any
+    extern define mark(self) -> Int
+    define get_self(self) -> Box { return self }
+}
+extern define malloc(n: Int) -> Any
+define main() -> Int {
+    return 42
+}' \
+    42
+standalone_run "ELF: compound assignment +=" \
+    'define main() -> Int { i := 40; i += 2; return i }' \
+    42
 # (the stdout=on stdout assertion implicitly proves eprint did
 # NOT show up there — it was routed to stderr instead.)
 
@@ -1416,4 +1430,4 @@ if [ "$fails" -gt 0 ]; then
     exit 1
 fi
 echo ""
-echo "all 166/166 cases passed"
+echo "all 168/168 cases passed"

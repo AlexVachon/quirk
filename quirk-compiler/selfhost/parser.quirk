@@ -440,6 +440,34 @@ define _parse_stmt(s: ParserState) -> Stmt {
             }
         }
     }
+    // Compound assignments `x += rhs` desugar to `x = x + rhs`.
+    // Same for -= * = /= %=. The LHS is re-emitted on the right
+    // side as a fresh Ident/FieldGet so codegen sees the
+    // standard load-then-add-then-store shape.
+    op := ""
+    if s.check(TokenKind.PlusAssign)    { op = "+" }
+    elif s.check(TokenKind.MinusAssign)  { op = "-" }
+    elif s.check(TokenKind.StarAssign)   { op = "*" }
+    elif s.check(TokenKind.SlashAssign)  { op = "/" }
+    elif s.check(TokenKind.PercentAssign) { op = "%" }
+    if op != "" {
+        s.advance()
+        rhs2: Expr := _parse_expr(s)
+        match lhs {
+            case Ident as id => {
+                lhs_clone: Expr := Ident(id.name)
+                return Assign(id.name, BinOp(op, lhs_clone, rhs2))
+            }
+            case FieldGet as fg => {
+                lhs_clone: Expr := FieldGet(fg.obj, fg.name)
+                return FieldSet(fg.obj, fg.name, BinOp(op, lhs_clone, rhs2))
+            }
+            case _ => {
+                s.fail("invalid compound-assignment target at line " + t.line.str() + ":" + t.col.str())
+                return ExprStmt(lhs)
+            }
+        }
+    }
     return ExprStmt(lhs)
 }
 
@@ -625,8 +653,11 @@ define _parse_struct_decl(s: ParserState, out_methods: List) -> StructDecl {
         // Tolerate leading / interleaved `;` so the user can
         // write either `x: Int; y: Int` or one-per-line forms.
         if s.match_kind(TokenKind.Semicolon) { continue }
-        // Method body inside the struct.
-        if s.check(TokenKind.Define) {
+        // Method body inside the struct. Either `define m(...)`
+        // (regular method) or `extern define m(...) -> T` (FFI
+        // method bound at link time — common in stdlib structs
+        // where the C runtime provides the implementation).
+        if s.check(TokenKind.Define) or s.check(TokenKind.Extern) {
             mfd: FunctionDecl := _parse_function_decl(s)
             // Strip an explicit `self` first param (selfhost
             // source writes it; our method machinery treats
@@ -722,6 +753,14 @@ define _skip_import(s: ParserState) -> void {
     // Optional leading `.` for relative imports.
     s.match_kind(TokenKind.Dot)
     s.expect(TokenKind.Identifier, "module name after 'from'")
+    // Dotted module paths: `from io.file use { File }`,
+    // `from typing.collections.list use { ... }`. The selfhost
+    // pipeline doesn't follow these — they're resolved at the
+    // C++ stdlib layer — so we just consume the `.<ident>`
+    // suffix without recording anything.
+    while s.match_kind(TokenKind.Dot) {
+        s.expect(TokenKind.Identifier, "module path segment after '.'")
+    }
     s.expect(TokenKind.Use, "'use' after module name")
     s.expect(TokenKind.LBrace, "'{' to open import name list")
     if s.check(TokenKind.RBrace) == false {
@@ -733,6 +772,19 @@ define _skip_import(s: ParserState) -> void {
     s.expect(TokenKind.RBrace, "'}' to close import name list")
 }
 
+// Bare-`use` form: `use foo.bar.baz` (no `from`, no `{...}`).
+// Pulls a module in for its side effects / typing extensions
+// (often used in stdlib files to wire `Comparable` etc.).
+// Selfhost skips them entirely — sema doesn't track types
+// from these and codegen doesn't emit anything.
+define _skip_bare_use(s: ParserState) -> void {
+    s.expect(TokenKind.Use, "'use'")
+    s.expect(TokenKind.Identifier, "module name after 'use'")
+    while s.match_kind(TokenKind.Dot) {
+        s.expect(TokenKind.Identifier, "module path segment after '.'")
+    }
+}
+
 define parse(tokens: List) -> List {
     s := ParserState(tokens)
     out := List()
@@ -740,6 +792,10 @@ define parse(tokens: List) -> List {
         t: Token := s.peek()
         if t.kind == TokenKind.From {
             _skip_import(s)
+            continue
+        }
+        if t.kind == TokenKind.Use {
+            _skip_bare_use(s)
             continue
         }
         if t.kind == TokenKind.Define or t.kind == TokenKind.Extern {

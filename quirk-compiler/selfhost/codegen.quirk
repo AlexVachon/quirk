@@ -93,6 +93,11 @@ define _q_ty_to_llvm(qty: String) -> String {
     if qty == "Bool"   { return "i1" }
     if qty == "Double" { return "double" }
     if qty == "String" { return "i8*" }
+    // `Any` is an opaque heap pointer — used for `_handle: Any`
+    // FFI fields, Map values, List<Any> elements. All flow as
+    // i8* at the LLVM level; downcasts happen at use sites
+    // through VarDecl annotation honoring.
+    if qty == "Any"    { return "i8*" }
     // Bare `List` defaults to the pointer-element layout
     // `%QListP* = { i32 length, i32 capacity, i8** data }`.
     // For Int-element storage, use the explicit `List<Int>`
@@ -2561,11 +2566,20 @@ define _gen_function(fdecl: FunctionDecl, mod: ModuleCG) -> String {
     // no entry block to seed alloca slots into. The sig table
     // is already populated by emit_module's pre-pass so call
     // sites resolve via the same lookup as normal functions.
+    // For methods, the `self` param was stripped from
+    // `fd.params` by the inside-struct parser — we prepend its
+    // type here to match the C ABI the runtime expects.
     if fdecl.is_extern {
         dsig := ""
+        first := true
+        if is_method {
+            dsig = self_ty
+            first = false
+        }
         di := 0
         while di < fdecl.params.length() {
-            if di > 0 { dsig = dsig + ", " }
+            if first == false { dsig = dsig + ", " }
+            first = false
             dp: Param := fdecl.params.__get(di)
             dty := _resolve_ty(mod, dp.type_annot)
             dsig = dsig + dty

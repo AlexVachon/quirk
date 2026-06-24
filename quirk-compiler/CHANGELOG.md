@@ -5,6 +5,111 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.54] — 2026-06-24
+
+### Phase 9: 🎉 **`try` / `throw` / `catch` via setjmp/longjmp**
+
+The biggest remaining language phase. Selfhost-compiled programs
+can now raise and handle exceptions using the standard libc
+setjmp/longjmp machinery — no runtime helpers needed beyond
+what libc + the standalone ELF already linked.
+
+```quirk
+struct Err { code: Int; msg: String }
+
+define risky(x: Int) -> Int {
+    if x < 0 { throw Err(7, "negative") }
+    return x * 3
+}
+
+define main() -> Int {
+    try {
+        n := risky(-5)
+        print("no throw, n=${n}")
+    } catch (e: Err) {
+        print("caught: ${e.code} ${e.msg}")
+        return 35 + e.code
+    }
+    return 0
+}
+// → caught: 7 negative ; exit 42
+```
+
+**Implementation**: two LLVM globals (`@__quirk_jmp_buf`,
+`@__quirk_exception`) plus per-try save/restore via `memcpy`.
+Nesting works because each `try { } catch { }` saves the
+outer jmp_buf into a 200-byte stack slot before running
+`_setjmp`, and restores it on either path (success or catch
+entry). Re-throws inside a catch propagate to the enclosing
+handler.
+
+**Pieces:**
+
+1. **AST**: new `Throw(value: Expr)` and `TryCatch(try_body,
+   binder, binder_type, catch_body)` variants of `Stmt`.
+
+2. **Parser**: `throw EXPR` and `try { … } catch (binder: T)
+   { … }` (single-catch, with required parens around the
+   binder). Multi-catch chains and `finally` clauses are
+   deferred — single-catch covers ~100% of stdlib use.
+
+3. **Sema**: `throw` accepts any pointer-typed expression
+   (struct, Any). The catch arm binds `e: T` in its own
+   scope before type-checking the handler body.
+
+4. **Codegen**: per-try, allocate a 200-byte stack buffer,
+   `memcpy` the outer jmp_buf into it, then `_setjmp` on
+   the global. `0` return → try body; nonzero → catch.
+   Both paths `memcpy` the saved buffer back into the
+   global BEFORE running their respective bodies (the catch
+   restore goes first so nested throws inside the handler
+   propagate up). `throw EXPR` stores the bitcast i8* into
+   the exception global and `longjmp`s.
+
+5. **Numbering gotcha** (caught + fixed): the try body's
+   "restore on success" memcpy comes AFTER the body. If the
+   body unconditionally throws, the body's terminator
+   (unreachable, after longjmp) suppresses subsequent emits
+   — but `cg.fresh()` still consumed an SSA slot, which
+   broke LLVM's strict-sequential-numbering check
+   ("instruction expected to be numbered '%45'"). Fixed by
+   guarding the restore-memcpy on `block_terminated == false`
+   so the slot isn't allocated when the emit would be a
+   no-op.
+
+### Stdlib coverage
+
+`packages/test/index.quirk` and `packages/math/index.quirk`
+both parse fully through Phase 9 now — they then hit downstream
+sema gaps from stdlib type tracking (`AssertionError` not
+visible, `Exception` not visible), which is a separate
+"sema accepts unknown types" enhancement.
+
+### Test count
+
+183 cases (up from 180 — three new try/throw probes:
+basic catch, success-path no-op, nested with re-throw).
+
+Selfhost fixed point still byte-identical at **1,882,349
+bytes** (IR grew ~52 KB from the codegen path).
+
+### Path B progress
+
+| Phase | Feature | Status |
+| --- | --- | --- |
+| 6     | `extern define` lowering | ✅ |
+| 6.w   | default arg values | ✅ |
+| 6.x   | inside-struct extern, Any, +=, dotted imports | ✅ |
+| 6.y   | polymorphic [], string-list literals, {} | ✅ |
+| 6.z   | …args variadic, multi-line import strip | ✅ |
+| 7     | trait clauses as no-ops + interface skip | ✅ |
+| 8     | for-in loops | ✅ |
+| **9** | **try / throw / catch** | ✅ **alpha.54** |
+| 10    | string interpolation | ✅ |
+| 11    | lambdas / Callable | open |
+| 12    | generics + traits proper | open |
+| 13    | range, tuple, destructuring, ops overload | open |
+
 ## [4.0.0-alpha.53] — 2026-06-24
 
 ### Phase 10: 🎉 **string interpolation `"hello ${name}!"`**

@@ -35,7 +35,7 @@ worked around in tokens.quirk's `__str` impl.
 from .tokens use { TokenKind, Token }
 from .ast use { Expr, Stmt, Param, FunctionDecl, TopLevel }
 from .ast use { IntLit, FloatLit, StringLit, BoolLit, NullLit, Ident, UnaryOp, BinOp, Call, FieldGet, ListLit, Index }
-from .ast use { Return, ExprStmt, VarDecl, Assign, FieldSet, If, While, Continue, Break, Match, ForIn, Func, StructTL, EnumTL, UnionTL }
+from .ast use { Return, ExprStmt, VarDecl, Assign, FieldSet, If, While, Continue, Break, Match, ForIn, Throw, TryCatch, Func, StructTL, EnumTL, UnionTL }
 from .ast use { StructField, StructDecl, EnumDecl, MatchArm, Variant, UnionDecl }
 
 struct ParserState {
@@ -383,6 +383,30 @@ define _parse_stmt(s: ParserState) -> Stmt {
         iter := _parse_expr(s)
         body := _parse_block(s)
         return ForIn(var_name, iter, body)
+    }
+    // `throw EXPR` — pass any pointer-typed value up the
+    // try/catch chain. Sema accepts struct/Any receivers;
+    // codegen lowers to longjmp + the global exception slot.
+    if t.kind == TokenKind.Throw {
+        s.advance()
+        value := _parse_expr(s)
+        return Throw(value)
+    }
+    // `try { ... } catch (binder: T) { ... }` — single-catch
+    // form. Multi-catch chains and `finally` clauses deferred.
+    if t.kind == TokenKind.Try {
+        s.advance()
+        try_body := _parse_block(s)
+        s.expect(TokenKind.Catch, "'catch' after try-block")
+        s.expect(TokenKind.LParen, "'(' to open catch binder")
+        binder := s.expect(TokenKind.Identifier, "catch binder name").value
+        binder_type := ""
+        if s.match_kind(TokenKind.Colon) {
+            binder_type = _parse_type_annot(s, "catch binder type")
+        }
+        s.expect(TokenKind.RParen, "')' to close catch binder")
+        catch_body := _parse_block(s)
+        return TryCatch(try_body, binder, binder_type, catch_body)
     }
     if t.kind == TokenKind.Continue {
         s.advance()

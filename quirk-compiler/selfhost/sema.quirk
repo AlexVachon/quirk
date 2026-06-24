@@ -27,7 +27,7 @@ Things deferred to Phase 3.x:
 
 from .ast use { Expr, Stmt, Param, FunctionDecl, TopLevel }
 from .ast use { IntLit, FloatLit, StringLit, BoolLit, NullLit, Ident, UnaryOp, BinOp, Call, FieldGet, ListLit, Index }
-from .ast use { Return, ExprStmt, VarDecl, Assign, FieldSet, If, While, Continue, Break, Match, ForIn, Func, StructTL, EnumTL, UnionTL }
+from .ast use { Return, ExprStmt, VarDecl, Assign, FieldSet, If, While, Continue, Break, Match, ForIn, Throw, TryCatch, Func, StructTL, EnumTL, UnionTL }
 from .ast use { StructField, StructDecl, EnumDecl, MatchArm, Variant, UnionDecl }
 from .types use { Ty, TInt, TDouble, TString, TBool, TVoid, TAny, TStruct, TEnum, TUnion, TList, TListP, TMap, TError }
 from .types use { ty_to_string, ty_from_annot, ty_compatible }
@@ -1202,6 +1202,35 @@ define _check_stmt(s: Sema, st: Stmt, ret: Ty) -> void {
         }
         case Match as m => {
             _check_match(s, m, ret)
+        }
+        case Throw as th => {
+            // Throw value must be a struct or Any (the thing
+            // longjmp'd through the @__quirk_exception slot
+            // is an i8*). Permissive sema for now — anything
+            // pointer-typed is fine.
+            _check_expr(s, th.value)
+        }
+        case TryCatch as tc => {
+            // Type-check the try body in its own scope.
+            s.push_scope()
+            j := 0
+            while j < tc.try_body.length() {
+                ts: Stmt := tc.try_body.__get(j)
+                _check_stmt(s, ts, ret)
+                j = j + 1
+            }
+            s.pop_scope()
+            // Catch body has `binder: T` bound in its scope.
+            s.push_scope()
+            bty: Ty := s.resolve_ty(tc.binder_type)
+            s.define_local(tc.binder, bty)
+            k := 0
+            while k < tc.catch_body.length() {
+                cs: Stmt := tc.catch_body.__get(k)
+                _check_stmt(s, cs, ret)
+                k = k + 1
+            }
+            s.pop_scope()
         }
         case _ => {}
     }

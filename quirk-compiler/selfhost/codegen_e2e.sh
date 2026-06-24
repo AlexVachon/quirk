@@ -1549,6 +1549,53 @@ standalone_run "ELF: interpolation with method call inside" \
     return xs.length() + 39
 }' \
     42 "len=3"
+
+# Phase 9: try / throw / catch via setjmp+longjmp.
+standalone_run "ELF: try/throw catches via longjmp" \
+    'struct Err { code: Int }
+define risky(x: Int) -> Int {
+    if x < 0 { throw Err(7) }
+    return x * 3
+}
+define main() -> Int {
+    try {
+        risky(-1)
+    } catch (e: Err) {
+        return 35 + e.code
+    }
+    return 0
+}' \
+    42
+standalone_run "ELF: try-success path leaves no exception" \
+    'struct Err { code: Int }
+define safe(x: Int) -> Int { return x * 2 }
+define main() -> Int {
+    n := 0
+    try {
+        n = safe(21)
+    } catch (e: Err) {
+        return 99
+    }
+    return n
+}' \
+    42
+standalone_run "ELF: nested try with re-throw" \
+    'struct Err { code: Int }
+define main() -> Int {
+    n := 0
+    try {
+        try {
+            throw Err(15)
+        } catch (e: Err) {
+            n = n + e.code
+            throw Err(100)
+        }
+    } catch (outer: Err) {
+        n = n + 27
+    }
+    return n
+}' \
+    42
 # (the stdout=on stdout assertion implicitly proves eprint did
 # NOT show up there — it was routed to stderr instead.)
 
@@ -1558,4 +1605,4 @@ if [ "$fails" -gt 0 ]; then
     exit 1
 fi
 echo ""
-echo "all 180/180 cases passed"
+echo "all 183/183 cases passed"

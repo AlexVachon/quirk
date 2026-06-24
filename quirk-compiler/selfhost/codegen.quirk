@@ -35,7 +35,7 @@ Deferred:
 
 from .ast use { Expr, Stmt, Param, FunctionDecl, TopLevel }
 from .ast use { IntLit, FloatLit, StringLit, BoolLit, NullLit, Ident, UnaryOp, BinOp, Call, FieldGet, ListLit, Index }
-from .ast use { Return, ExprStmt, VarDecl, Assign, FieldSet, If, While, Continue, Break, Match, ForIn, Func, StructTL, EnumTL, UnionTL }
+from .ast use { Return, ExprStmt, VarDecl, Assign, FieldSet, If, While, Continue, Break, Match, ForIn, Throw, TryCatch, Func, StructTL, EnumTL, UnionTL }
 from .ast use { StructField, StructDecl, EnumDecl, MatchArm, Variant, UnionDecl }
 
 ---
@@ -2647,6 +2647,119 @@ define _gen_stmt(cg: FnCG, st: Stmt) -> void {
                 tail: String := cg.loop_end.__get(n - 1)
                 cg.emit("br label %" + tail)
             }
+        }
+        case Throw as th => {
+            // Lower `throw VAL` to:
+            //   store the thrown pointer in @__quirk_exception
+            //   longjmp(@__quirk_jmp_buf, 1)
+            //   unreachable
+            // The jmp_buf is a 200-byte global (oversized; real
+            // sigjmp_buf is ~156 bytes on x86_64 glibc) that
+            // catch handlers _setjmp into.
+            cg.mod.ensure_decl("__quirk_exception",
+                "@__quirk_exception = global i8* null")
+            cg.mod.ensure_decl("__quirk_jmp_buf",
+                "@__quirk_jmp_buf = global [200 x i8] zeroinitializer")
+            cg.mod.ensure_decl("longjmp",
+                "declare void @longjmp(i8*, i32)")
+            val_ty := _expr_static_ty(cg, th.value)
+            val_reg := _gen_expr(cg, th.value)
+            val_i8 := val_reg
+            if val_ty != "i8*" {
+                if _is_ptr_ty(val_ty) {
+                    cast := cg.fresh()
+                    cg.emit(cast + " = bitcast " + val_ty + " " + val_reg + " to i8*")
+                    val_i8 = cast
+                }
+            }
+            cg.emit("store i8* " + val_i8 + ", i8** @__quirk_exception")
+            buf_gep := cg.fresh()
+            cg.emit(buf_gep + " = getelementptr inbounds [200 x i8], [200 x i8]* @__quirk_jmp_buf, i64 0, i64 0")
+            cg.emit("call void @longjmp(i8* " + buf_gep + ", i32 1)")
+            cg.emit("unreachable")
+        }
+        case TryCatch as tc => {
+            // Lower `try { body } catch (e: T) { handler }` to:
+            //   save current jmp_buf into a local
+            //   _setjmp(@__quirk_jmp_buf)
+            //   if zero → run body, restore saved buf
+            //   if nonzero → restore saved buf FIRST (so further
+            //                throws propagate to outer handler),
+            //                bind e := @__quirk_exception, run handler
+            cg.mod.ensure_decl("__quirk_exception",
+                "@__quirk_exception = global i8* null")
+            cg.mod.ensure_decl("__quirk_jmp_buf",
+                "@__quirk_jmp_buf = global [200 x i8] zeroinitializer")
+            cg.mod.ensure_decl("_setjmp",
+                "declare i32 @_setjmp(i8*) returns_twice")
+            cg.mod.ensure_decl("memcpy",
+                "declare i8* @memcpy(i8*, i8*, i64)")
+            // Save the outer jmp_buf into a local 200-byte slot.
+            saved_slot := "%" + cg.fresh_label("tc.saved")
+            cg.emit_entry(saved_slot + " = alloca [200 x i8]")
+            saved_ptr := cg.fresh()
+            cg.emit(saved_ptr + " = getelementptr inbounds [200 x i8], [200 x i8]* " +
+                    saved_slot + ", i64 0, i64 0")
+            global_ptr := cg.fresh()
+            cg.emit(global_ptr + " = getelementptr inbounds [200 x i8], [200 x i8]* @__quirk_jmp_buf, i64 0, i64 0")
+            mc_save := cg.fresh()
+            cg.emit(mc_save + " = call i8* @memcpy(i8* " + saved_ptr + ", i8* " + global_ptr + ", i64 200)")
+            // setjmp on the global buf.
+            sj_ret := cg.fresh()
+            cg.emit(sj_ret + " = call i32 @_setjmp(i8* " + global_ptr + ")")
+            took := cg.fresh()
+            cg.emit(took + " = icmp ne i32 " + sj_ret + ", 0")
+            body_lbl  := cg.fresh_label("tc.body")
+            catch_lbl := cg.fresh_label("tc.catch")
+            end_lbl   := cg.fresh_label("tc.end")
+            cg.emit("br i1 " + took + ", label %" + catch_lbl + ", label %" + body_lbl)
+            // Try body. On normal completion, restore the outer
+            // jmp_buf and skip past the catch.
+            cg.emit_raw(body_lbl + ":")
+            tbi := 0
+            while tbi < tc.try_body.length() {
+                ts: Stmt := tc.try_body.__get(tbi)
+                _gen_stmt(cg, ts)
+                tbi = tbi + 1
+            }
+            // Only emit the try-body's restore + branch if the
+            // body didn't unconditionally throw / return. Calling
+            // fresh() unconditionally would consume an SSA slot
+            // that the subsequent emit() (which drops dead code
+            // after a terminator) wouldn't actually use, breaking
+            // LLVM's strict sequential numbering.
+            if cg.block_terminated == false {
+                mc_restore_ok := cg.fresh()
+                cg.emit(mc_restore_ok + " = call i8* @memcpy(i8* " + global_ptr + ", i8* " + saved_ptr + ", i64 200)")
+                cg.emit("br label %" + end_lbl)
+            }
+            // Catch body. Restore outer jmp_buf BEFORE running
+            // the handler so any nested throws propagate up.
+            cg.emit_raw(catch_lbl + ":")
+            mc_restore_catch := cg.fresh()
+            cg.emit(mc_restore_catch + " = call i8* @memcpy(i8* " + global_ptr + ", i8* " + saved_ptr + ", i64 200)")
+            // Bind the exception value to the catch binder.
+            binder_ty := _resolve_ty(cg.mod, tc.binder_type)
+            exc_i8 := cg.fresh()
+            cg.emit(exc_i8 + " = load i8*, i8** @__quirk_exception")
+            binder_val := exc_i8
+            if binder_ty != "i8*" {
+                if _is_ptr_ty(binder_ty) {
+                    cast := cg.fresh()
+                    cg.emit(cast + " = bitcast i8* " + exc_i8 + " to " + binder_ty)
+                    binder_val = cast
+                }
+            }
+            slot := _ensure_fresh_slot(cg, tc.binder, binder_ty)
+            cg.emit("store " + binder_ty + " " + binder_val + ", " + binder_ty + "* " + slot.name)
+            cbi := 0
+            while cbi < tc.catch_body.length() {
+                cs: Stmt := tc.catch_body.__get(cbi)
+                _gen_stmt(cg, cs)
+                cbi = cbi + 1
+            }
+            cg.emit("br label %" + end_lbl)
+            cg.emit_raw(end_lbl + ":")
         }
         case ForIn as fi => {
             // Lower `for x in xs { body }` to:

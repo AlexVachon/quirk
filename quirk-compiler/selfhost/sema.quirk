@@ -27,7 +27,7 @@ Things deferred to Phase 3.x:
 
 from .ast use { Expr, Stmt, Param, FunctionDecl, TopLevel }
 from .ast use { IntLit, FloatLit, StringLit, BoolLit, NullLit, Ident, UnaryOp, BinOp, Call, FieldGet, ListLit, Index }
-from .ast use { Return, ExprStmt, VarDecl, Assign, FieldSet, If, While, Continue, Break, Match, Func, StructTL, EnumTL, UnionTL }
+from .ast use { Return, ExprStmt, VarDecl, Assign, FieldSet, If, While, Continue, Break, Match, ForIn, Func, StructTL, EnumTL, UnionTL }
 from .ast use { StructField, StructDecl, EnumDecl, MatchArm, Variant, UnionDecl }
 from .types use { Ty, TInt, TDouble, TString, TBool, TVoid, TAny, TStruct, TEnum, TUnion, TList, TListP, TMap, TError }
 from .types use { ty_to_string, ty_from_annot, ty_compatible }
@@ -1136,6 +1136,41 @@ define _check_stmt(s: Sema, st: Stmt, ret: Ty) -> void {
             k := 0
             while k < w.body.length() {
                 bs: Stmt := w.body.__get(k)
+                _check_stmt(s, bs, ret)
+                k = k + 1
+            }
+            s.pop_scope()
+        }
+        case ForIn as fi => {
+            // `for x in xs { ... }`. The iter must be a List
+            // (int- or pointer-element); the binder is the
+            // element type. Sema rejects iteration over any
+            // other type for now — Map/Set/Iterable protocols
+            // are deferred.
+            it: Ty := _check_expr(s, fi.iter)
+            is_int_list := false
+            match it { case TList as _ => is_int_list = true case _ => {} }
+            is_ptr_list := false
+            match it { case TListP as _ => is_ptr_list = true case _ => {} }
+            elem_ty: Ty := TInt()
+            if is_int_list {
+                elem_ty = TInt()
+            } elif is_ptr_list {
+                // Element type tracked at the AST level; codegen
+                // will narrow via VarDecl annotation if needed.
+                elem_ty = TAny()
+            } else {
+                is_err_it := false
+                match it { case TError as _ => is_err_it = true case _ => {} }
+                if is_err_it == false {
+                    s.report("'for' expects a List to iterate, got '" + ty_to_string(it) + "'")
+                }
+            }
+            s.push_scope()
+            s.define_local(fi.var_name, elem_ty)
+            k := 0
+            while k < fi.body.length() {
+                bs: Stmt := fi.body.__get(k)
                 _check_stmt(s, bs, ret)
                 k = k + 1
             }

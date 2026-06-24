@@ -1449,6 +1449,36 @@ define main() -> Int {
     return count_(xs) + 39
 }' \
     42
+
+# Phase 8: for-in loops. Lowers to a while-with-index over the
+# List's length/data slots. Pointer-element lists yield i8*
+# elements; int-element lists yield i32. break + continue
+# inside for-in branch to the loop's end + incr labels.
+standalone_run "ELF: for-in over Int list" \
+    'define main() -> Int {
+    sum := 0
+    for x in [10, 20, 12] { sum = sum + x }
+    return sum
+}' \
+    42
+standalone_run "ELF: for-in over String list" \
+    'define main() -> Int {
+    n := 0
+    for s in ["alpha", "beta", "gamma"] { n = n + s.length() }
+    return n + 28
+}' \
+    42
+standalone_run "ELF: for-in with break + continue" \
+    'define main() -> Int {
+    sum := 0
+    for x in [1, 2, 3, 4, 5, 6, 7] {
+        if x == 5 { break }
+        if x == 3 { continue }
+        sum = sum + x
+    }
+    return sum + 35
+}' \
+    42
 # (the stdout=on stdout assertion implicitly proves eprint did
 # NOT show up there — it was routed to stderr instead.)
 
@@ -1458,4 +1488,4 @@ if [ "$fails" -gt 0 ]; then
     exit 1
 fi
 echo ""
-echo "all 172/172 cases passed"
+echo "all 175/175 cases passed"

@@ -35,7 +35,7 @@ worked around in tokens.quirk's `__str` impl.
 from .tokens use { TokenKind, Token }
 from .ast use { Expr, Stmt, Param, FunctionDecl, TopLevel }
 from .ast use { IntLit, FloatLit, StringLit, BoolLit, NullLit, Ident, UnaryOp, BinOp, Call, FieldGet, ListLit, Index }
-from .ast use { Return, ExprStmt, VarDecl, Assign, FieldSet, If, While, Continue, Break, Match, Func, StructTL, EnumTL, UnionTL }
+from .ast use { Return, ExprStmt, VarDecl, Assign, FieldSet, If, While, Continue, Break, Match, ForIn, Func, StructTL, EnumTL, UnionTL }
 from .ast use { StructField, StructDecl, EnumDecl, MatchArm, Variant, UnionDecl }
 
 struct ParserState {
@@ -370,6 +370,19 @@ define _parse_stmt(s: ParserState) -> Stmt {
         cond := _parse_expr(s)
         body := _parse_block(s)
         return While(cond, body)
+    }
+    // `for x in xs { body }` — iterate a List. Sema rejects
+    // anything non-List; codegen desugars to a while-with-index.
+    // Multi-bind `for (k, v) in m` and Iterable protocols are
+    // deferred — single-binder list iteration is what stdlib
+    // code uses everywhere.
+    if t.kind == TokenKind.For {
+        s.advance()
+        var_name := s.expect(TokenKind.Identifier, "loop variable name after 'for'").value
+        s.expect(TokenKind.In, "'in' after for-loop variable")
+        iter := _parse_expr(s)
+        body := _parse_block(s)
+        return ForIn(var_name, iter, body)
     }
     if t.kind == TokenKind.Continue {
         s.advance()

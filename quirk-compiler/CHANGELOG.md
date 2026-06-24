@@ -5,6 +5,74 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.50] — 2026-06-24
+
+### Phase 8: 🎉 **`for x in xs { ... }` loops**
+
+The fifth Path-B phase. Unlocks ~half the stdlib —
+`packages/console`, most of `packages/typing`, `packages/net`,
+`packages/regex` all use `for-in` extensively.
+
+```quirk
+for x in [10, 20, 12] { sum = sum + x }      // Int list
+for s in ["alpha", "beta", "gamma"] { ... }  // pointer list
+for x in xs { if x == 5 { break } continue }  // break + continue
+```
+
+**Pieces:**
+
+1. **AST** (`selfhost/ast.quirk`): new `ForIn(var_name: String,
+   iter: Expr, body: List)` variant of `Stmt`.
+
+2. **Parser** (`selfhost/parser.quirk`): when stmt dispatcher
+   sees `TokenKind.For`, consume `for IDENT in EXPR { BLOCK }`
+   and emit `ForIn`. Multi-bind (`for (k, v) in m`) and
+   Iterable-protocol (`for x in custom_iter`) deferred — list
+   iteration covers ~95% of stdlib use.
+
+3. **Sema** (`selfhost/sema.quirk`): rejects iteration over
+   anything that's not `TList` or `TListP`. Binder is typed
+   `TInt` for int-list, `TAny` for ptr-list (VarDecl annotation
+   honoring narrows at use sites).
+
+4. **Codegen** (`selfhost/codegen.quirk`): lowers to
+   while-with-index. Layout:
+   ```
+   entry:  %idx.N = alloca i32 ; store 0
+   head:   load idx ; cmp < length ; br body or end
+   body:   load iter.data[idx] into binder slot ; <body>
+   incr:   idx += 1 ; goto head
+   end:
+   ```
+   `continue` branches to **incr** (not head) so the index
+   still advances. `break` branches to **end**. Dispatch on
+   `iter`'s static LLVM type — `%QListP*` uses i8* element
+   slots, `%QList*` uses i32.
+
+### Test count
+
+175 cases (up from 172 — three new for-in probes: Int list,
+String list, break + continue).
+
+Selfhost fixed point still byte-identical at **1,776,773
+bytes** (IR grew ~51 KB from the new codegen arm).
+
+### Phase progress
+
+| Phase | Feature | Status |
+| --- | --- | --- |
+| 6   | `extern define` lowering | ✅ alpha.46 |
+| 6.x | inside-struct extern, `Any`, `+=`, dotted imports | ✅ alpha.47 |
+| 6.y | polymorphic `[]`, string-list literals, `{}` map | ✅ alpha.48 |
+| 6.z | `...args` variadic, multi-line import strip | ✅ alpha.49 |
+| **8** | **for-in loops** | ✅ **alpha.50** |
+| 7   | trait declarations as no-ops | open |
+| 9   | try / throw / catch | open |
+| 10  | string interpolation | open |
+| 11  | lambdas / Callable | open |
+| 12  | generics + traits proper | open |
+| 13  | range, tuple, destructuring, ops overload | open |
+
 ## [4.0.0-alpha.49] — 2026-06-24
 
 ### Phase 6.z: variadic params + multi-line import stripping

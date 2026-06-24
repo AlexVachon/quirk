@@ -35,7 +35,7 @@ Deferred:
 
 from .ast use { Expr, Stmt, Param, FunctionDecl, TopLevel }
 from .ast use { IntLit, FloatLit, StringLit, BoolLit, NullLit, Ident, UnaryOp, BinOp, Call, FieldGet, ListLit, Index }
-from .ast use { Return, ExprStmt, VarDecl, Assign, FieldSet, If, While, Continue, Break, Match, Func, StructTL, EnumTL, UnionTL }
+from .ast use { Return, ExprStmt, VarDecl, Assign, FieldSet, If, While, Continue, Break, Match, ForIn, Func, StructTL, EnumTL, UnionTL }
 from .ast use { StructField, StructDecl, EnumDecl, MatchArm, Variant, UnionDecl }
 
 ---
@@ -2617,6 +2617,94 @@ define _gen_stmt(cg: FnCG, st: Stmt) -> void {
                 tail: String := cg.loop_end.__get(n - 1)
                 cg.emit("br label %" + tail)
             }
+        }
+        case ForIn as fi => {
+            // Lower `for x in xs { body }` to:
+            //   %iter = <iter expr>
+            //   %idx = alloca i32 (entry); store 0
+            //   head:  if idx < iter.length goto body else end
+            //   body:  bind x = iter.data[idx]; <body>; goto incr
+            //   incr:  idx += 1; goto head
+            //   end:
+            // `continue` branches to incr (not head) so the
+            // index still advances. `break` branches to end.
+            iter_ty := _expr_static_ty(cg, fi.iter)
+            iter_reg := _gen_expr(cg, fi.iter)
+            // Index slot in entry block (named, like map.idx)
+            // to dodge the SSA-numbering ordering trap.
+            idx_slot := "%" + cg.fresh_label("for.idx")
+            cg.emit_entry(idx_slot + " = alloca i32")
+            cg.emit("store i32 0, i32* " + idx_slot)
+            head_lbl := cg.fresh_label("for.head")
+            body_lbl := cg.fresh_label("for.body")
+            incr_lbl := cg.fresh_label("for.incr")
+            end_lbl  := cg.fresh_label("for.end")
+            cg.emit("br label %" + head_lbl)
+            cg.emit_raw(head_lbl + ":")
+            i_cur := cg.fresh()
+            cg.emit(i_cur + " = load i32, i32* " + idx_slot)
+            // length sits at field 0 of both %QList and %QListP
+            // headers; the load type is i32 in both cases.
+            len_gep := cg.fresh()
+            if iter_ty == "%QListP*" {
+                cg.emit(len_gep + " = getelementptr inbounds %QListP, %QListP* " + iter_reg +
+                        ", i32 0, i32 0")
+            } else {
+                cg.emit(len_gep + " = getelementptr inbounds %QList, %QList* " + iter_reg +
+                        ", i32 0, i32 0")
+            }
+            len_val := cg.fresh()
+            cg.emit(len_val + " = load i32, i32* " + len_gep)
+            in_range := cg.fresh()
+            cg.emit(in_range + " = icmp slt i32 " + i_cur + ", " + len_val)
+            cg.emit("br i1 " + in_range + ", label %" + body_lbl + ", label %" + end_lbl)
+            cg.emit_raw(body_lbl + ":")
+            // Element load. Pointer-list yields i8*; int-list i32.
+            elem_ty := "i32"
+            if iter_ty == "%QListP*" { elem_ty = "i8*" }
+            data_gep := cg.fresh()
+            if iter_ty == "%QListP*" {
+                cg.emit(data_gep + " = getelementptr inbounds %QListP, %QListP* " + iter_reg +
+                        ", i32 0, i32 2")
+            } else {
+                cg.emit(data_gep + " = getelementptr inbounds %QList, %QList* " + iter_reg +
+                        ", i32 0, i32 2")
+            }
+            data_ptr := cg.fresh()
+            if iter_ty == "%QListP*" {
+                cg.emit(data_ptr + " = load i8**, i8*** " + data_gep)
+            } else {
+                cg.emit(data_ptr + " = load i32*, i32** " + data_gep)
+            }
+            elem_slot_gep := cg.fresh()
+            cg.emit(elem_slot_gep + " = getelementptr inbounds " + elem_ty +
+                    ", " + elem_ty + "* " + data_ptr + ", i32 " + i_cur)
+            elem_val := cg.fresh()
+            cg.emit(elem_val + " = load " + elem_ty + ", " + elem_ty + "* " + elem_slot_gep)
+            // Bind into a fresh slot for the loop variable.
+            slot := _ensure_fresh_slot(cg, fi.var_name, elem_ty)
+            cg.emit("store " + elem_ty + " " + elem_val + ", " + elem_ty + "* " + slot.name)
+            // Push loop labels — continue jumps to incr (so the
+            // index still advances), break jumps to end.
+            cg.loop_head.append(incr_lbl)
+            cg.loop_end.append(end_lbl)
+            bi := 0
+            while bi < fi.body.length() {
+                bs: Stmt := fi.body.__get(bi)
+                _gen_stmt(cg, bs)
+                bi = bi + 1
+            }
+            cg.loop_head.pop()
+            cg.loop_end.pop()
+            cg.emit("br label %" + incr_lbl)
+            cg.emit_raw(incr_lbl + ":")
+            i_now := cg.fresh()
+            cg.emit(i_now + " = load i32, i32* " + idx_slot)
+            i_next := cg.fresh()
+            cg.emit(i_next + " = add nsw i32 " + i_now + ", 1")
+            cg.emit("store i32 " + i_next + ", i32* " + idx_slot)
+            cg.emit("br label %" + head_lbl)
+            cg.emit_raw(end_lbl + ":")
         }
         case _ => {}
     }

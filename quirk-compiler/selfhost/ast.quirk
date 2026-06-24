@@ -63,6 +63,7 @@ type Stmt =
     | Continue()
     | Break()
     | Match(scrutinee: Expr, arms: List)
+    | ForIn(var_name: String, iter: Expr, body: List)
 
 ---
 A single arm of a match statement. `pattern` is the variant

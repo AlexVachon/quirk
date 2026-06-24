@@ -26,7 +26,7 @@ Things deferred to Phase 3.x:
 ---
 
 from .ast use { Expr, Stmt, Param, FunctionDecl, TopLevel }
-from .ast use { IntLit, FloatLit, StringLit, BoolLit, NullLit, Ident, UnaryOp, BinOp, Call, FieldGet, ListLit, Index }
+from .ast use { IntLit, FloatLit, StringLit, BoolLit, NullLit, Ident, UnaryOp, BinOp, Call, FieldGet, ListLit, Index, Lambda }
 from .ast use { Return, ExprStmt, VarDecl, Assign, FieldSet, If, While, Continue, Break, Match, ForIn, Throw, TryCatch, Func, StructTL, EnumTL, UnionTL }
 from .ast use { StructField, StructDecl, EnumDecl, MatchArm, Variant, UnionDecl }
 from .types use { Ty, TInt, TDouble, TString, TBool, TVoid, TAny, TStruct, TEnum, TUnion, TList, TListP, TMap, TError }
@@ -201,8 +201,30 @@ define _check_expr(s: Sema, e: Expr) -> Ty {
         case FieldGet as fg => return _check_field_get(s, fg)
         case ListLit as ll  => return _check_list_lit(s, ll)
         case Index as ix    => return _check_index(s, ix)
+        case Lambda as lm   => return _check_lambda(s, lm)
         case _              => return TError("unknown expression kind")
     }
+}
+
+// Lambda: type-check the body in a scope where each lambda
+// param is bound. The lambda value itself is opaque to the
+// type system — we report TAny so callers can pass it
+// through any Callable-typed slot without further checks.
+// Capture-vs-free is not analyzed yet; non-capturing bodies
+// work, capturing bodies would silently produce wrong
+// behavior in the standalone ELF.
+define _check_lambda(s: Sema, lm: Lambda) -> Ty {
+    s.push_scope()
+    i := 0
+    while i < lm.params.length() {
+        p: Param := lm.params.__get(i)
+        pt: Ty := s.resolve_ty(p.type_annot)
+        s.define_local(p.name, pt)
+        i = i + 1
+    }
+    _check_expr(s, lm.body)
+    s.pop_scope()
+    return TAny()
 }
 
 define _check_unary(s: Sema, u: UnaryOp) -> Ty {

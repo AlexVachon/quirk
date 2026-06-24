@@ -34,7 +34,7 @@ Deferred:
 ---
 
 from .ast use { Expr, Stmt, Param, FunctionDecl, TopLevel }
-from .ast use { IntLit, FloatLit, StringLit, BoolLit, NullLit, Ident, UnaryOp, BinOp, Call, FieldGet, ListLit, Index }
+from .ast use { IntLit, FloatLit, StringLit, BoolLit, NullLit, Ident, UnaryOp, BinOp, Call, FieldGet, ListLit, Index, Lambda }
 from .ast use { Return, ExprStmt, VarDecl, Assign, FieldSet, If, While, Continue, Break, Match, ForIn, Throw, TryCatch, Func, StructTL, EnumTL, UnionTL }
 from .ast use { StructField, StructDecl, EnumDecl, MatchArm, Variant, UnionDecl }
 
@@ -205,6 +205,11 @@ struct ModuleCG {
     // variantName → _VarCgInfo. Lets `_gen_call` recognise
     // `V(args)` and route to the variant-ctor lowering.
     variants: Map
+    // Lifted lambda bodies — top-level functions emitted at
+    // the END of emit_module so they don't interrupt the
+    // currently-being-emitted enclosing function.
+    lambda_bodies: List
+    next_lambda: Int
 
     define __init(self) -> void {
         self.globals = List()
@@ -215,6 +220,8 @@ struct ModuleCG {
         self.enums = Map()
         self.unions = Map()
         self.variants = Map()
+        self.lambda_bodies = List()
+        self.next_lambda = 0
     }
 
     // Register a struct's layout. The `%struct.Name = type {...}`
@@ -840,8 +847,74 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
             cg.emit(reg + " = call " + ret_llvm + " @" + _llvm_fn_name(name) + sig)
             return reg
         }
+        case Lambda as lm => {
+            return _gen_lambda(cg, lm)
+        }
         case _ => return "0"
     }
+}
+
+// Lower a `fn(params) => body_expr` lambda by lifting it to
+// a top-level function `@__lambda_N` and returning a bitcast
+// of the function pointer to i8*. The lifted function body
+// is queued on `mod.lambda_bodies` and emitted at the end
+// of emit_module — past the user's function bodies so the
+// IR remains valid.
+//
+// MVP: non-capturing lambdas only. Free variables resolved
+// inside the body lookup against the lambda's empty scope
+// will produce `<undef:name>` — runtime crash. Closure
+// capture (env struct + thunk wrapper) is a follow-up.
+define _gen_lambda(outer_cg: FnCG, lm: Lambda) -> String {
+    mod := outer_cg.mod
+    n := mod.next_lambda
+    mod.next_lambda = n + 1
+    name := "__lambda_" + n.str()
+    // Build the lambda's own FnCG with params bound.
+    inner := FnCG(mod)
+    // Render the LLVM param list and bind each as a slot.
+    sig := ""
+    pi := 0
+    while pi < lm.params.length() {
+        p: Param := lm.params.__get(pi)
+        pty := _resolve_ty(mod, p.type_annot)
+        if pi > 0 { sig = sig + ", " }
+        arg_reg := "%arg" + pi.str()
+        sig = sig + pty + " " + arg_reg
+        // Alloca + store the incoming param so body sees a
+        // local named slot — same shape as _gen_function.
+        slot := _ensure_slot(inner, p.name, pty)
+        inner.emit_entry("store " + pty + " " + arg_reg + ", " + pty + "* " + slot.name)
+        pi = pi + 1
+    }
+    // Body — a single expression. We evaluate it then ret.
+    // Return type is the body's static LLVM type.
+    body_ty := _expr_static_ty(inner, lm.body)
+    inner.ret_ty = body_ty
+    body_val := _gen_expr(inner, lm.body)
+    inner.emit("ret " + body_ty + " " + body_val)
+    // Assemble the function body and queue it. Lambda bodies
+    // are appended to module output AFTER all user functions,
+    // so the enclosing function's IR is unaffected.
+    header := "define " + body_ty + " @" + name + "(" + sig + ") {\nentry:\n"
+    full := header + inner.entry_out + inner.out + "}\n"
+    mod.lambda_bodies.append(full)
+    // The lambda EXPRESSION evaluates to a bitcast of the
+    // function pointer to i8*. Compute the function-type
+    // string for the bitcast: `<ret_ty> (<param_tys>)*`.
+    ptr_ty := body_ty + " ("
+    pj := 0
+    while pj < lm.params.length() {
+        p2: Param := lm.params.__get(pj)
+        pty2 := _resolve_ty(mod, p2.type_annot)
+        if pj > 0 { ptr_ty = ptr_ty + ", " }
+        ptr_ty = ptr_ty + pty2
+        pj = pj + 1
+    }
+    ptr_ty = ptr_ty + ")*"
+    reg := outer_cg.fresh()
+    outer_cg.emit(reg + " = bitcast " + ptr_ty + " @" + name + " to i8*")
+    return reg
 }
 
 // User's `define main()` becomes `@__quirk_user_main` in LLVM
@@ -879,6 +952,7 @@ define _expr_static_ty(cg: FnCG, e: Expr) -> String {
         case BoolLit as _ => return "i1"
         case FloatLit as _ => return "double"
         case StringLit as _ => return "i8*"
+        case Lambda as _ => return "i8*"
         case ListLit as ll => {
             // Mirror sema's polymorphic rule: empty → ListP,
             // first-element-Int → List, otherwise ListP.
@@ -3136,6 +3210,18 @@ define emit_module(decls: List) -> String {
     out = out + "target triple = \"x86_64-pc-linux-gnu\"\n\n"
     out = out + mod.render_header()
     out = out + bodies
+    // Append any lifted lambda bodies. They were queued
+    // during _gen_function as `_gen_lambda` ran inside each
+    // expression that contained `fn(...) => …`. Emitting
+    // them after the user functions keeps the IR well-formed
+    // (lambdas can reference earlier-emitted decls without
+    // forward-decl trouble).
+    li := 0
+    while li < mod.lambda_bodies.length() {
+        lb: String := mod.lambda_bodies.__get(li)
+        out = out + lb + "\n"
+        li = li + 1
+    }
     if mod.sigs.has("__quirk_user_main") {
         out = out + "define i32 @main(i32 %argc, i8** %argv) {\nentry:\n"
         out = out + "  store i32 %argc, i32* @quirk_argc\n"

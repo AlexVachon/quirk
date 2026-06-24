@@ -38,6 +38,7 @@ type Expr =
     | FieldGet(obj: Expr, name: String)
     | ListLit(elems: List)
     | Index(obj: Expr, idx: Expr)
+    | Lambda(params: List, body: Expr)
 
 ---
 Statement nodes — sequenced inside a function body. No value

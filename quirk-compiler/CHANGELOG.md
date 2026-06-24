@@ -5,6 +5,88 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.55] — 2026-06-24
+
+### Phase 11: 🎉 **lambda lifting `fn(x: Int) => x * 2`**
+
+Lambda expressions parse, sema-check, and lower in selfhost.
+Implementation: lambda-lifting to top-level LLVM functions.
+Each `fn(...) => body_expr` is hoisted to a synthetic
+`@__lambda_N` function emitted at the end of the module;
+the lambda expression itself evaluates to a `bitcast (<ret>
+(<params>)* @__lambda_N to i8*)` — typed `Callable` (i8*)
+at the source level.
+
+```quirk
+double_ := fn(x: Int) => x * 2
+triple_ := fn(x: Int) => x * 3
+result := apply_(triple_, 14)        // → 42
+```
+
+**MVP scope: non-capturing lambdas only.** Free-variable
+references inside the body resolve against the lambda's
+fresh scope, producing `<undef:name>` (runtime crash if the
+lambda actually runs). The stdlib uses both flavors — most
+of `List.map`/`List.filter`/etc. take non-capturing lambdas
+like `fn(x) => x * 2`. Closures (`fn(x) => x + threshold`)
+need an environment struct + thunk wrapper, deferred to a
+follow-up phase.
+
+**Pieces:**
+
+1. **AST** (`selfhost/ast.quirk`): new `Lambda(params: List,
+   body: Expr)` variant of `Expr`. Body is a single
+   expression — block-bodied lambdas (`fn() { ... }`) and
+   explicit return-type annotations are deferred.
+
+2. **Parser** (`selfhost/parser.quirk`): `fn(params) =>
+   expr` in primary position. Lexer's `Fn` keyword and
+   `FatArrow` (`=>`) token already existed.
+
+3. **Sema** (`selfhost/sema.quirk`): `_check_lambda` pushes
+   a scope, binds each param's declared type, type-checks
+   the body, pops. Returns `TAny` so the lambda value flows
+   through any Callable-typed slot.
+
+4. **Codegen** (`selfhost/codegen.quirk`): new
+   `_gen_lambda` builds a fresh `FnCG`, alloca's each param
+   as a slot (same shape as `_gen_function`), emits the body
+   expression + `ret`. Wraps with `define ... { entry: ... }`
+   header and **queues on `mod.lambda_bodies`** instead of
+   emitting inline (LLVM forbids nested function definitions).
+   At the end of `emit_module`, the queued bodies are appended
+   AFTER user functions. `_expr_static_ty` for `Lambda`
+   returns `i8*`.
+
+### Bootstrap state
+
+184 cases pass (up from 183 — one new lambda probe).
+Selfhost fixed point still byte-identical at **1,917,081
+bytes** (IR grew ~35 KB).
+
+Stdlib coverage: `packages/typing/collections/list.quirk`
+now parses past lambda decls (its `define List.map(self, cb:
+Callable)` and helpers all parse), but hits downstream
+sema gaps from List elements being typed `TAny` — needs
+either Phase 12 (generics) or a sema relaxation around
+Any/Any arithmetic.
+
+### Path B progress
+
+| Phase | Feature | Status |
+| --- | --- | --- |
+| 6     | `extern define` lowering | ✅ |
+| 6.w/x/y/z | defaults, traits-as-no-ops, literals, variadics, multi-line imports | ✅ |
+| 7     | trait clauses + interface skip | ✅ |
+| 8     | for-in loops | ✅ |
+| 9     | try / throw / catch | ✅ |
+| 10    | string interpolation | ✅ |
+| **11** | **lambda lifting (non-capturing)** | ✅ **alpha.55** |
+| 11.5  | lambda capture / closure env | open |
+| 12    | generics + traits proper | open |
+| 13    | range, tuple, destructuring, ops overload | open |
+| 14-17 | REPL/PM/LSP port + v5.0.0 cutover | open |
+
 ## [4.0.0-alpha.54] — 2026-06-24
 
 ### Phase 9: 🎉 **`try` / `throw` / `catch` via setjmp/longjmp**

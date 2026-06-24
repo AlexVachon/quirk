@@ -1596,6 +1596,20 @@ define main() -> Int {
     return n
 }' \
     42
+
+# Phase 11: lambda lifting. `fn(x: Int) => x * 2` lifts to a
+# top-level @__lambda_N function emitted at the end of the
+# module. The lambda expression evaluates to a bitcast of
+# the fn pointer to i8* — typed Callable at the source level.
+# Non-capturing MVP — captures would silently produce wrong
+# behavior in the standalone ELF.
+standalone_run "ELF: lambda lifted to top-level fn, fn ptr passed as i8*" \
+    'define use_it(f: Any, x: Int) -> Int { return 42 }
+define main() -> Int {
+    triple := fn(x: Int) => x * 3
+    return use_it(triple, 14)
+}' \
+    42
 # (the stdout=on stdout assertion implicitly proves eprint did
 # NOT show up there — it was routed to stderr instead.)
 
@@ -1605,4 +1619,4 @@ if [ "$fails" -gt 0 ]; then
     exit 1
 fi
 echo ""
-echo "all 183/183 cases passed"
+echo "all 184/184 cases passed"

@@ -34,7 +34,7 @@ worked around in tokens.quirk's `__str` impl.
 
 from .tokens use { TokenKind, Token }
 from .ast use { Expr, Stmt, Param, FunctionDecl, TopLevel }
-from .ast use { IntLit, FloatLit, StringLit, BoolLit, NullLit, Ident, UnaryOp, BinOp, Call, FieldGet, ListLit, Index }
+from .ast use { IntLit, FloatLit, StringLit, BoolLit, NullLit, Ident, UnaryOp, BinOp, Call, FieldGet, ListLit, Index, Lambda }
 from .ast use { Return, ExprStmt, VarDecl, Assign, FieldSet, If, While, Continue, Break, Match, ForIn, Throw, TryCatch, Func, StructTL, EnumTL, UnionTL }
 from .ast use { StructField, StructDecl, EnumDecl, MatchArm, Variant, UnionDecl }
 
@@ -153,6 +153,27 @@ define _parse_primary(s: ParserState) -> Expr {
     if t.kind == TokenKind.Null_ {
         s.advance()
         return NullLit()
+    }
+    // Lambda literal: `fn(params) => expr`. Only the
+    // expression-bodied form for now — block-bodied lambdas
+    // (`fn() { ... }`) and explicit return type annotations
+    // are deferred. Each lambda is lifted to a top-level
+    // function by codegen and the expression evaluates to a
+    // raw i8* (typed Callable at the source level).
+    if t.kind == TokenKind.Fn {
+        s.advance()
+        s.expect(TokenKind.LParen, "'(' to open lambda params")
+        lparams := List()
+        if s.check(TokenKind.RParen) == false {
+            lparams.append(_parse_param(s))
+            while s.match_kind(TokenKind.Comma) {
+                lparams.append(_parse_param(s))
+            }
+        }
+        s.expect(TokenKind.RParen, "')' to close lambda params")
+        s.expect(TokenKind.FatArrow, "'=>' before lambda body")
+        body := _parse_expr(s)
+        return Lambda(lparams, body)
     }
     if t.kind == TokenKind.Identifier {
         s.advance()

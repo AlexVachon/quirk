@@ -592,12 +592,24 @@ define _parse_type_annot(s: ParserState, what: String) -> String {
 }
 
 define _parse_param(s: ParserState) -> Param {
+    // Variadic prefix: `...args: List` collects trailing args
+    // into a single List at the call site. The selfhost subset
+    // currently parses the marker and treats the param body
+    // identically to a regular `args: List` — call sites must
+    // still pass a List explicitly. Full call-site auto-pack
+    // is deferred to a follow-up phase. The flag is preserved
+    // on Param so a later codegen pass can find variadic
+    // callees and inject the pack.
+    is_variadic := false
+    if s.match_kind(TokenKind.Ellipsis) {
+        is_variadic = true
+    }
     name := s.expect(TokenKind.Identifier, "parameter name").value
     type_annot := ""
     if s.match_kind(TokenKind.Colon) {
         type_annot = _parse_type_annot(s, "parameter type")
     }
-    return Param(name, type_annot)
+    return Param(name, type_annot, is_variadic)
 }
 
 define _parse_function_decl(s: ParserState) -> FunctionDecl {

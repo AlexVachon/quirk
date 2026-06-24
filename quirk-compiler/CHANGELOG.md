@@ -5,6 +5,66 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.49] — 2026-06-24
+
+### Phase 6.z: variadic params + multi-line import stripping
+
+Two more gaps from pointing selfhost at the stdlib. Both
+small, both unlocking real code.
+
+**1. `...args: List` variadic param syntax.**
+The Ellipsis token already existed in the lexer; just needed
+parser support. `Param` gains an `is_variadic: Bool` field;
+the parser peeks for `...` before the param name and sets it.
+For the MVP, sema and codegen treat variadic params
+identically to a regular `List` param — call sites must pass
+a List explicitly (no auto-pack of trailing args yet). The
+flag is preserved for a later phase that wires call-site
+auto-pack. Unblocks parsing of `console.log`, `format`, and
+every other stdlib variadic.
+
+**2. Multi-line `from X use { ... }` import stripping.**
+The selfhost `build_combined` pipeline strips import headers
+from each file's source before concatenating. The old
+`_strip_imports` was line-based — it dropped lines starting
+with `from `, which works for `from io use { File }` but
+breaks for:
+
+```quirk
+from sys use {
+    stdout, stderr, stdin,
+    isatty, ansi, getenv
+}
+```
+
+The first line gets dropped, but the body lines remain as
+orphan tokens. They parse as a top-level expression statement
+that immediately fails with `Unexpected top-level token
+'stdout'`. Fixed: when a `from ` line opens `{` without
+closing it on the same line, the stripper keeps consuming
+subsequent lines until it sees the matching `}`. Bare
+`use foo.bar` lines (single-line by design) are also dropped
+explicitly.
+
+### Test count
+
+172 cases (up from 171 — one new variadic-param probe).
+Selfhost fixed point still byte-identical at **1,725,459
+bytes** (IR grew ~7 KB).
+
+### Progress on stdlib coverage
+
+| Package | Status |
+| --- | --- |
+| `packages/io/file.quirk` | ✅ Phase 6.x |
+| `packages/console/index.quirk` | parses imports; blocked on **for-in** (Phase 8) |
+| `packages/sys/index.quirk` | parses past compound-assign; blocked on String-list inference in some sites |
+
+Next likely targets: Phase 8 (for-in loops) unlocks console
+and dozens of other stdlib files. Phase 10 (string
+interpolation) unlocks all f-string usage. Both are
+medium-effort multi-day phases.
+
 ## [4.0.0-alpha.48] — 2026-06-24
 
 ### Phase 6.y: literal-form gaps — `[]`, `["a","b"]`, `{}`

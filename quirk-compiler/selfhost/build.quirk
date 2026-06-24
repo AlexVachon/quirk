@@ -73,9 +73,6 @@ define _strip_imports(src: String) -> String {
     while i < n {
         start := i
         next_i := _end_of_line(src, i)
-        // The line spans [start, next_i - 1] (excluding the
-        // trailing \n) when one is present; otherwise the
-        // tail of src.
         line_end := next_i
         if line_end > start {
             if next_i <= n and next_i > 0 and src.substring(next_i - 1, next_i) == "\n" {
@@ -83,9 +80,60 @@ define _strip_imports(src: String) -> String {
             }
         }
         line := src.substring(start, line_end)
-        if line.startswith("from ") == false {
-            out = out + line + "\n"
+        // `from X use { ... }` and bare `use foo.bar` headers
+        // get dropped. For the brace-form, if the `{` is on the
+        // first line but the matching `}` is later (multi-line
+        // import list), we also drop every line through the
+        // closing brace. Bare `use` is single-line by design.
+        if line.startswith("from ") {
+            // Single-line: contains both `{` and `}` on this line
+            // (or no `{` at all — `from X use *` shape).
+            has_open  := false
+            has_close := false
+            ci := 0
+            cn := line.length()
+            while ci < cn {
+                c := line.substring(ci, ci + 1)
+                if c == "{" { has_open  = true }
+                if c == "}" { has_close = true }
+                ci = ci + 1
+            }
+            i = next_i
+            if has_open and has_close == false {
+                // Drop subsequent lines until we see a `}` line.
+                done := false
+                while i < n and done == false {
+                    s2 := i
+                    e2 := _end_of_line(src, i)
+                    le2 := e2
+                    if le2 > s2 {
+                        if e2 <= n and e2 > 0 and src.substring(e2 - 1, e2) == "\n" {
+                            le2 = e2 - 1
+                        }
+                    }
+                    cont := src.substring(s2, le2)
+                    // Walk for the closing `}`.
+                    cj := 0
+                    cm := cont.length()
+                    while cj < cm {
+                        if cont.substring(cj, cj + 1) == "}" {
+                            done = true
+                            cj = cm
+                        }
+                        cj = cj + 1
+                    }
+                    i = e2
+                }
+            }
+            continue
         }
+        if line.startswith("use ") {
+            // Bare `use foo.bar.baz` — single-line, drop and
+            // advance.
+            i = next_i
+            continue
+        }
+        out = out + line + "\n"
         i = next_i
     }
     return out

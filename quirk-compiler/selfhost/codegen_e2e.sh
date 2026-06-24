@@ -1442,6 +1442,13 @@ standalone_run "ELF: empty map literal {}" \
     return m.length() * 14
 }' \
     42
+standalone_run "ELF: variadic ...args param accepted" \
+    'define count_(...args: List) -> Int { return args.length() }
+define main() -> Int {
+    xs := ["a", "b", "c"]
+    return count_(xs) + 39
+}' \
+    42
 # (the stdout=on stdout assertion implicitly proves eprint did
 # NOT show up there — it was routed to stderr instead.)
 
@@ -1451,4 +1458,4 @@ if [ "$fails" -gt 0 ]; then
     exit 1
 fi
 echo ""
-echo "all 171/171 cases passed"
+echo "all 172/172 cases passed"

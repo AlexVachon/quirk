@@ -91,10 +91,12 @@ fields are always present in source.
 struct Param {
     name: String
     type_annot: String
+    is_variadic: Bool
 
-    define __init(self, name: String, type_annot: String) -> void {
+    define __init(self, name: String, type_annot: String, is_variadic: Bool) -> void {
         self.name = name
         self.type_annot = type_annot
+        self.is_variadic = is_variadic
     }
 }
 

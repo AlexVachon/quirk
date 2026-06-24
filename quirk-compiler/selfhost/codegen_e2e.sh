@@ -1421,6 +1421,27 @@ define main() -> Int {
 standalone_run "ELF: compound assignment +=" \
     'define main() -> Int { i := 40; i += 2; return i }' \
     42
+standalone_run "ELF: empty list [] is polymorphic (string append)" \
+    'define main() -> Int {
+    xs := []
+    xs.append("alpha")
+    xs.append("beta")
+    return xs.length() + 40
+}' \
+    42
+standalone_run "ELF: string list literal" \
+    'define main() -> Int {
+    ss := ["a", "bb", "ccc"]
+    return ss.length() * 14
+}' \
+    42
+standalone_run "ELF: empty map literal {}" \
+    'define main() -> Int {
+    m := {}
+    m.put("a", "1"); m.put("b", "2"); m.put("c", "3")
+    return m.length() * 14
+}' \
+    42
 # (the stdout=on stdout assertion implicitly proves eprint did
 # NOT show up there — it was routed to stderr instead.)
 
@@ -1430,4 +1451,4 @@ if [ "$fails" -gt 0 ]; then
     exit 1
 fi
 echo ""
-echo "all 168/168 cases passed"
+echo "all 171/171 cases passed"

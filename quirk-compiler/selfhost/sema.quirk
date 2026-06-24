@@ -851,21 +851,42 @@ define _check_method_call(s: Sema, c: Call) -> Ty {
 // defaults to Int as well. Result type is `TList()` (untyped
 // list; codegen treats the value as `i32*`).
 define _check_list_lit(s: Sema, ll: ListLit) -> Ty {
-    i := 0
+    // Empty `[]` is polymorphic: TListP("Any"). Callers can
+    // append any pointer-typed value (String, struct, Any).
+    // For Int-only empty lists, users must spell List<Int>
+    // explicitly or seed with `[0]`.
+    if ll.elems.length() == 0 {
+        return TListP("Any")
+    }
+    // Peek at the first element to decide int-list vs ptr-list.
+    e0: Expr := ll.elems.__get(0)
+    t0 := _check_expr(s, e0)
+    is_int := false
+    match t0 { case TInt as _ => is_int = true case _ => {} }
+    // Check remaining elements match the first's kind.
+    i := 1
     while i < ll.elems.length() {
         ei: Expr := ll.elems.__get(i)
         et := _check_expr(s, ei)
-        is_int := false
-        match et { case TInt as _ => is_int = true case _ => {} }
         is_err := false
         match et { case TError as _ => is_err = true case _ => {} }
-        if is_int == false and is_err == false {
-            s.report("list literal element " + i.str() +
-                     " must be Int, got '" + ty_to_string(et) + "'")
+        if is_err { i = i + 1; continue }
+        if is_int {
+            other_is_int := false
+            match et { case TInt as _ => other_is_int = true case _ => {} }
+            if other_is_int == false {
+                s.report("list literal element " + i.str() +
+                         " must be Int (first element is Int), got '" +
+                         ty_to_string(et) + "'")
+            }
         }
         i = i + 1
     }
-    return TList()
+    if is_int { return TList() }
+    // Pointer-element list — covers Strings, structs, unions.
+    // Elements flow as i8* in IR; type narrowing happens at
+    // bind sites via VarDecl annotation honoring.
+    return TListP("Any")
 }
 
 // Subscript access `xs[i]`. Receiver must be a list; index

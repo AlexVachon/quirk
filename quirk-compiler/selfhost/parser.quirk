@@ -194,6 +194,20 @@ define _parse_primary(s: ParserState) -> Expr {
         s.expect(TokenKind.RBracket, "']' to close list literal")
         return ListLit(elems)
     }
+    if t.kind == TokenKind.LBrace {
+        // Empty map literal `{}` desugars to `Map()` — the
+        // existing map-ctor call which sema/codegen already
+        // know how to lower. We only handle the empty form
+        // for now; populated `{k: v}` map literals would
+        // need a sema-level rewrite (Phase 6.y).
+        s.advance()
+        if s.check(TokenKind.RBrace) == false {
+            s.fail("populated map literals `{k: v}` not yet supported (use `m := Map(); m.put(k, v)`)")
+            return IntLit(0)
+        }
+        s.expect(TokenKind.RBrace, "'}' to close empty map literal")
+        return Call(Ident("Map"), List())
+    }
     s.fail("Expected expression at line " + t.line.str() + ":" + t.col.str() + ", got '" + t.value + "'")
     // Sentinel: a zero IntLit. Caller will check `s.had_error`
     // and abandon further parsing of the surrounding expr.

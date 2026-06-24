@@ -879,7 +879,15 @@ define _expr_static_ty(cg: FnCG, e: Expr) -> String {
         case BoolLit as _ => return "i1"
         case FloatLit as _ => return "double"
         case StringLit as _ => return "i8*"
-        case ListLit as _ => return "%QList*"
+        case ListLit as ll => {
+            // Mirror sema's polymorphic rule: empty → ListP,
+            // first-element-Int → List, otherwise ListP.
+            if ll.elems.length() == 0 { return "%QListP*" }
+            e0: Expr := ll.elems.__get(0)
+            t0 := _expr_static_ty(cg, e0)
+            if t0 == "i32" { return "%QList*" }
+            return "%QListP*"
+        }
         case Index as ix => {
             obj_ty := _expr_static_ty(cg, ix.obj)
             if obj_ty == "%QListP*" { return "i8*" }
@@ -2036,6 +2044,19 @@ define _gen_map_new(cg: FnCG) -> String {
 // `%QList*` header pointer. Both buffers leak (same trade-off
 // as the string-concat allocator).
 define _gen_list_lit(cg: FnCG, elems: List) -> String {
+    // Dispatch on element kind using the first element's static
+    // type — mirrors sema's polymorphic rule. Empty lists and
+    // any non-Int element go through the %QListP* (pointer-
+    // element) lowering; Int elements stay on the existing
+    // %QList* (4-byte slot) path.
+    if elems.length() == 0 {
+        return _gen_listp_lit(cg, elems)
+    }
+    e0: Expr := elems.__get(0)
+    t0 := _expr_static_ty(cg, e0)
+    if t0 != "i32" {
+        return _gen_listp_lit(cg, elems)
+    }
     cg.mod.ensure_decl("malloc", "declare i8* @malloc(i64)")
     n := elems.length()
     cap := n
@@ -2074,6 +2095,58 @@ define _gen_list_lit(cg: FnCG, elems: List) -> String {
         cg.emit(gep + " = getelementptr inbounds i32, i32* " + data_ptr +
                 ", i32 " + i.str())
         cg.emit("store i32 " + ev + ", i32* " + gep)
+        i = i + 1
+    }
+    return base
+}
+
+// Pointer-element list literal lowering. Same structure as
+// `_gen_list_lit`'s Int path but writes 8-byte slots and
+// bitcasts each element to i8* before storing. Used for
+// empty `[]`, string-list literals, and struct-list literals.
+define _gen_listp_lit(cg: FnCG, elems: List) -> String {
+    cg.mod.ensure_decl("malloc", "declare i8* @malloc(i64)")
+    n := elems.length()
+    cap := n
+    if cap < 1 { cap = 1 }
+    raw := cg.fresh()
+    cg.emit(raw + " = call i8* @malloc(i64 12)")
+    base := cg.fresh()
+    cg.emit(base + " = bitcast i8* " + raw + " to %QListP*")
+    data_bytes := cap * 8
+    data_raw := cg.fresh()
+    cg.emit(data_raw + " = call i8* @malloc(i64 " + data_bytes.str() + ")")
+    data_ptr := cg.fresh()
+    cg.emit(data_ptr + " = bitcast i8* " + data_raw + " to i8**")
+    len_gep := cg.fresh()
+    cg.emit(len_gep + " = getelementptr inbounds %QListP, %QListP* " + base +
+            ", i32 0, i32 0")
+    cg.emit("store i32 " + n.str() + ", i32* " + len_gep)
+    cap_gep := cg.fresh()
+    cg.emit(cap_gep + " = getelementptr inbounds %QListP, %QListP* " + base +
+            ", i32 0, i32 1")
+    cg.emit("store i32 " + cap.str() + ", i32* " + cap_gep)
+    data_field_gep := cg.fresh()
+    cg.emit(data_field_gep + " = getelementptr inbounds %QListP, %QListP* " + base +
+            ", i32 0, i32 2")
+    cg.emit("store i8** " + data_ptr + ", i8*** " + data_field_gep)
+    i := 0
+    while i < elems.length() {
+        ei: Expr := elems.__get(i)
+        ev := _gen_expr(cg, ei)
+        ev_ty := _expr_static_ty(cg, ei)
+        ev_i8 := ev
+        if ev_ty != "i8*" {
+            if _is_ptr_ty(ev_ty) {
+                cast := cg.fresh()
+                cg.emit(cast + " = bitcast " + ev_ty + " " + ev + " to i8*")
+                ev_i8 = cast
+            }
+        }
+        gep := cg.fresh()
+        cg.emit(gep + " = getelementptr inbounds i8*, i8** " + data_ptr +
+                ", i32 " + i.str())
+        cg.emit("store i8* " + ev_i8 + ", i8** " + gep)
         i = i + 1
     }
     return base

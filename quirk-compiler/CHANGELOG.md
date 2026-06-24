@@ -5,6 +5,66 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.48] — 2026-06-24
+
+### Phase 6.y: literal-form gaps — `[]`, `["a","b"]`, `{}`
+
+Three literal gaps from `packages/sys/index.quirk` fixed in one pass.
+All three were the same shape: stdlib code uses polymorphic literal
+syntax the selfhost subset didn't recognize.
+
+**1. Empty `[]` is now polymorphic.**
+Was: defaulted to `List<Int>`, so `xs := []; xs.append("hi")` failed
+sema with `expects an Int element, got 'String'`.
+Now: defaults to `List<Any>` (TListP("Any") in sema, `%QListP*` in IR).
+Any pointer-typed value (String, struct, union, Any) can be appended.
+For Int-only lists, users must spell `List<Int>` explicitly or seed
+with at least one Int element (`xs := [0]`).
+
+**2. String / struct list literals: `["a", "b", "c"]`.**
+Was: only Int-element list literals were accepted by sema; codegen
+hardcoded the `%QList*` (4-byte slot) shape.
+Now: sema peeks the first element's type. All-Int → `%QList*`;
+otherwise → `%QListP*` (8-byte slot). Mixed-element lists produce a
+sema error pointing at the divergent element.
+
+**3. Empty map literal `{}`.**
+Was: `{` in expression position was an error (no production existed).
+Now: `{}` desugars at parse time to `Call(Ident("Map"), [])` — the
+existing `Map()` ctor codegen handles the rest. Populated `{k: v}`
+form deferred to a later phase.
+
+**Codegen pieces:**
+- New `_gen_listp_lit` helper (mirrors `_gen_list_lit` but writes
+  8-byte i8* slots, bitcasts non-i8* element values via the existing
+  `_is_ptr_ty` check).
+- `_gen_list_lit` peeks first element type; empty or non-Int routes
+  to `_gen_listp_lit`.
+- `_expr_static_ty` for `ListLit` mirrors the same rule.
+
+### Test count
+
+171 cases (up from 168 — three new ELF probes: empty-polymorphic
+`[]`, string-list literal, empty-map `{}`).
+
+Selfhost fixed point still byte-identical at **1,718,126 bytes**
+(IR grew ~33 KB from the new helper + parser branches).
+
+### Remaining stdlib-specific gaps
+
+| Gap | Severity | Effort |
+| --- | --- | --- |
+| Variadic params (`...args`) | high | medium |
+| Default argument values | medium | medium |
+| Operator overloading via dunders | low | large |
+| For-in loops (`for x in xs`) | high | medium (Phase 8) |
+| String interpolation (`f"…"` / `"…{x}…"`) | high | medium (Phase 10) |
+| Try/throw | medium | large (Phase 9) |
+
+`packages/io/file.quirk` compiles cleanly. `packages/sys/index.quirk`
+will need variadic params + a few sema fixes to clear the remaining
+warnings. Each fix unlocks more of the stdlib.
+
 ## [4.0.0-alpha.47] — 2026-06-24
 
 ### Phase 6.x: 🎉 **`packages/io/file.quirk` compiles cleanly through selfhost**

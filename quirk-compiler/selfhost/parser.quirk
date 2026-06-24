@@ -686,6 +686,18 @@ Stops at the EofToken sentinel.
 define _parse_struct_decl(s: ParserState, out_methods: List) -> StructDecl {
     s.expect(TokenKind.Struct, "'struct'")
     name := s.expect(TokenKind.Identifier, "struct name").value
+    // Optional trait list: `struct Foo : Comparable, Sizeable {
+    // ... }`. Selfhost treats traits as no-ops for now —
+    // dynamic dispatch + vtables aren't implemented. The trait
+    // names are consumed and discarded so the body parser sees
+    // `{` at the right spot. Phase 12 (proper generics +
+    // traits) will revisit.
+    if s.match_kind(TokenKind.Colon) {
+        s.expect(TokenKind.Identifier, "trait name after ':'")
+        while s.match_kind(TokenKind.Comma) {
+            s.expect(TokenKind.Identifier, "trait name after ','")
+        }
+    }
     s.expect(TokenKind.LBrace, "'{' to open struct body")
     fields := List()
     while s.check(TokenKind.RBrace) == false {
@@ -811,6 +823,36 @@ define _skip_import(s: ParserState) -> void {
     s.expect(TokenKind.RBrace, "'}' to close import name list")
 }
 
+// `interface Name : Parent { ... }` — trait declaration.
+// Selfhost has no trait/vtable infrastructure (Phase 12), so
+// we just consume the brace-balanced body and discard it.
+// The bodies hold `define m(self, …) -> T` signatures with
+// no implementation, which would need a vtable to dispatch
+// against. Concrete structs that `: Trait` already get their
+// trait list discarded by `_parse_struct_decl`, so dropping
+// the trait declaration entirely keeps the two sides aligned.
+define _skip_interface_decl(s: ParserState) -> void {
+    s.expect(TokenKind.Interface, "'interface'")
+    s.expect(TokenKind.Identifier, "interface name")
+    // Optional `: Parent1, Parent2` parent-trait list.
+    if s.match_kind(TokenKind.Colon) {
+        s.expect(TokenKind.Identifier, "parent trait name after ':'")
+        while s.match_kind(TokenKind.Comma) {
+            s.expect(TokenKind.Identifier, "parent trait name after ','")
+        }
+    }
+    s.expect(TokenKind.LBrace, "'{' to open interface body")
+    // Brace-balanced consume — same shape as the multi-line
+    // import stripper in build.quirk.
+    depth := 1
+    while depth > 0 and s.check(TokenKind.EofToken) == false {
+        tk: Token := s.peek()
+        if tk.kind == TokenKind.LBrace { depth = depth + 1 }
+        elif tk.kind == TokenKind.RBrace { depth = depth - 1 }
+        s.advance()
+    }
+}
+
 // Bare-`use` form: `use foo.bar.baz` (no `from`, no `{...}`).
 // Pulls a module in for its side effects / typing extensions
 // (often used in stdlib files to wire `Comparable` etc.).
@@ -856,6 +898,8 @@ define parse(tokens: List) -> List {
             out.append(EnumTL(_parse_enum_decl(s)))
         } elif t.kind == TokenKind.TypeKw {
             out.append(UnionTL(_parse_union_decl(s)))
+        } elif t.kind == TokenKind.Interface {
+            _skip_interface_decl(s)
         } else {
             s.fail("Unexpected top-level token '" + t.value + "' at line " + t.line.str() + ":" + t.col.str())
         }

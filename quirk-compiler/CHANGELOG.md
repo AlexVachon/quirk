@@ -5,6 +5,58 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.51] — 2026-06-24
+
+### Phase 7: traits as no-ops + interface skip + read_file NULL-safety
+
+Three small fixes that unlock all of `packages/typing/interfaces/*`
+and most of `packages/typing/primitives/*`.
+
+**1. Trait clause `: A, B` on structs is now parsed + discarded.**
+```quirk
+struct Point : Comparable, Sizeable { ... }   // selfhost: traits ignored
+```
+Selfhost has no vtable / dynamic-dispatch infrastructure (Phase 12),
+so concrete struct methods provide implementations directly. The
+trait list is consumed in `_parse_struct_decl` after the struct name
+and before the body brace; downstream sema and codegen don't see it.
+
+**2. Top-level `interface Name { ... }` is skipped.**
+Selfhost can't implement trait declarations meaningfully yet, so the
+brace-balanced body is consumed and dropped. Concrete structs that
+`: ThatInterface` already have their inheritance list discarded
+(point 1), so dropping the interface declaration entirely keeps the
+two sides aligned.
+
+**3. `read_file` is now NULL-safe on both compilers.**
+The C++-side `generateReadFile` and selfhost-side `_gen_read_file`
+both grew a NULL-check branch after `fopen`. Missing-file paths
+previously triggered `fseek(NULL, ...) → SIGSEGV`; now they emit a
+1-byte malloc'd buffer with `'\0'` and the caller sees an empty
+String. Symptom that triggered the fix: pointing selfhost at
+`packages/typing/interfaces/comparable.quirk` (which imports
+`from .equatable use { Equatable }`) made `_expand` build a wrong
+path like `packages/typing/equatable.quirk` — fopen returned NULL,
+then fseek crashed inside the JIT.
+
+### Stdlib coverage progress
+
+| Module / family | Status |
+| --- | --- |
+| `packages/typing/interfaces/*` (8 files) | ✅ all 8 compile |
+| `packages/typing/primitives/{int,bool,double}.quirk` | ✅ 3/4 |
+| `packages/typing/primitives/string.quirk` | blocked on **default arg values** (`= ""`) |
+| `packages/io/file.quirk` | ✅ |
+| `packages/typing/{option,result}.quirk` | blocked on **generic union** (`type Option<T> = ...`) |
+
+### Test count
+
+177 cases (up from 175 — two new probes: struct with trait clause,
+read_file on missing path).
+
+Selfhost fixed point still byte-identical at **1,795,765 bytes**
+(IR grew ~19 KB from the NULL-check branch + struct trait skip).
+
 ## [4.0.0-alpha.50] — 2026-06-24
 
 ### Phase 8: 🎉 **`for x in xs { ... }` loops**

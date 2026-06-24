@@ -1624,14 +1624,34 @@ define _gen_read_file(cg: FnCG, args: List) -> String {
             mode_name + ", i64 0, i64 0")
     fp := cg.fresh()
     cg.emit(fp + " = call i8* @fopen(i8* " + path + ", i8* " + mode_gep + ")")
-    // Seek to end, ftell for size, seek back.
+    // NULL-check: fopen returns null when the file can't be
+    // opened (missing path, permission denied, etc.). Without
+    // this, the next fseek crashes. We branch through two
+    // labels and write the result into a stack slot so callers
+    // get an empty string on failure instead of a segfault.
+    res_slot := "%" + cg.fresh_label("rd.res")
+    cg.emit_entry(res_slot + " = alloca i8*")
+    is_null := cg.fresh()
+    cg.emit(is_null + " = icmp eq i8* " + fp + ", null")
+    ok_lbl   := cg.fresh_label("rd.ok")
+    fail_lbl := cg.fresh_label("rd.fail")
+    end_lbl  := cg.fresh_label("rd.end")
+    cg.emit("br i1 " + is_null + ", label %" + fail_lbl + ", label %" + ok_lbl)
+    // Fail: 1-byte buffer holding just '\0' so callers see "".
+    cg.emit_raw(fail_lbl + ":")
+    empty_buf := cg.fresh()
+    cg.emit(empty_buf + " = call i8* @malloc(i64 1)")
+    cg.emit("store i8 0, i8* " + empty_buf)
+    cg.emit("store i8* " + empty_buf + ", i8** " + res_slot)
+    cg.emit("br label %" + end_lbl)
+    // Ok: full fseek/ftell/fread/null-terminate/fclose.
+    cg.emit_raw(ok_lbl + ":")
     seek_end := cg.fresh()
     cg.emit(seek_end + " = call i32 @fseek(i8* " + fp + ", i64 0, i32 2)")
     size := cg.fresh()
     cg.emit(size + " = call i64 @ftell(i8* " + fp + ")")
     seek_start := cg.fresh()
     cg.emit(seek_start + " = call i32 @fseek(i8* " + fp + ", i64 0, i32 0)")
-    // Allocate size+1 bytes, fread the content.
     alloc_size := cg.fresh()
     cg.emit(alloc_size + " = add nsw i64 " + size + ", 1")
     buf := cg.fresh()
@@ -1639,14 +1659,18 @@ define _gen_read_file(cg: FnCG, args: List) -> String {
     read_n := cg.fresh()
     cg.emit(read_n + " = call i64 @fread(i8* " + buf + ", i64 1, i64 " +
             size + ", i8* " + fp + ")")
-    // Null-terminate at buf[size].
     nul_slot := cg.fresh()
     cg.emit(nul_slot + " = getelementptr inbounds i8, i8* " + buf +
             ", i64 " + size)
     cg.emit("store i8 0, i8* " + nul_slot)
     closed := cg.fresh()
     cg.emit(closed + " = call i32 @fclose(i8* " + fp + ")")
-    return buf
+    cg.emit("store i8* " + buf + ", i8** " + res_slot)
+    cg.emit("br label %" + end_lbl)
+    cg.emit_raw(end_lbl + ":")
+    final_buf := cg.fresh()
+    cg.emit(final_buf + " = load i8*, i8** " + res_slot)
+    return final_buf
 }
 
 // Write a String to a file. Sequence: fopen("w") → strlen

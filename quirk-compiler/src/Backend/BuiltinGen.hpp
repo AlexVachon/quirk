@@ -237,12 +237,11 @@ class BuiltinGen {
     }
 
     // read_file(path: String) -> String
-    // Lowers to fopen + fseek/ftell/fseek + malloc + fread + null-
-    // terminate + fclose, then wraps the resulting i8* into a
-    // freshly allocated String. Matches `_gen_read_file` in
-    // selfhost/codegen.quirk so the C++ binary and a self-hosted
-    // standalone binary emit interchangeable IR for the same
-    // source.
+    // Lowers to fopen + fseek/ftell/fseek + malloc + fread +
+    // null-terminate + fclose, then wraps the resulting i8*
+    // into a freshly allocated String. Now NULL-safe: if fopen
+    // returns null (missing file, permission denied, etc.) we
+    // return an empty String instead of segfaulting in fseek.
     Value* generateReadFile(CallNode* call, std::function<Value*(Node*)> exprHandler) {
         if (call->args.size() != 1) return nullptr;
         Value* pathVal = exprHandler(call->args[0].value.get());
@@ -262,8 +261,33 @@ class BuiltinGen {
         if (!fopenFn || !fcloseFn || !fseekFn || !ftellFn || !freadFn || !mallocFn)
             return nullptr;
 
+        Function* parent = Builder.GetInsertBlock()->getParent();
+        BasicBlock* okBB   = BasicBlock::Create(Context, "rd.ok",   parent);
+        BasicBlock* failBB = BasicBlock::Create(Context, "rd.fail", parent);
+        BasicBlock* endBB  = BasicBlock::Create(Context, "rd.end",  parent);
+
+        // Stack slot for the resulting buffer pointer; written
+        // in both branches and loaded at the merge point.
+        IRBuilder<> entryB(&parent->getEntryBlock(),
+                           parent->getEntryBlock().getFirstInsertionPt());
+        Value* resSlot = entryB.CreateAlloca(i8PtrTy, nullptr, "rd.res");
+
         Value* mode = Builder.CreateGlobalStringPtr("r");
         Value* fp   = Builder.CreateCall(fopenFn, {pathBuf, mode});
+        Value* isNull = Builder.CreateICmpEQ(
+            fp, ConstantPointerNull::get(cast<PointerType>(i8PtrTy)));
+        Builder.CreateCondBr(isNull, failBB, okBB);
+
+        // Fail path: allocate a 1-byte buffer holding just '\0'
+        // so callers see a String with empty contents.
+        Builder.SetInsertPoint(failBB);
+        Value* emptyBuf = Builder.CreateCall(mallocFn, {ConstantInt::get(i64Ty, 1)});
+        Builder.CreateStore(ConstantInt::get(Type::getInt8Ty(Context), 0), emptyBuf);
+        Builder.CreateStore(emptyBuf, resSlot);
+        Builder.CreateBr(endBB);
+
+        // Ok path: full fseek/ftell/fread/null-terminate/fclose.
+        Builder.SetInsertPoint(okBB);
         Builder.CreateCall(fseekFn, {fp, ConstantInt::get(i64Ty, 0), ConstantInt::get(i32Ty, 2)});
         Value* size = Builder.CreateCall(ftellFn, {fp});
         Builder.CreateCall(fseekFn, {fp, ConstantInt::get(i64Ty, 0), ConstantInt::get(i32Ty, 0)});
@@ -274,10 +298,12 @@ class BuiltinGen {
         Value* nulSlot = Builder.CreateGEP(Type::getInt8Ty(Context), buf, size);
         Builder.CreateStore(ConstantInt::get(Type::getInt8Ty(Context), 0), nulSlot);
         Builder.CreateCall(fcloseFn, {fp});
-        // Wrap raw i8* into a String object so callers (typed
-        // `String`) can use string methods.
-        (void)i8PtrTy;
-        return structGen->allocateAndInit("String", {buf});
+        Builder.CreateStore(buf, resSlot);
+        Builder.CreateBr(endBB);
+
+        Builder.SetInsertPoint(endBB);
+        Value* finalBuf = Builder.CreateLoad(i8PtrTy, resSlot);
+        return structGen->allocateAndInit("String", {finalBuf});
     }
 
     // write_file(path: String, content: String) -> Int

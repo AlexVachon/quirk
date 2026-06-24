@@ -1479,6 +1479,35 @@ standalone_run "ELF: for-in with break + continue" \
     return sum + 35
 }' \
     42
+
+# Phase 7: trait clause `: A, B` on struct is a no-op + the
+# `interface` top-level keyword is skipped. Selfhost has no
+# vtable / dynamic-dispatch infrastructure; concrete struct
+# methods provide the implementations directly. This lets
+# typing-package files (which annotate every primitive with
+# its traits) parse cleanly.
+standalone_run "ELF: struct with trait clause compiles" \
+    'struct Point : Comparable, Sizeable {
+    x: Int
+    y: Int
+    define sum_(self) -> Int { return self.x + self.y }
+}
+define main() -> Int {
+    p := Point(20, 22)
+    return p.sum_()
+}' \
+    42
+
+# read_file NULL-safety: opening a missing file no longer
+# segfaults. Returns an empty String so callers can branch
+# on `.length() == 0`.
+standalone_run "ELF: read_file on missing path returns empty" \
+    'define main() -> Int {
+    s := read_file("/tmp/this-does-not-exist-quirk-test")
+    if s.length() == 0 { return 42 }
+    return 0
+}' \
+    42
 # (the stdout=on stdout assertion implicitly proves eprint did
 # NOT show up there — it was routed to stderr instead.)
 
@@ -1488,4 +1517,4 @@ if [ "$fails" -gt 0 ]; then
     exit 1
 fi
 echo ""
-echo "all 175/175 cases passed"
+echo "all 177/177 cases passed"

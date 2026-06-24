@@ -641,12 +641,72 @@ define _parse_block(s: ParserState) -> List {
 // and `TListP(elem)`.
 define _parse_type_annot(s: ParserState, what: String) -> String {
     name := s.expect(TokenKind.Identifier, what).value
+    // Generic type arguments. Both bracket forms supported:
+    //   angle:  `List<Int>`, `Map<K, V>` — the conventional
+    //           syntax, conflicts with `<` comparison so it's
+    //           only unambiguous in type-annotation position.
+    //   square: `Option[T]`, `Result[T, E]` — the stdlib's
+    //           preferred form, never ambiguous.
+    // Selfhost uses only the leading name for type resolution
+    // (generic args erase to TAny / i8*). We preserve the
+    // single-arg angle form `Name<X>` since codegen's
+    // _q_ty_to_llvm distinguishes List<Int> vs List<...>.
+    closer := TokenKind.Greater
+    opened := false
     if s.match_kind(TokenKind.Less) {
-        inner := s.expect(TokenKind.Identifier, "generic type argument").value
-        s.expect(TokenKind.Greater, "'>' to close generic type")
-        return name + "<" + inner + ">"
+        closer = TokenKind.Greater
+        opened = true
+    } elif s.match_kind(TokenKind.LBracket) {
+        closer = TokenKind.RBracket
+        opened = true
+    }
+    if opened {
+        first_inner := _parse_type_annot(s, "generic type argument")
+        while s.match_kind(TokenKind.Comma) {
+            _parse_type_annot(s, "generic type argument")
+        }
+        s.expect(closer, "closing bracket of generic type")
+        // Preserve angle-form single-arg generics; everything
+        // else (multi-arg, nested, square-bracket) erases to
+        // the bare name.
+        if closer == TokenKind.Greater and first_inner.length() > 0 {
+            is_simple := true
+            i := 0
+            n := first_inner.length()
+            while i < n {
+                ch := first_inner.substring(i, i + 1)
+                if ch == "<" or ch == "," { is_simple = false; i = n }
+                i = i + 1
+            }
+            if is_simple { return name + "<" + first_inner + ">" }
+        }
+        return name
     }
     return name
+}
+
+// Skip `<T>` / `<T1, T2>` / `[T]` / `[T1, T2]` after a
+// declaration name. Used by struct/enum/union/function
+// decls. Quirk supports both bracket forms — angle-style
+// matches the conventional generic syntax, square-style
+// (`Option[T]`, `Result[T, E]`) is what the stdlib uses
+// to keep angle brackets free for comparisons. Selfhost
+// has no generics machinery (Phase 12 type-erasure MVP),
+// so the params are consumed and discarded.
+define _skip_type_params(s: ParserState) -> void {
+    closer := TokenKind.Greater
+    if s.match_kind(TokenKind.Less) {
+        closer = TokenKind.Greater
+    } elif s.match_kind(TokenKind.LBracket) {
+        closer = TokenKind.RBracket
+    } else {
+        return
+    }
+    s.expect(TokenKind.Identifier, "type parameter name")
+    while s.match_kind(TokenKind.Comma) {
+        s.expect(TokenKind.Identifier, "type parameter name after ','")
+    }
+    s.expect(closer, "closing bracket of type parameters")
 }
 
 define _parse_param(s: ParserState) -> Param {
@@ -704,6 +764,9 @@ define _parse_function_decl(s: ParserState) -> FunctionDecl {
         receiver = first
         name = s.expect(TokenKind.Identifier, "method name after '.'").value
     }
+    // Optional generic type params: `define foo<T>(x: T)`.
+    // Same erasure as the struct/union forms.
+    _skip_type_params(s)
     s.expect(TokenKind.LParen, "'(' before parameter list")
     params := List()
     if s.check(TokenKind.RParen) == false {
@@ -742,6 +805,10 @@ Stops at the EofToken sentinel.
 define _parse_struct_decl(s: ParserState, out_methods: List) -> StructDecl {
     s.expect(TokenKind.Struct, "'struct'")
     name := s.expect(TokenKind.Identifier, "struct name").value
+    // Optional generic params: `struct Foo<T> { ... }` (Phase
+    // 12 type-erasure MVP). Consumed + discarded; T inside
+    // the struct body resolves as TAny.
+    _skip_type_params(s)
     // Optional trait list: `struct Foo : Comparable, Sizeable {
     // ... }`. Selfhost treats traits as no-ops for now —
     // dynamic dispatch + vtables aren't implemented. The trait
@@ -805,6 +872,9 @@ define _parse_struct_decl(s: ParserState, out_methods: List) -> StructDecl {
 define _parse_union_decl(s: ParserState) -> UnionDecl {
     s.expect(TokenKind.TypeKw, "'type'")
     name := s.expect(TokenKind.Identifier, "union name").value
+    // Optional generic params: `type Option<T> = ...`. Same
+    // type-erasure treatment as struct/function generics.
+    _skip_type_params(s)
     s.expect(TokenKind.Assign, "'=' after union name")
     variants := List()
     keep_going := true
@@ -839,6 +909,9 @@ define _parse_union_decl(s: ParserState) -> UnionDecl {
 define _parse_enum_decl(s: ParserState) -> EnumDecl {
     s.expect(TokenKind.Enum, "'enum'")
     name := s.expect(TokenKind.Identifier, "enum name").value
+    // Optional generic params (rare on enums, but keep the
+    // parser symmetric with struct/union/function decls).
+    _skip_type_params(s)
     s.expect(TokenKind.LBrace, "'{' to open enum body")
     variants := List()
     while s.check(TokenKind.RBrace) == false {
@@ -877,6 +950,27 @@ define _skip_import(s: ParserState) -> void {
         }
     }
     s.expect(TokenKind.RBrace, "'}' to close import name list")
+}
+
+// `extend Name { ... }` adds methods to an existing type
+// (typically a generic union like Option[T] or Result[T, E]).
+// Selfhost discards extend blocks entirely for the MVP —
+// the methods inside would need full method-dispatch
+// integration with sema's struct/union machinery, which is
+// a Phase 12.5 follow-up. Brace-balanced consume so nested
+// blocks don't break the scan.
+define _skip_extend_decl(s: ParserState) -> void {
+    s.expect(TokenKind.Extend, "'extend'")
+    s.expect(TokenKind.Identifier, "type name after 'extend'")
+    _skip_type_params(s)
+    s.expect(TokenKind.LBrace, "'{' to open extend body")
+    depth := 1
+    while depth > 0 and s.check(TokenKind.EofToken) == false {
+        tk: Token := s.peek()
+        if tk.kind == TokenKind.LBrace { depth = depth + 1 }
+        elif tk.kind == TokenKind.RBrace { depth = depth - 1 }
+        s.advance()
+    }
 }
 
 // `interface Name : Parent { ... }` — trait declaration.
@@ -956,6 +1050,8 @@ define parse(tokens: List) -> List {
             out.append(UnionTL(_parse_union_decl(s)))
         } elif t.kind == TokenKind.Interface {
             _skip_interface_decl(s)
+        } elif t.kind == TokenKind.Extend {
+            _skip_extend_decl(s)
         } else {
             s.fail("Unexpected top-level token '" + t.value + "' at line " + t.line.str() + ":" + t.col.str())
         }

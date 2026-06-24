@@ -5,6 +5,88 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.56] — 2026-06-24
+
+### Phase 12 (parse + type-erasure MVP): 🎉 **generics**
+
+Generic type parameters are now accepted in declarations and
+type annotations. Selfhost has no monomorphization or
+runtime dispatch — generic params **type-erase to i8\*** at
+the LLVM layer, which matches Quirk's existing
+boxed-Any-pointer ABI for non-primitive values.
+
+```quirk
+type Option[T] = Some(value: T) | None()           // square-bracket form
+type Result[T, E] = Ok(value: T) | Err(error: E)
+struct Wrap[T] { inner: T }
+define identity[T](x: T) -> T { return x }
+extend Option { … }                                // add methods to existing type
+```
+
+**Pieces:**
+
+1. **Parser** (`selfhost/parser.quirk`):
+   - `_parse_type_annot` accepts both `Name<T>` (angle) and
+     `Name[T]` (square) generic-arg lists, multi-arg
+     (`Map[K, V]`), and nested (`List<Map<String, Int>>`).
+     For the `<` form's single-arg case it preserves the
+     textual `Name<inner>` for codegen's int-list /
+     pointer-list dispatch; everything else erases to the
+     bare name.
+   - New `_skip_type_params` consumes `<T>` / `[T]` after a
+     declaration name and discards. Wired into
+     `_parse_struct_decl`, `_parse_union_decl`,
+     `_parse_enum_decl`, and `_parse_function_decl`.
+   - New `_skip_extend_decl` consumes top-level `extend
+     Name { ... }` blocks. The methods inside would need
+     full method-dispatch wiring against the target type,
+     deferred to a Phase 12.5 follow-up.
+
+2. **Codegen** (`selfhost/codegen.quirk`):
+   - `_q_ty_to_llvm` gains an explicit `Int → i32` arm so
+     the new single-letter generic-param heuristic doesn't
+     accidentally erase `Int` to `i8*`.
+   - Single-uppercase-letter type names (`T`, `E`, `A`, `B`,
+     `K`, `V`, …) fall back to `i8*`. Multi-character
+     unknowns still get the existing `i32` default — that's
+     wrong for stdlib types like `Exception` but matches
+     what selfhost expects elsewhere, and a "track stdlib
+     types" enhancement is a separate phase.
+
+### Stdlib coverage progress
+
+| Package | Status |
+| --- | --- |
+| `typing/option.quirk` | ✅ parses cleanly (303 bytes IR) |
+| `typing/result.quirk` | ✅ parses cleanly (305 bytes IR) |
+| `typing/interfaces/*` | ✅ all 8 |
+| `typing/primitives/*` | ✅ 4/4 |
+| `typing/callable.quirk` | ✅ |
+| `typing/collections/set.quirk` | ✅ |
+| `io/file.quirk` | ✅ |
+
+### Test count
+
+186 cases (up from 184 — two new generic-decl probes:
+struct with `[T]`, union with multi-arg `[A, B]`). Selfhost
+fixed point still byte-identical at **1,928,225 bytes** (IR
+grew ~11 KB from the parser additions).
+
+### What's left
+
+| Phase | Status |
+| --- | --- |
+| 6 / 6.w-z / 7 / 8 / 9 / 10 / 11 / 12-MVP | ✅ |
+| 11.5 (lambda capture / closure env) | open |
+| 12.5 (monomorphization, real method dispatch on generics) | open |
+| 13 (range, tuple, destructuring, ops overload) | open |
+| 14-17 (REPL/PM/LSP port + v5.0.0 cutover) | open |
+
+Stdlib gap surfacing is increasingly returning sema-level
+issues (Any+Any arithmetic, unknown struct field access)
+rather than parse-level — meaning the parser is essentially
+keeping up with the language surface.
+
 ## [4.0.0-alpha.55] — 2026-06-24
 
 ### Phase 11: 🎉 **lambda lifting `fn(x: Int) => x * 2`**

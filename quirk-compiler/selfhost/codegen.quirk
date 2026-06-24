@@ -90,6 +90,7 @@ define _llvm_encode_string(text: String) -> String {
 // `_expr_static_ty` short-circuiting on literals) can still
 // use it.
 define _q_ty_to_llvm(qty: String) -> String {
+    if qty == "Int"    { return "i32" }
     if qty == "Bool"   { return "i1" }
     if qty == "Double" { return "double" }
     if qty == "String" { return "i8*" }
@@ -116,6 +117,19 @@ define _q_ty_to_llvm(qty: String) -> String {
         inner := qty.substring(5, qty.length() - 1)
         if inner == "Int" { return "%QList*" }
         return "%QListP*"
+    }
+    // Single-letter uppercase type names — `T`, `E`, `A`,
+    // `B`, `K`, `V` — are almost always erased generic params.
+    // Treat as i8* so generic-typed fields/params/locals lay
+    // out as heap pointers rather than i32 ordinals. Multi-
+    // letter unknowns still fall through to the i32 default
+    // (which is wrong for stdlib heap types like Exception
+    // but matches what selfhost code expects elsewhere).
+    if qty.length() == 1 {
+        c := qty.substring(0, 1)
+        if c >= "A" and c <= "Z" {
+            return "i8*"
+        }
     }
     return "i32"
 }

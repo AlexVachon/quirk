@@ -1610,6 +1610,32 @@ define main() -> Int {
     return use_it(triple, 14)
 }' \
     42
+
+# Phase 12 (parse-only MVP): generic type parameters are
+# consumed and discarded. Angle-bracket form `<T>` and
+# square-bracket form `[T]` both supported; `extend Name { ... }`
+# blocks consumed as no-ops.
+standalone_run "ELF: struct with generic param parses (type-erasure)" \
+    'struct Wrap[T] {
+    inner: T
+}
+define main() -> Int {
+    w := Wrap("forty-two")
+    return 42
+}' \
+    42
+standalone_run "ELF: union with multi-arg generic params (pointer-typed)" \
+    'type Pair[A, B] = Both(a: A, b: B) | LeftOnly(a: A) | RightOnly(b: B)
+define main() -> Int {
+    p := Both("hello", "world")
+    match p {
+        case Both as b => return 42
+        case LeftOnly as _ => return 0
+        case RightOnly as _ => return 0
+        case _ => return 0
+    }
+}' \
+    42
 # (the stdout=on stdout assertion implicitly proves eprint did
 # NOT show up there — it was routed to stderr instead.)
 
@@ -1619,4 +1645,4 @@ if [ "$fails" -gt 0 ]; then
     exit 1
 fi
 echo ""
-echo "all 184/184 cases passed"
+echo "all 186/186 cases passed"

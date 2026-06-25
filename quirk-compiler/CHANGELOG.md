@@ -5,6 +5,32 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.70] — 2026-06-25
+
+### Test-corpus coverage: 33/60 → 35/60
+
+Two lexer changes pulling more test files through the
+parser. Fixed-point + 190-case e2e regression both green.
+
+**1. Single-quoted strings `'foo'`.** Selfhost's lexer only
+recognized `"...". Tests and stdlib use `'...'` for path
+literals and regex patterns (Python convention). The lexer
+now emits a `StringLiteral` for `'...'` content — no
+escape processing, no interpolation, just verbatim. The
+double-quoted path keeps escapes + interpolation as before.
+
+**2. Format-spec stripping in `${expr:fmt}` interpolation.**
+When recursively tokenizing the inner expression of a
+`${...}` block, we now scan for a top-level `:`, `|`, or
+`%` (depth-0 — inside parens/brackets they're left alone)
+and truncate the expression at that point. The format
+spec itself is discarded — selfhost has no format-aware
+printing, but the surrounding interpolation parses
+cleanly. This covers Python-style `:fmt` and Quirk's
+legacy `|fmt` / `%fmt` separators.
+
+Test corpus: **33/60 → 35/60 passing.**
+
 ## [4.0.0-alpha.69] — 2026-06-25
 
 ### Test-corpus coverage: 30/60 → 33/60

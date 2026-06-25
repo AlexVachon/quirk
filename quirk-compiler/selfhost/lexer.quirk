@@ -149,6 +149,34 @@ define _emit_string_or_interp(out: List, content: String, line: Int, start_col: 
                 j = j + 1
             }
             inner := content.substring(i + 2, j)
+            // Strip format spec — `:fmt`, `%fmt`, or `|fmt`
+            // suffix on the inner expression. Selfhost has no
+            // format-aware printing; we just keep the expression
+            // and discard the spec so the file parses.
+            spec_idx := -1
+            sk := 0
+            depth := 0
+            while sk < inner.length() {
+                ic := inner.substring(sk, sk + 1)
+                if ic == "(" or ic == "[" { depth = depth + 1 }
+                elif ic == ")" or ic == "]" { depth = depth - 1 }
+                elif depth == 0 and (ic == ":" or ic == "|" or ic == "%") {
+                    // `:fmt`, `|fmt`, or `%fmt` — Quirk's
+                    // three format-spec separators. Inside
+                    // an interpolation we always interpret a
+                    // bare top-level occurrence as a spec
+                    // separator (not modulo / type-annot /
+                    // union), since interp expressions almost
+                    // never use those operators.
+                    spec_idx = sk
+                    sk = inner.length()
+                    continue
+                }
+                sk = sk + 1
+            }
+            if spec_idx >= 0 {
+                inner = inner.substring(0, spec_idx)
+            }
             // Re-tokenize the inner expression. Append all
             // tokens except the trailing EofToken so the parser
             // sees a continuous stream.
@@ -311,6 +339,30 @@ define tokenize(source: String) -> List {
         // sequence (e.g. a real newline for `\n`), and codegen
         // re-encodes those bytes for LLVM IR's `c"..."` form.
         // Triple-quoted + interpolation are still deferred.
+        // Single-quoted string literal `'foo'` — no escapes,
+        // no interpolation. Behaves like Python's literal-quote
+        // strings; stdlib + tests use these for path fragments
+        // and regex patterns. Emits a single StringLiteral.
+        if c == "'" {
+            pos = pos + 1
+            col = col + 1
+            sq_start_col := col - 1
+            sq_content := ""
+            while pos < n and source.substring(pos, pos + 1) != "'" {
+                sch := source.substring(pos, pos + 1)
+                sq_content = sq_content + sch
+                if sch == "\n" {
+                    line = line + 1
+                    col = 1
+                } else {
+                    col = col + 1
+                }
+                pos = pos + 1
+            }
+            if pos < n { pos = pos + 1; col = col + 1 }
+            out.append(Token(TokenKind.StringLiteral, sq_content, line, sq_start_col))
+            continue
+        }
         if c == "\"" {
             pos = pos + 1
             col = col + 1

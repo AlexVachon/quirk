@@ -503,10 +503,27 @@ define _parse_postfix(s: ParserState) -> Expr {
             s.expect(TokenKind.RBracket, "']' to close index")
             e = Index(e, idx_expr)
         } elif s.check(TokenKind.Question) {
-            // Postfix unwrap `x?` — propagate null. Selfhost has
-            // no Option/Result auto-unwrap, so we just consume
-            // the `?` and leave the expression as-is.
-            s.advance()
+            // Postfix unwrap `x?` — propagate null. Only consume
+            // when the `?` is NOT the start of a ternary
+            // `x ? then : else`. Peek next token: if it's
+            // expression-startable, defer to the ternary handler
+            // in `_parse_expr`.
+            nq: Token := s.peek_at(1)
+            looks_like_ternary := false
+            if nq.kind == TokenKind.Identifier { looks_like_ternary = true }
+            if nq.kind == TokenKind.IntLiteral { looks_like_ternary = true }
+            if nq.kind == TokenKind.FloatLiteral { looks_like_ternary = true }
+            if nq.kind == TokenKind.StringLiteral { looks_like_ternary = true }
+            if nq.kind == TokenKind.LParen { looks_like_ternary = true }
+            if nq.kind == TokenKind.LBracket { looks_like_ternary = true }
+            if nq.kind == TokenKind.LBrace { looks_like_ternary = true }
+            if nq.kind == TokenKind.Not { looks_like_ternary = true }
+            if nq.kind == TokenKind.Minus { looks_like_ternary = true }
+            if looks_like_ternary {
+                keep_going = false
+            } else {
+                s.advance()
+            }
         } elif s.check(TokenKind.LParen) {
             // Call applied to whatever expression `e` is —
             // typically a FieldGet for method-call syntax,
@@ -677,6 +694,25 @@ define _parse_expr(s: ParserState) -> Expr {
         s.advance()
         right := _parse_and(s)
         left = BinOp("or", left, right)
+    }
+    // Ternary `cond ? then : else`. The postfix-unwrap `x?`
+    // consumer in _parse_postfix would already have eaten any
+    // `?` directly attached to the primary — to reach here
+    // the `?` must follow a multi-token expression (cmp/and/or
+    // chain), which can only be ternary. Lower to
+    // `__ternary(cond, then, else)` via the permissive
+    // unknown-call path.
+    if s.check(TokenKind.Question) {
+        s.advance()
+        then_expr := _parse_expr(s)
+        if s.match_kind(TokenKind.Colon) {
+            else_expr := _parse_expr(s)
+            tern_args := List()
+            tern_args.append(left)
+            tern_args.append(then_expr)
+            tern_args.append(else_expr)
+            return Call(Ident("__ternary"), tern_args)
+        }
     }
     return left
 }
@@ -867,12 +903,21 @@ define _parse_stmt(s: ParserState) -> Stmt {
         arms := List()
         while s.check(TokenKind.RBrace) == false and s.check(TokenKind.EofToken) == false {
             s.expect(TokenKind.Case, "'case' to open match arm")
-            // Pattern: either `_` (wildcard) or an identifier
-            // (variant name). `_` lexes as a plain Identifier
-            // with value "_" — distinguish by value, not kind.
-            ptok: Token := s.expect(TokenKind.Identifier, "variant name or '_'")
+            // Pattern: a variant name, `_` wildcard, or a literal
+            // (Int / String / Float / Bool). Literals are recorded
+            // in `pattern` as their lexeme — sema's variant
+            // lookup will treat unknown patterns permissively, so
+            // codegen falls back to a string-compare on the
+            // scrutinee's `.str()`. Multi-pattern `case 2, 3 =>`
+            // — additional patterns parse-and-discard.
+            ptok: Token := s.advance()
             pattern := ""
             if ptok.value != "_" { pattern = ptok.value }
+            // Optional list `case 1, 2, 3 =>`.
+            while s.match_kind(TokenKind.Comma) {
+                if s.check(TokenKind.FatArrow) { break }
+                s.advance()
+            }
             // `as <binder>` is optional. Binder defaults to "_"
             // (meaning the arm body doesn't bind anything).
             binder := "_"
@@ -880,13 +925,24 @@ define _parse_stmt(s: ParserState) -> Stmt {
                 btok: Token := s.expect(TokenKind.Identifier, "binder name after 'as'")
                 binder = btok.value
             }
-            s.expect(TokenKind.FatArrow, "'=>' after match-arm pattern")
-            // Body is either a `{ ... }` block or a single statement.
+            // Optional `if <guard>` clause — Quirk's match-arm
+            // guard. Selfhost has no guard codegen path, so the
+            // guard expression parses-and-discards.
+            if s.match_kind(TokenKind.If) {
+                _parse_expr(s)
+            }
+            // Body: `=> EXPR` / `=> { … }` / bare `{ … }`. The
+            // bare-block form (no `=>`) is sugar for `=> { … }`.
             arm_body := List()
             if s.check(TokenKind.LBrace) {
                 arm_body = _parse_block(s)
             } else {
-                arm_body.append(_parse_stmt(s))
+                s.expect(TokenKind.FatArrow, "'=>' after match-arm pattern")
+                if s.check(TokenKind.LBrace) {
+                    arm_body = _parse_block(s)
+                } else {
+                    arm_body.append(_parse_stmt(s))
+                }
             }
             arms.append(MatchArm(pattern, binder, arm_body))
         }
@@ -1664,6 +1720,28 @@ define parse(tokens: List) -> List {
                     tk: Token := s.peek()
                     if tk.kind == TokenKind.LParen { depth = depth + 1 }
                     elif tk.kind == TokenKind.RParen { depth = depth - 1 }
+                    s.advance()
+                }
+            }
+        } elif t.kind == TokenKind.For
+              or t.kind == TokenKind.If
+              or t.kind == TokenKind.While {
+            // Top-level imperative statements — selfhost has no
+            // module init machinery, so we parse-and-discard
+            // the entire block. Brace-balanced consume of the
+            // body block.
+            s.advance()  // for/if/while
+            // Consume the condition / header tokens until `{`.
+            while s.check(TokenKind.LBrace) == false
+                  and s.check(TokenKind.EofToken) == false {
+                s.advance()
+            }
+            if s.match_kind(TokenKind.LBrace) {
+                depth := 1
+                while depth > 0 and s.check(TokenKind.EofToken) == false {
+                    tk: Token := s.peek()
+                    if tk.kind == TokenKind.LBrace { depth = depth + 1 }
+                    elif tk.kind == TokenKind.RBrace { depth = depth - 1 }
                     s.advance()
                 }
             }

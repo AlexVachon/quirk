@@ -5,6 +5,46 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.75] — 2026-06-25
+
+### Parse failures: 4 → 2
+
+OK rate unchanged (43/60) but the remaining failures move
+deeper into sema territory — six more parser relaxations
+land that don't unlock a new whole test on their own but
+push tests further along the pipeline. Fixed-point +
+190-case e2e regression both green.
+
+**1. Match-arm `if` guard.** `case Foo if cond =>` —
+guard expression parses-and-discards (selfhost has no
+guard codegen path).
+
+**2. Match-arm literal pattern.** `case 1 =>`,
+`case "hello" =>`, etc. — pattern is recorded as the
+lexeme; sema's variant lookup treats it as an unknown
+identifier (permissive TAny path).
+
+**3. Multi-pattern arms `case 2, 3 =>`.** Trailing
+patterns parse-and-discard.
+
+**4. Match-arm bare-block body `case X { … }`.** Sugar
+for `case X => { … }`. The `=>` is optional when the
+body is a `{ … }` block.
+
+**5. Ternary `cond ? then : else`.** Lowered to
+`__ternary(cond, then, else)` synthetic call. The
+postfix-unwrap `x?` consumer now defers to ternary
+when `?` is followed by an expression-startable token.
+
+**6. Top-level `for` / `if` / `while` statements.**
+Selfhost has no module-init machinery, so these are
+parsed-and-discarded at the top level (brace-balanced
+body consumption).
+
+**7. Backtick-escaped identifiers.** Lexer now consumes
+backticks and continues, so ``catch (`Exception)`` and
+similar identifier-as-keyword escapes flow through.
+
 ## [4.0.0-alpha.74] — 2026-06-25
 
 ### Test-corpus coverage: 41/60 → 43/60

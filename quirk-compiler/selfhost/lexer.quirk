@@ -400,6 +400,16 @@ define tokenize(source: String) -> List {
         // no interpolation. Behaves like Python's literal-quote
         // strings; stdlib + tests use these for path fragments
         // and regex patterns. Emits a single StringLiteral.
+        // Backtick `\`IDENT\`` — Quirk's escape for using a
+        // keyword as an identifier (or for raw strings in some
+        // dialects). The lexer here just consumes the backtick
+        // and continues so the following identifier reads
+        // normally.
+        if c == "`" {
+            pos = pos + 1
+            col = col + 1
+            continue
+        }
         if c == "'" {
             pos = pos + 1
             col = col + 1

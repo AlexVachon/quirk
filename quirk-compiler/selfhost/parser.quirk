@@ -204,6 +204,13 @@ define _parse_primary(s: ParserState) -> Expr {
             return Lambda(lparams, IntLit(0))
         }
         s.expect(TokenKind.FatArrow, "'=>' before lambda body")
+        // Mixed form `fn(...) => { … }` — `=>` followed by a
+        // block. Treat the block as the body and discard
+        // statements (same as the pure-block form).
+        if s.check(TokenKind.LBrace) {
+            _parse_block(s)
+            return Lambda(lparams, IntLit(0))
+        }
         body := _parse_expr(s)
         return Lambda(lparams, body)
     }
@@ -229,6 +236,24 @@ define _parse_primary(s: ParserState) -> Expr {
         }
         return Ident("super")
     }
+    // `type(EXPR)` — Quirk's built-in type-inspection function.
+    // `type` is normally the keyword for type aliases, but in
+    // expression position followed by `(` it's a regular call.
+    // Synthesize an Identifier "type" and fall through to the
+    // call-args path.
+    if t.kind == TokenKind.TypeKw and s.peek_at(1).kind == TokenKind.LParen {
+        s.advance()  // consume `type`
+        s.advance()  // consume `(`
+        type_args := List()
+        if s.check(TokenKind.RParen) == false {
+            type_args.append(_parse_expr(s))
+            while s.match_kind(TokenKind.Comma) {
+                type_args.append(_parse_expr(s))
+            }
+        }
+        s.expect(TokenKind.RParen, "')' to close type() call")
+        return Call(Ident("type"), type_args)
+    }
     if t.kind == TokenKind.Identifier {
         s.advance()
         // Function call?  `name(args)`
@@ -250,6 +275,11 @@ define _parse_primary(s: ParserState) -> Expr {
     }
     if t.kind == TokenKind.LParen {
         s.advance()
+        // Empty tuple `()` — synthetic zero-arg `__tuple()`.
+        if s.check(TokenKind.RParen) {
+            s.advance()
+            return Call(Ident("__tuple"), List())
+        }
         e := _parse_expr(s)
         // Tuple literal `(a, b, ...)`: after the first expr, a
         // comma signals a tuple. Lower to a synthetic
@@ -358,6 +388,27 @@ define _parse_primary(s: ParserState) -> Expr {
             kv_args.append(first)
             s.expect(TokenKind.Colon, "':' between key and value in map literal")
             kv_args.append(_parse_expr(s))
+            // Map comprehension `{k_expr: v_expr for x in xs}` —
+            // after the first kv pair, if we see `for` the rest
+            // is a generator. Lower to `__map_comp(k, v, xs)`.
+            if s.check(TokenKind.For) {
+                s.advance()
+                if s.check(TokenKind.Identifier) { s.advance() }
+                while s.match_kind(TokenKind.Comma) {
+                    if s.check(TokenKind.Identifier) { s.advance() }
+                }
+                if s.check(TokenKind.In) { s.advance() }
+                src_expr := _parse_expr(s)
+                if s.match_kind(TokenKind.If) or s.match_kind(TokenKind.Where) {
+                    _parse_expr(s)
+                }
+                s.expect(TokenKind.RBrace, "'}' to close map comprehension")
+                mcomp_args := List()
+                mcomp_args.append(kv_args.__get(0))
+                mcomp_args.append(kv_args.__get(1))
+                mcomp_args.append(src_expr)
+                return Call(Ident("__map_comp"), mcomp_args)
+            }
             while s.match_kind(TokenKind.Comma) {
                 if s.check(TokenKind.RBrace) { break }
                 kv_args.append(_parse_expr(s))
@@ -631,7 +682,7 @@ define _parse_stmt(s: ParserState) -> Stmt {
     // we parse-and-discard the declaration. Subsequent
     // assignments still hit the same `Ident → ModuleVar`
     // codegen path the unqualified assignment would.
-    if t.kind == TokenKind.Global {
+    if t.kind == TokenKind.Global or t.kind == TokenKind.Nonlocal {
         s.advance()
         if s.check(TokenKind.Identifier) { s.advance() }
         while s.match_kind(TokenKind.Comma) {

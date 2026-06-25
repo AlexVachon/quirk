@@ -5,6 +5,57 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.73] — 2026-06-25
+
+### Test-corpus coverage: 39/60 → 41/60
+
+Six more relaxations across the lexer + parser. Fixed-point
++ 190-case e2e regression both green.
+
+**1. Hex integer literals `0xFF`.** Selfhost's lexer only
+knew about decimal integers. Now recognizes `0x` / `0X`
+prefix, walks hex digits (case-insensitive), tolerates
+`_` separators, and emits the decimal-stringified value
+as an IntLiteral. (The previous attempt set `pos = n + 1`
+on a non-hex char, which silently consumed the entire
+rest of the source — fixed with an explicit `hex_done`
+flag.)
+
+**2. Underscore separators in decimal literals `1_000_000`.**
+Tolerated in the lexer's decimal-int branch; underscores
+are filtered out of the emitted token value before
+downstream `to_int()` parses it.
+
+**3. Mixed-form lambda `fn(…) => { … }`.** Selfhost
+previously accepted `=> expr` OR `{ … }` but not both
+together. The mixed form is now treated as the block
+form (statements parsed and discarded). Was the root
+cause of the `decorators_test` set-literal misfire — the
+`=>` ate the FatArrow, then the `{` started a set
+literal that the parser couldn't close.
+
+**4. Map comprehension `{k_expr: v_expr for x in xs}`.**
+After the first `k: v` pair, if next is `for`, parse
+the generator and lower to a synthetic `__map_comp(k, v,
+xs)` call.
+
+**5. Empty tuple `()`.** Synthetic zero-arg `__tuple()`
+call. Was the root cause of `tuple_test` failing on
+`e := ()`.
+
+**6. `nonlocal` declarations.** Same parse-and-discard
+treatment as `global`. Selfhost has no closure-capture
+distinction between read-only and write-through at this
+layer.
+
+**7. `type(EXPR)` in expression position.** `type` is
+normally the keyword for type aliases (`type Name = T`),
+but when followed by `(`, it's Quirk's built-in
+type-inspection call. Parsed as a synthetic
+`Call(Ident("type"), [EXPR])`.
+
+Test corpus: **39/60 → 41/60.**
+
 ## [4.0.0-alpha.72] — 2026-06-25
 
 ### Test-corpus coverage: 35/60 → 39/60

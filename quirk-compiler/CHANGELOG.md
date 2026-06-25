@@ -5,6 +5,49 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.71] — 2026-06-25
+
+### Parse failures down 15 → 11; tests stay at 35/60
+
+Six parser relaxations move more tests past parsing. The
+overall OK rate held at 35/60 because the unlocked files
+hit sema errors next — but parse-fail dropped from 15 to
+11, narrowing the queue. Fixed-point + 190-case e2e
+regression both green.
+
+**1. `const x := EXPR` declarations.** `const` is currently
+identical to `:=` at runtime (no immutability check
+wired). Strip the `const` keyword and let the existing
+VarDecl path run.
+
+**2. `global a, b, c` declarations.** Quirk's `global`
+keyword inside a function body announces that subsequent
+writes target module-level storage. Selfhost has no
+closure/nonlocal distinction at this layer; parse-and-
+discard the declaration.
+
+**3. `where` constraint on function decls.** `define foo()
+where T: Comparable { ... }` — selfhost doesn't track
+type-class constraints, so the constraint expression
+parses-and-discards.
+
+**4. Multi-type catch `catch (TypeA, TypeB)`.** First type
+goes into the catch binder; additional types parse and
+discard. Selfhost can only branch on one exception type
+at this layer.
+
+**5. List + Set comprehensions `[expr for x in xs]` /
+`{expr for x in xs}`.** Lowered to synthetic
+`__list_comp(expr, xs)` / `__set_comp(expr, xs)` calls.
+Optional `if cond` clause parses-and-discards. Runtime
+support absent (no `@__list_comp` symbol), but the file
+parses for stdlib coverage purposes.
+
+**6. IndexSet via `:=`.** `xs[i] := v` and `obj.field := v`
+now parse alongside the `=` form. Quirk's surface
+treats `:=` as fresh-decl-only, but test code uses both
+forms interchangeably for index/field assignment.
+
 ## [4.0.0-alpha.70] — 2026-06-25
 
 ### Test-corpus coverage: 33/60 → 35/60

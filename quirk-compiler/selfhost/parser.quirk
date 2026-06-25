@@ -280,6 +280,24 @@ define _parse_primary(s: ParserState) -> Expr {
         elems := List()
         if s.check(TokenKind.RBracket) == false {
             elems.append(_parse_expr(s))
+            // List comprehension `[expr for x in xs (if cond)?]`.
+            // Selfhost desugars to a synthetic `__list_comp(expr,
+            // x, xs)` call (cond discarded for now). Parses
+            // cleanly via the permissive unknown-call path.
+            if s.check(TokenKind.For) {
+                s.advance()
+                if s.check(TokenKind.Identifier) { s.advance() }
+                if s.check(TokenKind.In) { s.advance() }
+                src_expr := _parse_expr(s)
+                if s.match_kind(TokenKind.If) {
+                    _parse_expr(s)
+                }
+                s.expect(TokenKind.RBracket, "']' to close list comprehension")
+                comp_args := List()
+                comp_args.append(elems.__get(0))
+                comp_args.append(src_expr)
+                return Call(Ident("__list_comp"), comp_args)
+            }
             while s.match_kind(TokenKind.Comma) {
                 if s.check(TokenKind.RBracket) { break }
                 elems.append(_parse_expr(s))
@@ -303,6 +321,23 @@ define _parse_primary(s: ParserState) -> Expr {
         // stdlib + test-corpus coverage.
         if s.check(TokenKind.RBrace) == false {
             first := _parse_expr(s)
+            // Set comprehension `{expr for x in xs (if cond)?}`.
+            // Same shape as list comprehension; lower to
+            // synthetic `__set_comp(expr, xs)` call.
+            if s.check(TokenKind.For) {
+                s.advance()
+                if s.check(TokenKind.Identifier) { s.advance() }
+                if s.check(TokenKind.In) { s.advance() }
+                src_expr := _parse_expr(s)
+                if s.match_kind(TokenKind.If) {
+                    _parse_expr(s)
+                }
+                s.expect(TokenKind.RBrace, "'}' to close set comprehension")
+                comp_args := List()
+                comp_args.append(first)
+                comp_args.append(src_expr)
+                return Call(Ident("__set_comp"), comp_args)
+            }
             // Set literal `{a, b, c}` — first item NOT followed
             // by `:` means we're not in map territory. Lower to
             // a synthetic call `__set_lit(a, b, c, ...)`. Same
@@ -559,6 +594,32 @@ define _parse_expr(s: ParserState) -> Expr {
 define _parse_stmt(s: ParserState) -> Stmt {
     t: Token := s.peek()
 
+    // `const x := EXPR` — Quirk's const-decl is currently
+    // identical to `:=` at runtime (no immutability check
+    // wired). Strip the leading `const` and let the regular
+    // VarDecl path run.
+    if t.kind == TokenKind.Const {
+        s.advance()
+        t = s.peek()
+    }
+    // `global a, b, c` — declares that subsequent writes
+    // target module-level storage. Selfhost has no closure
+    // capture / nonlocal modeling distinction here yet, so
+    // we parse-and-discard the declaration. Subsequent
+    // assignments still hit the same `Ident → ModuleVar`
+    // codegen path the unqualified assignment would.
+    if t.kind == TokenKind.Global {
+        s.advance()
+        if s.check(TokenKind.Identifier) { s.advance() }
+        while s.match_kind(TokenKind.Comma) {
+            if s.check(TokenKind.Identifier) { s.advance() }
+        }
+        // Continue parsing as a no-op — emit a synthetic
+        // zero IntLit ExprStmt to keep the statement count
+        // honest.
+        return ExprStmt(IntLit(0))
+    }
+
     if t.kind == TokenKind.Return {
         s.advance()
         // Bare `return` in void functions — peek for a
@@ -640,6 +701,13 @@ define _parse_stmt(s: ParserState) -> Stmt {
                 // for sema's `match` arm.
                 binder = "_"
                 binder_type = first_ident
+            }
+            // Multi-type catch `catch (TypeA, TypeB, TypeC)` —
+            // selfhost only stores one type, so additional
+            // type names are parse-and-discarded.
+            while s.match_kind(TokenKind.Comma) {
+                if s.check(TokenKind.Identifier) { s.advance() }
+                _skip_type_params(s)
             }
             s.expect(TokenKind.RParen, "')' to close catch binder")
             catch_body = _parse_block(s)
@@ -734,8 +802,13 @@ define _parse_stmt(s: ParserState) -> Stmt {
     // The LHS must be addressable: a bare identifier (→ Assign)
     // or a field access (→ FieldSet).
     lhs: Expr := _parse_expr(s)
-    if s.check(TokenKind.Assign) {
-        s.advance()  // consume =
+    // Accept both `LHS = RHS` and `LHS := RHS` as assignment.
+    // Quirk's surface uses `:=` exclusively for fresh
+    // declarations (caught above on the Ident path), but
+    // test code uses `xs[i] := v` and `obj.field := v`
+    // somewhat interchangeably. Treat them as the same.
+    if s.check(TokenKind.Assign) or s.check(TokenKind.AssignInit) {
+        s.advance()  // consume = or :=
         rhs: Expr := _parse_expr(s)
         match lhs {
             case Ident as id => return Assign(id.name, rhs)
@@ -1043,6 +1116,12 @@ define _parse_function_decl(s: ParserState) -> FunctionDecl {
     ret_type := ""
     if s.match_kind(TokenKind.Arrow) {
         ret_type = _parse_type_annot(s, "return type after '->'")
+    }
+    // Optional `where <constraint>` clause — Quirk's type-class
+    // constraint syntax. Selfhost has no constraint tracking;
+    // parse-and-discard the constraint expression.
+    if s.match_kind(TokenKind.Where) {
+        _parse_expr(s)
     }
     // Extern functions have no body — return an empty stmt list.
     body := List()

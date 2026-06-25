@@ -5,6 +5,52 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.74] — 2026-06-25
+
+### Test-corpus coverage: 41/60 → 43/60
+
+Eight more relaxations across lexer + parser. Fixed-point
++ 190-case e2e regression both green.
+
+**1. Top-level `@decorator` annotations.** Skip `@IDENT`
+(and the optional `@IDENT(args)` argument list) before
+a `define`. Selfhost doesn't apply the decorator; the
+underlying function compiles as-is.
+
+**2. Top-level multi-target destructure `a, b := EXPR`.**
+First binding becomes the toplevel-vardecl name; the
+rest parse-and-discard. Matches the statement-level
+multi-target handling added in alpha.72.
+
+**3. Union types `Int | String | Float`.** In type-annot
+position, after the first type name and optional generic
+args, consume any number of `| AlternativeType` and
+discard. The leading name remains the static type for
+sema.
+
+**4. Cast operator `EXPR as Type`.** Added at the cmp
+precedence level. Guarded against `with X as binder
+{ … }` — if the post-`as` ident is followed by `{`,
+leave the `as` for the with-stmt parser.
+
+**5. Binary integer literals `0b101`.** Same shape as
+the alpha.73 hex path. `_` separators tolerated.
+
+**6. `struct Name where ...` constraints.** Optional
+`where <constraint>` clause between the trait list and
+the struct body opener. Constraint expression consumed
+up to the next `{`.
+
+**7. Slice without start `xs[:b]`.** Allow `:` to follow
+`[` directly with no leading index expression — use `0`
+as the index for codegen purposes (selfhost has no
+slicing runtime).
+
+Test corpus: **41/60 → 43/60.** A regression introduced
+by the unguarded `as` consumer was caught in the same
+release; three with-stmt-using tests passed before, then
+failed, then passed again after the guard.
+
 ## [4.0.0-alpha.73] — 2026-06-25
 
 ### Test-corpus coverage: 39/60 → 41/60

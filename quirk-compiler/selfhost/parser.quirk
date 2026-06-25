@@ -479,14 +479,18 @@ define _parse_postfix(s: ParserState) -> Expr {
             }
         } elif s.check(TokenKind.LBracket) {
             s.advance()
-            idx := _parse_expr(s)
-            // Slice form `xs[a:b]` (Python-style). Selfhost has
-            // no slice runtime; we discard `b` and use `a` as
-            // the index. Real slicing would need a runtime
-            // helper. For parse-only purposes the call shape
-            // is preserved.
+            // Slice form `xs[:b]` (no start) — selfhost treats
+            // as an index of 0 and discards `b`. Selfhost has no
+            // slice runtime; the result expression is wrong but
+            // the file parses.
+            idx_expr: Expr := IntLit(0)
+            if s.check(TokenKind.Colon) == false {
+                idx_expr = _parse_expr(s)
+            }
+            // Slice form `xs[a:b]` (Python-style). Discard `b`.
             if s.match_kind(TokenKind.Colon) {
-                if s.check(TokenKind.RBracket) == false {
+                if s.check(TokenKind.RBracket) == false
+                   and s.check(TokenKind.Colon) == false {
                     _parse_expr(s)
                 }
                 if s.match_kind(TokenKind.Colon) {
@@ -497,7 +501,7 @@ define _parse_postfix(s: ParserState) -> Expr {
                 }
             }
             s.expect(TokenKind.RBracket, "']' to close index")
-            e = Index(e, idx)
+            e = Index(e, idx_expr)
         } elif s.check(TokenKind.Question) {
             // Postfix unwrap `x?` — propagate null. Selfhost has
             // no Option/Result auto-unwrap, so we just consume
@@ -632,6 +636,22 @@ define _parse_cmp(s: ParserState) -> Expr {
         is_args := List()
         is_args.append(left)
         left = Call(Ident("__is"), is_args)
+    }
+    // `EXPR as Type` — Quirk's type-cast operator. Selfhost
+    // discards the target type and returns the expression
+    // as-is. Guard against `with EXPR as binder { … }` — if
+    // the token AFTER the target name is `{`, this is a
+    // with-statement binder, not a cast; leave it for the
+    // outer parser.
+    while s.check(TokenKind.As) {
+        n1: Token := s.peek_at(1)
+        n2: Token := s.peek_at(2)
+        if n1.kind == TokenKind.Identifier and n2.kind == TokenKind.LBrace {
+            // with-stmt binder, don't consume
+            break
+        }
+        s.advance()
+        _parse_type_annot(s, "cast target type")
     }
     return left
 }
@@ -1131,6 +1151,14 @@ define _parse_type_annot(s: ParserState, what: String) -> String {
     // Nullable suffix `T?` — Quirk shorthand for `Option[T]`.
     // Selfhost erases the suffix.
     s.match_kind(TokenKind.Question)
+    // Union type `Int | String | Float` — Quirk's anonymous
+    // union form. Selfhost has no union-tag tracking at this
+    // point in parsing; consume the remaining alternatives
+    // and discard them. Sema later treats the leading name
+    // as the binder's static type.
+    while s.match_kind(TokenKind.Pipe) {
+        _parse_type_annot(s, "union alternative type")
+    }
     return name
 }
 
@@ -1298,6 +1326,17 @@ define _parse_struct_decl(s: ParserState, out_methods: List) -> StructDecl {
         s.expect(TokenKind.Identifier, "trait name after ':'")
         while s.match_kind(TokenKind.Comma) {
             s.expect(TokenKind.Identifier, "trait name after ','")
+        }
+    }
+    // Optional `where <constraint>` clause on the struct
+    // declaration. Selfhost has no constraint tracking;
+    // parse-and-discard the constraint expression. Brace-
+    // balanced consume of a parenthesized constraint, single
+    // expression otherwise — stop at `{`.
+    if s.match_kind(TokenKind.Where) {
+        while s.check(TokenKind.LBrace) == false
+              and s.check(TokenKind.EofToken) == false {
+            s.advance()
         }
     }
     s.expect(TokenKind.LBrace, "'{' to open struct body")
@@ -1566,22 +1605,67 @@ define parse(tokens: List) -> List {
             _skip_extend_decl(s)
         } elif t.kind == TokenKind.Identifier {
             // Could be a bare expression `obj.method(…)` or a
-            // declaration `name := …`. Peek the next token to
-            // decide: `:` or `:=` or `=` → declaration; anything
-            // else → consume as an expression statement and
-            // discard. Selfhost has no top-level imperative
-            // execution; this just keeps the parser tolerant
-            // of test files that include top-level setup code.
+            // declaration `name := …` / `a, b := …`. Peek the
+            // next token to decide: `:` or `:=` or `=` →
+            // declaration; `,` followed by ident+`:=` → multi-
+            // target destructure; otherwise consume as an
+            // expression statement and discard.
             next: Token := s.peek_at(1)
             if next.kind == TokenKind.Colon
                or next.kind == TokenKind.AssignInit
                or next.kind == TokenKind.Assign {
                 _skip_toplevel_vardecl(s)
+            } elif next.kind == TokenKind.Comma {
+                // Look-ahead for destructuring tail.
+                look := 2
+                is_destruct := false
+                while look < 10 {
+                    tn: Token := s.peek_at(look)
+                    if tn.kind == TokenKind.AssignInit
+                       or tn.kind == TokenKind.Assign {
+                        is_destruct = true
+                        look = 10
+                    } elif tn.kind == TokenKind.Identifier
+                           or tn.kind == TokenKind.Comma {
+                        look = look + 1
+                    } else {
+                        look = 10
+                    }
+                }
+                if is_destruct {
+                    s.advance()  // first ident
+                    while s.match_kind(TokenKind.Comma) {
+                        if s.check(TokenKind.Identifier) { s.advance() }
+                    }
+                    if s.match_kind(TokenKind.AssignInit) == false {
+                        s.match_kind(TokenKind.Assign)
+                    }
+                    _parse_expr(s)
+                    s.match_kind(TokenKind.Semicolon)
+                } else {
+                    _parse_expr(s)
+                    s.match_kind(TokenKind.Semicolon)
+                }
             } else {
-                // Parse-and-discard the expression. Don't emit
-                // an AST node — there's no top-level Stmt slot.
                 _parse_expr(s)
                 s.match_kind(TokenKind.Semicolon)
+            }
+        } elif t.kind == TokenKind.At {
+            // `@decorator` annotation in front of a `define`.
+            // Selfhost has no decorator dispatch; parse-and-
+            // discard the `@IDENT(...)` form and let the
+            // following `define` pick up at the next outer
+            // loop iteration.
+            s.advance()  // @
+            if s.check(TokenKind.Identifier) { s.advance() }
+            if s.match_kind(TokenKind.LParen) {
+                depth := 1
+                while depth > 0 and s.check(TokenKind.EofToken) == false {
+                    tk: Token := s.peek()
+                    if tk.kind == TokenKind.LParen { depth = depth + 1 }
+                    elif tk.kind == TokenKind.RParen { depth = depth - 1 }
+                    s.advance()
+                }
             }
         } else {
             s.fail("Unexpected top-level token '" + t.value + "' at line " + t.line.str() + ":" + t.col.str())

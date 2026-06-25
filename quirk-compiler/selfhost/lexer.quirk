@@ -315,6 +315,24 @@ define tokenize(source: String) -> List {
         if _is_digit(c) {
             start := pos
             // Hex literal: `0x` / `0X` prefix.
+            // Binary literal: `0b` / `0B` prefix.
+            if c == "0" and pos + 1 < n
+               and (source.substring(pos + 1, pos + 2) == "b"
+                    or source.substring(pos + 1, pos + 2) == "B") {
+                pos = pos + 2
+                bin_val := 0
+                bin_done := false
+                while pos < n and bin_done == false {
+                    bc := source.substring(pos, pos + 1)
+                    if bc == "0" { bin_val = bin_val * 2; pos = pos + 1 }
+                    elif bc == "1" { bin_val = bin_val * 2 + 1; pos = pos + 1 }
+                    elif bc == "_" { pos = pos + 1 }
+                    else { bin_done = true }
+                }
+                col = col + (pos - start)
+                out.append(Token(TokenKind.IntLiteral, bin_val.str(), line, start_col))
+                continue
+            }
             if c == "0" and pos + 1 < n
                and (source.substring(pos + 1, pos + 2) == "x"
                     or source.substring(pos + 1, pos + 2) == "X") {

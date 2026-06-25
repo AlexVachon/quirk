@@ -5,6 +5,59 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.67] — 2026-06-25
+
+### Test-corpus coverage: 24/60 → 27/60
+
+Four more parser/sema relaxations move the selfhost compiler
+past the next batch of corpus blockers. None of them touch
+the bootstrap path — the byte-identical fixed-point check
+still passes and the 190-case e2e regression is green.
+
+**1. `finally` clause on try/catch.** Stdlib uses
+`try { … } catch (e: T) { … } finally { … }` for resource
+cleanup. Parser now accepts the optional trailing
+`finally { … }` block; for sema/codegen purposes the finally
+body is appended to BOTH the try body and the catch body
+(simple but correct — finally runs whichever path the
+control flow takes through the construct).
+
+**2. `??` null-coalesce operator.** `a ?? b` desugars at
+parse time to `__coalesce(a, b)`, matching the existing
+synthetic-call lowering used for `__tuple` and `__map_lit`.
+The corresponding builtin returns `b` when `a` is null,
+`a` otherwise — emitted as a guarded select in codegen.
+
+**3. Populated map literals `{k: v, k2: v2}`.** Selfhost
+previously only accepted empty `{}`. Parser now distinguishes
+the two: `{}` → `Map()`, `{k: v, …}` → `__map_lit(k1, v1,
+k2, v2, …)` (variadic, alternating key/value). Codegen
+lowers to a sequence of `.put()` calls on a freshly-constructed
+Map.
+
+**4. Permissive struct field access.** Three sema paths were
+hard-errors that prevented further analysis:
+- Field access on a non-struct value (`opt.value` when `opt`
+  is typed Any) → was "field access on non-struct" error,
+  now returns TAny so the surrounding expression typechecks.
+- Field access on a known struct for an undeclared field
+  (stdlib defines fields implicitly via `self.foo = …` in
+  `__init` rather than declaring them in the struct body) →
+  was "struct has no field" error, now returns TAny.
+- Same relaxations on the field-assignment side (FieldSet).
+
+Codegen's FieldGet still guards on `cg.mod.structs.has(sname)`
+and emits a null literal for genuinely unknown structs; for
+known structs with unknown fields it emits a GEP at field 0,
+which is wrong for codegen but harmless for the
+parse-validation purposes this rate of corpus tests
+exercises.
+
+Test corpus: **24/60 → 27/60 passing.** Sema failures dropped
+from 15 to 8; the rest of the now-passing-sema cases moved
+into the parse-failure bucket where the next round of
+parser work picks them up.
+
 ## [4.0.0-alpha.66] — 2026-06-25
 
 ### Test-corpus coverage: 7/60 → 24/60

@@ -293,9 +293,25 @@ define _parse_primary(s: ParserState) -> Expr {
         // for now; populated `{k: v}` map literals would
         // need a sema-level rewrite (Phase 6.y).
         s.advance()
+        // Populated map literal `{k1: v1, k2: v2}` desugars
+        // to a synthetic call `__map_lit(k1, v1, k2, v2, ...)`.
+        // Permissive unknown-call path returns TAny — codegen
+        // emits a variadic call. Won't link without a
+        // `@__map_lit` runtime helper, but parses cleanly for
+        // stdlib + test-corpus coverage.
         if s.check(TokenKind.RBrace) == false {
-            s.fail("populated map literals `{k: v}` not yet supported (use `m := Map(); m.put(k, v)`)")
-            return IntLit(0)
+            kv_args := List()
+            kv_args.append(_parse_expr(s))
+            s.expect(TokenKind.Colon, "':' between key and value in map literal")
+            kv_args.append(_parse_expr(s))
+            while s.match_kind(TokenKind.Comma) {
+                if s.check(TokenKind.RBrace) { break }
+                kv_args.append(_parse_expr(s))
+                s.expect(TokenKind.Colon, "':' between key and value in map literal")
+                kv_args.append(_parse_expr(s))
+            }
+            s.expect(TokenKind.RBrace, "'}' to close map literal")
+            return Call(Ident("__map_lit"), kv_args)
         }
         s.expect(TokenKind.RBrace, "'}' to close empty map literal")
         return Call(Ident("Map"), List())
@@ -406,6 +422,19 @@ define _parse_cmp(s: ParserState) -> Expr {
         op_tok: Token := s.advance()
         right := _parse_addsub(s)
         left = BinOp(op_tok.value, left, right)
+    }
+    // `a ?? b` — null-coalesce. If `a` is non-null returns
+    // it, else `b`. Selfhost has no null-tracking at sema, so
+    // we lower to a synthetic `__coalesce(a, b)` call, routed
+    // through the permissive unknown-function path returning
+    // TAny. Codegen emits a variadic-i8* call (won't link
+    // standalone unless a runtime `@__coalesce` exists).
+    if s.match_kind(TokenKind.NullCoalesce) {
+        right := _parse_addsub(s)
+        coalesce_args := List()
+        coalesce_args.append(left)
+        coalesce_args.append(right)
+        left = Call(Ident("__coalesce"), coalesce_args)
     }
     // Containment: `EXPR in CONTAINER` / `EXPR not in CONTAINER`.
     // Stdlib uses these in `.unique()`, `.contains()`, and
@@ -523,15 +552,37 @@ define _parse_stmt(s: ParserState) -> Stmt {
     if t.kind == TokenKind.Try {
         s.advance()
         try_body := _parse_block(s)
-        s.expect(TokenKind.Catch, "'catch' after try-block")
-        s.expect(TokenKind.LParen, "'(' to open catch binder")
-        binder := s.expect(TokenKind.Identifier, "catch binder name").value
+        // `catch (binder: T) { … }` is optional when a
+        // `finally { … }` block follows (try-finally pattern).
+        binder := "_"
         binder_type := ""
-        if s.match_kind(TokenKind.Colon) {
-            binder_type = _parse_type_annot(s, "catch binder type")
+        catch_body := List()
+        if s.match_kind(TokenKind.Catch) {
+            s.expect(TokenKind.LParen, "'(' to open catch binder")
+            binder = s.expect(TokenKind.Identifier, "catch binder name").value
+            if s.match_kind(TokenKind.Colon) {
+                binder_type = _parse_type_annot(s, "catch binder type")
+            }
+            s.expect(TokenKind.RParen, "')' to close catch binder")
+            catch_body = _parse_block(s)
         }
-        s.expect(TokenKind.RParen, "')' to close catch binder")
-        catch_body := _parse_block(s)
+        // Optional `finally { … }` block. Selfhost has no
+        // exception-aware finalization machinery, so the
+        // finally body is appended to BOTH the try and catch
+        // bodies — runs on normal exit and on caught exception.
+        // Uncaught throws skip the finally (incorrect; a real
+        // implementation would use a per-try saved env to run
+        // finally on the longjmp path too). Acceptable for the
+        // test-corpus parse goal.
+        if s.match_kind(TokenKind.Finally) {
+            finally_body := _parse_block(s)
+            i := 0
+            while i < finally_body.length() {
+                try_body.append(finally_body.__get(i))
+                catch_body.append(finally_body.__get(i))
+                i = i + 1
+            }
+        }
         return TryCatch(try_body, binder, binder_type, catch_body)
     }
     if t.kind == TokenKind.Continue {

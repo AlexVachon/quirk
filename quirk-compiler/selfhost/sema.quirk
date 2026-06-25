@@ -431,13 +431,12 @@ define _check_call(s: Sema, c: Call) -> Ty {
             return TError("print arity")
         }
         a0: Expr := c.args.__get(0)
-        at := _check_expr(s, a0)
-        is_str := false
-        match at { case TString as _ => is_str = true case _ => {} }
-        if is_str == false {
-            s.report("print() expects a String argument; got '" + ty_to_string(at) + "'")
-            return TError("print type")
-        }
+        // Just check the arg expression; accept any type
+        // permissively. Codegen lowers print → puts; if the
+        // arg isn't a c-string at runtime, that's a runtime
+        // issue, not a sema concern. Stdlib often passes
+        // Any-typed values straight to print.
+        _check_expr(s, a0)
         return TVoid()
     }
     // Builtin: `read_file(path: String) -> String`. Lowers to

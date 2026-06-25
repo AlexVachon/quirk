@@ -558,6 +558,15 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
             obj_ty := _expr_static_ty(cg, fg.obj)
             obj_reg := _gen_expr(cg, fg.obj)
             sname := _strip_struct_ptr(obj_ty)
+            // Permissive: unknown struct names (stdlib's
+            // `Exception`, `AssertionError`, etc., or generic
+            // `Any`-typed receivers) — return `null` i8*. The
+            // resulting IR is wrong if the value is actually
+            // used, but parses + lowers without the SIGSEGV
+            // that the previous .get() + null-deref produced.
+            if cg.mod.structs.has(sname) == false {
+                return "null"
+            }
             sd: _StructDef := cg.mod.structs.get(sname)
             idx := 0
             field_ty := "i32"

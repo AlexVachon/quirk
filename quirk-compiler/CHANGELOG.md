@@ -5,6 +5,19 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.76] — 2026-06-25
+
+### Test-corpus coverage: 43/60 → 44/60
+
+Lexer: respect interpolation depth when scanning double-quoted
+strings. Previously `"${value["name"]}"` terminated the outer
+literal at the inner opening `"`. The lexer now tracks
+`${` … `}` depth and only treats `"` as the closing quote when
+depth is zero, so nested string sub-expressions in
+interpolations parse cleanly.
+
+Fixed-point + 190-case e2e regression both green.
+
 ## [4.0.0-alpha.75] — 2026-06-25
 
 ### Parse failures: 4 → 2

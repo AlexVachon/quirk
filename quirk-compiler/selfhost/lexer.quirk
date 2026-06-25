@@ -434,8 +434,31 @@ define tokenize(source: String) -> List {
             pos = pos + 1
             col = col + 1
             content := ""
-            while pos < n and source.substring(pos, pos + 1) != "\"" {
+            // Track interpolation depth so nested `${value["x"]}`
+            // sub-strings don't terminate the outer literal early.
+            // Increment on `${`, decrement on `}` at the same level.
+            interp_depth := 0
+            while pos < n and (interp_depth > 0
+                               or source.substring(pos, pos + 1) != "\"") {
                 ch := source.substring(pos, pos + 1)
+                if interp_depth == 0 and ch == "$"
+                   and pos + 1 < n and source.substring(pos + 1, pos + 2) == "{" {
+                    interp_depth = interp_depth + 1
+                    content = content + ch
+                    pos = pos + 1; col = col + 1
+                    content = content + source.substring(pos, pos + 1)
+                    pos = pos + 1; col = col + 1
+                    continue
+                }
+                if interp_depth > 0 and ch == "{" {
+                    interp_depth = interp_depth + 1
+                }
+                if interp_depth > 0 and ch == "}" {
+                    interp_depth = interp_depth - 1
+                    content = content + ch
+                    pos = pos + 1; col = col + 1
+                    continue
+                }
                 if ch == "\\" and pos + 1 < n {
                     esc := source.substring(pos + 1, pos + 2)
                     if esc == "n" {

@@ -5,6 +5,50 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.69] — 2026-06-25
+
+### Test-corpus coverage: 30/60 → 33/60
+
+Six parser tweaks chip the next blockers. Fixed-point +
+190-case e2e regression both green.
+
+**1. Direct-call named args.** alpha.68 added `name = val`
+prefix-skipping for postfix calls (`obj.method(name = val)`)
+but missed the direct-call path (`f(name = val)`) in
+`_parse_primary`'s Identifier branch. Now both sites call
+`_skip_named_arg_prefix`.
+
+**2. Chained `??`.** `a ?? b ?? c` previously stopped after
+the first `??` because the parser only consumed one. Changed
+to a `while` loop so the chain unfolds left-associatively
+into `__coalesce(__coalesce(a, b), c)`.
+
+**3. `throw EXPR from e` chained exceptions.** Optional
+`from <expr>` clause after a throw value — parse-and-discard
+since selfhost doesn't track exception causes.
+
+**4. Bare `throw` rethrow.** `throw` with no expression in
+catch blocks now parses (synthesizes a NullLit value;
+real rethrow semantics would need a live-exception slot).
+
+**5. `catch (Type)` shorthand binder.** `catch (Type)`
+without `binder: Type` syntax now parses — binder set to
+`_`, type used for the catch arm.
+
+**6. Backed enum `enum Name(BackingType) { V = lit }`.**
+Optional `(IdentBackingType)` after the enum name is
+parsed-and-discarded; per-variant `= LITERAL` value
+clauses likewise parse-and-discard. Selfhost doesn't
+store backing values yet, but the file parses.
+
+**7. Set literal `{a, b, c}`.** When the first item in a
+brace block is followed by `,` (not `:`), parse as a Set
+literal → synthetic `__set_lit(...)` call. Map literals
+(`{k: v}`) still take the `:`-after-first-key path.
+
+Test corpus: **30/60 → 33/60 passing.** Sema-fail count
+held at 10; parse-fail dropped from 20 to 17.
+
 ## [4.0.0-alpha.68] — 2026-06-25
 
 ### Test-corpus coverage: 27/60 → 30/60

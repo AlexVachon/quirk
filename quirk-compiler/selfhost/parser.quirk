@@ -236,8 +236,10 @@ define _parse_primary(s: ParserState) -> Expr {
             s.advance()  // consume `(`
             args := List()
             if s.check(TokenKind.RParen) == false {
+                _skip_named_arg_prefix(s)
                 args.append(_parse_expr(s))
                 while s.match_kind(TokenKind.Comma) {
+                    _skip_named_arg_prefix(s)
                     args.append(_parse_expr(s))
                 }
             }
@@ -300,8 +302,23 @@ define _parse_primary(s: ParserState) -> Expr {
         // `@__map_lit` runtime helper, but parses cleanly for
         // stdlib + test-corpus coverage.
         if s.check(TokenKind.RBrace) == false {
+            first := _parse_expr(s)
+            // Set literal `{a, b, c}` — first item NOT followed
+            // by `:` means we're not in map territory. Lower to
+            // a synthetic call `__set_lit(a, b, c, ...)`. Same
+            // permissive-unknown-call path as `__map_lit`.
+            if s.check(TokenKind.Colon) == false {
+                set_args := List()
+                set_args.append(first)
+                while s.match_kind(TokenKind.Comma) {
+                    if s.check(TokenKind.RBrace) { break }
+                    set_args.append(_parse_expr(s))
+                }
+                s.expect(TokenKind.RBrace, "'}' to close set literal")
+                return Call(Ident("__set_lit"), set_args)
+            }
             kv_args := List()
-            kv_args.append(_parse_expr(s))
+            kv_args.append(first)
             s.expect(TokenKind.Colon, "':' between key and value in map literal")
             kv_args.append(_parse_expr(s))
             while s.match_kind(TokenKind.Comma) {
@@ -342,13 +359,11 @@ handled later by `_parse_addsub`.
 // but keep the AST shape consumable.
 define _skip_named_arg_prefix(s: ParserState) -> void {
     if s.check(TokenKind.Identifier) == false { return }
-    save_pos := s.pos
-    s.advance()
-    if s.check(TokenKind.Assign) {
+    nxt: Token := s.peek_at(1)
+    if nxt.kind == TokenKind.Assign {
         s.advance()
-        return
+        s.advance()
     }
-    s.pos = save_pos
 }
 
 // Postfix chain — `obj.field`, `obj.field.subfield`,
@@ -458,7 +473,7 @@ define _parse_cmp(s: ParserState) -> Expr {
     // through the permissive unknown-function path returning
     // TAny. Codegen emits a variadic-i8* call (won't link
     // standalone unless a runtime `@__coalesce` exists).
-    if s.match_kind(TokenKind.NullCoalesce) {
+    while s.match_kind(TokenKind.NullCoalesce) {
         right := _parse_addsub(s)
         coalesce_args := List()
         coalesce_args.append(left)
@@ -583,7 +598,21 @@ define _parse_stmt(s: ParserState) -> Stmt {
     // codegen lowers to longjmp + the global exception slot.
     if t.kind == TokenKind.Throw {
         s.advance()
+        // Bare `throw` — rethrow the current exception. Selfhost
+        // has no live-exception slot to grab, so we synthesize
+        // a `null` value; codegen would need to fish from
+        // @__quirk_exception on a real implementation, but for
+        // parse-only purposes a null sentinel is enough.
+        if s.check(TokenKind.RBrace) or s.check(TokenKind.EofToken) {
+            return Throw(NullLit())
+        }
         value := _parse_expr(s)
+        // Optional `from <expr>` chained-exception clause.
+        // Quirk's AST doesn't track the cause, so we parse and
+        // discard.
+        if s.match_kind(TokenKind.From) {
+            _parse_expr(s)
+        }
         return Throw(value)
     }
     if t.kind == TokenKind.With {
@@ -601,9 +630,16 @@ define _parse_stmt(s: ParserState) -> Stmt {
         catch_body := List()
         if s.match_kind(TokenKind.Catch) {
             s.expect(TokenKind.LParen, "'(' to open catch binder")
-            binder = s.expect(TokenKind.Identifier, "catch binder name").value
+            first_ident := s.expect(TokenKind.Identifier, "catch binder name").value
             if s.match_kind(TokenKind.Colon) {
+                binder = first_ident
                 binder_type = _parse_type_annot(s, "catch binder type")
+            } else {
+                // `catch (Type)` shorthand — no binder name, just
+                // the exception type. Use `_` and keep the type
+                // for sema's `match` arm.
+                binder = "_"
+                binder_type = first_ident
             }
             s.expect(TokenKind.RParen, "')' to close catch binder")
             catch_body = _parse_block(s)
@@ -1137,6 +1173,14 @@ define _parse_union_decl(s: ParserState) -> UnionDecl {
 define _parse_enum_decl(s: ParserState) -> EnumDecl {
     s.expect(TokenKind.Enum, "'enum'")
     name := s.expect(TokenKind.Identifier, "enum name").value
+    // Optional backing-type `enum Name(BackingType) { ... }` —
+    // Quirk's "backed enum" form lets each variant carry a
+    // String or Int literal value. Selfhost doesn't store
+    // backing values yet; we parse-and-discard.
+    if s.match_kind(TokenKind.LParen) {
+        if s.check(TokenKind.Identifier) { s.advance() }
+        s.expect(TokenKind.RParen, "')' to close enum backing-type")
+    }
     // Optional generic params (rare on enums, but keep the
     // parser symmetric with struct/union/function decls).
     _skip_type_params(s)
@@ -1146,6 +1190,12 @@ define _parse_enum_decl(s: ParserState) -> EnumDecl {
         if s.match_kind(TokenKind.Semicolon) { continue }
         vtok: Token := s.expect(TokenKind.Identifier, "variant name")
         variants.append(vtok.value)
+        // Optional `= LITERAL` — backed enum variant value.
+        // Selfhost doesn't track the literal, just parse it.
+        if s.match_kind(TokenKind.Assign) {
+            _parse_expr(s)
+        }
+        if s.match_kind(TokenKind.Comma) { continue }
     }
     s.expect(TokenKind.RBrace, "'}' to close enum body")
     return EnumDecl(name, variants)

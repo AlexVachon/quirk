@@ -13,7 +13,7 @@ LLVM_CONFIG ?= llvm-config-14
 # walk the AST unoptimized, which added ~30-40% to every invocation.
 CXX      ?= g++
 CXXFLAGS = -std=c++17 -Wall -O2 -Iinclude $(shell $(LLVM_CONFIG) --cppflags) -MMD -MP
-LDFLAGS  = $(shell $(LLVM_CONFIG) --ldflags --libs all --system-libs)
+LDFLAGS  = $(shell $(LLVM_CONFIG) --ldflags --libs all --system-libs) -lpthread
 
 # Same story for runtime.so — the .c files implementing String, List, Map,
 # etc. were unoptimized at runtime. -O2 here makes every string/list/map

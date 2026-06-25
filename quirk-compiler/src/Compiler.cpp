@@ -33,6 +33,7 @@
 #include <sstream>
 #include <vector>
 #include <unistd.h>
+#include <pthread.h>
 
 #include "PackageManager.hpp"
 
@@ -969,7 +970,42 @@ static int runJITModule(std::unique_ptr<llvm::Module> module,
     std::vector<char*> scriptArgv;
     scriptArgv.push_back(const_cast<char*>(inputFile.c_str()));
     for (auto& a : scriptArgs) scriptArgv.push_back(const_cast<char*>(a.c_str()));
-    int ret = mainFn((int)scriptArgv.size(), scriptArgv.data());
+
+    // Run the JIT'd main on a worker thread with a 64 MB
+    // stack. The main thread's stack is ~8 MB (Linux default)
+    // which deeply-recursive selfhost code — esp. sema/codegen
+    // chasing nested method-call expressions through
+    // typing/collections/list.quirk — exhausts. Running on a
+    // larger stack via pthread sidesteps the issue without
+    // making the regression on already-flat code worse.
+    struct ThreadArgs {
+        int (*fn)(int, char**);
+        int argc;
+        char** argv;
+        int result;
+    };
+    ThreadArgs ta{mainFn, (int)scriptArgv.size(), scriptArgv.data(), 0};
+
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    pthread_attr_setstacksize(&attr, 64 * 1024 * 1024);
+
+    pthread_t worker;
+    int trc = pthread_create(&worker, &attr,
+        +[](void* arg) -> void* {
+            auto* t = static_cast<ThreadArgs*>(arg);
+            t->result = t->fn(t->argc, t->argv);
+            return nullptr;
+        }, &ta);
+    pthread_attr_destroy(&attr);
+    if (trc != 0) {
+        // Fall back to direct call on the main thread if the
+        // worker spawn failed (unlikely on Linux).
+        ta.result = mainFn(ta.argc, ta.argv);
+    } else {
+        pthread_join(worker, nullptr);
+    }
+    int ret = ta.result;
     if (ret != 0) {
         std::cerr << "Error: Program exited with code " << ret << std::endl;
         return ret;

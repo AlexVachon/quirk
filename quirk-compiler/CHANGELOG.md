@@ -5,6 +5,58 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.58] — 2026-06-24
+
+### JIT stack bump: run user code on a 64 MB worker thread
+
+The C++-compiler JIT now invokes the user's `main()` on a
+worker thread with a **64 MB stack** (vs. the ~8 MB Linux
+default for the main thread). Deep-recursion user programs
+— selfhost's sema/codegen chasing nested method-call chains
+through stdlib code like `typing/collections/list.quirk`, or
+plain user code with deep AST walks — no longer hit the
+OS-level stack limit.
+
+**Mechanics** (`src/Compiler.cpp`, ~30 lines added):
+
+```cpp
+pthread_attr_t attr;
+pthread_attr_init(&attr);
+pthread_attr_setstacksize(&attr, 64 * 1024 * 1024);
+pthread_t worker;
+ThreadArgs ta{mainFn, argc, argv, 0};
+pthread_create(&worker, &attr, +[](void* a) -> void* {
+    auto* t = static_cast<ThreadArgs*>(a);
+    t->result = t->fn(t->argc, t->argv);
+    return nullptr;
+}, &ta);
+pthread_join(worker, nullptr);
+int ret = ta.result;
+```
+
+Fallback to direct-call on the main thread if `pthread_create`
+fails (extremely unlikely on Linux). Makefile picks up
+`-lpthread` explicitly since `llvm-config --system-libs`
+doesn't pull it in on this distro.
+
+### Known: `typing/collections/list.quirk` still doesn't compile
+
+While running list.quirk through selfhost, the C++ JIT
+crashes with an IndexError inside selfhost's own sema code
+— a selfhost-source bug (likely an out-of-bounds list access
+in a method-dispatch loop) that's exposed by list.quirk's
+deeply-nested chained method calls. **This crash isn't a
+stack-overflow** (despite the same symptom under low-stack
+conditions); the 64 MB worker doesn't fix it. Triaging the
+selfhost-sema bug is a separate phase.
+
+### Test count
+
+187/187 cases pass (unchanged). Selfhost fixed point still
+byte-identical at **1,927,188 bytes** — the worker-thread
+change is transparent to the IR pipeline since the JIT'd
+code runs the same logic, just on a larger stack.
+
 ## [4.0.0-alpha.57] — 2026-06-24
 
 ### Phase 12.x: permissive sema for stdlib parsing

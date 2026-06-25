@@ -1677,6 +1677,13 @@ standalone_run "ELF: modulo operator + xs[i] = v subscript assign" \
     return sum - 25
 }' \
     42
+# Tuple literals lower to a synthetic `__tuple(...)` call —
+# useful for stdlib-coverage parsing (itertools/console
+# compile cleanly) but the call needs a runtime `__tuple`
+# symbol to actually link as a standalone ELF, which the
+# selfhost codegen does not ship. So no standalone probe;
+# the stdlib-compile cases (alpha.60-61 changelog) are the
+# real validation.
 # (the stdout=on stdout assertion implicitly proves eprint did
 # NOT show up there — it was routed to stderr instead.)
 

@@ -208,6 +208,23 @@ define _parse_primary(s: ParserState) -> Expr {
     if t.kind == TokenKind.LParen {
         s.advance()
         e := _parse_expr(s)
+        // Tuple literal `(a, b, ...)`: after the first expr, a
+        // comma signals a tuple. Lower to a synthetic
+        // `__tuple(a, b, ...)` call — sema's permissive
+        // unknown-function path accepts it as TAny.
+        // Tuple destructuring (`(a, b) := t`) and per-element
+        // index access (`t.0`, `t.1`) are deferred — stdlib
+        // parsing only needs the construction form.
+        if s.check(TokenKind.Comma) {
+            tup_args := List()
+            tup_args.append(e)
+            while s.match_kind(TokenKind.Comma) {
+                if s.check(TokenKind.RParen) { break }
+                tup_args.append(_parse_expr(s))
+            }
+            s.expect(TokenKind.RParen, "')' to close tuple literal")
+            return Call(Ident("__tuple"), tup_args)
+        }
         s.expect(TokenKind.RParen, "')' to close paren-expr")
         return e
     }

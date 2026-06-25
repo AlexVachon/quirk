@@ -5,6 +5,54 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.61] — 2026-06-25
+
+### Tuple literal `(a, b, c)` + variadic call-site shape
+
+`(a, b, c)` literals now parse and lower. Implementation
+follows the same opaque-call pattern as `in`/`not in` from
+alpha.59:
+
+- **Parser** (`selfhost/parser.quirk`): inside LParen
+  primary, if a comma follows the first expression, collect
+  remaining elements and emit `Call(Ident("__tuple"), elems)`.
+- **Codegen**: unknown calls now declare a variadic extern
+  (`declare i8* @__tuple(...)`) on demand and emit calls
+  with the variadic signature shape (`call i8* (...) @__tuple(...)`).
+  Argument types come from `_expr_static_ty` of each arg
+  expression — was hardcoded `i32`, which broke tuple calls
+  with mixed-typed args like `(10, "hi", true)` (i32, i8*,
+  i1). Return type also defaults to `i8*` instead of `i32`
+  for unknown callees, matching the boxed-Any ABI.
+
+**This change touches the general call codegen.** Every
+synthetic / unknown-stdlib call now goes through the
+variadic-i8* shape — keeps types aligned at LLVM time but
+means the resulting IR has undefined `@__tuple` /
+`@__contains` / etc. symbols that the linker would reject.
+That's fine for the stdlib-coverage goal (parse + emit IR);
+the symbols just need to exist if you want to link the
+output into a binary.
+
+### Stdlib coverage update
+
+`console` and `itertools` now compile cleanly (43 KB + 39 KB
+of IR). Cumulative stdlib count is **~27 files**.
+
+The `test` package is still the lone holdout — separate
+SIGSEGV deep in selfhost codegen (different code path,
+needs a separate triage phase).
+
+### Test count
+
+189 cases (unchanged — removed the tuple-ELF probe since
+the synthetic `__tuple` symbol doesn't link; stdlib-compile
+cases serve as the actual validation).
+
+Selfhost fixed point still byte-identical at **1,977,965
+bytes** (IR grew ~4 KB from the call-site shape change +
+tuple parser).
+
 ## [4.0.0-alpha.60] — 2026-06-25
 
 ### Stdlib coverage explosion: 8/11 previously-failing files compile

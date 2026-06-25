@@ -841,29 +841,62 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
                 args.append(_gen_expr(cg, ai))
                 i = i + 1
             }
-            ret_llvm := "i32"
+            // Default return type to i8* (matches the
+            // boxed-Any ABI of all unknown calls). Tracked
+            // sigs override.
+            ret_llvm := "i8*"
             param_llvm := List()
             llvm_name := _llvm_fn_name(name)
+            is_unknown := false
             if cg.mod.sigs.has(llvm_name) {
                 msig: _Sig := cg.mod.sigs.get(llvm_name)
                 ret_llvm = msig.ret_ty
                 param_llvm = msig.param_tys
+            } else {
+                is_unknown = true
+                // Synthesize a variadic-i8* extern declaration
+                // for unknown callees (synthetic __tuple /
+                // __contains lowerings, stdlib module-style
+                // calls). Without this, llc/clang fail with
+                // "use of undefined value" on the call.
+                cg.mod.ensure_decl(llvm_name,
+                    "declare i8* @" + llvm_name + "(...)")
             }
             sig := "("
             j := 0
             while j < args.length() {
                 if j > 0 { sig = sig + ", " }
                 av: String := args.__get(j)
+                // Default the call-site param type to the
+                // arg expression's actual static LLVM type
+                // (was hardcoded "i32"). For untracked
+                // unknown-function calls like the synthetic
+                // `__tuple` / `__contains` lowerings, this
+                // gives LLVM consistent types between the
+                // call signature and the value being passed.
                 pty := "i32"
                 if j < param_llvm.length() {
                     pty = param_llvm.__get(j)
+                } else {
+                    if j < c.args.length() {
+                        arg_e: Expr := c.args.__get(j)
+                        pty = _expr_static_ty(cg, arg_e)
+                    }
                 }
                 sig = sig + pty + " " + av
                 j = j + 1
             }
             sig = sig + ")"
             reg := cg.fresh()
-            cg.emit(reg + " = call " + ret_llvm + " @" + _llvm_fn_name(name) + sig)
+            // Variadic-shaped call for unknown callees: prefix
+            // with `<ret> (...)` so LLVM accepts the type-
+            // narrowed call against the variadic declaration.
+            // Normal calls (known sigs) use the plain form.
+            if is_unknown {
+                cg.emit(reg + " = call " + ret_llvm + " (...) @" + _llvm_fn_name(name) + sig)
+            } else {
+                cg.emit(reg + " = call " + ret_llvm + " @" + _llvm_fn_name(name) + sig)
+            }
             return reg
         }
         case Lambda as lm => {
@@ -1072,7 +1105,14 @@ define _expr_static_ty(cg: FnCG, e: Expr) -> String {
                 sig: _Sig := cg.mod.sigs.get(cn_llvm)
                 return sig.ret_ty
             }
-            return "i32"
+            // Unknown function calls (stdlib references the
+            // permissive sema accepted) default to i8* —
+            // matches the boxed Any-pointer ABI that every
+            // unknown call returns at runtime. Keeps the slot-
+            // type / call-result types aligned at the LLVM
+            // level so subsequent uses of the value don't trip
+            // i32-vs-i8* mismatches.
+            return "i8*"
         }
         case FieldGet as fg => {
             // Enum-variant access: receiver Ident matches a

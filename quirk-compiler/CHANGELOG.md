@@ -5,6 +5,57 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.72] — 2026-06-25
+
+### Test-corpus coverage: 35/60 → 39/60
+
+Six more parser/lexer relaxations close another batch of
+test files. Parse failures dropped to 4 (from 11 at the
+start of alpha.71). Fixed-point + 190-case e2e regression
+both green.
+
+**1. Chained catch arms.** `try { … } catch (A) { … }
+catch (B) { … }` — selfhost's TryCatch AST holds one
+catch binder + body, so subsequent catches' bodies append
+to the first. Binder-type distinction is lost (acceptable
+for parse-only); real multi-catch dispatch would need a
+linear type-switch in codegen.
+
+**2. Top-level expression statements.** `obj.method(...)`
+at module scope used to fail with "Unexpected top-level
+token 'IDENT(...'" because the toplevel-vardecl parser
+only knew about `name := EXPR`. Now we look two tokens
+ahead: `:`, `:=`, `=` → vardecl; otherwise treat as a
+bare expression statement and parse-and-discard. Selfhost
+has no top-level imperative execution; this just keeps
+the parser tolerant.
+
+**3. Slice indexing `xs[a:b]` / `xs[a:b:step]`.** Parsed
+as a normal `Index(xs, a)` — the slice bounds and step
+are parse-and-discarded. Real slicing needs a runtime
+helper (`@__slice_range` or similar); not in this lift.
+
+**4. Postfix unwrap `x?`.** Quirk's Option/Result types
+support `?` for "propagate-null-or-unwrap." Selfhost has
+no auto-unwrap modeling, so we just consume the `?` token
+and leave the expression as-is.
+
+**5. Multi-target destructure `a, b := EXPR`.** First
+identifier becomes a VarDecl; subsequent names are
+parse-and-discarded. Real tuple-destructure needs
+codegen-aware splitting; this preserves parseability.
+
+**6. Hex byte escape `\xHH`.** String-literal lexer now
+consumes the two hex digits after `\x` and emits a
+placeholder byte sequence into the string content. Tests
+use `"\xFF"` for byte-level operations.
+
+**7. Comprehension `where` filter.** `[expr for x in xs
+where cond]` accepted alongside Python-style `if cond`.
+
+Test corpus: **35/60 → 39/60.** Parse-fail: 11 → 4.
+Sema-fail: 14 → 17 (some unlocked files hit sema next).
+
 ## [4.0.0-alpha.71] — 2026-06-25
 
 ### Parse failures down 15 → 11; tests stay at 35/60

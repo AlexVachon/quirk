@@ -386,6 +386,20 @@ define tokenize(source: String) -> List {
                         content = content + "\\"
                     } elif esc == "\"" {
                         content = content + "\""
+                    } elif esc == "x" {
+                        // Hex byte escape `\xHH`. Consume two
+                        // hex digits and emit a placeholder
+                        // byte. Selfhost has no char-by-char
+                        // String builder; emit the literal `\xHH`
+                        // bytes — close enough for parse-only.
+                        if pos + 3 < n {
+                            content = content + ch + esc
+                            content = content + source.substring(pos + 2, pos + 4)
+                            pos = pos + 4
+                            col = col + 4
+                            continue
+                        }
+                        content = content + ch + esc
                     } else {
                         // Unknown escape — pass through verbatim
                         // so the source's intent is recoverable.

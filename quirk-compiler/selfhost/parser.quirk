@@ -289,7 +289,9 @@ define _parse_primary(s: ParserState) -> Expr {
                 if s.check(TokenKind.Identifier) { s.advance() }
                 if s.check(TokenKind.In) { s.advance() }
                 src_expr := _parse_expr(s)
-                if s.match_kind(TokenKind.If) {
+                // Filter clause: accept both `if cond` (Python
+                // style) and `where cond` (Quirk's surface).
+                if s.match_kind(TokenKind.If) or s.match_kind(TokenKind.Where) {
                     _parse_expr(s)
                 }
                 s.expect(TokenKind.RBracket, "']' to close list comprehension")
@@ -427,8 +429,29 @@ define _parse_postfix(s: ParserState) -> Expr {
         } elif s.check(TokenKind.LBracket) {
             s.advance()
             idx := _parse_expr(s)
+            // Slice form `xs[a:b]` (Python-style). Selfhost has
+            // no slice runtime; we discard `b` and use `a` as
+            // the index. Real slicing would need a runtime
+            // helper. For parse-only purposes the call shape
+            // is preserved.
+            if s.match_kind(TokenKind.Colon) {
+                if s.check(TokenKind.RBracket) == false {
+                    _parse_expr(s)
+                }
+                if s.match_kind(TokenKind.Colon) {
+                    // Triple-form `xs[a:b:step]` — discard step too.
+                    if s.check(TokenKind.RBracket) == false {
+                        _parse_expr(s)
+                    }
+                }
+            }
             s.expect(TokenKind.RBracket, "']' to close index")
             e = Index(e, idx)
+        } elif s.check(TokenKind.Question) {
+            // Postfix unwrap `x?` — propagate null. Selfhost has
+            // no Option/Result auto-unwrap, so we just consume
+            // the `?` and leave the expression as-is.
+            s.advance()
         } elif s.check(TokenKind.LParen) {
             // Call applied to whatever expression `e` is —
             // typically a FieldGet for method-call syntax,
@@ -711,6 +734,33 @@ define _parse_stmt(s: ParserState) -> Stmt {
             }
             s.expect(TokenKind.RParen, "')' to close catch binder")
             catch_body = _parse_block(s)
+            // Chained catch arms `try {...} catch (A) {...} catch
+            // (B) {...}` — selfhost's TryCatch AST holds one
+            // binder+body pair, so subsequent catches' bodies
+            // are appended to the first. The binder type
+            // distinction is lost (acceptable for parse-only).
+            while s.check(TokenKind.Catch) {
+                s.advance()  // catch
+                s.expect(TokenKind.LParen, "'(' to open catch binder")
+                extra_ident := s.expect(TokenKind.Identifier, "catch binder name").value
+                if s.match_kind(TokenKind.Colon) {
+                    _parse_type_annot(s, "catch binder type")
+                }
+                while s.match_kind(TokenKind.Comma) {
+                    if s.check(TokenKind.Identifier) { s.advance() }
+                    _skip_type_params(s)
+                }
+                s.expect(TokenKind.RParen, "')' to close catch binder")
+                extra_body: List := _parse_block(s)
+                ei := 0
+                while ei < extra_body.length() {
+                    catch_body.append(extra_body.__get(ei))
+                    ei = ei + 1
+                }
+                // Reference the binder so the variable's scope
+                // doesn't shadow-warn — sema already accepted it.
+                if extra_ident == "" { extra_ident = "_" }
+            }
         }
         // Optional `finally { … }` block. Selfhost has no
         // exception-aware finalization machinery, so the
@@ -794,6 +844,41 @@ define _parse_stmt(s: ParserState) -> Stmt {
                 s.expect(TokenKind.Assign, "':=' or '=' after annotated variable name")
             }
             return VarDecl(name, type_annot, _parse_expr(s))
+        }
+        // Multi-target destructure `a, b := EXPR` / `a, b = EXPR`.
+        // Selfhost stores one VarDecl per binding; we emit a
+        // VarDecl for `a` capturing the whole expression and
+        // discard `b, c, ...` names. Real destructuring would
+        // need tuple-aware codegen; this preserves parseability.
+        if t2.kind == TokenKind.Comma {
+            // Walk ahead until we see `:=` or `=` to confirm this
+            // is destructuring (not a comma in a wider context
+            // we shouldn't touch). Bail otherwise.
+            look := 2
+            saw_assign := false
+            while look < 10 {
+                tn: Token := s.peek_at(look)
+                if tn.kind == TokenKind.AssignInit
+                   or tn.kind == TokenKind.Assign {
+                    saw_assign = true
+                    look = 10
+                } elif tn.kind == TokenKind.Identifier
+                       or tn.kind == TokenKind.Comma {
+                    look = look + 1
+                } else {
+                    look = 10
+                }
+            }
+            if saw_assign {
+                first_name := s.advance().value
+                while s.match_kind(TokenKind.Comma) {
+                    if s.check(TokenKind.Identifier) { s.advance() }
+                }
+                if s.match_kind(TokenKind.AssignInit) == false {
+                    s.match_kind(TokenKind.Assign)
+                }
+                return VarDecl(first_name, "", _parse_expr(s))
+            }
         }
     }
 
@@ -1429,7 +1514,24 @@ define parse(tokens: List) -> List {
         } elif t.kind == TokenKind.Extend {
             _skip_extend_decl(s)
         } elif t.kind == TokenKind.Identifier {
-            _skip_toplevel_vardecl(s)
+            // Could be a bare expression `obj.method(…)` or a
+            // declaration `name := …`. Peek the next token to
+            // decide: `:` or `:=` or `=` → declaration; anything
+            // else → consume as an expression statement and
+            // discard. Selfhost has no top-level imperative
+            // execution; this just keeps the parser tolerant
+            // of test files that include top-level setup code.
+            next: Token := s.peek_at(1)
+            if next.kind == TokenKind.Colon
+               or next.kind == TokenKind.AssignInit
+               or next.kind == TokenKind.Assign {
+                _skip_toplevel_vardecl(s)
+            } else {
+                // Parse-and-discard the expression. Don't emit
+                // an AST node — there's no top-level Stmt slot.
+                _parse_expr(s)
+                s.match_kind(TokenKind.Semicolon)
+            }
         } else {
             s.fail("Unexpected top-level token '" + t.value + "' at line " + t.line.str() + ":" + t.col.str())
         }

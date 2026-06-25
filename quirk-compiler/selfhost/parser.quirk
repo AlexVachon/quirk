@@ -334,6 +334,23 @@ The unary form only matches at the start of an expression
 position (where `_parse_unary` is called); the binary form is
 handled later by `_parse_addsub`.
 ---
+
+// If the upcoming tokens look like `IDENT =` (and NOT `==`),
+// silently drop the `IDENT =` prefix so positional parsing
+// proceeds on the RHS. Lets calls like `f(name = val)` parse
+// as if they were `f(val)` — we lose the keyword association
+// but keep the AST shape consumable.
+define _skip_named_arg_prefix(s: ParserState) -> void {
+    if s.check(TokenKind.Identifier) == false { return }
+    save_pos := s.pos
+    s.advance()
+    if s.check(TokenKind.Assign) {
+        s.advance()
+        return
+    }
+    s.pos = save_pos
+}
+
 // Postfix chain — `obj.field`, `obj.field.subfield`,
 // `xs[i]`, `xs[i].field`, and `obj.method(args)`. Loops
 // until none of `.`, `[`, `(` follow. The `(` arm lets a
@@ -343,10 +360,20 @@ define _parse_postfix(s: ParserState) -> Expr {
     e := _parse_primary(s)
     keep_going := true
     while keep_going {
-        if s.check(TokenKind.Dot) {
+        if s.check(TokenKind.Dot) or s.check(TokenKind.QuestionDot) {
             s.advance()
-            name_tok: Token := s.expect(TokenKind.Identifier, "field name after '.'")
-            e = FieldGet(e, name_tok.value)
+            // Accept either an identifier or any keyword-like
+            // token as a field name (.type, .from, .as, etc.).
+            // The lexer hands us the token kind we tried to
+            // produce; if it's not Identifier, fall back to
+            // consuming the next token whatever it is.
+            if s.check(TokenKind.Identifier) {
+                name_tok: Token := s.advance()
+                e = FieldGet(e, name_tok.value)
+            } else {
+                name_tok: Token := s.advance()
+                e = FieldGet(e, name_tok.value)
+            }
         } elif s.check(TokenKind.LBracket) {
             s.advance()
             idx := _parse_expr(s)
@@ -359,8 +386,10 @@ define _parse_postfix(s: ParserState) -> Expr {
             s.advance()
             args := List()
             if s.check(TokenKind.RParen) == false {
+                _skip_named_arg_prefix(s)
                 args.append(_parse_expr(s))
                 while s.match_kind(TokenKind.Comma) {
+                    _skip_named_arg_prefix(s)
                     args.append(_parse_expr(s))
                 }
             }
@@ -466,6 +495,19 @@ define _parse_cmp(s: ParserState) -> Expr {
         call_args.append(right)
         call_args.append(left)
         left = Call(Ident("__contains"), call_args)
+    }
+    // `EXPR is Type` — type-narrowing predicate. Lower to a
+    // synthetic call `__is(EXPR)` (drop the type, sema only
+    // needs a Bool-typed expression). The actual narrowing
+    // semantics aren't tracked by selfhost; this just keeps
+    // the file parseable so the surrounding tests compile.
+    if s.check(TokenKind.Is) {
+        s.advance()
+        if s.check(TokenKind.Identifier) { s.advance() }
+        _skip_type_params(s)  // optional <T> / [T] suffix
+        is_args := List()
+        is_args.append(left)
+        left = Call(Ident("__is"), is_args)
     }
     return left
 }

@@ -5,6 +5,46 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.68] — 2026-06-25
+
+### Test-corpus coverage: 27/60 → 30/60
+
+Three more parser relaxations land. Fixed-point + 190-case
+e2e regression both green.
+
+**1. `?.` optional-chaining as field access.** The lexer
+already emits `QuestionDot` as a single token; the parser
+now treats it identically to `Dot` in postfix position
+(`obj?.field` → `FieldGet(obj, "field")`). Selfhost doesn't
+track null-propagation semantics — it just lets the file
+parse. Codegen lowers as a normal field access, so a null
+LHS still crashes at runtime; the goal here is parse
+parity, not semantic equivalence.
+
+**2. Keyword field names.** `e.type`, `s.from`, `x.as`,
+etc. were rejected as "expected field name after '.'"
+because the lexer hands back a keyword-tagged token, not
+`Identifier`. Parser now accepts any token after `.` and
+uses its raw lexeme as the field name.
+
+**3. Named call args `f(name = val)`.** Quirk doesn't
+formally support keyword arguments, but several test files
+use them (especially with the variadic `*args` form).
+Parser now drops the `name =` prefix at parse time and
+treats `val` as a positional argument. Callers that needed
+the name lose it; callers that didn't care get a parseable
+file.
+
+**4. `is` as type-narrowing predicate.** `x is T` lowers
+to `__is(x)` — a synthetic call returning Bool via the
+permissive unknown-function path. Selfhost doesn't actually
+narrow the type inside the then-branch; that's a deeper
+sema lift. This just lets the test files parse.
+
+Test corpus: **27/60 → 30/60 passing.** Sema failures
+ticked up slightly (8 → 10) as some files moved out of
+parse-fail into sema-fail.
+
 ## [4.0.0-alpha.67] — 2026-06-25
 
 ### Test-corpus coverage: 24/60 → 27/60

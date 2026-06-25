@@ -297,6 +297,18 @@ define _check_binop(s: Sema, b: BinOp) -> Ty {
         is_dbl_r := false
         match rt { case TDouble as _ => is_dbl_r = true case _ => {} }
         if is_dbl_l and is_dbl_r { return TDouble() }
+        // Permissive Any-side fallback for type-erased generic
+        // code in the stdlib. `Any <op> Any`, `Any <op> Int`,
+        // and `Int <op> Any` are all accepted as Any — codegen
+        // will either route through the existing numeric path
+        // (if the runtime values turn out to be ints) or
+        // produce undefined-behaviour IR. This unblocks stdlib
+        // parsing without requiring monomorphization.
+        is_any_l := false
+        match lt { case TAny as _ => is_any_l = true case _ => {} }
+        is_any_r := false
+        match rt { case TAny as _ => is_any_r = true case _ => {} }
+        if is_any_l or is_any_r { return TAny() }
         s.report("operator '" + op + "' expects matching numeric or String operands; got '" +
                  ty_to_string(lt) + "' and '" + ty_to_string(rt) + "'")
         return TError("operator mismatch")
@@ -340,6 +352,14 @@ define _check_binop(s: Sema, b: BinOp) -> Ty {
             match rt { case TBool as _ => is_bl_r = true case _ => {} }
             if is_bl_l and is_bl_r { return TBool() }
         }
+        // Permissive Any-side fallback. `Any cmp X` / `X cmp Any`
+        // returns Bool — codegen will route based on the
+        // concrete LLVM types at the use site.
+        is_any_l := false
+        match lt { case TAny as _ => is_any_l = true case _ => {} }
+        is_any_r := false
+        match rt { case TAny as _ => is_any_r = true case _ => {} }
+        if is_any_l or is_any_r { return TBool() }
         s.report("comparison '" + op + "' expects matching Int / Double / String operands; got '" +
                  ty_to_string(lt) + "' and '" + ty_to_string(rt) + "'")
         return TError("comparison operand mismatch")
@@ -559,8 +579,13 @@ define _check_call(s: Sema, c: Call) -> Ty {
         return TStruct(name)
     }
     if s.functions.has(name) == false {
-        s.report("call to undefined function '" + name + "'")
-        return TError("unknown function")
+        // Permissive bootstrap mode: unknown functions (stdlib
+        // names we haven't tracked like `AssertionError`,
+        // `ValueError`, `Exception`) are accepted as opaque
+        // calls returning TAny. Args are NOT re-checked here —
+        // they were already evaluated when we built up c.args.
+        // Trade-off: typos in function names don't get caught.
+        return TAny()
     }
     // Argument types are checked individually for unknown
     // identifiers but not yet matched against the callee's
@@ -611,8 +636,12 @@ define _check_field_get(s: Sema, fg: FieldGet) -> Ty {
         }
     }
     if s.structs.has(sname) == false {
-        s.report("field access on unknown struct '" + sname + "'")
-        return TError("unknown struct")
+        // Permissive bootstrap mode: field access on a struct
+        // we don't track (stdlib types like Exception with
+        // `.type`, `.message`) returns TAny. Lets stdlib
+        // catch-arm bodies (`catch (e: Exception) { … e.message }`)
+        // parse and sema cleanly.
+        return TAny()
     }
     decl: StructDecl := s.structs.get(sname)
     i := 0
@@ -888,8 +917,15 @@ define _check_method_call(s: Sema, c: Call) -> Ty {
         // list's declared `List<T>` parameter is queued.
         return TInt()
     }
-    s.report("unknown method '." + fg.name + "()' on '" + ty_to_string(ot) + "'")
-    return TError("unknown method")
+    // Permissive bootstrap mode: unknown methods (stdlib's
+    // `.is_alpha()`, `.replace()`, `.encode()`, etc., that
+    // selfhost doesn't track) return TAny. We skip arg
+    // type-checking here — receiver has already been
+    // evaluated, and re-walking deeply nested expressions
+    // can exhaust the JIT stack on stdlib code with chained
+    // method calls. Trade-off: typos in method names + arg
+    // shapes don't get caught.
+    return TAny()
 }
 
 // List literal `[a, b, c]`. Phase 4.11 only supports Int
@@ -1141,15 +1177,18 @@ define _check_stmt(s: Sema, st: Stmt, ret: Ty) -> void {
         }
         case If as iff => {
             ct: Ty := _check_expr(s, iff.cond)
-            // Conditions must be Bool. Allow TError to pass
-            // through silently — the inner diagnostic already
-            // landed and "if `<error>` then …" would just be
-            // noise on top.
+            // Conditions must be Bool. Allow TError + TAny to
+            // pass through silently — TError's inner diagnostic
+            // already landed, and TAny matches type-erased
+            // generic stdlib code that returns a boolean-flavored
+            // Any.
             is_bool := false
             match ct { case TBool as _ => is_bool = true case _ => {} }
             is_err := false
             match ct { case TError as _ => is_err = true case _ => {} }
-            if is_bool == false and is_err == false {
+            is_any := false
+            match ct { case TAny as _ => is_any = true case _ => {} }
+            if is_bool == false and is_err == false and is_any == false {
                 s.report("'if' condition must be Bool, got '" + ty_to_string(ct) + "'")
             }
             s.push_scope()

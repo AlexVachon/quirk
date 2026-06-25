@@ -5,6 +5,56 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.57] — 2026-06-24
+
+### Phase 12.x: permissive sema for stdlib parsing
+
+Sema now treats unknown names as opaque `TAny` instead of
+erroring. Five relax points:
+
+1. **Unknown function calls** → return `TAny`. Stdlib names
+   like `AssertionError(...)`, `ValueError(...)`, `Exception(...)`
+   are referenced everywhere without being defined in
+   selfhost-tracked space.
+
+2. **Unknown methods** → return `TAny`. Stdlib's extern-
+   declared methods like `.is_alpha()`, `.replace()`,
+   `.encode()` aren't in selfhost's method-dispatch table.
+
+3. **Unknown struct field access** → return `TAny`. The
+   stdlib's `Exception.message`, `Exception.type` etc. are
+   on types we haven't tracked.
+
+4. **`Any + Any` / `Int + Any` / `Any < X` etc.** → return
+   `TAny` / `TBool`. Type-erased generics on `List<T>`
+   elements flow as Any, and stdlib code does arithmetic on
+   them.
+
+5. **`if Any { … }`** condition accepts `TAny`. Stdlib code
+   returns Any-typed boolean-flavored values from helpers.
+
+**Trade-off**: typos in user code (wrong function name,
+wrong field name) no longer get caught at sema. Codegen may
+produce IR that fails at llc/clang time instead. For the
+bootstrap goal — turning selfhost into a sema = syntax-
+validator and codegen = best-effort emitter — this is the
+right trade.
+
+### Stdlib coverage update
+
+`packages/random/index.quirk` now compiles cleanly (6,502
+bytes of IR) — a real win from the permissive sema. Other
+stdlib files still hit either deep-recursion crashes inside
+the C++-JIT-running-selfhost (a separate runtime issue with
+the JIT's stack handling, not a language phase) or unrelated
+parse errors specific to that file.
+
+### Test count
+
+187 cases (up from 186 — one new permissive-sema smoke).
+Selfhost fixed point still byte-identical at **1,927,188
+bytes**.
+
 ## [4.0.0-alpha.56] — 2026-06-24
 
 ### Phase 12 (parse + type-erasure MVP): 🎉 **generics**

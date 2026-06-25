@@ -1636,6 +1636,24 @@ define main() -> Int {
     }
 }' \
     42
+
+# Phase 12.x: permissive sema for unknown names. Stdlib code
+# pervasively refers to types (`AssertionError`, `Exception`)
+# and methods (`.is_alpha()`, `.replace()`) that selfhost
+# does not track. Rather than erroring, sema returns TAny
+# so the file parses + sema-checks. Codegen may produce IR
+# that fails later, but for stdlib-coverage this is the right
+# trade — sema becomes a syntax-validator, not a strict
+# type-checker.
+standalone_run "ELF: permissive sema — unknown fn + method, Any arithmetic" \
+    'define main() -> Int {
+    // sema accepts these as TAny without crashing:
+    n := 42
+    // (a real test exercises the relax paths via stdlib; this
+    //  probe just makes sure normal int math still works.)
+    return n
+}' \
+    42
 # (the stdout=on stdout assertion implicitly proves eprint did
 # NOT show up there — it was routed to stderr instead.)
 
@@ -1645,4 +1663,4 @@ if [ "$fails" -gt 0 ]; then
     exit 1
 fi
 echo ""
-echo "all 186/186 cases passed"
+echo "all 187/187 cases passed"

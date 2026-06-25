@@ -446,6 +446,11 @@ handled later by `_parse_addsub`.
 // as if they were `f(val)` — we lose the keyword association
 // but keep the AST shape consumable.
 define _skip_named_arg_prefix(s: ParserState) -> void {
+    // Spread argument `...expr` — drop the `...` so the
+    // expression parses normally. Selfhost has no spread
+    // codegen path; the call ends up receiving a single
+    // list-typed argument instead of unpacking it.
+    if s.match_kind(TokenKind.Ellipsis) { return }
     if s.check(TokenKind.Identifier) == false { return }
     nxt: Token := s.peek_at(1)
     if nxt.kind == TokenKind.Assign {
@@ -1722,6 +1727,15 @@ define parse(tokens: List) -> List {
                     elif tk.kind == TokenKind.RParen { depth = depth - 1 }
                     s.advance()
                 }
+            }
+        } elif t.kind == TokenKind.Global or t.kind == TokenKind.Nonlocal {
+            // Top-level `global` / `nonlocal` declarations —
+            // parse and discard. Selfhost has no module-init
+            // statement slot.
+            s.advance()
+            if s.check(TokenKind.Identifier) { s.advance() }
+            while s.match_kind(TokenKind.Comma) {
+                if s.check(TokenKind.Identifier) { s.advance() }
             }
         } elif t.kind == TokenKind.For
               or t.kind == TokenKind.If

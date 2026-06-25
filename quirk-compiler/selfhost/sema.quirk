@@ -1106,8 +1106,27 @@ define _check_match(s: Sema, m: Match, ret: Ty) -> void {
     }
     if is_err { return }
     if uname == "" {
-        s.report("'match' scrutinee must be a tagged-union value, got '" +
-                 ty_to_string(scrut_ty) + "'")
+        // Permissive: match on Any / Int / String etc. is the
+        // pattern Quirk uses for type-narrowing matches
+        // (`match x { case Int => …; case String => … }`).
+        // Selfhost has no narrow-by-type machinery; we just
+        // accept the arms with their patterns as bare values.
+        i := 0
+        while i < m.arms.length() {
+            arm: MatchArm := m.arms.__get(i)
+            s.push_scope()
+            if arm.binder != "_" {
+                s.define_local(arm.binder, TAny())
+            }
+            j := 0
+            while j < arm.body.length() {
+                st: Stmt := arm.body.__get(j)
+                _check_stmt(s, st, ret)
+                j = j + 1
+            }
+            s.pop_scope()
+            i = i + 1
+        }
         return
     }
     i := 0

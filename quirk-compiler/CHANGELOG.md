@@ -5,6 +5,25 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.77] — 2026-06-25
+
+Three more relaxations:
+
+- **Sema: permissive match on non-union scrutinee.** `match x
+  { case Int => …; case String => … }` (type-narrowing match)
+  used to hard-error if `x` wasn't a tagged-union type. Now
+  the arms are checked with arm bodies as if the binder were
+  TAny — same shape as the variant-match path, just without
+  the variant lookup.
+- **Parser: spread argument `f(...args)`.** `_skip_named_arg_prefix`
+  now consumes a leading `...` so the expression parses as a
+  normal positional argument.
+- **Parser: top-level `global` / `nonlocal` declarations.** Parse
+  and discard. Selfhost has no module-init statement slot.
+
+Test corpus: **44/60 OK, 2 parse-fail, 13 sema-fail.**
+Sema-fail dropped from 14 → 13.
+
 ## [4.0.0-alpha.76] — 2026-06-25
 
 ### Test-corpus coverage: 43/60 → 44/60

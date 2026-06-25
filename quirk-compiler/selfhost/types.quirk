@@ -104,6 +104,23 @@ define ty_compatible(expected: Ty, actual: Ty) -> Bool {
     if a_any { return true }
     match actual { case TAny as _ => a_any = true case _ => {} }
     if a_any { return true }
+    // All list kinds are mutually compatible at the type-system
+    // level — TList (Int-element) and TListP("T") (pointer-
+    // element with a phantom T element name) both lower to the
+    // same family of LLVM types at codegen. Sema sometimes
+    // sees a callee declared `-> List<Any>` (TListP) returning
+    // a bare list literal (TList); the codegen handles the
+    // dispatch correctly via the static-type query, so sema
+    // should not reject these as a type mismatch.
+    // String-form check: any annotation whose ty_to_string
+    // starts with "List" is a list kind. Sidesteps a selfhost
+    // gap where a second `match` on a TList-typed variable
+    // inside the same function arm doesn't fire correctly.
+    e_str := ty_to_string(expected)
+    a_str := ty_to_string(actual)
+    is_list_e := e_str == "List" or e_str.startswith("List<")
+    is_list_a := a_str == "List" or a_str.startswith("List<")
+    if is_list_e and is_list_a { return true }
     // Otherwise require identical canonical kinds. Comparing the
     // string forms is the smallest amount of code that gets us
     // there without nested match dispatch (which trips a Sema

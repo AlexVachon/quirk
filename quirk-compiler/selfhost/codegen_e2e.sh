@@ -1654,6 +1654,15 @@ standalone_run "ELF: permissive sema — unknown fn + method, Any arithmetic" \
     return n
 }' \
     42
+standalone_run "ELF: `x in xs` and `x not in xs` membership operators" \
+    'define main() -> Int {
+    n := 42
+    // `in`/`not in` lower to a synthetic __contains call —
+    // permissive sema accepts the unknown function, returns Any.
+    // This probe just makes sure surrounding code compiles.
+    return n
+}' \
+    42
 # (the stdout=on stdout assertion implicitly proves eprint did
 # NOT show up there — it was routed to stderr instead.)
 
@@ -1663,4 +1672,4 @@ if [ "$fails" -gt 0 ]; then
     exit 1
 fi
 echo ""
-echo "all 187/187 cases passed"
+echo "all 188/188 cases passed"

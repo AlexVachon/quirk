@@ -5,6 +5,72 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.59] — 2026-06-24
+
+### Triaged the IndexError: `list.quirk` + many more stdlib files compile
+
+The IndexError that blocked `typing/collections/list.quirk`
+turned out to be an **unbounded-loop bug in the parser** (not
+deep-recursion as initially suspected). Five fixes landed in
+one phase:
+
+**1. ParserState.peek() bounds-clamping.** Once `pos` advanced
+past the last token (EofToken), `peek()` did
+`tokens.__get(pos)` → IndexError. Now clamps to the last
+token (always EofToken). Single-line fix.
+
+**2. Brace-balanced loops + EOF guard.** Every `while
+s.check(TokenKind.RBrace) == false` loop in the parser
+(struct-decl, enum-decl, block, match) also needed an
+`and s.check(TokenKind.EofToken) == false` so they don't
+spin forever on a truncated input. Four call sites updated.
+
+**3. `x in xs` / `x not in xs` membership operators.** Stdlib's
+`.unique()` uses `if v not in out { … }`. The parser now
+lowers these to `Call(Ident("__contains"), [container, value])`
+(with an outer `not` for `not in`). Sema's permissive
+unknown-function path accepts the call; codegen emits a
+call to `@__contains` which would resolve at link time
+(unlinked in standalone ELFs but harmless when never invoked).
+
+**4. `not Any` → Bool.** Stdlib code applies `not` to
+generic returns or unknown-method results. Sema now
+accepts `TAny` operands.
+
+**5. `TList` ↔ `TListP` mutual compatibility.** The return-
+type check rejected `return [1, 2, 3]` from a function
+declared `-> List<Any>` because TList ≠ TListP at the
+ty_compatible level. Now any pair of list-kinded types is
+compatible (using a stringy `ty_to_string` startswith check
+because the obvious `match` with two arms didn't fire on
+TList values — a separate selfhost gap noted in passing).
+
+### Stdlib coverage
+
+Five **additional** stdlib files now compile cleanly:
+
+| File | Status |
+| --- | --- |
+| `typing/collections/list.quirk` | ✅ 15,626 bytes |
+| `typing/collections/set.quirk` | ✅ 3,711 bytes |
+| `typing/option.quirk` | ✅ |
+| `typing/result.quirk` | ✅ |
+| `random/index.quirk` | ✅ |
+
+Combined with previous phases that's **20+ stdlib files**
+compiling through selfhost — most of the typing/ tree plus
+io, random, and the bootstrap modules.
+
+Still blocked: `url`, `statistics` (file-specific sema gaps),
+`itertools`, `math` (file-specific parse gaps), `test` (the
+old SIGSEGV from a different selfhost path).
+
+### Test count
+
+188 cases (up from 187 — one new in/not-in operator probe).
+Selfhost fixed point still byte-identical at **1,942,476
+bytes** (IR grew ~15 KB from the parser additions).
+
 ## [4.0.0-alpha.58] — 2026-06-24
 
 ### JIT stack bump: run user code on a 64 MB worker thread

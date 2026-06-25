@@ -247,6 +247,12 @@ define _check_unary(s: Sema, u: UnaryOp) -> Ty {
         is_bool := false
         match ot { case TBool as _ => is_bool = true case _ => {} }
         if is_bool { return TBool() }
+        // Permissive bootstrap mode: `not Any` returns Bool —
+        // stdlib code often applies `not` to type-erased
+        // generic returns or unknown-function results.
+        is_any := false
+        match ot { case TAny as _ => is_any = true case _ => {} }
+        if is_any { return TBool() }
         s.report("unary 'not' expects Bool, got '" + ty_to_string(ot) + "'")
         return TError("unary not type mismatch")
     }

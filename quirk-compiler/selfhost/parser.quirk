@@ -72,6 +72,19 @@ struct ParserState {
     }
 
     define peek(self) -> Token {
+        // Clamp at the end of the token stream so callers that
+        // loop on `s.check(...) == false` until a closing token
+        // don't index past the array bounds when the source is
+        // truncated / unclosed. `tokenize` always appends an
+        // EofToken sentinel as the last element, so clamping
+        // gives the loop a stable end-of-stream value to spin
+        // on (the loop is responsible for noticing EofToken
+        // and breaking out — checking `peek().kind ==
+        // TokenKind.EofToken` is the idiom).
+        n := self.tokens.length()
+        if self.pos >= n {
+            return self.tokens.__get(n - 1)
+        }
         return self.tokens.__get(self.pos)
     }
 
@@ -336,6 +349,37 @@ define _parse_cmp(s: ParserState) -> Expr {
         right := _parse_addsub(s)
         left = BinOp(op_tok.value, left, right)
     }
+    // Containment: `EXPR in CONTAINER` / `EXPR not in CONTAINER`.
+    // Stdlib uses these in `.unique()`, `.contains()`, and
+    // similar list-processing methods. Lower to a synthetic
+    // call `__contains(container, value)` — sema accepts via
+    // the permissive unknown-function path (returns TAny),
+    // codegen emits a call to an undefined symbol which is
+    // tolerable for stdlib-parse-only purposes.
+    if s.check(TokenKind.Not) {
+        // Peek ahead for `not in`. If it's `not <something else>`,
+        // back off — this slot belongs to the unary prefix
+        // parser (which already consumed `not` at primary level
+        // before reaching us).
+        nxt: Token := s.peek_at(1)
+        if nxt.kind == TokenKind.In {
+            s.advance()  // not
+            s.advance()  // in
+            right := _parse_addsub(s)
+            call_args := List()
+            call_args.append(right)
+            call_args.append(left)
+            inner: Expr := Call(Ident("__contains"), call_args)
+            left = UnaryOp("not", inner)
+        }
+    } elif s.check(TokenKind.In) {
+        s.advance()
+        right := _parse_addsub(s)
+        call_args := List()
+        call_args.append(right)
+        call_args.append(left)
+        left = Call(Ident("__contains"), call_args)
+    }
     return left
 }
 
@@ -442,7 +486,7 @@ define _parse_stmt(s: ParserState) -> Stmt {
         scrutinee := _parse_expr(s)
         s.expect(TokenKind.LBrace, "'{' to open match body")
         arms := List()
-        while s.check(TokenKind.RBrace) == false {
+        while s.check(TokenKind.RBrace) == false and s.check(TokenKind.EofToken) == false {
             s.expect(TokenKind.Case, "'case' to open match arm")
             // Pattern: either `_` (wildcard) or an identifier
             // (variant name). `_` lexes as a plain Identifier
@@ -615,7 +659,7 @@ define _parse_if_chain(s: ParserState) -> Stmt {
 define _parse_block(s: ParserState) -> List {
     s.expect(TokenKind.LBrace, "'{' to open block")
     stmts := List()
-    while s.check(TokenKind.RBrace) == false {
+    while s.check(TokenKind.RBrace) == false and s.check(TokenKind.EofToken) == false {
         if s.had_error { break }
         stmts.append(_parse_stmt(s))
         // Optional `;` separator between statements. Quirk's
@@ -823,7 +867,7 @@ define _parse_struct_decl(s: ParserState, out_methods: List) -> StructDecl {
     }
     s.expect(TokenKind.LBrace, "'{' to open struct body")
     fields := List()
-    while s.check(TokenKind.RBrace) == false {
+    while s.check(TokenKind.RBrace) == false and s.check(TokenKind.EofToken) == false {
         // Tolerate leading / interleaved `;` so the user can
         // write either `x: Int; y: Int` or one-per-line forms.
         if s.match_kind(TokenKind.Semicolon) { continue }
@@ -914,7 +958,7 @@ define _parse_enum_decl(s: ParserState) -> EnumDecl {
     _skip_type_params(s)
     s.expect(TokenKind.LBrace, "'{' to open enum body")
     variants := List()
-    while s.check(TokenKind.RBrace) == false {
+    while s.check(TokenKind.RBrace) == false and s.check(TokenKind.EofToken) == false {
         if s.match_kind(TokenKind.Semicolon) { continue }
         vtok: Token := s.expect(TokenKind.Identifier, "variant name")
         variants.append(vtok.value)

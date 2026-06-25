@@ -351,8 +351,15 @@ module-level state for string-literal interning + runtime
 helper declarations.
 ---
 struct FnCG {
-    entry_out: String
-    out: String
+    entry_out: List
+    // out / entry_out are List<String> (each element is one
+    // line of IR, including its trailing "\n") to avoid the
+    // O(N²) string-accumulation pattern. Final flatten happens
+    // via the `_str_join` builtin in `_gen_function`. Before
+    // this refactor the standalone selfhost binary used ~4 GB
+    // of RAM when compiling its own ~50K-line IR output;
+    // afterward it's bounded by total IR size (~5-10 MB).
+    out: List
     next_reg: Int
     next_label: Int
     locals: Map
@@ -372,8 +379,8 @@ struct FnCG {
     loop_end: List
 
     define __init(self, m: ModuleCG) -> void {
-        self.entry_out = ""
-        self.out = ""
+        self.entry_out = List()
+        self.out = List()
         self.next_reg = 0
         self.next_label = 0
         self.locals = Map()
@@ -403,7 +410,7 @@ struct FnCG {
         // block) emits unreachable IR that fails strict
         // verification.
         if self.block_terminated { return }
-        self.out = self.out + "  " + line + "\n"
+        self.out.append("  " + line + "\n")
         // `ret` / `br` / `unreachable` mark the block as
         // terminated. We check for the first token of the
         // line — anything else is a normal instruction.
@@ -417,7 +424,7 @@ struct FnCG {
     // Labels reopen the block, so emitting one clears the
     // terminated flag.
     define emit_raw(self, line: String) -> void {
-        self.out = self.out + line + "\n"
+        self.out.append(line + "\n")
         // A label line (`some.label.0:`) opens a fresh block,
         // so prior terminator status no longer applies.
         if line.endswith(":") {
@@ -426,7 +433,7 @@ struct FnCG {
     }
 
     define emit_entry(self, line: String) -> void {
-        self.entry_out = self.entry_out + "  " + line + "\n"
+        self.entry_out.append("  " + line + "\n")
     }
 }
 
@@ -760,6 +767,14 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
             if name == "eprint" and c.args.length() == 1 {
                 return _gen_eprint(cg, c.args)
             }
+            // _str_join(list_of_strings) — sum-strlen +
+            // single malloc + memcpy each piece. Lowered to a
+            // module-level @__str_join helper function that's
+            // emitted once per module (extracted to avoid
+            // duplicating IR at every call site).
+            if name == "_str_join" and c.args.length() == 1 {
+                return _gen_str_join(cg, c.args)
+            }
             // Builtin file I/O. Extracted into helpers because
             // both lowerings emit a multi-call sequence — the
             // recursion-pairing dodge applies.
@@ -949,7 +964,12 @@ define _gen_lambda(outer_cg: FnCG, lm: Lambda) -> String {
     // are appended to module output AFTER all user functions,
     // so the enclosing function's IR is unaffected.
     header := "define " + body_ty + " @" + name + "(" + sig + ") {\nentry:\n"
-    full := header + inner.entry_out + inner.out + "}\n"
+    parts := List()
+    parts.append(header)
+    parts.append(_str_join(inner.entry_out))
+    parts.append(_str_join(inner.out))
+    parts.append("}\n")
+    full := _str_join(parts)
     mod.lambda_bodies.append(full)
     // The lambda EXPRESSION evaluates to a bitcast of the
     // function pointer to i8*. Compute the function-type
@@ -1085,6 +1105,8 @@ define _expr_static_ty(cg: FnCG, e: Expr) -> String {
             if cname == "arg_get"   { return "i8*" }
             // eprint(s) → Int (0); the actual return is never used.
             if cname == "eprint"    { return "i32" }
+            // _str_join(list) → String pointer.
+            if cname == "_str_join" { return "i8*" }
             // Builtin collection constructors.
             if cname == "Map"  { return "%QMap*" }
             // Both `List()` and `ListP()` produce
@@ -1704,6 +1726,88 @@ define _gen_string_method(cg: FnCG, name: String, recv_reg: String, args: List) 
 // fseek back → malloc(size+1) → fread → null-terminate →
 // fclose → return buf. No error handling yet — a missing
 // file is undefined behaviour for now.
+// _str_join(parts) — efficient List<String> concatenation.
+// Emits a module-level `@__str_join` helper function once
+// per module on demand. Each call site is a one-liner call
+// against that helper. Avoids the O(N²) `out + line + "\n"`
+// accumulation that ballooned the selfhost binary to ~4 GB
+// of resident memory.
+//
+// Helper signature: `i8* @__str_join(%QListP* parts)`.
+// Algorithm: walk once summing strlen of each element,
+// malloc total + 1, walk again strcpy + strcat each into
+// the buffer. Single O(N) pass instead of O(N²).
+define _gen_str_join(cg: FnCG, args: List) -> String {
+    cg.mod.ensure_decl("__str_join_helper", _str_join_helper_ir())
+    cg.mod.ensure_decl("strlen", "declare i64 @strlen(i8*)")
+    cg.mod.ensure_decl("malloc", "declare i8* @malloc(i64)")
+    cg.mod.ensure_decl("strcpy", "declare i8* @strcpy(i8*, i8*)")
+    cg.mod.ensure_decl("strcat", "declare i8* @strcat(i8*, i8*)")
+    le: Expr := args.__get(0)
+    list_reg := _gen_expr(cg, le)
+    reg := cg.fresh()
+    cg.emit(reg + " = call i8* @__str_join(%QListP* " + list_reg + ")")
+    return reg
+}
+
+// Module-level helper definition. Stored as the `decls` value
+// so it gets emitted once at module-render time.
+define _str_join_helper_ir() -> String {
+    out := ""
+    out = out + "define i8* @__str_join(%QListP* %lst) {\n"
+    out = out + "entry:\n"
+    // Load length and data.
+    out = out + "  %len_gep = getelementptr inbounds %QListP, %QListP* %lst, i32 0, i32 0\n"
+    out = out + "  %n = load i32, i32* %len_gep\n"
+    out = out + "  %data_gep = getelementptr inbounds %QListP, %QListP* %lst, i32 0, i32 2\n"
+    out = out + "  %data = load i8**, i8*** %data_gep\n"
+    // Sum strlen of each piece.
+    out = out + "  %total_slot = alloca i64\n"
+    out = out + "  store i64 0, i64* %total_slot\n"
+    out = out + "  %i_slot = alloca i32\n"
+    out = out + "  store i32 0, i32* %i_slot\n"
+    out = out + "  br label %sum_head\n"
+    out = out + "sum_head:\n"
+    out = out + "  %i_sum = load i32, i32* %i_slot\n"
+    out = out + "  %sum_cond = icmp slt i32 %i_sum, %n\n"
+    out = out + "  br i1 %sum_cond, label %sum_body, label %alloc\n"
+    out = out + "sum_body:\n"
+    out = out + "  %s_slot = getelementptr inbounds i8*, i8** %data, i32 %i_sum\n"
+    out = out + "  %s = load i8*, i8** %s_slot\n"
+    out = out + "  %slen = call i64 @strlen(i8* %s)\n"
+    out = out + "  %cur_total = load i64, i64* %total_slot\n"
+    out = out + "  %new_total = add nsw i64 %cur_total, %slen\n"
+    out = out + "  store i64 %new_total, i64* %total_slot\n"
+    out = out + "  %i_next = add nsw i32 %i_sum, 1\n"
+    out = out + "  store i32 %i_next, i32* %i_slot\n"
+    out = out + "  br label %sum_head\n"
+    out = out + "alloc:\n"
+    // Allocate result buffer (total + 1 for the null terminator)
+    out = out + "  %total_final = load i64, i64* %total_slot\n"
+    out = out + "  %alloc_sz = add nsw i64 %total_final, 1\n"
+    out = out + "  %buf = call i8* @malloc(i64 %alloc_sz)\n"
+    // Write a leading null so strcat starts from offset 0.
+    out = out + "  store i8 0, i8* %buf\n"
+    // Reset index.
+    out = out + "  store i32 0, i32* %i_slot\n"
+    out = out + "  br label %cat_head\n"
+    out = out + "cat_head:\n"
+    out = out + "  %i_cat = load i32, i32* %i_slot\n"
+    out = out + "  %cat_cond = icmp slt i32 %i_cat, %n\n"
+    out = out + "  br i1 %cat_cond, label %cat_body, label %done\n"
+    out = out + "cat_body:\n"
+    out = out + "  %s2_slot = getelementptr inbounds i8*, i8** %data, i32 %i_cat\n"
+    out = out + "  %s2 = load i8*, i8** %s2_slot\n"
+    out = out + "  %catr = call i8* @strcat(i8* %buf, i8* %s2)\n"
+    out = out + "  %i_cat_next = add nsw i32 %i_cat, 1\n"
+    out = out + "  store i32 %i_cat_next, i32* %i_slot\n"
+    out = out + "  br label %cat_head\n"
+    out = out + "done:\n"
+    out = out + "  ret i8* %buf\n"
+    out = out + "}"
+    return out
+}
+
 // eprint(s) — write(2, s, strlen(s)) then write a "\n".
 // Extracted helper for the same recursion-pairing reason as
 // _gen_arg_get / _gen_read_file. Returns "0" to satisfy
@@ -3140,7 +3244,16 @@ define _gen_function(fdecl: FunctionDecl, mod: ModuleCG) -> String {
     if is_method { full_name = fdecl.receiver + "__" + fdecl.name }
     else { full_name = _llvm_fn_name(fdecl.name) }
     header := "define " + ret_llvm + " @" + full_name + "(" + sig + ") {\nentry:\n"
-    return header + cg.entry_out + cg.out + "}\n"
+    // Concatenate via _str_join — single sum-strlen + malloc
+    // + memcpy pass instead of O(N²) growing-string `+`. For
+    // selfhost's own ~50K-line IR output this is the
+    // difference between ~4 GB peak memory and ~5-10 MB.
+    fn_body_parts := List()
+    fn_body_parts.append(header)
+    fn_body_parts.append(_str_join(cg.entry_out))
+    fn_body_parts.append(_str_join(cg.out))
+    fn_body_parts.append("}\n")
+    return _str_join(fn_body_parts)
 }
 
 ---

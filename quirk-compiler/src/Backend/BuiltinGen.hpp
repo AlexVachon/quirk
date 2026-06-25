@@ -124,7 +124,8 @@ class BuiltinGen {
             || name == "type" || name == "str" || name == "write" || name == "writeln"
             || name == "read_file" || name == "write_file"
             || name == "arg_count" || name == "arg_get"
-            || name == "eprint";
+            || name == "eprint"
+            || name == "_str_join";
     }
 
     Value* handleBuiltin(const std::string& name, CallNode* call,
@@ -140,7 +141,35 @@ class BuiltinGen {
         if (name == "arg_count")  return generateArgCount(call, exprHandler);
         if (name == "arg_get")    return generateArgGet(call, exprHandler);
         if (name == "eprint")     return generateEPrint(call, exprHandler);
+        if (name == "_str_join")  return generateStrJoin(call, exprHandler);
         return nullptr;
+    }
+
+    // _str_join(parts: List<String>) -> String — single-pass
+    // sum-strlen + malloc + strcat over the list elements.
+    // Both compilers expose this; C++ side forwards to the
+    // runtime helper `Core_String__str_join` (which uses
+    // the List/String C ABI directly).
+    Value* generateStrJoin(CallNode* call, std::function<Value*(Node*)> exprHandler) {
+        if (call->args.size() != 1) return nullptr;
+        Value* listVal = exprHandler(call->args[0].value.get());
+        if (!listVal) return nullptr;
+        Type* i8PtrTy = Type::getInt8PtrTy(Context);
+        Type* strPtrTy = structGen->getStringPtrType();
+        Function* fn = TheModule->getFunction("Core_String__str_join");
+        if (!fn) {
+            // Declare with opaque (i8*) param/return so we don't
+            // need to know the concrete List* / String* struct
+            // types in this header. The C symbol's ABI matches.
+            FunctionType* ft = FunctionType::get(i8PtrTy, {i8PtrTy}, false);
+            fn = Function::Create(ft, Function::ExternalLinkage,
+                                  "Core_String__str_join", TheModule);
+        }
+        Value* listAsI8 = Builder.CreateBitCast(listVal, i8PtrTy);
+        Value* res = Builder.CreateCall(fn, {listAsI8});
+        if (res->getType() != strPtrTy)
+            res = Builder.CreateBitCast(res, strPtrTy);
+        return res;
     }
 
     // eprint(s: String) -> Int. Mirrors the selfhost lowering:

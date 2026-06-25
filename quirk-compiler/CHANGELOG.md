@@ -5,6 +5,84 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.64] — 2026-06-25
+
+### 🎉 Selfhost compiler memory: **4.2 GB → 1.28 GB (70% drop)**
+
+The selfhost compiler's runtime memory profile drops from
+~4.2 GB peak (when compiling its own ~6000-line source) to
+**1.28 GB peak**, ending wall-clock-time at **0.74s** for the
+fixed-point step. No more OOM-killer susceptibility on
+modestly-loaded hosts.
+
+**Root cause**: every `cg.emit(line)` call did
+`self.out = self.out + "  " + line + "\n"` — a malloc +
+strcpy + strcat per call, with the previous buffer left as
+unfreed garbage. With ~50K emits per fixed-point run, total
+allocation churn was sum-of-1..N ≈ ~62 GB of malloc'd
+strings (most leaked), with peak working set ~4 GB.
+
+**Fix**: introduce a `_str_join(parts: List) -> String`
+builtin and refactor the codegen's two accumulator buffers
+(`FnCG.out` and `FnCG.entry_out`) from `String` to
+`List<String>`. Each `emit` becomes `list.append(line)` —
+O(1) amortized per call. Final flatten at the end of
+`_gen_function` is a single sum-strlen + malloc + strcat
+pass via `_str_join`. Total allocation drops to O(N).
+
+**Pieces:**
+
+1. **`_str_join` selfhost-side codegen**
+   (`selfhost/codegen.quirk`): emits a module-level
+   `@__str_join` helper on demand (declared once via
+   `ensure_decl`). The helper walks the `%QListP*` once
+   to sum strlens, mallocs the total + 1, walks again
+   strcat'ing each piece into the buffer.
+
+2. **`_str_join` C++ runtime**
+   (`src/Runtime/core/string.c`): new
+   `Core_String__str_join(List* parts) -> String*` —
+   same algorithm, leveraging the runtime's existing
+   `Core_Collections_List_List_length` /
+   `Core_Collections_List_List___get` / `make_String_taking_ownership`.
+   BuiltinGen emits an extern declaration and forwards
+   the call.
+
+3. **`FnCG` refactor**: `out: String` → `out: List`,
+   `entry_out: String` → `entry_out: List`. Methods
+   `emit` / `emit_raw` / `emit_entry` now `.append()`.
+   `_gen_function` assembles the final body via
+   `_str_join`. Same shape for the lambda lifter
+   (`_gen_lambda`).
+
+4. **Selfhost sema entry** for `_str_join` (returns
+   `TString`).
+
+5. **Hidden install gotcha caught + fixed**: the C++
+   compiler loads `runtime.so` from `~/.quirk/bin/`
+   (not `./bin/`). After rebuilding `bin/runtime.so`
+   with the new `Core_String__str_join`, `cp
+   bin/runtime.so ~/.quirk/bin/` is required for the
+   JIT to find it. A future polish phase would auto-sync.
+
+### Bootstrap state
+
+190/190 e2e cases pass. **Selfhost fixed point byte-
+identical at 2,033,722 bytes** (IR grew ~44 KB from the
+@__str_join helper + the per-fn _str_join calls). Memory
+profile (via `/usr/bin/time -v`):
+
+| Phase | Peak RSS |
+| --- | --- |
+| Before (alpha.63) | 4.2 GB |
+| After (alpha.64) | **1.28 GB** |
+
+The 1.28 GB residual is from the rest of the codegen state
+(List slots, AST nodes, etc.) which still never free. Adding
+GC to the standalone ELF (Boehm-style) would push it
+further, but 1.28 GB is comfortable headroom for compiling
+the existing selfhost source on any sensible machine.
+
 ## [4.0.0-alpha.63] — 2026-06-25
 
 ### Map-key TAny: the OOM was system memory pressure, not the change

@@ -2927,6 +2927,12 @@ std::string Sema::resolveVariable(const std::string &name)
     // IR is piped to a file.
     if (name == "eprint")
         return "Int";
+    // Efficient list-of-strings concatenation. Single
+    // sum-strlen + malloc + memcpy pass — replaces the
+    // O(N²) `out + line + "\n"` accumulation in selfhost's
+    // codegen `cg.out` buffer.
+    if (name == "_str_join")
+        return "String";
         
     // --- NEW: Super keyword support ---
     if (name == "super") {

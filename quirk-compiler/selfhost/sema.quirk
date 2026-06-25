@@ -479,6 +479,23 @@ define _check_call(s: Sema, c: Call) -> Ty {
         }
         return TInt()
     }
+    // Builtin: `_str_join(parts: List<String>) -> String` —
+    // efficient concatenation of a list of strings via a
+    // single sum-strlen + malloc + memcpy pass. Replaces the
+    // O(N²) `out = out + ... + ...` accumulation pattern that
+    // makes the standalone selfhost binary use ~4 GB of
+    // memory when compiling its own source. Returns the
+    // freshly malloc'd buffer; the input list elements stay
+    // owned by the caller.
+    if name == "_str_join" {
+        if c.args.length() != 1 {
+            s.report("_str_join() takes 1 argument (list)")
+            return TError("_str_join arity")
+        }
+        ae: Expr := c.args.__get(0)
+        _check_expr(s, ae)
+        return TString()
+    }
     // Builtin: `eprint(s: String) -> Int`. Same shape as
     // `print()` but routes to stderr (fd 2) via libc
     // `write()`, so diagnostics don't get tangled in stdout

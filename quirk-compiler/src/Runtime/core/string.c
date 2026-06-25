@@ -1340,3 +1340,30 @@ int Core_String_String_length(String* self) {
     if (!self) return 0;
     return self->length;
 }
+
+// _str_join(parts: List<String>) -> String — single-pass
+// concatenation. Used by selfhost's codegen to flatten its
+// `out: List<String>` accumulator without the O(N²) growth
+// of repeated `+`. Walks the list twice: once to sum
+// lengths, once to copy each piece via strcat into a
+// freshly-allocated buffer.
+extern int Core_Collections_List_List_length(List* self);
+extern void* Core_Collections_List_List___get(List* self, int index);
+
+String* Core_String__str_join(List* parts) {
+    if (!parts) return make_String("");
+    int n = Core_Collections_List_List_length(parts);
+    size_t total = 0;
+    for (int i = 0; i < n; i++) {
+        String* s = (String*)Core_Collections_List_List___get(parts, i);
+        if (s && s->buffer) total += strlen(s->buffer);
+    }
+    char* buf = (char*)GC_malloc(total + 1);
+    if (!buf) return make_String("");
+    buf[0] = '\0';
+    for (int i = 0; i < n; i++) {
+        String* s = (String*)Core_Collections_List_List___get(parts, i);
+        if (s && s->buffer) strcat(buf, s->buffer);
+    }
+    return make_String_taking_ownership(buf);
+}

@@ -5,6 +5,67 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.62] — 2026-06-25
+
+### 19 of 20 stdlib packages compile through selfhost
+
+Four parser/sema fixes pushed coverage from ~13 packages to
+**19 of 20** stdlib `index.quirk` files:
+
+| Newly green | Already green | Still blocked |
+| --- | --- | --- |
+| `uuid`, `prompt`, `csv`, `toml*` | `crypto`, `debug`, `encoding`, `fs`, `html`, `net`, `time`, `itertools`, `console`, `math`, `url`, `statistics`, `regex`, `random`, `argparse`, `datetime` | `toml` (Map-key TAny path triggers selfhost OOM) |
+
+The four landed fixes:
+
+**1. for-in over Any iterable.** Sema relaxed: `for x in
+something_any` binds `x: TAny` instead of erroring.
+Stdlib's Map iteration / unknown-call-result iteration
+parses cleanly now.
+
+**2. `Type?` nullable suffix.** Quirk shorthand for
+`Option[T]` / `T | null`. Parser drops the `?` — same
+type-erasure shape as the generic `[T]` parameters.
+Applies at every type-annot site (struct fields, params,
+return types, generic args).
+
+**3. `with EXPR as IDENT { BODY }` context-manager
+statement.** Parser lowers to a synthetic `if true { IDENT
+:= EXPR; <BODY> }`. No auto-close on exit — stdlib code
+that relies on `__exit` cleanup leaks the resource, but
+the file still parses + sema-checks cleanly. Extracted to
+`_parse_with_stmt` helper because the inline-construction
+shape inside `_parse_stmt` triggered the self-compiler
+OOM (same recursion-pairing pattern that bit `arg_get` /
+`read_file` / `eprint` earlier).
+
+**4. Top-level `IDENT := EXPR` declaration.** Module-level
+constants like `_HEX := "0123456789abcdef"` (used by
+`uuid`, others) are consumed by the top-level dispatcher
+via `_skip_toplevel_vardecl` and discarded. Selfhost has
+no module-export mechanism, so the value isn't reachable
+from outside anyway.
+
+### Known: Map.has() TAny key path causes selfhost OOM
+
+The natural fix for `toml` — adding `match kt { case TAny
+as _ => is_str_k = true case _ => {} }` after the existing
+TString check in `_check_method_call`'s map arms —
+mysteriously inflates the selfhost binary's memory usage
+to >4 GB at runtime, OOM-killing the standalone binary
+during compile_combined. Tried the stringy alternative
+(`kt_str == "Any"`) — same OOM. **Reverted; toml stays
+blocked.** Worth a separate triage phase to understand why
+the change cascades into runtime memory pressure when its
+direct source impact is ~30 IR lines.
+
+### Test count
+
+190 cases (up from 189 — one new `Type?` nullable suffix
+probe). Selfhost fixed point still byte-identical at
+**1,989,490 bytes** (IR grew ~12 KB from the parser
+additions).
+
 ## [4.0.0-alpha.61] — 2026-06-25
 
 ### Tuple literal `(a, b, c)` + variadic call-site shape

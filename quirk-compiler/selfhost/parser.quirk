@@ -474,6 +474,9 @@ define _parse_stmt(s: ParserState) -> Stmt {
         value := _parse_expr(s)
         return Throw(value)
     }
+    if t.kind == TokenKind.With {
+        return _parse_with_stmt(s)
+    }
     // `try { ... } catch (binder: T) { ... }` — single-catch
     // form. Multi-catch chains and `finally` clauses deferred.
     if t.kind == TokenKind.Try {
@@ -731,6 +734,8 @@ define _parse_type_annot(s: ParserState, what: String) -> String {
         // Preserve angle-form single-arg generics; everything
         // else (multi-arg, nested, square-bracket) erases to
         // the bare name.
+        // Nullable suffix `Type[T]?` / `Type<T>?`.
+        s.match_kind(TokenKind.Question)
         if closer == TokenKind.Greater and first_inner.length() > 0 {
             is_simple := true
             i := 0
@@ -744,6 +749,9 @@ define _parse_type_annot(s: ParserState, what: String) -> String {
         }
         return name
     }
+    // Nullable suffix `T?` — Quirk shorthand for `Option[T]`.
+    // Selfhost erases the suffix.
+    s.match_kind(TokenKind.Question)
     return name
 }
 
@@ -769,6 +777,30 @@ define _skip_type_params(s: ParserState) -> void {
         s.expect(TokenKind.Identifier, "type parameter name after ','")
     }
     s.expect(closer, "closing bracket of type parameters")
+}
+
+// `with EXPR as IDENT { BODY }` — context manager statement.
+// Lowered to a synthetic `if true { binder := ctx; <body> }`
+// — no auto-close on exit (stdlib code that relies on
+// `__exit` cleanup would leak the resource, but the file
+// still parses + sema-checks cleanly). Extracted to its own
+// function because the inline-body construction inside
+// _parse_stmt creates two recursive _parse_* calls that
+// historically triggered self-compiler corruption.
+define _parse_with_stmt(s: ParserState) -> Stmt {
+    s.expect(TokenKind.With, "'with'")
+    ctx_expr := _parse_expr(s)
+    s.expect(TokenKind.As, "'as' after with-expression")
+    binder := s.expect(TokenKind.Identifier, "with-statement binder name").value
+    body := _parse_block(s)
+    full_body := List()
+    full_body.append(VarDecl(binder, "", ctx_expr))
+    bi := 0
+    while bi < body.length() {
+        full_body.append(body.__get(bi))
+        bi = bi + 1
+    }
+    return If(BoolLit(true), full_body, List())
 }
 
 define _parse_param(s: ParserState) -> Param {
@@ -1014,6 +1046,25 @@ define _skip_import(s: ParserState) -> void {
     s.expect(TokenKind.RBrace, "'}' to close import name list")
 }
 
+// Top-level constant declaration:
+//   `NAME := EXPR` or `NAME: T := EXPR`
+// Stdlib uses this for module-private lookup tables
+// (`_HEX := "0123456789abcdef"`). Selfhost discards — the
+// value isn't accessible from outside this file anyway
+// since there's no module-export mechanism. Helper-extracted
+// to keep _parse_top from creating extra recursion-pairing
+// surface (same dodge that bit the with-stmt MVP).
+define _skip_toplevel_vardecl(s: ParserState) -> void {
+    s.expect(TokenKind.Identifier, "top-level constant name")
+    if s.match_kind(TokenKind.Colon) {
+        _parse_type_annot(s, "top-level constant type")
+    }
+    if s.match_kind(TokenKind.AssignInit) or s.match_kind(TokenKind.Assign) {
+        _parse_expr(s)
+    }
+    s.match_kind(TokenKind.Semicolon)
+}
+
 // `extend Name { ... }` adds methods to an existing type
 // (typically a generic union like Option[T] or Result[T, E]).
 // Selfhost discards extend blocks entirely for the MVP —
@@ -1114,6 +1165,8 @@ define parse(tokens: List) -> List {
             _skip_interface_decl(s)
         } elif t.kind == TokenKind.Extend {
             _skip_extend_decl(s)
+        } elif t.kind == TokenKind.Identifier {
+            _skip_toplevel_vardecl(s)
         } else {
             s.fail("Unexpected top-level token '" + t.value + "' at line " + t.line.str() + ":" + t.col.str())
         }

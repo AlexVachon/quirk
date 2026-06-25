@@ -1677,6 +1677,13 @@ standalone_run "ELF: modulo operator + xs[i] = v subscript assign" \
     return sum - 25
 }' \
     42
+# Nullable type suffix `String?` — Quirk shorthand for
+# Option-of-T. Selfhost erases at parse time.
+standalone_run "ELF: Type? nullable suffix erased at parse" \
+    'define f(x: String?) -> Int { return 42 }
+define main() -> Int { return f("hi") }' \
+    42
+
 # Tuple literals lower to a synthetic `__tuple(...)` call —
 # useful for stdlib-coverage parsing (itertools/console
 # compile cleanly) but the call needs a runtime `__tuple`
@@ -1693,4 +1700,4 @@ if [ "$fails" -gt 0 ]; then
     exit 1
 fi
 echo ""
-echo "all 189/189 cases passed"
+echo "all 190/190 cases passed"

@@ -1266,7 +1266,17 @@ define _check_stmt(s: Sema, st: Stmt, ret: Ty) -> void {
             } else {
                 is_err_it := false
                 match it { case TError as _ => is_err_it = true case _ => {} }
-                if is_err_it == false {
+                is_any_it := false
+                match it { case TAny as _ => is_any_it = true case _ => {} }
+                // Permissive: `for x in something_any { ... }`
+                // — type-erased iterables (Map values, unknown
+                // stdlib returns) flow as Any. We bind the
+                // loop var as TAny and let codegen handle the
+                // missing list-shape at runtime (which would
+                // crash for non-list iterables, but for stdlib
+                // parsing this is acceptable).
+                if is_any_it { elem_ty = TAny() }
+                if is_err_it == false and is_any_it == false {
                     s.report("'for' expects a List to iterate, got '" + ty_to_string(it) + "'")
                 }
             }

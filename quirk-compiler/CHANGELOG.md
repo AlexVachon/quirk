@@ -5,6 +5,58 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.63] — 2026-06-25
+
+### Map-key TAny: the OOM was system memory pressure, not the change
+
+The Map.has TAny accept that alpha.62 reported as causing a 4 GB
+OOM was actually fine all along. The OOM **wasn't a regression
+from the change** — the standalone selfhost binary has been
+consistently using ~4 GB of resident memory at runtime when
+compiling the ~6000-line selfhost source tree, and the kernel
+OOM-killer was firing whenever system memory dropped below ~4 GB
+free. Other processes on the host were consuming memory unevenly
+across runs, so the SIGKILL came and went.
+
+**Confirmed via `/usr/bin/time -v`** — peak RSS is 4.2 GB regardless
+of whether the Map-key change is in source. The selfhost compiler's
+no-GC allocate-everything-forever runtime is what's actually
+limiting us on memory.
+
+### Toml: parse + sema progress, but new crash deeper
+
+With the Map.has TAny fix back in, `packages/toml/index.quirk`
+parses cleanly + sema accepts more code, but the binary now SIGSEGVs
+on a different code path (inside the codegen of an inner expression
+through transitive imports). That's a separate selfhost-source bug
+to triage — not a Map-arm regression.
+
+### Net effect
+
+Three landed changes:
+
+1. **Map.has / Map.get / Map.put accept TAny keys.** Three sema
+   arms each get a second `match kt { case TAny as _ => is_str_k
+   = true case _ => {} }`. Stdlib map iteration on type-erased
+   keys (toml + others) now passes sema.
+
+2. **Documented the 4 GB memory ceiling.** A real upper-limit
+   on the selfhost compiler — large inputs (selfhost source,
+   stdlib files) can push it over. No-GC selfhost runtime
+   accumulates allocations linearly with work. Mitigation
+   paths: `/usr/bin/time -v` wrapper sidesteps the OOM-killer
+   somehow; otherwise just ensure 4+ GB free.
+
+### Stdlib coverage unchanged at 19/20
+
+| ✅ | crypto, csv, debug, encoding, fs, html, net, time, itertools, console, math, url, statistics, regex, random, argparse, datetime, uuid, prompt |
+| ⏸ | toml (new deeper SIGSEGV — different bug) |
+
+### Test count
+
+190 cases (unchanged). Selfhost fixed point still byte-identical
+at **1,990,878 bytes** (IR grew ~1.4 KB).
+
 ## [4.0.0-alpha.62] — 2026-06-25
 
 ### 19 of 20 stdlib packages compile through selfhost

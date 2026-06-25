@@ -857,6 +857,7 @@ define _check_method_call(s: Sema, c: Call) -> Ty {
             _check_expr(s, ve)
             is_str_k := false
             match kt { case TString as _ => is_str_k = true case _ => {} }
+            match kt { case TAny as _ => is_str_k = true case _ => {} }
             if is_str_k == false {
                 s.report(".put() key must be String, got '" + ty_to_string(kt) + "'")
                 return TError("method arg")
@@ -872,6 +873,7 @@ define _check_method_call(s: Sema, c: Call) -> Ty {
             kt := _check_expr(s, ke)
             is_str_k := false
             match kt { case TString as _ => is_str_k = true case _ => {} }
+            match kt { case TAny as _ => is_str_k = true case _ => {} }
             if is_str_k == false {
                 s.report(".get() key must be String, got '" + ty_to_string(kt) + "'")
                 return TError("method arg")
@@ -890,6 +892,7 @@ define _check_method_call(s: Sema, c: Call) -> Ty {
             kt := _check_expr(s, ke)
             is_str_k := false
             match kt { case TString as _ => is_str_k = true case _ => {} }
+            match kt { case TAny as _ => is_str_k = true case _ => {} }
             if is_str_k == false {
                 s.report(".has() key must be String, got '" + ty_to_string(kt) + "'")
                 return TError("method arg")

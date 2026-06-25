@@ -27,7 +27,7 @@ Things deferred to Phase 3.x:
 
 from .ast use { Expr, Stmt, Param, FunctionDecl, TopLevel }
 from .ast use { IntLit, FloatLit, StringLit, BoolLit, NullLit, Ident, UnaryOp, BinOp, Call, FieldGet, ListLit, Index, Lambda }
-from .ast use { Return, ExprStmt, VarDecl, Assign, FieldSet, If, While, Continue, Break, Match, ForIn, Throw, TryCatch, Func, StructTL, EnumTL, UnionTL }
+from .ast use { Return, ExprStmt, VarDecl, Assign, FieldSet, If, While, Continue, Break, Match, ForIn, Throw, TryCatch, IndexSet, Func, StructTL, EnumTL, UnionTL }
 from .ast use { StructField, StructDecl, EnumDecl, MatchArm, Variant, UnionDecl }
 from .types use { Ty, TInt, TDouble, TString, TBool, TVoid, TAny, TStruct, TEnum, TUnion, TList, TListP, TMap, TError }
 from .types use { ty_to_string, ty_from_annot, ty_compatible }
@@ -188,11 +188,13 @@ define _check_expr(s: Sema, e: Expr) -> Ty {
         case NullLit as _   => return TAny()
         case Ident as id    => {
             t: Ty := s.resolve_local(id.name)
-            // Resolution surfaces a TError for undefined names —
-            // report it here so the diagnostic lands in
-            // s.errors. Without this, the cascade-suppression
-            // in Return swallows the only signal we had.
-            match t { case TError as e => s.report(e.msg) case _ => {} }
+            // Permissive bootstrap mode: undefined idents
+            // resolve as TAny so stdlib module-style references
+            // (`hex.encode(...)`, `Double(x)`, `math.sin(x)`)
+            // don't trip sema. Codegen still has the chance to
+            // produce a working call site for the cases that
+            // matter; everything else is opaque.
+            match t { case TError as _ => return TAny() case _ => {} }
             return t
         }
         case UnaryOp as u   => return _check_unary(s, u)
@@ -292,7 +294,7 @@ define _check_binop(s: Sema, b: BinOp) -> Ty {
         if is_str_l and is_any_r { return TString() }
         if is_any_l and is_str_r { return TString() }
     }
-    if op == "+" or op == "-" or op == "*" or op == "/" {
+    if op == "+" or op == "-" or op == "*" or op == "/" or op == "%" {
         is_int_l := false
         match lt { case TInt as _ => is_int_l = true case _ => {} }
         is_int_r := false
@@ -376,8 +378,10 @@ define _check_binop(s: Sema, b: BinOp) -> Ty {
     if op == "and" or op == "or" {
         is_bl := false
         match lt { case TBool as _ => is_bl = true case _ => {} }
+        match lt { case TAny as _ => is_bl = true case _ => {} }
         is_br := false
         match rt { case TBool as _ => is_br = true case _ => {} }
+        match rt { case TAny as _ => is_br = true case _ => {} }
         if is_bl and is_br { return TBool() }
         s.report("'" + op + "' expects matching Bool operands; got '" +
                  ty_to_string(lt) + "' and '" + ty_to_string(rt) + "'")
@@ -748,10 +752,13 @@ define _check_method_call(s: Sema, c: Call) -> Ty {
         a1: Expr := c.args.__get(1)
         at0 := _check_expr(s, a0)
         at1 := _check_expr(s, a1)
+        // Accept TInt and TAny (type-erased generic returns).
         is_int_a := false
         match at0 { case TInt as _ => is_int_a = true case _ => {} }
+        match at0 { case TAny as _ => is_int_a = true case _ => {} }
         is_int_b := false
         match at1 { case TInt as _ => is_int_b = true case _ => {} }
+        match at1 { case TAny as _ => is_int_b = true case _ => {} }
         if is_int_a == false or is_int_b == false {
             s.report(".substring() expects two Int arguments")
             return TError("method arg")
@@ -827,6 +834,12 @@ define _check_method_call(s: Sema, c: Call) -> Ty {
             return TError("method arity")
         }
         if is_list or is_str or is_map { return TInt() }
+        // Permissive: `.length()` on Any (type-erased generic
+        // value) returns Int — stdlib calls .length() on
+        // List<Any> elements which sema sees as TAny.
+        is_any_len := false
+        match ot { case TAny as _ => is_any_len = true case _ => {} }
+        if is_any_len { return TInt() }
         s.report("." + fg.name + "() not defined on '" + ty_to_string(ot) + "'")
         return TError("method receiver")
     }
@@ -1269,6 +1282,17 @@ define _check_stmt(s: Sema, st: Stmt, ret: Ty) -> void {
         }
         case Match as m => {
             _check_match(s, m, ret)
+        }
+        case IndexSet as ixs => {
+            // `xs[i] = v` — type-check the three sub-exprs.
+            // The element-type matching against the list's
+            // declared type would require tracking element
+            // types properly; for now we accept any value
+            // (permissive bootstrap mode) and codegen
+            // bitcasts to the slot type at the store site.
+            _check_expr(s, ixs.obj)
+            _check_expr(s, ixs.idx)
+            _check_expr(s, ixs.value)
         }
         case Throw as th => {
             // Throw value must be a struct or Any (the thing

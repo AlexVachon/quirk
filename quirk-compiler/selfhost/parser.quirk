@@ -35,7 +35,7 @@ worked around in tokens.quirk's `__str` impl.
 from .tokens use { TokenKind, Token }
 from .ast use { Expr, Stmt, Param, FunctionDecl, TopLevel }
 from .ast use { IntLit, FloatLit, StringLit, BoolLit, NullLit, Ident, UnaryOp, BinOp, Call, FieldGet, ListLit, Index, Lambda }
-from .ast use { Return, ExprStmt, VarDecl, Assign, FieldSet, If, While, Continue, Break, Match, ForIn, Throw, TryCatch, Func, StructTL, EnumTL, UnionTL }
+from .ast use { Return, ExprStmt, VarDecl, Assign, FieldSet, If, While, Continue, Break, Match, ForIn, Throw, TryCatch, IndexSet, Func, StructTL, EnumTL, UnionTL }
 from .ast use { StructField, StructDecl, EnumDecl, MatchArm, Variant, UnionDecl }
 
 struct ParserState {
@@ -313,7 +313,7 @@ define _parse_unary(s: ParserState) -> Expr {
 
 define _parse_mul(s: ParserState) -> Expr {
     left := _parse_unary(s)
-    while s.check(TokenKind.Star) or s.check(TokenKind.Slash) {
+    while s.check(TokenKind.Star) or s.check(TokenKind.Slash) or s.check(TokenKind.Percent) {
         op_tok: Token := s.advance()
         right := _parse_unary(s)
         left = BinOp(op_tok.value, left, right)
@@ -550,6 +550,7 @@ define _parse_stmt(s: ParserState) -> Stmt {
         match lhs {
             case Ident as id => return Assign(id.name, rhs)
             case FieldGet as fg => return FieldSet(fg.obj, fg.name, rhs)
+            case Index as ix => return IndexSet(ix.obj, ix.idx, rhs)
             case _ => {
                 s.fail("invalid assignment target at line " + t.line.str() + ":" + t.col.str())
                 return ExprStmt(lhs)

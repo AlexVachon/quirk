@@ -67,6 +67,7 @@ type Stmt =
     | ForIn(var_name: String, iter: Expr, body: List)
     | Throw(value: Expr)
     | TryCatch(try_body: List, binder: String, binder_type: String, catch_body: List)
+    | IndexSet(obj: Expr, idx: Expr, value: Expr)
 
 ---
 A single arm of a match statement. `pattern` is the variant

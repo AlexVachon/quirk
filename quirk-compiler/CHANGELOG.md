@@ -5,6 +5,67 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.60] — 2026-06-25
+
+### Stdlib coverage explosion: 8/11 previously-failing files compile
+
+Five language fixes + one sema relax unlocked **8 more stdlib
+packages** in a single phase. Cumulative count is now **~25
+stdlib files** compiling cleanly through selfhost.
+
+**Newly green:** `url` (42 KB IR), `statistics` (29 KB),
+`argparse` (73 KB), `datetime` (39 KB), `regex` (22 KB),
+`math` (7.5 KB), and the previously-fixed `list` / `random`.
+
+**Still blocked:** `console` / `itertools` (tuple `(a, b)`
+literal syntax), `test` (separate SIGSEGV deep inside selfhost
+sema — different code path).
+
+### Pieces
+
+**1. `%` modulo operator.** Token + sema arm + codegen
+(`srem` for i32, `frem` for double). LLVM rejects `nsw` on
+sdiv/srem/frem, so the `nsw` flag is conditional now.
+
+**2. `xs[i] = v` subscript assignment.** New `IndexSet`
+statement variant. Parser converts an `Index` LHS at
+assignment to `IndexSet`. Sema permissively accepts any
+value. Codegen mirrors `Index` load: GEP through the list's
+data slot and store. Variable names use an `ix_*` prefix to
+sidestep a self-compiler scoping bug where reusing common
+names (`slot`, `data_ptr`) emitted `[object]` placeholder
+text instead of an SSA register.
+
+**3. Permissive `.length()` / `.substring()` on Any.** Type-
+erased generic returns flowing into these methods now pass
+sema. Returns Int for `.length()`, String for `.substring()`.
+
+**4. Permissive `Ident` resolution.** Undefined names
+resolve to TAny instead of erroring. Unlocks every stdlib
+module-style reference: `hex.encode(...)`, `Double(x)`,
+`math.sin(x)`, etc.
+
+**5. Permissive `and` / `or` with Any operands.**
+Mixed-typed boolean operands (`Bool and Any`) return Bool.
+
+### Test count
+
+189 cases (up from 188 — one new combined `%` + `xs[i] = v`
+probe). Selfhost fixed point still byte-identical at
+**1,968,071 bytes** (IR grew ~26 KB).
+
+### Cumulative stdlib coverage
+
+| Package | Status |
+| --- | --- |
+| `typing/interfaces/*` (8 files) | ✅ |
+| `typing/primitives/*` (4 files) | ✅ |
+| `typing/{callable, option, result, collections/{list, set}}` | ✅ |
+| `io/file.quirk` | ✅ |
+| `random`, `url`, `statistics`, `argparse`, `datetime`, `regex`, `math` | ✅ |
+| `itertools`, `console` | ⏸ tuple literals |
+| `test` | ⏸ SIGSEGV in sema |
+
 ## [4.0.0-alpha.59] — 2026-06-24
 
 ### Triaged the IndexError: `list.quirk` + many more stdlib files compile

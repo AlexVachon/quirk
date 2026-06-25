@@ -35,7 +35,7 @@ Deferred:
 
 from .ast use { Expr, Stmt, Param, FunctionDecl, TopLevel }
 from .ast use { IntLit, FloatLit, StringLit, BoolLit, NullLit, Ident, UnaryOp, BinOp, Call, FieldGet, ListLit, Index, Lambda }
-from .ast use { Return, ExprStmt, VarDecl, Assign, FieldSet, If, While, Continue, Break, Match, ForIn, Throw, TryCatch, Func, StructTL, EnumTL, UnionTL }
+from .ast use { Return, ExprStmt, VarDecl, Assign, FieldSet, If, While, Continue, Break, Match, ForIn, Throw, TryCatch, IndexSet, Func, StructTL, EnumTL, UnionTL }
 from .ast use { StructField, StructDecl, EnumDecl, MatchArm, Variant, UnionDecl }
 
 ---
@@ -703,11 +703,16 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
             if op == "-" { int_instr = "sub"  dbl_instr = "fsub" }
             if op == "*" { int_instr = "mul"  dbl_instr = "fmul" }
             if op == "/" { int_instr = "sdiv" dbl_instr = "fdiv" }
+            if op == "%" { int_instr = "srem" dbl_instr = "frem" }
+            // `nsw` (no-signed-wrap) is only valid on add/sub/
+            // mul; sdiv/srem/frem reject it.
+            int_flag := " nsw"
+            if op == "/" or op == "%" { int_flag = "" }
             reg := cg.fresh()
             if is_dbl {
                 cg.emit(reg + " = " + dbl_instr + " double " + l + ", " + r)
             } else {
-                cg.emit(reg + " = " + int_instr + " nsw i32 " + l + ", " + r)
+                cg.emit(reg + " = " + int_instr + int_flag + " i32 " + l + ", " + r)
             }
             return reg
         }
@@ -2734,6 +2739,45 @@ define _gen_stmt(cg: FnCG, st: Stmt) -> void {
             if n > 0 {
                 tail: String := cg.loop_end.__get(n - 1)
                 cg.emit("br label %" + tail)
+            }
+        }
+        case IndexSet as ixs => {
+            // `xs[i] = v` — mirrors the load shape from
+            // Index in _gen_expr, but with a store instead.
+            // %QListP* writes i8* slots; %QList* writes i32.
+            base_ty := _expr_static_ty(cg, ixs.obj)
+            base_reg := _gen_expr(cg, ixs.obj)
+            idx_reg := _gen_expr(cg, ixs.idx)
+            val_ty := _expr_static_ty(cg, ixs.value)
+            val_reg := _gen_expr(cg, ixs.value)
+            if base_ty == "%QListP*" {
+                ix_data_gep := cg.fresh()
+                cg.emit(ix_data_gep + " = getelementptr inbounds %QListP, %QListP* " + base_reg +
+                        ", i32 0, i32 2")
+                ix_data_ptr := cg.fresh()
+                cg.emit(ix_data_ptr + " = load i8**, i8*** " + ix_data_gep)
+                ix_elem_gep := cg.fresh()
+                cg.emit(ix_elem_gep + " = getelementptr inbounds i8*, i8** " + ix_data_ptr +
+                        ", i32 " + idx_reg)
+                v_i8 := val_reg
+                if val_ty != "i8*" {
+                    if _is_ptr_ty(val_ty) {
+                        ix_cast := cg.fresh()
+                        cg.emit(ix_cast + " = bitcast " + val_ty + " " + val_reg + " to i8*")
+                        v_i8 = ix_cast
+                    }
+                }
+                cg.emit("store i8* " + v_i8 + ", i8** " + ix_elem_gep)
+            } else {
+                ix_data_gep := cg.fresh()
+                cg.emit(ix_data_gep + " = getelementptr inbounds %QList, %QList* " + base_reg +
+                        ", i32 0, i32 2")
+                ix_data_ptr := cg.fresh()
+                cg.emit(ix_data_ptr + " = load i32*, i32** " + ix_data_gep)
+                ix_elem_gep := cg.fresh()
+                cg.emit(ix_elem_gep + " = getelementptr inbounds i32, i32* " + ix_data_ptr +
+                        ", i32 " + idx_reg)
+                cg.emit("store i32 " + val_reg + ", i32* " + ix_elem_gep)
             }
         }
         case Throw as th => {

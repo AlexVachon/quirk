@@ -1663,6 +1663,20 @@ standalone_run "ELF: `x in xs` and `x not in xs` membership operators" \
     return n
 }' \
     42
+standalone_run "ELF: modulo operator + xs[i] = v subscript assign" \
+    'define main() -> Int {
+    xs := [10, 20, 30, 40, 50]
+    xs[2] = 7
+    sum := 0
+    i := 0
+    while i < 5 {
+        if i % 2 == 0 { sum = sum + xs[i] }
+        i = i + 1
+    }
+    // i=0: +10, i=2: +7, i=4: +50 = 67; want 42 → 67 - 25
+    return sum - 25
+}' \
+    42
 # (the stdout=on stdout assertion implicitly proves eprint did
 # NOT show up there — it was routed to stderr instead.)
 
@@ -1672,4 +1686,4 @@ if [ "$fails" -gt 0 ]; then
     exit 1
 fi
 echo ""
-echo "all 188/188 cases passed"
+echo "all 189/189 cases passed"

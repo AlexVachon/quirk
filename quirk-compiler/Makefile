@@ -43,7 +43,15 @@ DEPS = $(OBJS:.o=.d)
 LINENOISE_SRC = src/third_party/linenoise/linenoise.c
 LINENOISE_OBJ = $(OBJ_DIR)/third_party/linenoise/linenoise.o
 
-TARGET = $(BIN_DIR)/quirk
+# --- v5.0.0 cutover note ---
+# `$(TARGET)` is the C++ compiler — kept as `bin/quirk-cpp` so the
+# user-facing `bin/quirk` can be the new selfhost-driven wrapper.
+# The C++ binary stays the source-of-truth for the bootstrap chain
+# (selfhost is compiled from selfhost/ source via this binary), and
+# remains the fallback for package manager subcommands until those
+# move into selfhost.
+TARGET = $(BIN_DIR)/quirk-cpp
+DRIVER = $(BIN_DIR)/quirk
 
 # --- 2. RUNTIME LIBRARY ---
 # Entry point (unity build — includes all .c files below)
@@ -79,7 +87,7 @@ RUNTIME_LIB = $(BIN_DIR)/runtime.so
 
 # --- RULES ---
 
-all: $(TARGET) $(RUNTIME_LIB)
+all: $(TARGET) $(RUNTIME_LIB) $(SELFHOST_BIN) $(DRIVER)
 
 $(TARGET): $(OBJS) $(LINENOISE_OBJ)
 	@mkdir -p $(BIN_DIR)
@@ -154,6 +162,17 @@ selfhost-binary: $(SELFHOST_BIN)
 	@echo "  size:  $$(stat -c%s $(SELFHOST_BIN)) bytes"
 	@echo ""
 	@echo "  usage: $(SELFHOST_BIN) <source.quirk> [out.ll]"
+
+# --- DRIVER WRAPPER (the user-facing bin/quirk for v5.0.0) ------------------
+# Installs the selfhost-driven compile + JIT-execute wrapper at
+# $(DRIVER). Falls back to bin/quirk-cpp for package manager
+# subcommands. Depends on the selfhost binary + runtime + C++
+# binary (for the fallback) being present.
+$(DRIVER): selfhost/quirk-driver.sh $(SELFHOST_BIN) $(RUNTIME_LIB) $(TARGET)
+	@mkdir -p $(BIN_DIR)
+	cp selfhost/quirk-driver.sh $@
+	chmod +x $@
+	@echo "  installed: $@ (selfhost-driven; fallback to $(TARGET))"
 
 # --- SELFHOST FIXED-POINT VERIFICATION -------------------------------------
 # The canonical bootstrap proof: the self-hosted compiler is a stable

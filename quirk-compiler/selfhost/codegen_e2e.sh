@@ -9,7 +9,10 @@
 #   3. Pipe to lli-14 and compare the exit code against expected.
 
 set -u
-QUIRK="${QUIRK:-./bin/quirk}"
+# v5.0.0: `bin/quirk` is the selfhost-driven driver wrapper now.
+# This suite exercises the C++ compiler's codegen — point at the
+# renamed binary directly. Override with `QUIRK=…` to retarget.
+QUIRK="${QUIRK:-./bin/quirk-cpp}"
 LLI="${LLI:-lli-14}"
 export QUIRK_HOME="${QUIRK_HOME:-$(pwd)}"
 

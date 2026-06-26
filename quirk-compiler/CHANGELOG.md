@@ -5,6 +5,79 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [5.0.0-alpha.0] — 2026-06-26 — **bin/quirk cutover**
+
+The user-facing `bin/quirk` is now the selfhost-driven compiler
+driver. v5.0.0 MVP scope.
+
+### What changed
+
+- **`bin/quirk` is a shell wrapper** that orchestrates the
+  selfhost pipeline: emit IR via `bin/quirk-selfhost`, lower
+  via `llc-14`, link via `clang-14 -no-pie` against
+  `bin/runtime.so`, then `exec` the result. The user sees
+  the same `quirk source.quirk` UX they had under the C++
+  compiler, but the compilation is done by the selfhost
+  binary.
+- **`bin/quirk-cpp`** is the renamed C++ compiler. Still the
+  bootstrap entry point — Makefile builds it first, then
+  uses it to compile `selfhost/*.quirk` into
+  `bin/quirk-selfhost`. Also the fallback target for
+  package manager subcommands (`quirk install`, `quirk
+  new`, …) which the wrapper routes through.
+- **Makefile `all:`** now produces all four artifacts:
+  `bin/quirk-cpp`, `bin/runtime.so`, `bin/quirk-selfhost`,
+  and the `bin/quirk` driver script. `make` is enough to
+  get a working v5.0.0 install.
+
+### Wrapper CLI
+
+```
+quirk <source.quirk>                 # compile + execute
+quirk <source.quirk> -o <out.ll>     # emit IR to file
+quirk --ir <source.quirk>            # emit IR to stdout
+quirk <source.quirk> -- <prog args>  # forward args to program
+quirk --cpp <args>                   # delegate to bin/quirk-cpp
+quirk pkg install <name>             # routes to bin/quirk-cpp
+```
+
+`--no-aot` and `--no-cache` are accepted as no-ops for
+backward compat (selfhost has no AOT cache).
+
+### What works on the new driver
+
+- `quirk source.quirk` (compile + execute) on programs that
+  selfhost can correctly emit IR for — at the cutover this
+  is at least the 3/60 corpus tests that match C++ output
+  byte-for-byte (enum_test, gc_test, alias_import_test),
+  plus selfhost compiling itself (the bootstrap fixed-point
+  holds).
+- `quirk --ir source.quirk` for IR inspection.
+- `quirk pkg …` and other package manager subcommands
+  (transparently delegated to `bin/quirk-cpp`).
+
+### What needs more work
+
+The 57/60 corpus tests that don't yet compile-and-execute
+correctly through selfhost still need codegen work to
+bridge the typed-struct-pointer ABI between stdlib (which
+uses `%struct.String*`, `%struct.List*`) and selfhost
+(which mostly treats things as i8* / i32). Tracked under
+the run-the-corpus thread in CHANGELOG entries
+.79 / .80 / .82.
+
+### Bootstrap chain (unchanged in structure)
+
+```
+src/*.cpp + src/Runtime/*.c   →  bin/quirk-cpp (C++ compiler)
+selfhost/*.quirk + bin/quirk-cpp →  bin/quirk-selfhost (ELF)
+selfhost/quirk-driver.sh + above →  bin/quirk (driver wrapper)
+```
+
+Test infra: `selfhost/codegen_e2e.sh` updated to target
+`bin/quirk-cpp` directly (was `bin/quirk`). 190/190 e2e
+cases pass; fixed-point byte-identical self-stage holds.
+
 ## [4.0.0-alpha.82] — 2026-06-26
 
 ### Codegen: Callable indirect calls, pointer/int coercion, String* unwrap

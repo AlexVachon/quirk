@@ -5,6 +5,72 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.79] — 2026-06-25
+
+### Run-the-corpus diagnosis + first-cut codegen repairs
+
+Started executing the 60 parse-passing corpus tests end-to-end
+through selfhost (emit IR → llc → clang → run). Baseline before
+this release: **2/60 produced output identical to the C++
+compiler** (enum_test, gc_test); 1 ran but with wrong output
+(match_test); 22 link-failed on missing `TestCase` stdlib
+symbol; the rest failed at IR-emit or llc validation.
+
+Three codegen fixes land that move some tests from "IR doesn't
+even validate" to "produces output (sometimes wrong)". The
+fixed-point + 190-case e2e regression both still green.
+
+**1. Bad-method fallback emits `0` not `<bad-method:foo>`.**
+Permissive sema accepts unknown methods on opaque receivers
+and returns TAny; codegen previously emitted a placeholder
+text token that llc rejected. Now returns the integer zero
+literal, which type-checks for `i32` slots (the default
+static return type for unknown methods).
+
+**2. Pointer-return coercion.** When `return EXPR` flows
+through a function whose declared return type is a pointer
+(`i8*`, `%struct.Foo*`, etc.) and the value text is the
+integer zero, swap to `null` — LLVM requires `null` not `0`
+for pointer literals.
+
+**3. Print arg coercion.** `print(EXPR)` lowers to
+`puts(i8* %arg)`. When the arg's static type is non-pointer
+(typically `i32` from a bad-method fallback), inject an
+`inttoptr` cast — or, when the value is literal zero, swap
+to `null`.
+
+**4. Module-qualified call rewrite.** `module.fn(args)` where
+`module` is a free identifier (not a local variable) and
+`fn` matches a known top-level function name now lowers to
+a direct call `@fn(args)`. Recovers `from .mod as alias`
+imports where the alias is used in calls — selfhost has no
+first-class module representation otherwise. Applied at
+both `_gen_expr` and `_expr_static_ty` so the return-type
+inference matches the emitted call.
+
+### Status after fixes
+
+- **Run-clean and output-matches-C++**: 2/36 of non-TestCase tests.
+- **Run-clean but output differs**: 3 (match_test runs all
+  arms unconditionally; alias_import_test segfaults inside
+  `shout` because `msg.upper()` falls through to bad-method
+  → null → `puts(null)`).
+- **IR-fail or llc-reject**: 24 (remaining type-mismatches).
+- **Link-fail**: 4 (missing extern stdlib symbols).
+- **Tests using `TestCase`**: 24 — separately link-fail on
+  missing test-framework symbol; need stdlib bundling.
+
+### Lessons for next phase
+
+The cosmetic-sema relaxations from alpha.74-78 have a real
+cost: codegen can't tell "selfhost knows nothing about this
+method" from "method genuinely doesn't exist." The next lift
+is wiring unknown methods through to the runtime by naming
+convention — most stdlib methods like `.upper()`, `.lower()`,
+`.trim()` already exist as `Core_String_String_upper` etc.
+in `bin/runtime.so` and just need a mangling rule in
+`_gen_method_call`'s tail.
+
 ## [4.0.0-alpha.78] — 2026-06-25
 
 ### Test-corpus coverage: 44/60 → 60/60 (FULL CORPUS)

@@ -740,13 +740,41 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
             // for valid method calls.
             is_method := false
             match c.callee { case FieldGet as _ => is_method = true case _ => {} }
+            // Module-qualified call `module.fn(args)`: when the
+            // FieldGet's object is a free identifier (not a
+            // local) and the field name matches a known
+            // top-level function, treat this as a direct call
+            // to that function. Quirk's module-aliased imports
+            // (`from .mod as m`) reach codegen as plain Ident
+            // chains since selfhost has no first-class module
+            // representation; this rewrite recovers them.
+            rewritten_name := ""
+            if is_method {
+                fg_cb: FieldGet := c.callee
+                match fg_cb.obj {
+                    case Ident as oid => {
+                        if cg.locals.has(oid.name) == false {
+                            cb_llvm := _llvm_fn_name(fg_cb.name)
+                            if cg.mod.sigs.has(cb_llvm) {
+                                rewritten_name = fg_cb.name
+                                is_method = false
+                            }
+                        }
+                    }
+                    case _ => {}
+                }
+            }
             if is_method {
                 return _gen_method_call(cg, c)
             }
             name := ""
-            match c.callee {
-                case Ident as id => name = id.name
-                case _ => name = "<bad-callee>"
+            if rewritten_name != "" {
+                name = rewritten_name
+            } else {
+                match c.callee {
+                    case Ident as id => name = id.name
+                    case _ => name = "<bad-callee>"
+                }
             }
             // print(<String expr>) lowers to `call i32 @puts(i8* %arg)`.
             // The argument codegen path already produces an i8*
@@ -757,6 +785,19 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
             if name == "print" and c.args.length() == 1 {
                 arg0: Expr := c.args.__get(0)
                 arg_reg := _gen_expr(cg, arg0)
+                arg_ty := _expr_static_ty(cg, arg0)
+                // If the arg is a non-pointer scalar (bad-method
+                // fallback emits literal `0` typed as i32), we
+                // can't shove it into `puts` as an i8* — coerce
+                // through an inttoptr cast so the IR type-checks.
+                // The runtime value is meaningless either way.
+                if arg_reg == "0" {
+                    arg_reg = "null"
+                } elif _is_ptr_ty(arg_ty) == false {
+                    cast_reg := cg.fresh()
+                    cg.emit(cast_reg + " = inttoptr " + arg_ty + " " + arg_reg + " to i8*")
+                    arg_reg = cast_reg
+                }
                 cg.mod.ensure_decl("puts", "declare i32 @puts(i8*)")
                 reg := cg.fresh()
                 cg.emit(reg + " = call i32 @puts(i8* " + arg_reg + ")")
@@ -1095,6 +1136,22 @@ define _expr_static_ty(cg: FnCG, e: Expr) -> String {
             match c.callee { case FieldGet as _ => is_method = true case _ => {} }
             if is_method {
                 fg: FieldGet := c.callee
+                // Module-qualified call rewrite (matches _gen_expr):
+                // if FieldGet's obj is a free identifier and the
+                // method name matches a known top-level function,
+                // return that function's tracked return type.
+                match fg.obj {
+                    case Ident as oid => {
+                        if cg.locals.has(oid.name) == false {
+                            llv := _llvm_fn_name(fg.name)
+                            if cg.mod.sigs.has(llv) {
+                                msig: _Sig := cg.mod.sigs.get(llv)
+                                return msig.ret_ty
+                            }
+                        }
+                    }
+                    case _ => {}
+                }
                 rcv := _expr_static_ty(cg, fg.obj)
                 return _method_ret_ty(cg, rcv, fg.name)
             }
@@ -1486,7 +1543,15 @@ define _gen_method_call(cg: FnCG, c: Call) -> String {
             return sel
         }
     }
-    return "<bad-method:" + fg.name + ">"
+    // Unknown method on a non-permissive-handled receiver type.
+    // Sema accepted this through the permissive path; codegen
+    // has no real lowering, but we can't emit a placeholder
+    // text token (`<bad-method:foo>`) because llc would reject
+    // it as invalid IR. Emit a zero constant — the slot's
+    // static type drives the load/store width. The program
+    // will produce wrong runtime output but the IR will at
+    // least compile to ELF.
+    return "0"
 }
 
 // Lower `xs.append(v)`. Reads the header's length + capacity;
@@ -2773,6 +2838,13 @@ define _gen_stmt(cg: FnCG, st: Stmt) -> void {
                 cast := cg.fresh()
                 cg.emit(cast + " = bitcast " + v_ty + " " + v + " to " + cg.ret_ty)
                 v = cast
+            }
+            // `0` doesn't type-check as a pointer literal; LLVM
+            // wants `null`. Swap when the ret_ty is a pointer
+            // and the value text is the integer zero (typically
+            // emitted by the bad-method / bad-callee fallback).
+            if v == "0" and _is_ptr_ty(cg.ret_ty) {
+                v = "null"
             }
             cg.emit("ret " + cg.ret_ty + " " + v)
         }

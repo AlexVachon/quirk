@@ -64,7 +64,7 @@ static std::string self_binary();
 
 namespace qpm {
 
-constexpr const char* QUIRK_VERSION = "4.0.0-alpha.79";
+constexpr const char* QUIRK_VERSION = "4.0.0-alpha.80";
 
 namespace fs = std::filesystem;
 

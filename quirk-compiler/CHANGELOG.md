@@ -5,6 +5,57 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.80] — 2026-06-25
+
+### Run-the-corpus: 2/36 → 3/36 matching C++ output
+
+Inline lowerings for common String methods that don't need
+the runtime's `String*` wrapper. Fixed-point + 190-case e2e
+regression both green.
+
+**1. `s.upper()` / `s.lower()`.** Allocates a fresh malloc'd
+buffer, walks input byte-by-byte via libc `toupper`/`tolower`,
+null-terminates. Pure libc — no runtime helper needed. Was
+the blocker on `alias_import_test` segfaulting inside `shout`
+(now MATCH).
+
+**2. `s.contains(sub)`.** Lowers to `strstr(s, sub) != null`.
+
+**3. `s.size()` / `s.is_empty()`.** size is alias for length
+(strlen). is_empty is `*s == '\0'`.
+
+**4. `.size()` on List / Map.** Alias for `.length()` —
+direct GEP read of the `length` header field.
+
+**5. String passthroughs.** `title`, `capitalize`,
+`sentence_case`, `trim`, `trim_start`, `trim_end`, `swapcase`,
+`reverse`, `replace` all return the input unchanged. Wrong
+runtime output but valid IR — keeps surrounding code able
+to compile and run.
+
+**6. Bad-method fallback uses `null` for pointer return
+types.** Previously emitted `0` unconditionally, which
+type-checks as integer but fails llc when used downstream
+as an i8* (e.g. `strlen(i8* 0)` in string-concat lowering).
+Now `_method_ret_ty`-driven: pointer returns get `null`,
+integer returns get `0`.
+
+**7. String-concat operand coercion.** `String + String` BinOp
+lowering swaps literal-`0` operands to `null` before passing
+to strlen. Same shape as the print-arg coercion in alpha.79.
+
+### Status
+
+Run-clean baseline: 3/36 of non-TestCase tests produce
+output identical to the C++ compiler. The remaining 33 hit
+deeper issues (stdlib module bundling, struct field-access
+indexing, double-vs-int return-type mismatches) — the
+String method work alone won't push the count much higher.
+The next-most-impactful single lift is bundling absolute
+package imports (`from io use { … }`) so tests that depend
+on stdlib `console`/`io`/`http`/`fs`/`time`/`crypto` can
+actually link.
+
 ## [4.0.0-alpha.79] — 2026-06-25
 
 ### Run-the-corpus diagnosis + first-cut codegen repairs

@@ -505,10 +505,50 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
             // data buffer are separate allocations (Phase 4.15+)
             // so we can't reach the element via a single GEP.
             // Dispatch on receiver type: %QList* uses i32
-            // storage, %QListP* uses i8* storage.
+            // storage, %QListP* uses i8* storage; %QMap* gets
+            // a method-style `.get` call; %struct.String*
+            // unwraps to the buffer + byte-load (single-char
+            // indexing).
             base_ty := _expr_static_ty(cg, ix.obj)
             base_reg := _gen_expr(cg, ix.obj)
+            // Map indexing `m[key]` → equivalent of `m.get(key)`.
+            // Route through the existing inline Map.get codegen
+            // rather than calling the runtime stdlib helper —
+            // selfhost's %QMap struct layout differs from the
+            // runtime's %struct.Map and the two ABIs are not
+            // interchangeable. Skip pre-evaluating ix.idx;
+            // _gen_map_method does its own arg gen.
+            if base_ty == "%QMap*" {
+                map_args := List()
+                map_args.append(ix.idx)
+                return _gen_map_method(cg, "get", base_reg, map_args)
+            }
             idx_reg := _gen_expr(cg, ix.idx)
+            // String indexing `s[i]` → byte-load.
+            if base_ty == "i8*" or base_ty == "%struct.String*" {
+                buf := base_reg
+                if base_ty == "%struct.String*" {
+                    gep := cg.fresh()
+                    cg.emit(gep + " = getelementptr inbounds %struct.String, %struct.String* " + base_reg + ", i32 0, i32 0")
+                    bufreg := cg.fresh()
+                    cg.emit(bufreg + " = load i8*, i8** " + gep)
+                    buf = bufreg
+                }
+                idx_ty2 := _expr_static_ty(cg, ix.idx)
+                idx64 := idx_reg
+                if idx_ty2 == "i32" {
+                    s64 := cg.fresh()
+                    cg.emit(s64 + " = sext i32 " + idx_reg + " to i64")
+                    idx64 = s64
+                }
+                ch_gep := cg.fresh()
+                cg.emit(ch_gep + " = getelementptr inbounds i8, i8* " + buf + ", i64 " + idx64)
+                ch := cg.fresh()
+                cg.emit(ch + " = load i8, i8* " + ch_gep)
+                ext := cg.fresh()
+                cg.emit(ext + " = zext i8 " + ch + " to i32")
+                return ext
+            }
             if base_ty == "%QListP*" {
                 data_gep := cg.fresh()
                 cg.emit(data_gep + " = getelementptr inbounds %QListP, %QListP* " + base_reg +
@@ -697,6 +737,28 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
             if op == ">"  { int_pred = "sgt" dbl_pred = "ogt" }
             if op == ">=" { int_pred = "sge" dbl_pred = "oge" }
             if int_pred.length() > 0 {
+                // %struct.String* operand on either side — unwrap
+                // to the `_buffer` field so the comparison routes
+                // through the strcmp/i8* path below. Symmetric
+                // to the `+` concat handling above.
+                rt_cmp := _expr_static_ty(cg, b.right)
+                if opd_ty == "%struct.String*" or rt_cmp == "%struct.String*" {
+                    opd_ty = "i8*"
+                    if _expr_static_ty(cg, b.left) == "%struct.String*" {
+                        gepl_c := cg.fresh()
+                        cg.emit(gepl_c + " = getelementptr inbounds %struct.String, %struct.String* " + l + ", i32 0, i32 0")
+                        lbuf_c := cg.fresh()
+                        cg.emit(lbuf_c + " = load i8*, i8** " + gepl_c)
+                        l = lbuf_c
+                    }
+                    if rt_cmp == "%struct.String*" {
+                        gepr_c := cg.fresh()
+                        cg.emit(gepr_c + " = getelementptr inbounds %struct.String, %struct.String* " + r + ", i32 0, i32 0")
+                        rbuf_c := cg.fresh()
+                        cg.emit(rbuf_c + " = load i8*, i8** " + gepr_c)
+                        r = rbuf_c
+                    }
+                }
                 // String comparisons — all six predicates
                 // route through strcmp. Equality (`==` / `!=`)
                 // compares the strcmp result against zero;
@@ -1077,6 +1139,19 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
                     cg.emit(cast_reg + " = bitcast i8* " + av + " to " + pty)
                     av = cast_reg
                 }
+                // Reverse direction: arg is a specific struct
+                // pointer (e.g. %struct.ArgSpec*) but the param
+                // expects i8* (stdlib functions typed for the
+                // Any ABI). Bitcast to i8*. Also handles
+                // %QListP*→i8* and similar selfhost-flat→i8*
+                // coercions at sig boundaries.
+                if pty == "i8*" and _is_ptr_ty(arg_static_ty)
+                   and arg_static_ty != "i8*"
+                   and av != "null" {
+                    cast_rev := cg.fresh()
+                    cg.emit(cast_rev + " = bitcast " + arg_static_ty + " " + av + " to i8*")
+                    av = cast_rev
+                }
                 sig = sig + pty + " " + av
                 j = j + 1
             }
@@ -1424,6 +1499,16 @@ define _gen_struct_ctor(cg: FnCG, name: String, ctor_args: List) -> String {
                 cg.emit(cast_reg3 + " = bitcast i8* " + aval + " to " + pty)
                 aval = cast_reg3
             }
+            // Reverse: typed pointer arg → i8* param (stdlib's
+            // Any ABI). Symmetric to the call-site coercion in
+            // _gen_expr's Call branch.
+            if pty == "i8*" and _is_ptr_ty(arg_static_ty3)
+               and arg_static_ty3 != "i8*"
+               and aval != "null" {
+                cast_rev3 := cg.fresh()
+                cg.emit(cast_rev3 + " = bitcast " + arg_static_ty3 + " " + aval + " to i8*")
+                aval = cast_rev3
+            }
             sig = sig + ", " + pty + " " + aval
             ai = ai + 1
         }
@@ -1501,6 +1586,14 @@ define _gen_method_call(cg: FnCG, c: Call) -> String {
                     cast_reg2 := cg.fresh()
                     cg.emit(cast_reg2 + " = bitcast i8* " + av + " to " + pty)
                     av = cast_reg2
+                }
+                // Reverse: typed pointer arg → i8* param.
+                if pty == "i8*" and _is_ptr_ty(arg_static_ty2)
+                   and arg_static_ty2 != "i8*"
+                   and av != "null" {
+                    cast_rev2 := cg.fresh()
+                    cg.emit(cast_rev2 + " = bitcast " + arg_static_ty2 + " " + av + " to i8*")
+                    av = cast_rev2
                 }
                 sig = sig + pty + " " + av
                 j = j + 1
@@ -3012,6 +3105,7 @@ define _gen_variant_ctor(cg: FnCG, name: String, ctor_args: List) -> String {
 define _gen_field_set(cg: FnCG, obj: Expr, name: String, value: Expr) -> void {
     obj_ty := _expr_static_ty(cg, obj)
     obj_reg := _gen_expr(cg, obj)
+    val_ty := _expr_static_ty(cg, value)
     val_reg := _gen_expr(cg, value)
     sname := _strip_struct_ptr(obj_ty)
     sd: _StructDef := cg.mod.structs.get(sname)
@@ -3030,6 +3124,31 @@ define _gen_field_set(cg: FnCG, obj: Expr, name: String, value: Expr) -> void {
     cg.emit(gep + " = getelementptr inbounds %struct." + sname +
             ", %struct." + sname + "* " + obj_reg +
             ", i32 0, i32 " + idx.str())
+    // Pointer-type coercion: stdlib structs declare fields as
+    // `%struct.List*` / `%struct.Map*` / `%struct.String*` but
+    // selfhost may produce a `%QListP*` / `%QMap*` / `i8*` value
+    // for them. Bitcast pointer-to-pointer (memory layouts
+    // intentionally diverge but selfhost is self-consistent
+    // about which shape it uses, so casting through is safe so
+    // long as no stdlib helper reads the bytes).
+    if val_ty != field_ty {
+        if _is_ptr_ty(val_ty) and _is_ptr_ty(field_ty) {
+            cast_reg := cg.fresh()
+            cg.emit(cast_reg + " = bitcast " + val_ty + " " + val_reg + " to " + field_ty)
+            val_reg = cast_reg
+        }
+        // Pointer → int: e.g. struct field declared `Int` but
+        // value is i8*. ptrtoint preserves bit-pattern.
+        if _is_ptr_ty(val_ty) and field_ty == "i32" {
+            ptr_int := cg.fresh()
+            cg.emit(ptr_int + " = ptrtoint " + val_ty + " " + val_reg + " to i32")
+            val_reg = ptr_int
+        }
+        // Int → pointer: literal 0 swaps to null.
+        if field_ty != "i32" and _is_ptr_ty(field_ty) and val_reg == "0" {
+            val_reg = "null"
+        }
+    }
     cg.emit("store " + field_ty + " " + val_reg + ", " + field_ty + "* " + gep)
 }
 
@@ -3351,9 +3470,23 @@ define _gen_stmt(cg: FnCG, st: Stmt) -> void {
         case IndexSet as ixs => {
             // `xs[i] = v` — mirrors the load shape from
             // Index in _gen_expr, but with a store instead.
-            // %QListP* writes i8* slots; %QList* writes i32.
+            // %QListP* writes i8* slots; %QList* writes i32;
+            // %QMap* routes through inline Map.put codegen.
             base_ty := _expr_static_ty(cg, ixs.obj)
             base_reg := _gen_expr(cg, ixs.obj)
+            // Map[key] = value → equivalent of `m.put(key, value)`.
+            // Route through the existing inline Map.put codegen
+            // (selfhost's %QMap layout is incompatible with the
+            // runtime's %struct.Map, so we don't call the stdlib
+            // helper). Don't pre-gen idx/val — _gen_map_method
+            // generates them from the args.
+            if base_ty == "%QMap*" {
+                put_args := List()
+                put_args.append(ixs.idx)
+                put_args.append(ixs.value)
+                _gen_map_method(cg, "put", base_reg, put_args)
+                return
+            }
             idx_reg := _gen_expr(cg, ixs.idx)
             val_ty := _expr_static_ty(cg, ixs.value)
             val_reg := _gen_expr(cg, ixs.value)

@@ -5,6 +5,71 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [5.0.0-alpha.1] — 2026-06-26 — codegen parity batch 1
+
+Codegen-parity grind toward making more of the corpus run
+end-to-end through `bin/quirk`. Run-the-corpus headline holds
+at 3/60 MATCH (same `enum_test`, `gc_test`, `alias_import_test`),
+but the per-test pipeline reaches deeper into the bundled
+stdlib before tripping. Fixed-point + 190-case e2e regression
+both green.
+
+### Map indexing — route to inline Map.put/get
+
+`m[k]` and `m[k] = v` on a `%QMap*` receiver now go through
+the existing inline `_gen_map_method` ("put" / "get" / "has")
+rather than the QList GEP fallback. Previously these emitted
+`getelementptr %QList, %QList* m, …` on a Map receiver
+(structurally wrong — `%QList` has a different field layout).
+
+Also tried routing to the runtime helpers (`@Map__put`,
+`@Map__get`) but selfhost's `%QMap` layout is incompatible
+with the runtime's `%struct.Map` (the field orders differ),
+so the inline path stays — same code selfhost has used since
+alpha.0 for explicit `.put()` / `.get()`.
+
+### String indexing `s[i]`
+
+Index codegen now handles `i8*` and `%struct.String*` receivers
+by loading the byte at the indexed offset and zext'ing to i32.
+For `%struct.String*`, the `_buffer` field is GEP'd + loaded
+first.
+
+### Struct-field FieldSet — pointer-type coercion
+
+When the target field's declared LLVM type is a pointer
+(`%struct.List*`, `%struct.Map*`, etc.) but the value is a
+different pointer shape (selfhost's `%QListP*`, `%QMap*`,
+`i8*`), emit a bitcast at the store site. Also handles
+pointer-to-int (ptrtoint) and int-to-null coercion for
+mismatched-kind stores.
+
+### `%struct.String*` comparison
+
+BinOp `==` / `!=` / `<` / `<=` / `>` / `>=` on `%struct.String*`
+operands now extracts the `_buffer` field on each side and
+routes through the existing strcmp-based path. Without this,
+`%12 = icmp eq i32 %String*, %String*` was emitted (type
+error — i32 predicate on pointer values).
+
+### Reverse-direction call-arg coercion
+
+For typed calls where the param expects `i8*` but the value's
+static type is a specific struct pointer (`%struct.ArgSpec*`,
+etc.), emit a bitcast to `i8*` at the call site. Mirror of
+the existing forward-direction coercion (`i8*` → `%struct.X*`).
+Applied at all three call sites: direct call, method call,
+and struct constructor.
+
+### Why MATCH didn't move
+
+These fixes shift the failing IR line further into the
+bundled stdlib but each test still trips a later validation
+error before producing runnable IR. Honest expectation: this
+is a multi-release grind. Each release lands one codegen
+pattern; MATCH advances when a test runs out of new patterns
+to trip.
+
 ## [5.0.0-alpha.0] — 2026-06-26 — **bin/quirk cutover**
 
 The user-facing `bin/quirk` is now the selfhost-driven compiler

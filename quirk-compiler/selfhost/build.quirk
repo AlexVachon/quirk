@@ -62,6 +62,87 @@ define _module_name_of(line: String) -> String {
     return rest.substring(0, sp)
 }
 
+// Extract the module name from an absolute `from foo.bar use { … }`
+// or `use foo.bar` line. Returns "" if the line is a relative
+// import (handled by `_module_name_of`) or not an import line.
+// Dots in the module name stay as separators — the resolver
+// turns them into path segments.
+define _abs_module_of(line: String) -> String {
+    if line.startswith("from ") {
+        rest := line.substring(5, line.length())
+        if rest.startswith(".") { return "" }
+        sp := 0
+        n := rest.length()
+        while sp < n and rest.substring(sp, sp + 1) != " " {
+            sp = sp + 1
+        }
+        return rest.substring(0, sp)
+    }
+    if line.startswith("use ") {
+        rest := line.substring(4, line.length())
+        if rest.startswith(".") { return "" }
+        sp := 0
+        n := rest.length()
+        while sp < n and rest.substring(sp, sp + 1) != " "
+              and rest.substring(sp, sp + 1) != "\t"
+              and rest.substring(sp, sp + 1) != "\n"
+              and rest.substring(sp, sp + 1) != "\r" {
+            sp = sp + 1
+        }
+        return rest.substring(0, sp)
+    }
+    return ""
+}
+
+// Return the directory component of `path` — everything up
+// to (but not including) the final `/`. Returns "." when
+// there's no separator.
+define _build_dirname(path: String) -> String {
+    last_slash := -1
+    i := 0
+    n := path.length()
+    while i < n {
+        if path.substring(i, i + 1) == "/" { last_slash = i }
+        i = i + 1
+    }
+    if last_slash < 0 { return "." }
+    return path.substring(0, last_slash)
+}
+
+// Translate dotted module name → relative path with `/`.
+// `foo.bar.baz` → `foo/bar/baz`.
+define _dot_to_slash(name: String) -> String {
+    out := ""
+    i := 0
+    n := name.length()
+    while i < n {
+        c := name.substring(i, i + 1)
+        if c == "." { out = out + "/" } else { out = out + c }
+        i = i + 1
+    }
+    return out
+}
+
+// Try to resolve an absolute module name `foo.bar` against
+// the packages root. Returns the resolved file path or "".
+// Mirrors the C++ compiler's `resolveImportPath` search:
+//   <root>/<name>.quirk
+//   <root>/<name>/index.quirk
+//   <root>/<name>/src/index.quirk
+// `read_file` returns an empty string on missing files so
+// we use length-check rather than a dedicated `exists`
+// builtin (which selfhost doesn't yet expose).
+define _resolve_abs(name: String, pkgs_root: String) -> String {
+    rel := _dot_to_slash(name)
+    cand1 := pkgs_root + "/" + rel + ".quirk"
+    if read_file(cand1).length() > 0 { return cand1 }
+    cand2 := pkgs_root + "/" + rel + "/index.quirk"
+    if read_file(cand2).length() > 0 { return cand2 }
+    cand3 := pkgs_root + "/" + rel + "/src/index.quirk"
+    if read_file(cand3).length() > 0 { return cand3 }
+    return ""
+}
+
 // Build `src` with every `from …` line removed. The parser
 // already skips imports, but keeping the surface clean
 // makes the combined source easier to inspect and avoids
@@ -150,7 +231,13 @@ define _expand(path: String, base_dir: String, visited: Map, parts: List) -> Int
     if visited.has(path) { return 0 }
     visited.put(path, "y")
     src := _slurp(path)
-    // Walk lines, find `from .X` imports, recurse first.
+    if src.length() == 0 { return 0 }
+    // Each file resolves its own relative imports against
+    // its own directory. `base_dir` is the *packages root*
+    // (used for absolute imports); we derive the file's
+    // own directory for `.X` resolution.
+    file_dir := _build_dirname(path)
+    // Walk lines, find imports, recurse first.
     i := 0
     n := src.length()
     while i < n {
@@ -163,10 +250,24 @@ define _expand(path: String, base_dir: String, visited: Map, parts: List) -> Int
             }
         }
         line := src.substring(start, line_end)
-        module := _module_name_of(line)
-        if module != "" {
-            sub_path := base_dir + "/" + module + ".quirk"
+        // Relative import: `from .X use { … }` — resolve
+        // against the importing file's own directory.
+        rel_module := _module_name_of(line)
+        if rel_module != "" {
+            sub_path := file_dir + "/" + rel_module + ".quirk"
             _expand(sub_path, base_dir, visited, parts)
+        }
+        // Absolute import: `from foo.bar use {…}` or `use
+        // foo.bar` — look up `packages/foo/bar.quirk` or
+        // `packages/foo/bar/index.quirk` via `_resolve_abs`.
+        // Self-references (`use test` inside packages/test/
+        // index.quirk) hit the `visited` short-circuit.
+        abs_module := _abs_module_of(line)
+        if abs_module != "" {
+            abs_path := _resolve_abs(abs_module, base_dir)
+            if abs_path != "" {
+                _expand(abs_path, base_dir, visited, parts)
+            }
         }
         i = next_i
     }
@@ -179,10 +280,39 @@ define _expand(path: String, base_dir: String, visited: Map, parts: List) -> Int
 // its transitive `from .X use { … }` dependencies under
 // `base_dir`. The driver caller can hand the result to
 // `tokenize → parse → check → emit_module` directly.
+// Locate a `packages/` directory near `start_dir`. Tries
+// `<start>/packages`, `<start>/../packages`, and so on up
+// to four levels. Returns "" if none found. The walk-up
+// matches the C++ compiler's `getSearchPaths()` strategy
+// — packages typically live one or two directories above
+// the user's source.
+define _find_packages_root(start_dir: String) -> String {
+    cur := start_dir
+    i := 0
+    while i < 5 {
+        cand := cur + "/packages"
+        // Probe an arbitrary package known to ship with the
+        // bundled stdlib. If `test/index.quirk` reads, we
+        // have a valid packages root.
+        probe := cand + "/test/index.quirk"
+        if read_file(probe).length() > 0 { return cand }
+        cur = cur + "/.."
+        i = i + 1
+    }
+    return ""
+}
+
 define build_combined(entry_path: String, base_dir: String) -> String {
     visited := Map()
     parts := List()
-    _expand(entry_path, base_dir, visited, parts)
+    // Resolve a packages root once; pass it as the `base_dir`
+    // arg to `_expand` so absolute imports inside any file
+    // share the same search root regardless of where in
+    // the tree they appear. Relative imports still resolve
+    // against each file's own directory.
+    pkgs_root := _find_packages_root(base_dir)
+    if pkgs_root == "" { pkgs_root = base_dir }
+    _expand(entry_path, pkgs_root, visited, parts)
     combined := ""
     i := 0
     while i < parts.length() {

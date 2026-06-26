@@ -955,6 +955,12 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
                         pty = _expr_static_ty(cg, arg_e)
                     }
                 }
+                // Literal-zero coercion: if the slot expects a
+                // pointer but the arg value is `0` (from a
+                // bad-method fallback or similar), swap to
+                // `null`. Mirrors the print-arg and return-stmt
+                // coercions added in alpha.79/.80.
+                if av == "0" and _is_ptr_ty(pty) { av = "null" }
                 sig = sig + pty + " " + av
                 j = j + 1
             }
@@ -1283,6 +1289,7 @@ define _gen_struct_ctor(cg: FnCG, name: String, ctor_args: List) -> String {
             if sigi < msig.param_tys.length() {
                 pty = msig.param_tys.__get(sigi)
             }
+            if aval == "0" and _is_ptr_ty(pty) { aval = "null" }
             sig = sig + ", " + pty + " " + aval
             ai = ai + 1
         }
@@ -1348,6 +1355,7 @@ define _gen_method_call(cg: FnCG, c: Call) -> String {
                     pty = mtsig.param_tys.__get(pi)
                 }
                 av: String := arg_vals.__get(j)
+                if av == "0" and _is_ptr_ty(pty) { av = "null" }
                 sig = sig + pty + " " + av
                 j = j + 1
             }

@@ -5,6 +5,65 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.81] — 2026-06-26
+
+### Stdlib package bundling in `build_combined`
+
+Selfhost's import resolver now follows absolute `from foo.bar use
+{…}` / `use foo.bar` imports against a `packages/` root, matching
+the C++ compiler's path search. Previously only relative `from .X`
+imports recursed; absolute imports were silently stripped, which is
+why corpus tests that depend on stdlib (`from test use { TestCase
+}`, `use io`, `use sys`, etc.) link-failed.
+
+**What landed:**
+
+- `_abs_module_of` — parses `from foo.bar use {...}` and
+  `use foo.bar` lines (no leading dot) and returns the dotted name.
+  Handles CRLF line endings (the trailing `\r` was previously
+  carried into the resolved path).
+- `_dot_to_slash` — `foo.bar` → `foo/bar`.
+- `_resolve_abs(name, root)` — probes `<root>/<name>.quirk`,
+  `<root>/<name>/index.quirk`, and `<root>/<name>/src/index.quirk`
+  via the existing `read_file` builtin. Returns "" when nothing
+  resolves.
+- `_find_packages_root(start_dir)` — walks up from `start_dir`
+  testing for a `packages/test/index.quirk` probe; matches the
+  C++ compiler's `getSearchPaths()` walk.
+- `_expand` now uses each file's own directory for relative
+  imports (previously a fixed `base_dir` for all files) and
+  passes the packages root through for absolute imports.
+- Parser: struct fields accept a default-value clause
+  `field: Type = expr` (parse-and-discard; codegen has no
+  default-value support yet). Required for `struct Exception
+  { file: String = "" ... }` and similar.
+
+### Codegen: pointer-arg coercion at typed-call sites
+
+When a typed call expects a pointer-shaped argument and the
+expression evaluates to literal `0` (the bad-method fallback's
+sentinel), swap to `null`. Applied at:
+
+- Direct call path (`Call(Ident, args)`) in `_gen_expr`
+- Method call path (`Call(FieldGet, args)`) in `_gen_method_call`
+- Struct constructor call (`Foo(args)`) at the `__init` site
+
+Without this, `List__reduce(%struct.List* %0, i8* 0, …)` etc.
+fail llc validation with "integer constant must have integer
+type".
+
+### Status
+
+Run-the-corpus: **3/60 MATCH** (same headline number as alpha.80),
+but the bundling change is a major capability shift behind the
+scenes — IR sizes for stdlib-using tests jumped from ~60 lines to
+1000s, meaning the stdlib code now reaches codegen. The remaining
+~52 IR-fails are stdlib codegen patterns selfhost doesn't yet
+handle (List/Map field-access mismatches, struct field GEPs with
+wrong indices, etc.).
+
+Fixed-point + 190-case e2e regression both green.
+
 ## [4.0.0-alpha.80] — 2026-06-25
 
 ### Run-the-corpus: 2/36 → 3/36 matching C++ output

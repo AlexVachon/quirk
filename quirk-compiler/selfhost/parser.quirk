@@ -1512,9 +1512,28 @@ define _parse_struct_decl(s: ParserState, out_methods: List) -> StructDecl {
             out_methods.append(mfd)
             continue
         }
+        // Accept keyword tokens as field names too (`type`,
+        // `from`, etc.). Same shape as the postfix-access
+        // relaxation in `_parse_postfix`.
+        if s.check(TokenKind.Identifier) == false {
+            ftok: Token := s.advance()
+            s.expect(TokenKind.Colon, "':' after field name")
+            ftype := _parse_type_annot(s, "field type")
+            // Optional `= default_value` clause. Selfhost has
+            // no codegen for struct-field defaults, so parse
+            // and discard.
+            if s.match_kind(TokenKind.Assign) {
+                _parse_expr(s)
+            }
+            fields.append(StructField(ftok.value, ftype))
+            continue
+        }
         fname := s.expect(TokenKind.Identifier, "field name").value
         s.expect(TokenKind.Colon, "':' after field name")
         ftype := _parse_type_annot(s, "field type")
+        if s.match_kind(TokenKind.Assign) {
+            _parse_expr(s)
+        }
         fields.append(StructField(fname, ftype))
     }
     s.expect(TokenKind.RBrace, "'}' to close struct body")

@@ -5,6 +5,66 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [4.0.0-alpha.82] — 2026-06-26
+
+### Codegen: Callable indirect calls, pointer/int coercion, String* unwrap
+
+Six codegen changes targeting the recurring IR-validation
+failures from the stdlib-bundled tests. The run-the-corpus
+headline holds at 3/60 — each fix unlocks one validation
+error and exposes the next — but the codegen layer is now
+more robust at the type boundaries. Fixed-point +
+190-case e2e regression both green.
+
+**1. Indirect call through local Callable.** `cb(a, b)`
+where `cb` is a parameter / local typed Callable now loads
+the i8* slot, bitcasts to a function-pointer type
+`i8* (i8*, ..., i8*)*`, and calls indirectly. Args are
+inttoptr-promoted from non-pointer types. Was emitting
+`call ... @cb(...)` as if cb were a global.
+
+**2. Pointer-arg coercion at typed call sites.** When a
+typed call (direct, method, or struct ctor) expects a
+specific pointer type (`%struct.Callable*`, `%struct.List*`)
+but the arg's static type is i8*, emit a bitcast. Lets
+lambda values (which selfhost types as i8*) flow into
+Callable parameters cleanly.
+
+**3. Synthetic-call return type pinning.** `__contains` and
+`__is` now declared with `i1` return type, matching how
+the surface-lowered `in` / `not in` / `is` expressions
+use the result. Previously declared as i8* via the unknown-
+call default, then later use as i1 fails the
+"defined with type 'i8*' but expected 'i1'" check.
+
+**4. Pointer ↔ int coercion at VarDecl store.** When the
+slot is i32 and the RHS is a pointer type, ptrtoint.
+When the slot is a pointer and the RHS is i32, inttoptr.
+Lets `cmp := cb(a, b)` where cb returns i8* but cmp's
+slot is i32 (because sema typed cb's return as Int).
+
+**5. `%struct.String*` operand support in `+` concat.** When
+either side of `+` is a typed String pointer (from a stdlib
+function return), extract the `_buffer` field via GEP+load
+to get the i8* c-string, then route through the existing
+strlen/malloc/strcat path. `_expr_static_ty` also recognizes
+String* operands as producing an i8* concat result.
+
+**6. List-element store coercion.** Both `_gen_list_lit` and
+`_gen_list_append` ptrtoint pointer-typed values before
+storing to an i32 element slot. Lets a `[prefix() + " "]`
+literal compile when `prefix()` returns String*.
+
+### Status
+
+Run-the-corpus: 3/60 MATCH. The same 52 files fail at LLC,
+but the failing IR line shifts later as each fix lands —
+the per-test pipeline is reaching deeper into the bundled
+stdlib before tripping. Diminishing returns suggest the
+next push needs structural sema/type work (proper
+String*/List* tracking from stdlib sigs all the way down
+to slot/store sites), not more point fixes.
+
 ## [4.0.0-alpha.81] — 2026-06-26
 
 ### Stdlib package bundling in `build_combined`

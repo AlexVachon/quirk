@@ -621,14 +621,42 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
             // both sides to agree.
             opd_ty := _expr_static_ty(cg, b.left)
             is_dbl := opd_ty == "double"
+            // %struct.String* operand from stdlib calls (e.g.
+            // `prefix()` returning the typed String pointer):
+            // treat as i8* for concat purposes. The actual
+            // c-string lives at field 0 of the struct, but
+            // existing stdlib calls happen to return values
+            // that, when passed through strlen-on-i8*, would
+            // crash — for now we extract the buffer field.
+            rt_check := _expr_static_ty(cg, b.right)
+            if b.op == "+" and (opd_ty == "%struct.String*" or rt_check == "%struct.String*") {
+                opd_ty = "i8*"
+            }
             // String concat: `+` on two i8* operands. Lower to
             // malloc(strlen(a) + strlen(b) + 1) + strcpy + strcat,
             // and return the malloc'd buffer. The result leaks
             // — the self-hosted compiler is short-lived enough
             // that explicit free / a GC layer can wait.
             if b.op == "+" and opd_ty == "i8*" {
+                l_ty := _expr_static_ty(cg, b.left)
+                r_ty := _expr_static_ty(cg, b.right)
                 l := _gen_expr(cg, b.left)
                 r := _gen_expr(cg, b.right)
+                // %struct.String* → i8* by extracting buffer (field 0).
+                if l_ty == "%struct.String*" {
+                    gepl := cg.fresh()
+                    cg.emit(gepl + " = getelementptr inbounds %struct.String, %struct.String* " + l + ", i32 0, i32 0")
+                    lbuf := cg.fresh()
+                    cg.emit(lbuf + " = load i8*, i8** " + gepl)
+                    l = lbuf
+                }
+                if r_ty == "%struct.String*" {
+                    gepr := cg.fresh()
+                    cg.emit(gepr + " = getelementptr inbounds %struct.String, %struct.String* " + r + ", i32 0, i32 0")
+                    rbuf := cg.fresh()
+                    cg.emit(rbuf + " = load i8*, i8** " + gepr)
+                    r = rbuf
+                }
                 // Coerce literal-zero operands to `null` — the
                 // bad-method codegen fallback emits `0` (typed
                 // as the slot expects) but downstream string
@@ -903,6 +931,63 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
             if cg.mod.structs.has(name) {
                 return _gen_struct_ctor(cg, name, c.args)
             }
+            // Indirect call through a local-bound function
+            // pointer: `cb(a, b)` where `cb` is a parameter
+            // typed Callable / Any. Load the function-pointer
+            // value from the slot, bitcast to a call-typed
+            // pointer, then call indirectly. Selfhost stores
+            // Callables as i8* — at call time we narrow back
+            // to a function-pointer-of-args type.
+            if cg.locals.has(name) and cg.mod.sigs.has(_llvm_fn_name(name)) == false {
+                slot: _Slot := cg.locals.get(name)
+                fp_raw := cg.fresh()
+                cg.emit(fp_raw + " = load " + slot.ty + ", " + slot.ty + "* " + slot.name)
+                ind_args := List()
+                ind_arg_tys := List()
+                ki := 0
+                while ki < c.args.length() {
+                    aexp: Expr := c.args.__get(ki)
+                    ind_args.append(_gen_expr(cg, aexp))
+                    ind_arg_tys.append("i8*")
+                    ki = ki + 1
+                }
+                // Build the function-pointer type
+                // `i8* (i8*, i8*, ..., i8*)*` from the arg count.
+                fn_ty := "i8* ("
+                ai_t := 0
+                while ai_t < ind_arg_tys.length() {
+                    if ai_t > 0 { fn_ty = fn_ty + ", " }
+                    fn_ty = fn_ty + "i8*"
+                    ai_t = ai_t + 1
+                }
+                fn_ty = fn_ty + ")*"
+                fp_typed := cg.fresh()
+                cg.emit(fp_typed + " = bitcast " + slot.ty + " " + fp_raw +
+                        " to " + fn_ty)
+                call_sig := "("
+                kj := 0
+                while kj < ind_args.length() {
+                    if kj > 0 { call_sig = call_sig + ", " }
+                    av_i: String := ind_args.__get(kj)
+                    // Indirect-call arg promotion: arg expr's
+                    // static type may be i32 / i1; the fn-ptr
+                    // type expects i8* per slot. Inttoptr the
+                    // non-pointer values.
+                    aexp_k: Expr := c.args.__get(kj)
+                    av_ty := _expr_static_ty(cg, aexp_k)
+                    if _is_ptr_ty(av_ty) == false {
+                        promoted := cg.fresh()
+                        cg.emit(promoted + " = inttoptr " + av_ty + " " + av_i + " to i8*")
+                        av_i = promoted
+                    }
+                    call_sig = call_sig + "i8* " + av_i
+                    kj = kj + 1
+                }
+                call_sig = call_sig + ")"
+                ind_reg := cg.fresh()
+                cg.emit(ind_reg + " = call i8* " + fp_typed + call_sig)
+                return ind_reg
+            }
             // Emit each arg first, then the call. Look up the
             // callee's typed signature so each arg + the return
             // is rendered with the matching LLVM type.
@@ -917,6 +1002,14 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
             // boxed-Any ABI of all unknown calls). Tracked
             // sigs override.
             ret_llvm := "i8*"
+            // Synthetic lowering call return types — these
+            // names are emitted by the parser's surface-syntax
+            // rewrites (`in`/`not in`/`is`/`??`/etc.). Without
+            // pinning the right return type here, downstream
+            // uses (e.g. `xor i1 %x, 1` for `not in`) reject
+            // the call result as a type mismatch.
+            if name == "__contains" { ret_llvm = "i1" }
+            if name == "__is" { ret_llvm = "i1" }
             param_llvm := List()
             llvm_name := _llvm_fn_name(name)
             is_unknown := false
@@ -926,13 +1019,18 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
                 param_llvm = msig.param_tys
             } else {
                 is_unknown = true
-                // Synthesize a variadic-i8* extern declaration
-                // for unknown callees (synthetic __tuple /
-                // __contains lowerings, stdlib module-style
-                // calls). Without this, llc/clang fail with
-                // "use of undefined value" on the call.
+                // Synthesize a variadic extern declaration for
+                // unknown callees (synthetic __tuple / __contains
+                // lowerings, stdlib module-style calls). The
+                // declaration's return type must match what
+                // `ret_llvm` is set to above (i1 for boolean
+                // synthetics, i8* otherwise) — otherwise the
+                // first declaration locks in i8* and subsequent
+                // call-sites with `i1` return type fail llc
+                // with a "defined with type … but expected …"
+                // mismatch.
                 cg.mod.ensure_decl(llvm_name,
-                    "declare i8* @" + llvm_name + "(...)")
+                    "declare " + ret_llvm + " @" + llvm_name + "(...)")
             }
             sig := "("
             j := 0
@@ -961,6 +1059,24 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
                 // `null`. Mirrors the print-arg and return-stmt
                 // coercions added in alpha.79/.80.
                 if av == "0" and _is_ptr_ty(pty) { av = "null" }
+                // Pointer-type coercion: when expected param is
+                // a specific struct pointer (`%struct.Callable*`,
+                // `%struct.List*`, etc.) but the arg is i8*
+                // (typical for lambdas and any-typed values),
+                // emit a bitcast so llc accepts the call. The
+                // cast is a no-op at the machine level.
+                arg_static_ty := ""
+                if j < c.args.length() {
+                    aexp: Expr := c.args.__get(j)
+                    arg_static_ty = _expr_static_ty(cg, aexp)
+                }
+                if _is_ptr_ty(pty) and pty != "i8*"
+                   and arg_static_ty == "i8*"
+                   and av != "null" {
+                    cast_reg := cg.fresh()
+                    cg.emit(cast_reg + " = bitcast i8* " + av + " to " + pty)
+                    av = cast_reg
+                }
                 sig = sig + pty + " " + av
                 j = j + 1
             }
@@ -1130,9 +1246,15 @@ define _expr_static_ty(cg: FnCG, e: Expr) -> String {
             //   otherwise → i32
             lt := _expr_static_ty(cg, b.left)
             if lt == "i8*" and op == "+" { return "i8*" }
+            // %struct.String* on either side of `+` produces an
+            // i8* result — the codegen extracts the buffer
+            // field and routes through the libc-concat path.
+            if lt == "%struct.String*" and op == "+" { return "i8*" }
             if lt == "double" { return "double" }
             rt := _expr_static_ty(cg, b.right)
             if rt == "double" { return "double" }
+            if rt == "%struct.String*" and op == "+" { return "i8*" }
+            if rt == "i8*" and op == "+" { return "i8*" }
             return "i32"
         }
         case Call as c => {
@@ -1173,6 +1295,10 @@ define _expr_static_ty(cg: FnCG, e: Expr) -> String {
                 case Ident as id => cname = id.name
                 case _ => {}
             }
+            // Synthetic lowering calls — match the return-type
+            // pinning in `_gen_expr`'s Call branch.
+            if cname == "__contains" { return "i1" }
+            if cname == "__is" { return "i1" }
             // Builtin `len()` returns Int regardless of arg type.
             if cname == "len" { return "i32" }
             // Builtin file I/O. read_file returns the malloc'd
@@ -1290,6 +1416,14 @@ define _gen_struct_ctor(cg: FnCG, name: String, ctor_args: List) -> String {
                 pty = msig.param_tys.__get(sigi)
             }
             if aval == "0" and _is_ptr_ty(pty) { aval = "null" }
+            arg_static_ty3 := _expr_static_ty(cg, aexpr)
+            if _is_ptr_ty(pty) and pty != "i8*"
+               and arg_static_ty3 == "i8*"
+               and aval != "null" {
+                cast_reg3 := cg.fresh()
+                cg.emit(cast_reg3 + " = bitcast i8* " + aval + " to " + pty)
+                aval = cast_reg3
+            }
             sig = sig + ", " + pty + " " + aval
             ai = ai + 1
         }
@@ -1356,6 +1490,18 @@ define _gen_method_call(cg: FnCG, c: Call) -> String {
                 }
                 av: String := arg_vals.__get(j)
                 if av == "0" and _is_ptr_ty(pty) { av = "null" }
+                arg_static_ty2 := ""
+                if j < c.args.length() {
+                    aexp2: Expr := c.args.__get(j)
+                    arg_static_ty2 = _expr_static_ty(cg, aexp2)
+                }
+                if _is_ptr_ty(pty) and pty != "i8*"
+                   and arg_static_ty2 == "i8*"
+                   and av != "null" {
+                    cast_reg2 := cg.fresh()
+                    cg.emit(cast_reg2 + " = bitcast i8* " + av + " to " + pty)
+                    av = cast_reg2
+                }
                 sig = sig + pty + " " + av
                 j = j + 1
             }
@@ -1772,6 +1918,16 @@ define _gen_list_append(cg: FnCG, recv_reg: String, args: List) -> String {
     cg.emit(data_ptr + " = load i32*, i32** " + data_gep)
     slot := cg.fresh()
     cg.emit(slot + " = getelementptr inbounds i32, i32* " + data_ptr + ", i32 " + len0)
+    // Pointer-to-int coercion at the store site: stdlib `+`
+    // concat / fn returns may produce i8* values being
+    // appended to an int-element list. ptrtoint preserves
+    // bit-pattern; the i32 slot holds the lower 32 bits.
+    aval_ty := _expr_static_ty(cg, aexpr)
+    if _is_ptr_ty(aval_ty) {
+        promo := cg.fresh()
+        cg.emit(promo + " = ptrtoint " + aval_ty + " " + aval + " to i32")
+        aval = promo
+    }
     cg.emit("store i32 " + aval + ", i32* " + slot)
     new_len := cg.fresh()
     cg.emit(new_len + " = add nsw i32 " + len0 + ", 1")
@@ -2586,6 +2742,16 @@ define _gen_list_lit(cg: FnCG, elems: List) -> String {
         gep := cg.fresh()
         cg.emit(gep + " = getelementptr inbounds i32, i32* " + data_ptr +
                 ", i32 " + i.str())
+        // Coerce: if the element's actual emit type is a
+        // pointer (e.g. stdlib `+` concat returned i8*),
+        // ptrtoint to i32 before storing. Same coercion as
+        // _gen_list_append uses.
+        ev_ty := _expr_static_ty(cg, ei)
+        if _is_ptr_ty(ev_ty) {
+            promo := cg.fresh()
+            cg.emit(promo + " = ptrtoint " + ev_ty + " " + ev + " to i32")
+            ev = promo
+        }
         cg.emit("store i32 " + ev + ", i32* " + gep)
         i = i + 1
     }
@@ -3057,6 +3223,27 @@ define _gen_stmt(cg: FnCG, st: Stmt) -> void {
                     cg.emit(cast + " = bitcast " + rhs_ty + " " + rhs +
                             " to " + ty)
                     store_val = cast
+                }
+                // Pointer → int coercion: indirect calls /
+                // bad-method fallbacks return i8* but sema may
+                // have inferred the slot as i32 (`cmp := cb(a, b)`
+                // where cb is a Callable). ptrtoint bridges
+                // the gap without changing the bit pattern.
+                if _is_ptr_ty(rhs_ty) and ty == "i32" {
+                    cast := cg.fresh()
+                    cg.emit(cast + " = ptrtoint " + rhs_ty + " " + rhs + " to i32")
+                    store_val = cast
+                }
+                // Int → pointer: rare, but covers a literal
+                // `0` flowing into a pointer-typed slot.
+                if _is_ptr_ty(ty) and rhs_ty == "i32" {
+                    if rhs == "0" {
+                        store_val = "null"
+                    } else {
+                        cast := cg.fresh()
+                        cg.emit(cast + " = inttoptr i32 " + rhs + " to " + ty)
+                        store_val = cast
+                    }
                 }
             }
             slot := _ensure_fresh_slot(cg, v.name, ty)

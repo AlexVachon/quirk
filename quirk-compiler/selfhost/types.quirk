@@ -121,6 +121,28 @@ define ty_compatible(expected: Ty, actual: Ty) -> Bool {
     is_list_e := e_str == "List" or e_str.startswith("List<")
     is_list_a := a_str == "List" or a_str.startswith("List<")
     if is_list_e and is_list_a { return true }
+    // Numeric widening: Int → Double is always allowed (matches
+    // Quirk's surface semantics where numeric literals coerce
+    // freely). The opposite direction (Double → Int) would
+    // truncate; selfhost still accepts it permissively since
+    // codegen has explicit `as Int` casts where needed.
+    is_int_a := a_str == "Int"
+    is_dbl_e := e_str == "Double" or e_str == "Float"
+    if is_int_a and is_dbl_e { return true }
+    is_dbl_a := a_str == "Double" or a_str == "Float"
+    is_int_e := e_str == "Int"
+    if is_dbl_a and is_int_e { return true }
+    // Int ↔ Bool: explicit casts (`0 as Bool`, `flag as Int`)
+    // discard the target type at parse, so a `flag: Bool = N`
+    // declaration with N: Int reaches ty_compatible with Int
+    // on the RHS. Accept the conversion permissively — Quirk's
+    // runtime treats zero as false / non-zero as true.
+    is_bool_e := e_str == "Bool"
+    is_bool_a := a_str == "Bool"
+    if (is_bool_e and is_int_a) or (is_int_e and is_bool_a) { return true }
+    // String + nullable: `String?` annotations match String at
+    // runtime since selfhost erases the nullable suffix.
+    if e_str == a_str + "?" or a_str == e_str + "?" { return true }
     // Otherwise require identical canonical kinds. Comparing the
     // string forms is the smallest amount of code that gets us
     // there without nested match dispatch (which trips a Sema

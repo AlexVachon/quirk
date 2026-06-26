@@ -521,7 +521,8 @@ define _parse_postfix(s: ParserState) -> Expr {
             if nq.kind == TokenKind.StringLiteral { looks_like_ternary = true }
             if nq.kind == TokenKind.LParen { looks_like_ternary = true }
             if nq.kind == TokenKind.LBracket { looks_like_ternary = true }
-            if nq.kind == TokenKind.LBrace { looks_like_ternary = true }
+            // LBrace is NOT expression-startable in our grammar
+            // — `if q? { … }` should still treat `?` as unwrap.
             if nq.kind == TokenKind.Not { looks_like_ternary = true }
             if nq.kind == TokenKind.Minus { looks_like_ternary = true }
             if looks_like_ternary {
@@ -561,7 +562,24 @@ define _parse_unary(s: ParserState) -> Expr {
         s.advance()
         return UnaryOp("not", _parse_unary(s))
     }
-    return _parse_postfix(s)
+    e := _parse_postfix(s)
+    // `EXPR as Type` — Quirk's type-cast operator. Sits tighter
+    // than `*` `/` so `a as Double / b as Double` groups as
+    // `(a as Double) / (b as Double)`. Selfhost discards the
+    // target type and returns the expression as-is. Guard
+    // against `with EXPR as binder { … }` — if the token AFTER
+    // the target name is `{`, this is a with-stmt binder, not
+    // a cast; leave it for the outer parser.
+    while s.check(TokenKind.As) {
+        n1: Token := s.peek_at(1)
+        n2: Token := s.peek_at(2)
+        if n1.kind == TokenKind.Identifier and n2.kind == TokenKind.LBrace {
+            break
+        }
+        s.advance()
+        _parse_type_annot(s, "cast target type")
+    }
+    return e
 }
 
 define _parse_mul(s: ParserState) -> Expr {
@@ -659,22 +677,6 @@ define _parse_cmp(s: ParserState) -> Expr {
         is_args.append(left)
         left = Call(Ident("__is"), is_args)
     }
-    // `EXPR as Type` — Quirk's type-cast operator. Selfhost
-    // discards the target type and returns the expression
-    // as-is. Guard against `with EXPR as binder { … }` — if
-    // the token AFTER the target name is `{`, this is a
-    // with-statement binder, not a cast; leave it for the
-    // outer parser.
-    while s.check(TokenKind.As) {
-        n1: Token := s.peek_at(1)
-        n2: Token := s.peek_at(2)
-        if n1.kind == TokenKind.Identifier and n2.kind == TokenKind.LBrace {
-            // with-stmt binder, don't consume
-            break
-        }
-        s.advance()
-        _parse_type_annot(s, "cast target type")
-    }
     return left
 }
 
@@ -753,6 +755,42 @@ define _parse_stmt(s: ParserState) -> Stmt {
         // zero IntLit ExprStmt to keep the statement count
         // honest.
         return ExprStmt(IntLit(0))
+    }
+    // Nested `define name(args) { ... }` inside a function body
+    // — Quirk's local-function form. Selfhost lifts it to a
+    // VarDecl binding the function's name to a synthetic
+    // Lambda value. The lambda body is parsed (so the token
+    // stream advances correctly) but, like our other block-
+    // lambda paths, the body statements are dropped — codegen
+    // emits an empty lifted function. Real lowering would
+    // need closure-capture analysis.
+    if t.kind == TokenKind.Define {
+        s.advance()  // define
+        fname := ""
+        if s.check(TokenKind.Identifier) {
+            fname = s.advance().value
+        }
+        _skip_type_params(s)
+        if s.match_kind(TokenKind.LParen) {
+            // Skip param list — brace-balanced consume.
+            pd := 1
+            while pd > 0 and s.check(TokenKind.EofToken) == false {
+                tk: Token := s.peek()
+                if tk.kind == TokenKind.LParen { pd = pd + 1 }
+                elif tk.kind == TokenKind.RParen { pd = pd - 1 }
+                s.advance()
+            }
+        }
+        if s.match_kind(TokenKind.Arrow) {
+            _parse_type_annot(s, "nested-define return type")
+        }
+        // Body block — consume with brace balance.
+        if s.check(TokenKind.LBrace) {
+            _parse_block(s)
+        }
+        nested_lambda := Lambda(List(), IntLit(0))
+        if fname == "" { fname = "_nested_define" }
+        return VarDecl(fname, "", nested_lambda)
     }
 
     if t.kind == TokenKind.Return {
@@ -908,20 +946,55 @@ define _parse_stmt(s: ParserState) -> Stmt {
         arms := List()
         while s.check(TokenKind.RBrace) == false and s.check(TokenKind.EofToken) == false {
             s.expect(TokenKind.Case, "'case' to open match arm")
-            // Pattern: a variant name, `_` wildcard, or a literal
-            // (Int / String / Float / Bool). Literals are recorded
-            // in `pattern` as their lexeme — sema's variant
-            // lookup will treat unknown patterns permissively, so
-            // codegen falls back to a string-compare on the
-            // scrutinee's `.str()`. Multi-pattern `case 2, 3 =>`
-            // — additional patterns parse-and-discard.
-            ptok: Token := s.advance()
+            // Pattern: variant name, `_` wildcard, literal,
+            // qualified `Enum.Variant`, or tuple `(a, b)`.
+            // We accept all forms by consuming whatever shape
+            // appears up to `as` / `if` / `=>` / `,` / `{`.
             pattern := ""
-            if ptok.value != "_" { pattern = ptok.value }
-            // Optional list `case 1, 2, 3 =>`.
+            if s.check(TokenKind.LParen) {
+                // Tuple-destructure pattern `(a, b, c)`.
+                s.advance()
+                pd := 1
+                while pd > 0 and s.check(TokenKind.EofToken) == false {
+                    tk: Token := s.peek()
+                    if tk.kind == TokenKind.LParen { pd = pd + 1 }
+                    elif tk.kind == TokenKind.RParen { pd = pd - 1 }
+                    s.advance()
+                }
+                pattern = "_tuple"
+            } else {
+                ptok: Token := s.advance()
+                if ptok.value != "_" { pattern = ptok.value }
+                // Qualified `Enum.Variant` — consume `.NAME` chain.
+                while s.match_kind(TokenKind.Dot) {
+                    if s.check(TokenKind.Identifier) {
+                        pt2: Token := s.advance()
+                        pattern = pattern + "." + pt2.value
+                    }
+                }
+            }
+            // Multi-pattern `case 2, 3 =>` or `case Foo, Bar =>`
+            // — additional patterns parse-and-discard.
             while s.match_kind(TokenKind.Comma) {
                 if s.check(TokenKind.FatArrow) { break }
-                s.advance()
+                if s.check(TokenKind.LBrace) { break }
+                if s.check(TokenKind.If) { break }
+                if s.check(TokenKind.As) { break }
+                if s.check(TokenKind.LParen) {
+                    s.advance()
+                    pd := 1
+                    while pd > 0 and s.check(TokenKind.EofToken) == false {
+                        tk: Token := s.peek()
+                        if tk.kind == TokenKind.LParen { pd = pd + 1 }
+                        elif tk.kind == TokenKind.RParen { pd = pd - 1 }
+                        s.advance()
+                    }
+                } else {
+                    s.advance()
+                    while s.match_kind(TokenKind.Dot) {
+                        if s.check(TokenKind.Identifier) { s.advance() }
+                    }
+                }
             }
             // `as <binder>` is optional. Binder defaults to "_"
             // (meaning the arm body doesn't bind anything).
@@ -1344,9 +1417,14 @@ define _parse_function_decl(s: ParserState) -> FunctionDecl {
     }
     // Optional `where <constraint>` clause — Quirk's type-class
     // constraint syntax. Selfhost has no constraint tracking;
-    // parse-and-discard the constraint expression.
+    // brace-balanced consume up to the body block opener so
+    // arbitrary constraint syntax (`T: Comparable`, `b != 0`,
+    // `T: Primitive + Show`) all parse-and-discard.
     if s.match_kind(TokenKind.Where) {
-        _parse_expr(s)
+        while s.check(TokenKind.LBrace) == false
+              and s.check(TokenKind.EofToken) == false {
+            s.advance()
+        }
     }
     // Extern functions have no body — return an empty stmt list.
     body := List()

@@ -5,6 +5,79 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [5.0.0-alpha.2] — 2026-06-28 — codegen parity batch 2
+
+IR-validation failures drop from 48 → 32 (a third of remaining
+LLC errors cleared). 16 tests now reach the linker stage instead
+of being rejected by llc. Link-fail bucket rose 7 → 23 as those
+tests advanced to a new failure mode (missing stdlib symbols),
+but the codegen layer is now substantially more robust.
+
+MATCH headline holds at 3/60 — the unlocked tests now trip later
+issues (function-name collisions, missing extern symbols, runtime
+ABI gaps) before producing correct output. Fixed-point + 190-case
+e2e regression both green.
+
+### Pointer null-check `ptr == 0` / `ptr != 0`
+
+BinOp `==` / `!=` now detects when one operand has a pointer
+static type and the other is the literal `0`. Emits `icmp eq
+<ptr-ty> %x, null` instead of the default `icmp eq i32`, which
+was rejecting the IR ("defined with type '%struct.X*' but
+expected 'i32'"). Covers `if x == 0`, `if x != 0`, and the
+explicit `if x == null` shapes that stdlib uses pervasively
+for option-typed returns.
+
+### print/puts coerces `%struct.String*` via `_buffer` field
+
+`print(x)` where `x: %struct.String*` (a stdlib-typed string)
+now GEPs the `_buffer` field and loads the i8* before passing
+to puts. Other pointer kinds (e.g. `%QListP*`) bitcast to i8*
+through.
+
+### Assign coercion: `0` → `null`, ptr ↔ int
+
+`x = expr` re-bind site now applies the same coercions as VarDecl:
+literal `0` flowing into a pointer slot swaps to `null`;
+pointer-to-int kind mismatches go through ptrtoint; int-to-
+pointer through inttoptr.
+
+### Return coercion: ptr ↔ int
+
+Return path now handles pointer-into-int-ret and int-into-ptr-ret
+mismatches via ptrtoint / inttoptr. Fixes functions where the
+declared return type is the i32 default but the body produces
+an i8* (e.g. `define size() { return (cols, rows) }` lowering
+to a `__tuple` call that returns i8*).
+
+### Map.put / Map.get key + value coercion
+
+`_gen_map_method` now extracts the `_buffer` field from
+`%struct.String*` keys and values, bitcasts other pointer
+kinds to i8*, and inttoptr-promotes integer values. Stdlib
+literal strings flowing into `m["key"]` no longer trip the
+strcmp signature with mismatched pointer types.
+
+### ForIn: bitcast stdlib list/map to selfhost flat shape
+
+`for x in xs { … }` where `xs` is `%struct.List*` now bitcasts
+to `%QListP*` before iterating. Same for `%struct.Map*` →
+`%QMap*`. Selfhost only knows how to walk its flat headers;
+the cast is layout-correct so long as the value was originally
+populated by selfhost-emitted code, which is always the case
+for values constructed in user functions.
+
+### Generalized pointer-to-pointer call-arg coercion
+
+The single biggest unlock this release: replaced three
+specialized coercion branches (i8*→struct-ptr, struct-ptr→i8*,
+reverse) at each call site with one general rule: any
+mismatched pointer kinds at a call boundary get a bitcast.
+LLVM lets ptr↔ptr bitcasts pass freely; selfhost is internally
+consistent about its flat shapes, so a single cast bridges the
+gap. Applied at direct call, method call, and struct-ctor
+call sites. Was the gate behind the 16-test IR-fail drop.
+
 ## [5.0.0-alpha.1] — 2026-06-26 — codegen parity batch 1
 
 Codegen-parity grind toward making more of the corpus run

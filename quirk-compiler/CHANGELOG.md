@@ -5,6 +5,39 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [5.0.0-alpha.3] — 2026-06-28 — function-name dedup
+
+Multi-package stdlib bundling produces duplicate top-level
+function names (e.g. `extern define parse` in
+`encoding/json.quirk` and `define parse(raw) -> URL` in
+`url/index.quirk`; or two non-extern `define write(...)`
+from different packages). LLVM rejects redefinition.
+
+`emit_module` now tracks function names that have been
+emitted and silently drops subsequent collisions. First
+emission wins. Fix is conservative — it doesn't try to
+resolve which implementation is "correct" for a given
+call site; that's a deeper sema lift. For the run-the-
+corpus push it's enough to make the IR validate.
+
+Also tried (and reverted):
+- snprintf-based numeric-to-string coercion in `+` concat
+  paths. Made `s + n` for non-string `n` emit a libc
+  snprintf into a fresh buffer. Worked semantically but
+  pushed the C++ compiler's memory usage past the
+  bootstrap limit; the fixed-point build OOM'd. Reverted.
+  Same fix is achievable via a runtime helper instead
+  of inlined snprintf chunks — deferred.
+- Default-arg filling in struct constructor calls. Worked
+  but didn't move MATCH; deferred until a real defaults
+  table is wired through the parser.
+
+Net change: **IR-fail 32 → 31** (one corpus test cleared
+LLC validation). MATCH still 3/60; the cleared test now
+hits a different validation error or link failure further
+into the pipeline. Bootstrap + 190-case e2e regression
+both green.
+
 ## [5.0.0-alpha.2] — 2026-06-28 — codegen parity batch 2
 
 IR-validation failures drop from 48 → 32 (a third of remaining

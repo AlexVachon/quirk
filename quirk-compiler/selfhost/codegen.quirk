@@ -4064,6 +4064,14 @@ define emit_module(decls: List) -> String {
     // signature so call-site codegen can render argument and
     // return types correctly — including for forward references
     // where the callee's body is emitted after the call site.
+    // Track defined (non-extern) function names so multi-
+    // package stdlib bundling that produces two declarations
+    // of the same top-level name (e.g. `extern define parse`
+    // in encoding/json.quirk and `define parse(raw) -> URL`
+    // in url/index.quirk) doesn't lead to llc rejecting the
+    // module. The non-extern wins; subsequent same-name
+    // emissions are silently dropped.
+    seen_emitted := Map()
     pp := 0
     while pp < decls.length() {
         dp: TopLevel := decls.__get(pp)
@@ -4106,7 +4114,16 @@ define emit_module(decls: List) -> String {
         match d {
             case Func as f => {
                 fd: FunctionDecl := f.decl
-                bodies = bodies + _gen_function(fd, mod) + "\n"
+                emit_name := fd.name
+                if fd.receiver != "" {
+                    emit_name = fd.receiver + "__" + fd.name
+                } else {
+                    emit_name = _llvm_fn_name(fd.name)
+                }
+                if seen_emitted.has(emit_name) == false {
+                    bodies = bodies + _gen_function(fd, mod) + "\n"
+                    seen_emitted.put(emit_name, "y")
+                }
             }
             case _ => {}
         }

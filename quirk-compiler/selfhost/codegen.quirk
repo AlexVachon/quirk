@@ -740,6 +740,18 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
                 // we get `strlen(i8* 0)` which llc rejects.
                 if l == "0" { l = "null" }
                 if r == "0" { r = "null" }
+                // Non-string scalar operands (Int / Double / Bool)
+                // get stringified through `_gen_to_string` —
+                // libc snprintf into a fresh 32-byte buffer.
+                // Without this, `s + 100` (where 100 is i32) or
+                // `s + vec.x` (Double) emits `strlen(i8* 100)` /
+                // `strlen(i8* %dbl)` which llc rejects.
+                if l_ty == "i32" or l_ty == "double" or l_ty == "i1" {
+                    l = _gen_to_string(cg, l, l_ty)
+                }
+                if r_ty == "i32" or r_ty == "double" or r_ty == "i1" {
+                    r = _gen_to_string(cg, r, r_ty)
+                }
                 cg.mod.ensure_decl("malloc", "declare i8* @malloc(i64)")
                 cg.mod.ensure_decl("strlen", "declare i64 @strlen(i8*)")
                 cg.mod.ensure_decl("strcpy", "declare i8* @strcpy(i8*, i8*)")
@@ -805,6 +817,41 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
                 // number — cg.fresh() assigns in call order
                 // and emit order must match.
                 if opd_ty == "i8*" {
+                    // Null-check shortcut: `ptr == 0` / `ptr != 0`
+                    // — emit `icmp <pred> i8* %x, null` directly
+                    // rather than strcmp. Stdlib idiom for
+                    // `option.value == 0` / `if x != 0` guards.
+                    if (op == "==" or op == "!=") and (r == "0" or l == "0") {
+                        reg := cg.fresh()
+                        pred_n := "eq"
+                        if op == "!=" { pred_n = "ne" }
+                        if l == "0" {
+                            cg.emit(reg + " = icmp " + pred_n + " i8* null, " + r)
+                        } else {
+                            cg.emit(reg + " = icmp " + pred_n + " i8* " + l + ", null")
+                        }
+                        return reg
+                    }
+                    // Mixed-kind compare: i8* operand vs a non-
+                    // pointer integer literal (e.g. `g == 1`
+                    // where g is a backed-enum pointer and 1 is
+                    // the ordinal). Inttoptr-promote the literal
+                    // so strcmp doesn't crash on a tiny integer
+                    // "pointer". The cast is bit-preserving;
+                    // strcmp would still misbehave at runtime
+                    // but the IR validates.
+                    lt_lit := _expr_static_ty(cg, b.left)
+                    rt_lit := _expr_static_ty(cg, b.right)
+                    if rt_lit == "i32" {
+                        promo := cg.fresh()
+                        cg.emit(promo + " = inttoptr i32 " + r + " to i8*")
+                        r = promo
+                    }
+                    if lt_lit == "i32" {
+                        promo := cg.fresh()
+                        cg.emit(promo + " = inttoptr i32 " + l + " to i8*")
+                        l = promo
+                    }
                     cg.mod.ensure_decl("strcmp", "declare i32 @strcmp(i8*, i8*)")
                     cmp := cg.fresh()
                     cg.emit(cmp + " = call i32 @strcmp(i8* " + l + ", i8* " + r + ")")
@@ -1225,6 +1272,24 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
                 }
                 sig = sig + pty + " " + av
                 j = j + 1
+            }
+            // Fill in default args for trailing declared params
+            // the call site didn't supply. Same pattern as the
+            // struct ctor default-fill: Quirk source can declare
+            // `define foo(a, b = 0, c = false)` and call `foo(1)`;
+            // selfhost's parser parse-and-discards the defaults,
+            // so we emit a generic zero (`0` / `null`) per
+            // missing slot. Wrong runtime behaviour for non-zero
+            // defaults but the call arity matches.
+            if is_unknown == false {
+                while j < param_llvm.length() {
+                    if j > 0 { sig = sig + ", " }
+                    pty_fill := param_llvm.__get(j)
+                    fill_val := "0"
+                    if _is_ptr_ty(pty_fill) { fill_val = "null" }
+                    sig = sig + pty_fill + " " + fill_val
+                    j = j + 1
+                }
             }
             sig = sig + ")"
             reg := cg.fresh()
@@ -1898,6 +1963,12 @@ define _gen_method_call(cg: FnCG, c: Call) -> String {
             cg.mod.ensure_decl("malloc", "declare i8* @malloc(i64)")
             cg.mod.ensure_decl("snprintf",
                 "declare i32 @snprintf(i8*, i64, i8*, ...)")
+            // Defensive: `null` flows here when an upstream
+            // coercion produced a pointer literal for what
+            // selfhost typed as Int. `i32 null` would trip
+            // llc; swap to the integer zero literal.
+            recv_val := recv_reg
+            if recv_val == "null" { recv_val = "0" }
             fmt := cg.mod.alloc_string("%d")
             buf := cg.fresh()
             cg.emit(buf + " = call i8* @malloc(i64 12)")
@@ -1906,7 +1977,7 @@ define _gen_method_call(cg: FnCG, c: Call) -> String {
                     fmt + ", i64 0, i64 0")
             ret := cg.fresh()
             cg.emit(ret + " = call i32 (i8*, i64, i8*, ...) @snprintf(i8* " + buf +
-                    ", i64 12, i8* " + fmt_gep + ", i32 " + recv_reg + ")")
+                    ", i64 12, i8* " + fmt_gep + ", i32 " + recv_val + ")")
             return buf
         }
         // Double.str(): snprintf("%g", x) into a 32-byte buffer.
@@ -2101,6 +2172,48 @@ define _gen_list_append(cg: FnCG, recv_reg: String, args: List) -> String {
     cg.emit(new_len + " = add nsw i32 " + len0 + ", 1")
     cg.emit("store i32 " + new_len + ", i32* " + len_gep)
     return "0"
+}
+
+// Stringify a non-string scalar — Int / Double / Bool — into a
+// fresh malloc'd i8* buffer via libc snprintf. Returns the
+// buffer register. Used at `+` concat boundaries when one
+// operand is non-string and the other is i8*.
+//
+// Result leaks (same as the rest of the concat path). 32 bytes
+// is plenty for `%d` (max i32 = 11 digits + sign + null) and
+// `%g` (typical 6-significant-digit double).
+define _gen_to_string(cg: FnCG, val: String, ty: String) -> String {
+    cg.mod.ensure_decl("malloc", "declare i8* @malloc(i64)")
+    cg.mod.ensure_decl("snprintf",
+        "declare i32 @snprintf(i8*, i64, i8*, ...)")
+    fmt_str := "%d"
+    val_ty := "i32"
+    actual_val := val
+    if ty == "double" {
+        fmt_str = "%g"
+        val_ty = "double"
+    } elif ty == "i1" {
+        // Bool — zext to i32 first; snprintf %d handles it.
+        ext := cg.fresh()
+        cg.emit(ext + " = zext i1 " + val + " to i32")
+        actual_val = ext
+    }
+    fmt := cg.mod.alloc_string(fmt_str)
+    fmt_gep := cg.fresh()
+    cg.emit(fmt_gep + " = getelementptr inbounds [3 x i8], [3 x i8]* " +
+            fmt + ", i64 0, i64 0")
+    buf := cg.fresh()
+    cg.emit(buf + " = call i8* @malloc(i64 32)")
+    // Assign the snprintf return to a fresh register even though
+    // we discard it — every LLVM instruction implicitly consumes
+    // a slot in the auto-numbering sequence; a bare `call`
+    // would advance the counter without emitting `%N =`,
+    // creating a gap that the next `cg.fresh()` doesn't account
+    // for and tripping "instruction expected to be numbered".
+    snret := cg.fresh()
+    cg.emit(snret + " = call i32 (i8*, i64, i8*, ...) @snprintf(i8* " + buf +
+            ", i64 32, i8* " + fmt_gep + ", " + val_ty + " " + actual_val + ")")
+    return buf
 }
 
 // String method lowering. All four route through libc:
@@ -3768,15 +3881,22 @@ define _gen_stmt(cg: FnCG, st: Stmt) -> void {
             cg.emit(mc_restore_catch + " = call i8* @memcpy(i8* " + global_ptr + ", i8* " + saved_ptr + ", i64 200)")
             // Bind the exception value to the catch binder.
             binder_ty := _resolve_ty(cg.mod, tc.binder_type)
+            // Unknown struct names (`AppError`, `MyException`,
+            // etc.) resolve to i32 via the default-fallback in
+            // _q_ty_to_llvm — but the exception value loaded
+            // from `@__quirk_exception` is always i8*. Treat
+            // unknown / non-pointer binder types as i8* so the
+            // store type-matches the loaded value.
+            if binder_ty == "i32" or _is_ptr_ty(binder_ty) == false {
+                binder_ty = "i8*"
+            }
             exc_i8 := cg.fresh()
             cg.emit(exc_i8 + " = load i8*, i8** @__quirk_exception")
             binder_val := exc_i8
             if binder_ty != "i8*" {
-                if _is_ptr_ty(binder_ty) {
-                    cast := cg.fresh()
-                    cg.emit(cast + " = bitcast i8* " + exc_i8 + " to " + binder_ty)
-                    binder_val = cast
-                }
+                cast := cg.fresh()
+                cg.emit(cast + " = bitcast i8* " + exc_i8 + " to " + binder_ty)
+                binder_val = cast
             }
             slot := _ensure_fresh_slot(cg, tc.binder, binder_ty)
             cg.emit("store " + binder_ty + " " + binder_val + ", " + binder_ty + "* " + slot.name)

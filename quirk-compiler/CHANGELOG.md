@@ -5,6 +5,65 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [5.0.0-alpha.6] — 2026-06-29 — codegen parity batch 4
+
+Five codegen fixes targeting the remaining LLC-rejection
+clusters. IR-fail **28 → 21** (cumulative across the batch).
+MATCH headline still 3/60 — the cleared tests now hit
+link-time stdlib symbol misses. Fixed-point byte-identical
+holds, 190/190 e2e regression green, peak memory 93 MB.
+
+### 1. Catch-binder type defaults to i8*
+
+`catch (e: AppError)` where `AppError` isn't a registered
+struct used to resolve binder_ty to `i32` (the
+_q_ty_to_llvm fallback for unknown identifiers). Then the
+exception value (always i8* from `@__quirk_exception`)
+was stored to the i32 slot. Now: non-pointer / unknown
+binder types coerce to i8* before slot allocation.
+
+### 2. Snprintf return value gets an explicit SSA name
+
+`_gen_to_string` was emitting a bare `call i32 (...)
+@snprintf(...)` for the discarded snprintf return. LLVM
+auto-numbers every instruction even when no name is
+assigned, so the next `cg.fresh()` ended up with a gap
+that tripped "instruction expected to be numbered '%N'".
+Assigning the call result to a fresh register fixes the
+numbering.
+
+### 3. Call-site default-arg fill (trailing zeros)
+
+When a tracked callee declares more params than the call
+passes (Quirk source pattern `define foo(a, b=0, c=false)`
+called as `foo(1)`), codegen now fills the trailing slots
+with type-appropriate `0` / `null`. Mirror of the struct-
+ctor default-fill from alpha.5. Was causing `@process_link
+defined with type 'i32 (i8*)*' but expected 'i32 (i8*, i1)*'`
+arity errors.
+
+### 4. Non-string operand → string via `_gen_to_string`
+
+`s + 100` (i32) or `s + vec.x` (Double) now routes the
+non-string operand through a new `_gen_to_string` helper
+that calls libc snprintf into a fresh 32-byte buffer.
+Without this, the BinOp `+` lowering called
+`strlen(i8* 100)` / `strlen(i8* %dbl)` and llc rejected.
+Result string leaks (same as the rest of the concat path).
+
+Previously attempted pre-alpha.4 and reverted under
+memory pressure — applies cleanly now thanks to the
+List-accumulator memory fix.
+
+### 5. Pointer compare against integer literal
+
+`g == 0` / `g != 0` on i8* operands now emits
+`icmp <pred> i8* %x, null` directly rather than routing
+through strcmp (which would crash on `strcmp(i8* 0, ...)`).
+For nonzero integer literals (`g == 1` against a backed-
+enum ordinal), the literal goes through `inttoptr i32 N
+to i8*` first so strcmp sees a properly-typed pointer.
+
 ## [5.0.0-alpha.5] — 2026-06-29 — codegen parity batch 3
 
 Four codegen fixes building on alpha.4's memory headroom.

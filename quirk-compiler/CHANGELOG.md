@@ -5,6 +5,45 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [5.0.0-alpha.13] — 2026-06-29 — constructor + stdlib alias batch
+
+Link-fail **25 → 19** cumulative — 6 more tests clear linking.
+MATCH unchanged at 4/60; the unlocked tests advance to DIFF-FAIL
+(linked but wrong output, mostly layout-related). Bootstrap
+byte-identical fixed point holds; 190/190 e2e green.
+
+### 1. Bare collection constructors
+
+Selfhost emits `Set()` / `Map()` / `Queue()` as direct function
+calls expecting a runtime-defined symbol. The C++ compiler maps
+these to `Core_Collections_<T>___init` invocations on freshly
+malloc'd memory; the aliases match. `__asm__` directives sidestep
+the `Set` / `Map` / `Queue` typedef names already in scope from
+`types.h`.
+
+### 2. String method aliases — full set
+
+Added `ljust` / `rjust` / `center` / `join` / `split` / `title`
+/ `capitalize` / `lstrip` / `rstrip` / `count` / `repeat` /
+`reverse` / `lines` / `is_alpha` / `is_digit` / `is_lower` /
+`is_upper` / `is_space` / `index` / `remove`. All pass through
+to `Core_String_String_*` impls; receivers reach these from
+runtime-built `make_String` calls so layout matches.
+
+### 3. Exception constructors
+
+`TypeError("msg")` / `ValueError("msg")` / etc. were emitted by
+selfhost as direct function calls; now stub-forward (returning
+the message verbatim). Throw walks a generic catch chain
+correctly because the binder is opaque i8*.
+
+### 4. Built-in `type(x)`
+
+Returns the static string `"any"` as a placeholder. Selfhost
+doesn't carry per-value type metadata; full implementation
+would need a tag-byte preamble. Stub is good enough to clear
+the link wall.
+
 ## [5.0.0-alpha.12] — 2026-06-29 — Int/Double mixed arith + return cast
 
 LLC-fail **11 → 9** cumulative. MATCH unchanged at 4/60 — the

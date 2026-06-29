@@ -1177,9 +1177,21 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
                     aexp_k: Expr := c.args.__get(kj)
                     av_ty := _expr_static_ty(cg, aexp_k)
                     if _is_ptr_ty(av_ty) == false {
-                        promoted := cg.fresh()
-                        cg.emit(promoted + " = inttoptr " + av_ty + " " + av_i + " to i8*")
-                        av_i = promoted
+                        // `double` can't go through `inttoptr`
+                        // directly (LLVM requires the source to
+                        // be an integer type). Bitcast through
+                        // i64 first.
+                        if av_ty == "double" {
+                            d2i := cg.fresh()
+                            cg.emit(d2i + " = bitcast double " + av_i + " to i64")
+                            promoted := cg.fresh()
+                            cg.emit(promoted + " = inttoptr i64 " + d2i + " to i8*")
+                            av_i = promoted
+                        } else {
+                            promoted := cg.fresh()
+                            cg.emit(promoted + " = inttoptr " + av_ty + " " + av_i + " to i8*")
+                            av_i = promoted
+                        }
                     }
                     call_sig = call_sig + "i8* " + av_i
                     kj = kj + 1
@@ -2073,12 +2085,25 @@ define _gen_listp_append(cg: FnCG, recv_reg: String, args: List) -> String {
     aexpr: Expr := args.__get(0)
     a_ty := _expr_static_ty(cg, aexpr)
     a_val := _gen_expr(cg, aexpr)
-    // Coerce to i8* if the static type is some other pointer.
+    // Coerce to i8* — pointer-element list stores i8* slots, so
+    // every appended value needs to land as i8*. Pointers
+    // bitcast; integers / bools go through inttoptr; doubles
+    // bitcast-to-i64 first.
     val_i8 := a_val
     if a_ty != "i8*" {
         if _is_ptr_ty(a_ty) {
             cast := cg.fresh()
             cg.emit(cast + " = bitcast " + a_ty + " " + a_val + " to i8*")
+            val_i8 = cast
+        } elif a_ty == "double" {
+            d2i := cg.fresh()
+            cg.emit(d2i + " = bitcast double " + a_val + " to i64")
+            cast := cg.fresh()
+            cg.emit(cast + " = inttoptr i64 " + d2i + " to i8*")
+            val_i8 = cast
+        } else {
+            cast := cg.fresh()
+            cg.emit(cast + " = inttoptr " + a_ty + " " + a_val + " to i8*")
             val_i8 = cast
         }
     }
@@ -3799,6 +3824,23 @@ define _gen_stmt(cg: FnCG, st: Stmt) -> void {
             // %QMap* routes through inline Map.put codegen.
             base_ty := _expr_static_ty(cg, ixs.obj)
             base_reg := _gen_expr(cg, ixs.obj)
+            // Coerce stdlib-typed list/map pointers to selfhost's
+            // flat shape — mirror of the Index coercion. Without
+            // this, `items[j] = v` on a `%struct.List*` slot
+            // emits GEP %QList* directly on the typed pointer,
+            // and llc rejects.
+            if base_ty == "%struct.List*" {
+                rebind := cg.fresh()
+                cg.emit(rebind + " = bitcast %struct.List* " + base_reg + " to %QListP*")
+                base_reg = rebind
+                base_ty = "%QListP*"
+            }
+            if base_ty == "%struct.Map*" {
+                rebind2 := cg.fresh()
+                cg.emit(rebind2 + " = bitcast %struct.Map* " + base_reg + " to %QMap*")
+                base_reg = rebind2
+                base_ty = "%QMap*"
+            }
             // Map[key] = value → equivalent of `m.put(key, value)`.
             // Route through the existing inline Map.put codegen
             // (selfhost's %QMap layout is incompatible with the
@@ -3830,6 +3872,15 @@ define _gen_stmt(cg: FnCG, st: Stmt) -> void {
                         ix_cast := cg.fresh()
                         cg.emit(ix_cast + " = bitcast " + val_ty + " " + val_reg + " to i8*")
                         v_i8 = ix_cast
+                    } else {
+                        // Integer / bool / double value into an
+                        // i8* slot — inttoptr-promote so the
+                        // store type-matches. Without this we
+                        // emit `store i8* 10, i8**` which llc
+                        // rejects.
+                        ix_promo := cg.fresh()
+                        cg.emit(ix_promo + " = inttoptr " + val_ty + " " + val_reg + " to i8*")
+                        v_i8 = ix_promo
                     }
                 }
                 cg.emit("store i8* " + v_i8 + ", i8** " + ix_elem_gep)

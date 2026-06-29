@@ -5,6 +5,41 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [5.0.0-alpha.8] — 2026-06-29 — codegen parity batch 6
+
+Four codegen fixes around the i8*-element list write path.
+IR-fail **18 → 15** cumulative. MATCH still 3/60. Bootstrap +
+190/190 e2e regression green, peak memory ~93 MB.
+
+### 1. IndexSet: stdlib list/map bitcast
+
+`xs[j] = v` where `xs` is `%struct.List*` / `%struct.Map*` now
+bitcasts to selfhost's flat shape before the store. Mirror of
+the Index coercion from alpha.7. Triggered by stdlib code like
+`math.shuffle(items)` doing `items[i] = items.get(j)`.
+
+### 2. IndexSet: int → i8* inttoptr promotion
+
+When the pointer-element list path stores a non-pointer value
+(`xs[i] = 10`), the previous code only handled the pointer-to-
+pointer bitcast case and let bare integers leak through as
+`store i8* 10, i8**` which llc rejected. Non-pointer values
+now `inttoptr` to i8* before the store.
+
+### 3. `_gen_listp_append`: int / bool / double append
+
+Same pattern as IndexSet — appending a non-pointer scalar to
+a pointer-element list now inttoptr-promotes. Doubles go
+through a `bitcast double → i64` intermediate since LLVM's
+`inttoptr` only accepts integer source types.
+
+### 4. Indirect-call: double-arg bitcast through i64
+
+Calling a Callable (`pred(item)`-style) promotes every arg to
+i8* so the call type-matches the variadic function pointer.
+Doubles couldn't go through `inttoptr double` directly; now
+they go `bitcast double → i64 → inttoptr i64 → i8*`.
+
 ## [5.0.0-alpha.7] — 2026-06-29 — codegen parity batch 5
 
 Six codegen fixes. IR-fail **21 → 18** cumulative. MATCH headline

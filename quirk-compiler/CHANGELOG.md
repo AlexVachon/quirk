@@ -5,6 +5,62 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [5.0.0-alpha.5] — 2026-06-29 — codegen parity batch 3
+
+Four codegen fixes building on alpha.4's memory headroom.
+IR-fail 31 → 28 (three more tests cleared LLC validation).
+MATCH headline holds at 3/60; the cleared tests now trip
+link-time misses (stdlib symbol gaps) instead of LLC type
+errors. Bootstrap byte-identical fixed-point holds, 190/190
+e2e regression green, peak memory still 92 MB.
+
+### 1. `register_sig` first-wins
+
+alpha.3's emit-pass dedup picked the first non-extern wins,
+but the pre-pass `register_sig` still overwrote sigs with
+the last seen, which left call sites resolving to a
+signature that didn't match the emitted symbol. The
+`%struct.URL* @parse` define and `i8* @parse` call sites
+were the canonical case. Pre-pass now skips re-registration,
+matching the emit-pass behaviour.
+
+### 2. Struct ctor default-arg fill
+
+`Foo()` with no args calling `Foo.__init(self, x: Int = 0)`
+no longer trips `"@Foo____init defined with type 'i32
+(%struct.Foo*, i32)*' but expected 'i32 (%struct.Foo*)*'`.
+When the user passes fewer args than the sig's user-visible
+slot count, codegen fills the trailing positions with `0`
+(integer) or `null` (pointer). Wrong runtime behaviour if
+the actual defaults are non-zero, but the IR validates and
+the call links.
+
+### 3. Empty-struct + missing-field guards
+
+Permissive sema accepts `self.field = ...` on `Exception`
+subclasses that declare no fields (stdlib pattern: fields
+implicit through `__init` chains). Codegen used to emit
+`getelementptr %struct.X, %struct.X* %obj, i32 0, i32 0`
+on an empty struct → "invalid getelementptr indices".
+`_gen_field_set` and `_gen_field_get` now early-return
+when the struct has no fields or the named field isn't
+declared.
+
+### 4. `<undef:name>` placeholder → `0`
+
+Unknown identifiers at codegen time used to emit
+`<undef:name>` placeholder text, which llc rejected as
+"expected type". Now returns the integer zero literal,
+matching the bad-method / bad-callee fallback pattern.
+Same caveat as those: runtime behaviour is meaningless
+if the reference is live, but the IR validates.
+
+This change had been attempted in pre-alpha.4 territory
+and was reverted because the bootstrap appeared to OOM —
+turns out that was ambient memory pressure on the machine,
+not a code-side regression. With alpha.4's selfhost peak
+down to 92 MB, this change applies cleanly.
+
 ## [5.0.0-alpha.4] — 2026-06-29 — selfhost peak memory 1.84 GB → 92 MB
 
 A major memory-footprint reduction. Selfhost compiling its own

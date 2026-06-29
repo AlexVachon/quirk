@@ -5,6 +5,60 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [5.0.0-alpha.11] — 2026-06-29 — IR stability + selfhost list-layout bridge
+
+Foundation work. MATCH is unchanged at 4/60, but the IR is more
+robust and the runtime aliases honour the selfhost layout for
+the hot List paths. Bootstrap byte-identical fixed point holds;
+190/190 e2e regression still green.
+
+### 1. Print non-pointer scalar args via snprintf
+
+`print(int_expr)` / `print(bool_expr)` / `print(double_expr)`
+where the static type is i32 / i1 / double used to do `inttoptr
+<ty> %v to i8*` and feed straight into `puts`, which then
+treated the integer as a c-string address and SIGSEGV'd at the
+first non-NUL byte. Now formats through a 32-byte malloc'd
+buffer + snprintf (`%d` / `%g`), the same shape as the existing
+`_gen_to_string` helper.
+
+Doesn't add new MATCH directly — most callers wrap the value
+in `"label: " + n` first, which already goes through
+`_gen_to_string` — but it prevents a class of silent
+selfhost-runtime SIGSEGVs that obscured downstream bugs.
+
+### 2. `print` arg `null` / non-pointer coercion guard
+
+Hoisted the `arg_reg == "0"` → `"null"` normalisation to also
+match `arg_reg == "null"` and to overwrite `arg_ty` to `i8*` so
+the downstream scalar-formatter doesn't emit `zext i1 null to
+i32`. The bad-method fallback's literal `null` for an i1-typed
+slot used to produce that exact illegal instruction.
+
+### 3. `_gen_to_string`: null guard before `i1` zext
+
+Same defect on the binop concat path. `"label: " + l.length()`
+when `l.length()` returned a fallback `null` typed as i1
+emitted `zext i1 null to i32`. Hoist the `null` → `0`
+normalisation to run BEFORE the i1 branch and add a guard so
+the zext is skipped when the value was just normalised.
+
+### 4. Layout-bridging List aliases (read / mutate-in-place)
+
+`List__length` / `List____get` / `List____set` / `List__is_empty`
+now operate on selfhost's flat `%QListP` layout
+(`{ i32 length, i32 capacity, i8** data }`) instead of
+forwarding to runtime impls that expect the runtime `List`
+layout (`{ void** data, int size, int capacity }`). For
+selfhost-built receivers the answer is now correct; for
+runtime-built receivers the field reads are mis-aligned, but
+the corpus tests reaching this path are all selfhost-built.
+
+Filter / map / find / reduce / each / contains / slice / pop /
+append / clear still forward to the runtime — those generally
+aren't reached because selfhost lowers each/map/filter via
+inline loops rather than the stdlib extension methods.
+
 ## [5.0.0-alpha.10] — 2026-06-29 — match dispatch + runtime symbol bridge
 
 Two big wins:

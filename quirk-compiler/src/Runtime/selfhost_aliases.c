@@ -146,15 +146,54 @@ void*  String__replace   (void* s, void* a, void* b)               { return Core
 void   String____init    (void* self, char* src)                   { Core_String_String___init(self, src); }
 
 // List — Core_Collections_List_List_* family.
+//
+// Layout-bridging: receivers reaching these aliases are
+// almost always selfhost's flat `%QListP`
+// (`{ i32 length, i32 capacity, i8** data }`), bitcast at
+// the call site to satisfy a `%struct.List*` parameter
+// type. The runtime's `List` (`{ void** data, int size,
+// int capacity }`) has the SAME fields but in a different
+// order, so forwarding directly to the runtime impls reads
+// the wrong bytes.
+//
+// For the read-only / mutate-in-place methods (length /
+// get / set / is_empty), peek at the selfhost layout
+// directly — safe for selfhost-built receivers and likely
+// fast enough that runtime callers won't notice. For
+// methods that require the full runtime machinery (filter
+// / map / find / reduce / each that take Callable), forward
+// — those generally aren't reached at runtime because
+// selfhost lowers each/map/filter via inline loops rather
+// than through these stdlib methods.
 
-int    List__length    (void* s)                  { return Core_Collections_List_List_length(s); }
+struct QListP_View {
+    int    length;
+    int    capacity;
+    void** data;
+};
+
+int   List__length   (void* s) {
+    return s ? ((struct QListP_View*)s)->length : 0;
+}
+void* List____get    (void* s, int i) {
+    if (!s) return 0;
+    struct QListP_View* v = (struct QListP_View*)s;
+    if (i < 0 || i >= v->length) return 0;
+    return v->data[i];
+}
+void  List____set    (void* s, int i, void* val) {
+    if (!s) return;
+    struct QListP_View* v = (struct QListP_View*)s;
+    if (i >= 0 && i < v->length) v->data[i] = val;
+}
+int   List__is_empty (void* s) {
+    return s ? ((struct QListP_View*)s)->length == 0 : 1;
+}
+
 void   List__append    (void* s, void* v)         { Core_Collections_List_List_append(s, v); }
-void*  List____get     (void* s, int i)           { return Core_Collections_List_List___get(s, i); }
-void   List____set     (void* s, int i, void* v)  { Core_Collections_List_List___set(s, i, v); }
 int    List__contains  (void* s, void* v)         { return Core_Collections_List_List_contains(s, v); }
 void*  List__slice     (void* s, int a, int b)    { return Core_Collections_List_List_slice(s, a, b); }
 void*  List__pop       (void* s)                  { return Core_Collections_List_List_pop(s); }
-int    List__is_empty  (void* s)                  { return Core_Collections_List_List_is_empty(s); }
 void   List__clear     (void* s)                  { Core_Collections_List_List_clear(s); }
 void*  List__reduce    (void* s, void* f, void* i){ return Core_Collections_List_List_reduce(s, f, i); }
 void*  List__filter    (void* s, void* f)         { return Core_Collections_List_List_filter(s, f); }
@@ -214,3 +253,16 @@ int    group_depth_get(void)         { return Sys_group_depth_get(); }
 // the stub is a no-op (returns null). Test code reaching this path is
 // already in undefined-behaviour territory.
 void* super(void* arg) { (void)arg; return 0; }
+
+// quirk_opaque_to_cstr — char*-returning wrapper around
+// quirk_opaque_to_string. Selfhost's IR uses opaque `%struct.String`
+// (no field layout in the emitted module), so it can't GEP into the
+// String* returned by quirk_opaque_to_string to pull out the buffer.
+// This helper does the GEP-and-load on the C side and hands back the
+// raw c-string pointer, ready to feed straight into puts.
+extern String* quirk_opaque_to_string(void* val);
+
+char* quirk_opaque_to_cstr(void* val) {
+    String* s = quirk_opaque_to_string(val);
+    return s ? s->buffer : (char*)"null";
+}

@@ -1079,8 +1079,17 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
                 // can't shove it into `puts` as an i8* — coerce
                 // through an inttoptr cast so the IR type-checks.
                 // The runtime value is meaningless either way.
-                if arg_reg == "0" {
+                if arg_reg == "0" or arg_reg == "null" {
+                    // bad-method fallback returned a literal
+                    // `0` / `null` constant. Coerce to `null`
+                    // with i8* type so the downstream branches
+                    // (which expect a pointer for the puts call)
+                    // see a valid shape. Without this, a non-
+                    // pointer-typed `null` (e.g. arg_ty == "i1"
+                    // from an enum compare) hit `zext i1 null
+                    // to i32` — `null must be a pointer type`.
                     arg_reg = "null"
+                    arg_ty = "i8*"
                 } elif arg_ty == "%struct.String*" {
                     // Extract _buffer field — runtime String is
                     // `{ i8* buffer, i32 length }`; we want the
@@ -1091,9 +1100,33 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
                     cg.emit(buf + " = load i8*, i8** " + gep_buf)
                     arg_reg = buf
                 } elif _is_ptr_ty(arg_ty) == false {
-                    cast_reg := cg.fresh()
-                    cg.emit(cast_reg + " = inttoptr " + arg_ty + " " + arg_reg + " to i8*")
-                    arg_reg = cast_reg
+                    // Non-pointer scalar (Int / Bool / enum tag /
+                    // double) — format through snprintf so the
+                    // user sees the numeric value rather than the
+                    // SIGSEGV that puts(inttoptr) produces.
+                    fmt := "%d"
+                    cast_ty := arg_ty
+                    promo_reg := arg_reg
+                    if arg_ty == "double" { fmt = "%g" }
+                    if arg_ty == "i1" {
+                        // Promote bool to i32 — puts a numeric 0/1.
+                        // Strictly speaking print(bool) should
+                        // render "true"/"false", but %d at least
+                        // avoids the wild-pointer puts crash.
+                        promo_reg = cg.fresh()
+                        cg.emit(promo_reg + " = zext i1 " + arg_reg + " to i32")
+                        cast_ty = "i32"
+                    }
+                    cg.mod.ensure_decl("snprintf", "declare i32 @snprintf(i8*, i64, i8*, ...)")
+                    fmt_const := cg.mod.alloc_string(fmt)
+                    fmt_reg := cg.fresh()
+                    cg.emit(fmt_reg + " = getelementptr inbounds [" + (fmt.length() + 1).str() + " x i8], [" + (fmt.length() + 1).str() + " x i8]* " + fmt_const + ", i64 0, i64 0")
+                    cg.mod.ensure_decl("malloc", "declare i8* @malloc(i64)")
+                    buf_raw := cg.fresh()
+                    cg.emit(buf_raw + " = call i8* @malloc(i64 32)")
+                    snret := cg.fresh()
+                    cg.emit(snret + " = call i32 (i8*, i64, i8*, ...) @snprintf(i8* " + buf_raw + ", i64 32, i8* " + fmt_reg + ", " + cast_ty + " " + promo_reg + ")")
+                    arg_reg = buf_raw
                 } elif arg_ty != "i8*" {
                     // Other pointer kinds (e.g. %QListP*, struct ptrs)
                     // bitcast to i8* — wrong runtime output but
@@ -2310,14 +2343,23 @@ define _gen_to_string(cg: FnCG, val: String, ty: String) -> String {
     val_ty := "i32"
     actual_val := val
     // Defensive: `null` flows here when an upstream coercion
-    // gave us a pointer for what selfhost typed as Int — the
-    // raw `null` would trip llc's `i32 null` check.
-    if actual_val == "null" { actual_val = "0" }
+    // gave us a pointer for what selfhost typed as Int / Bool
+    // — the raw `null` would trip llc's `i32 null` or `i1 null`
+    // checks. Substitute `0` and treat the value as i32 (drops
+    // any Bool-ness, but the runtime output ("0") is at least
+    // valid IR and matches the no-op semantic).
+    if actual_val == "null" {
+        actual_val = "0"
+        val = "0"
+    }
     if ty == "double" {
         fmt_str = "%g"
         val_ty = "double"
-    } elif ty == "i1" {
+    } elif ty == "i1" and val != "0" {
         // Bool — zext to i32 first; snprintf %d handles it.
+        // The `val != "0"` guard skips the zext when the
+        // value was just normalised away from null above; a
+        // literal `0` is a valid i32 already.
         ext := cg.fresh()
         cg.emit(ext + " = zext i1 " + val + " to i32")
         actual_val = ext
@@ -3697,6 +3739,7 @@ define _method_ret_ty(cg: FnCG, recv_ty: String, method: String) -> String {
 define _is_ptr_ty(ty: String) -> Bool {
     return ty.endswith("*")
 }
+
 
 // Extract `"Foo"` from `"%struct.Foo*"`. Returns the input
 // unchanged when it doesn't look like a struct pointer — the

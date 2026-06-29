@@ -5,6 +5,62 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [5.0.0-alpha.7] — 2026-06-29 — codegen parity batch 5
+
+Six codegen fixes. IR-fail **21 → 18** cumulative. MATCH headline
+still 3/60; link-fail rose 33 → 36 as the cleared tests advanced
+to stdlib symbol misses. Bootstrap byte-identical fixed-point
+holds, 190/190 e2e regression green, peak memory ~93 MB.
+
+### 1. Throw value coercion
+
+`throw <non-pointer>` (typically a bare `throw` rethrow where the
+parser synthesizes NullLit) now coerces literal `0` to `null` or
+emits an `inttoptr` for non-zero int. Fixes
+`store i8* 0, i8** @__quirk_exception` rejected by llc.
+
+### 2. `_gen_to_string` defensive null→0
+
+The Int.str() / generic to-string helper now swaps a `null`
+operand to `0` before calling `snprintf(..., i32 N)` — matches
+the Int.str() fix from alpha.5 but applies at the new helper
+site too.
+
+### 3. Try/catch body terminator guard
+
+When a `throw` (or other terminator) ends the try body, the
+parser-appended `finally { … }` statements still ran through
+`_gen_stmt`. `emit()` suppressed the IR for those, but
+`cg.fresh()` still bumped the SSA counter, leaving gaps that
+tripped LLVM's "instruction expected to be numbered '%N'"
+check. Both try and catch loops now short-circuit on
+`block_terminated`.
+
+### 4. Index codegen: stdlib list/map bitcast
+
+`xs[i]` where `xs` is `%struct.List*` / `%struct.Map*` (bundled
+stdlib types) now bitcasts to selfhost's flat `%QListP*` /
+`%QMap*` before the index/lookup. Mirror of the ForIn coercion
+from alpha.2. The bitcast is layout-safe because the indexed
+values were originally written by selfhost-emitted code.
+
+### 5. Index static-ty matches the coercion
+
+`_expr_static_ty` for `Index(struct.List*)` now returns `i8*`
+(the pointer-element type for QListP after bitcast) instead of
+the default `i32`. Without this, the return value's static type
+disagreed with its actual emitted LLVM type — downstream
+`ret i8* %x` would `inttoptr` the i8* as if it were i32.
+
+### 6. If-condition truthiness coercion
+
+`if EXPR { … }` where EXPR isn't already i1 (pointers from
+Callable invocations, ints from any-typed expressions) now
+emits `icmp ne <ty> %cond, 0/null` to produce a proper i1
+before `br i1`. Matches the alpha.2 sema relaxation that
+accepts any non-error type in `if` conditions — codegen now
+implements the conversion the sema promised.
+
 ## [5.0.0-alpha.6] — 2026-06-29 — codegen parity batch 4
 
 Five codegen fixes targeting the remaining LLC-rejection

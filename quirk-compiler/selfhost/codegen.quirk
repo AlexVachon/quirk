@@ -535,6 +535,25 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
             // indexing).
             base_ty := _expr_static_ty(cg, ix.obj)
             base_reg := _gen_expr(cg, ix.obj)
+            // Coerce stdlib-typed list/map pointers to selfhost's
+            // flat shape. Mirror of the ForIn coercion: bundled
+            // stdlib functions return `%struct.List*` /
+            // `%struct.Map*`, but selfhost-built values keep the
+            // flat QList / QMap layout. A pointer-to-pointer
+            // bitcast is safe because the index codegen accesses
+            // bytes that were originally written by selfhost.
+            if base_ty == "%struct.List*" {
+                rebind := cg.fresh()
+                cg.emit(rebind + " = bitcast %struct.List* " + base_reg + " to %QListP*")
+                base_reg = rebind
+                base_ty = "%QListP*"
+            }
+            if base_ty == "%struct.Map*" {
+                rebind2 := cg.fresh()
+                cg.emit(rebind2 + " = bitcast %struct.Map* " + base_reg + " to %QMap*")
+                base_reg = rebind2
+                base_ty = "%QMap*"
+            }
             // Map indexing `m[key]` → equivalent of `m.get(key)`.
             // Route through the existing inline Map.get codegen
             // rather than calling the runtime stdlib helper —
@@ -1427,6 +1446,14 @@ define _expr_static_ty(cg: FnCG, e: Expr) -> String {
         case Index as ix => {
             obj_ty := _expr_static_ty(cg, ix.obj)
             if obj_ty == "%QListP*" { return "i8*" }
+            // Stdlib's typed List/Map slots — the Index codegen
+            // bitcasts these to %QListP* / %QMap*, so the
+            // element type at the use site is i8* (pointer-
+            // element for List, value for Map.get).
+            if obj_ty == "%struct.List*" { return "i8*" }
+            if obj_ty == "%struct.Map*" { return "i8*" }
+            // String indexing returns i32 (byte zext to int).
+            if obj_ty == "%struct.String*" or obj_ty == "i8*" { return "i32" }
             return "i32"
         }
         case Ident as id => {
@@ -2189,6 +2216,10 @@ define _gen_to_string(cg: FnCG, val: String, ty: String) -> String {
     fmt_str := "%d"
     val_ty := "i32"
     actual_val := val
+    // Defensive: `null` flows here when an upstream coercion
+    // gave us a pointer for what selfhost typed as Int — the
+    // raw `null` would trip llc's `i32 null` check.
+    if actual_val == "null" { actual_val = "0" }
     if ty == "double" {
         fmt_str = "%g"
         val_ty = "double"
@@ -3666,7 +3697,32 @@ define _gen_stmt(cg: FnCG, st: Stmt) -> void {
             _gen_match(cg, m)
         }
         case If as iff => {
+            cond_ty := _expr_static_ty(cg, iff.cond)
             cond := _gen_expr(cg, iff.cond)
+            // Truthiness coercion. Selfhost's permissive `if`
+            // sema accepts any non-error type as a condition,
+            // but `br i1` needs an i1 specifically. Coerce
+            // pointer / int conditions to i1 via icmp-not-zero.
+            // Callable invocations especially: indirect calls
+            // return i8* (the TAny erasure), but the predicate's
+            // real return is i1 — the byte value 0/1 matches
+            // i1 semantics so `icmp ne i8* %cond, null`-style
+            // wouldn't be right; we ptrtoint to i32 first and
+            // compare against 0 instead, which extracts the
+            // lower bit correctly.
+            if cond_ty != "i1" {
+                if _is_ptr_ty(cond_ty) {
+                    p2i := cg.fresh()
+                    cg.emit(p2i + " = ptrtoint " + cond_ty + " " + cond + " to i32")
+                    new_cond := cg.fresh()
+                    cg.emit(new_cond + " = icmp ne i32 " + p2i + ", 0")
+                    cond = new_cond
+                } elif cond_ty == "i32" {
+                    new_cond := cg.fresh()
+                    cg.emit(new_cond + " = icmp ne i32 " + cond + ", 0")
+                    cond = new_cond
+                }
+            }
             then_lbl := cg.fresh_label("if.then")
             else_lbl := cg.fresh_label("if.else")
             end_lbl  := cg.fresh_label("if.end")
@@ -3811,6 +3867,18 @@ define _gen_stmt(cg: FnCG, st: Stmt) -> void {
                     cast := cg.fresh()
                     cg.emit(cast + " = bitcast " + val_ty + " " + val_reg + " to i8*")
                     val_i8 = cast
+                } else {
+                    // `throw <something-non-pointer>` — usually
+                    // a bare `throw` rethrow where the parser
+                    // synthesized NullLit. Coerce to a real
+                    // null so the store type-checks.
+                    if val_i8 == "0" {
+                        val_i8 = "null"
+                    } else {
+                        cast := cg.fresh()
+                        cg.emit(cast + " = inttoptr " + val_ty + " " + val_reg + " to i8*")
+                        val_i8 = cast
+                    }
                 }
             }
             cg.emit("store i8* " + val_i8 + ", i8** @__quirk_exception")
@@ -3859,6 +3927,16 @@ define _gen_stmt(cg: FnCG, st: Stmt) -> void {
             cg.emit_raw(body_lbl + ":")
             tbi := 0
             while tbi < tc.try_body.length() {
+                // Stop after a terminator. Parsing-side, `finally
+                // { … }` blocks get appended to BOTH try_body and
+                // catch_body so the cleanup runs on either path
+                // — but if the try body unconditionally throws,
+                // codegen would still walk the finally statements
+                // (emit() suppresses output for terminated
+                // blocks, but cg.fresh() still bumps the SSA
+                // counter, leaving gaps that fail LLVM's
+                // sequential-numbering check).
+                if cg.block_terminated { tbi = tc.try_body.length(); continue }
                 ts: Stmt := tc.try_body.__get(tbi)
                 _gen_stmt(cg, ts)
                 tbi = tbi + 1
@@ -3902,6 +3980,13 @@ define _gen_stmt(cg: FnCG, st: Stmt) -> void {
             cg.emit("store " + binder_ty + " " + binder_val + ", " + binder_ty + "* " + slot.name)
             cbi := 0
             while cbi < tc.catch_body.length() {
+                // Mirror of the try-body terminator guard above —
+                // the parser appends `finally { … }` to both
+                // try_body and catch_body, so if the catch body
+                // terminates (rethrow, etc.), cg.fresh() in the
+                // appended finally statements would leave SSA
+                // gaps.
+                if cg.block_terminated { cbi = tc.catch_body.length(); continue }
                 cs: Stmt := tc.catch_body.__get(cbi)
                 _gen_stmt(cg, cs)
                 cbi = cbi + 1

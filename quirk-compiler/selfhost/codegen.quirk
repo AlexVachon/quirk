@@ -758,6 +758,28 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
             if b.op == "+" and (opd_ty == "%struct.String*" or rt_check == "%struct.String*") {
                 opd_ty = "i8*"
             }
+            // Mixed Int + String — selfhost typed the BinOp by
+            // the left side (Int), but if the right side is a
+            // string literal (i8* from a constant GEP), the user
+            // clearly meant string concat. Promote opd_ty so the
+            // concat path takes over; downstream `_gen_to_string`
+            // will format the i32 left operand into a c-string.
+            if b.op == "+" and rt_check == "i8*" and (opd_ty == "i32" or opd_ty == "i1" or opd_ty == "double") {
+                opd_ty = "i8*"
+            }
+            // Mixed Int + Double — selfhost typed by the left
+            // side. If the right is double, promote the BinOp
+            // to double so the arithmetic path emits fadd /
+            // fmul. Without this, `i32 * 2.0` fails llc.
+            if (b.op == "+" or b.op == "-" or b.op == "*" or b.op == "/") and rt_check == "double" and opd_ty == "i32" {
+                opd_ty = "double"
+                is_dbl = true
+            }
+            // Symmetric: left double, right Int — bias to
+            // double too.
+            if (b.op == "+" or b.op == "-" or b.op == "*" or b.op == "/") and opd_ty == "double" and rt_check == "i32" {
+                is_dbl = true
+            }
             // String concat: `+` on two i8* operands. Lower to
             // malloc(strlen(a) + strlen(b) + 1) + strcpy + strcat,
             // and return the malloc'd buffer. The result leaks
@@ -1012,6 +1034,28 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
             // mul; sdiv/srem/frem reject it.
             int_flag := " nsw"
             if op == "/" or op == "%" { int_flag = "" }
+            // Coerce mixed Int/Double operands: when the BinOp
+            // resolved to double but an operand reaches us with
+            // an i32 static type (selfhost biases by the left
+            // side, so this happens when only one side is Int),
+            // sitofp it first so the fmul / fadd / etc. sees
+            // matching `double` operands. Without this we'd emit
+            // `fmul double <i32-reg>, 2.0` and llc rejects it
+            // with "integer constant must have integer type".
+            if is_dbl {
+                lt_n := _expr_static_ty(cg, b.left)
+                rt_n := _expr_static_ty(cg, b.right)
+                if lt_n == "i32" {
+                    lpromo := cg.fresh()
+                    cg.emit(lpromo + " = sitofp i32 " + l + " to double")
+                    l = lpromo
+                }
+                if rt_n == "i32" {
+                    rpromo := cg.fresh()
+                    cg.emit(rpromo + " = sitofp i32 " + r + " to double")
+                    r = rpromo
+                }
+            }
             reg := cg.fresh()
             if is_dbl {
                 cg.emit(reg + " = " + dbl_instr + " double " + l + ", " + r)
@@ -3833,6 +3877,21 @@ define _gen_stmt(cg: FnCG, st: Stmt) -> void {
                 i2p_ret := cg.fresh()
                 cg.emit(i2p_ret + " = inttoptr i32 " + v + " to " + cg.ret_ty)
                 v = i2p_ret
+            } elif v_ty == "i32" and cg.ret_ty == "double" {
+                // Int → Double coercion. selfhost drops `as
+                // Double` casts at parse time so a function
+                // declared `-> Double` whose body produces an
+                // i32 (e.g. `a / b` on two Int) reaches this
+                // point with the cast erased. sitofp recovers
+                // the intent without round-trip-through-AST.
+                s2d := cg.fresh()
+                cg.emit(s2d + " = sitofp i32 " + v + " to double")
+                v = s2d
+            } elif v_ty == "double" and cg.ret_ty == "i32" {
+                // Double → Int — opposite direction.
+                d2s := cg.fresh()
+                cg.emit(d2s + " = fptosi double " + v + " to i32")
+                v = d2s
             }
             cg.emit("ret " + cg.ret_ty + " " + v)
         }

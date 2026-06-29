@@ -5,6 +5,40 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [5.0.0-alpha.12] — 2026-06-29 — Int/Double mixed arith + return cast
+
+LLC-fail **11 → 9** cumulative. MATCH unchanged at 4/60 — the
+cleared tests advance from LLC-fail to LINK-fail (the next
+wall). Bootstrap byte-identical fixed point holds; 190/190 e2e
+regression still green.
+
+### 1. Int → Double return coercion
+
+`define divide(a: Int, b: Int) -> Double` whose body returns
+`a / b` (an i32) used to emit `ret double %sdiv` — invalid
+IR. Selfhost drops `as Double` casts at parse time, so we
+recover the intent at the Return statement: if the value's
+static type is i32 and the function's declared return type
+is double, emit `sitofp i32 ... to double` before the ret.
+Symmetric Double → Int via fptosi.
+
+### 2. Int + Double mixed arithmetic
+
+`x * 2.0` where `x` is Int used to type the BinOp by the
+left operand (Int) and emit `mul nsw i32 %x, 2.0` — llc
+rejected the `2.0` constant on an integer instruction.
+Now bumps `opd_ty` to double when either operand is double,
+and `sitofp`-promotes the i32 operand before the fmul / fadd
+/ fdiv / fsub.
+
+### 3. Int + String concat promotion
+
+`col1 + " "` where `col1` is Int and `" "` is a string
+literal used to emit `add nsw i32 %col1, @.str.X` — llc
+rejected the pointer-as-i32. Now detects "either side is
+i8*" and routes through the strcat path, where the existing
+`_gen_to_string` helper handles formatting the i32 side.
+
 ## [5.0.0-alpha.11] — 2026-06-29 — IR stability + selfhost list-layout bridge
 
 Foundation work. MATCH is unchanged at 4/60, but the IR is more

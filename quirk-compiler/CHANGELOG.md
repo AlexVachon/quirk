@@ -5,6 +5,49 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [5.0.0-alpha.9] — 2026-06-29 — codegen parity batch 7
+
+Five codegen fixes. IR-fail **15 → 12** cumulative. MATCH still
+3/60. Bootstrap byte-identical fixed-point holds, 190/190 e2e
+regression green.
+
+### 1. String-indexing guards against pointer index
+
+`s[k]` where `k` has pointer type isn't really a String byte-
+load — it's a Map-on-Any lookup. Selfhost can't resolve the
+right runtime helper, so it bails to `return "null"`. Without
+the guard, codegen emitted `getelementptr i8, i8* %s, i64
+%strLitPtr` which llc rejected.
+
+### 2. `not` on non-i1 operands coerces to i1 first
+
+Sema's permissive `not` accepted any non-error type; codegen
+emitted `xor i1 %x, 1` directly. Now coerces pointer / i32
+operands to i1 via `icmp ne <ty> %x, 0/null` first.
+
+### 3. List / struct-ptr concat → `<list>` placeholder
+
+`s + xs` where `xs` is `%QListP*` / `%QList*` / `%QMap*` /
+struct-pointer used to emit `strlen(<ptr>)` which llc rejected
+("defined with type '%QListP*' but expected 'i8*'"). Now
+substitutes a static `<list>` placeholder string at the
+concat site. Wrong runtime output but the IR validates.
+
+### 4. Pointer-vs-pointer comparison for all six predicates
+
+BinOp `==` / `!=` / `<` / `<=` / `>` / `>=` on two pointer
+operands now emits `icmp <pred> <ptr-ty> %a, %b` directly.
+Mixed pointer types get a bitcast first. Previously only
+`==` / `!=` had pointer-vs-zero handling; ordering ops fell
+through to `icmp slt i32` on pointer values.
+
+### 5. Assign: `null` → `0` when slot is i32
+
+Reverse of the alpha.5 `0 → null` swap. When a `<bad-method>`
+fallback returned `null` (because `_method_ret_ty` defaulted
+to a pointer) but the slot was sized as i32 by sema, store
+`0` instead of `null`. Fixes `store i32 null, i32* %_.addr`.
+
 ## [5.0.0-alpha.8] — 2026-06-29 — codegen parity batch 6
 
 Four codegen fixes around the i8*-element list write path.

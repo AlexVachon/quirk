@@ -277,7 +277,12 @@ struct ModuleCG {
     }
 
     define render_header(self) -> String {
-        out := ""
+        // List-accumulator + `_str_join` at the end. Was a
+        // classic `out = out + line` loop with N×decls + N×
+        // structs + N×globals iterations, which became
+        // O(total_chars × N) when the bundled stdlib pushed
+        // each list into the dozens-of-entries range.
+        parts := List()
         // Internal list-header type. `{ length, capacity,
         // i32* data }` — the data array lives in its own
         // allocation so `.append` can `realloc` the buffer
@@ -285,19 +290,19 @@ struct ModuleCG {
         // hold. Always emitted (cheap, and avoids a "used a
         // list?" tracking flag); LLVM's verifier accepts unused
         // type defs.
-        out = out + "%QList = type { i32, i32, i32* }\n"
+        parts.append("%QList = type { i32, i32, i32* }\n")
         // Pointer-element list. Same shape as %QList but the
         // data buffer holds i8* slots. `List<T>` where T is
         // anything other than `Int` resolves to this type;
         // bare `List` annotation defaults to %QList (i32).
-        out = out + "%QListP = type { i32, i32, i8** }\n"
+        parts.append("%QListP = type { i32, i32, i8** }\n")
         // Internal map types. `%QMapKV` is a single key/value
         // pair (both i8*); `%QMap` is the header — length,
         // capacity, and a pointer to the entry array. Linear
         // scan on lookup; fine for the small per-scope tables
         // selfhost uses.
-        out = out + "%QMapKV = type { i8*, i8* }\n"
-        out = out + "%QMap = type { i32, i32, %QMapKV* }\n\n"
+        parts.append("%QMapKV = type { i8*, i8* }\n")
+        parts.append("%QMap = type { i32, i32, %QMapKV* }\n\n")
         // %struct.Name type defs first so subsequent globals /
         // function signatures can reference them by name.
         snames := self.structs.keys()
@@ -305,36 +310,41 @@ struct ModuleCG {
         while si < snames.length() {
             sname: String := snames.__get(si)
             sd: _StructDef := self.structs.get(sname)
-            line := "%struct." + sd.name + " = type { "
+            line_parts := List()
+            line_parts.append("%struct.")
+            line_parts.append(sd.name)
+            line_parts.append(" = type { ")
             fi := 0
             while fi < sd.field_llvm_tys.length() {
-                if fi > 0 { line = line + ", " }
+                if fi > 0 { line_parts.append(", ") }
                 ft: String := sd.field_llvm_tys.__get(fi)
-                line = line + ft
+                line_parts.append(ft)
                 fi = fi + 1
             }
-            line = line + " }"
-            out = out + line + "\n"
+            line_parts.append(" }\n")
+            parts.append(_str_join(line_parts))
             si = si + 1
         }
-        if snames.length() > 0 { out = out + "\n" }
+        if snames.length() > 0 { parts.append("\n") }
         i := 0
         while i < self.globals.length() {
             line: String := self.globals.__get(i)
-            out = out + line + "\n"
+            parts.append(line)
+            parts.append("\n")
             i = i + 1
         }
-        if self.globals.length() > 0 { out = out + "\n" }
+        if self.globals.length() > 0 { parts.append("\n") }
         keys := self.decls.keys()
         j := 0
         while j < keys.length() {
             k: String := keys.__get(j)
             line: String := self.decls.get(k)
-            out = out + line + "\n"
+            parts.append(line)
+            parts.append("\n")
             j = j + 1
         }
-        if keys.length() > 0 { out = out + "\n" }
-        return out
+        if keys.length() > 0 { parts.append("\n") }
+        return _str_join(parts)
     }
 }
 
@@ -4107,7 +4117,12 @@ define emit_module(decls: List) -> String {
     // Emit functions next so module-level globals / decls
     // (collected into `mod` as a side-effect of codegen) are
     // populated by the time we render the header.
-    bodies := ""
+    // List-accumulator pattern: with bundled stdlib pulling in
+    // hundreds of functions, each `bodies = bodies + ...` step
+    // was reallocating the entire accumulated IR text. The
+    // _str_join helper does a single sum-strlen + malloc +
+    // strcat pass at the end.
+    body_parts := List()
     i := 0
     while i < decls.length() {
         d: TopLevel := decls.__get(i)
@@ -4121,7 +4136,8 @@ define emit_module(decls: List) -> String {
                     emit_name = _llvm_fn_name(fd.name)
                 }
                 if seen_emitted.has(emit_name) == false {
-                    bodies = bodies + _gen_function(fd, mod) + "\n"
+                    body_parts.append(_gen_function(fd, mod))
+                    body_parts.append("\n")
                     seen_emitted.put(emit_name, "y")
                 }
             }
@@ -4129,6 +4145,7 @@ define emit_module(decls: List) -> String {
         }
         i = i + 1
     }
+    bodies := _str_join(body_parts)
     // If the user defined a `main()` function, emit the
     // ELF-entry wrapper that stashes argc/argv into module
     // globals (so arg_count/arg_get can read them) and
@@ -4140,10 +4157,16 @@ define emit_module(decls: List) -> String {
         mod.ensure_decl("quirk_argc", "@quirk_argc = global i32 0")
         mod.ensure_decl("quirk_argv", "@quirk_argv = global i8** null")
     }
-    out := "; ModuleID = 'selfhost'\n"
-    out = out + "target triple = \"x86_64-pc-linux-gnu\"\n\n"
-    out = out + mod.render_header()
-    out = out + bodies
+    // Final module assembly. List-accumulator pattern again
+    // — `out` was the largest accumulating string in selfhost
+    // (full module IR can be 100k+ lines for bundled-stdlib
+    // tests), so the per-iteration concat was a major chunk
+    // of the peak-memory load.
+    out_parts := List()
+    out_parts.append("; ModuleID = 'selfhost'\n")
+    out_parts.append("target triple = \"x86_64-pc-linux-gnu\"\n\n")
+    out_parts.append(mod.render_header())
+    out_parts.append(bodies)
     // Append any lifted lambda bodies. They were queued
     // during _gen_function as `_gen_lambda` ran inside each
     // expression that contained `fn(...) => …`. Emitting
@@ -4153,15 +4176,16 @@ define emit_module(decls: List) -> String {
     li := 0
     while li < mod.lambda_bodies.length() {
         lb: String := mod.lambda_bodies.__get(li)
-        out = out + lb + "\n"
+        out_parts.append(lb)
+        out_parts.append("\n")
         li = li + 1
     }
     if mod.sigs.has("__quirk_user_main") {
-        out = out + "define i32 @main(i32 %argc, i8** %argv) {\nentry:\n"
-        out = out + "  store i32 %argc, i32* @quirk_argc\n"
-        out = out + "  store i8** %argv, i8*** @quirk_argv\n"
-        out = out + "  %r = call i32 @__quirk_user_main()\n"
-        out = out + "  ret i32 %r\n}\n"
+        out_parts.append("define i32 @main(i32 %argc, i8** %argv) {\nentry:\n")
+        out_parts.append("  store i32 %argc, i32* @quirk_argc\n")
+        out_parts.append("  store i8** %argv, i8*** @quirk_argv\n")
+        out_parts.append("  %r = call i32 @__quirk_user_main()\n")
+        out_parts.append("  ret i32 %r\n}\n")
     }
-    return out
+    return _str_join(out_parts)
 }

@@ -148,7 +148,11 @@ define _resolve_abs(name: String, pkgs_root: String) -> String {
 // makes the combined source easier to inspect and avoids
 // duplicate imports of the same module across files.
 define _strip_imports(src: String) -> String {
-    out := ""
+    // List-accumulator pattern (same as `build_combined`):
+    // a stdlib source file can be a few kB; concatenating
+    // line-by-line into a String is O(N²) on file size.
+    // Join at the end via the runtime helper.
+    out_parts := List()
     i := 0
     n := src.length()
     while i < n {
@@ -214,10 +218,11 @@ define _strip_imports(src: String) -> String {
             i = next_i
             continue
         }
-        out = out + line + "\n"
+        out_parts.append(line)
+        out_parts.append("\n")
         i = next_i
     }
-    return out
+    return _str_join(out_parts)
 }
 
 // Recursive expansion. `visited` is keyed by absolute path
@@ -313,14 +318,20 @@ define build_combined(entry_path: String, base_dir: String) -> String {
     pkgs_root := _find_packages_root(base_dir)
     if pkgs_root == "" { pkgs_root = base_dir }
     _expand(entry_path, pkgs_root, visited, parts)
-    combined := ""
+    // Single-pass sum-strlen + malloc + strcat via `_str_join`
+    // instead of the classic O(N²) `combined = combined + p`
+    // loop. With stdlib bundling pulling in ~30 files of a few
+    // kB each, the quadratic path is hundreds of MB of doomed
+    // allocations during the build.
+    joined := List()
     i := 0
     while i < parts.length() {
         p: String := parts.__get(i)
-        combined = combined + p + "\n"
+        joined.append(p)
+        joined.append("\n")
         i = i + 1
     }
-    return combined
+    return _str_join(joined)
 }
 
 // Convenience: run the full pipeline (combined source →

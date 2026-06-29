@@ -5,6 +5,60 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [5.0.0-alpha.4] — 2026-06-29 — selfhost peak memory 1.84 GB → 92 MB
+
+A major memory-footprint reduction. Selfhost compiling its own
+source dropped from 1.84 GB peak / 5.5 s wall-clock to **92 MB
+peak / 0.45 s** — 20× less RAM, 12× faster.
+
+Root cause: O(N²) string concatenation in the IR-accumulation
+hot paths. alpha.64 (back in March) caught the per-function
+`FnCG.out` accumulator but left four other concat-in-loop
+sites alone. They didn't matter until stdlib bundling
+(alpha.81) made each compilation pull in hundreds of
+functions / dozens of files — at which point every per-step
+reallocation copied the entire accumulated IR text again.
+
+### Sites converted to list-accumulator + `_str_join`
+
+1. **`build.quirk:build_combined`** — `combined = combined + p + "\n"`
+   over each bundled file's contents. With ~30 stdlib files of
+   a few kB each, this was reallocating tens of MB per step.
+2. **`build.quirk:_strip_imports`** — per-line accumulator inside
+   a function called once per bundled file. Compounded with site 1.
+3. **`codegen.quirk:ModuleCG.render_header`** — module header
+   accumulator. Linear in `structs + globals + decls`; the
+   bundled stdlib pushes each into the dozens.
+4. **`codegen.quirk:emit_module` — `bodies := bodies + …`** — the
+   biggest contributor. Hundreds of function IR strings, each
+   thousands of bytes. Classic textbook O(N²).
+5. **`codegen.quirk:emit_module` — final `out := out + …`** —
+   assembles header + bodies + lambdas + main wrapper. The
+   accumulated module is 100k+ lines of IR; each `+=` was
+   reallocating the lot.
+
+All five paths now build a `List<String>` of parts and call
+`_str_join` once to single-pass sum-strlen + malloc + strcat.
+
+### Why this matters for the cutover
+
+Bootstrap-environments often have <2 GB of headroom. With
+selfhost at 1.84 GB peak, contention from any background
+process triggered OOM-kill during `make selfhost-fixedpoint`
+or `make selfhost-binary`. At 92 MB peak, selfhost comfortably
+fits anywhere from a Docker CI runner to a Raspberry Pi.
+
+Side effect: any selfhost-driven `./bin/quirk <src>` invocation
+also runs ~12× faster on stdlib-using programs, since the
+wrapper shells out to selfhost before llc/clang.
+
+### Status
+
+Run-the-corpus headline unchanged (3/60 MATCH, 31 IR-fail,
+24 link-fail). The memory work was a perf/operability fix;
+codegen behaviour didn't change. Bootstrap byte-identical
+fixed-point holds, 190/190 e2e regression green.
+
 ## [5.0.0-alpha.3] — 2026-06-28 — function-name dedup
 
 Multi-package stdlib bundling produces duplicate top-level

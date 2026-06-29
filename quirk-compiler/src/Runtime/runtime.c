@@ -58,6 +58,13 @@ static char* __gc_strdup(const char* s) {
 #include "libs/encoding/base64.c"
 #include "libs/encoding/hex.c"
 
+// Forwarding stubs from selfhost-emitted unmangled names to the
+// runtime's package-mangled exports. The C++ compiler resolves
+// `sys.version()` to `Sys_version`; selfhost emits the bare
+// `version`. Aliasing here unblocks corpus tests without
+// requiring selfhost to learn package-aware mangling.
+#include "selfhost_aliases.c"
+
 extern void Random_init(void);
 
 void QuirkRuntime_init(int argc, char** argv) {

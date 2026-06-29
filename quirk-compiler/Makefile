@@ -60,6 +60,7 @@ RUNTIME_ENTRY = src/Runtime/runtime.c
 # All C files pulled in via #include; any change here rebuilds runtime.so
 RUNTIME_DEPS  = \
 	src/Runtime/types.h \
+	src/Runtime/selfhost_aliases.c \
 	src/Runtime/core/string.c \
 	src/Runtime/core/primitives.c \
 	src/Runtime/core/list.c \

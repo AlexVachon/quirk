@@ -5,6 +5,81 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [5.0.0-alpha.10] — 2026-06-29 — match dispatch + runtime symbol bridge
+
+Two big wins:
+
+- **`match_test` now MATCH** — its expected output is byte-identical
+  to the C++ compiler's. MATCH **3 → 4**.
+- **Link-fail 36 → 22** — runtime symbol-bridge stubs unblock 14
+  link-fail tests (they reach the run stage, mostly DIFF-FAIL from
+  layout incompatibilities but a few are correct).
+
+Bootstrap byte-identical fixed point holds; 190/190 e2e regression
+still green.
+
+### 1. Match arm value dispatch
+
+`match scrut { case 1 => … case 2 => … case _ => … }` on a non-
+union scrutinee used to emit every arm body in sequence (the
+permissive "we don't know what to compare, just run everything"
+fallback). Now emits a real cmp + branch per arm:
+
+- Int / Bool: `icmp eq i32 %scrut, K` (`true`/`false` map to
+  `1`/`0` and the type widens to i1).
+- String: `strcmp(%scrut, "K") == 0`.
+- Qualified `Enum.Variant`: walks `cg.mod.enums`, compares
+  the i32 tag ordinal.
+
+Each arm body terminates with `br label %match.end` unless it
+already terminated. The `cg.block_terminated` guard prevents the
+fall-through `br` from being emitted twice when an arm `return`s.
+
+Multi-pattern arms (`case 1, 2, 3 =>`) still drop the trailing
+alternatives at parse time — a corpus-quality limitation, but
+not a regression versus prior behaviour.
+
+### 2. `src/Runtime/selfhost_aliases.c` — symbol bridge
+
+New file, included from `runtime.c` via the unity build. Three
+classes of forwarders:
+
+- **Sys package**: `version` / `prefix` / `srcline` → `Sys_*`.
+  Selfhost doesn't track package paths yet, so it emits the
+  bare names where the C++ compiler emits `Sys_*`.
+- **Synthetic call lowerings**: `__coalesce` / `__ternary` /
+  `__contains` / `__is` / `__tuple` / `__map_lit` / `__set_lit`
+  / `__list_comp` / `__map_comp` / `__set_comp`. Selfhost's
+  parser rewrites surface syntax (`a ?? b`, `c ? t : e`, `x in
+  xs`, `(a,b)`, `{k:v}`, etc.) into calls to these names.
+  Implementations are stub-quality — they cover linking, not
+  the full semantics.
+- **Stdlib method aliases**: `<Type>__<method>` → `Core_<Module>_
+  <Type>_<Type>_<method>`. Covers List / Set / Map / String /
+  File / sys top-levels (`ansi`, `terminal_cols`, `read_key`,
+  `timer_start`, `group_depth_inc`, etc.) plus a no-op `super()`.
+
+Caveat: selfhost's flat `%QListP` layout (length, capacity,
+data) differs from the runtime's `%struct.List*` layout (data,
+size, capacity). Aliases route to the runtime impls; when the
+receiver was actually built by the runtime, layouts match and
+the call is correct. When selfhost uses its own `%QListP` and
+bitcasts to `%struct.List*` to satisfy a method signature,
+field reads land on the wrong offsets — that's the source of
+most new DIFF-FAILs. Fixable by a layout-translating shim layer
+in the alias bodies; deferred.
+
+### 3. Audit before bridging
+
+Two passes through `nm bin/runtime.so` to confirm forwarder
+targets exist:
+
+- Initial alias batch referenced `Core_String_String_strip`,
+  which the runtime doesn't define (it has `trim` / `lstrip` /
+  `rstrip`). Without the audit, the unresolved symbol inside
+  `runtime.so` itself broke linking of every test. Resolved by
+  pointing `String__strip` at `Core_String_String_trim`.
+
 ## [5.0.0-alpha.9] — 2026-06-29 — codegen parity batch 7
 
 Five codegen fixes. IR-fail **15 → 12** cumulative. MATCH still

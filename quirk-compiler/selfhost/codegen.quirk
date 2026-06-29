@@ -3280,20 +3280,133 @@ define _gen_match(cg: FnCG, m: Match) -> void {
     // arm bodies run" — but selfhost-bootstrap purposes
     // don't exercise the result, only the parse + emit path.
     if cg.mod.unions.has(uname) == false {
+        // Value-dispatch path. Scrutinee is a primitive (Int /
+        // Bool / String / enum-constant) — emit a real cmp +
+        // branch per arm. We distinguish three shapes from
+        // arm.pattern (parser writes the pattern as a string):
+        //
+        //   ""              → wildcard, unconditional jump.
+        //   numeric / bool  → Int/Bool: `icmp eq i32 %scrut, K`.
+        //   "X.Y"           → enum constant: look up the qualified
+        //                     name in cg.mod.enum_values (registered
+        //                     during enum codegen) and compare i32.
+        //   else            → String: strcmp against literal.
+        //
+        // Multi-pattern arms (`case 1, 2, 3 =>`) drop the trailing
+        // alternatives at parse time — only the first pattern reaches
+        // codegen. That's a corpus-quality limitation, not a
+        // correctness regression versus prior behaviour (which ran
+        // every arm).
         end_lbl_p := cg.fresh_label("match.end")
+        scrut_is_str := false
+        if scrut_ty == "i8*" { scrut_is_str = true }
+        if _strip_struct_ptr(scrut_ty) == "String" { scrut_is_str = true }
+        if scrut_is_str {
+            cg.mod.ensure_decl("strcmp", "declare i32 @strcmp(i8*, i8*)")
+        }
         i_p := 0
         while i_p < m.arms.length() {
             arm_p: MatchArm := m.arms.__get(i_p)
+            body_lbl_p := cg.fresh_label("match.arm")
+            next_lbl_p := cg.fresh_label("match.next")
+            pat := arm_p.pattern
+            if pat == "" {
+                cg.emit("br label %" + body_lbl_p)
+            } else {
+                if scrut_is_str {
+                    // String compare. Materialize the pattern as
+                    // a global constant via the same path normal
+                    // string literals take.
+                    sl := StringLit(pat)
+                    pat_reg := _gen_expr(cg, sl)
+                    // %scrut may be in some pointer-typed register
+                    // — bitcast to i8* first.
+                    s8 := scrut_reg
+                    if scrut_ty != "i8*" {
+                        s8 = cg.fresh()
+                        cg.emit(s8 + " = bitcast " + scrut_ty + " " + scrut_reg + " to i8*")
+                    }
+                    sc := cg.fresh()
+                    cg.emit(sc + " = call i32 @strcmp(i8* " + s8 + ", i8* " + pat_reg + ")")
+                    cmp_p := cg.fresh()
+                    cg.emit(cmp_p + " = icmp eq i32 " + sc + ", 0")
+                    cg.emit("br i1 " + cmp_p + ", label %" + body_lbl_p + ", label %" + next_lbl_p)
+                } else {
+                    // Int / Bool / enum-constant compare. Build
+                    // the literal value: numeric literals pass
+                    // through unchanged; "true"/"false" become
+                    // 1/0; qualified `T.V` resolves through the
+                    // enum-values map (if registered) or falls
+                    // back to "0" so codegen doesn't crash.
+                    lit_v := pat
+                    cmp_ty := scrut_ty
+                    if cmp_ty != "i1" and cmp_ty != "i32" and cmp_ty != "i64" {
+                        cmp_ty = "i32"
+                    }
+                    if pat == "true"  { lit_v = "1" cmp_ty = "i1" }
+                    if pat == "false" { lit_v = "0" cmp_ty = "i1" }
+                    // Qualified `Enum.Variant` — scan for dot,
+                    // resolve via cg.mod.enums to a tag ordinal.
+                    // selfhost has no String.find/index_of yet so
+                    // we walk the string character by character.
+                    dot_idx := -1
+                    di := 0
+                    while di < pat.length() {
+                        if pat.substring(di, di + 1) == "." {
+                            dot_idx = di
+                            di = pat.length()
+                        } else {
+                            di = di + 1
+                        }
+                    }
+                    if dot_idx >= 0 {
+                        enum_name := pat.substring(0, dot_idx)
+                        var_name := pat.substring(dot_idx + 1, pat.length())
+                        if cg.mod.enums.has(enum_name) {
+                            ed_m: EnumDecl := cg.mod.enums.get(enum_name)
+                            vi_m := 0
+                            while vi_m < ed_m.variants.length() {
+                                vn_m: String := ed_m.variants.__get(vi_m)
+                                if vn_m == var_name { lit_v = vi_m.str() }
+                                vi_m = vi_m + 1
+                            }
+                        }
+                    }
+                    // Promote i1 scrutinee to i32 when comparing
+                    // against an int literal (multi-value match
+                    // arms can compare bool against numeric form).
+                    cmp_reg := scrut_reg
+                    if scrut_ty == "i1" and cmp_ty != "i1" {
+                        cmp_reg = cg.fresh()
+                        cg.emit(cmp_reg + " = zext i1 " + scrut_reg + " to " + cmp_ty)
+                    }
+                    cmp_p := cg.fresh()
+                    cg.emit(cmp_p + " = icmp eq " + cmp_ty + " " + cmp_reg + ", " + lit_v)
+                    cg.emit("br i1 " + cmp_p + ", label %" + body_lbl_p + ", label %" + next_lbl_p)
+                }
+            }
+            cg.emit_raw(body_lbl_p + ":")
+            cg.block_terminated = false
             bi_p := 0
             while bi_p < arm_p.body.length() {
+                if cg.block_terminated { break }
                 bs_p: Stmt := arm_p.body.__get(bi_p)
                 _gen_stmt(cg, bs_p)
                 bi_p = bi_p + 1
+            }
+            if cg.block_terminated == false {
+                cg.emit("br label %" + end_lbl_p)
+            }
+            cg.block_terminated = false
+            cg.emit_raw(next_lbl_p + ":")
+            if pat == "" {
+                cg.emit("br label %" + end_lbl_p)
             }
             i_p = i_p + 1
         }
         cg.emit("br label %" + end_lbl_p)
         cg.emit_raw(end_lbl_p + ":")
+        cg.block_terminated = false
         return
     }
     udecl: UnionDecl := cg.mod.unions.get(uname)

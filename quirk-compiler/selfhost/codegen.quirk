@@ -224,6 +224,11 @@ struct ModuleCG {
     // currently-being-emitted enclosing function.
     lambda_bodies: List
     next_lambda: Int
+    // childName → parentName. Populated when a struct
+    // declaration has a `: Parent` inheritance clause. Used by
+    // super() codegen to find the parent struct so the bitcast
+    // routes .method() dispatch to the parent's mangled symbol.
+    struct_parents: Map
 
     define __init(self) -> void {
         self.globals = List()
@@ -236,6 +241,7 @@ struct ModuleCG {
         self.variants = Map()
         self.lambda_bodies = List()
         self.next_lambda = 0
+        self.struct_parents = Map()
     }
 
     // Register a struct's layout. The `%struct.Name = type {...}`
@@ -803,12 +809,16 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
                 l := _gen_expr(cg, b.left)
                 r := _gen_expr(cg, b.right)
                 // %struct.String* → i8* by extracting buffer (field 0).
+                // Update l_ty / r_ty to match the new value so the
+                // downstream `<list>` placeholder branch doesn't
+                // re-replace the just-extracted buffer.
                 if l_ty == "%struct.String*" {
                     gepl := cg.fresh()
                     cg.emit(gepl + " = getelementptr inbounds %struct.String, %struct.String* " + l + ", i32 0, i32 0")
                     lbuf := cg.fresh()
                     cg.emit(lbuf + " = load i8*, i8** " + gepl)
                     l = lbuf
+                    l_ty = "i8*"
                 }
                 if r_ty == "%struct.String*" {
                     gepr := cg.fresh()
@@ -816,6 +826,7 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
                     rbuf := cg.fresh()
                     cg.emit(rbuf + " = load i8*, i8** " + gepr)
                     r = rbuf
+                    r_ty = "i8*"
                 }
                 // Coerce literal-zero operands to `null` — the
                 // bad-method codegen fallback emits `0` (typed
@@ -1191,6 +1202,32 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
                     case Ident as id => name = id.name
                     case _ => name = "<bad-callee>"
                 }
+            }
+            // `super()` inside a method — return `self` bitcast
+            // to the parent struct's pointer type so that the
+            // following `.method(...)` dispatch resolves to the
+            // PARENT'S mangled symbol (not the child's, which
+            // would infinitely recurse). The parent's fields are
+            // prepended to the child's layout via the inheritance
+            // bridge, so the bitcast is a no-op at the machine
+            // level and parent-field accesses land on the same
+            // bytes.
+            if name == "super" and c.args.length() == 0 {
+                if cg.locals.has("self") {
+                    self_slot: _Slot := cg.locals.get("self")
+                    self_reg := cg.fresh()
+                    cg.emit(self_reg + " = load " + self_slot.ty + ", " + self_slot.ty + "* " + self_slot.name)
+                    child_name := _strip_struct_ptr(self_slot.ty)
+                    if cg.mod.struct_parents.has(child_name) {
+                        parent_name: String := cg.mod.struct_parents.get(child_name)
+                        parent_ty := "%struct." + parent_name + "*"
+                        bc := cg.fresh()
+                        cg.emit(bc + " = bitcast " + self_slot.ty + " " + self_reg + " to " + parent_ty)
+                        return bc
+                    }
+                    return self_reg
+                }
+                return "null"
             }
             // print(<String expr>) lowers to `call i32 @puts(i8* %arg)`.
             // The argument codegen path already produces an i8*
@@ -1854,6 +1891,21 @@ define _expr_static_ty(cg: FnCG, e: Expr) -> String {
                 case Ident as id => cname = id.name
                 case _ => {}
             }
+            // `super()` returns self bitcast to the parent type.
+            // Same dispatch as the value-emitting code in
+            // `_gen_expr`'s Call branch.
+            if cname == "super" and c.args.length() == 0 {
+                if cg.locals.has("self") {
+                    self_slot_t: _Slot := cg.locals.get("self")
+                    child_n := _strip_struct_ptr(self_slot_t.ty)
+                    if cg.mod.struct_parents.has(child_n) {
+                        sp_name: String := cg.mod.struct_parents.get(child_n)
+                        return "%struct." + sp_name + "*"
+                    }
+                    return self_slot_t.ty
+                }
+                return "i8*"
+            }
             // Synthetic lowering calls — match the return-type
             // pinning in `_gen_expr`'s Call branch.
             if cname == "__contains" { return "i1" }
@@ -2053,6 +2105,45 @@ define _gen_method_call(cg: FnCG, c: Call) -> String {
     // signature in mod.sigs. Found → render a typed call
     // threading the receiver as %arg0.
     sname := _strip_struct_ptr(recv_ty)
+    // `super().__init(msg)` against the auto-registered
+    // Exception schema: there's no real Exception____init
+    // function in the module (the typing.exceptions module
+    // wasn't explicitly imported), so the sigs lookup
+    // misses. Inline a setter for field 1 (message) so the
+    // catch-binder's .message access sees the thrown value.
+    if sname == "Exception" and fg.name == "__init" and c.args.length() == 1 {
+        if cg.mod.structs.has("Exception") {
+            sd_e: _StructDef := cg.mod.structs.get("Exception")
+            // Find field "message" index (typically 1).
+            mi := -1
+            ti := -1
+            mfi := 0
+            while mfi < sd_e.field_names.length() {
+                fnm: String := sd_e.field_names.__get(mfi)
+                if fnm == "message" { mi = mfi }
+                if fnm == "type" { ti = mfi }
+                mfi = mfi + 1
+            }
+            arg_e: Expr := c.args.__get(0)
+            arg_v := _gen_expr(cg, arg_e)
+            arg_t := _expr_static_ty(cg, arg_e)
+            // Wrap i8* → String* if needed (mirror of the
+            // call-boundary make_String wrap).
+            if arg_t == "i8*" {
+                cg.mod.ensure_decl("make_String",
+                    "declare %struct.String* @make_String(i8*)")
+                mks := cg.fresh()
+                cg.emit(mks + " = call %struct.String* @make_String(i8* " + arg_v + ")")
+                arg_v = mks
+            }
+            if mi >= 0 {
+                gep_m := cg.fresh()
+                cg.emit(gep_m + " = getelementptr inbounds %struct.Exception, %struct.Exception* " + recv_reg + ", i32 0, i32 " + mi.str())
+                cg.emit("store %struct.String* " + arg_v + ", %struct.String** " + gep_m)
+            }
+            return "0"
+        }
+    }
     if cg.mod.structs.has(sname) {
         full := sname + "__" + fg.name
         if cg.mod.sigs.has(full) {
@@ -4755,6 +4846,22 @@ define _gen_stmt(cg: FnCG, st: Stmt) -> void {
                 "@__quirk_jmp_buf = global [200 x i8] zeroinitializer")
             cg.mod.ensure_decl("longjmp",
                 "declare void @longjmp(i8*, i32)")
+            // Bare `throw` (the parser produces `Throw(NullLit())`):
+            // re-raise the CURRENT exception rather than nulling
+            // it out. We skip the store-into-@__quirk_exception
+            // step so the outer catch sees the original value.
+            is_bare_rethrow := false
+            match th.value {
+                case NullLit as _ => is_bare_rethrow = true
+                case _ => {}
+            }
+            if is_bare_rethrow {
+                buf_gep_b := cg.fresh()
+                cg.emit(buf_gep_b + " = getelementptr inbounds [200 x i8], [200 x i8]* @__quirk_jmp_buf, i64 0, i64 0")
+                cg.emit("call void @longjmp(i8* " + buf_gep_b + ", i32 1)")
+                cg.emit("unreachable")
+                return
+            }
             val_ty := _expr_static_ty(cg, th.value)
             val_reg := _gen_expr(cg, th.value)
             val_i8 := val_reg
@@ -5145,6 +5252,37 @@ define emit_module(decls: List) -> String {
     // wouldn't yet know the name. Each entry is registered
     // with a placeholder empty field list; pass 1b fills in
     // the real types.
+    // Auto-register the stdlib `Exception` struct schema if the
+    // user's code references it (as a parent struct or a catch
+    // binder type) but didn't explicitly import the typing.
+    // exceptions module. This is a corpus-quality compromise:
+    // real Quirk fixes this via the implicit `use typing` prelude.
+    // Without registration, `catch (e: Exception)` binders type
+    // as i8*, so `e.message` returns null.
+    ex_needed := false
+    nx := 0
+    while nx < decls.length() {
+        dnx: TopLevel := decls.__get(nx)
+        match dnx {
+            case StructTL as stx => {
+                if stx.decl.parent == "Exception" { ex_needed = true }
+            }
+            case _ => {}
+        }
+        nx = nx + 1
+    }
+    if ex_needed and mod.structs.has("Exception") == false {
+        exc_fnames := List()
+        exc_ftys := List()
+        exc_fnames.append("type")          exc_ftys.append("%struct.String*")
+        exc_fnames.append("message")       exc_ftys.append("%struct.String*")
+        exc_fnames.append("file")          exc_ftys.append("%struct.String*")
+        exc_fnames.append("line")          exc_ftys.append("i32")
+        exc_fnames.append("callee")        exc_ftys.append("%struct.String*")
+        exc_fnames.append("traceback")     exc_ftys.append("%struct.String*")
+        exc_fnames.append("cause_trace")   exc_ftys.append("%struct.String*")
+        mod.register_struct(_StructDef("Exception", exc_fnames, exc_ftys))
+    }
     na := 0
     while na < decls.length() {
         dn: TopLevel := decls.__get(na)
@@ -5192,6 +5330,34 @@ define emit_module(decls: List) -> String {
                 sd: StructDecl := st.decl
                 fnames := List()
                 ftys := List()
+                // Struct inheritance: `struct Child : Parent { ... }`
+                // prepends the parent's fields (so accessing
+                // `child.parent_field` GEPs into the same offset
+                // as the parent struct).
+                if sd.parent != "" {
+                    mod.struct_parents.put(sd.name, sd.parent)
+                    if mod.structs.has(sd.parent) {
+                        pd: _StructDef := mod.structs.get(sd.parent)
+                        pi := 0
+                        while pi < pd.field_names.length() {
+                            fnames.append(pd.field_names.__get(pi))
+                            ftys.append(pd.field_llvm_tys.__get(pi))
+                            pi = pi + 1
+                        }
+                    } elif sd.parent == "Exception" {
+                        // Auto-fill Exception's known field layout
+                        // when the user hasn't explicitly imported
+                        // the base struct. Mirror of the stdlib's
+                        // `typing/exceptions/base.quirk` definition.
+                        fnames.append("type")          ftys.append("%struct.String*")
+                        fnames.append("message")       ftys.append("%struct.String*")
+                        fnames.append("file")          ftys.append("%struct.String*")
+                        fnames.append("line")          ftys.append("i32")
+                        fnames.append("callee")        ftys.append("%struct.String*")
+                        fnames.append("traceback")     ftys.append("%struct.String*")
+                        fnames.append("cause_trace")   ftys.append("%struct.String*")
+                    }
+                }
                 fi := 0
                 while fi < sd.fields.length() {
                     f: StructField := sd.fields.__get(fi)

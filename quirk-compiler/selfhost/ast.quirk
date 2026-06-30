@@ -154,10 +154,12 @@ this order verbatim.
 struct StructDecl {
     name: String
     fields: List
+    parent: String
 
-    define __init(self, name: String, fields: List) -> void {
+    define __init(self, name: String, fields: List, parent: String) -> void {
         self.name = name
         self.fields = fields
+        self.parent = parent
     }
 }
 

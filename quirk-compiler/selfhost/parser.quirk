@@ -1461,8 +1461,14 @@ define _parse_struct_decl(s: ParserState, out_methods: List) -> StructDecl {
     // names are consumed and discarded so the body parser sees
     // `{` at the right spot. Phase 12 (proper generics +
     // traits) will revisit.
+    parent_name := ""
     if s.match_kind(TokenKind.Colon) {
-        s.expect(TokenKind.Identifier, "trait name after ':'")
+        first_tok: Token := s.expect(TokenKind.Identifier, "trait name after ':'")
+        // Capture the FIRST name as the parent struct — Quirk
+        // uses `struct Child : Parent { ... }` to mean
+        // inheritance. Subsequent names (after `,`) are
+        // traits and stay discarded for now.
+        parent_name = first_tok.value
         while s.match_kind(TokenKind.Comma) {
             s.expect(TokenKind.Identifier, "trait name after ','")
         }
@@ -1537,7 +1543,7 @@ define _parse_struct_decl(s: ParserState, out_methods: List) -> StructDecl {
         fields.append(StructField(fname, ftype))
     }
     s.expect(TokenKind.RBrace, "'}' to close struct body")
-    return StructDecl(name, fields)
+    return StructDecl(name, fields, parent_name)
 }
 
 // Parse a single tagged-union declaration:

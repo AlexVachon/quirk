@@ -1492,7 +1492,7 @@ define check(decls: List) -> List {
                         fi = fi + 1
                     }
                     s.structs.put(ud.name + "__" + v.name,
-                                  StructDecl(ud.name + "__" + v.name, syn_fields))
+                                  StructDecl(ud.name + "__" + v.name, syn_fields, ""))
                     vi = vi + 1
                 }
             }

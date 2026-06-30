@@ -5,6 +5,64 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [5.0.0-alpha.19] — 2026-06-30 — exception_improvements_test MATCH (5 → 6/60)
+
+`exception_improvements_test` now byte-identical. Four
+independent fixes stacked to push the test all the way:
+inheritance, super-dispatch, Exception-init synthesis, and
+bare-throw re-raise. Bootstrap byte-identical + 190/190 e2e green.
+
+### 1. Struct inheritance — parent fields prepended
+
+`StructDecl` gained a `parent: String` field; parser captures
+the first name after `:` (Quirk's inheritance syntax). Codegen's
+struct registration pre-pass now prepends the parent's fields
+to the child's layout, so `child.parent_field` GEPs into the
+right offset.
+
+Auto-fills `Exception`'s 7-field schema when the user references
+it as a parent without explicitly importing `typing.exceptions`.
+`mod.struct_parents` tracks the relationship for downstream
+super-dispatch.
+
+### 2. `super()` returns self bitcast to parent
+
+`Call(Ident("super"), [])` used to lower to `@super()` which
+returned null. Now loads `self` from the current method's local
+slot and bitcasts to the PARENT struct pointer type. The bitcast
+is a no-op at the machine level, but the type change routes any
+following `.method(...)` to the parent's mangled symbol instead
+of infinitely recursing into the child's same-named method.
+
+Updated in both `_gen_expr` (value emission) and
+`_expr_static_ty` (type queries).
+
+### 3. Synthetic `Exception____init` field setter
+
+When the user writes `super().__init(msg)` against the
+auto-registered Exception schema, there's no real Exception
+init function in the module to dispatch to. Inline an explicit
+GEP+store of the `message` field (with the standard i8* → String
+wrap if needed) so the field is actually set.
+
+### 4. Bare `throw` re-raise preserves `@__quirk_exception`
+
+Parser produces `Throw(NullLit())` for the bare `throw` re-raise
+inside a catch handler. Codegen used to evaluate that null and
+store it into `@__quirk_exception`, nulling out the original
+thrown value. The longjmp then woke the outer catch with null
+and crashed. Now detects the NullLit shape and SKIPS the store
+— the longjmp re-enters with the original exception intact.
+
+### 5. Concat l_ty/r_ty refresh after buffer extraction
+
+When `r_ty == "%struct.String*"` triggered the buffer-extract
+branch, the subsequent placeholder-rewrite branch (for
+non-i8* pointers) saw the still-`%struct.String*` r_ty and
+replaced the just-extracted buffer with the `<list>`
+placeholder. Updating l_ty / r_ty to `"i8*"` after extraction
+keeps the buffer all the way to strcat.
+
 ## [5.0.0-alpha.18] — 2026-06-30 — primitives MATCH (4 → 5/60)
 
 `primitives` test is now byte-identical to the C++ compiler.

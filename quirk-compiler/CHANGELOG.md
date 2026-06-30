@@ -5,6 +5,59 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [5.0.0-alpha.18] — 2026-06-30 — primitives MATCH (4 → 5/60)
+
+`primitives` test is now byte-identical to the C++ compiler.
+Composes three independent fixes that each looked too narrow
+in isolation but stacked to push the test all the way across.
+Bootstrap byte-identical + 190/190 e2e green.
+
+### 1. `Int.parse` / `Double.parse` / `Bool.parse` static dispatch
+
+Quirk allows `Int.parse("123")` as a static method call. The
+parser hands this to codegen as `Call(FieldGet(Ident("Int"),
+"parse"), [arg])`. Selfhost used to fall through to
+`<bad-callee>` (returning literal `0`); now detects free
+identifiers matching primitive type names (`Int`, `Double`,
+`Bool`, `String`) and routes to the runtime mangled symbols
+`Core_Primitives_<T>_parse`.
+
+`Int.parse` takes a `%struct.String*` (it reads `s->buffer`
+and `s->length`), so the codegen wraps a passed-in `i8*`
+c-string via `make_String` first — same shape as the call-
+boundary make_String wrap from alpha.15.
+
+### 2. Runtime String type def in module preamble
+
+The make_String wrap path (and now the Int.parse one) reference
+`%struct.String*` in signatures + GEPs, but `%struct.String`
+isn't a registered user struct, so llc rejected the GEP with
+"use of undefined type 'struct.String'". The module preamble
+now unconditionally emits `%struct.String = type { i8*, i32 }`
+when the user's source hasn't already imported a `String`
+struct — guarded by `mod.structs.has("String")` so we don't
+double-define when the standard `String` is in scope.
+
+### 3. Interpolation format spec — `${x % .2f}` → snprintf
+
+The lexer previously stripped format specs (`%fmt` / `:fmt` /
+`|fmt` after the inner expression). Now it preserves the spec
+and routes through `.__fmt("spec")` instead of `.str()`. A new
+codegen branch lowers `__fmt` to:
+
+```
+malloc(64) → snprintf(buf, 64, "<printf-spec>", arg)
+```
+
+translating Quirk's spec separators into libc-printf form
+(`% .2f` → `%.2f`, `:>5d` → `%5d`, etc.). String / Bool args
+get unwrapped to `i8*` / `i32` first so they reach the
+variadic vararg slot with the right shape.
+
+`primitives.quirk`'s last remaining diff line —
+`As float: -42` vs `As float: -42.00` — is now correctly
+formatted as `-42.00`.
+
 ## [5.0.0-alpha.17] — 2026-06-30 — Int / Double primitive method dispatch
 
 `primitives` test now produces correct output for 6 / 8 lines —

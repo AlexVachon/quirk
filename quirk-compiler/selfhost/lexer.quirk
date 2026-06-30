@@ -174,7 +174,13 @@ define _emit_string_or_interp(out: List, content: String, line: Int, start_col: 
                 }
                 sk = sk + 1
             }
+            spec_text := ""
             if spec_idx >= 0 {
+                // Capture the spec text (everything after the
+                // separator). The separator itself is kept in
+                // `spec_text` so codegen can distinguish `%`
+                // (printf-style) from `:` / `|` (others).
+                spec_text = inner.substring(spec_idx, inner.length())
                 inner = inner.substring(0, spec_idx)
             }
             // Re-tokenize the inner expression. Append all
@@ -195,11 +201,21 @@ define _emit_string_or_interp(out: List, content: String, line: Int, start_col: 
             }
             out.append(Token(TokenKind.RParen, ")", line, start_col))
             // Auto-call `.str()` so concat with String works
-            // regardless of the inner expression's type.
+            // regardless of the inner expression's type. If a
+            // format spec was attached (`${x % .2f}`), call
+            // `.__fmt("% .2f")` instead — codegen routes that
+            // through snprintf with the printf-style spec.
             out.append(Token(TokenKind.Dot, ".", line, start_col))
-            out.append(Token(TokenKind.Identifier, "str", line, start_col))
-            out.append(Token(TokenKind.LParen, "(", line, start_col))
-            out.append(Token(TokenKind.RParen, ")", line, start_col))
+            if spec_text.length() > 0 {
+                out.append(Token(TokenKind.Identifier, "__fmt", line, start_col))
+                out.append(Token(TokenKind.LParen, "(", line, start_col))
+                out.append(Token(TokenKind.StringLiteral, spec_text, line, start_col))
+                out.append(Token(TokenKind.RParen, ")", line, start_col))
+            } else {
+                out.append(Token(TokenKind.Identifier, "str", line, start_col))
+                out.append(Token(TokenKind.LParen, "(", line, start_col))
+                out.append(Token(TokenKind.RParen, ")", line, start_col))
+            }
             i = j + 1
             seg_start = i
             continue

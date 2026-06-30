@@ -307,7 +307,19 @@ struct ModuleCG {
         // scan on lookup; fine for the small per-scope tables
         // selfhost uses.
         parts.append("%QMapKV = type { i8*, i8* }\n")
-        parts.append("%QMap = type { i32, i32, %QMapKV* }\n\n")
+        parts.append("%QMap = type { i32, i32, %QMapKV* }\n")
+        // Runtime String struct — `{ i8* buffer, i32 length }`.
+        // Selfhost references `%struct.String*` in call signatures
+        // even when "String" isn't a user-registered struct (e.g.
+        // the make_String wrap at function-call boundaries).
+        // Without this type def, llc rejects any GEP into the
+        // struct with "use of undefined type". Only emit when
+        // the user's source HASN'T imported a `String` struct
+        // (which would otherwise duplicate the type def).
+        if self.structs.has("String") == false {
+            parts.append("%struct.String = type { i8*, i32 }\n")
+        }
+        parts.append("\n")
         // %struct.Name type defs first so subsequent globals /
         // function signatures can reference them by name.
         snames := self.structs.keys()
@@ -1081,6 +1093,7 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
             // chains since selfhost has no first-class module
             // representation; this rewrite recovers them.
             rewritten_name := ""
+            primitive_static := ""
             if is_method {
                 fg_cb: FieldGet := c.callee
                 match fg_cb.obj {
@@ -1091,6 +1104,19 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
                                 rewritten_name = fg_cb.name
                                 is_method = false
                             }
+                            // Primitive type static method: `Int.parse(s)`
+                            // / `Double.parse(s)` / `Bool.parse(s)` /
+                            // `String.<...>`. Route to the runtime
+                            // `Core_Primitives_<T>_<method>` symbol.
+                            // Detected when the receiver is a free
+                            // ident matching a known primitive type name.
+                            if rewritten_name == "" {
+                                if oid.name == "Int" or oid.name == "Double"
+                                   or oid.name == "Bool" or oid.name == "String" {
+                                    primitive_static = oid.name + "/" + fg_cb.name
+                                    is_method = false
+                                }
+                            }
                         }
                     }
                     case _ => {}
@@ -1098,6 +1124,64 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
             }
             if is_method {
                 return _gen_method_call(cg, c)
+            }
+            if primitive_static != "" {
+                // Map `<Type>.<method>` to the runtime symbol +
+                // signature. Hand-rolled table — only the methods
+                // exercised by the corpus.
+                p_slash := primitive_static.length()
+                p_i := 0
+                while p_i < p_slash {
+                    if primitive_static.substring(p_i, p_i + 1) == "/" {
+                        p_slash = p_i
+                        p_i = primitive_static.length()
+                    } else {
+                        p_i = p_i + 1
+                    }
+                }
+                p_type := primitive_static.substring(0, p_slash)
+                p_method := primitive_static.substring(p_slash + 1, primitive_static.length())
+                if p_type == "Int" and p_method == "parse" {
+                    // Core_Primitives_Int_parse takes %struct.String*
+                    // (it reads s->buffer + s->length). When we
+                    // have an i8* c-string, wrap via make_String
+                    // first.
+                    cg.mod.ensure_decl("Core_Primitives_Int_parse",
+                        "declare i32 @Core_Primitives_Int_parse(%struct.String*)")
+                    cg.mod.ensure_decl("make_String",
+                        "declare %struct.String* @make_String(i8*)")
+                    arg_e: Expr := c.args.__get(0)
+                    arg_v := _gen_expr(cg, arg_e)
+                    arg_t := _expr_static_ty(cg, arg_e)
+                    if arg_t == "i8*" {
+                        wraps := cg.fresh()
+                        cg.emit(wraps + " = call %struct.String* @make_String(i8* " + arg_v + ")")
+                        arg_v = wraps
+                    }
+                    reg := cg.fresh()
+                    cg.emit(reg + " = call i32 @Core_Primitives_Int_parse(%struct.String* " + arg_v + ")")
+                    return reg
+                }
+                if p_type == "Double" and p_method == "parse" {
+                    cg.mod.ensure_decl("atof", "declare double @atof(i8*)")
+                    arg_e: Expr := c.args.__get(0)
+                    arg_v := _gen_expr(cg, arg_e)
+                    reg := cg.fresh()
+                    cg.emit(reg + " = call double @atof(i8* " + arg_v + ")")
+                    return reg
+                }
+                if p_type == "Bool" and p_method == "parse" {
+                    cg.mod.ensure_decl("Core_Primitives_Bool_parse",
+                        "declare i1 @Core_Primitives_Bool_parse(i8*)")
+                    arg_e: Expr := c.args.__get(0)
+                    arg_v := _gen_expr(cg, arg_e)
+                    reg := cg.fresh()
+                    cg.emit(reg + " = call i1 @Core_Primitives_Bool_parse(i8* " + arg_v + ")")
+                    return reg
+                }
+                // Unknown primitive static method — fall through
+                // to the unknown-call path, returning 0.
+                return "0"
             }
             name := ""
             if rewritten_name != "" {
@@ -2283,6 +2367,77 @@ define _gen_method_call(cg: FnCG, c: Call) -> String {
         cg.emit(reg + " = load i32, i32* " + gep)
         return reg
     }
+    // `value.__fmt("spec")` — interpolation format-spec lowering.
+    // The lexer rewrites `${x % .2f}` into `x.__fmt("% .2f")` so
+    // codegen has the spec text available as a string literal
+    // arg. Lower to `snprintf(buf, 32, "<C-format>", x)` with
+    // the spec text translated to a libc-printf form.
+    if fg.name == "__fmt" and c.args.length() == 1 {
+        spec_arg: Expr := c.args.__get(0)
+        spec_text := ""
+        match spec_arg {
+            case StringLit as sl => spec_text = sl.value
+            case _ => {}
+        }
+        // Trim the leading separator (`%` / `:` / `|`) and any
+        // following whitespace. Quirk's `% .2f` becomes libc's
+        // `%.2f`; `:>5d` becomes `%5d` (approximately).
+        cfmt := "%s"
+        if spec_text.length() > 0 {
+            sep := spec_text.substring(0, 1)
+            rest := spec_text.substring(1, spec_text.length())
+            // strip leading whitespace from `rest`.
+            ri := 0
+            while ri < rest.length() and rest.substring(ri, ri + 1) == " " {
+                ri = ri + 1
+            }
+            rest = rest.substring(ri, rest.length())
+            if sep == "%" {
+                cfmt = "%" + rest
+            } elif sep == ":" {
+                // `:>5d` — just the width + type. Skip the
+                // alignment glyph (>, <, ^).
+                if rest.length() > 0 {
+                    g := rest.substring(0, 1)
+                    if g == ">" or g == "<" or g == "^" {
+                        rest = rest.substring(1, rest.length())
+                    }
+                }
+                cfmt = "%" + rest
+            } else {
+                cfmt = "%s"
+            }
+        }
+        cg.mod.ensure_decl("malloc", "declare i8* @malloc(i64)")
+        cg.mod.ensure_decl("snprintf",
+            "declare i32 @snprintf(i8*, i64, i8*, ...)")
+        fmt_const := cg.mod.alloc_string(cfmt)
+        fmt_reg := cg.fresh()
+        cg.emit(fmt_reg + " = getelementptr inbounds [" + (cfmt.length() + 1).str() + " x i8], [" + (cfmt.length() + 1).str() + " x i8]* " + fmt_const + ", i64 0, i64 0")
+        buf_reg := cg.fresh()
+        cg.emit(buf_reg + " = call i8* @malloc(i64 64)")
+        // Pick the right arg type for the snprintf vararg slot.
+        arg_ty_str := recv_ty
+        recv_pass := recv_reg
+        if recv_ty == "%struct.String*" {
+            gepb := cg.fresh()
+            cg.emit(gepb + " = getelementptr inbounds %struct.String, %struct.String* " + recv_reg + ", i32 0, i32 0")
+            bb_ := cg.fresh()
+            cg.emit(bb_ + " = load i8*, i8** " + gepb)
+            recv_pass = bb_
+            arg_ty_str = "i8*"
+        }
+        if recv_ty == "i1" {
+            z := cg.fresh()
+            cg.emit(z + " = zext i1 " + recv_reg + " to i32")
+            recv_pass = z
+            arg_ty_str = "i32"
+        }
+        sn := cg.fresh()
+        cg.emit(sn + " = call i32 (i8*, i64, i8*, ...) @snprintf(i8* " + buf_reg + ", i64 64, i8* " + fmt_reg + ", " + arg_ty_str + " " + recv_pass + ")")
+        return buf_reg
+    }
+
     // Int / Double primitive methods — `n.abs()`, `n.is_even()`,
     // `n.pow(k)`, `n.to_float()` etc. Forward to the runtime
     // `Core_Primitives_<T>_<method>` family.
@@ -4138,6 +4293,9 @@ define _method_ret_ty(cg: FnCG, recv_ty: String, method: String) -> String {
     if method == "has" { return "i1" }
     if method == "put" { return "i32" }
     if method == "keys" { return "%QListP*" }
+    // Interpolation format-spec lowering: `value.__fmt("spec")`
+    // always returns a freshly-allocated i8* c-string from snprintf.
+    if method == "__fmt" { return "i8*" }
     // Int / Double primitive method ret types.
     if recv_ty == "i32" {
         if method == "abs" { return "i32" }

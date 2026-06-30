@@ -377,6 +377,112 @@ void* make_queue_alias(void) {
     return p;
 }
 
+// ---- Bare top-level stdlib forwarders -----------------------------------
+//
+// Selfhost emits package-qualified calls without their package
+// prefix (`encode("...")` rather than `base64.encode(...)`). These
+// stubs route to the runtime's namespaced mangling. Most take
+// String* receivers; selfhost passes raw c-string i8* — we wrap
+// via make_String.
+
+extern void* make_string_alias(void* arg) __asm__("__qsh_to_String");
+void* make_string_alias(void* arg) {
+    if (!arg) return 0;
+    return make_String((const char*)arg);
+}
+
+// Encoding (base64 / hex / json — selfhost picks the first one)
+void* encode(void* s) {
+    extern String* Encoding_Base64_encode(String*);
+    return Encoding_Base64_encode((String*)make_string_alias(s));
+}
+void* decode(void* s) {
+    extern String* Encoding_Base64_decode(String*);
+    return Encoding_Base64_decode((String*)make_string_alias(s));
+}
+void* dumps(void* v) {
+    extern String* Encoding_Json_dumps(void* v);
+    return Encoding_Json_dumps(v);
+}
+void* dumps_indent(void* v, int indent) {
+    extern String* Encoding_Json_dumps_indent(void* v, int32_t indent);
+    return Encoding_Json_dumps_indent(v, indent);
+}
+void* parse_json(void* s) {
+    extern void* Encoding_Json_parse(String*);
+    return Encoding_Json_parse((String*)make_string_alias(s));
+}
+// `parse` bare → JSON parse (most common use in corpus).
+void* parse(void* s) { return parse_json(s); }
+
+// Fs
+int mkdir_raw(void* path, int parents) {
+    extern int Fs_mkdir_raw(String*, int);
+    return Fs_mkdir_raw((String*)make_string_alias(path), parents);
+}
+int rmdir_raw(void* path) {
+    extern int Fs_rmdir_raw(String*);
+    return Fs_rmdir_raw((String*)make_string_alias(path));
+}
+int remove_raw(void* path) {
+    extern int Fs_remove_raw(String*);
+    return Fs_remove_raw((String*)make_string_alias(path));
+}
+
+// Random
+double _next_double(void) {
+    extern double Random__next_double(void);
+    return Random__next_double();
+}
+int _next_int(int lo, int hi) {
+    extern int32_t Random__next_int(int32_t, int32_t);
+    return Random__next_int(lo, hi);
+}
+// Math
+int sign_int(int x) {
+    extern int Math_sign_int(int);
+    return Math_sign_int(x);
+}
+int random_int(int lo, int hi) {
+    extern int Math_random_int(int, int);
+    return Math_random_int(lo, hi);
+}
+
+// Regex
+void* compile_raw(void* pattern, void* flags) {
+    extern void* Regex_compile_raw(String*, String*);
+    return Regex_compile_raw((String*)make_string_alias(pattern),
+                             (String*)make_string_alias(flags));
+}
+int test_raw(void* h, void* s) {
+    extern int Regex_test_raw(void*, String*);
+    return Regex_test_raw(h, (String*)make_string_alias(s));
+}
+int find_at(void* h, void* s, int from_offset) {
+    extern int Regex_find_at(void*, String*, int);
+    return Regex_find_at(h, (String*)make_string_alias(s), from_offset);
+}
+
+// Time
+int year(int epoch, int utc) {
+    extern int Time_year(int, int);
+    return Time_year(epoch, utc);
+}
+int month(int epoch, int utc) {
+    extern int Time_month(int, int);
+    return Time_month(epoch, utc);
+}
+int day(int epoch, int utc) {
+    extern int Time_day(int, int);
+    return Time_day(epoch, utc);
+}
+
+// Debug
+void breakpoint(void* label) {
+    extern void Debug_breakpoint(String*);
+    Debug_breakpoint((String*)make_string_alias(label));
+}
+
 // `super()` — selfhost emits literal `super(...)` calls for derived
 // struct constructors. There's no notion of inheritance in the runtime;
 // the stub is a no-op (returns null). Test code reaching this path is
@@ -432,11 +538,27 @@ void* __qsh_map_keys  (void* m)                    { return Core_Collections_Map
 void* __qsh_map_values(void* m)                    { return Core_Collections_Map_Map_values(m); }
 
 // String.
-void* __qsh_str_ljust    (void* s, int w, void* p) { return Core_String_String_ljust(s, w, p); }
-void* __qsh_str_rjust    (void* s, int w, void* p) { return Core_String_String_rjust(s, w, p); }
-void* __qsh_str_center   (void* s, int w, void* p) { return Core_String_String_center(s, w, p); }
-void* __qsh_str_join     (void* s, void* xs)       { return Core_String_String_join(s, xs); }
-void* __qsh_str_split    (void* s, void* sep)      { return Core_String_String_split(s, sep); }
+// Each __qsh_str_* wrapper boxes c-string i8* args via make_String
+// before forwarding. Core_String_String_* expects String* (it reads
+// `->buffer` / `->length`). Selfhost hands us a raw c-string pointer
+// in these paths because the receiver type was opaque i8*.
+void* __qsh_str_ljust    (void* s, int w, void* p) { return Core_String_String_ljust(make_String((char*)s), w, make_String((char*)p)); }
+void* __qsh_str_rjust    (void* s, int w, void* p) { return Core_String_String_rjust(make_String((char*)s), w, make_String((char*)p)); }
+void* __qsh_str_center   (void* s, int w, void* p) { return Core_String_String_center(make_String((char*)s), w, make_String((char*)p)); }
+// Convert from QListP layout if it looks like one. The runtime
+// join expects List with `{ void** data, int size, int capacity }`
+// fields. selfhost passes a %QListP* with `{ length, capacity, data }`
+// — bitcast at the call site doesn't reorder. We can't disambiguate
+// from C alone, but the bootstrap-time `__qsh_qlistp_to_list` is
+// always safe to call (it returns a fresh runtime List that join
+// can iterate).
+extern void* __qsh_qlistp_to_list(void* qlistp);
+void* __qsh_str_join(void* s, void* xs) {
+    if (!xs) return Core_String_String_join(make_String((char*)s), 0);
+    List* converted = (List*)__qsh_qlistp_to_list(xs);
+    return Core_String_String_join(make_String((char*)s), converted);
+}
+void* __qsh_str_split    (void* s, void* sep)      { return Core_String_String_split(make_String((char*)s), make_String((char*)sep)); }
 void* __qsh_str_lines    (void* s)                 { return Core_String_String_lines(s); }
 void* __qsh_str_repeat   (void* s, int n)          { return Core_String_String_repeat(s, n); }
 int   __qsh_str_to_int   (void* s)                 { return Core_String_String_to_int(s); }
@@ -474,6 +596,26 @@ void* __qsh_qlistp_to_list(void* qlistp) {
     if (q->data) {
         for (int i = 0; i < q->length; i++) {
             Core_Collections_List_List_append(out, q->data[i]);
+        }
+    }
+    return out;
+}
+
+// Same shape but for `%QList { i32 length, i32 capacity, i32* data }`
+// — the int-element flat layout used by `[1, 2, 3]` int-list literals.
+// We inttoptr each element to i8* so the runtime List sees the boxed
+// shape its iterators expect.
+struct QList_Hdr { int length; int capacity; int* data; };
+
+void* __qsh_qlist_to_list(void* qlist) {
+    if (!qlist) return 0;
+    struct QList_Hdr* q = (struct QList_Hdr*)qlist;
+    List* out = (List*)GC_malloc(sizeof(List));
+    Core_Collections_List_List___init(out);
+    if (q->data) {
+        for (int i = 0; i < q->length; i++) {
+            void* boxed = (void*)(uintptr_t)q->data[i];
+            Core_Collections_List_List_append(out, boxed);
         }
     }
     return out;

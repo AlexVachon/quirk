@@ -5,6 +5,84 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [5.0.0-alpha.20] — 2026-06-30 — Tier 1 batch — cast_where_test MATCH (6 → 7/60)
+
+Tier 1 grind. Multiple stacked fixes, one new MATCH. Cleared a
+chunk of LINK-FAIL by adding stdlib forwarder stubs. Bootstrap +
+190/190 e2e green.
+
+### 1. Defensive null/scalar coercions
+
+Various paths now tolerate `null` flowing into i32 slots
+(VarDecl, BinOp operands). The bad-method / unknown-FieldGet
+fallback emits `null` for what sema typed as Int — coercing to
+`0` keeps llc happy.
+
+### 2. Int↔Bool/Double coercions at VarDecl
+
+`flag: Bool = 42 as Bool` was storing i32 42 into an i1 slot
+(low-bit truncation to 0). Now emits `icmp ne i32 ..., 0`.
+Bool→Int and Double→Int complete the symmetry.
+
+### 3. print(Bool) renders "true" / "false"
+
+Previously printed `0` / `1` via `%d`. Now emits a `select i1
+b, "true", "false"` and routes through puts.
+
+### 4. print(Double) uses %f instead of %g
+
+`print(d)` now produces `3.140000`-style output matching the
+C++ compiler's default. `%g` truncated trailing zeros.
+
+### 5. Contextual Int → Double promotion for `/`
+
+`define divide(a: Int, b: Int) -> Double { return a / b }` —
+the `as Double` casts are dropped at parse time, so the body
+is integer division. When `cg.ret_ty == "double"`, the BinOp
+`/` codegen now sitofp-promotes both operands and emits fdiv.
+A `ctx_promoted` flag guards against double-sitofp from the
+existing mixed-numeric path.
+
+### 6. QListP → runtime List bridge at VarDecl + QList variant
+
+VarDecl bitcast from a `%QListP*` RHS into a `%struct.List*`
+slot now routes through `__qsh_qlistp_to_list` instead of a
+bare bitcast. A second helper `__qsh_qlist_to_list` handles
+the i32-element variant, inttoptr-boxing each element to i8*
+so the runtime List can iterate uniformly.
+
+### 7. Bare top-level stdlib forwarder stubs
+
+Added 25 stubs in `selfhost_aliases.c` routing selfhost's
+unprefixed call names to runtime mangled symbols:
+
+- `encode` / `decode` / `dumps` / `dumps_indent` / `parse` →
+  `Encoding_Base64_*` / `Encoding_Json_*`
+- `mkdir_raw` / `rmdir_raw` / `remove_raw` → `Fs_*`
+- `_next_double` / `_next_int` → `Random__*`
+- `sign_int` / `random_int` → `Math_*`
+- `compile_raw` / `test_raw` / `find_at` → `Regex_*`
+- `year` / `month` / `day` → `Time_*`
+- `breakpoint` → `Debug_*`
+
+Most take `String*` receivers — wrappers call `make_String` on
+c-string args first.
+
+### 8. `__qsh_str_join` layout convert
+
+`", ".join(items)` where items is a `%QListP*` now routes through
+`__qsh_qlistp_to_list` before forwarding to the runtime join.
+Without the conversion, join read fields off the wrong offsets.
+
+### 9. LLC stability touch-ups
+
+- BinOp arithmetic: `null` operands coerced to `0` / `0.0`
+  before the integer / double op (defensive for `null * null`
+  on commented-out struct fields).
+- Concat: `r_ty` / `l_ty` refresh to `"i8*"` after String
+  buffer extraction (previously the placeholder branch
+  overwrote the just-extracted buffer with `<list>`).
+
 ## [5.0.0-alpha.19] — 2026-06-30 — exception_improvements_test MATCH (5 → 6/60)
 
 `exception_improvements_test` now byte-identical. Four

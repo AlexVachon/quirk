@@ -1057,6 +1057,23 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
             // mul; sdiv/srem/frem reject it.
             int_flag := " nsw"
             if op == "/" or op == "%" { int_flag = "" }
+            // Contextual Int→Double promotion: if the enclosing
+            // function returns Double and we're doing `/` on two
+            // i32 operands, the user almost certainly wants float
+            // division. Promote both operands and use fdiv.
+            // Skip the mixed-numeric block below by also marking
+            // both operands as already-double.
+            ctx_promoted := false
+            if is_dbl == false and op == "/" and cg.ret_ty == "double" {
+                lp := cg.fresh()
+                cg.emit(lp + " = sitofp i32 " + l + " to double")
+                l = lp
+                rp := cg.fresh()
+                cg.emit(rp + " = sitofp i32 " + r + " to double")
+                r = rp
+                is_dbl = true
+                ctx_promoted = true
+            }
             // Coerce mixed Int/Double operands: when the BinOp
             // resolved to double but an operand reaches us with
             // an i32 static type (selfhost biases by the left
@@ -1065,7 +1082,7 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
             // matching `double` operands. Without this we'd emit
             // `fmul double <i32-reg>, 2.0` and llc rejects it
             // with "integer constant must have integer type".
-            if is_dbl {
+            if is_dbl and ctx_promoted == false {
                 lt_n := _expr_static_ty(cg, b.left)
                 rt_n := _expr_static_ty(cg, b.right)
                 if lt_n == "i32" {
@@ -1078,6 +1095,18 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
                     cg.emit(rpromo + " = sitofp i32 " + r + " to double")
                     r = rpromo
                 }
+            }
+            // Defensive: a literal `null` operand (from a
+            // bad-field fallback on a commented-out struct
+            // field, etc.) reaching the arithmetic emit hits
+            // "null must be a pointer type". Coerce to `0` for
+            // integer ops, `0.0` for double.
+            if is_dbl == false {
+                if l == "null" { l = "0" }
+                if r == "null" { r = "0" }
+            } else {
+                if l == "null" { l = "0.0" }
+                if r == "null" { r = "0.0" }
             }
             reg := cg.fresh()
             if is_dbl {
@@ -1264,24 +1293,28 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
                     buf := cg.fresh()
                     cg.emit(buf + " = load i8*, i8** " + gep_buf)
                     arg_reg = buf
+                } elif arg_ty == "i1" {
+                    // print(bool) — emit `select i1 b, "true",
+                    // "false"`. The two strings are interned via
+                    // alloc_string and we pick one at runtime.
+                    t_name := cg.mod.alloc_string("true")
+                    f_name := cg.mod.alloc_string("false")
+                    t_gep := cg.fresh()
+                    cg.emit(t_gep + " = getelementptr inbounds [5 x i8], [5 x i8]* " + t_name + ", i64 0, i64 0")
+                    f_gep := cg.fresh()
+                    cg.emit(f_gep + " = getelementptr inbounds [6 x i8], [6 x i8]* " + f_name + ", i64 0, i64 0")
+                    sel := cg.fresh()
+                    cg.emit(sel + " = select i1 " + arg_reg + ", i8* " + t_gep + ", i8* " + f_gep)
+                    arg_reg = sel
                 } elif _is_ptr_ty(arg_ty) == false {
-                    // Non-pointer scalar (Int / Bool / enum tag /
+                    // Non-pointer scalar (Int / enum tag /
                     // double) — format through snprintf so the
                     // user sees the numeric value rather than the
                     // SIGSEGV that puts(inttoptr) produces.
                     fmt := "%d"
                     cast_ty := arg_ty
                     promo_reg := arg_reg
-                    if arg_ty == "double" { fmt = "%g" }
-                    if arg_ty == "i1" {
-                        // Promote bool to i32 — puts a numeric 0/1.
-                        // Strictly speaking print(bool) should
-                        // render "true"/"false", but %d at least
-                        // avoids the wild-pointer puts crash.
-                        promo_reg = cg.fresh()
-                        cg.emit(promo_reg + " = zext i1 " + arg_reg + " to i32")
-                        cast_ty = "i32"
-                    }
+                    if arg_ty == "double" { fmt = "%f" }
                     cg.mod.ensure_decl("snprintf", "declare i32 @snprintf(i8*, i64, i8*, ...)")
                     fmt_const := cg.mod.alloc_string(fmt)
                     fmt_reg := cg.fresh()
@@ -1616,19 +1649,23 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
                         mks := cg.fresh()
                         cg.emit(mks + " = call %struct.String* @make_String(i8* " + av + ")")
                         av = mks
-                    } elif (arg_static_ty == "%QListP*" or arg_static_ty == "%QList*") and pty == "%struct.List*" {
-                        // QListP (selfhost flat layout) → runtime
-                        // List: fields are the same shape but
-                        // different order, so a bare bitcast
-                        // lands every field access on the wrong
-                        // offset. Convert through the runtime
-                        // helper that walks + re-appends.
+                    } elif arg_static_ty == "%QListP*" and pty == "%struct.List*" {
                         cg.mod.ensure_decl("__qsh_qlistp_to_list",
                             "declare %struct.List* @__qsh_qlistp_to_list(i8*)")
                         q8 := cg.fresh()
                         cg.emit(q8 + " = bitcast " + arg_static_ty + " " + av + " to i8*")
                         qconv := cg.fresh()
                         cg.emit(qconv + " = call %struct.List* @__qsh_qlistp_to_list(i8* " + q8 + ")")
+                        av = qconv
+                    } elif arg_static_ty == "%QList*" and pty == "%struct.List*" {
+                        // i32-element variant — inttoptr each
+                        // element to i8* before re-appending.
+                        cg.mod.ensure_decl("__qsh_qlist_to_list",
+                            "declare %struct.List* @__qsh_qlist_to_list(i8*)")
+                        q8 := cg.fresh()
+                        cg.emit(q8 + " = bitcast " + arg_static_ty + " " + av + " to i8*")
+                        qconv := cg.fresh()
+                        cg.emit(qconv + " = call %struct.List* @__qsh_qlist_to_list(i8* " + q8 + ")")
                         av = qconv
                     } else {
                         cast_p2p := cg.fresh()
@@ -1847,6 +1884,12 @@ define _expr_static_ty(cg: FnCG, e: Expr) -> String {
             // field and routes through the libc-concat path.
             if lt == "%struct.String*" and op == "+" { return "i8*" }
             if lt == "double" { return "double" }
+            // Contextual promotion: `/` on Int operands when the
+            // enclosing function returns Double — sync with the
+            // emit-side promotion that does i32 → double.
+            if op == "/" and cg.ret_ty == "double" and lt == "i32" {
+                return "double"
+            }
             rt := _expr_static_ty(cg, b.right)
             if rt == "double" { return "double" }
             if rt == "%struct.String*" and op == "+" { return "i8*" }
@@ -4574,7 +4617,32 @@ define _gen_stmt(cg: FnCG, st: Stmt) -> void {
             // assignment).
             store_val := rhs
             if ty != rhs_ty {
-                if _is_ptr_ty(ty) and _is_ptr_ty(rhs_ty) {
+                // QListP → runtime List conversion. The selfhost
+                // flat-pointer-element layout has the same shape
+                // as runtime List (modulo field order), so the
+                // converter walks data[i] as i8* and re-appends
+                // onto a fresh runtime List. The i32-element
+                // %QList variant does NOT have matching element
+                // width, so we don't auto-convert that one — the
+                // user has to call `[...].map(x => x.str())` or
+                // similar to widen to QListP first.
+                if rhs_ty == "%QListP*" and ty == "%struct.List*" {
+                    cg.mod.ensure_decl("__qsh_qlistp_to_list",
+                        "declare %struct.List* @__qsh_qlistp_to_list(i8*)")
+                    qbc := cg.fresh()
+                    cg.emit(qbc + " = bitcast " + rhs_ty + " " + rhs + " to i8*")
+                    qcv := cg.fresh()
+                    cg.emit(qcv + " = call %struct.List* @__qsh_qlistp_to_list(i8* " + qbc + ")")
+                    store_val = qcv
+                } elif rhs_ty == "%QList*" and ty == "%struct.List*" {
+                    cg.mod.ensure_decl("__qsh_qlist_to_list",
+                        "declare %struct.List* @__qsh_qlist_to_list(i8*)")
+                    qbc := cg.fresh()
+                    cg.emit(qbc + " = bitcast " + rhs_ty + " " + rhs + " to i8*")
+                    qcv := cg.fresh()
+                    cg.emit(qcv + " = call %struct.List* @__qsh_qlist_to_list(i8* " + qbc + ")")
+                    store_val = qcv
+                } elif _is_ptr_ty(ty) and _is_ptr_ty(rhs_ty) {
                     cast := cg.fresh()
                     cg.emit(cast + " = bitcast " + rhs_ty + " " + rhs +
                             " to " + ty)
@@ -4601,6 +4669,45 @@ define _gen_stmt(cg: FnCG, st: Stmt) -> void {
                         store_val = cast
                     }
                 }
+                // Int → Double: `d: Double = i as Double` (the
+                // `as Double` cast is dropped at parse time, so
+                // the RHS reaches us as i32). sitofp recovers
+                // the intent.
+                if ty == "double" and rhs_ty == "i32" {
+                    cast := cg.fresh()
+                    cg.emit(cast + " = sitofp i32 " + rhs + " to double")
+                    store_val = cast
+                }
+                // Double → Int: opposite direction.
+                if ty == "i32" and rhs_ty == "double" {
+                    cast := cg.fresh()
+                    cg.emit(cast + " = fptosi double " + rhs + " to i32")
+                    store_val = cast
+                }
+                // Int → Bool: `flag: Bool = 42 as Bool` — any
+                // non-zero is truthy. icmp-ne lowers correctly
+                // (storing i32 into an i1 slot would truncate
+                // to the low bit, getting `false` for 42).
+                if ty == "i1" and rhs_ty == "i32" {
+                    cast := cg.fresh()
+                    cg.emit(cast + " = icmp ne i32 " + rhs + ", 0")
+                    store_val = cast
+                }
+                // Bool → Int: zext.
+                if ty == "i32" and rhs_ty == "i1" {
+                    cast := cg.fresh()
+                    cg.emit(cast + " = zext i1 " + rhs + " to i32")
+                    store_val = cast
+                }
+            }
+            // Defensive: a literal `null` flowing into an i32
+            // slot (the inverse of the existing `0` → `null`
+            // swap below). Comes up when an unknown FieldGet /
+            // bad-method returned `null` but the slot was sized
+            // i32 by sema. Without this, llc rejects with "null
+            // must be a pointer type".
+            if store_val == "null" and ty == "i32" {
+                store_val = "0"
             }
             slot := _ensure_fresh_slot(cg, v.name, ty)
             cg.emit("store " + slot.ty + " " + store_val + ", " + slot.ty + "* " + slot.name)

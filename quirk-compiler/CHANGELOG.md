@@ -5,6 +5,30 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [5.0.0-alpha.22] — 2026-06-30 — null compare fix + more exception stubs
+
+LLC-fail 9 → 8 (`exceptions_full_test` cleared), link-fail
+6 → 5. MATCH unchanged at 7/60 — unblocked tests segfault
+inside `run_all`'s closure dispatch. Bootstrap + 190/190 e2e
+green.
+
+### 1. BinOp `==` / `!=` literal-null compare
+
+`e.type == "ValueError"` where `e.type` returns the literal
+text `null` (from a bad-field FieldGet on an unregistered
+struct) used to emit `icmp eq i32 null, <i8*>` — invalid IR.
+
+Now adds two more guarded paths in the `==`/`!=` BinOp
+codegen: `null` literal on the left + pointer-typed right →
+emit `icmp eq <ptr-ty> null, %r`; symmetric for the other
+side. And `null == null` folds to a constant `1` / `0`.
+
+### 2. More exception constructors
+
+`NotImplementedError`, `NullError`, `ZeroDivisionError`
+stub-forward to their message arg (same shape as the
+existing TypeError / ValueError / etc.).
+
 ## [5.0.0-alpha.21] — 2026-06-30 — inherited method dispatch + more stdlib stubs
 
 MATCH unchanged at 7/60 — the link-wall keeps dropping (8 → 5)

@@ -1009,6 +1009,28 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
                         cg.emit(reg + " = icmp " + int_pred + " " + rt2 + " null, " + r)
                         return reg
                     }
+                    // Literal `null` on one side (from a
+                    // bad-field FieldGet that returned null
+                    // instead of the i32 default). Compare via
+                    // pointer-eq against the other side.
+                    if l == "null" and _is_ptr_ty(rt2) {
+                        reg := cg.fresh()
+                        cg.emit(reg + " = icmp " + int_pred + " " + rt2 + " null, " + r)
+                        return reg
+                    }
+                    if r == "null" and _is_ptr_ty(lt2) {
+                        reg := cg.fresh()
+                        cg.emit(reg + " = icmp " + int_pred + " " + lt2 + " " + l + ", null")
+                        return reg
+                    }
+                    // Both literal null / one null and one i32:
+                    // collapse to a constant boolean — both null
+                    // (eq) is true; ne is false. Without this
+                    // llc rejects `icmp eq i32 null, <ptr>`.
+                    if l == "null" and r == "null" {
+                        if op == "==" { return "1" }
+                        return "0"
+                    }
                 }
                 // Pointer-vs-pointer comparison for all six
                 // predicates: `a == b`, `a < b`, etc. where both

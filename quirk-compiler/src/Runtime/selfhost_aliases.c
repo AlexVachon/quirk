@@ -663,6 +663,9 @@ void* IOError         (void* msg) { return msg; }
 void* FileNotFoundError(void* msg) { return msg; }
 void* NameError       (void* msg) { return msg; }
 void* AttributeError  (void* msg) { return msg; }
+void* NotImplementedError(void* msg) { return msg; }
+void* NullError       (void* msg) { return msg; }
+void* ZeroDivisionError(void* msg) { return msg; }
 
 // ---- i8*-receiver method routes -----------------------------------------
 //

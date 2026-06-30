@@ -1481,9 +1481,25 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
                 if _is_ptr_ty(pty) and _is_ptr_ty(arg_static_ty)
                    and pty != arg_static_ty
                    and av != "null" {
-                    cast_p2p := cg.fresh()
-                    cg.emit(cast_p2p + " = bitcast " + arg_static_ty + " " + av + " to " + pty)
-                    av = cast_p2p
+                    // i8* → %struct.String*: a raw c-string
+                    // pointer isn't layout-compatible with the
+                    // runtime String struct (`{ i8* buffer, i32
+                    // length }`). Reading field 0 of a c-string
+                    // re-interprets the first 8 bytes as a
+                    // pointer, which crashes any subsequent
+                    // puts. Wrap via `make_String` to build a
+                    // proper String header.
+                    if arg_static_ty == "i8*" and pty == "%struct.String*" {
+                        cg.mod.ensure_decl("make_String",
+                            "declare %struct.String* @make_String(i8*)")
+                        mks := cg.fresh()
+                        cg.emit(mks + " = call %struct.String* @make_String(i8* " + av + ")")
+                        av = mks
+                    } else {
+                        cast_p2p := cg.fresh()
+                        cg.emit(cast_p2p + " = bitcast " + arg_static_ty + " " + av + " to " + pty)
+                        av = cast_p2p
+                    }
                 }
                 sig = sig + pty + " " + av
                 j = j + 1
@@ -1864,12 +1880,22 @@ define _gen_struct_ctor(cg: FnCG, name: String, ctor_args: List) -> String {
             arg_static_ty3 := _expr_static_ty(cg, aexpr)
             // Generalized pointer-to-pointer coercion at the
             // struct constructor's `__init` call boundary.
+            // Same i8* → %struct.String* via make_String as the
+            // direct-call path (above).
             if _is_ptr_ty(pty) and _is_ptr_ty(arg_static_ty3)
                and pty != arg_static_ty3
                and aval != "null" {
-                cast_p2p3 := cg.fresh()
-                cg.emit(cast_p2p3 + " = bitcast " + arg_static_ty3 + " " + aval + " to " + pty)
-                aval = cast_p2p3
+                if arg_static_ty3 == "i8*" and pty == "%struct.String*" {
+                    cg.mod.ensure_decl("make_String",
+                        "declare %struct.String* @make_String(i8*)")
+                    mks3 := cg.fresh()
+                    cg.emit(mks3 + " = call %struct.String* @make_String(i8* " + aval + ")")
+                    aval = mks3
+                } else {
+                    cast_p2p3 := cg.fresh()
+                    cg.emit(cast_p2p3 + " = bitcast " + arg_static_ty3 + " " + aval + " to " + pty)
+                    aval = cast_p2p3
+                }
             }
             sig = sig + ", " + pty + " " + aval
             ai = ai + 1
@@ -1961,13 +1987,21 @@ define _gen_method_call(cg: FnCG, c: Call) -> String {
                 }
                 // Generalized pointer-to-pointer coercion at the
                 // method-call boundary. Mirror of the direct-
-                // call path above.
+                // call path above (incl. the i8* → String wrap).
                 if _is_ptr_ty(pty) and _is_ptr_ty(arg_static_ty2)
                    and pty != arg_static_ty2
                    and av != "null" {
-                    cast_p2p2 := cg.fresh()
-                    cg.emit(cast_p2p2 + " = bitcast " + arg_static_ty2 + " " + av + " to " + pty)
-                    av = cast_p2p2
+                    if arg_static_ty2 == "i8*" and pty == "%struct.String*" {
+                        cg.mod.ensure_decl("make_String",
+                            "declare %struct.String* @make_String(i8*)")
+                        mks2 := cg.fresh()
+                        cg.emit(mks2 + " = call %struct.String* @make_String(i8* " + av + ")")
+                        av = mks2
+                    } else {
+                        cast_p2p2 := cg.fresh()
+                        cg.emit(cast_p2p2 + " = bitcast " + arg_static_ty2 + " " + av + " to " + pty)
+                        av = cast_p2p2
+                    }
                 }
                 sig = sig + pty + " " + av
                 j = j + 1

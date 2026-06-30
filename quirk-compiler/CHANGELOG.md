@@ -5,6 +5,35 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [5.0.0-alpha.15] — 2026-06-30 — i8* → String* wrap at call boundaries
+
+When a function or method takes a `%struct.String*` parameter and the
+call site supplies a raw c-string `i8*` (the common case for string
+literals reaching user-defined `define greeting(msg: String)`), selfhost
+used to emit a bare `bitcast i8* %lit to %struct.String*` and call.
+
+The bitcast is a no-op at the machine level, so the callee then GEP'd
+field 0 of what it thought was a `{ i8* buffer, i32 length }` struct
+— but the underlying memory is a raw c-string, so the first 8 bytes
+("Hello fr") got interpreted as the buffer pointer. `puts(0x7266206f6c6c6548)`
+SIGSEGV.
+
+The fix routes through `make_String(i8*)` at the call boundary: the
+runtime allocates a proper `String*` header and strdup's the c-string
+into its buffer. Applied at all three call sites:
+
+- Direct calls (`greeting(...)`).
+- User-defined struct method calls (`obj.method(...)`).
+- Struct constructor `__init` calls (`Foo(...)`).
+
+Other pointer-pointer coercions still go through the existing bitcast
+path — only the `i8* → %struct.String*` case is layout-incompatible.
+
+MATCH unchanged at 4/60; the wrap unblocks SIGSEGVs in tests like
+`ftf_imports` that called user-defined String-typed-arg functions, but
+downstream code still hits other issues (Int-tagged-pointer in
+concat, etc.). Bootstrap + 190/190 e2e green.
+
 ## [5.0.0-alpha.14] — 2026-06-30 — i8*-receiver method routing + Map/Set literal runtime
 
 Foundation for collection-method dispatch on i8*-typed receivers

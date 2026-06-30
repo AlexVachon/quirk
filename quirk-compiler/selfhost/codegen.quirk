@@ -1689,6 +1689,20 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
                         qconv := cg.fresh()
                         cg.emit(qconv + " = call %struct.List* @__qsh_qlist_to_list(i8* " + q8 + ")")
                         av = qconv
+                    } elif arg_static_ty == "i8*" and pty == "%struct.List*" {
+                        // i8* → runtime List: callee expects a
+                        // List (likely variadic `...args: List`)
+                        // and the caller is passing a single
+                        // i8* arg directly. Wrap into a fresh
+                        // single-element runtime List. Without
+                        // this, a bare bitcast lands the c-string
+                        // bytes inside the List header → garbage
+                        // length/data → IndexError at iteration.
+                        cg.mod.ensure_decl("__qsh_wrap_one_list",
+                            "declare %struct.List* @__qsh_wrap_one_list(i8*)")
+                        wrap := cg.fresh()
+                        cg.emit(wrap + " = call %struct.List* @__qsh_wrap_one_list(i8* " + av + ")")
+                        av = wrap
                     } else {
                         cast_p2p := cg.fresh()
                         cg.emit(cast_p2p + " = bitcast " + arg_static_ty + " " + av + " to " + pty)
@@ -1822,6 +1836,16 @@ define _gen_lambda(outer_cg: FnCG, lm: Lambda) -> String {
 // the rename is invisible to callers.
 define _llvm_fn_name(name: String) -> String {
     if name == "main" { return "__quirk_user_main" }
+    // Standard-stream accessors: selfhost source uses
+    // `stdout()` / `stderr()` / `stdin()` as zero-arg calls
+    // (per the console / sys stdlib). Re-target to the
+    // runtime's mangled `Sys_*` impls. We can't use libc's
+    // own symbol names — they're FILE* globals, and the
+    // linker would resolve our `call @stdout()` to the
+    // global's address (crash).
+    if name == "stdout" { return "Sys_stdout" }
+    if name == "stderr" { return "Sys_stderr" }
+    if name == "stdin"  { return "Sys_stdin" }
     return name
 }
 
@@ -2719,6 +2743,18 @@ define _gen_method_call(cg: FnCG, c: Call) -> String {
         // segment without special-casing the String case.
         if recv_ty == "i8*" {
             return recv_reg
+        }
+        // %struct.String*.str() — extract the buffer field.
+        // Selfhost's interpolation lowering auto-calls `.str()`
+        // on each segment, and the struct-String case used to
+        // fall through to the bad-method fallback returning
+        // null, which broke `"x: ${s}"` for String-typed `s`.
+        if recv_ty == "%struct.String*" {
+            gep_buf := cg.fresh()
+            cg.emit(gep_buf + " = getelementptr inbounds %struct.String, %struct.String* " + recv_reg + ", i32 0, i32 0")
+            buf := cg.fresh()
+            cg.emit(buf + " = load i8*, i8** " + gep_buf)
+            return buf
         }
         // Int.str(): snprintf("%d", x) into a 12-byte buffer
         // (max i32 in decimal is 11 chars + null).
@@ -5183,16 +5219,17 @@ define _gen_stmt(cg: FnCG, st: Stmt) -> void {
             // index still advances. `break` branches to end.
             iter_ty := _expr_static_ty(cg, fi.iter)
             iter_reg := _gen_expr(cg, fi.iter)
-            // Coerce stdlib-typed list/map pointers to selfhost's
-            // flat shape. Bundled stdlib functions return
-            // `%struct.List*` etc., but selfhost only knows how
-            // to iterate over `%QListP*` / `%QList*` / `%QMap*`.
-            // Bitcast through — wrong if the value was actually
-            // populated through the runtime ABI, but selfhost-
-            // built values stay layout-compatible.
+            // Coerce stdlib-typed `%struct.List*` to selfhost's
+            // flat layout. Layouts differ (field order!), so we
+            // can't bitcast; convert through the runtime helper
+            // that walks + re-appends into a %QListP* with i8*
+            // elements. The forIn body then iterates the flat
+            // shape correctly.
             if iter_ty == "%struct.List*" {
+                cg.mod.ensure_decl("__qsh_list_to_qlistp",
+                    "declare %QListP* @__qsh_list_to_qlistp(%struct.List*)")
                 rebind := cg.fresh()
-                cg.emit(rebind + " = bitcast %struct.List* " + iter_reg + " to %QListP*")
+                cg.emit(rebind + " = call %QListP* @__qsh_list_to_qlistp(%struct.List* " + iter_reg + ")")
                 iter_reg = rebind
                 iter_ty = "%QListP*"
             }

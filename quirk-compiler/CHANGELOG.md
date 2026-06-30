@@ -5,6 +5,69 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [5.0.0-alpha.23] — 2026-06-30 — closure-adjacent stack fixes (7 → 10/60)
+
+Three new MATCH: `crypto_test`, `csv_test`, `url_test`. The
+test framework's `run_all` + lambda dispatch now executes end-
+to-end for many tests. Bootstrap byte-identical + 190/190 e2e
+green.
+
+The original goal was full Callable closure capture, but the
+selfhost lambdas without captures (the common case) actually
+work as bare fn ptrs through a struct.Callable* — the
+TestCase-using corpus tests don't capture from enclosing
+scope. The real blockers were elsewhere:
+
+### 1. `String*.str()` extracts buffer
+
+Selfhost's interpolation lowering auto-calls `.str()` on every
+segment. `%struct.String*.str()` used to fall through to the
+bad-method fallback returning `null`, breaking
+`"label: ${s}"` for String-typed `s`. Now extracts the buffer
+field directly.
+
+### 2. `stdout()` / `stderr()` / `stdin()` → `Sys_*`
+
+The console package writes `_emit_str(stdout(), ...)` — a
+ZERO-ARG call on `stdout`. Selfhost emitted `call @stdout()`
+which the linker resolved to libc's `stdout` global (a FILE*).
+Calling a global as a function crashes. `_llvm_fn_name` now
+re-targets `stdout`/`stderr`/`stdin` to `Sys_stdout`/etc.
+
+(An asm-rename approach was tried first and globally shadowed
+libc's stdout, breaking all puts/printf calls including those
+inside `bin/quirk-selfhost` itself. The codegen-side rename
+was the right path.)
+
+### 3. `i8* → %struct.List*` variadic auto-wrap
+
+`console.log("")` with the variadic signature
+`define log(...args: List)` passes a bare i8* arg. Selfhost
+used to bitcast i8* to List*, which then iterated garbage
+inside the function body. Now wraps via
+`__qsh_wrap_one_list(arg)` — a runtime helper that builds a
+single-element List.
+
+### 4. for-in over `%struct.List*` converts layout
+
+The for-in loop reads `length` at offset 0 (selfhost's
+`%QListP` layout). Bitcasting `%struct.List*` (which has data
+at offset 0, size at offset 8) made the loop read the data
+pointer as a huge length — millions of iterations, IndexError
+when the runtime's List_get hit its bounds check.
+
+Now routes through `__qsh_list_to_qlistp`, a sidecar that
+copies the runtime List header into a fresh `%QListP` with
+the right field order. The data buffer is shared (safe under
+GC).
+
+### 5. `List__length` / `__get` / `__set` / `is_empty` route to runtime
+
+Receivers reaching these aliases are runtime-built (the
+call-boundary QListP→List bridge runs first). The previous
+QListP-layout reads gave huge values for `size`. Forward to
+`Core_Collections_List_List_*` directly.
+
 ## [5.0.0-alpha.22] — 2026-06-30 — null compare fix + more exception stubs
 
 LLC-fail 9 → 8 (`exceptions_full_test` cleared), link-fail

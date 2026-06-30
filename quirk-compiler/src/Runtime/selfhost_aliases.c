@@ -254,22 +254,21 @@ struct QListP_View {
     void** data;
 };
 
+// Forward to the runtime List impls — receivers reaching these
+// aliases are runtime-built (the QListP→List bridge runs at the
+// call boundary, so by the time we get here it's already in
+// runtime layout `{ data, size, capacity }`).
 int   List__length   (void* s) {
-    return s ? ((struct QListP_View*)s)->length : 0;
+    return Core_Collections_List_List_length(s);
 }
 void* List____get    (void* s, int i) {
-    if (!s) return 0;
-    struct QListP_View* v = (struct QListP_View*)s;
-    if (i < 0 || i >= v->length) return 0;
-    return v->data[i];
+    return Core_Collections_List_List___get(s, i);
 }
 void  List____set    (void* s, int i, void* val) {
-    if (!s) return;
-    struct QListP_View* v = (struct QListP_View*)s;
-    if (i >= 0 && i < v->length) v->data[i] = val;
+    Core_Collections_List_List___set(s, i, val);
 }
 int   List__is_empty (void* s) {
-    return s ? ((struct QListP_View*)s)->length == 0 : 1;
+    return Core_Collections_List_List_is_empty(s);
 }
 
 void   List__append    (void* s, void* v)         { Core_Collections_List_List_append(s, v); }
@@ -780,6 +779,33 @@ void* __qsh_qlist_to_list(void* qlist) {
             Core_Collections_List_List_append(out, boxed);
         }
     }
+    return out;
+}
+
+// Wrap a single i8* into a one-element runtime List. Used at
+// the call boundary when a function is variadic (`...args:
+// List`) but the caller passes a bare arg. Bridges the
+// arity gap without selfhost having to track variadic call
+// patterns explicitly.
+void* __qsh_wrap_one_list(void* arg) {
+    List* out = (List*)GC_malloc(sizeof(List));
+    Core_Collections_List_List___init(out);
+    Core_Collections_List_List_append(out, arg);
+    return out;
+}
+
+// Reverse of __qsh_qlistp_to_list — convert a runtime List back
+// to selfhost's flat `%QListP { length, capacity, data }` so
+// the codegen's for-in loop can read length at offset 0 + walk
+// the data pointer. Direct bitcast doesn't work because the
+// field orders differ.
+void* __qsh_list_to_qlistp(void* list) {
+    if (!list) return 0;
+    List* in = (List*)list;
+    struct QListP_Hdr* out = (struct QListP_Hdr*)GC_malloc(sizeof(struct QListP_Hdr));
+    out->length = in->size;
+    out->capacity = in->capacity;
+    out->data = in->data;  // share the data pointer; lifetime fine under GC
     return out;
 }
 

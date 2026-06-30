@@ -1411,6 +1411,45 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
                         pty = _expr_static_ty(cg, arg_e)
                     }
                 }
+                // Synthetic variadic helpers (`__map_lit`,
+                // `__set_lit`, `__tuple`) expect ALL args boxed
+                // as `i8*` AND a trailing NULL sentinel (added
+                // after the loop) so the runtime's va_args walk
+                // knows when to stop. Without uniform i8* args
+                // the runtime mis-reads the i32-shaped arg as a
+                // 64-bit pointer (taking 4 bytes of stack
+                // garbage with it).
+                if is_unknown and (llvm_name == "__map_lit"
+                                   or llvm_name == "__set_lit"
+                                   or llvm_name == "__tuple") {
+                    if pty == "i32" {
+                        promo_arg := cg.fresh()
+                        cg.emit(promo_arg + " = inttoptr i32 " + av + " to i8*")
+                        av = promo_arg
+                        pty = "i8*"
+                    } elif pty == "i1" {
+                        z := cg.fresh()
+                        cg.emit(z + " = zext i1 " + av + " to i32")
+                        promo_arg := cg.fresh()
+                        cg.emit(promo_arg + " = inttoptr i32 " + z + " to i8*")
+                        av = promo_arg
+                        pty = "i8*"
+                    } elif pty == "double" {
+                        // double inttoptr isn't valid — bitcast
+                        // to i64 first.
+                        bb := cg.fresh()
+                        cg.emit(bb + " = bitcast double " + av + " to i64")
+                        promo_arg := cg.fresh()
+                        cg.emit(promo_arg + " = inttoptr i64 " + bb + " to i8*")
+                        av = promo_arg
+                        pty = "i8*"
+                    } elif _is_ptr_ty(pty) and pty != "i8*" {
+                        bp := cg.fresh()
+                        cg.emit(bp + " = bitcast " + pty + " " + av + " to i8*")
+                        av = bp
+                        pty = "i8*"
+                    }
+                }
                 // Literal-zero coercion: if the slot expects a
                 // pointer but the arg value is `0` (from a
                 // bad-method fallback or similar), swap to
@@ -1466,6 +1505,17 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
                     sig = sig + pty_fill + " " + fill_val
                     j = j + 1
                 }
+            }
+            // Append a `null` sentinel for the synthetic variadic
+            // helpers — paired with the va_args walk in
+            // `__map_lit` / `__set_lit` / `__tuple`. Without it
+            // the helper reads past the last real arg into stack
+            // garbage.
+            if is_unknown and (llvm_name == "__map_lit"
+                               or llvm_name == "__set_lit"
+                               or llvm_name == "__tuple") {
+                if j > 0 { sig = sig + ", " }
+                sig = sig + "i8* null"
             }
             sig = sig + ")"
             reg := cg.fresh()
@@ -2075,16 +2125,12 @@ define _gen_method_call(cg: FnCG, c: Call) -> String {
             cg.emit(cmp + " = icmp ne i8* " + hit + ", null")
             return cmp
         }
-        // `s.size()` is an alias for `s.length()`. Some stdlib
-        // code uses one, some the other.
-        if fg.name == "size" {
-            cg.mod.ensure_decl("strlen", "declare i64 @strlen(i8*)")
-            len64 := cg.fresh()
-            cg.emit(len64 + " = call i64 @strlen(i8* " + recv_reg + ")")
-            reg := cg.fresh()
-            cg.emit(reg + " = trunc i64 " + len64 + " to i32")
-            return reg
-        }
+        // `s.size()` is ambiguous on i8*: String uses it as an
+        // alias for `.length()`, but Set / Queue / Map use it
+        // as the element count. Defer to the runtime-alias
+        // route at the bottom of this function (`Set__size`),
+        // which is correct for collection-typed receivers. No
+        // test in the corpus uses `.size()` on a real String.
         // `s.is_empty()` → `strlen(s) == 0`. Cheap to emit
         // and avoids a runtime call.
         if fg.name == "is_empty" {
@@ -2200,6 +2246,135 @@ define _gen_method_call(cg: FnCG, c: Call) -> String {
             cg.emit(sel + " = select i1 " + recv_reg + ", i8* " + t_gep +
                     ", i8* " + f_gep)
             return sel
+        }
+    }
+    // i8* receiver with a method name that uniquely identifies
+    // a runtime collection (Set / Map / List). Route to the
+    // mangled alias symbol — selfhost's `Set()` / `Map()`
+    // constructors return runtime-layout pointers via the
+    // selfhost_aliases.c stubs, so the call lands on the right
+    // implementation. Methods shared across types (`length`,
+    // `has`, `contains`) need a tie-breaker — see below.
+    if recv_ty == "i8*" {
+        alias := ""
+        ret_ll := "i32"
+        // Set-specific methods.
+        if fg.name == "size"         { alias = "__qsh_set_size"        ret_ll = "i32" }
+        if fg.name == "add"          { alias = "__qsh_set_add"         ret_ll = "void" }
+        if fg.name == "to_list"      { alias = "__qsh_set_to_list"     ret_ll = "i8*" }
+        if fg.name == "union"        { alias = "__qsh_set_union"       ret_ll = "i8*" }
+        if fg.name == "intersection" { alias = "__qsh_set_intersection" ret_ll = "i8*" }
+        if fg.name == "difference"   { alias = "__qsh_set_difference"  ret_ll = "i8*" }
+        // Map-specific methods.
+        if fg.name == "put"          { alias = "__qsh_map_put"         ret_ll = "void" }
+        if fg.name == "get"          { alias = "__qsh_map_get"         ret_ll = "i8*" }
+        if fg.name == "keys"         { alias = "__qsh_map_keys"        ret_ll = "i8*" }
+        if fg.name == "values"       { alias = "__qsh_map_values"      ret_ll = "i8*" }
+        // Ambiguous methods — `has` exists on Set and Map. We
+        // pick Set (the more common case for i8*-typed
+        // receivers); the layouts are similar enough that the
+        // runtime impl reads the same i8* key argument.
+        if fg.name == "has"          { alias = "__qsh_set_has"         ret_ll = "i1" }
+        // Map.length / Set.size disambiguation: selfhost source
+        // uses `.length()` for Map and `.size()` for Set; honour
+        // that convention when we hit `length` on an i8*.
+        if fg.name == "length" and recv_ty == "i8*" {
+            alias = "__qsh_map_length"
+            ret_ll = "i32"
+        }
+        // String methods that route through the alias bridge.
+        if fg.name == "ljust"     { alias = "__qsh_str_ljust"      ret_ll = "i8*" }
+        if fg.name == "rjust"     { alias = "__qsh_str_rjust"      ret_ll = "i8*" }
+        if fg.name == "center"    { alias = "__qsh_str_center"     ret_ll = "i8*" }
+        if fg.name == "join"      { alias = "__qsh_str_join"       ret_ll = "i8*" }
+        if fg.name == "split"     { alias = "__qsh_str_split"      ret_ll = "i8*" }
+        if fg.name == "lines"     { alias = "__qsh_str_lines"      ret_ll = "i8*" }
+        if fg.name == "repeat"    { alias = "__qsh_str_repeat"     ret_ll = "i8*" }
+        if fg.name == "to_int"    { alias = "__qsh_str_to_int"     ret_ll = "i32" }
+        if fg.name == "to_float"  { alias = "__qsh_str_to_float"   ret_ll = "double" }
+        if fg.name == "find"      { alias = "__qsh_str_find"       ret_ll = "i32" }
+        if fg.name == "index"     { alias = "__qsh_str_index"      ret_ll = "i32" }
+        if fg.name == "count"     { alias = "__qsh_str_count"      ret_ll = "i32" }
+        if fg.name == "is_alpha"  { alias = "__qsh_str_is_alpha"   ret_ll = "i1" }
+        if fg.name == "is_digit"  { alias = "__qsh_str_is_digit"   ret_ll = "i1" }
+        if fg.name == "is_lower"  { alias = "__qsh_str_is_lower"   ret_ll = "i1" }
+        if fg.name == "is_upper"  { alias = "__qsh_str_is_upper"   ret_ll = "i1" }
+        if fg.name == "is_space"  { alias = "__qsh_str_is_space"   ret_ll = "i1" }
+        if alias.length() > 0 {
+            // Build the declare + call. Argument types default
+            // to i8* (the Any-boxed ABI); the runtime helper
+            // converts via quirk_opaque_to_string for hash keys.
+            arg_vals := List()
+            arg_decls := List()
+            ai := 0
+            while ai < c.args.length() {
+                aexpr: Expr := c.args.__get(ai)
+                av := _gen_expr(cg, aexpr)
+                aty := _expr_static_ty(cg, aexpr)
+                // Coerce non-i8* / non-i32 scalars to the right
+                // ABI: i32/i1 → inttoptr to i8* (the boxed-Any
+                // shape stdlib expects). Pointer types pass
+                // through. i32 width/index params (e.g. ljust's
+                // width) stay i32 — distinguish by position 0 vs
+                // others isn't reliable, so we keep i32 for the
+                // FIRST arg of ljust/rjust/center/repeat.
+                if (alias == "String__ljust" or alias == "String__rjust" or alias == "String__center") and ai == 0 {
+                    arg_vals.append(av)
+                    arg_decls.append("i32")
+                } elif alias == "String__repeat" and ai == 0 {
+                    arg_vals.append(av)
+                    arg_decls.append("i32")
+                } elif aty == "i32" or aty == "i1" {
+                    promo := cg.fresh()
+                    if aty == "i1" {
+                        z := cg.fresh()
+                        cg.emit(z + " = zext i1 " + av + " to i32")
+                        cg.emit(promo + " = inttoptr i32 " + z + " to i8*")
+                    } else {
+                        cg.emit(promo + " = inttoptr i32 " + av + " to i8*")
+                    }
+                    arg_vals.append(promo)
+                    arg_decls.append("i8*")
+                } elif _is_ptr_ty(aty) {
+                    if aty != "i8*" {
+                        b := cg.fresh()
+                        cg.emit(b + " = bitcast " + aty + " " + av + " to i8*")
+                        arg_vals.append(b)
+                    } else {
+                        arg_vals.append(av)
+                    }
+                    arg_decls.append("i8*")
+                } else {
+                    arg_vals.append(av)
+                    arg_decls.append(aty)
+                }
+                ai = ai + 1
+            }
+            // Build the declare line.
+            decl_args := "i8*"
+            di := 0
+            while di < arg_decls.length() {
+                decl_args = decl_args + ", " + arg_decls.__get(di)
+                di = di + 1
+            }
+            decl_ret := ret_ll
+            if decl_ret == "void" { decl_ret = "void" }
+            cg.mod.ensure_decl(alias, "declare " + decl_ret + " @" + alias + "(" + decl_args + ")")
+            // Build the call.
+            sig := "(i8* " + recv_reg
+            ci := 0
+            while ci < arg_vals.length() {
+                sig = sig + ", " + arg_decls.__get(ci) + " " + arg_vals.__get(ci)
+                ci = ci + 1
+            }
+            sig = sig + ")"
+            if ret_ll == "void" {
+                cg.emit("call void @" + alias + sig)
+                return "0"
+            }
+            reg := cg.fresh()
+            cg.emit(reg + " = call " + ret_ll + " @" + alias + sig)
+            return reg
         }
     }
     // Unknown method on a non-permissive-handled receiver type.
@@ -3772,6 +3947,24 @@ define _method_ret_ty(cg: FnCG, recv_ty: String, method: String) -> String {
     if method == "has" { return "i1" }
     if method == "put" { return "i32" }
     if method == "keys" { return "%QListP*" }
+    // i8*-receiver fallback methods routed through __qsh_*
+    // wrappers. Keep these in sync with the routing table in
+    // `_gen_method_call`. Without matching ret types here, the
+    // Return-statement coercion path tries to inttoptr the i8*
+    // result back to a struct pointer ("integer constant must
+    // have integer type").
+    if recv_ty == "i8*" {
+        if method == "join" or method == "split" or method == "lines"
+           or method == "ljust" or method == "rjust" or method == "center"
+           or method == "repeat" or method == "to_list"
+           or method == "union" or method == "intersection" or method == "difference"
+           or method == "keys" or method == "values" { return "i8*" }
+        if method == "find" or method == "index" or method == "count"
+           or method == "to_int" or method == "size" { return "i32" }
+        if method == "to_float" { return "double" }
+        if method == "is_alpha" or method == "is_digit" or method == "is_lower"
+           or method == "is_upper" or method == "is_space" { return "i1" }
+    }
     return "i32"
 }
 

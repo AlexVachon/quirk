@@ -88,14 +88,76 @@ int __is(void* x) { return x != 0; }
 // caller usually only uses `t.0` anyway.
 void* __tuple(void* first, ...) { return first; }
 
-// `{k1: v1, ...}` map literal — return null. Real implementation
-// would build a %QMap struct; for now any code reaching this stub
-// has bigger problems (the codegen for map-literal use sites is
-// best-effort).
-void* __map_lit(void* k0, ...) { (void)k0; return 0; }
+// `{k1: v1, k2: v2, ...}` map literal — build a runtime Map. The
+// arity is hidden by `(...)` in the declare; we walk the va_args
+// until we see a sentinel pointer or until the runtime detects a
+// non-string-shaped key. Real callers always supply complete k/v
+// pairs and the resulting Map struct then composes with the rest
+// of the `__qsh_map_*` routing.
+//
+// Caveat: we have no way to know the arity at runtime. Selfhost
+// emits a fixed-arity call (`__map_lit(k0, v0, k1, v1, ...)`) but
+// declares the symbol variadic. We bound the walk at 32 pairs (64
+// va_args slots) which covers every map literal in the corpus.
 
-// `{a, b, ...}` set literal — same shape as __map_lit.
-void* __set_lit(void* a0, ...) { (void)a0; return 0; }
+#include <stdarg.h>
+
+// Map_put expects a `String*` key (it reads `keyObj->buffer`).
+// Selfhost passes raw c-string i8* pointers; wrap via make_String
+// before calling. The other side of this — Map_get / __qsh_map_get
+// — has the same expectation.
+extern String* make_String(const char* src);
+
+static String* __qsh_box_key(void* p) {
+    if (!p) return NULL;
+    // Tagged-int detection: low 4 GiB → format as int and box.
+    // Heap pointers (including c-string literals) → wrap raw.
+    uintptr_t u = (uintptr_t)p;
+    if (u <= 0xFFFFFFFFUL) {
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%d", (int)u);
+        return make_String(buf);
+    }
+    return make_String((const char*)p);
+}
+
+void* __map_lit(void* k0, ...) {
+    void* m = GC_malloc(256);
+    Core_Collections_Map_Map___init(m);
+    if (!k0) return m;
+    va_list ap;
+    va_start(ap, k0);
+    void* v0 = va_arg(ap, void*);
+    Core_Collections_Map_Map_put(m, __qsh_box_key(k0), v0);
+    // Walk remaining pairs two-at-a-time. The trailing `null`
+    // sentinel emitted by codegen ends the loop.
+    for (int i = 0; i < 64; i++) {
+        void* k = va_arg(ap, void*);
+        if (!k) break;
+        void* v = va_arg(ap, void*);
+        Core_Collections_Map_Map_put(m, __qsh_box_key(k), v);
+    }
+    va_end(ap);
+    return m;
+}
+
+// `{a, b, ...}` set literal — same idea as __map_lit but single-
+// valued. Walk va_args until NULL.
+void* __set_lit(void* a0, ...) {
+    void* s = GC_malloc(256);
+    Core_Collections_Set_Set___init(s);
+    if (!a0) return s;
+    Core_Collections_Set_Set_add(s, a0);
+    va_list ap;
+    va_start(ap, a0);
+    for (int i = 0; i < 128; i++) {
+        void* v = va_arg(ap, void*);
+        if (!v) break;
+        Core_Collections_Set_Set_add(s, v);
+    }
+    va_end(ap);
+    return s;
+}
 
 // List / Set / Map comprehensions — comprehensive runtime support
 // would need a sub-allocation + walk over the iterable. Stubs
@@ -336,6 +398,57 @@ void* IOError         (void* msg) { return msg; }
 void* FileNotFoundError(void* msg) { return msg; }
 void* NameError       (void* msg) { return msg; }
 void* AttributeError  (void* msg) { return msg; }
+
+// ---- i8*-receiver method routes -----------------------------------------
+//
+// Selfhost types `Set()` / `Map()` constructors as `i8*` opaque, losing
+// the type. When user code writes `s.size()` or `s.add(1)`, codegen
+// emits a call into one of these `__qsh_*` symbols rather than directly
+// into `Set__size` / `String__join` — that avoids ABI clashes with
+// stdlib bodies that selfhost also emits (e.g. selfhost's `String__join`
+// has `(%struct.String*, %struct.List*)`, not `(i8*, i8*)`).
+//
+// The `__qsh_*` route gives us a clean place to handle the boxing /
+// unboxing the stdlib expects. Selfhost passes Int args inttoptr-boxed
+// to i8*; the runtime's helpers know how to read them via
+// quirk_opaque_to_string.
+
+// Set.
+int   __qsh_set_size       (void* s)          { return Core_Collections_Set_Set_size(s); }
+void  __qsh_set_add        (void* s, void* v) { Core_Collections_Set_Set_add(s, v); }
+int   __qsh_set_has        (void* s, void* v) { return Core_Collections_Set_Set_has(s, v); }
+void* __qsh_set_to_list    (void* s)          { return Core_Collections_Set_Set_to_list(s); }
+void* __qsh_set_union      (void* a, void* b) { return Core_Collections_Set_Set_union(a, b); }
+void* __qsh_set_intersection(void* a, void* b){ return Core_Collections_Set_Set_intersection(a, b); }
+void* __qsh_set_difference (void* a, void* b) { return Core_Collections_Set_Set_difference(a, b); }
+
+// Map. Key args get boxed through `__qsh_box_key` because Map_put
+// / Map_get / Map_has expect a `String*` (they read keyObj->buffer)
+// while selfhost passes raw c-string pointers.
+int   __qsh_map_length(void* m)                    { return Core_Collections_Map_Map_length(m); }
+void  __qsh_map_put   (void* m, void* k, void* v)  { Core_Collections_Map_Map_put(m, __qsh_box_key(k), v); }
+void* __qsh_map_get   (void* m, void* k)           { return Core_Collections_Map_Map_get(m, __qsh_box_key(k)); }
+void* __qsh_map_keys  (void* m)                    { return Core_Collections_Map_Map_keys(m); }
+void* __qsh_map_values(void* m)                    { return Core_Collections_Map_Map_values(m); }
+
+// String.
+void* __qsh_str_ljust    (void* s, int w, void* p) { return Core_String_String_ljust(s, w, p); }
+void* __qsh_str_rjust    (void* s, int w, void* p) { return Core_String_String_rjust(s, w, p); }
+void* __qsh_str_center   (void* s, int w, void* p) { return Core_String_String_center(s, w, p); }
+void* __qsh_str_join     (void* s, void* xs)       { return Core_String_String_join(s, xs); }
+void* __qsh_str_split    (void* s, void* sep)      { return Core_String_String_split(s, sep); }
+void* __qsh_str_lines    (void* s)                 { return Core_String_String_lines(s); }
+void* __qsh_str_repeat   (void* s, int n)          { return Core_String_String_repeat(s, n); }
+int   __qsh_str_to_int   (void* s)                 { return Core_String_String_to_int(s); }
+double __qsh_str_to_float(void* s)                 { return Core_String_String_to_float(s); }
+int   __qsh_str_find     (void* s, void* n)        { return Core_String_String_find(s, n); }
+int   __qsh_str_index    (void* s, void* n)        { return Core_String_String_index(s, n); }
+int   __qsh_str_count    (void* s, void* n)        { return Core_String_String_count(s, n); }
+int   __qsh_str_is_alpha (void* s)                 { return Core_String_String_is_alpha(s); }
+int   __qsh_str_is_digit (void* s)                 { return Core_String_String_is_digit(s); }
+int   __qsh_str_is_lower (void* s)                 { return Core_String_String_is_lower(s); }
+int   __qsh_str_is_upper (void* s)                 { return Core_String_String_is_upper(s); }
+int   __qsh_str_is_space (void* s)                 { return Core_String_String_is_space(s); }
 
 // Built-in `type(x)` — Quirk returns a string naming the type.
 // Selfhost doesn't carry enough type metadata at runtime to do

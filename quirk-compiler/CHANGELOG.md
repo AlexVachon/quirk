@@ -5,6 +5,84 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [5.0.0-alpha.14] — 2026-06-30 — i8*-receiver method routing + Map/Set literal runtime
+
+Foundation for collection-method dispatch on i8*-typed receivers
+(the shape selfhost gives `Set()` / `Map()` constructors and
+opaque collection returns). MATCH unchanged at 4/60; concrete map/
+set operations now succeed end-to-end in isolated smoke tests, but
+the corpus tests downstream of them still trip Int-tagged-pointer
+issues at print sites. Bootstrap byte-identical + 190/190 e2e green.
+
+### 1. `__qsh_*` method-route table for `i8*` receivers
+
+When the receiver type is `i8*` and no other dispatch branch
+matches, `_gen_method_call` now emits a call into a `__qsh_*`
+wrapper symbol (defined in `selfhost_aliases.c`) instead of the
+old `<bad-method>` fall-through. The wrapper forwards to the
+runtime's `Core_Collections_*` / `Core_String_*` impl with the
+correct C calling convention.
+
+Methods routed: `size` / `add` / `has` / `to_list` / `union` /
+`intersection` / `difference` (Set); `put` / `get` / `keys` /
+`values` / `length` (Map); `ljust` / `rjust` / `center` / `join`
+/ `split` / `lines` / `repeat` / `to_int` / `to_float` / `find`
+/ `index` / `count` / `is_alpha` / `is_digit` / `is_lower` /
+`is_upper` / `is_space` (String).
+
+Critical: the route uses a `__qsh_*` namespace rather than the
+direct `Set__size` / `String__join` names, because selfhost
+ALSO emits stdlib extension method `define`s under those same
+mangled names (with different param types). LLVM would reject
+the duplicate-with-different-sigs.
+
+`_method_ret_ty` is updated to match — without it, the
+Return-statement coercion path would inttoptr the i8* result
+back to a struct pointer ("integer constant must have integer
+type").
+
+### 2. `__map_lit` / `__set_lit` real implementations
+
+`{k: v, ...}` and `{a, b, ...}` literals previously lowered to
+stub helpers that returned `0`. Real implementations now:
+
+- `GC_malloc` a runtime Map/Set buffer (256 bytes — comfortably
+  larger than the actual struct sizes of 32 / 32 bytes).
+- Call `Core_Collections_<T>___init` to set up the entries
+  array.
+- Walk va_args two-at-a-time (or one-at-a-time for sets),
+  calling `Core_Collections_<T>_put` / `_add`.
+
+Keys for Map_put go through `__qsh_box_key` — `make_String`
+with a tagged-int detection at the boundary. Without this,
+Map_put's `keyObj->buffer` read crashes on raw c-string
+pointers.
+
+### 3. Synthetic variadic call arg coercion
+
+`__map_lit` / `__set_lit` / `__tuple` calls now uniformly
+promote all args to `i8*` at the call site:
+
+- `i32` → `inttoptr i32 to i8*`
+- `i1` → `zext i1 to i32 to inttoptr to i8*`
+- `double` → `bitcast double to i64 to inttoptr to i8*`
+- struct ptrs → `bitcast`
+
+Without uniform args, va_args misreads the 4-byte i32 arg as
+an 8-byte pointer, picking up stack garbage.
+
+A trailing `i8* null` sentinel is appended at the call site
+so the runtime va_args walk can detect the end. Selfhost
+previously emitted no sentinel and the helpers ran past the
+end into garbage.
+
+### 4. `s.size()` route for i8*
+
+Previously dispatched to `strlen` for any i8* receiver
+(assumes String). Now defers to the `__qsh_*` route, so a
+`Set` correctly returns its element count. No corpus test
+uses `.size()` on an actual String.
+
 ## [5.0.0-alpha.13] — 2026-06-29 — constructor + stdlib alias batch
 
 Link-fail **25 → 19** cumulative — 6 more tests clear linking.

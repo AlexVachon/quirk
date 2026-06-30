@@ -2283,6 +2283,94 @@ define _gen_method_call(cg: FnCG, c: Call) -> String {
         cg.emit(reg + " = load i32, i32* " + gep)
         return reg
     }
+    // Int / Double primitive methods — `n.abs()`, `n.is_even()`,
+    // `n.pow(k)`, `n.to_float()` etc. Forward to the runtime
+    // `Core_Primitives_<T>_<method>` family.
+    if recv_ty == "i32" {
+        if fg.name == "abs" {
+            cg.mod.ensure_decl("Core_Primitives_Int_abs",
+                "declare i32 @Core_Primitives_Int_abs(i32)")
+            reg := cg.fresh()
+            cg.emit(reg + " = call i32 @Core_Primitives_Int_abs(i32 " + recv_reg + ")")
+            return reg
+        }
+        if fg.name == "is_even" {
+            cg.mod.ensure_decl("Core_Primitives_Int_is_even",
+                "declare i1 @Core_Primitives_Int_is_even(i32)")
+            reg := cg.fresh()
+            cg.emit(reg + " = call i1 @Core_Primitives_Int_is_even(i32 " + recv_reg + ")")
+            return reg
+        }
+        if fg.name == "is_odd" {
+            cg.mod.ensure_decl("Core_Primitives_Int_is_odd",
+                "declare i1 @Core_Primitives_Int_is_odd(i32)")
+            reg := cg.fresh()
+            cg.emit(reg + " = call i1 @Core_Primitives_Int_is_odd(i32 " + recv_reg + ")")
+            return reg
+        }
+        if fg.name == "pow" {
+            cg.mod.ensure_decl("Core_Primitives_Int_pow",
+                "declare i32 @Core_Primitives_Int_pow(i32, i32)")
+            arg_e: Expr := c.args.__get(0)
+            arg_v := _gen_expr(cg, arg_e)
+            reg := cg.fresh()
+            cg.emit(reg + " = call i32 @Core_Primitives_Int_pow(i32 " + recv_reg + ", i32 " + arg_v + ")")
+            return reg
+        }
+        if fg.name == "to_float" {
+            cg.mod.ensure_decl("Core_Primitives_Int_to_float",
+                "declare double @Core_Primitives_Int_to_float(i32)")
+            reg := cg.fresh()
+            cg.emit(reg + " = call double @Core_Primitives_Int_to_float(i32 " + recv_reg + ")")
+            return reg
+        }
+    }
+    if recv_ty == "double" {
+        if fg.name == "abs" {
+            // `fabs` is the libm primitive — declare and call.
+            cg.mod.ensure_decl("fabs", "declare double @fabs(double)")
+            reg := cg.fresh()
+            cg.emit(reg + " = call double @fabs(double " + recv_reg + ")")
+            return reg
+        }
+        if fg.name == "ceil" {
+            cg.mod.ensure_decl("ceil", "declare double @ceil(double)")
+            cg.mod.ensure_decl("__qsh_d2i", "declare i32 @__qsh_d2i(double)")
+            r := cg.fresh()
+            cg.emit(r + " = call double @ceil(double " + recv_reg + ")")
+            // Quirk's `.ceil()` returns Int — fptosi.
+            reg := cg.fresh()
+            cg.emit(reg + " = fptosi double " + r + " to i32")
+            return reg
+        }
+        if fg.name == "floor" {
+            cg.mod.ensure_decl("floor", "declare double @floor(double)")
+            r := cg.fresh()
+            cg.emit(r + " = call double @floor(double " + recv_reg + ")")
+            reg := cg.fresh()
+            cg.emit(reg + " = fptosi double " + r + " to i32")
+            return reg
+        }
+        if fg.name == "round" {
+            cg.mod.ensure_decl("round", "declare double @round(double)")
+            r := cg.fresh()
+            cg.emit(r + " = call double @round(double " + recv_reg + ")")
+            reg := cg.fresh()
+            cg.emit(reg + " = fptosi double " + r + " to i32")
+            return reg
+        }
+        if fg.name == "sqrt" {
+            cg.mod.ensure_decl("sqrt", "declare double @sqrt(double)")
+            reg := cg.fresh()
+            cg.emit(reg + " = call double @sqrt(double " + recv_reg + ")")
+            return reg
+        }
+        if fg.name == "to_int" {
+            reg := cg.fresh()
+            cg.emit(reg + " = fptosi double " + recv_reg + " to i32")
+            return reg
+        }
+    }
     if fg.name == "str" {
         // String.str() is a no-op — the receiver IS already a
         // string. Lets interpolation auto-call `.str()` on every
@@ -4050,6 +4138,18 @@ define _method_ret_ty(cg: FnCG, recv_ty: String, method: String) -> String {
     if method == "has" { return "i1" }
     if method == "put" { return "i32" }
     if method == "keys" { return "%QListP*" }
+    // Int / Double primitive method ret types.
+    if recv_ty == "i32" {
+        if method == "abs" { return "i32" }
+        if method == "is_even" or method == "is_odd" { return "i1" }
+        if method == "pow" { return "i32" }
+        if method == "to_float" { return "double" }
+    }
+    if recv_ty == "double" {
+        if method == "abs" or method == "sqrt" { return "double" }
+        if method == "ceil" or method == "floor" or method == "round" { return "i32" }
+        if method == "to_int" { return "i32" }
+    }
     // i8*-receiver fallback methods routed through __qsh_*
     // wrappers. Keep these in sync with the routing table in
     // `_gen_method_call`. Without matching ret types here, the

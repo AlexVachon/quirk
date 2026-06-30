@@ -5,6 +5,32 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [5.0.0-alpha.17] — 2026-06-30 — Int / Double primitive method dispatch
+
+`primitives` test now produces correct output for 6 / 8 lines —
+the remaining diffs are the `${x % .2f}` format-spec (unimplemented)
+and a static `Int.parse(s)` call (no static-method dispatch yet).
+Bootstrap + 190/190 e2e green; MATCH still 4/60.
+
+### 1. Int method dispatch on `i32` receivers
+
+`n.abs()` / `n.is_even()` / `n.is_odd()` / `n.pow(k)` / `n.to_float()`
+now route directly to `Core_Primitives_Int_*` runtime symbols
+instead of falling through to the `<bad-method>` fallback (which
+returned `0`).
+
+### 2. Double method dispatch on `double` receivers
+
+`x.abs()` / `x.ceil()` / `x.floor()` / `x.round()` / `x.sqrt()` /
+`x.to_int()` now route to libm (`fabs` / `ceil` / `floor` /
+`round` / `sqrt`) with the right return-type handling. `.ceil()`
+/ `.floor()` / `.round()` follow Quirk's convention of returning
+`Int` (fptosi after the libm call); `.sqrt()` / `.abs()` stay
+double.
+
+`_method_ret_ty` is updated to match — without it, downstream
+`Return`-stmt coercion would mis-coerce the i32 result.
+
 ## [5.0.0-alpha.16] — 2026-06-30 — runtime List dispatch + QListP→List bridge
 
 Bridges the second selfhost/runtime layout incompatibility (Lists,

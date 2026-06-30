@@ -450,6 +450,35 @@ int   __qsh_str_is_lower (void* s)                 { return Core_String_String_i
 int   __qsh_str_is_upper (void* s)                 { return Core_String_String_is_upper(s); }
 int   __qsh_str_is_space (void* s)                 { return Core_String_String_is_space(s); }
 
+// ---- Layout conversion: QListP → runtime List --------------------------
+//
+// Selfhost emits list literals as `%QListP { i32 length, i32 capacity,
+// i8** data }` and passes them where the callee expects a runtime
+// `%struct.List* { void** data, int size, int capacity }` (e.g. a
+// user function declared `define f(xs: List)`). The fields are the
+// same shape but in a different ORDER, so a bare bitcast lands every
+// access on the wrong field.
+//
+// `__qsh_qlistp_to_list` materialises a fresh runtime List from a
+// selfhost QListP by walking and re-appending the elements. The
+// result composes correctly with the runtime's `Core_Collections_
+// List_*` family.
+
+struct QListP_Hdr { int length; int capacity; void** data; };
+
+void* __qsh_qlistp_to_list(void* qlistp) {
+    if (!qlistp) return 0;
+    struct QListP_Hdr* q = (struct QListP_Hdr*)qlistp;
+    List* out = (List*)GC_malloc(sizeof(List));
+    Core_Collections_List_List___init(out);
+    if (q->data) {
+        for (int i = 0; i < q->length; i++) {
+            Core_Collections_List_List_append(out, q->data[i]);
+        }
+    }
+    return out;
+}
+
 // Built-in `type(x)` — Quirk returns a string naming the type.
 // Selfhost doesn't carry enough type metadata at runtime to do
 // this properly; return "any" as a safe placeholder. Most callers

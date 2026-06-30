@@ -1495,6 +1495,20 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
                         mks := cg.fresh()
                         cg.emit(mks + " = call %struct.String* @make_String(i8* " + av + ")")
                         av = mks
+                    } elif (arg_static_ty == "%QListP*" or arg_static_ty == "%QList*") and pty == "%struct.List*" {
+                        // QListP (selfhost flat layout) → runtime
+                        // List: fields are the same shape but
+                        // different order, so a bare bitcast
+                        // lands every field access on the wrong
+                        // offset. Convert through the runtime
+                        // helper that walks + re-appends.
+                        cg.mod.ensure_decl("__qsh_qlistp_to_list",
+                            "declare %struct.List* @__qsh_qlistp_to_list(i8*)")
+                        q8 := cg.fresh()
+                        cg.emit(q8 + " = bitcast " + arg_static_ty + " " + av + " to i8*")
+                        qconv := cg.fresh()
+                        cg.emit(qconv + " = call %struct.List* @__qsh_qlistp_to_list(i8* " + q8 + ")")
+                        av = qconv
                     } else {
                         cast_p2p := cg.fresh()
                         cg.emit(cast_p2p + " = bitcast " + arg_static_ty + " " + av + " to " + pty)
@@ -2082,6 +2096,61 @@ define _gen_method_call(cg: FnCG, c: Call) -> String {
         reg := cg.fresh()
         cg.emit(reg + " = load " + elem_llvm + ", " + elem_ptr + " " + elem_gep)
         return reg
+    }
+    // Runtime-typed List receiver (`%struct.List*`) — selfhost
+    // doesn't know the flat layout, so dispatch through the
+    // runtime mangled symbol. Covers `.get(i)` / `.length()` /
+    // `.append(x)` patterns used when a List is passed as a
+    // parameter (`cases: List` reaching `run_all`).
+    if recv_ty == "%struct.List*" {
+        if fg.name == "get" or fg.name == "__get" {
+            cg.mod.ensure_decl("Core_Collections_List_List___get",
+                "declare i8* @Core_Collections_List_List___get(%struct.List*, i32)")
+            idx_expr: Expr := c.args.__get(0)
+            idx_reg := _gen_expr(cg, idx_expr)
+            reg := cg.fresh()
+            cg.emit(reg + " = call i8* @Core_Collections_List_List___get(%struct.List* " + recv_reg + ", i32 " + idx_reg + ")")
+            return reg
+        }
+        if fg.name == "length" {
+            cg.mod.ensure_decl("Core_Collections_List_List_length",
+                "declare i32 @Core_Collections_List_List_length(%struct.List*)")
+            reg := cg.fresh()
+            cg.emit(reg + " = call i32 @Core_Collections_List_List_length(%struct.List* " + recv_reg + ")")
+            return reg
+        }
+        if fg.name == "append" {
+            cg.mod.ensure_decl("Core_Collections_List_List_append",
+                "declare void @Core_Collections_List_List_append(%struct.List*, i8*)")
+            arg_e: Expr := c.args.__get(0)
+            arg_v := _gen_expr(cg, arg_e)
+            arg_t := _expr_static_ty(cg, arg_e)
+            // Box scalar into i8* via inttoptr.
+            if arg_t == "i32" {
+                p := cg.fresh()
+                cg.emit(p + " = inttoptr i32 " + arg_v + " to i8*")
+                arg_v = p
+            } elif arg_t == "i1" {
+                z := cg.fresh()
+                cg.emit(z + " = zext i1 " + arg_v + " to i32")
+                p := cg.fresh()
+                cg.emit(p + " = inttoptr i32 " + z + " to i8*")
+                arg_v = p
+            } elif _is_ptr_ty(arg_t) and arg_t != "i8*" {
+                bp := cg.fresh()
+                cg.emit(bp + " = bitcast " + arg_t + " " + arg_v + " to i8*")
+                arg_v = bp
+            }
+            cg.emit("call void @Core_Collections_List_List_append(%struct.List* " + recv_reg + ", i8* " + arg_v + ")")
+            return "0"
+        }
+        if fg.name == "is_empty" {
+            cg.mod.ensure_decl("Core_Collections_List_List_is_empty",
+                "declare i1 @Core_Collections_List_List_is_empty(%struct.List*)")
+            reg := cg.fresh()
+            cg.emit(reg + " = call i1 @Core_Collections_List_List_is_empty(%struct.List* " + recv_reg + ")")
+            return reg
+        }
     }
     // `.__get(i)` — method form of subscript. Mirrors the
     // Index expr's lowering exactly; selfhost source uses

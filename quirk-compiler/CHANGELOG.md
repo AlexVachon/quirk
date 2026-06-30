@@ -5,6 +5,40 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [5.0.0-alpha.16] — 2026-06-30 — runtime List dispatch + QListP→List bridge
+
+Bridges the second selfhost/runtime layout incompatibility (Lists,
+the dominant one after Strings) so the test corpus's `test.run_all`
+runner can at least find its TestCase entries. MATCH unchanged at
+4/60 — the Callable dispatch inside run_all is the next blocker —
+but the IR now reaches the body-invocation site rather than getting
+a null TestCase out of the gate. Bootstrap + 190/190 e2e green.
+
+### 1. Runtime-typed List method dispatch
+
+When the receiver type is `%struct.List*` (the runtime List, as
+opposed to selfhost's flat `%QListP*`), `_gen_method_call` now
+routes `get` / `__get` / `length` / `append` / `is_empty` directly
+to the `Core_Collections_List_List_*` mangled symbols.
+
+Previously these methods fell through to the bad-method fallback
+which returned `null`, so `cases.get(i)` in `test.run_all` got a
+null TestCase pointer and immediately crashed when GEP'd for the
+`body` field.
+
+### 2. `%QListP* → %struct.List*` layout bridge
+
+When the call site supplies a selfhost-flat list (built via
+`[ ... ]` literal) where the callee expects a runtime List
+(`define f(xs: List)`), selfhost used to emit a bare bitcast.
+The field orders differ (`{ length, capacity, data }` vs
+`{ data, size, capacity }`), so every field access landed on
+the wrong offset.
+
+New runtime helper `__qsh_qlistp_to_list` walks the QListP
+elements and re-appends them onto a fresh runtime List. Routed
+through automatically at the call boundary in `_gen_call`.
+
 ## [5.0.0-alpha.15] — 2026-06-30 — i8* → String* wrap at call boundaries
 
 When a function or method takes a `%struct.String*` parameter and the

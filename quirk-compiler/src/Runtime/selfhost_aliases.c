@@ -483,6 +483,165 @@ void breakpoint(void* label) {
     Debug_breakpoint((String*)make_string_alias(label));
 }
 
+// Net (TLS)
+int tls_connect(void* host, int port) {
+    extern int Net_tls_connect(String*, int);
+    return Net_tls_connect((String*)make_string_alias(host), port);
+}
+int tls_send(int handle, void* data) {
+    extern int Net_tls_send(int, String*);
+    return Net_tls_send(handle, (String*)make_string_alias(data));
+}
+void* tls_recv(int handle, int size) {
+    extern String* Net_tls_recv(int, int);
+    return Net_tls_recv(handle, size);
+}
+void tls_close(int handle) {
+    extern void Net_tls_close(int);
+    Net_tls_close(handle);
+}
+
+// Time (extended)
+int hour(int epoch, int utc) {
+    extern int Time_hour(int, int);
+    return Time_hour(epoch, utc);
+}
+int minute(int epoch, int utc) {
+    extern int Time_minute(int, int);
+    return Time_minute(epoch, utc);
+}
+void* format_at(int epoch, void* fmt, int utc) {
+    extern String* Time_format_at(int, String*, int);
+    return Time_format_at(epoch, (String*)make_string_alias(fmt), utc);
+}
+void* iso_at(int epoch, int utc) {
+    extern String* Time_iso_at(int, int);
+    return Time_iso_at(epoch, utc);
+}
+int parse_iso(void* s) {
+    extern int Time_parse_iso(String*);
+    return Time_parse_iso((String*)make_string_alias(s));
+}
+
+// Math (extended)
+double e_constant(void) {
+    extern double Math_e(void);
+    return Math_e();
+}
+double infinity_constant(void) {
+    extern double Math_infinity(void);
+    return Math_infinity();
+}
+int is_finite(double x) {
+    extern int Math_is_finite(double);
+    return Math_is_finite(x);
+}
+int is_inf(double x) {
+    extern int Math_is_inf(double);
+    return Math_is_inf(x);
+}
+int is_nan(double x) {
+    extern int Math_is_nan(double);
+    return Math_is_nan(x);
+}
+// Selfhost emits `e` / `infinity` as zero-arg calls; asm-rename
+// to bypass the libc / runtime symbol collisions.
+extern double e_name() __asm__("e");
+double e_name(void) { return e_constant(); }
+extern double infinity_name() __asm__("infinity");
+double infinity_name(void) { return infinity_constant(); }
+
+// Regex (extended)
+int group_count(void* handle) {
+    extern int Regex_group_count(void*);
+    return Regex_group_count(handle);
+}
+int group_start(void* handle, int idx) {
+    extern int Regex_group_start(void*, int);
+    return Regex_group_start(handle, idx);
+}
+int group_end(void* handle, int idx) {
+    extern int Regex_group_end(void*, int);
+    return Regex_group_end(handle, idx);
+}
+void* replace_all_raw(void* handle, void* s, void* repl) {
+    extern String* Regex_replace_all_raw(void*, String*, String*);
+    return Regex_replace_all_raw(handle,
+        (String*)make_string_alias(s),
+        (String*)make_string_alias(repl));
+}
+void* split_raw(void* handle, void* s) {
+    extern List* Regex_split_raw(void*, String*);
+    return Regex_split_raw(handle, (String*)make_string_alias(s));
+}
+
+// Fs (extended)
+int chdir_raw(void* path) {
+    extern int Fs_chdir_raw(String*);
+    return Fs_chdir_raw((String*)make_string_alias(path));
+}
+void* cwd(void) {
+    extern String* Fs_cwd(void);
+    return Fs_cwd();
+}
+int exists(void* path) {
+    extern int Fs_exists(String*);
+    return Fs_exists((String*)make_string_alias(path));
+}
+int is_dir(void* path) {
+    extern int Fs_is_dir(String*);
+    return Fs_is_dir((String*)make_string_alias(path));
+}
+int is_file(void* path) {
+    extern int Fs_is_file(String*);
+    return Fs_is_file((String*)make_string_alias(path));
+}
+void* list_dir(void* path) {
+    extern List* Fs_list_dir(String*);
+    return Fs_list_dir((String*)make_string_alias(path));
+}
+int rename_raw(void* from, void* to) {
+    extern int Fs_rename_raw(String*, String*);
+    return Fs_rename_raw((String*)make_string_alias(from),
+                         (String*)make_string_alias(to));
+}
+int size(void* path) {
+    extern int Fs_size(String*);
+    return Fs_size((String*)make_string_alias(path));
+}
+
+// Math (more)
+extern double pi_alias() __asm__("pi");
+extern double tau_alias() __asm__("tau");
+double pi_alias(void)  { extern double Math_pi(void);  return Math_pi(); }
+double tau_alias(void) { extern double Math_tau(void); return Math_tau(); }
+double sign(double x) {
+    extern double Math_sign(double);
+    return Math_sign(x);
+}
+void seed(int s) {
+    extern void Math_seed(int);
+    Math_seed(s);
+}
+
+// Time (more)
+int second(int epoch, int utc) {
+    extern int Time_second(int, int);
+    return Time_second(epoch, utc);
+}
+int weekday(int epoch, int utc) {
+    extern int Time_weekday(int, int);
+    return Time_weekday(epoch, utc);
+}
+int unix_now(void) {
+    extern int Time_unix_now(void);
+    return Time_unix_now();
+}
+int to_unix(int y, int m, int d, int h, int mn, int s, int utc) {
+    extern int Time_to_unix(int, int, int, int, int, int, int);
+    return Time_to_unix(y, m, d, h, mn, s, utc);
+}
+
 // `super()` — selfhost emits literal `super(...)` calls for derived
 // struct constructors. There's no notion of inheritance in the runtime;
 // the stub is a no-op (returns null). Test code reaching this path is

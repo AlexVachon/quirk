@@ -5,6 +5,44 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [5.0.0-alpha.21] — 2026-06-30 — inherited method dispatch + more stdlib stubs
+
+MATCH unchanged at 7/60 — the link-wall keeps dropping (8 → 5)
+but the unblocked tests all crash inside `run_all`'s closure
+dispatch. Bootstrap byte-identical + 190/190 e2e green.
+
+### 1. Inherited method dispatch
+
+When `recv.method()` is called on a `%struct.Child*` and the
+child doesn't define `Child__method`, walk the parent chain via
+`mod.struct_parents`. The first hit (`Parent__method`) becomes
+the call target; selfhost bitcasts `recv` to `%struct.Parent*`
+so the signature matches.
+
+The same walk is mirrored in `_method_ret_ty` so downstream
+coercions (Return-stmt sitofp, print-arg scalar formatting)
+see the inherited return type instead of the i32 default.
+
+`super_tests` now prints the first 4 lines correctly
+(`Rex says Woof`, `Animal: Rex (Labrador)`, etc.) before
+hitting the next layer-of-blockers.
+
+### 2. Stdlib forwarder stubs — extended batch
+
+- Net TLS: `tls_connect` / `tls_send` / `tls_recv` / `tls_close`
+- Time: `hour` / `minute` / `second` / `weekday` /
+  `format_at` / `iso_at` / `parse_iso` / `unix_now` / `to_unix`
+- Math: `e` / `pi` / `tau` / `infinity` / `sign` / `seed` /
+  `is_finite` / `is_inf` / `is_nan`
+- Regex: `group_count` / `group_start` / `group_end` /
+  `replace_all_raw` / `split_raw`
+- Fs: `chdir_raw` / `cwd` / `exists` / `is_dir` / `is_file` /
+  `list_dir` / `rename_raw` / `size`
+
+`e` / `infinity` / `pi` / `tau` use `__asm__` rename to dodge
+collisions with libc / runtime names that already exist as
+typedef / global identifiers.
+
 ## [5.0.0-alpha.20] — 2026-06-30 — Tier 1 batch — cast_where_test MATCH (6 → 7/60)
 
 Tier 1 grind. Multiple stacked fixes, one new MATCH. Cleared a

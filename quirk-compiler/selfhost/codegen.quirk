@@ -2189,7 +2189,38 @@ define _gen_method_call(cg: FnCG, c: Call) -> String {
     }
     if cg.mod.structs.has(sname) {
         full := sname + "__" + fg.name
+        // Inherited method lookup: if the child doesn't define
+        // this method, walk the parent chain. The child's
+        // memory layout already includes the parent's fields
+        // (per the inheritance bridge in emit_module), so the
+        // parent method's GEP offsets land on the right bytes
+        // when we cast self to the parent struct type.
+        inh_recv_ty := recv_ty
+        inh_recv_reg := recv_reg
+        if cg.mod.sigs.has(full) == false {
+            walker := sname
+            while cg.mod.struct_parents.has(walker) and cg.mod.sigs.has(full) == false {
+                parent_n: String := cg.mod.struct_parents.get(walker)
+                cand := parent_n + "__" + fg.name
+                if cg.mod.sigs.has(cand) {
+                    full = cand
+                    // Bitcast self to the parent struct pointer
+                    // so the call signature matches the parent's
+                    // `define m(self: Parent, ...)`.
+                    p_ty := "%struct." + parent_n + "*"
+                    if inh_recv_ty != p_ty {
+                        bc := cg.fresh()
+                        cg.emit(bc + " = bitcast " + inh_recv_ty + " " + inh_recv_reg + " to " + p_ty)
+                        inh_recv_reg = bc
+                        inh_recv_ty = p_ty
+                    }
+                }
+                walker = parent_n
+            }
+        }
         if cg.mod.sigs.has(full) {
+            recv_ty = inh_recv_ty
+            recv_reg = inh_recv_reg
             mtsig: _Sig := cg.mod.sigs.get(full)
             // Build "(self_ty %recv, pty %arg, ...)" using the
             // pre-registered param tys (which already include
@@ -4382,6 +4413,20 @@ define _method_ret_ty(cg: FnCG, recv_ty: String, method: String) -> String {
         if cg.mod.sigs.has(full) {
             sig: _Sig := cg.mod.sigs.get(full)
             return sig.ret_ty
+        }
+        // Walk parent chain — same lookup the call-emitting
+        // path does. Without this, downstream coercions
+        // (Return-stmt sitofp, print-arg scalar formatting)
+        // see the wrong return type for inherited methods.
+        walker := sname
+        while cg.mod.struct_parents.has(walker) {
+            parent_n: String := cg.mod.struct_parents.get(walker)
+            cand := parent_n + "__" + method
+            if cg.mod.sigs.has(cand) {
+                sig2: _Sig := cg.mod.sigs.get(cand)
+                return sig2.ret_ty
+            }
+            walker = parent_n
         }
     }
     if method == "length" { return "i32" }

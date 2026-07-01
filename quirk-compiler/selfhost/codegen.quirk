@@ -2906,9 +2906,35 @@ define _gen_method_call(cg: FnCG, c: Call) -> String {
                     arg_decls.append("i8*")
                 } elif _is_ptr_ty(aty) {
                     if aty != "i8*" {
-                        b := cg.fresh()
-                        cg.emit(b + " = bitcast " + aty + " " + av + " to i8*")
-                        arg_vals.append(b)
+                        // Convert %QListP* / %QList* to a
+                        // runtime List first for methods that
+                        // iterate — otherwise the receiver
+                        // reads wrong offsets.
+                        if aty == "%QListP*" {
+                            cg.mod.ensure_decl("__qsh_qlistp_to_list",
+                                "declare %struct.List* @__qsh_qlistp_to_list(i8*)")
+                            b8 := cg.fresh()
+                            cg.emit(b8 + " = bitcast %QListP* " + av + " to i8*")
+                            conv := cg.fresh()
+                            cg.emit(conv + " = call %struct.List* @__qsh_qlistp_to_list(i8* " + b8 + ")")
+                            b := cg.fresh()
+                            cg.emit(b + " = bitcast %struct.List* " + conv + " to i8*")
+                            arg_vals.append(b)
+                        } elif aty == "%QList*" {
+                            cg.mod.ensure_decl("__qsh_qlist_to_list",
+                                "declare %struct.List* @__qsh_qlist_to_list(i8*)")
+                            b8 := cg.fresh()
+                            cg.emit(b8 + " = bitcast %QList* " + av + " to i8*")
+                            conv := cg.fresh()
+                            cg.emit(conv + " = call %struct.List* @__qsh_qlist_to_list(i8* " + b8 + ")")
+                            b := cg.fresh()
+                            cg.emit(b + " = bitcast %struct.List* " + conv + " to i8*")
+                            arg_vals.append(b)
+                        } else {
+                            b := cg.fresh()
+                            cg.emit(b + " = bitcast " + aty + " " + av + " to i8*")
+                            arg_vals.append(b)
+                        }
                     } else {
                         arg_vals.append(av)
                     }

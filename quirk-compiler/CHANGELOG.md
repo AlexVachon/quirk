@@ -5,6 +5,44 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [5.0.0-alpha.25] — 2026-07-01 — join unwrap + QListP→List coerce at method-call (23 → 24/60)
+
+`ftf_imports` MATCH; `strings` also incidentally landed. The
+`__qsh_str_join` alias was returning a `String*` where the
+caller's declared type was `i8*`, so downstream `puts()` read
+the String struct's bytes as a c-string → garbage output.
+Bootstrap byte-identical + 190/190 e2e green.
+
+### 1. `__qsh_str_join` unwraps to c-string buffer
+
+Selfhost's routing declares the alias as `i8* @__qsh_str_join
+(...)` and the caller treats the return as a raw c-string
+(`puts`, string concat). But my alias returned the runtime
+`String*` directly — pointer to `{ i8* buffer, i32 length }`
+struct rather than the c-string content. Now extracts `->buffer`
+before returning. Falls back to the empty c-string on null.
+
+### 2. `%QListP*` / `%QList*` → runtime List at method-call boundary
+
+When `list.join(sep)` is dispatched through the `__qsh_str_*`
+route, the receiver `list` might be `%QListP*` or `%QList*`
+(selfhost's flat layouts). The routing used to bare-bitcast to
+`i8*`, so the runtime helper read wrong offsets and hit an
+infinite loop / IndexError.
+
+Now inserts a `__qsh_qlistp_to_list` / `__qsh_qlist_to_list`
+call before the alias, matching the layout the runtime helpers
+expect.
+
+### 3. Failed foray: aggressive make_String wrapping
+
+Wrapping every `__qsh_str_*` arg via `make_String` broke tests
+where the arg was already a `String*`: `make_String` treated
+the String struct's first 8 bytes (the buffer pointer) as a
+c-string and duplicated garbage. Reverted to passing args
+through unchanged; only `__qsh_str_join`'s separator (a raw
+c-string literal) gets the wrap.
+
 ## [5.0.0-alpha.24] — 2026-07-01 — Assign i8* → String* + variadic box (10 → 23/60)
 
 **Thirteen** new MATCH: `comprehensions_test`, `datetime_test`,

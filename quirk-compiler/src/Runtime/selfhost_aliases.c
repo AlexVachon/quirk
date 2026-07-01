@@ -703,9 +703,9 @@ void* __qsh_map_values(void* m)                    { return Core_Collections_Map
 // before forwarding. Core_String_String_* expects String* (it reads
 // `->buffer` / `->length`). Selfhost hands us a raw c-string pointer
 // in these paths because the receiver type was opaque i8*.
-void* __qsh_str_ljust    (void* s, int w, void* p) { return Core_String_String_ljust(make_String((char*)s), w, make_String((char*)p)); }
-void* __qsh_str_rjust    (void* s, int w, void* p) { return Core_String_String_rjust(make_String((char*)s), w, make_String((char*)p)); }
-void* __qsh_str_center   (void* s, int w, void* p) { return Core_String_String_center(make_String((char*)s), w, make_String((char*)p)); }
+void* __qsh_str_ljust    (void* s, int w, void* p) { return Core_String_String_ljust(s, w, p); }
+void* __qsh_str_rjust    (void* s, int w, void* p) { return Core_String_String_rjust(s, w, p); }
+void* __qsh_str_center   (void* s, int w, void* p) { return Core_String_String_center(s, w, p); }
 // Convert from QListP layout if it looks like one. The runtime
 // join expects List with `{ void** data, int size, int capacity }`
 // fields. selfhost passes a %QListP* with `{ length, capacity, data }`
@@ -714,12 +714,22 @@ void* __qsh_str_center   (void* s, int w, void* p) { return Core_String_String_c
 // always safe to call (it returns a fresh runtime List that join
 // can iterate).
 extern void* __qsh_qlistp_to_list(void* qlistp);
+// The `xs` receiver reaches us as a runtime List — selfhost's
+// VarDecl / call-boundary bridge converts %QListP → %struct.List
+// before values flow into these aliases. Pass through. Return
+// the c-string buffer directly — selfhost's declare types this
+// as `i8* @__qsh_str_join(...)` and the caller uses it as a
+// raw c-string (e.g. `puts(%result)`).
+// __qsh_str_join specifically NEEDS the wrap because:
+// 1. `s` is a raw c-string (the separator literal, e.g. ", ")
+// 2. Return value is used as a raw c-string in puts / concat
+// The other __qsh_str_* aliases receive already-wrapped String*
+// from stdlib helpers, so no wrap needed.
 void* __qsh_str_join(void* s, void* xs) {
-    if (!xs) return Core_String_String_join(make_String((char*)s), 0);
-    List* converted = (List*)__qsh_qlistp_to_list(xs);
-    return Core_String_String_join(make_String((char*)s), converted);
+    String* r = Core_String_String_join(make_String((char*)s), (List*)xs);
+    return (r && r->buffer) ? (void*)r->buffer : (void*)"";
 }
-void* __qsh_str_split    (void* s, void* sep)      { return Core_String_String_split(make_String((char*)s), make_String((char*)sep)); }
+void* __qsh_str_split    (void* s, void* sep)      { return Core_String_String_split(s, sep); }
 void* __qsh_str_lines    (void* s)                 { return Core_String_String_lines(s); }
 void* __qsh_str_repeat   (void* s, int n)          { return Core_String_String_repeat(s, n); }
 int   __qsh_str_to_int   (void* s)                 { return Core_String_String_to_int(s); }

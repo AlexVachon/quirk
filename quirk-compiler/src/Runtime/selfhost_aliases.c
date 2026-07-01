@@ -706,6 +706,10 @@ void* __qsh_map_values(void* m)                    { return Core_Collections_Map
 void* __qsh_str_ljust    (void* s, int w, void* p) { return Core_String_String_ljust(s, w, p); }
 void* __qsh_str_rjust    (void* s, int w, void* p) { return Core_String_String_rjust(s, w, p); }
 void* __qsh_str_center   (void* s, int w, void* p) { return Core_String_String_center(s, w, p); }
+void* __qsh_str_encode   (void* s)                                { return Core_String_String_encode(s); }
+int   __qsh_str_distance (void* s, void* other)                   { return Core_String_String_distance(s, other); }
+void* __qsh_str_replace  (void* s, void* from, void* to)          { return Core_String_String_replace(s, from, to); }
+void* __qsh_str_remove   (void* s, void* needle)                  { return Core_String_String_remove(s, needle); }
 // Convert from QListP layout if it looks like one. The runtime
 // join expects List with `{ void** data, int size, int capacity }`
 // fields. selfhost passes a %QListP* with `{ length, capacity, data }`

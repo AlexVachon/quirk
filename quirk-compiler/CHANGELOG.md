@@ -5,6 +5,50 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [5.0.0-alpha.26] — 2026-07-01 — DIFF-FAIL infrastructure (still 24/60)
+
+Foundation work targeting the DIFF-FAIL tier. MATCH unchanged;
+several tests now execute further before crashing. Bootstrap
+byte-identical + 190/190 e2e green.
+
+### 1. Concat opaque-cstr wrap for List<Int> indexing
+
+`s + l[i]` where `l` is `%QListP*`/`%QList*` now routes the
+i8* element through `quirk_opaque_to_cstr` — the runtime helper
+that detects the tagged-int shape and formats it as a decimal
+string. Without this, `strlen(inttoptr'd int)` crashed at
+runtime.
+
+The wrap is narrowly gated: only fires for Index expressions
+on QList/QListP receivers. Map / String indexing keeps its own
+dispatch — Map values can be real string pointers with low
+addresses that the tagged-int heuristic would mis-classify.
+
+### 2. Map Index `m["key"]` routes to runtime
+
+Selfhost previously bitcast `%struct.Map*` to `%QMap*` and used
+the inline `.get()` codegen, but the runtime and selfhost Map
+layouts are structurally different (`{ MapEntry*, capacity,
+size, ... }` vs `{ length, capacity, entries }`). Bitcast made
+the inline code read wrong offsets.
+
+Now emits a direct `__qsh_map_get(map, key)` call for both
+`%struct.Map*` and `i8*` (map-literal result) receivers.
+
+### 3. More `__qsh_str_*` aliases
+
+Added `encode` / `distance` / `replace` / `remove` to the
+String method-routing table. `_method_ret_ty` updated to match.
+
+### 4. `%struct.List` type def in module preamble
+
+Selfhost references `%struct.List*` in call signatures (the
+QListP → List bridge) even when the user's source hasn't
+imported the List struct. Now emits `%struct.List = type
+{ i8**, i32, i32 }` in the preamble when `List` isn't a
+registered struct — same shape as the `%struct.String` fix
+that landed earlier.
+
 ## [5.0.0-alpha.25] — 2026-07-01 — join unwrap + QListP→List coerce at method-call (23 → 24/60)
 
 `ftf_imports` MATCH; `strings` also incidentally landed. The

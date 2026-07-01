@@ -5,6 +5,39 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [5.0.0-alpha.24] — 2026-07-01 — Assign i8* → String* + variadic box (10 → 23/60)
+
+**Thirteen** new MATCH: `comprehensions_test`, `datetime_test`,
+`debug_test`, `fstring_fmt_test`, `global_keyword_test`,
+`json_pretty_test`, `json_typed_loads_test`, `lang_extras_test`,
+`module_state_test`, `optional_chaining_test`, `random_test`,
+`type_narrowing_test`, `uuid_test`. All were passing every
+assertion inside `run_all` but crashing on the final
+`console.info("all ... passed")` line. Two tiny fixes covered
+the whole cluster. Bootstrap byte-identical + 190/190 e2e green.
+
+### 1. Assign i8* → %struct.String* wraps via make_String
+
+`msg = msg + sep + item` in `_emit_args` had msg declared as
+`String` (slot type `%struct.String*`) but the concat RHS
+produced a raw c-string i8*. Selfhost's Assign did a bare
+bitcast, storing the c-string as a String struct pointer.
+Downstream `stream.write(msg)` then interpreted the c-string's
+first 8 bytes as `->buffer` — a wild pointer that fwrite
+tried to memcpy.
+
+Mirror of the call-boundary make_String wrap added earlier.
+
+### 2. Variadic wrap boxes args as String*
+
+`__qsh_wrap_one_list` used to append the raw i8* arg directly.
+Downstream callees (e.g. `_emit_args` iterating over
+`args: List` and doing `msg + item`) read each item as
+`%struct.String*` — the same c-string-as-struct wild-pointer
+issue. Now the wrapper calls `make_String` on the arg first
+(with a tagged-int guard so low-address values pass through
+unchanged for the boxed-Int Any path).
+
 ## [5.0.0-alpha.23] — 2026-06-30 — closure-adjacent stack fixes (7 → 10/60)
 
 Three new MATCH: `crypto_test`, `csv_test`, `url_test`. The

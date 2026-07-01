@@ -4825,10 +4825,21 @@ define _gen_stmt(cg: FnCG, st: Stmt) -> void {
             rhs := _gen_expr(cg, a.value)
             slot := _ensure_slot(cg, a.name, "i32")
             if rhs_ty != slot.ty and _is_ptr_ty(rhs_ty) and _is_ptr_ty(slot.ty) {
-                cast := cg.fresh()
-                cg.emit(cast + " = bitcast " + rhs_ty + " " + rhs +
-                        " to " + slot.ty)
-                rhs = cast
+                // i8* → %struct.String*: wrap via make_String so
+                // downstream code can read `->buffer`/`->length`.
+                // Mirror of the call-boundary wrap.
+                if rhs_ty == "i8*" and slot.ty == "%struct.String*" {
+                    cg.mod.ensure_decl("make_String",
+                        "declare %struct.String* @make_String(i8*)")
+                    mks := cg.fresh()
+                    cg.emit(mks + " = call %struct.String* @make_String(i8* " + rhs + ")")
+                    rhs = mks
+                } else {
+                    cast := cg.fresh()
+                    cg.emit(cast + " = bitcast " + rhs_ty + " " + rhs +
+                            " to " + slot.ty)
+                    rhs = cast
+                }
             }
             // Literal `0` flowing into a pointer slot — swap to
             // `null`. Common from bad-method fallback.

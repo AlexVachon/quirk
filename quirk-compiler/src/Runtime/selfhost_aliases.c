@@ -787,10 +787,24 @@ void* __qsh_qlist_to_list(void* qlist) {
 // List`) but the caller passes a bare arg. Bridges the
 // arity gap without selfhost having to track variadic call
 // patterns explicitly.
+//
+// The arg is boxed via make_String — variadic callees are
+// virtually always `...args: List` used for stringification
+// (`console.log(msg)` / etc.), and the callee reads each item
+// as a String*. A bare c-string pointer would cause the
+// callee's `item->buffer` read to interpret the string bytes
+// as a wild pointer → crash in fwrite.
 void* __qsh_wrap_one_list(void* arg) {
     List* out = (List*)GC_malloc(sizeof(List));
     Core_Collections_List_List___init(out);
-    Core_Collections_List_List_append(out, arg);
+    // Tagged-int detection: leave low pointers alone (they're
+    // Any-boxed ints, not c-strings). Otherwise wrap as String.
+    uintptr_t u = (uintptr_t)arg;
+    void* boxed = arg;
+    if (u > 0xFFFFFFFFUL) {
+        boxed = make_String((const char*)arg);
+    }
+    Core_Collections_List_List_append(out, boxed);
     return out;
 }
 

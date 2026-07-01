@@ -200,19 +200,19 @@ define _parse_primary(s: ParserState) -> Expr {
             _parse_type_annot(s, "lambda return type")
         }
         if s.check(TokenKind.LBrace) {
-            _parse_block(s)
-            return Lambda(lparams, IntLit(0))
+            block_stmts := _parse_block(s)
+            return Lambda(lparams, IntLit(0), block_stmts)
         }
         s.expect(TokenKind.FatArrow, "'=>' before lambda body")
         // Mixed form `fn(...) => { … }` — `=>` followed by a
-        // block. Treat the block as the body and discard
-        // statements (same as the pure-block form).
+        // block. Preserve the statements so codegen can emit
+        // a real body instead of an empty `ret i32 0`.
         if s.check(TokenKind.LBrace) {
-            _parse_block(s)
-            return Lambda(lparams, IntLit(0))
+            block_stmts := _parse_block(s)
+            return Lambda(lparams, IntLit(0), block_stmts)
         }
         body := _parse_expr(s)
-        return Lambda(lparams, body)
+        return Lambda(lparams, body, List())
     }
     // `super` keyword in expression position — treat as a
     // synthetic identifier. Stdlib structs use `super().__init(...)`
@@ -785,10 +785,11 @@ define _parse_stmt(s: ParserState) -> Stmt {
             _parse_type_annot(s, "nested-define return type")
         }
         // Body block — consume with brace balance.
+        nested_stmts := List()
         if s.check(TokenKind.LBrace) {
-            _parse_block(s)
+            nested_stmts = _parse_block(s)
         }
-        nested_lambda := Lambda(List(), IntLit(0))
+        nested_lambda := Lambda(List(), IntLit(0), nested_stmts)
         if fname == "" { fname = "_nested_define" }
         return VarDecl(fname, "", nested_lambda)
     }

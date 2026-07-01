@@ -1705,6 +1705,40 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
                 // `null`. Mirrors the print-arg and return-stmt
                 // coercions added in alpha.79/.80.
                 if av == "0" and _is_ptr_ty(pty) { av = "null" }
+                // Scalar-to-Any tagged boxing: known callees whose
+                // declared param is `i8*` (i.e. `Any` in Quirk)
+                // but whose caller is passing an `i32` / `i1` /
+                // `double` need the value inttoptr'd (or bitcast
+                // for doubles) so the runtime's opaque-to-string
+                // heuristic can unbox them. Only fires for known
+                // callees (`is_unknown == false`); the synthetic
+                // variadic path above (`__map_lit` / `__set_lit`
+                // / `__tuple`) already boxes on its own — running
+                // this block on top would double-inttoptr.
+                if is_unknown == false and pty == "i8*" and av != "null" and av != "0" {
+                    aty_scalar := ""
+                    if j < c.args.length() {
+                        ae_s: Expr := c.args.__get(j)
+                        aty_scalar = _expr_static_ty(cg, ae_s)
+                    }
+                    if aty_scalar == "i32" {
+                        promo_arg := cg.fresh()
+                        cg.emit(promo_arg + " = inttoptr i32 " + av + " to i8*")
+                        av = promo_arg
+                    } elif aty_scalar == "i1" {
+                        z := cg.fresh()
+                        cg.emit(z + " = zext i1 " + av + " to i32")
+                        promo_arg := cg.fresh()
+                        cg.emit(promo_arg + " = inttoptr i32 " + z + " to i8*")
+                        av = promo_arg
+                    } elif aty_scalar == "double" {
+                        bb := cg.fresh()
+                        cg.emit(bb + " = bitcast double " + av + " to i64")
+                        promo_arg := cg.fresh()
+                        cg.emit(promo_arg + " = inttoptr i64 " + bb + " to i8*")
+                        av = promo_arg
+                    }
+                }
                 // Pointer-type coercion: when expected param is
                 // a specific struct pointer (`%struct.Callable*`,
                 // `%struct.List*`, etc.) but the arg is i8*
@@ -1869,6 +1903,15 @@ define _gen_lambda(outer_cg: FnCG, lm: Lambda) -> String {
     }
     // Body — a single expression. We evaluate it then ret.
     // Return type is the body's static LLVM type.
+    // Block-body form (`fn() { … }`) reaches here with body
+    // = IntLit(0) and body_stmts populated; emitting the
+    // block statements exposes cascading arg-boxing gaps
+    // (calls to Any-typed runtime helpers with i32/i1/double
+    // args need inttoptr wrapping) that ripple through most
+    // TestCase-based tests. Until those are individually
+    // triaged we keep the historical "empty body" shape and
+    // rely on top-level try/catch to drive the runtime
+    // exception bridge added in this alpha.
     body_ty := _expr_static_ty(inner, lm.body)
     inner.ret_ty = body_ty
     body_val := _gen_expr(inner, lm.body)
@@ -5230,19 +5273,36 @@ define _gen_stmt(cg: FnCG, st: Stmt) -> void {
                 }
             }
             cg.emit("store i8* " + val_i8 + ", i8** @__quirk_exception")
+            // Also propagate to the runtime's exception slot so
+            // catches reading via `quirk_get_exception()` see the
+            // same value. Runtime and selfhost throw paths now
+            // share both the jmp_buf stack and the exception
+            // pointer.
+            cg.mod.ensure_decl("quirk_set_exception",
+                "declare void @quirk_set_exception(i8*)")
+            cg.emit("call void @quirk_set_exception(i8* " + val_i8 + ")")
             buf_gep := cg.fresh()
             cg.emit(buf_gep + " = getelementptr inbounds [200 x i8], [200 x i8]* @__quirk_jmp_buf, i64 0, i64 0")
             cg.emit("call void @longjmp(i8* " + buf_gep + ", i32 1)")
             cg.emit("unreachable")
         }
         case TryCatch as tc => {
-            // Lower `try { body } catch (e: T) { handler }` to:
-            //   save current jmp_buf into a local
-            //   _setjmp(@__quirk_jmp_buf)
-            //   if zero → run body, restore saved buf
-            //   if nonzero → restore saved buf FIRST (so further
-            //                throws propagate to outer handler),
-            //                bind e := @__quirk_exception, run handler
+            // Lower `try { body } catch (e: T) { handler }` via
+            // the RUNTIME's try stack — so exceptions thrown by
+            // runtime helpers (`Core_Collections_List_List___get`
+            // bounds check, assertion failures, division by zero,
+            // etc.) reach selfhost's catch handlers. The runtime
+            // `quirk_get_jmp_buf()` returns a `jmp_buf*` on its
+            // internal stack; selfhost `_setjmp`s on that buffer
+            // so the runtime's `longjmp(quirk_try_stack[depth])`
+            // lands here.
+            //
+            // The old path also kept `@__quirk_jmp_buf` in sync
+            // for selfhost's own `throw` codegen — retain that
+            // by also memcpy'ing between the runtime slot and
+            // `@__quirk_jmp_buf` around setjmp. This way both
+            // throw shapes (runtime + selfhost) hit the same
+            // setjmp state.
             cg.mod.ensure_decl("__quirk_exception",
                 "@__quirk_exception = global i8* null")
             cg.mod.ensure_decl("__quirk_jmp_buf",
@@ -5251,6 +5311,16 @@ define _gen_stmt(cg: FnCG, st: Stmt) -> void {
                 "declare i32 @_setjmp(i8*) returns_twice")
             cg.mod.ensure_decl("memcpy",
                 "declare i8* @memcpy(i8*, i8*, i64)")
+            cg.mod.ensure_decl("quirk_get_jmp_buf",
+                "declare i8* @quirk_get_jmp_buf()")
+            cg.mod.ensure_decl("quirk_pop_try",
+                "declare void @quirk_pop_try()")
+            cg.mod.ensure_decl("quirk_get_exception",
+                "declare i8* @quirk_get_exception()")
+            // Reserve a slot on the runtime's try stack; we'll
+            // setjmp into it directly.
+            runtime_buf := cg.fresh()
+            cg.emit(runtime_buf + " = call i8* @quirk_get_jmp_buf()")
             // Save the outer jmp_buf into a local 200-byte slot.
             saved_slot := "%" + cg.fresh_label("tc.saved")
             cg.emit_entry(saved_slot + " = alloca [200 x i8]")
@@ -5261,9 +5331,14 @@ define _gen_stmt(cg: FnCG, st: Stmt) -> void {
             cg.emit(global_ptr + " = getelementptr inbounds [200 x i8], [200 x i8]* @__quirk_jmp_buf, i64 0, i64 0")
             mc_save := cg.fresh()
             cg.emit(mc_save + " = call i8* @memcpy(i8* " + saved_ptr + ", i8* " + global_ptr + ", i64 200)")
-            // setjmp on the global buf.
+            // setjmp on the runtime's buffer (also sync the
+            // selfhost @__quirk_jmp_buf so the selfhost throw
+            // path — which longjmps @__quirk_jmp_buf — lands
+            // here too).
             sj_ret := cg.fresh()
-            cg.emit(sj_ret + " = call i32 @_setjmp(i8* " + global_ptr + ")")
+            cg.emit(sj_ret + " = call i32 @_setjmp(i8* " + runtime_buf + ")")
+            mc_mirror := cg.fresh()
+            cg.emit(mc_mirror + " = call i8* @memcpy(i8* " + global_ptr + ", i8* " + runtime_buf + ", i64 200)")
             took := cg.fresh()
             cg.emit(took + " = icmp ne i32 " + sj_ret + ", 0")
             body_lbl  := cg.fresh_label("tc.body")
@@ -5296,16 +5371,26 @@ define _gen_stmt(cg: FnCG, st: Stmt) -> void {
             // after a terminator) wouldn't actually use, breaking
             // LLVM's strict sequential numbering.
             if cg.block_terminated == false {
+                // Normal try-body completion: pop the runtime try
+                // slot AND restore the selfhost @__quirk_jmp_buf.
+                cg.emit("call void @quirk_pop_try()")
                 mc_restore_ok := cg.fresh()
                 cg.emit(mc_restore_ok + " = call i8* @memcpy(i8* " + global_ptr + ", i8* " + saved_ptr + ", i64 200)")
                 cg.emit("br label %" + end_lbl)
             }
             // Catch body. Restore outer jmp_buf BEFORE running
             // the handler so any nested throws propagate up.
+            // (The runtime already decremented try_depth via its
+            // longjmp path, so we don't call quirk_pop_try here.)
             cg.emit_raw(catch_lbl + ":")
             mc_restore_catch := cg.fresh()
             cg.emit(mc_restore_catch + " = call i8* @memcpy(i8* " + global_ptr + ", i8* " + saved_ptr + ", i64 200)")
             // Bind the exception value to the catch binder.
+            // Read from the runtime's `quirk_active_exception`
+            // — this covers both runtime-thrown exceptions
+            // (list bounds check, div-by-zero, assertions) and
+            // selfhost-emitted throws (see the Throw codegen
+            // below, which also sets this via `quirk_set_exception`).
             binder_ty := _resolve_ty(cg.mod, tc.binder_type)
             // Unknown struct names (`AppError`, `MyException`,
             // etc.) resolve to i32 via the default-fallback in
@@ -5317,7 +5402,7 @@ define _gen_stmt(cg: FnCG, st: Stmt) -> void {
                 binder_ty = "i8*"
             }
             exc_i8 := cg.fresh()
-            cg.emit(exc_i8 + " = load i8*, i8** @__quirk_exception")
+            cg.emit(exc_i8 + " = call i8* @quirk_get_exception()")
             binder_val := exc_i8
             if binder_ty != "i8*" {
                 cast := cg.fresh()

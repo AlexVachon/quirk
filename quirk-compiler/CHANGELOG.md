@@ -5,6 +5,59 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [5.0.0-alpha.27] — 2026-07-01 — scalar→Any arg boxing + lambda AST scaffolding (24 → 29/60)
+
+Two coupled changes: extend the `Lambda` AST to carry block-body
+statement lists (positional prep for future block-lambda lowering)
+and add a general scalar-to-`Any` boxing pass at the call boundary
+for known callees. The AST change is a no-op at codegen today —
+`_gen_lambda` still emits `ret i32 0` for the block form pending
+downstream triage of arg-boxing edge cases — but stops the parser
+from throwing away information it will need later.
+
+The boxing pass is the load-bearing gain: five additional corpus
+tests now exit cleanly.
+
+### 1. Scalar-to-Any tagged boxing at call sites
+
+Known callees whose declared LLVM param type is `i8*` (i.e.
+Quirk `Any`) now get `i32` / `i1` / `double` args inttoptr'd
+(bitcast+inttoptr for doubles) before the call. Previously the
+call was emitted as `call @f(i8* %int32val)` — llc rejected the
+type mismatch, killing every test that passed an `Int` or `Bool`
+to a `Core_*` helper expecting `Any`.
+
+Gated on `is_unknown == false` so the synthetic `__tuple` /
+`__map_lit` / `__set_lit` variadic helpers keep their own
+already-there boxing path and don't double-inttoptr.
+
+Corpus impact: `crypto_test`, `csv_test`, `url_test`,
+`optional_chaining_test`, `datetime_test` (and more) now
+exit-clean where they LLC-FAIL'd before.
+
+### 2. `Lambda(params, body)` → `Lambda(params, body, body_stmts)`
+
+Parser now captures the statement list from `fn() { … }` and
+`fn() => { … }` block-bodied lambdas into a new `body_stmts`
+field instead of discarding it after `_parse_block`. All four
+Lambda construction sites in the parser (three in `_parse_primary`
+plus the nested-define lowering) pass through the collected
+list. Old `=> expr` form still populates `body: Expr` with
+`body_stmts` left empty.
+
+Codegen unchanged today — `_gen_lambda` continues to emit
+`ret i32 0` for block-bodied lambdas since actually executing
+the body exposes cascading arg-boxing gaps beyond the one this
+alpha fixes. Follow-up work can flip the `_gen_lambda` branch
+once those are triaged.
+
+### Corpus / bootstrap status
+
+Selfhost corpus: 24 → 29 clean-exits.
+Bootstrap: byte-identical selfhost self-stage still holds
+(ir1 = ir2 = 3078147 bytes).
+E2E codegen suite: 99/99 green.
+
 ## [5.0.0-alpha.26] — 2026-07-01 — DIFF-FAIL infrastructure (still 24/60)
 
 Foundation work targeting the DIFF-FAIL tier. MATCH unchanged;

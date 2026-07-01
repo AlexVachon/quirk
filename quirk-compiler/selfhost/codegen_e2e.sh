@@ -1185,7 +1185,11 @@ EOF
         rm -f "$ll_path" "$s_path" "$bin_path"
         return
     fi
-    "${CLANG:-clang-14}" -no-pie "$s_path" -o "$bin_path" 2>/dev/null
+    # Link with bin/runtime.so + libm/libdl so the try/throw
+    # exception bridge (quirk_get_jmp_buf / quirk_set_exception
+    # / quirk_get_exception / quirk_pop_try) resolves. Unused
+    # helpers don't affect the resulting binary.
+    "${CLANG:-clang-14}" -no-pie "$s_path" bin/runtime.so -lm -ldl -o "$bin_path" 2>/dev/null
     if [ ! -x "$bin_path" ]; then
         echo "FAIL  $label  (clang link failed)"
         echo "      asm at $s_path"

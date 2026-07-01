@@ -5,6 +5,77 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [5.0.0-alpha.28] — 2026-07-01 — LLC-FAIL sweep: coercion + dedup fixes (29 → 31/60)
+
+Four targeted codegen fixes drawn from the current LLC-FAIL
+tier. Two direct corpus wins (`fs_test`, `uses`), plus one
+LLC-FAIL that flipped to CRASH but is now further along.
+
+### 1. Dedup `extern define` against `ensure_decl`
+
+`extern define floor(...)` from `packages/math/index.quirk`
+emitted `declare double @floor(double)` as a top-level line,
+while `.floor()` method calls emitted the SAME declaration via
+`ensure_decl("floor", …)`. Two identical `declare`s → llc-14
+rejects the redefinition.
+
+The extern-define path now checks `mod.decls.has(full_name)`
+first — skips emission when present, and registers itself so
+subsequent `ensure_decl` calls dedup. Unblocked
+`statistics_test`'s LLC (which then hit a downstream double↔i32
+issue — see #4).
+
+### 2. Skip ptr-to-ptr coercion after `__tuple` / `__map_lit` boxing
+
+`fs_test` failed with a double-bitcast:
+
+    %7 = bitcast %struct.String* %5 to i8*    ; __tuple boxing
+    %8 = bitcast %struct.String* %7 to i8*    ; stale AST type re-fires
+
+The `__map_lit` / `__set_lit` / `__tuple` variadic path
+converts `av` to i8* and sets `pty="i8*"`, but the generalized
+ptr-to-ptr coercion downstream reads `arg_static_ty` from the
+AST expression — which still reports the original type. Second
+coercion emits `bitcast <orig-type> <i8*-reg> to i8*`, invalid.
+Now guarded by `already_boxed`.
+
+### 3. i32 → double sitofp at struct-ctor `__init` boundary
+
+`Vector2(3, 4)` where `__init` expects `(x: Double, y: Double)`
+reached codegen with `IntLit` args → the ctor emitted
+`call @Vector2____init(double 3, double 4)` — llc-14 rejects
+integer constants as double-typed args.
+
+Added a targeted `sitofp i32 → double` before the ptr coercion
+block in `_gen_struct_ctor`. Unblocked `tests/uses.quirk`
+(Vector2 constructor path).
+
+### 4. Route `Double.parse` / `Int.parse` / `Bool.parse` return types
+
+`_expr_static_ty` for `Double.parse(s)` fell through to the
+generic `sigs.get("parse")` lookup — which picked up an
+unrelated stdlib `parse` (returning i32). Callers then emitted
+`sitofp i32 %d to double` on a value that was already `double`.
+
+Primitive-static calls (`Int|Double|Bool.parse`) now short-
+circuit to their known return types before the sig-table
+lookup.
+
+### 5. Ptr → i8* bitcast for indirect callable args
+
+`http_server_test` hit `call i8* %fn(i8* %94)` where `%94` was
+`%struct.Request*` — the indirect-call arg promotion only
+handled `i32` / `i1` / `double` (`_is_ptr_ty == false` branch).
+Non-i8* pointer args now get bitcast to i8*, matching the
+uniform i8*-per-slot fn-ptr shape.
+
+### Corpus / bootstrap status
+
+Selfhost corpus: 29 → 31 clean-exits.
+Bootstrap: byte-identical self-stage still holds
+(ir1 = ir2 = 3091892 bytes).
+E2E codegen suite: 190/190 green.
+
 ## [5.0.0-alpha.27] — 2026-07-01 — scalar→Any arg boxing + lambda AST scaffolding (24 → 29/60)
 
 Two coupled changes: extend the `Lambda` AST to carry block-body

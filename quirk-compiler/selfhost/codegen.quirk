@@ -1586,6 +1586,14 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
                             cg.emit(promoted + " = inttoptr " + av_ty + " " + av_i + " to i8*")
                             av_i = promoted
                         }
+                    } elif av_ty != "i8*" and av_i != "null" {
+                        // Non-i8* pointer (e.g. `%struct.Request*`)
+                        // through an indirect callable — bitcast
+                        // to i8* since the fn-ptr type uniformly
+                        // uses i8* per slot.
+                        p2p := cg.fresh()
+                        cg.emit(p2p + " = bitcast " + av_ty + " " + av_i + " to i8*")
+                        av_i = p2p
                     }
                     call_sig = call_sig + "i8* " + av_i
                     kj = kj + 1
@@ -1750,6 +1758,18 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
                     aexp: Expr := c.args.__get(j)
                     arg_static_ty = _expr_static_ty(cg, aexp)
                 }
+                // Skip ptr-to-ptr coercion when the `__tuple` /
+                // `__map_lit` / `__set_lit` boxing block above
+                // already converted `av` to i8*. The static ty
+                // read from the AST expression is stale in that
+                // case — it reports the ORIGINAL type (e.g.
+                // `%struct.String*`), so re-firing the coercion
+                // emits `bitcast %struct.String* <i8*-reg> to i8*`
+                // which llc-14 rejects as a type mismatch.
+                already_boxed := is_unknown and (llvm_name == "__map_lit"
+                                                 or llvm_name == "__set_lit"
+                                                 or llvm_name == "__tuple")
+                                and pty == "i8*"
                 // Generalized pointer-to-pointer coercion: any
                 // mismatched pointer kinds at the call boundary
                 // get a bitcast. LLVM allows ptr↔ptr bitcasts
@@ -1761,7 +1781,8 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
                 // a single bitcast is enough so long as the
                 // bytes aren't actually accessed through the
                 // wrong layout.
-                if _is_ptr_ty(pty) and _is_ptr_ty(arg_static_ty)
+                if already_boxed == false
+                   and _is_ptr_ty(pty) and _is_ptr_ty(arg_static_ty)
                    and pty != arg_static_ty
                    and av != "null" {
                     // i8* → %struct.String*: a raw c-string
@@ -2084,9 +2105,18 @@ define _expr_static_ty(cg: FnCG, e: Expr) -> String {
                 // if FieldGet's obj is a free identifier and the
                 // method name matches a known top-level function,
                 // return that function's tracked return type.
+                // Primitive-static receivers (Int/Double/Bool/String.<m>)
+                // are recognised first — otherwise a stdlib
+                // `parse` sig collides with `Double.parse`, and
+                // the returned ret_ty (usually i32) gets a spurious
+                // sitofp when the real lowering (`atof`) returns
+                // double.
                 match fg.obj {
                     case Ident as oid => {
                         if cg.locals.has(oid.name) == false {
+                            if oid.name == "Double" and fg.name == "parse" { return "double" }
+                            if oid.name == "Int"    and fg.name == "parse" { return "i32" }
+                            if oid.name == "Bool"   and fg.name == "parse" { return "i1" }
                             llv := _llvm_fn_name(fg.name)
                             if cg.mod.sigs.has(llv) {
                                 msig: _Sig := cg.mod.sigs.get(llv)
@@ -2241,6 +2271,21 @@ define _gen_struct_ctor(cg: FnCG, name: String, ctor_args: List) -> String {
             }
             if aval == "0" and _is_ptr_ty(pty) { aval = "null" }
             arg_static_ty3 := _expr_static_ty(cg, aexpr)
+            // Int-literal → double promotion at the `__init`
+            // boundary. `Vector2(3, 4)` where the ctor signature
+            // is `(x: Double, y: Double)` reaches codegen with
+            // an IntLit AST node; _gen_expr rendered it as the
+            // literal string `"3"`, but llc-14 rejects
+            // `double 3` (integer constant → double type). Emit
+            // `sitofp i32 <av> to double` via a scratch register
+            // so the type matches. Covers both literal ints and
+            // any i32-typed sub-expression.
+            if pty == "double" and arg_static_ty3 == "i32" {
+                si2d := cg.fresh()
+                cg.emit(si2d + " = sitofp i32 " + aval + " to double")
+                aval = si2d
+                arg_static_ty3 = "double"
+            }
             // Generalized pointer-to-pointer coercion at the
             // struct constructor's `__init` call boundary.
             // Same i8* → %struct.String* via make_String as the
@@ -5578,7 +5623,19 @@ define _gen_function(fdecl: FunctionDecl, mod: ModuleCG) -> String {
         full_name := fdecl.name
         if is_method { full_name = fdecl.receiver + "__" + fdecl.name }
         else { full_name = _llvm_fn_name(fdecl.name) }
-        return "declare " + ret_llvm + " @" + full_name + "(" + dsig + ")\n"
+        // Dedup against `ensure_decl`-registered externs. An
+        // inline lowering may have already emitted `declare
+        // double @floor(double)` via `ensure_decl("floor", …)`
+        // for a `.floor()` method call — re-emitting it as a
+        // top-level line for the stdlib's `extern define floor`
+        // would produce two identical `declare` lines and
+        // llc-14 rejects the redefinition. Skip if already
+        // registered; otherwise register so downstream
+        // ensure_decl calls don't dupe either.
+        if mod.decls.has(full_name) { return "" }
+        line := "declare " + ret_llvm + " @" + full_name + "(" + dsig + ")\n"
+        mod.decls.put(full_name, line)
+        return ""
     }
 
     // Build the param signature `<ty> %arg0, <ty> %arg1, ...`

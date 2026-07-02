@@ -5,6 +5,58 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [5.0.0-alpha.30] — 2026-07-02 — backed-enum `.value()` reverse lookup (still 32/60)
+
+Wires up the reverse direction of alpha.29's backed-enum work:
+given an enum ordinal, `.value()` returns the backing value. No
+corpus MATCH change (the target test already exit-0'd on
+alpha.29 because it doesn't gate exit code on internal FAILs),
+but `enum_backed_test` now passes 3 of the 5 internal `.value`
+checks it used to fail.
+
+### 1. `_Slot` gains `enum_name`
+
+Adds an optional semantic tag so an `i32` slot can also record
+"this ordinal belongs to enum X". Empty for non-enum slots;
+populated by VarDecl codegen when the RHS is a backed-enum
+lookup call (`g := Gender("Male")`) or when the annotation
+names a backed enum (`code: Status := ...`).
+
+### 2. `.value()` dispatch on Ident receivers
+
+`_gen_method_call` intercepts `<obj>.value()` before the
+generic method-call path. Two receiver shapes handled:
+- `g.value()` where `g` is a local with enum-tagged slot
+- `Gender.Other.value()` where the receiver is a
+  `FieldGet(Ident(EnumName), Variant)` chain resolving to a
+  literal-constant ordinal.
+
+For String backing, extracts `->buffer` from the returned
+`String*` and returns the raw i8* for downstream concat /
+comparison; Int/Double backings return their scalar directly.
+
+### 3. `_expr_static_ty` learns `.value()` return types
+
+`Call(FieldGet(<enum receiver>, "value"), [])` now reports the
+backing type's LLVM shape (i8* / i32 / double) instead of
+falling through to i32. Keeps the concat + string-eq / string-lt
+codegen from mis-typing the result.
+
+### 4. Not covered (deferred)
+
+- `self.code.value()` — needs struct-field type tracking
+  (which fields are backed-enum-typed).
+- Exception message field access — the `nope` error-message
+  check in the corpus test still fails; this is exception-
+  handling infrastructure, not enum-related.
+
+### Corpus / bootstrap status
+
+Selfhost corpus: 32/60 unchanged (the improvements are internal
+to `enum_backed_test`, which already exit-0'd).
+Bootstrap: byte-identical self-stage still holds.
+E2E codegen suite: 190/190 green.
+
 ## [5.0.0-alpha.29] — 2026-07-02 — backed-enum lookup lowering (31 → 32/60)
 
 Wires up `EnumName(value)` calls on backed enums to the runtime's

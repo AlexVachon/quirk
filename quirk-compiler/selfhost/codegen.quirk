@@ -2093,9 +2093,16 @@ define _llvm_fn_name(name: String) -> String {
 struct _Slot {
     name: String
     ty: String
+    // Semantic enum name when this slot's `ty` is i32 but the
+    // value is actually an ordinal into a backed enum. Empty
+    // when the slot doesn't hold enum data. Used by `.value`
+    // dispatch to route back through `quirk_enum_value_*` with
+    // the right packed table.
+    enum_name: String
     define __init(self, name: String, ty: String) -> void {
         self.name = name
         self.ty = ty
+        self.enum_name = ""
     }
 }
 
@@ -2210,8 +2217,43 @@ define _expr_static_ty(cg: FnCG, e: Expr) -> String {
                 // the returned ret_ty (usually i32) gets a spurious
                 // sitofp when the real lowering (`atof`) returns
                 // double.
+                // Chained `Gender.Other.value()` — FieldGet on
+                // FieldGet(Ident(EnumName), Variant). Same
+                // dispatch shape as the direct-Ident case below.
+                if fg.name == "value" {
+                    match fg.obj {
+                        case FieldGet as cfg_st => {
+                            match cfg_st.obj {
+                                case Ident as ceid_st => {
+                                    if cg.mod.enums.has(ceid_st.name) {
+                                        ed_cst: EnumDecl := cg.mod.enums.get(ceid_st.name)
+                                        if ed_cst.backing_ty == "String" { return "i8*" }
+                                        if ed_cst.backing_ty == "Int"    { return "i32" }
+                                        if ed_cst.backing_ty == "Double" { return "double" }
+                                    }
+                                }
+                                case _ => {}
+                            }
+                        }
+                        case _ => {}
+                    }
+                }
                 match fg.obj {
                     case Ident as oid => {
+                        // Backed-enum `.value()` on an enum-tagged
+                        // local slot: matches the runtime helper's
+                        // return type. Keeps concat / comparison
+                        // downstream from mis-treating the result
+                        // as an i32 ordinal.
+                        if cg.locals.has(oid.name) and fg.name == "value" {
+                            sl_ev: _Slot := cg.locals.get(oid.name)
+                            if sl_ev.enum_name != "" and cg.mod.enums.has(sl_ev.enum_name) {
+                                ed_st: EnumDecl := cg.mod.enums.get(sl_ev.enum_name)
+                                if ed_st.backing_ty == "String" { return "i8*" }
+                                if ed_st.backing_ty == "Int"    { return "i32" }
+                                if ed_st.backing_ty == "Double" { return "double" }
+                            }
+                        }
                         if cg.locals.has(oid.name) == false {
                             if oid.name == "Double" and fg.name == "parse" { return "double" }
                             if oid.name == "Int"    and fg.name == "parse" { return "i32" }
@@ -2465,6 +2507,115 @@ define _gen_struct_ctor(cg: FnCG, name: String, ctor_args: List) -> String {
 // workaround pattern as `_gen_struct_ctor` and `_gen_list_lit`.
 define _gen_method_call(cg: FnCG, c: Call) -> String {
     fg: FieldGet := c.callee
+    // Backed-enum `.value()` reverse lookup: when the receiver is
+    // an Ident whose slot was tagged with an enum_name in VarDecl
+    // codegen, route to `quirk_enum_value_str` / `_int` /
+    // `_double` with the packed table + count. The receiver's
+    // value is the ordinal (i32), which is what the runtime
+    // helpers expect as arg 0.
+    if fg.name == "value" and c.args.length() == 0 {
+        // Determine the enum this `.value()` targets and how to
+        // load the ordinal. Two receiver shapes:
+        //   1. `g.value()`         — Ident whose slot is enum-tagged
+        //   2. `Gender.Other.value()` — FieldGet(Ident(EnumName), Variant)
+        //      resolves to a literal-constant ordinal.
+        ev_target_enum := ""
+        ev_ord_load := ""
+        match fg.obj {
+            case Ident as ev_id2 => {
+                if cg.locals.has(ev_id2.name) {
+                    sl_ev2: _Slot := cg.locals.get(ev_id2.name)
+                    if sl_ev2.enum_name != "" {
+                        ev_target_enum = sl_ev2.enum_name
+                        ldr := cg.fresh()
+                        cg.emit(ldr + " = load i32, i32* " + sl_ev2.name)
+                        ev_ord_load = ldr
+                    }
+                }
+            }
+            case FieldGet as ev_fg2 => {
+                match ev_fg2.obj {
+                    case Ident as ev_enum_id => {
+                        if cg.mod.enums.has(ev_enum_id.name) {
+                            ed_chain: EnumDecl := cg.mod.enums.get(ev_enum_id.name)
+                            vi_chain := 0
+                            while vi_chain < ed_chain.variants.length() {
+                                vn_chain: String := ed_chain.variants.__get(vi_chain)
+                                if vn_chain == ev_fg2.name {
+                                    ev_target_enum = ev_enum_id.name
+                                    ev_ord_load = vi_chain.str()
+                                }
+                                vi_chain = vi_chain + 1
+                            }
+                        }
+                    }
+                    case _ => {}
+                }
+            }
+            case _ => {}
+        }
+        if ev_target_enum != "" and cg.mod.enums.has(ev_target_enum) {
+            ed_ev: EnumDecl := cg.mod.enums.get(ev_target_enum)
+            n_ev := ed_ev.variants.length()
+            if ed_ev.backing_ty == "String" {
+                blob_len_ev := 0
+                vi_ev := 0
+                while vi_ev < ed_ev.variants.length() {
+                    vn_ev: String := ed_ev.variants.__get(vi_ev)
+                    vv_ev: String := ed_ev.values.__get(vi_ev)
+                    entry_ev := vv_ev
+                    if entry_ev == "" { entry_ev = vn_ev }
+                    blob_len_ev = blob_len_ev + entry_ev.length() + 1
+                    vi_ev = vi_ev + 1
+                }
+                cg.mod.ensure_decl("quirk_enum_value_str",
+                    "declare %struct.String* @quirk_enum_value_str(i32, i8*, i32)")
+                packed_ev := cg.fresh()
+                cg.emit(packed_ev + " = getelementptr inbounds ["
+                        + blob_len_ev.str() + " x i8], ["
+                        + blob_len_ev.str() + " x i8]* @__enum_packed_"
+                        + ev_target_enum + ", i64 0, i64 0")
+                result_ev := cg.fresh()
+                cg.emit(result_ev + " = call %struct.String* @quirk_enum_value_str(i32 "
+                        + ev_ord_load + ", i8* " + packed_ev + ", i32 "
+                        + n_ev.str() + ")")
+                gep_buf_ev := cg.fresh()
+                cg.emit(gep_buf_ev + " = getelementptr inbounds %struct.String, %struct.String* "
+                        + result_ev + ", i32 0, i32 0")
+                buf_ev := cg.fresh()
+                cg.emit(buf_ev + " = load i8*, i8** " + gep_buf_ev)
+                return buf_ev
+            }
+            if ed_ev.backing_ty == "Int" {
+                cg.mod.ensure_decl("quirk_enum_value_int",
+                    "declare i32 @quirk_enum_value_int(i32, i32*, i32)")
+                packed_ei := cg.fresh()
+                cg.emit(packed_ei + " = getelementptr inbounds ["
+                        + n_ev.str() + " x i32], ["
+                        + n_ev.str() + " x i32]* @__enum_packed_"
+                        + ev_target_enum + ", i64 0, i64 0")
+                result_ei := cg.fresh()
+                cg.emit(result_ei + " = call i32 @quirk_enum_value_int(i32 "
+                        + ev_ord_load + ", i32* " + packed_ei + ", i32 "
+                        + n_ev.str() + ")")
+                return result_ei
+            }
+            if ed_ev.backing_ty == "Double" {
+                cg.mod.ensure_decl("quirk_enum_value_double",
+                    "declare double @quirk_enum_value_double(i32, double*, i32)")
+                packed_ed := cg.fresh()
+                cg.emit(packed_ed + " = getelementptr inbounds ["
+                        + n_ev.str() + " x double], ["
+                        + n_ev.str() + " x double]* @__enum_packed_"
+                        + ev_target_enum + ", i64 0, i64 0")
+                result_ed := cg.fresh()
+                cg.emit(result_ed + " = call double @quirk_enum_value_double(i32 "
+                        + ev_ord_load + ", double* " + packed_ed + ", i32 "
+                        + n_ev.str() + ")")
+                return result_ed
+            }
+        }
+    }
     recv_ty := _expr_static_ty(cg, fg.obj)
     recv_reg := _gen_expr(cg, fg.obj)
     // User struct method dispatch: receiver type is
@@ -5134,6 +5285,36 @@ define _gen_stmt(cg: FnCG, st: Stmt) -> void {
                 store_val = "0"
             }
             slot := _ensure_fresh_slot(cg, v.name, ty)
+            // Enum-lookup RHS: `g := Gender("Male")` produces an
+            // i32 ordinal, but the slot has no way to record which
+            // enum without a semantic tag. Tag it here so `.value`
+            // dispatch can find the packed table.
+            match v.value {
+                case Call as vc_ec => {
+                    match vc_ec.callee {
+                        case Ident as vc_id => {
+                            if cg.mod.enums.has(vc_id.name) {
+                                ed_vc: EnumDecl := cg.mod.enums.get(vc_id.name)
+                                if ed_vc.backing_ty != "" {
+                                    slot.enum_name = vc_id.name
+                                }
+                            }
+                        }
+                        case _ => {}
+                    }
+                }
+                case _ => {}
+            }
+            // Explicit `x: EnumName := ...` annotation also tags
+            // the slot — needed for struct fields typed as an
+            // enum being loaded into a local, and for param-shape
+            // assignments (though params get their own path).
+            if v.type_annot != "" and cg.mod.enums.has(v.type_annot) {
+                ed_va: EnumDecl := cg.mod.enums.get(v.type_annot)
+                if ed_va.backing_ty != "" {
+                    slot.enum_name = v.type_annot
+                }
+            }
             cg.emit("store " + slot.ty + " " + store_val + ", " + slot.ty + "* " + slot.name)
         }
         case Assign as a => {

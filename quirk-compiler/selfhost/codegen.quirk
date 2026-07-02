@@ -1518,6 +1518,105 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
             if cg.mod.variants.has(name) {
                 return _gen_variant_ctor(cg, name, c.args)
             }
+            // Backed-enum lookup: `Gender("F")` on a backed enum
+            // routes to the runtime's `quirk_enum_lookup_*` helper,
+            // returning the variant ordinal (or throwing ValueError
+            // on miss). The packed-values global was emitted in
+            // the pre-pass over EnumTL nodes; here we synthesize
+            // the call against that global.
+            if cg.mod.enums.has(name) and c.args.length() == 1 {
+                ed_call: EnumDecl := cg.mod.enums.get(name)
+                if ed_call.backing_ty == "String" {
+                    arg_e_be: Expr := c.args.__get(0)
+                    arg_v_be := _gen_expr(cg, arg_e_be)
+                    arg_ty_be := _expr_static_ty(cg, arg_e_be)
+                    // Wrap i8* → %struct.String* via make_String.
+                    // Runtime lookup helper reads `->buffer`.
+                    if arg_ty_be == "i8*" {
+                        cg.mod.ensure_decl("make_String",
+                            "declare %struct.String* @make_String(i8*)")
+                        mks_be := cg.fresh()
+                        cg.emit(mks_be + " = call %struct.String* @make_String(i8* " + arg_v_be + ")")
+                        arg_v_be = mks_be
+                    }
+                    cg.mod.ensure_decl("quirk_enum_lookup_str",
+                        "declare i32 @quirk_enum_lookup_str(%struct.String*, i8*, i32, i8*)")
+                    // GEP the packed blob and enum-name globals.
+                    blob_len_be := 0
+                    vi_be := 0
+                    while vi_be < ed_call.variants.length() {
+                        vn_be: String := ed_call.variants.__get(vi_be)
+                        vv_be: String := ed_call.values.__get(vi_be)
+                        entry_be := vv_be
+                        if entry_be == "" { entry_be = vn_be }
+                        blob_len_be = blob_len_be + entry_be.length() + 1
+                        vi_be = vi_be + 1
+                    }
+                    packed_gep := cg.fresh()
+                    cg.emit(packed_gep + " = getelementptr inbounds ["
+                            + blob_len_be.str() + " x i8], ["
+                            + blob_len_be.str() + " x i8]* @__enum_packed_"
+                            + name + ", i64 0, i64 0")
+                    ename_len_be := name.length() + 1
+                    ename_gep := cg.fresh()
+                    cg.emit(ename_gep + " = getelementptr inbounds ["
+                            + ename_len_be.str() + " x i8], ["
+                            + ename_len_be.str() + " x i8]* @__enum_name_"
+                            + name + ", i64 0, i64 0")
+                    ord_reg := cg.fresh()
+                    cg.emit(ord_reg + " = call i32 @quirk_enum_lookup_str(%struct.String* "
+                            + arg_v_be + ", i8* " + packed_gep + ", i32 "
+                            + ed_call.variants.length().str() + ", i8* "
+                            + ename_gep + ")")
+                    return ord_reg
+                }
+                if ed_call.backing_ty == "Int" {
+                    arg_e_bi: Expr := c.args.__get(0)
+                    arg_v_bi := _gen_expr(cg, arg_e_bi)
+                    cg.mod.ensure_decl("quirk_enum_lookup_int",
+                        "declare i32 @quirk_enum_lookup_int(i32, i32*, i32, i8*)")
+                    n_bi := ed_call.variants.length()
+                    packed_gep_i := cg.fresh()
+                    cg.emit(packed_gep_i + " = getelementptr inbounds ["
+                            + n_bi.str() + " x i32], ["
+                            + n_bi.str() + " x i32]* @__enum_packed_"
+                            + name + ", i64 0, i64 0")
+                    ename_len_bi := name.length() + 1
+                    ename_gep_i := cg.fresh()
+                    cg.emit(ename_gep_i + " = getelementptr inbounds ["
+                            + ename_len_bi.str() + " x i8], ["
+                            + ename_len_bi.str() + " x i8]* @__enum_name_"
+                            + name + ", i64 0, i64 0")
+                    ord_reg_i := cg.fresh()
+                    cg.emit(ord_reg_i + " = call i32 @quirk_enum_lookup_int(i32 "
+                            + arg_v_bi + ", i32* " + packed_gep_i + ", i32 "
+                            + n_bi.str() + ", i8* " + ename_gep_i + ")")
+                    return ord_reg_i
+                }
+                if ed_call.backing_ty == "Double" {
+                    arg_e_bd: Expr := c.args.__get(0)
+                    arg_v_bd := _gen_expr(cg, arg_e_bd)
+                    cg.mod.ensure_decl("quirk_enum_lookup_double",
+                        "declare i32 @quirk_enum_lookup_double(double, double*, i32, i8*)")
+                    n_bd := ed_call.variants.length()
+                    packed_gep_d := cg.fresh()
+                    cg.emit(packed_gep_d + " = getelementptr inbounds ["
+                            + n_bd.str() + " x double], ["
+                            + n_bd.str() + " x double]* @__enum_packed_"
+                            + name + ", i64 0, i64 0")
+                    ename_len_bd := name.length() + 1
+                    ename_gep_d := cg.fresh()
+                    cg.emit(ename_gep_d + " = getelementptr inbounds ["
+                            + ename_len_bd.str() + " x i8], ["
+                            + ename_len_bd.str() + " x i8]* @__enum_name_"
+                            + name + ", i64 0, i64 0")
+                    ord_reg_d := cg.fresh()
+                    cg.emit(ord_reg_d + " = call i32 @quirk_enum_lookup_double(double "
+                            + arg_v_bd + ", double* " + packed_gep_d + ", i32 "
+                            + n_bd.str() + ", i8* " + ename_gep_d + ")")
+                    return ord_reg_d
+                }
+            }
             // Struct constructor: `Foo(a, b, ...)`. malloc a
             // %struct.Foo, then GEP + store each arg into its
             // field slot. Sizing uses the GEP-of-null trick —
@@ -2180,6 +2279,16 @@ define _expr_static_ty(cg: FnCG, e: Expr) -> String {
             }
             if cg.mod.structs.has(cname) {
                 return "%struct." + cname + "*"
+            }
+            // Backed-enum lookup call `EnumName(value)` returns
+            // the variant ordinal as i32 (see the Call-site
+            // routing to `quirk_enum_lookup_*`).
+            if cg.mod.enums.has(cname) {
+                ed_ret: EnumDecl := cg.mod.enums.get(cname)
+                if ed_ret.backing_ty == "String" or ed_ret.backing_ty == "Int"
+                   or ed_ret.backing_ty == "Double" {
+                    return "i32"
+                }
             }
             cn_llvm := _llvm_fn_name(cname)
             if cg.mod.sigs.has(cn_llvm) {
@@ -5782,6 +5891,101 @@ define emit_module(decls: List) -> String {
             case EnumTL as et => {
                 ed: EnumDecl := et.decl
                 mod.enums.put(ed.name, ed)
+                // Backed enums emit a packed values global that
+                // the runtime's `quirk_enum_lookup_*` helpers
+                // walk. Layout by backing type:
+                //   String → "v0\0v1\0...\0"          (null-separated blob)
+                //   Int    → [count x i32]            (packed int table)
+                //   Double → [count x double]         (packed double table)
+                // The lookup helper takes (query, packed, count,
+                // enum_name) and returns the ordinal (throwing
+                // ValueError on miss).
+                if ed.backing_ty == "String" {
+                    // Build the LLVM `c"..."` encoding directly.
+                    // Each entry gets its bytes copied through the
+                    // \\-escape filter, followed by an explicit
+                    // `\\00` separator (LLVM's encoding for a NUL
+                    // byte in a c-string constant).
+                    enc_parts := List()
+                    blob_len := 0
+                    vi_e := 0
+                    while vi_e < ed.variants.length() {
+                        vn_e: String := ed.variants.__get(vi_e)
+                        vv_e: String := ed.values.__get(vi_e)
+                        entry := vv_e
+                        if entry == "" { entry = vn_e }
+                        bi := 0
+                        while bi < entry.length() {
+                            ch: String := entry.substring(bi, bi + 1)
+                            if ch == "\\" {
+                                enc_parts.append("\\5C")
+                            } elif ch == "\"" {
+                                enc_parts.append("\\22")
+                            } else {
+                                enc_parts.append(ch)
+                            }
+                            bi = bi + 1
+                        }
+                        enc_parts.append("\\00")
+                        blob_len = blob_len + entry.length() + 1
+                        vi_e = vi_e + 1
+                    }
+                    encoded := _str_join(enc_parts)
+                    global_line := "@__enum_packed_" + ed.name
+                                 + " = private constant [" + blob_len.str()
+                                 + " x i8] c\"" + encoded + "\""
+                    mod.globals.append(global_line)
+                    // Enum name string for error messages.
+                    ename_bytes := ed.name.length() + 1
+                    mod.globals.append(
+                        "@__enum_name_" + ed.name
+                        + " = private constant [" + ename_bytes.str()
+                        + " x i8] c\"" + ed.name + "\\00\"")
+                } elif ed.backing_ty == "Int" {
+                    // Packed [N x i32] table. Explicit values or
+                    // fallback to ordinal.
+                    row_parts := List()
+                    vi_i := 0
+                    while vi_i < ed.variants.length() {
+                        vv_i: String := ed.values.__get(vi_i)
+                        val_i := vv_i
+                        if val_i == "" { val_i = vi_i.str() }
+                        if vi_i > 0 { row_parts.append(", ") }
+                        row_parts.append("i32 ")
+                        row_parts.append(val_i)
+                        vi_i = vi_i + 1
+                    }
+                    n_i := ed.variants.length()
+                    mod.globals.append(
+                        "@__enum_packed_" + ed.name
+                        + " = private constant [" + n_i.str()
+                        + " x i32] [" + _str_join(row_parts) + "]")
+                    mod.globals.append(
+                        "@__enum_name_" + ed.name
+                        + " = private constant [" + (ed.name.length() + 1).str()
+                        + " x i8] c\"" + ed.name + "\\00\"")
+                } elif ed.backing_ty == "Double" {
+                    row_parts_d := List()
+                    vi_d := 0
+                    while vi_d < ed.variants.length() {
+                        vv_d: String := ed.values.__get(vi_d)
+                        val_d := vv_d
+                        if val_d == "" { val_d = vi_d.str() + ".0" }
+                        if vi_d > 0 { row_parts_d.append(", ") }
+                        row_parts_d.append("double ")
+                        row_parts_d.append(val_d)
+                        vi_d = vi_d + 1
+                    }
+                    n_d := ed.variants.length()
+                    mod.globals.append(
+                        "@__enum_packed_" + ed.name
+                        + " = private constant [" + n_d.str()
+                        + " x double] [" + _str_join(row_parts_d) + "]")
+                    mod.globals.append(
+                        "@__enum_name_" + ed.name
+                        + " = private constant [" + (ed.name.length() + 1).str()
+                        + " x i8] c\"" + ed.name + "\\00\"")
+                }
             }
             case UnionTL as ut => {
                 ud: UnionDecl := ut.decl

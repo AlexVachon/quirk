@@ -5,6 +5,52 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [5.0.0-alpha.29] — 2026-07-02 — backed-enum lookup lowering (31 → 32/60)
+
+Wires up `EnumName(value)` calls on backed enums to the runtime's
+`quirk_enum_lookup_*` helpers. Extends the `EnumDecl` AST to carry
+the backing type + per-variant literal values (previously
+parse-and-discarded), emits packed values globals per backed enum,
+and routes the Call codegen path to the correct lookup helper by
+backing type.
+
+### 1. `EnumDecl` gains `backing_ty` + `values`
+
+Parser now captures the `BackingType` name inside `enum Name(BackingType)`
+and each variant's explicit `= LITERAL` value. Empty string in
+`values[i]` means "no explicit value; use ordinal / variant-name
+default" — matching the C++ compiler's semantics for
+`enum Color { Red; Green; Blue }`.
+
+### 2. Packed values globals per backed enum
+
+The `emit_module` pre-pass emits `@__enum_packed_<Name>` and
+`@__enum_name_<Name>` globals per backed enum. Layout:
+- `String`-backed: null-separated blob `c"v0\00v1\00...\00"`
+- `Int`-backed:    `[N x i32]` table
+- `Double`-backed: `[N x double]` table
+
+Empty explicit values fall back to the variant name (String) or
+its ordinal (Int/Double).
+
+### 3. Call-site routing
+
+`EnumName(value)` with a single arg now checks whether `EnumName`
+is a registered backed enum first, before the struct-ctor / variant
+paths. When it is, codegen emits GEPs into the packed + name globals
+and a call to `quirk_enum_lookup_str` / `_int` / `_double`. Return
+type is `i32` (the ordinal); `_expr_static_ty` updated so var-decl
+slots infer the right shape.
+
+### 4. Corpus / bootstrap status
+
+Selfhost corpus: 31 → 32 clean-exits (`enum_backed_test` links and
+exits 0; the `.value()` reverse-lookup still fails inside the test
+body — that's a separate slot-type-tracking task).
+Bootstrap: byte-identical self-stage still holds
+(ir1 = ir2 = 3200377 bytes).
+E2E codegen suite: 190/190 green.
+
 ## [5.0.0-alpha.28] — 2026-07-01 — LLC-FAIL sweep: coercion + dedup fixes (29 → 31/60)
 
 Four targeted codegen fixes drawn from the current LLC-FAIL

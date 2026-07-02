@@ -1594,10 +1594,15 @@ define _parse_enum_decl(s: ParserState) -> EnumDecl {
     name := s.expect(TokenKind.Identifier, "enum name").value
     // Optional backing-type `enum Name(BackingType) { ... }` —
     // Quirk's "backed enum" form lets each variant carry a
-    // String or Int literal value. Selfhost doesn't store
-    // backing values yet; we parse-and-discard.
+    // String / Int / Double literal value. Backing type name
+    // (`String`, `Int`, `Double`) is captured so codegen can
+    // route `EnumName(value)` calls to the right runtime
+    // lookup helper.
+    backing_ty := ""
     if s.match_kind(TokenKind.LParen) {
-        if s.check(TokenKind.Identifier) { s.advance() }
+        if s.check(TokenKind.Identifier) {
+            backing_ty = s.advance().value
+        }
         s.expect(TokenKind.RParen, "')' to close enum backing-type")
     }
     // Optional generic params (rare on enums, but keep the
@@ -1605,19 +1610,32 @@ define _parse_enum_decl(s: ParserState) -> EnumDecl {
     _skip_type_params(s)
     s.expect(TokenKind.LBrace, "'{' to open enum body")
     variants := List()
+    values := List()
     while s.check(TokenKind.RBrace) == false and s.check(TokenKind.EofToken) == false {
         if s.match_kind(TokenKind.Semicolon) { continue }
         vtok: Token := s.expect(TokenKind.Identifier, "variant name")
         variants.append(vtok.value)
         // Optional `= LITERAL` — backed enum variant value.
-        // Selfhost doesn't track the literal, just parse it.
+        // Capture the literal representation so codegen can
+        // emit the packed values global. Empty string means
+        // "default to the variant name" (for String backing)
+        // or "default to ordinal" (for Int/Double backing) —
+        // matching the C++ compiler's semantics.
+        val_repr := ""
         if s.match_kind(TokenKind.Assign) {
-            _parse_expr(s)
+            e := _parse_expr(s)
+            match e {
+                case StringLit as sl => val_repr = sl.value
+                case IntLit as il    => val_repr = il.value.str()
+                case FloatLit as fl  => val_repr = fl.value
+                case _ => {}
+            }
         }
+        values.append(val_repr)
         if s.match_kind(TokenKind.Comma) { continue }
     }
     s.expect(TokenKind.RBrace, "'}' to close enum body")
-    return EnumDecl(name, variants)
+    return EnumDecl(name, variants, backing_ty, values)
 }
 
 // Skip a `from .X use { A, B, C }` import statement. Imports

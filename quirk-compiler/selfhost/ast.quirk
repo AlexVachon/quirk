@@ -172,10 +172,15 @@ supports unbacked enums (no payloads, no explicit values).
 struct EnumDecl {
     name: String
     variants: List
+    backing_ty: String
+    values: List
 
-    define __init(self, name: String, variants: List) -> void {
+    define __init(self, name: String, variants: List,
+                  backing_ty: String, values: List) -> void {
         self.name = name
         self.variants = variants
+        self.backing_ty = backing_ty
+        self.values = values
     }
 }
 

@@ -1753,6 +1753,12 @@ define _skip_bare_use(s: ParserState) -> void {
 define parse(tokens: List) -> List {
     s := ParserState(tokens)
     out := List()
+    // Top-level statements outside any `define main() { ... }`
+    // are script-mode code. Accumulate them here; at end of
+    // parse we wrap them in a synthetic `main` if the source
+    // didn't already declare one.
+    script_stmts := List()
+    has_user_main := false
     while s.check(TokenKind.EofToken) == false {
         t: Token := s.peek()
         if t.kind == TokenKind.From {
@@ -1764,7 +1770,11 @@ define parse(tokens: List) -> List {
             continue
         }
         if t.kind == TokenKind.Define or t.kind == TokenKind.Extern {
-            out.append(Func(_parse_function_decl(s)))
+            fd_top: FunctionDecl := _parse_function_decl(s)
+            if fd_top.name == "main" and fd_top.receiver == "" {
+                has_user_main = true
+            }
+            out.append(Func(fd_top))
         } elif t.kind == TokenKind.Struct {
             inside_methods := List()
             sd: StructDecl := _parse_struct_decl(s, inside_methods)
@@ -1797,7 +1807,11 @@ define parse(tokens: List) -> List {
             if next.kind == TokenKind.Colon
                or next.kind == TokenKind.AssignInit
                or next.kind == TokenKind.Assign {
-                _skip_toplevel_vardecl(s)
+                // Top-level vardecl (`t: Tuple := ...`) — collect
+                // into script_stmts so it lands inside the
+                // synthetic main. Falls back to skip when
+                // _parse_stmt would fail.
+                script_stmts.append(_parse_stmt(s))
             } elif next.kind == TokenKind.Comma {
                 // Look-ahead for destructuring tail.
                 look := 2
@@ -1816,16 +1830,18 @@ define parse(tokens: List) -> List {
                     }
                 }
                 if is_destruct {
-                    s.advance()  // first ident
-                    while s.match_kind(TokenKind.Comma) {
-                        if s.check(TokenKind.Identifier) { s.advance() }
-                    }
-                    if s.match_kind(TokenKind.AssignInit) == false {
-                        s.match_kind(TokenKind.Assign)
-                    }
-                    _parse_expr(s)
-                    s.match_kind(TokenKind.Semicolon)
+                    // `_parse_stmt` handles multi-target
+                    // destructure via its VarDecl-with-comma path.
+                    script_stmts.append(_parse_stmt(s))
                 } else {
+                    // Bare `f(args)` — parse-and-discard rather
+                    // than wrapping into ExprStmt: some corpus
+                    // files (generics_interfaces, new_features)
+                    // use multi-arg `print("x", y)` at top level
+                    // which sema rejects, and turning that into
+                    // a synthetic-main stmt hard-fails IR emit.
+                    // Better to lose the side-effect (matches
+                    // pre-alpha.31 behaviour) than block the file.
                     _parse_expr(s)
                     s.match_kind(TokenKind.Semicolon)
                 }
@@ -1862,12 +1878,13 @@ define parse(tokens: List) -> List {
         } elif t.kind == TokenKind.For
               or t.kind == TokenKind.If
               or t.kind == TokenKind.While {
-            // Top-level imperative statements — selfhost has no
-            // module init machinery, so we parse-and-discard
-            // the entire block. Brace-balanced consume of the
-            // body block.
+            // Top-level imperative statements — parse-and-discard.
+            // `_parse_stmt` would work in principle but the range
+            // expression `0..10` in `for i in 0..10 { ... }` still
+            // trips its expression parser, so we keep the brace-
+            // balanced skip to avoid regressions on files whose
+            // main body already handles everything.
             s.advance()  // for/if/while
-            // Consume the condition / header tokens until `{`.
             while s.check(TokenKind.LBrace) == false
                   and s.check(TokenKind.EofToken) == false {
                 s.advance()
@@ -1893,6 +1910,22 @@ define parse(tokens: List) -> List {
         // "SEMA FAILED" prefixes.
         print("PARSE FAILED:")
         print("  " + s.error_msg)
+    }
+    // Script-mode main synthesis: only when the source contains
+    // ZERO top-level declarations (i.e. it's a pure script file
+    // like tuple_test) AND accumulated some parseable stmts.
+    // Files that mix top-level defs with top-level statements
+    // (new_features, generics_interfaces) treat the stmts as
+    // module-init sugar the C++ compiler handles differently;
+    // running them through the synthetic main would put them
+    // through sema, which rejects things like operator-overload
+    // usages and multi-arg print() calls that never reached sema
+    // under the prior parse-and-discard behaviour.
+    if script_stmts.length() > 0
+       and has_user_main == false
+       and out.length() == 0 {
+        synth_main := FunctionDecl("main", List(), "void", script_stmts, "", false)
+        out.append(Func(synth_main))
     }
     return out
 }

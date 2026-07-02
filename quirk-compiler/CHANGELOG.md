@@ -5,6 +5,44 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [5.0.0-alpha.31] — 2026-07-02 — script-mode `main()` synthesis (32 → 33/60)
+
+Files with top-level statements but no `define main()` (pure
+script-style tests like `tuple_test`) now get a synthetic main
+built from the collected statements. Previously those files
+had no entry point and failed at link.
+
+### 1. Parser collects vardecl + destructure at top level
+
+`_skip_toplevel_vardecl` was already parse-and-discard for
+`NAME := EXPR` / `NAME: T := EXPR`; now the parser routes those
+through `_parse_stmt` when appropriate, appending the resulting
+`VarDecl` into a `script_stmts` list. Same for multi-target
+destructure (`x, y := coords`). Bare expression statements
+(`f(args)`) keep the old parse-and-discard path — some corpus
+helper files use multi-arg `print("x", y)` at top level, which
+sema rejects, and turning those into synthetic-main stmts would
+hard-fail IR emission for files that used to at least reach
+llc.
+
+### 2. Script-mode gate
+
+Synthetic-main creation is gated on `out.length() == 0` — the
+file must contain zero top-level struct/enum/type/function
+declarations. That signal reliably distinguishes pure script
+files (`tuple_test`) from mixed library-plus-init files
+(`new_features`, `generics_interfaces`), where running the
+init lines through the synthetic-main path would send them
+through sema and hit operator-overload / multi-arg-print
+rejections. The gate keeps the mixed files at their prior
+LLC/LINK status without regressing.
+
+### 3. Corpus / bootstrap status
+
+Selfhost corpus: 32 → 33 clean-exits (`tuple_test`).
+Bootstrap: byte-identical self-stage still holds.
+E2E codegen suite: 190/190 green.
+
 ## [5.0.0-alpha.30] — 2026-07-02 — backed-enum `.value()` reverse lookup (still 32/60)
 
 Wires up the reverse direction of alpha.29's backed-enum work:

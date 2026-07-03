@@ -201,7 +201,7 @@ define _parse_primary(s: ParserState) -> Expr {
         }
         if s.check(TokenKind.LBrace) {
             block_stmts := _parse_block(s)
-            return Lambda(lparams, IntLit(0), block_stmts)
+            return Lambda(lparams, IntLit(0), block_stmts, List())
         }
         s.expect(TokenKind.FatArrow, "'=>' before lambda body")
         // Mixed form `fn(...) => { … }` — `=>` followed by a
@@ -209,10 +209,10 @@ define _parse_primary(s: ParserState) -> Expr {
         // a real body instead of an empty `ret i32 0`.
         if s.check(TokenKind.LBrace) {
             block_stmts := _parse_block(s)
-            return Lambda(lparams, IntLit(0), block_stmts)
+            return Lambda(lparams, IntLit(0), block_stmts, List())
         }
         body := _parse_expr(s)
-        return Lambda(lparams, body, List())
+        return Lambda(lparams, body, List(), List())
     }
     // `super` keyword in expression position — treat as a
     // synthetic identifier. Stdlib structs use `super().__init(...)`
@@ -789,7 +789,7 @@ define _parse_stmt(s: ParserState) -> Stmt {
         if s.check(TokenKind.LBrace) {
             nested_stmts = _parse_block(s)
         }
-        nested_lambda := Lambda(List(), IntLit(0), nested_stmts)
+        nested_lambda := Lambda(List(), IntLit(0), nested_stmts, List())
         if fname == "" { fname = "_nested_define" }
         return VarDecl(fname, "", nested_lambda)
     }

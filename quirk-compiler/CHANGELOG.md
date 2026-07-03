@@ -5,6 +5,43 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [5.0.0-alpha.33] — 2026-07-02 — closure-capture AST scaffolding (still 33/60)
+
+Foundational bump: `Lambda` AST gains a `captures: List` field
+(empty in this alpha) for future closure-capture work. All four
+Lambda construction sites in the parser pass an empty list.
+No codegen behavior change; corpus unchanged at 33/60.
+
+### Context: aborted shape-tag experiment
+
+This alpha also contains a fully-reverted attempt at
+per-allocation shape tags (option 1a of the "what needs to be
+done" survey). Adding a `shape_tag` field to the runtime's
+String struct + corresponding stdlib field triggered a cascading
+ABI-mismatch problem: bin/quirk-selfhost's compiled binary
+embedded the old String layout (from when IT was built), which
+diverged from the new runtime's layout, producing garbage IR
+(string constants with pointer-address-sized length fields).
+
+The right way to do shape tags is a coordinated cross-compiler
+migration with an intermediate compat mode — a genuine multi-day
+project outside single-session scope. Reverted; documenting
+here so a future attempt has the failure-mode context.
+
+### Roadmap for closure work
+
+Steps 2-5 remain (each ~200+ lines):
+- Whole-scope capture analysis at codegen time
+- Extend Callable to `%struct.Callable* { fn, env }` on selfhost side (C++ side already has this shape)
+- Modify `_gen_lambda` to emit `(env, args)` signature + populate env at lambda-creation
+- Modify indirect-call to load fn+env and thread env as first arg
+- Flip lambda block-body emission on once captures work end-to-end
+
+### Corpus / bootstrap status
+
+Selfhost corpus: 33/60 unchanged. Bootstrap byte-identical
+self-stage still holds. E2E codegen suite: 190/190 green.
+
 ## [5.0.0-alpha.32] — 2026-07-02 — multi-arg print sema relaxation (still 33/60)
 
 Sema now accepts `print(a, b, c, ...)` with any arity ≥ 1 instead

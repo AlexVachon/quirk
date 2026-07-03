@@ -1834,14 +1834,13 @@ define parse(tokens: List) -> List {
                     // destructure via its VarDecl-with-comma path.
                     script_stmts.append(_parse_stmt(s))
                 } else {
-                    // Bare `f(args)` — parse-and-discard rather
-                    // than wrapping into ExprStmt: some corpus
-                    // files (generics_interfaces, new_features)
-                    // use multi-arg `print("x", y)` at top level
-                    // which sema rejects, and turning that into
-                    // a synthetic-main stmt hard-fails IR emit.
-                    // Better to lose the side-effect (matches
-                    // pre-alpha.31 behaviour) than block the file.
+                    // Bare `f(args)` — parse-and-discard. Even
+                    // though sema now accepts multi-arg print
+                    // (alpha.32), `print(tuple_or_list_pointer)`
+                    // still segfaults at runtime because tuples/
+                    // lists aren't c-strings. Discarding keeps
+                    // pure script files running past the useless
+                    // print — tuple_test still exits 0.
                     _parse_expr(s)
                     s.match_kind(TokenKind.Semicolon)
                 }

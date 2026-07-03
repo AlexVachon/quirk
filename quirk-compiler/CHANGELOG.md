@@ -5,6 +5,47 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [5.0.0-alpha.32] — 2026-07-02 — multi-arg print sema relaxation (still 33/60)
+
+Sema now accepts `print(a, b, c, ...)` with any arity ≥ 1 instead
+of hard-failing at 2+ args. Codegen lowers to `puts(first_arg)`
+and drops the extras. Foundational: doesn't move corpus MATCH
+yet, but was the sema block preventing several stdlib helper
+files and corpus tests from reaching IR emit, and unblocks
+future work that leans on the sema pass.
+
+### 1. Sema: accept ≥1 print args
+
+`print(x, y)` used to `s.report("print() takes exactly one
+argument")` and return `TError`. Now walks all args, `_check_expr`
+each individually, and returns void. Matches how `print` is used
+throughout the stdlib and the C++ compiler's tolerance for the
+same shorthand.
+
+### 2. Codegen: lower first arg, drop extras
+
+`_gen_expr`'s Call branch condition on print changed from
+`c.args.length() == 1` to `>= 1`. First arg goes through the
+existing single-arg puts lowering (with all its type coercion
+handling); extras are parsed but produce no side effect. Users
+who care about all args should use interpolation
+(`"${a} ${b}"`) — that path already handles multi-piece
+formatting correctly.
+
+### 3. Corpus / bootstrap status
+
+Selfhost corpus: 33/60 unchanged. `new_features` and
+`generics_interfaces` (which used to hard-fail sema on multi-arg
+prints) now advance to LLC-FAIL / LINK-FAIL, matching their
+pre-alpha.31 categorisation. Bootstrap byte-identical, e2e
+190/190.
+
+Also attempted (reverted): re-enabling lambda block-body
+emission. It regressed 19 tests to CRASH because unpopulated
+lambdas that used to silently exit-0 now try to run bodies
+that segfault on unboxed args. Waits on proper closure capture
++ deeper arg-boxing coverage.
+
 ## [5.0.0-alpha.31] — 2026-07-02 — script-mode `main()` synthesis (32 → 33/60)
 
 Files with top-level statements but no `define main()` (pure

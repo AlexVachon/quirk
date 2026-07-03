@@ -1359,7 +1359,12 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
             // load from a String slot, return from a String
             // function), so this case just consumes whatever
             // _gen_expr returned without caring about the shape.
-            if name == "print" and c.args.length() == 1 {
+            // Multi-arg print — lower to a single-arg call on
+            // the first arg; extras get parsed but produce no
+            // runtime side effect. Trades semantic completeness
+            // for compatibility with stdlib / corpus code that
+            // uses `print("Set size:", n)` as informal shorthand.
+            if name == "print" and c.args.length() >= 1 {
                 arg0: Expr := c.args.__get(0)
                 arg_reg := _gen_expr(cg, arg0)
                 arg_ty := _expr_static_ty(cg, arg0)
@@ -2028,10 +2033,10 @@ define _gen_lambda(outer_cg: FnCG, lm: Lambda) -> String {
     // block statements exposes cascading arg-boxing gaps
     // (calls to Any-typed runtime helpers with i32/i1/double
     // args need inttoptr wrapping) that ripple through most
-    // TestCase-based tests. Until those are individually
-    // triaged we keep the historical "empty body" shape and
-    // rely on top-level try/catch to drive the runtime
-    // exception bridge added in this alpha.
+    // TestCase-based tests. Kept as "empty body" until closure
+    // capture + more boxing coverage land; retrying the flip
+    // in alpha.32 regressed 19 corpus tests, so the discard
+    // remains the safe default.
     body_ty := _expr_static_ty(inner, lm.body)
     inner.ret_ty = body_ty
     body_val := _gen_expr(inner, lm.body)

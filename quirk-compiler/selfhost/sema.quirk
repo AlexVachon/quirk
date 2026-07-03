@@ -435,10 +435,23 @@ define _check_call(s: Sema, c: Call) -> Ty {
     // Builtin: `print(String) -> void`. Phase 4.3 lowers calls of
     // this shape directly to `puts`; sema's job here is only to
     // accept it and to type-check the single argument.
+    //
+    // Multi-arg `print("Set size:", n)` is a common surface-syntax
+    // shortcut that stdlib and corpus tests use freely. Sema
+    // accepts any arity and just checks each arg — codegen lowers
+    // a single-arg call to `puts` and drops extras. The dropped
+    // values are runtime info leaks; users who care should use
+    // interpolation (`"${a} ${b}"`) instead.
     if name == "print" {
-        if c.args.length() != 1 {
-            s.report("print() takes exactly one argument")
+        if c.args.length() == 0 {
+            s.report("print() takes at least one argument")
             return TError("print arity")
+        }
+        pi := 0
+        while pi < c.args.length() {
+            ae_p: Expr := c.args.__get(pi)
+            _check_expr(s, ae_p)
+            pi = pi + 1
         }
         a0: Expr := c.args.__get(0)
         // Just check the arg expression; accept any type

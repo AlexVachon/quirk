@@ -469,6 +469,10 @@ define _parse_postfix(s: ParserState) -> Expr {
     keep_going := true
     while keep_going {
         if s.check(TokenKind.Dot) or s.check(TokenKind.QuestionDot) {
+            // Preserve the safe-call marker so codegen can emit a
+            // null-check + short-circuit around the access. Bare
+            // `.` builds a normal FieldGet; `?.` sets is_safe.
+            safe := s.check(TokenKind.QuestionDot)
             s.advance()
             // Accept either an identifier or any keyword-like
             // token as a field name (.type, .from, .as, etc.).
@@ -477,10 +481,10 @@ define _parse_postfix(s: ParserState) -> Expr {
             // consuming the next token whatever it is.
             if s.check(TokenKind.Identifier) {
                 name_tok: Token := s.advance()
-                e = FieldGet(e, name_tok.value)
+                e = FieldGet(e, name_tok.value, safe)
             } else {
                 name_tok: Token := s.advance()
-                e = FieldGet(e, name_tok.value)
+                e = FieldGet(e, name_tok.value, safe)
             }
         } elif s.check(TokenKind.LBracket) {
             s.advance()
@@ -1130,7 +1134,7 @@ define _parse_stmt(s: ParserState) -> Stmt {
                 return Assign(id.name, BinOp(op, lhs_clone, rhs2))
             }
             case FieldGet as fg => {
-                lhs_clone: Expr := FieldGet(fg.obj, fg.name)
+                lhs_clone: Expr := FieldGet(fg.obj, fg.name, fg.is_safe)
                 return FieldSet(fg.obj, fg.name, BinOp(op, lhs_clone, rhs2))
             }
             case _ => {

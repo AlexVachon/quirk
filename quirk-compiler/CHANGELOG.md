@@ -5,6 +5,53 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [5.0.0-alpha.34] — 2026-07-02 — safe-call `?.` semantics + Callable struct type (still 33/60)
+
+Two independent additions, both foundational (no corpus MATCH
+change yet, but each unblocks a class of tests once follow-ups
+land):
+
+### 1. Safe-call `?.` short-circuits on null
+
+The parser previously routed `x?.method()` through the same
+FieldGet AST node as `x.method()` — dropping the safe-call
+marker at parse time. That meant `x.method()` on a null `x`
+segfaulted at runtime just like the unsafe form.
+
+- `FieldGet` gains an `is_safe: Bool` field.
+- Parser sets it to `true` when the postfix token was
+  `QuestionDot`, `false` for `Dot`. All three FieldGet
+  construction sites updated.
+- `_gen_method_call` intercepts `is_safe = true` receivers of
+  pointer type and emits `alloca i8*` + null-check + branch +
+  recursive dispatch with a non-safe FieldGet + phi-load. On
+  null receiver, the result is null; otherwise the normal
+  method call runs. Non-pointer receivers (e.g. `Int?.method()`
+  where the receiver is `i32`) fall through to the existing
+  path — Int-null needs distinguishable-null representation,
+  a separate task.
+
+Doesn't move corpus MATCH yet: `optional_test` still crashes
+downstream on `Int? = null` semantics (a stored `0` collides
+with a legitimate `Int == 0` value, and `puts(0)` segfaults).
+That crash is now the last blocker for `optional_test` — the
+`?.` path itself works cleanly on `String?`.
+
+### 2. `%struct.Callable` type declaration in selfhost preamble
+
+Selfhost now emits `%struct.Callable = type { i8*, i8* }` in
+its LLVM IR preamble, matching the C++ compiler's shape.
+Currently unused by selfhost (lambdas still emit raw fn ptrs),
+but the type name is now available for the follow-up closure
+work — when `_gen_lambda` starts allocating Callable structs
+and the indirect-call path unpacks them, the type declaration
+is already in place. Reserved for a coordinated future flip.
+
+### 3. Corpus / bootstrap status
+
+Selfhost corpus: 33/60 unchanged. Bootstrap byte-identical
+self-stage still holds. E2E codegen suite: 190/190 green.
+
 ## [5.0.0-alpha.33] — 2026-07-02 — closure-capture AST scaffolding (still 33/60)
 
 Foundational bump: `Lambda` AST gains a `captures: List` field

@@ -35,7 +35,7 @@ type Expr =
     | UnaryOp(op: String, operand: Expr)
     | BinOp(op: String, left: Expr, right: Expr)
     | Call(callee: Expr, args: List)
-    | FieldGet(obj: Expr, name: String)
+    | FieldGet(obj: Expr, name: String, is_safe: Bool)
     | ListLit(elems: List)
     | Index(obj: Expr, idx: Expr)
     | Lambda(params: List, body: Expr, body_stmts: List, captures: List)

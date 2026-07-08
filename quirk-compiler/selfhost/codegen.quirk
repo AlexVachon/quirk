@@ -2512,6 +2512,63 @@ define _gen_struct_ctor(cg: FnCG, name: String, ctor_args: List) -> String {
 // workaround pattern as `_gen_struct_ctor` and `_gen_list_lit`.
 define _gen_method_call(cg: FnCG, c: Call) -> String {
     fg: FieldGet := c.callee
+    // Safe-call `receiver?.method(args)` — when the FieldGet
+    // was parsed from `?.` (not `.`), emit a null-check +
+    // short-circuit around the entire method dispatch. Result
+    // slot is `alloca i8*`, initialised to null; if receiver
+    // is non-null we run the normal method dispatch and store
+    // its result. Callers see i8* — for pointer-typed methods
+    // this is the right shape; for `.upper()` etc. returning
+    // c-strings this also works. Skip when receiver's static
+    // type is non-pointer (Bool `.str()` on i1 has no null
+    // to check for).
+    if fg.is_safe {
+        recv_st_ty := _expr_static_ty(cg, fg.obj)
+        if _is_ptr_ty(recv_st_ty) {
+            recv_v_pre := _gen_expr(cg, fg.obj)
+            res_slot_sc := "%" + cg.fresh_label("sc.res")
+            cg.emit_entry(res_slot_sc + " = alloca i8*")
+            cg.emit("store i8* null, i8** " + res_slot_sc)
+            null_cmp := cg.fresh()
+            cg.emit(null_cmp + " = icmp eq " + recv_st_ty + " " + recv_v_pre + ", null")
+            ok_lbl := cg.fresh_label("sc.ok")
+            end_lbl := cg.fresh_label("sc.end")
+            cg.emit("br i1 " + null_cmp + ", label %" + end_lbl + ", label %" + ok_lbl)
+            cg.emit_raw(ok_lbl + ":")
+            // Rebuild the Call with a non-safe FieldGet so the
+            // recursive method dispatch runs the normal path
+            // without re-triggering the safe-call wrap.
+            unsafe_fg := FieldGet(fg.obj, fg.name, false)
+            unsafe_call := Call(unsafe_fg, c.args)
+            inner_result := _gen_method_call(cg, unsafe_call)
+            // Coerce the inner result to i8* for uniform storage.
+            inner_ty := _expr_static_ty(cg, unsafe_call)
+            store_val := inner_result
+            if inner_ty != "i8*" {
+                if _is_ptr_ty(inner_ty) {
+                    bc_sc := cg.fresh()
+                    cg.emit(bc_sc + " = bitcast " + inner_ty + " " + inner_result + " to i8*")
+                    store_val = bc_sc
+                } elif inner_ty == "i32" or inner_ty == "i1" {
+                    z_sc := inner_result
+                    if inner_ty == "i1" {
+                        z_new := cg.fresh()
+                        cg.emit(z_new + " = zext i1 " + inner_result + " to i32")
+                        z_sc = z_new
+                    }
+                    i2p_sc := cg.fresh()
+                    cg.emit(i2p_sc + " = inttoptr i32 " + z_sc + " to i8*")
+                    store_val = i2p_sc
+                }
+            }
+            cg.emit("store i8* " + store_val + ", i8** " + res_slot_sc)
+            cg.emit("br label %" + end_lbl)
+            cg.emit_raw(end_lbl + ":")
+            res_final := cg.fresh()
+            cg.emit(res_final + " = load i8*, i8** " + res_slot_sc)
+            return res_final
+        }
+    }
     // Backed-enum `.value()` reverse lookup: when the receiver is
     // an Ident whose slot was tagged with an enum_name in VarDecl
     // codegen, route to `quirk_enum_value_str` / `_int` /

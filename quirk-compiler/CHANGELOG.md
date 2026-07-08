@@ -5,6 +5,74 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [5.0.0-alpha.36] — 2026-07-08 — defensive stringification (33 → 36/60)
+
+Three targeted defenses against the "opaque i8* reaches
+strlen" crash class that dominates the CRASH tier. Each is
+narrow enough to not regress existing tests but broad enough
+to unlock several corpus entries. Net: `uses`, `lists`, and
+`maps` now clean-exit.
+
+### 1. Struct-ptr / collection `.str()` placeholder
+
+`.str()` on a `%struct.Foo*` receiver where `Foo` has no
+user-defined `__str` method used to fall through to the
+bad-method fallback and return `null`. Now emits a
+`<Foo>` placeholder c-string. Same treatment for the
+internal collection shapes (`%QList*`, `%QListP*`, `%QMap*`)
+which produce `<list>` / `<map>`.
+
+Unblocked `uses` (Vector2 interpolation).
+
+### 2. `.str()` on i8* wraps in null-guard
+
+Opaque i8* receivers from list-comp stubs, unknown-callee
+returns, and other producers may be null at runtime. `.str()`
+on i8* used to return `recv_reg` verbatim, letting null flow
+into strlen and segfault. Now:
+
+    %is_nn = icmp ne i8* %recv, null
+    %safe = select i1 %is_nn, i8* %recv, i8* "<null>"
+
+Skipped for StringLit receivers (provably non-null) so
+`"literal".str()` stays a no-op.
+
+Unblocked `lists` (list-comprehension `__list_comp` returns
+null; interpolation now shows `<null>` instead of crashing).
+
+### 3. Concat operands: null-guard + Index-through-opaque_to_cstr
+
+Two parallel guards on i8* concat operands whose source is a
+`Call` / `FieldGet` / `Index` (uncertain — could be null or
+tagged int):
+
+- `Call` and `FieldGet` sources get the same `select`-based
+  null-guard as `.str()`.
+- `Index` sources on `%QListP*` / `%QList*` / `%QMap*` /
+  `i8*` receivers route through `quirk_opaque_to_cstr`,
+  which handles both null (returns "null") and tagged ints
+  (decodes to decimal).
+
+The `Index`-on-i8* case extends alpha.26's narrow
+QListP/QList treatment to also cover `Map<K,V>[key]` lookups
+that erase to `i8*` at storage time. Unblocked `maps`
+(`m["age"]` returned a tagged-int 30, previously
+strlen(0x1E) segfaulted).
+
+### 4. Variadic param slot typing (from earlier this alpha)
+
+`...args` params (no type annot) now allocate as `%QListP*`
+instead of defaulting to i32. `variadic.quirk` still LLC-fails
+at the call site (arity mismatch — trailing args aren't
+packed into a list yet) but the callee-side slot is now
+right.
+
+### Corpus / bootstrap status
+
+Selfhost corpus: 33 → 36 clean-exits.
+Bootstrap: byte-identical self-stage still holds.
+E2E codegen suite: 190/190 green.
+
 ## [5.0.0-alpha.35] — 2026-07-02 — variadic param slot typing (still 33/60)
 
 Foundational: variadic params (`...args` without a type annot)

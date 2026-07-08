@@ -882,7 +882,8 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
                 if l_ty == "i8*" and _is_opaque_source(b.left) {
                     lbase_ty := ""
                     match b.left { case Index as lix => lbase_ty = _expr_static_ty(cg, lix.obj) case _ => {} }
-                    if lbase_ty == "%QListP*" or lbase_ty == "%QList*" {
+                    if lbase_ty == "%QListP*" or lbase_ty == "%QList*"
+                       or lbase_ty == "%QMap*" or lbase_ty == "i8*" {
                         cg.mod.ensure_decl("quirk_opaque_to_cstr",
                             "declare i8* @quirk_opaque_to_cstr(i8*)")
                         lu := cg.fresh()
@@ -893,7 +894,8 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
                 if r_ty == "i8*" and _is_opaque_source(b.right) {
                     rbase_ty := ""
                     match b.right { case Index as rix => rbase_ty = _expr_static_ty(cg, rix.obj) case _ => {} }
-                    if rbase_ty == "%QListP*" or rbase_ty == "%QList*" {
+                    if rbase_ty == "%QListP*" or rbase_ty == "%QList*"
+                       or rbase_ty == "%QMap*" or rbase_ty == "i8*" {
                         cg.mod.ensure_decl("quirk_opaque_to_cstr",
                             "declare i8* @quirk_opaque_to_cstr(i8*)")
                         ru := cg.fresh()
@@ -908,6 +910,56 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
                 // we get `strlen(i8* 0)` which llc rejects.
                 if l == "0" { l = "null" }
                 if r == "0" { r = "null" }
+                // Runtime null-guard: i8* concat operands from
+                // Call/FieldGet returns may be null (e.g. map.get
+                // returning a c-string that isn't there, list-comp
+                // stub returning null). strlen(null) segfaults.
+                // Wrap in `select` against null with "<null>"
+                // fallback. Literal / Ident / static-string
+                // operands are skipped (either provably non-null
+                // or the wrap wastes a select).
+                if l_ty == "i8*" {
+                    l_uncertain := false
+                    match b.left {
+                        case Call as _ => l_uncertain = true
+                        case FieldGet as _ => l_uncertain = true
+                        case Index as _ => l_uncertain = true
+                        case _ => {}
+                    }
+                    if l_uncertain and l != "null" {
+                        null_ph_l := cg.mod.alloc_string("<null>")
+                        null_gep_l := cg.fresh()
+                        cg.emit(null_gep_l + " = getelementptr inbounds [7 x i8], [7 x i8]* "
+                                + null_ph_l + ", i64 0, i64 0")
+                        is_nn_l := cg.fresh()
+                        cg.emit(is_nn_l + " = icmp ne i8* " + l + ", null")
+                        safe_l := cg.fresh()
+                        cg.emit(safe_l + " = select i1 " + is_nn_l + ", i8* " + l
+                                + ", i8* " + null_gep_l)
+                        l = safe_l
+                    }
+                }
+                if r_ty == "i8*" {
+                    r_uncertain := false
+                    match b.right {
+                        case Call as _ => r_uncertain = true
+                        case FieldGet as _ => r_uncertain = true
+                        case Index as _ => r_uncertain = true
+                        case _ => {}
+                    }
+                    if r_uncertain and r != "null" {
+                        null_ph_r := cg.mod.alloc_string("<null>")
+                        null_gep_r := cg.fresh()
+                        cg.emit(null_gep_r + " = getelementptr inbounds [7 x i8], [7 x i8]* "
+                                + null_ph_r + ", i64 0, i64 0")
+                        is_nn_r := cg.fresh()
+                        cg.emit(is_nn_r + " = icmp ne i8* " + r + ", null")
+                        safe_r := cg.fresh()
+                        cg.emit(safe_r + " = select i1 " + is_nn_r + ", i8* " + r
+                                + ", i8* " + null_gep_r)
+                        r = safe_r
+                    }
+                }
                 // Non-string scalar operands (Int / Double / Bool)
                 // get stringified through `_gen_to_string` —
                 // libc snprintf into a fresh 32-byte buffer.
@@ -3229,11 +3281,31 @@ define _gen_method_call(cg: FnCG, c: Call) -> String {
         }
     }
     if fg.name == "str" {
-        // String.str() is a no-op — the receiver IS already a
-        // string. Lets interpolation auto-call `.str()` on every
-        // segment without special-casing the String case.
+        // String.str() is a no-op when receiver is definitely a
+        // c-string. For opaque i8* values (list-comp results,
+        // unknown-callee returns) recv_reg may be null at runtime.
+        // Wrap in a select against null with "<null>" fallback so
+        // downstream concat/strlen doesn't segfault.
+        //
+        // Skip the wrap for StringLit sources — they're guaranteed
+        // non-null and the wrap wastes a select. Same for
+        // FieldGet.__buffer extractions (String* buffer).
         if recv_ty == "i8*" {
-            return recv_reg
+            is_static := false
+            match fg.obj { case StringLit as _ => is_static = true case _ => {} }
+            if is_static {
+                return recv_reg
+            }
+            null_ph := cg.mod.alloc_string("<null>")
+            null_gep := cg.fresh()
+            cg.emit(null_gep + " = getelementptr inbounds [7 x i8], [7 x i8]* "
+                    + null_ph + ", i64 0, i64 0")
+            is_nn := cg.fresh()
+            cg.emit(is_nn + " = icmp ne i8* " + recv_reg + ", null")
+            safe_reg := cg.fresh()
+            cg.emit(safe_reg + " = select i1 " + is_nn + ", i8* " + recv_reg
+                    + ", i8* " + null_gep)
+            return safe_reg
         }
         // %struct.String*.str() — extract the buffer field.
         // Selfhost's interpolation lowering auto-calls `.str()`
@@ -3306,6 +3378,44 @@ define _gen_method_call(cg: FnCG, c: Call) -> String {
             cg.emit(sel + " = select i1 " + recv_reg + ", i8* " + t_gep +
                     ", i8* " + f_gep)
             return sel
+        }
+        // Struct-pointer receiver: user structs without a `.str()`
+        // method fall through the sig lookup and hit the bad-method
+        // fallback (`return null`). That null then reaches concat,
+        // where strlen(null) segfaults. Emit a placeholder like
+        // `<Vector2>` so interpolation like `"v = ${v}"` produces
+        // a printable string instead of crashing.
+        //
+        // Real struct __str methods (when the user defined one)
+        // are dispatched earlier via `_gen_method_call`'s
+        // struct-method path; only the "no __str method" case
+        // reaches here.
+        sname_str := _strip_struct_ptr(recv_ty)
+        if sname_str != recv_ty and cg.mod.structs.has(sname_str) {
+            ph_name := cg.mod.alloc_string("<" + sname_str + ">")
+            ph_gep := cg.fresh()
+            n_ph := sname_str.length() + 3
+            cg.emit(ph_gep + " = getelementptr inbounds ["
+                    + n_ph.str() + " x i8], ["
+                    + n_ph.str() + " x i8]* " + ph_name + ", i64 0, i64 0")
+            return ph_gep
+        }
+        // Selfhost's flat-shape internal collection pointers:
+        // `%QList*` / `%QListP*` / `%QMap*`. No stdlib method
+        // dispatch — emit a `<list>` / `<map>` placeholder.
+        if recv_ty == "%QList*" or recv_ty == "%QListP*" {
+            ph_lst := cg.mod.alloc_string("<list>")
+            ph_lst_gep := cg.fresh()
+            cg.emit(ph_lst_gep + " = getelementptr inbounds [7 x i8], [7 x i8]* "
+                    + ph_lst + ", i64 0, i64 0")
+            return ph_lst_gep
+        }
+        if recv_ty == "%QMap*" {
+            ph_map := cg.mod.alloc_string("<map>")
+            ph_map_gep := cg.fresh()
+            cg.emit(ph_map_gep + " = getelementptr inbounds [6 x i8], [6 x i8]* "
+                    + ph_map + ", i64 0, i64 0")
+            return ph_map_gep
         }
     }
     // i8* receiver with a method name that uniquely identifies

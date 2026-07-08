@@ -5,6 +5,45 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [5.0.0-alpha.37] — 2026-07-08 — String-inheriting struct plumbing (still 36/60)
+
+Three coordinated additions that make `struct Foo: String { ... }`
+patterns actually allocate + initialise their inherited buffer/
+length fields. Foundational — `super_tests.quirk` still crashes
+elsewhere post-init (deeper inheritance features), but the
+struct-inheriting-String setup is no longer memory-corrupting.
+
+### 1. String inheritance field layout
+
+When `sd.parent == "String"` in `emit_module`'s struct pre-pass,
+prepend `{ _buffer: i8*, _length: i32 }` to the child's field
+list — mirroring the auto-fill for `Exception`. Without this,
+`struct Tag: String` had zero registered fields → sizeof(Tag)=0
+→ malloc(0) → `String____init` writing 16 bytes off the end of
+the tiny allocation, corrupting adjacent heap.
+
+### 2. `super().__init(text)` on String parent
+
+New special-case in `_gen_method_call`: when receiver-struct-name
+is `"String"` and method is `"__init"` with 1 arg, emit a
+direct call to the runtime's `String____init(String*, i8*)`.
+Unwraps `%struct.String*` arg to its buffer field first.
+Matches the shape of the existing `Exception.__init` special-
+case.
+
+### 3. String struct method fallthrough
+
+`.upper()` / `.lower()` / `.substring()` / etc. on a
+`%struct.String*` receiver (from a bitcast or inheritance
+dispatch) now extract the buffer field to i8* and fall through
+to the existing i8* dispatch. Previously the sig lookup missed,
+falling to `return null` and downstream strlen segfaults.
+
+### Corpus / bootstrap status
+
+Selfhost corpus: 36/60 unchanged. Bootstrap byte-identical.
+E2E codegen suite: 190/190 green.
+
 ## [5.0.0-alpha.36] — 2026-07-08 — defensive stringification (33 → 36/60)
 
 Three targeted defenses against the "opaque i8* reaches

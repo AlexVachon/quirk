@@ -2776,6 +2776,34 @@ define _gen_method_call(cg: FnCG, c: Call) -> String {
             return "0"
         }
     }
+    // `super().__init(raw)` where the parent is the stdlib
+    // String: selfhost has no user-registered `String__init`,
+    // but the runtime exports `String____init(String*, i8*)`.
+    // Emit a direct call so struct-inheriting-String patterns
+    // like `struct Tag: String` (see super_tests.quirk) get
+    // their buffer initialised. Without this, Tag's buffer stays
+    // uninitialised and downstream `.upper()` on Tag reads a
+    // bogus buffer pointer.
+    if sname == "String" and fg.name == "__init" and c.args.length() == 1 {
+        cg.mod.ensure_decl("String____init",
+            "declare i32 @String____init(%struct.String*, i8*)")
+        arg_e_si: Expr := c.args.__get(0)
+        arg_v_si := _gen_expr(cg, arg_e_si)
+        arg_t_si := _expr_static_ty(cg, arg_e_si)
+        // Unwrap %struct.String* → buffer i8*.
+        if arg_t_si == "%struct.String*" {
+            gep_b_si := cg.fresh()
+            cg.emit(gep_b_si + " = getelementptr inbounds %struct.String, %struct.String* "
+                    + arg_v_si + ", i32 0, i32 0")
+            buf_si := cg.fresh()
+            cg.emit(buf_si + " = load i8*, i8** " + gep_b_si)
+            arg_v_si = buf_si
+        }
+        r_si := cg.fresh()
+        cg.emit(r_si + " = call i32 @String____init(%struct.String* " + recv_reg
+                + ", i8* " + arg_v_si + ")")
+        return r_si
+    }
     if cg.mod.structs.has(sname) {
         full := sname + "__" + fg.name
         // Inherited method lookup: if the child doesn't define
@@ -3037,6 +3065,30 @@ define _gen_method_call(cg: FnCG, c: Call) -> String {
         }
         if fg.name == "keys" {
             return _gen_map_keys(cg, recv_reg)
+        }
+    }
+    // %struct.String* receiver on a known string method: extract
+    // the buffer i8* and fall through to the i8* dispatch below.
+    // Without this, inheritance patterns like `super().upper()`
+    // on a struct that extends String (see super_tests.quirk's
+    // `struct Tag: String`) bitcast to %struct.String* but then
+    // no method dispatch matches, falling to the bad-method
+    // fallback (`return null`) and segfaulting downstream.
+    if recv_ty == "%struct.String*" {
+        is_str_method := fg.name == "substring" or fg.name == "startswith"
+                      or fg.name == "endswith" or fg.name == "to_int"
+                      or fg.name == "upper" or fg.name == "lower"
+                      or fg.name == "contains" or fg.name == "length"
+                      or fg.name == "trim" or fg.name == "split"
+                      or fg.name == "replace"
+        if is_str_method {
+            gep_buf_sm := cg.fresh()
+            cg.emit(gep_buf_sm + " = getelementptr inbounds %struct.String, %struct.String* "
+                    + recv_reg + ", i32 0, i32 0")
+            buf_sm := cg.fresh()
+            cg.emit(buf_sm + " = load i8*, i8** " + gep_buf_sm)
+            recv_reg = buf_sm
+            recv_ty = "i8*"
         }
     }
     // String methods. Each lowers to a libc helper call;
@@ -6413,6 +6465,15 @@ define emit_module(decls: List) -> String {
                         fnames.append("callee")        ftys.append("%struct.String*")
                         fnames.append("traceback")     ftys.append("%struct.String*")
                         fnames.append("cause_trace")   ftys.append("%struct.String*")
+                    } elif sd.parent == "String" {
+                        // Auto-fill String's `{ buffer, length }`
+                        // layout when the user's `struct Foo: String`
+                        // inherits it. Without this, Foo has zero
+                        // fields (parent unknown), sizeof(Foo)=0,
+                        // and String____init writes past the tiny
+                        // allocation into other heap objects.
+                        fnames.append("_buffer")       ftys.append("i8*")
+                        fnames.append("_length")       ftys.append("i32")
                     }
                 }
                 fi := 0

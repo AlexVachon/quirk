@@ -5,6 +5,47 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [5.0.0-alpha.38] — 2026-07-08 — null-guarded String* handling (36 → 37/60)
+
+Stdlib helpers (`sys.env`, `map.get`, etc.) return null when a
+lookup misses. Selfhost's codegen was blindly dereferencing
+`%struct.String*` to extract the buffer field, segfaulting on
+null. Two coordinated additions guard the two hot paths.
+
+### 1. Concat String* extraction: branch-based null-guard
+
+The `+`/interpolation concat path used to `getelementptr +
+load` on `%struct.String*` unconditionally. Now emits:
+
+    alloca i8* → store null
+    icmp ne String* %s, null
+    br → ok / end
+    ok: gep + load buffer → store in slot
+    end: load slot → use as operand
+
+Both operand slots (left + right) get the same treatment.
+Select-based guard doesn't suffice — LLVM's `select` evaluates
+both operands, so the load still runs on the null branch.
+
+### 2. String equality strcmp null-guard
+
+`strcmp(null, ...)` also segfaults. Before the strcmp call,
+uncertain-source operands (Call / FieldGet / Index — same
+signal used elsewhere) get a `select`-based swap: null →
+pointer to `""`. Safe because strcmp on `""` returns 0/-1/1
+just like a real empty string.
+
+Combined effect: `sys.env("MISSING") == "true"` (common CI
+pattern in corpus tests) now compares cleanly to false
+instead of crashing.
+
+Unblocked `http_client_test`.
+
+### Corpus / bootstrap status
+
+Selfhost corpus: 36 → 37 clean-exits. Bootstrap byte-identical.
+E2E codegen suite: 190/190 green.
+
 ## [5.0.0-alpha.37] — 2026-07-08 — String-inheriting struct plumbing (still 36/60)
 
 Three coordinated additions that make `struct Foo: String { ... }`

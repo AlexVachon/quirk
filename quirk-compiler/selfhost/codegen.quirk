@@ -6008,6 +6008,13 @@ define _gen_function(fdecl: FunctionDecl, mod: ModuleCG) -> String {
         if arg_idx > 0 { sig = sig + ", " }
         arg_reg := "%arg" + arg_idx.str()
         pty := _resolve_ty(mod, p.type_annot)
+        // Variadic param `...args`: no type annot → default i32
+        // is wrong; call site collects trailing args into a
+        // pointer-element list. Override to `%QListP*` so slot
+        // + body iteration reach the right LLVM shape.
+        if p.is_variadic and p.type_annot == "" {
+            pty = "%QListP*"
+        }
         sig = sig + pty + " " + arg_reg
         arg_idx = arg_idx + 1
         i = i + 1
@@ -6028,6 +6035,11 @@ define _gen_function(fdecl: FunctionDecl, mod: ModuleCG) -> String {
     while k < fdecl.params.length() {
         p: Param := fdecl.params.__get(k)
         pty := _resolve_ty(mod, p.type_annot)
+        // Mirror the variadic override from the signature loop
+        // above — slot must match the LLVM param type.
+        if p.is_variadic and p.type_annot == "" {
+            pty = "%QListP*"
+        }
         slot := _ensure_slot(cg, p.name, pty)
         cg.emit_entry("store " + pty + " %arg" + next_arg.str() + ", " + pty + "* " + slot.name)
         next_arg = next_arg + 1

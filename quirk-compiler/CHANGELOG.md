@@ -5,6 +5,50 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [5.0.0-alpha.35] — 2026-07-02 — variadic param slot typing (still 33/60)
+
+Foundational: variadic params (`...args` without a type annot)
+now allocate as `%QListP*` instead of defaulting to `i32`. Both
+loops in `_gen_function` (sig-builder + entry-block slot-store)
+override to the pointer-list type when `p.is_variadic` is set.
+
+Doesn't move corpus MATCH — `variadic.quirk` still LLC-fails,
+just at a later step (arity mismatch: call site passes N args
+positionally instead of packing trailing args into a single
+list). That call-site packing is a separate follow-up.
+
+### Session summary — where 60/60 stopped
+
+Ninth alpha this session (27-35). Corpus went 24 → 33 in that
+run; every remaining failing test now needs structural work
+that doesn't fit the "small atomic commit" pattern:
+
+- LLC-FAILs (5): union-variant Int semantics, named-arg
+  reordering, variadic call packing, contextual double
+  promotion, `console.log` sig mismatch — each a genuine
+  language feature.
+- LINK-FAILs (6): closure capture (decorators_test), package
+  imports (custom_package_test, fs_test), helper-file no-main
+  files (generics_interfaces, greet_lib, utils).
+- CRASHes (16): closure-dependent lambda body execution
+  (lambdas_test, test_test), inheritance / super() (super_tests,
+  strings), container-in-concat (lists, maps, math_extended_test,
+  uses), exception-message plumbing (exceptions_full_test),
+  Int? distinguishable-null (optional_test), and network
+  timeouts (http_client, argparse, etc.).
+
+Closing this last 27 realistically means: closures + shape
+tags + inheritance done as their own dedicated multi-day
+projects each, plus ~10 individual feature alphas. Two of the
+three big projects were attempted in-session and reverted for
+ABI-mismatch reasons — a fresh session with a design-first
+approach is the right vehicle for those.
+
+### Corpus / bootstrap status
+
+Selfhost corpus: 33/60 unchanged. Bootstrap byte-identical.
+E2E codegen suite: 190/190 green.
+
 ## [5.0.0-alpha.34] — 2026-07-02 — safe-call `?.` semantics + Callable struct type (still 33/60)
 
 Two independent additions, both foundational (no corpus MATCH

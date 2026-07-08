@@ -741,6 +741,47 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
             // permissive case as the empty-struct branch above.
             // Return null so callers don't deref a bogus GEP.
             if fg_found == false { return "null" }
+            // Null-guarded struct field access: some callers (like
+            // `regex.find(...)` on a no-match) return null Match*.
+            // Blind GEP+load on null segfaults. Emit branch:
+            //   if obj != null: gep+load, store in slot
+            //   else: leave slot at null/zero
+            //   then load slot as result
+            //
+            // Skip the guard when obj is an Ident (slot writes have
+            // already validated non-null via constructor/init) or
+            // when the field is scalar and the caller uses it in
+            // arithmetic (guard overhead wastes cycles). For now
+            // apply universally when obj is a Call — that's the
+            // common no-match / lookup-miss case.
+            // Always guard when the field type is a pointer —
+            // stdlib helpers like `regex.find()` return a null
+            // Match on no-match, and any subsequent `.text` /
+            // `.start` / `.end` access segfaults. Cheap runtime
+            // branch avoids the common no-match crash.
+            if _is_ptr_ty(field_ty) {
+                slot_fg := "%" + cg.fresh_label("fg.res")
+                cg.emit_entry(slot_fg + " = alloca " + field_ty)
+                cg.emit("store " + field_ty + " null, " + field_ty + "* " + slot_fg)
+                nn_fg := cg.fresh()
+                cg.emit(nn_fg + " = icmp ne %struct." + sname + "* " + obj_reg + ", null")
+                ok_fg := cg.fresh_label("fg.ok")
+                end_fg := cg.fresh_label("fg.end")
+                cg.emit("br i1 " + nn_fg + ", label %" + ok_fg + ", label %" + end_fg)
+                cg.emit_raw(ok_fg + ":")
+                gep2 := cg.fresh()
+                cg.emit(gep2 + " = getelementptr inbounds %struct." + sname +
+                        ", %struct." + sname + "* " + obj_reg +
+                        ", i32 0, i32 " + idx.str())
+                val_ok := cg.fresh()
+                cg.emit(val_ok + " = load " + field_ty + ", " + field_ty + "* " + gep2)
+                cg.emit("store " + field_ty + " " + val_ok + ", " + field_ty + "* " + slot_fg)
+                cg.emit("br label %" + end_fg)
+                cg.emit_raw(end_fg + ":")
+                final_fg := cg.fresh()
+                cg.emit(final_fg + " = load " + field_ty + ", " + field_ty + "* " + slot_fg)
+                return final_fg
+            }
             gep := cg.fresh()
             cg.emit(gep + " = getelementptr inbounds %struct." + sname +
                     ", %struct." + sname + "* " + obj_reg +
@@ -1604,8 +1645,22 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
                     arg_reg = cast_other
                 }
                 cg.mod.ensure_decl("puts", "declare i32 @puts(i8*)")
+                // Null-guard: puts(NULL) segfaults immediately.
+                // When an upstream expression (unknown method,
+                // FieldGet on null struct, opaque return) produces
+                // a runtime-null i8*, replace with a null-shaped
+                // literal so the print produces "null" instead of
+                // crashing. Cheap select — no branch needed.
+                null_ph_pr := cg.mod.alloc_string("null")
+                null_gep_pr := cg.fresh()
+                cg.emit(null_gep_pr + " = getelementptr inbounds [5 x i8], [5 x i8]* "
+                        + null_ph_pr + ", i64 0, i64 0")
+                is_nn_pr := cg.fresh()
+                cg.emit(is_nn_pr + " = icmp ne i8* " + arg_reg + ", null")
+                safe_pr := cg.fresh()
+                cg.emit(safe_pr + " = select i1 " + is_nn_pr + ", i8* " + arg_reg + ", i8* " + null_gep_pr)
                 reg := cg.fresh()
-                cg.emit(reg + " = call i32 @puts(i8* " + arg_reg + ")")
+                cg.emit(reg + " = call i32 @puts(i8* " + safe_pr + ")")
                 // print returns void Quirk-side; our Stmt path
                 // discards the value at ExprStmt, but to keep
                 // _gen_expr's contract uniform we still return
@@ -3478,16 +3533,29 @@ define _gen_method_call(cg: FnCG, c: Call) -> String {
             return safe_reg
         }
         // %struct.String*.str() — extract the buffer field.
-        // Selfhost's interpolation lowering auto-calls `.str()`
-        // on each segment, and the struct-String case used to
-        // fall through to the bad-method fallback returning
-        // null, which broke `"x: ${s}"` for String-typed `s`.
+        // Null-guarded via branch: chained accesses like
+        // `${find_result.text}` where find returned null yield
+        // a null String* here, and blindly deref'ing segfaults.
         if recv_ty == "%struct.String*" {
+            slot_ss := "%" + cg.fresh_label("sstr.res")
+            cg.emit_entry(slot_ss + " = alloca i8*")
+            cg.emit("store i8* null, i8** " + slot_ss)
+            nn_ss := cg.fresh()
+            cg.emit(nn_ss + " = icmp ne %struct.String* " + recv_reg + ", null")
+            ok_ss := cg.fresh_label("ss.ok")
+            end_ss := cg.fresh_label("ss.end")
+            cg.emit("br i1 " + nn_ss + ", label %" + ok_ss + ", label %" + end_ss)
+            cg.emit_raw(ok_ss + ":")
             gep_buf := cg.fresh()
             cg.emit(gep_buf + " = getelementptr inbounds %struct.String, %struct.String* " + recv_reg + ", i32 0, i32 0")
             buf := cg.fresh()
             cg.emit(buf + " = load i8*, i8** " + gep_buf)
-            return buf
+            cg.emit("store i8* " + buf + ", i8** " + slot_ss)
+            cg.emit("br label %" + end_ss)
+            cg.emit_raw(end_ss + ":")
+            final_ss := cg.fresh()
+            cg.emit(final_ss + " = load i8*, i8** " + slot_ss)
+            return final_ss
         }
         // Int.str(): snprintf("%d", x) into a 12-byte buffer
         // (max i32 in decimal is 11 chars + null).

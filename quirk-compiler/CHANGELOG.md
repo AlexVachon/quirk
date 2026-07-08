@@ -5,6 +5,51 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [5.0.0-alpha.40] — 2026-07-08 — three more null-guards (still 38/60)
+
+Three defensive null-guards added at the last remaining crash
+sites for the "unknown method / lookup miss returned null and
+we blindly deref'd" pattern. None of them individually turned
+a CRASH test into an OK — each was exposing a downstream
+issue — but composed they eliminate a whole family of
+segfaults and are foundation for the closure / shape-tag
+work that would unlock more of the CRASH tier.
+
+### 1. Struct field access guards null obj pointer
+
+`FieldGet` on a pointer-typed field previously emitted GEP+load
+unconditionally. Now emits `alloca + icmp + br + load + store`
+when the field's LLVM type is a pointer — matches the
+String-buffer-extraction pattern from alpha.38. Fixes the
+first level of crashes in patterns like
+`m := regex.find(...); m.text` when find returned null.
+
+### 2. `.str()` on `%struct.String*` gets the branch-guard treatment
+
+Extends alpha.38's concat path to `.str()` — chained accesses
+like `${find_result.text}` where the inner FieldGet succeeded
+(post #1) but yielded a null `String*` still segfaulted at
+the buffer extract. Now null-guarded via the same
+alloca/branch/load shape.
+
+### 3. `print`/`puts` gets a select-based null → "null" swap
+
+The final line of defense: any null i8* reaching `puts` gets
+swapped to a `"null"` literal. Cheap runtime select. Matches
+Python/Ruby "prints as 'null'" semantics for missing values
+instead of segfaulting.
+
+### Corpus / bootstrap status
+
+Selfhost corpus: 38/60 unchanged. Bootstrap byte-identical.
+E2E codegen suite: 190/190 green.
+
+The remaining crashes (super_tests, math_extended_test, etc.)
+are past the null-deref stage — they hit bogus non-null
+pointer derefs (String buffer field holding raw c-string bytes
+misread as a pointer, %struct.List/%QListP layout mismatches)
+that these guards can't catch without runtime shape tagging.
+
 ## [5.0.0-alpha.39] — 2026-07-08 — defensive List.append (37 → 38/60)
 
 Runtime `Core_Collections_List_List_append` now defends against

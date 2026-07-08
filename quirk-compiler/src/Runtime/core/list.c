@@ -80,8 +80,28 @@ void Core_Collections_List_List_ensure_capacity(List* self, int min_capacity) {
 }
 
 void Core_Collections_List_List_append(List* self, void* item) {
-    // Amortized O(1) growth
-    if (self->size == self->capacity) {
+    // Defensive: selfhost's codegen sometimes forwards a null
+    // (unknown-method returning null, uninitialised slot) to
+    // `.append()`. Dereferencing self here would segfault
+    // silently; a bare return matches the "no-op on missing
+    // container" semantics the corpus expects.
+    if (!self) return;
+    // Amortized O(1) growth. If capacity is 0 (uninitialised
+    // struct from selfhost — no runtime __init call ran),
+    // `capacity * GROWTH_FACTOR` is also 0, realloc(NULL, 0)
+    // is implementation-defined, and the resulting NULL data
+    // pointer segfaults on the next index. Seed with a small
+    // default (8) so the grow-then-write pattern always ends
+    // with a valid allocation.
+    // Zero-cap OR unreasonable-cap (uninitialised selfhost
+    // struct): start fresh rather than realloc'ing an
+    // unknown-provenance pointer. GC_realloc on a bogus
+    // pointer segfaults immediately.
+    if (self->capacity <= 0 || self->capacity > (1 << 24)) {
+        self->capacity = 8;
+        self->data = (void**)malloc(sizeof(void*) * 8);
+        if (self->size < 0 || self->size > (1 << 24)) self->size = 0;
+    } else if (self->size == self->capacity) {
         List__resize(self, self->capacity * GROWTH_FACTOR);
     }
     self->data[self->size++] = item;

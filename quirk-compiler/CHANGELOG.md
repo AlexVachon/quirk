@@ -5,6 +5,29 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [5.0.0-alpha.39] — 2026-07-08 — defensive List.append (37 → 38/60)
+
+Runtime `Core_Collections_List_List_append` now defends against
+two ways selfhost's codegen can hand it a malformed List:
+
+1. **`self == NULL`** — from an unknown-method fallback or an
+   uninitialised slot. Bare return instead of dereferencing.
+2. **`capacity <= 0` or absurdly large** — selfhost sometimes
+   constructs a List via bitcast/coercion without running the
+   runtime's `List___init`, leaving `capacity` at 0 (from
+   zero-init) or garbage (from uninitialised memory). Fresh
+   `malloc(8)` instead of `GC_realloc(bogus_ptr, 0)` which
+   segfaults on the unknown-provenance data pointer.
+
+Unblocked `argparse_test` — its Parser__positional path
+appends to a List whose selfhost-side layout was zero-init'd
+by a struct ctor that didn't route through `List___init`.
+
+### Corpus / bootstrap status
+
+Selfhost corpus: 37 → 38 clean-exits. Bootstrap byte-identical.
+E2E codegen suite: 190/190 green.
+
 ## [5.0.0-alpha.38] — 2026-07-08 — null-guarded String* handling (36 → 37/60)
 
 Stdlib helpers (`sys.env`, `map.get`, etc.) return null when a

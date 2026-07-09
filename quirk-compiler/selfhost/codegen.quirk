@@ -1645,20 +1645,54 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
                     arg_reg = cast_other
                 }
                 cg.mod.ensure_decl("puts", "declare i32 @puts(i8*)")
-                // Null-guard: puts(NULL) segfaults immediately.
-                // When an upstream expression (unknown method,
-                // FieldGet on null struct, opaque return) produces
-                // a runtime-null i8*, replace with a null-shaped
-                // literal so the print produces "null" instead of
-                // crashing. Cheap select — no branch needed.
+                // Two-part inline guard around puts arg:
+                //   1. null → "null" placeholder
+                //   2. tagged-int (uval < 0x400000, well below
+                //      static rodata) → snprintf-formatted decimal
+                //
+                // Inline via select rather than a runtime helper so
+                // the emitted IR runs cleanly under lli-14 (no
+                // external symbol resolution) and standalone-linked
+                // binaries.
                 null_ph_pr := cg.mod.alloc_string("null")
                 null_gep_pr := cg.fresh()
                 cg.emit(null_gep_pr + " = getelementptr inbounds [5 x i8], [5 x i8]* "
                         + null_ph_pr + ", i64 0, i64 0")
-                is_nn_pr := cg.fresh()
-                cg.emit(is_nn_pr + " = icmp ne i8* " + arg_reg + ", null")
+                // Cast to i64 for the tagged-int threshold check.
+                p2i_pr := cg.fresh()
+                cg.emit(p2i_pr + " = ptrtoint i8* " + arg_reg + " to i64")
+                // Tagged-int decode path: allocate a 32-byte buffer,
+                // snprintf("%d", uval) into it. Emitted unconditionally
+                // in the IR (the buffer + snprintf run regardless);
+                // the final `select` picks whether puts sees this or
+                // the original arg. Cheap tradeoff — snprintf on a
+                // stack-alloc'd 32B buffer is a handful of cycles.
+                cg.mod.ensure_decl("malloc", "declare i8* @malloc(i64)")
+                cg.mod.ensure_decl("snprintf", "declare i32 @snprintf(i8*, i64, i8*, ...)")
+                fmt_pr := cg.mod.alloc_string("%d")
+                fmt_gep_pr := cg.fresh()
+                cg.emit(fmt_gep_pr + " = getelementptr inbounds [3 x i8], [3 x i8]* "
+                        + fmt_pr + ", i64 0, i64 0")
+                dec_buf := cg.fresh()
+                cg.emit(dec_buf + " = call i8* @malloc(i64 32)")
+                trunc_pr := cg.fresh()
+                cg.emit(trunc_pr + " = trunc i64 " + p2i_pr + " to i32")
+                sn_pr := cg.fresh()
+                cg.emit(sn_pr + " = call i32 (i8*, i64, i8*, ...) @snprintf(i8* "
+                        + dec_buf + ", i64 32, i8* " + fmt_gep_pr + ", i32 " + trunc_pr + ")")
+                // Selects:
+                //   is_tagged = uval < 0x400000
+                //   is_null   = arg == null
+                //   after_tag = is_tagged ? dec_buf : arg
+                //   final     = is_null ? "null" : after_tag
+                is_tag_pr := cg.fresh()
+                cg.emit(is_tag_pr + " = icmp ult i64 " + p2i_pr + ", 4194304")
+                after_tag_pr := cg.fresh()
+                cg.emit(after_tag_pr + " = select i1 " + is_tag_pr + ", i8* " + dec_buf + ", i8* " + arg_reg)
+                is_null_pr := cg.fresh()
+                cg.emit(is_null_pr + " = icmp eq i8* " + arg_reg + ", null")
                 safe_pr := cg.fresh()
-                cg.emit(safe_pr + " = select i1 " + is_nn_pr + ", i8* " + arg_reg + ", i8* " + null_gep_pr)
+                cg.emit(safe_pr + " = select i1 " + is_null_pr + ", i8* " + null_gep_pr + ", i8* " + after_tag_pr)
                 reg := cg.fresh()
                 cg.emit(reg + " = call i32 @puts(i8* " + safe_pr + ")")
                 // print returns void Quirk-side; our Stmt path

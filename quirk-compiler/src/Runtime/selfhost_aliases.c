@@ -856,3 +856,32 @@ char* quirk_opaque_to_cstr(void* val) {
     String* s = quirk_opaque_to_string(val);
     return s ? s->buffer : (char*)"null";
 }
+
+// Safe stringifier for `puts` arguments — narrower scope than
+// quirk_opaque_to_cstr, but with a strict tagged-int guard.
+//
+// Some Quirk expressions (`x: Int? = null ?? 0`, list-of-Int
+// indexing, `__coalesce` returns) produce i8* values that are
+// actually tagged integers rather than c-string pointers. Calling
+// `puts(0x2A)` (the tagged-int representation of 42) segfaults
+// because the runtime tries to read from address 42.
+//
+// Under `-no-pie` binaries the .rodata section starts around
+// 0x40_0000 (~4MB), so any i8* below that threshold is
+// unambiguously a tagged int. Format it as a decimal string.
+// Above the threshold, assume it's a real c-string pointer
+// (static or heap). Null → "null" for consistency with
+// existing print-of-null semantics.
+char* quirk_safe_puts_arg(void* val) {
+    if (!val) return (char*)"null";
+    uintptr_t u = (uintptr_t)val;
+    if (u < 0x400000UL) {
+        // Tagged integer — format as decimal into a fresh
+        // GC-managed buffer so the returned pointer stays alive
+        // until GC reclaims it.
+        char* buf = (char*)GC_malloc(32);
+        snprintf(buf, 32, "%d", (int)u);
+        return buf;
+    }
+    return (char*)val;
+}

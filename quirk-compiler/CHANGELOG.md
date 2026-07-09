@@ -5,6 +5,43 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [5.0.0-alpha.41] — 2026-07-09 — inline puts tagged-int guard (38 → 40/60)
+
+Extends alpha.40's puts null-guard with a tagged-int check.
+Tests hitting `puts(0x2A)` — a tagged integer 42 posing as an
+i8* pointer, from `x: Int? := null; print(x ?? 42)` or lambda
+bodies that return an Int through Any-typed slots — now snprintf
+the value as decimal instead of segfaulting.
+
+### 1. Inline guard shape
+
+Two-part select chain wrapping the puts arg:
+
+    is_tag = ptrtoint arg < 0x400000    ; below .rodata start
+    dec_buf = snprintf("%d", arg)       ; unconditional (few cycles)
+    after_tag = select is_tag, dec_buf, arg
+    is_null = arg == null
+    safe = select is_null, "null", after_tag
+    puts(safe)
+
+All inline IR — no external symbol needed. That keeps the
+emitted programs runnable under `lli-14` (which doesn't load
+runtime.so by default) and under standalone-linked ELFs alike.
+
+### 2. Selfhost binary links runtime.so
+
+Makefile: `$(SELFHOST_BIN)` and `$(SELFHOST_FP_BIN)` rules now
+link against `$(RUNTIME_LIB)` (+ `-lm -ldl`). Selfhost's own IR
+already references runtime helpers (`quirk_opaque_to_cstr` since
+alpha.36) that were previously satisfied only at test-time
+linking. Fixed-point self-stage still byte-identical.
+
+### 3. Corpus / bootstrap status
+
+Selfhost corpus: 38 → 40 clean-exits (+`lambdas_test`,
++`optional_test`). Bootstrap byte-identical. E2E codegen suite:
+190/190 green.
+
 ## [5.0.0-alpha.40] — 2026-07-08 — three more null-guards (still 38/60)
 
 Three defensive null-guards added at the last remaining crash

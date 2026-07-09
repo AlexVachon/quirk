@@ -153,9 +153,9 @@ $(SELFHOST_LL): $(TARGET) selfhost/quirk_main.quirk selfhost/build.quirk \
 $(SELFHOST_S): $(SELFHOST_LL)
 	llc-14 $< -o $@
 
-$(SELFHOST_BIN): $(SELFHOST_S)
+$(SELFHOST_BIN): $(SELFHOST_S) $(RUNTIME_LIB)
 	@mkdir -p $(BIN_DIR)
-	clang-14 -no-pie $< -o $@
+	clang-14 -no-pie $< $(RUNTIME_LIB) -lm -ldl -o $@
 
 selfhost-binary: $(SELFHOST_BIN)
 	@echo ""
@@ -196,10 +196,10 @@ $(SELFHOST_FP_IR1): $(SELFHOST_BIN)
 	@mkdir -p build
 	./$(SELFHOST_BIN) selfhost/quirk_main.quirk $@
 
-$(SELFHOST_FP_BIN): $(SELFHOST_FP_IR1)
+$(SELFHOST_FP_BIN): $(SELFHOST_FP_IR1) $(RUNTIME_LIB)
 	@mkdir -p build
 	llc-14 $< -o build/quirk_selfhost_fp1.s
-	clang-14 -no-pie build/quirk_selfhost_fp1.s -o $@
+	clang-14 -no-pie build/quirk_selfhost_fp1.s $(RUNTIME_LIB) -lm -ldl -o $@
 
 $(SELFHOST_FP_IR2): $(SELFHOST_FP_BIN)
 	./$(SELFHOST_FP_BIN) selfhost/quirk_main.quirk $@

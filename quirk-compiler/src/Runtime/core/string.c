@@ -670,6 +670,11 @@ static int is_url_safe(char c) {
 String* Core_String_String_encode(String* self) {
     if (!self || !self->buffer)
         return make_String("");
+    // Sanity: length may be garbage from an uninitialised struct.
+    // Fall back to computing from the buffer's actual NUL terminator.
+    if (self->length < 0 || self->length > (1 << 24)) {
+        self->length = (int)strlen(self->buffer);
+    }
     char* temp = (char*)malloc((self->length * 3) + 1);
     char hex[] = "0123456789ABCDEF";
     int pos = 0;
@@ -714,6 +719,12 @@ int Core_String_String_endswith(String* self, String* suffix) {
 int Core_String_String_find(String* self, String* sub) {
     if (!self || !self->buffer || !sub || !sub->buffer)
         return -1;
+    // Sanity: length fields on either String may be garbage
+    // from an uninitialised struct. Bail if they don't look
+    // like plausible c-string lengths — otherwise strstr may
+    // read past a truncated buffer into unmapped memory.
+    if (self->length < 0 || self->length > (1 << 24)) return -1;
+    if (sub->length < 0 || sub->length > (1 << 24)) return -1;
     char* ptr = strstr(self->buffer, sub->buffer);
     return (ptr == NULL) ? -1 : (int)(ptr - self->buffer);
 }

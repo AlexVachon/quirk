@@ -237,6 +237,13 @@ static void Json__serialize_map(Map* map, char** buf, int* cap, int* len, int in
 
 static void Json__serialize_list(List* list, char** buf, int* cap, int* len, int indent, int depth) {
     Json__buf_append_char(buf, cap, len, '[');
+    // Defensive: selfhost's codegen can hand us a partially-init
+    // List where `size` is garbage or `data` is null. Bail
+    // cleanly rather than iterating past the end of memory.
+    if (!list || list->size < 0 || list->size > (1 << 24) || !list->data) {
+        Json__buf_append_char(buf, cap, len, ']');
+        return;
+    }
     for (int i = 0; i < list->size; i++) {
         if (i > 0) Json__buf_append_char(buf, cap, len, ',');
         Json__buf_newline_indent(buf, cap, len, indent, depth + 1);
@@ -256,6 +263,17 @@ static void Json__serialize_list(List* list, char** buf, int* cap, int* len, int
 //                         stores string/number values as char* directly)
 static void Json__serialize_any(void* val, AnyTag hint, char** buf, int* cap, int* len, int indent, int depth) {
     if (!val) { Json__buf_append(buf, cap, len, "null"); return; }
+    // Tagged-int guard: selfhost may hand us `inttoptr i32 X to i8*`
+    // values (List<Int> element retrievals via Any). Reading
+    // *(int32_t*)val on a low-address non-pointer segfaults.
+    // Below .rodata start (~4MB), assume tagged int; format as
+    // decimal.
+    if ((uintptr_t)val < 0x400000UL) {
+        char numbuf[32];
+        snprintf(numbuf, 32, "%d", (int)(uintptr_t)val);
+        Json__buf_append(buf, cap, len, numbuf);
+        return;
+    }
 
     // If we have an explicit Any* (hint == ANY_INT etc.), dispatch directly.
     if (hint != ANY_PTR) {

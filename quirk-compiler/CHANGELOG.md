@@ -5,6 +5,44 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [5.0.0-alpha.43] — 2026-07-09 — runtime lib defensive guards (still 40/60)
+
+Four runtime library null/sanity guards added to soften the
+"uninitialised runtime struct" crash class. None flip a test
+individually because the underlying tests hit deeper issues
+downstream, but these are foundation for future work.
+
+### 1. `Json__serialize_list`: null / size sanity / null data
+
+The stdlib's List struct can arrive with unreasonable
+`size` (garbage from an uninitialised int) or `data == NULL`.
+Bail cleanly with an empty `[]` output instead of iterating
+past the end of memory.
+
+### 2. `Json__serialize_any`: tagged-int check at entry
+
+Reading `*(int32_t*)val` on a tagged-int pointer (like
+`inttoptr i32 42 to i8*`) segfaults. Check the pointer value
+against the 4MB threshold first; if below, format as decimal.
+
+### 3. `Core_String_String_find`: length sanity on both operands
+
+`self->length` and `sub->length` may be garbage from
+uninitialised structs. Bail on out-of-range values so `strstr`
+doesn't scan past mapped memory.
+
+### 4. `Core_String_String_encode`: length fallback to strlen
+
+If `self->length` is negative or unreasonable, recompute from
+`strlen(buffer)`. Doesn't help when `buffer` itself is a bogus
+pointer (still crashes in strlen) — that's a downstream issue
+needing runtime shape tagging.
+
+### Corpus / bootstrap status
+
+Selfhost corpus: 40/60 unchanged. Bootstrap byte-identical.
+E2E codegen suite: 190/190 green.
+
 ## [5.0.0-alpha.42] — 2026-07-09 — universal FieldGet + List___get null-guards (still 40/60)
 
 Two more defensive scaffolds, both foundational — no new corpus

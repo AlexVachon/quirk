@@ -144,6 +144,13 @@ ListIterator* Core_Collections_List_List___iter(List* self) {
 extern void quirk_throw_exception(const char* type_name, const char* message);
 
 void* Core_Collections_List_List___get(List* self, int index) {
+    // Defensive: selfhost's codegen can hand us a null or
+    // uninitialised List (unknown-method fallback, coerced
+    // slot never routed through List___init). Return null
+    // instead of dereferencing garbage fields.
+    if (!self) return NULL;
+    if (self->size < 0 || self->size > (1 << 24)) return NULL;
+    if (!self->data) return NULL;
     if (index < 0) index += self->size;
     if (index < 0 || index >= self->size) {
         char buf[128];

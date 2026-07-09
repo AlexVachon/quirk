@@ -5,6 +5,47 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [5.0.0-alpha.42] — 2026-07-09 — universal FieldGet + List___get null-guards (still 40/60)
+
+Two more defensive scaffolds, both foundational — no new corpus
+MATCH yet but each addresses a specific crash class exposed by
+the previous alphas' null-guard work.
+
+### 1. FieldGet null-guard now universal (all field types)
+
+alpha.40 only guarded pointer-typed struct fields. But
+`self->size` (i32) or `self->angle` (double) also segfaults
+when `self` is null — the load offset from a null base
+address dereferences null memory at whatever offset the field
+sits at. Now every FieldGet through a struct pointer gets the
+alloca/branch/load treatment, with a fallback value chosen by
+type: `null` for pointers, `0` for i32/i1, `0.0` for double.
+
+Unblocks `regex_test` from its instant-crash at the first
+`.text` / `.start` access on a no-match Match — now runs
+through most of the test (see #2 for why it doesn't hit OK
+yet).
+
+### 2. `Core_Collections_List_List___get` defensive guards
+
+Runtime helper for `list[i]` now returns null instead of
+segfaulting when:
+- `self` is NULL (unknown-method fallback / uninitialised slot)
+- `self->size` is negative or absurdly large (uninitialised
+  memory read as an int)
+- `self->data` is NULL (partial init)
+
+`regex_test` still doesn't reach OK because it now enters an
+infinite loop elsewhere (16M lines of output before OOM kill)
+— a downstream logic issue in one of the regex stdlib helpers
+that would need targeted investigation. Ships the guard
+anyway as foundational.
+
+### 3. Corpus / bootstrap status
+
+Selfhost corpus: 40/60 unchanged. Bootstrap byte-identical.
+E2E codegen suite: 190/190 green.
+
 ## [5.0.0-alpha.41] — 2026-07-09 — inline puts tagged-int guard (38 → 40/60)
 
 Extends alpha.40's puts null-guard with a tagged-int check.

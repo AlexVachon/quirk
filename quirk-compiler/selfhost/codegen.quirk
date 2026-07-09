@@ -754,41 +754,41 @@ define _gen_expr(cg: FnCG, e: Expr) -> String {
             // arithmetic (guard overhead wastes cycles). For now
             // apply universally when obj is a Call — that's the
             // common no-match / lookup-miss case.
-            // Always guard when the field type is a pointer —
-            // stdlib helpers like `regex.find()` return a null
-            // Match on no-match, and any subsequent `.text` /
-            // `.start` / `.end` access segfaults. Cheap runtime
-            // branch avoids the common no-match crash.
-            if _is_ptr_ty(field_ty) {
-                slot_fg := "%" + cg.fresh_label("fg.res")
-                cg.emit_entry(slot_fg + " = alloca " + field_ty)
-                cg.emit("store " + field_ty + " null, " + field_ty + "* " + slot_fg)
-                nn_fg := cg.fresh()
-                cg.emit(nn_fg + " = icmp ne %struct." + sname + "* " + obj_reg + ", null")
-                ok_fg := cg.fresh_label("fg.ok")
-                end_fg := cg.fresh_label("fg.end")
-                cg.emit("br i1 " + nn_fg + ", label %" + ok_fg + ", label %" + end_fg)
-                cg.emit_raw(ok_fg + ":")
-                gep2 := cg.fresh()
-                cg.emit(gep2 + " = getelementptr inbounds %struct." + sname +
-                        ", %struct." + sname + "* " + obj_reg +
-                        ", i32 0, i32 " + idx.str())
-                val_ok := cg.fresh()
-                cg.emit(val_ok + " = load " + field_ty + ", " + field_ty + "* " + gep2)
-                cg.emit("store " + field_ty + " " + val_ok + ", " + field_ty + "* " + slot_fg)
-                cg.emit("br label %" + end_fg)
-                cg.emit_raw(end_fg + ":")
-                final_fg := cg.fresh()
-                cg.emit(final_fg + " = load " + field_ty + ", " + field_ty + "* " + slot_fg)
-                return final_fg
+            // Always guard: stdlib helpers like `regex.find()`
+            // return a null Match on no-match, and any
+            // subsequent `.text` / `.start` / `.end` access
+            // segfaults. Also guard i32/i1/double fields — the
+            // load through a null struct pointer segfaults at
+            // offset 0 too, not just at pointer offsets.
+            // Fallback value: null for pointer types, 0 for
+            // scalars. Cheap alloca+branch+load — avoids the
+            // common no-match crash.
+            fallback_val := "null"
+            if _is_ptr_ty(field_ty) == false {
+                fallback_val = "0"
+                if field_ty == "double" { fallback_val = "0.0" }
             }
-            gep := cg.fresh()
-            cg.emit(gep + " = getelementptr inbounds %struct." + sname +
+            slot_fg := "%" + cg.fresh_label("fg.res")
+            cg.emit_entry(slot_fg + " = alloca " + field_ty)
+            cg.emit("store " + field_ty + " " + fallback_val + ", " + field_ty + "* " + slot_fg)
+            nn_fg := cg.fresh()
+            cg.emit(nn_fg + " = icmp ne %struct." + sname + "* " + obj_reg + ", null")
+            ok_fg := cg.fresh_label("fg.ok")
+            end_fg := cg.fresh_label("fg.end")
+            cg.emit("br i1 " + nn_fg + ", label %" + ok_fg + ", label %" + end_fg)
+            cg.emit_raw(ok_fg + ":")
+            gep2 := cg.fresh()
+            cg.emit(gep2 + " = getelementptr inbounds %struct." + sname +
                     ", %struct." + sname + "* " + obj_reg +
                     ", i32 0, i32 " + idx.str())
-            reg := cg.fresh()
-            cg.emit(reg + " = load " + field_ty + ", " + field_ty + "* " + gep)
-            return reg
+            val_ok := cg.fresh()
+            cg.emit(val_ok + " = load " + field_ty + ", " + field_ty + "* " + gep2)
+            cg.emit("store " + field_ty + " " + val_ok + ", " + field_ty + "* " + slot_fg)
+            cg.emit("br label %" + end_fg)
+            cg.emit_raw(end_fg + ":")
+            final_fg := cg.fresh()
+            cg.emit(final_fg + " = load " + field_ty + ", " + field_ty + "* " + slot_fg)
+            return final_fg
         }
         case UnaryOp as u => {
             opd_ty := _expr_static_ty(cg, u.operand)

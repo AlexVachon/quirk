@@ -1,13 +1,15 @@
 # Quirk (.quirk) Language Reference
 
-**Compiler:** 3.0.0  
+**Compiler:** 5.0.0-alpha.43  
 **Language spec:** rev 3  
 **Extension:** `.quirk`  
 **Runtime:** LLVM JIT + native binary output
 
 Quirk is a compiled, statically-typed language with Python-like syntax, struct-based OOP, first-class functions, sum types (tagged unions + generics, since v3.0.0), and a rich standard library. It compiles to native code via LLVM and uses the Boehm GC for memory management.
 
-> **New in v3.0.0:** tagged unions (`type Result = Ok(...) | Err(...)`), generic types (`type Option[T] = Some(value: T) | None()`), exhaustive pattern matching with payload narrowing, per-variant methods, and a canonical `Option[T]` / `Result[T, E]` in the standard library. See [chapter 22](#22-tagged-unions--sum-types), [chapter 23](#23-generic-types), [chapter 24](#24-canonical-option--result), or the full [RELEASE_NOTES_v3.0.0.md](quirk-compiler/RELEASE_NOTES_v3.0.0.md).
+> **v5.0.0-alpha (in progress):** a self-hosted Quirk-in-Quirk compiler ships alongside the C++ one. `bin/quirk-selfhost` compiles a working subset of Quirk (40/60 corpus tests) and reaches a byte-identical bootstrap fixed point under itself. The C++ compiler at `bin/quirk-cpp` remains the production toolchain — see [`quirk-compiler/README.md`](quirk-compiler/README.md#self-host-status) for the coverage story.
+>
+> **v3.0.0 highlights:** tagged unions (`type Result = Ok(...) | Err(...)`), generic types (`type Option[T] = Some(value: T) | None()`), exhaustive pattern matching with payload narrowing, per-variant methods, and a canonical `Option[T]` / `Result[T, E]` in the standard library. See [chapter 22](#22-tagged-unions--sum-types), [chapter 23](#23-generic-types), [chapter 24](#24-canonical-option--result), or the full [RELEASE_NOTES_v3.0.0.md](quirk-compiler/RELEASE_NOTES_v3.0.0.md).
 
 ---
 

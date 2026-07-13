@@ -5,6 +5,51 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## Session close — alpha.27 through alpha.43
+
+Self-hosted compiler push. Corpus MATCH count went from **24/60**
+at alpha.27 to **40/60** at alpha.43 across 17 shipped alphas.
+Every alpha maintained:
+
+- Byte-identical selfhost fixed point (`make selfhost-fixedpoint`)
+- 190/190 e2e codegen suite green (`selfhost/codegen_e2e.sh`)
+- No corpus regressions from one alpha to the next (aborted
+  bigger refactors were reverted before ship)
+
+**What landed:**
+
+- alpha.27 — scalar→Any arg boxing at call sites (+5 tests)
+- alpha.28 — LLC-FAIL coercion + dedup sweep (+2)
+- alpha.29 — backed-enum lookup lowering (+1)
+- alpha.30 — backed-enum `.value()` reverse lookup (0 MATCH; internal)
+- alpha.31 — script-mode `main()` synthesis (+1)
+- alpha.32 — multi-arg print sema relaxation (0; foundational)
+- alpha.33 — closure-capture AST scaffolding (0; foundational)
+- alpha.34 — safe-call `?.` + `%struct.Callable` type (0; foundational)
+- alpha.35 — variadic param slot typing (0; foundational)
+- alpha.36 — defensive stringification (+3: `uses`, `lists`, `maps`)
+- alpha.37 — String-inheriting struct plumbing (0; foundational)
+- alpha.38 — null-guarded String* handling (+1: `http_client_test`)
+- alpha.39 — defensive List.append (+1: `argparse_test`)
+- alpha.40 — three more null-guards (0; foundational)
+- alpha.41 — inline puts tagged-int guard (+2: `lambdas_test`, `optional_test`)
+- alpha.42 — universal FieldGet + List___get null-guards (0; foundational)
+- alpha.43 — runtime lib defensive guards (0; foundational)
+
+**Why the push is on hold at 40/60:**
+
+The remaining 20 tests each exercise features that need
+multi-day dedicated projects to land safely — attempts to fit
+them into single-alpha commits kept regressing bootstrap or
+introducing ABI mismatches that had to be reverted. The
+outstanding items are documented in
+[README.md](./README.md#self-host-status).
+
+The self-host is now positioned as **a working proof of the
+language** (byte-identical fixed point + 40/60 corpus) rather
+than **a race to feature parity**. New language work continues
+in the C++ compiler; the self-host adopts features lazily.
+
 ## [5.0.0-alpha.43] — 2026-07-09 — runtime lib defensive guards (still 40/60)
 
 Four runtime library null/sanity guards added to soften the

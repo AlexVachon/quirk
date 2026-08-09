@@ -3130,23 +3130,28 @@ static std::string fmt_source(const std::string& src) {
     return out;
 }
 
-// `quirk fmt [--check|--stdout] <file>...`
+// `quirk fmt [--check|--stdout|--diff] <file>...`
 //   no flag   → format each file in place (no-op if already formatted)
 //   --check   → exit 1 if any file would change (prints names); useful in CI
 //   --stdout  → print formatted output to stdout, don't write back
+//   --diff    → print a unified diff of what --check would change (CI-friendly
+//               review workflow — see exactly which lines a --check flagged)
 static int cmd_fmt(const std::vector<std::string>& args) {
     bool checkOnly = false;
     bool toStdout  = false;
+    bool showDiff  = false;
     std::vector<std::string> files;
     for (auto& a : args) {
         if (a == "--check")       checkOnly = true;
         else if (a == "--stdout") toStdout  = true;
+        else if (a == "--diff") { checkOnly = true; showDiff = true; }
         else if (a == "--help" || a == "-h") {
             std::cout <<
-                "quirk fmt [--check|--stdout] <file>...\n"
+                "quirk fmt [--check|--stdout|--diff] <file>...\n"
                 "    Reformat Quirk source files to a canonical style.\n"
                 "    --check    exit 1 if any file would change, list them\n"
                 "    --stdout   print formatted output, don't modify files\n"
+                "    --diff     print unified diff of pending changes (implies --check)\n"
                 "    With no files, formats every .quirk under the current directory.\n";
             return 0;
         }
@@ -3212,7 +3217,34 @@ static int cmd_fmt(const std::vector<std::string>& args) {
         if (out == orig) continue;
 
         if (checkOnly) {
-            std::cout << "would format: " << f << "\n";
+            if (showDiff) {
+                // Line-by-line unified diff. Simple LCS-free
+                // implementation: walk both files in parallel,
+                // print differing lines with `-` / `+` prefixes.
+                // Not a full unified-diff algorithm but enough
+                // for review-in-CI use. Users who need proper
+                // diffs can `--stdout | diff -u <orig>`.
+                std::cout << "--- " << f << " (current)\n";
+                std::cout << "+++ " << f << " (formatted)\n";
+                std::istringstream aiss(orig), biss(out);
+                std::vector<std::string> aLines, bLines;
+                for (std::string ln; std::getline(aiss, ln); ) aLines.push_back(ln);
+                for (std::string ln; std::getline(biss, ln); ) bLines.push_back(ln);
+                size_t n = std::max(aLines.size(), bLines.size());
+                for (size_t i = 0; i < n; i++) {
+                    const std::string& al = i < aLines.size() ? aLines[i] : "";
+                    const std::string& bl = i < bLines.size() ? bLines[i] : "";
+                    if (al != bl) {
+                        if (i < aLines.size())
+                            std::cout << log::RED() << "-" << al << log::RESET() << "\n";
+                        if (i < bLines.size())
+                            std::cout << log::GREEN() << "+" << bl << log::RESET() << "\n";
+                    }
+                }
+                std::cout << "\n";
+            } else {
+                std::cout << "would format: " << f << "\n";
+            }
             wouldChange++;
             continue;
         }
@@ -3710,23 +3742,34 @@ static int cmd_test(const std::vector<std::string>& args) {
 
         // Erase the in-progress line so the final status glyph stands alone.
         if (tty) std::cout << "\r\x1b[2K";
+        // Compose the per-file case tally consistently across both
+        // outcomes — always show "N passed, M failed" when either
+        // count is positive. Previously the green branch printed
+        // only "(N passed)", hiding the fact that some meta-tests
+        // (test_test.quirk) exit-0 while reporting internal
+        // failures — leaving the summary line and the per-file
+        // line contradicting each other.
+        std::string tally;
+        if (res.sawSummary && (res.passed > 0 || res.failed > 0)) {
+            tally = "(" + std::to_string(res.passed) + " passed";
+            if (res.failed > 0)
+                tally += ", " + std::to_string(res.failed) + " failed";
+            tally += ")";
+        }
         if (fileGreen) {
             filesOk++;
             std::cout << "  " << log::GREEN() << "✓" << log::RESET() << " "
                       << f.string();
-            if (res.sawSummary)
-                std::cout << "  " << log::dim("(" + std::to_string(res.passed) + " passed)");
+            if (!tally.empty())
+                std::cout << "  " << log::dim(tally);
             std::cout << "\n";
         } else {
             filesFail++;
             failures.push_back(res);
             std::cout << "  " << log::RED() << "✗" << log::RESET() << " "
                       << f.string();
-            if (res.sawSummary)
-                std::cout << "  " << log::dim("(" + std::to_string(res.failed)
-                                              + " failed, "
-                                              + std::to_string(res.passed)
-                                              + " passed)");
+            if (!tally.empty())
+                std::cout << "  " << log::dim(tally);
             else if (res.exitCode == 124)
                 std::cout << "  " << log::dim("(timeout)");
             else
@@ -3753,13 +3796,29 @@ static int cmd_test(const std::vector<std::string>& args) {
         }
     }
 
-    std::cout << log::bold("Summary: ")
+    // Two-tier summary: file-level results first (did each file
+    // finish cleanly), then case-level (individual assertions
+    // across all files). Adds "files:" / "cases:" prefixes so
+    // the two rows can't be confused for each other — the old
+    // layout ran the counts together on one line, making
+    // "0 failed · 1 failed" read like a contradiction.
+    int totalCases = totalPassed + totalFailed;
+    int totalFiles = filesOk + filesFail;
+    std::cout << log::bold("Summary:") << "\n"
+              << "  files: "
               << log::GREEN() << filesOk << " ok" << log::RESET()
               << ", "
               << (filesFail > 0 ? log::RED() : log::DIM())
               << filesFail << " failed" << log::RESET()
-              << log::dim("  · ")
-              << totalPassed << " passed / " << totalFailed << " failed (cases)\n";
+              << log::dim(" / " + std::to_string(totalFiles) + " total")
+              << "\n"
+              << "  cases: "
+              << log::GREEN() << totalPassed << " passed" << log::RESET()
+              << ", "
+              << (totalFailed > 0 ? log::RED() : log::DIM())
+              << totalFailed << " failed" << log::RESET()
+              << log::dim(" / " + std::to_string(totalCases) + " total")
+              << "\n";
 
     return filesFail == 0 ? 0 : 1;
 }

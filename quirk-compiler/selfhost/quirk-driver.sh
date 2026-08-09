@@ -31,7 +31,7 @@ CPP="$DIR/quirk-cpp"
 # .quirk source falls through to the C++ binary so `quirk install`,
 # `quirk new`, etc. keep working.
 case "${1:-}" in
-    pkg|install|uninstall|new|list|packages|run|init|update|publish|fmt|repl)
+    pkg|install|uninstall|new|list|packages|run|init|update|publish|fmt|repl|test|t|eval|-c|module|-m|venv|env|sync|check|doc|version|--version|-v|help|--help|-h)
         exec "$CPP" "$@"
         ;;
     --cpp)

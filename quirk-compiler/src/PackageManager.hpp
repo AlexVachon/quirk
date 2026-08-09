@@ -2968,6 +2968,15 @@ static std::string fmt_apply_spacing(std::string text) {
     text = std::regex_replace(text, reDoubleSpc, " ");
     text = std::regex_replace(text, reUnaryMinus, "$1 -$2");
     text = std::regex_replace(text, reOpenUnary,  "$1-$2");
+    // Paren padding fixup: collapse any leading space after `(` or
+    // `[` (`f(   x, y)` → `f(x, y)`) and any trailing space before
+    // `)` or `]` (`f(x, y   )` → `f(x, y)`). Ran after the general
+    // spacing rules so the earlier operator/colon passes don't
+    // leave stray padding around call boundaries.
+    static const std::regex reOpenPad (R"(([\(\[]) +)");
+    static const std::regex reClosePad(R"( +([\)\]]))");
+    text = std::regex_replace(text, reOpenPad,  "$1");
+    text = std::regex_replace(text, reClosePad, "$1");
     // Deliberately *don't* trim trailing whitespace here. This function is
     // called whenever we flush a code segment, including right before a
     // string literal — e.g. `: ` flushed before `"Alice"` must keep its

@@ -259,9 +259,11 @@ STDLIB_TAG   ?= v1.0.0
 # that doesn't match the global STDLIB_TAG (e.g. `prompt` was
 # renamed from `ask` and ships v1.0.1 with the rename baked in).
 STDLIB_TAG_prompt ?= v1.1.0
-# typing v1.14.0 adds Map.items() returning a List of [k, v]
-# Lists for iteration. Pure Quirk-side helper; no runtime work.
-STDLIB_TAG_typing ?= v1.14.0
+# typing v1.15.0 adopts the compiler v5.1.0 `extern { ... }` block
+# form across primitives + collections (176 → 3 individual `extern`
+# keywords) and adds `typing.prelude` for one-line interface imports.
+# C ABI symbol names unchanged.
+STDLIB_TAG_typing ?= v1.15.0
 # html v1.0.0 is the initial release (compiler v3.5.0+). The
 # explicit pin keeps a global STDLIB_TAG bump from accidentally
 # pulling a v2 with potentially breaking changes.

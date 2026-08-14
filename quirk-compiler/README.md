@@ -32,7 +32,7 @@ Quirk ships two compiler binaries plus a driver script:
 
 ### Self-host status
 
-`bin/quirk-selfhost` was built up incrementally through the v5.0.0-alpha series (see [CHANGELOG.md](./CHANGELOG.md)). It reached a stable milestone at **v5.0.0-alpha.43**:
+`bin/quirk-selfhost` was built up incrementally through the v5.0.0-alpha series (see [CHANGELOG.md](./CHANGELOG.md)). It reached its stable milestone at **v5.0.0-alpha.43** and the push was formally closed in **v5.1.0**:
 
 - **40/60 corpus tests** clean-exit under the selfhost pipeline (compile → link with `bin/runtime.so` → run).
 - **Bootstrap fixed point** — `bin/quirk-selfhost` compiles its own source (`selfhost/*.quirk`) to byte-identical IR under itself. Verify with `make selfhost-fixedpoint`.

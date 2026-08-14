@@ -1,0 +1,44 @@
+// p85 — `extern { ... }` block form in a struct body mangles each
+// member's C ABI name identically to individual `extern define`
+// declarations.
+//
+// The block sugar is intended for the stdlib `typing` package, which
+// has 20+ files where every method is `extern` and the redundant
+// keyword clutters the surface. The parser accepts:
+//
+//   struct Foo : I {
+//       extern {
+//           define a(self) -> Int
+//           define b(self) -> Int
+//       }
+//   }
+//
+// as equivalent to:
+//
+//   struct Foo : I {
+//       extern define a(self) -> Int
+//       define b(self) -> Int    // WRONG — no `extern` prefix inside
+//                                 // an individual line means non-extern
+//       extern define b(self) -> Int   // ← what block form is sugar for
+//   }
+//
+// This probe exercises 4 primitive-type block-form callsites (see
+// packages/typing/primitives/{int,double,bool,string}.quirk) — if any
+// symbol resolution regresses to the wrong ABI name, one of these
+// prints wrong output or fails at link time.
+
+n := 42
+print(n.abs())           // Core_Primitives_Int_abs — from int.quirk block
+print(n.pow(2))          // Core_Primitives_Int_pow
+print(n.is_even())       // Core_Primitives_Int_is_even
+
+s := "Hello"
+print(s.upper())         // Core_String_String_upper — from string.quirk block
+print(s.reverse())
+print(s.length())
+
+x := 3.7
+print(x.floor())         // Core_Primitives_Double_floor
+
+b := true
+print(b.str())           // Core_Primitives_Bool_str

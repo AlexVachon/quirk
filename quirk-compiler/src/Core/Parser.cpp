@@ -1157,8 +1157,12 @@ std::string Parser::computeModulePrefix() const {
     return result;
 }
 
-std::unique_ptr<FunctionNode> Parser::parseFunction(bool allowAbstract) {
-    bool isExtern = false;
+std::unique_ptr<FunctionNode> Parser::parseFunction(bool allowAbstract,
+                                                    bool assumeExtern) {
+    // `assumeExtern` is set by the `extern { ... }` block handler: inside
+    // the block the `extern` keyword has already been consumed once for
+    // the whole group, so individual members start at `define`.
+    bool isExtern = assumeExtern;
     if (peek().type == TokenType::EXTERN) {
         advance();
         isExtern = true;
@@ -1440,6 +1444,46 @@ std::unique_ptr<StructNode> Parser::parseStruct() {
             do {
                 node->parents.push_back(advance().value);
             } while (match(TokenType::COMMA));
+        }
+        else if (peek().type == TokenType::EXTERN &&
+                 pos + 1 < (int)tokens.size() &&
+                 tokens[pos + 1].type == TokenType::LBRACE) {
+            // `extern { ... }` block form — reduces per-line noise in
+            // stdlib types where every method is extern. Each member
+            // inside the block is treated as if it were prefixed with
+            // `extern`, so mangling + linkage derivation stay identical
+            // to individual `extern define …` declarations.
+            advance();  // consume 'extern'
+            advance();  // consume '{'
+            while (peek().type != TokenType::RBRACE && !isAtEnd()) {
+                bool isInit = (peek().type == TokenType::INIT);
+                auto func = parseFunction(/*allowAbstract=*/false,
+                                          /*assumeExtern=*/true);
+                func->cls = node->name;
+                func->isExtern = true;
+
+                std::string rawMethodName = func->name;
+                if (isInit) {
+                    func->name = node->name + "__init";
+                } else {
+                    func->name = node->name + "_" + func->name;
+                }
+                if (!isInit && func->name.find("__init") != std::string::npos) {
+                    func->name = node->name + "__init";
+                }
+                std::string mp = computeModulePrefix();
+                func->linkageName = mp + "_" + node->name + "_" + rawMethodName;
+
+                if (!func->parameters.empty() &&
+                    func->parameters[0].name == "self") {
+                    func->parameters.erase(func->parameters.begin());
+                    func->isStatic = false;
+                } else {
+                    func->isStatic = true;
+                }
+                extraNodes.push_back(std::move(func));
+            }
+            consume(TokenType::RBRACE, "Expected '}' to close `extern` block");
         }
         else if (peek().type == TokenType::DEFINE ||
                  peek().type == TokenType::INIT ||

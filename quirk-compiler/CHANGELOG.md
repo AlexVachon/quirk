@@ -5,6 +5,68 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [5.1.0] — 2026-08-14 — closing the alpha push; DX + `extern` blocks
+
+Marks the transition from the selfhost-corpus-push phase (alphas
+.27–.43, frozen at 40/60) to the post-alpha feature line. No
+breaking changes vs. alpha.43 — this is a rename + accumulated
+feature/DX work that had been shipping without version bumps
+since the alpha series was declared closed.
+
+**Language**
+
+- `extern { ... }` **block form** in struct bodies. Groups
+  related runtime-bound methods so a file like `packages/typing/
+  primitives/string.quirk` doesn't repeat the `extern` keyword 55
+  times. C ABI mangling is byte-identical to individual
+  `extern define` lines. Both forms parse, and they can be mixed
+  freely (including alongside non-extern methods) in the same
+  struct.
+
+  Enables the pending `quirk-typing` v1.15.0 cleanup — 176 → 3
+  individual `extern` keywords across the typing package + a
+  new `typing.prelude` re-export module that collapses the 5–8
+  interface imports at the top of every builtin type file into
+  a single line.
+
+- Regression probe: `tests/probes/p85_extern_block.quirk`
+  exercises 4 primitive types via the block form to lock in the
+  mangling.
+
+**CLI**
+
+- `quirk doc [--md] <file|dir>...` — dump docstrings +
+  signatures from a Quirk source file or a whole package.
+  Recognises the `---…---` docstring convention. `--md` emits
+  GitHub-flavoured markdown (`##` headers, fenced signatures)
+  for piping into a docs site; default is a coloured terminal
+  view.
+
+- `quirk fmt --check` now points at the first differing line
+  (`would format: path (N lines differ, first at :M)`) — makes
+  CI logs in big repos actionable without a second `--diff`
+  round-trip.
+
+- `quirk fmt --diff` — unified-diff-style preview of pending
+  changes. Complements `--check` for review workflows.
+
+- `quirk test` subcommand routing — the driver had been
+  silently trying to compile the literal word `test` as a
+  source file when you typed `quirk test`.
+
+- `quirk fmt` — canonical paren padding: `greet( name)` →
+  `greet(name)`.
+
+- `quirk test` summary now has a two-tier layout
+  (files then cases) so the two "N failed" counters can't be
+  confused for each other.
+
+**Docs**
+
+- `README.md` compiler stamp bumped `3.0.0` → `5.1.0`.
+- Self-host status section clarifies the push is **frozen** at
+  40/60, not paused mid-flight.
+
 ## Session close — alpha.27 through alpha.43
 
 Self-hosted compiler push. Corpus MATCH count went from **24/60**

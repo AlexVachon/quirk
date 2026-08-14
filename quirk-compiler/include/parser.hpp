@@ -56,7 +56,8 @@ private:
     std::unique_ptr<Node> parseMatch();
     
     // Definition parsing
-    std::unique_ptr<FunctionNode> parseFunction(bool allowAbstract = false);
+    std::unique_ptr<FunctionNode> parseFunction(bool allowAbstract = false,
+                                                bool assumeExtern = false);
     std::unique_ptr<StructNode> parseStruct();
     // Parse: where T: Interface1 & Interface2, U: Interface3
     std::map<std::string, std::vector<std::string>> parseGenericWhere(const std::vector<std::string>& typeParams);

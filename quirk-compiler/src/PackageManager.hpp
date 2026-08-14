@@ -64,7 +64,7 @@ static std::string self_binary();
 
 namespace qpm {
 
-constexpr const char* QUIRK_VERSION = "5.0.0-alpha.43";
+constexpr const char* QUIRK_VERSION = "5.1.0";
 
 namespace fs = std::filesystem;
 
@@ -3130,6 +3130,155 @@ static std::string fmt_source(const std::string& src) {
     return out;
 }
 
+// `quirk doc <file-or-dir>...` — print docstrings + signatures from one
+// or more Quirk source files (or every `.quirk` under a directory).
+// Cheap surface-area view of a package: useful for exploring stdlib
+// modules without opening the source, and for piping into a docs site
+// via `--md`.
+//
+// Recognises the `---…---` docstring convention from
+// `tools/gen_stdlib_docs.py`: a fenced block on its own lines
+// followed by a `(extern )?(define|struct|enum|type|interface)`
+// header. Prints signature + indented body per entry.
+//
+// Flags:
+//   --md   emit GitHub-flavoured markdown (`##` name, fenced signature,
+//          docstring paragraph) instead of the coloured terminal view
+
+// Extract (signature-line, docstring-body-lines, kind, name) tuples from
+// a Quirk source file. Returns empty on unreadable files (caller warns).
+struct DocEntry {
+    std::string kind, name, signature;
+    std::vector<std::string> body;
+};
+static std::vector<DocEntry> doc_extract(const std::string& path) {
+    std::vector<DocEntry> out;
+    std::ifstream in(path);
+    if (!in) return out;
+    std::stringstream buf; buf << in.rdbuf();
+    std::string src = buf.str();
+    std::vector<std::string> lines;
+    {
+        std::istringstream iss(src);
+        for (std::string ln; std::getline(iss, ln); ) lines.push_back(ln);
+    }
+    static const std::regex reHeader(
+        R"(^\s*(?:extern\s+)?(define|struct|enum|type|interface)\s+([A-Za-z_][A-Za-z_0-9]*).*$)");
+    auto is_fence = [](const std::string& l) {
+        auto b = l.find_first_not_of(" \t");
+        auto e = l.find_last_not_of(" \t");
+        return b != std::string::npos && l.substr(b, e - b + 1) == "---";
+    };
+    size_t i = 0;
+    while (i < lines.size()) {
+        if (!is_fence(lines[i])) { i++; continue; }
+        std::vector<std::string> body;
+        size_t j = i + 1;
+        while (j < lines.size() && !is_fence(lines[j])) { body.push_back(lines[j]); j++; }
+        if (j >= lines.size()) { i = j; continue; }
+        size_t k = j + 1;
+        while (k < lines.size() && lines[k].find_first_not_of(" \t") == std::string::npos) k++;
+        if (k >= lines.size()) { i = k; continue; }
+        std::smatch m;
+        if (!std::regex_match(lines[k], m, reHeader)) { i = k; continue; }
+        out.push_back({m[1].str(), m[2].str(), lines[k], body});
+        i = k + 1;
+    }
+    return out;
+}
+
+// Expand each arg into a list of `.quirk` files: files pass through,
+// directories are walked recursively.
+static std::vector<std::string> doc_expand_paths(const std::vector<std::string>& args) {
+    std::vector<std::string> files;
+    std::error_code ec;
+    for (const auto& a : args) {
+        if (a.size() > 2 && a[0] == '-' && a[1] == '-') continue;  // flag
+        if (fs::is_directory(a, ec)) {
+            for (auto& e : fs::recursive_directory_iterator(a, ec)) {
+                if (!e.is_regular_file()) continue;
+                if (e.path().extension() == ".quirk") files.push_back(e.path().string());
+            }
+        } else {
+            files.push_back(a);
+        }
+    }
+    std::sort(files.begin(), files.end());
+    return files;
+}
+
+static int cmd_doc(const std::vector<std::string>& args) {
+    bool asMarkdown = false;
+    std::vector<std::string> positional;
+    for (const auto& a : args) {
+        if (a == "--md")             asMarkdown = true;
+        else if (a == "--help" || a == "-h") {
+            std::cout <<
+                "quirk doc [--md] <file-or-dir>...\n"
+                "    Print docstrings + signatures from Quirk source files.\n"
+                "    Directories are walked recursively for `.quirk` files.\n"
+                "    Recognises the `---…---` docstring convention (fenced\n"
+                "    block immediately before a define/struct/enum/type).\n"
+                "\n"
+                "    --md   emit GitHub-flavoured markdown instead of coloured\n"
+                "           terminal output\n";
+            return 0;
+        }
+        else if (!a.empty() && a[0] == '-') {
+            log::err("quirk doc: unknown flag `" + a + "`");
+            return 1;
+        }
+        else positional.push_back(a);
+    }
+    if (positional.empty()) {
+        std::cout <<
+            "quirk doc [--md] <file-or-dir>...\n"
+            "    Print docstrings + signatures from Quirk source files.\n"
+            "    Directories are walked recursively for `.quirk` files.\n";
+        return 1;
+    }
+    auto files = doc_expand_paths(positional);
+    int total = 0;
+    for (const auto& path : files) {
+        auto entries = doc_extract(path);
+        // Detect unreadable file (empty result + not a valid empty file).
+        if (entries.empty()) {
+            std::ifstream in(path);
+            if (!in) { log::err("cannot read " + path); return 1; }
+            continue;
+        }
+        if (asMarkdown) {
+            std::cout << "# " << path << "\n\n";
+            for (const auto& e : entries) {
+                std::cout << "## `" << e.name << "` — `" << e.kind << "`\n\n"
+                          << "```quirk\n" << e.signature << "\n```\n\n";
+                for (const auto& dl : e.body) std::cout << dl << "\n";
+                std::cout << "\n";
+                total++;
+            }
+        } else {
+            std::cout << "\n" << log::bold(path) << "\n"
+                      << std::string(path.size(), '=') << "\n";
+            for (const auto& e : entries) {
+                std::cout << "\n" << log::bold(e.name) << "  "
+                          << log::dim("(" + e.kind + ")") << "\n"
+                          << "    " << e.signature << "\n";
+                for (const auto& dl : e.body) std::cout << "    " << dl << "\n";
+                total++;
+            }
+        }
+    }
+    if (total == 0) {
+        if (!asMarkdown) log::note("no documented entries found");
+        return 0;
+    }
+    if (!asMarkdown) {
+        std::cout << "\n" << log::dim(
+            std::to_string(total) + (total == 1 ? " entry" : " entries")) << "\n";
+    }
+    return 0;
+}
+
 // `quirk fmt [--check|--stdout|--diff] <file>...`
 //   no flag   → format each file in place (no-op if already formatted)
 //   --check   → exit 1 if any file would change (prints names); useful in CI
@@ -3243,7 +3392,32 @@ static int cmd_fmt(const std::vector<std::string>& args) {
                 }
                 std::cout << "\n";
             } else {
-                std::cout << "would format: " << f << "\n";
+                // Locate first differing line for a compact CI hint:
+                // "would format: path (12 lines differ, first at :47)".
+                // Beats a naked filename when a big-repo CI check
+                // is trying to tell you which file to open first.
+                std::istringstream aiss(orig), biss(out);
+                std::vector<std::string> aLines, bLines;
+                for (std::string ln; std::getline(aiss, ln); ) aLines.push_back(ln);
+                for (std::string ln; std::getline(biss, ln); ) bLines.push_back(ln);
+                int firstDiff = -1, diffCount = 0;
+                size_t n = std::max(aLines.size(), bLines.size());
+                for (size_t i = 0; i < n; i++) {
+                    const std::string& al = i < aLines.size() ? aLines[i] : "";
+                    const std::string& bl = i < bLines.size() ? bLines[i] : "";
+                    if (al != bl) {
+                        if (firstDiff < 0) firstDiff = (int)i + 1;
+                        diffCount++;
+                    }
+                }
+                std::cout << "would format: " << f;
+                if (firstDiff > 0) {
+                    std::cout << "  " << log::dim(
+                        "(" + std::to_string(diffCount) + " line"
+                        + (diffCount == 1 ? "" : "s")
+                        + " differ, first at :" + std::to_string(firstDiff) + ")");
+                }
+                std::cout << "\n";
             }
             wouldChange++;
             continue;
@@ -6320,6 +6494,7 @@ static void print_pm_help() {
         "  venv <path>                     Create/repair an isolated env\n"
         "  env                             Show the active resolution context\n"
         "  fmt [--check] [<file>...]       Reformat source to canonical style\n"
+        "  doc [--md] <file|dir>...        Print docstrings + signatures from source\n"
         "  sync                            Bootstrap from a clone (venv + install)\n"
         "\n"
         "PACKAGES                                            (see also: `quirk pkg help`)\n"
@@ -6466,6 +6641,7 @@ static bool is_subcommand(const std::string& argIn) {
            arg == "run" || arg == "eval" || arg == "module" ||
            arg == "env" || arg == "new" || arg == "help" ||
            arg == "script" || arg == "sync" || arg == "stdlib" || arg == "fmt" ||
+           arg == "doc" ||
            arg == "repl" || arg == "test" || arg == "bump-compiler" ||
            arg == "compiler" || arg == "auth" || arg == "completion" ||
            arg == "resolve";
@@ -6682,6 +6858,7 @@ inline bool dispatch(int& argc, char** argv, int& outRc) {
     else if (verb == "script")       outRc = cmd_script(verbArgs);
     else if (verb == "sync")         outRc = cmd_sync(verbArgs);
     else if (verb == "fmt")          outRc = cmd_fmt(verbArgs);
+    else if (verb == "doc")          outRc = cmd_doc(verbArgs);
     else if (verb == "repl")         outRc = cmd_repl(verbArgs);
     else if (verb == "test")         outRc = cmd_test(verbArgs);
     else if (verb == "stdlib")       outRc = cmd_stdlib(verbArgs);

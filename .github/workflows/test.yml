@@ -85,7 +85,12 @@ jobs:
           fails=0
           for t in tests/*.quirk; do
             case "$t" in *compiler_errors*) continue ;; esac
-            out=$(timeout 30 ./bin/quirk --no-aot --no-cache "$t" 2>&1)
+            # Use bin/quirk-cpp explicitly: the driver (bin/quirk) now
+            # prefers the selfhost pipeline, which is frozen at 40/60
+            # corpus. The general test suite is meant to validate the
+            # production compiler; selfhost has its own regression
+            # coverage (corpus + p85 + bootstrap fixed-point).
+            out=$(timeout 30 ./bin/quirk-cpp --no-aot --no-cache "$t" 2>&1)
             rc=$?
             if echo "$out" | grep -qE "Internal compiler error|malformed IR|core dumped|Aborted \(core|Segmentation fault"; then
               echo "::error file=$t::stdlib test crashed: $t"
@@ -144,7 +149,7 @@ jobs:
           set +e
           fails=0
           for p in tests/probes/p*.quirk; do
-            out=$(timeout 10 ./bin/quirk run --no-aot --no-cache "$p" 2>&1)
+            out=$(timeout 10 ./bin/quirk-cpp run --no-aot --no-cache "$p" 2>&1)
             if echo "$out" | grep -qE "Internal compiler error|malformed IR|core dumped|Aborted|Segmentation fault"; then
               echo "::error file=$p::probe regressed: $p"
               echo "$out" | head -8
@@ -250,7 +255,7 @@ jobs:
           set +e
           fails=0
           for p in tests/probes/p*.quirk; do
-            out=$(timeout 15 ./bin/quirk run --no-aot --no-cache "$p" 2>&1)
+            out=$(timeout 15 ./bin/quirk-cpp run --no-aot --no-cache "$p" 2>&1)
             # UBSan format: "<file>:<line>:<col>: runtime error: <msg>".
             # The leading path+line:col is what distinguishes a real
             # UBSan hit from Quirk's own `Quirk runtime error:` prints

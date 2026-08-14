@@ -56,7 +56,7 @@ jobs:
         run: |
           apt-get install -y --no-install-recommends \
             build-essential gcc g++ make pkg-config \
-            llvm-14 libllvm14 llvm-14-dev \
+            llvm-14 libllvm14 llvm-14-dev clang-14 \
             libgc-dev libssl-dev
 
       - uses: actions/checkout@v4

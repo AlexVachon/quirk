@@ -43,13 +43,11 @@ DEPS = $(OBJS:.o=.d)
 LINENOISE_SRC = src/third_party/linenoise/linenoise.c
 LINENOISE_OBJ = $(OBJ_DIR)/third_party/linenoise/linenoise.o
 
-# --- v5.0.0 cutover note ---
-# `$(TARGET)` is the C++ compiler — kept as `bin/quirk-cpp` so the
-# user-facing `bin/quirk` can be the new selfhost-driven wrapper.
-# The C++ binary stays the source-of-truth for the bootstrap chain
-# (selfhost is compiled from selfhost/ source via this binary), and
-# remains the fallback for package manager subcommands until those
-# move into selfhost.
+# The C++ compiler is the production binary. `bin/quirk-cpp` is
+# the primary name; `bin/quirk` is installed as a symlink so
+# `#!/usr/bin/env quirk` shebangs and habit-typing work. The
+# self-hosted Quirk-in-Quirk compiler lives in its own repo at
+# github.com/AlexVachon/quirk-selfhost since v5.2.0.
 TARGET = $(BIN_DIR)/quirk-cpp
 DRIVER = $(BIN_DIR)/quirk
 
@@ -60,7 +58,6 @@ RUNTIME_ENTRY = src/Runtime/runtime.c
 # All C files pulled in via #include; any change here rebuilds runtime.so
 RUNTIME_DEPS  = \
 	src/Runtime/types.h \
-	src/Runtime/selfhost_aliases.c \
 	src/Runtime/core/string.c \
 	src/Runtime/core/primitives.c \
 	src/Runtime/core/list.c \
@@ -88,7 +85,7 @@ RUNTIME_LIB = $(BIN_DIR)/runtime.so
 
 # --- RULES ---
 
-all: $(TARGET) $(RUNTIME_LIB) $(SELFHOST_BIN) $(DRIVER)
+all: $(TARGET) $(RUNTIME_LIB) $(DRIVER)
 
 $(TARGET): $(OBJS) $(LINENOISE_OBJ)
 	@mkdir -p $(BIN_DIR)
@@ -118,125 +115,16 @@ clean:
 test: all
 	./$(TARGET) tests/encoding_test.quirk
 
-# --- SELFHOST BINARY -------------------------------------------------------
-# Build a standalone Quirk compiler binary from the self-hosted source.
-# Pipeline: bin/quirk (C++ compiler) → selfhost/quirk_main.quirk → IR text
-# → llc-14 → x86_64 assembly → clang-14 -no-pie → bin/quirk-selfhost ELF.
-#
-# The resulting binary is a fully usable CLI compiler:
-#   ./bin/quirk-selfhost source.quirk           # IR to stdout
-#   ./bin/quirk-selfhost source.quirk out.ll    # IR to file
-#
-# Note: requires llc-14 and clang-14 on PATH. The intermediate .ll is
-# kept under build/ for inspection. To reproduce the byte-identical
-# fixed point, run `make selfhost-fixedpoint` (alpha.43+).
-SELFHOST_LL  = build/quirk_selfhost.ll
-SELFHOST_S   = build/quirk_selfhost.s
-SELFHOST_BIN = $(BIN_DIR)/quirk-selfhost
-
-$(SELFHOST_LL): $(TARGET) selfhost/quirk_main.quirk selfhost/build.quirk \
-                selfhost/codegen.quirk selfhost/sema.quirk \
-                selfhost/parser.quirk selfhost/lexer.quirk \
-                selfhost/ast.quirk selfhost/tokens.quirk selfhost/types.quirk
-	@mkdir -p build
-	# stdout-redirect rather than the driver's argv[2] file-write
-	# path: the C++ compiler has a known wrapping bug where a
-	# String returned by `arg_get` reaches `write_file` as a
-	# String-of-String (its `_buffer` points at a struct, not a
-	# c-string). The selfhost-compiled binary doesn't have this
-	# bug — once the standalone binary is built, file-output via
-	# argv[2] works correctly there.
-	./$(TARGET) --no-aot --no-cache selfhost/quirk_main.quirk \
-		selfhost/quirk_main.quirk > $@ \
-		|| (rm -f $@ && echo "selfhost IR emission failed" && exit 1)
-
-$(SELFHOST_S): $(SELFHOST_LL)
-	llc-14 $< -o $@
-
-$(SELFHOST_BIN): $(SELFHOST_S) $(RUNTIME_LIB)
+# --- DRIVER SHIM ------------------------------------------------------------
+# The `bin/quirk` shim — a symlink to `bin/quirk-cpp`. Historically
+# this was a shell driver that dispatched to the selfhost binary
+# with fallback to quirk-cpp; since v5.2.0 the selfhost lives in
+# its own repo (github.com/AlexVachon/quirk-selfhost), so `bin/quirk`
+# is just the C++ compiler under a friendlier name.
+$(DRIVER): $(TARGET)
 	@mkdir -p $(BIN_DIR)
-	clang-14 -no-pie $< $(RUNTIME_LIB) -lm -ldl -o $@
-
-selfhost-binary: $(SELFHOST_BIN)
-	@echo ""
-	@echo "  built: $(SELFHOST_BIN)"
-	@echo "  size:  $$(stat -c%s $(SELFHOST_BIN)) bytes"
-	@echo ""
-	@echo "  usage: $(SELFHOST_BIN) <source.quirk> [out.ll]"
-
-# --- DRIVER WRAPPER (the user-facing bin/quirk for v5.0.0) ------------------
-# Installs the selfhost-driven compile + JIT-execute wrapper at
-# $(DRIVER). Falls back to bin/quirk-cpp for package manager
-# subcommands. Depends on the selfhost binary + runtime + C++
-# binary (for the fallback) being present.
-$(DRIVER): selfhost/quirk-driver.sh $(SELFHOST_BIN) $(RUNTIME_LIB) $(TARGET)
-	@mkdir -p $(BIN_DIR)
-	cp selfhost/quirk-driver.sh $@
-	chmod +x $@
-	@echo "  installed: $@ (selfhost-driven; fallback to $(TARGET))"
-
-# --- SELFHOST FIXED-POINT VERIFICATION -------------------------------------
-# The canonical bootstrap proof: the self-hosted compiler is a stable
-# fixed point under itself. Pipeline:
-#
-#   bin/quirk-selfhost compiles selfhost/quirk_main.quirk  → ir1.ll
-#   ir1.ll + llc-14 + clang-14                              → quirk-selfhost-v2
-#   quirk-selfhost-v2 compiles selfhost/quirk_main.quirk    → ir2.ll
-#   diff ir1.ll ir2.ll  → must be byte-identical (zero diff)
-#
-# Why not compare against `bin/quirk` (the C++ compiler) output: the two
-# compilers use intentionally different IR shapes (GC_malloc vs malloc,
-# Core_Primitives_* vs inline structs) — they're both correct, just not
-# byte-identical. The real fixed-point criterion is selfhost-vs-selfhost.
-SELFHOST_FP_IR1 = build/quirk_selfhost_fp1.ll
-SELFHOST_FP_IR2 = build/quirk_selfhost_fp2.ll
-SELFHOST_FP_BIN = build/quirk-selfhost-v2
-
-$(SELFHOST_FP_IR1): $(SELFHOST_BIN)
-	@mkdir -p build
-	./$(SELFHOST_BIN) selfhost/quirk_main.quirk $@
-
-$(SELFHOST_FP_BIN): $(SELFHOST_FP_IR1) $(RUNTIME_LIB)
-	@mkdir -p build
-	llc-14 $< -o build/quirk_selfhost_fp1.s
-	clang-14 -no-pie build/quirk_selfhost_fp1.s $(RUNTIME_LIB) -lm -ldl -o $@
-
-$(SELFHOST_FP_IR2): $(SELFHOST_FP_BIN)
-	./$(SELFHOST_FP_BIN) selfhost/quirk_main.quirk $@
-
-selfhost-fixedpoint: $(SELFHOST_FP_IR1) $(SELFHOST_FP_IR2)
-	@if diff -q $(SELFHOST_FP_IR1) $(SELFHOST_FP_IR2) > /dev/null; then       \
-	    echo "";                                                                \
-	    echo "  byte-identical fixed point achieved";                           \
-	    echo "  ir1 = $$(wc -c < $(SELFHOST_FP_IR1)) bytes";                    \
-	    echo "  ir2 = $$(wc -c < $(SELFHOST_FP_IR2)) bytes";                    \
-	    echo "";                                                                \
-	    echo "  bin/quirk-selfhost compiled itself, the resulting binary";      \
-	    echo "  recompiled the same source, output is identical.";              \
-	    echo "  this is the canonical bootstrap milestone.";                    \
-	else                                                                        \
-	    echo "FAIL: fixed-point verification";                                  \
-	    diff -u $(SELFHOST_FP_IR1) $(SELFHOST_FP_IR2) | head -50;               \
-	    exit 1;                                                                 \
-	fi
-
-# Self-host smoke — runs the in-Quirk lexer (Phase 1), parser
-# (Phase 2), and sema (Phase 3) against a small corpus. Doesn't
-# yet assert byte-for-byte equality with the C++ tokenizer /
-# parser / sema (Phase 5 does); this is here so regressions in
-# selfhost/*.quirk surface in CI before they bitrot silently.
-test-selfhost: all
-	@echo "--- Phase 1: lexer ---"
-	QUIRK_HOME=$(shell pwd) ./$(TARGET) --no-aot --no-cache selfhost/lexer_test.quirk
-	@echo ""
-	@echo "--- Phase 2: parser ---"
-	QUIRK_HOME=$(shell pwd) ./$(TARGET) --no-aot --no-cache selfhost/parser_test.quirk
-	@echo ""
-	@echo "--- Phase 3: sema ---"
-	QUIRK_HOME=$(shell pwd) ./$(TARGET) --no-aot --no-cache selfhost/sema_test.quirk
-	@echo ""
-	@echo "--- Phase 4: codegen + lli ---"
-	bash selfhost/codegen_e2e.sh
+	@ln -sf quirk-cpp $@
+	@echo "  installed: $@ → quirk-cpp"
 
 # --- STDLIB BOOTSTRAP -------------------------------------------------------
 # Fetch the 21 canonical stdlib repos into ./packages/. Required for:
@@ -333,4 +221,4 @@ FUZZ_SEED  ?=
 fuzz:
 	@python3 tools/fuzz.py --iters $(FUZZ_ITERS) $(if $(FUZZ_SEED),--seed $(FUZZ_SEED),) --quiet
 
-.PHONY: all clean test selfhost-binary selfhost-fixedpoint bootstrap-stdlib bootstrap-stdlib-clean docs fuzz
+.PHONY: all clean test bootstrap-stdlib bootstrap-stdlib-clean docs fuzz

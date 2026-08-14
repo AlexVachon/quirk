@@ -5,6 +5,56 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [5.2.0] — 2026-08-14 — extract self-host to its own repo
+
+The Quirk-in-Quirk compiler (`selfhost/*.quirk` + the C forwarding
+shim) moves out of this tree and into a standalone repo:
+
+**→ [github.com/AlexVachon/quirk-selfhost](https://github.com/AlexVachon/quirk-selfhost)**
+
+The bootstrap-fixed-point milestone (byte-identical self-compile,
+40/60 corpus, 190/190 e2e codegen) is preserved there as an
+independently checkable artifact:
+
+```bash
+git clone https://github.com/AlexVachon/quirk-selfhost
+cd quirk-selfhost && make fixedpoint
+```
+
+**Removed from this repo**
+
+- `selfhost/` (17 files, ~12k lines of Quirk)
+- `src/Runtime/selfhost_aliases.c` (887 lines of C forwarding stubs)
+- `Makefile` SELFHOST/DRIVER/fixedpoint recipes (~120 lines)
+- `#include "selfhost_aliases.c"` from `runtime.c`
+- `bin/quirk-selfhost` build target
+- `selfhost-binary`, `selfhost-fixedpoint`, `test-selfhost` targets
+
+**Changed**
+
+- `bin/quirk` is now a symlink to `bin/quirk-cpp` (previously a
+  shell driver that preferred the selfhost pipeline). Fixes the
+  CI-routing footgun where the driver silently ran tests through
+  the frozen-at-40/60 self-host and reported gaps as regressions.
+- The runtime library defensive guards that were originally added
+  because self-host emitted-IR triggered edge cases (see the
+  `// Defensive: selfhost's codegen ...` comments in
+  `core/list.c`, `core/string.c`, `libs/encoding/json.c`) stay in
+  place — they harden the runtime against any codegen path, not
+  just self-host's.
+
+**Rationale**
+
+The self-host push reached its milestone at v5.0.0-alpha.43 and was
+closed in v5.1.0. Since then it was frozen in-tree, taxing every
+feature decision ("does self-host need this?"), polluting build
+output with `-Wincompatible-pointer-types` warnings, and causing
+one CI regression (the `bin/quirk` driver preference silently ran
+tests through a compiler that can't handle them). Extracting to a
+sibling repo preserves the milestone as a *stronger* artifact — a
+cloneable, buildable proof — while removing that surface from the
+main compiler's release cycle.
+
 ## [5.1.0] — 2026-08-14 — closing the alpha push; DX + `extern` blocks
 
 Marks the transition from the selfhost-corpus-push phase (alphas

@@ -1,13 +1,13 @@
 # Quirk (.quirk) Language Reference
 
-**Compiler:** 5.1.0  
+**Compiler:** 5.2.0  
 **Language spec:** rev 3  
 **Extension:** `.quirk`  
 **Runtime:** LLVM JIT + native binary output
 
 Quirk is a compiled, statically-typed language with Python-like syntax, struct-based OOP, first-class functions, sum types (tagged unions + generics, since v3.0.0), and a rich standard library. It compiles to native code via LLVM and uses the Boehm GC for memory management.
 
-> **v5.1.0** closes the v5.0.0-alpha selfhost push (frozen at 40/60 corpus, byte-identical bootstrap fixed point) and rolls up the post-alpha DX + language work: `extern { ... }` block form for stdlib types, `quirk doc` for surface-area viewing, `quirk fmt --diff`/`--check` with line-level hints, and driver subcommand routing. The C++ compiler at `bin/quirk-cpp` remains the production toolchain; see [`quirk-compiler/README.md`](quirk-compiler/README.md#self-host-status) for the self-host coverage story.
+> **v5.2.0** extracts the Quirk-in-Quirk compiler to its own repo at [github.com/AlexVachon/quirk-selfhost](https://github.com/AlexVachon/quirk-selfhost). The bootstrap-fixed-point milestone (40/60 corpus + byte-identical self-compile) is preserved there as a standalone, independently-checkable artifact. The main compiler tree drops ~13k lines of surface area and one CI-routing footgun. `bin/quirk-cpp` is the production toolchain; `bin/quirk` is now a symlink to it.
 >
 > **v3.0.0 highlights:** tagged unions (`type Result = Ok(...) | Err(...)`), generic types (`type Option[T] = Some(value: T) | None()`), exhaustive pattern matching with payload narrowing, per-variant methods, and a canonical `Option[T]` / `Result[T, E]` in the standard library. See [chapter 22](#22-tagged-unions--sum-types), [chapter 23](#23-generic-types), [chapter 24](#24-canonical-option--result), or the full [RELEASE_NOTES_v3.0.0.md](quirk-compiler/RELEASE_NOTES_v3.0.0.md).
 

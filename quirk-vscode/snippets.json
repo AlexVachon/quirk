@@ -32,6 +32,24 @@
         "description": "Insert a Quirk docstring block with an example section"
     },
 
+    "If Single-Statement (=>)": {
+        "prefix": "if=>",
+        "body": ["if ${1:condition} => $0"],
+        "description": "Single-statement if body (v5.3.0)"
+    },
+
+    "While Single-Statement (=>)": {
+        "prefix": "while=>",
+        "body": ["while ${1:condition} => $0"],
+        "description": "Single-statement while body (v5.3.0)"
+    },
+
+    "For Single-Statement (=>)": {
+        "prefix": "for=>",
+        "body": ["for ${1:item} in ${2:iterable} => $0"],
+        "description": "Single-statement for body (v5.3.0)"
+    },
+
     "Function Definition": {
         "prefix": "define",
         "body": [

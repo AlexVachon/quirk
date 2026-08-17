@@ -2,6 +2,18 @@
 
 All notable changes to the extension land here. Versioning follows SemVer; minor bumps for new features, patches for fixes.
 
+## [0.2.19] — 2026-08-17 — `=>` single-statement control-flow snippets
+
+Companion to Quirk 5.3.0's new single-statement control-flow form.
+Three new snippets:
+
+  `if=>`     → `if ${1:condition} => $0`
+  `while=>`  → `while ${1:condition} => $0`
+  `for=>`    → `for ${1:item} in ${2:iterable} => $0`
+
+The existing braced snippets (`if`, `while`, `for`) still work —
+these are opt-in for the compact form.
+
 ## [0.2.18] — 2026-08-14 — track declarations in top-level control-flow blocks
 
 `DiagnosticsProvider` was silently dropping every declaration inside

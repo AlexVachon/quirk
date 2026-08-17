@@ -5,6 +5,51 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [5.3.0] — 2026-08-17 — single-line control flow + fuzz-found `String * Any` fix
+
+**Language**
+
+- `=>` single-statement bodies on `if` / `elif` / `else` / `while` /
+  `for`. Same shape users already know from lambdas
+  (`fn(x) => x * 2`) and match arms (`case Some => body`), now
+  extended to control-flow headers:
+
+  ```quirk
+  if x < 0 => return -x
+
+  if kind == 1      => print("one")
+  elif kind == 2    => print("two")
+  else              => print("many")
+
+  while i < n => i = i + 1
+
+  for n in xs => total = total + n
+  ```
+
+  Braced and single-statement forms mix freely within the same
+  program. Parser change (`parseControlBody` helper), one line
+  per site. Regression probe: `tests/probes/p87_single_line_control.quirk`.
+
+**Fuzz-found crash**
+
+- `String * <any>` where the RHS static type is `Any` (e.g. from
+  `Map.get(...)` or an `Any`-typed local) no longer aborts the LLVM
+  verifier with "malformed IR". Reached by the mutation fuzzer
+  (finding c001, seed=1 iter=93 — the mutator flipped `+` to `*`
+  in a `Map.get` probe).
+
+  Root cause: the operator-overload dispatch required the RHS's
+  static type to match the magic method's declared param
+  (`String.__mul(self, n: Int)` demanded Int). Opaque `i8*` (Any)
+  didn't fit, so no dispatch fired, and Codegen fell through to
+  `mul nsw i8* %v, %String* %4` — mismatched operand types.
+
+  Fix: accept `i8*` as an RHS candidate during dispatch selection
+  in `Codegen.cpp:4229`. The existing coercion block already knew
+  how to unbox Any into whatever the param wanted (via
+  `quirk_opaque_to_int`); it just wasn't being reached. Regression
+  probe: `tests/probes/p86_string_mul_any.quirk`.
+
 ## [5.2.1] — 2026-08-14 — stop treating nonzero exit as a compiler error
 
 Small correctness fix — the run loop was printing

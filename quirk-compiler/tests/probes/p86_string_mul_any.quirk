@@ -1,0 +1,21 @@
+// p86 — `String * Any` (Any known to be Int at runtime) doesn't
+// crash the LLVM verifier. Reached by the mutation fuzzer (finding
+// c001, seed=1 iter=93) — the mutation flipped `+` to `*` in
+// p15_map_missing_typed.quirk, producing `"bug: " * v` where `v`
+// came from `Map.get(...)` typed as `Any`.
+//
+// Pre-fix: the operator-overload dispatch in Codegen.cpp required
+// R's static type to match the magic method's declared param
+// (`String.__mul(self, n: Int)` needs Int). i8* (Any) didn't fit,
+// so `rhsFits` stayed false, no magic dispatch fired, and Codegen
+// fell through to `mathGen->generateBinaryOp("*", %String*, i8*)`
+// → `mul nsw i8* %v, %String* %4` → LLVM verifier abort.
+//
+// Fix: accept `i8* (Any)` on the RHS during dispatch selection.
+// The existing coercion block below the dispatch already knows
+// how to unbox Any into whatever the declared param wants (via
+// `quirk_opaque_to_int`), so we just needed to stop bailing out
+// before that coercion could run.
+
+v: Any = 42
+print("bug: " * v)   // "bug: " repeated 42 times, no crash

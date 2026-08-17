@@ -4236,6 +4236,18 @@ Value* LLVMCodegen::handleExpression(Node* node) {
                                 Type* re = R->getType()->getPointerElementType();
                                 Type* pe = rhsParam->getPointerElementType();
                                 if (re == pe) rhsFits = true;
+                            } else if (R->getType()->isPointerTy() &&
+                                       R->getType()->getPointerElementType()->isIntegerTy(8)) {
+                                // Opaque `i8*` (Any) — dispatch fires,
+                                // and the coercion block below unboxes
+                                // R into whatever the declared param
+                                // wants (Int / Double / String*). The
+                                // fuzz-found `"bug" * any` case landed
+                                // here; without this branch rhsFits
+                                // stayed false, magicFn was null, and
+                                // Codegen fell through to `mul %String*,
+                                // i8*` which the LLVM verifier rejects.
+                                rhsFits = true;
                             }
                             if (rhsFits) magicFn = candidate;
                         }
@@ -4252,6 +4264,35 @@ Value* LLVMCodegen::handleExpression(Node* node) {
                             rArg = Builder.CreateIntCast(rArg, expectedTy, true);
                         else if (rArg->getType()->isIntegerTy() && expectedTy->isPointerTy())
                             rArg = Builder.CreateIntToPtr(rArg, expectedTy);
+                        else if (rArg->getType()->isPointerTy() &&
+                                 rArg->getType()->getPointerElementType()->isIntegerTy(8) &&
+                                 expectedTy->isIntegerTy()) {
+                            // Opaque `i8*` (Any) → Int/scalar for methods
+                            // whose param is a plain integer (e.g.
+                            // `String.__mul(self, n: Int)`). Reached when
+                            // the RHS came from something dynamically
+                            // typed — `Map.get`, `List.__get`, or an Any-
+                            // typed local — so its static type is i8*
+                            // instead of i32. `quirk_opaque_to_int`
+                            // handles both encodings (tagged-int and
+                            // heap-Any) and returns 0 for null.
+                            //
+                            // Pre-fix: this case fell through with no
+                            // coercion; the CreateCall below fed an i8*
+                            // to an i32-param callee and LLVM's verifier
+                            // aborted with "Internal compiler error:
+                            // malformed IR" (surfaced by the mutation
+                            // fuzzer via `"bug: " * v` where `v` is a
+                            // Map.get result).
+                            FunctionCallee toInt = TheModule->getOrInsertFunction(
+                                "quirk_opaque_to_int",
+                                Type::getInt32Ty(Context),
+                                Type::getInt8PtrTy(Context));
+                            Value* unboxed = Builder.CreateCall(toInt, {rArg}, "unbox_any_to_int");
+                            if (expectedTy != Type::getInt32Ty(Context))
+                                unboxed = Builder.CreateIntCast(unboxed, expectedTy, true);
+                            rArg = unboxed;
+                        }
                     }
                     Value* res = Builder.CreateCall(magicFn, {L, rArg}, "op_result");
                     // Comparison ops are typed Bool at the Quirk level. Extern

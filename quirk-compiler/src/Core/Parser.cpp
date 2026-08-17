@@ -979,30 +979,45 @@ std::unique_ptr<Node> Parser::parseStatementImpl() {
     return parseExpression(0);
 }
 
+// Parse a control-flow body — either a braced block `{ ... }` or a
+// single statement after `=>`. Both forms are accepted at every
+// control-flow site (if / elif / else / while / for), so
+//
+//     if x < 0 => return -x
+//
+// is exactly equivalent to
+//
+//     if x < 0 { return -x }
+//
+// The `=>` form is a v5.3.0 ergonomics addition — same shape users
+// already know from lambdas (`fn(x) => x * 2`) and match arms
+// (`case Some => body`).
+void Parser::parseControlBody(std::vector<std::unique_ptr<Node>>& out) {
+    if (match(TokenType::FAT_ARROW)) {
+        out.push_back(parseStatement());
+        return;
+    }
+    consume(TokenType::LBRACE, "Expected '{' or '=>'");
+    while (peek().type != TokenType::RBRACE && !isAtEnd())
+        out.push_back(parseStatement());
+    consume(TokenType::RBRACE, "Expected '}'");
+}
+
 std::unique_ptr<Node> Parser::parseIf() {
     consume(TokenType::IF, "Expected 'if'");
     auto node = std::make_unique<IfNode>();
     node->condition = parseExpression(0);
-    consume(TokenType::LBRACE, "Expected '{'");
-    while (peek().type != TokenType::RBRACE && !isAtEnd())
-        node->thenBranch.push_back(parseStatement());
-    consume(TokenType::RBRACE, "Expected '}'");
+    parseControlBody(node->thenBranch);
     while (peek().type == TokenType::ELIF) {
         advance();
         ElIfBlock ei;
         ei.condition = parseExpression(0);
-        consume(TokenType::LBRACE, "Expected '{'");
-        while (peek().type != TokenType::RBRACE && !isAtEnd())
-            ei.body.push_back(parseStatement());
-        consume(TokenType::RBRACE, "Expected '}'");
+        parseControlBody(ei.body);
         node->elIfBranches.push_back(std::move(ei));
     }
     if (peek().type == TokenType::ELSE) {
         advance();
-        consume(TokenType::LBRACE, "Expected '{'");
-        while (peek().type != TokenType::RBRACE && !isAtEnd())
-            node->elseBranch.push_back(parseStatement());
-        consume(TokenType::RBRACE, "Expected '}'");
+        parseControlBody(node->elseBranch);
     }
     return node;
 }
@@ -1011,10 +1026,7 @@ std::unique_ptr<Node> Parser::parseWhile() {
     consume(TokenType::WHILE, "Expected 'while'");
     auto node = std::make_unique<WhileNode>();
     node->condition = parseExpression(0);
-    consume(TokenType::LBRACE, "Expected '{'");
-    while (peek().type != TokenType::RBRACE && !isAtEnd())
-        node->body.push_back(parseStatement());
-    consume(TokenType::RBRACE, "Expected '}'");
+    parseControlBody(node->body);
     return node;
 }
 
@@ -1046,10 +1058,7 @@ std::unique_ptr<Node> Parser::parseFor() {
     auto node = std::make_unique<ForNode>(varName, isRef, parseExpression(0));
     node->varName2 = varName2;
     node->destructureVars = destructureVars;
-    consume(TokenType::LBRACE, "Expected '{'");
-    while (peek().type != TokenType::RBRACE && !isAtEnd())
-        node->body.push_back(parseStatement());
-    consume(TokenType::RBRACE, "Expected '}'");
+    parseControlBody(node->body);
     return node;
 }
 

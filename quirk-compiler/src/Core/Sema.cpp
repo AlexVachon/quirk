@@ -1804,8 +1804,47 @@ std::string Sema::checkBinaryOp(BinaryOpNode *node)
             // For !=, fall back to __eq if __ne is not defined
             if (!fn && node->op == "!=") fn = findMethod(lType, lType + "___eq");
             if (fn) {
+                // Verify RHS is compatible with the method's second
+                // param (first non-self param). Without this check Sema
+                // trusted the dispatch blindly — `String * Any` found
+                // `String.__mul(self, n: Int)`, returned "String", and
+                // let Codegen try to `mul %String*, i8*` (fuzz finding
+                // c001). Same class of bug would fire for `s.__mul(any)`
+                // in general.
+                //
+                // The declared param already had `self` stripped in
+                // parser.cpp (parseStruct), so parameters[0] is the RHS
+                // param for a binary op. Comparison ops (== etc.) skip
+                // the check — they're accepted with any-vs-any because
+                // Codegen falls back to `quirk_any_equals` for opaque
+                // pairs and dispatches to __eq only when both sides are
+                // the same struct.
                 static const std::set<std::string> boolOps = {"==","!=","<","<=",">",">="};
                 if (boolOps.count(node->op)) return "Bool";
+                if (!fn->parameters.empty()) {
+                    const std::string& want = fn->parameters[0].type;
+                    // Inline compat check — the shared lambdas
+                    // (`compatibleOperands`, `isUnknown`) live below,
+                    // out of scope here. Accept: exact match, either
+                    // side unknown/Any/void, or numeric widening.
+                    auto known = [](const std::string& t) {
+                        return t != "" && t != "Any" && t != "Null" &&
+                               t != "auto" && t != "void";
+                    };
+                    auto num = [](const std::string& t) {
+                        return t == "Int" || t == "int" ||
+                               t == "Double" || t == "double";
+                    };
+                    bool compat = (want == rType) || !known(want) ||
+                                  !known(rType) || (num(want) && num(rType));
+                    if (!compat) {
+                        fatalError("'" + node->op + "' on '" + lType +
+                                   "' expects '" + want + "' on the right, got '" +
+                                   rType + "'. If the value is dynamically-typed, "
+                                   "cast it first (e.g. `.to_int()` / `.to_str()`).",
+                                   node->line, node->col, node->filePath);
+                    }
+                }
                 return fn->returnType;
             }
         }

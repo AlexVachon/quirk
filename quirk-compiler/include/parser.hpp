@@ -49,6 +49,12 @@ private:
     std::unique_ptr<Node> parseIf();
     std::unique_ptr<Node> parseWhile();
     std::unique_ptr<Node> parseFor();
+
+    // Parse a control-flow body — either a braced block `{ ... }` or
+    // a single statement after `=>`. Used by if / elif / else /
+    // while / for so `if x < 0 => return -x` reads the same shape
+    // as a full braced body without special-casing at each site.
+    void parseControlBody(std::vector<std::unique_ptr<Node>>& out);
     std::unique_ptr<Node> parseUse();
     std::unique_ptr<Node> parseWith();
     std::unique_ptr<Node> parseTry();

@@ -2,6 +2,33 @@
 
 All notable changes to the extension land here. Versioning follows SemVer; minor bumps for new features, patches for fixes.
 
+## [0.2.18] — 2026-08-14 — track declarations in top-level control-flow blocks
+
+`DiagnosticsProvider` was silently dropping every declaration inside
+a top-level `if / for / while / match` body in script-mode files:
+
+```quirk
+if cmd == "build" {
+    site := "."                    // declaration dropped
+    if argv.length() >= 3 { site = argv.__get(2) }
+    build(site)                     // → "'site' is not defined."
+}
+```
+
+Root cause: the guard `if (isInsideFunc || isTopLevel)` was
+gating declaration tracking on `braceDepth === 0 || currentFuncDepth
+!= -1`. A script-mode `if` body sits at `braceDepth > 0` with no
+enclosing `define`, so both were false and the whole tracking pass
+was skipped. The comment above the guard even said `braceDepth > 0
+outside a function means we're inside a struct body` — that
+assumption breaks for script-style code.
+
+Now the provider explicitly tracks struct/enum/interface body
+regions via `structBodyDepth`, and declaration tracking is gated on
+`isInsideFunc || !isInsideStructBody`. Script-mode top-level
+control flow works; struct-body false positives (declarations
+mis-identified from `field: Type` lines) stay suppressed.
+
 ## [0.2.17] — 2026-08-14 — 4-space indent in every snippet, not tabs
 
 Every snippet body was inserting a literal `\t` for indentation.

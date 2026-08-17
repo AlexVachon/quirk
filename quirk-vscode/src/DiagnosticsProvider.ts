@@ -299,6 +299,13 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
     // Robust brace-depth tracking replaces the buggy 'inStruct' regex logic
     let braceDepth = 0;
     let currentFuncDepth = -1;
+    // The brace depth at which we opened a struct/enum/interface body,
+    // or -1 if we're not currently inside one. This is what tells us
+    // whether to skip declaration tracking on lines at braceDepth > 0.
+    // Previously we assumed "any depth without a function context =
+    // struct body", which false-positively skipped declarations inside
+    // top-level `if / for / while` blocks in script-mode files.
+    let structBodyDepth = -1;
     // Stack of outer (locals, funcDepth) pairs — pushed when we enter a
     // nested `define` inside another function body so the inner define's
     // params don't clobber the outer scope's locals. Popped when the inner
@@ -435,11 +442,34 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
             }
         }
 
-        // Allow declaration tracking inside a function body OR at the top level (braceDepth === 0).
-        // braceDepth > 0 outside a function means we're inside a struct body — skip to avoid
-        // treating type-annotated fields like `data: Any` as variable declarations.
+        // Allow declaration tracking inside a function body OR anywhere at
+        // the module level that isn't a struct/enum/interface body. The old
+        // check ("braceDepth === 0 OR insideFunc") false-positively dropped
+        // declarations from script-style top-level blocks — `if cmd == "x"
+        // { site := "." }` at module level looked like "we're inside a
+        // struct" because braceDepth > 0 and no function had been entered.
+        //
+        // Struct-body regions are tracked via structBodyDepth (see below);
+        // that state is what we actually check to decide whether to skip
+        // declaration lines like `field: Type` inside a struct body.
         const isInsideFunc = currentFuncDepth !== -1;
-        const isTopLevel = braceDepth === 0;
+        const isInsideStructBody = structBodyDepth !== -1;
+
+        // Enter a struct/enum/interface body when we see the header +
+        // an opening brace on this line. Interfaces do declare method
+        // signatures with parameter names that shouldn't be tracked as
+        // top-level variables either.
+        if (!isInsideFunc && !isInsideStructBody) {
+            const structHeaderRe =
+                /^\s*(?:extern\s+)?(?:struct|enum|interface)\s+[A-Za-z_]\w*\b/;
+            if (structHeaderRe.test(maskedLine) && maskedLine.includes('{')) {
+                // structBodyDepth is set to the depth we'll fall back to when
+                // the matching `}` closes — i.e., the depth BEFORE the open
+                // brace. `braceDepth += openBraces - closeBraces` runs at the
+                // bottom of this iteration, so record the current value.
+                structBodyDepth = braceDepth;
+            }
+        }
 
         // Collect named argument names: `ident =` patterns at paren-depth > 0.
         // These are keyword arguments to function calls, not variable declarations.
@@ -481,7 +511,7 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
         // Type alias lines don't declare runtime variables — skip assignment matching
         const isTypeAliasLine = /^\s*type\s+[a-zA-Z_]\w*\s*=/.test(maskedLine);
 
-        if (isInsideFunc || isTopLevel) {
+        if (isInsideFunc || !isInsideStructBody) {
             // Parenthesized for-destructuring: for (n, s) in pairs
             const forParenDestructMatch = /\bfor\s+\(([^)]+)\)\s+in\b/.exec(maskedLine);
             if (forParenDestructMatch) {
@@ -768,7 +798,7 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
 
         // Adjust scope level
         braceDepth += openBraces - closeBraces;
-        
+
         // If we drop back down to the brace level where the function started,
         // we have exited the function body. Pop the outer scope if one was
         // stashed (i.e. this was a nested define inside another function);
@@ -781,6 +811,14 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
             } else {
                 currentFuncDepth   = -1;
             }
+        }
+
+        // Exit struct/enum/interface body when braces close back to the
+        // depth we opened at. Note: structBodyDepth was set to the depth
+        // BEFORE the opening `{`, so the closing brace lands us right at
+        // that same depth.
+        if (structBodyDepth !== -1 && braceDepth <= structBodyDepth && closeBraces > 0) {
+            structBodyDepth = -1;
         }
     }
 

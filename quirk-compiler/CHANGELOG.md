@@ -5,6 +5,22 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [5.2.1] — 2026-08-14 — stop treating nonzero exit as a compiler error
+
+Small correctness fix — the run loop was printing
+`Error: Program exited with code N` on any nonzero `main()` return,
+which conflated normal program semantics (an exit code is a
+program-level signal, not a compiler failure) with actual
+compilation errors.
+
+  - `Compiler.cpp` — remove the unconditional stderr message and
+    just forward the program's exit code to the shell. The user
+    can still read the code via `$?`.
+
+Behaviour before: `define main() -> Int { return 42 }` printed a
+red-flagged "Error:" line to stderr on top of the exit code. Now:
+silent exit with code 42, as expected.
+
 ## [5.2.0] — 2026-08-14 — extract self-host to its own repo
 
 The Quirk-in-Quirk compiler (`selfhost/*.quirk` + the C forwarding

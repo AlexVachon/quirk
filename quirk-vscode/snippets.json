@@ -36,7 +36,7 @@
         "prefix": "define",
         "body": [
             "define ${1:name}(${2:args}) -> ${3:void} {",
-            "\t$0",
+            "    $0",
             "}"
         ],
         "description": "Define a new function"
@@ -46,7 +46,7 @@
         "prefix": "defw",
         "body": [
             "define ${1:name}(${2:args}) -> ${3:void} where ${4:condition} {",
-            "\t$0",
+            "    $0",
             "}"
         ],
         "description": "Define a function with a where precondition"
@@ -70,7 +70,7 @@
             "@returns ${4:void}",
             "---",
             "define ${5:name}(${6:${2}: ${7:Type}}) -> ${4:void} {",
-            "\t$0",
+            "    $0",
             "}"
         ],
         "description": "Define a function with a docstring"
@@ -80,16 +80,16 @@
         "prefix": "struct",
         "body": [
             "struct ${1:Name} {",
-            "\t${2:field}: ${3:Type}",
+            "    ${2:field}: ${3:Type}",
             "",
-            "\t---",
-            "\tConstructor for ${1:Name}.",
-            "\t@param :",
-            "\t- **${2:field}** The ${2:field} value.",
-            "\t---",
-            "\tdefine __init(self, ${2:field}: ${3:Type}) -> void {",
-            "\t\tself.${2:field} = ${2:field}",
-            "\t}",
+            "    ---",
+            "    Constructor for ${1:Name}.",
+            "    @param :",
+            "    - **${2:field}** The ${2:field} value.",
+            "    ---",
+            "    define __init(self, ${2:field}: ${3:Type}) -> void {",
+            "        self.${2:field} = ${2:field}",
+            "    }",
             "}"
         ],
         "description": "Define a struct with an __init method"
@@ -99,10 +99,10 @@
         "prefix": "structx",
         "body": [
             "struct ${1:Name} : ${2:Parent} {",
-            "\tdefine __init(self) -> void {",
-            "\t\tsuper().__init(${3:args})",
-            "\t\t$0",
-            "\t}",
+            "    define __init(self) -> void {",
+            "        super().__init(${3:args})",
+            "        $0",
+            "    }",
             "}"
         ],
         "description": "Define a struct that inherits from another"
@@ -112,7 +112,7 @@
         "prefix": "if",
         "body": [
             "if ${1:condition} {",
-            "\t$0",
+            "    $0",
             "}"
         ],
         "description": "If statement"
@@ -122,9 +122,9 @@
         "prefix": "ife",
         "body": [
             "if ${1:condition} {",
-            "\t$0",
+            "    $0",
             "} else {",
-            "\t",
+            "    ",
             "}"
         ],
         "description": "If-else statement"
@@ -134,7 +134,7 @@
         "prefix": "for",
         "body": [
             "for ${1:item} in ${2:iterable} {",
-            "\t$0",
+            "    $0",
             "}"
         ],
         "description": "For-in loop"
@@ -144,7 +144,7 @@
         "prefix": "forr",
         "body": [
             "for ${1:i} in ${2:0}..${3:10} {",
-            "\t$0",
+            "    $0",
             "}"
         ],
         "description": "For loop over a range (e.g. 0..10)"
@@ -154,7 +154,7 @@
         "prefix": "ford",
         "body": [
             "for (${1:k}, ${2:v}) in ${3:items} {",
-            "\t$0",
+            "    $0",
             "}"
         ],
         "description": "For loop with tuple destructuring"
@@ -182,8 +182,8 @@
         "prefix": "tmatch",
         "body": [
             "match ${1:value} {",
-            "\tcase ${2:Ok} as ${3:o} => $0",
-            "\tcase ${4:Err} => ",
+            "    case ${2:Ok} as ${3:o} => $0",
+            "    case ${4:Err} => ",
             "}"
         ],
         "description": "Match arm over a tagged union, with payload narrow-bind"
@@ -193,9 +193,9 @@
         "prefix": "defv",
         "body": [
             "define ${1:name}(*${2:args}) -> ${3:void} {",
-            "\tfor ${4:item} in ${2:args} {",
-            "\t\t$0",
-            "\t}",
+            "    for ${4:item} in ${2:args} {",
+            "        $0",
+            "    }",
             "}"
         ],
         "description": "Define a variadic function (*args)"
@@ -205,7 +205,7 @@
         "prefix": "while",
         "body": [
             "while ${1:condition} {",
-            "\t$0",
+            "    $0",
             "}"
         ],
         "description": "While loop"
@@ -215,9 +215,9 @@
         "prefix": "try",
         "body": [
             "try {",
-            "\t$0",
+            "    $0",
             "} catch (${1:e}: ${2:Exception}) {",
-            "\tprint(\"Error: \" + ${1:e}.message)",
+            "    print(\"Error: \" + ${1:e}.message)",
             "}"
         ],
         "description": "Try-catch exception handling"
@@ -227,9 +227,9 @@
         "prefix": "tryr",
         "body": [
             "try {",
-            "\t$0",
+            "    $0",
             "} catch (${1:e}: ${2:Exception}) {",
-            "\tthrow ${3:Exception}(${1:e}.message) from ${1:e}",
+            "    throw ${3:Exception}(${1:e}.message) from ${1:e}",
             "}"
         ],
         "description": "Try-catch with exception chaining"
@@ -239,7 +239,7 @@
         "prefix": "with",
         "body": [
             "with ${1:File(\"${2:path}\", \"${3:r}\")} as ${4:f} {",
-            "\t$0",
+            "    $0",
             "}"
         ],
         "description": "Context-managed block"
@@ -261,7 +261,7 @@
         "prefix": "main",
         "body": [
             "define main() -> void {",
-            "\t$0",
+            "    $0",
             "}"
         ],
         "description": "Main entry point"

@@ -1005,12 +1005,13 @@ static int runJITModule(std::unique_ptr<llvm::Module> module,
     } else {
         pthread_join(worker, nullptr);
     }
-    int ret = ta.result;
-    if (ret != 0) {
-        std::cerr << "Error: Program exited with code " << ret << std::endl;
-        return ret;
-    }
-    return 0;
+    // Forward the program's exit code to the shell verbatim. A
+    // nonzero return from `main` is a program-level signal, NOT a
+    // compiler error — the driver used to shout `Error: Program
+    // exited with code N` on any nonzero, which conflated normal
+    // program semantics with compilation failure. The user can read
+    // the exit code via `$?` if they need it.
+    return ta.result;
 }
 
 // ==========================================================

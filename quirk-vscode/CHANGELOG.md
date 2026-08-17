@@ -2,6 +2,24 @@
 
 All notable changes to the extension land here. Versioning follows SemVer; minor bumps for new features, patches for fixes.
 
+## [0.2.17] — 2026-08-14 — 4-space indent in every snippet, not tabs
+
+Every snippet body was inserting a literal `\t` for indentation.
+In an editor configured for 4-space indent (Quirk's canonical
+style), that showed up as a real tab character, mixing with the
+surrounding spaces.
+
+Fixed in two places:
+
+- `snippets.json` — 34 `\t` occurrences → 4 spaces.
+- `src/CompletionProvider.ts` — 39 `\n\t` occurrences in the
+  runtime snippet strings (keyword completions like `define`,
+  `struct`, `if`, `match`, and the __magic-method templates)
+  → `\n    `.
+
+The `out/` directory is rebuilt with the updated strings so the
+fix ships in the packaged VSIX.
+
 ## [0.2.16] — 2026-06-20
 
 ### Stop flagging parameters after a function-call default value

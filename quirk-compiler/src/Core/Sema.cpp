@@ -3,6 +3,7 @@
 #include <functional>
 #include <sstream>
 #include "sema.hpp"
+#include "ErrorCodes.hpp"
 
 std::string Sema::currentClass = "";
 
@@ -363,7 +364,17 @@ static void printSemaError(const std::string& msg, int line, int col,
         emitDiagnosticJson("error", msg, path, line, col, suggestions);
         return;
     }
-    std::cerr << "\033[1;31m[ERROR]\033[0m " << msg << "\n";
+    // Look up a stable error code from the message text — see
+    // `src/Core/ErrorCodes.hpp` for the registry. Codes let users
+    // `quirk explain Q0100` for a proper docs page rather than
+    // reading the terse one-liner.
+    int code = quirk::matchErrorCode(msg);
+    if (code > 0) {
+        std::cerr << "\033[1;31m[" << quirk::formatCode(code) << " ERROR]\033[0m "
+                  << msg << "\n";
+    } else {
+        std::cerr << "\033[1;31m[ERROR]\033[0m " << msg << "\n";
+    }
     if (line > 0) {
         std::cerr << " --> ";
         if (!path.empty()) std::cerr << path << ":";

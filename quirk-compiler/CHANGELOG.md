@@ -5,6 +5,50 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [5.3.7] — 2026-08-18 — diagnostic error codes + `quirk explain`
+
+Every well-known error now prints with a stable numeric code you can
+look up:
+
+```
+[Q0100 ERROR] undefined variable or function 'site'
+ --> src/main.quirk:17:11
+```
+
+And `quirk explain <code>` prints a docs page (title + summary + fix
+hint + before/after example):
+
+```
+$ quirk explain Q0100
+Q0100  Undefined variable or function
+
+The identifier isn't declared in the current scope and isn't imported
+by any `use` / `from ... use { ... }` line.
+
+Fix: Check the spelling, declare the variable, or import it. In
+script-mode files, top-level `if`/`while` blocks are declaration-
+tracked (v5.3.5+ tooling).
+
+Example:
+    // bad:
+    if cmd == "build" { site := "." }
+    build(site)                 // Q0100 — site is out of scope
+    // good — declare at the enclosing scope:
+    ...
+```
+
+- 13 codes assigned covering the most-common errors (parser: Q0001-6,
+  name resolution + imports: Q0100-4, type checking: Q0200-6, structs:
+  Q0301, contracts: Q0400).
+- `quirk explain list` prints every registered code.
+- `quirk explain Q0100` / `explain 100` / `explain q0100` all parse.
+- Zero touch to the ~68 `fatalError()` call sites — codes are inferred
+  from message text via `src/Core/ErrorCodes.hpp`. Adding a new code
+  is one entry in two tables.
+
+Corpus: 44 ok / 47 unchanged.
+
+
 ## [5.3.6] — 2026-08-18 — `quirk cache info` + `clean compile` subcommand
 
 Extends the existing `quirk cache` command with visibility into the

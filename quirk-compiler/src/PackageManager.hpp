@@ -32,6 +32,7 @@
 #include <fstream>
 #include <sstream>
 #include <iostream>
+#include "Core/ErrorCodes.hpp"    // path is relative to src/ per Makefile -Iinclude
 #include <filesystem>
 #include <cstdlib>
 #include <system_error>
@@ -64,7 +65,7 @@ static std::string self_binary();
 
 namespace qpm {
 
-constexpr const char* QUIRK_VERSION = "5.3.6";
+constexpr const char* QUIRK_VERSION = "5.3.7";
 
 namespace fs = std::filesystem;
 
@@ -5934,6 +5935,58 @@ static int cmd_version() {
     return 0;
 }
 
+// `quirk explain <code>` — show the docs page for a diagnostic code.
+// Codes are the `Q0042` prefix on error messages (v5.3.7+). Accepts:
+//     Q0100      — full form
+//     q0100      — case-insensitive
+//     100        — bare number
+static int cmd_explain(const std::vector<std::string>& args) {
+    if (args.empty() || args[0] == "--help" || args[0] == "-h") {
+        std::cout << "quirk explain <code>\n"
+                     "    Print the docs page for a diagnostic error code.\n"
+                     "    Codes appear in error output as `[Q0042 ERROR]`.\n"
+                     "\n"
+                     "Examples:\n"
+                     "    quirk explain Q0100\n"
+                     "    quirk explain 100\n"
+                     "\n"
+                     "List every known code with `quirk explain list`.\n";
+        return args.empty() ? 1 : 0;
+    }
+    if (args[0] == "list") {
+        std::cout << "Known error codes:\n";
+        for (const auto& d : quirk::errorDocs()) {
+            std::cout << "  " << quirk::formatCode(d.code) << "  " << d.title << "\n";
+        }
+        std::cout << "\nUse `quirk explain <code>` for the full docs page.\n";
+        return 0;
+    }
+    // Parse Q0042 / q0042 / 42 → int
+    std::string raw = args[0];
+    int code = 0;
+    if (raw.size() >= 2 && (raw[0] == 'Q' || raw[0] == 'q')) raw = raw.substr(1);
+    try { code = std::stoi(raw); }
+    catch (...) { std::cerr << "explain: not a valid code: " << args[0] << "\n"; return 1; }
+
+    const quirk::ErrorDoc* doc = quirk::lookupErrorDoc(code);
+    if (!doc) {
+        std::cerr << "explain: no docs page for " << quirk::formatCode(code) << "\n";
+        std::cerr << "  (`quirk explain list` shows all known codes)\n";
+        return 1;
+    }
+    std::cout << "\033[1;36m" << quirk::formatCode(doc->code) << "\033[0m  \033[1m"
+              << doc->title << "\033[0m\n\n";
+    std::cout << doc->summary << "\n\n";
+    std::cout << "\033[1;33mFix:\033[0m " << doc->hint << "\n\n";
+    std::cout << "\033[1;33mExample:\033[0m\n";
+    // Indent the example block by 4 spaces.
+    std::string ex = doc->example;
+    std::istringstream is(ex);
+    std::string ln;
+    while (std::getline(is, ln)) std::cout << "    " << ln << "\n";
+    return 0;
+}
+
 // `quirk eval "<code>"` — wrap the code in `define main() { ... }` and run it.
 // We write a temp file and re-exec ourselves so the normal compile path runs.
 static int cmd_eval(const std::vector<std::string>& args) {
@@ -6726,7 +6779,7 @@ static bool is_subcommand(const std::string& argIn) {
            arg == "pkg" ||
            arg == "init" || arg == "version" || arg == "venv" ||
            arg == "run" || arg == "eval" || arg == "module" ||
-           arg == "env" || arg == "new" || arg == "help" ||
+           arg == "env" || arg == "new" || arg == "help" || arg == "explain" ||
            arg == "script" || arg == "sync" || arg == "stdlib" || arg == "fmt" ||
            arg == "doc" ||
            arg == "repl" || arg == "test" || arg == "bump-compiler" ||
@@ -6950,6 +7003,7 @@ inline bool dispatch(int& argc, char** argv, int& outRc) {
     else if (verb == "test")         outRc = cmd_test(verbArgs);
     else if (verb == "stdlib")       outRc = cmd_stdlib(verbArgs);
     else if (verb == "help")         outRc = cmd_help(verbArgs);
+    else if (verb == "explain")      outRc = cmd_explain(verbArgs);
     else {
         // Unknown verb. Before dumping the full help, try a typo
         // suggestion — `quirk insatll foo` is almost certainly meant

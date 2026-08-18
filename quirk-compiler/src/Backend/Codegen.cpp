@@ -25,6 +25,7 @@
 
 #include "TypeGen.hpp"
 #include "BoxInt.hpp"
+#include "CoerceGen.hpp"
 #include "VariableGen.hpp"
 #include "MathGen.hpp"
 #include "StructGen.hpp"
@@ -2538,49 +2539,13 @@ class LLVMCodegen {
                         argVal = Builder.CreateBitCast(checked, expectedType);
                     }
                 }
-            } else if (argVal->getType() != expectedType) {
-                if (argVal->getType()->isIntegerTy() && expectedType->isIntegerTy())
-                    argVal = Builder.CreateIntCast(argVal, expectedType, true);
-                else if (argVal->getType()->isIntegerTy() && expectedType->isPointerTy())
-                    argVal = quirk::boxIntToOpaque(Context, TheModule.get(), Builder, argVal, expectedType);
-                else if (argVal->getType()->isPointerTy() && expectedType->isPointerTy())
-                    argVal = Builder.CreateBitCast(argVal, expectedType);
-                else if (argVal->getType()->isIntegerTy() && expectedType->isDoubleTy())
-                    argVal = Builder.CreateSIToFP(argVal, expectedType);
-                // Double → i8* (Any-typed param). Sema accepts the
-                // call because Any takes anything, but Codegen needs
-                // to actually box the Double or LLVM rejects the
-                // `call ...(double %x)` against an `i8*` signature.
-                // Route through `Core_Primitives_Any_box_double` —
-                // matches what nonlocal-cell boxing does for the same
-                // shape.
-                else if (argVal->getType()->isDoubleTy() &&
-                         expectedType == Type::getInt8PtrTy(Context)) {
-                    FunctionCallee box = TheModule->getOrInsertFunction(
-                        "Core_Primitives_Any_box_double",
-                        Type::getInt8PtrTy(Context), Type::getDoubleTy(Context));
-                    argVal = Builder.CreateCall(box, {argVal}, "arg_dbl_box");
-                }
-                else if (argVal->getType()->isDoubleTy() && expectedType->isIntegerTy())
-                    argVal = Builder.CreateFPToSI(argVal, expectedType);
-                // ptr → int: e.g. a `nonlocal i: Int` cell loads as i8*
-                // but gets passed where an i32/i64 is expected
-                // (List.get(i)). Route through quirk_opaque_to_int so
-                // both encodings — Any* (Int 0/false/Bool false) and
-                // legacy tagged-int (nonzero ints, list elements) —
-                // resolve correctly.
-                else if (argVal->getType()->isPointerTy() && expectedType->isIntegerTy()) {
-                    Type* i8p = Type::getInt8PtrTy(Context);
-                    FunctionCallee toInt = TheModule->getOrInsertFunction(
-                        "quirk_opaque_to_int", Type::getInt32Ty(Context), i8p);
-                    Value* casted = (argVal->getType() == i8p)
-                        ? argVal
-                        : Builder.CreateBitCast(argVal, i8p);
-                    Value* asI32 = Builder.CreateCall(toInt, {casted}, "nonlocal_unbox");
-                    argVal = expectedType->isIntegerTy(32)
-                        ? asI32
-                        : Builder.CreateIntCast(asI32, expectedType, /*isSigned=*/true);
-                }
+            } else {
+                // General coercion fall-through: 8 cases (int↔int width,
+                // int↔double, i8*↔int, i8*→String*, etc.) all live in
+                // CoerceGen. Any→String was a fuzz-found gap (v5.3.3)
+                // that landed in exactly this site AFTER StructGen —
+                // consolidating means the fix now applies uniformly.
+                argVal = quirk::coerceToType(argVal, expectedType, Context, Builder, TheModule.get());
             }
             finalArgs.push_back(argVal);
         }
@@ -4255,45 +4220,16 @@ Value* LLVMCodegen::handleExpression(Node* node) {
                 }
                 if (!magicFn) magicFn = TheModule->getFunction(sName + it->second);
                 if (magicFn && magicFn->arg_size() >= 2) {
-                    Value* rArg = R;
+                    // RHS may not statically match the declared magic-
+                    // method param (e.g. `String.__mul(self, n: Int)`
+                    // called as `"bug: " * anyVal`). CoerceGen bridges
+                    // int↔int width, i8*(Any)→Int/Double/String*, and
+                    // pointer bitcasts uniformly — this replaces the
+                    // hand-rolled switch that used to live here (the
+                    // v5.3.0 fuzz path added the i8*→Int leg one at a
+                    // time; now every leg lives in one file).
                     Type* expectedTy = magicFn->getFunctionType()->getParamType(1);
-                    if (rArg->getType() != expectedTy) {
-                        if (rArg->getType()->isPointerTy() && expectedTy->isPointerTy())
-                            rArg = Builder.CreateBitCast(rArg, expectedTy);
-                        else if (rArg->getType()->isIntegerTy() && expectedTy->isIntegerTy())
-                            rArg = Builder.CreateIntCast(rArg, expectedTy, true);
-                        else if (rArg->getType()->isIntegerTy() && expectedTy->isPointerTy())
-                            rArg = Builder.CreateIntToPtr(rArg, expectedTy);
-                        else if (rArg->getType()->isPointerTy() &&
-                                 rArg->getType()->getPointerElementType()->isIntegerTy(8) &&
-                                 expectedTy->isIntegerTy()) {
-                            // Opaque `i8*` (Any) → Int/scalar for methods
-                            // whose param is a plain integer (e.g.
-                            // `String.__mul(self, n: Int)`). Reached when
-                            // the RHS came from something dynamically
-                            // typed — `Map.get`, `List.__get`, or an Any-
-                            // typed local — so its static type is i8*
-                            // instead of i32. `quirk_opaque_to_int`
-                            // handles both encodings (tagged-int and
-                            // heap-Any) and returns 0 for null.
-                            //
-                            // Pre-fix: this case fell through with no
-                            // coercion; the CreateCall below fed an i8*
-                            // to an i32-param callee and LLVM's verifier
-                            // aborted with "Internal compiler error:
-                            // malformed IR" (surfaced by the mutation
-                            // fuzzer via `"bug: " * v` where `v` is a
-                            // Map.get result).
-                            FunctionCallee toInt = TheModule->getOrInsertFunction(
-                                "quirk_opaque_to_int",
-                                Type::getInt32Ty(Context),
-                                Type::getInt8PtrTy(Context));
-                            Value* unboxed = Builder.CreateCall(toInt, {rArg}, "unbox_any_to_int");
-                            if (expectedTy != Type::getInt32Ty(Context))
-                                unboxed = Builder.CreateIntCast(unboxed, expectedTy, true);
-                            rArg = unboxed;
-                        }
-                    }
+                    Value* rArg = quirk::coerceToType(R, expectedTy, Context, Builder, TheModule.get());
                     Value* res = Builder.CreateCall(magicFn, {L, rArg}, "op_result");
                     // Comparison ops are typed Bool at the Quirk level. Extern
                     // implementations widen the C ABI return to i32, so truncate

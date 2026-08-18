@@ -9,6 +9,7 @@
 #include "ast.hpp"
 #include "llvm/IR/IRBuilder.h"
 #include "BoxInt.hpp"
+#include "CoerceGen.hpp"
 
 using namespace llvm;
 
@@ -210,78 +211,10 @@ class StructGen {
                 Value* argVal = args[i];
                 if (i + 1 < initFunc->arg_size()) {
                     Type* expectedType = initFunc->getFunctionType()->getParamType(i + 1);
-
-                    if (argVal->getType() != expectedType) {
-                        if (argVal->getType()->isPointerTy() &&
-                            argVal->getType()->getPointerElementType()->isIntegerTy(8) &&
-                            expectedType->isPointerTy() &&
-                            expectedType->getPointerElementType()->isStructTy()) {
-
-                            StructType* pst = cast<StructType>(expectedType->getPointerElementType());
-                            if (pst->getName() == "String") {
-                                if (name == "String") {
-                                    argVal = Builder.CreateBitCast(argVal, expectedType);
-                                } else {
-                                    // Runtime unbox: `argVal` is opaque
-                                    // i8* — it might be (a) a raw c-string,
-                                    // (b) an Any-boxed String pointer, or
-                                    // (c) some other Any-tagged value.
-                                    // `quirk_opaque_to_string` inspects the
-                                    // tag and returns a real `String*`:
-                                    //   - Any-boxed String → underlying String*
-                                    //   - Any-boxed Int/Double → freshly-
-                                    //     stringified representation
-                                    //   - raw c-string → wrapped in a fresh
-                                    //     String
-                                    //
-                                    // Pre-fix: this path unconditionally
-                                    // called `allocateAndInit("String", {argVal})`,
-                                    // which wraps whatever pointer it gets
-                                    // as the new String's `_buffer` field.
-                                    // For a destructured tuple element that
-                                    // came out as an Any-boxed `%String*`,
-                                    // the wrap treated the struct pointer
-                                    // as a c-string → the "_buffer" pointed
-                                    // at struct header bytes, and downstream
-                                    // uses (print / path concat) rendered
-                                    // garbage like `example-site/posts/����.html`.
-                                    Type* i8p = Type::getInt8PtrTy(Context);
-                                    FunctionCallee toStr = TheModule->getOrInsertFunction(
-                                        "quirk_opaque_to_string",
-                                        expectedType, i8p);
-                                    Value* asI8p = argVal->getType() == i8p
-                                        ? argVal
-                                        : Builder.CreateBitCast(argVal, i8p);
-                                    argVal = Builder.CreateCall(toStr, {asI8p}, "unbox_any_to_str");
-                                }
-                            } else {
-                                argVal = Builder.CreateBitCast(argVal, expectedType);
-                            }
-                        }
-                        else if (argVal->getType()->isIntegerTy() && expectedType->isDoubleTy())
-                            argVal = Builder.CreateSIToFP(argVal, expectedType);
-                        else if (argVal->getType()->isDoubleTy() && expectedType->isIntegerTy())
-                            argVal = Builder.CreateFPToSI(argVal, expectedType);
-                        else if (argVal->getType()->isPointerTy() && expectedType->isPointerTy())
-                            argVal = Builder.CreateBitCast(argVal, expectedType);
-                        else if (argVal->getType()->isIntegerTy() && expectedType->isPointerTy())
-                            argVal = quirk::boxIntToOpaque(Context, TheModule, Builder, argVal, expectedType);
-                        else if (argVal->getType()->isDoubleTy() && expectedType->isPointerTy()) {
-                            // Double → opaque ptr — box through the
-                            // runtime helper so the value carries a
-                            // real ANY_DOUBLE tag. Mirrors the
-                            // Codegen.cpp call-arg path. Surfaces in
-                            // generic-T constructor slots like
-                            // `Some(value: T)` when T is erased.
-                            Type* i8PtrTy = Type::getInt8PtrTy(Context);
-                            FunctionCallee box = TheModule->getOrInsertFunction(
-                                "Core_Primitives_Any_box_double",
-                                i8PtrTy, Type::getDoubleTy(Context));
-                            argVal = Builder.CreateCall(box, {argVal}, "arg_dbl_box");
-                            if (expectedType != i8PtrTy)
-                                argVal = Builder.CreateBitCast(argVal, expectedType);
-                        }
-                    }
+                    // All coercion cases live in CoerceGen; see the
+                    // header for the full case table (bug fixes here
+                    // used to require touching 6 different sites).
+                    argVal = quirk::coerceToType(argVal, expectedType, Context, Builder, TheModule);
                 }
                 initArgs.push_back(argVal);
             }
@@ -339,57 +272,10 @@ class StructGen {
             for (auto val : args) {
                 if (idx >= (int)st->getNumElements()) break;
                 Value* fieldPtr = Builder.CreateStructGEP(st, objPtr, idx++);
-
                 Type* expectedType = fieldPtr->getType()->getPointerElementType();
-
-                if (val->getType() != expectedType) {
-                    if (val->getType()->isPointerTy() &&
-                        val->getType()->getPointerElementType()->isIntegerTy(8) &&
-                        expectedType->isPointerTy() &&
-                        expectedType->getPointerElementType()->isStructTy()) {
-
-                        StructType* pst = cast<StructType>(expectedType->getPointerElementType());
-                        std::string sName = pst->getName().str();
-                        if (sName.find("struct.") == 0) sName = sName.substr(7);
-
-                        if (sName == "String") {
-                            // Runtime unbox — same fix as the __init
-                            // path above. See there for the full
-                            // rationale; short version: wrapping an
-                            // Any-boxed String pointer inside a fresh
-                            // String's `_buffer` field gives you a
-                            // struct-header masquerading as a c-string.
-                            Type* i8p = Type::getInt8PtrTy(Context);
-                            FunctionCallee toStr = TheModule->getOrInsertFunction(
-                                "quirk_opaque_to_string", expectedType, i8p);
-                            Value* asI8p = val->getType() == i8p
-                                ? val
-                                : Builder.CreateBitCast(val, i8p);
-                            val = Builder.CreateCall(toStr, {asI8p}, "unbox_field_to_str");
-                        } else {
-                            val = Builder.CreateBitCast(val, expectedType);
-                        }
-                    }
-                    else if (val->getType()->isIntegerTy() && expectedType->isIntegerTy()) val = Builder.CreateIntCast(val, expectedType, true);
-                    else if (val->getType()->isPointerTy() && expectedType->isPointerTy()) val = Builder.CreateBitCast(val, expectedType);
-                    else if (val->getType()->isIntegerTy() && expectedType->isPointerTy()) val = quirk::boxIntToOpaque(Context, TheModule, Builder, val, expectedType);
-                    else if (val->getType()->isIntegerTy() && expectedType->isDoubleTy()) val = Builder.CreateSIToFP(val, expectedType);
-                    else if (val->getType()->isDoubleTy() && expectedType->isPointerTy()) {
-                        // Double → opaque ptr in the no-__init fallback
-                        // path. Mirrors the init-arg coercion above —
-                        // surfaces in variant-struct field stores like
-                        // `Some(x)` where x is Double and Some.value is
-                        // an erased generic T (i8*). Without this the
-                        // verifier rejected "store double, i8**".
-                        Type* i8p = Type::getInt8PtrTy(Context);
-                        FunctionCallee box = TheModule->getOrInsertFunction(
-                            "Core_Primitives_Any_box_double",
-                            i8p, Type::getDoubleTy(Context));
-                        val = Builder.CreateCall(box, {val}, "field_dbl_box");
-                        if (expectedType != i8p) val = Builder.CreateBitCast(val, expectedType);
-                    }
-                }
-
+                // Same coercion cases as the __init arg path — routed
+                // through CoerceGen so bug fixes land in one place.
+                val = quirk::coerceToType(val, expectedType, Context, Builder, TheModule);
                 Builder.CreateStore(val, fieldPtr);
             }
             // Store __type_id for fallback path as well

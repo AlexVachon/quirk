@@ -5,6 +5,57 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [5.3.4] — 2026-08-18 — consolidate Codegen coercion into `CoerceGen`
+
+Backend refactor — no user-visible language change, but every future
+`i8*/String*/Int/Double/i32` coercion fix now lands in exactly one file
+instead of the 4–6 sites that drifted out of sync over the past 40
+alphas.
+
+Every "type mismatch → box/unbox/cast" site in Codegen used to be
+hand-rolled 6 different times:
+
+| Site | LoC before |
+|---|---|
+| `StructGen.hpp` __init arg coercion    | ~70 |
+| `StructGen.hpp` no-__init field-store  | ~50 |
+| `Codegen.cpp`   call-arg coercion      | ~50 |
+| `Codegen.cpp`   magic-method dispatch  | ~40 |
+| `Codegen.cpp`   retval coercion        | ~100 (specialised paths untouched) |
+| Various inline one-offs                 | ~15 |
+
+Each covered a slightly different subset. When the fuzzer found
+`String * Any` in v5.3.0 or `Post(stem, ...)` returned garbage bytes
+in v5.3.3, the fix landed at ONE site — leaving the others still
+broken until they surfaced independently.
+
+**New `src/Backend/CoerceGen.hpp`** — single `coerceToType(val, expected, …)`
+helper with the full case table:
+
+    ty == expected                     →  val (no-op)
+    int → int (width mismatch)         →  CreateIntCast(signed)
+    int → double                       →  CreateSIToFP
+    double → int                       →  CreateFPToSI
+    double → i8*                       →  Core_Primitives_Any_box_double
+    int  → any ptr                     →  boxIntToOpaque
+    i8*  → String*                     →  quirk_opaque_to_string (unbox)
+    i8*  → int                         →  quirk_opaque_to_int (unbox)
+    i8*  → double                      →  quirk_opaque_to_double (unbox)
+    ptr → ptr (compatible)             →  CreateBitCast
+
+Migration:
+
+- `StructGen.hpp` __init arg coercion — 70 lines → 1 call
+- `StructGen.hpp` field-store fallback — 50 lines → 1 call
+- `Codegen.cpp` call-arg coercion       — 45 lines → 1 call
+- `Codegen.cpp` magic-method dispatch   — 40 lines → 1 call
+- retval coercion left intact (specialised branches: null-preservation
+  for nullable returns, variant-struct → union upcast, lambda i8*-box)
+
+Full test suite unchanged at 44 ok / 47. Case count actually
+increased by 1 (202 → 203) — the newly-uniform `i8* → double` case
+unblocked a corpus test that had been silently mis-typing.
+
 ## [5.3.3] — 2026-08-18 — destructured tuple elements passed to String fields
 
 Destructured tuple elements passed to `String`-typed struct fields

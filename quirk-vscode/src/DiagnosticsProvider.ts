@@ -34,6 +34,33 @@ function collectModuleExports(filePath: string): Set<string> | null {
     let m: RegExpExecArray | null;
     while ((m = declRe.exec(content)) !== null) exports.add(m[1]);
 
+    // Module-level constant bindings: `NAME := value` or `NAME: T = value`
+    // at brace-depth 0. Import-check missed these — a file exporting
+    // `DIM := "\x1b[2m"` looked like it exported nothing but the
+    // `define`d functions, so `from .format use { DIM }` false-warned.
+    //
+    // Depth tracking is line-crude but plenty for module-level scans:
+    // count `{` and `}` per line, only accept declarations while
+    // depth stays at 0. Multi-line strings would confuse this, but
+    // the export sanity check tolerates false-positives (an over-broad
+    // export set only silences real name-typo diagnostics on this
+    // file, not on its consumers).
+    {
+        const lines = content.split(/\r?\n/);
+        let depth = 0;
+        const constRe = /^\s*([A-Za-z_]\w*)\s*(?::\s*[A-Za-z0-9_.?|&\s\[\]]+\s*)?\s*(?::=|=(?!>))/;
+        for (const line of lines) {
+            if (depth === 0) {
+                const cm = constRe.exec(line);
+                if (cm) exports.add(cm[1]);
+            }
+            for (const ch of line) {
+                if (ch === '{') depth++;
+                else if (ch === '}') depth = Math.max(0, depth - 1);
+            }
+        }
+    }
+
     // Single-line re-exports.
     const reRe = new RegExp(REEXPORT_RE_SRC, 'gm');
     while ((m = reRe.exec(content)) !== null) {
@@ -1043,6 +1070,14 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
 
             // Suppress warnings for declarations on dead code lines
             if (deadLines.has(range.start.line)) return;
+
+            // Module-level names are the file's public API — other
+            // files import them via `from .this use { X }`. Skip the
+            // unused-warning for anything that ended up in the file-
+            // globals set (Pass 1 gates on brace-depth == 0). This is
+            // the same rationale as not flagging a `define` as unused
+            // when no in-file caller consumes it.
+            if (fileGlobals.has(cleanKey)) return;
 
             const diagnostic = new vscode.Diagnostic(
                 range,

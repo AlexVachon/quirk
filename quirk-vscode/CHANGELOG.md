@@ -2,6 +2,40 @@
 
 All notable changes to the extension land here. Versioning follows SemVer; minor bumps for new features, patches for fixes.
 
+## [0.2.23] — 2026-08-18 — module-level constants export + no "unused" on public API
+
+Two related fixes, both surfaced while dogfooding `qcm` against the
+export-check.
+
+**Module-level `NAME := value` constants are now exported.** The
+export scanner recognised `define`/`struct`/`enum`/`type`/
+`interface`/re-exports, but not top-level constant bindings. A file
+with
+
+```quirk
+DIM   := "\x1b[2m"
+BOLD  := "\x1b[1m"
+```
+
+read as "no exports for those names", so downstream
+`from .format use { DIM, BOLD }` false-warned even when the
+compiler compiled it fine.
+
+**Module-level names are no longer flagged "unused".** Public API
+by shape — other files import them via `from .this use { X }`,
+which this pass can't see. Was firing on the same DIM/BOLD
+constants that also had the missing-export false-warning above,
+which combined to a very confusing "declared but never used, and
+if you use it we'll say it doesn't exist" pair of squiggles.
+
+Both fixes are in `DiagnosticsProvider.ts`:
+
+- `collectModuleExports` — new depth-tracked loop that adds
+  brace-depth-0 `NAME := ...` / `NAME: T = ...` bindings.
+- Pass-3 (unused warnings) — skips when `fileGlobals.has(cleanKey)`.
+
+## [0.2.22] — 2026-08-18 — (rolled into 0.2.23)
+
 ## [0.2.21] — 2026-08-18 — lint direct calls to magic methods
 
 Info-level squiggle on `x.__get(i)` / `x.__set(i, v)` / `x.__add(y)`

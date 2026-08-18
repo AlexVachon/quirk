@@ -163,6 +163,32 @@ STDLIB_TAG_html ?= v1.0.1
 # requirement beyond what v1.1.0 already needed.
 STDLIB_TAG_net ?= v1.2.0
 
+# --- INSTALL / UNINSTALL --------------------------------------------------
+# Copy the freshly-built compiler + runtime into $(PREFIX) (default
+# ~/.quirk/bin). `bin/quirk` is installed as a regular file rather
+# than a symlink so it works after copying to a different filesystem
+# or a permission-restricted user dir. Runs `all` first so an
+# out-of-date build gets caught.
+PREFIX ?= $(HOME)/.quirk
+
+install: all
+	@mkdir -p $(PREFIX)/bin
+	@cp -f $(TARGET) $(PREFIX)/bin/quirk-cpp
+	@cp -f $(TARGET) $(PREFIX)/bin/quirk
+	@cp -f $(RUNTIME_LIB) $(PREFIX)/bin/runtime.so
+	@chmod +x $(PREFIX)/bin/quirk $(PREFIX)/bin/quirk-cpp
+	@echo ""
+	@echo "  installed to $(PREFIX)/bin:"
+	@echo "    quirk        ($$(stat -c%s $(PREFIX)/bin/quirk) bytes)"
+	@echo "    quirk-cpp    ($$(stat -c%s $(PREFIX)/bin/quirk-cpp) bytes)"
+	@echo "    runtime.so   ($$(stat -c%s $(PREFIX)/bin/runtime.so) bytes)"
+	@echo ""
+	@echo "  run: $(PREFIX)/bin/quirk --version"
+
+uninstall:
+	@rm -f $(PREFIX)/bin/quirk $(PREFIX)/bin/quirk-cpp $(PREFIX)/bin/runtime.so
+	@echo "  removed compiler binaries from $(PREFIX)/bin"
+
 bootstrap-stdlib:
 	@mkdir -p packages
 	@for pkg in $(STDLIB_PACKAGES); do                                            \
@@ -221,4 +247,4 @@ FUZZ_SEED  ?=
 fuzz:
 	@python3 tools/fuzz.py --iters $(FUZZ_ITERS) $(if $(FUZZ_SEED),--seed $(FUZZ_SEED),) --quiet
 
-.PHONY: all clean test bootstrap-stdlib bootstrap-stdlib-clean docs fuzz
+.PHONY: all clean test install uninstall bootstrap-stdlib bootstrap-stdlib-clean docs fuzz

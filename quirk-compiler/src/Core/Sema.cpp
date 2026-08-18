@@ -2494,6 +2494,24 @@ std::string Sema::checkCall(CallNode *node)
         else if (objType == "bool") objType = "Bool";
         else if (objType == "cstring" || objType == "string" || objType == "char") objType = "String";
 
+        // Method calls on an `Any` receiver defer to runtime — the
+        // static type of the return can't be known, so it's `Any`.
+        // Previously Sema fell all the way through to `return "void"`
+        // at the bottom, which propagated a void into downstream
+        // type-checks and rejected valid code like:
+        //
+        //     b := blocks.__get(i).trim()   // b was typed 'void'
+        //     render_block(b)                // Sema: expected String, got void
+        //
+        // where `blocks.__get(i)` correctly returned Any but the
+        // subsequent `.trim()` chain lost that. Returning "Any" here
+        // pushes the type check to runtime — same policy as calling
+        // through a Callable variable or accessing an Any field.
+        if (objType == "Any" || objType == "auto") {
+            for (auto& a : node->args) checkExpression(a.value.get());
+            return "Any";
+        }
+
         // Builtin method return types for core primitives.
         // These are defined in Quirk's core library files which may not always
         // be loaded, so we hard-code their return types here as a fallback to

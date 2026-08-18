@@ -5,6 +5,30 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [5.3.2] — 2026-08-18 — method calls on `Any` type as `Any`, not `void`
+
+Sema was returning `void` for method calls on an `Any` receiver, which
+broke natural chains like:
+
+```quirk
+b := blocks.__get(i).trim()   // .trim() on Any returned void
+render_block(b)                // "expected String but got void"
+```
+
+Root cause: `checkMemberCall` had per-primitive tables (String / Int /
+Double / Bool / List / Map) and a fall-through `return "void"` at the
+bottom. `Any` matched no table and hit the fall-through.
+
+Fix: when the receiver type is `Any` (or `auto`), skip method
+resolution and return `"Any"` — same policy Sema already uses for
+calling through Callable variables and accessing Any fields. Runtime
+still throws on genuinely-wrong types (`.trim()` on an Int, etc.); the
+static check just stops rejecting the shape.
+
+Regression probe: `tests/probes/p89_any_method_call.quirk` — exercises
+`List.__get(i).trim()`, chained `.trim().upper()` on Map.get results,
+and confirms downstream assignment/print work.
+
 ## [5.3.1] — 2026-08-17 — bare-tuple returns (Python-style multi-return)
 
 **Language**

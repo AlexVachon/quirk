@@ -1,0 +1,32 @@
+// p89 — method calls on an `Any` receiver type-check as `Any`,
+// not `void` (v5.3.2). The pattern shows up naturally whenever a
+// value comes back from `List.__get(...)`, `Map.get(...)`, or any
+// slot typed as Any.
+//
+// Pre-fix: Sema's method-return table only knew about String/Int/
+// Double/Bool/List/Map primitives. For `Any`, the type lookup missed
+// and Sema fell through to `return "void"` at the bottom of
+// checkMemberCall. That void then propagated through downstream
+// assignments and function-call arg checks:
+//
+//     b := blocks.__get(i).trim()    // b typed as void
+//     render_block(b)                 // Sema: expected String, got void
+//
+// Fix: when the receiver is Any, defer to runtime — return "Any" so
+// the type flows through. `.trim()` on a runtime-non-String value
+// still throws at runtime; static type-checking just doesn't reject
+// the shape statically.
+
+blocks: List = ["  hello  ", "  world  "]
+i := 0
+while i < blocks.length() {
+    b := blocks.__get(i).trim()         // Any → Any (not void)
+    print(b)                             // hello, then world
+    i = i + 1
+}
+
+// Chained calls on Any also work.
+m: Map = {"key": "  spaced  "}
+v := m.get("key")                        // v: Any
+w := v.trim().upper()                    // both Any → Any
+print(w)                                 // "SPACED"

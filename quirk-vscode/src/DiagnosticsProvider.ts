@@ -960,7 +960,79 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
     }
 
     // ==========================================
-    // PASS 3: Generate "Unused" Diagnostics 
+    // PASS 2.5: Dunder direct-call lint
+    // ==========================================
+    // `__get` / `__set` / `__add` / `__mul` / `__eq` etc. are magic
+    // methods — they exist to be dispatched by bracket / operator
+    // syntax, not to be called directly. `xs.__get(i)` reads worse
+    // than `xs[i]`, and defining a struct's own `__get` only pays off
+    // when someone uses `obj[key]`. Flag direct calls with an Info
+    // diagnostic + concrete suggested alternative. Info severity so
+    // the lint doesn't drown out real errors on the same line.
+    const DUNDER_ALTS: Record<string, string> = {
+        __get:  'use bracket syntax: `x[i]`',
+        __set:  'use bracket-assign: `x[i] = v`',
+        __add:  'use `+`',
+        __sub:  'use `-`',
+        __mul:  'use `*`',
+        __div:  'use `/`',
+        __mod:  'use `%`',
+        __eq:   'use `==`',
+        __ne:   'use `!=`',
+        __lt:   'use `<`',
+        __le:   'use `<=`',
+        __gt:   'use `>`',
+        __ge:   'use `>=`',
+        __iter: 'use `for x in …` (loops call this automatically)',
+        __has_next: 'iterate with `for x in …` instead of calling manually',
+        __next:     'iterate with `for x in …` instead of calling manually',
+        __str:  'use string concat: `"" + x` or interpolation `"${x}"`',
+        __repr: 'use `repr(x)`',
+        __hash: 'hashing happens automatically when x is a Map key or Set element',
+    };
+    // Match `<receiver>.__name(`. The receiver capture is used to
+    // exempt `self` — calling your own dunder from another method
+    // is the canonical stdlib pattern (e.g. `List.first()` calls
+    // `self.__get(0)`; there's no bracket syntax available on
+    // `self` inside a method body).
+    const dunderCallRe = /(\w+)\s*\.(__[a-z_][a-z0-9_]*)\s*\(/g;
+    let lintInDoc = false;
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        // Track `---` docstring fence state (same convention the other
+        // passes use). Skip everything inside — docstring examples like
+        // `xs.__get(0)` in stdlib prose aren't real calls.
+        if (line.trim() === '---') { lintInDoc = !lintInDoc; continue; }
+        if (lintInDoc) continue;
+        if (deadLines.has(i)) continue;
+        // Skip masked content (strings/comments) — same rule as other passes.
+        const cleaned = maskLine(line);
+        // Skip lines inside a method-declaring context (`define __get(self,...)`).
+        // Those aren't calls, they're the definition of the magic method.
+        if (/^\s*(?:extern\s+)?(?:define|def)\s+__/.test(cleaned)) continue;
+        dunderCallRe.lastIndex = 0;
+        let m: RegExpExecArray | null;
+        while ((m = dunderCallRe.exec(cleaned)) !== null) {
+            // m[1] captures `self` if the receiver is `self`; skip those —
+            // calling your own dunder from another method is idiomatic.
+            if (m[1] === 'self') continue;
+            const dunder = m[2];
+            const hint = DUNDER_ALTS[dunder];
+            if (!hint) continue;
+            // Range starts at the dunder name, not the leading `.` or `self`.
+            const dotIdx = cleaned.indexOf('.' + dunder, m.index);
+            if (dotIdx < 0) continue;
+            const nameStart = dotIdx + 1;
+            diagnostics.push(new vscode.Diagnostic(
+                new vscode.Range(i, nameStart, i, nameStart + dunder.length),
+                `avoid calling magic method '${dunder}' directly — ${hint}`,
+                vscode.DiagnosticSeverity.Information,
+            ));
+        }
+    }
+
+    // ==========================================
+    // PASS 3: Generate "Unused" Diagnostics
     // ==========================================
     declarations.forEach((range, key) => {
         // Only warn on unused LOCAL variables.

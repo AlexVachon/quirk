@@ -2,6 +2,33 @@
 
 All notable changes to the extension land here. Versioning follows SemVer; minor bumps for new features, patches for fixes.
 
+## [0.2.21] — 2026-08-18 — lint direct calls to magic methods
+
+Info-level squiggle on `x.__get(i)` / `x.__set(i, v)` / `x.__add(y)`
+and other dunder methods called directly, with a concrete
+alternative:
+
+```
+avoid calling magic method '__get' directly — use bracket syntax: `x[i]`
+avoid calling magic method '__add' directly — use `+`
+avoid calling magic method '__iter' directly — use `for x in …` (loops call this automatically)
+```
+
+Dunder methods are the internal protocol behind bracket syntax and
+operator overloads — user code should call the sugar, not the
+implementation. `x[i]` reads better than `x.__get(i)` and produces
+identical IR.
+
+Exempted:
+
+- `self.__X(…)` — calling your own dunder from another method is the
+  canonical stdlib pattern (e.g. `List.first()` calls `self.__get(0)`
+  because bracket syntax on `self` isn't available inside the class).
+- Method definitions (`define __get(self, i: Int) …`) — those are
+  where dunders are supposed to appear.
+- Docstring examples (`--- xs.__get(0) is equivalent to xs[0] ---`) —
+  the fence-tracked skip keeps prose examples quiet.
+
 ## [0.2.20] — 2026-08-18 — warn when `from X use { name }` isn't exported
 
 Previously the extension only validated the module path (`from .foo use {…}`)

@@ -222,8 +222,37 @@ class StructGen {
                                 if (name == "String") {
                                     argVal = Builder.CreateBitCast(argVal, expectedType);
                                 } else {
-                                    std::vector<Value*> ctorArgs = {argVal};
-                                    argVal = allocateAndInit("String", ctorArgs);
+                                    // Runtime unbox: `argVal` is opaque
+                                    // i8* — it might be (a) a raw c-string,
+                                    // (b) an Any-boxed String pointer, or
+                                    // (c) some other Any-tagged value.
+                                    // `quirk_opaque_to_string` inspects the
+                                    // tag and returns a real `String*`:
+                                    //   - Any-boxed String → underlying String*
+                                    //   - Any-boxed Int/Double → freshly-
+                                    //     stringified representation
+                                    //   - raw c-string → wrapped in a fresh
+                                    //     String
+                                    //
+                                    // Pre-fix: this path unconditionally
+                                    // called `allocateAndInit("String", {argVal})`,
+                                    // which wraps whatever pointer it gets
+                                    // as the new String's `_buffer` field.
+                                    // For a destructured tuple element that
+                                    // came out as an Any-boxed `%String*`,
+                                    // the wrap treated the struct pointer
+                                    // as a c-string → the "_buffer" pointed
+                                    // at struct header bytes, and downstream
+                                    // uses (print / path concat) rendered
+                                    // garbage like `example-site/posts/����.html`.
+                                    Type* i8p = Type::getInt8PtrTy(Context);
+                                    FunctionCallee toStr = TheModule->getOrInsertFunction(
+                                        "quirk_opaque_to_string",
+                                        expectedType, i8p);
+                                    Value* asI8p = argVal->getType() == i8p
+                                        ? argVal
+                                        : Builder.CreateBitCast(argVal, i8p);
+                                    argVal = Builder.CreateCall(toStr, {asI8p}, "unbox_any_to_str");
                                 }
                             } else {
                                 argVal = Builder.CreateBitCast(argVal, expectedType);
@@ -324,8 +353,19 @@ class StructGen {
                         if (sName.find("struct.") == 0) sName = sName.substr(7);
 
                         if (sName == "String") {
-                            std::vector<Value*> boxArgs = {val};
-                            val = allocateAndInit("String", boxArgs);
+                            // Runtime unbox — same fix as the __init
+                            // path above. See there for the full
+                            // rationale; short version: wrapping an
+                            // Any-boxed String pointer inside a fresh
+                            // String's `_buffer` field gives you a
+                            // struct-header masquerading as a c-string.
+                            Type* i8p = Type::getInt8PtrTy(Context);
+                            FunctionCallee toStr = TheModule->getOrInsertFunction(
+                                "quirk_opaque_to_string", expectedType, i8p);
+                            Value* asI8p = val->getType() == i8p
+                                ? val
+                                : Builder.CreateBitCast(val, i8p);
+                            val = Builder.CreateCall(toStr, {asI8p}, "unbox_field_to_str");
                         } else {
                             val = Builder.CreateBitCast(val, expectedType);
                         }

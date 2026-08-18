@@ -5,6 +5,40 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [5.3.3] — 2026-08-18 — destructured tuple elements passed to String fields
+
+Destructured tuple elements passed to `String`-typed struct fields
+came out as garbage bytes. Chain:
+
+```quirk
+struct Post { slug: String, body: String }
+stem, ext := fs.split_ext(fs.basename(path))  // stem : Any (i8*)
+post := Post(stem, "body")
+print(post.slug)                                // → "�^��U"
+```
+
+Root cause: the struct-field-store path in `StructGen.hpp` handled
+`i8* → %String*` coercion by wrapping the raw pointer as the new
+String's `_buffer` field via `allocateAndInit("String", {val})`.
+When the Any actually contained a boxed `%String*` (which is what
+tuple destructuring produces for String elements), the wrap made
+the new String's buffer point at struct-header bytes — downstream
+`.length()`, concat, or printing dereferenced those as characters.
+
+Fix: route the coercion through `quirk_opaque_to_string`. It
+inspects the Any tag and returns a real `%String*`:
+
+  - Any-boxed String → underlying pointer (the actual fix)
+  - Primitive Any (Int/Double) → freshly stringified value
+  - Raw c-string → wrapped in a fresh String
+
+Two call sites patched in `StructGen.hpp` — the `__init` arg-coercion
+block AND the no-`__init` field-GEP fallback. The ssg example
+project's `Post(stem, ...)` pattern (surfaced this bug) now writes
+correct filenames.
+
+Regression probe: `tests/probes/p90_destructured_to_string_field.quirk`.
+
 ## [5.3.2] — 2026-08-18 — method calls on `Any` type as `Any`, not `void`
 
 Sema was returning `void` for method calls on an `Any` receiver, which

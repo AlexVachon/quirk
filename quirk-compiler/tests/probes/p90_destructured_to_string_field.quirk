@@ -1,0 +1,53 @@
+// p90 — destructured tuple elements passed as String-typed struct
+// fields no longer render as garbage bytes (v5.3.3).
+//
+// Chain that used to fail:
+//
+//     struct Post { slug: String, body: String }
+//     stem, ext := fs.split_ext(fs.basename(path))    // stem : Any
+//     post := Post(stem, "html")                       // slug corrupted
+//     print(post.slug)                                 // → "�^��U" or similar
+//
+// Root cause: struct-field assignment for a String field with an i8*
+// (opaque Any) source wrapped the pointer as the new String's
+// `_buffer` field via `allocateAndInit("String", {val})`. When the
+// Any was actually a boxed `%String*` (which is what tuple
+// destructuring produces for String elements), the wrap treated the
+// struct-header address as a c-string — subsequent `.length()`,
+// concatenation, or printing dereferenced struct header bytes as
+// characters, giving garbage.
+//
+// Fix: dispatch through `quirk_opaque_to_string` which inspects the
+// Any tag and returns a real `%String*` (Any-boxed String →
+// underlying pointer; primitive Any → stringified; raw c-string →
+// wrapped in a fresh String). Two call sites fixed — the __init
+// arg-coercion path AND the no-__init field-store fallback.
+
+use fs
+
+struct Post {
+    slug: String
+    body: String
+}
+
+// Case A — direct literal (baseline; already worked pre-fix).
+p1 := Post("literal-slug", "body")
+print(p1.slug)                       // literal-slug
+
+// Case B — direct local (baseline).
+name := "direct-slug"
+p2 := Post(name, "body")
+print(p2.slug)                       // direct-slug
+
+// Case C — destructured tuple element (the failing path).
+stem, ext := fs.split_ext("hello.md")
+p3 := Post(stem, "body")
+print(p3.slug)                       // hello
+
+// Case D — destructured element at a later positional slot.
+p4 := Post("safe", stem)
+print(p4.body)                       // hello
+
+// Concat + path shape (the exact pattern in the ssg builder).
+out_path := fs.join("public", "posts/" + p3.slug + ".html")
+print(out_path)                      // public/posts/hello.html

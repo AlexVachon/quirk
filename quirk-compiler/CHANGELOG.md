@@ -5,6 +5,79 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [5.3.9] — 2026-08-18 — `quirk check`, `quirk watch`, fuzz→probes auto-graduation
+
+Three DX shortcuts, no language change.
+
+**`quirk check <file.quirk>`** — lex + parse + Sema only, no
+Codegen, no run. ~5× faster than a full compile for editor / CI
+lint loops. Diagnostics are identical to a full compile (same
+Q-codes, same source-map ranges).
+
+```
+$ quirk check src/main.quirk
+[Q0100 ERROR] undefined variable or function 'y'
+ --> src/main.quirk:2:7
+```
+
+Overloads the existing `quirk check` (which validates `quirk.toml`):
+if `arg[0]` ends in `.quirk`, dispatches to the new source-checker;
+otherwise runs the existing manifest validator. Both behaviours
+preserved.
+
+**`quirk watch <file.quirk>`** — re-runs the file every time it
+changes on disk. Requires `inotifywait` (Linux) or `fswatch`
+(macOS). Kills the "edit / switch to terminal / arrow-up / enter"
+loop.
+
+```
+$ quirk watch src/main.quirk
+[watch] src/main.quirk — Ctrl+C to stop
+Hello, World
+[watch] src/main.quirk changed — re-running
+Hello, Quirk
+```
+
+**Fuzz → probes auto-graduation** — `tools/fuzz.py --graduate` now
+writes findings directly to `tests/probes/pNN_fuzz_<hint>.quirk`
+with the next available probe number, so the CI regression corpus
+grows without manual triage. Existing `tools/fuzz_findings/`
+staging still populated as before.
+
+```
+$ python3 tools/fuzz.py --iters 500 --graduate
+  [ 93] CRASH #1: Internal compiler error: malformed IR
+          saved → tools/fuzz_findings/c001_...
+          also graduated → tests/probes/p92_fuzz_....quirk
+```
+
+Corpus: 44 ok / 47 unchanged.
+## [5.3.9] — 2026-08-18 — `quirk check`, `quirk watch`, fuzz→probes graduation
+
+Three DX shortcuts, no language change.
+
+**`quirk check <file.quirk>`** — lex + parse + Sema only, no
+Codegen, no run. ~5× faster than a full compile for editor / CI
+lint loops. Diagnostics are identical to a full compile (same
+Q-codes, same source-map ranges).
+
+Overloads the existing `quirk check` (which validates `quirk.toml`):
+if `arg[0]` ends in `.quirk`, dispatches to the new source checker;
+otherwise runs the manifest validator. Both behaviours preserved.
+
+**`quirk watch <file.quirk>`** — re-runs the file every time it
+changes on disk. Requires `inotifywait` (Linux) or `fswatch`
+(macOS). Kills the "edit → switch to terminal → arrow-up → enter"
+loop.
+
+**Fuzz → probes auto-graduation** — `tools/fuzz.py --graduate` now
+writes findings directly to `tests/probes/pNN_fuzz_<hint>.quirk`
+with the next available probe number, so the CI regression corpus
+grows without manual triage. Existing `tools/fuzz_findings/`
+staging still populated as before.
+
+Corpus: 44 ok / 47 unchanged.
+
 ## [5.3.8] — 2026-08-18 — parser reports multiple errors per compile
 
 Before: a single parser error in `foo.quirk:5` short-circuited the

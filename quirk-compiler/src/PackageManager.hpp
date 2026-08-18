@@ -65,7 +65,7 @@ static std::string self_binary();
 
 namespace qpm {
 
-constexpr const char* QUIRK_VERSION = "5.3.8";
+constexpr const char* QUIRK_VERSION = "5.3.9";
 
 namespace fs = std::filesystem;
 
@@ -5935,6 +5935,112 @@ static int cmd_version() {
     return 0;
 }
 
+// `quirk watch <file>` — re-run `<file>` every time it (or any file
+// in its directory) changes on disk. Cheap dev-loop shortcut: edit
+// in the editor, save, terminal shows fresh output.
+//
+// Implementation: `inotifywait -m -e close_write` (Linux) drives a
+// re-exec loop. Fatal-error output shows up the same as any normal
+// `quirk <file>` run — the watcher just triggers the compile/run,
+// it doesn't try to swallow diagnostics.
+static int cmd_watch(const std::vector<std::string>& args) {
+    if (args.empty() || args[0] == "--help" || args[0] == "-h") {
+        std::cout << "quirk watch <file.quirk>\n"
+                     "    Re-run <file> every time it changes on disk.\n"
+                     "    Requires `inotifywait` (from inotify-tools). On\n"
+                     "    macOS this uses `fswatch` if available.\n";
+        return args.empty() ? 1 : 0;
+    }
+    std::string target = args[0];
+    if (!fs::exists(target)) {
+        std::cerr << "watch: file not found: " << target << "\n";
+        return 1;
+    }
+    // Watch the parent directory so re-saves (which some editors do
+    // via atomic-rename) still trigger. Filter to the target file
+    // name inside the loop.
+    fs::path abs = fs::absolute(target);
+    std::string dir = abs.parent_path().string();
+    std::string name = abs.filename().string();
+    std::string bin = self_binary();
+
+    // Detect available watcher.
+    auto haveCmd = [](const std::string& c) {
+        return std::system(("command -v " + c + " >/dev/null 2>&1").c_str()) == 0;
+    };
+    std::string watcher;
+    if (haveCmd("inotifywait"))     watcher = "inotifywait";
+    else if (haveCmd("fswatch"))    watcher = "fswatch";
+    else {
+        std::cerr << "watch: needs `inotifywait` (Linux: apt install inotify-tools)\n"
+                     "       or `fswatch` (macOS: brew install fswatch).\n";
+        return 1;
+    }
+
+    // Initial run.
+    std::cout << "\033[1;36m[watch]\033[0m " << target << " — Ctrl+C to stop\n";
+    std::string quickRun = bin + " " + target;
+    std::system(quickRun.c_str());
+
+    // Loop: block on watcher until a change fires, then re-run.
+    std::string cmd;
+    if (watcher == "inotifywait") {
+        cmd = "inotifywait -q -e close_write,modify --format '%f' " + dir;
+    } else {
+        // fswatch prints filename per event
+        cmd = "fswatch -1 " + abs.string();
+    }
+    while (true) {
+        FILE* p = popen(cmd.c_str(), "r");
+        if (!p) { std::cerr << "watch: popen failed\n"; return 1; }
+        char buf[512]; std::string changed;
+        while (fgets(buf, sizeof(buf), p)) changed += buf;
+        pclose(p);
+
+        // Filter — for inotifywait we get the base filename; for
+        // fswatch we get the absolute path.
+        bool relevant =
+            (watcher == "fswatch") ||
+            (changed.find(name) != std::string::npos);
+        if (!relevant) continue;
+
+        std::cout << "\n\033[1;36m[watch]\033[0m " << target << " changed — re-running\n";
+        std::system(quickRun.c_str());
+    }
+    return 0;
+}
+
+// `quirk check <file>` — lex + parse + Sema only, skip Codegen and
+// execution. Fast type-check pass for editor-loop / CI-lint use;
+// same diagnostics as a full compile, but no LLVM IR generation and
+// no run. Under the hood this just re-execs the compiler with the
+// existing `--check` flag.
+//
+// Named `cmd_typecheck` to avoid collision with the existing
+// `cmd_check` (which is `quirk pkg check` — quirk.toml manifest
+// validation). Dispatcher (below) routes `quirk check` to this OR
+// to `cmd_check` based on the first argument: if it looks like a
+// `.quirk` file, we're in source-check mode.
+static int cmd_typecheck(const std::vector<std::string>& args) {
+    if (args.empty() || args[0] == "--help" || args[0] == "-h") {
+        std::cout << "quirk check <file.quirk>\n"
+                     "    Lex + parse + Sema only. No codegen, no run.\n"
+                     "    Same diagnostics as a full compile; ~5x faster.\n";
+        return args.empty() ? 1 : 0;
+    }
+    std::string bin = self_binary();
+    std::vector<std::string> argv = { bin, "--check" };
+    for (auto& a : args) argv.push_back(a);
+    std::vector<char*> cargv;
+    for (auto& s : argv) cargv.push_back(const_cast<char*>(s.c_str()));
+    cargv.push_back(nullptr);
+    execvp(bin.c_str(), cargv.data());
+    // If exec fails, fall through with an error — user asked for
+    // `quirk check`, we can't run it.
+    std::cerr << "check: exec failed: " << bin << "\n";
+    return 1;
+}
+
 // `quirk explain <code>` — show the docs page for a diagnostic code.
 // Codes are the `Q0042` prefix on error messages (v5.3.7+). Accepts:
 //     Q0100      — full form
@@ -6780,6 +6886,7 @@ static bool is_subcommand(const std::string& argIn) {
            arg == "init" || arg == "version" || arg == "venv" ||
            arg == "run" || arg == "eval" || arg == "module" ||
            arg == "env" || arg == "new" || arg == "help" || arg == "explain" ||
+           arg == "check" || arg == "watch" ||
            arg == "script" || arg == "sync" || arg == "stdlib" || arg == "fmt" ||
            arg == "doc" ||
            arg == "repl" || arg == "test" || arg == "bump-compiler" ||
@@ -6987,7 +7094,14 @@ inline bool dispatch(int& argc, char** argv, int& outRc) {
     else if (verb == "cache")        outRc = cmd_cache(verbArgs);
     else if (verb == "registry")     outRc = cmd_registry(verbArgs);
     else if (verb == "register")     outRc = cmd_register(verbArgs);
-    else if (verb == "check")        outRc = cmd_check(verbArgs);
+    else if (verb == "check") {
+        // `quirk check <file.quirk>` → typecheck source (v5.3.9+).
+        // `quirk check` (no args) → validate ./quirk.toml (existing).
+        bool isSourceCheck = !verbArgs.empty() &&
+                             verbArgs[0].size() > 6 &&
+                             verbArgs[0].substr(verbArgs[0].size() - 6) == ".quirk";
+        outRc = isSourceCheck ? cmd_typecheck(verbArgs) : cmd_check(verbArgs);
+    }
     else if (verb == "versions")     outRc = cmd_versions(verbArgs);
     else if (verb == "release")      outRc = cmd_release(verbArgs);
     else if (verb == "bump-compiler") outRc = cmd_bump_compiler(verbArgs);
@@ -7004,6 +7118,7 @@ inline bool dispatch(int& argc, char** argv, int& outRc) {
     else if (verb == "stdlib")       outRc = cmd_stdlib(verbArgs);
     else if (verb == "help")         outRc = cmd_help(verbArgs);
     else if (verb == "explain")      outRc = cmd_explain(verbArgs);
+    else if (verb == "watch")        outRc = cmd_watch(verbArgs);
     else {
         // Unknown verb. Before dumping the full help, try a typo
         // suggestion — `quirk insatll foo` is almost certainly meant

@@ -236,12 +236,36 @@ def crash_signature(out: Outcome) -> str:
     return "unknown"
 
 
+PROBES_DIR = REPO_ROOT / "tests" / "probes"
+
+
+def next_probe_number() -> int:
+    """Scan tests/probes/ for the highest p<NN> prefix and return N+1
+    so new fuzz-graduated probes get a fresh, unique file name."""
+    highest = 0
+    if not PROBES_DIR.exists():
+        return 1
+    for f in PROBES_DIR.glob("p*.quirk"):
+        m = re.match(r"p(\d+)_", f.name)
+        if m:
+            highest = max(highest, int(m.group(1)))
+    return highest + 1
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--iters", type=int, default=200)
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--max-mutations", type=int, default=3)
     parser.add_argument("--quiet", action="store_true")
+    parser.add_argument(
+        "--graduate",
+        action="store_true",
+        help="Also save findings directly to tests/probes/ as regression "
+             "probes (auto-numbered pNN_fuzz_<hint>.quirk). Zero-triage "
+             "corpus growth — CI will refuse to accept a PR that regresses "
+             "any probe.",
+    )
     args = parser.parse_args()
 
     if not QUIRK.exists():
@@ -306,6 +330,29 @@ def main() -> int:
         seen_signatures[sig] = save
         print(f"  [{it:4d}] CRASH #{n}: {sig}")
         print(f"          saved → {save.relative_to(REPO_ROOT)}")
+
+        # --graduate: also write a permanent regression probe under
+        # tests/probes/. Auto-numbered pNN_fuzz_<hint>.quirk so future
+        # fuzz runs / CI runs / test-suite runs re-check the case.
+        # Skipping when the hint is empty avoids probe names like
+        # `pNN_fuzz_.quirk`.
+        if args.graduate and path_hint:
+            probe_n = next_probe_number()
+            probe_name = f"p{probe_n:02d}_fuzz_{path_hint}.quirk"
+            probe_path = PROBES_DIR / probe_name
+            probe_header = (
+                f"// {probe_name} — auto-graduated from mutation fuzzer.\n"
+                f"// Seed: {seed.relative_to(REPO_ROOT)}\n"
+                f"// Mutations applied: {applied}\n"
+                f"// Crash signature: {sig}\n"
+                f"//\n"
+                f"// Compiler must reject / handle this file cleanly (no\n"
+                f"// SIGSEGV / SIGABRT / malformed IR). Downgrade to a\n"
+                f"// proper hand-authored probe once the fix lands.\n"
+                f"//\n"
+            )
+            probe_path.write_text(probe_header + src, encoding="utf-8")
+            print(f"          also graduated → {probe_path.relative_to(REPO_ROOT)}")
 
     print()
     print(f"Iterations: {args.iters}")

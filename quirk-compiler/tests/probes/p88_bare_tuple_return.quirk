@@ -1,0 +1,39 @@
+// p88 — `return a, b` (bare tuple, no parens) desugars to
+// `return (a, b)`. Python-style ergonomics for multi-value
+// returns; pairs with the existing destructuring form
+// `x, y := f()` on the caller side (v5.3.1).
+//
+// Pre-fix: `return "", src` errored at the first comma with
+// `Unexpected token: ,` — parseReturn parsed one expression
+// then let statement parsing hit the comma cold.
+
+define split_two() -> Tuple {
+    return "left", "right"
+}
+
+define split_three() -> Tuple {
+    return 10, 20, 30
+}
+
+// Paired with single-line `=>` control-flow (v5.3.0):
+define classify(n: Int) -> Tuple {
+    if n < 0 => return "neg", -n
+    return "pos", n
+}
+
+a, b := split_two()
+print(a)                       // left
+print(b)                       // right
+
+x, y, z := split_three()
+print(x)                       // 10
+print(y)                       // 20
+print(z)                       // 30
+
+sign, mag := classify(-7)
+print(sign)                    // neg
+print(mag)                     // 7
+
+// Scalar return unchanged — no bare tuple triggered.
+define one() -> Int { return 42 }
+print(one())                   // 42

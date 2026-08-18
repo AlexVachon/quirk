@@ -5,6 +5,39 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [5.3.1] — 2026-08-17 — bare-tuple returns (Python-style multi-return)
+
+**Language**
+
+`return a, b, c` desugars to `return (a, b, c)`. Pythonic
+multi-value returns without needing parentheses:
+
+```quirk
+define split(s: String) -> Tuple {
+    if not s.startswith("+++\n") => return "", s
+    return "front", "body"
+}
+
+f, b := split("hello")   // pairs cleanly with existing
+                          // destructuring on the caller side
+```
+
+Only fires when a trailing comma follows the first expression;
+`return x` stays scalar. Scope is `return` statement only — other
+bare-tuple sites (`x := a, b` on RHS; `case 1, 2 =>` patterns)
+still require parens to avoid ambiguity with call args and
+destructuring.
+
+**Also**
+
+Reverted the over-eager Sema RHS-type check on magic-method dispatch
+that shipped in v5.3.0. It falsely rejected `String + Double` (which
+the stdlib uses in `math/vectors.quirk`) and cost 2 corpus tests. The
+Codegen-side i8*→Int coercion still catches the fuzz-found
+`String * Any` crash on its own; Sema stays permissive.
+
+Regression probe: `tests/probes/p88_bare_tuple_return.quirk`.
+
 ## [5.3.0] — 2026-08-17 — single-line control flow + fuzz-found `String * Any` fix
 
 **Language**

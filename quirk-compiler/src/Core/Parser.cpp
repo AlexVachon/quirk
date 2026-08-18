@@ -897,8 +897,30 @@ std::unique_ptr<Node> Parser::parseStatementImpl() {
     if (peek().type == TokenType::RETURN) {
         advance();
         std::unique_ptr<Node> expr = nullptr;
-        if (peek().type != TokenType::RBRACE)
+        if (peek().type != TokenType::RBRACE) {
             expr = parseExpression(0);
+            // Bare tuple return: `return a, b, c` desugars to
+            // `return (a, b, c)`. Python-style ergonomics for
+            // multi-value returns — pairs with the existing
+            // destructuring form `x, y := f()` on the caller side.
+            //
+            // Only fires when we see a trailing comma after the
+            // first expression; a lone `return x` keeps its
+            // scalar shape unchanged.
+            //
+            // Scope: `return` context only. Other bare-tuple sites
+            // (`x := a, b` — right-hand tuple; match patterns
+            // `case 1, 2 =>`) still require parens to avoid
+            // ambiguity with call args and destructuring.
+            if (peek().type == TokenType::COMMA) {
+                std::vector<std::unique_ptr<Node>> elements;
+                elements.push_back(std::move(expr));
+                while (match(TokenType::COMMA)) {
+                    elements.push_back(parseExpression(0));
+                }
+                expr = std::make_unique<TupleLiteralNode>(std::move(elements));
+            }
+        }
         return std::make_unique<ReturnNode>(std::move(expr));
     }
     if (type == TokenType::IDENTIFIER) {

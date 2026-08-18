@@ -1020,8 +1020,13 @@ void Parser::parseControlBody(std::vector<std::unique_ptr<Node>>& out) {
         return;
     }
     consume(TokenType::LBRACE, "Expected '{' or '=>'");
-    while (peek().type != TokenType::RBRACE && !isAtEnd())
-        out.push_back(parseStatement());
+    while (peek().type != TokenType::RBRACE && !isAtEnd()) {
+        try {
+            out.push_back(parseStatement());
+        } catch (ParseError&) {
+            syncStatement();
+        }
+    }
     consume(TokenType::RBRACE, "Expected '}'");
 }
 
@@ -1357,8 +1362,13 @@ std::unique_ptr<FunctionNode> Parser::parseFunction(bool allowAbstract,
         reportError("Expected '{' to open function body", peek());
     }
     advance(); // consume '{'
-    while (peek().type != TokenType::RBRACE && !isAtEnd())
-        node->body.push_back(parseStatement());
+    while (peek().type != TokenType::RBRACE && !isAtEnd()) {
+        try {
+            node->body.push_back(parseStatement());
+        } catch (ParseError&) {
+            syncStatement();
+        }
+    }
     consume(TokenType::RBRACE, "Expected '}'");
     return node;
 }
@@ -1939,6 +1949,44 @@ void Parser::sync() {
             t == TokenType::FROM   || t == TokenType::EXTEND ||
             t == TokenType::INIT)
             return;
+        advance();
+    }
+}
+
+// In-block resync: advance to the next likely statement boundary
+// so subsequent statements in the SAME block can still be parsed.
+// Boundaries: newline (Quirk is statement-per-line), `;` separator,
+// `}` (block end — stop before it so the outer loop terminates
+// cleanly), and any statement-starter keyword.
+//
+// Before v5.3.8, block-body parse errors propagated up to the outer
+// top-level catch, so a single `if x return -x` short-circuited
+// every subsequent function in the file. Now the error is
+// reported, the parser resyncs to the next line, and downstream
+// statements still get type-checked.
+void Parser::syncStatement() {
+    // If we're already at a boundary, don't skip — the current token
+    // starts a fresh statement.
+    auto isBoundary = [](TokenType t) {
+        return t == TokenType::RBRACE || t == TokenType::SEMICOLON ||
+               t == TokenType::EOF_TOKEN ||
+               t == TokenType::IF || t == TokenType::ELIF || t == TokenType::ELSE ||
+               t == TokenType::WHILE || t == TokenType::FOR ||
+               t == TokenType::RETURN || t == TokenType::BREAK ||
+               t == TokenType::CONTINUE || t == TokenType::THROW ||
+               t == TokenType::TRY || t == TokenType::WITH || t == TokenType::MATCH ||
+               t == TokenType::DEFINE || t == TokenType::INIT ||
+               t == TokenType::STRUCT || t == TokenType::ENUM ||
+               t == TokenType::USE || t == TokenType::FROM || t == TokenType::EXTEND;
+    };
+    if (isBoundary(peek().type)) return;
+
+    int startLine = peek().line;
+    while (!isAtEnd()) {
+        // Line-anchored resync: once we're on a new line, an
+        // identifier / literal starts a plausible fresh statement.
+        if (peek().line != startLine) return;
+        if (isBoundary(peek().type)) return;
         advance();
     }
 }

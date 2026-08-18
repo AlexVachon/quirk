@@ -22,6 +22,11 @@ class Parser {
 
     void reportError(const std::string& message, const Token& token); // records + throws ParseError
     void sync(); // advance to next top-level sync point
+    // In-block statement resync — advance past one broken statement
+    // (to newline, `;`, or a plausible statement-starter) so the
+    // next line inside a `define` body can still be type-checked.
+    // Used by every `while (peek() != RBRACE) parseStatement()` loop.
+    void syncStatement();
 
 public:
     Parser(const std::vector<Token>& tokens, const std::string& source, const std::string& filePath = "unknown_file");

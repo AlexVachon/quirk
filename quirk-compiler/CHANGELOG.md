@@ -5,6 +5,33 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [5.3.8] — 2026-08-18 — parser reports multiple errors per compile
+
+Before: a single parser error in `foo.quirk:5` short-circuited the
+entire file — every subsequent statement / function went unchecked.
+Users would fix one error, recompile, hit the next, repeat.
+
+Now the parser recovers to the next statement boundary within a
+block, reports every syntax error in the file at once:
+
+```
+define one() {
+    if x return -x       // Q0003
+    if y return -y       // Q0003 (still visible now)
+}
+```
+
+- New `syncStatement()` helper — advances to next newline / `}` /
+  statement-starter keyword. Lighter than the existing `sync()`
+  (which walks to the next top-level `define`/`struct`).
+- Wrapped `parseControlBody` + function-body statement loops in
+  try/catch/syncStatement.
+- Errors still cause a non-zero exit — this is purely about
+  reporting completeness.
+
+Corpus: 44 ok / 47 unchanged.
+
+
 ## [5.3.7] — 2026-08-18 — diagnostic error codes + `quirk explain`
 
 Every well-known error now prints with a stable numeric code you can

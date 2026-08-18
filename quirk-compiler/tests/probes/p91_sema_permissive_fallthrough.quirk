@@ -1,0 +1,29 @@
+// p91 — Sema's final method-call fall-through returns Any, not void
+// (v5.3.5). Consistent with the Any-receiver / Callable-invocation
+// policies added earlier — the class of "expected X, got void" false
+// positives that showed up in v5.3.2 (`Any.trim()` → void) had a twin
+// case in the final fall-through that was still using void.
+//
+// Now every unresolved method-call shape returns Any, deferring the
+// actual type check to runtime. Sema-side `Unknown method 'Foo.bar'`
+// errors for known primitive types still fire — this only affects the
+// "we can't statically know what this method call resolves to"
+// fall-through.
+//
+// The pattern: a decorator-desugared call chain where the callee is
+// itself the result of another call, so its static type is (at best)
+// Callable and Sema can't statically resolve the return type.
+
+use sys
+
+// Any-typed local — Sema pushes the resolved return through the
+// permissive fall-through, and downstream assignment / arg-passing
+// no longer breaks with "expected X, got void".
+argv: List = sys.argv()
+first := argv.get(0)               // first: Any (List.get returns Any)
+second := first.substring(0, 3)    // Sema pre-fix: void → poisons the chain
+                                    // Sema post-fix: Any → runtime dispatches
+
+// Just confirm no Sema rejection; runtime is fine here because
+// sys.argv()[0] is the program path (a real String).
+print(second.length() > 0)         // true

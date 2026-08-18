@@ -2638,7 +2638,18 @@ std::string Sema::checkCall(CallNode *node)
         // is a type error elsewhere; here we just bail out as void.
         if (calleeTy == "Callable" || calleeTy == "Any") return "Any";
     }
-    return "void";
+    // Fall-through: method not resolved via any lookup path. Before
+    // v5.3.5 this returned "void", which then poisoned every
+    // downstream assignment / arg-check with the "expected X, got void"
+    // class of error — same root cause as the v5.3.2 Any.method() bug.
+    //
+    // Returning "Any" here defers the shape check to runtime (the
+    // Codegen coercion helper in CoerceGen unboxes at the call site).
+    // Consistent with the Any-receiver / Callable-invocation policies
+    // above. Trades one class of false-positive Sema rejections for
+    // Sema being more permissive about method existence; runtime still
+    // throws on genuinely-wrong method dispatch.
+    return "Any";
 }
 
 std::string Sema::checkListLiteral(ListLiteralNode *node)

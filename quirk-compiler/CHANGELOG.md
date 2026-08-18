@@ -5,6 +5,34 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [5.3.5] — 2026-08-18 — Sema method-call fall-through returns `Any`, not `void`
+
+Companion Sema fix to the CoerceGen consolidation in v5.3.4. The final
+fall-through in `checkMemberCall` (when a method's return type can't
+be statically resolved via any lookup path — builtin table, struct
+registry, chained callable) used to return `"void"`, which poisoned
+downstream type checks:
+
+```quirk
+argv := sys.argv()
+first := argv.get(0)          // first: Any
+second := first.substring(0, 3)   // Sema pre-fix: void → poisons chain
+```
+
+Same class of bug as the v5.3.2 `Any.trim()` → void issue — that path
+was fixed at one site but its twin at the outer fall-through was still
+returning void. Now every unresolved-method-call shape defers to
+runtime with `Any`, consistent with the Any-receiver / Callable-
+invocation policies already in place.
+
+Sema-side "Unknown method 'X.y'" diagnostics for KNOWN primitive types
+still fire — this only affects the "can't statically know what this
+resolves to" fall-through. Bogus methods on typed receivers still get
+caught pre-Codegen.
+
+Regression probe: `tests/probes/p91_sema_permissive_fallthrough.quirk`.
+Corpus: 44 ok / 47 (unchanged), cases 203 → 204 (+1).
+
 ## [5.3.4] — 2026-08-18 — consolidate Codegen coercion into `CoerceGen`
 
 Backend refactor — no user-visible language change, but every future

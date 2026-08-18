@@ -2,6 +2,34 @@
 
 All notable changes to the extension land here. Versioning follows SemVer; minor bumps for new features, patches for fixes.
 
+## [0.2.20] — 2026-08-18 — warn when `from X use { name }` isn't exported
+
+Previously the extension only validated the module path (`from .foo use {…}`)
+and silently accepted every name in `{…}`. Typos like
+
+```quirk
+from .frontmatter use { split_frontmatter }
+```
+
+against a module that actually defines `split_formatter` compiled fine in
+the editor and only surfaced at compile time with
+
+```
+[ERROR] module '.frontmatter' does not export symbol 'split_frontmatter'
+```
+
+Now: each name in the braces is validated against the target module's
+real exports (top-level `define/struct/enum/type/interface`,
+re-exported names, enum variants, tagged-union arms). A missing name
+shows up as an inline warning in the editor:
+
+```
+'module '.frontmatter' does not export symbol 'split_frontmatter'
+```
+
+Cross-module lookups are cached per document, so a file that imports
+`Int` five times from `typing` only pays the module-read cost once.
+
 ## [0.2.19] — 2026-08-17 — `=>` single-statement control-flow snippets
 
 Companion to Quirk 5.3.0's new single-statement control-flow form.

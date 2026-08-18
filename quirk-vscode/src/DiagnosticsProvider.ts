@@ -1,7 +1,104 @@
 import * as vscode from 'vscode';
+import * as fs from 'fs';
 import { getDeadLines } from './DeadCodeProvider';
 import { maskLine, maskLineWithState, TripleState } from './utils/maskLine';
 import { resolveModulePath, findProjectRootFor, resolveQuirkHome } from './ImportProvider';
+
+// Regex sources reused across pass-1 (for the current doc) and the
+// exports scanner (for referenced modules). Kept as strings so we
+// can compile flavours (`gm` for the module scanner, `m` inline).
+const EXPORT_DECL_RE_SRC =
+    '^\\s*(?:extern\\s+)?(?:define|def|init|struct|enum|type|interface)\\s+([a-zA-Z_]\\w*)';
+const REEXPORT_RE_SRC =
+    '^\\s*from\\s+[.a-zA-Z0-9_/]+\\s+use\\s+\\{([^}]*)\\}';
+
+// Read a Quirk module file and return the set of names it exports:
+// top-level `define/struct/enum/type/interface` declarations plus
+// symbols it re-exports via its own single-line
+// `from X use { … }` imports. Enum variants (both inline and
+// multi-line) are also included so a `from typing use { Some }`
+// on a tagged-union type resolves.
+//
+// Returns null when the file can't be read (module path resolves
+// but disk read fails — treat as "no info", not "missing symbol").
+function collectModuleExports(filePath: string): Set<string> | null {
+    let content: string;
+    try {
+        content = fs.readFileSync(filePath, 'utf-8');
+    } catch {
+        return null;
+    }
+    const exports = new Set<string>();
+    // Direct declarations.
+    const declRe = new RegExp(EXPORT_DECL_RE_SRC, 'gm');
+    let m: RegExpExecArray | null;
+    while ((m = declRe.exec(content)) !== null) exports.add(m[1]);
+
+    // Single-line re-exports.
+    const reRe = new RegExp(REEXPORT_RE_SRC, 'gm');
+    while ((m = reRe.exec(content)) !== null) {
+        m[1].split(',').forEach(s => {
+            const t = s.trim();
+            if (t) exports.add(t);
+        });
+    }
+
+    // Multi-line re-exports: `from X use {\n  a,\n  b\n}`. Simple state
+    // machine — enter on a line whose right side has `use {` but no `}`,
+    // collect names until the closing `}`.
+    const lines = content.split(/\r?\n/);
+    let capture = '';
+    let capturing = false;
+    for (const line of lines) {
+        if (!capturing) {
+            const openM = /^\s*from\s+[.a-zA-Z0-9_/]+\s+use\s+\{([^}]*)$/.exec(line);
+            if (openM) { capture = openM[1]; capturing = true; }
+        } else {
+            const closeIdx = line.indexOf('}');
+            if (closeIdx >= 0) {
+                capture += ',' + line.slice(0, closeIdx);
+                capture.split(',').forEach(s => {
+                    const t = s.trim();
+                    if (t) exports.add(t);
+                });
+                capture = '';
+                capturing = false;
+            } else {
+                capture += ',' + line;
+            }
+        }
+    }
+
+    // Enum variants (inline + multi-line).
+    const inlineEnum = /^\s*enum\s+[a-zA-Z_]\w*\s*(?:\([^)]*\))?\s*\{([^}]*)\}/gm;
+    while ((m = inlineEnum.exec(content)) !== null) {
+        m[1].split(/[,\s]+/).forEach(v => {
+            const name = v.split('=')[0].trim();
+            if (/^[a-zA-Z_]\w*$/.test(name)) exports.add(name);
+        });
+    }
+    // Multi-line enums.
+    let inEnum = false;
+    for (const line of lines) {
+        const openM = /^\s*enum\s+[a-zA-Z_]\w*/.exec(line);
+        if (!inEnum && openM && !line.includes('}')) { inEnum = true; continue; }
+        if (inEnum) {
+            if (line.includes('}')) { inEnum = false; continue; }
+            const v = /^\s*([a-zA-Z_]\w*)/.exec(line);
+            if (v) exports.add(v[1]);
+        }
+    }
+
+    // Tagged-union variants: `type Result = Ok(...) | Err(...)`.
+    const tuRe = /^\s*type\s+[A-Za-z_]\w*(?:\[[^\]]*\])?\s*=\s*(.+)$/gm;
+    while ((m = tuRe.exec(content)) !== null) {
+        m[1].split('|').forEach(arm => {
+            const nm = /^\s*([A-Za-z_]\w*)/.exec(arm);
+            if (nm) exports.add(nm[1]);
+        });
+    }
+    return exports;
+}
 
 const KEYWORDS = new Set([
     'define', 'struct', 'if', 'else', 'elif', 'while', 'for', 'in',
@@ -51,6 +148,43 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
             `Cannot resolve module '${modulePath}'${hint}`,
             vscode.DiagnosticSeverity.Warning,
         ));
+    };
+
+    // Cache module-export sets across all `from X use { ... }` lines in
+    // this document — resolving + reading + scanning each referenced
+    // module isn't free, and the same module is often imported multiple
+    // times in the same file.
+    const exportsCache = new Map<string, Set<string> | null>();
+    const exportsForModule = (modulePath: string): Set<string> | null => {
+        if (exportsCache.has(modulePath)) return exportsCache.get(modulePath)!;
+        const resolved = resolveModulePath(projectRootForImports, docPath, modulePath);
+        if (!resolved) { exportsCache.set(modulePath, null); return null; }
+        const set = collectModuleExports(resolved);
+        exportsCache.set(modulePath, set);
+        return set;
+    };
+
+    // Validate every `{ name1, name2 }` list against the target module's
+    // real exports. Fires when a name isn't defined + isn't re-exported
+    // + isn't an enum variant / tagged-union arm. Skipped silently when
+    // the module can't be resolved or read (the resolver-warning path
+    // above already flagged it).
+    const reportUnknownExports = (lineIdx: number, line: string,
+                                  modulePath: string, symbolsBlock: string) => {
+        const exports = exportsForModule(modulePath);
+        if (!exports) return;   // no info — don't over-warn
+        for (const raw of symbolsBlock.split(',')) {
+            const symbol = raw.trim().split(/\s+as\s+/)[0].trim();
+            if (!symbol || !/^[a-zA-Z_]\w*$/.test(symbol)) continue;
+            if (exports.has(symbol)) continue;
+            const pos = line.indexOf(symbol);
+            if (pos < 0) continue;
+            diagnostics.push(new vscode.Diagnostic(
+                new vscode.Range(lineIdx, pos, lineIdx, pos + symbol.length),
+                `module '${modulePath}' does not export symbol '${symbol}'`,
+                vscode.DiagnosticSeverity.Warning,
+            ));
+        }
     };
 
     const declarations = new Map<string, vscode.Range>();
@@ -128,11 +262,13 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
             multiLineImport += " " + cleanLine;
             if (cleanLine.includes('}')) {
                 const symbolsMatch = /\{([^}]*)\}/.exec(multiLineImport);
+                const fromM = /^\s*from\s+([.a-zA-Z0-9_/]+)/.exec(multiLineImport);
                 if (symbolsMatch) {
                     symbolsMatch[1].split(',').forEach(s => {
                         const trimmed = s.trim();
                         if (trimmed) { fileGlobals.add(trimmed); explicitImports.add(trimmed); }
                     });
+                    if (fromM) reportUnknownExports(i, line, fromM[1], symbolsMatch[1]);
                 }
                 isReadingImport = false;
                 multiLineImport = "";
@@ -211,12 +347,13 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
         const fromAsMatch = /^\s*from\s+[.a-zA-Z0-9_/]+\s+as\s+([a-zA-Z_]\w*)/.exec(cleanLine);
         if (fromAsMatch) { fileGlobals.add(fromAsMatch[1]); useAliases.add(fromAsMatch[1]); }
 
-        match = /^\s*from\s+[.a-zA-Z0-9_/]+\s+use\s+\{([^}]*)\}/.exec(cleanLine);
+        match = /^\s*from\s+([.a-zA-Z0-9_/]+)\s+use\s+\{([^}]*)\}/.exec(cleanLine);
         if (match) {
-            match[1].split(',').forEach(s => {
+            match[2].split(',').forEach(s => {
                 const trimmed = s.trim();
                 if (trimmed) { fileGlobals.add(trimmed); explicitImports.add(trimmed); }
             });
+            reportUnknownExports(i, line, match[1], match[2]);
         }
 
         // Type alias: `type Name = T` — register Name as global so the

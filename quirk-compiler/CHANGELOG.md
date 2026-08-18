@@ -5,6 +5,31 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [5.3.6] — 2026-08-18 — `quirk cache info` + `clean compile` subcommand
+
+Extends the existing `quirk cache` command with visibility into the
+compile cache (bitcode + AOT) that was previously invisible:
+
+```
+$ quirk cache info
+Cache directory: /home/alex/.quirk/cache
+  bitcode:  282 entries, 19.98 MB
+  aot:      0 entries, 0.00 MB
+  packages: 0 entries, 0.00 MB
+```
+
+- `quirk cache info` — statistics for all three cache kinds.
+- `quirk cache clean compile` — targeted wipe of `.bc` files + the
+  `build/` AOT tree; leaves downloaded package tarballs alone.
+- Bare `quirk cache` now hints at `info` when the package list is
+  empty but bitcode/AOT entries are present (previously said
+  "Cache empty" which was misleading when 20+ MB of `.bc` were
+  sitting there).
+
+No change to `quirk cache clean` (still wipes everything) or `list`
+(still shows package tarballs only) — additive.
+
+
 ## [5.3.5] — 2026-08-18 — Sema method-call fall-through returns `Any`, not `void`
 
 Companion Sema fix to the CoerceGen consolidation in v5.3.4. The final

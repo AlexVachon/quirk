@@ -64,7 +64,7 @@ static std::string self_binary();
 
 namespace qpm {
 
-constexpr const char* QUIRK_VERSION = "5.3.5";
+constexpr const char* QUIRK_VERSION = "5.3.6";
 
 namespace fs = std::filesystem;
 
@@ -5790,7 +5790,24 @@ static int cmd_cache(const std::vector<std::string>& args) {
             byPkg[n].push_back(v);
         }
         if (byPkg.empty()) {
-            std::cout << (filter.empty() ? "Cache empty." : ("No cached versions for '" + filter + "'.")) << "\n";
+            std::cout << (filter.empty() ? "No cached packages." : ("No cached versions for '" + filter + "'.")) << "\n";
+            // If the cache dir has bitcode/AOT content but no package
+            // tarballs, nudge the user toward `info` — the old "Cache
+            // empty." message was misleading when hundreds of MB of
+            // bitcode entries were sitting right there.
+            if (filter.empty()) {
+                bool hasCompileCache = false;
+                std::error_code ec;
+                for (auto& e : fs::directory_iterator(cdir, ec)) {
+                    if ((e.is_regular_file() && e.path().extension() == ".bc") ||
+                        (e.is_directory() && e.path().filename() == "build")) {
+                        hasCompileCache = true; break;
+                    }
+                }
+                if (hasCompileCache) {
+                    std::cout << "  (bitcode / AOT entries present — see `quirk cache info`)\n";
+                }
+            }
             return 0;
         }
         for (auto& kv : byPkg) {
@@ -5804,12 +5821,36 @@ static int cmd_cache(const std::vector<std::string>& args) {
         return 0;
     }
     if (sub == "clean") {
-        // `quirk cache clean [pkg[@ver]]` — wipe cache (filtered).
+        // `quirk cache clean [pkg[@ver] | compile]` — wipe cache
+        // (filtered). Special filter `compile` targets the bitcode +
+        // AOT-build caches only, leaving downloaded package tarballs
+        // alone — useful when you suspect stale IR without wanting to
+        // re-download every stdlib package. Bare `quirk cache clean`
+        // wipes everything (bitcode + build/ + tarballs).
         if (!fs::is_directory(cdir)) { std::cout << "Cache empty.\n"; return 0; }
         if (args.size() < 2) {
             // Wipe everything
             for (auto& e : fs::directory_iterator(cdir)) fs::remove_all(e.path());
             std::cout << "Cache cleared.\n";
+            return 0;
+        }
+        if (args[1] == "compile") {
+            int bcRemoved = 0;
+            for (auto& e : fs::directory_iterator(cdir)) {
+                if (e.is_regular_file() && e.path().extension() == ".bc") {
+                    fs::remove(e.path()); bcRemoved++;
+                }
+            }
+            std::error_code ec;
+            bool buildWiped = false;
+            fs::path buildDir = cdir / "build";
+            if (fs::is_directory(buildDir, ec)) {
+                fs::remove_all(buildDir, ec);
+                buildWiped = !ec;
+            }
+            std::cout << "Removed " << bcRemoved << " bitcode entries"
+                      << (buildWiped ? " + AOT build tree" : "")
+                      << ". Package tarballs left alone.\n";
             return 0;
         }
         std::string target = args[1];
@@ -5831,13 +5872,59 @@ static int cmd_cache(const std::vector<std::string>& args) {
         std::cout << "Removed " << removed << " cache entries.\n";
         return 0;
     }
+    if (sub == "info") {
+        // `quirk cache info` — statistics for both caches. Useful for
+        // debugging staleness ("did my last edit invalidate the
+        // cache?") and disk usage.
+        if (!fs::is_directory(cdir)) { std::cout << "Cache empty (dir does not exist).\n"; return 0; }
+        int bitcodeEntries = 0;
+        uintmax_t bitcodeBytes = 0;
+        int packageEntries = 0;
+        uintmax_t packageBytes = 0;
+        int aotEntries = 0;
+        uintmax_t aotBytes = 0;
+        std::error_code ec;
+        for (auto& e : fs::directory_iterator(cdir, ec)) {
+            if (e.is_regular_file() && e.path().extension() == ".bc") {
+                bitcodeEntries++;
+                bitcodeBytes += fs::file_size(e.path(), ec);
+            } else if (e.is_directory() && e.path().filename() == "build") {
+                for (auto& b : fs::recursive_directory_iterator(e.path(), ec)) {
+                    if (b.is_regular_file()) {
+                        aotEntries++;
+                        aotBytes += fs::file_size(b.path(), ec);
+                    }
+                }
+            } else if (e.is_directory()) {
+                // pkg-version tarball dirs
+                packageEntries++;
+                for (auto& p : fs::recursive_directory_iterator(e.path(), ec)) {
+                    if (p.is_regular_file()) packageBytes += fs::file_size(p.path(), ec);
+                }
+            }
+        }
+        auto mb = [](uintmax_t b) {
+            double m = double(b) / (1024.0 * 1024.0);
+            char buf[32]; snprintf(buf, sizeof(buf), "%.2f MB", m);
+            return std::string(buf);
+        };
+        std::cout << "Cache directory: " << cdir.string() << "\n";
+        std::cout << "  bitcode:  " << bitcodeEntries << " entries, " << mb(bitcodeBytes) << "\n";
+        std::cout << "  aot:      " << aotEntries    << " entries, " << mb(aotBytes)    << "\n";
+        std::cout << "  packages: " << packageEntries << " entries, " << mb(packageBytes) << "\n";
+        std::cout << "\n"
+                  << "  To wipe compile cache only:  quirk cache clean compile\n"
+                  << "  To wipe everything:          quirk cache clean\n";
+        return 0;
+    }
     if (sub == "dir") {
         std::cout << cdir.string() << "\n";
         return 0;
     }
     std::cerr << "cache: unknown subcommand '" << sub << "'\n";
     std::cerr << "  usage: quirk cache list [<pkg>]\n";
-    std::cerr << "         quirk cache clean [<pkg>[@<ver>]]\n";
+    std::cerr << "         quirk cache info\n";
+    std::cerr << "         quirk cache clean [<pkg>[@<ver>] | compile]\n";
     std::cerr << "         quirk cache dir\n";
     return 1;
 }

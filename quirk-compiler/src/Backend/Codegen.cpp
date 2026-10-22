@@ -4471,11 +4471,18 @@ Value* LLVMCodegen::handleExpression(Node* node) {
             Value* isNull = Builder.CreateICmpEQ(
                 L, Constant::getNullValue(L->getType()), "coalesce_isnull");
             Value* rhs = R ? R : Constant::getNullValue(L->getType());
+            // `x ?? 0` with `x: Int?` — Sema types the result as Int, so
+            // unbox the LHS and select natively. (Previously the RHS was
+            // replaced with null and the fallback silently dropped.)
+            if (rhs->getType()->isIntegerTy(32) || rhs->getType()->isDoubleTy()) {
+                Value* unboxed = emitUnboxToType(L, rhs->getType());
+                return Builder.CreateSelect(isNull, rhs, unboxed, "coalesce");
+            }
             if (rhs->getType() != L->getType()) {
                 if (rhs->getType()->isPointerTy())
                     rhs = Builder.CreateBitCast(rhs, L->getType(), "coalesce_cast");
                 else
-                    rhs = Constant::getNullValue(L->getType());
+                    rhs = Builder.CreateBitCast(emitBox(rhs), L->getType(), "coalesce_box");
             }
             return Builder.CreateSelect(isNull, rhs, L, "coalesce");
         }

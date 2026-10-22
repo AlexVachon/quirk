@@ -5,6 +5,25 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [5.3.11] — 2026-10-22 — `??` with an `Int` / `Float` fallback
+
+**Fixed: `x ?? 0` ignored the fallback when `x: Int?` was null.**
+Codegen replaced any non-pointer right-hand side with null, so the
+coalesce selected between null and null — `print(x ?? 0)` printed
+`null`, and `n: Int := x ?? 7` read 0. The LHS is now unboxed and
+selected natively against the `Int` / `Float` fallback, matching the
+`Int` result type Sema already assigned. Other primitive fallbacks
+are boxed instead of dropped.
+
+```quirk
+x: Int? = null
+print(x ?? 0)            // 0   (was null)
+n: Int := x ?? 7
+print(n + 1)             // 8   (was 1)
+```
+
+New probe: `p93_optional_int_coalesce`.
+
 ## [5.3.10] — 2026-10-22 — `Map.get` miss is a real null
 
 **Fixed: a `Map.get` miss behaved like the string `"null"`.** Coercing

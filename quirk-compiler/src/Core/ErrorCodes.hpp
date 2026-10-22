@@ -66,6 +66,7 @@ inline const std::vector<ErrorCode>& knownErrorCodes() {
         {204, std::regex("^cannot mutate const variable")},
         {205, std::regex("^type '[^']*' does not support indexing")},
         {206, std::regex("^array index must be 'Int'")},
+        {207, std::regex("^'(if|elif|while)' condition must be 'Bool'")},
         // Struct / inheritance
         {300, std::regex("^can only throw struct objects")},
         {301, std::regex("^catch type '[^']*' does not inherit from 'Exception'")},
@@ -89,6 +90,15 @@ inline std::string formatCode(int code) {
     char buf[8];
     snprintf(buf, sizeof(buf), "Q%04d", code);
     return buf;
+}
+
+// The colored `[Q0100 ERROR]` / `[ERROR]` tag every error printer uses
+// (Sema, Parser, Codegen) — one place so a code registered here shows
+// up no matter which phase reports the message.
+inline std::string errorTag(const std::string& msg) {
+    int code = matchErrorCode(msg);
+    return code > 0 ? "\033[1;31m[" + formatCode(code) + " ERROR]\033[0m "
+                    : std::string("\033[1;31m[ERROR]\033[0m ");
 }
 
 // Docs table — one entry per code. `quirk explain <code>` prints
@@ -209,6 +219,15 @@ inline const std::vector<ErrorDoc>& errorDocs() {
          "// good — new binding, or use var:\n"
          "pi := 3.14\n"
          "pi = 3.14159"},
+
+        {207, "Condition must be 'Bool'",
+         "`if`, `elif` and `while` take a `Bool` condition. Quirk does not treat `Int`, `String` or other values as truthy here.",
+         "Compare explicitly (`n != 0`, `s.length() > 0`), or use the `x?` presence check for optionals.",
+         "// bad:\n"
+         "n := 42\n"
+         "if n { print(\"yes\") }        // Q0207\n\n"
+         "// good:\n"
+         "if n != 0 { print(\"yes\") }"},
 
         {301, "Catch type does not inherit from 'Exception'",
          "The `catch (e: T)` type must be a struct that inherits (directly or transitively) from `Exception`.",

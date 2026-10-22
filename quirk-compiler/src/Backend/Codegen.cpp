@@ -23,6 +23,7 @@
 
 #include "ast.hpp"
 
+#include "../Core/ErrorCodes.hpp"
 #include "TypeGen.hpp"
 #include "BoxInt.hpp"
 #include "CoerceGen.hpp"
@@ -134,7 +135,7 @@ class LLVMCodegen {
     void setSourceMap(const std::map<std::string, std::string>& sm) { sourceMap = sm; }
 
     [[noreturn]] void fatalError(const std::string& msg, int line, int col) {
-        std::cerr << "\033[1;31m[ERROR]\033[0m " << msg << "\n";
+        std::cerr << quirk::errorTag(msg) << msg << "\n";
 
         if (line > 0) {
             if (!currentFilePath.empty())

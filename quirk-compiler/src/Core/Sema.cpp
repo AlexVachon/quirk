@@ -368,13 +368,7 @@ static void printSemaError(const std::string& msg, int line, int col,
     // `src/Core/ErrorCodes.hpp` for the registry. Codes let users
     // `quirk explain Q0100` for a proper docs page rather than
     // reading the terse one-liner.
-    int code = quirk::matchErrorCode(msg);
-    if (code > 0) {
-        std::cerr << "\033[1;31m[" << quirk::formatCode(code) << " ERROR]\033[0m "
-                  << msg << "\n";
-    } else {
-        std::cerr << "\033[1;31m[ERROR]\033[0m " << msg << "\n";
-    }
+    std::cerr << quirk::errorTag(msg) << msg << "\n";
     if (line > 0) {
         std::cerr << " --> ";
         if (!path.empty()) std::cerr << path << ":";

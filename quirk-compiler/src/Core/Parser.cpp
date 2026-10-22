@@ -3,6 +3,7 @@
 #include <map>
 #include <set>
 #include "parser.hpp"
+#include "ErrorCodes.hpp"
 #include "../PackageManager.hpp"
 
 Parser::Parser(const std::vector<Token>& tokens, const std::string& source, const std::string& filePath)
@@ -1928,7 +1929,7 @@ void Parser::flushErrors() const {
             std::cout.flush();
             continue;
         }
-        std::cerr << "\033[1;31m[ERROR]\033[0m " << e.msg << "\n";
+        std::cerr << quirk::errorTag(e.msg) << e.msg << "\n";
         if (!e.filePath.empty())
             std::cerr << " --> " << e.filePath << ":" << e.line << ":" << e.col << "\n";
         std::string ln = std::to_string(e.line);

@@ -5,6 +5,22 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [5.3.14] — 2026-10-22 — error codes from every phase
+
+**Fixed: error codes only appeared for Sema errors.** The v5.3.7
+registry was consulted only by Sema's printer; Parser and Codegen
+printed a bare `[ERROR]`. So the parser codes Q0001–Q0006 never showed,
+and Codegen-reported messages such as `Unknown method` lost their
+Q0104. All three printers now share `quirk::errorTag()`.
+
+```
+[Q0004 ERROR] Expected ')' (found '}')      (was [ERROR])
+[Q0104 ERROR] Unknown method 'Int.nonexistent'
+```
+
+**New: Q0207 — condition must be `Bool`** (`if` / `elif` / `while`),
+with a `quirk explain Q0207` page.
+
 ## [5.3.13] — 2026-10-22 — piped source input
 
 **Fixed: `quirk <(...)` / `quirk /dev/stdin` silently ran nothing.**

@@ -106,8 +106,11 @@ inline Value* coerceToType(Value* val, Type* expected,
             if (auto* st = dyn_cast<StructType>(elt)) {
                 StringRef nm = st->getName();
                 if (nm.contains("String") && !nm.contains("Iterator")) {
+                    // `_or_null`: a null Any (e.g. a Map.get miss) stays a
+                    // null String* instead of becoming the 4-char "null",
+                    // so `s == null` holds and `s.length()` is 0.
                     FunctionCallee toStr = mod->getOrInsertFunction(
-                        "quirk_opaque_to_string", expected, i8p);
+                        "quirk_opaque_to_string_or_null", expected, i8p);
                     return b.CreateCall(toStr, {val}, "coerce_any2str");
                 }
             }

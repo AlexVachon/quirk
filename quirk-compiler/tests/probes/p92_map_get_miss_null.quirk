@@ -1,0 +1,35 @@
+// p92 — a Map.get miss is a real null, not the 4-char string "null"
+// (v5.3.10). Coercing a null Any to String used to route through
+// quirk_opaque_to_string, which renders null as "null" — so
+// `m.get(miss).length()` was 4 and `s: String := m.get(miss)` failed
+// `s == null`. String coercions now use the `_or_null` variant
+// (String methods are null-safe), and display paths (print, `+`,
+// interpolation) render a null String as "null" instead of crashing.
+//
+// Expected output:
+//   0
+//   true
+//   0
+//   null
+//   [null]
+//   v=null
+//   default
+//   5
+define main() -> void {
+    m := {"a": "hello"}
+    v := m.get("zz")
+    print(v.length())
+    print(v == null)
+
+    s: String := m.get("zz")
+    print(s.length())
+    print(s)
+    print("[" + s + "]")
+    print("v=${s}")
+
+    o: String? = m.get("zz")
+    print(o ?? "default")
+
+    h := m.get("a")
+    print(h.length())
+}

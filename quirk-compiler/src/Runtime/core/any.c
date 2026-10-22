@@ -150,7 +150,8 @@ String* Core_Primitives_Any_to_string(Any* a) {
             return make_String(buf);
         }
         case ANY_STRING: {
-            if (!a->ptr) return make_String("");
+            // Null String displays as "null" — same as print and `+`.
+            if (!a->ptr) return make_String("null");
             return (String*)a->ptr;
         }
         case ANY_LIST: {

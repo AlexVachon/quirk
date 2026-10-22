@@ -102,6 +102,13 @@ String* quirk_opaque_to_string_or_null(void* val) {
     return quirk_opaque_to_string(val);
 }
 
+// Display form of a typed String*: a null String (e.g. `s: String :=
+// m.get(miss)`) prints as "null" instead of dereferencing NULL. Used by
+// valueToString for print / write / interpolation.
+String* quirk_string_display(String* s) {
+    return s ? s : make_String("null");
+}
+
 // Unwrap an opaque value to its raw struct pointer. Used when a
 // `Foo`-typed binding receives an `Any`-typed value (e.g.
 // `t: Tuple = xs.get(0)` where the list stores Any-boxed tuples).

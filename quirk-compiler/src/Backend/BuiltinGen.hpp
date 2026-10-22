@@ -385,7 +385,11 @@ class BuiltinGen {
                 if (dotPos != std::string::npos && std::isdigit(sName[dotPos + 1]))
                     sName = sName.substr(0, dotPos);
 
-                if (sName == "String") return val;
+                if (sName == "String") {
+                    FunctionCallee fn = TheModule->getOrInsertFunction(
+                        "quirk_string_display", FunctionType::get(ty, {ty}, false));
+                    return Builder.CreateCall(fn, {val});
+                }
                 if (sName == "Any") {
                     Function* fn = TheModule->getFunction("Core_Primitives_Any_to_string");
                     if (fn) return Builder.CreateCall(fn, {val});
@@ -638,7 +642,8 @@ class BuiltinGen {
                     structName = structName.substr(0, dotPos);
 
                 if (structName == "String") {
-                    Value* bufPtr = structGen->getMemberPtr(val, "_buffer");
+                    // valueToString null-guards (null String prints "null").
+                    Value* bufPtr = structGen->getMemberPtr(valueToString(val), "_buffer");
                     if (bufPtr) {
                         Value* cStr = Builder.CreateLoad(Type::getInt8PtrTy(Context), bufPtr);
                         Value* fmt = Builder.CreateGlobalStringPtr("%s\n");

@@ -5,6 +5,36 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [5.3.10] — 2026-10-22 — `Map.get` miss is a real null
+
+**Fixed: a `Map.get` miss behaved like the string `"null"`.** Coercing
+a null `Any` to `String` went through `quirk_opaque_to_string`, which
+renders null as the 4-char `"null"`. So `m.get(miss).length()` was 4,
+`s: String := m.get(miss)` failed `s == null`, and `??` / `?` treated
+the miss as present.
+
+String coercions (typed bindings, `Any`-receiver method calls) now use
+`quirk_opaque_to_string_or_null`, so the miss stays null. String
+methods were already null-safe, so `.length()` is 0.
+
+```quirk
+m := {"a": "x"}
+v := m.get("zz")
+print(v.length())        // 0   (was 4)
+o: String? = m.get("zz")
+print(o ?? "default")    // default   (was null)
+```
+
+**Fixed: null `String` display.** `print(s)` on a null `String`
+segfaulted; `"[" + s + "]"` produced `[0]`; `"${s}"` produced an empty
+string. All three now render `null`.
+
+Side effect: `String?` null-coalesce and null-check now work on null
+strings in more positions (`tests/optional_test.quirk`: `a ?? "default"`,
+`q?`, `n?.upper() ?? "(null)"` now give the right answers).
+
+New probe: `p92_map_get_miss_null`.
+
 ## [5.3.9] — 2026-08-18 — `quirk check`, `quirk watch`, fuzz→probes auto-graduation
 
 Three DX shortcuts, no language change.
@@ -50,31 +80,6 @@ $ python3 tools/fuzz.py --iters 500 --graduate
           saved → tools/fuzz_findings/c001_...
           also graduated → tests/probes/p92_fuzz_....quirk
 ```
-
-Corpus: 44 ok / 47 unchanged.
-## [5.3.9] — 2026-08-18 — `quirk check`, `quirk watch`, fuzz→probes graduation
-
-Three DX shortcuts, no language change.
-
-**`quirk check <file.quirk>`** — lex + parse + Sema only, no
-Codegen, no run. ~5× faster than a full compile for editor / CI
-lint loops. Diagnostics are identical to a full compile (same
-Q-codes, same source-map ranges).
-
-Overloads the existing `quirk check` (which validates `quirk.toml`):
-if `arg[0]` ends in `.quirk`, dispatches to the new source checker;
-otherwise runs the manifest validator. Both behaviours preserved.
-
-**`quirk watch <file.quirk>`** — re-runs the file every time it
-changes on disk. Requires `inotifywait` (Linux) or `fswatch`
-(macOS). Kills the "edit → switch to terminal → arrow-up → enter"
-loop.
-
-**Fuzz → probes auto-graduation** — `tools/fuzz.py --graduate` now
-writes findings directly to `tests/probes/pNN_fuzz_<hint>.quirk`
-with the next available probe number, so the CI regression corpus
-grows without manual triage. Existing `tools/fuzz_findings/`
-staging still populated as before.
 
 Corpus: 44 ok / 47 unchanged.
 

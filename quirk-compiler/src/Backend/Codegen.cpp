@@ -1876,14 +1876,16 @@ class LLVMCodegen {
                     objPtr = Builder.CreateLoad(objPtr->getType()->getPointerElementType(), objPtr);
                 }
                 if (objPtr->getType()->isPointerTy() && objPtr->getType()->getPointerElementType()->isIntegerTy(8)) {
-                    // i8* is a boxed list element (String* or tagged int cast to void*); unbox via quirk_opaque_to_string
-                    Function* opaqueToStr = TheModule->getFunction("quirk_opaque_to_string");
+                    // i8* is a boxed list element (String* or tagged int cast to void*); unbox via
+                    // quirk_opaque_to_string_or_null so a null receiver (Map.get miss) stays null —
+                    // String methods are null-safe, so `v.length()` is 0, not len("null").
+                    Function* opaqueToStr = TheModule->getFunction("quirk_opaque_to_string_or_null");
                     if (!opaqueToStr) {
                         Type* retTy = StructTypes.count("String")
                             ? (Type*)PointerType::getUnqual(StructTypes["String"])
                             : (Type*)Type::getInt8PtrTy(Context);
                         FunctionType* ft = FunctionType::get(retTy, {Type::getInt8PtrTy(Context)}, false);
-                        opaqueToStr = Function::Create(ft, Function::ExternalLinkage, "quirk_opaque_to_string", TheModule.get());
+                        opaqueToStr = Function::Create(ft, Function::ExternalLinkage, "quirk_opaque_to_string_or_null", TheModule.get());
                     }
                     objPtr = Builder.CreateCall(opaqueToStr, {objPtr}, "deboxed_str");
                 }
@@ -3431,9 +3433,10 @@ class LLVMCodegen {
                 // tag), or raw String* (passes through). The
                 // previously-used `Any_to_str` only handled the
                 // tagged-Any case; raw String* cast to Any* read
-                // garbage from the tag slot.
+                // garbage from the tag slot. `_or_null` keeps a null
+                // Any (Map.get miss) null rather than the string "null".
                 FunctionCallee f = TheModule->getOrInsertFunction(
-                    "quirk_opaque_to_string",
+                    "quirk_opaque_to_string_or_null",
                     FunctionType::get(targetType,
                                       {Type::getInt8PtrTy(Context)}, false));
                 Value* asI8 = anyPtr;

@@ -441,6 +441,9 @@ String* make_String(const char* raw);
 // Until List storage is migrated to Any*, Core_String_String___add must handle
 // the case where a retrieved value is a tiny address, not a real String*.
 static inline String* quirk_ensure_string(String* val) {
+    // Null String (explicit null, Map.get miss) concatenates as "null",
+    // matching print — not as tagged-int 0.
+    if (!val) return make_String("null");
     uintptr_t v = (uintptr_t)val;
     if (v <= MAX_SMALL_INT) {
         char temp[32];

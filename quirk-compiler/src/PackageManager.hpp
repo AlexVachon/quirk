@@ -65,7 +65,7 @@ static std::string self_binary();
 
 namespace qpm {
 
-constexpr const char* QUIRK_VERSION = "5.3.14";
+constexpr const char* QUIRK_VERSION = "5.3.15";
 
 namespace fs = std::filesystem;
 
@@ -5913,6 +5913,10 @@ static int cmd_cache(const std::vector<std::string>& args) {
         std::cout << "  bitcode:  " << bitcodeEntries << " entries, " << mb(bitcodeBytes) << "\n";
         std::cout << "  aot:      " << aotEntries    << " entries, " << mb(aotBytes)    << "\n";
         std::cout << "  packages: " << packageEntries << " entries, " << mb(packageBytes) << "\n";
+        // Mirrors cacheBudgetBytes() in Compiler.cpp (bitcode + aot only).
+        const char* maxEnv = std::getenv("QUIRK_CACHE_MAX_MB");
+        std::cout << "  budget:   " << (maxEnv && *maxEnv ? maxEnv : "512")
+                  << " MB for bitcode + aot (LRU eviction; set QUIRK_CACHE_MAX_MB)\n";
         std::cout << "\n"
                   << "  To wipe compile cache only:  quirk cache clean compile\n"
                   << "  To wipe everything:          quirk cache clean\n";

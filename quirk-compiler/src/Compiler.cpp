@@ -716,7 +716,7 @@ static void hashImportGraph(const std::string& entry,
 //
 // On a stale `use`d file the new key won't match the old cache file,
 // so we get a clean miss. Recompile + new cache entry. The old entry
-// just lingers until cache cleanup (TODO: LRU eviction).
+// lingers until `pruneCaches` evicts it (LRU, size-budgeted).
 static std::string computeCacheKey(const std::string& inputPath, int optLevel) {
     if (!fs::exists(inputPath)) return "";
 
@@ -830,6 +830,72 @@ static fs::path buildCachePathFor(const std::string& key) {
     fs::path root = home ? fs::path(home) / ".quirk" / "cache" / "build"
                          : fs::temp_directory_path() / "quirk-cache-build";
     return root / (key + "-" + detectArchTag()) / "quirk-bin";
+}
+
+// ==========================================================
+//  CACHE EVICTION  (LRU by mtime, size-budgeted)
+// ==========================================================
+//
+// Every edit to a program mints a new cache key, so without eviction
+// both caches grow forever. Hits bump the entry's mtime (`touchCacheEntry`)
+// so mtime == last use; after each save, `pruneCaches` deletes the
+// least-recently-used entries until the bitcode + AOT caches together fit
+// in the budget: $QUIRK_CACHE_MAX_MB, default 512. The entry just written
+// is never evicted.
+
+static void touchCacheEntry(const fs::path& p) {
+    std::error_code ec;
+    fs::last_write_time(p, fs::file_time_type::clock::now(), ec);
+}
+
+static uintmax_t cacheBudgetBytes() {
+    uintmax_t mb = 512;
+    if (const char* env = std::getenv("QUIRK_CACHE_MAX_MB")) {
+        char* end = nullptr;
+        unsigned long long v = std::strtoull(env, &end, 10);
+        if (end && end != env && *end == '\0') mb = v;
+    }
+    return mb * 1024 * 1024;
+}
+
+static void pruneCaches(const fs::path& justSaved) {
+    struct Entry { fs::path path; uintmax_t size; fs::file_time_type used; };
+    std::vector<Entry> entries;
+    uintmax_t total = 0;
+    std::error_code ec;
+
+    // Bitcode cache: one `<key>.bc` file per entry.
+    fs::path bcRoot = cachePathFor("x").parent_path();
+    for (auto& f : fs::directory_iterator(bcRoot, ec)) {
+        if (!f.is_regular_file(ec) || f.path().extension() != ".bc") continue;
+        uintmax_t sz = f.file_size(ec);
+        entries.push_back({f.path(), sz, f.last_write_time(ec)});
+        total += sz;
+    }
+    // AOT cache: one `<key>-<arch>/` directory per entry; its `quirk-bin`
+    // carries the last-use mtime.
+    fs::path aotRoot = buildCachePathFor("x").parent_path().parent_path();
+    for (auto& d : fs::directory_iterator(aotRoot, ec)) {
+        if (!d.is_directory(ec)) continue;
+        uintmax_t sz = 0;
+        for (auto& f : fs::recursive_directory_iterator(d.path(), ec))
+            if (f.is_regular_file(ec)) sz += f.file_size(ec);
+        fs::path bin = d.path() / "quirk-bin";
+        auto used = fs::exists(bin, ec) ? fs::last_write_time(bin, ec) : d.last_write_time(ec);
+        entries.push_back({d.path(), sz, used});
+        total += sz;
+    }
+
+    uintmax_t budget = cacheBudgetBytes();
+    if (total <= budget) return;
+    std::sort(entries.begin(), entries.end(),
+              [](const Entry& a, const Entry& b) { return a.used < b.used; });
+    for (const auto& e : entries) {
+        if (total <= budget) break;
+        if (e.path == justSaved || justSaved.parent_path() == e.path) continue;
+        fs::remove_all(e.path, ec);
+        if (!ec) total -= e.size;
+    }
 }
 
 // Compile the source at `inputPath` into a native binary at `outPath`.
@@ -1325,6 +1391,7 @@ int main(int argc, char* argv[]) {
             fs::path binPath = buildCachePathFor(aotKey);
             if (fs::exists(binPath)) {
                 log.debug("AOT cache HIT: " + binPath.string());
+                touchCacheEntry(binPath);
                 return execCachedBinary(binPath.string(), opts.inputFile, scriptArgs);
             }
             log.debug("AOT cache MISS: " + binPath.string());
@@ -1345,6 +1412,7 @@ int main(int argc, char* argv[]) {
             fs::path cp = cachePathFor(key);
             if (fs::exists(cp)) {
                 log.debug("Cache HIT: " + cp.string());
+                touchCacheEntry(cp);
                 auto ctx = std::make_unique<llvm::LLVMContext>();
                 if (auto cached = loadCachedBitcode(cp, *ctx)) {
                     std::string runtimePath = resolveRuntimeSoPath();
@@ -1574,6 +1642,7 @@ int main(int argc, char* argv[]) {
             return 1;
         }
         std::error_code ec; fs::remove(irPath, ec);
+        pruneCaches(binPath);
         std::cout << "Built: " << binPath.string() << "\n";
         std::cout << "Now `quirk " << opts.inputFile
                   << "` will exec this binary directly (~10× faster startup).\n";
@@ -1602,6 +1671,7 @@ int main(int argc, char* argv[]) {
                 fs::path cp = cachePathFor(key);
                 if (saveCachedBitcode(cp, *module)) {
                     log.debug("Cache SAVE: " + cp.string());
+                    pruneCaches(cp);
                 } else {
                     log.debug("Cache SAVE failed: " + cp.string());
                 }

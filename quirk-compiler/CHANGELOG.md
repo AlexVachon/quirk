@@ -5,6 +5,20 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [5.3.15] — 2026-10-22 — compile-cache LRU eviction
+
+Every edit to a program mints a new cache key, so `~/.quirk/cache/`
+(bitcode) and `~/.quirk/cache/build/` (AOT binaries) grew without bound.
+Now:
+
+- a cache hit bumps the entry's mtime, so mtime == last use;
+- after each save, least-recently-used entries are deleted until the
+  bitcode + AOT caches together fit in **`QUIRK_CACHE_MAX_MB`**
+  (default **512**). The entry just written is never evicted; package
+  downloads in the same directory are never touched.
+
+`quirk cache info` shows the active budget.
+
 ## [5.3.14] — 2026-10-22 — error codes from every phase
 
 **Fixed: error codes only appeared for Sema errors.** The v5.3.7

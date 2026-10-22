@@ -143,6 +143,20 @@ static std::string stripNullable(const std::string& t) {
     return t;
 }
 
+std::string Sema::monoRewriteType(const std::string& type) {
+    if (type.find('[') == std::string::npos) return type;
+    bool nullable = type.back() == '?';
+    std::string t = stripNullable(type);
+    auto pos = t.find('[');
+    std::string base = t.substr(0, pos);
+    auto it = structRegistry.find(base);
+    if (it == structRegistry.end() || !it->second || it->second->typeParams.empty())
+        return base + (nullable ? "?" : "");
+    std::string out = base;
+    for (const auto& a : extractTypeArgs(t)) { out += "__"; out += monoRewriteType(a); }
+    return out + (nullable ? "?" : "");
+}
+
 void Sema::collectInstantiationsFromType(const std::string& type) {
     if (type.empty()) return;
     std::string t = stripNullable(type);
@@ -211,18 +225,18 @@ void Sema::collectInstantiationsInNode(Node* n) {
 void Sema::rewriteTypeAnnotations(Node* n) {
     if (!n) return;
     if (auto* s = dynamic_cast<StructNode*>(n)) {
-        for (auto& f : s->fields) f.type = monoMangleType(f.type);
-        for (auto& p : s->parents) p = monoMangleType(p);
+        for (auto& f : s->fields) f.type = monoRewriteType(f.type);
+        for (auto& p : s->parents) p = monoRewriteType(p);
         return;
     }
     if (auto* f = dynamic_cast<FunctionNode*>(n)) {
-        for (auto& p : f->parameters) p.type = monoMangleType(p.type);
-        f->returnType = monoMangleType(f->returnType);
+        for (auto& p : f->parameters) p.type = monoRewriteType(p.type);
+        f->returnType = monoRewriteType(f->returnType);
         for (auto& s : f->body) rewriteTypeAnnotations(s.get());
         return;
     }
     if (auto* v = dynamic_cast<VarDeclNode*>(n)) {
-        v->typeAnnotation = monoMangleType(v->typeAnnotation);
+        v->typeAnnotation = monoRewriteType(v->typeAnnotation);
         if (v->expression) rewriteTypeAnnotations(v->expression.get());
         return;
     }
@@ -268,7 +282,7 @@ void Sema::runMonomorphizePrePass(std::vector<std::unique_ptr<Node>>& nodes) {
         const std::string& base = inst.first;
         const std::vector<std::string>& args = inst.second;
         std::string mangled = base;
-        for (const auto& a : args) { mangled += "__"; mangled += monoMangleType(a); }
+        for (const auto& a : args) { mangled += "__"; mangled += monoRewriteType(a); }
         if (structRegistry.count(mangled)) continue;   // already done
         auto* src = structRegistry[base];
         if (!src) continue;
@@ -285,7 +299,7 @@ void Sema::runMonomorphizePrePass(std::vector<std::unique_ptr<Node>>& nodes) {
             // substituted field type, so `Box[Box[Int]]` ends up
             // with a `value: Box__Int` field that downstream
             // resolution can find.
-            sf.type = monoMangleType(sf.type);
+            sf.type = monoRewriteType(sf.type);
             spec->fields.push_back(std::move(sf));
         }
         structRegistry[mangled] = spec.get();

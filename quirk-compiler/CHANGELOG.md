@@ -5,6 +5,25 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [5.3.16] — 2026-10-22 — `List[Int]` / `Map[K, V]` annotations
+
+**Fixed: parameterized builtin annotations miscompiled.** The v3.1.0
+monomorphization pre-pass rewrote *every* `Foo[Args]` annotation to a
+mangled name — including non-generic builtins — so `xs: List[Int]`
+became the unknown type `List__Int`, which lowered as an untyped
+pointer. Results were silently wrong:
+
+```quirk
+define total(xs: List[Int]) -> Int { ... }
+print(total([1, 2, 3]))       // 6   (was 0)
+m: Map[String, Int] := {"a": 1}
+print(m.length())             // 1   (was 8 — dispatched as String.length)
+```
+
+Only generic structs (`Box[Int]` → `Box__Int`) are mangled now; other
+bracketed annotations reduce to their base type. `tests/generics_interfaces`
+compiles and runs for the first time (it failed on `List[T]`).
+
 ## [5.3.15] — 2026-10-22 — compile-cache LRU eviction
 
 Every edit to a program mints a new cache key, so `~/.quirk/cache/`

@@ -87,7 +87,7 @@ inline int matchErrorCode(const std::string& msg) {
 // Format a code as `Q0042` — always 4-digit zero-padded so `quirk
 // explain Q0042` and `quirk explain 42` both parse cleanly.
 inline std::string formatCode(int code) {
-    char buf[8];
+    char buf[16];
     snprintf(buf, sizeof(buf), "Q%04d", code);
     return buf;
 }

@@ -194,6 +194,10 @@ class Sema {
     void collectInstantiationsFromType(const std::string& type);
     void collectInstantiationsInNode(Node* n);
     void rewriteTypeAnnotations(Node* n);
+    // `Box[Int]` → `Box__Int` for generic structs; `List[Int]` → `List`
+    // for everything else (non-generic bases have no specialization, and
+    // an unknown `List__Int` lowered as an untyped pointer).
+    std::string monoRewriteType(const std::string& type);
     FunctionNode* findMethod(const std::string& cls, const std::string& name) {
         auto cit = methodRegistry.find(cls);
         if (cit == methodRegistry.end()) return nullptr;

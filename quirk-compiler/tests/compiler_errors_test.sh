@@ -40,7 +40,7 @@ EOF
 echo "============================================"
 echo " 4. --check on a valid file"
 echo "============================================"
-$QUIRK --check tests/lists.qk 2>&1; echo ""
+$QUIRK --check tests/lists.quirk 2>&1; echo ""
 
 echo "============================================"
 echo " 5. --check on an invalid file"

@@ -1271,6 +1271,30 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    // Pipes / process substitution (`quirk <(...)`, `/dev/stdin`) can only
+    // be read once, but the cache-key hash and the parser each open the
+    // input — the parser then saw an empty program and exited 0 silently.
+    // Spool non-regular inputs into a temp file so every read agrees.
+    {
+        std::error_code ec;
+        if (fs::exists(opts.inputFile, ec) && !fs::is_regular_file(opts.inputFile, ec)
+            && !fs::is_directory(opts.inputFile, ec)) {
+            std::ifstream in(opts.inputFile, std::ios::binary);
+            std::stringstream ss; ss << in.rdbuf();
+            static std::string spooled =
+                (fs::temp_directory_path() / "quirk-stdin-XXXXXX.quirk").string();
+            int fd = mkstemps(spooled.data(), 6);
+            if (fd >= 0) {
+                std::string src = ss.str();
+                if (::write(fd, src.data(), src.size()) == (ssize_t)src.size()) {
+                    opts.inputFile = spooled;
+                    std::atexit([] { std::remove(spooled.c_str()); });
+                }
+                ::close(fd);
+            }
+        }
+    }
+
     // Derive base name for output files (e.g. "tests/strings.quirk" -> "strings")
     fs::path inputPath(opts.inputFile);
     std::string baseName = inputPath.stem().string();    // "strings"

@@ -5,6 +5,23 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [5.3.13] — 2026-10-22 — piped source input
+
+**Fixed: `quirk <(...)` / `quirk /dev/stdin` silently ran nothing.**
+The cache-key hash and the parser each open the input file; a pipe can
+only be read once, so the parser saw an empty program and exited 0 —
+no output, no diagnostics. Non-regular inputs are now spooled once into
+a temp `.quirk` file (removed at exit) before any other phase runs.
+
+```
+$ echo 'print("hi")' | quirk /dev/stdin
+hi
+```
+
+`tests/compiler_errors_test.sh` — which feeds every case through process
+substitution — shows its diagnostics again (its `--check` case also
+pointed at the pre-rename `tests/lists.qk`).
+
 ## [5.3.12] — 2026-10-22 — String subclasses hold their text
 
 **Fixed: `super().__init(text)` in a `String` subclass stored garbage.**

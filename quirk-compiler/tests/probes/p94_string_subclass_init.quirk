@@ -1,0 +1,33 @@
+// p94 — String subclasses (v5.3.12). `super().__init(text)` inside
+// `struct Tag: String` bitcast the String* argument to the runtime's
+// `char* raw`, so the new string's contents were the pointer's bytes
+// (printed as garbage). Codegen now passes the source's buffer.
+// Also: `.length` without parens was silently dropped on a subclass —
+// the property fallback now walks the parent chain.
+//
+// Expected output:
+//   hello
+//   5
+//   5
+//   HELLO
+//   Hello
+struct Tag: String {
+    define __init(self, text: String) -> void {
+        super().__init(text)
+    }
+}
+
+struct Greeting: String {
+    define __init(self, raw: String = "Hello") {
+        super().__init(raw)
+    }
+}
+
+define main() -> void {
+    t := Tag("hello")
+    print(t)
+    print(t.length)
+    print(t.length())
+    print(t.upper())
+    print(Greeting())
+}

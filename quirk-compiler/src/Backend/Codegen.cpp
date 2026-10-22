@@ -2454,6 +2454,30 @@ class LLVMCodegen {
                 argVal = Builder.CreateZExt(argVal, Type::getInt32Ty(Context));
             }
 
+            // `super().__init(text)` in a String subclass: the runtime
+            // `__init(String*, char* raw)` reads `raw` as C chars, but the
+            // Quirk-side `raw: Any` would bitcast the String* itself — the
+            // new string's contents became the pointer's bytes. Pass the
+            // buffer instead (via quirk_string_display, so a null String
+            // copies as "null" — same as print and `+` — instead of crashing).
+            if (funcName == "Core_String_String___init" && i == 1 &&
+                expectedType == Type::getInt8PtrTy(Context) &&
+                argVal->getType()->isPointerTy() &&
+                argVal->getType()->getPointerElementType()->isStructTy()) {
+                std::string sName = cast<StructType>(argVal->getType()->getPointerElementType())->getName().str();
+                if (sName.find("struct.") == 0) sName = sName.substr(7);
+                if (sName == "String" || structGen->inheritsFrom(sName, "String")) {
+                    Value* asStr = Builder.CreateBitCast(argVal, structGen->getStringPtrType());
+                    Value* bufPtr = structGen->getMemberPtr(
+                        Builder.CreateCall(TheModule->getOrInsertFunction("quirk_string_display",
+                            FunctionType::get(asStr->getType(), {asStr->getType()}, false)), {asStr}),
+                        "_buffer");
+                    Value* buf = Builder.CreateLoad(Type::getInt8PtrTy(Context), bufPtr, "init_src_buf");
+                    finalArgs.push_back(buf);
+                    continue;
+                }
+            }
+
             if (argVal->getType()->isPointerTy() &&
                 argVal->getType()->getPointerElementType()->isIntegerTy(8) &&
                 expectedType->isPointerTy() &&
@@ -4849,11 +4873,22 @@ Value* LLVMCodegen::handleExpression(Node* node) {
             && objPtr->getType()->getPointerElementType()->isStructTy()) {
             std::string structName = cast<StructType>(objPtr->getType()->getPointerElementType())->getName().str();
             if (structName.rfind("struct.", 0) == 0) structName = structName.substr(7);
-            // Resolve <Struct>_<name> first, then the magic-method form.
-            Function* propFn = TheModule->getFunction(structName + "_" + member->memberName);
-            if (!propFn) propFn = resolveFunction(structName + "_" + member->memberName);
-            if (!propFn) propFn = TheModule->getFunction(structName + "___" + member->memberName);
-            if (!propFn) propFn = resolveFunction(structName + "___" + member->memberName);
+            // Resolve <Struct>_<name> first, then the magic-method form;
+            // walk up the parent chain so inherited properties work too
+            // (`t.length` on `struct Tag: String`).
+            auto findProp = [&](const std::string& sn) -> Function* {
+                Function* f = TheModule->getFunction(sn + "_" + member->memberName);
+                if (!f) f = resolveFunction(sn + "_" + member->memberName);
+                if (!f) f = TheModule->getFunction(sn + "___" + member->memberName);
+                if (!f) f = resolveFunction(sn + "___" + member->memberName);
+                return f;
+            };
+            Function* propFn = findProp(structName);
+            std::string current = structName;
+            while (!propFn && structHierarchy.count(current) && !structHierarchy[current].empty()) {
+                current = structHierarchy[current][0];
+                propFn = findProp(current);
+            }
             // Only auto-call zero-arg (the `self` param is the one arg).
             if (propFn && propFn->arg_size() == 1) {
                 Value* arg = objPtr;

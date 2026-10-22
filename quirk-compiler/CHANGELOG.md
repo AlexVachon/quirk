@@ -5,6 +5,28 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [5.3.12] — 2026-10-22 — String subclasses hold their text
+
+**Fixed: `super().__init(text)` in a `String` subclass stored garbage.**
+`String.__init` declares `raw: Any` (lowered to `i8*`), but the runtime
+reads it as C chars. Passing a `String` bitcast the `String*` itself, so
+the new string's contents were the pointer's bytes. Codegen now passes
+the source string's buffer (a null source copies as `"null"`).
+
+```quirk
+struct Tag: String {
+    define __init(self, text: String) -> void { super().__init(text) }
+}
+print(Tag("hello"))      // hello   (was 6 bytes of garbage)
+```
+
+**Fixed: inherited zero-arg properties.** `t.length` (no parens) on a
+`String` subclass emitted nothing; the property fallback only searched
+the struct itself. It now walks the parent chain.
+
+`tests/strings.quirk` and `tests/super_tests.quirk` print their expected
+output for the first time. New probe: `p94_string_subclass_init`.
+
 ## [5.3.11] — 2026-10-22 — `??` with an `Int` / `Float` fallback
 
 **Fixed: `x ?? 0` ignored the fallback when `x: Int?` was null.**

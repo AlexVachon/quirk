@@ -5,6 +5,18 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [6.0.4] — 2026-10-23 — a local Callable shadows a global function
+
+**Fixed: any program defining a top-level `f` failed to compile**
+(`Internal compiler error: malformed IR — Incorrect number of arguments
+passed to called function`). Codegen resolved a call `f(x)` to a
+top-level function before looking at local variables, so inside
+typing's `Option.map(self, f: Callable)` / `filter` / `and_then` the
+call went to the user's `define f(...)` with the wrong arguments. A
+local (or parameter) of type `Callable` now shadows a top-level
+function of the same name; direct calls to the global still resolve to
+it when no such local exists. New probe: p97.
+
 ## [6.0.3] — 2026-10-23 — `quirk auth login` works out of the box
 
 The "Quirk CLI" GitHub OAuth App's client ID is now baked into the

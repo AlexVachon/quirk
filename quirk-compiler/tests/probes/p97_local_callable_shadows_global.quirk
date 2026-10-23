@@ -1,0 +1,19 @@
+// p97 — A local Callable shadows a top-level function of the same
+// name (v6.0.4). Codegen resolved `f(x)` to a global `define f(...)`
+// before looking at locals, so inside typing's
+// `Option.map(self, f: Callable)` the call went to the user's `f`
+// with the wrong arguments — any program defining a top-level `f`
+// failed with "Incorrect number of arguments passed to called
+// function" (malformed IR).
+from typing use { Option, Some, None }
+
+define f(n: Int) -> Int { return n + 1 }
+define apply(f: Callable, x: Int) -> Int { return f(x) }
+
+define main() -> void {
+    if f(3) != 4                         { print("FAIL: global f"); return }
+    if apply(fn(v) => v * 10, 4) != 40   { print("FAIL: Callable param f"); return }
+    o: Option := Some(5)
+    if o.map(fn(v) => v * 2).unwrap_or(0) != 10 { print("FAIL: Option.map with user f"); return }
+    print("PASS: local Callable shadows global function")
+}

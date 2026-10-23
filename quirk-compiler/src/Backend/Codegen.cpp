@@ -1635,6 +1635,17 @@ class LLVMCodegen {
                 func = TheModule->getFunction(call->resolvedLinkageName);
             }
             if (!func) func = resolveFunction(lit->value, currentCodegenClass);
+            // A local Callable shadows a top-level function of the same
+            // name: inside typing's `Option.map(self, f: Callable)`,
+            // `f(v)` must call the parameter, not a user's global
+            // `define f(...)` (which got called with the wrong args).
+            if (func && varGen->hasLocal(lit->value)) {
+                Value* local = varGen->resolveVariable(lit->value);
+                if (local && local->getType()->isPointerTy() &&
+                    local->getType()->getPointerElementType()->isStructTy() &&
+                    cast<StructType>(local->getType()->getPointerElementType()) == StructTypes["Callable"])
+                    func = nullptr;
+            }
             if (func) return generateGlobalCall(func, call);
 
             // Check if identifier resolves to a Callable variable (lambda stored in variable)

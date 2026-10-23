@@ -153,7 +153,15 @@ class ControlFlowGen {
             StructType* st = cast<StructType>(iterable->getType()->getPointerElementType());
             std::string structName = st->getName().str();
 
-            bool isPair = !node->varName2.empty();
+            // `for (k, v) in m` parses as tuple destructuring (the parser
+            // can't know `m` is a Map). Over a type with a pair iterator,
+            // bind key/value through it instead — destructuring each key
+            // String as a Tuple gave k = its first byte, v = null.
+            bool pairFromTuple = node->destructureVars.size() == 2 &&
+                                 resolveFunc(structName + "___iter_pairs") != nullptr;
+            bool isPair = !node->varName2.empty() || pairFromTuple;
+            std::string keyVar = pairFromTuple ? node->destructureVars[0] : node->varName;
+            std::string valVar = pairFromTuple ? node->destructureVars[1] : node->varName2;
             Function* iterFunc = isPair ? resolveFunc(structName + "___iter_pairs") : nullptr;
             if (!iterFunc) iterFunc = resolveFunc(structName + "___iter");
             if (!iterFunc) iterFunc = resolveFunc(structName + "__iter");
@@ -184,7 +192,7 @@ class ControlFlowGen {
 
             Value* item = Builder.CreateCall(nextFunc, {iteratorObj}, "item");
 
-            if (!node->destructureVars.empty()) {
+            if (!node->destructureVars.empty() && !pairFromTuple) {
                 // Tuple destructuring: for (a, b) in items
                 Function* getFn = TheModule->getFunction("Core_Collections_Tuple_Tuple___get");
                 if (!getFn) {
@@ -207,14 +215,14 @@ class ControlFlowGen {
                     varGen->defineLocalVariable(node->destructureVars[di], elem);
                 }
             } else {
-                varGen->defineLocalVariable(node->varName, item);
+                varGen->defineLocalVariable(keyVar, item);
             }
 
             if (isPair) {
                 Function* curValFunc = resolveFunc(iterName + "___current_value");
                 if (curValFunc) {
                     Value* val = Builder.CreateCall(curValFunc, {iteratorObj}, "pair_val");
-                    varGen->defineLocalVariable(node->varName2, val);
+                    varGen->defineLocalVariable(valVar, val);
                 }
             }
 

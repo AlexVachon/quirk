@@ -5,6 +5,32 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [6.0.7] — 2026-10-23 — Set rewrite; `for (k, v) in map`
+
+**`Set` gets the same compact-dict design as `Map` (v6.0.6):** a dense
+insertion-ordered entry array plus a hash index, cached hashes compared
+before `strcmp`, a mask instead of `%`, one key copy, O(1) `remove`.
+
+| | before | after |
+|---|---|---|
+| 1M add + 1M has + iterate | 0.92 s | 0.53 s |
+| remove 50k of 100k elements | 8.91 s | 0.04 s |
+
+**Fixed: `add` silently dropped elements after add/remove churn.**
+Deleted slots were never reclaimed, and once the table filled up
+`add()` returned without inserting — `s.add("new")` followed by
+`s.has("new")` gave `false`. The index is now rebuilt before it passes
+3/4 full.
+
+**Fixed: `for (k, v) in m` over a Map** (the form STDLIB.md documents).
+The parenthesised form parses as tuple destructuring, so each key String
+was destructured as a Tuple: `k` came out as the key's first byte and
+`v` as null. Codegen now binds key and value through the Map's pair
+iterator when the iterable has one; tuple destructuring over lists of
+tuples is unchanged.
+
+New probe: p99.
+
 ## [6.0.6] — 2026-10-23 — faster, insertion-ordered Map
 
 `Map` is now an insertion-ordered "compact dict" (CPython's design since

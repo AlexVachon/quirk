@@ -1,0 +1,40 @@
+// p99 — Set as an insertion-ordered compact set, and `for (k, v) in m`
+// (v6.0.7).
+//
+// Locks:
+//   - add/remove churn on a small set: the old table never reclaimed
+//     deleted slots, and once it filled, add() silently dropped the
+//     element (`s.add("new")` then `s.has("new")` was false)
+//   - insertion order through str(), iteration and set operations
+//   - `for (k, v) in m` over a Map binds key and value — it was
+//     compiled as tuple destructuring of each key String (k = its
+//     first byte, v = null)
+define main() -> void {
+    s := Set()
+    s.add("a")
+    i := 0
+    while i < 1000 {
+        key := "t" + i.str()
+        s.add(key)
+        s.remove(key)
+        i = i + 1
+    }
+    s.add("new")
+    if not s.has("new")             { print("FAIL: add after churn was dropped"); return }
+    if s.str() != "{a, new}"        { print("FAIL: set order " + s.str()); return }
+    t := Set()
+    t.add("new")
+    t.add("z")
+    if (s + t).str() != "{a, new, z}" { print("FAIL: union order"); return }
+    if (s - t).str() != "{a}"       { print("FAIL: difference"); return }
+
+    m := {"x": 1, "y": 2}
+    out := ""
+    for (k, v) in m { out = out + k + "=" + v.str() + ";" }
+    if out != "x=1;y=2;"            { print("FAIL: map pair loop " + out); return }
+    pairs := [(1, "a"), (2, "b")]
+    joined := ""
+    for (n, c) in pairs { joined = joined + n.str() + c }
+    if joined != "1a2b"             { print("FAIL: tuple destructuring " + joined); return }
+    print("PASS: ordered set + map pair loop")
+}

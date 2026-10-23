@@ -90,20 +90,26 @@ typedef struct {
     int idx;
 } TupleIterator;
 
+// Set layout (v6.0.7) — same insertion-ordered compact design as Map:
+// dense `entries` in insertion order (removed ones are is_occupied == 0
+// holes until the next rebuild) plus an open-addressing `index` of
+// 1-based positions (0 = empty, -1 = deleted). 32 bytes, with the
+// offsets any.c's shape heuristic reads (entries @0, pow2 capacity @8,
+// size @12); `struct Set` in typing allocates exactly this size.
 typedef struct {
     char* key;       // string representation used for hashing/equality
     void* value;     // original boxed value
     int is_occupied;
-    int is_deleted;
+    unsigned int hash;     // cached FNV-1a of key
 } SetEntry;
 
 typedef struct {
-    SetEntry* entries;
-    int capacity;
-    int size;
-    char** key_order;   // insertion-order
-    int order_size;
-    int order_capacity;
+    SetEntry* entries;     // dense, insertion order
+    int capacity;          // index slots (power of two, >= 8)
+    int size;              // live entries
+    int32_t* index;        // slot -> entry position + 1; 0 empty, -1 deleted
+    int order_size;        // entries used in `entries` (incl. removed holes)
+    int order_capacity;    // allocated length of `entries`
 } Set;
 
 typedef struct {

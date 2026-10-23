@@ -1,0 +1,41 @@
+// p98 — Map as an insertion-ordered compact dict (v6.0.6).
+//
+// Locks:
+//   - put/remove churn on a small map: the old table never reclaimed
+//     deleted slots and didn't count them toward resizing, so ~8
+//     put+remove cycles of fresh keys filled it and put() SIGSEGV'd
+//   - insertion order for str(), keys(), values(), iteration, JSON
+//     (JSON used to come out in hash-table order)
+//   - overwrite keeps position; re-adding a removed key appends it
+from encoding.json use { dumps }
+
+define main() -> void {
+    m := {"b": 1, "a": 2}
+    m.put("c", 3)
+    m.put("a", 20)
+    if m.str() != "{\"b\": 1, \"a\": 20, \"c\": 3}" { print("FAIL: order/overwrite " + m.str()); return }
+    m.remove("b")
+    m.put("b", 9)
+    if m.keys().str() != "[a, c, b]"   { print("FAIL: re-add appends " + m.keys().str()); return }
+    if m.values().str() != "[20, 3, 9]" { print("FAIL: values order"); return }
+    if dumps(m) != "{\"a\":20,\"c\":3,\"b\":9}" { print("FAIL: json order " + dumps(m)); return }
+
+    order := ""
+    for k in m { order = order + k }
+    if order != "acb"                  { print("FAIL: iteration order " + order); return }
+
+    i := 0
+    while i < 100000 {
+        key := "t" + i.str()
+        m.put(key, i)
+        m.remove(key)
+        i = i + 1
+    }
+    if m.length() != 3                 { print("FAIL: churn length"); return }
+    if m.get("c") != 3                 { print("FAIL: churn lost entry"); return }
+    if m.has("t5")                     { print("FAIL: removed key still present"); return }
+
+    m.clear()
+    if m.length() != 0 or m.str() != "{}" { print("FAIL: clear"); return }
+    print("PASS: insertion-ordered map")
+}

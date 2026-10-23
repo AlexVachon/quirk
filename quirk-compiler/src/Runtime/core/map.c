@@ -5,9 +5,17 @@
 
 extern String* quirk_opaque_to_string(void* val);
 
+// Insertion-ordered hash map (see the layout notes on `Map` in types.h).
+// `entries` is dense in insertion order, so iteration, keys(), values()
+// and str() walk it directly; `index` maps hash slots to entry positions.
+// Lookups compare the cached hash before strcmp. The index is kept at
+// most 3/4 full counting removed entries, and rebuilt (compacting the
+// removed holes) when it would pass that — so a probe always reaches an
+// empty slot.
+
 #define INITIAL_CAPACITY 8
-#define INITIAL_ORDER_CAPACITY 8
-#define LOAD_FACTOR 0.75
+#define SLOT_EMPTY    0
+#define SLOT_DELETED (-1)
 
 // FNV-1a Hash Function (Standard, fast string hashing)
 static unsigned int hash_str(const char* key) {
@@ -20,43 +28,94 @@ static unsigned int hash_str(const char* key) {
     return hash;
 }
 
-static MapEntry* Map__find_entry(MapEntry* entries, int capacity, const char* key) {
-    unsigned int hash = hash_str(key);
-    int idx = hash % capacity;
-    int start_idx = idx;
-
+// Index slot for `key`: where it lives if present (*found = 1), else
+// the slot an insert should use (first deleted slot seen, or the empty
+// one that ended the probe).
+static int Map__find_slot(Map* self, const char* key, unsigned int hash, int* found) {
+    unsigned int mask = (unsigned int)self->capacity - 1;
+    unsigned int i = hash & mask;
+    int first_deleted = -1;
     while (1) {
-        MapEntry* entry = &entries[idx];
-        if (!entry->is_occupied && !entry->is_deleted)
-            return entry;
-        if (entry->is_occupied && strcmp(entry->key, key) == 0)
-            return entry;
-        idx = (idx + 1) % capacity;
-        if (idx == start_idx)
-            return NULL;
+        int32_t pos = self->index[i];
+        if (pos == SLOT_EMPTY) {
+            *found = 0;
+            return first_deleted >= 0 ? first_deleted : (int)i;
+        }
+        if (pos == SLOT_DELETED) {
+            if (first_deleted < 0) first_deleted = (int)i;
+        } else {
+            MapEntry* e = &self->entries[pos - 1];
+            if (e->hash == hash && strcmp(e->key, key) == 0) {
+                *found = 1;
+                return (int)i;
+            }
+        }
+        i = (i + 1) & mask;
     }
 }
 
-// Append key to insertion-order list (only for new keys).
-static void Map__order_append(Map* self, const char* key) {
-    if (self->order_size >= self->order_capacity) {
-        self->order_capacity *= 2;
-        self->key_order = (char**)realloc(self->key_order, self->order_capacity * sizeof(char*));
-    }
-    self->key_order[self->order_size++] = strdup(key);
+static MapEntry* Map__lookup(Map* self, const char* key) {
+    if (!self || !key || self->size == 0) return NULL;
+    int found;
+    int slot = Map__find_slot(self, key, hash_str(key), &found);
+    return found ? &self->entries[self->index[slot] - 1] : NULL;
 }
 
-// Remove key from insertion-order list (shift remaining entries left).
-static void Map__order_remove(Map* self, const char* key) {
+// Rebuild the index for `new_cap` slots, compacting removed entries out
+// of the dense array (order of live entries is preserved).
+static void Map__rebuild(Map* self, int new_cap) {
+    int live = 0;
     for (int i = 0; i < self->order_size; i++) {
-        if (self->key_order[i] && strcmp(self->key_order[i], key) == 0) {
-            free(self->key_order[i]);
-            memmove(&self->key_order[i], &self->key_order[i + 1],
-                    (self->order_size - i - 1) * sizeof(char*));
-            self->order_size--;
-            return;
+        if (self->entries[i].is_occupied) {
+            if (live != i) self->entries[live] = self->entries[i];
+            live++;
         }
     }
+    self->order_size = live;
+    self->capacity = new_cap;
+    self->index = (int32_t*)calloc(new_cap, sizeof(int32_t));
+    unsigned int mask = (unsigned int)new_cap - 1;
+    for (int i = 0; i < live; i++) {
+        unsigned int s = self->entries[i].hash & mask;
+        while (self->index[s] != SLOT_EMPTY) s = (s + 1) & mask;
+        self->index[s] = i + 1;
+    }
+}
+
+// Make room for one more entry: keep (used entries + 1) <= 3/4 of the
+// index. Grows when live entries need it, otherwise just compacts holes.
+static void Map__reserve_one(Map* self) {
+    if ((self->order_size + 1) * 4 > self->capacity * 3) {
+        int new_cap = self->capacity;
+        while ((self->size + 1) * 2 > new_cap) new_cap *= 2;   // live <= 1/2 after rebuild
+        Map__rebuild(self, new_cap);
+    }
+    if (self->order_size >= self->order_capacity) {
+        self->order_capacity = self->order_capacity ? self->order_capacity * 2 : INITIAL_CAPACITY;
+        self->entries = (MapEntry*)realloc(self->entries, self->order_capacity * sizeof(MapEntry));
+    }
+}
+
+// put() on a raw C-string key (copied on insert).
+static void Map__put_raw(Map* self, const char* rawKey, void* value) {
+    unsigned int hash = hash_str(rawKey);
+    int found;
+    int slot = Map__find_slot(self, rawKey, hash, &found);
+    if (found) {
+        self->entries[self->index[slot] - 1].value = value;
+        return;
+    }
+    int32_t* old_index = self->index;
+    Map__reserve_one(self);
+    if (self->index != old_index)   // rebuilt: slots moved
+        slot = Map__find_slot(self, rawKey, hash, &found);
+    MapEntry* e = &self->entries[self->order_size];
+    e->key = strdup(rawKey);
+    e->value = value;
+    e->is_occupied = 1;
+    e->hash = hash;
+    self->index[slot] = ++self->order_size;
+    self->size++;
 }
 
 // ==========================================
@@ -66,49 +125,18 @@ static void Map__order_remove(Map* self, const char* key) {
 void Core_Collections_Map_Map___init(Map* self) {
     self->capacity = INITIAL_CAPACITY;
     self->size = 0;
-    self->entries = (MapEntry*)calloc(self->capacity, sizeof(MapEntry));
-    self->order_capacity = INITIAL_ORDER_CAPACITY;
+    self->index = (int32_t*)calloc(INITIAL_CAPACITY, sizeof(int32_t));
+    self->order_capacity = INITIAL_CAPACITY;
     self->order_size = 0;
-    self->key_order = (char**)malloc(self->order_capacity * sizeof(char*));
+    self->entries = (MapEntry*)calloc(INITIAL_CAPACITY, sizeof(MapEntry));
 }
 
 void Core_Collections_Map_Map___del(Map* self) {
-    if (self->entries) {
-        for (int i = 0; i < self->capacity; i++) {
-            if (self->entries[i].is_occupied && self->entries[i].key)
-                free(self->entries[i].key);
-        }
-        free(self->entries);
-        self->entries = NULL;
-    }
-    if (self->key_order) {
-        for (int i = 0; i < self->order_size; i++)
-            free(self->key_order[i]);
-        free(self->key_order);
-        self->key_order = NULL;
-    }
-}
-
-// Resize only rehashes the entry table; key_order is unaffected.
-static void Map__resize(Map* self) {
-    int old_cap = self->capacity;
-    MapEntry* old_entries = self->entries;
-
-    self->capacity *= 2;
-    self->entries = (MapEntry*)calloc(self->capacity, sizeof(MapEntry));
-    self->size = 0;
-
-    for (int i = 0; i < old_cap; i++) {
-        if (old_entries[i].is_occupied) {
-            MapEntry* dest = Map__find_entry(self->entries, self->capacity,
-                                             old_entries[i].key);
-            dest->key = old_entries[i].key;
-            dest->value = old_entries[i].value;
-            dest->is_occupied = 1;
-            self->size++;
-        }
-    }
-    free(old_entries);
+    // Memory is GC-managed (runtime.c maps malloc/free onto Boehm); just
+    // drop the references.
+    self->entries = NULL;
+    self->index = NULL;
+    self->size = self->order_size = self->order_capacity = 0;
 }
 
 // ==========================================
@@ -117,48 +145,31 @@ static void Map__resize(Map* self) {
 
 void Core_Collections_Map_Map_put(Map* self, String* keyObj, void* value) {
     if (!keyObj || !keyObj->buffer) return;
-    char* rawKey = keyObj->buffer;
-
-    if ((float)self->size / self->capacity >= LOAD_FACTOR)
-        Map__resize(self);
-
-    MapEntry* entry = Map__find_entry(self->entries, self->capacity, rawKey);
-
-    int is_new = !entry->is_occupied;
-    if (is_new) {
-        entry->key = strdup(rawKey);
-        self->size++;
-        Map__order_append(self, rawKey);
-    }
-
-    entry->value = value;
-    entry->is_occupied = 1;
-    entry->is_deleted = 0;
+    Map__put_raw(self, keyObj->buffer, value);
 }
 
 void* Core_Collections_Map_Map_get(Map* self, String* keyObj) {
     if (!keyObj || !keyObj->buffer) return NULL;
-    MapEntry* entry = Map__find_entry(self->entries, self->capacity, keyObj->buffer);
-    return (entry && entry->is_occupied) ? entry->value : NULL;
+    MapEntry* e = Map__lookup(self, keyObj->buffer);
+    return e ? e->value : NULL;
 }
 
 int Core_Collections_Map_Map_has(Map* self, String* keyObj) {
     if (!keyObj || !keyObj->buffer) return 0;
-    MapEntry* entry = Map__find_entry(self->entries, self->capacity, keyObj->buffer);
-    return (entry && entry->is_occupied);
+    return Map__lookup(self, keyObj->buffer) != NULL;
 }
 
 void Core_Collections_Map_Map_remove(Map* self, String* keyObj) {
-    if (!keyObj || !keyObj->buffer) return;
-    MapEntry* entry = Map__find_entry(self->entries, self->capacity, keyObj->buffer);
-    if (entry && entry->is_occupied) {
-        Map__order_remove(self, entry->key);
-        entry->is_occupied = 0;
-        entry->is_deleted = 1;
-        free(entry->key);
-        entry->key = NULL;
-        self->size--;
-    }
+    if (!self || !keyObj || !keyObj->buffer || self->size == 0) return;
+    int found;
+    int slot = Map__find_slot(self, keyObj->buffer, hash_str(keyObj->buffer), &found);
+    if (!found) return;
+    MapEntry* e = &self->entries[self->index[slot] - 1];
+    e->is_occupied = 0;
+    e->key = NULL;
+    e->value = NULL;
+    self->index[slot] = SLOT_DELETED;
+    self->size--;
 }
 
 int Core_Collections_Map_Map_length(Map* self) {
@@ -166,14 +177,7 @@ int Core_Collections_Map_Map_length(Map* self) {
 }
 
 void Core_Collections_Map_Map_clear(Map* self) {
-    for (int i = 0; i < self->capacity; i++) {
-        if (self->entries[i].is_occupied)
-            free(self->entries[i].key);
-        self->entries[i].is_occupied = 0;
-        self->entries[i].is_deleted = 0;
-    }
-    for (int i = 0; i < self->order_size; i++)
-        free(self->key_order[i]);
+    memset(self->index, 0, self->capacity * sizeof(int32_t));
     self->order_size = 0;
     self->size = 0;
 }
@@ -185,15 +189,8 @@ void Core_Collections_Map_Map_clear(Map* self) {
 void Core_Collections_Map_Map_put_all(Map* self, Map* other) {
     if (!self || !other) return;
     for (int i = 0; i < other->order_size; i++) {
-        const char* rawKey = other->key_order[i];
-        if (!rawKey) continue;
-        MapEntry* src = Map__find_entry(other->entries, other->capacity, rawKey);
-        if (!src || !src->is_occupied) continue;
-        // Wrap the C string back into a Quirk String* so the existing
-        // put() logic owns its own copy of the key. Avoids any
-        // shared-key lifetime entanglement between the two maps.
-        String* keyObj = make_String(rawKey);
-        Core_Collections_Map_Map_put(self, keyObj, src->value);
+        MapEntry* src = &other->entries[i];
+        if (src->is_occupied) Map__put_raw(self, src->key, src->value);
     }
 }
 
@@ -222,8 +219,8 @@ List* Core_Collections_Map_Map_keys(Map* self) {
 
     if (!self) return result;
     for (int i = 0; i < self->order_size; i++) {
-        if (self->key_order[i])
-            Core_Collections_List_List_append(result, (void*)make_String(self->key_order[i]));
+        if (self->entries[i].is_occupied)
+            Core_Collections_List_List_append(result, (void*)make_String(self->entries[i].key));
     }
     return result;
 }
@@ -237,10 +234,8 @@ List* Core_Collections_Map_Map_values(Map* self) {
 
     if (!self) return result;
     for (int i = 0; i < self->order_size; i++) {
-        if (!self->key_order[i]) continue;
-        MapEntry* entry = Map__find_entry(self->entries, self->capacity, self->key_order[i]);
-        if (entry && entry->is_occupied)
-            Core_Collections_List_List_append(result, entry->value);
+        if (self->entries[i].is_occupied)
+            Core_Collections_List_List_append(result, self->entries[i].value);
     }
     return result;
 }
@@ -252,14 +247,15 @@ List* Core_Collections_Map_Map_values(Map* self) {
 extern void quirk_throw_exception(const char* type_name, const char* message);
 
 void* Core_Collections_Map_Map___get(Map* self, String* keyObj) {
-    void* val = Core_Collections_Map_Map_get(self, keyObj);
-    if (!val && !Core_Collections_Map_Map_has(self, keyObj)) {
+    MapEntry* e = (keyObj && keyObj->buffer) ? Map__lookup(self, keyObj->buffer) : NULL;
+    if (!e) {
         const char* key = (keyObj && keyObj->buffer) ? keyObj->buffer : "(null)";
         char buf[256];
         snprintf(buf, sizeof(buf), "'%s'", key);
         quirk_throw_exception("KeyError", buf);
+        return NULL;
     }
-    return val;
+    return e->value;
 }
 
 void Core_Collections_Map_Map___set(Map* self, String* keyObj, void* value) {
@@ -275,10 +271,9 @@ String* Core_Collections_Map_Map___str(Map* self) {
 
     int first = 1;
     for (int i = 0; i < self->order_size; i++) {
-        const char* k = self->key_order[i];
-        if (!k) continue;
-        MapEntry* entry = Map__find_entry(self->entries, self->capacity, k);
-        if (!entry || !entry->is_occupied) continue;
+        MapEntry* entry = &self->entries[i];
+        if (!entry->is_occupied) continue;
+        const char* k = entry->key;
 
         String* vs = quirk_opaque_to_string(entry->value);
         const char* vstr = (vs && vs->buffer) ? vs->buffer : "null";
@@ -305,6 +300,13 @@ String* Core_Collections_Map_Map___str(Map* self) {
 // ==========================================
 //  MAP ITERATOR
 // ==========================================
+//
+// `idx` walks the dense entry array; removed entries are skipped.
+
+static int Map__skip_removed(Map* m, int idx) {
+    while (idx < m->order_size && !m->entries[idx].is_occupied) idx++;
+    return idx;
+}
 
 void Core_Collections_Map_MapIterator___init(MapIterator* self, Map* m) {
     self->map_ref = m;
@@ -312,14 +314,16 @@ void Core_Collections_Map_MapIterator___init(MapIterator* self, Map* m) {
 }
 
 int Core_Collections_Map_MapIterator___has_next(MapIterator* self) {
-    return self && self->map_ref && self->idx < self->map_ref->order_size;
+    if (!self || !self->map_ref) return 0;
+    self->idx = Map__skip_removed(self->map_ref, self->idx);
+    return self->idx < self->map_ref->order_size;
 }
 
 String* Core_Collections_Map_MapIterator___next(MapIterator* self) {
-    if (!self || !self->map_ref || self->idx >= self->map_ref->order_size)
-        return make_String("");
-    const char* key = self->map_ref->key_order[self->idx++];
-    return make_String(key ? key : "");
+    if (!self || !self->map_ref) return make_String("");
+    self->idx = Map__skip_removed(self->map_ref, self->idx);
+    if (self->idx >= self->map_ref->order_size) return make_String("");
+    return make_String(self->map_ref->entries[self->idx++].key);
 }
 
 MapIterator* Core_Collections_Map_Map___iter(Map* self) {
@@ -339,18 +343,21 @@ static void MapPairIterator__init(MapPairIterator* self, Map* m) {
 }
 
 int Core_Collections_Map_MapPairIterator___has_next(MapPairIterator* self) {
-    return self && self->map_ref && self->idx < self->map_ref->order_size;
+    if (!self || !self->map_ref) return 0;
+    self->idx = Map__skip_removed(self->map_ref, self->idx);
+    return self->idx < self->map_ref->order_size;
 }
 
 String* Core_Collections_Map_MapPairIterator___next(MapPairIterator* self) {
-    if (!self || !self->map_ref || self->idx >= self->map_ref->order_size) {
+    if (!self || !self->map_ref) { if (self) self->current_value = NULL; return make_String(""); }
+    self->idx = Map__skip_removed(self->map_ref, self->idx);
+    if (self->idx >= self->map_ref->order_size) {
         self->current_value = NULL;
         return make_String("");
     }
-    const char* key = self->map_ref->key_order[self->idx++];
-    MapEntry* entry = key ? Map__find_entry(self->map_ref->entries, self->map_ref->capacity, key) : NULL;
-    self->current_value = (entry && entry->is_occupied) ? entry->value : NULL;
-    return make_String(key ? key : "");
+    MapEntry* e = &self->map_ref->entries[self->idx++];
+    self->current_value = e->value;
+    return make_String(e->key);
 }
 
 void* Core_Collections_Map_MapPairIterator___current_value(MapPairIterator* self) {
@@ -372,29 +379,23 @@ typedef void* (*LambdaFn1)(void* env, void* arg);
 void Core_Collections_Map_Map_each(Map* self, Callable* cb) {
     LambdaFn2 fn = (LambdaFn2)cb->fn;
     for (int i = 0; i < self->order_size; i++) {
-        const char* k = self->key_order[i];
-        if (!k) continue;
-        MapEntry* entry = Map__find_entry(self->entries, self->capacity, k);
-        if (entry && entry->is_occupied)
-            fn(cb->env, make_String(k), entry->value);
+        MapEntry* e = &self->entries[i];
+        if (e->is_occupied) fn(cb->env, make_String(e->key), e->value);
     }
 }
 
 void Core_Collections_Map_Map_each_value(Map* self, Callable* cb) {
     LambdaFn1 fn = (LambdaFn1)cb->fn;
     for (int i = 0; i < self->order_size; i++) {
-        const char* k = self->key_order[i];
-        if (!k) continue;
-        MapEntry* entry = Map__find_entry(self->entries, self->capacity, k);
-        if (entry && entry->is_occupied)
-            fn(cb->env, entry->value);
+        MapEntry* e = &self->entries[i];
+        if (e->is_occupied) fn(cb->env, e->value);
     }
 }
 
 void Core_Collections_Map_Map_each_key(Map* self, Callable* cb) {
     LambdaFn1 fn = (LambdaFn1)cb->fn;
     for (int i = 0; i < self->order_size; i++) {
-        const char* k = self->key_order[i];
-        if (k) fn(cb->env, make_String(k));
+        MapEntry* e = &self->entries[i];
+        if (e->is_occupied) fn(cb->env, make_String(e->key));
     }
 }

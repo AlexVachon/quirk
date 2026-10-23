@@ -218,7 +218,8 @@ static void Json__buf_append_escaped(char** buf, int* cap, int* len, const char*
 static void Json__serialize_map(Map* map, char** buf, int* cap, int* len, int indent, int depth) {
     Json__buf_append_char(buf, cap, len, '{');
     int first = 1;
-    for (int i = 0; i < map->capacity; i++) {
+    // Dense entry array in insertion order (removed entries are holes).
+    for (int i = 0; i < map->order_size; i++) {
         if (!map->entries[i].is_occupied) continue;
         if (!first) Json__buf_append_char(buf, cap, len, ',');
         Json__buf_newline_indent(buf, cap, len, indent, depth + 1);
@@ -357,7 +358,12 @@ static void Json__serialize_any(void* val, AnyTag hint, char** buf, int* cap, in
         unsigned char buf_first = *((unsigned char*)inner_ptr);
         if (str_len >= 0 && str_len <= 4096 && buf_first >= 32) {
             const char* str_buf = (const char*)inner_ptr;
-            if (str_buf[str_len] == '\0') {
+            // Require the whole buffer to be that length, not just a NUL
+            // at buf[len]: a Map reads here as (entries, capacity >= 8), and
+            // its first entry's key pointer has zero top bytes, so strnlen
+            // stops before 8. (`buf[len] == 0` alone let a Map whose first
+            // value pointer had a zero low byte pass as an 8-char string.)
+            if (str_buf[str_len] == '\0' && strnlen(str_buf, (size_t)str_len + 1) == (size_t)str_len) {
                 Json__buf_append_escaped(buf, cap, len, str_buf);
                 return;
             }
@@ -365,7 +371,7 @@ static void Json__serialize_any(void* val, AnyTag hint, char** buf, int* cap, in
     }
 
     // 3. Map* — [entries* @0][cap i32 @8][size i32 @12]
-    //    MapEntry layout: { char* key @0, void* value @8, int is_occupied @16, int is_deleted @20 }
+    //    MapEntry layout: { char* key @0, void* value @8, int is_occupied @16, uint hash @20 }
     //    is_occupied is always exactly 0 or 1 (set explicitly by Map_put/Map_remove).
     //    We must read offset 16, NOT offset 0 (key) — key is a non-null heap pointer
     //    when slot 0 is occupied, making key[0] > 1 and breaking the old check.

@@ -5,6 +5,39 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [6.0.6] — 2026-10-23 — faster, insertion-ordered Map
+
+`Map` is now an insertion-ordered "compact dict" (CPython's design since
+3.6): a dense entry array in insertion order plus a hash index into it.
+Hashes are cached and compared before `strcmp`, the index uses a mask
+instead of `%`, each key is copied once (not twice), and `remove` is
+O(1).
+
+| | before | after |
+|---|---|---|
+| 1.5M put + 1.5M get (`"k" + i.str()` keys) | 1.50 s | 0.81 s |
+| 1.5M put | 0.89 s | 0.53 s |
+| remove 100k of 200k keys | 38.7 s | 0.11 s |
+
+The map benchmark now beats Python's dict (1.01 s).
+
+**Fixed: put/remove churn crashed.** Deleted slots were never reclaimed
+and didn't count toward resizing, so a few put+remove cycles of fresh
+keys on a small map filled the table and the next `put` SIGSEGV'd
+(about 8 cycles on a one-entry map). The index is now rebuilt (removed
+entries compacted out) before it passes 3/4 full.
+
+**Changed: JSON objects are serialized in insertion order** (was
+hash-table order), matching `str()`, `keys()` and iteration.
+
+Also fixed in `encoding.json`: the untagged-value heuristic could take a
+Map for an 8-character String (it only checked for a NUL at
+`buf[len]`); it now requires `strnlen(buf) == len`.
+
+`struct Map` keeps its 32-byte size and the field offsets JSON's shape
+heuristic reads, so the `typing` package needs no change. New probe:
+p98.
+
 ## [6.0.5] — 2026-10-23 — 16 MB initial GC heap
 
 **Allocation-heavy code runs up to ~5× faster.** Boehm GC starts with a

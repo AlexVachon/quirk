@@ -29,20 +29,28 @@ typedef struct {
     int idx;
 } ListIterator;
 
+// Map layout (v6.0.6) — an insertion-ordered "compact dict":
+// `entries` is a dense array in insertion order (removed entries stay as
+// is_occupied == 0 holes until the next rebuild), and `index` is an
+// open-addressing table of 1-based positions into it (0 = empty,
+// -1 = deleted). The struct is 32 bytes and keeps the offsets json.c's
+// shape heuristic reads (entries @0, pow2 capacity @8, size @12, the
+// first entry's is_occupied @16): `struct Map` in typing allocates
+// exactly this size.
 typedef struct {
     char* key;
     void* value;
     int is_occupied;
-    int is_deleted;
+    unsigned int hash;     // cached FNV-1a of key
 } MapEntry;
 
 typedef struct {
-    MapEntry* entries;
-    int capacity;
-    int size;
-    char** key_order;      // insertion-order key list
-    int order_size;
-    int order_capacity;
+    MapEntry* entries;     // dense, insertion order
+    int capacity;          // index slots (power of two, >= 8)
+    int size;              // live entries
+    int32_t* index;        // slot -> entry position + 1; 0 empty, -1 deleted
+    int order_size;        // entries used in `entries` (incl. removed holes)
+    int order_capacity;    // allocated length of `entries`
 } Map;
 
 typedef struct {

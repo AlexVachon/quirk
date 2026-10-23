@@ -623,7 +623,9 @@ std::string Sema::monoDisplay(const std::string& msg) const {
     std::string path = (!filePath.empty())                          ? filePath
                      : (lastNode && !lastNode->filePath.empty()) ? lastNode->filePath
                      : currentFilePath;
-    // Flush any previously accumulated errors first, then print this one and exit
+    // Flush accumulated warnings + errors first (a warning often explains
+    // the fatal error, e.g. stdlib-type shadowing), then print this one and exit
+    if (!warnings.empty()) flushWarnings();
     flushErrors();
     printSemaError(msg, line, col, path, sourceMap);
     exit(1);
@@ -909,6 +911,26 @@ void Sema::registerTopLevel(Node* node)
 {
         if (auto s = dynamic_cast<StructNode *>(node))
         {
+            // A user type named like a stdlib one (`type Result = Ok | Err`)
+            // replaces it globally — the stdlib's own methods on it
+            // (typing's `extend Result`) then fail type-checking with a
+            // confusing error inside the package. Warn at the user's decl.
+            auto prev = structRegistry.find(s->name);
+            if (prev != structRegistry.end() && prev->second && prev->second != s &&
+                !s->isSpecialization) {
+                auto isStd = [](const std::string& m) {
+                    return m.rfind("typing", 0) == 0 || m.rfind("core", 0) == 0;
+                };
+                bool prevStd = isStd(prev->second->moduleName), curStd = isStd(s->moduleName);
+                if (prevStd != curStd) {
+                    StructNode* user = curStd ? prev->second : s;
+                    StructNode* lib  = curStd ? s : prev->second;
+                    reportWarning("type '" + user->name + "' shadows '" + lib->name + "' from '" +
+                                  lib->moduleName + "'; stdlib code using it may fail to "
+                                  "type-check. Rename this type.",
+                                  user->line, user->col, user->filePath);
+                }
+            }
             structRegistry[s->name] = s;
         }
         else if (auto iface = dynamic_cast<InterfaceNode*>(node))

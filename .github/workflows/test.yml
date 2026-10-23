@@ -141,23 +141,13 @@ jobs:
         env:
           QUIRK_HOME: ${{ github.workspace }}/quirk-compiler
         # Every probe in tests/probes/ documents the bug class it
-        # protects against. A probe is failing when it produces an
-        # uncaught SIGSEGV, an ICE, or an LLVM verifier abort. A
-        # *thrown* Quirk exception (ValueError, TypeError, etc.) is
-        # the correct behaviour for most probes.
-        run: |
-          set +e
-          fails=0
-          for p in tests/probes/p*.quirk; do
-            out=$(timeout 10 ./bin/quirk-cpp run --no-aot --no-cache "$p" 2>&1)
-            if echo "$out" | grep -qE "Internal compiler error|malformed IR|core dumped|Aborted|Segmentation fault"; then
-              echo "::error file=$p::probe regressed: $p"
-              echo "$out" | head -8
-              fails=$((fails + 1))
-            fi
-          done
-          echo "probe failures: $fails"
-          exit $fails
+        # protects against. A probe fails when it crashes or times out,
+        # reports a compile error, or prints a `FAIL` line. Probes that
+        # lock a diagnostic say so with `// expect-error: <text>` and fail
+        # only if that text is missing. (Until v6.0.1 this step only
+        # caught crashes, so probes failing with type errors went
+        # unnoticed — p42 / p48 / p50 / p40 / p44 among them.)
+        run: tools/check_probes.sh
 
       - name: Run mutation fuzzer
         id: fuzz

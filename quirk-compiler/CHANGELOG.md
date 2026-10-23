@@ -5,6 +5,36 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [6.0.1] — 2026-10-23 — probes must actually pass
+
+**CI: the probe step only caught crashes.** A probe that failed with a
+type error or printed `FAIL:` still passed CI, which is how p42 / p48 /
+p50 (generics) and p40 / p44 (tagged unions) sat broken unnoticed. The
+step now runs `tools/check_probes.sh`, which fails a probe that crashes
+or times out, reports a compile error, or prints a `FAIL` line. Probes
+that exist to lock a diagnostic declare it:
+
+```quirk
+// expect-error: Q0203
+```
+
+and fail only if that text is missing (p25, p26, p52). Run it locally
+from `quirk-compiler/` with `QUIRK_HOME=$PWD tools/check_probes.sh`.
+
+**New warning: shadowing a stdlib type.** A user type named like one
+from `typing` (`type Result = Ok(...) | Err(msg: String)`) replaces it
+everywhere, so typing's own `extend Result` methods failed with a
+confusing error *inside the package* (`'Err' has no member 'error'`,
+pointing at `typing/result.quirk`). Sema now warns at the user's
+declaration — `type 'Err' shadows 'Err' from 'typing.result'`.
+
+Also:
+- Warnings are printed before a fatal error instead of being dropped.
+- Structs synthesized from `type X = A | B` carry the declaration's
+  position (diagnostics about them used to say `:0:0`).
+- p40 / p44 renamed their local `Result`/`Ok`/`Err` to
+  `Outcome`/`Good`/`Bad` and pass again.
+
 ## [6.0.0] — 2026-10-23 — generics are monomorphized
 
 **Generic structs and functions now compile to a specialized copy per

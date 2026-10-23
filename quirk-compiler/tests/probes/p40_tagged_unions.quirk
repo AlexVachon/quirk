@@ -10,14 +10,17 @@
 // vtable-eligible) and the bind-arm bitcasts the scrutinee to the
 // variant's LLVM struct type so `.value` GEPs against the right
 // layout.
+// (Local types are Outcome/Good/Bad: a local `Result`/`Ok`/`Err` would
+// replace typing's and break its own `extend Result` methods — see
+// the shadowing warning added in v6.0.1.)
 
-type Result = Ok(value: Int) | Err(msg: String)
+type Outcome = Good(value: Int) | Bad(msg: String)
 type LoadStatus = Pending() | Loaded(data: String) | Failed(err: String)
 
-define unwrap_or_zero(r: Result) -> Int {
+define unwrap_or_zero(r: Outcome) -> Int {
     match r {
-        case Ok as o => return o.value
-        case Err     => return 0
+        case Good as o => return o.value
+        case Bad     => return 0
     }
     return -1
 }
@@ -32,9 +35,9 @@ define status_label(s: LoadStatus) -> String {
 }
 
 define main() -> void {
-    if unwrap_or_zero(Ok(42))      != 42 { print("FAIL: unwrap Ok(42)");        return }
-    if unwrap_or_zero(Ok(0))       != 0  { print("FAIL: unwrap Ok(0)");         return }
-    if unwrap_or_zero(Err("nope")) != 0  { print("FAIL: unwrap Err");           return }
+    if unwrap_or_zero(Good(42))      != 42 { print("FAIL: unwrap Good(42)");        return }
+    if unwrap_or_zero(Good(0))       != 0  { print("FAIL: unwrap Good(0)");         return }
+    if unwrap_or_zero(Bad("nope")) != 0  { print("FAIL: unwrap Bad");           return }
 
     if status_label(Pending())          != "waiting" { print("FAIL: Pending"); return }
     if status_label(Loaded("rows"))     != "ready"   { print("FAIL: Loaded");  return }

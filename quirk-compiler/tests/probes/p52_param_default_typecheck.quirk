@@ -1,3 +1,4 @@
+// expect-error: Q0400
 // A default value whose type doesn't match the parameter type used
 // to slip past Sema and reach Codegen, where it manifested as an
 // LLVM verifier abort ("Call parameter type does not match function

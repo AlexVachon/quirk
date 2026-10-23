@@ -231,14 +231,21 @@ std::vector<std::unique_ptr<Node>> Parser::parse() {
                     // existing fallback path (GEP-store each field at
                     // construction time) generates the constructor.
                     {
+                        // Synthesized structs point at the `type` keyword so
+                        // Sema diagnostics about them have a location.
+                        const Token& declTok = tokens[declStart];
                         auto baseStruct = std::make_unique<StructNode>();
                         baseStruct->name       = node->name;
                         baseStruct->typeParams = node->typeParams;
+                        baseStruct->line = declTok.line; baseStruct->col = declTok.col;
+                        baseStruct->filePath = filePath;
                         extraNodes.push_back(std::move(baseStruct));
                         for (const auto& v : node->variants) {
                             auto variantStruct = std::make_unique<StructNode>();
                             variantStruct->name       = v.name;
                             variantStruct->parents    = { node->name };
+                            variantStruct->line = declTok.line; variantStruct->col = declTok.col;
+                            variantStruct->filePath = filePath;
                             // Each variant inherits the union's type
                             // parameters so a payload field declared as
                             // `value: T` resolves against the same scope

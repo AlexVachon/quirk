@@ -9,31 +9,34 @@
 //    mark `isStatic = false`.
 //
 // 2. Two extend-blocks defining the same raw method (e.g. `describe`
-//    on `Ok` and on `Err`) shared the parser-default linkage name
+//    on `Good` and on `Bad`) shared the parser-default linkage name
 //    `<modulePrefix>$describe`, so LLVM emitted only one and every
 //    dispatch routed to whichever was defined last. Fix: compose a
 //    struct-specific linkage `<modulePrefix>_<Target>_<raw>` matching
 //    the in-struct method shape.
+// (Local types are Outcome/Good/Bad: a local `Result`/`Ok`/`Err` would
+// replace typing's and break its own `extend Result` methods — see
+// the shadowing warning added in v6.0.1.)
 
-type Result = Ok(value: Int) | Err(msg: String)
+type Outcome = Good(value: Int) | Bad(msg: String)
 
-extend Ok {
-    define describe(self) -> String { return "Ok(" + self.value + ")" }
+extend Good {
+    define describe(self) -> String { return "Good(" + self.value + ")" }
     define is_ok(self)    -> Bool   { return true }
 }
-extend Err {
-    define describe(self) -> String { return "Err: " + self.msg }
+extend Bad {
+    define describe(self) -> String { return "Bad: " + self.msg }
     define is_ok(self)    -> Bool   { return false }
 }
 
 define main() -> void {
-    a := Ok(42)
-    b := Err("boom")
+    a := Good(42)
+    b := Bad("boom")
 
-    if a.describe() != "Ok(42)"    { print("FAIL: Ok.describe");  return }
-    if b.describe() != "Err: boom" { print("FAIL: Err.describe"); return }
-    if a.is_ok()    != true        { print("FAIL: Ok.is_ok");     return }
-    if b.is_ok()    != false       { print("FAIL: Err.is_ok");    return }
+    if a.describe() != "Good(42)"    { print("FAIL: Good.describe");  return }
+    if b.describe() != "Bad: boom" { print("FAIL: Bad.describe"); return }
+    if a.is_ok()    != true        { print("FAIL: Good.is_ok");     return }
+    if b.is_ok()    != false       { print("FAIL: Bad.is_ok");    return }
 
     // Same shape on a plain struct pair (no tagged union)
     print("PASS: variant methods via extend")

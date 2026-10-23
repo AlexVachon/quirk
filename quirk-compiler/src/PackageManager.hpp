@@ -65,7 +65,7 @@ static std::string self_binary();
 
 namespace qpm {
 
-constexpr const char* QUIRK_VERSION = "6.0.2";
+constexpr const char* QUIRK_VERSION = "6.0.3";
 
 namespace fs = std::filesystem;
 
@@ -4657,10 +4657,8 @@ inline void maybe_announce_update() {
 // only the user's *token* is sensitive, and that lives in their home dir.
 // ─────────────────────────────────────────────────────────────────────────
 
-// TODO: replace this with the real client_id from the GitHub OAuth App once
-// it's registered. The placeholder is harmless — `quirk auth login` will
-// just fail with a clear error pointing at the registration steps.
-static const char* QUIRK_OAUTH_CLIENT_ID_DEFAULT = "REPLACE_ME_WITH_OAUTH_APP_CLIENT_ID";
+// Client ID of the "Quirk CLI" GitHub OAuth App (device flow enabled).
+static const char* QUIRK_OAUTH_CLIENT_ID_DEFAULT = "Ov23liBexzBzdyuVtPYF";
 static const char* QUIRK_DEVICE_CODE_URL = "https://github.com/login/device/code";
 static const char* QUIRK_TOKEN_URL       = "https://github.com/login/oauth/access_token";
 static const char* QUIRK_USER_API        = "https://api.github.com/user";
@@ -4782,19 +4780,6 @@ static int cmd_auth(const std::vector<std::string>& args) {
 
     if (sub == "login") {
         std::string client_id = quirk_oauth_client_id();
-        if (client_id == QUIRK_OAUTH_CLIENT_ID_DEFAULT) {
-            log::err("auth login: the Quirk OAuth App client_id isn't configured in this build");
-            std::cerr << "    Register a GitHub OAuth App (free, 5 minutes):\n";
-            std::cerr << "      https://github.com/settings/applications/new\n";
-            std::cerr << "        Application name: Quirk CLI\n";
-            std::cerr << "        Homepage URL:     https://github.com/AlexVachon/quirk\n";
-            std::cerr << "        Callback URL:     http://localhost   (not used by device flow)\n";
-            std::cerr << "      → Save, then on the app's page tick `Enable Device Flow`.\n";
-            std::cerr << "    Then either bake the client_id into the binary or export it:\n";
-            std::cerr << "      export QUIRK_OAUTH_CLIENT_ID=Ov23li...\n";
-            return 1;
-        }
-
         // Step 1 — request a device + user code.
         std::string req = "curl -fsSL -X POST '" + std::string(QUIRK_DEVICE_CODE_URL)
                         + "' -H 'Accept: application/json'"

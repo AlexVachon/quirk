@@ -5,6 +5,14 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [6.0.3] — 2026-10-23 — `quirk auth login` works out of the box
+
+The "Quirk CLI" GitHub OAuth App's client ID is now baked into the
+binary, so `quirk auth login` runs the device flow without first
+exporting `QUIRK_OAUTH_CLIENT_ID`. The env var still overrides it (for
+testing against another app). The "client_id isn't configured" error
+path is gone.
+
 ## [6.0.2] — 2026-10-23 — operator overloads check the right operand
 
 **Fixed: `"a" * "b"` crashed the compiler** (`Internal compiler error:

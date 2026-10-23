@@ -62,6 +62,17 @@ extern void Random_init(void);
 
 void QuirkRuntime_init(int argc, char** argv) {
     GC_INIT();             // <--- USE MACRO: Handles stack base detection automatically
+    // Boehm starts with a tiny heap and collects every few hundred KB,
+    // so allocation-heavy loops (string building, short-lived lists)
+    // spent most of their time in GC: 1.5M `"k" + i.str()` took 0.97s,
+    // 0.20s with a 16 MB start. Reserved pages aren't touched until
+    // used, so small programs keep their RSS. GC_INITIAL_HEAP_SIZE
+    // (read by GC_INIT) still overrides.
+    if (!getenv("GC_INITIAL_HEAP_SIZE")) {
+        size_t have = GC_get_heap_size();
+        size_t want = (size_t)16 << 20;
+        if (have < want) GC_expand_hp(want - have);
+    }
     Sys_init(argc, argv);
     Random_init();          // seed the RNG from time+pid so each run differs
 }

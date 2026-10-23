@@ -5,6 +5,22 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [6.0.5] — 2026-10-23 — 16 MB initial GC heap
+
+**Allocation-heavy code runs up to ~5× faster.** Boehm GC starts with a
+tiny heap and collects every few hundred KB, so loops that create many
+short-lived values spent most of their time in the collector. The
+runtime now grows the heap to 16 MB at startup.
+
+| 1.5M × `"k" + i.str()` | before | after |
+|---|---|---|
+| native binary | 0.97 s | 0.20 s |
+| `quirk run` (incl. compile) | 1.09 s | 0.38 s |
+
+Pages are reserved, not touched, so a hello-world's memory use is
+unchanged; other benchmarks (calls, lists, maps) are unchanged too.
+Set `GC_INITIAL_HEAP_SIZE` to choose a different starting size.
+
 ## [6.0.4] — 2026-10-23 — a local Callable shadows a global function
 
 **Fixed: any program defining a top-level `f` failed to compile**

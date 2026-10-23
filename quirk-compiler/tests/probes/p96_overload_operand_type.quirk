@@ -1,0 +1,17 @@
+// expect-error: (Vec.__add expects 'Vec' on the right)
+// p96 — The right operand of a user-defined operator overload must fit
+// the dunder's parameter (v6.0.2). `Vec(1) + 2` against
+// `__add(self, o: Vec)` was accepted by Sema and SIGSEGV'd at runtime
+// when the method read `o.x` from the Int. An `Any`-typed right
+// operand (e.g. a Map.get result) still defers to runtime.
+
+struct Vec {
+    x: Int
+    define __init(self, x: Int) -> void { self.x = x }
+    define __add(self, o: Vec) -> Vec { return Vec(self.x + o.x) }
+}
+
+define main() -> void {
+    print((Vec(1) + Vec(2)).x)   // legal
+    print((Vec(1) + 2).x)        // Q0203: Vec.__add expects 'Vec'
+}

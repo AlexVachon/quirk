@@ -1,27 +1,22 @@
+// expect-error: '*' operands must be numeric; got 'String' and 'String'
 // p46 — String * String must be a clean Sema rejection, not an
 // LLVM IR "Integer arithmetic operators only work with integral
-// types" crash (v3.0.3, surfaced by tools/fuzz.py @ seed=1).
+// types" crash (v3.0.3, surfaced by tools/fuzz.py @ seed=1; again in
+// v6.0.1 @ seed=7 via `"x" * 16.0.sqrt().str()`).
 //
-// Cause: the arithmetic operator-typing gate (`-` / `*` / `/` / `%`)
-// used `compatibleOperands(lType, rType)` which short-circuited on
-// `lType == rType` — accepting `String == String` even though
-// strings aren't numeric. Codegen then emitted `mul %String*, %String*`
-// and LLVM's verifier rejected it. Fix: tightened the gate to
-// require each side to be numeric-or-unknown rather than just
-// equal. Equality (`==`/`!=`) still accepts same-typed strings via
-// the eq-branch's separate gate.
-
-define check(s: String) -> Bool {
-    // This used to produce an ICE; should now be a clean Sema reject.
-    // We can't actually compile a `String * String` program here
-    // because that's the very error we're locking out — instead the
-    // probe runs the *legal* sibling shapes that share the same
-    // codegen path, ensuring we didn't accidentally over-reject.
-    return s == "hello"
-}
+// Cause (v6.0.2): Sema's operator-overload branch found
+// `String.__mul(self, n: Int)` for a String left operand and accepted
+// the expression without checking the right operand against `n: Int`,
+// so the numeric gate below never ran and Codegen emitted
+// `mul %String*, %String*`. The branch now checks the right operand:
+// builtin (extern) overloads fall through to their own operand rules
+// on a mismatch — `"n=" + 5` still concatenates — and user-defined
+// overloads report the mismatch directly.
+//
+// Until v6.0.1 this probe couldn't express the rejection (probes had to
+// compile); `// expect-error:` lets it lock the exact diagnostic.
 
 define main() -> void {
-    if check("hello") != true  { print("FAIL: == fires"); return }
-    if check("world") != false { print("FAIL: != fires"); return }
-    print("PASS: String == String still works; String * String now Sema-rejected")
+    print("-" * 3)        // legal: String * Int repetition
+    print("a" * "b")      // Q0201: operands must be numeric
 }

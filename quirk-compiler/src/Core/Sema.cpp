@@ -2109,9 +2109,32 @@ std::string Sema::checkBinaryOp(BinaryOpNode *node)
             // For !=, fall back to __eq if __ne is not defined
             if (!fn && node->op == "!=") fn = findMethod(lType, lType + "___eq");
             if (fn) {
-                static const std::set<std::string> boolOps = {"==","!=","<","<=",">",">="};
-                if (boolOps.count(node->op)) return "Bool";
-                return fn->returnType;
+                // The right operand must fit the overload's parameter:
+                // `"a" * "b"` found String.__mul(n: Int) and was accepted,
+                // then Codegen emitted an integer `mul` on two pointers
+                // (ICE). Untyped right operands defer to runtime as before.
+                bool fits = true;
+                if (!fn->parameters.empty()) {
+                    const std::string& want = fn->parameters[0].type;
+                    bool deferred = rType.empty() || rType == "Any" || rType == "auto" ||
+                                    rType == "void" || isGenericParam(rType);
+                    fits = want.empty() || want == "Any" || deferred || isCompatibleTypes(want, rType);
+                    // User-defined overloads: a mismatch is an error here.
+                    if (!fits && !fn->isExtern)
+                        fatalError("operator '" + node->op + "' incompatible types: '" + lType +
+                                   "' and '" + rType + "' (" + lType + "." + magic +
+                                   " expects '" + want + "' on the right)",
+                                   node->line, node->col, node->filePath);
+                }
+                // Builtins (runtime-backed, extern dunders) have their own
+                // operand rules below — `"n=" + 5` concatenates although
+                // String.__add declares `other: String` — so a mismatch
+                // falls through to them instead of being accepted here.
+                if (fits) {
+                    static const std::set<std::string> boolOps = {"==","!=","<","<=",">",">="};
+                    if (boolOps.count(node->op)) return "Bool";
+                    return fn->returnType;
+                }
             }
         }
     }

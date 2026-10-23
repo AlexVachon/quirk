@@ -5,6 +5,31 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [6.0.2] — 2026-10-23 — operator overloads check the right operand
+
+**Fixed: `"a" * "b"` crashed the compiler** (`Internal compiler error:
+malformed IR`, found by the fuzzer). Sema's operator-overload branch
+found `String.__mul(self, n: Int)` and accepted the expression without
+checking the right operand, so the numeric-operand check never ran and
+Codegen emitted an integer multiply on two pointers.
+
+The overload branch now checks the right operand against the dunder's
+parameter:
+
+- **Builtins** (runtime-backed `extern` dunders) fall through to their
+  own operand rules on a mismatch, so `"n=" + 5` still concatenates and
+  `"-" * 3` still repeats, while `"a" * "b"` is a clean
+  `Q0201 '*' operands must be numeric`.
+- **User-defined overloads** report the mismatch:
+  `Vec(1) + 2` against `__add(self, o: Vec)` is
+  `Q0203 ... (Vec.__add expects 'Vec' on the right)` — on 5.3.x it
+  compiled and SIGSEGV'd at runtime.
+- An `Any` right operand (e.g. a `Map.get` result) still defers to
+  runtime.
+
+p46 now locks the real rejection with `// expect-error:` (it previously
+could only test `==`). New probe: p96.
+
 ## [6.0.1] — 2026-10-23 — probes must actually pass
 
 **CI: the probe step only caught crashes.** A probe that failed with a

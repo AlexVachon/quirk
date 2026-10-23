@@ -14,6 +14,10 @@ class BuiltinGen {
     StructGen* structGen;
 
    public:
+    // Monomorphized struct → user-facing name (`Box__Int` → `Box[Int]`),
+    // filled by Codegen from StructNode::genericDisplayName.
+    std::map<std::string, std::string> displayNames;
+
     BuiltinGen(LLVMContext& ctx, Module* mod, IRBuilder<>& builder, StructGen* sg)
         : Context(ctx), TheModule(mod), Builder(builder), structGen(sg) {}
 
@@ -547,7 +551,8 @@ class BuiltinGen {
                     Function* getType = TheModule->getFunction("Core_Primitives_Any_get_type");
                     if (getType) return Builder.CreateCall(getType, {val});
                 }
-                return makeTypeString(structName);
+                auto dn = displayNames.find(structName);
+                return makeTypeString(dn != displayNames.end() ? dn->second : structName);
             }
             // i8* opaque — may be a tagged integer or boxed Any*; use the safe helper
             // that checks the pointer value before dereferencing (avoids segfault on tagged ints).

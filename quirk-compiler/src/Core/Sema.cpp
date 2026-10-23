@@ -4,6 +4,7 @@
 #include <sstream>
 #include "sema.hpp"
 #include "ErrorCodes.hpp"
+#include "parser.hpp"   // GenericTemplate (monomorphization)
 
 std::string Sema::currentClass = "";
 
@@ -97,43 +98,17 @@ static std::string substituteTypeParams(const std::string& type,
     return out;
 }
 
-// v3.1.0 monomorphization helpers ──────────────────────────────────
+// Monomorphization (v3.1.0 pre-pass, full specialization since v6.0.0) ──
 //
-// Pre-pass that runs before structRegistry is built. Walks the AST
-// for `StructName[ConcreteArgs]` annotations, synthesizes one
-// specialized StructNode per unique pair (with field types
-// T-substituted), and rewrites every annotation in place to the
-// mangled name. Downstream Sema + Codegen then see only concrete
-// structs.
-//
-// Method-body specialization is NOT done by this pass — that
-// requires deep-cloning FunctionNode bodies and substituting T
-// inside expressions, which needs an AST clone visitor we don't
-// have yet. As a result, methods declared on the generic struct
-// are NOT carried over to the specialized variants in this slice.
-// Member-field access works (Box[Int].value GEPs against the
-// specialized layout); method calls (Box[Int].method()) fall back
-// to the original via the inheritance walk.
-
-// Mangle `Box[Int]` → `Box__Int`. Recursive in args, so
-// `List[Box[Int]]` → `List__Box__Int`. Trailing `?` (nullable
-// marker) is preserved post-mangle.
-static std::string monoMangleType(const std::string& type) {
-    if (type.empty()) return type;
-    bool nullable = !type.empty() && type.back() == '?';
-    std::string t = nullable ? type.substr(0, type.size() - 1) : type;
-    auto pos = t.find('[');
-    if (pos == std::string::npos) return type;
-    std::string base = t.substr(0, pos);
-    auto args = extractTypeArgs(t);
-    std::string out = base;
-    for (const auto& a : args) {
-        out += "__";
-        out += monoMangleType(a);
-    }
-    if (nullable) out += "?";
-    return out;
-}
+// Generic structs and top-level generic functions keep their tokens
+// (GenericTemplate, captured by the parser). Each concrete
+// instantiation — from an annotation (`b: Box[Int]`, rewritten by the
+// pre-pass below) or inferred at a call (`Box(42)`, in checkCall) —
+// re-parses those tokens with T substituted into `Box__Int`, a full
+// copy with methods, which Sema and Codegen then treat as an ordinary
+// struct. Specialized methods are checked/compiled on first use
+// (monoDeferrable). Tagged unions, which have no template, keep the
+// legacy field-only synthesis.
 
 // Strip nullable suffix for register lookups. `Box[Int]?` and
 // `Box[Int]` share the same specialized struct — the `?` just
@@ -146,15 +121,175 @@ static std::string stripNullable(const std::string& t) {
 std::string Sema::monoRewriteType(const std::string& type) {
     if (type.find('[') == std::string::npos) return type;
     bool nullable = type.back() == '?';
+    std::string q = nullable ? "?" : "";
     std::string t = stripNullable(type);
     auto pos = t.find('[');
     std::string base = t.substr(0, pos);
     auto it = structRegistry.find(base);
     if (it == structRegistry.end() || !it->second || it->second->typeParams.empty())
-        return base + (nullable ? "?" : "");
-    std::string out = base;
-    for (const auto& a : extractTypeArgs(t)) { out += "__"; out += monoRewriteType(a); }
-    return out + (nullable ? "?" : "");
+        return base + q;
+    std::vector<std::string> args;
+    bool concrete = true;
+    for (const auto& a : extractTypeArgs(t)) {
+        args.push_back(monoRewriteType(a));
+        if (!monoConcreteType(args.back())) concrete = false;
+    }
+    // `Box[T]` inside a generic body stays as written — inference
+    // unifies against it, and the uniform code reads it as `Box`.
+    if (!concrete) return type;
+    if (it->second->genericTemplate) {
+        std::string m = monoInstantiateStruct(base, args);
+        return (m.empty() ? base : m) + q;
+    }
+    // No template (tagged-union parents/variants): legacy field-only
+    // synthesis from the pre-pass, when it ran for this pair.
+    std::string mangled = base;
+    for (const auto& a : args) { mangled += "__"; mangled += a; }
+    return (structRegistry.count(mangled) ? mangled : base) + q;
+}
+
+bool Sema::monoConcreteType(const std::string& t) const {
+    if (t.empty() || t.back() == '?') return false;
+    if (t.find('|') != std::string::npos || t.find('[') != std::string::npos ||
+        t.rfind("MODULE$", 0) == 0) return false;
+    static const std::set<std::string> builtins = {
+        "Int", "Double", "Bool", "Char", "String", "List", "Map", "Set",
+        "Queue", "Tuple", "Callable", "File"};
+    if (builtins.count(t)) return true;
+    if (enumRegistry.count(t)) return true;
+    auto it = structRegistry.find(t);
+    return it != structRegistry.end() && it->second;
+}
+
+// Mark freshly re-parsed nodes as specializations of `src`, rewrite their
+// annotations (instantiating nested generics), register them if Pass 1
+// already ran, and append them to the node list so Pass 2 / Codegen see
+// them like any other top-level declaration.
+void Sema::monoAdopt(std::vector<std::unique_ptr<Node>>& fresh, Node* src) {
+    for (auto& n : fresh) {
+        n->isSpecialization = true;
+        n->moduleName = src->moduleName;
+        n->filePath   = src->filePath;
+    }
+    for (auto& n : fresh) rewriteTypeAnnotations(n.get());
+    for (auto& n : fresh) {
+        if (monoPass1Done) registerTopLevel(n.get());
+        monoNodes->push_back(std::move(n));
+    }
+}
+
+std::string Sema::monoInstantiateStruct(const std::string& base,
+                                        const std::vector<std::string>& args) {
+    auto it = structRegistry.find(base);
+    if (it == structRegistry.end() || !it->second) return "";
+    StructNode* src = it->second;
+    if (!src->genericTemplate || src->typeParams.size() != args.size() || !monoNodes)
+        return "";
+    std::string mangled = base;
+    for (const auto& a : args) { mangled += "__"; mangled += a; }
+    if (structRegistry.count(mangled)) return mangled;   // done, or in progress
+    if (monoFailed.count(mangled)) return "";
+    // Extern-backed generics map methods onto runtime symbols by name;
+    // a renamed copy would link against symbols that don't exist.
+    for (const auto& tk : src->genericTemplate->tokens)
+        if (tk.type == TokenType::EXTERN) { monoFailed.insert(mangled); return ""; }
+
+    auto fresh = src->genericTemplate->instantiate(mangled, args);
+    StructNode* spec = nullptr;
+    for (auto& n : fresh)
+        if (auto* sn = dynamic_cast<StructNode*>(n.get())) if (sn->name == mangled) spec = sn;
+    if (!spec) { monoFailed.insert(mangled); return ""; }
+    // Register before adopting so self-referential fields
+    // (`next: Node[T]?`) resolve to this in-progress specialization.
+    // `extend Box { ... }` blocks: instantiate with Box's type params.
+    std::vector<std::pair<std::vector<std::unique_ptr<Node>>, FunctionNode*>> extensions;
+    for (const auto& [tpl, firstMethod] : monoExtends[base]) {
+        GenericTemplate t = *tpl;
+        t.typeParams = src->typeParams;
+        auto more = t.instantiate(mangled, args);
+        if (more.empty()) { monoFailed.insert(mangled); return ""; }
+        extensions.push_back({std::move(more), firstMethod});
+    }
+    structRegistry[mangled] = spec;
+    monoOrigin[mangled] = {base, args};
+    spec->genericBase = base;
+    // User-facing name for type() / messages: `Box[Box[Int]]`.
+    spec->genericDisplayName = base + "[";
+    for (size_t i = 0; i < args.size(); i++) {
+        auto a = structRegistry.find(args[i]);
+        std::string shown = (a != structRegistry.end() && a->second &&
+                             !a->second->genericDisplayName.empty())
+                            ? a->second->genericDisplayName : args[i];
+        spec->genericDisplayName += (i ? ", " : "") + shown;
+    }
+    spec->genericDisplayName += "]";
+    monoAdopt(fresh, src);
+    for (auto& [nodes, firstMethod] : extensions) monoAdopt(nodes, firstMethod);
+    return mangled;
+}
+
+std::string Sema::monoInstantiateFunction(FunctionNode* fn,
+                                          const std::vector<std::string>& args) {
+    if (!fn || !fn->genericTemplate || fn->typeParams.size() != args.size() || !monoNodes)
+        return "";
+    std::string mangled = fn->name;
+    for (const auto& a : args) { mangled += "__"; mangled += a; }
+    auto& slot = methodRegistry[""][mangled];
+    if (slot) return slot->isSpecialization && slot->moduleName == fn->moduleName ? mangled : "";
+    methodRegistry[""].erase(mangled);
+    if (monoFailed.count(mangled)) return "";
+
+    auto fresh = fn->genericTemplate->instantiate(mangled, args);
+    FunctionNode* spec = nullptr;
+    for (auto& n : fresh)
+        if (auto* f = dynamic_cast<FunctionNode*>(n.get())) if (f->name == mangled) spec = f;
+    if (!spec) { monoFailed.insert(mangled); return ""; }
+    monoOrigin[mangled] = {fn->name, args};
+    // Register first so a recursive call in the body resolves here.
+    methodRegistry[""][mangled] = spec;
+    monoAdopt(fresh, fn);
+    return mangled;
+}
+
+// Bind each type param by unifying declared param types against the
+// argument types Sema computed. Fails (→ uniform generic fallback) when a
+// param stays unbound, binds to a non-concrete type, or binds twice
+// inconsistently (Int vs Double widens to Double).
+bool Sema::monoInferArgs(const std::vector<std::string>& typeParams,
+                         const std::vector<std::string>& paramTypes,
+                         const std::vector<std::string>& argTypes,
+                         std::vector<std::string>& out) const {
+    std::map<std::string, std::string> bound;
+    std::function<bool(const std::string&, const std::string&)> unify =
+        [&](const std::string& p, const std::string& a) -> bool {
+        if (std::find(typeParams.begin(), typeParams.end(), p) != typeParams.end()) {
+            if (!monoConcreteType(a)) return false;
+            auto b = bound.find(p);
+            if (b == bound.end()) { bound[p] = a; return true; }
+            if (b->second == a) return true;
+            if ((b->second == "Int" && a == "Double") || (b->second == "Double" && a == "Int")) {
+                b->second = "Double"; return true;
+            }
+            return false;
+        }
+        auto lb = p.find('[');
+        if (lb == std::string::npos || p.back() != ']') return true;   // nothing to bind
+        auto o = monoOrigin.find(a);
+        if (o == monoOrigin.end() || o->second.first != p.substr(0, lb)) return true;
+        auto pArgs = extractTypeArgs(p);
+        for (size_t i = 0; i < pArgs.size() && i < o->second.second.size(); i++)
+            if (!unify(pArgs[i], o->second.second[i])) return false;
+        return true;
+    };
+    for (size_t i = 0; i < paramTypes.size() && i < argTypes.size(); i++)
+        if (!unify(paramTypes[i], argTypes[i])) return false;
+    out.clear();
+    for (const auto& tp : typeParams) {
+        auto b = bound.find(tp);
+        if (b == bound.end()) return false;
+        out.push_back(b->second);
+    }
+    return true;
 }
 
 void Sema::collectInstantiationsFromType(const std::string& type) {
@@ -266,9 +401,14 @@ void Sema::runMonomorphizePrePass(std::vector<std::unique_ptr<Node>>& nodes) {
     // First pass: build a structRegistry SHADOW so the collector's
     // `structRegistry.count(base)` check sees user structs that
     // haven't been Pass-1-registered yet.
+    monoNodes = &nodes;
     for (const auto& n : nodes) {
         if (auto* s = dynamic_cast<StructNode*>(n.get())) {
             structRegistry[s->name] = s;
+        } else if (auto* e = dynamic_cast<EnumNode*>(n.get())) {
+            enumRegistry[e->name] = e;   // so `Box[Color]` counts as concrete
+        } else if (auto* f = dynamic_cast<FunctionNode*>(n.get())) {
+            if (f->extendTemplate) monoExtends[f->cls].push_back({f->extendTemplate, f});
         }
     }
     // Second pass: collect every `Foo[Args]` annotation.
@@ -286,6 +426,7 @@ void Sema::runMonomorphizePrePass(std::vector<std::unique_ptr<Node>>& nodes) {
         if (structRegistry.count(mangled)) continue;   // already done
         auto* src = structRegistry[base];
         if (!src) continue;
+        if (src->genericTemplate) continue;   // full specialization happens on demand
         if (src->typeParams.size() != args.size()) continue;
         auto spec = std::make_unique<StructNode>();
         spec->name = mangled;
@@ -310,11 +451,13 @@ void Sema::runMonomorphizePrePass(std::vector<std::unique_ptr<Node>>& nodes) {
     // Fourth pass: rewrite every annotation in the original AST
     // to the mangled form. After this, downstream passes never
     // see `Foo[Args]` again — only concrete `Foo__Args`.
-    for (const auto& n : nodes) rewriteTypeAnnotations(n.get());
+    // Index loop: rewriting can instantiate (and append) specializations.
+    for (size_t i = 0; i < nodes.size(); i++) rewriteTypeAnnotations(nodes[i].get());
 
     // Reset the shadow registry — Pass 1 will repopulate it via
     // its normal walk over the (now-extended) nodes vector.
     structRegistry.clear();
+    enumRegistry.clear();
 }
 
 // Minimal JSON-string escaper for the NDJSON diagnostics mode. Quotes,
@@ -414,8 +557,66 @@ static void printSemaError(const std::string& msg, int line, int col,
     if (line > 0) std::cerr << "\n";
 }
 
-[[noreturn]] void Sema::fatalError(const std::string& msg, int line, int col,
+std::string Sema::monoDisplay(const std::string& msg) const {
+    if (monoOrigin.empty()) return msg;
+    // Plain generic expected, specialization given (`expected 'Box' but
+    // got 'Box__Int'`): plain `Box` is the untyped generic now, so say how
+    // to accept the specialized value.
+    std::string hint;
+    for (const auto& [spec, origin] : monoOrigin) {
+        if (!structRegistry.count(spec)) continue;
+        if (msg.find("'" + origin.first + "'") != std::string::npos &&
+            msg.find("'" + spec + "'") != std::string::npos) {
+            std::string shown = structRegistry.at(spec)->genericDisplayName;
+            hint = "\n  hint: plain `" + origin.first + "` is the untyped generic; write `" + shown +
+                   "`, or make the function generic: `define f[T](x: " + origin.first + "[T])`";
+            break;
+        }
+    }
+    auto isWord = [](char c) { return std::isalnum((unsigned char)c) || c == '_'; };
+    std::string out;
+    size_t i = 0;
+    while (i < msg.size()) {
+        if (!isWord(msg[i])) { out += msg[i++]; continue; }
+        size_t j = i;
+        while (j < msg.size() && isWord(msg[j])) j++;
+        std::string word = msg.substr(i, j - i);
+        auto o = monoOrigin.find(word);
+        if (o != monoOrigin.end()) {
+            auto st = structRegistry.find(word);
+            if (st != structRegistry.end() && st->second && !st->second->genericDisplayName.empty())
+                word = st->second->genericDisplayName;
+            else
+                word = o->second.first;   // function specialization → its generic name
+        }
+        out += word;
+        i = j;
+    }
+    // Errors raised while checking a specialization point into the
+    // generic's source; say which instantiation failed.
+    std::string note;
+    if (currentFunctionNode && currentFunctionNode->isSpecialization) {
+        const std::string& owner = currentFunctionNode->cls.empty()
+            ? currentFunctionNode->name : currentFunctionNode->cls;
+        auto st = structRegistry.find(owner);
+        auto o = monoOrigin.find(owner);
+        std::string shown;
+        if (st != structRegistry.end() && st->second && !st->second->genericDisplayName.empty())
+            shown = st->second->genericDisplayName;
+        else if (o != monoOrigin.end()) {
+            shown = o->second.first + "[";
+            for (size_t k = 0; k < o->second.second.size(); k++)
+                shown += (k ? ", " : "") + o->second.second[k];
+            shown += "]";
+        }
+        if (!shown.empty()) note = "\n  note: while instantiating `" + shown + "`";
+    }
+    return out + hint + note;
+}
+
+[[noreturn]] void Sema::fatalError(const std::string& rawMsg, int line, int col,
                                     const std::string& filePath) {
+    const std::string msg = monoDisplay(rawMsg);
     if (line <= 0 && lastNode && lastNode->line > 0) {
         line = lastNode->line; col = lastNode->col;
     }
@@ -436,7 +637,7 @@ void Sema::reportError(const std::string& msg, int line, int col,
     std::string path = (!filePath.empty())                          ? filePath
                      : (lastNode && !lastNode->filePath.empty()) ? lastNode->filePath
                      : currentFilePath;
-    errors.push_back({msg, path, line, col, {}});
+    errors.push_back({monoDisplay(msg), path, line, col, {}});
 }
 
 void Sema::reportError(const std::string& msg,
@@ -449,7 +650,7 @@ void Sema::reportError(const std::string& msg,
     std::string path = (!filePath.empty())                          ? filePath
                      : (lastNode && !lastNode->filePath.empty()) ? lastNode->filePath
                      : currentFilePath;
-    errors.push_back({msg, path, line, col, suggestions});
+    errors.push_back({monoDisplay(msg), path, line, col, suggestions});
 }
 
 // Damerau-Levenshtein distance — counts single-char transpositions as
@@ -667,6 +868,8 @@ void Sema::reportWarning(const std::string& msg, int line, int col,
     if (line <= 0 && lastNode && lastNode->line > 0) {
         line = lastNode->line; col = lastNode->col;
     }
+    // Specializations re-check user code the generic already reported on.
+    if (currentFunctionNode && currentFunctionNode->isSpecialization) return;
     std::string path = (!filePath.empty())                             ? filePath
                      : (lastNode && !lastNode->filePath.empty()) ? lastNode->filePath
                      : currentFilePath;
@@ -679,6 +882,90 @@ void Sema::flushWarnings() {
                   << "\n --> " << w.filePath << ":" << w.line << ":" << w.col << "\n";
     warnings.clear();
 }
+
+bool Sema::monoDeferrable(FunctionNode* f) {
+    if (!f || !f->isSpecialization || f->cls.empty()) return false;
+    if (f->name == f->cls + "__init") return false;
+    std::string prefix = f->cls + "_";
+    std::string raw = f->name.rfind(prefix, 0) == 0 ? f->name.substr(prefix.size()) : f->name;
+    if (raw.rfind("__", 0) == 0) return false;            // dunder: implicit uses
+    auto st = structRegistry.find(f->cls);
+    if (st != structRegistry.end() && st->second) {
+        for (const auto& ifaceName : st->second->interfaces) {
+            auto it = interfaceRegistry.find(ifaceName);
+            if (it == interfaceRegistry.end()) continue;
+            for (const auto& m : it->second->methods) {
+                std::string mr = m->name.substr(m->name.find('_') + 1);
+                if (mr == raw) return false;              // interface implementation
+            }
+        }
+    }
+    return true;
+}
+
+// Pass-1 registration of one top-level node. Also called for
+// monomorphized specializations created after Pass 1 (monoAdopt).
+void Sema::registerTopLevel(Node* node)
+{
+        if (auto s = dynamic_cast<StructNode *>(node))
+        {
+            structRegistry[s->name] = s;
+        }
+        else if (auto iface = dynamic_cast<InterfaceNode*>(node))
+        {
+            interfaceRegistry[iface->name] = iface;
+        }
+        else if (auto f = dynamic_cast<FunctionNode *>(node))
+        {
+            if (f->returnType.empty())
+                f->returnType = "auto";
+            if (monoPass1Done && !scopeStack.empty())
+                scopeStack.front()[f->name] = VarInfo{f->returnType, false, false, false, currentFilePath};
+            else
+                defineVariable(f->name, f->returnType);
+            if (!f->cls.empty())
+                methodRegistry[f->cls][f->name] = f;
+            else {
+                // For top-level functions: keep the existing
+                // single-FunctionNode pointer for the 99% case where
+                // a name is unique. When a second package defines
+                // the same name (e.g. `html.input` after
+                // `console.input` is loaded), promote both into the
+                // overloads side-table so the call-site can pick by
+                // module visibility.
+                auto& slot = methodRegistry[""][f->name];
+                if (slot && slot->moduleName != f->moduleName) {
+                    auto& cands = topLevelOverloads[f->name];
+                    if (cands.empty()) cands.push_back(slot);
+                    // Avoid duplicate registration on Sema re-runs.
+                    bool already = false;
+                    for (auto* c : cands) if (c == f) { already = true; break; }
+                    if (!already) cands.push_back(f);
+                }
+                slot = f;
+            }
+        }
+        else if (auto e = dynamic_cast<EnumNode*>(node)) {
+            enumRegistry[e->name] = e;
+        }
+        else if (auto tu = dynamic_cast<TaggedUnionDeclNode*>(node)) {
+            // Variants were already desugared to StructNodes at parse
+            // time; here we just record the union → variant-set mapping
+            // for the exhaustiveness check in checkStatement(MatchNode).
+            std::vector<std::string> names;
+            names.reserve(tu->variants.size());
+            for (const auto& v : tu->variants) names.push_back(v.name);
+            taggedUnionVariants[tu->name] = std::move(names);
+        }
+        else if (auto v = dynamic_cast<VarDeclNode*>(node)) {
+            // Top-level `NAME := value` bindings — track them so
+            // `from M use { NAME }` can resolve them across modules.
+            // The LHS is a LiteralNode whose value is the name.
+            if (auto* lhs = dynamic_cast<LiteralNode*>(v->lhs.get())) {
+                moduleConstRegistry[lhs->value] = v;
+            }
+        }
+    }
 
 bool Sema::analyze(std::vector<std::unique_ptr<Node>> &nodes)
 {
@@ -716,70 +1003,18 @@ bool Sema::analyze(std::vector<std::unique_ptr<Node>> &nodes)
     runMonomorphizePrePass(nodes);
 
     // Pass 1: Register Structs, Interfaces, and Signatures
-    for (const auto &node : nodes)
-    {
-        if (auto s = dynamic_cast<StructNode *>(node.get()))
-        {
-            structRegistry[s->name] = s;
-        }
-        else if (auto iface = dynamic_cast<InterfaceNode*>(node.get()))
-        {
-            interfaceRegistry[iface->name] = iface;
-        }
-        else if (auto f = dynamic_cast<FunctionNode *>(node.get()))
-        {
-            if (f->returnType.empty())
-                f->returnType = "auto";
-            defineVariable(f->name, f->returnType);
-            if (!f->cls.empty())
-                methodRegistry[f->cls][f->name] = f;
-            else {
-                // For top-level functions: keep the existing
-                // single-FunctionNode pointer for the 99% case where
-                // a name is unique. When a second package defines
-                // the same name (e.g. `html.input` after
-                // `console.input` is loaded), promote both into the
-                // overloads side-table so the call-site can pick by
-                // module visibility.
-                auto& slot = methodRegistry[""][f->name];
-                if (slot && slot->moduleName != f->moduleName) {
-                    auto& cands = topLevelOverloads[f->name];
-                    if (cands.empty()) cands.push_back(slot);
-                    // Avoid duplicate registration on Sema re-runs.
-                    bool already = false;
-                    for (auto* c : cands) if (c == f) { already = true; break; }
-                    if (!already) cands.push_back(f);
-                }
-                slot = f;
-            }
-        }
-        else if (auto e = dynamic_cast<EnumNode*>(node.get())) {
-            enumRegistry[e->name] = e;
-        }
-        else if (auto tu = dynamic_cast<TaggedUnionDeclNode*>(node.get())) {
-            // Variants were already desugared to StructNodes at parse
-            // time; here we just record the union → variant-set mapping
-            // for the exhaustiveness check in checkStatement(MatchNode).
-            std::vector<std::string> names;
-            names.reserve(tu->variants.size());
-            for (const auto& v : tu->variants) names.push_back(v.name);
-            taggedUnionVariants[tu->name] = std::move(names);
-        }
-        else if (auto v = dynamic_cast<VarDeclNode*>(node.get())) {
-            // Top-level `NAME := value` bindings — track them so
-            // `from M use { NAME }` can resolve them across modules.
-            // The LHS is a LiteralNode whose value is the name.
-            if (auto* lhs = dynamic_cast<LiteralNode*>(v->lhs.get())) {
-                moduleConstRegistry[lhs->value] = v;
-            }
-        }
-    }
+    for (const auto &node : nodes) registerTopLevel(node.get());
+    monoPass1Done = true;
 
     // Pass 2: Analyze Bodies
     enterScope();
 
-    for (const auto &node : nodes)
+    // Index loop: checking a call can instantiate (and append) a
+    // generic specialization, which then gets checked here too.
+    size_t nodeIdxTail = 0;
+    for (size_t nodeIdx = 0; nodeIdx < nodes.size(); nodeIdx++, nodeIdxTail = nodeIdx)
     {
+        Node* node = nodes[nodeIdx].get();
         std::string mod = node->moduleName;
         if (moduleVisibility.find(mod) == moduleVisibility.end())
         {
@@ -787,7 +1022,7 @@ bool Sema::analyze(std::vector<std::unique_ptr<Node>> &nodes)
         }
 
         // Validate inheritance tree and interface conformance for structs
-        if (auto s = dynamic_cast<StructNode*>(node.get())) {
+        if (auto s = dynamic_cast<StructNode*>(node)) {
             std::vector<std::string> structParents;
             for (const std::string& parentName : s->parents) {
                 if (interfaceRegistry.count(parentName)) {
@@ -823,23 +1058,52 @@ bool Sema::analyze(std::vector<std::unique_ptr<Node>> &nodes)
 
         if (!node->filePath.empty()) currentFilePath = node->filePath;
 
-        if (auto f = dynamic_cast<FunctionNode *>(node.get()))
+        if (auto f = dynamic_cast<FunctionNode *>(node))
         {
+            if (monoDeferrable(f) && !monoUsed.count(f)) continue;   // checked on first use
+            if (f->isSpecialization) monoChecked.insert(f);
             checkFunction(f);
         }
-        else if (auto use = dynamic_cast<UseNode *>(node.get()))
+        else if (auto use = dynamic_cast<UseNode *>(node))
         {
             checkUse(use);
         }
-        else if (dynamic_cast<InterfaceNode*>(node.get()))
+        else if (dynamic_cast<InterfaceNode*>(node))
         {
             // Interface declarations are compile-time only — no body to check
         }
-        else if (!dynamic_cast<StructNode *>(node.get()))
+        else if (!dynamic_cast<StructNode *>(node))
         {
-            checkStatement(node.get());
+            checkStatement(node);
         }
     }
+    // Drain specialized methods that became used after the loop passed
+    // them (a later method's body called them). Checking one can create
+    // or use more, so repeat until nothing new appears.
+    for (bool progress = true; progress; ) {
+        progress = false;
+        std::vector<FunctionNode*> todo;
+        for (auto* f : monoUsed) if (!monoChecked.count(f)) todo.push_back(f);
+        for (auto* f : todo) {
+            monoChecked.insert(f);
+            checkFunction(f);
+            progress = true;
+        }
+        // Specializations appended while draining: check them too.
+        for (; nodeIdxTail < nodes.size(); nodeIdxTail++) {
+            if (auto f = dynamic_cast<FunctionNode*>(nodes[nodeIdxTail].get())) {
+                if (monoDeferrable(f) && !monoUsed.count(f)) continue;
+                if (monoChecked.insert(f).second) { checkFunction(f); progress = true; }
+            }
+        }
+    }
+    // Never-used specialized methods are dropped so Codegen doesn't emit
+    // (possibly ill-typed) bodies for them.
+    nodes.erase(std::remove_if(nodes.begin(), nodes.end(), [&](const std::unique_ptr<Node>& n) {
+        auto* f = dynamic_cast<FunctionNode*>(n.get());
+        return f && monoDeferrable(f) && !monoChecked.count(f);
+    }), nodes.end());
+
     exitScope();
     if (!warnings.empty()) flushWarnings();
     if (!errors.empty()) {
@@ -2203,6 +2467,22 @@ std::string Sema::checkCall(CallNode *node)
         // Positional constructor call: Foo(...) where Foo is a known struct.
         // Validate argument count against __init (self already stripped by parser).
         if (structRegistry.count(l->value)) {
+            // Generic struct with inferable type args: `Box(42)` →
+            // `Box__Int(42)`. The callee is rewritten in place so Codegen
+            // constructs the specialized layout. Uninferable calls keep
+            // the uniform (i8*-field) generic.
+            if (StructNode* gs = structRegistry[l->value];
+                gs && gs->genericTemplate && !gs->typeParams.empty()) {
+                bool kw = false;
+                for (auto& a : node->args) if (!a.name.empty()) kw = true;
+                FunctionNode* ginit = findMethod(l->value, l->value + "__init");
+                std::vector<std::string> pTypes, targs;
+                if (ginit) for (auto& p : ginit->parameters) pTypes.push_back(p.type);
+                if (ginit && !kw && monoInferArgs(gs->typeParams, pTypes, argTypes, targs)) {
+                    std::string m = monoInstantiateStruct(l->value, targs);
+                    if (!m.empty()) l->value = m;
+                }
+            }
             std::string initName = l->value + "__init";
             if (methodRegistry.count(l->value) &&
                 methodRegistry[l->value].count(initName)) {
@@ -2267,6 +2547,28 @@ std::string Sema::checkCall(CallNode *node)
                     if (!fn->linkageName.empty() && fn->linkageName != l->value)
                         node->resolvedLinkageName = fn->linkageName;
                     return fn->returnType.empty() ? "void" : fn->returnType;
+                }
+            }
+
+            // Generic function with inferable type args: `identity(42)` →
+            // `identity__Int(42)` (see the struct-constructor case above).
+            // Runs before the generic-param early return below: a generic
+            // fn's scope binding is its declared return type (`Box[T]`),
+            // which that check would otherwise read as an unknown → Any.
+            if (FunctionNode* gfn = lookupTopLevel(l->value);
+                gfn && gfn->genericTemplate && !gfn->typeParams.empty()) {
+                bool kw = false;
+                for (auto& a : node->args) if (!a.name.empty()) kw = true;
+                std::vector<std::string> pTypes, targs;
+                for (auto& p : gfn->parameters) pTypes.push_back(p.type);
+                if (!kw && monoInferArgs(gfn->typeParams, pTypes, argTypes, targs)) {
+                    std::string m = monoInstantiateFunction(gfn, targs);
+                    if (!m.empty()) {
+                        l->value = m;
+                        vtype = resolveVariable(m);
+                        if (currentFunctionNode)
+                            moduleVisibility[currentFunctionNode->moduleName].visibleSymbols.insert(m);
+                    }
                 }
             }
 
@@ -2901,7 +3203,8 @@ std::string Sema::resolveVariable(const std::string &name)
     // to the LSP for semantic find-references and rename. `lastNode`
     // is set by checkExpression entry points to the LiteralNode that
     // names the identifier, so its line/col is precise.
-    if (lastNode && lastNode->line > 0) {
+    if (lastNode && lastNode->line > 0 &&
+        !(currentFunctionNode && currentFunctionNode->isSpecialization)) {
         usages.push_back({name, currentScope,
                           lastNode->filePath, lastNode->line, lastNode->col});
     }

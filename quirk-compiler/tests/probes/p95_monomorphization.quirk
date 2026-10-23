@@ -1,0 +1,98 @@
+// p95 — Full monomorphization of generic structs and functions (v6.0.0).
+//
+// Generic declarations are re-parsed per concrete instantiation with T
+// substituted (GenericTemplate::instantiate), so `Box(42)` builds a
+// `Box[Int]` whose `value` field is a real i32 and whose methods are
+// specialized copies. Type args are inferred from constructor / call
+// arguments, or taken from annotations. Calls whose args can't be
+// inferred (null, Any) keep the uniform i8*-field generic.
+//
+// Locks:
+//   - inference: Box(42) → Box[Int]; Pair("a", 1).swap() → Pair[Int, String]
+//   - nested + self-referential: Box[Box[Int]], Node[T] { next: Node[T]? }
+//   - `extend Box { ... }` methods exist on every specialization
+//   - generic fns: wrap(3.5) → Box[Double]; unwrap infers T from Box[T]
+//   - Double fields are exact (the uniform layout truncated 1.5 to 1)
+//   - plain `Box` is the untyped generic: a Box[Int] read back through
+//     it from a List throws TypeError instead of reading garbage
+//
+// Expected output:
+//   PASS: monomorphization
+define fail(msg: String) -> void {
+    print("FAIL: " + msg)
+}
+
+struct Box[T] {
+    value: T
+    define __init(self, value: T) -> void { self.value = value }
+    define get(self) -> T { return self.value }
+}
+
+struct Pair[K, V] {
+    key: K
+    val: V
+    define __init(self, key: K, val: V) -> void { self.key = key; self.val = val }
+    define swap(self) -> Pair[V, K] { return Pair(self.val, self.key) }
+}
+
+struct Node[T] {
+    value: T
+    next: Node[T]?
+    define __init(self, value: T) -> void { self.value = value; self.next = null }
+}
+
+struct Acc[T] {
+    total: T
+    define __init(self, start: T) -> void { self.total = start }
+    define add(self, x: T) -> void { self.total = self.total + x }
+}
+
+extend Box {
+    define doubled(self) -> T { return self.value * 2 }
+}
+
+define wrap[T](x: T) -> Box[T] { return Box(x) }
+define unwrap[T](b: Box[T]) -> T { return b.value }
+
+define main() -> void {
+    if type(Box(42)) != "Box[Int]"          { fail("Box(42) type"); return }
+    if Box(42).get() + 1 != 43               { fail("Box[Int].get"); return }
+    if Box("hi").get().upper() != "HI"       { fail("Box[String].get"); return }
+    if Box(21).doubled() != 42               { fail("extend method on Box[Int]"); return }
+
+    q := Pair("age", 30).swap()
+    if type(q) != "Pair[Int, String]"        { fail("Pair.swap type"); return }
+    if q.key + 1 != 31                       { fail("Pair.swap key"); return }
+
+    bb := Box(Box(5))
+    if type(bb) != "Box[Box[Int]]"           { fail("nested type"); return }
+    if bb.value.value * 2 != 10              { fail("nested value"); return }
+
+    n := Node(1)
+    n.next = Node(2)
+    if n.value + n.next.value != 3           { fail("self-referential"); return }
+
+    if type(wrap(3.5)) != "Box[Double]"      { fail("wrap type"); return }
+    if unwrap(Box("deep")).upper() != "DEEP" { fail("unwrap inference"); return }
+
+    acc := Acc(0.0)
+    i := 0
+    while i < 4 { acc.add(1.5); i = i + 1 }
+    if acc.total != 6.0                      { fail("Double field exact"); return }
+
+    if type(Box(null)) != "Box"              { fail("null falls back to uniform"); return }
+
+    xs := [Box(1)]
+    typed: Box[Int] := xs[0]
+    if typed.value != 1                      { fail("typed read from List"); return }
+    caught := false
+    try {
+        plain: Box := xs[0]
+        print(plain.value)
+    } catch (e: TypeError) {
+        caught = true
+    }
+    if not caught                            { fail("plain Box guard"); return }
+
+    print("PASS: monomorphization")
+}

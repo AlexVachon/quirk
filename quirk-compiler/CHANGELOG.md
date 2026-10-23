@@ -5,6 +5,64 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [6.0.0] — 2026-10-23 — generics are monomorphized
+
+**Generic structs and functions now compile to a specialized copy per
+concrete instantiation.** `Box(42)` builds a `Box[Int]` whose `value`
+is a real `Int` field and whose methods are `Int`-typed copies; generic
+functions are specialized per call the same way. Type args come from
+annotations (`b: Box[Int]`) or are inferred from constructor / call
+arguments, including through generic params (`unwrap[T](b: Box[T])`
+called with a `Box[String]` binds `T = String`).
+
+```quirk
+a := Box(42)
+print(type(a))                // Box[Int]
+q := Pair("age", 30).swap()   // Pair[Int, String]
+w := wrap(1.5)                // Box[Double]
+```
+
+- **Correct and fast.** A `Double` accumulator in a generic struct used
+  to silently truncate (`Acc(0.0)` + 1.5 × 5M → `5000000`); it's now
+  exact and ~4.7× faster end-to-end on that benchmark.
+- **Type-checked.** Each used specialization is checked with its
+  concrete types: `takes(Box("oops"))` for `takes(b: Box[Int])` is a
+  compile error naming `Box[Int]` / `Box[String]`. Diagnostics raised
+  inside a specialization add `note: while instantiating Box[Bool]`.
+- **Lazy methods.** Methods are specialized on first use (like C++
+  template members), so `Box(true)` compiles even when `Box` has a
+  `triple()` that only works for numbers. Dunder methods and interface
+  implementations are always kept.
+- `extend Box { ... }` methods exist on every specialization.
+- Nested and self-referential generics work: `Box[Box[Int]]`,
+  `struct Node[T] { next: Node[T]? }`.
+- Cross-module generics work (`from .boxes use { Box, wrap }` — on
+  5.3.x `wrap(41).get()` resolved as `String.get`).
+- `type()`, hover types (`--symbols-json`) and error messages show
+  `Box[Int]`, never the internal `Box__Int`.
+- Type annotations accept nested args and a trailing `?`:
+  `Box[List[Int]]`, `Box[Int]?` (both were parse errors).
+
+**Breaking: plain `Box` is the untyped generic.** A `b: Box` parameter
+or binding no longer accepts a `Box[Int]` — their layouts differ.
+Passing one is a compile error with a hint (`write Box[Int], or make the
+function generic: define f[T](x: Box[T])`). A specialized value stored
+in a `List` / `Map` and read back through a plain `Box` annotation
+throws `TypeError: expected Box (untyped generic) but got Box[Int]`
+instead of misreading its fields.
+
+Still untyped: calls whose args don't pin `T` (`Box(null)`, `Any`
+values), extern-backed generics, and tagged unions (`Option[T]`,
+`Result[T, E]`).
+
+Implementation: the parser keeps each generic declaration's tokens
+(`GenericTemplate`); Sema re-parses them per instantiation with `T`
+substituted and the declaration renamed, then rewrites the call site.
+
+Probes `p42_generic_substitution`, `p48_ordered_cmp_generic_field` and
+`p50_monomorph_struct` pass again (they had been failing with type
+errors CI didn't catch). New probe: `p95_monomorphization`.
+
 ## [5.3.16] — 2026-10-22 — `List[Int]` / `Map[K, V]` annotations
 
 **Fixed: parameterized builtin annotations miscompiled.** The v3.1.0

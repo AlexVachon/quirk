@@ -1515,15 +1515,53 @@ define filter[T](items: List[T], pred: Callable) -> List[T] where T: Comparable 
 }
 ```
 
-### Limitation: uniform representation
+### Specialization (monomorphization)
 
-At the IR layer, every generic field currently lowers as `i8*`
-(an opaque pointer). Runtime ops dispatch on shape via
-`quirk_opaque_to_int` and `quirk_opaque_eq` so primitives, Any\*
-heap-boxes, and tagged ints all work correctly. A future v3.x
-release will add per-instantiation monomorphization so `Box[Int]`
-and `Box[String]` get distinct LLVM struct layouts; today's
-behaviour is correct but not maximally packed.
+*Since v6.0.0.* Each concrete instantiation gets its own compiled copy
+of the struct and its methods. `Box(42)` builds a `Box[Int]` whose
+`value` is a real `Int` field, not a boxed pointer, and generic
+functions are specialized per call site the same way. Type arguments
+come from annotations (`b: Box[Int]`) or are inferred from the
+arguments:
+
+```quirk
+a := Box(42)
+print(type(a))           // Box[Int]
+p := Pair("age", 30)     // Pair[String, Int]
+print(type(p.swap()))    // Pair[Int, String]
+w := wrap(1.5)           // define wrap[T](x: T) -> Box[T]: Box[Double]
+```
+
+Methods are specialized when first used, the way C++ instantiates
+template members, so `Box(true)` is fine even if `Box` has a `triple()`
+(`value * 3`) that only works for numbers. Because every *used*
+specialization is type-checked with its concrete types, mistakes
+surface at compile time:
+
+```quirk
+define takes(b: Box[Int]) -> Int { return b.value }
+takes(Box("oops"))       // Q0200: expected 'Box[Int]' but got 'Box[String]'
+```
+
+When the arguments don't pin `T` down (`Box(null)`, or an `Any` value),
+the call uses the *untyped* generic, where fields hold any value.
+
+**Plain `Box` means the untyped generic.** A `b: Box` parameter or
+binding no longer accepts a `Box[Int]`, because their layouts differ.
+Write the type arguments, or make the function generic:
+
+```quirk
+define total(b: Box[Int]) -> Int { ... }       // one instantiation
+define unwrap[T](b: Box[T]) -> T { ... }       // any instantiation
+```
+
+A specialized value stored in a `List`/`Map` and read back through a
+plain `Box` annotation throws a `TypeError` naming the right type
+(`annotate the binding as Box[Int]`) rather than misreading the fields.
+
+Generic types declared with `extern` methods (runtime-backed) and
+tagged unions (`Option[T]`, `Result[T, E]`) still use the untyped
+representation.
 
 ---
 

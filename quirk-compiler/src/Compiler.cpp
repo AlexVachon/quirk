@@ -1120,9 +1120,19 @@ static std::string symJsonEscape(const std::string& s) {
     return out;
 }
 
+// Specialization name → display form (`Box__Int` → `Box[Int]`), filled
+// by emitSymbols so hover types read the way the user wrote them.
+static std::map<std::string, std::string> g_symDisplayNames;
+
 static void emitSymbol(const char* kind, const std::string& name,
                        const std::string& scope, const std::string& file,
-                       int line, int col, const std::string& type = "") {
+                       int line, int col, const std::string& rawType = "") {
+    std::string type = rawType;
+    {
+        bool nullable = !type.empty() && type.back() == '?';
+        auto it = g_symDisplayNames.find(nullable ? type.substr(0, type.size() - 1) : type);
+        if (it != g_symDisplayNames.end()) type = it->second + (nullable ? "?" : "");
+    }
     std::cout << "{\"kind\":\""  << kind
               << "\",\"name\":\""  << symJsonEscape(name)
               << "\",\"scope\":\"" << symJsonEscape(scope)
@@ -1163,7 +1173,11 @@ static void emitBodyVariables(const std::vector<std::unique_ptr<Node>>& body,
 }
 
 static void emitSymbols(const std::vector<std::unique_ptr<Node>>& ast) {
+    for (auto& node : ast)
+        if (auto s = dynamic_cast<StructNode*>(node.get()))
+            if (!s->genericDisplayName.empty()) g_symDisplayNames[s->name] = s->genericDisplayName;
     for (auto& node : ast) {
+        if (node->isSpecialization) continue;   // monomorphized copies
         if (auto fn = dynamic_cast<FunctionNode*>(node.get())) {
             if (fn->isExtern) continue;     // external decls: declared, not defined here
             // Top-level functions have empty `cls`; methods carry their

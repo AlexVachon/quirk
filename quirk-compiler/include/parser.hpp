@@ -5,6 +5,26 @@
 #include "lexer.hpp"
 #include "ast.hpp"
 
+// Token slice of one generic declaration (`struct Box[T] { ... }` or a
+// top-level `define f[T](...) { ... }`), kept so Sema can monomorphize
+// it: `instantiate` copies the tokens, renames the declaration, drops the
+// `[T, ...]` list and `where` clause, swaps every `T` identifier for the
+// concrete type's tokens, and re-parses — a deep, substituted clone of
+// the struct (methods included) without an AST clone visitor.
+struct GenericTemplate {
+    std::vector<Token> tokens;            // declaration tokens, no EOF
+    std::shared_ptr<std::string> source;  // for error-line display
+    std::string filePath;
+    size_t nameIndex = 0;                 // index of the name token
+    std::vector<std::string> typeParams;
+
+    // Returns the parsed nodes (StructNode + method FunctionNodes, or one
+    // FunctionNode), or empty on a parse error.
+    std::vector<std::unique_ptr<Node>> instantiate(
+        const std::string& newName,
+        const std::vector<std::string>& typeArgs) const;
+};
+
 // Thrown by reportError; caught in parse() to recover at top-level boundaries.
 struct ParseError {};
 
@@ -16,6 +36,10 @@ class Parser {
     int lambdaCount = 0;
 
     std::vector<std::unique_ptr<Node>> extraNodes;
+    std::shared_ptr<std::string> sourceCopy;   // shared by this file's GenericTemplates
+
+    std::shared_ptr<GenericTemplate> makeTemplate(int begin, int end,
+                                                  const std::vector<std::string>& typeParams);
 
     struct ErrorRecord { std::string msg, filePath, lineCode; int line, col; };
     std::vector<ErrorRecord> errors;

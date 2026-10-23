@@ -176,19 +176,10 @@ class Sema {
     // variant, parent=union) happens at parse time via desugaring.
     std::map<std::string, std::vector<std::string>> taggedUnionVariants;
 
-    // v3.1.0 — per-instantiation Codegen monomorphization. Runs as
-    // a Pass-0 (before structRegistry is built): walk the AST,
-    // collect every `StructName[ConcreteArgs]` in a type annotation,
-    // synthesize one specialized StructNode per (StructName, [Args])
-    // pair with `T`-substituted field types, and rewrite the
-    // annotations to the mangled name. The downstream passes see
-    // only concrete structs.
-    //
-    // Method specialization is the harder companion piece (requires
-    // deep-cloning FunctionNode bodies); deferred to a follow-up.
-    // Today's slice: field-level type safety + packed layouts for
-    // explicit-annotation use; method calls on the specialized
-    // type fall back to the erased version via bitcast.
+    // Monomorphization pre-pass (Pass 0): collect `StructName[Args]`
+    // annotations and rewrite them to the specialization's mangled name
+    // (`Box__Int`), instantiating it from the GenericTemplate on demand.
+    // Tagged unions (no template) keep the v3.1.0 field-only synthesis.
     std::set<std::pair<std::string, std::vector<std::string>>> monoInstantiations;
     void runMonomorphizePrePass(std::vector<std::unique_ptr<Node>>& nodes);
     void collectInstantiationsFromType(const std::string& type);
@@ -198,12 +189,47 @@ class Sema {
     // for everything else (non-generic bases have no specialization, and
     // an unknown `List__Int` lowered as an untyped pointer).
     std::string monoRewriteType(const std::string& type);
+
+    // v5.4.0 monomorphization: generic structs / top-level functions are
+    // re-parsed from their GenericTemplate per concrete instantiation.
+    std::vector<std::unique_ptr<Node>>* monoNodes = nullptr;  // analyze()'s list
+    bool monoPass1Done = false;
+    std::set<std::string> monoFailed;
+    // mangled name → (generic base, concrete args); lets inference unify
+    // `Box[T]` against an argument of type `Box__Int`.
+    std::map<std::string, std::pair<std::string, std::vector<std::string>>> monoOrigin;
+    // `extend Name { ... }` blocks per struct name (template + the block's
+    // first method, whose module/file the copies inherit).
+    std::map<std::string, std::vector<std::pair<std::shared_ptr<GenericTemplate>, FunctionNode*>>> monoExtends;
+    bool monoConcreteType(const std::string& t) const;
+    std::string monoInstantiateStruct(const std::string& base, const std::vector<std::string>& args);
+    std::string monoInstantiateFunction(FunctionNode* fn, const std::vector<std::string>& args);
+    void monoAdopt(std::vector<std::unique_ptr<Node>>& fresh, Node* src);
+    bool monoInferArgs(const std::vector<std::string>& typeParams,
+                       const std::vector<std::string>& paramTypes,
+                       const std::vector<std::string>& argTypes,
+                       std::vector<std::string>& out) const;
+    void registerTopLevel(Node* node);
+    // Rewrite specialization names in a diagnostic to the user's
+    // spelling: `Box__Int` → `Box[Int]`, `identity__Int` → `identity`.
+    std::string monoDisplay(const std::string& msg) const;
     FunctionNode* findMethod(const std::string& cls, const std::string& name) {
         auto cit = methodRegistry.find(cls);
         if (cit == methodRegistry.end()) return nullptr;
         auto fit = cit->second.find(name);
-        return fit == cit->second.end() ? nullptr : fit->second;
+        if (fit == cit->second.end()) return nullptr;
+        // Resolving a specialized method counts as a use — it then gets
+        // type-checked and compiled (see monoDeferrable).
+        if (fit->second && fit->second->isSpecialization && !fit->second->cls.empty())
+            monoUsed.insert(fit->second);
+        return fit->second;
     }
+    // Specialized methods are checked + compiled only once used, like C++
+    // template members: `Box[Bool]` mustn't fail on a `triple()` (value * 3)
+    // nobody calls. Dunder methods (Codegen calls them implicitly) and
+    // interface implementations are always kept.
+    std::set<FunctionNode*> monoUsed, monoChecked;
+    bool monoDeferrable(FunctionNode* f);
     struct VarInfo { std::string type; bool isConst = false; bool used = false; bool isParam = false; std::string filePath; };
     std::vector<std::map<std::string, VarInfo>> scopeStack;
     std::map<std::string, std::string> globalModuleAliases;

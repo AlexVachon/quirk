@@ -78,10 +78,14 @@ std::vector<std::unique_ptr<Node>> Parser::parse() {
         }
 
         TokenType type = peek().type;
+        int declStart = pos;   // for generic templates (see GenericTemplate)
         try {
             if (type == TokenType::DEFINE || type == TokenType::INIT ||
                 type == TokenType::EXTERN) {
                 auto fn = parseFunction();
+                if (!fn->typeParams.empty() && !fn->isExtern && fn->cls.empty() &&
+                    pendingDecorators.empty() && type == TokenType::DEFINE)
+                    fn->genericTemplate = makeTemplate(declStart, pos, fn->typeParams);
                 fn->decorators = std::move(pendingDecorators);
                 if (!fn->decorators.empty()) {
                     // ─── Decorator rewriting ───────────────────────────────
@@ -157,7 +161,10 @@ std::vector<std::unique_ptr<Node>> Parser::parse() {
             } else if (type == TokenType::ENUM) {
                 nodes.push_back(parseEnum());
             } else if (type == TokenType::STRUCT) {
-                nodes.push_back(parseStruct());
+                auto st = parseStruct();
+                if (!st->typeParams.empty())
+                    st->genericTemplate = makeTemplate(declStart, pos, st->typeParams);
+                nodes.push_back(std::move(st));
                 for (auto& extra : extraNodes)
                     nodes.push_back(std::move(extra));
                 extraNodes.clear();
@@ -274,6 +281,7 @@ std::vector<std::unique_ptr<Node>> Parser::parse() {
                 advance();
                 std::string targetStruct = advance().value;
                 consume(TokenType::LBRACE, "Expected '{'");
+                size_t firstExtendNode = nodes.size();
                 while (peek().type != TokenType::RBRACE && !isAtEnd()) {
                     auto func = parseFunction();
                     func->cls = targetStruct;
@@ -317,6 +325,9 @@ std::vector<std::unique_ptr<Node>> Parser::parse() {
                     nodes.push_back(std::move(func));
                 }
                 consume(TokenType::RBRACE, "Expected '}'");
+                if (nodes.size() > firstExtendNode)
+                    if (auto* f0 = dynamic_cast<FunctionNode*>(nodes[firstExtendNode].get()))
+                        f0->extendTemplate = makeTemplate(declStart, pos, {});
             } else {
                 nodes.push_back(parseStatement());
                 for (auto& extra : extraNodes)
@@ -2235,17 +2246,23 @@ std::unique_ptr<Node> Parser::parseThrow() {
 
 bool Parser::isGenericArgList() const {
     // Lookahead from current pos (which must be LBRACKET).
-    // Returns true if tokens form: [ IDENTIFIER (COMMA IDENTIFIER)* ]
-    // with no literals or operators inside — unambiguously a type-arg list.
+    // Returns true if tokens form a type-arg list: identifiers, commas,
+    // `?`, and nested `[...]` (`Box[List[Int]]`, `Map[String, Int?]`)
+    // with no literals or operators inside. Only called from
+    // parseTypeString, so `xs[ys[i]]` index expressions never get here.
     int i = pos + 1;
     int n = (int)tokens.size();
     if (i >= n || tokens[pos].type != TokenType::LBRACKET) return false;
-    while (i < n && tokens[i].type != TokenType::RBRACKET) {
-        if (tokens[i].type == TokenType::IDENTIFIER) { i++; }
-        else if (tokens[i].type == TokenType::COMMA)  { i++; }
+    int depth = 1;
+    while (i < n) {
+        TokenType t = tokens[i].type;
+        if (t == TokenType::RBRACKET) { if (--depth == 0) return true; i++; }
+        else if (t == TokenType::LBRACKET) { depth++; i++; }
+        else if (t == TokenType::IDENTIFIER || t == TokenType::COMMA ||
+                 t == TokenType::QUESTION) { i++; }
         else return false; // literal, operator, etc. — not a type-arg list
     }
-    return i < n; // found closing ]
+    return false;
 }
 
 std::string Parser::parseTypeString() {
@@ -2263,6 +2280,7 @@ std::string Parser::parseTypeString() {
         }
         consume(TokenType::RBRACKET, "Expected ']' after type arguments");
         t += "]";
+        if (peek().type == TokenType::QUESTION) { advance(); t += "?"; }  // Box[Int]?
     }
     // Union types: T | U
     while (peek().type == TokenType::PIPE) {
@@ -2330,3 +2348,78 @@ std::map<std::string, std::vector<std::string>> Parser::parseGenericWhere(const 
     return constraints;
 }
 
+
+
+// ==========================================================
+//  GENERIC TEMPLATES (monomorphization)
+// ==========================================================
+
+std::shared_ptr<GenericTemplate> Parser::makeTemplate(int begin, int end,
+                                                      const std::vector<std::string>& typeParams) {
+    if (begin < 0 || end <= begin + 1 || end > (int)tokens.size()) return nullptr;
+    if (!sourceCopy) sourceCopy = std::make_shared<std::string>(source);
+    auto t = std::make_shared<GenericTemplate>();
+    t->tokens.assign(tokens.begin() + begin, tokens.begin() + end);
+    t->source = sourceCopy;
+    t->filePath = filePath;
+    t->nameIndex = 1;   // `struct NAME` / `define NAME`
+    t->typeParams = typeParams;
+    return t;
+}
+
+std::vector<std::unique_ptr<Node>> GenericTemplate::instantiate(
+        const std::string& newName,
+        const std::vector<std::string>& typeArgs) const {
+    // Lex each concrete arg once; the tokens get the position of the `T`
+    // they replace so diagnostics point into the generic's source.
+    std::map<std::string, std::vector<Token>> argToks;
+    for (size_t i = 0; i < typeParams.size() && i < typeArgs.size(); i++) {
+        Lexer lx(typeArgs[i]);
+        std::vector<Token> ts;
+        for (auto& tk : lx.tokenize())
+            if (tk.type != TokenType::EOF_TOKEN)
+                ts.push_back(tk);
+        argToks[typeParams[i]] = std::move(ts);
+    }
+    auto isParam = [&](const Token& tk) {
+        return tk.type == TokenType::IDENTIFIER && argToks.count(tk.value);
+    };
+
+    std::vector<Token> out;
+    out.reserve(tokens.size() + 8);
+    for (size_t i = 0; i < tokens.size(); i++) {
+        const Token& tk = tokens[i];
+        if (i == nameIndex) {
+            Token n = tk; n.value = newName; out.push_back(n);
+            // Drop the `[T, U]` parameter list right after the name.
+            if (i + 1 < tokens.size() && tokens[i + 1].type == TokenType::LBRACKET) {
+                int depth = 0;
+                for (i = i + 1; i < tokens.size(); i++) {
+                    if (tokens[i].type == TokenType::LBRACKET) depth++;
+                    else if (tokens[i].type == TokenType::RBRACKET && --depth == 0) break;
+                }
+            }
+            continue;
+        }
+        // Drop generic-constraint clauses (`where T: Comparable`) — the
+        // parser only accepts them alongside a type-param list. A `where`
+        // not followed by a type param is a contract and is kept.
+        if (tk.type == TokenType::WHERE && i + 1 < tokens.size() && isParam(tokens[i + 1])) {
+            while (i + 1 < tokens.size() && tokens[i + 1].type != TokenType::LBRACE) i++;
+            continue;
+        }
+        if (isParam(tk)) {
+            for (Token a : argToks[tk.value]) { a.line = tk.line; a.col = tk.col; out.push_back(a); }
+            continue;
+        }
+        out.push_back(tk);
+    }
+    Token eof; eof.type = TokenType::EOF_TOKEN;
+    eof.line = tokens.empty() ? 0 : tokens.back().line; eof.col = 0;
+    out.push_back(eof);
+
+    Parser p(out, *source, filePath);
+    auto nodes = p.parse();
+    if (p.hasErrors()) { p.flushErrors(); return {}; }
+    return nodes;
+}

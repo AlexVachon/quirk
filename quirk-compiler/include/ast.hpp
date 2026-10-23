@@ -15,12 +15,22 @@ extern bool g_diagnostics_json;
 #include <string>
 #include <vector>
 
+// Saved token slice of a generic `struct Foo[T]` / `define f[T]`
+// declaration, re-parsed with T substituted to monomorphize it.
+// Defined in parser.hpp (keeps ast.hpp free of lexer types).
+struct GenericTemplate;
+
 class Node {
    public:
     std::string moduleName;
     std::string filePath;
     int line = 0;
     int col  = 0;
+    // True for nodes synthesized by monomorphization (`Box__Int`,
+    // `identity__Int`). Sema mutes warnings / usages inside them and
+    // `--symbols-json` skips them — the user-written generic already
+    // reports those.
+    bool isSpecialization = false;
 
     virtual ~Node() = default;
     virtual void print(int indent) const = 0;
@@ -102,6 +112,11 @@ class FunctionNode : public Node {
     std::vector<std::string> typeParams; // generic type params, e.g. ["T", "U"]
     // where T: Interface1 & Interface2 — maps type param name → required interfaces
     std::map<std::string, std::vector<std::string>> genericConstraints;
+    std::shared_ptr<GenericTemplate> genericTemplate;  // set for top-level generic fns
+    // Set on the first method of an `extend Name { ... }` block: the whole
+    // block's tokens, re-instantiated alongside `Name`'s specializations
+    // when Name is generic (so `extend Box` methods exist on `Box[Int]`).
+    std::shared_ptr<GenericTemplate> extendTemplate;
 
     // Python-style decorators: `@a` or `@a(args)` lines stacked above the
     // `define` line. Stored bottom-up in source order; applied top-down at
@@ -172,6 +187,9 @@ class StructNode : public Node {
     std::vector<std::string> typeParams;   // generic type params, e.g. ["T"]
     std::map<std::string, std::vector<std::string>> genericConstraints; // where T: Interface
     std::vector<StructField> fields;
+    std::shared_ptr<GenericTemplate> genericTemplate;  // set for generic structs
+    std::string genericDisplayName;   // `Box[Int]` for specialization `Box__Int`
+    std::string genericBase;          // `Box` for specialization `Box__Int`
 
     void print(int indent) const override {
         std::string space(indent, ' ');

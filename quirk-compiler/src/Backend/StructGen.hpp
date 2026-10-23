@@ -64,6 +64,10 @@ class StructGen {
     }
 
     void registerTypeId(const std::string& name, int id) { typeIdMap[name] = id; }
+    int typeIdOf(const std::string& name) const {
+        auto it = typeIdMap.find(name);
+        return it == typeIdMap.end() ? -1 : it->second;
+    }
     int  getTypeId(const std::string& name) const {
         auto it = typeIdMap.find(name);
         return it == typeIdMap.end() ? 0 : it->second;

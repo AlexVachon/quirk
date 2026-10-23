@@ -100,6 +100,9 @@ class LLVMCodegen {
     std::unique_ptr<ControlFlowGen> flowGen;
     std::unique_ptr<StructGen> structGen;
     std::unique_ptr<BuiltinGen> builtinGen;
+    // Generic base → its monomorphized specializations (`Box` →
+    // [`Box__Int`, ...]); drives emitGenericGuard.
+    std::map<std::string, std::vector<std::string>> genericSpecs;
     std::unique_ptr<VariableGen> varGen;
     std::unique_ptr<MathGen> mathGen;
     std::unique_ptr<TypeExtensions> typeExtensions;
@@ -248,6 +251,10 @@ class LLVMCodegen {
         for (const auto& node : nodes) {
             if (auto s = dynamic_cast<StructNode*>(node.get())) {
                 if (!StructTypes.count(s->name)) StructTypes[s->name] = StructType::create(Context, s->name);
+                if (!s->genericDisplayName.empty())
+                    builtinGen->displayNames[s->name] = s->genericDisplayName;
+                if (!s->genericBase.empty())
+                    genericSpecs[s->genericBase].push_back(s->name);
             }
         }
         // Built-in Type struct (for self.__class)
@@ -2563,7 +2570,7 @@ class LLVMCodegen {
                         }
                         Value* nameStr = Builder.CreateGlobalStringPtr(sName);
                         Value* checked = Builder.CreateCall(checkFn, {argVal, nameStr}, "arg_check_" + sName);
-                        argVal = Builder.CreateBitCast(checked, expectedType);
+                        argVal = emitGenericGuard(Builder.CreateBitCast(checked, expectedType), sName);
                     }
                 }
             } else {
@@ -3414,6 +3421,50 @@ class LLVMCodegen {
         return callBox("Core_Primitives_Any_box_null", {});
     }
 
+    // A value arriving untyped (List/Map element, Any param) at a slot
+    // annotated with a *plain* generic (`b: Box`) must really be the
+    // uniform `Box` — a specialization (`Box[Int]`) has a different
+    // field layout. Switch on __type_id and throw a TypeError naming the
+    // right annotation instead of reading fields at the wrong offsets.
+    Value* emitGenericGuard(Value* structPtr, const std::string& sName) {
+        auto it = genericSpecs.find(sName);
+        if (it == genericSpecs.end() || !structPtr->getType()->isPointerTy()) return structPtr;
+        std::vector<std::pair<int, std::string>> bad;
+        for (const auto& spec : it->second) {
+            int id = structGen->typeIdOf(spec);
+            if (id > 0) bad.push_back({id, spec});
+        }
+        if (bad.empty() || structGen->typeIdOf(sName) <= 0) return structPtr;
+
+        Function* fn = Builder.GetInsertBlock()->getParent();
+        BasicBlock* checkBB = BasicBlock::Create(Context, "gguard_check", fn);
+        BasicBlock* okBB    = BasicBlock::Create(Context, "gguard_ok", fn);
+        Value* isNull = Builder.CreateIsNull(structPtr, "gguard_null");
+        Builder.CreateCondBr(isNull, okBB, checkBB);
+
+        Builder.SetInsertPoint(checkBB);
+        Value* tidPtr = Builder.CreateBitCast(structPtr, PointerType::getUnqual(Type::getInt32Ty(Context)));
+        Value* tid = Builder.CreateLoad(Type::getInt32Ty(Context), tidPtr, "gguard_tid");
+        SwitchInst* sw = Builder.CreateSwitch(tid, okBB, (unsigned)bad.size());
+        FunctionCallee thrower = TheModule->getOrInsertFunction("quirk_throw_exception",
+            FunctionType::get(Type::getVoidTy(Context),
+                              {Type::getInt8PtrTy(Context), Type::getInt8PtrTy(Context)}, false));
+        for (const auto& [id, spec] : bad) {
+            BasicBlock* failBB = BasicBlock::Create(Context, "gguard_fail", fn);
+            sw->addCase(ConstantInt::get(Type::getInt32Ty(Context), id), failBB);
+            Builder.SetInsertPoint(failBB);
+            auto dn = builtinGen->displayNames.find(spec);
+            std::string shown = dn != builtinGen->displayNames.end() ? dn->second : spec;
+            std::string msg = "expected " + sName + " (untyped generic) but got " + shown +
+                              "; annotate the binding as " + shown;
+            Builder.CreateCall(thrower, {Builder.CreateGlobalStringPtr("TypeError"),
+                                         Builder.CreateGlobalStringPtr(msg)});
+            Builder.CreateBr(okBB);
+        }
+        Builder.SetInsertPoint(okBB);
+        return structPtr;
+    }
+
     // Emit unboxing from Any* to a specific LLVM target type.
     //
     // For Int/Double targets we route through the runtime's
@@ -3497,6 +3548,7 @@ class LLVMCodegen {
                 Value* raw = Builder.CreateCall(f, {asI8});
                 return Builder.CreateBitCast(raw, targetType);
             }
+            return emitGenericGuard(Builder.CreateBitCast(anyPtr, targetType), name);
         }
         return Builder.CreateBitCast(anyPtr, targetType);
     }

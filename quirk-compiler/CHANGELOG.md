@@ -5,6 +5,28 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [6.1.0] — 2026-10-26 — checked Int arithmetic
+
+**Behaviour change: Int overflow throws instead of wrapping.** `Int` is
+32-bit, and `+`, `-` and `*` used to wrap around silently, so an
+overflowing computation produced a wrong answer with no warning (summing
+0..10M gave garbage). They now use LLVM's checked-arithmetic intrinsics
+and throw a `RuntimeError` on overflow:
+
+```
+RuntimeError: integer overflow: 2147483647 + 1 exceeds Int range (-2147483648..2147483647)
+```
+
+Catch it as `RuntimeError` or `Exception`. (A dedicated `OverflowError`
+needs a `typing` release; when it lands as a `RuntimeError` subtype,
+existing catches keep working.) Code that relied on wrap-around (hand-
+rolled hashes, LCGs) needs `% m` before it overflows, or `Double`.
+
+Cost: ~6% on a loop that is nothing but arithmetic, nothing measurable
+on calls / methods. `p14_int_overflow` now locks the new behaviour.
+64-bit Int is a separate, larger change (it needs a new representation
+for ints stored in untyped containers).
+
 ## [6.0.7] — 2026-10-23 — Set rewrite; `for (k, v) in map`
 
 **`Set` gets the same compact-dict design as `Map` (v6.0.6):** a dense

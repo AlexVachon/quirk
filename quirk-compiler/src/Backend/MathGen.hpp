@@ -1,6 +1,8 @@
 #pragma once
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Module.h"
+#include "llvm/IR/Intrinsics.h"
+#include "llvm/IR/MDBuilder.h"
 #include "ast.hpp"
 #include <functional>
 
@@ -12,6 +14,38 @@ class MathGen {
     Module* TheModule = nullptr;
 
    public:
+    // Int (i32) `+` / `-` / `*` with overflow detection: the
+    // llvm.s*.with.overflow intrinsics give the wrapped result plus a
+    // flag; on overflow branch to a cold block that calls the runtime's
+    // quirk_int_overflow (throws RuntimeError). Silent wrap-around used
+    // to produce wrong answers (sum of 0..10M came out negative-ish).
+    Value* emitCheckedInt(const std::string& op, Value* L, Value* R) {
+        Module* mod = Builder.GetInsertBlock()->getModule();
+        Intrinsic::ID id = op == "+" ? Intrinsic::sadd_with_overflow
+                         : op == "-" ? Intrinsic::ssub_with_overflow
+                                     : Intrinsic::smul_with_overflow;
+        Function* intr = Intrinsic::getDeclaration(mod, id, {L->getType()});
+        Value* pair = Builder.CreateCall(intr, {L, R}, "i_chk");
+        Value* result = Builder.CreateExtractValue(pair, 0, op == "+" ? "i_add" : op == "-" ? "i_sub" : "i_mul");
+        Value* overflow = Builder.CreateExtractValue(pair, 1, "i_ovf");
+
+        Function* parent = Builder.GetInsertBlock()->getParent();
+        BasicBlock* ovfBB = BasicBlock::Create(Context, "int_overflow", parent);
+        BasicBlock* okBB  = BasicBlock::Create(Context, "int_ok", parent);
+        MDBuilder md(Context);
+        Builder.CreateCondBr(overflow, ovfBB, okBB, md.createBranchWeights(1, 1 << 20));
+
+        Builder.SetInsertPoint(ovfBB);
+        FunctionCallee fail = mod->getOrInsertFunction("quirk_int_overflow",
+            Type::getVoidTy(Context), Type::getInt8PtrTy(Context),
+            Type::getInt32Ty(Context), Type::getInt32Ty(Context));
+        Builder.CreateCall(fail, {Builder.CreateGlobalStringPtr(op), L, R});
+        Builder.CreateUnreachable();
+
+        Builder.SetInsertPoint(okBB);
+        return result;
+    }
+
     MathGen(LLVMContext& ctx, IRBuilder<>& build)
         : Context(ctx), Builder(build) {}
 
@@ -109,9 +143,12 @@ class MathGen {
                 else
                     R = Builder.CreateIntCast(R, L->getType(), true);
             }
-            if (op == "+")  return Builder.CreateAdd(L, R, "i_add");
-            if (op == "-")  return Builder.CreateSub(L, R, "i_sub");
-            if (op == "*")  return Builder.CreateMul(L, R, "i_mul");
+            if (op == "+" || op == "-" || op == "*") {
+                if (L->getType()->isIntegerTy(32)) return emitCheckedInt(op, L, R);
+                if (op == "+")  return Builder.CreateAdd(L, R, "i_add");
+                if (op == "-")  return Builder.CreateSub(L, R, "i_sub");
+                return Builder.CreateMul(L, R, "i_mul");
+            }
             if (op == "/" || op == "%") {
                 // LLVM's `sdiv` / `srem` against 0 are *undefined
                 // behavior* — at -O2 the optimizer assumes the divisor

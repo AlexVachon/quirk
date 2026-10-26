@@ -132,6 +132,17 @@ String* quirk_string_display(String* s) {
 //     underlying struct.
 //   - raw struct pointer (List*/Map*/Tuple*/...) → returns val
 //     unchanged.
+// Int is 32-bit; `+` / `-` / `*` used to wrap silently on overflow
+// (summing 0..10M gave garbage). Codegen now emits checked arithmetic
+// and calls this on overflow. Thrown as RuntimeError (catchable as
+// RuntimeError / Exception) until typing gains an OverflowError.
+void quirk_int_overflow(const char* op, int32_t a, int32_t b) {
+    char buf[160];
+    snprintf(buf, sizeof(buf), "integer overflow: %d %s %d exceeds Int range (%d..%d)",
+             a, op, b, INT32_MIN, INT32_MAX);
+    quirk_throw_exception("RuntimeError", buf);
+}
+
 void* quirk_opaque_to_struct(void* val) {
     if (!val) return NULL;
     uintptr_t uval = (uintptr_t)val;

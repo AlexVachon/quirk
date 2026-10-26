@@ -118,7 +118,10 @@ a, b := (10, 20)     // Tuple destructuring
 
 ### Int
 
-32-bit signed integer.
+32-bit signed integer (-2147483648 to 2147483647). `+`, `-` and `*`
+are checked: a result outside that range throws a `RuntimeError`
+(`integer overflow: 2147483647 + 1 exceeds Int range`) instead of
+wrapping around. Use `Double` for larger magnitudes.
 
 ```quirk
 n := 42

@@ -1,8 +1,10 @@
-// i32 overflow. Wrap-around is fine; what's not fine is UB-derived
-// nonsense or a crash. Most languages document the behavior either
-// way; what matters is consistency.
+// expect-error: integer overflow: 2147483647 + 1 exceeds Int range
+// i32 overflow. Until v6.1.0 this wrapped silently to INT32_MIN —
+// defined and consistent, but it turned overflow bugs into wrong
+// answers (summing 0..10M gave garbage). Int `+` / `-` / `*` now use
+// checked arithmetic and throw RuntimeError on overflow.
 define main() -> void {
     a := 2147483647     // INT32_MAX
     b := 1
-    print(a + b)        // overflows to INT32_MIN
+    print(a + b)        // RuntimeError: integer overflow
 }

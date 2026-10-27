@@ -151,8 +151,8 @@ STDLIB_TAG_prompt ?= v1.1.0
 # their iterators) to `typing.prelude` — v1.15.0 shipped the prelude
 # with only primitives + interfaces + Callable, which failed the
 # compiler's export-check on the very natural `from typing.prelude
-# use { Map, List }` shape.
-STDLIB_TAG_typing ?= v1.15.1
+# use { Map, List }` shape. v1.15.2 documents Int as 64-bit (v7.0.0).
+STDLIB_TAG_typing ?= v1.15.2
 # html v1.0.0 is the initial release (compiler v3.5.0+). The
 # explicit pin keeps a global STDLIB_TAG bump from accidentally
 # pulling a v2 with potentially breaking changes.

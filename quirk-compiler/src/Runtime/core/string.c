@@ -424,10 +424,10 @@ void Core_String_String___init(String* self, char* raw) {
 }
 
 void Core_String_String___del(String* self) {
-    if (self->buffer) {
-        free(self->buffer);
-        self->buffer = NULL;
-    }
+    // No-op: memory is GC-managed (runtime.c maps free onto nothing), and
+    // string literals are shared static Strings — clearing `buffer` here
+    // would blank every other use of the same literal.
+    (void)self;
 }
 
 // ==========================================

@@ -1,0 +1,29 @@
+// p100 — String literals are shared static Strings (v6.1.1). Each
+// distinct literal is one statically allocated String instead of a
+// GC_malloc + strdup on every evaluation. Safe because Strings are
+// immutable; this probe locks that operations on a literal never
+// change what later evaluations of the same literal see.
+struct Greeting: String {
+    define __init(self, raw: String = "Hello") { super().__init(raw) }
+}
+
+define lit() -> String { return "base" }
+
+define main() -> void {
+    a := lit()
+    b := a.upper() + a.replace("a", "A") + a * 2 + a.substring(0, 2)
+    if lit() != "base"               { print("FAIL: literal changed by methods"); return }
+    if b != "BASEbAsebasebaseba"     { print("FAIL: method results " + b); return }
+    g := Greeting()
+    if lit().length() != 4           { print("FAIL: length"); return }
+    if g.upper() != "HELLO" or Greeting().lower() != "hello" { print("FAIL: subclass default"); return }
+    i := 0
+    n := 0
+    while i < 1000 {
+        s := "k" + i.str()
+        if s.startswith("k") { n = n + 1 }
+        i = i + 1
+    }
+    if n != 1000                     { print("FAIL: loop literal"); return }
+    print("PASS: shared literals")
+}

@@ -3432,6 +3432,42 @@ class LLVMCodegen {
         return callBox("Core_Primitives_Any_box_null", {});
     }
 
+    // String literal → one shared, statically allocated String per
+    // distinct text in the module. Strings are immutable (no runtime
+    // path writes a String's fields after __init), so a literal needn't
+    // be a fresh GC_malloc + __init (which strdup'd the text) every time
+    // it is evaluated — `"k" + i.str()` in a loop allocated three
+    // objects per iteration for the "k" alone.
+    std::map<std::string, GlobalVariable*> stringConstants;
+    Value* emitStringConstant(const std::string& text) {
+        auto it = stringConstants.find(text);
+        if (it != stringConstants.end()) return it->second;
+        StructType* strTy = StructTypes.count("String") ? StructTypes["String"] : nullptr;
+        if (!strTy || strTy->isOpaque() || strTy->getNumElements() != 2) {
+            std::vector<Value*> args = {Builder.CreateGlobalStringPtr(text)};
+            return structGen->allocateAndInit("String", args);
+        }
+        // Length as __init computes it (strlen), so embedded NULs behave
+        // exactly as before.
+        size_t len = std::strlen(text.c_str());
+        Constant* chars = ConstantDataArray::getString(Context, text, true);
+        auto* charsGV = new GlobalVariable(*TheModule, chars->getType(), true,
+                                           GlobalValue::PrivateLinkage, chars, ".strlit.chars");
+        charsGV->setUnnamedAddr(GlobalValue::UnnamedAddr::Global);
+        Constant* zero = ConstantInt::get(Type::getInt32Ty(Context), 0);
+        Constant* bufPtr = ConstantExpr::getInBoundsGetElementPtr(
+            chars->getType(), charsGV, ArrayRef<Constant*>{zero, zero});
+        Constant* init = ConstantStruct::get(strTy, {
+            ConstantExpr::getBitCast(bufPtr, strTy->getElementType(0)),
+            ConstantInt::get(strTy->getElementType(1), len)});
+        // Writable (not `constant`): nothing should write it, but a stray
+        // write must not fault.
+        auto* gv = new GlobalVariable(*TheModule, strTy, false,
+                                      GlobalValue::PrivateLinkage, init, ".strlit");
+        stringConstants[text] = gv;
+        return gv;
+    }
+
     // A value arriving untyped (List/Map element, Any param) at a slot
     // annotated with a *plain* generic (`b: Box`) must really be the
     // uniform `Box` — a specialization (`Box[Int]`) has a different
@@ -3833,17 +3869,13 @@ Value* LLVMCodegen::handleExpression(Node* node) {
         
         if (lit->value.size() >= 2 && lit->value.front() == '"') {
             std::string rawStr = unescapeString(lit->value.substr(1, lit->value.size() - 2));
-            Value* rawPtr = Builder.CreateGlobalStringPtr(rawStr);
-            std::vector<Value*> args = {rawPtr};
-            return structGen->allocateAndInit("String", args);
+            return emitStringConstant(rawStr);
         }
 
         if (lit->value.size() >= 2 && lit->value.front() == '\'') {
             // Single-quoted literals are 1-char Strings (Char type is gone).
             std::string rawStr = unescapeString(lit->value.substr(1, lit->value.size() - 2));
-            Value* rawPtr = Builder.CreateGlobalStringPtr(rawStr);
-            std::vector<Value*> args = {rawPtr};
-            return structGen->allocateAndInit("String", args);
+            return emitStringConstant(rawStr);
         }
 
         if (varGen->exists(lit->value)) return varGen->resolveVariable(lit->value);

@@ -5,6 +5,25 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [6.1.1] — 2026-10-27 — shared string literals
+
+Each string literal used to allocate a fresh `String` (GC_malloc) and
+`strdup` its text every time it was evaluated, so `"k" + i.str()` in a
+loop allocated for the `"k"` alone on every iteration. Each distinct
+literal is now one statically allocated `String` per module, used
+directly. Strings are immutable, so sharing is safe; `String.__del`
+(never called by generated code) is now a no-op so it can't blank a
+shared literal.
+
+| | before | after |
+|---|---|---|
+| loop of literal concatenation + compare (3M) | 0.74 s | 0.26 s |
+| 1.5M × `"k" + i.str()` | 0.26 s | 0.18 s |
+| map benchmark (1.5M put + get) | 0.80 s | 0.69 s |
+
+Output is identical across the test suite, probes and examples. New
+probe: p100.
+
 ## [6.1.0] — 2026-10-26 — checked Int arithmetic
 
 **Behaviour change: Int overflow throws instead of wrapping.** `Int` is

@@ -1,0 +1,64 @@
+// p101 — Untyped-value readers use runtime type headers (v6.1.3, phase 2).
+//
+// Before: the runtime guessed what an untyped value was from its first
+// bytes. A struct whose first field was a small Int read as an Any box;
+// anything else read as a String — so `xs[0] == xs[1]` on two structs,
+// printing a List of structs, and `type()` / `is` on untyped values were
+// wrong or SIGSEGV'd. Generated code now registers each struct's name and
+// `__str` with its header type id.
+//
+// Also locks two Codegen fixes found alongside:
+//   - `x + "s"` with a non-String x (Int, Double, untyped) concatenated in
+//     reverse ("a5" for 5 + "a")
+//   - arithmetic with a struct operand and no matching overload throws
+//     TypeError instead of emitting invalid IR (compiler crash)
+from encoding.json use { dumps }
+
+struct P {
+    a: Int
+    b: Int
+}
+
+struct Named {
+    n: String
+    define __init(self, n: String) -> void { self.n = n }
+    define __str(self) -> String { return "Named(" + self.n + ")" }
+}
+
+define main() -> void {
+    xs := List()
+    xs.append(P(4, 7))
+    xs.append(P(1, 2))
+    if type(xs[0]) != "P"            { print("FAIL: type of struct in list"); return }
+    if xs[0] == xs[1]                { print("FAIL: distinct structs equal"); return }
+    if not (xs[0] == xs[0])          { print("FAIL: struct not equal to itself"); return }
+    if xs.str() != "[<P>, <P>]"      { print("FAIL: list of structs " + xs.str()); return }
+    ns := [Named("a"), Named("b")]
+    if ns.str() != "[Named(a), Named(b)]" { print("FAIL: __str via list " + ns.str()); return }
+
+    q: Any := P(1, 2)
+    if not (q is P)                  { print("FAIL: is P"); return }
+    w: Any := xs
+    if not (w is List) or (w is Map) { print("FAIL: is List / Map"); return }
+
+    s := Set()
+    s.add("x")
+    if dumps({"s": s, "t": (1, "two")}) != "{\"s\":[\"x\"],\"t\":[1,\"two\"]}" {
+        print("FAIL: json set/tuple " + dumps({"s": s, "t": (1, "two")})); return
+    }
+
+    m := {"k": "v"}
+    if 5 + "a" != "5a"               { print("FAIL: Int + String order"); return }
+    if m.get("k") + "!" != "v!"      { print("FAIL: Any + String order"); return }
+
+    caught := false
+    try {
+        out := "x"
+        for (k, v) in m { out = out * k }   // the fuzz-found shape: String * String
+        print(out)
+    } catch (e: TypeError) {
+        caught = true
+    }
+    if not caught                    { print("FAIL: struct arithmetic TypeError"); return }
+    print("PASS: header-based readers")
+}

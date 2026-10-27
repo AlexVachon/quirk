@@ -115,6 +115,78 @@ static void quirk_hdr_note(void* val, const char* where) {
     }
 }
 
+// User struct registry (phase 2 of runtime type tags): generated code
+// registers each struct's header type id with its name and its `__str`
+// (or NULL) at startup, so untyped code can name and print struct values.
+typedef String* (*QuirkStrFn)(void*);
+typedef struct { const char* name; QuirkStrFn str; } QuirkTypeInfo;
+static QuirkTypeInfo* quirk_types = NULL;
+static uint32_t quirk_types_cap = 0;
+
+void quirk_register_type(uint32_t type_id, const char* name, void* str_fn) {
+    if (type_id < QT_STRUCT_BASE) return;
+    uint32_t i = type_id - QT_STRUCT_BASE;
+    if (i >= quirk_types_cap) {
+        uint32_t cap = quirk_types_cap ? quirk_types_cap : 64;
+        while (cap <= i) cap *= 2;
+        quirk_types = (QuirkTypeInfo*)GC_realloc(quirk_types, cap * sizeof(QuirkTypeInfo));
+        memset(quirk_types + quirk_types_cap, 0, (cap - quirk_types_cap) * sizeof(QuirkTypeInfo));
+        quirk_types_cap = cap;
+    }
+    quirk_types[i].name = name;
+    quirk_types[i].str = (QuirkStrFn)str_fn;
+}
+
+static const QuirkTypeInfo* quirk_type_info(uint32_t type_id) {
+    if (type_id < QT_STRUCT_BASE) return NULL;
+    uint32_t i = type_id - QT_STRUCT_BASE;
+    return (i < quirk_types_cap && quirk_types[i].name) ? &quirk_types[i] : NULL;
+}
+
+// Name for a headered value's type id (NULL for QT_NONE).
+static const char* quirk_type_id_name(uint32_t t) {
+    switch (t) {
+        case QT_STRING:   return "String";
+        case QT_LIST:     return "List";
+        case QT_MAP:      return "Map";
+        case QT_SET:      return "Set";
+        case QT_TUPLE:    return "Tuple";
+        case QT_CALLABLE: return "Callable";
+        case QT_QUEUE:    return "Queue";
+        case QT_TYPE:     return "Type";
+        case QT_FILE:     return "File";
+        case QT_EXCEPTION: return "Exception";
+        case QT_ITERATOR: return "Iterator";
+        case QT_NONE:     return NULL;
+        default: {
+            const QuirkTypeInfo* ti = quirk_type_info(t);
+            return ti ? ti->name : "Object";
+        }
+    }
+}
+
+// Stringify a headered, non-Any value by its type id.
+static String* quirk_headered_to_string(void* val, uint32_t t) {
+    switch (t) {
+        case QT_STRING: { String* s = (String*)val; return s->buffer ? s : make_String("null"); }
+        case QT_LIST:   return Core_Collections_List_List___str((List*)val);
+        case QT_MAP:    return Core_Collections_Map_Map___str((Map*)val);
+        case QT_SET:    return Core_Collections_Set_Set___str((Set*)val);
+        case QT_TUPLE:  return Core_Collections_Tuple_Tuple___str((Tuple*)val);
+        case QT_QUEUE:  return Core_Collections_Queue_Queue___str((Queue*)val);
+        default: break;
+    }
+    const QuirkTypeInfo* ti = quirk_type_info(t);
+    if (ti && ti->str) {
+        String* r = ti->str(val);
+        if (r) return r;
+    }
+    const char* name = quirk_type_id_name(t);
+    char buf[160];
+    snprintf(buf, sizeof(buf), "<%s>", name ? name : "Object");
+    return make_String(buf);
+}
+
 String* quirk_opaque_to_string(void* val) {
     quirk_hdr_note(val, "opaque_to_string");
     if (!val) return make_String("null");
@@ -125,12 +197,14 @@ String* quirk_opaque_to_string(void* val) {
         snprintf(buf, sizeof(buf), "%d", (int)uval);
         return make_String(buf);
     }
-    // Case 2: Any* — first 4 bytes are tag in 0..ANY_CALLABLE (10)
-    int32_t possible_tag = *(int32_t*)val;
-    if (possible_tag >= ANY_INT && possible_tag <= ANY_CALLABLE) {
+    // Case 2: Any* box
+    if (quirk_is_any(val)) {
         return Core_Primitives_Any_to_string((Any*)val);
     }
-    // Case 3: String* — use buffer directly
+    // Case 3: headered object — its type id says what it is.
+    uint32_t t = quirk_type_of(val);
+    if (t != QT_NONE) return quirk_headered_to_string(val, t);
+    // Case 4: no header (selfhost values) — legacy guess: a String*.
     String* s = (String*)val;
     return (s->buffer) ? s : make_String("null");
 }
@@ -182,8 +256,7 @@ void* quirk_opaque_to_struct(void* val) {
     if (!val) return NULL;
     uintptr_t uval = (uintptr_t)val;
     if (uval <= 0xFFFFFFFFUL) return NULL;
-    int32_t tag = *(int32_t*)val;
-    if (tag >= ANY_INT && tag <= ANY_CALLABLE) {
+    if (quirk_is_any(val)) {
         return ((Any*)val)->ptr;
     }
     return val;
@@ -203,8 +276,7 @@ int32_t quirk_opaque_to_int(void* val) {
     if (!val) return 0;
     uintptr_t u = (uintptr_t)val;
     if (u <= 0xFFFFFFFFUL) return (int32_t)u;
-    int32_t possible_tag = *(int32_t*)val;
-    if (possible_tag >= ANY_INT && possible_tag <= ANY_CALLABLE) {
+    if (quirk_is_any(val)) {
         Any* a = (Any*)val;
         switch (a->tag) {
             case ANY_INT:
@@ -222,8 +294,7 @@ double quirk_opaque_to_double(void* val) {
     if (!val) return 0.0;
     uintptr_t u = (uintptr_t)val;
     if (u <= 0xFFFFFFFFUL) return (double)(int32_t)u;
-    int32_t possible_tag = *(int32_t*)val;
-    if (possible_tag >= ANY_INT && possible_tag <= ANY_CALLABLE) {
+    if (quirk_is_any(val)) {
         Any* a = (Any*)val;
         switch (a->tag) {
             case ANY_DOUBLE: return a->dval;
@@ -280,8 +351,7 @@ int32_t quirk_opaque_eq(void* a, void* b) {
     if (aTagged && bTagged) return ua == ub;
     if (aTagged != bTagged) return 0;
     // Both heap-pointers. Check Any* tag — if both ANY_*, compare ival.
-    int32_t ta = *(int32_t*)a, tb = *(int32_t*)b;
-    if (ta >= ANY_INT && ta <= ANY_NULL && tb >= ANY_INT && tb <= ANY_NULL) {
+    if (quirk_is_any(a) && quirk_is_any(b)) {
         Any* aa = (Any*)a; Any* ab = (Any*)b;
         if (aa->tag != ab->tag) return 0;
         switch (aa->tag) {
@@ -292,10 +362,18 @@ int32_t quirk_opaque_eq(void* a, void* b) {
             default: return aa->ptr == ab->ptr;
         }
     }
-    // Fall through to String shape — most common non-Any heap eq.
-    // String has the buffer ptr at offset 0 + length at offset 8.
-    // If the layout doesn't match (e.g. user struct), bail to raw
-    // pointer eq (already failed above by a != b).
+    // Headered values: equal contents only for two Strings; any other
+    // pair of distinct objects is unequal (identity was checked above).
+    // Reading a struct as a String here dereferenced its first field.
+    uint32_t ta = quirk_type_of(a), tb = quirk_type_of(b);
+    if (ta != QT_NONE || tb != QT_NONE) {
+        if (ta == QT_STRING && tb == QT_STRING)
+            return Core_String_String___eq((String*)a, (String*)b);
+        if ((ta == QT_STRING && tb == QT_NONE) || (ta == QT_NONE && tb == QT_STRING))
+            return Core_String_String___eq((String*)a, (String*)b);
+        return 0;
+    }
+    // Neither has a header (selfhost values): legacy String-shape eq.
     return Core_String_String___eq((String*)a, (String*)b);
 }
 
@@ -311,8 +389,7 @@ void* quirk_opaque_check_struct_or_null(void* val, const char* type_name) {
         quirk_throw_exception("TypeError", buf);
         return NULL;
     }
-    int32_t possible_tag = *(int32_t*)val;
-    if (possible_tag >= ANY_INT && possible_tag <= ANY_CALLABLE) {
+    if (quirk_is_any(val)) {
         char buf[128];
         snprintf(buf, sizeof(buf),
                  "expected %s but got Any-wrapped value",
@@ -336,8 +413,7 @@ void* quirk_opaque_unwrap_or_null(void* val, int32_t expected_tag,
         quirk_throw_exception("TypeError", buf);
         return NULL;  // unreachable
     }
-    int32_t possible_tag = *(int32_t*)val;
-    if (possible_tag >= ANY_INT && possible_tag <= ANY_CALLABLE) {
+    if (quirk_is_any(val)) {
         Any* a = (Any*)val;
         if (a->tag == expected_tag) return a->ptr;
         char buf[128];
@@ -356,8 +432,7 @@ int32_t quirk_any_as_bool(void* val) {
     if (!val) return 0;
     uintptr_t uval = (uintptr_t)val;
     if (uval <= 0xFFFFFFFFUL) return uval != 0;  // tagged int: 0 = false
-    int32_t possible_tag = *(int32_t*)val;
-    if (possible_tag >= ANY_INT && possible_tag <= ANY_CALLABLE) {
+    if (quirk_is_any(val)) {
         Any* a = (Any*)val;
         switch (a->tag) {
             case ANY_BOOL:   return a->ival != 0;
@@ -383,10 +458,11 @@ String* quirk_opaque_get_type(void* val) {
     if (!val) return make_String("Null");
     uintptr_t uval = (uintptr_t)val;
     if (uval <= 0xFFFFFFFFUL) return make_String("Int");
-    int32_t possible_tag = *(int32_t*)val;
-    if (possible_tag >= ANY_INT && possible_tag <= ANY_CALLABLE)
+    if (quirk_is_any(val))
         return Core_Primitives_Any_get_type((Any*)val);
-    // Assume String* (most common non-Any heap value in opaque slots)
+    const char* name = quirk_type_id_name(quirk_type_of(val));
+    if (name) return make_String(name);
+    // No header (selfhost values): assume String*, the most common case.
     return make_String("String");
 }
 

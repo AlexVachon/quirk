@@ -193,6 +193,31 @@ typedef struct {
     void*   ptr;   // String*/List*/Map*/ptr — offset 16, size 8
 } Any;
 
+// Type id from a value's QuirkHeader, or QT_NONE when it has none (tagged
+// int, null, or an object not allocated by quirk_alloc — e.g. selfhost's
+// raw C strings). Headered objects always sit at p ≡ 8 (mod 16): Boehm
+// blocks are 16-aligned and the header is the first 8 bytes. So any other
+// pointer is rejected without being dereferenced, and for p ≡ 8 the header
+// lies in the same 16-byte granule as p — reading it can't fault.
+static inline uint32_t quirk_type_of(const void* p) {
+    uintptr_t u = (uintptr_t)p;
+    if (u <= 0xFFFFFFFFUL || (u & 15) != 8) return QT_NONE;
+    const QuirkHeader* h = quirk_header_of(p);
+    return h->magic == QUIRK_HDR_MAGIC ? h->type_id : QT_NONE;
+}
+
+// Is this untyped value an Any* box? Decided by the header when there is
+// one. Only header-less values fall back to the old guess (first 4 bytes
+// in the AnyTag range), which misfires on any struct whose first field is
+// a small int.
+static inline int quirk_is_any(const void* p) {
+    if (!p || (uintptr_t)p <= 0xFFFFFFFFUL) return 0;
+    uint32_t t = quirk_type_of(p);
+    if (t != QT_NONE) return t == QT_ANY;
+    int32_t tag = *(const int32_t*)p;
+    return tag >= ANY_INT && tag <= ANY_CALLABLE;
+}
+
 
 // ===================================================
 //  UTILITY: Safe C-string extraction from String*

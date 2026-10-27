@@ -335,14 +335,51 @@ static void Json__serialize_any(void* val, AnyTag hint, char** buf, int* cap, in
     // 1. Any* — check BEFORE reading inner_ptr to prevent crash when tag is a small int
     //    (e.g. Any*{tag=6} means inner_ptr=6, dereferencing it → SIGSEGV)
     {
-        int32_t possible_tag = *((int32_t*)val);
-        if (possible_tag >= ANY_INT && possible_tag <= ANY_NULL) {
+        if (quirk_is_any(val)) {
             Any* a = (Any*)val;
             Json__serialize_any(val, (AnyTag)a->tag, buf, cap, len, indent, depth);
             return;
         }
     }
 
+    // Headered value (anything quirk_alloc'd): dispatch on its type id
+    // instead of guessing from field contents.
+    {
+        uint32_t ht = quirk_type_of(val);
+        if (ht == QT_STRING) {
+            String* hs = (String*)val;
+            if (hs->buffer) Json__buf_append_escaped(buf, cap, len, hs->buffer);
+            else Json__buf_append(buf, cap, len, "null");
+            return;
+        }
+        if (ht == QT_MAP)  { Json__serialize_map((Map*)val, buf, cap, len, indent, depth); return; }
+        if (ht == QT_LIST) { Json__serialize_list((List*)val, buf, cap, len, indent, depth); return; }
+        if (ht == QT_SET || ht == QT_TUPLE) {
+            // JSON arrays. Set: its element values in insertion order.
+            extern List* Core_Collections_Set_Set_to_list(Set*);
+            List* items = (ht == QT_SET) ? Core_Collections_Set_Set_to_list((Set*)val) : NULL;
+            if (ht == QT_TUPLE) {
+                Tuple* tp = (Tuple*)val;
+                Json__buf_append_char(buf, cap, len, '[');
+                for (int i = 0; i < tp->size; i++) {
+                    if (i) Json__buf_append_char(buf, cap, len, ',');
+                    Json__serialize_any(tp->data[i], ANY_PTR, buf, cap, len, indent, depth + 1);
+                }
+                Json__buf_append_char(buf, cap, len, ']');
+            } else {
+                Json__serialize_list(items, buf, cap, len, indent, depth);
+            }
+            return;
+        }
+        if (ht != QT_NONE && ht != QT_ANY) {
+            // Other objects (non-ISerializable structs, callables, ...)
+            // have no JSON form.
+            Json__buf_append(buf, cap, len, "null");
+            return;
+        }
+    }
+
+    // No header (values from selfhost builds): legacy shape guessing.
     // All remaining types are at least 16 bytes, so reading inner_ptr and
     // offset-8/12 fields is safe. Guard against null/small invalid pointers.
     void* inner_ptr = *((void**)val);

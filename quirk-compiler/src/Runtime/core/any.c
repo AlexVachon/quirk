@@ -120,7 +120,13 @@ String* Core_Primitives_Any_get_type(Any* a) {
         case ANY_STRING: return make_String("String");
         case ANY_LIST:   return make_String("List");
         case ANY_MAP:    return make_String("Map");
-        case ANY_PTR:    return make_String("Ptr");
+        case ANY_PTR: {
+            // The boxed object's header names its real type (a user struct
+            // registered by generated code, a List, ...); "Ptr" otherwise.
+            extern String* quirk_opaque_get_type(void* val);
+            if (a->ptr && quirk_type_of(a->ptr) != QT_NONE) return quirk_opaque_get_type(a->ptr);
+            return make_String("Ptr");
+        }
         case ANY_NULL:   return make_String("Null");
         case ANY_TUPLE:    return make_String("Tuple");
         case ANY_CALLABLE: return make_String("Callable");
@@ -210,9 +216,17 @@ int Core_Primitives_Quirk_isinstance(void* val, String* type_str) {
 
     if (!val) return strcmp(t, "Null") == 0;
 
+    // Headered value (anything quirk_alloc'd): its header names the type.
+    {
+        uint32_t ht = quirk_type_of(val);
+        if (ht != QT_NONE && ht != QT_ANY) {
+            extern String* quirk_opaque_get_type(void* val);
+            return Core_String_String___eq(quirk_opaque_get_type(val), type_str);
+        }
+    }
+
     // Any* check (tag 0-10, inclusive of ANY_CALLABLE)
-    int32_t first_i32 = *((int32_t*)val);
-    if (first_i32 >= 0 && first_i32 <= 10) {
+    if (quirk_is_any(val)) {
         Any* a = (Any*)val;
         String* actual = Core_Primitives_Any_get_type(a);
         return Core_String_String___eq(actual, type_str);

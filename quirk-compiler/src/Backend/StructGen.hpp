@@ -25,6 +25,9 @@ class StructGen {
     std::map<std::string, std::string> structInitMap;
     std::map<std::string, std::vector<std::string>>* structHierarchy = nullptr;
     std::map<std::string, int> typeIdMap;
+   public:
+    const std::map<std::string, int>& typeIds() const { return typeIdMap; }
+   private:
 
     // Virtual-dispatch bookkeeping (v2.3.3 — merged from Codegen.cpp).
     // `vtableEligible`: structs that get an `__type_id` (i32) prepended
@@ -103,6 +106,19 @@ class StructGen {
     }
 
     Value* generateStrCall(Value* objPtr, const std::string& structName) {
+        Function* strFunc = findStrFunction(structName);
+        if (!strFunc) return nullptr;
+
+        Type* expectedSelfType = strFunc->getFunctionType()->getParamType(0);
+        Value* castedSelf = objPtr;
+        if (castedSelf->getType() != expectedSelfType)
+            castedSelf = Builder.CreateBitCast(castedSelf, expectedSelfType);
+
+        return Builder.CreateCall(strFunc, {castedSelf}, "str_res");
+    }
+
+    // The `__str` a struct (or its nearest ancestor) defines, or nullptr.
+    Function* findStrFunction(const std::string& structName) {
         std::string funcName = structName + "___str";
         Function* strFunc = TheModule->getFunction(funcName);
         if (!strFunc) {
@@ -142,15 +158,7 @@ class StructGen {
             };
             strFunc = searchHierarchy(structName);
         }
-
-        if (!strFunc) return nullptr;
-
-        Type* expectedSelfType = strFunc->getFunctionType()->getParamType(0);
-        Value* castedSelf = objPtr;
-        if (castedSelf->getType() != expectedSelfType)
-            castedSelf = Builder.CreateBitCast(castedSelf, expectedSelfType);
-
-        return Builder.CreateCall(strFunc, {castedSelf}, "str_res");
+        return strFunc;
     }
 
     // Runtime type id written into the object header (see QuirkHeader in

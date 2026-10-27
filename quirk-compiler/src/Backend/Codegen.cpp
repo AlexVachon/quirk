@@ -624,6 +624,27 @@ class LLVMCodegen {
             
         Builder.CreateCall(runtimeInit, {argc, argv});
 
+        // Register each user struct's header type id with its name and
+        // `__str`, so untyped runtime code (printing a List of structs,
+        // `type(x)` on an Any, ==) can identify and print struct values.
+        {
+            Type* i8p = Type::getInt8PtrTy(Context);
+            FunctionCallee regFn = TheModule->getOrInsertFunction("quirk_register_type",
+                FunctionType::get(Type::getVoidTy(Context), {Type::getInt32Ty(Context), i8p, i8p}, false));
+            for (const auto& [sname, sid] : structGen->typeIds()) {
+                if (!StructTypes.count(sname) || StructTypes[sname]->isOpaque()) continue;
+                Value* strFn = ConstantPointerNull::get(cast<PointerType>(i8p));
+                if (Function* f = structGen->findStrFunction(sname))
+                    if (f->arg_size() == 1 && f->getReturnType()->isPointerTy())
+                        strFn = Builder.CreateBitCast(f, i8p);
+                std::string shown = builtinGen->displayNames.count(sname)
+                    ? builtinGen->displayNames[sname] : sname;
+                Builder.CreateCall(regFn, {
+                    ConstantInt::get(Type::getInt32Ty(Context), structGen->objectTypeId(sname)),
+                    Builder.CreateGlobalStringPtr(shown), strFn});
+            }
+        }
+
         // --- Push 'main' to the shadow stack ---
         // Locate the user's entry-file path so the frame carries a real path
         // (not the literal "main"). Without this the VSCode debugger tries
@@ -3469,7 +3490,9 @@ class LLVMCodegen {
         auto* gv = new GlobalVariable(*TheModule, boxTy, false,
                                       GlobalValue::PrivateLinkage, ConstantStruct::get(boxTy, {hdr, init}),
                                       ".strlit");
-        gv->setAlignment(Align(8));
+        // 16: keeps the String part at an address ≡ 8 (mod 16), like
+        // quirk_alloc'd objects — quirk_type_of relies on that.
+        gv->setAlignment(Align(16));
         Constant* strPtr = ConstantExpr::getInBoundsGetElementPtr(boxTy, gv,
             ArrayRef<Constant*>{ConstantInt::get(i32, 0), ConstantInt::get(i32, 1)});
         stringConstants[text] = strPtr;
@@ -4258,7 +4281,30 @@ Value* LLVMCodegen::handleExpression(Node* node) {
         // with the String as receiver. Without the swap, L is i32
         // (not a struct pointer), the dispatch skips entirely, and
         // mathGen emits raw `mul %String*, i32` — IR verifier abort.
-        if ((binOp->op == "*" || binOp->op == "+" ||
+        //
+        // Except `x + "str"`: concatenation isn't commutative, and the swap
+        // produced `"str" + x` (`5 + "a"` gave "a5", `m.get(k) + "!"` gave
+        // "!v"). Stringify the left operand instead, so String.__add runs
+        // with the operands in source order.
+        bool rIsString = R && R->getType()->isPointerTy() &&
+            R->getType()->getPointerElementType()->isStructTy() &&
+            StructTypes.count("String") &&
+            R->getType()->getPointerElementType() == StructTypes["String"];
+        if (binOp->op == "+" && rIsString &&
+            !(L->getType()->isPointerTy() &&
+              L->getType()->getPointerElementType()->isStructTy())) {
+            if (L->getType() == Type::getInt8PtrTy(Context)) {
+                // Untyped value: declare with the String* return the rest
+                // of Codegen uses (getOrInsertFunction reconciles).
+                FunctionCallee toStr = TheModule->getOrInsertFunction("quirk_opaque_to_string",
+                    FunctionType::get(R->getType(), {Type::getInt8PtrTy(Context)}, false));
+                L = Builder.CreateCall(toStr, {L}, "lhs_str");
+            } else if (Value* ls = builtinGen->valueToString(L)) {
+                if (ls->getType() != R->getType() && ls->getType()->isPointerTy())
+                    ls = Builder.CreateBitCast(ls, R->getType());
+                L = ls;
+            }
+        } else if ((binOp->op == "*" || binOp->op == "+" ||
              binOp->op == "==" || binOp->op == "!=") &&
             R && R->getType()->isPointerTy() &&
             R->getType()->getPointerElementType()->isStructTy() &&
@@ -4615,6 +4661,43 @@ Value* LLVMCodegen::handleExpression(Node* node) {
             return Builder.CreateSelect(isNull, rhs, L, "coalesce");
         }
 
+        // Arithmetic that reached the numeric path with a pointer operand
+        // (no overload matched — e.g. `s * item` where Sema saw `item` as
+        // Any but its LLVM value is a String*) has no valid lowering;
+        // `mul %String*, %String*` crashed the compiler with malformed IR.
+        // Throw a TypeError at runtime instead.
+        // (Opaque i8* operands are fine — MathGen unboxes them; only a
+        // struct pointer has no numeric lowering.)
+        auto isStructPtr = [](Value* v) {
+            return v->getType()->isPointerTy() && v->getType()->getPointerElementType()->isStructTy();
+        };
+        if ((binOp->op == "+" || binOp->op == "-" || binOp->op == "*" ||
+             binOp->op == "/" || binOp->op == "%") && L && R &&
+            (isStructPtr(L) || isStructPtr(R))) {
+            auto tyName = [&](Type* t) -> std::string {
+                if (t->isIntegerTy(1)) return "Bool";
+                if (t->isIntegerTy()) return "Int";
+                if (t->isDoubleTy()) return "Double";
+                if (t->isPointerTy() && t->getPointerElementType()->isStructTy()) {
+                    std::string n = cast<StructType>(t->getPointerElementType())->getName().str();
+                    if (n.rfind("struct.", 0) == 0) n = n.substr(7);
+                    auto dn = builtinGen->displayNames.find(n);
+                    return dn != builtinGen->displayNames.end() ? dn->second : n;
+                }
+                return "Any";
+            };
+            std::string msg = "unsupported operand types for '" + binOp->op + "': '" +
+                              tyName(L->getType()) + "' and '" + tyName(R->getType()) + "'";
+            FunctionCallee thrower = TheModule->getOrInsertFunction("quirk_throw_exception",
+                FunctionType::get(Type::getVoidTy(Context),
+                                  {Type::getInt8PtrTy(Context), Type::getInt8PtrTy(Context)}, false));
+            Builder.CreateCall(thrower, {Builder.CreateGlobalStringPtr("TypeError"),
+                                         Builder.CreateGlobalStringPtr(msg)});
+            Builder.CreateUnreachable();
+            Function* fn = Builder.GetInsertBlock()->getParent();
+            Builder.SetInsertPoint(BasicBlock::Create(Context, "after_type_error", fn));
+            return Constant::getNullValue(L->getType());
+        }
         return mathGen->generateBinaryOp(binOp->op, L, R);
     }
 

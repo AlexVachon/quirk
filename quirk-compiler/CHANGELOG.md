@@ -5,6 +5,43 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [6.1.3] — 2026-10-27 — runtime type headers (phase 2): read, don't guess
+
+The untyped-value readers now decide what a value is from its type
+header (v6.1.2) instead of its first bytes. Values without a header —
+only those from selfhost-compiled code until phase 4 — keep the old
+heuristics, so nothing that worked stops working.
+
+- **`quirk_type_of` / `quirk_is_any`** replace the "first 4 bytes in
+  0..10 means Any" test at all 12 sites. It misfired on any struct whose
+  first field is a small Int. Reading the header can't fault: headered
+  objects always sit at an address ≡ 8 (mod 16), so other pointers are
+  rejected without being dereferenced.
+- **Struct registry.** Generated code registers each struct's type id with
+  its name and `__str`. Untyped paths can now name and print structs:
+  `print(list_of_structs)` uses each element's `__str` (`<P>` without
+  one), `type(xs[0])` gives `P`, and a boxed struct's `type()` gives its
+  name instead of `Ptr`.
+- **Fixed: `==` on two structs from a List/Map SIGSEGV'd** (both were read
+  as Strings). Distinct objects now compare unequal; Strings by content.
+- **`x is T`** on untyped values uses the header (was offset guessing).
+- **JSON** dispatches on the header: Sets and Tuples serialize as arrays,
+  other non-serializable objects as `null`. The program in p101
+  SIGSEGV'd on 5.3.9.
+
+Two Codegen fixes found along the way:
+
+- **Fixed: `x + "str"` concatenated in reverse** when `x` wasn't
+  statically a String — `5 + "a"` gave `"a5"`, `m.get(k) + "!"` gave
+  `"!v"`, `xs[0] + "q"` gave `"qp"`. An operand swap meant for `3 * "ab"`
+  also fired for `+`. The left operand is now stringified in place.
+- **Fixed: arithmetic with a struct operand and no matching overload**
+  (e.g. `out * k` where Sema saw `k` as Any but it was a String) crashed
+  the compiler with malformed IR; it now throws `TypeError: unsupported
+  operand types for '*': 'String' and 'String'`.
+
+New probe: p101.
+
 ## [6.1.2] — 2026-10-27 — runtime type headers (phase 1)
 
 First phase of replacing the runtime's shape guessing (reading an

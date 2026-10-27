@@ -43,8 +43,7 @@ static void buffer_append(char** buf, int* cap, int* len, const char* str) {
 static inline int is_valid_any_ptr(void* item) {
     if (!item) return 0;
     if ((uintptr_t)item <= 0xFFFFFFFFUL) return 0;  // tagged integer
-    int32_t tag = *(int32_t*)item;
-    return tag >= ANY_INT && tag <= ANY_NULL;
+    return quirk_is_any(item);
 }
 
 static void append_any(char** buf, int* cap, int* len, void* item) {
@@ -406,8 +405,7 @@ void Core_String_String___init(String* self, char* raw) {
     }
     // If raw is actually an Any* (first 4 bytes are a valid AnyTag), extract
     // its string representation instead of treating it as a raw C string.
-    int32_t possible_tag = *(int32_t*)raw;
-    if (possible_tag >= ANY_INT && possible_tag <= ANY_NULL) {
+    if (quirk_is_any(raw)) {
         Any* a = (Any*)raw;
         String* extracted = Core_Primitives_Any_to_string(a);
         if (extracted && extracted->buffer) {

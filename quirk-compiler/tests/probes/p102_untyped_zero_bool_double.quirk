@@ -1,0 +1,27 @@
+// p102 — Int 0, Bool false and Double values in untyped slots (v6.1.4,
+// phase 3 of runtime type tags).
+//
+// An Int stored untyped is inlined into the pointer — and 0 inlines to
+// the null pointer. Map / list literals and several coercions did that,
+// so a Map value 0 read back as null (`m.get("a") ?? 99` gave 99) and
+// JSON wrote it as null. Int 0 now goes to the runtime's shared boxed
+// zero. Map literals also inlined Bool false as null, and a Double value
+// (`{"x": 2.5}`) crashed the compiler with an invalid bitcast; both are
+// now Any-boxed like list elements.
+from encoding.json use { dumps }
+
+define main() -> void {
+    m := {"a": 0, "b": 1, "f": false, "x": 2.5}
+    if m.get("a") == null            { print("FAIL: Map value 0 read as null"); return }
+    x: Int? = m.get("a")
+    if (x ?? 99) != 0                { print("FAIL: ?? on Map value 0"); return }
+    if m.get("f") == null            { print("FAIL: Map value false read as null"); return }
+    if m.str() != "{\"a\": 0, \"b\": 1, \"f\": false, \"x\": 2.5}" { print("FAIL: map str " + m.str()); return }
+    if dumps(m) != "{\"a\":0,\"b\":1,\"f\":false,\"x\":2.5}" { print("FAIL: json " + dumps(m)); return }
+    xs := [3, 0, 2]
+    if not (0 in xs)                 { print("FAIL: 0 in list"); return }
+    if xs.sum() != 5                 { print("FAIL: sum with zero"); return }
+    sq := {k: v * 2 for k, v in {"p": 0, "q": 4}}
+    if sq.str() != "{\"p\": 0, \"q\": 8}" { print("FAIL: comprehension " + sq.str()); return }
+    print("PASS: untyped zero / false / double")
+}

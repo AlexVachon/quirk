@@ -5,6 +5,37 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [6.1.4] — 2026-10-27 — runtime type tags (phase 3): Int 0, false, Double in untyped slots
+
+An Int stored in an untyped slot (List / Map element, Any) is inlined into
+the pointer — and Int 0 inlines to the null pointer. `boxIntToOpaque`
+already diverted 0 to a boxed Int for some boundaries, but map and list
+literals, map comprehensions and several coercions bypassed it.
+
+- **Fixed: a Map value `0` read back as `null`.** `m.get("a")` printed
+  `null`, compared `== null`, and `m.get("a") ?? 99` gave 99; JSON wrote
+  it as `null`. Every Int-to-untyped encoder now goes through
+  `encodeUntypedInt`, and `Any_box_int(0)` returns one shared, static,
+  headered zero box (Any boxes are never mutated after creation), so
+  boxing 0 allocates nothing.
+- **Fixed: `0 in xs`** was false for a list containing 0.
+- **Fixed: Map literals stored Bool `false` as `null`, and a Double value
+  (`{"x": 2.5}`) crashed the compiler** with an invalid bitcast (5.3.9
+  too). Map literal and comprehension values are boxed like list
+  elements (`toUntypedValue`).
+- `Map.__str` prints boxed numbers / Bools bare (`{"a": 0}`, not
+  `{"a": "0"}`).
+
+The phase-3 plan changed (user decision): small Ints keep today's inline
+encoding instead of moving to low-bit tagging, which keeps selfhost
+interop intact. Two pieces are deferred: decoding odd pointer values
+above 4 GiB as wide ints (raw `char*` values can be odd today, so it
+lands together with 64-bit Int), and linking selfhost binaries as PIE —
+selfhost truncates pointers to i32 in places and only works because its
+non-PIE static data sits below 4 GiB, so that moves to phase 4.
+
+No measurable cost. New probe: p102.
+
 ## [6.1.3] — 2026-10-27 — runtime type headers (phase 2): read, don't guess
 
 The untyped-value readers now decide what a value is from its type

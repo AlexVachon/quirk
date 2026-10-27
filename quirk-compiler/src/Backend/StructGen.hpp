@@ -161,6 +161,37 @@ class StructGen {
         return strFunc;
     }
 
+    // An Int stored in an untyped (i8*) slot. Int 0 must not become the
+    // null pointer (a Map value 0 read back as null, `?? d` took the
+    // default): boxIntToOpaque maps it to the runtime's shared boxed
+    // zero. Other widths (Bool / Char) keep the inline encoding.
+    Value* encodeUntypedInt(Value* v, Type* target) {
+        if (v->getType()->isIntegerTy(32))
+            return quirk::boxIntToOpaque(Context, TheModule, Builder, v, target);
+        return Builder.CreateIntToPtr(v, target);
+    }
+
+    // A value stored in an untyped (i8*) container slot: Bool and Double
+    // go in an Any box (an inline Bool false would be the null pointer;
+    // a Double can't be bitcast to a pointer at all — `{"x": 2.5}` crashed
+    // the compiler), Int via encodeUntypedInt, pointers bitcast.
+    Value* toUntypedValue(Value* val) {
+        Type* i8p = Type::getInt8PtrTy(Context);
+        Type* i32 = Type::getInt32Ty(Context);
+        if (val->getType()->isIntegerTy(1)) {
+            FunctionCallee boxBool = TheModule->getOrInsertFunction("Core_Primitives_Any_box_bool", i8p, i32);
+            return Builder.CreateCall(boxBool, {Builder.CreateZExt(val, i32)});
+        }
+        if (val->getType()->isDoubleTy()) {
+            FunctionCallee boxDbl = TheModule->getOrInsertFunction("Core_Primitives_Any_box_double",
+                i8p, Type::getDoubleTy(Context));
+            return Builder.CreateCall(boxDbl, {val});
+        }
+        if (val->getType()->isIntegerTy()) return encodeUntypedInt(val, i8p);
+        if (val->getType() != i8p && val->getType()->isPointerTy()) return Builder.CreateBitCast(val, i8p);
+        return val;
+    }
+
     // Runtime type id written into the object header (see QuirkHeader in
     // Runtime/types.h). Must match the runtime's QuirkTypeId values.
     enum : uint32_t {
@@ -518,7 +549,7 @@ class StructGen {
         for (auto& elem : node->elements) {
             Value* v = exprHandler(elem.get());
             if (!v) continue;
-            if (v->getType()->isIntegerTy()) v = Builder.CreateIntToPtr(v, i8PtrTy);
+            if (v->getType()->isIntegerTy()) v = encodeUntypedInt(v, i8PtrTy);
             else if (v->getType()->isPointerTy() && v->getType() != i8PtrTy) v = Builder.CreateBitCast(v, i8PtrTy);
             Builder.CreateCall(addFunc, {setObj, v});
         }
@@ -543,21 +574,7 @@ class StructGen {
                 key = allocateAndInit("String", args);
             }
 
-            Type* voidPtr = Type::getInt8PtrTy(Context);
-            if (val->getType()->isIntegerTy()) val = Builder.CreateIntToPtr(val, voidPtr);
-            else if (val->getType()->isPointerTy() && val->getType() != voidPtr) val = Builder.CreateBitCast(val, voidPtr);
-            else if (val->getType()->isDoubleTy()) {
-                Function* f2s = TheModule->getFunction("_float_to_str");
-                if (f2s) {
-                    Value* rawStr = Builder.CreateCall(f2s, {val});
-                    std::vector<Value*> sArgs = {rawStr};
-                    Value* strObj = allocateAndInit("String", sArgs);
-                    val = Builder.CreateBitCast(strObj, voidPtr);
-                } else {
-                    val = Builder.CreateBitCast(val, voidPtr);
-                }
-            }
-            Builder.CreateCall(putFunc, {mapObj, key, val});
+            Builder.CreateCall(putFunc, {mapObj, key, toUntypedValue(val)});
         }
         return mapObj;
     }

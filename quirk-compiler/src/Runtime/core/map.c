@@ -277,7 +277,13 @@ String* Core_Collections_Map_Map___str(Map* self) {
 
         String* vs = quirk_opaque_to_string(entry->value);
         const char* vstr = (vs && vs->buffer) ? vs->buffer : "null";
+        // Numbers print bare: inline Ints, and boxed Int / Double / Bool
+        // (Int 0 is always boxed — see Core_Primitives_Any_box_int).
         int is_int_val = entry->value && (uintptr_t)entry->value <= 0xFFFFFFFFUL;
+        if (!is_int_val && quirk_is_any(entry->value)) {
+            int32_t tg = ((Any*)entry->value)->tag;
+            is_int_val = (tg == ANY_INT || tg == ANY_DOUBLE || tg == ANY_BOOL);
+        }
         int vquote = !is_int_val;
 
         int needed = (first ? 0 : 2) + 1 + strlen(k) + 3 + (vquote ? 2 : 0) + strlen(vstr) + 1;

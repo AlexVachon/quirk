@@ -13,7 +13,16 @@ String* Core_Callable_Callable___str(Callable* self);
 //  BOX — wrap a primitive/struct into Any*
 // ===================================================
 
+// The boxed Int 0. An untyped Int can't be stored inline as 0 (that's the
+// null pointer — a Map value 0 read back as null), so 0 is always boxed;
+// Any boxes are never mutated after creation, so every boxed zero can be
+// this one static, headered object instead of a fresh allocation.
+static struct { QuirkHeader h; Any a; } __attribute__((aligned(16))) quirk_zero_box = {
+    { QUIRK_HDR_MAGIC, QT_ANY }, { ANY_INT, 0, 0.0, NULL }
+};
+
 Any* Core_Primitives_Any_box_int(int32_t v) {
+    if (v == 0) return &quirk_zero_box.a;
     Any* a = (Any*)quirk_alloc(QT_ANY, sizeof(Any));
     a->tag = ANY_INT; a->ival = v; a->dval = 0.0; a->ptr = NULL;
     return a;

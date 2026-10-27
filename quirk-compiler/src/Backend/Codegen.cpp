@@ -3082,7 +3082,7 @@ class LLVMCodegen {
                 // General numeric/pointer coercions
                 else if (val->getType() != targetType) {
                     if (val->getType()->isIntegerTy() && targetType->isPointerTy())
-                        val = Builder.CreateIntToPtr(val, targetType);
+                        val = encodeUntypedInt(val, targetType);
                     else if (val->getType()->isPointerTy() && targetType->isPointerTy())
                         val = Builder.CreateBitCast(val, targetType);
                     else if (val->getType()->isIntegerTy() && targetType->isDoubleTy())
@@ -3214,7 +3214,7 @@ class LLVMCodegen {
                     }
                     else if (val->getType()->isIntegerTy() && fieldType->isIntegerTy()) val = Builder.CreateIntCast(val, fieldType, true);
                     else if (val->getType()->isPointerTy() && fieldType->isPointerTy()) val = Builder.CreateBitCast(val, fieldType);
-                    else if (val->getType()->isIntegerTy() && fieldType->isPointerTy()) val = Builder.CreateIntToPtr(val, fieldType);
+                    else if (val->getType()->isIntegerTy() && fieldType->isPointerTy()) val = encodeUntypedInt(val, fieldType);
                     else if (val->getType()->isIntegerTy() && fieldType->isDoubleTy()) val = Builder.CreateSIToFP(val, fieldType);
                     // Double → Int field. Sema allows the assignment
                     // when the param is declared Double and the field
@@ -3293,7 +3293,7 @@ class LLVMCodegen {
                         if (func->arg_size() >= 3) {
                             Type* valType = func->getFunctionType()->getParamType(2);
                             if (val->getType() != valType) {
-                                if (val->getType()->isIntegerTy() && valType->isPointerTy()) val = Builder.CreateIntToPtr(val, valType);
+                                if (val->getType()->isIntegerTy() && valType->isPointerTy()) val = encodeUntypedInt(val, valType);
                                 else if (val->getType()->isPointerTy() && valType->isPointerTy()) val = Builder.CreateBitCast(val, valType);
                             }
                         }
@@ -3309,7 +3309,7 @@ class LLVMCodegen {
                     return;
                 }
                 if (val->getType()->isIntegerTy()) {
-                    Value* boxedVal = Builder.CreateIntToPtr(val, Type::getInt8PtrTy(Context));
+                    Value* boxedVal = encodeUntypedInt(val, Type::getInt8PtrTy(Context));
                     ptr = Builder.CreateBitCast(ptr, PointerType::getUnqual(Type::getInt8PtrTy(Context)));
                     Value* elementPtr = Builder.CreateGEP(Type::getInt8PtrTy(Context), ptr, index);
                     Builder.CreateStore(boxedVal, elementPtr);
@@ -3448,6 +3448,16 @@ class LLVMCodegen {
             }
         }
         return callBox("Core_Primitives_Any_box_null", {});
+    }
+
+    // An Int stored in an untyped (i8*) slot. Int 0 must not become the
+    // null pointer (a Map value 0 read back as null, `?? d` took the
+    // default): boxIntToOpaque maps it to the runtime's shared boxed
+    // zero. Other widths (Bool / Char) keep the inline encoding.
+    Value* encodeUntypedInt(Value* v, Type* target) {
+        if (v->getType()->isIntegerTy(32))
+            return quirk::boxIntToOpaque(Context, TheModule.get(), Builder, v, target);
+        return Builder.CreateIntToPtr(v, target);
     }
 
     // String literal → one shared, statically allocated String per
@@ -3728,7 +3738,7 @@ class LLVMCodegen {
         if (elem) {
             Type* voidPtr = Type::getInt8PtrTy(Context);
             Value* boxed = elem;
-            if (elem->getType()->isIntegerTy()) boxed = Builder.CreateIntToPtr(elem, voidPtr);
+            if (elem->getType()->isIntegerTy()) boxed = encodeUntypedInt(elem, voidPtr);
             else if (elem->getType() != voidPtr) boxed = Builder.CreateBitCast(elem, voidPtr);
             Builder.CreateCall(appendFunc, {resultList, boxed});
         }
@@ -3829,10 +3839,7 @@ class LLVMCodegen {
                 }
                 keyVal = Builder.CreateCall(opaqueToStr, {keyVal}, "mcomp_key_str");
             }
-            Type* voidPtr = Type::getInt8PtrTy(Context);
-            if (valVal->getType()->isIntegerTy()) valVal = Builder.CreateIntToPtr(valVal, voidPtr);
-            else if (valVal->getType() != voidPtr) valVal = Builder.CreateBitCast(valVal, voidPtr);
-            Builder.CreateCall(putFunc, {resultMap, keyVal, valVal});
+            Builder.CreateCall(putFunc, {resultMap, keyVal, structGen->toUntypedValue(valVal)});
         }
         Builder.CreateBr(condBB);
         Builder.SetInsertPoint(afterBB);
@@ -4002,7 +4009,7 @@ Value* LLVMCodegen::handleExpression(Node* node) {
                 ? elem
                 : (elem->getType()->isPointerTy()
                     ? Builder.CreateBitCast(elem, i8PtrTy)
-                    : Builder.CreateIntToPtr(elem, i8PtrTy));
+                    : encodeUntypedInt(elem, i8PtrTy));
 
             Value* result = nullptr;
 

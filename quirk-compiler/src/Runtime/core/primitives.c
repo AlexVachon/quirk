@@ -12,31 +12,31 @@ extern void quirk_throw_exception(const char* type_name, const char* message);
 // ==========================================
 
 // Converts raw int -> String Object
-String* Core_Primitives_Int_str(int self) {
+String* Core_Primitives_Int_str(int64_t self) {
     char buffer[64];
-    snprintf(buffer, 64, "%d", self);
+    snprintf(buffer, 64, "%lld", (long long)self);
     return make_String(buffer);
 }
 
 // Converts raw int -> raw double
-double Core_Primitives_Int_to_float(int self) {
+double Core_Primitives_Int_to_float(int64_t self) {
     return (double)self;
 }
 
-int Core_Primitives_Int_abs(int self) {
+int64_t Core_Primitives_Int_abs(int64_t self) {
     return (self < 0) ? -self : self;
 }
 
-int Core_Primitives_Int_pow(int self, int exp) {
+int64_t Core_Primitives_Int_pow(int64_t self, int64_t exp) {
     // pow() takes doubles, so we cast
     return (int)pow((double)self, (double)exp);
 }
 
-int Core_Primitives_Int_is_even(int self) {
+int Core_Primitives_Int_is_even(int64_t self) {
     return (self % 2) == 0;
 }
 
-int Core_Primitives_Int_is_odd(int self) {
+int Core_Primitives_Int_is_odd(int64_t self) {
     return (self % 2) != 0;
 }
 
@@ -53,7 +53,7 @@ String* Core_Primitives_Double_str(double self) {
 }
 
 // Converts raw double -> raw int (Truncates)
-int Core_Primitives_Double_to_int(double self) {
+int64_t Core_Primitives_Double_to_int(double self) {
     return (int)self;
 }
 
@@ -100,7 +100,7 @@ char Core_Primitives_Char_lower(char self) { return tolower((unsigned char)self)
 //  PARSE METHODS (static — no self)
 // ==========================================
 
-int Core_Primitives_Int_parse(String* s) {
+int64_t Core_Primitives_Int_parse(String* s) {
     if (!s || !s->buffer || s->length == 0) {
         quirk_throw_exception("ValueError", "cannot parse empty string as Int");
         return 0;
@@ -161,7 +161,7 @@ char Core_Primitives_Char_parse(String* s) {
     return s->buffer[0];
 }
 
-String* Core_Primitives_Int___str(int self)    { return Core_Primitives_Int_str(self); }
+String* Core_Primitives_Int___str(int64_t self)    { return Core_Primitives_Int_str(self); }
 String* Core_Primitives_Double___str(double self) { return Core_Primitives_Double_str(self); }
 String* Core_Primitives_Bool___str(int self)   { return Core_Primitives_Bool_str(self); }
 String* Core_Primitives_Char___str(char self)  { return Core_Primitives_Char_str(self); }

@@ -118,10 +118,12 @@ a, b := (10, 20)     // Tuple destructuring
 
 ### Int
 
-32-bit signed integer (-2147483648 to 2147483647). `+`, `-` and `*`
-are checked: a result outside that range throws a `RuntimeError`
-(`integer overflow: 2147483647 + 1 exceeds Int range`) instead of
-wrapping around. Use `Double` for larger magnitudes.
+64-bit signed integer (-9223372036854775808 to 9223372036854775807).
+`+`, `-` and `*` are checked: a result outside that range throws a
+`RuntimeError` (`integer overflow: 9223372036854775807 + 1 exceeds Int
+range`) instead of wrapping around. Use `Double` for larger magnitudes.
+An extern that binds to a C `int` can declare its parameters and
+return as `Int32`; they type-check as `Int` and convert at the call.
 
 ```quirk
 n := 42

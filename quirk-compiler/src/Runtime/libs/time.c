@@ -26,7 +26,7 @@
 
 // Decode `epoch` into a struct tm, in UTC (`utc != 0`) or local time.
 // Returns 1 on success, 0 if the host couldn't decode (extreme epoch).
-static int time__break_down(int epoch, int utc, struct tm* out) {
+static int time__break_down(int64_t epoch, int64_t utc, struct tm* out) {
     time_t t = (time_t)epoch;
 #ifdef _WIN32
     // gmtime_s / localtime_s have args swapped from POSIX *_r.
@@ -45,55 +45,55 @@ static int time__break_down(int epoch, int utc, struct tm* out) {
 }
 
 // Current Unix epoch, seconds. -1 if the host clock is unavailable.
-int Time_unix_now() {
+int64_t Time_unix_now() {
     time_t t = time(NULL);
     if (t == (time_t)-1) return -1;
     return (int)t;
 }
 
-int Time_year(int epoch, int utc) {
+int64_t Time_year(int64_t epoch, int64_t utc) {
     struct tm tm;
     if (!time__break_down(epoch, utc, &tm)) return 0;
     return 1900 + tm.tm_year;
 }
 
-int Time_month(int epoch, int utc) {
+int64_t Time_month(int64_t epoch, int64_t utc) {
     struct tm tm;
     if (!time__break_down(epoch, utc, &tm)) return 0;
     return tm.tm_mon + 1;
 }
 
-int Time_day(int epoch, int utc) {
+int64_t Time_day(int64_t epoch, int64_t utc) {
     struct tm tm;
     if (!time__break_down(epoch, utc, &tm)) return 0;
     return tm.tm_mday;
 }
 
-int Time_hour(int epoch, int utc) {
+int64_t Time_hour(int64_t epoch, int64_t utc) {
     struct tm tm;
     if (!time__break_down(epoch, utc, &tm)) return 0;
     return tm.tm_hour;
 }
 
-int Time_minute(int epoch, int utc) {
+int64_t Time_minute(int64_t epoch, int64_t utc) {
     struct tm tm;
     if (!time__break_down(epoch, utc, &tm)) return 0;
     return tm.tm_min;
 }
 
-int Time_second(int epoch, int utc) {
+int64_t Time_second(int64_t epoch, int64_t utc) {
     struct tm tm;
     if (!time__break_down(epoch, utc, &tm)) return 0;
     return tm.tm_sec;
 }
 
-int Time_weekday(int epoch, int utc) {
+int64_t Time_weekday(int64_t epoch, int64_t utc) {
     struct tm tm;
     if (!time__break_down(epoch, utc, &tm)) return 0;
     return tm.tm_wday;  // 0 = Sunday, 6 = Saturday
 }
 
-int Time_yearday(int epoch, int utc) {
+int64_t Time_yearday(int64_t epoch, int64_t utc) {
     struct tm tm;
     if (!time__break_down(epoch, utc, &tm)) return 0;
     return tm.tm_yday + 1;  // 1-366
@@ -102,7 +102,7 @@ int Time_yearday(int epoch, int utc) {
 // Build an epoch from broken-down components. Pass utc=1 to interpret the
 // inputs as UTC, utc=0 for the host's local time zone (DST handled by libc).
 // Returns -1 if mktime/timegm rejects the inputs.
-int Time_to_unix(int year, int month, int day, int hour, int minute, int second, int utc) {
+int64_t Time_to_unix(int64_t year, int64_t month, int64_t day, int64_t hour, int64_t minute, int64_t second, int64_t utc) {
     struct tm tm;
     memset(&tm, 0, sizeof(tm));
     tm.tm_year = year - 1900;
@@ -124,7 +124,7 @@ int Time_to_unix(int year, int month, int day, int hour, int minute, int second,
 
 // Format `epoch` using a strftime-style spec. Falls back to ISO-8601 when
 // `fmt` is empty.
-String* Time_format_at(int epoch, String* fmt, int utc) {
+String* Time_format_at(int64_t epoch, String* fmt, int64_t utc) {
     struct tm tm;
     if (!time__break_down(epoch, utc, &tm)) return make_String("");
     const char* spec = (fmt && fmt->buffer && fmt->length > 0)
@@ -137,7 +137,7 @@ String* Time_format_at(int epoch, String* fmt, int utc) {
 }
 
 // Pre-formatted ISO-8601: "2026-01-15T12:34:56Z" (UTC) or "...+/-HH:MM" local.
-String* Time_iso_at(int epoch, int utc) {
+String* Time_iso_at(int64_t epoch, int64_t utc) {
     struct tm tm;
     if (!time__break_down(epoch, utc, &tm)) return make_String("");
     char out[64];
@@ -174,7 +174,7 @@ String* Time_iso_at(int epoch, int utc) {
 // Parse an ISO-8601 string of the form "YYYY-MM-DD[Thh:mm:ss[Z]]" into an
 // epoch. Returns -1 on parse failure. Trailing "Z" → UTC; absent timezone
 // or " " separator → local (DST as the host sees it).
-int Time_parse_iso(String* s) {
+int64_t Time_parse_iso(String* s) {
     if (!s || !s->buffer) return -1;
     int Y = 0, M = 0, D = 0, h = 0, mn = 0, sec = 0;
     int n;

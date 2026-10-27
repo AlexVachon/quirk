@@ -702,7 +702,7 @@ Parses a string as a floating-point number.
 
 ### `struct Int : Primitive, Comparable, Parseable`
 
-32-bit signed integer.
+64-bit signed integer.
 Supports arithmetic operators (`+`, `-`, `*`, `/`, `%`, `**`) and comparisons.
 
 @example:

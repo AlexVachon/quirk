@@ -66,7 +66,7 @@ void Random_init(void) {
 }
 
 // Public — Quirk's `random.seed(n)`.
-void Random_seed(int32_t n) {
+void Random_seed(int64_t n) {
     rng_seed_u64((uint64_t)(int64_t)n);
     rng_initialized = 1;
 }
@@ -82,9 +82,9 @@ double Random__next_double(void) {
 
 // Inclusive [lo, hi]. Backs Quirk's `random.randint` and is also reused
 // internally for `choice` and `sample`.
-int32_t Random__next_int(int32_t lo, int32_t hi) {
+int64_t Random__next_int(int64_t lo, int64_t hi) {
     if (!rng_initialized) Random_init();
-    if (hi < lo) { int32_t t = lo; lo = hi; hi = t; }
+    if (hi < lo) { int64_t t = lo; lo = hi; hi = t; }
     uint64_t span = (uint64_t)((int64_t)hi - (int64_t)lo + 1);
     // Lemire's debiased rejection method — uniform across `span`.
     uint64_t x = rng_next_u64();
@@ -105,9 +105,9 @@ int32_t Random__next_int(int32_t lo, int32_t hi) {
 // whatever type was stored; the Quirk side does the unwrap.
 void* Random_choice(List* list) {
     if (!list) return NULL;
-    int n = list->size;
+    int64_t n = list->size;
     if (n <= 0) return NULL;
-    int32_t idx = Random__next_int(0, n - 1);
+    int64_t idx = Random__next_int(0, n - 1);
     return list->data[idx];
 }
 
@@ -115,9 +115,9 @@ void* Random_choice(List* list) {
 // chaining ergonomics on the Quirk side.
 List* Random_shuffle(List* list) {
     if (!list) return list;
-    int n = list->size;
+    int64_t n = list->size;
     for (int i = n - 1; i > 0; i--) {
-        int32_t j = Random__next_int(0, i);
+        int64_t j = Random__next_int(0, i);
         void* tmp = list->data[i];
         list->data[i] = list->data[j];
         list->data[j] = tmp;

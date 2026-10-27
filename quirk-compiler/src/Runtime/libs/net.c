@@ -34,11 +34,11 @@
 #include <openssl/err.h>
 
 
-int Net_socket() {
+int64_t Net_socket() {
     return socket(AF_INET, SOCK_STREAM, 0);
 }
 
-int Net_bind(int sockfd, String* host, int port) {
+int64_t Net_bind(int64_t sockfd, String* host, int64_t port) {
     struct sockaddr_in serv_addr;
     memset(&serv_addr, 0, sizeof(serv_addr));
     serv_addr.sin_family = AF_INET;
@@ -59,17 +59,17 @@ int Net_bind(int sockfd, String* host, int port) {
     return bind(sockfd, (struct sockaddr *) &serv_addr, sizeof(serv_addr));
 }
 
-int Net_listen(int sockfd, int backlog) {
+int64_t Net_listen(int64_t sockfd, int64_t backlog) {
     return listen(sockfd, backlog);
 }
 
-int Net_accept(int sockfd) {
+int64_t Net_accept(int64_t sockfd) {
     struct sockaddr_in cli_addr;
     socklen_t clilen = sizeof(cli_addr);
     return accept(sockfd, (struct sockaddr *) &cli_addr, &clilen);
 }
 
-int Net_connect(int sockfd, String* host, int port) {
+int64_t Net_connect(int64_t sockfd, String* host, int64_t port) {
     if (!host || !host->buffer) return -1;
     
     char* safe_host = make_safe_cstr(host);
@@ -87,12 +87,12 @@ int Net_connect(int sockfd, String* host, int port) {
 
     return connect(sockfd, (struct sockaddr*)&serv_addr, sizeof(serv_addr));
 }
-int Net_send(int sockfd, String* data) {
+int64_t Net_send(int64_t sockfd, String* data) {
     if (!data || !data->buffer) return 0;
     return send(sockfd, data->buffer, data->length, 0);
 }
 
-String* Net_recv(int sockfd, int size) {
+String* Net_recv(int64_t sockfd, int64_t size) {
     char* buffer = GC_malloc(size + 1);
     int n = recv(sockfd, buffer, size, 0);
     if (n < 0) return make_String("");
@@ -100,7 +100,7 @@ String* Net_recv(int sockfd, int size) {
     return make_String(buffer);
 }
 
-void Net_close(int sockfd) {
+void Net_close(int64_t sockfd) {
     #ifdef _WIN32
         closesocket(sockfd);
     #else
@@ -180,7 +180,7 @@ static void quirk_tls_free_slot(int h) {
 
 // Returns a handle (>=0) on success, -1 on any failure.
 // `host` is used for both DNS resolution and SNI / cert hostname check.
-int Net_tls_connect(String* host, int port) {
+int64_t Net_tls_connect(String* host, int64_t port) {
     quirk_tls_lazy_init();
     if (!g_tls_ctx || !host || !host->buffer) return -1;
 
@@ -236,20 +236,20 @@ int Net_tls_connect(String* host, int port) {
     return h;
 }
 
-int Net_tls_send(int handle, String* data) {
+int64_t Net_tls_send(int64_t handle, String* data) {
     if (handle < 0 || handle >= QUIRK_TLS_SLOTS) return -1;
     if (!g_tls_slots[handle].in_use) return -1;
     if (!data || !data->buffer) return 0;
-    int n = SSL_write(g_tls_slots[handle].ssl, data->buffer, data->length);
+    int64_t n = SSL_write(g_tls_slots[handle].ssl, data->buffer, data->length);
     return n;
 }
 
-String* Net_tls_recv(int handle, int size) {
+String* Net_tls_recv(int64_t handle, int64_t size) {
     if (handle < 0 || handle >= QUIRK_TLS_SLOTS) return make_String("");
     if (!g_tls_slots[handle].in_use) return make_String("");
     if (size <= 0) return make_String("");
     char* buffer = (char*)GC_malloc(size + 1);
-    int n = SSL_read(g_tls_slots[handle].ssl, buffer, size);
+    int64_t n = SSL_read(g_tls_slots[handle].ssl, buffer, size);
     if (n <= 0) {
         // n=0 → clean close; n<0 → error or want-read. Either way
         // the caller's recv loop reads "no more bytes" the same as
@@ -260,7 +260,7 @@ String* Net_tls_recv(int handle, int size) {
     return make_String(buffer);
 }
 
-void Net_tls_close(int handle) {
+void Net_tls_close(int64_t handle) {
     if (handle < 0 || handle >= QUIRK_TLS_SLOTS) return;
     if (!g_tls_slots[handle].in_use) return;
     if (g_tls_slots[handle].ssl) {

@@ -2,6 +2,8 @@
 #include <algorithm>
 #include <functional>
 #include <sstream>
+#include <cerrno>
+#include <cstdlib>
 #include "sema.hpp"
 #include "ErrorCodes.hpp"
 #include "parser.hpp"   // GenericTemplate (monomorphization)
@@ -1787,7 +1789,18 @@ void Sema::checkFor(ForNode *node)
     exitScope();
 }
 
+// `Int32` (a C `int`, for extern signatures) type-checks as `Int`; only
+// codegen keeps it 32-bit, converting at the call boundary.
+static std::string canonIntType(const std::string& t) {
+    return t == "Int32" ? "Int" : t;
+}
+
 std::string Sema::checkExpression(Node *node)
+{
+    return canonIntType(checkExpressionImpl(node));
+}
+
+std::string Sema::checkExpressionImpl(Node *node)
 {
     if (auto lit = dynamic_cast<LiteralNode *>(node))
         return checkLiteral(lit);
@@ -1882,8 +1895,15 @@ std::string Sema::checkExpression(Node *node)
 std::string Sema::checkLiteral(LiteralNode *node)
 {
     lastNode = node;
-    if (std::isdigit(node->value[0]))
-        return (node->value.find('.') != std::string::npos) ? "Double" : "Int";
+    if (std::isdigit(node->value[0])) {
+        if (node->value.find('.') != std::string::npos) return "Double";
+        errno = 0;
+        (void)std::strtoll(node->value.c_str(), nullptr, 10);
+        if (errno == ERANGE)
+            reportError("Int literal " + node->value + " is out of range (Int is 64-bit)",
+                        node->line, node->col, node->filePath);
+        return "Int";
+    }
     if (node->value[0] == '"' || node->value[0] == '\'')
         return "String";        // 'x' and "x" both produce length-1 strings
     if (node->value == "true" || node->value == "false")
@@ -3061,8 +3081,9 @@ bool Sema::isGenericParam(const std::string& t) const {
     return !isKnownType(t) && !structRegistry.count(t) && !enumRegistry.count(t);
 }
 
-bool Sema::isCompatibleTypes(const std::string &expected, const std::string &actual)
+bool Sema::isCompatibleTypes(const std::string &expected_, const std::string &actual_)
 {
+    const std::string expected = canonIntType(expected_), actual = canonIntType(actual_);
     if (expected == actual) return true;
     if (isGenericParam(expected) || isGenericParam(actual)) return true;
     if (expected == "Any" || actual == "Any") return true;
@@ -3238,7 +3259,7 @@ void Sema::defineVariable(const std::string &name, const std::string &type, bool
 {
     if (scopeStack.empty())
         enterScope();
-    scopeStack.back()[name] = VarInfo{type, isConst, false, isParam, currentFilePath};
+    scopeStack.back()[name] = VarInfo{canonIntType(type), isConst, false, isParam, currentFilePath};
 }
 
 std::string Sema::resolveVariable(const std::string &name)

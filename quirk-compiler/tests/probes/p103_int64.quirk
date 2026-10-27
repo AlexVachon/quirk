@@ -1,0 +1,57 @@
+// p103 — Int is 64-bit (v7.0.0).
+//
+// Int used to be i32: 3_000_000_000 didn't fit, and since v6.1.0 sums
+// past 2^31 threw an overflow error. Int is now i64 end to end — the
+// runtime's Int parameters, fields and box are int64_t too. In untyped
+// slots (List / Map elements, Any) an Int that fits in 32 bits is still
+// inlined into the pointer; a larger one goes in a headered Any box.
+// Also locks the module data layout: without one LLVM aligned i64 to 4,
+// so `{ i32 __type_id, i64 value }` struct fields were read at the
+// wrong offset.
+from encoding.json use { dumps, loads }
+
+enum Big(Int) {
+    Small = 1
+    Huge = 6000000000
+}
+
+struct Cell {
+    value: Int
+    next: Cell
+    define __init(self, v: Int) {
+        self.value = v
+        self.next = null
+    }
+}
+
+define main() -> void {
+    a := 3000000000
+    if a * 3 != 9000000000            { print("FAIL: big multiply"); return }
+    if (a * 3).str() != "9000000000"  { print("FAIL: big str " + (a * 3).str()); return }
+    if "${a + 1}" != "3000000001"     { print("FAIL: interpolation"); return }
+    xs := [1, -1, 5000000000, -5000000000, 2147483648]
+    if xs.str() != "[1, -1, 5000000000, -5000000000, 2147483648]" { print("FAIL: list str " + xs.str()); return }
+    total := 0
+    for x in xs { total = total + x }
+    if total != 2147483648            { print("FAIL: list sum " + total.str()); return }
+    if not (5000000000 in xs)         { print("FAIL: big in list"); return }
+    rem := 0
+    for x in xs { rem = rem + x % 7 }     // `%` on an untyped element (was never unboxed); truncating
+    if rem != 2                       { print("FAIL: % on list element " + rem.str()); return }
+    m := {"big": 9000000000}
+    n: Int = m.get("big")
+    if n + 1 != 9000000001            { print("FAIL: map value"); return }
+    if dumps(m) != "{\"big\":9000000000}" { print("FAIL: json dumps " + dumps(m)); return }
+    parsed: Map = loads("{\"v\": 12345678901}")
+    v: Int = parsed.get("v")
+    if v != 12345678901               { print("FAIL: json loads"); return }
+    count := 0
+    for i in 2147483646..2147483650 { count = count + 1 }
+    if count != 4                     { print("FAIL: range past 2^31"); return }
+    if Big.Huge.value() != 6000000000 { print("FAIL: enum backing value"); return }
+    if Big(6000000000) != Big.Huge    { print("FAIL: enum lookup"); return }
+    c := Cell(1)
+    c.next = Cell(7000000000)
+    if c.next.value != 7000000000     { print("FAIL: struct field " + c.next.value.str()); return }
+    print("PASS: 64-bit Int")
+}

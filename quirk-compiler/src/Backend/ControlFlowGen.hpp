@@ -4,6 +4,7 @@
 #include "ast.hpp"
 #include "llvm/IR/IRBuilder.h"
 #include "VariableGen.hpp"
+#include "BoxInt.hpp"
 
 using namespace llvm;
 
@@ -197,7 +198,7 @@ class ControlFlowGen {
                 Function* getFn = TheModule->getFunction("Core_Collections_Tuple_Tuple___get");
                 if (!getFn) {
                     Type* i8p = Type::getInt8PtrTy(Context);
-                    FunctionType* ft = FunctionType::get(i8p, {i8p, Type::getInt32Ty(Context)}, false);
+                    FunctionType* ft = FunctionType::get(i8p, {i8p, Type::getInt64Ty(Context)}, false);
                     getFn = Function::Create(ft, Function::ExternalLinkage,
                                              "Core_Collections_Tuple_Tuple___get", TheModule);
                 }
@@ -208,9 +209,10 @@ class ControlFlowGen {
                     if (tupleArg->getType() != expectedTy)
                         tupleArg = Builder.CreateBitCast(tupleArg, expectedTy);
                 }
+                Type* idxTy = getFn->getFunctionType()->getParamType(1);
                 for (int di = 0; di < (int)node->destructureVars.size(); di++) {
                     Value* elem = Builder.CreateCall(getFn,
-                        {tupleArg, ConstantInt::get(Type::getInt32Ty(Context), di)},
+                        {tupleArg, ConstantInt::get(idxTy, di)},
                         node->destructureVars[di]);
                     varGen->defineLocalVariable(node->destructureVars[di], elem);
                 }
@@ -447,7 +449,7 @@ class ControlFlowGen {
             Builder.CreateStore(initHelper("String", fileArgs), fileFieldPtr);
 
             Value* lineFieldPtr = Builder.CreateStructGEP(StructTypes["Exception"], baseExc, 3);
-            Builder.CreateStore(ConstantInt::get(Type::getInt32Ty(Context), node->line), lineFieldPtr);
+            Builder.CreateStore(ConstantInt::get(StructTypes["Exception"]->getElementType(3), node->line), lineFieldPtr);
 
             Value* calleeFieldPtr = Builder.CreateStructGEP(StructTypes["Exception"], baseExc, 4);
             Value* rawCalleeName  = Builder.CreateGlobalStringPtr(parentFunc->getName().str());
@@ -547,17 +549,18 @@ class ControlFlowGen {
                     Function* getFn = TheModule->getFunction(fnName);
                     if (!getFn) {
                         FunctionType* ft = FunctionType::get(Type::getInt8PtrTy(Context),
-                            {scrutVal->getType(), Type::getInt32Ty(Context)}, false);
+                            {scrutVal->getType(), Type::getInt64Ty(Context)}, false);
                         getFn = Function::Create(ft, Function::ExternalLinkage,
                             fnName, TheModule);
                     }
+                    Type* idxTy = getFn->getFunctionType()->getParamType(1);
                     Value* contArg = scrutVal;
                     Type* paramTy = getFn->getFunctionType()->getParamType(0);
                     if (contArg->getType() != paramTy && contArg->getType()->isPointerTy() && paramTy->isPointerTy())
                         contArg = Builder.CreateBitCast(contArg, paramTy);
                     for (size_t bi = 0; bi < arm.bindNames.size(); bi++) {
                         Value* elem = Builder.CreateCall(getFn,
-                            {contArg, ConstantInt::get(Type::getInt32Ty(Context), (int)bi)},
+                            {contArg, ConstantInt::get(idxTy, (int)bi)},
                             arm.bindNames[bi]);
                         bindHook(arm.bindNames[bi], elem);
                     }
@@ -573,7 +576,9 @@ class ControlFlowGen {
                 Type* i32Ty   = Type::getInt32Ty(Context);
                 Value* scrutI8 = scrutVal->getType()->isPointerTy()
                     ? Builder.CreateBitCast(scrutVal, i8PtrTy)
-                    : Builder.CreateIntToPtr(scrutVal, i8PtrTy);
+                    : scrutVal->getType()->isIntegerTy(64)
+                        ? quirk::boxIntToOpaque(Context, TheModule, Builder, scrutVal, i8PtrTy)
+                        : Builder.CreateIntToPtr(scrutVal, i8PtrTy);
 
                 Function* makeStrFn = nullptr;
                 Function* isinstanceFn = nullptr;

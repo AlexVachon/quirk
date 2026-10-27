@@ -43,10 +43,10 @@ double Math_trunc(double x) { return trunc(x); }
 double Math_fmod(double a, double b)  { return fmod(a, b); }
 double Math_hypot(double x, double y) { return hypot(x, y); }
 double Math_fabs(double x) { return fabs(x); }
-int    Math_abs(int x)     { return x < 0 ? -x : x; }
+int64_t Math_abs(int64_t x)     { return x < 0 ? -x : x; }
 
 // Signum: -1, 0, +1 for negative/zero/positive. Returns 0 for NaN.
-int Math_sign_int(int x) {
+int64_t Math_sign_int(int64_t x) {
     if (x > 0) return  1;
     if (x < 0) return -1;
     return 0;
@@ -78,7 +78,7 @@ double Math_nan()      { return NAN; }
 
 static unsigned long long math_rng_state = 0x9E3779B97F4A7C15ULL;
 
-void Math_seed(int s) {
+void Math_seed(int64_t s) {
     math_rng_state = (unsigned long long)(unsigned int)s * 0x9E3779B97F4A7C15ULL + 1;
     if (math_rng_state == 0) math_rng_state = 1;
 }
@@ -95,7 +95,7 @@ static unsigned long long math_rng_next() {
 
 // Returns a pseudo-random Int in [lo, hi] (inclusive). Falls back to lo
 // if the range is degenerate to avoid signed division surprises.
-int Math_random_int(int lo, int hi) {
+int64_t Math_random_int(int64_t lo, int64_t hi) {
     if (hi <= lo) return lo;
     unsigned long long span = (unsigned long long)((long long)hi - (long long)lo + 1LL);
     return lo + (int)(math_rng_next() % span);

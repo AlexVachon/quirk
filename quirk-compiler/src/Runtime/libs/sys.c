@@ -97,7 +97,7 @@ static char* gc_strdup(const char* s) {
     return new_s;
 }
 
-char* Sys_srcline(const char* filename, int target_line) {
+char* Sys_srcline(const char* filename, int64_t target_line) {
     if (!filename) {
         return gc_strdup("?");
     }
@@ -157,11 +157,11 @@ void quirk_pop_frame() {
     if (quirk_shadow_sp > 0) quirk_shadow_sp--;
 }
 
-int Sys_shadow_size() {
+int64_t Sys_shadow_size() {
     return quirk_shadow_sp;
 }
 
-String* Sys_shadow_frame(int index) {
+String* Sys_shadow_frame(int64_t index) {
     if (index < 0 || index >= quirk_shadow_sp) {
         return make_String("");
     }
@@ -179,11 +179,11 @@ String* Sys_shadow_frame(int index) {
 
 // --- SYSTEM BUILTINS ---
 
-int Sys_arg_count() {
+int64_t Sys_arg_count() {
     return quirk_argc;
 }
 
-String* Sys_arg_get(int index) {
+String* Sys_arg_get(int64_t index) {
     if (index < 0 || index >= quirk_argc) return make_String("");
     return make_String(quirk_argv[index]);
 }
@@ -205,13 +205,13 @@ String* Sys_getenv(String* key) {
     return make_String(val ? val : "");
 }
 
-int Sys_system(String* cmd) {
+int64_t Sys_system(String* cmd) {
     char* safe_cmd = make_safe_cstr(cmd);
     if (!safe_cmd) return -1;
     return system(safe_cmd);
 }
 
-void Sys_exit(int code) {
+void Sys_exit(int64_t code) {
     exit(code);
 }
 
@@ -271,7 +271,7 @@ String* Sys_ansi(String* name) {
 
 // Terminal dimensions. Returns 80/24 fallbacks when stdout isn't a TTY or
 // the syscall fails — keeps callers from special-casing piped output.
-int Sys_terminal_cols() {
+int64_t Sys_terminal_cols() {
 #ifdef _WIN32
     CONSOLE_SCREEN_BUFFER_INFO csbi;
     if (GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &csbi))
@@ -285,7 +285,7 @@ int Sys_terminal_cols() {
 #endif
 }
 
-int Sys_terminal_rows() {
+int64_t Sys_terminal_rows() {
 #ifdef _WIN32
     CONSOLE_SCREEN_BUFFER_INFO csbi;
     if (GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &csbi))
@@ -335,7 +335,7 @@ String* Sys_read_password() {
 // character value as an Int (so callers can compare to e.g. 27 for ESC,
 // 13 for Enter, 0x41 for 'A', or special codes from arrow keys via
 // subsequent reads — Up = ESC '[' 'A', etc.).
-int Sys_read_key() {
+int64_t Sys_read_key() {
 #ifdef _WIN32
     return _getch();
 #else
@@ -358,18 +358,18 @@ int Sys_read_key() {
 
 // Monotonic clock in milliseconds. Use deltas only — absolute value is
 // not relative to the Unix epoch. Suitable for `console.time/time_end`.
-int Sys_now_ms() {
+int64_t Sys_now_ms() {
 #ifdef _WIN32
-    return (int)GetTickCount();
+    return (int64_t)GetTickCount64();
 #else
     struct timespec ts;
     if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return 0;
     long long ms = (long long)ts.tv_sec * 1000LL + ts.tv_nsec / 1000000LL;
-    return (int)ms;
+    return (int64_t)ms;
 #endif
 }
 
-void Sys_sleep(int ms) {
+void Sys_sleep(int64_t ms) {
     if (ms <= 0) return;
 #ifdef _WIN32
     Sleep((DWORD)ms);
@@ -389,16 +389,16 @@ void Sys_sleep(int ms) {
 
 static int sys_group_depth = 0;
 
-int Sys_group_depth_get()  { return sys_group_depth; }
+int64_t Sys_group_depth_get()  { return sys_group_depth; }
 void Sys_group_depth_inc() { sys_group_depth++; }
 void Sys_group_depth_dec() { if (sys_group_depth > 0) sys_group_depth--; }
 
 #define SYS_TIMER_SLOTS 32
-static struct { char name[64]; int start_ms; int active; } sys_timers[SYS_TIMER_SLOTS];
+static struct { char name[64]; int64_t start_ms; int active; } sys_timers[SYS_TIMER_SLOTS];
 
 void Sys_timer_start(String* label) {
     if (!label || !label->buffer) return;
-    int now = Sys_now_ms();
+    int64_t now = Sys_now_ms();
     int free_slot = -1;
     for (int i = 0; i < SYS_TIMER_SLOTS; i++) {
         if (sys_timers[i].active && strncmp(sys_timers[i].name, label->buffer, sizeof(sys_timers[i].name) - 1) == 0) {
@@ -416,11 +416,11 @@ void Sys_timer_start(String* label) {
 
 // Returns elapsed ms for the named timer and clears the slot. Returns -1 if
 // the timer wasn't started.
-int Sys_timer_end(String* label) {
+int64_t Sys_timer_end(String* label) {
     if (!label || !label->buffer) return -1;
     for (int i = 0; i < SYS_TIMER_SLOTS; i++) {
         if (sys_timers[i].active && strncmp(sys_timers[i].name, label->buffer, sizeof(sys_timers[i].name) - 1) == 0) {
-            int elapsed = Sys_now_ms() - sys_timers[i].start_ms;
+            int64_t elapsed = Sys_now_ms() - sys_timers[i].start_ms;
             sys_timers[i].active = 0;
             sys_timers[i].name[0] = '\0';
             return elapsed;

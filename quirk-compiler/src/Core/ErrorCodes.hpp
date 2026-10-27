@@ -67,6 +67,7 @@ inline const std::vector<ErrorCode>& knownErrorCodes() {
         {205, std::regex("^type '[^']*' does not support indexing")},
         {206, std::regex("^array index must be 'Int'")},
         {207, std::regex("^'(if|elif|while)' condition must be 'Bool'")},
+        {208, std::regex("^Int literal [0-9]+ is out of range")},
         // Struct / inheritance
         {300, std::regex("^can only throw struct objects")},
         {301, std::regex("^catch type '[^']*' does not inherit from 'Exception'")},
@@ -228,6 +229,14 @@ inline const std::vector<ErrorDoc>& errorDocs() {
          "if n { print(\"yes\") }        // Q0207\n\n"
          "// good:\n"
          "if n != 0 { print(\"yes\") }"},
+
+        {208, "Int literal out of range",
+         "`Int` is a signed 64-bit integer: literals must lie in -9223372036854775808..9223372036854775807.",
+         "Use a `Double` literal (`1e20`) for larger magnitudes. For the most negative Int, write `-9223372036854775807 - 1`.",
+         "// bad:\n"
+         "big := 99999999999999999999      // Q0208\n\n"
+         "// good:\n"
+         "big := 1e20"},
 
         {301, "Catch type does not inherit from 'Exception'",
          "The `catch (e: T)` type must be a struct that inherits (directly or transitively) from `Exception`.",

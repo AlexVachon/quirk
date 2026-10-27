@@ -65,7 +65,7 @@ private:
             return callBox("Core_Primitives_Any_box_char", {ext});
         }
         if (type->isIntegerTy()) {
-            Value* casted = Builder.CreateIntCast(v, Type::getInt32Ty(Context), true);
+            Value* casted = Builder.CreateIntCast(v, Type::getInt64Ty(Context), true);
             return callBox("Core_Primitives_Any_box_int", {casted});
         }
         if (type->isDoubleTy())

@@ -167,8 +167,27 @@ class LLVMCodegen {
         exit(1);
     }
 
+    static void setHostTarget(Module& M) {
+        InitializeNativeTarget();
+        std::string triple = sys::getDefaultTargetTriple();
+        std::string err;
+        const Target* target = TargetRegistry::lookupTarget(triple, err);
+        if (!target) return;
+        std::unique_ptr<TargetMachine> tm(target->createTargetMachine(
+            triple, "generic", "", TargetOptions(), Optional<Reloc::Model>(Reloc::PIC_)));
+        if (!tm) return;
+        M.setTargetTriple(triple);
+        M.setDataLayout(tm->createDataLayout());
+    }
+
     LLVMCodegen() : pCtx(std::make_unique<LLVMContext>()), Context(*pCtx), Builder(Context) {
         TheModule = std::make_unique<Module>("QuirkCompiler", Context);
+        // Lay structs out exactly as the host C compiler does. Without a
+        // data layout LLVM falls back to its default one, where i64 is
+        // only 4-aligned: `{ i32, i64 }` put the Int at offset 4 while the
+        // runtime (and the final machine code) put it at 8, and the
+        // optimizer folded field reads to the wrong offset.
+        setHostTarget(*TheModule);
         enumGen.setModule(TheModule.get());
         typeGen = std::make_unique<TypeGen>(Context, StructTypes);
         flowGen = std::make_unique<ControlFlowGen>(Context, TheModule.get(), Builder);
@@ -968,11 +987,9 @@ class LLVMCodegen {
                 //     address, not the int — e.g. a nonlocal Int
                 //     captured in the wrapped closure leaks as
                 //     `(int32)(uintptr_t)Any*`).
-                // Route through quirk_opaque_to_int which handles both.
-                Type* i8p = Type::getInt8PtrTy(Context);
-                FunctionCallee toInt = TheModule->getOrInsertFunction(
-                    "quirk_opaque_to_int", Type::getInt32Ty(Context), i8p);
-                unboxed = Builder.CreateCall(toInt, {raw}, "dec_int");
+                // decodeUntypedInt handles both.
+                unboxed = quirk::decodeUntypedInt(Context, TheModule.get(), Builder, raw);
+                if (rt == "Int32") unboxed = Builder.CreateTrunc(unboxed, Type::getInt32Ty(Context));
             } else if (rt == "Bool") {
                 unboxed = Builder.CreateICmpNE(raw,
                     ConstantPointerNull::get(cast<PointerType>(raw->getType())), "dec_bool");
@@ -1028,7 +1045,7 @@ class LLVMCodegen {
             Type* retTy = F->getReturnType();
             if (retTy->isVoidTy())
                 Builder.CreateRetVoid();
-            else if (retTy->isIntegerTy(32))
+            else if (retTy->isIntegerTy())
                 Builder.CreateRet(ConstantInt::get(retTy, 0));
             else
                 Builder.CreateRet(UndefValue::get(retTy));
@@ -1158,10 +1175,8 @@ class LLVMCodegen {
         // Route both through the runtime helpers so the lambda
         // sees the same Int it was conceptually passed.
         if (type == "Int" || type == "Int32") {
-            Type* i8p = Type::getInt8PtrTy(Context);
-            FunctionCallee toInt = TheModule->getOrInsertFunction(
-                "quirk_opaque_to_int", Type::getInt32Ty(Context), i8p);
-            return Builder.CreateCall(toInt, {raw}, "lambda_unbox_int");
+            Value* n = quirk::decodeUntypedInt(Context, TheModule.get(), Builder, raw);
+            return type == "Int32" ? Builder.CreateTrunc(n, Type::getInt32Ty(Context)) : n;
         }
         if (type == "Bool")
             return Builder.CreateICmpNE(raw, ConstantPointerNull::get(cast<PointerType>(raw->getType())), "lambdabool");
@@ -1571,12 +1586,15 @@ class LLVMCodegen {
                 Value* count     = ConstantInt::get(i32, info.values.size());
 
                 if (info.backingType == "Int") {
+                    Type* i64 = Type::getInt64Ty(Context);
                     FunctionCallee fn = TheModule->getOrInsertFunction(
                         "quirk_enum_lookup_int",
-                        FunctionType::get(i32, {i32, i8p, i32, i8p}, false));
-                    // Coerce a boxed-int (i8*) query to i32 if needed.
+                        FunctionType::get(i32, {i64, i8p, i32, i8p}, false));
+                    // Coerce a boxed-int (i8*) query to Int if needed.
                     if (query->getType()->isPointerTy())
-                        query = Builder.CreatePtrToInt(query, i32);
+                        query = quirk::decodeUntypedInt(Context, TheModule.get(), Builder, query);
+                    else
+                        query = Builder.CreateSExtOrTrunc(query, i64);
                     return Builder.CreateCall(fn, {query, packedPtr, count, namePtr});
                 }
                 if (info.backingType == "Double") {
@@ -1698,8 +1716,10 @@ class LLVMCodegen {
                         // Unbox the result based on the tracked return type
                         std::string retType = callableReturnTypes.count(lit->value)
                                               ? callableReturnTypes.at(lit->value) : "";
-                        if (retType == "Int" || retType == "Int32")
-                            return Builder.CreatePtrToInt(raw, Type::getInt32Ty(Context));
+                        if (retType == "Int" || retType == "Int32") {
+                            Value* n = quirk::decodeUntypedInt(Context, TheModule.get(), Builder, raw);
+                            return retType == "Int32" ? Builder.CreateTrunc(n, Type::getInt32Ty(Context)) : n;
+                        }
                         if (retType == "Bool")
                             return Builder.CreateICmpNE(raw, ConstantPointerNull::get(cast<PointerType>(raw->getType())));
                         if (retType == "Double" || retType == "Float") {
@@ -1746,7 +1766,8 @@ class LLVMCodegen {
                         if (!enumName.empty()) {
                             Value* ordinal = handleExpression(member->object.get());
                             if (ordinal->getType()->isPointerTy())
-                                ordinal = Builder.CreatePtrToInt(ordinal, Type::getInt32Ty(Context));
+                                ordinal = Builder.CreateTrunc(quirk::decodeUntypedInt(Context, TheModule.get(), Builder, ordinal),
+                                                              Type::getInt32Ty(Context));
                             Function* strFn = TheModule->getFunction("__" + enumName + "_str");
                             if (strFn) return Builder.CreateCall(strFn, {ordinal});
                         }
@@ -1772,12 +1793,15 @@ class LLVMCodegen {
                     Value* count = ConstantInt::get(i32, info.values.size());
 
                     if (info.backingType == "Int") {
+                        Type* i64 = Type::getInt64Ty(Context);
                         FunctionCallee fn = TheModule->getOrInsertFunction(
                             "quirk_enum_parse_int",
-                            FunctionType::get(i8p, {i32, PointerType::getUnqual(i32), i32}, false));
+                            FunctionType::get(i8p, {i64, PointerType::getUnqual(i64), i32}, false));
                         if (query->getType()->isPointerTy())
-                            query = Builder.CreatePtrToInt(query, i32);
-                        Value* packedPtr = Builder.CreateBitCast(packedGv, PointerType::getUnqual(i32));
+                            query = quirk::decodeUntypedInt(Context, TheModule.get(), Builder, query);
+                        else
+                            query = Builder.CreateSExtOrTrunc(query, i64);
+                        Value* packedPtr = Builder.CreateBitCast(packedGv, PointerType::getUnqual(i64));
                         return Builder.CreateCall(fn, {query, packedPtr, count});
                     }
                     if (info.backingType == "Double") {
@@ -2232,6 +2256,8 @@ class LLVMCodegen {
                         } else if (objPtr->getType()->isIntegerTy(1) && expectedSelfType->isIntegerTy(32)) {
                             // Bool self widening: C ABI passes Bool as int (i32)
                             objPtr = Builder.CreateZExt(objPtr, expectedSelfType);
+                        } else if (objPtr->getType()->isIntegerTy() && expectedSelfType->isIntegerTy()) {
+                            objPtr = Builder.CreateIntCast(objPtr, expectedSelfType, /*isSigned=*/true);
                         }
                     }
                 }
@@ -2730,18 +2756,19 @@ class LLVMCodegen {
                 Value* startV = handleExpression(range->start.get());
                 Value* endV   = handleExpression(range->end.get());
                 if (!startV || !endV) return;
-                auto toI32 = [&](Value* v) -> Value* {
-                    if (v->getType()->isIntegerTy(32)) return v;
-                    if (v->getType()->isIntegerTy()) return Builder.CreateSExt(v, Type::getInt32Ty(Context));
-                    if (v->getType()->isPointerTy()) return Builder.CreatePtrToInt(v, Type::getInt32Ty(Context));
+                Type* intTy = Type::getInt64Ty(Context);
+                auto toInt = [&](Value* v) -> Value* {
+                    if (v->getType()->isIntegerTy(64)) return v;
+                    if (v->getType()->isIntegerTy()) return Builder.CreateSExt(v, intTy);
+                    if (v->getType()->isPointerTy()) return quirk::decodeUntypedInt(Context, TheModule.get(), Builder, v);
                     return v;
                 };
-                startV = toI32(startV); endV = toI32(endV);
+                startV = toInt(startV); endV = toInt(endV);
 
                 // Allocate loop counter
                 Function* curFn = Builder.GetInsertBlock()->getParent();
                 IRBuilder<> entryB(&curFn->getEntryBlock(), curFn->getEntryBlock().begin());
-                Value* counterSlot = entryB.CreateAlloca(Type::getInt32Ty(Context), nullptr, f->varName + "_range");
+                Value* counterSlot = entryB.CreateAlloca(intTy, nullptr, f->varName + "_range");
                 Builder.CreateStore(startV, counterSlot);
 
                 BasicBlock* condBB  = BasicBlock::Create(Context, "range_cond",  curFn);
@@ -2753,7 +2780,7 @@ class LLVMCodegen {
 
                 Builder.CreateBr(condBB);
                 Builder.SetInsertPoint(condBB);
-                Value* counter = Builder.CreateLoad(Type::getInt32Ty(Context), counterSlot, f->varName);
+                Value* counter = Builder.CreateLoad(intTy, counterSlot, f->varName);
                 Value* cmp = Builder.CreateICmpSLT(counter, endV, "range_cmp");
                 Builder.CreateCondBr(cmp, bodyBB, afterBB);
 
@@ -2762,8 +2789,8 @@ class LLVMCodegen {
                 for (auto& stmt : f->body) handleStatement(stmt.get(), curFn);
                 if (!Builder.GetInsertBlock()->getTerminator()) {
                     Value* next = Builder.CreateAdd(
-                        Builder.CreateLoad(Type::getInt32Ty(Context), counterSlot),
-                        ConstantInt::get(Type::getInt32Ty(Context), 1), "range_next");
+                        Builder.CreateLoad(intTy, counterSlot),
+                        ConstantInt::get(intTy, 1), "range_next");
                     Builder.CreateStore(next, counterSlot);
                     Builder.CreateBr(condBB);
                 }
@@ -2825,7 +2852,11 @@ class LLVMCodegen {
             // 3. Emit the Return Instruction
             if (retVal) {
                 if (parentFunc->getName() == "main") {
-                    if (retVal->getType()->isIntegerTy(32)) { Builder.CreateRet(retVal); return; }
+                    // main's C return is the process exit status (int).
+                    if (retVal->getType()->isIntegerTy() && !retVal->getType()->isIntegerTy(1)) {
+                        Builder.CreateRet(Builder.CreateSExtOrTrunc(retVal, Type::getInt32Ty(Context)));
+                        return;
+                    }
                     Builder.CreateRet(ConstantInt::get(Type::getInt32Ty(Context), 0));
                     return;
                 }
@@ -2833,7 +2864,8 @@ class LLVMCodegen {
                 Type* expectedType = parentFunc->getReturnType();
                 if (retVal->getType() != expectedType) {
                     if (retVal->getType()->isIntegerTy() && expectedType->isIntegerTy()) {
-                        retVal = Builder.CreateIntCast(retVal, expectedType, true);
+                        retVal = Builder.CreateIntCast(retVal, expectedType,
+                                                       /*isSigned=*/!retVal->getType()->isIntegerTy(1));
                     }
                     // Int → Double widening on return. Sema already
                     // accepts `Int` where `Double` is declared (the
@@ -2901,14 +2933,10 @@ class LLVMCodegen {
                     else if (retVal->getType()->isPointerTy()
                           && retVal->getType()->getPointerElementType()->isIntegerTy(8)
                           && expectedType->isIntegerTy()) {
-                        Type* i8p = Type::getInt8PtrTy(Context);
-                        FunctionCallee toInt = TheModule->getOrInsertFunction(
-                            "quirk_opaque_to_int",
-                            Type::getInt32Ty(Context), i8p);
-                        Value* asI32 = Builder.CreateCall(toInt, {retVal}, "ret_unbox_int");
-                        retVal = expectedType->isIntegerTy(32)
-                            ? asI32
-                            : Builder.CreateIntCast(asI32, expectedType, true);
+                        Value* asInt = quirk::decodeUntypedInt(Context, TheModule.get(), Builder, retVal);
+                        retVal = expectedType->isIntegerTy(64)
+                            ? asInt
+                            : Builder.CreateIntCast(asInt, expectedType, true);
                     }
                     else if (retVal->getType()->isPointerTy()
                           && retVal->getType()->getPointerElementType()->isIntegerTy(8)
@@ -2991,15 +3019,16 @@ class LLVMCodegen {
             if (!getFn) {
                 Type* tuplePtrTy = PointerType::getUnqual(StructTypes["Tuple"]);
                 FunctionType* ft = FunctionType::get(Type::getInt8PtrTy(Context),
-                    {tuplePtrTy, Type::getInt32Ty(Context)}, false);
+                    {tuplePtrTy, Type::getInt64Ty(Context)}, false);
                 getFn = Function::Create(ft, Function::ExternalLinkage, "Core_Collections_Tuple_Tuple___get", TheModule.get());
             }
             if (getFn) {
+                Type* idxTy = getFn->getFunctionType()->getParamType(1);
                 for (int i = 0; i < (int)tupLhs->elements.size(); i++) {
                     auto* nameNode = dynamic_cast<LiteralNode*>(tupLhs->elements[i].get());
                     if (!nameNode) continue;
                     Value* elem = Builder.CreateCall(getFn,
-                        {val, ConstantInt::get(Type::getInt32Ty(Context), i)});
+                        {val, ConstantInt::get(idxTy, i)});
                     if (!varGen->exists(nameNode->value)) varGen->defineLocalVariable(nameNode->value, elem);
                     else varGen->updateLocalVariable(nameNode->value, elem);
                 }
@@ -3054,7 +3083,7 @@ class LLVMCodegen {
                 // result/Enum.parse(...)).
                 else if (val->getType()->isPointerTy() &&
                          val->getType()->getPointerElementType()->isIntegerTy(8)) {
-                    if (targetType->isIntegerTy(32) || targetType->isDoubleTy()) {
+                    if (targetType->isIntegerTy(64) || targetType->isIntegerTy(32) || targetType->isDoubleTy()) {
                         // Route through emitUnboxToType so heap-Any-boxed
                         // values unbox correctly. The previous shortcut
                         // PtrToInt(i8*, i32) only worked for tagged-int
@@ -3231,7 +3260,7 @@ class LLVMCodegen {
                     // raw-tagged-int path.
                     else if (val->getType()->isPointerTy() &&
                              val->getType()->getPointerElementType()->isIntegerTy(8) &&
-                             (fieldType->isIntegerTy(32) || fieldType->isDoubleTy())) {
+                             (fieldType->isIntegerTy(64) || fieldType->isIntegerTy(32) || fieldType->isDoubleTy())) {
                         val = emitUnboxToType(val, fieldType);
                     }
                     // i8* → Bool (i1) field. Route through
@@ -3315,8 +3344,8 @@ class LLVMCodegen {
                     Builder.CreateStore(boxedVal, elementPtr);
                     return;
                 }
-                ptr = Builder.CreateBitCast(ptr, Type::getInt32PtrTy(Context));
-                Builder.CreateStore(val, Builder.CreateGEP(Type::getInt32Ty(Context), ptr, index));
+                ptr = Builder.CreateBitCast(ptr, PointerType::getUnqual(val->getType()));
+                Builder.CreateStore(val, Builder.CreateGEP(val->getType(), ptr, index));
             }
         }
     }
@@ -3382,7 +3411,7 @@ class LLVMCodegen {
             return callBox("Core_Primitives_Any_box_char", {ext});
         }
         if (ty->isIntegerTy()) {
-            Value* c = Builder.CreateIntCast(v, Type::getInt32Ty(Context), true);
+            Value* c = Builder.CreateIntCast(v, Type::getInt64Ty(Context), true);
             return callBox("Core_Primitives_Any_box_int", {c});
         }
         if (ty->isDoubleTy()) return callBox("Core_Primitives_Any_box_double", {v});
@@ -3450,12 +3479,12 @@ class LLVMCodegen {
         return callBox("Core_Primitives_Any_box_null", {});
     }
 
-    // An Int stored in an untyped (i8*) slot. Int 0 must not become the
-    // null pointer (a Map value 0 read back as null, `?? d` took the
-    // default): boxIntToOpaque maps it to the runtime's shared boxed
-    // zero. Other widths (Bool / Char) keep the inline encoding.
+    // An Int stored in an untyped (i8*) slot, via boxIntToOpaque (inline
+    // when it fits in 32 bits, else boxed; 0 → the shared boxed zero, so
+    // a Map value 0 doesn't read back as null). Other widths (Bool /
+    // Char) keep the plain inline encoding.
     Value* encodeUntypedInt(Value* v, Type* target) {
-        if (v->getType()->isIntegerTy(32))
+        if (v->getType()->isIntegerTy(64) || v->getType()->isIntegerTy(32))
             return quirk::boxIntToOpaque(Context, TheModule.get(), Builder, v, target);
         return Builder.CreateIntToPtr(v, target);
     }
@@ -3568,11 +3597,9 @@ class LLVMCodegen {
         if (anyPtr->getType() != i8p)
             asI8 = Builder.CreateBitCast(anyPtr, i8p);
 
-        if (targetType->isIntegerTy(32)) {
-            FunctionCallee f = TheModule->getOrInsertFunction(
-                "quirk_opaque_to_int",
-                FunctionType::get(Type::getInt32Ty(Context), {i8p}, false));
-            return Builder.CreateCall(f, {asI8});
+        if (targetType->isIntegerTy(64) || targetType->isIntegerTy(32)) {
+            Value* n = quirk::decodeUntypedInt(Context, TheModule.get(), Builder, asI8);
+            return targetType->isIntegerTy(64) ? n : Builder.CreateTrunc(n, targetType);
         }
         if (targetType->isDoubleTy()) {
             FunctionCallee f = TheModule->getOrInsertFunction(
@@ -3902,7 +3929,8 @@ Value* LLVMCodegen::handleExpression(Node* node) {
 
         if (std::isdigit(lit->value[0])) {
             if (lit->value.find('.') != std::string::npos) return ConstantFP::get(Context, APFloat(std::stod(lit->value)));
-            return ConstantInt::get(Type::getInt32Ty(Context), std::stoi(lit->value));
+            // Sema rejects literals outside Int's range (Q0208).
+            return ConstantInt::get(Type::getInt64Ty(Context), (uint64_t)std::strtoll(lit->value.c_str(), nullptr, 10), /*isSigned=*/true);
         }
         
         if (lit->value.size() >= 2 && lit->value.front() == '"') {
@@ -4101,18 +4129,23 @@ Value* LLVMCodegen::handleExpression(Node* node) {
 
             Type* srcTy = src->getType();
             Type* i32Ty = Type::getInt32Ty(Context);
+            Type* intTy = Type::getInt64Ty(Context);   // Quirk Int
             Type* dblTy = Type::getDoubleTy(Context);
 
             if (targetType == "Double" || targetType == "Float") {
                 if (srcTy->isIntegerTy())  return Builder.CreateSIToFP(src, dblTy, "cast_dbl");
                 if (srcTy->isDoubleTy())   return src;
             }
-            if (targetType == "Int") {
-                if (srcTy->isDoubleTy())      return Builder.CreateFPToSI(src, i32Ty, "cast_int");
-                if (srcTy->isIntegerTy(1))    return Builder.CreateZExt(src, i32Ty, "cast_int");
-                if (srcTy->isIntegerTy(8))    return Builder.CreateZExt(src, i32Ty, "cast_int");
-                if (srcTy->isIntegerTy(32))   return src;
-                if (srcTy->isPointerTy())     return Builder.CreatePtrToInt(src, i32Ty, "cast_int");
+            if (targetType == "Int" || targetType == "Int32") {
+                Type* dst = targetType == "Int" ? intTy : i32Ty;
+                if (srcTy->isDoubleTy())      return Builder.CreateFPToSI(src, dst, "cast_int");
+                if (srcTy->isIntegerTy(1))    return Builder.CreateZExt(src, dst, "cast_int");
+                if (srcTy->isIntegerTy(8))    return Builder.CreateZExt(src, dst, "cast_int");
+                if (srcTy->isIntegerTy())     return Builder.CreateSExtOrTrunc(src, dst, "cast_int");
+                if (srcTy->isPointerTy()) {
+                    Value* n = quirk::decodeUntypedInt(Context, TheModule.get(), Builder, src);
+                    return dst == intTy ? n : Builder.CreateTrunc(n, dst, "cast_int");
+                }
             }
             if (targetType == "Bool") {
                 if (srcTy->isIntegerTy(1))  return src;
@@ -4130,9 +4163,9 @@ Value* LLVMCodegen::handleExpression(Node* node) {
                     }
                 }
                 if (srcTy->isIntegerTy()) {
-                    Value* i32val = srcTy->isIntegerTy(32) ? src : Builder.CreateSExt(src, i32Ty);
+                    Value* n = Builder.CreateSExtOrTrunc(src, intTy);
                     Function* f = TheModule->getFunction("Core_Primitives_Int_str");
-                    if (f) return Builder.CreateCall(f, {i32val}, "cast_str");
+                    if (f) return Builder.CreateCall(f, {n}, "cast_str");
                 }
                 if (srcTy->isDoubleTy()) {
                     Function* f = TheModule->getFunction("Core_Primitives_Double_str");
@@ -4189,27 +4222,20 @@ Value* LLVMCodegen::handleExpression(Node* node) {
             // `Core_Primitives_Any_to_int` SEGV'd on tagged ints because
             // it derefs `.tag` on pointer N.
             Type* i8p = Type::getInt8PtrTy(Context);
-            auto unboxAnyToInt = [&](Value* boxedI8p, Type* targetIntTy) {
-                FunctionCallee toInt = TheModule->getOrInsertFunction(
-                    "quirk_opaque_to_int",
-                    Type::getInt32Ty(Context),
-                    i8p);
-                Value* asI32 = Builder.CreateCall(toInt, {boxedI8p}, "any_unbox_i");
-                if (targetIntTy->isIntegerTy(32)) return asI32;
-                return Builder.CreateIntCast(asI32, targetIntTy, true, "any_unbox_cast");
+            Type* intTy = Type::getInt64Ty(Context);
+            auto unboxAnyToInt = [&](Value* boxedI8p) {
+                return quirk::decodeUntypedInt(Context, TheModule.get(), Builder, boxedI8p);
             };
-            if (L->getType() == i8p && R->getType()->isIntegerTy() &&
-                !R->getType()->isIntegerTy(64)) {
-                L = unboxAnyToInt(L, Type::getInt32Ty(Context));
+            if (L->getType() == i8p && R->getType()->isIntegerTy()) {
+                L = unboxAnyToInt(L);
                 if (R->getType()->isIntegerTy(1))
-                    R = Builder.CreateZExt(R, Type::getInt32Ty(Context), "bool_widen");
+                    R = Builder.CreateZExt(R, intTy, "bool_widen");
                 else if (R->getType() != L->getType())
                     R = Builder.CreateIntCast(R, L->getType(), true, "rhs_widen");
-            } else if (R->getType() == i8p && L->getType()->isIntegerTy() &&
-                       !L->getType()->isIntegerTy(64)) {
-                R = unboxAnyToInt(R, Type::getInt32Ty(Context));
+            } else if (R->getType() == i8p && L->getType()->isIntegerTy()) {
+                R = unboxAnyToInt(R);
                 if (L->getType()->isIntegerTy(1))
-                    L = Builder.CreateZExt(L, Type::getInt32Ty(Context), "bool_widen");
+                    L = Builder.CreateZExt(L, intTy, "bool_widen");
                 else if (L->getType() != R->getType())
                     L = Builder.CreateIntCast(L, R->getType(), true, "lhs_widen");
             }
@@ -4576,7 +4602,10 @@ Value* LLVMCodegen::handleExpression(Node* node) {
                         return Builder.CreateCall(toStrFn, {val});
                     }
 
-                    if (ty->isIntegerTy(32)) { if (auto* f = TheModule->getFunction("Core_Primitives_Int_str")) return Builder.CreateCall(f, {val}); }
+                    if (ty->isIntegerTy(64) || ty->isIntegerTy(32)) {
+                        if (auto* f = TheModule->getFunction("Core_Primitives_Int_str"))
+                            return Builder.CreateCall(f, {Builder.CreateSExtOrTrunc(val, Type::getInt64Ty(Context))});
+                    }
                     if (ty->isDoubleTy()) { if (auto* f = TheModule->getFunction("Core_Primitives_Double_str")) return Builder.CreateCall(f, {val}); }
                     if (ty->isIntegerTy(1)) {
                         if (auto* f = TheModule->getFunction("Core_Primitives_Bool_str")) {
@@ -4655,7 +4684,7 @@ Value* LLVMCodegen::handleExpression(Node* node) {
             // `x ?? 0` with `x: Int?` — Sema types the result as Int, so
             // unbox the LHS and select natively. (Previously the RHS was
             // replaced with null and the fallback silently dropped.)
-            if (rhs->getType()->isIntegerTy(32) || rhs->getType()->isDoubleTy()) {
+            if (rhs->getType()->isIntegerTy(64) || rhs->getType()->isIntegerTy(32) || rhs->getType()->isDoubleTy()) {
                 Value* unboxed = emitUnboxToType(L, rhs->getType());
                 return Builder.CreateSelect(isNull, rhs, unboxed, "coalesce");
             }
@@ -4758,12 +4787,13 @@ Value* LLVMCodegen::handleExpression(Node* node) {
                     // `.values`
                     GlobalVariable* packedGv = TheModule->getNamedGlobal("__" + lit->value + "_packed");
                     if (info.backingType == "Int") {
+                        Type* i64 = Type::getInt64Ty(Context);
                         FunctionCallee fn = TheModule->getOrInsertFunction(
                             "quirk_enum_values_int",
                             FunctionType::get(listPtrTy,
-                                {PointerType::getUnqual(i32), i32}, false));
-                        Value* asI32p = Builder.CreateBitCast(packedGv, PointerType::getUnqual(i32));
-                        return Builder.CreateCall(fn, {asI32p, count});
+                                {PointerType::getUnqual(i64), i32}, false));
+                        Value* asI64p = Builder.CreateBitCast(packedGv, PointerType::getUnqual(i64));
+                        return Builder.CreateCall(fn, {asI64p, count});
                     }
                     if (info.backingType == "Double") {
                         Type* dbl = Type::getDoubleTy(Context);
@@ -4828,11 +4858,12 @@ Value* LLVMCodegen::handleExpression(Node* node) {
             }
             if (!enumName.empty()) {
                 Value* ord = handleExpression(member->object.get());
-                // Defensive cast — varGen may hand back an i8* in some
-                // closure-capture paths; coerce to i32 with PtrToInt.
+                // The ordinal is an i32 variant index; `.ordinal` is an Int.
+                // Defensive: varGen may hand back an i8* in some
+                // closure-capture paths.
                 if (ord->getType()->isPointerTy())
-                    ord = Builder.CreatePtrToInt(ord, Type::getInt32Ty(Context));
-                return ord;
+                    return quirk::decodeUntypedInt(Context, TheModule.get(), Builder, ord);
+                return Builder.CreateSExtOrTrunc(ord, Type::getInt64Ty(Context));
             }
         }
 
@@ -4895,7 +4926,7 @@ Value* LLVMCodegen::handleExpression(Node* node) {
                 if (info.backingType == "Int") {
                     FunctionCallee fn = TheModule->getOrInsertFunction(
                         "quirk_enum_value_int",
-                        FunctionType::get(i32, {i32, i8p, i32}, false));
+                        FunctionType::get(Type::getInt64Ty(Context), {i32, i8p, i32}, false));
                     return Builder.CreateCall(fn, {ordinal, packedPtr, count});
                 }
                 if (info.backingType == "Double") {
@@ -5002,7 +5033,7 @@ Value* LLVMCodegen::handleExpression(Node* node) {
                 Function* getFn = TheModule->getFunction("Core_Collections_Tuple_Tuple___get");
                 if (!getFn) {
                     FunctionType* ft = FunctionType::get(Type::getInt8PtrTy(Context),
-                        {tuplePtrTy, Type::getInt32Ty(Context)}, false);
+                        {tuplePtrTy, Type::getInt64Ty(Context)}, false);
                     getFn = Function::Create(ft, Function::ExternalLinkage,
                         "Core_Collections_Tuple_Tuple___get", TheModule.get());
                 }
@@ -5011,7 +5042,7 @@ Value* LLVMCodegen::handleExpression(Node* node) {
                     : objPtr;
                 int idx = std::stoi(member->memberName);
                 return Builder.CreateCall(getFn,
-                    {tupPtr, ConstantInt::get(Type::getInt32Ty(Context), idx)},
+                    {tupPtr, ConstantInt::get(getFn->getFunctionType()->getParamType(1), idx)},
                     "tup_" + member->memberName);
             }
         }
@@ -5152,7 +5183,8 @@ Value* LLVMCodegen::handleExpression(Node* node) {
         Value* objVal = handleExpression(sl->object.get());
         if (!objVal) return nullptr;
 
-        Type* i32Ty    = Type::getInt32Ty(Context);
+        Type* i32Ty    = Type::getInt32Ty(Context);   // GEP field indices
+        Type* intTy    = Type::getInt64Ty(Context);   // Quirk Int (bounds, sizes)
         Type* i8PtrTy  = Type::getInt8PtrTy(Context);
 
         // Determine object type: String or List
@@ -5169,10 +5201,10 @@ Value* LLVMCodegen::handleExpression(Node* node) {
 
         Value* startVal = sl->start
             ? handleExpression(sl->start.get())
-            : ConstantInt::get(i32Ty, 0);
+            : ConstantInt::get(intTy, 0);
         if (!startVal) return nullptr;
-        if (!startVal->getType()->isIntegerTy(32))
-            startVal = Builder.CreateIntCast(startVal, i32Ty, true);
+        if (!startVal->getType()->isIntegerTy(64))
+            startVal = Builder.CreateIntCast(startVal, intTy, true);
 
         if (isListSlice) {
             // List slice: Core_Collections_List_List_slice(List*, start, end)
@@ -5188,26 +5220,26 @@ Value* LLVMCodegen::handleExpression(Node* node) {
             if (sl->end) {
                 endVal = handleExpression(sl->end.get());
                 if (!endVal) return nullptr;
-                if (!endVal->getType()->isIntegerTy(32))
-                    endVal = Builder.CreateIntCast(endVal, i32Ty, true);
+                if (!endVal->getType()->isIntegerTy(64))
+                    endVal = Builder.CreateIntCast(endVal, intTy, true);
             } else if (listTy) {
-                // Load size field (index 1 in {void**, int, int})
+                // Load size field (index 1 in {void**, Int, Int})
                 Value* sizePtr = Builder.CreateGEP(listTy, objVal,
                     {ConstantInt::get(i32Ty, 0), ConstantInt::get(i32Ty, 1)}, "list_sizeptr");
-                endVal = Builder.CreateLoad(i32Ty, sizePtr, "list_size");
+                endVal = Builder.CreateLoad(intTy, sizePtr, "list_size");
             } else {
-                endVal = ConstantInt::getSigned(i32Ty, -1);
+                endVal = ConstantInt::getSigned(intTy, -1);
             }
 
             FunctionCallee sliceFn = TheModule->getOrInsertFunction(
                 "Core_Collections_List_List_slice",
-                listPtrTy, listPtrTy, i32Ty, i32Ty);
+                listPtrTy, listPtrTy, intTy, intTy);
             return Builder.CreateCall(sliceFn, {objVal, startVal, endVal}, "list_slice");
 
         } else {
             // String slice: Core_String_String_substring(String*, start, end)
             StructType* strTy = StructTypes.count("String") ? StructTypes["String"] : nullptr;
-            if (!strTy) strTy = StructType::create(Context, {i8PtrTy, i32Ty}, "String");
+            if (!strTy) strTy = StructType::create(Context, {i8PtrTy, intTy}, "String");
             Type* strPtrTy = PointerType::getUnqual(strTy);
             if (objVal->getType() != strPtrTy)
                 objVal = Builder.CreateBitCast(objVal, strPtrTy);
@@ -5216,17 +5248,17 @@ Value* LLVMCodegen::handleExpression(Node* node) {
             if (sl->end) {
                 endVal = handleExpression(sl->end.get());
                 if (!endVal) return nullptr;
-                if (!endVal->getType()->isIntegerTy(32))
-                    endVal = Builder.CreateIntCast(endVal, i32Ty, true);
+                if (!endVal->getType()->isIntegerTy(64))
+                    endVal = Builder.CreateIntCast(endVal, intTy, true);
             } else {
                 Value* lenPtr = Builder.CreateGEP(strTy, objVal,
                     {ConstantInt::get(i32Ty, 0), ConstantInt::get(i32Ty, 1)}, "str_lenptr");
-                endVal = Builder.CreateLoad(i32Ty, lenPtr, "str_len");
+                endVal = Builder.CreateLoad(intTy, lenPtr, "str_len");
             }
 
             FunctionCallee substringFn = TheModule->getOrInsertFunction(
                 "Core_String_String_substring",
-                strPtrTy, strPtrTy, i32Ty, i32Ty);
+                strPtrTy, strPtrTy, intTy, intTy);
             return Builder.CreateCall(substringFn, {objVal, startVal, endVal}, "slice");
         }
     }

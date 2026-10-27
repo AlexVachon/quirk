@@ -57,8 +57,9 @@ inline Value* coerceToType(Value* val, Type* expected,
 
     Type* i8p = Type::getInt8PtrTy(ctx);
 
-    // int → int (different widths).
+    // int → int (different widths). A Bool (i1) zero-extends: true is 1.
     if (got->isIntegerTy() && expected->isIntegerTy()) {
+        if (got->isIntegerTy(1)) return b.CreateZExt(val, expected, "coerce_b2i");
         return b.CreateIntCast(val, expected, /*isSigned=*/true, "coerce_i2i");
     }
 
@@ -126,12 +127,9 @@ inline Value* coerceToType(Value* val, Type* expected,
     // above). Route through quirk_opaque_to_int so both the tagged-
     // int encoding and the heap-Any encoding resolve correctly.
     if (got->isPointerTy() && expected->isIntegerTy()) {
-        FunctionCallee toInt = mod->getOrInsertFunction(
-            "quirk_opaque_to_int", Type::getInt32Ty(ctx), i8p);
-        Value* casted = (got == i8p) ? val : b.CreateBitCast(val, i8p);
-        Value* asI32 = b.CreateCall(toInt, {casted}, "coerce_any2i");
-        if (expected->isIntegerTy(32)) return asI32;
-        return b.CreateIntCast(asI32, expected, /*isSigned=*/true, "coerce_i2i_narrow");
+        Value* asInt = quirk::decodeUntypedInt(ctx, mod, b, val);
+        if (expected->isIntegerTy(64)) return asInt;
+        return b.CreateIntCast(asInt, expected, /*isSigned=*/true, "coerce_i2i_narrow");
     }
 
     // i8* → double. Same Any-vs-tagged-int concern as the int

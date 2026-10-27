@@ -117,7 +117,7 @@ void* Core_Collections_List_List_pop(List* self) {
 }
 
 // Inline candidate (if LTO enabled)
-int Core_Collections_List_List_length(List* self) {
+int64_t Core_Collections_List_List_length(List* self) {
     return self->size;
 }
 
@@ -143,7 +143,7 @@ ListIterator* Core_Collections_List_List___iter(List* self) {
 
 extern void quirk_throw_exception(const char* type_name, const char* message);
 
-void* Core_Collections_List_List___get(List* self, int index) {
+void* Core_Collections_List_List___get(List* self, int64_t index) {
     // Defensive: selfhost's codegen can hand us a null or
     // uninitialised List (unknown-method fallback, coerced
     // slot never routed through List___init). Return null
@@ -155,26 +155,26 @@ void* Core_Collections_List_List___get(List* self, int index) {
     if (index < 0 || index >= self->size) {
         char buf[128];
         snprintf(buf, sizeof(buf),
-                 "list index %d out of range (size: %d)", index, self->size);
+                 "list index %lld out of range (size: %lld)", (long long)index, (long long)self->size);
         quirk_throw_exception("IndexError", buf);
     }
     return self->data[index];
 }
 
-void Core_Collections_List_List___set(List* self, int index, void* item) {
+void Core_Collections_List_List___set(List* self, int64_t index, void* item) {
     if (index < 0) index += self->size;
     if (index < 0 || index >= self->size) {
         char buf[128];
         snprintf(buf, sizeof(buf),
-                 "list assignment index %d out of range (size: %d)", index, self->size);
+                 "list assignment index %lld out of range (size: %lld)", (long long)index, (long long)self->size);
         quirk_throw_exception("IndexError", buf);
     }
     self->data[index] = item;
 }
 
-List* Core_Collections_List_List_slice(List* self, int start, int end) {
+List* Core_Collections_List_List_slice(List* self, int64_t start, int64_t end) {
     if (!self) return NULL;
-    int len = self->size;
+    int64_t len = self->size;
     if (start < 0) start += len;
     if (end   < 0) end   += len;
     if (start < 0) start = 0;
@@ -215,7 +215,7 @@ String* Core_Collections_List_List___repr(List* self) {
     // 3. Fast concatenation
     // We calculate exact size to do 1 malloc instead of multiple
     // Format: "[" + content + "]" + null_terminator
-    int total_len = 1 + content->length + 1;
+    int64_t total_len = 1 + content->length + 1;
     char* raw = (char*)malloc(total_len + 1);
     
     if (!raw) exit(1);
@@ -244,16 +244,13 @@ String* Core_Collections_List_List___str(List* self) {
 
 // `elem in list` — works for String* (by value) and other pointer types (by identity).
 // Tagged-integer i8* values are <= 0xFFFFFFFF on 64-bit systems; heap pointers are above.
+extern int32_t quirk_opaque_eq(void* a, void* b);
+
+// `x in xs`: same equality as `==` on untyped values (an inline or boxed
+// Int by value, Strings by text, other objects by identity).
 int Core_Collections_List_List_contains(List* self, void* elem) {
-    for (int i = 0; i < self->size; i++) {
-        void* item = self->data[i];
-        if (item == elem) return 1;
-        if ((uintptr_t)item > 0xFFFFFFFFUL && (uintptr_t)elem > 0xFFFFFFFFUL) {
-            String* s1 = (String*)item;
-            String* s2 = (String*)elem;
-            if (s1->buffer && s2->buffer && s1->length == s2->length &&
-                memcmp(s1->buffer, s2->buffer, s1->length) == 0) return 1;
-        }
+    for (int64_t i = 0; i < self->size; i++) {
+        if (quirk_opaque_eq(self->data[i], elem)) return 1;
     }
     return 0;
 }
@@ -269,7 +266,7 @@ typedef void* (*LambdaFn2)(void* env, void* acc, void* arg);
 // `[0] * 5` → `[0, 0, 0, 0, 0]`. n<=0 returns the empty list.
 // Element values are shared (not deep-copied) — same shape as
 // Python's list-repeat operator.
-List* Core_Collections_List_List___mul(List* self, int n) {
+List* Core_Collections_List_List___mul(List* self, int64_t n) {
     List* result = (List*)quirk_alloc(QT_LIST, sizeof(List));
     Core_Collections_List_List___init(result);
     if (!self || n <= 0 || self->size == 0) return result;
@@ -298,7 +295,7 @@ List* Core_Collections_List_List___add(List* self, List* other) {
     List* result = (List*)quirk_alloc(QT_LIST, sizeof(List));
     Core_Collections_List_List___init(result);
     if (!self && !other) return result;
-    int total = (self ? self->size : 0) + (other ? other->size : 0);
+    int64_t total = (self ? self->size : 0) + (other ? other->size : 0);
     Core_Collections_List_List_ensure_capacity(result, total);
     if (self) {
         for (int i = 0; i < self->size; i++)

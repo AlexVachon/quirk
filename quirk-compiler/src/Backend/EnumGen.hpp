@@ -154,11 +154,11 @@ class EnumGen {
                 std::vector<Constant*> vals;
                 vals.reserve(info.values.size());
                 for (const auto& v : info.values) {
-                    int32_t n = 0;
-                    try { n = (int32_t)std::stol(v); } catch (...) { n = 0; }
-                    vals.push_back(ConstantInt::get(Type::getInt32Ty(Context), n));
+                    int64_t n = 0;
+                    try { n = (int64_t)std::stoll(v); } catch (...) { n = 0; }
+                    vals.push_back(ConstantInt::get(Type::getInt64Ty(Context), n));
                 }
-                auto* arrTy = ArrayType::get(Type::getInt32Ty(Context), vals.size());
+                auto* arrTy = ArrayType::get(Type::getInt64Ty(Context), vals.size());
                 Constant* blob = ConstantArray::get(arrTy, vals);
                 auto* gv = new GlobalVariable(
                     *TheModule, arrTy, /*isConstant=*/true,

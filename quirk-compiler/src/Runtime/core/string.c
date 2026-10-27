@@ -225,6 +225,18 @@ static void ensure_type_suffix(char* fmt, size_t fmt_size, char default_type) {
     fmt[n + 1] = '\0';
 }
 
+// For a 64-bit Int argument: put the `ll` length modifier before an
+// integer conversion char (`%5d` → `%5lld`, `%x` → `%llx`).
+static void ensure_ll_length(char* fmt, size_t fmt_size) {
+    size_t n = fmt ? strlen(fmt) : 0;
+    if (n == 0 || !strchr("diuxXo", fmt[n - 1])) return;
+    if (n >= 2 && fmt[n - 2] == 'l') return;
+    if (n + 3 > fmt_size) return;
+    fmt[n + 1] = fmt[n - 1];
+    fmt[n - 1] = 'l'; fmt[n] = 'l';
+    fmt[n + 2] = '\0';
+}
+
 // Pull the explicit width number out of a printf spec (the digits
 // between the alignment flag and the type char or precision dot).
 // Returns 0 if there's no width specified. Used to size the centring
@@ -326,9 +338,10 @@ static void append_formatted(char** buf,
                 if (strchr(format_string, 's'))
                     strcpy(format_string, "%d");
                 ensure_type_suffix(format_string, sizeof(format_string), 'd');
-                snprintf(output_buffer, 256, format_string, a->ival);
+                ensure_ll_length(format_string, sizeof(format_string));
+                snprintf(output_buffer, 256, format_string, (long long)a->ival);
             } else {
-                snprintf(output_buffer, 256, "%d", a->ival);
+                snprintf(output_buffer, 256, "%lld", (long long)a->ival);
             }
             if (commas) insert_thousand_commas(output_buffer, sizeof(output_buffer));
             if (center) center_in_field(output_buffer, sizeof(output_buffer), extract_width(translated));
@@ -454,7 +467,7 @@ static inline String* quirk_ensure_string(String* val) {
 // `s * n` — fresh String with self repeated n times. `n <= 0`
 // returns the empty string (Python semantics). Called by the
 // `__mul` magic method dispatch on String * Int.
-String* Core_String_String___mul(String* self, int n) {
+String* Core_String_String___mul(String* self, int64_t n) {
     if (!self || !self->buffer || n <= 0) return make_String("");
     size_t len = strlen(self->buffer);
     if (len == 0) return make_String("");
@@ -472,7 +485,7 @@ String* Core_String_String___add(String* self, String* other) {
     other = quirk_ensure_string(other);
     if (!self || !other)
         return make_String("");
-    int new_len = self->length + other->length;
+    int64_t new_len = self->length + other->length;
     char* raw = (char*)malloc(new_len + 1);
     if (!raw)
         return NULL;
@@ -511,7 +524,7 @@ String* Core_String_String___str(String* self) {
 }
 
 String* Core_String_String___repr(String* self) {
-    int len = self->length + 2;
+    int64_t len = self->length + 2;
     char* raw = (char*)GC_malloc(len + 1);
     snprintf(raw, len + 1, "\"%s\"", self->buffer);
     return make_String(raw);
@@ -525,7 +538,7 @@ int Core_String_String___get(String* self, int index) {
     if (index < 0 || index >= self->length) {
         char buf[128];
         snprintf(buf, sizeof(buf),
-                 "string index %d out of range (length: %d)", index, self->length);
+                 "string index %d out of range (length: %lld)", index, (long long)self->length);
         quirk_throw_exception("IndexError", buf);
     }
     return (int)(unsigned char)self->buffer[index];
@@ -693,10 +706,10 @@ String* Core_String_String_encode(String* self) {
     return make_String_taking_ownership(temp);
 }
 
-int Core_String_String_count(String* self, String* sub) {
+int64_t Core_String_String_count(String* self, String* sub) {
     if (!self || !self->buffer || !sub || !sub->buffer)
         return 0;
-    int sub_len = sub->length;
+    int64_t sub_len = sub->length;
     if (sub_len == 0)
         return self->length + 1;
     int count = 0;
@@ -717,7 +730,7 @@ int Core_String_String_endswith(String* self, String* suffix) {
                   suffix->buffer) == 0;
 }
 
-int Core_String_String_find(String* self, String* sub) {
+int64_t Core_String_String_find(String* self, String* sub) {
     if (!self || !self->buffer || !sub || !sub->buffer)
         return -1;
     // Sanity: length fields on either String may be garbage
@@ -730,8 +743,8 @@ int Core_String_String_find(String* self, String* sub) {
     return (ptr == NULL) ? -1 : (int)(ptr - self->buffer);
 }
 
-int Core_String_String_index(String* self, String* sub) {
-    int idx = Core_String_String_find(self, sub);
+int64_t Core_String_String_index(String* self, String* sub) {
+    int64_t idx = Core_String_String_find(self, sub);
     if (idx == -1) {
         printf("ValueError: substring not found\n");
         exit(1);
@@ -742,7 +755,7 @@ int Core_String_String_index(String* self, String* sub) {
 String* Core_String_String_trim(String* self) {
     if (!self || !self->buffer)
         return make_String("");
-    int start = 0, end = self->length - 1;
+    int64_t start = 0, end = self->length - 1;
     while (start < self->length && isspace((unsigned char)self->buffer[start]))
         start++;
     if (start > end)
@@ -761,14 +774,14 @@ String* Core_String_String_replace(String* self, String* old_str, String* new_st
         return make_String("");
     int count = 0;
     char* tmp = self->buffer;
-    int old_len = old_str->length;
+    int64_t old_len = old_str->length;
     if (old_len == 0)
         return make_String(self->buffer);
     while ((tmp = strstr(tmp, old_str->buffer))) {
         count++;
         tmp += old_len;
     }
-    int new_len = self->length + (count * (new_str->length - old_len));
+    int64_t new_len = self->length + (count * (new_str->length - old_len));
     char* result = (char*)malloc(new_len + 1);
     char* src = self->buffer;
     char* dest = result;
@@ -788,7 +801,7 @@ String* Core_String_String_replace(String* self, String* old_str, String* new_st
 String* Core_String_String_remove(String* self, String* sub) {
     if (!self || !self->buffer || !sub || !sub->buffer)
         return make_String("");
-    int sub_len = sub->length;
+    int64_t sub_len = sub->length;
     if (sub_len == 0)
         return make_String(self->buffer);
     int count = 0;
@@ -797,7 +810,7 @@ String* Core_String_String_remove(String* self, String* sub) {
         count++;
         tmp += sub_len;
     }
-    int new_len = self->length - (count * sub_len);
+    int64_t new_len = self->length - (count * sub_len);
     char* result = (char*)malloc(new_len + 1);
     char* src = self->buffer;
     char* dest = result;
@@ -811,10 +824,10 @@ String* Core_String_String_remove(String* self, String* sub) {
     return make_String_taking_ownership(result);
 }
 
-String* Core_String_String_repeat(String* self, int n) {
+String* Core_String_String_repeat(String* self, int64_t n) {
     if (!self || !self->buffer || n <= 0)
         return make_String("");
-    int new_len = self->length * n;
+    int64_t new_len = self->length * n;
     char* result = (char*)malloc(new_len + 1);
     char* ptr = result;
     for (int i = 0; i < n; i++) {
@@ -843,7 +856,7 @@ int Core_String_String_startswith(String* self, String* prefix) {
     return strncmp(self->buffer, prefix->buffer, prefix->length) == 0;
 }
 
-String* Core_String_String_substring(String* self, int start, int end) {
+String* Core_String_String_substring(String* self, int64_t start, int64_t end) {
     if (!self || !self->buffer)
         return make_String("");
     if (start < 0)
@@ -856,7 +869,7 @@ String* Core_String_String_substring(String* self, int start, int end) {
         end = self->length;
     if (start >= end)
         return make_String("");
-    int new_len = end - start;
+    int64_t new_len = end - start;
     char* temp = (char*)malloc(new_len + 1);
     memcpy(temp, self->buffer + start, new_len);
     temp[new_len] = '\0';
@@ -957,12 +970,12 @@ String* Core_String_String_join(String* self, List* items) {
     return make_String_taking_ownership(result);
 }
 
-String* Core_String_String_zfill(String* self, int width) {
+String* Core_String_String_zfill(String* self, int64_t width) {
     if (!self || !self->buffer)
         return make_String("");
     if (self->length >= width)
         return make_String(self->buffer);
-    int padding = width - self->length;
+    int64_t padding = width - self->length;
     char* result = (char*)malloc(width + 1);
     memset(result, '0', padding);
     memcpy(result + padding, self->buffer, self->length);
@@ -970,13 +983,13 @@ String* Core_String_String_zfill(String* self, int width) {
     return make_String_taking_ownership(result);
 }
 
-String* Core_String_String_ljust(String* self, int width, String* pad) {
+String* Core_String_String_ljust(String* self, int64_t width, String* pad) {
     if (!self || !self->buffer)
         return make_String("");
     char pad_char = (pad && pad->length > 0) ? pad->buffer[0] : ' ';
     if (self->length >= width)
         return make_String(self->buffer);
-    int padding = width - self->length;
+    int64_t padding = width - self->length;
     char* result = (char*)malloc(width + 1);
     memcpy(result, self->buffer, self->length);
     memset(result + self->length, pad_char, padding);
@@ -984,13 +997,13 @@ String* Core_String_String_ljust(String* self, int width, String* pad) {
     return make_String_taking_ownership(result);
 }
 
-String* Core_String_String_rjust(String* self, int width, String* pad) {
+String* Core_String_String_rjust(String* self, int64_t width, String* pad) {
     if (!self || !self->buffer)
         return make_String("");
     char pad_char = (pad && pad->length > 0) ? pad->buffer[0] : ' ';
     if (self->length >= width)
         return make_String(self->buffer);
-    int padding = width - self->length;
+    int64_t padding = width - self->length;
     char* result = (char*)malloc(width + 1);
     memset(result, pad_char, padding);
     memcpy(result + padding, self->buffer, self->length);
@@ -1035,13 +1048,13 @@ int Core_String_String_contains(String* self, String* sub) {
     return Core_String_String_find(self, sub) != -1;
 }
 
-String* Core_String_String_center(String* self, int width, String* pad) {
+String* Core_String_String_center(String* self, int64_t width, String* pad) {
     if (!self || !self->buffer)
         return make_String("");
     char pad_char = (pad && pad->length > 0) ? pad->buffer[0] : ' ';
     if (self->length >= width)
         return make_String(self->buffer);
-    int total_padding = width - self->length;
+    int64_t total_padding = width - self->length;
     int left = total_padding / 2;
     int right = total_padding - left;
     char* result = (char*)malloc(width + 1);
@@ -1098,7 +1111,7 @@ int Core_String_String_is_alpha(String* self) {
 
 extern void quirk_throw_exception(const char* type_name, const char* message);
 
-int Core_String_String_to_int(String* self) {
+int64_t Core_String_String_to_int(String* self) {
     if (!self || !self->buffer || self->length == 0) {
         quirk_throw_exception("ValueError", "cannot convert empty string to Int");
         return 0;
@@ -1213,11 +1226,11 @@ static int min3(int a, int b, int c) {
     return m;
 }
 
-int Core_String_String_distance(String* self, String* other) {
+int64_t Core_String_String_distance(String* self, String* other) {
     if (!self || !other)
         return 0;
-    int len1 = self->length;
-    int len2 = other->length;
+    int64_t len1 = self->length;
+    int64_t len2 = other->length;
     int* matrix = (int*)malloc((len1 + 1) * (len2 + 1) * sizeof(int));
 #define M(r, c) matrix[(r) * (len2 + 1) + (c)]
     for (int i = 0; i <= len1; i++)
@@ -1348,7 +1361,7 @@ String* Core_String_String_format(String* self, List* args) {
     return Core_String_String_format_list(self, args);
 }
 
-int Core_String_String_length(String* self) {
+int64_t Core_String_String_length(String* self) {
     if (!self) return 0;
     return self->length;
 }
@@ -1359,12 +1372,12 @@ int Core_String_String_length(String* self) {
 // of repeated `+`. Walks the list twice: once to sum
 // lengths, once to copy each piece via strcat into a
 // freshly-allocated buffer.
-extern int Core_Collections_List_List_length(List* self);
-extern void* Core_Collections_List_List___get(List* self, int index);
+extern int64_t Core_Collections_List_List_length(List* self);
+extern void* Core_Collections_List_List___get(List* self, int64_t index);
 
 String* Core_String__str_join(List* parts) {
     if (!parts) return make_String("");
-    int n = Core_Collections_List_List_length(parts);
+    int64_t n = Core_Collections_List_List_length(parts);
     size_t total = 0;
     for (int i = 0; i < n; i++) {
         String* s = (String*)Core_Collections_List_List___get(parts, i);

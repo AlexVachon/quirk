@@ -22,7 +22,7 @@ void Core_Collections_Queue_Queue___del(Queue* self) {
 }
 
 static void Queue__grow(Queue* self) {
-    int new_cap = self->capacity * 2;
+    int64_t new_cap = self->capacity * 2;
     void** new_data = (void**)malloc(new_cap * sizeof(void*));
     for (int i = 0; i < self->size; i++)
         new_data[i] = self->data[(self->head + i) % self->capacity];
@@ -78,7 +78,7 @@ void* Core_Collections_Queue_Queue_peek_back(Queue* self) {
     return self->data[(self->tail - 1 + self->capacity) % self->capacity];
 }
 
-int Core_Collections_Queue_Queue_size(Queue* self) { return self ? self->size : 0; }
+int64_t Core_Collections_Queue_Queue_size(Queue* self) { return self ? self->size : 0; }
 int Core_Collections_Queue_Queue_is_empty(Queue* self) { return !self || self->size == 0; }
 
 void Core_Collections_Queue_Queue_clear(Queue* self) {

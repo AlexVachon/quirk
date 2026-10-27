@@ -46,23 +46,23 @@ static inline const QuirkHeader* quirk_header_of(const void* p) {
 
 typedef struct {
     char* buffer;
-    int length;
+    int64_t length;
 } String;
 
 typedef struct {
     String* str_ref;
-    int idx;
+    int64_t idx;
 } StringIterator;
 
 typedef struct {
     void** data;
-    int size;
-    int capacity;
+    int64_t size;
+    int64_t capacity;
 } List;
 
 typedef struct {
     List* list_ref;
-    int idx;
+    int64_t idx;
 } ListIterator;
 
 // Map layout (v6.0.6) — an insertion-ordered "compact dict":
@@ -82,21 +82,21 @@ typedef struct {
 
 typedef struct {
     MapEntry* entries;     // dense, insertion order
-    int capacity;          // index slots (power of two, >= 8)
-    int size;              // live entries
+    int64_t capacity;          // index slots (power of two, >= 8)
+    int64_t size;              // live entries
     int32_t* index;        // slot -> entry position + 1; 0 empty, -1 deleted
-    int order_size;        // entries used in `entries` (incl. removed holes)
-    int order_capacity;    // allocated length of `entries`
+    int64_t order_size;        // entries used in `entries` (incl. removed holes)
+    int64_t order_capacity;    // allocated length of `entries`
 } Map;
 
 typedef struct {
     Map* map_ref;
-    int idx;  // index into key_order
+    int64_t idx;  // index into key_order
 } MapIterator;
 
 typedef struct {
     Map* map_ref;
-    int idx;  // index into key_order
+    int64_t idx;  // index into key_order
     void* current_value;
 } MapPairIterator;
 
@@ -118,12 +118,12 @@ typedef struct {
 
 typedef struct {
     void** data;
-    int size;
+    int64_t size;
 } Tuple;
 
 typedef struct {
     Tuple* tuple_ref;
-    int idx;
+    int64_t idx;
 } TupleIterator;
 
 // Set layout (v6.0.7) — same insertion-ordered compact design as Map:
@@ -141,40 +141,40 @@ typedef struct {
 
 typedef struct {
     SetEntry* entries;     // dense, insertion order
-    int capacity;          // index slots (power of two, >= 8)
-    int size;              // live entries
+    int64_t capacity;          // index slots (power of two, >= 8)
+    int64_t size;              // live entries
     int32_t* index;        // slot -> entry position + 1; 0 empty, -1 deleted
-    int order_size;        // entries used in `entries` (incl. removed holes)
-    int order_capacity;    // allocated length of `entries`
+    int64_t order_size;        // entries used in `entries` (incl. removed holes)
+    int64_t order_capacity;    // allocated length of `entries`
 } Set;
 
 typedef struct {
     Set* set_ref;
-    int idx;
+    int64_t idx;
 } SetIterator;
 
 typedef struct {
     void** data;
-    int head;       // index of front element
-    int tail;       // index past last element
-    int capacity;
-    int size;
+    int64_t head;       // index of front element
+    int64_t tail;       // index past last element
+    int64_t capacity;
+    int64_t size;
 } Queue;
 
 typedef struct {
     Queue* queue_ref;
-    int pos;        // current iteration index (0-based)
+    int64_t pos;        // current iteration index (0-based)
 } QueueIterator;
 
 // ===================================================
 //  Any — Tagged Union for dynamic typing
 //
-//  LLVM struct layout: { i32 tag, i32 ival, double dval, i8* ptr }
-//  Offsets: 0, 4, 8, 16  —  total 24 bytes
+//  LLVM struct layout: { i32 tag, i64 ival, double dval, i8* ptr }
+//  Offsets: 0, 8, 16, 24  —  total 32 bytes
 // ===================================================
 
 typedef enum {
-    ANY_INT    = 0,   // ival holds int32
+    ANY_INT    = 0,   // ival holds int64
     ANY_DOUBLE = 1,   // dval holds double
     ANY_BOOL   = 2,   // ival holds 0 or 1
     ANY_CHAR   = 3,   // ival holds char code
@@ -189,9 +189,9 @@ typedef enum {
 
 typedef struct {
     int32_t tag;   // AnyTag  — offset  0, size 4
-    int32_t ival;  // Int/Bool/Char — offset  4, size 4
-    double  dval;  // Double  — offset  8, size 8
-    void*   ptr;   // String*/List*/Map*/ptr — offset 16, size 8
+    int64_t ival;  // Int/Bool/Char — offset  8, size 8
+    double  dval;  // Double  — offset 16, size 8
+    void*   ptr;   // String*/List*/Map*/ptr — offset 24, size 8
 } Any;
 
 // Type id from a value's QuirkHeader, or QT_NONE when it has none (tagged

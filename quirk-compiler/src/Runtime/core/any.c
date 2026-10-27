@@ -2,7 +2,7 @@
 
 // Forward declarations from string.c
 int    Core_String_String___eq(String* self, String* other);
-int    Core_String_String_to_int(String* self);
+int64_t Core_String_String_to_int(String* self);
 double Core_String_String_to_float(String* self);
 String* Core_Collections_List_List___str(List* self);
 String* Core_Collections_Map_Map___str(Map* self);
@@ -21,7 +21,7 @@ static struct { QuirkHeader h; Any a; } __attribute__((aligned(16))) quirk_zero_
     { QUIRK_HDR_MAGIC, QT_ANY }, { ANY_INT, 0, 0.0, NULL }
 };
 
-Any* Core_Primitives_Any_box_int(int32_t v) {
+Any* Core_Primitives_Any_box_int(int64_t v) {
     if (v == 0) return &quirk_zero_box.a;
     Any* a = (Any*)quirk_alloc(QT_ANY, sizeof(Any));
     a->tag = ANY_INT; a->ival = v; a->dval = 0.0; a->ptr = NULL;
@@ -92,13 +92,13 @@ Any* Core_Primitives_Any_box_callable(Callable* v) {
 //  UNBOX — extract a concrete value from Any*
 // ===================================================
 
-int32_t Core_Primitives_Any_to_int(Any* a) {
+int64_t Core_Primitives_Any_to_int(Any* a) {
     if (!a) return 0;
     switch (a->tag) {
         case ANY_INT:    return a->ival;
         case ANY_BOOL:   return a->ival;
         case ANY_CHAR:   return a->ival;
-        case ANY_DOUBLE: return (int32_t)a->dval;
+        case ANY_DOUBLE: return (int64_t)a->dval;
         case ANY_STRING: return a->ptr ? Core_String_String_to_int((String*)a->ptr) : 0;
         default:         return 0;
     }

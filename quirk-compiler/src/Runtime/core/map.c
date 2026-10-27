@@ -86,7 +86,7 @@ static void Map__rebuild(Map* self, int new_cap) {
 // index. Grows when live entries need it, otherwise just compacts holes.
 static void Map__reserve_one(Map* self) {
     if ((self->order_size + 1) * 4 > self->capacity * 3) {
-        int new_cap = self->capacity;
+        int64_t new_cap = self->capacity;
         while ((self->size + 1) * 2 > new_cap) new_cap *= 2;   // live <= 1/2 after rebuild
         Map__rebuild(self, new_cap);
     }
@@ -172,7 +172,7 @@ void Core_Collections_Map_Map_remove(Map* self, String* keyObj) {
     self->size--;
 }
 
-int Core_Collections_Map_Map_length(Map* self) {
+int64_t Core_Collections_Map_Map_length(Map* self) {
     return self->size;
 }
 

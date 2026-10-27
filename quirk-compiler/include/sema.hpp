@@ -263,6 +263,7 @@ class Sema {
     void checkUse(UseNode* node);
 
     std::string checkExpression(Node* node);
+    std::string checkExpressionImpl(Node* node);
     std::string checkLiteral(LiteralNode* node);
     std::string checkBinaryOp(BinaryOpNode* node);
     std::string checkMemberAccess(MemberAccessNode* node);

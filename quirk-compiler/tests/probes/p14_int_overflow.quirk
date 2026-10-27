@@ -1,10 +1,10 @@
-// expect-error: integer overflow: 2147483647 + 1 exceeds Int range
-// i32 overflow. Until v6.1.0 this wrapped silently to INT32_MIN —
-// defined and consistent, but it turned overflow bugs into wrong
-// answers (summing 0..10M gave garbage). Int `+` / `-` / `*` now use
-// checked arithmetic and throw RuntimeError on overflow.
+// expect-error: integer overflow: 9223372036854775807 + 1 exceeds Int range
+// Int is 64-bit (v7.0.0; i32 before). Since v6.1.0 `+` / `-` / `*` use
+// checked arithmetic and throw RuntimeError on overflow instead of
+// wrapping silently — overflow bugs used to become wrong answers.
 define main() -> void {
-    a := 2147483647     // INT32_MAX
-    b := 1
-    print(a + b)        // RuntimeError: integer overflow
+    a := 2147483647     // INT32_MAX — no longer a limit
+    print(a + 1)        // 2147483648
+    b := 9223372036854775807    // INT64_MAX
+    print(b + 1)        // RuntimeError: integer overflow
 }

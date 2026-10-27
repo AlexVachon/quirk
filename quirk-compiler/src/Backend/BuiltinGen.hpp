@@ -61,7 +61,8 @@ class BuiltinGen {
         Function::Create(FunctionType::get(voidTy, {voidPtrTy, i32Ty}, false), Function::ExternalLinkage, "longjmp", TheModule);
 
         auto anyPtrTy = Type::getInt8PtrTy(Context);
-        Function::Create(FunctionType::get(anyPtrTy, {i32Ty},     false), Function::ExternalLinkage, "Core_Primitives_Any_box_int",    TheModule);
+        Type* intTy = Type::getInt64Ty(Context);   // Quirk Int
+        Function::Create(FunctionType::get(anyPtrTy, {intTy},     false), Function::ExternalLinkage, "Core_Primitives_Any_box_int",    TheModule);
         Function::Create(FunctionType::get(anyPtrTy, {Type::getDoubleTy(Context)}, false), Function::ExternalLinkage, "Core_Primitives_Any_box_double", TheModule);
         Function::Create(FunctionType::get(anyPtrTy, {i32Ty},     false), Function::ExternalLinkage, "Core_Primitives_Any_box_bool",   TheModule);
         Function::Create(FunctionType::get(anyPtrTy, {i32Ty},     false), Function::ExternalLinkage, "Core_Primitives_Any_box_char",   TheModule);
@@ -82,7 +83,7 @@ class BuiltinGen {
         Function::Create(FunctionType::get(anyPtrTy, {anyPtrTy},  false), Function::ExternalLinkage, "Core_Primitives_Any_to_str",    TheModule);
         Function::Create(FunctionType::get(anyPtrTy, {anyPtrTy},  false), Function::ExternalLinkage, "Core_Primitives_Any___str",     TheModule);
         Function::Create(FunctionType::get(anyPtrTy, {anyPtrTy},  false), Function::ExternalLinkage, "Core_Primitives_Any_get_type",  TheModule);
-        Function::Create(FunctionType::get(i32Ty,    {anyPtrTy},  false), Function::ExternalLinkage, "Core_Primitives_Any_to_int",    TheModule);
+        Function::Create(FunctionType::get(intTy,    {anyPtrTy},  false), Function::ExternalLinkage, "Core_Primitives_Any_to_int",    TheModule);
         Function::Create(FunctionType::get(Type::getDoubleTy(Context), {anyPtrTy}, false), Function::ExternalLinkage, "Core_Primitives_Any_to_float", TheModule);
         Function::Create(FunctionType::get(i32Ty,    {anyPtrTy, anyPtrTy}, false), Function::ExternalLinkage, "Core_Primitives_Any_isinstance", TheModule);
 
@@ -234,15 +235,15 @@ class BuiltinGen {
         if (call->args.size() != 1) return nullptr;
         Value* idx = exprHandler(call->args[0].value.get());
         if (!idx) return nullptr;
-        Type* i32Ty = Type::getInt32Ty(Context);
-        if (idx->getType() != i32Ty) {
+        Function* fn = TheModule->getFunction("Sys_arg_get");
+        if (!fn) return nullptr;
+        Type* idxTy = fn->getFunctionType()->getParamType(0);
+        if (idx->getType() != idxTy) {
             if (idx->getType()->isIntegerTy())
-                idx = Builder.CreateIntCast(idx, i32Ty, true);
+                idx = Builder.CreateIntCast(idx, idxTy, true);
             else
                 return nullptr;
         }
-        Function* fn = TheModule->getFunction("Sys_arg_get");
-        if (!fn) return nullptr;
         Value* raw = Builder.CreateCall(fn, {idx});
         Type* strPtrTy = structGen->getStringPtrType();
         if (raw->getType() != strPtrTy)
@@ -489,7 +490,7 @@ class BuiltinGen {
 
             Type* ty = val->getType();
             Value* fmtStr = Builder.CreateGlobalStringPtr(newline ? "%s\n" : "%s");
-            Value* fmtInt = Builder.CreateGlobalStringPtr(newline ? "%d\n" : "%d");
+            Value* fmtInt = Builder.CreateGlobalStringPtr(newline ? "%lld\n" : "%lld");
             Value* fmtFlt = Builder.CreateGlobalStringPtr(newline ? "%f\n" : "%f");
 
             if (ty->isIntegerTy(1)) {
@@ -500,7 +501,7 @@ class BuiltinGen {
             } else if (ty->isIntegerTy(8)) {
                 Builder.CreateCall(printfFunc, {Builder.CreateGlobalStringPtr(newline ? "%c\n" : "%c"), val});
             } else if (ty->isIntegerTy()) {
-                Builder.CreateCall(printfFunc, {fmtInt, val});
+                Builder.CreateCall(printfFunc, {fmtInt, Builder.CreateSExtOrTrunc(val, Type::getInt64Ty(Context))});
             } else if (ty->isDoubleTy()) {
                 Builder.CreateCall(printfFunc, {fmtFlt, val});
             } else {
@@ -587,8 +588,8 @@ class BuiltinGen {
             Function* f = TheModule->getFunction("Core_Primitives_Bool_str");
             if (f) return Builder.CreateCall(f, {val});
         }
-        if (val->getType()->getIntegerBitWidth() != 32)
-            val = Builder.CreateIntCast(val, Type::getInt32Ty(Context), true);
+        if (val->getType()->getIntegerBitWidth() != 64)
+            val = Builder.CreateIntCast(val, Type::getInt64Ty(Context), true);
 
         Function* f = TheModule->getFunction("Core_Primitives_Int_str");
         if (f) return Builder.CreateCall(f, {val});
@@ -596,7 +597,7 @@ class BuiltinGen {
         Function* mallocFunc = TheModule->getFunction("malloc");
         Value* buffer = Builder.CreateCall(mallocFunc, {ConstantInt::get(Type::getInt64Ty(Context), 32)});
         Function* sprintfFunc = TheModule->getFunction("sprintf");
-        Value* fmt = Builder.CreateGlobalStringPtr("%d");
+        Value* fmt = Builder.CreateGlobalStringPtr("%lld");
         Builder.CreateCall(sprintfFunc, {buffer, fmt, val});
         std::vector<Value*> ctorArgs = {buffer};
         return structGen->allocateAndInit("String", ctorArgs);
@@ -713,8 +714,8 @@ class BuiltinGen {
                     Value* fmt = Builder.CreateGlobalStringPtr("%c\n");
                     Builder.CreateCall(printfFunc, {fmt, val});
                 } else {
-                    Value* fmt = Builder.CreateGlobalStringPtr("%d\n");
-                    Builder.CreateCall(printfFunc, {fmt, val});
+                    Value* fmt = Builder.CreateGlobalStringPtr("%lld\n");
+                    Builder.CreateCall(printfFunc, {fmt, Builder.CreateSExtOrTrunc(val, Type::getInt64Ty(Context))});
                 }
             } else if (type->isDoubleTy()) {
                 Value* fmt = Builder.CreateGlobalStringPtr("%f\n");

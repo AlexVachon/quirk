@@ -89,10 +89,10 @@ int Regex_test_raw(void* handle, String* s) {
 //  group_start/end to assemble a `Match` value.
 // ---------------------------------------------------------------------------
 
-int Regex_find_at(void* handle, String* s, int from_offset) {
+int64_t Regex_find_at(void* handle, String* s, int64_t from_offset) {
     QkRegex* qr = (QkRegex*)handle;
     if (!qr || !qr->compiled || !s || !s->buffer) return -1;
-    int len = s->length;
+    int64_t len = s->length;
     if (from_offset < 0) from_offset = 0;
     if (from_offset > len) return -1;
 
@@ -110,19 +110,19 @@ int Regex_find_at(void* handle, String* s, int from_offset) {
     return (int)qr->last_groups[0].rm_so + from_offset;
 }
 
-int Regex_group_count(void* handle) {
+int64_t Regex_group_count(void* handle) {
     QkRegex* qr = (QkRegex*)handle;
     return qr ? qr->last_count : 0;
 }
 
-int Regex_group_start(void* handle, int idx) {
+int64_t Regex_group_start(void* handle, int64_t idx) {
     QkRegex* qr = (QkRegex*)handle;
     if (!qr || idx < 0 || idx >= qr->last_count) return -1;
     if (qr->last_groups[idx].rm_so < 0) return -1;
     return (int)qr->last_groups[idx].rm_so + qr->last_origin;
 }
 
-int Regex_group_end(void* handle, int idx) {
+int64_t Regex_group_end(void* handle, int64_t idx) {
     QkRegex* qr = (QkRegex*)handle;
     if (!qr || idx < 0 || idx >= qr->last_count) return -1;
     if (qr->last_groups[idx].rm_eo < 0) return -1;
@@ -153,13 +153,13 @@ String* Regex_replace_all_raw(void* handle, String* s, String* replacement) {
     QkRegex* qr = (QkRegex*)handle;
     if (!qr || !qr->compiled || !s || !s->buffer) return s;
     const char* repl = (replacement && replacement->buffer) ? replacement->buffer : "";
-    int repl_len = replacement ? replacement->length : 0;
+    int64_t repl_len = replacement ? replacement->length : 0;
 
     char* out = NULL;
     int cap = 0, len = 0;
 
     int offset = 0;
-    int input_len = s->length;
+    int64_t input_len = s->length;
     regmatch_t groups[MAX_GROUPS];
 
     while (offset <= input_len) {
@@ -235,7 +235,7 @@ List* Regex_split_raw(void* handle, String* s) {
         return result;
     }
     int offset = 0;
-    int input_len = s->length;
+    int64_t input_len = s->length;
     regmatch_t groups[MAX_GROUPS];
     while (offset <= input_len) {
         int err = regexec(&qr->r, s->buffer + offset, 1, groups, 0);

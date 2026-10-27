@@ -3,6 +3,7 @@
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/MDBuilder.h"
+#include "BoxInt.hpp"
 #include "ast.hpp"
 #include <functional>
 
@@ -14,7 +15,7 @@ class MathGen {
     Module* TheModule = nullptr;
 
    public:
-    // Int (i32) `+` / `-` / `*` with overflow detection: the
+    // Int (i64) `+` / `-` / `*` with overflow detection: the
     // llvm.s*.with.overflow intrinsics give the wrapped result plus a
     // flag; on overflow branch to a cold block that calls the runtime's
     // quirk_int_overflow (throws RuntimeError). Silent wrap-around used
@@ -36,10 +37,11 @@ class MathGen {
         Builder.CreateCondBr(overflow, ovfBB, okBB, md.createBranchWeights(1, 1 << 20));
 
         Builder.SetInsertPoint(ovfBB);
+        Type* i64 = Type::getInt64Ty(Context);
         FunctionCallee fail = mod->getOrInsertFunction("quirk_int_overflow",
-            Type::getVoidTy(Context), Type::getInt8PtrTy(Context),
-            Type::getInt32Ty(Context), Type::getInt32Ty(Context));
-        Builder.CreateCall(fail, {Builder.CreateGlobalStringPtr(op), L, R});
+            Type::getVoidTy(Context), Type::getInt8PtrTy(Context), i64, i64);
+        Builder.CreateCall(fail, {Builder.CreateGlobalStringPtr(op),
+                                  Builder.CreateSExtOrTrunc(L, i64), Builder.CreateSExtOrTrunc(R, i64)});
         Builder.CreateUnreachable();
 
         Builder.SetInsertPoint(okBB);
@@ -90,7 +92,7 @@ class MathGen {
         // `quirk_opaque_to_int` handles both, so we route through it
         // when we have a Module pointer; the raw PtrToInt fallback
         // covers the early-init path where setModule hasn't fired.
-        bool isNumericOp = (op=="+"||op=="-"||op=="*"||op=="/"||op==">"||op=="<"||op==">="||op=="<=");
+        bool isNumericOp = (op=="+"||op=="-"||op=="*"||op=="/"||op=="%"||op==">"||op=="<"||op==">="||op=="<=");
         bool isEqOp     = (op == "==" || op == "!=");
         {
             Type* i8p = Type::getInt8PtrTy(Context);
@@ -99,10 +101,8 @@ class MathGen {
             bool Lnum = L->getType()->isIntegerTy() || L->getType()->isDoubleTy();
             bool Rnum = R->getType()->isIntegerTy() || R->getType()->isDoubleTy();
             auto unbox = [&](Value* v, const char* label) -> Value* {
-                if (!TheModule) return Builder.CreatePtrToInt(v, Type::getInt32Ty(Context), label);
-                FunctionCallee toInt = TheModule->getOrInsertFunction(
-                    "quirk_opaque_to_int", Type::getInt32Ty(Context), i8p);
-                return Builder.CreateCall(toInt, {v}, label);
+                if (!TheModule) return Builder.CreatePtrToInt(v, Type::getInt64Ty(Context), label);
+                return quirk::decodeUntypedInt(Context, TheModule, Builder, v);
             };
             if (isNumericOp) {
                 // Arithmetic / ordered comparison: unbox any i8* side that
@@ -144,7 +144,7 @@ class MathGen {
                     R = Builder.CreateIntCast(R, L->getType(), true);
             }
             if (op == "+" || op == "-" || op == "*") {
-                if (L->getType()->isIntegerTy(32)) return emitCheckedInt(op, L, R);
+                if (L->getType()->isIntegerTy(64) || L->getType()->isIntegerTy(32)) return emitCheckedInt(op, L, R);
                 if (op == "+")  return Builder.CreateAdd(L, R, "i_add");
                 if (op == "-")  return Builder.CreateSub(L, R, "i_sub");
                 return Builder.CreateMul(L, R, "i_mul");

@@ -74,7 +74,7 @@ String* Crypto_hmac_sha256(String* key, String* msg) {
 
 // Returns `n` cryptographically-strong random bytes encoded as lowercase hex.
 // Falls back to a low-quality LCG if /dev/urandom is unavailable (rare).
-String* Crypto_random_hex(int n) {
+String* Crypto_random_hex(int64_t n) {
     if (n <= 0) return make_String("");
     if (n > 4096) n = 4096;
     unsigned char* buf = (unsigned char*)GC_malloc(n);

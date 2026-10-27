@@ -38,7 +38,7 @@ public:
         //     change that makes `case null` work on primitives.
         if (typeName.back() == '?') {
             std::string base = typeName.substr(0, typeName.size() - 1);
-            if (base == "int" || base == "Int" ||
+            if (base == "int" || base == "Int" || base == "Int32" ||
                 base == "bool" || base == "Bool" ||
                 base == "double" || base == "Double" ||
                 base == "char" || base == "Char") {
@@ -49,7 +49,10 @@ public:
             }
             return getLLVMType(base);   // struct? / String? / etc. unchanged
         }
-        if (typeName == "int" || typeName == "Int") return Type::getInt32Ty(Context);
+        // Int is 64-bit; Int32 is a C `int`, for extern signatures (Sema
+        // treats it as Int; calls convert at the boundary).
+        if (typeName == "int" || typeName == "Int") return Type::getInt64Ty(Context);
+        if (typeName == "Int32") return Type::getInt32Ty(Context);
         if (typeName == "bool" || typeName == "Bool") return Type::getInt1Ty(Context);
         if (typeName == "double" || typeName == "Double") return Type::getDoubleTy(Context);
         if (typeName == "void") return Type::getVoidTy(Context);

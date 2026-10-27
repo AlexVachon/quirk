@@ -5,6 +5,47 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.0.0] — 2026-10-27 — Int is 64-bit
+
+`Int` was a 32-bit integer: 3,000,000,000 didn't fit, and since v6.1.0
+any sum past 2,147,483,647 threw an overflow error. It is now a signed
+64-bit integer everywhere — locals, struct fields, parameters, returns,
+List / Map elements, JSON, and the runtime's C side.
+
+**Breaking:**
+- Int range is -9223372036854775808..9223372036854775807. Overflow is
+  still checked (`RuntimeError: integer overflow: ...`), at the new
+  limits.
+- Runtime functions and struct fields that hold a Quirk Int are
+  `int64_t` (List / String / Map / Set / Tuple / Queue sizes and
+  indices, the `Any` box's `ival`, `Exception.line`, ...). Native code
+  built against the old `types.h` must be rebuilt.
+- An `extern` that binds to a C `int` should declare it `Int32`: it
+  type-checks as `Int` and is converted at the call. A plain `Int` now
+  means a C `int64_t`.
+
+**How untyped Ints are stored:** an Int that fits in 32 bits is still
+stored inline in the pointer (no allocation); a larger one goes in a
+headered `Any` box. Reading one back sign-extends the inline form, or
+reads the box.
+
+**Fixed along the way:**
+- The compiler never set the module's target data layout, so LLVM used
+  its default, where i64 is only 4-byte aligned. The optimizer then read
+  struct fields after an i32 (such as the `__type_id` header field) at
+  the wrong offset. Modules now carry the host triple and data layout.
+- `x % n` with `x` an untyped value (a `for x in list` element) never
+  unboxed `x`, so it gave garbage. It is unboxed like `+` / `-` / `*`.
+- `x in xs` read any two heap values as Strings. It now uses the same
+  equality as `==`, and an inline Int equals a boxed Int with the same
+  value (JSON parses numbers into boxes).
+- A Bool passed or returned where an Int is expected became -1 for
+  `true` (sign extension); it is now 1.
+- `EnumName.variants` / `.values` no longer turn an Int 0 into null.
+- New diagnostic Q0208: an Int literal outside the 64-bit range.
+
+New probe p103; p14 now checks the 64-bit overflow limit.
+
 ## [6.1.5] — 2026-10-27 — runtime type tags (phase 4): selfhost strings carry headers, selfhost links PIE
 
 Selfhost (quirk-selfhost) represents String values as raw `char*`, which

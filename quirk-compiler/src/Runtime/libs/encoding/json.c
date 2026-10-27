@@ -1,5 +1,6 @@
 #include "../../types.h"
 #include <ctype.h>
+#include <errno.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -11,7 +12,7 @@ extern String* make_String_taking_ownership(char* raw);
 // real Quirk types on the way out of loads(). Without these, every numeric
 // or boolean field would come back as a String, forcing callers to do
 // Int.parse(m.get("age")) by hand.
-extern Any* Core_Primitives_Any_box_int(int32_t v);
+extern Any* Core_Primitives_Any_box_int(int64_t v);
 extern Any* Core_Primitives_Any_box_double(double v);
 extern Any* Core_Primitives_Any_box_bool(int32_t v);
 extern Any* Core_Primitives_Any_box_null(void);
@@ -57,7 +58,12 @@ static Any* Json__parse_number(const char** cursor) {
     memcpy(tmp, start, len);
     tmp[len] = '\0';
     if (is_float) return Core_Primitives_Any_box_double(strtod(tmp, NULL));
-    return Core_Primitives_Any_box_int((int32_t)strtol(tmp, NULL, 10));
+    // An integer outside Int's 64-bit range reads as a Double, like any
+    // JSON number with a fraction.
+    errno = 0;
+    long long v = strtoll(tmp, NULL, 10);
+    if (errno == ERANGE) return Core_Primitives_Any_box_double(strtod(tmp, NULL));
+    return Core_Primitives_Any_box_int((int64_t)v);
 }
 
 Map* Encoding_Json__parse_object(const char** cursor) {
@@ -281,7 +287,7 @@ static void Json__serialize_any(void* val, AnyTag hint, char** buf, int* cap, in
         Any* a = (Any*)val;
         char numbuf[64];
         switch (hint) {
-            case ANY_INT:    snprintf(numbuf, 64, "%d", a->ival);  Json__buf_append(buf, cap, len, numbuf); return;
+            case ANY_INT:    snprintf(numbuf, 64, "%lld", (long long)a->ival);  Json__buf_append(buf, cap, len, numbuf); return;
             case ANY_DOUBLE: snprintf(numbuf, 64, "%g", a->dval);  Json__buf_append(buf, cap, len, numbuf); return;
             case ANY_BOOL:   Json__buf_append(buf, cap, len, a->ival ? "true" : "false"); return;
             case ANY_CHAR: {
@@ -511,7 +517,7 @@ String* Encoding_Json_dumps(void* val) {
 // level. `indent <= 0` falls back to compact output (matches dumps).
 // Quirk's dumps() wrapper picks this entry when the caller passes
 // `pretty: true` or a non-zero `indent`.
-String* Encoding_Json_dumps_indent(void* val, int32_t indent) {
+String* Encoding_Json_dumps_indent(void* val, int64_t indent) {
     if (!val) return make_String("null");
     if (indent < 0) indent = 0;
     int cap = 512, len = 0;

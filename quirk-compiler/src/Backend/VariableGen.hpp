@@ -97,12 +97,10 @@ class VariableGen {
             return Builder.CreateCall(boxBool, {ext});
         }
         if (val->getType()->isIntegerTy()) {
+            Type* i64 = Type::getInt64Ty(Context);
             FunctionCallee boxInt = TheModule->getOrInsertFunction(
-                "Core_Primitives_Any_box_int", i8p, i32);
-            Value* w = val->getType()->getIntegerBitWidth() == 32
-                ? val
-                : Builder.CreateIntCast(val, i32, /*isSigned=*/true);
-            return Builder.CreateCall(boxInt, {w});
+                "Core_Primitives_Any_box_int", i8p, i64);
+            return Builder.CreateCall(boxInt, {Builder.CreateSExtOrTrunc(val, i64)});
         }
         if (val->getType()->isDoubleTy()) {
             FunctionCallee boxDbl = TheModule->getOrInsertFunction(

@@ -58,7 +58,7 @@ void quirk_unhandled_exception() {
 //   field 0: String* type
 //   field 1: String* message
 //   field 2: String* file
-//   field 3: int     line   (+ 4 bytes natural padding)
+//   field 3: Int     line   (int64_t)
 //   field 4: String* callee
 //   field 5: String* traceback
 //   field 6: String* cause_trace
@@ -68,8 +68,7 @@ typedef struct {
     String* type;
     String* message;
     String* file;
-    int32_t line;
-    // 4 bytes of natural C padding here to align next pointer
+    int64_t line;
     String* callee;
     String* traceback;
     String* cause_trace;

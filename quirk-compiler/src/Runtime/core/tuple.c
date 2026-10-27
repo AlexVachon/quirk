@@ -53,12 +53,12 @@ TupleIterator* Core_Collections_Tuple_Tuple___iter(Tuple* self) {
 
 // ===== ELEMENT ACCESS =====
 
-void* Core_Collections_Tuple_Tuple___get(Tuple* t, int i) {
+void* Core_Collections_Tuple_Tuple___get(Tuple* t, int64_t i) {
     if (!t || i < 0 || i >= t->size) return NULL;
     return t->data[i];
 }
 
-int Core_Collections_Tuple_Tuple_length(Tuple* self) {
+int64_t Core_Collections_Tuple_Tuple_length(Tuple* self) {
     return self ? self->size : 0;
 }
 

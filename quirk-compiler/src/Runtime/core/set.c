@@ -77,7 +77,7 @@ static void Set__rebuild(Set* self, int new_cap) {
 // index. Grows when live entries need it, otherwise just compacts holes.
 static void Set__reserve_one(Set* self) {
     if ((self->order_size + 1) * 4 > self->capacity * 3) {
-        int new_cap = self->capacity;
+        int64_t new_cap = self->capacity;
         while ((self->size + 1) * 2 > new_cap) new_cap *= 2;   // live <= 1/2 after rebuild
         Set__rebuild(self, new_cap);
     }
@@ -160,7 +160,7 @@ int Core_Collections_Set_Set_has(Set* self, void* val) {
     return found;
 }
 
-int Core_Collections_Set_Set_size(Set* self) { return self ? self->size : 0; }
+int64_t Core_Collections_Set_Set_size(Set* self) { return self ? self->size : 0; }
 int Core_Collections_Set_Set_is_empty(Set* self) { return !self || self->size == 0; }
 
 // ===== SET OPERATIONS =====

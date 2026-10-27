@@ -161,12 +161,12 @@ class StructGen {
         return strFunc;
     }
 
-    // An Int stored in an untyped (i8*) slot. Int 0 must not become the
-    // null pointer (a Map value 0 read back as null, `?? d` took the
-    // default): boxIntToOpaque maps it to the runtime's shared boxed
-    // zero. Other widths (Bool / Char) keep the inline encoding.
+    // An Int stored in an untyped (i8*) slot, via boxIntToOpaque (inline
+    // when it fits in 32 bits, else boxed; 0 → the shared boxed zero, so
+    // a Map value 0 doesn't read back as null). Other widths (Bool /
+    // Char) keep the plain inline encoding.
     Value* encodeUntypedInt(Value* v, Type* target) {
-        if (v->getType()->isIntegerTy(32))
+        if (v->getType()->isIntegerTy(64) || v->getType()->isIntegerTy(32))
             return quirk::boxIntToOpaque(Context, TheModule, Builder, v, target);
         return Builder.CreateIntToPtr(v, target);
     }
@@ -529,11 +529,13 @@ class StructGen {
         Value* dataPtr = Builder.CreateStructGEP(StructTypes["List"], listObj, 0);
         Builder.CreateStore(buffer, dataPtr);
 
+        // _size / _capacity are Int fields (see typing List).
+        Type* intTy = StructTypes["List"]->getElementType(1);
         Value* lenPtr = Builder.CreateStructGEP(StructTypes["List"], listObj, 1);
-        Builder.CreateStore(ConstantInt::get(Type::getInt32Ty(Context), values.size()), lenPtr);
+        Builder.CreateStore(ConstantInt::get(intTy, values.size()), lenPtr);
 
         Value* capPtr = Builder.CreateStructGEP(StructTypes["List"], listObj, 2);
-        Builder.CreateStore(ConstantInt::get(Type::getInt32Ty(Context), cap), capPtr);
+        Builder.CreateStore(ConstantInt::get(intTy, cap), capPtr);
 
         return listObj;
     }

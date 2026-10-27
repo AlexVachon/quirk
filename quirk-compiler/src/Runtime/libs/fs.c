@@ -82,7 +82,7 @@ int Fs_is_file(String* path) {
 }
 
 // Size of the file at `path` in bytes. -1 if it can't be stat'd.
-int Fs_size(String* path) {
+int64_t Fs_size(String* path) {
     char* p = make_safe_cstr(path);
     if (!p) return -1;
     struct stat st;
@@ -95,7 +95,7 @@ int Fs_size(String* path) {
 }
 
 // Last modification time as Unix epoch seconds. -1 on failure.
-int Fs_mtime(String* path) {
+int64_t Fs_mtime(String* path) {
     char* p = make_safe_cstr(path);
     if (!p) return -1;
     struct stat st;
@@ -109,7 +109,7 @@ int Fs_mtime(String* path) {
 
 // Create directory `path`. `parents == 1` makes intermediate dirs (mkdir -p).
 // Returns 0 on success, -1 on error.
-int Fs_mkdir_raw(String* path, int parents) {
+int64_t Fs_mkdir_raw(String* path, int64_t parents) {
     char* p = make_safe_cstr(path);
     if (!p || !*p) return -1;
     if (!parents) {
@@ -152,7 +152,7 @@ int Fs_mkdir_raw(String* path, int parents) {
     return 0;
 }
 
-int Fs_rmdir_raw(String* path) {
+int64_t Fs_rmdir_raw(String* path) {
     char* p = make_safe_cstr(path);
     if (!p) return -1;
 #ifdef _WIN32
@@ -162,13 +162,13 @@ int Fs_rmdir_raw(String* path) {
 #endif
 }
 
-int Fs_remove_raw(String* path) {
+int64_t Fs_remove_raw(String* path) {
     char* p = make_safe_cstr(path);
     if (!p) return -1;
     return remove(p) == 0 ? 0 : -1;
 }
 
-int Fs_rename_raw(String* from, String* to) {
+int64_t Fs_rename_raw(String* from, String* to) {
     char* a = make_safe_cstr(from);
     char* b = make_safe_cstr(to);
     if (!a || !b) return -1;
@@ -219,7 +219,7 @@ String* Fs_cwd() {
     return make_String(buf);
 }
 
-int Fs_chdir_raw(String* path) {
+int64_t Fs_chdir_raw(String* path) {
     char* p = make_safe_cstr(path);
     if (!p) return -1;
 #ifdef _WIN32

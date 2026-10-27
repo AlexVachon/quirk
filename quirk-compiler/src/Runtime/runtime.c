@@ -242,14 +242,13 @@ String* quirk_string_display(String* s) {
 //     underlying struct.
 //   - raw struct pointer (List*/Map*/Tuple*/...) → returns val
 //     unchanged.
-// Int is 32-bit; `+` / `-` / `*` used to wrap silently on overflow
-// (summing 0..10M gave garbage). Codegen now emits checked arithmetic
-// and calls this on overflow. Thrown as RuntimeError (catchable as
-// RuntimeError / Exception) until typing gains an OverflowError.
-void quirk_int_overflow(const char* op, int32_t a, int32_t b) {
-    char buf[160];
-    snprintf(buf, sizeof(buf), "integer overflow: %d %s %d exceeds Int range (%d..%d)",
-             a, op, b, INT32_MIN, INT32_MAX);
+// Int is 64-bit and checked: codegen calls this when `+` / `-` / `*`
+// overflows. Thrown as RuntimeError (catchable as RuntimeError /
+// Exception) until typing gains an OverflowError.
+void quirk_int_overflow(const char* op, int64_t a, int64_t b) {
+    char buf[200];
+    snprintf(buf, sizeof(buf), "integer overflow: %lld %s %lld exceeds Int range (%lld..%lld)",
+             (long long)a, op, (long long)b, (long long)INT64_MIN, (long long)INT64_MAX);
     quirk_throw_exception("RuntimeError", buf);
 }
 
@@ -264,16 +263,16 @@ void* quirk_opaque_to_struct(void* val) {
     return val;
 }
 
-// Coerce an opaque i8* (whatever shape it has) to an int32. Same
+// Coerce an opaque i8* (whatever shape it has) to an Int. Same
 // heuristic as quirk_opaque_to_string but for the Int target:
 //   null                 → 0       (legit "no value" fallback)
-//   uval ≤ 0xFFFFFFFF    → (int32)uval        (tagged int — the common
-//                                              case for list[i] of Ints)
+//   uval ≤ 0xFFFFFFFF    → (int32)uval, sign-extended  (inline Int — the
+//                                     common case for list[i] of Ints)
 //   Any*-tagged ANY_INT  → a->ival
 //   Any*-tagged ANY_DOUBLE/CHAR/BOOL → coerce
 //   Any*-tagged anything else → 0
 // Used by field assignments / typed-walrus when the RHS is opaque.
-int32_t quirk_opaque_to_int(void* val) {
+int64_t quirk_opaque_to_int(void* val) {
     quirk_hdr_note(val, "to_int");
     if (!val) return 0;
     uintptr_t u = (uintptr_t)val;
@@ -284,7 +283,7 @@ int32_t quirk_opaque_to_int(void* val) {
             case ANY_INT:
             case ANY_BOOL:
             case ANY_CHAR:   return a->ival;
-            case ANY_DOUBLE: return (int32_t)a->dval;
+            case ANY_DOUBLE: return (int64_t)a->dval;
             default:         return 0;
         }
     }
@@ -351,7 +350,14 @@ int32_t quirk_opaque_eq(void* a, void* b) {
     int aTagged = ua <= 0xFFFFFFFFUL;
     int bTagged = ub <= 0xFFFFFFFFUL;
     if (aTagged && bTagged) return ua == ub;
-    if (aTagged != bTagged) return 0;
+    if (aTagged != bTagged) {
+        // An inline Int against a boxed one (JSON parses numbers into
+        // boxes): compare the values.
+        void* boxed = aTagged ? b : a;
+        if (quirk_type_of(boxed) == QT_ANY && ((Any*)boxed)->tag == ANY_INT)
+            return quirk_opaque_to_int(a) == quirk_opaque_to_int(b);
+        return 0;
+    }
     // Both heap-pointers. Check Any* tag — if both ANY_*, compare ival.
     if (quirk_is_any(a) && quirk_is_any(b)) {
         Any* aa = (Any*)a; Any* ab = (Any*)b;
@@ -521,31 +527,33 @@ List* quirk_enum_values_str(const char* packed, int32_t count) {
     return lst;
 }
 
+// An Int as an untyped (i8*) value — the encoding codegen's
+// encodeUntypedInt emits: inline in the pointer when it fits in 32 bits
+// (pointer value <= 0xFFFFFFFF; quirk_opaque_to_int sign-extends it
+// back), otherwise — and for 0, which inline would be null — a headered
+// Any box.
+void* quirk_int_to_opaque(int64_t v) {
+    if (v != 0 && v >= INT32_MIN && v <= INT32_MAX)
+        return (void*)(uintptr_t)(uint32_t)(int32_t)v;
+    return Core_Primitives_Any_box_int(v);
+}
+
 // `EnumName.variants` — eagerly builds the List [0, 1, ..., count-1]
-// of variant ordinals. Each ordinal is stored as a tagged-pointer
-// Any-int (inttoptr of the value), matching how List<Any> elements
-// of Int type are encoded everywhere else.
+// of variant ordinals, each encoded like any untyped Int.
 List* quirk_enum_variants(int32_t count) {
     List* lst = (List*)quirk_alloc(QT_LIST, sizeof(List));
     Core_Collections_List_List___init(lst);
-    for (int32_t i = 0; i < count; i++) {
-        uintptr_t boxed = (uintptr_t)(uint32_t)i;
-        Core_Collections_List_List_append(lst, (void*)boxed);
-    }
+    for (int32_t i = 0; i < count; i++)
+        Core_Collections_List_List_append(lst, quirk_int_to_opaque(i));
     return lst;
 }
 
-List* quirk_enum_values_int(const int32_t* packed, int32_t count) {
+List* quirk_enum_values_int(const int64_t* packed, int32_t count) {
     List* lst = (List*)quirk_alloc(QT_LIST, sizeof(List));
     Core_Collections_List_List___init(lst);
     if (!packed) return lst;
-    for (int32_t i = 0; i < count; i++) {
-        // Ints in Lists live as tagged-pointer Any boxes — `inttoptr`
-        // of the int value. Same encoding Codegen uses when an Int
-        // literal lands in a List<Any>.
-        uintptr_t boxed = (uintptr_t)(uint32_t)packed[i];
-        Core_Collections_List_List_append(lst, (void*)boxed);
-    }
+    for (int32_t i = 0; i < count; i++)
+        Core_Collections_List_List_append(lst, quirk_int_to_opaque(packed[i]));
     return lst;
 }
 
@@ -561,7 +569,7 @@ void* quirk_enum_parse_str(String* query, const char* packed, int32_t count) {
     return Core_Primitives_Any_box_int(idx);
 }
 
-void* quirk_enum_parse_int(int32_t query, const int32_t* packed, int32_t count) {
+void* quirk_enum_parse_int(int64_t query, const int64_t* packed, int32_t count) {
     for (int32_t i = 0; i < count; i++) {
         if (packed[i] == query) return Core_Primitives_Any_box_int(i);
     }
@@ -629,14 +637,14 @@ List* quirk_enum_values_double(const double* packed, int32_t count) {
     return lst;
 }
 
-int32_t quirk_enum_lookup_int(int32_t query, const int32_t* packed,
+int32_t quirk_enum_lookup_int(int64_t query, const int64_t* packed,
                               int32_t count, const char* enum_name) {
     for (int32_t i = 0; i < count; i++) {
         if (packed[i] == query) return i;
     }
-    char buf[64];
-    snprintf(buf, sizeof(buf), "%d is not a valid %s",
-             query, enum_name ? enum_name : "enum");
+    char buf[96];
+    snprintf(buf, sizeof(buf), "%lld is not a valid %s",
+             (long long)query, enum_name ? enum_name : "enum");
     quirk_throw_exception("ValueError", buf);
     return -1;
 }
@@ -651,7 +659,7 @@ String* quirk_enum_value_str(int32_t ordinal, const char* packed, int32_t count)
     return make_String(p);
 }
 
-int32_t quirk_enum_value_int(int32_t ordinal, const int32_t* packed, int32_t count) {
+int64_t quirk_enum_value_int(int32_t ordinal, const int64_t* packed, int32_t count) {
     if (ordinal < 0 || ordinal >= count || !packed) return 0;
     return packed[ordinal];
 }

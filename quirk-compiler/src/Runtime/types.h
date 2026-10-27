@@ -6,6 +6,41 @@
 #include <string.h>
 #include <stdint.h>
 
+// ===================================================
+//  OBJECT HEADER (runtime type tags, phase 1 — v6.2.0)
+// ===================================================
+// Every runtime *value* object (String, List, Map, Set, Tuple, Any,
+// Callable, iterators, user structs, ...) is allocated by quirk_alloc,
+// which puts an 8-byte header in front of the returned pointer:
+//
+//     [ QuirkHeader @ p-8 ][ object fields @ p ... ]
+//
+// The object's own layout is unchanged (so `typing` struct sizes and
+// every field offset stay the same); untyped code can read the header to
+// learn what a pointer is instead of guessing from its first bytes.
+// Boehm keeps the block alive through the interior pointer p.
+// Internal buffers (character data, entry arrays) carry no header.
+typedef struct {
+    uint32_t magic;     // QUIRK_HDR_MAGIC — distinguishes headered objects
+    uint32_t type_id;   // QuirkTypeId, or QT_STRUCT_BASE + user struct id
+} QuirkHeader;
+
+#define QUIRK_HDR_MAGIC 0x4B525551u   /* "QURK" */
+
+enum QuirkTypeId {
+    QT_NONE = 0,
+    QT_STRING, QT_LIST, QT_MAP, QT_SET, QT_TUPLE, QT_ANY, QT_CALLABLE,
+    QT_QUEUE, QT_EXCEPTION, QT_ITERATOR, QT_TYPE, QT_FILE, QT_OTHER,
+    QT_STRUCT_BASE = 100   // user struct: QT_STRUCT_BASE + codegen type id
+};
+
+// Allocate `size` bytes of zeroed, GC-managed memory with a header.
+void* quirk_alloc(uint32_t type_id, size_t size);
+
+static inline const QuirkHeader* quirk_header_of(const void* p) {
+    return (const QuirkHeader*)((const char*)p - sizeof(QuirkHeader));
+}
+
 // ===== CORE STRUCTS =====
 
 typedef struct {

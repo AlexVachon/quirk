@@ -10,7 +10,9 @@
 # and then fail only if that text is *missing* from the output.
 #
 # Usage (from quirk-compiler/):  tools/check_probes.sh [path/to/quirk-cpp]
-# Set QUIRK_HOME to this checkout so the dev runtime.so is used.
+# Set QUIRK_HOME to this checkout so the dev runtime.so is used. With
+# QUIRK_CHECK_HEADERS=1 (as in CI) a probe also fails if any untyped value
+# it touches lacks the runtime type header (see QuirkHeader in types.h).
 
 QUIRK=${1:-./bin/quirk-cpp}
 fails=0
@@ -27,6 +29,10 @@ for p in tests/probes/p*.quirk; do
         reason="crashed"
     elif [ $rc -eq 124 ]; then
         reason="timed out"
+    elif printf '%s\n' "$plain" | grep -q "^\[quirk-headers\] no header:"; then
+        # Only reported with QUIRK_CHECK_HEADERS=1 (CI sets it): a value
+        # object was allocated without the runtime type header.
+        reason="object without type header"
     elif [ -n "$expect" ]; then
         printf '%s\n' "$plain" | grep -qF -- "$expect" || reason="expected error '$expect' was not reported"
     elif printf '%s\n' "$plain" | grep -qE "ERROR\]|^Compilation failed"; then

@@ -223,7 +223,7 @@ void Sys_exit(int code) {
 // Wraps a C FILE* handle in a Quirk File struct.
 // is_open=2 signals to File_close that it should NOT fclose() a std stream.
 static File* make_stream_file(FILE* handle) {
-    File* f = (File*)GC_malloc(sizeof(File));
+    File* f = (File*)quirk_alloc(QT_FILE, sizeof(File));
     f->handle = handle;
     f->is_open = 2; // sentinel: open but unmanaged (don't fclose)
     return f;

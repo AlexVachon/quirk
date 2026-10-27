@@ -15,7 +15,7 @@ String* Encoding_Hex_encode(String* input) {
     }
     out[in_len * 2] = '\0';
     
-    String* res = (String*)GC_malloc(sizeof(String));
+    String* res = (String*)quirk_alloc(QT_STRING, sizeof(String));
     res->buffer = out;
     res->length = in_len * 2;
     return res;
@@ -42,7 +42,7 @@ String* Encoding_Hex_decode(String* input) {
     }
     out[out_len] = '\0';
     
-    String* res = (String*)GC_malloc(sizeof(String));
+    String* res = (String*)quirk_alloc(QT_STRING, sizeof(String));
     res->buffer = out;
     res->length = out_len;
     return res;

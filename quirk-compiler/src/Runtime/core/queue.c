@@ -105,7 +105,7 @@ void* Core_Collections_Queue_QueueIterator___next(QueueIterator* self) {
 }
 
 QueueIterator* Core_Collections_Queue_Queue___iter(Queue* self) {
-    QueueIterator* it = (QueueIterator*)malloc(sizeof(QueueIterator));
+    QueueIterator* it = (QueueIterator*)quirk_alloc(QT_ITERATOR, sizeof(QueueIterator));
     Core_Collections_Queue_QueueIterator___init(it, self);
     return it;
 }

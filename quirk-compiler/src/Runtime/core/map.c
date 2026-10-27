@@ -199,7 +199,7 @@ void Core_Collections_Map_Map_put_all(Map* self, Map* other) {
 // `{**m1, **m2}` precedence Python uses). Neither input mutated.
 Map* Core_Collections_Map_Map___add(Map* self, Map* other) {
     extern void Core_Collections_Map_Map___init(Map*);
-    Map* result = (Map*)GC_malloc(sizeof(Map));
+    Map* result = (Map*)quirk_alloc(QT_MAP, sizeof(Map));
     Core_Collections_Map_Map___init(result);
     if (self)  Core_Collections_Map_Map_put_all(result, self);
     if (other) Core_Collections_Map_Map_put_all(result, other);
@@ -214,7 +214,7 @@ List* Core_Collections_Map_Map_keys(Map* self) {
     extern void Core_Collections_List_List___init(List*);
     extern void Core_Collections_List_List_append(List*, void*);
 
-    List* result = (List*)malloc(sizeof(List));
+    List* result = (List*)quirk_alloc(QT_LIST, sizeof(List));
     Core_Collections_List_List___init(result);
 
     if (!self) return result;
@@ -229,7 +229,7 @@ List* Core_Collections_Map_Map_values(Map* self) {
     extern void Core_Collections_List_List___init(List*);
     extern void Core_Collections_List_List_append(List*, void*);
 
-    List* result = (List*)malloc(sizeof(List));
+    List* result = (List*)quirk_alloc(QT_LIST, sizeof(List));
     Core_Collections_List_List___init(result);
 
     if (!self) return result;
@@ -327,7 +327,7 @@ String* Core_Collections_Map_MapIterator___next(MapIterator* self) {
 }
 
 MapIterator* Core_Collections_Map_Map___iter(Map* self) {
-    MapIterator* iter = (MapIterator*)malloc(sizeof(MapIterator));
+    MapIterator* iter = (MapIterator*)quirk_alloc(QT_ITERATOR, sizeof(MapIterator));
     Core_Collections_Map_MapIterator___init(iter, self);
     return iter;
 }
@@ -365,7 +365,7 @@ void* Core_Collections_Map_MapPairIterator___current_value(MapPairIterator* self
 }
 
 MapPairIterator* Core_Collections_Map_Map___iter_pairs(Map* self) {
-    MapPairIterator* iter = (MapPairIterator*)malloc(sizeof(MapPairIterator));
+    MapPairIterator* iter = (MapPairIterator*)quirk_alloc(QT_ITERATOR, sizeof(MapPairIterator));
     MapPairIterator__init(iter, self);
     return iter;
 }

@@ -63,7 +63,7 @@ static Any* Json__parse_number(const char** cursor) {
 Map* Encoding_Json__parse_object(const char** cursor) {
     (*cursor)++; // Skip '{'
     
-    Map* map = (Map*)GC_malloc(sizeof(Map));
+    Map* map = (Map*)quirk_alloc(QT_MAP, sizeof(Map));
     extern void Core_Collections_Map_Map___init(Map*);
     extern void Core_Collections_Map_Map_put(Map*, String*, void*);
     Core_Collections_Map_Map___init(map);
@@ -102,7 +102,7 @@ Map* Encoding_Json__parse_object(const char** cursor) {
 List* Encoding_Json__parse_array(const char** cursor) {
     (*cursor)++; // Skip '['
     
-    List* list = (List*)GC_malloc(sizeof(List));
+    List* list = (List*)quirk_alloc(QT_LIST, sizeof(List));
     extern void Core_Collections_List_List___init(List*);
     extern void Core_Collections_List_List_append(List*, void*);
     Core_Collections_List_List___init(list);

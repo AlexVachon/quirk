@@ -153,6 +153,31 @@ class StructGen {
         return Builder.CreateCall(strFunc, {castedSelf}, "str_res");
     }
 
+    // Runtime type id written into the object header (see QuirkHeader in
+    // Runtime/types.h). Must match the runtime's QuirkTypeId values.
+    enum : uint32_t {
+        QT_STRING = 1, QT_LIST, QT_MAP, QT_SET, QT_TUPLE, QT_ANY, QT_CALLABLE,
+        QT_QUEUE, QT_EXCEPTION, QT_ITERATOR, QT_TYPE, QT_FILE, QT_OTHER,
+        QT_STRUCT_BASE = 100
+    };
+    uint32_t objectTypeId(const std::string& name) const {
+        static const std::map<std::string, uint32_t> builtin = {
+            {"String", QT_STRING}, {"List", QT_LIST}, {"Map", QT_MAP}, {"Set", QT_SET},
+            {"Tuple", QT_TUPLE}, {"Any", QT_ANY}, {"Callable", QT_CALLABLE},
+            {"Queue", QT_QUEUE}, {"Type", QT_TYPE}, {"File", QT_FILE}};
+        auto b = builtin.find(name);
+        if (b != builtin.end()) return b->second;
+        auto t = typeIdMap.find(name);
+        return QT_STRUCT_BASE + (t != typeIdMap.end() ? (uint32_t)t->second : 0u);
+    }
+    // `quirk_alloc(type_id, size)`: zeroed GC memory behind an 8-byte header.
+    Value* emitQuirkAlloc(uint32_t typeId, Value* size) {
+        FunctionCallee allocFn = TheModule->getOrInsertFunction("quirk_alloc",
+            FunctionType::get(Type::getInt8PtrTy(Context),
+                              {Type::getInt32Ty(Context), Type::getInt64Ty(Context)}, false));
+        return Builder.CreateCall(allocFn, {ConstantInt::get(Type::getInt32Ty(Context), typeId), size});
+    }
+
     Value* allocateAndInit(const std::string& name, std::vector<Value*> args) {
         if (!StructTypes.count(name)) {
             std::cerr << "Error: Unknown struct " << name << std::endl;
@@ -171,10 +196,7 @@ class StructGen {
         if (sizeBytes == 0) sizeBytes = 1;
         Value* allocSize = ConstantInt::get(Type::getInt64Ty(Context), sizeBytes);
 
-        FunctionCallee mallocFunc = TheModule->getOrInsertFunction("GC_malloc",
-            FunctionType::get(Type::getInt8PtrTy(Context), {Type::getInt64Ty(Context)}, false));
-
-        Value* rawPtr = Builder.CreateCall(mallocFunc, {allocSize});
+        Value* rawPtr = emitQuirkAlloc(objectTypeId(name), allocSize);
         Value* objPtr = Builder.CreateBitCast(rawPtr, PointerType::getUnqual(st));
 
         std::string initName = name + "__init";

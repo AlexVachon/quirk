@@ -559,7 +559,7 @@ String* Core_String_StringIterator___next(StringIterator* self) {
 }
 
 StringIterator* Core_String_String___iter(String* self) {
-    StringIterator* iter = (StringIterator*)malloc(sizeof(StringIterator));
+    StringIterator* iter = (StringIterator*)quirk_alloc(QT_ITERATOR, sizeof(StringIterator));
     Core_String_StringIterator___init(iter, self);
     return iter;
 }
@@ -571,14 +571,14 @@ StringIterator* Core_String_String___iter(String* self) {
 String* make_String_taking_ownership(char* raw_buffer) {
     if (!raw_buffer)
         return NULL;
-    String* s = (String*)malloc(sizeof(String));
+    String* s = (String*)quirk_alloc(QT_STRING, sizeof(String));
     s->buffer = raw_buffer;
     s->length = strlen(raw_buffer);
     return s;
 }
 
 String* make_String(const char* raw) {
-    String* s = (String*)malloc(sizeof(String));
+    String* s = (String*)quirk_alloc(QT_STRING, sizeof(String));
     uintptr_t val = (uintptr_t)raw;
     if (val <= MAX_SMALL_INT) {
         char temp[32];
@@ -867,7 +867,7 @@ String* Core_String_String_substring(String* self, int start, int end) {
 
 List* Core_String_String_split(String* self, String* delim) {
     if (!self || !self->buffer) {
-        List* empty = (List*)malloc(sizeof(List));
+        List* empty = (List*)quirk_alloc(QT_LIST, sizeof(List));
         empty->size = 0;
         empty->capacity = 0;
         empty->data = NULL;
@@ -890,7 +890,7 @@ List* Core_String_String_split(String* self, String* delim) {
         count = self->length;
     }
 
-    List* list = (List*)malloc(sizeof(List));
+    List* list = (List*)quirk_alloc(QT_LIST, sizeof(List));
     list->size = 0;
     list->capacity = count;
     list->data = (void**)malloc(sizeof(void*) * count);
@@ -1177,7 +1177,7 @@ List* Core_String_String_lines(String* self) {
             count++;
         ptr++;
     }
-    List* list = (List*)malloc(sizeof(List));
+    List* list = (List*)quirk_alloc(QT_LIST, sizeof(List));
     list->size = 0;
     list->capacity = count;
     list->data = (void**)malloc(sizeof(void*) * count);

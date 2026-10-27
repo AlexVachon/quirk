@@ -5,6 +5,34 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [6.1.2] — 2026-10-27 — runtime type headers (phase 1)
+
+First phase of replacing the runtime's shape guessing (reading an
+untyped value's first bytes to decide whether it is an Int, an `Any`, a
+`String`, a `Map`, ...) with explicit type tags. No behaviour change in
+this release.
+
+Every runtime value object is now allocated by `quirk_alloc(type_id,
+size)`, which puts an 8-byte header (`QuirkHeader`: magic + type id) in
+front of the returned pointer. Object layouts and field offsets are
+unchanged, so the `typing` package needs no change; Boehm keeps blocks
+alive through the interior pointer. Routed through it: the runtime's 52
+object allocation sites, Codegen's struct allocator (every struct,
+including String and List), Callables, `self.__class` Type objects, and
+the static string literals from v6.1.1.
+
+`QUIRK_CHECK_HEADERS=1` makes the untyped-value readers report any heap
+pointer without a header. Across the test suite and probes: 2,964
+pointers checked, 0 missing. CI now runs the probe suite with the check
+on, so a new allocation path without a header fails CI.
+
+Cost: none measurable — speed within noise, memory unchanged (the header
+fits in Boehm's size-class rounding for these objects).
+
+Next phases: read headers instead of guessing (phase 2), low-bit tagged
+ints in untyped slots (phase 3, prerequisite for 64-bit Int), selfhost
+headers (phase 4).
+
 ## [6.1.1] — 2026-10-27 — shared string literals
 
 Each string literal used to allocate a fresh `String` (GC_malloc) and

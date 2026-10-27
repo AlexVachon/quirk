@@ -140,6 +140,8 @@ jobs:
         working-directory: quirk-compiler
         env:
           QUIRK_HOME: ${{ github.workspace }}/quirk-compiler
+          # Fail on any value object without a runtime type header.
+          QUIRK_CHECK_HEADERS: "1"
         # Every probe in tests/probes/ documents the bug class it
         # protects against. A probe fails when it crashes or times out,
         # reports a compile error, or prints a `FAIL` line. Probes that

@@ -135,7 +135,7 @@ int Core_Collections_List_List_is_empty(List* self) {
 // ==========================================
 
 ListIterator* Core_Collections_List_List___iter(List* self) {
-    ListIterator* iter = (ListIterator*)malloc(sizeof(ListIterator));
+    ListIterator* iter = (ListIterator*)quirk_alloc(QT_ITERATOR, sizeof(ListIterator));
     if (!iter) exit(1);
     Core_Collections_List_ListIterator___init(iter, self);
     return iter;
@@ -179,7 +179,7 @@ List* Core_Collections_List_List_slice(List* self, int start, int end) {
     if (end   < 0) end   += len;
     if (start < 0) start = 0;
     if (end > len) end = len;
-    List* out = (List*)GC_malloc(sizeof(List));
+    List* out = (List*)quirk_alloc(QT_LIST, sizeof(List));
     out->size = 0;
     out->capacity = (end > start) ? end - start : 0;
     out->data = out->capacity > 0
@@ -270,7 +270,7 @@ typedef void* (*LambdaFn2)(void* env, void* acc, void* arg);
 // Element values are shared (not deep-copied) — same shape as
 // Python's list-repeat operator.
 List* Core_Collections_List_List___mul(List* self, int n) {
-    List* result = (List*)GC_malloc(sizeof(List));
+    List* result = (List*)quirk_alloc(QT_LIST, sizeof(List));
     Core_Collections_List_List___init(result);
     if (!self || n <= 0 || self->size == 0) return result;
     Core_Collections_List_List_ensure_capacity(result, self->size * n);
@@ -295,7 +295,7 @@ void Core_Collections_List_List_append_all(List* self, List* other) {
 // by every element of other. Neither input is mutated. Sema picks
 // up the call via the `__add` dunder on the receiver type.
 List* Core_Collections_List_List___add(List* self, List* other) {
-    List* result = (List*)GC_malloc(sizeof(List));
+    List* result = (List*)quirk_alloc(QT_LIST, sizeof(List));
     Core_Collections_List_List___init(result);
     if (!self && !other) return result;
     int total = (self ? self->size : 0) + (other ? other->size : 0);
@@ -313,7 +313,7 @@ List* Core_Collections_List_List___add(List* self, List* other) {
 
 List* Core_Collections_List_List_map(List* self, Callable* cb) {
     LambdaFn1 fn = (LambdaFn1)cb->fn;
-    List* result = (List*)GC_malloc(sizeof(List));
+    List* result = (List*)quirk_alloc(QT_LIST, sizeof(List));
     Core_Collections_List_List___init(result);
     for (int i = 0; i < self->size; i++)
         Core_Collections_List_List_append(result, fn(cb->env, self->data[i]));
@@ -322,7 +322,7 @@ List* Core_Collections_List_List_map(List* self, Callable* cb) {
 
 List* Core_Collections_List_List_filter(List* self, Callable* cb) {
     LambdaFn1 fn = (LambdaFn1)cb->fn;
-    List* result = (List*)GC_malloc(sizeof(List));
+    List* result = (List*)quirk_alloc(QT_LIST, sizeof(List));
     Core_Collections_List_List___init(result);
     for (int i = 0; i < self->size; i++)
         if (fn(cb->env, self->data[i]) != NULL)

@@ -92,7 +92,7 @@ void quirk_capture_traceback(void* exc_ptr) {
 }
 
 void quirk_throw_exception(const char* type_name, const char* message) {
-    QuirkException* exc = (QuirkException*)GC_malloc(sizeof(QuirkException));
+    QuirkException* exc = (QuirkException*)quirk_alloc(QT_EXCEPTION, sizeof(QuirkException));
     exc->type        = make_String(type_name);
     exc->message     = make_String(message);
     exc->file        = make_String("");

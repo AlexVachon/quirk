@@ -31,7 +31,7 @@ String* Encoding_Base64_encode(String* input) {
     out[out_len] = '\0';
     
     // We manually construct the String object to ensure it is Binary Safe
-    String* res = (String*)GC_malloc(sizeof(String));
+    String* res = (String*)quirk_alloc(QT_STRING, sizeof(String));
     res->buffer = out;
     res->length = out_len;
     return res;
@@ -73,7 +73,7 @@ String* Encoding_Base64_decode(String* input) {
     }
     out[out_len] = '\0';
     
-    String* res = (String*)GC_malloc(sizeof(String));
+    String* res = (String*)quirk_alloc(QT_STRING, sizeof(String));
     res->buffer = out;
     res->length = out_len;
     return res;

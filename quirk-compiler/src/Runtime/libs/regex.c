@@ -55,7 +55,7 @@ void* Regex_compile_raw(String* pattern, String* flags) {
         quirk_throw_exception("ValueError", "regex.compile: pattern is null");
         return NULL;
     }
-    QkRegex* qr = (QkRegex*)GC_malloc(sizeof(QkRegex));
+    QkRegex* qr = (QkRegex*)quirk_alloc(QT_OTHER, sizeof(QkRegex));
     qr->compiled = 0;
     qr->last_count = 0;
     qr->last_origin = 0;
@@ -220,7 +220,7 @@ String* Regex_replace_all_raw(void* handle, String* s, String* replacement) {
 // ---------------------------------------------------------------------------
 
 static List* regex__new_list(void) {
-    List* l = (List*)GC_malloc(sizeof(List));
+    List* l = (List*)quirk_alloc(QT_LIST, sizeof(List));
     Core_Collections_List_List___init(l);
     return l;
 }

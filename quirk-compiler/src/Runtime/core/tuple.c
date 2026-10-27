@@ -14,7 +14,7 @@ String* quirk_opaque_to_string(void* val);
 // canonical way to get freed-out-from-under and render as empty
 // strings when the containing collection was printed.
 Tuple* quirk_tuple_new(int size) {
-    Tuple* t = (Tuple*)GC_malloc(sizeof(Tuple));
+    Tuple* t = (Tuple*)quirk_alloc(QT_TUPLE, sizeof(Tuple));
     t->size = size;
     int cap = (size > 0 ? size : 1);
     t->data = (void**)GC_malloc(sizeof(void*) * cap);
@@ -46,7 +46,7 @@ void* Core_Collections_Tuple_TupleIterator___next(TupleIterator* self) {
 }
 
 TupleIterator* Core_Collections_Tuple_Tuple___iter(Tuple* self) {
-    TupleIterator* iter = (TupleIterator*)malloc(sizeof(TupleIterator));
+    TupleIterator* iter = (TupleIterator*)quirk_alloc(QT_ITERATOR, sizeof(TupleIterator));
     Core_Collections_Tuple_TupleIterator___init(iter, self);
     return iter;
 }

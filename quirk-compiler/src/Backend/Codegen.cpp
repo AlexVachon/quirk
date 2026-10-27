@@ -1218,12 +1218,9 @@ class LLVMCodegen {
         Type* i8PtrTy = Type::getInt8PtrTy(Context);
         StructType* callableTy = StructTypes["Callable"];
 
-        FunctionCallee gcMallocFn = TheModule->getOrInsertFunction(
-            "GC_malloc", i8PtrTy, Type::getInt64Ty(Context));
         uint64_t callSz = TheModule->getDataLayout().getTypeAllocSize(callableTy);
-        Value* raw = Builder.CreateCall(
-            gcMallocFn, {ConstantInt::get(Type::getInt64Ty(Context), callSz)},
-            fnName + "_callable");
+        Value* raw = structGen->emitQuirkAlloc(structGen->objectTypeId("Callable"),
+            ConstantInt::get(Type::getInt64Ty(Context), callSz));
         Value* callablePtr = Builder.CreateBitCast(raw, PointerType::getUnqual(callableTy));
 
         Value* fnField  = Builder.CreateStructGEP(callableTy, callablePtr, 0);
@@ -3438,7 +3435,7 @@ class LLVMCodegen {
     // be a fresh GC_malloc + __init (which strdup'd the text) every time
     // it is evaluated — `"k" + i.str()` in a loop allocated three
     // objects per iteration for the "k" alone.
-    std::map<std::string, GlobalVariable*> stringConstants;
+    std::map<std::string, Constant*> stringConstants;
     Value* emitStringConstant(const std::string& text) {
         auto it = stringConstants.find(text);
         if (it != stringConstants.end()) return it->second;
@@ -3460,12 +3457,23 @@ class LLVMCodegen {
         Constant* init = ConstantStruct::get(strTy, {
             ConstantExpr::getBitCast(bufPtr, strTy->getElementType(0)),
             ConstantInt::get(strTy->getElementType(1), len)});
-        // Writable (not `constant`): nothing should write it, but a stray
-        // write must not fault.
-        auto* gv = new GlobalVariable(*TheModule, strTy, false,
-                                      GlobalValue::PrivateLinkage, init, ".strlit");
-        stringConstants[text] = gv;
-        return gv;
+        // Preceded by an object header like every runtime value (see
+        // QuirkHeader): { {magic, QT_STRING}, String }, and the literal is
+        // the address of the String part. Writable (not `constant`):
+        // nothing should write it, but a stray write must not fault.
+        Type* i32 = Type::getInt32Ty(Context);
+        StructType* hdrTy = StructType::get(Context, {i32, i32});
+        StructType* boxTy = StructType::get(Context, {hdrTy, strTy});
+        Constant* hdr = ConstantStruct::get(hdrTy, {
+            ConstantInt::get(i32, 0x4B525551u), ConstantInt::get(i32, structGen->objectTypeId("String"))});
+        auto* gv = new GlobalVariable(*TheModule, boxTy, false,
+                                      GlobalValue::PrivateLinkage, ConstantStruct::get(boxTy, {hdr, init}),
+                                      ".strlit");
+        gv->setAlignment(Align(8));
+        Constant* strPtr = ConstantExpr::getInBoundsGetElementPtr(boxTy, gv,
+            ArrayRef<Constant*>{ConstantInt::get(i32, 0), ConstantInt::get(i32, 1)});
+        stringConstants[text] = strPtr;
+        return strPtr;
     }
 
     // A value arriving untyped (List/Map element, Any param) at a slot
@@ -4861,9 +4869,8 @@ Value* LLVMCodegen::handleExpression(Node* node) {
             const auto& DL = TheModule->getDataLayout();
             uint64_t sz = DL.getTypeAllocSize(typeST);
             if (sz == 0) sz = 1;
-            FunctionCallee mallocFn = TheModule->getOrInsertFunction("GC_malloc",
-                FunctionType::get(Type::getInt8PtrTy(Context), {Type::getInt64Ty(Context)}, false));
-            Value* raw    = Builder.CreateCall(mallocFn, {ConstantInt::get(Type::getInt64Ty(Context), sz)});
+            Value* raw    = structGen->emitQuirkAlloc(structGen->objectTypeId("Type"),
+                ConstantInt::get(Type::getInt64Ty(Context), sz));
             Value* typePtr = Builder.CreateBitCast(raw, PointerType::getUnqual(typeST));
 
             auto makeStr = [&](const std::string& s) {

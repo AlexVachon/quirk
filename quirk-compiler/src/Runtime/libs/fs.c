@@ -39,7 +39,7 @@
 // List_append are already in scope — no `extern` needed (and conflicting
 // types if we tried).
 static List* fs__new_list(void) {
-    List* l = (List*)GC_malloc(sizeof(List));
+    List* l = (List*)quirk_alloc(QT_LIST, sizeof(List));
     Core_Collections_List_List___init(l);
     return l;
 }

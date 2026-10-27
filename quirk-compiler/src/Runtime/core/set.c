@@ -169,7 +169,7 @@ int Core_Collections_Set_Set_is_empty(Set* self) { return !self || self->size ==
 // (self's elements first, then other's new ones for union).
 
 Set* Core_Collections_Set_Set_union(Set* self, Set* other) {
-    Set* result = (Set*)GC_malloc(sizeof(Set));
+    Set* result = (Set*)quirk_alloc(QT_SET, sizeof(Set));
     Core_Collections_Set_Set___init(result);
     for (int i = 0; i < self->order_size; i++)
         if (self->entries[i].is_occupied) Core_Collections_Set_Set_add(result, self->entries[i].value);
@@ -179,7 +179,7 @@ Set* Core_Collections_Set_Set_union(Set* self, Set* other) {
 }
 
 Set* Core_Collections_Set_Set_intersection(Set* self, Set* other) {
-    Set* result = (Set*)GC_malloc(sizeof(Set));
+    Set* result = (Set*)quirk_alloc(QT_SET, sizeof(Set));
     Core_Collections_Set_Set___init(result);
     for (int i = 0; i < self->order_size; i++) {
         SetEntry* e = &self->entries[i];
@@ -190,7 +190,7 @@ Set* Core_Collections_Set_Set_intersection(Set* self, Set* other) {
 }
 
 Set* Core_Collections_Set_Set_difference(Set* self, Set* other) {
-    Set* result = (Set*)GC_malloc(sizeof(Set));
+    Set* result = (Set*)quirk_alloc(QT_SET, sizeof(Set));
     Core_Collections_Set_Set___init(result);
     for (int i = 0; i < self->order_size; i++) {
         SetEntry* e = &self->entries[i];
@@ -207,7 +207,7 @@ Set* Core_Collections_Set_Set_difference(Set* self, Set* other) {
 List* Core_Collections_Set_Set_to_list(Set* self) {
     extern void Core_Collections_List_List___init(List*);
     extern void Core_Collections_List_List_append(List*, void*);
-    List* result = (List*)GC_malloc(sizeof(List));
+    List* result = (List*)quirk_alloc(QT_LIST, sizeof(List));
     Core_Collections_List_List___init(result);
     if (!self) return result;
     for (int i = 0; i < self->order_size; i++)
@@ -244,7 +244,7 @@ void* Core_Collections_Set_SetIterator___next(SetIterator* self) {
 }
 
 SetIterator* Core_Collections_Set_Set___iter(Set* self) {
-    SetIterator* it = (SetIterator*)GC_malloc(sizeof(SetIterator));
+    SetIterator* it = (SetIterator*)quirk_alloc(QT_ITERATOR, sizeof(SetIterator));
     Core_Collections_Set_SetIterator___init(it, self);
     return it;
 }

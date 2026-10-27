@@ -82,7 +82,41 @@ void QuirkRuntime_init(int argc, char** argv) {
 //   1. Tagged integer: pointer value <= 0xFFFFFFFF (inttoptr i32 -> i8*)
 //   2. Any*: first 4 bytes are a valid AnyTag (0..ANY_NULL=8)
 //   3. String*: first field is a heap pointer to char buffer
+void* quirk_alloc(uint32_t type_id, size_t size) {
+    char* block = (char*)GC_malloc(sizeof(QuirkHeader) + (size ? size : 1));
+    QuirkHeader* h = (QuirkHeader*)block;
+    h->magic = QUIRK_HDR_MAGIC;
+    h->type_id = type_id;
+    return block + sizeof(QuirkHeader);
+}
+
+// QUIRK_CHECK_HEADERS=1: phase-1 coverage check. The untyped-value
+// readers report every heap pointer that reaches them without a header
+// (an allocation site not yet routed through quirk_alloc); a summary
+// prints at exit. Reads p-8, so only meant for test runs.
+static int quirk_hdr_check = -1;
+static long quirk_hdr_seen = 0, quirk_hdr_missing = 0;
+static void quirk_hdr_report(void) {
+    fprintf(stderr, "[quirk-headers] %ld untyped pointers checked, %ld without header\n",
+            quirk_hdr_seen, quirk_hdr_missing);
+}
+static void quirk_hdr_note(void* val, const char* where) {
+    if (quirk_hdr_check < 0) {
+        const char* e = getenv("QUIRK_CHECK_HEADERS");
+        quirk_hdr_check = (e && *e && *e != '0');
+        if (quirk_hdr_check) atexit(quirk_hdr_report);
+    }
+    if (!quirk_hdr_check || !val || (uintptr_t)val <= 0xFFFFFFFFUL) return;
+    quirk_hdr_seen++;
+    if (quirk_header_of(val)->magic != QUIRK_HDR_MAGIC) {
+        if (quirk_hdr_missing++ < 8)
+            fprintf(stderr, "[quirk-headers] no header: %p in %s (first word %08x)\n",
+                    val, where, *(uint32_t*)val);
+    }
+}
+
 String* quirk_opaque_to_string(void* val) {
+    quirk_hdr_note(val, "opaque_to_string");
     if (!val) return make_String("null");
     uintptr_t uval = (uintptr_t)val;
     // Case 1: tagged integer
@@ -144,6 +178,7 @@ void quirk_int_overflow(const char* op, int32_t a, int32_t b) {
 }
 
 void* quirk_opaque_to_struct(void* val) {
+    quirk_hdr_note(val, "to_struct");
     if (!val) return NULL;
     uintptr_t uval = (uintptr_t)val;
     if (uval <= 0xFFFFFFFFUL) return NULL;
@@ -164,6 +199,7 @@ void* quirk_opaque_to_struct(void* val) {
 //   Any*-tagged anything else → 0
 // Used by field assignments / typed-walrus when the RHS is opaque.
 int32_t quirk_opaque_to_int(void* val) {
+    quirk_hdr_note(val, "to_int");
     if (!val) return 0;
     uintptr_t u = (uintptr_t)val;
     if (u <= 0xFFFFFFFFUL) return (int32_t)u;
@@ -182,6 +218,7 @@ int32_t quirk_opaque_to_int(void* val) {
 }
 
 double quirk_opaque_to_double(void* val) {
+    quirk_hdr_note(val, "to_double");
     if (!val) return 0.0;
     uintptr_t u = (uintptr_t)val;
     if (u <= 0xFFFFFFFFUL) return (double)(int32_t)u;
@@ -233,6 +270,7 @@ double quirk_opaque_to_double(void* val) {
 // two-Strings case; otherwise compares as tagged ints (raw uintptr).
 extern int Core_String_String___eq(String* self, String* other);
 int32_t quirk_opaque_eq(void* a, void* b) {
+    quirk_hdr_note(a, "eq"); quirk_hdr_note(b, "eq");
     if (a == b) return 1;                 // bit-identical (incl both-null)
     if (!a || !b) return 0;
     uintptr_t ua = (uintptr_t)a, ub = (uintptr_t)b;
@@ -262,6 +300,7 @@ int32_t quirk_opaque_eq(void* a, void* b) {
 }
 
 void* quirk_opaque_check_struct_or_null(void* val, const char* type_name) {
+    quirk_hdr_note(val, "check_struct_or_null");
     if (!val) return NULL;
     uintptr_t u = (uintptr_t)val;
     if (u <= 0xFFFFFFFFUL) {
@@ -286,6 +325,7 @@ void* quirk_opaque_check_struct_or_null(void* val, const char* type_name) {
 
 void* quirk_opaque_unwrap_or_null(void* val, int32_t expected_tag,
                                   const char* type_name) {
+    quirk_hdr_note(val, "unwrap");
     if (!val) return NULL;
     uintptr_t u = (uintptr_t)val;
     if (u <= 0xFFFFFFFFUL) {
@@ -339,6 +379,7 @@ void quirk_print_opaque(void* val) {
 // Return the type name of an opaque i8* value — safe version of Core_Primitives_Any_get_type
 // that handles tagged integers without dereferencing invalid addresses.
 String* quirk_opaque_get_type(void* val) {
+    quirk_hdr_note(val, "get_type");
     if (!val) return make_String("Null");
     uintptr_t uval = (uintptr_t)val;
     if (uval <= 0xFFFFFFFFUL) return make_String("Int");
@@ -387,7 +428,7 @@ extern void quirk_throw_exception(const char* type_name, const char* message);
 // as a List. String-backed and unbacked enums share the same packed
 // blob format (`"v0\0v1\0...\0"`) so one helper covers both.
 List* quirk_enum_values_str(const char* packed, int32_t count) {
-    List* lst = (List*)GC_malloc(sizeof(List));
+    List* lst = (List*)quirk_alloc(QT_LIST, sizeof(List));
     Core_Collections_List_List___init(lst);
     if (!packed) return lst;
     const char* p = packed;
@@ -403,7 +444,7 @@ List* quirk_enum_values_str(const char* packed, int32_t count) {
 // Any-int (inttoptr of the value), matching how List<Any> elements
 // of Int type are encoded everywhere else.
 List* quirk_enum_variants(int32_t count) {
-    List* lst = (List*)GC_malloc(sizeof(List));
+    List* lst = (List*)quirk_alloc(QT_LIST, sizeof(List));
     Core_Collections_List_List___init(lst);
     for (int32_t i = 0; i < count; i++) {
         uintptr_t boxed = (uintptr_t)(uint32_t)i;
@@ -413,7 +454,7 @@ List* quirk_enum_variants(int32_t count) {
 }
 
 List* quirk_enum_values_int(const int32_t* packed, int32_t count) {
-    List* lst = (List*)GC_malloc(sizeof(List));
+    List* lst = (List*)quirk_alloc(QT_LIST, sizeof(List));
     Core_Collections_List_List___init(lst);
     if (!packed) return lst;
     for (int32_t i = 0; i < count; i++) {
@@ -491,12 +532,12 @@ double quirk_enum_value_double(int32_t ordinal, const double* packed, int32_t co
 // can be iterated and the elements `n: Double := list.get(i)`-unboxed
 // the same way Int-backed enums work.
 List* quirk_enum_values_double(const double* packed, int32_t count) {
-    List* lst = (List*)GC_malloc(sizeof(List));
+    List* lst = (List*)quirk_alloc(QT_LIST, sizeof(List));
     Core_Collections_List_List___init(lst);
     if (!packed) return lst;
     for (int32_t i = 0; i < count; i++) {
         // Heap-Any wrap so the value carries its tag through the List.
-        Any* a = (Any*)GC_malloc(sizeof(Any));
+        Any* a = (Any*)quirk_alloc(QT_ANY, sizeof(Any));
         a->tag = ANY_DOUBLE;
         a->ival = 0;
         a->dval = packed[i];

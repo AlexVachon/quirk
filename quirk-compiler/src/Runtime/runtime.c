@@ -147,6 +147,7 @@ static const QuirkTypeInfo* quirk_type_info(uint32_t type_id) {
 static const char* quirk_type_id_name(uint32_t t) {
     switch (t) {
         case QT_STRING:   return "String";
+        case QT_CSTR:     return "String";
         case QT_LIST:     return "List";
         case QT_MAP:      return "Map";
         case QT_SET:      return "Set";
@@ -169,6 +170,7 @@ static const char* quirk_type_id_name(uint32_t t) {
 static String* quirk_headered_to_string(void* val, uint32_t t) {
     switch (t) {
         case QT_STRING: { String* s = (String*)val; return s->buffer ? s : make_String("null"); }
+        case QT_CSTR:   return make_String((const char*)val);
         case QT_LIST:   return Core_Collections_List_List___str((List*)val);
         case QT_MAP:    return Core_Collections_Map_Map___str((Map*)val);
         case QT_SET:    return Core_Collections_Set_Set___str((Set*)val);
@@ -367,8 +369,12 @@ int32_t quirk_opaque_eq(void* a, void* b) {
     // Reading a struct as a String here dereferenced its first field.
     uint32_t ta = quirk_type_of(a), tb = quirk_type_of(b);
     if (ta != QT_NONE || tb != QT_NONE) {
-        if (ta == QT_STRING && tb == QT_STRING)
-            return Core_String_String___eq((String*)a, (String*)b);
+        int sa = (ta == QT_STRING || ta == QT_CSTR), sb = (tb == QT_STRING || tb == QT_CSTR);
+        if (sa && sb) {
+            const char* xa = (ta == QT_CSTR) ? (const char*)a : ((String*)a)->buffer;
+            const char* xb = (tb == QT_CSTR) ? (const char*)b : ((String*)b)->buffer;
+            return xa && xb && strcmp(xa, xb) == 0;
+        }
         if ((ta == QT_STRING && tb == QT_NONE) || (ta == QT_NONE && tb == QT_STRING))
             return Core_String_String___eq((String*)a, (String*)b);
         return 0;

@@ -5,6 +5,25 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [6.1.5] — 2026-10-27 — runtime type tags (phase 4): selfhost strings carry headers, selfhost links PIE
+
+Selfhost (quirk-selfhost) represents String values as raw `char*`, which
+had no type header, so the runtime's readers fell back to guessing.
+
+- New type id `QT_CSTR` (14): a headered raw C string. Selfhost now emits
+  string literals with the header in front (16-aligned) and allocates
+  heap strings through a headered malloc, so `quirk_type_of` recognises
+  them.
+- `quirk_opaque_to_string`, `quirk_opaque_eq` and the JSON encoder read
+  `QT_CSTR` directly; a `QT_CSTR` and a `String*` with the same text
+  compare equal.
+- quirk-cpp never emits `QT_CSTR`; its output is unchanged.
+
+Phase 4b lives in quirk-selfhost: its binaries now link as PIE. The
+pointer truncations that blocked that were mostly in its C shim, which
+called runtime functions with no prototype, so C's implicit `int` return
+cut every returned pointer to 32 bits.
+
 ## [6.1.4] — 2026-10-27 — runtime type tags (phase 3): Int 0, false, Double in untyped slots
 
 An Int stored in an untyped slot (List / Map element, Any) is inlined into

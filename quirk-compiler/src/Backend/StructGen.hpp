@@ -197,6 +197,7 @@ class StructGen {
     enum : uint32_t {
         QT_STRING = 1, QT_LIST, QT_MAP, QT_SET, QT_TUPLE, QT_ANY, QT_CALLABLE,
         QT_QUEUE, QT_EXCEPTION, QT_ITERATOR, QT_TYPE, QT_FILE, QT_OTHER,
+        QT_CSTR = 14,   // selfhost raw char* strings; never emitted here
         QT_STRUCT_BASE = 100
     };
     uint32_t objectTypeId(const std::string& name) const {

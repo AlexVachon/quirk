@@ -352,6 +352,7 @@ static void Json__serialize_any(void* val, AnyTag hint, char** buf, int* cap, in
             else Json__buf_append(buf, cap, len, "null");
             return;
         }
+        if (ht == QT_CSTR) { Json__buf_append_escaped(buf, cap, len, (const char*)val); return; }
         if (ht == QT_MAP)  { Json__serialize_map((Map*)val, buf, cap, len, indent, depth); return; }
         if (ht == QT_LIST) { Json__serialize_list((List*)val, buf, cap, len, indent, depth); return; }
         if (ht == QT_SET || ht == QT_TUPLE) {

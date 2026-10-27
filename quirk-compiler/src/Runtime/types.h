@@ -31,6 +31,7 @@ enum QuirkTypeId {
     QT_NONE = 0,
     QT_STRING, QT_LIST, QT_MAP, QT_SET, QT_TUPLE, QT_ANY, QT_CALLABLE,
     QT_QUEUE, QT_EXCEPTION, QT_ITERATOR, QT_TYPE, QT_FILE, QT_OTHER,
+    QT_CSTR = 14,          // raw NUL-terminated char* (selfhost String values)
     QT_STRUCT_BASE = 100   // user struct: QT_STRUCT_BASE + codegen type id
 };
 

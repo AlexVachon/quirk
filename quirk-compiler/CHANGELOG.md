@@ -5,6 +5,13 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.0.2] — 2026-10-28 — macOS build fix
+
+v7.0.1's macOS release build failed, so it shipped Linux binaries only.
+The new cache-key stamp passed a `file_time_type` tick count to
+`std::to_string`; libc++ counts those ticks in `__int128`, which has no
+overload. It's now cast to `long long`. No behavior change.
+
 ## [7.0.1] — 2026-10-27 — assignments are type-checked
 
 Sema checked call arguments but never assignments, so a value of the

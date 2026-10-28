@@ -719,7 +719,8 @@ static std::string fileStamp(const std::string& path) {
     std::error_code ec;
     auto size = fs::file_size(path, ec);
     if (ec) return path + ":?";
-    auto mtime = fs::last_write_time(path, ec).time_since_epoch().count();
+    // libc++ (macOS) counts file_time_type in __int128 — no to_string overload.
+    auto mtime = static_cast<long long>(fs::last_write_time(path, ec).time_since_epoch().count());
     return path + ":" + std::to_string(size) + ":" + std::to_string(mtime);
 }
 

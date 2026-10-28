@@ -55,6 +55,7 @@ static std::string self_binary();
 }  // namespace qpm
 #include <sys/stat.h>
 #include <sys/utsname.h>
+#include <sys/ioctl.h>
 #include <fcntl.h>
 #include <cstdio>
 #include <thread>
@@ -68,7 +69,7 @@ static std::string self_binary();
 
 namespace qpm {
 
-constexpr const char* QUIRK_VERSION = "7.2.0";
+constexpr const char* QUIRK_VERSION = "7.2.1";
 
 namespace fs = std::filesystem;
 
@@ -4711,33 +4712,57 @@ inline std::map<std::string, std::string> quirk_stdlib_versions(const fs::path& 
     return out;
 }
 
-// One line saying how the stdlib changed between two installs, pip-style:
-// `Updated typing 1.15.1 → 1.15.2, net 1.1.0 → 1.2.0`. Packages whose old
-// version is unknown count as unchanged, so the first install over a
-// pre-7.2 one doesn't claim everything changed. `-v` lists every package.
-inline void quirk_report_stdlib_changes(const std::map<std::string, std::string>& before,
-                                        const std::map<std::string, std::string>& after) {
+// List the installed stdlib, pip-style, wrapped under a `Stdlib` step:
+// `argparse 1.0.0, …, typing 1.15.1 → 1.15.2, newpkg 0.1.0 (new), …`.
+// Changes against the previous install are bold. A package whose old
+// version is unknown (pre-7.2 install) isn't marked as changed.
+inline void quirk_report_stdlib(const std::map<std::string, std::string>& before,
+                                const std::map<std::string, std::string>& after) {
+    if (log::quiet_flag() || after.empty()) return;
     auto bare = [](const std::string& t) {
         return (!t.empty() && t[0] == 'v') ? t.substr(1) : t;
     };
-    std::vector<std::string> updated, added, removed;
+    // (plain text for width, display text)
+    std::vector<std::pair<std::string, std::string>> items;
     for (auto& [name, ver] : after) {
+        std::string v = ver.empty() ? "?" : bare(ver);
         auto it = before.find(name);
-        if (it == before.end()) added.push_back(name + " " + bare(ver));
-        else if (!it->second.empty() && it->second != ver)
-            updated.push_back(name + " " + bare(it->second) + " → " + bare(ver));
+        if (it != before.end() && !it->second.empty() && it->second != ver) {
+            std::string t = name + " " + bare(it->second) + " → " + v;
+            items.push_back({t, log::bold(t)});
+        } else if (it == before.end() && !before.empty()) {
+            std::string t = name + " " + v + " (new)";
+            items.push_back({t, log::bold(t)});
+        } else {
+            items.push_back({name + " " + v, name + " " + log::dim(v)});
+        }
     }
+    int width = 80;
+    struct winsize ws;
+    if (::isatty(STDOUT_FILENO) && ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_col > 40)
+        width = ws.ws_col;
+    const std::string indent(13, ' ');
+    std::string out;
+    int col = 13;
+    for (size_t i = 0; i < items.size(); i++) {
+        std::string sep = i + 1 < items.size() ? "," : "";
+        int w = (int)items[i].first.size() + (int)sep.size();
+        // "→" is 3 bytes but one column.
+        if (items[i].first.find("→") != std::string::npos) w -= 2;
+        if (i > 0 && col + 1 + w > width) { out += "\n" + indent; col = 13; }
+        else if (i > 0) { out += " "; col += 1; }
+        out += items[i].second + sep;
+        col += w;
+    }
+    log::step("Stdlib", out.substr(0));
+    std::vector<std::string> removed;
     for (auto& [name, ver] : before)
         if (!after.count(name)) removed.push_back(name);
-    auto join = [](const std::vector<std::string>& v) {
-        std::string s;
-        for (size_t i = 0; i < v.size(); i++) s += (i ? ", " : "") + v[i];
-        return s;
-    };
-    if (!updated.empty()) log::step("Updated", join(updated));
-    if (!added.empty() && !before.empty()) log::step("Added", join(added));
-    if (!removed.empty()) log::step("Removed", join(removed));
-    for (auto& [name, ver] : after) log::v(name + " " + (ver.empty() ? "?" : bare(ver)));
+    if (!removed.empty()) {
+        std::string r;
+        for (size_t i = 0; i < removed.size(); i++) r += (i ? ", " : "") + removed[i];
+        log::step("Removed", r);
+    }
 }
 
 // Download, verify and unpack compiler release `tag` under `work`.
@@ -5481,7 +5506,7 @@ static int cmd_compiler(const std::vector<std::string>& args) {
         if (withExtension) quirk_install_vscode_extension(work);
         fs::remove_all(work, ec);
 
-        quirk_report_stdlib_changes(stdlibBefore, stdlibAfter);
+        quirk_report_stdlib(stdlibBefore, stdlibAfter);
         bool same = quirk_compare_versions(version, QUIRK_VERSION) == 0;
         log::step("Installed", "quirk " + version.substr(1)
                   + log::dim((same ? "" : "  (was " + std::string(QUIRK_VERSION) + ")")

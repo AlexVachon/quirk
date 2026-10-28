@@ -5,6 +5,19 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.2.1] — 2026-10-28 — always list the stdlib on install
+
+7.2.0 listed only the stdlib packages that changed, so a reinstall (or
+an update that didn't touch the stdlib) printed none. `quirk compiler
+update` / `install` now always list every bundled package and its
+version, wrapped to the terminal width, with changes in bold:
+
+```
+      Stdlib argparse 1.0.0, console 1.0.0, crypto 1.0.0, csv 1.0.0,
+             …, prompt 1.1.0, typing 1.15.2 → 1.15.3, newpkg 0.1.0 (new), …
+     Removed uuid
+```
+
 ## [7.2.0] — 2026-10-28 — stdlib versions on install
 
 The 24 stdlib packages bundled with the compiler now carry their

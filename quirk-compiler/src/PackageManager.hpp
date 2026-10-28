@@ -54,6 +54,9 @@ namespace qpm {
 static std::string self_binary();
 }  // namespace qpm
 #include <sys/stat.h>
+#include <sys/utsname.h>
+#include <fcntl.h>
+#include <cstdio>
 #include <thread>
 #include <chrono>
 #include <ctime>
@@ -65,7 +68,7 @@ static std::string self_binary();
 
 namespace qpm {
 
-constexpr const char* QUIRK_VERSION = "7.0.2";
+constexpr const char* QUIRK_VERSION = "7.1.0";
 
 namespace fs = std::filesystem;
 
@@ -156,6 +159,200 @@ inline std::string bold(const std::string& s) {
 }
 
 }  // namespace log
+
+// ---------------------- Downloads ----------------------
+// Every file the CLI fetches goes through `net::download`, so they all
+// report the same way: a `Downloading <name> (<size>)` step, a pip-style
+// progress bar on a TTY, the size / time when done, and a readable
+// reason on failure instead of curl's raw exit code. curl does the
+// transfer (no libcurl link); the bar is drawn by watching the output
+// file grow while curl runs.
+namespace net {
+
+inline std::string human_bytes(double b) {
+    const char* units[] = {"B", "kB", "MB", "GB"};
+    int u = 0;
+    while (b >= 1000.0 && u < 3) { b /= 1000.0; u++; }
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), u == 0 ? "%.0f %s" : "%.1f %s", b, units[u]);
+    return buf;
+}
+
+inline std::string clock_str(double secs) {
+    int t = secs < 0 ? 0 : (int)(secs + 0.5);
+    char buf[16];
+    std::snprintf(buf, sizeof(buf), "%d:%02d:%02d", t / 3600, (t / 60) % 60, t % 60);
+    return buf;
+}
+
+struct Result {
+    bool ok = false;
+    int curlRc = 0;        // curl's exit code (network / TLS / timeout)
+    long http = 0;         // final HTTP status after redirects
+    uintmax_t bytes = 0;
+    double secs = 0;
+};
+
+// Run curl with `args` (no shell), capturing what it writes to stdout.
+inline int run_curl(const std::vector<std::string>& args, std::string* out, pid_t* bg = nullptr,
+                    int* outFd = nullptr) {
+    int pipefd[2];
+    if (pipe(pipefd) != 0) return -1;
+    pid_t pid = fork();
+    if (pid < 0) { close(pipefd[0]); close(pipefd[1]); return -1; }
+    if (pid == 0) {
+        dup2(pipefd[1], STDOUT_FILENO);
+        int devnull = open("/dev/null", O_WRONLY);
+        if (devnull >= 0) dup2(devnull, STDERR_FILENO);
+        close(pipefd[0]); close(pipefd[1]);
+        std::vector<char*> argv;
+        argv.push_back(const_cast<char*>("curl"));
+        for (auto& a : args) argv.push_back(const_cast<char*>(a.c_str()));
+        argv.push_back(nullptr);
+        execvp("curl", argv.data());
+        _exit(127);
+    }
+    close(pipefd[1]);
+    if (bg) { *bg = pid; *outFd = pipefd[0]; return 0; }
+    char buf[4096]; ssize_t n;
+    while ((n = read(pipefd[0], buf, sizeof(buf))) > 0) if (out) out->append(buf, n);
+    close(pipefd[0]);
+    int status = 0;
+    waitpid(pid, &status, 0);
+    return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+}
+
+// Content-Length of the final (2xx) response after redirects, or -1
+// when the server doesn't say or the URL doesn't resolve to a file.
+inline long long remote_size(const std::string& url) {
+    std::string out;
+    if (run_curl({"-sIL", "--max-time", "10", url}, &out) != 0) return -1;
+    long long size = -1;
+    int status = 0;
+    std::istringstream in(out);
+    std::string line;
+    while (std::getline(in, line)) {           // last hop wins
+        std::string low;
+        for (char c : line) low += (char)std::tolower((unsigned char)c);
+        if (low.rfind("http/", 0) == 0) {
+            size = -1;
+            auto sp = low.find(' ');
+            status = sp == std::string::npos ? 0 : std::atoi(low.c_str() + sp + 1);
+        } else if (low.rfind("content-length:", 0) == 0) {
+            size = std::atoll(low.c_str() + 15);
+        }
+    }
+    return (status >= 200 && status < 300) ? size : -1;
+}
+
+inline void draw_bar(uintmax_t got, long long total, double secs) {
+    const int width = 32;
+    std::string line = "\r\x1b[2K" + std::string(13, ' ');
+    double rate = secs > 0.05 ? got / secs : 0;
+    if (total > 0) {
+        int filled = (int)((double)got / total * width);
+        if (filled > width) filled = width;
+        // Colour tells done from remaining; without it, use two glyphs.
+        const bool c = log::color_enabled();
+        line += log::GREEN();
+        for (int i = 0; i < filled; i++) line += c ? "━" : "#";
+        line += log::RESET();
+        line += log::DIM();
+        for (int i = filled; i < width; i++) line += c ? "━" : "-";
+        line += log::RESET();
+        line += " " + human_bytes((double)got) + "/" + human_bytes((double)total);
+        if (rate > 0) {
+            line += " " + log::dim(human_bytes(rate) + "/s");
+            if (got < (uintmax_t)total)
+                line += " " + log::dim("eta " + clock_str((total - got) / rate));
+        }
+    } else {
+        line += human_bytes((double)got);
+        if (rate > 0) line += " " + log::dim(human_bytes(rate) + "/s");
+    }
+    std::cerr << line << std::flush;
+}
+
+// Fetch `url` into `out`. `label` names it in the step line; an empty
+// label downloads silently (probes, small metadata). `sizeHint`:
+// -1 = ask the server first (HEAD), -2 = don't ask (codeload tarballs,
+// which are generated on the fly and never report a size).
+// `stepLine = false` keeps the bar / size but skips the step line, for
+// callers that already printed their own.
+inline Result download(const std::string& url, const fs::path& out,
+                       const std::string& label = "", long long sizeHint = -1,
+                       bool stepLine = true) {
+    Result r;
+    const bool show = !label.empty() && !log::quiet_flag();
+    const bool bar  = show && ::isatty(STDERR_FILENO);
+    long long total = sizeHint == -1 && show ? remote_size(url) : (sizeHint >= 0 ? sizeHint : -1);
+    if (show && stepLine)
+        log::step("Downloading", label + (total > 0 ? log::dim(" (" + human_bytes((double)total) + ")") : ""));
+    log::v(url);
+    std::cout << std::flush;   // step line before the bar (stderr)
+
+    std::error_code ec;
+    fs::remove(out, ec);
+    pid_t pid; int fd;
+    auto t0 = std::chrono::steady_clock::now();
+    if (run_curl({"-sL", "--connect-timeout", "15",
+                  "-o", out.string(), "-w", "%{http_code}", url}, nullptr, &pid, &fd) != 0) {
+        r.curlRc = -1;
+        return r;
+    }
+    auto elapsed = [&] {
+        return std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    };
+    int status = 0;
+    bool drew = false;
+    while (waitpid(pid, &status, WNOHANG) == 0) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        if (!bar || elapsed() < 0.2) continue;     // don't flash a bar for quick misses
+        draw_bar(fs::exists(out, ec) ? fs::file_size(out, ec) : 0, total, elapsed());
+        drew = true;
+    }
+    std::string code; char buf[64]; ssize_t n;
+    while ((n = read(fd, buf, sizeof(buf))) > 0) code.append(buf, n);
+    close(fd);
+    r.secs   = elapsed();
+    r.curlRc = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+    r.http   = std::atol(code.c_str());
+    r.bytes  = fs::exists(out, ec) ? fs::file_size(out, ec) : 0;
+    r.ok     = r.curlRc == 0 && r.http >= 200 && r.http < 300;
+    if (!r.ok) fs::remove(out, ec);
+
+    if (drew) {
+        if (r.ok) { draw_bar(r.bytes, (long long)r.bytes, r.secs); std::cerr << "\n"; }
+        else std::cerr << "\r\x1b[2K" << std::flush;
+    } else if (show && r.ok) {
+        char t[32];
+        std::snprintf(t, sizeof(t), "%.1fs", r.secs);
+        std::cout << std::string(13, ' ')
+                  << log::dim(human_bytes((double)r.bytes) + " in "
+                              + (r.secs < 60 ? std::string(t) : clock_str(r.secs))) << "\n";
+    }
+    return r;
+}
+
+// Why a download failed, in words.
+inline std::string describe(const Result& r) {
+    switch (r.curlRc) {
+        case 0:  break;
+        case -1:
+        case 127: return "couldn't run curl (is it installed?)";
+        case 6:  return "couldn't resolve host (offline?)";
+        case 7:  return "couldn't connect to the server";
+        case 28: return "timed out";
+        case 35: case 51: case 58: case 60:
+                 return "TLS / certificate error (curl " + std::to_string(r.curlRc) + ")";
+        default: return "network error (curl " + std::to_string(r.curlRc) + ")";
+    }
+    if (r.http == 404) return "not found (HTTP 404)";
+    if (r.http == 403) return "forbidden (HTTP 403 — GitHub rate limit?)";
+    return "HTTP " + std::to_string(r.http);
+}
+
+}  // namespace net
 
 // ---------------------- Tiny TOML-ish manifest parser ----------------------
 // Supports:
@@ -1501,11 +1698,13 @@ static int try_codeload_tarball(const std::string& ownerRepo, const std::string&
     fs::remove_all(extractDir, ec);
     fs::create_directories(extractDir, ec);
 
-    // Always silence curl — its 404 is normal when probing tag-name variants
-    // (e.g. "1.0.0" vs "v1.0.0"). Caller decides what to do on failure.
-    std::string curl = "curl -fsSL \"" + url + "\" -o \"" + tmpTar.string() + "\" 2>/dev/null";
-    if (std::system(curl.c_str()) != 0) {
-        fs::remove(tmpTar, ec);
+    // A 404 is normal when probing tag-name variants ("1.0.0" vs
+    // "v1.0.0"), so failures stay silent; the caller decides what to
+    // report. The caller printed the `Downloading` step: this adds the
+    // bar / size. codeload builds tarballs on the fly, so no size up front.
+    net::Result r = net::download(url, tmpTar, quiet ? "" : ownerRepo, -2, /*stepLine=*/false);
+    if (!r.ok) {
+        log::v(url + ": " + net::describe(r));
         return 1;
     }
     std::string tar = "tar -xzf \"" + tmpTar.string()
@@ -4444,27 +4643,139 @@ static int cmd_bump_compiler(const std::vector<std::string>& args) {
 // ─────────────────────────────────────────────────────────────────────────
 // `quirk compiler {install <vX.Y.Z> | update | list | version}`
 //
-// User-facing self-management of the compiler binary. Internally everything
-// delegates to install.sh on `main` — same logic the one-liner uses — so
-// there's a single source of truth for the install flow. We just make it
-// invokable from inside the running compiler.
+// User-facing self-management of the compiler binary. `install` /
+// `update` fetch the release tarball directly (quirk_fetch_compiler_release)
+// so every step is reported; the install.sh one-liner covers first installs.
 //
 //   quirk compiler version       — print current QUIRK_VERSION
 //   quirk compiler list          — show available `vX.Y.Z` releases on GitHub
 //   quirk compiler install vA.B.C — replace this binary with version A.B.C
 //   quirk compiler update         — replace this binary with the latest tag
 //
-// Note: replacement happens by re-running install.sh, which downloads the
-// release tarball and unpacks into INSTALL_DIR (defaults to ~/.quirk). The
+// Note: `install` / `update` download the release tarball themselves
+// (same layout as install.sh, which stays the first-install path),
+// verify its sha256 and unpack into INSTALL_DIR (defaults to ~/.quirk). The
 // command does NOT mutate a quirk binary that lives elsewhere (e.g. a
 // system /usr/local install) — that's by design; system installs should
 // be managed by the package manager that owns them.
 // ─────────────────────────────────────────────────────────────────────────
 
-static const char* QUIRK_INSTALL_SCRIPT_URL =
-    "https://raw.githubusercontent.com/AlexVachon/quirk/main/install.sh";
 static const char* QUIRK_RELEASES_API_URL =
     "https://api.github.com/repos/AlexVachon/quirk/releases?per_page=30";
+static const char* QUIRK_RELEASE_DOWNLOAD_URL =
+    "https://github.com/AlexVachon/quirk/releases/download/";
+
+// Release tarball suffix for this machine ("linux-x86_64", "darwin-arm64"),
+// or "" when no prebuilt compiler ships for it (`why` says so).
+inline std::string quirk_release_platform(std::string* why) {
+    struct utsname u;
+    if (uname(&u) != 0) { *why = "couldn't detect the platform"; return ""; }
+    std::string os = u.sysname, arch = u.machine;
+    if (os == "Linux" && (arch == "x86_64" || arch == "amd64")) return "linux-x86_64";
+    if (os == "Darwin" && (arch == "arm64" || arch == "aarch64")) return "darwin-arm64";
+    *why = "no prebuilt compiler for " + os + " " + arch
+         + " — build from source: https://github.com/AlexVachon/quirk#building";
+    return "";
+}
+
+// sha256 of a file via sha256sum / shasum (whichever exists), "" if neither.
+inline std::string quirk_sha256_file(const fs::path& f) {
+    for (const char* tool : {"sha256sum", "shasum -a 256"}) {
+        std::string cmd = std::string(tool) + " '" + f.string() + "' 2>/dev/null";
+        FILE* p = popen(cmd.c_str(), "r");
+        if (!p) continue;
+        char buf[256] = {0};
+        std::string out = fgets(buf, sizeof(buf), p) ? buf : "";
+        if (pclose(p) == 0 && out.size() >= 64) return out.substr(0, 64);
+    }
+    return "";
+}
+
+// Download, verify and unpack compiler release `tag` under `work`.
+// Returns the unpacked `quirk-<ver>-<platform>/` directory (flat
+// `bin/` + `packages/` layout), or "" after logging why it failed.
+inline fs::path quirk_fetch_compiler_release(const std::string& tag, const fs::path& work) {
+    std::string why;
+    std::string plat = quirk_release_platform(&why);
+    if (plat.empty()) { log::err(why); return {}; }
+    std::string ver = (!tag.empty() && tag[0] == 'v') ? tag.substr(1) : tag;
+    std::string pkg = "quirk-" + ver + "-" + plat;
+    std::string url = std::string(QUIRK_RELEASE_DOWNLOAD_URL) + tag + "/" + pkg + ".tar.gz";
+    fs::path tarball = work / (pkg + ".tar.gz");
+
+    net::Result r = net::download(url, tarball, pkg + ".tar.gz");
+    if (!r.ok) {
+        log::err("download failed: " + net::describe(r));
+        if (r.http == 404)
+            std::cerr << "    " << log::dim("release " + tag + " has no " + plat
+                + " build (yet?) — `quirk compiler list` shows published releases; "
+                  "a just-tagged release takes a few minutes to build") << "\n";
+        std::cerr << "    " << log::dim(url) << "\n";
+        return {};
+    }
+
+    // The release publishes a `.sha256` sidecar; a mismatch means a
+    // corrupted or tampered download. Older releases may lack one.
+    fs::path sidecar = work / (pkg + ".tar.gz.sha256");
+    net::Result sr = net::download(url + ".sha256", sidecar);
+    if (sr.ok) {
+        std::ifstream in(sidecar);
+        std::string expected; in >> expected;
+        std::string actual = quirk_sha256_file(tarball);
+        if (actual.empty()) {
+            log::warn("no sha256sum / shasum on PATH — checksum not verified");
+        } else if (actual != expected) {
+            log::err("checksum mismatch for " + pkg + ".tar.gz");
+            std::cerr << "    " << log::dim("expected " + expected) << "\n"
+                      << "    " << log::dim("got      " + actual) << "\n";
+            return {};
+        } else {
+            log::step("Verified", "sha256 " + log::dim(actual.substr(0, 16) + "…"));
+        }
+    } else {
+        log::warn("no checksum published for " + tag + " — not verified");
+    }
+
+    log::step("Unpacking", pkg + ".tar.gz");
+    std::string tar = "tar -xzf '" + tarball.string() + "' -C '" + work.string() + "'";
+    if (std::system(tar.c_str()) != 0 || !fs::exists(work / pkg / "bin" / "quirk")) {
+        log::err("couldn't unpack " + pkg + ".tar.gz");
+        return {};
+    }
+    return work / pkg;
+}
+
+// Find the newest published VSCode extension (.vsix) and install it with
+// `$CODE_CMD` (default `code`). Best-effort: failures only warn.
+inline void quirk_install_vscode_extension(const fs::path& work) {
+    const char* cc = std::getenv("CODE_CMD");
+    std::string code = (cc && *cc) ? cc : "code";
+    if (std::system(("command -v '" + code + "' >/dev/null 2>&1").c_str()) != 0) {
+        log::warn("'" + code + "' is not on PATH — skipping the VSCode extension "
+                  "(set CODE_CMD=codium / cursor / … for another editor)");
+        return;
+    }
+    std::string cmd = std::string("curl -fsSL '") + QUIRK_RELEASES_API_URL
+                    + "' 2>/dev/null | grep -oE 'https://[^\"]+\\.vsix' | head -n 1";
+    std::string vsixUrl;
+    if (FILE* p = popen(cmd.c_str(), "r")) {
+        char buf[1024];
+        if (fgets(buf, sizeof(buf), p)) vsixUrl = buf;
+        pclose(p);
+    }
+    while (!vsixUrl.empty() && std::isspace((unsigned char)vsixUrl.back())) vsixUrl.pop_back();
+    if (vsixUrl.empty()) { log::warn("no published Quirk VSCode extension found — skipping"); return; }
+    fs::path vsix = work / fs::path(vsixUrl).filename();
+    net::Result r = net::download(vsixUrl, vsix, vsix.filename().string());
+    if (!r.ok) { log::warn("extension download failed: " + net::describe(r)); return; }
+    log::step("Installing", "VSCode extension into '" + code + "'");
+    if (std::system(("'" + code + "' --install-extension '" + vsix.string() + "' >/dev/null").c_str()) != 0)
+        log::warn("extension install failed — install it manually: " + code
+                  + " --install-extension " + vsixUrl);
+    else
+        log::ok("VSCode extension installed");
+}
+
 
 // ─────────────────────────────────────────────────────────────────────────
 // Update check — at most once per 24h, prints a one-line notice when a
@@ -4892,7 +5203,8 @@ static int cmd_compiler(const std::vector<std::string>& args) {
             "                           Outside a venv, has no effect — global is already the target.\n"
             "  --with-extension         Also install the Quirk VSCode extension\n"
             "                           (downloads the latest .vsix from the GitHub Releases page).\n"
-            "  --no-extension           Skip the extension prompt (default).\n";
+            "  --no-extension           Skip the extension prompt (default).\n"
+            "  --force                  `update`: reinstall even when already up to date.\n";
         return 0;
     };
 
@@ -4979,20 +5291,21 @@ static int cmd_compiler(const std::vector<std::string>& args) {
     if (sub == "install" || sub == "update") {
         // Argument parsing:
         //   --global              force global install even from inside a venv
-        //   --with-extension      pass through to install.sh (VSCode extension)
-        //   --no-extension        opposite — explicit "skip extension" (default)
+        //   --with-extension      also install the VSCode extension
+        //   --no-extension        explicit "skip extension" (default)
+        //   --force               `update`: reinstall even when up to date
         //   <version>             positional, for `install` only
         // Default target picks itself: inside an active venv we update
         // the *venv* exclusively; outside, the global. Matches Python's
         // pip/python convention — activated env wins.
-        bool forceGlobal = false;
-        std::string extFlag;  // "" / " --with-extension" / " --no-extension"
+        bool forceGlobal = false, withExtension = false, force = false;
         std::string version;
         for (size_t i = 1; i < args.size(); i++) {
             const std::string& a = args[i];
             if (a == "--global") forceGlobal = true;
-            else if (a == "--with-extension") extFlag = " --with-extension";
-            else if (a == "--no-extension")   extFlag = " --no-extension";
+            else if (a == "--with-extension") withExtension = true;
+            else if (a == "--no-extension")   withExtension = false;
+            else if (a == "--force")          force = true;
             else if (sub == "install") {
                 version = a;
                 if (!version.empty() && version[0] != 'v') version = "v" + version;
@@ -5007,30 +5320,67 @@ static int cmd_compiler(const std::vector<std::string>& args) {
         const bool targetVenv  = inVenv && !forceGlobal;
         const bool targetGlobal = !inVenv || forceGlobal;
 
-        // For a venv-only install: run install.sh against a temp dir,
-        // then copy the binary/runtime/stdlib into the venv's layout
-        // (which differs from the tarball's flat shape). The global
-        // stays untouched. For a global install (or no venv) we run
-        // install.sh as before.
-        //
-        // `extFlag` threads through both paths because the extension
-        // install side-effect in install.sh isn't scoped to
-        // INSTALL_DIR — VSCode extensions always land in
-        // ~/.vscode/extensions/ regardless. Routing it through both
-        // paths means `quirk compiler update --with-extension` works
-        // identically whether or not a venv is active.
-        std::string flag = (version.empty() ? "" : (" --version=" + version)) + extFlag;
-
-        if (targetGlobal) {
-            std::string cmd = std::string("curl -fsSL '") + QUIRK_INSTALL_SCRIPT_URL
-                            + "' | sh -s --" + flag;
-            std::cout << log::dim("→ ") << cmd << "\n";
-            int rc = std::system(cmd.c_str());
-            if (rc != 0) {
-                log::err("compiler " + sub + " failed (exit "
-                         + std::to_string(WEXITSTATUS(rc)) + ")");
+        if (version.empty()) {
+            log::step("Checking", "for the latest compiler release");
+            version = quirk_fetch_latest_tag();
+            if (version.empty()) {
+                log::err("couldn't reach the GitHub releases API (offline, or rate-limited?)");
                 return 1;
             }
+            int cmp = quirk_compare_versions(version, QUIRK_VERSION);
+            if (cmp <= 0 && !force) {
+                if (cmp == 0) log::ok("quirk " + std::string(QUIRK_VERSION) + " is already the latest release");
+                else log::note("running " + std::string(QUIRK_VERSION) + ", newer than the latest release "
+                               + version + " (dev build?)");
+                std::cout << "    " << log::dim("`--force` reinstalls anyway") << "\n";
+                return 0;
+            }
+            log::note(std::string(QUIRK_VERSION) + " → " + log::bold(version.substr(1)));
+        }
+
+        // Download + verify + unpack once into a staging dir, then copy
+        // into the target, so a failure halfway can't leave a
+        // half-installed toolchain.
+        char tmpl[] = "/tmp/quirk-update-XXXXXX";
+        char* tdir = mkdtemp(tmpl);
+        if (!tdir) {
+            log::err("compiler " + sub + ": couldn't create a staging dir");
+            return 1;
+        }
+        fs::path work = tdir;
+        std::error_code ec;
+        fs::path stage = quirk_fetch_compiler_release(version, work);
+        if (stage.empty()) { fs::remove_all(work, ec); return 1; }
+        fs::path stageBin = stage / "bin";
+        fs::path stagePkg = stage / "packages";
+        auto make_exec = [&](const fs::path& f) {
+            fs::permissions(f,
+                fs::perms::owner_all | fs::perms::group_read | fs::perms::group_exec
+                                     | fs::perms::others_read | fs::perms::others_exec,
+                fs::perm_options::replace, ec);
+        };
+
+        if (targetGlobal) {
+            // Same layout and replace-on-reinstall as install.sh. `libs/`
+            // is removed for pre-1.0.8 installs, where it would shadow
+            // `packages/`. Removing `bin/` while this binary runs from it
+            // is fine: the running image stays mapped until exit.
+            const char* idEnv = std::getenv("INSTALL_DIR");
+            const char* home  = std::getenv("HOME");
+            fs::path dir = (idEnv && *idEnv) ? fs::path(idEnv)
+                         : fs::path(home ? home : ".") / ".quirk";
+            log::step("Installing", "into " + dir.string());
+            fs::create_directories(dir, ec);
+            for (const char* d : {"bin", "lib", "libs", "packages"}) fs::remove_all(dir / d, ec);
+            ec.clear();
+            fs::copy(stage, dir, fs::copy_options::recursive | fs::copy_options::copy_symlinks
+                               | fs::copy_options::overwrite_existing, ec);
+            if (ec) {
+                log::err("couldn't copy into " + dir.string() + ": " + ec.message());
+                fs::remove_all(work, ec);
+                return 1;
+            }
+            make_exec(dir / "bin" / "quirk");
         }
 
         if (targetVenv) {
@@ -5038,35 +5388,12 @@ static int cmd_compiler(const std::vector<std::string>& args) {
             fs::path venvDir = envHome ? fs::path(envHome) : fs::path();
             if (venvDir.empty()) {
                 log::err("compiler " + sub + ": active venv has no QUIRK_HOME");
+                fs::remove_all(work, ec);
                 return 1;
             }
-            // Stage the install into a fresh temp dir so a failure
-            // halfway through can't leave the venv with a half-installed
-            // toolchain.
-            std::error_code ec;
-            char tmpl[] = "/tmp/quirk-update-XXXXXX";
-            char* tdir = mkdtemp(tmpl);
-            if (!tdir) {
-                log::err("compiler " + sub + ": couldn't create staging dir");
-                return 1;
-            }
-            fs::path stage = tdir;
-            std::string cmd = std::string("curl -fsSL '") + QUIRK_INSTALL_SCRIPT_URL
-                            + "' | INSTALL_DIR='" + stage.string() + "' sh -s --" + flag;
-            std::cout << log::dim("→ ") << cmd << "\n";
-            int rc = std::system(cmd.c_str());
-            if (rc != 0) {
-                fs::remove_all(stage, ec);
-                log::err("compiler " + sub + ": staging install failed (exit "
-                         + std::to_string(WEXITSTATUS(rc)) + ")");
-                return 1;
-            }
-
-            // Promote staged content into the venv layout. The tarball
-            // is flat (`bin/quirk`, `packages/<each>/`); the venv uses
-            // `bin/quirk` + `lib/quirk/stdlib/<each>/`.
-            fs::path stageBin = stage / "bin";
-            fs::path stagePkg = stage / "packages";
+            // The tarball is flat (`bin/quirk`, `packages/<each>/`); the
+            // venv uses `bin/quirk` + `lib/quirk/stdlib/<each>/`.
+            log::step("Installing", "into venv " + venvDir.string());
             fs::path venvBin  = venvDir / "bin";
             fs::path venvLib  = venvDir / "lib" / "quirk" / "stdlib";
             fs::create_directories(venvBin);
@@ -5078,12 +5405,7 @@ static int cmd_compiler(const std::vector<std::string>& args) {
                 fs::path dst = venvBin / f;
                 if (fs::exists(dst, ec) || fs::is_symlink(dst, ec)) fs::remove(dst, ec);
                 fs::copy_file(src, dst, fs::copy_options::overwrite_existing, ec);
-                if (f == "quirk") {
-                    fs::permissions(dst,
-                        fs::perms::owner_all | fs::perms::group_read | fs::perms::group_exec
-                                             | fs::perms::others_read | fs::perms::others_exec,
-                        fs::perm_options::replace, ec);
-                }
+                if (f == "quirk") make_exec(dst);
             }
 
             int swapped = 0;
@@ -5097,23 +5419,23 @@ static int cmd_compiler(const std::vector<std::string>& args) {
                          fs::copy_options::recursive | fs::copy_options::copy_symlinks, ec);
                 if (!ec) swapped++;
             }
-            fs::remove_all(stage, ec);
-            log::ok("venv updated  " + log::dim("(" + std::to_string(swapped) +
-                    " stdlib package(s), bin/quirk + runtime.so)"));
+            log::note(std::to_string(swapped) + " stdlib package(s), bin/quirk + runtime.so");
+        }
+
+        if (withExtension) quirk_install_vscode_extension(work);
+        fs::remove_all(work, ec);
+
+        log::step("Installed", "quirk " + version.substr(1)
+                  + log::dim("  (was " + std::string(QUIRK_VERSION) + ")"));
+        if (targetVenv) {
             std::cerr << "    " << log::dim(
                 "global compiler unchanged (use `quirk compiler "
                 + sub + " --global` to also update the global)") << "\n";
-            return 0;
-        }
-
-        std::cout << "\n";
-        if (inVenv && forceGlobal) {
+        } else if (inVenv && forceGlobal) {
             std::cerr << "    " << log::dim(
                 "active venv left unchanged — `deactivate` and re-run "
                 "without --global to also bump the venv, or `quirk venv "
                 "repair` to sync from the new global.") << "\n";
-        } else {
-            log::ok("Open a new shell (or re-source your profile) to use the new compiler.");
         }
         return 0;
     }
@@ -5156,7 +5478,15 @@ static int cmd_completion(const std::vector<std::string>& args) {
                 "autoload -U +X compinit && compinit\n"
                 "autoload -U +X bashcompinit && bashcompinit\n";
         }
-        std::cout << R"BASH(_quirk_complete() {
+        std::cout << R"BASH(# .quirk files plus directories to descend into. `complete -o filenames`
+# makes readline append `/` (not a space) to a directory match.
+_quirk_files() {
+    local IFS=$'\n'
+    COMPREPLY+=($(compgen -f -X '!*.quirk' -- "$cur"))
+    COMPREPLY+=($(compgen -d -- "$cur"))
+}
+
+_quirk_complete() {
     local cur prev verbs
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
@@ -5164,18 +5494,17 @@ static int cmd_completion(const std::vector<std::string>& args) {
     # Top-level verbs (keep in sync with PackageManager.hpp::dispatch).
     verbs="run repl test fmt install upgrade remove uninstall list packages show init new venv version eval module deps env cache registry register check versions release bump-compiler compiler auth audit script sync stdlib pkg help completion"
 
-    # First word: complete the verb itself.
+    # First word: a verb, or a script path (`quirk app.quirk` runs it).
     if [ "$COMP_CWORD" -eq 1 ]; then
         COMPREPLY=($(compgen -W "$verbs" -- "$cur"))
+        _quirk_files
         return
     fi
 
     # Dispatch on the verb for smarter per-command completion.
     case "${COMP_WORDS[1]}" in
         run|fmt|test)
-            # Complete .quirk file paths.
-            COMPREPLY=($(compgen -f -X '!*.quirk' -- "$cur"))
-            COMPREPLY+=($(compgen -d -- "$cur"))
+            _quirk_files
             ;;
         bump-compiler)
             if [ "$COMP_CWORD" -eq 2 ]; then
@@ -5231,7 +5560,7 @@ static int cmd_completion(const std::vector<std::string>& args) {
             ;;
     esac
 }
-complete -F _quirk_complete quirk
+complete -o filenames -F _quirk_complete quirk
 )BASH";
         return 0;
     }
@@ -5502,14 +5831,11 @@ static int fetch_advisories(bool forceRefresh, bool quiet = false) {
         }
     }
     std::string url = resolve_advisories_url();
-    if (!quiet) std::cout << "Fetching advisories from " << url << "...\n";
     fs::path tmp = cache.string() + ".tmp";
-    std::string cmd = "curl -fsSL \"" + url + "\" -o \"" + tmp.string() + "\" 2>/dev/null";
-    int rc = std::system(cmd.c_str());
-    if (rc != 0) {
-        if (!quiet) std::cerr << "audit: couldn't fetch advisories (network down?)\n"
-                              << "  Continuing with the cached list (may be stale).\n";
-        std::error_code ec; fs::remove(tmp, ec);
+    net::Result r = net::download(url, tmp, quiet ? "" : "advisories" + log::dim("  " + url));
+    if (!r.ok) {
+        if (!quiet) log::warn("couldn't fetch advisories: " + net::describe(r)
+                              + " — continuing with the cached list (may be stale)");
         return 0;   // soft-fail: keep old cache
     }
     std::error_code ec;
@@ -5701,20 +6027,17 @@ static int cmd_registry(const std::vector<std::string>& args) {
 
     if (sub == "update") {
         std::string url = resolve_registry_url();
-        std::cout << "Fetching registry index from " << url << "...\n";
         fs::path tmp = registry_cache_path().string() + ".tmp";
-        std::string cmd = "curl -fsSL \"" + url + "\" -o \"" + tmp.string() + "\"";
-        int rc = std::system(cmd.c_str());
-        if (rc != 0) {
-            std::cerr << "registry update: fetch failed (curl rc=" << rc << ")\n";
-            std::cerr << "  Local aliases (`registry add`) still work.\n";
-            fs::remove(tmp);
+        net::Result r = net::download(url, tmp, "registry index" + log::dim("  " + url));
+        if (!r.ok) {
+            log::err("registry update: " + net::describe(r));
+            std::cerr << "    " << log::dim("local aliases (`registry add`) still work") << "\n";
             return 1;
         }
         std::error_code ec;
         fs::rename(tmp, registry_cache_path(), ec);
         auto kv = read_kv_file(registry_cache_path());
-        std::cout << "  ✓ registry cached (" << kv.size() << " packages)\n";
+        log::ok("registry cached (" + std::to_string(kv.size()) + " packages)");
         return 0;
     }
 
@@ -6676,6 +6999,7 @@ static std::string help_for(const std::string& cmdIn) {
                "                               (default: the active venv).\n"
                "      --with-extension         Also install the Quirk VSCode extension.\n"
                "      --no-extension           Skip the extension (default).\n"
+               "      --force                  update: reinstall even when up to date.\n"
                "\n"
                "    `quirk compiler update` in a v2.2.14+ venv updates *only* that\n"
                "    venv; the global stays put. Use `--global` to flip the target.\n"

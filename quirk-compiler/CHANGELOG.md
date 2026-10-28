@@ -5,6 +5,48 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.1.0] — 2026-10-28 — download progress, native `compiler update`
+
+**Downloads report what they're doing.** Every file the CLI fetches
+(compiler releases, package tarballs, the registry index, advisories)
+goes through one helper, `net::download`:
+
+```
+$ quirk compiler update
+    Checking for the latest compiler release
+  · 7.0.2 → 7.1.0
+ Downloading quirk-7.1.0-linux-x86_64.tar.gz (1.2 MB)
+             ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1.2 MB/1.2 MB 2.0 MB/s
+    Verified sha256 4e1f09a2b7c3d58e…
+   Unpacking quirk-7.1.0-linux-x86_64.tar.gz
+  Installing into /home/alex/.quirk
+   Installed quirk 7.1.0  (was 7.0.2)
+```
+
+The progress bar shows on a terminal; piped output gets a `1.2 MB in
+0.4s` line instead. `-v` adds the URLs and `--quiet` drops everything
+but errors. Failures say why (`not found (HTTP 404)`, `couldn't resolve
+host (offline?)`, `forbidden (HTTP 403 — GitHub rate limit?)`) instead
+of a raw `curl: (22)`. A missing release build explains that a
+just-tagged release takes a few minutes to build.
+
+**`quirk compiler update` / `install` no longer pipe `install.sh`.**
+They download the release tarball, check its sha256 against the
+published sidecar, unpack it into a staging dir, and only then copy it
+into `~/.quirk` (or the active venv). The layout is the same as
+install.sh's, and install.sh stays the first-install one-liner.
+`--with-extension` installs the VSCode extension the same way.
+`update` now stops early when you're already on the latest release (or
+a newer dev build); `--force` reinstalls anyway.
+
+**Tab completion for script paths.** The bash / zsh completion script
+(`quirk completion bash|zsh`) only offered subcommands as the first
+word, so `quirk path/to/app.quirk` (shorthand for `quirk run`) got no
+completion. It now offers `.quirk` files and directories there too.
+Directories complete as `dir/` instead of `dir ` (the script registers
+with `-o filenames`), so tab keeps descending into a path under `run` /
+`fmt` / `test` as well. Fish already fell back to file completion.
+
 ## [7.0.2] — 2026-10-28 — macOS build fix
 
 v7.0.1's macOS release build failed, so it shipped Linux binaries only.

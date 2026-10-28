@@ -5,6 +5,36 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.3.0] — 2026-10-28 — stdlib packages download one by one
+
+`quirk compiler update` / `install` now download each stdlib package
+separately, each with its own progress bar, instead of listing what came
+inside the compiler tarball (7.2.1):
+
+```
+   Unpacking quirk-7.3.0-linux-x86_64.tar.gz
+ Downloading argparse 1.0.0 (3.3 kB)
+             ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 3.3 kB/3.3 kB
+ Downloading typing 1.15.1 → 1.15.2 (16.1 kB)
+             ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 16.1 kB/16.1 kB
+ Downloading uuid 1.0.0 new (1.7 kB)
+             ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1.7 kB/1.7 kB
+     Removed oldpkg
+   Installed quirk 7.3.0  (was 7.2.1)  · 24 stdlib packages
+```
+
+Each release now also publishes every package as `stdlib-<name>-<ver>.tar.gz`
+plus a `stdlib.lock` (`<name> <tag> <bytes> <sha256>`), built by the new
+`make stdlib-assets` target. Each package is checked against its sha256.
+The compiler tarball still bundles `packages/` (install.sh and the 7.1 /
+7.2 updaters use it). It's also the fallback: for a release without
+`stdlib.lock`, or if any package fails to download or verify, the bundled
+copy is installed and the command says so.
+
+Also: a download too quick to draw progress still ends on a full bar,
+and quick downloads no longer report a bogus speed (the 100ms poll
+counted as transfer time).
+
 ## [7.2.1] — 2026-10-28 — always list the stdlib on install
 
 7.2.0 listed only the stdlib packages that changed, so a reinstall (or

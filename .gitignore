@@ -16,6 +16,8 @@ quirk-compiler/test_output.txt
 # stdlib repos by `make bootstrap-stdlib`. Fresh contributors run that
 # target once after clone; the release workflow runs it before packaging.
 quirk-compiler/packages/
+# `make stdlib-assets` output (per-package release assets).
+quirk-compiler/stdlib-assets/
 
 # Build outputs. Everything under bin/ (quirk driver, quirk-cpp,
 # quirk-selfhost, runtime.so) and build/ (intermediate .ll / .s from

@@ -55,7 +55,6 @@ static std::string self_binary();
 }  // namespace qpm
 #include <sys/stat.h>
 #include <sys/utsname.h>
-#include <sys/ioctl.h>
 #include <fcntl.h>
 #include <cstdio>
 #include <thread>
@@ -69,7 +68,7 @@ static std::string self_binary();
 
 namespace qpm {
 
-constexpr const char* QUIRK_VERSION = "7.2.1";
+constexpr const char* QUIRK_VERSION = "7.3.0";
 
 namespace fs = std::filesystem;
 
@@ -304,13 +303,18 @@ inline Result download(const std::string& url, const fs::path& out,
     auto elapsed = [&] {
         return std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     };
+    // Poll curl often (so a quick download's time is accurate), redraw
+    // the bar every 100ms, and not at all for quick misses.
     int status = 0;
     bool drew = false;
+    double lastDraw = 0;
     while (waitpid(pid, &status, WNOHANG) == 0) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        if (!bar || elapsed() < 0.2) continue;     // don't flash a bar for quick misses
-        draw_bar(fs::exists(out, ec) ? fs::file_size(out, ec) : 0, total, elapsed());
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        double t = elapsed();
+        if (!bar || t < 0.2 || t - lastDraw < 0.1) continue;
+        draw_bar(fs::exists(out, ec) ? fs::file_size(out, ec) : 0, total, t);
         drew = true;
+        lastDraw = t;
     }
     std::string code; char buf[64]; ssize_t n;
     while ((n = read(fd, buf, sizeof(buf))) > 0) code.append(buf, n);
@@ -324,9 +328,13 @@ inline Result download(const std::string& url, const fs::path& out,
     r.ok     = r.curlRc == 0 && (isFile || (r.http >= 200 && r.http < 300));
     if (!r.ok) fs::remove(out, ec);
 
-    if (drew) {
-        if (r.ok) { draw_bar(r.bytes, (long long)r.bytes, r.secs); std::cerr << "\n"; }
-        else std::cerr << "\r\x1b[2K" << std::flush;
+    // On a terminal a finished download always ends on a full bar, even
+    // one too quick to have drawn any progress.
+    if (bar && r.ok) {
+        draw_bar(r.bytes, total > 0 ? total : (long long)r.bytes, r.secs);
+        std::cerr << "\n";
+    } else if (drew) {
+        std::cerr << "\r\x1b[2K" << std::flush;
     } else if (show && r.ok) {
         char t[32];
         std::snprintf(t, sizeof(t), "%.1fs", r.secs);
@@ -4712,57 +4720,70 @@ inline std::map<std::string, std::string> quirk_stdlib_versions(const fs::path& 
     return out;
 }
 
-// List the installed stdlib, pip-style, wrapped under a `Stdlib` step:
-// `argparse 1.0.0, …, typing 1.15.1 → 1.15.2, newpkg 0.1.0 (new), …`.
-// Changes against the previous install are bold. A package whose old
-// version is unknown (pre-7.2 install) isn't marked as changed.
-inline void quirk_report_stdlib(const std::map<std::string, std::string>& before,
-                                const std::map<std::string, std::string>& after) {
-    if (log::quiet_flag() || after.empty()) return;
+// Where compiler releases download from, ending in `/`.
+// QUIRK_RELEASE_URL points at a mirror (or a local `file://` dir in tests).
+inline std::string quirk_release_base() {
+    const char* base = std::getenv("QUIRK_RELEASE_URL");
+    return (base && *base) ? std::string(base) + "/" : QUIRK_RELEASE_DOWNLOAD_URL;
+}
+
+// Since 7.3.0 each release also publishes every stdlib package as its
+// own asset (`stdlib-<name>-<ver>.tar.gz`) plus a `stdlib.lock` listing
+// `<name> <tag> <bytes> <sha256>` per line. Download each one with its
+// own progress bar into `stagePkg`, replacing the copy bundled in the
+// compiler tarball. The bundle stays the fallback: for older releases
+// (no lock), or when any package fails, it's used as-is and this
+// returns false. `before` (the stdlib being replaced) marks changes.
+inline bool quirk_fetch_stdlib_assets(const std::string& tag, const fs::path& work,
+                                      const fs::path& stagePkg,
+                                      const std::map<std::string, std::string>& before) {
+    std::string base = quirk_release_base() + tag + "/";
+    fs::path lock = work / "stdlib.lock";
+    if (!net::download(base + "stdlib.lock", lock).ok) {
+        log::note("stdlib: using the " + std::to_string(quirk_stdlib_versions(stagePkg).size())
+                  + " packages bundled with " + tag);
+        return false;
+    }
     auto bare = [](const std::string& t) {
         return (!t.empty() && t[0] == 'v') ? t.substr(1) : t;
     };
-    // (plain text for width, display text)
-    std::vector<std::pair<std::string, std::string>> items;
-    for (auto& [name, ver] : after) {
-        std::string v = ver.empty() ? "?" : bare(ver);
+    fs::path dest = work / "stdlib";
+    std::error_code ec;
+    fs::create_directories(dest, ec);
+    std::ifstream in(lock);
+    std::string line;
+    int count = 0;
+    while (std::getline(in, line)) {
+        std::istringstream ls(line);
+        std::string name, ver, sha;
+        long long size = -1;
+        if (line.empty() || line[0] == '#' || !(ls >> name >> ver >> size >> sha)) continue;
+        std::string file = "stdlib-" + name + "-" + bare(ver) + ".tar.gz";
+        // `typing 1.15.2`, `typing 1.15.1 → 1.15.2` when it changed, `uuid 1.0.0 new`.
+        std::string label = name + " " + bare(ver);
         auto it = before.find(name);
-        if (it != before.end() && !it->second.empty() && it->second != ver) {
-            std::string t = name + " " + bare(it->second) + " → " + v;
-            items.push_back({t, log::bold(t)});
-        } else if (it == before.end() && !before.empty()) {
-            std::string t = name + " " + v + " (new)";
-            items.push_back({t, log::bold(t)});
-        } else {
-            items.push_back({name + " " + v, name + " " + log::dim(v)});
+        if (it == before.end() && !before.empty())
+            label += " " + log::bold("new");
+        else if (it != before.end() && !it->second.empty() && it->second != ver)
+            label = name + " " + bare(it->second) + " → " + log::bold(bare(ver));
+        fs::path tarball = work / file;
+        net::Result r = net::download(base + file, tarball, label, size);
+        std::string why = !r.ok ? net::describe(r)
+                        : quirk_sha256_file(tarball) != sha ? "checksum mismatch" : "";
+        if (why.empty()) {
+            std::string tar = "tar -xzf '" + tarball.string() + "' -C '" + dest.string() + "'";
+            if (std::system(tar.c_str()) != 0 || !fs::is_directory(dest / name)) why = "couldn't unpack";
         }
+        if (!why.empty()) {
+            log::warn(name + ": " + why + " — using the stdlib bundled with " + tag);
+            return false;
+        }
+        count++;
     }
-    int width = 80;
-    struct winsize ws;
-    if (::isatty(STDOUT_FILENO) && ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_col > 40)
-        width = ws.ws_col;
-    const std::string indent(13, ' ');
-    std::string out;
-    int col = 13;
-    for (size_t i = 0; i < items.size(); i++) {
-        std::string sep = i + 1 < items.size() ? "," : "";
-        int w = (int)items[i].first.size() + (int)sep.size();
-        // "→" is 3 bytes but one column.
-        if (items[i].first.find("→") != std::string::npos) w -= 2;
-        if (i > 0 && col + 1 + w > width) { out += "\n" + indent; col = 13; }
-        else if (i > 0) { out += " "; col += 1; }
-        out += items[i].second + sep;
-        col += w;
-    }
-    log::step("Stdlib", out.substr(0));
-    std::vector<std::string> removed;
-    for (auto& [name, ver] : before)
-        if (!after.count(name)) removed.push_back(name);
-    if (!removed.empty()) {
-        std::string r;
-        for (size_t i = 0; i < removed.size(); i++) r += (i ? ", " : "") + removed[i];
-        log::step("Removed", r);
-    }
+    if (count == 0) return false;
+    fs::remove_all(stagePkg, ec);
+    fs::rename(dest, stagePkg, ec);
+    return !ec;
 }
 
 // Download, verify and unpack compiler release `tag` under `work`.
@@ -4774,10 +4795,7 @@ inline fs::path quirk_fetch_compiler_release(const std::string& tag, const fs::p
     if (plat.empty()) { log::err(why); return {}; }
     std::string ver = (!tag.empty() && tag[0] == 'v') ? tag.substr(1) : tag;
     std::string pkg = "quirk-" + ver + "-" + plat;
-    // QUIRK_RELEASE_URL points at a mirror (or a local `file://` dir in tests).
-    const char* base = std::getenv("QUIRK_RELEASE_URL");
-    std::string url = std::string(base && *base ? std::string(base) + "/" : QUIRK_RELEASE_DOWNLOAD_URL)
-                    + tag + "/" + pkg + ".tar.gz";
+    std::string url = quirk_release_base() + tag + "/" + pkg + ".tar.gz";
     fs::path tarball = work / (pkg + ".tar.gz");
 
     net::Result r = net::download(url, tarball, pkg + ".tar.gz");
@@ -5431,7 +5449,18 @@ static int cmd_compiler(const std::vector<std::string>& args) {
         if (stage.empty()) { fs::remove_all(work, ec); return 1; }
         fs::path stageBin = stage / "bin";
         fs::path stagePkg = stage / "packages";
+        // The stdlib being replaced, to mark what changed.
         std::map<std::string, std::string> stdlibBefore;
+        {
+            const char* idEnv = std::getenv("INSTALL_DIR");
+            const char* home  = std::getenv("HOME");
+            const char* qh    = std::getenv("QUIRK_HOME");
+            stdlibBefore = targetVenv && qh
+                ? quirk_stdlib_versions(fs::path(qh) / "lib" / "quirk" / "stdlib")
+                : quirk_stdlib_versions(((idEnv && *idEnv) ? fs::path(idEnv)
+                                         : fs::path(home ? home : ".") / ".quirk") / "packages");
+        }
+        quirk_fetch_stdlib_assets(version, work, stagePkg, stdlibBefore);
         const std::map<std::string, std::string> stdlibAfter = quirk_stdlib_versions(stagePkg);
         auto make_exec = [&](const fs::path& f) {
             fs::permissions(f,
@@ -5450,7 +5479,6 @@ static int cmd_compiler(const std::vector<std::string>& args) {
             fs::path dir = (idEnv && *idEnv) ? fs::path(idEnv)
                          : fs::path(home ? home : ".") / ".quirk";
             log::step("Installing", "into " + dir.string());
-            stdlibBefore = quirk_stdlib_versions(dir / "packages");
             fs::create_directories(dir, ec);
             for (const char* d : {"bin", "lib", "libs", "packages"}) fs::remove_all(dir / d, ec);
             ec.clear();
@@ -5477,7 +5505,6 @@ static int cmd_compiler(const std::vector<std::string>& args) {
             log::step("Installing", "into venv " + venvDir.string());
             fs::path venvBin  = venvDir / "bin";
             fs::path venvLib  = venvDir / "lib" / "quirk" / "stdlib";
-            if (!targetGlobal) stdlibBefore = quirk_stdlib_versions(venvLib);
             fs::create_directories(venvBin);
             fs::create_directories(venvLib);
 
@@ -5506,7 +5533,12 @@ static int cmd_compiler(const std::vector<std::string>& args) {
         if (withExtension) quirk_install_vscode_extension(work);
         fs::remove_all(work, ec);
 
-        quirk_report_stdlib(stdlibBefore, stdlibAfter);
+        {
+            std::string removed;
+            for (auto& [name, ver] : stdlibBefore)
+                if (!stdlibAfter.count(name)) removed += (removed.empty() ? "" : ", ") + name;
+            if (!removed.empty()) log::step("Removed", removed);
+        }
         bool same = quirk_compare_versions(version, QUIRK_VERSION) == 0;
         log::step("Installed", "quirk " + version.substr(1)
                   + log::dim((same ? "" : "  (was " + std::string(QUIRK_VERSION) + ")")

@@ -225,6 +225,24 @@ bootstrap-stdlib:
 	done
 	@echo "Stdlib bootstrap complete: $$(ls packages | wc -l) packages"
 
+# Per-package release assets: `stdlib-<name>-<ver>.tar.gz` for each
+# bootstrapped package plus `stdlib.lock` (`<name> <tag> <bytes> <sha256>`),
+# which `quirk compiler update` downloads one by one (7.3.0+). Run after
+# bootstrap-stdlib; the release workflow uploads `$(STDLIB_ASSETS)/*`.
+STDLIB_ASSETS ?= stdlib-assets
+stdlib-assets:
+	@rm -rf "$(STDLIB_ASSETS)" && mkdir -p "$(STDLIB_ASSETS)"
+	@echo "# <name> <tag> <bytes> <sha256>" > "$(STDLIB_ASSETS)/stdlib.lock"
+	@for d in packages/*/; do                                                     \
+	    n=$$(basename "$$d"); v=$$(cat "$$d/.version" 2>/dev/null);               \
+	    if [ -z "$$v" ]; then echo "  ✗ $$n has no .version — run bootstrap-stdlib"; exit 1; fi; \
+	    f="$(STDLIB_ASSETS)/stdlib-$$n-$${v#v}.tar.gz";                           \
+	    tar czf "$$f" -C packages "$$n";                                          \
+	    sum=$$( (sha256sum "$$f" 2>/dev/null || shasum -a 256 "$$f") | cut -c1-64); \
+	    echo "$$n $$v $$(wc -c < "$$f" | tr -d ' ') $$sum" >> "$(STDLIB_ASSETS)/stdlib.lock"; \
+	done
+	@echo "stdlib assets: $$(ls $(STDLIB_ASSETS)/*.tar.gz | wc -l | tr -d ' ') packages → $(STDLIB_ASSETS)/"
+
 # Convenience: wipe + re-fetch the entire stdlib.
 bootstrap-stdlib-clean:
 	rm -rf packages
@@ -250,4 +268,4 @@ FUZZ_SEED  ?=
 fuzz:
 	@python3 tools/fuzz.py --iters $(FUZZ_ITERS) $(if $(FUZZ_SEED),--seed $(FUZZ_SEED),) --quiet
 
-.PHONY: all clean test install uninstall bootstrap-stdlib bootstrap-stdlib-clean docs fuzz
+.PHONY: all clean test install uninstall bootstrap-stdlib bootstrap-stdlib-clean stdlib-assets docs fuzz

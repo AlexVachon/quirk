@@ -112,6 +112,15 @@ jobs:
           sha256sum "${PKG}.tar.gz" > "${PKG}.tar.gz.sha256"
           echo "pkg=${PKG}" >> "$GITHUB_OUTPUT"
 
+      - name: Package stdlib assets
+        # One `stdlib-<name>-<ver>.tar.gz` per package + `stdlib.lock`, so
+        # `quirk compiler update` (7.3.0+) downloads each with its own
+        # progress bar. Platform-independent, so only this job uploads
+        # them. The compiler tarball keeps bundling `packages/` for
+        # install.sh and older updaters.
+        working-directory: quirk-compiler
+        run: make stdlib-assets STDLIB_ASSETS="${GITHUB_WORKSPACE}/stdlib-assets"
+
       - name: Create or update GitHub Release
         # Runs as a JS action on the runner host, NOT inside the container —
         # which is what we want (the container has its own /tmp etc.).
@@ -120,6 +129,7 @@ jobs:
           files: |
             ${{ steps.pkg.outputs.pkg }}.tar.gz
             ${{ steps.pkg.outputs.pkg }}.tar.gz.sha256
+            stdlib-assets/*
           generate_release_notes: true
           draft: false
           prerelease: ${{ contains(github.ref_name, '-') }}

@@ -68,7 +68,7 @@ static std::string self_binary();
 
 namespace qpm {
 
-constexpr const char* QUIRK_VERSION = "7.1.0";
+constexpr const char* QUIRK_VERSION = "7.2.0";
 
 namespace fs = std::filesystem;
 
@@ -318,7 +318,9 @@ inline Result download(const std::string& url, const fs::path& out,
     r.curlRc = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
     r.http   = std::atol(code.c_str());
     r.bytes  = fs::exists(out, ec) ? fs::file_size(out, ec) : 0;
-    r.ok     = r.curlRc == 0 && r.http >= 200 && r.http < 300;
+    // file:// has no HTTP status (curl reports 000).
+    bool isFile = url.rfind("file://", 0) == 0;
+    r.ok     = r.curlRc == 0 && (isFile || (r.http >= 200 && r.http < 300));
     if (!r.ok) fs::remove(out, ec);
 
     if (drew) {
@@ -4691,6 +4693,53 @@ inline std::string quirk_sha256_file(const fs::path& f) {
     return "";
 }
 
+// Stdlib package → version tag, for a `packages/`-style dir. Versions
+// come from the `.version` file `make bootstrap-stdlib` writes into each
+// package; a package without one maps to "" (pre-7.2 installs).
+inline std::map<std::string, std::string> quirk_stdlib_versions(const fs::path& dir) {
+    std::map<std::string, std::string> out;
+    std::error_code ec;
+    for (auto& e : fs::directory_iterator(dir, ec)) {
+        if (!e.is_directory()) continue;
+        std::string name = e.path().filename().string();
+        if (name.empty() || name[0] == '.') continue;
+        std::string ver;
+        std::ifstream in(e.path() / ".version");
+        in >> ver;
+        out[name] = ver;
+    }
+    return out;
+}
+
+// One line saying how the stdlib changed between two installs, pip-style:
+// `Updated typing 1.15.1 → 1.15.2, net 1.1.0 → 1.2.0`. Packages whose old
+// version is unknown count as unchanged, so the first install over a
+// pre-7.2 one doesn't claim everything changed. `-v` lists every package.
+inline void quirk_report_stdlib_changes(const std::map<std::string, std::string>& before,
+                                        const std::map<std::string, std::string>& after) {
+    auto bare = [](const std::string& t) {
+        return (!t.empty() && t[0] == 'v') ? t.substr(1) : t;
+    };
+    std::vector<std::string> updated, added, removed;
+    for (auto& [name, ver] : after) {
+        auto it = before.find(name);
+        if (it == before.end()) added.push_back(name + " " + bare(ver));
+        else if (!it->second.empty() && it->second != ver)
+            updated.push_back(name + " " + bare(it->second) + " → " + bare(ver));
+    }
+    for (auto& [name, ver] : before)
+        if (!after.count(name)) removed.push_back(name);
+    auto join = [](const std::vector<std::string>& v) {
+        std::string s;
+        for (size_t i = 0; i < v.size(); i++) s += (i ? ", " : "") + v[i];
+        return s;
+    };
+    if (!updated.empty()) log::step("Updated", join(updated));
+    if (!added.empty() && !before.empty()) log::step("Added", join(added));
+    if (!removed.empty()) log::step("Removed", join(removed));
+    for (auto& [name, ver] : after) log::v(name + " " + (ver.empty() ? "?" : bare(ver)));
+}
+
 // Download, verify and unpack compiler release `tag` under `work`.
 // Returns the unpacked `quirk-<ver>-<platform>/` directory (flat
 // `bin/` + `packages/` layout), or "" after logging why it failed.
@@ -4700,7 +4749,10 @@ inline fs::path quirk_fetch_compiler_release(const std::string& tag, const fs::p
     if (plat.empty()) { log::err(why); return {}; }
     std::string ver = (!tag.empty() && tag[0] == 'v') ? tag.substr(1) : tag;
     std::string pkg = "quirk-" + ver + "-" + plat;
-    std::string url = std::string(QUIRK_RELEASE_DOWNLOAD_URL) + tag + "/" + pkg + ".tar.gz";
+    // QUIRK_RELEASE_URL points at a mirror (or a local `file://` dir in tests).
+    const char* base = std::getenv("QUIRK_RELEASE_URL");
+    std::string url = std::string(base && *base ? std::string(base) + "/" : QUIRK_RELEASE_DOWNLOAD_URL)
+                    + tag + "/" + pkg + ".tar.gz";
     fs::path tarball = work / (pkg + ".tar.gz");
 
     net::Result r = net::download(url, tarball, pkg + ".tar.gz");
@@ -5335,7 +5387,8 @@ static int cmd_compiler(const std::vector<std::string>& args) {
                 std::cout << "    " << log::dim("`--force` reinstalls anyway") << "\n";
                 return 0;
             }
-            log::note(std::string(QUIRK_VERSION) + " → " + log::bold(version.substr(1)));
+            if (cmp == 0) log::note("reinstalling " + version.substr(1));
+            else log::note(std::string(QUIRK_VERSION) + " → " + log::bold(version.substr(1)));
         }
 
         // Download + verify + unpack once into a staging dir, then copy
@@ -5353,6 +5406,8 @@ static int cmd_compiler(const std::vector<std::string>& args) {
         if (stage.empty()) { fs::remove_all(work, ec); return 1; }
         fs::path stageBin = stage / "bin";
         fs::path stagePkg = stage / "packages";
+        std::map<std::string, std::string> stdlibBefore;
+        const std::map<std::string, std::string> stdlibAfter = quirk_stdlib_versions(stagePkg);
         auto make_exec = [&](const fs::path& f) {
             fs::permissions(f,
                 fs::perms::owner_all | fs::perms::group_read | fs::perms::group_exec
@@ -5370,6 +5425,7 @@ static int cmd_compiler(const std::vector<std::string>& args) {
             fs::path dir = (idEnv && *idEnv) ? fs::path(idEnv)
                          : fs::path(home ? home : ".") / ".quirk";
             log::step("Installing", "into " + dir.string());
+            stdlibBefore = quirk_stdlib_versions(dir / "packages");
             fs::create_directories(dir, ec);
             for (const char* d : {"bin", "lib", "libs", "packages"}) fs::remove_all(dir / d, ec);
             ec.clear();
@@ -5396,6 +5452,7 @@ static int cmd_compiler(const std::vector<std::string>& args) {
             log::step("Installing", "into venv " + venvDir.string());
             fs::path venvBin  = venvDir / "bin";
             fs::path venvLib  = venvDir / "lib" / "quirk" / "stdlib";
+            if (!targetGlobal) stdlibBefore = quirk_stdlib_versions(venvLib);
             fs::create_directories(venvBin);
             fs::create_directories(venvLib);
 
@@ -5419,14 +5476,16 @@ static int cmd_compiler(const std::vector<std::string>& args) {
                          fs::copy_options::recursive | fs::copy_options::copy_symlinks, ec);
                 if (!ec) swapped++;
             }
-            log::note(std::to_string(swapped) + " stdlib package(s), bin/quirk + runtime.so");
         }
 
         if (withExtension) quirk_install_vscode_extension(work);
         fs::remove_all(work, ec);
 
+        quirk_report_stdlib_changes(stdlibBefore, stdlibAfter);
+        bool same = quirk_compare_versions(version, QUIRK_VERSION) == 0;
         log::step("Installed", "quirk " + version.substr(1)
-                  + log::dim("  (was " + std::string(QUIRK_VERSION) + ")"));
+                  + log::dim((same ? "" : "  (was " + std::string(QUIRK_VERSION) + ")")
+                             + "  · " + std::to_string(stdlibAfter.size()) + " stdlib packages"));
         if (targetVenv) {
             std::cerr << "    " << log::dim(
                 "global compiler unchanged (use `quirk compiler "
@@ -6683,8 +6742,14 @@ static int cmd_stdlib(const std::vector<std::string>& args) {
             for (auto& e : fs::recursive_directory_iterator(stdlib / m)) {
                 if (e.is_regular_file() && e.path().extension() == ".quirk") files++;
             }
+            std::string ver;
+            std::ifstream vin(stdlib / m / ".version");
+            vin >> ver;
+            if (!ver.empty() && ver[0] == 'v') ver = ver.substr(1);
             std::cout << "  " << m;
             for (size_t i = m.size(); i < pad + 2; i++) std::cout << ' ';
+            std::cout << (ver.empty() ? log::dim("?") : ver);
+            for (size_t i = ver.empty() ? 1 : ver.size(); i < 9; i++) std::cout << ' ';
             std::cout << log::dim(std::to_string(files) + " file" + (files == 1 ? "" : "s")) << "\n";
         }
         return 0;

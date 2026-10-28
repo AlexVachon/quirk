@@ -193,10 +193,6 @@ uninstall:
 bootstrap-stdlib:
 	@mkdir -p packages
 	@for pkg in $(STDLIB_PACKAGES); do                                            \
-	    if [ -f "packages/$$pkg/index.quirk" ]; then                              \
-	        echo "  ✓ $$pkg (already present)";                                   \
-	        continue;                                                             \
-	    fi;                                                                       \
 	    tag="$(STDLIB_TAG)";                                                      \
 	    case "$$pkg" in                                                           \
 	        prompt) tag="$(STDLIB_TAG_prompt)" ;;                                 \
@@ -204,9 +200,14 @@ bootstrap-stdlib:
 	        html)   tag="$(STDLIB_TAG_html)"   ;;                                 \
 	        net)    tag="$(STDLIB_TAG_net)"    ;;                                 \
 	    esac;                                                                     \
+	    if [ -f "packages/$$pkg/index.quirk" ] &&                                 \
+	       [ "$$(cat packages/$$pkg/.version 2>/dev/null)" = "$$tag" ]; then      \
+	        echo "  ✓ $$pkg@$$tag (already present)";                             \
+	        continue;                                                             \
+	    fi;                                                                       \
 	    echo "  → cloning quirk-$$pkg@$$tag";                                     \
 	    tmp=$$(mktemp -d);                                                        \
-	    if ! git clone --quiet --depth 1 --branch "$$tag"                         \
+	    if ! git -c advice.detachedHead=false clone --quiet --depth 1 --branch "$$tag" \
 	            "https://github.com/$(STDLIB_OWNER)/quirk-$$pkg.git" "$$tmp";     \
 	    then                                                                      \
 	        echo "  ✗ $$pkg — clone failed";                                      \
@@ -219,6 +220,7 @@ bootstrap-stdlib:
 	    else                                                                      \
 	        mv "$$tmp" "packages/$$pkg";                                          \
 	    fi;                                                                       \
+	    echo "$$tag" > "packages/$$pkg/.version";                                 \
 	    rm -rf "$$tmp";                                                           \
 	done
 	@echo "Stdlib bootstrap complete: $$(ls packages | wc -l) packages"

@@ -5,6 +5,38 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.2.0] — 2026-10-28 — stdlib versions on install
+
+The 24 stdlib packages bundled with the compiler now carry their
+version. `make bootstrap-stdlib` writes a `.version` file into each
+`packages/<name>/` (the pinned tag), and the release tarball ships them.
+
+`quirk compiler update` / `install` report what changed in the stdlib,
+pip-style, and only what changed:
+
+```
+  Installing into /home/alex/.quirk
+     Updated typing 1.15.2 → 1.15.3
+       Added newpkg 0.1.0
+     Removed uuid
+   Installed quirk 7.9.0  (was 7.2.0)  · 24 stdlib packages
+```
+
+`--verbose` lists every package and its version. `quirk stdlib list`
+gains a version column. An install over a pre-7.2 one has nothing to
+compare against, so it reports no changes, just the count.
+
+Also:
+- `make bootstrap-stdlib` re-fetches a package whose `.version` doesn't
+  match its pin. Before, any present package was skipped, so bumping
+  `STDLIB_TAG_<pkg>` did nothing until you deleted the directory. The
+  first run after upgrading re-fetches every package once. It also no
+  longer prints git's detached-HEAD advice for each clone.
+- `update --force` on the version you already run says `reinstalling
+  7.2.0` instead of `7.2.0 → 7.2.0` / `(was 7.2.0)`.
+- `QUIRK_RELEASE_URL` overrides where compiler releases are downloaded
+  from (a mirror, or a local `file://` directory).
+
 ## [7.1.0] — 2026-10-28 — download progress, native `compiler update`
 
 **Downloads report what they're doing.** Every file the CLI fetches
@@ -24,7 +56,7 @@ $ quirk compiler update
 ```
 
 The progress bar shows on a terminal; piped output gets a `1.2 MB in
-0.4s` line instead. `-v` adds the URLs and `--quiet` drops everything
+0.4s` line instead. `--verbose` adds the URLs and `--quiet` drops everything
 but errors. Failures say why (`not found (HTTP 404)`, `couldn't resolve
 host (offline?)`, `forbidden (HTTP 403 — GitHub rate limit?)`) instead
 of a raw `curl: (22)`. A missing release build explains that a

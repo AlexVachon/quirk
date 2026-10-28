@@ -236,6 +236,8 @@ class Sema {
     std::map<std::string, std::string> typeAliases; // name → resolved type
 
     bool isCompatibleTypes(const std::string &expected, const std::string &actual);
+    void checkAssignType(const std::string &target, const std::string &value,
+                         const std::string &what, VarDeclNode *node);
     bool isGenericParam(const std::string &t) const;
     bool inheritsFromException(const std::string& typeName, const std::string& baseType = "Exception");
     void checkInterfaceConformance(StructNode* s, InterfaceNode* iface);

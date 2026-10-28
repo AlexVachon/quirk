@@ -711,8 +711,21 @@ static void hashImportGraph(const std::string& entry,
     }
 }
 
+static std::string resolveRuntimeSoPath();
+
+// Size + mtime of a build artifact, for the cache key. A dev rebuild
+// keeps QUIRK_VERSION but changes these, so its stale entries miss.
+static std::string fileStamp(const std::string& path) {
+    std::error_code ec;
+    auto size = fs::file_size(path, ec);
+    if (ec) return path + ":?";
+    auto mtime = fs::last_write_time(path, ec).time_since_epoch().count();
+    return path + ":" + std::to_string(size) + ":" + std::to_string(mtime);
+}
+
 // Cache key = sha256 of the import-closure (entry + everything `use`d
-// transitively) + compiler version + opt level. Returns hex.
+// transitively) + compiler version + opt level + the compiler binary
+// and runtime.so it was built with. Returns hex.
 //
 // On a stale `use`d file the new key won't match the old cache file,
 // so we get a clean miss. Recompile + new cache entry. The old entry
@@ -732,7 +745,9 @@ static std::string computeCacheKey(const std::string& inputPath, int optLevel) {
     hashImportGraph(inputPath, hasher, visited);
 
     std::string suffix = std::string("\n--quirk-") + qpm::QUIRK_VERSION
-                       + "-O" + std::to_string(optLevel) + "--";
+                       + "-O" + std::to_string(optLevel)
+                       + "-" + fileStamp(qpm::self_binary())
+                       + "-" + fileStamp(resolveRuntimeSoPath()) + "--";
     hasher.update(llvm::ArrayRef<uint8_t>(
         reinterpret_cast<const uint8_t*>(suffix.data()), suffix.size()));
 

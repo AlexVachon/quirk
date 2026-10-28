@@ -1,0 +1,19 @@
+// expect-error: cannot assign 'String' to field 'x' of type 'Int'
+// p104 — assignments are type-checked (v7.0.1).
+//
+// Sema checked call arguments but not `x: T = v`, `x = v` or
+// `obj.field = v`. A String stored into an Int field reached Codegen
+// as `store %String*, i64*` and died as "Internal compiler error:
+// malformed IR" (fuzz kept finding it); the same mistake on a local
+// compiled and printed the pointer as a number. Now it's Q0209.
+
+struct P {
+    x: Int
+    define __init(self, v: Int) { self.x = v }
+}
+
+define main() -> void {
+    p := P(1)
+    p.x = "hello"
+    print(p.x)
+}

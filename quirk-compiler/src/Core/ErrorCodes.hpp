@@ -68,6 +68,7 @@ inline const std::vector<ErrorCode>& knownErrorCodes() {
         {206, std::regex("^array index must be 'Int'")},
         {207, std::regex("^'(if|elif|while)' condition must be 'Bool'")},
         {208, std::regex("^Int literal [0-9]+ is out of range")},
+        {209, std::regex("^cannot assign '[^']*' to ")},
         // Struct / inheritance
         {300, std::regex("^can only throw struct objects")},
         {301, std::regex("^catch type '[^']*' does not inherit from 'Exception'")},
@@ -237,6 +238,16 @@ inline const std::vector<ErrorDoc>& errorDocs() {
          "big := 99999999999999999999      // Q0208\n\n"
          "// good:\n"
          "big := 1e20"},
+
+        {209, "Cannot assign a value of the wrong type",
+         "`x: T = v`, `x = v` and `obj.field = v` must store a value of the variable's or field's type. A variable keeps the type it was declared (or first inferred) with.",
+         "Convert the value (`.str()`, `.to_int()`, `as Int`), or use a new variable. `Int` widens to `Double` implicitly; `Double` to `Int` must be explicit.",
+         "// bad:\n"
+         "n := 1\n"
+         "n = \"one\"                 // Q0209\n\n"
+         "// good — convert, or a new binding:\n"
+         "n = \"1\".to_int()\n"
+         "label := \"one\""},
 
         {301, "Catch type does not inherit from 'Exception'",
          "The `catch (e: T)` type must be a struct that inherits (directly or transitively) from `Exception`.",

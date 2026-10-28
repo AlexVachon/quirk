@@ -5,6 +5,45 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.0.1] — 2026-10-27 — assignments are type-checked
+
+Sema checked call arguments but never assignments, so a value of the
+wrong type reached Codegen unchecked:
+
+- `obj.field = "text"` on an `Int` field died as "Internal compiler
+  error: malformed IR" (`store %String*, i64*`) — the crash class the
+  fuzzer kept finding.
+- `n = "text"` on an `Int` local compiled and printed the string's
+  address as a number.
+- `x: Int = 2.7` kept the Double, and `n = 4.2` stored the Double's
+  bits as an Int. Only fields truncated (FPToSI).
+
+`x: T = v`, `x = v` and `obj.field = v` now require a compatible value
+and report **Q0209** "cannot assign 'U' to 'x' of type 'T'". The rules
+are the ones arguments already follow: `Int` widens to `Double`, a
+struct to its parent, `null` to reference types, and `Any` or a type
+Sema can't infer defers to runtime.
+
+**Breaking:** Double → Int assignment must be explicit (`d.to_int()` or
+`d as Int`), as for `Int` parameters. It truncated for fields and
+misbehaved for locals; nothing in the test corpus, examples,
+quirk-tests or quirk-ssg relied on it.
+
+**Also fixed:** a module-qualified call (`toml.parse(...)`) was typed
+by the bare function the caller imported (`from url use { parse }`), so
+`m: Map := toml.parse(...)` looked like a URL. Sema now picks the
+overload from the named module. Codegen already dispatched correctly.
+
+**Also fixed:** the run / AOT cache key covered the program, its
+imports, the version and the opt level, but not the compiler itself, so
+a rebuilt dev compiler with an unchanged version kept running programs
+compiled by the old one. The key now includes the size and mtime of the
+`quirk` binary and `runtime.so`.
+
+Probes: p104 (new) locks the field-assign error; p49 and p51 now expect
+Q0209 instead of locking the old coercion / no-crash behavior. Fuzz:
+600 iterations, 0 crashes.
+
 ## [7.0.0] — 2026-10-27 — Int is 64-bit
 
 `Int` was a 32-bit integer: 3,000,000,000 didn't fit, and since v6.1.0

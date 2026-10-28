@@ -16,6 +16,12 @@ static std::string baseType(const std::string& t) {
     return pos != std::string::npos ? t.substr(0, pos) : t;
 }
 
+// `Int32` (a C `int`, for extern signatures) type-checks as `Int`; only
+// codegen keeps it 32-bit, converting at the call boundary.
+static std::string canonIntType(const std::string& t) {
+    return t == "Int32" ? "Int" : t;
+}
+
 // Extract the comma-separated type args from a parameterized type:
 //   "Box[Int]"          -> ["Int"]
 //   "Map[String, Int]"  -> ["String", "Int"]
@@ -1467,10 +1473,12 @@ void Sema::checkVarDecl(VarDeclNode *node)
             // hint at the binding site. Only meaningful when the user
             // didn't explicitly annotate.
             if (node->typeAnnotation.empty()) node->inferredType = exprType;
+            else checkAssignType(finalType, exprType, "'" + lit->value + "'", node);
             defineVariable(lit->value, finalType, node->isConst);
         } else {
             // Reassignment — mark the existing binding as used
-            resolveVariable(lit->value);
+            std::string varType = resolveVariable(lit->value);
+            if (node->op == "=") checkAssignType(varType, exprType, "'" + lit->value + "'", node);
         }
     }
     else if (auto member = dynamic_cast<MemberAccessNode *>(node->lhs.get()))
@@ -1481,7 +1489,30 @@ void Sema::checkVarDecl(VarDeclNode *node)
             msg += formatHint(suggestMembers(baseType(objType), member->memberName));
             fatalError(msg, member->line, member->col, member->filePath);
         }
+        if (node->op == "=")
+            checkAssignType(resolveMember(objType, member->memberName), exprType,
+                            "field '" + member->memberName + "'", node);
     }
+}
+
+// `x: T = v`, `x = v` and `obj.field = v` must store a value of the
+// slot's type. Unchecked, a String stored into an Int slot either
+// became malformed IR (fields) or a pointer read back as a number
+// (locals). Unknown / inferred-later types on either side defer, and
+// generic args are compared loosely (`List[Int]` slot ← `List` literal).
+void Sema::checkAssignType(const std::string &target, const std::string &value,
+                           const std::string &what, VarDeclNode *node)
+{
+    auto unknown = [](const std::string &t) {
+        return t.empty() || t == "unknown" || t == "auto" || t == "void";
+    };
+    if (unknown(target) || unknown(value)) return;
+    if (isCompatibleTypes(target, value)) return;
+    if (isCompatibleTypes(baseType(target), baseType(value))) return;
+    std::string msg = "cannot assign '" + value + "' to " + what + " of type '" + target + "'";
+    if (canonIntType(target) == "Int" && value == "Double")
+        msg += " (convert explicitly: `.to_int()` or `as Int`)";
+    reportError(msg, node->line, node->col, node->filePath);
 }
 
 void Sema::checkStatement(Node *node)
@@ -1787,12 +1818,6 @@ void Sema::checkFor(ForNode *node)
     for (auto &s : node->body)
         checkStatement(s.get());
     exitScope();
-}
-
-// `Int32` (a C `int`, for extern signatures) type-checks as `Int`; only
-// codegen keeps it 32-bit, converting at the call boundary.
-static std::string canonIntType(const std::string& t) {
-    return t == "Int32" ? "Int" : t;
 }
 
 std::string Sema::checkExpression(Node *node)
@@ -2815,8 +2840,19 @@ std::string Sema::checkCall(CallNode *node)
                 return funcName;
             }
 
-            // 2. Is it a standard Module Function?
-            FunctionNode* fn = lookupTopLevel(funcName);
+            // 2. Is it a standard Module Function? `toml.parse` names
+            //    its module, so prefer that module's overload over
+            //    whatever bare `parse` the caller imported.
+            FunctionNode* fn = nullptr;
+            {
+                std::string mod = objType.substr(7);  // strip MODULE$
+                std::replace(mod.begin(), mod.end(), '/', '.');
+                auto cit = topLevelOverloads.find(funcName);
+                if (cit != topLevelOverloads.end())
+                    for (FunctionNode* f : cit->second)
+                        if (f->moduleName == mod || f->moduleName.rfind(mod + ".", 0) == 0) { fn = f; break; }
+            }
+            if (!fn) fn = lookupTopLevel(funcName);
             if (fn) {
                 bool anyKwarg = false;
                 for (auto& a : node->args) if (!a.name.empty()) { anyKwarg = true; break; }

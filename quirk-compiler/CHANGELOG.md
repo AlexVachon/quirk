@@ -5,6 +5,15 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.3.1] — 2026-11-04 — no update notice after updating
+
+`quirk compiler update` ended with "A new Quirk release is available:
+7.2.1 → v7.3.0" right after installing 7.3.0. The once-a-day notice runs
+after every subcommand and compares against the version of the running
+binary, which is still the old one during an update. It's now skipped
+for all `quirk compiler …` commands: `update` / `install` just installed
+the release, and `check` / `list` already print the latest one.
+
 ## [7.3.0] — 2026-10-28 — stdlib packages download one by one
 
 `quirk compiler update` / `install` now download each stdlib package

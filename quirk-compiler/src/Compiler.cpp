@@ -1284,8 +1284,11 @@ int main(int argc, char* argv[]) {
         // Fire the once-per-24h update notice on the subcommand path —
         // those are the invocations the user is paying attention to.
         // Skipped automatically on pipes/CI, dev builds, and when
-        // QUIRK_NO_UPDATE_CHECK is set.
-        qpm::maybe_announce_update();
+        // QUIRK_NO_UPDATE_CHECK is set. Not after `quirk compiler …`:
+        // `update` / `install` just replaced this binary (its version is
+        // stale, so the notice would offer the release it installed), and
+        // `check` / `list` already print the latest release.
+        if (std::string(argv[1]) != "compiler") qpm::maybe_announce_update();
         return pmRc;
     }
 

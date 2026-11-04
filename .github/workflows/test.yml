@@ -1,11 +1,17 @@
 name: Test
 
-# Fires on every push to main and every PR targeting main. Two
+# Fires on every push to main and every PR targeting main, and by hand
+# on any branch (`gh workflow run test.yml --ref <branch>`). Three
 # parallel jobs:
 #
 #   test      — vanilla build, runs the stdlib test suite + the
-#               adversarial probe suite. Fails on any SIGSEGV, ICE,
+#               adversarial probe suite, then rehearses a release
+#               (tools/rehearse_release.sh). Fails on any SIGSEGV, ICE,
 #               LLVM verifier abort, or wrong output.
+#
+#   macos     — the macOS arm64 build, probes and release rehearsal,
+#               so a macOS-only break shows up here instead of in the
+#               release build after the tag is out (v7.0.1).
 #
 #   ubsan     — same probes, with the runtime built under
 #               -fsanitize=undefined. Catches latent UB (signed
@@ -27,6 +33,7 @@ on:
   pull_request:
     branches:
       - main
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -151,6 +158,15 @@ jobs:
         # unnoticed — p42 / p48 / p50 / p40 / p44 among them.)
         run: tools/check_probes.sh
 
+      - name: Rehearse the release
+        working-directory: quirk-compiler
+        # Package this commit exactly as release.yml would (compiler
+        # tarball + per-package stdlib assets), then install it with
+        # `quirk compiler install` from a local file:// release, in a
+        # throwaway HOME. Catches packaging and updater breaks before a
+        # tag ships them (7.3.0's stdlib assets first ran on the release).
+        run: tools/rehearse_release.sh
+
       - name: Run mutation fuzzer
         id: fuzz
         working-directory: quirk-compiler
@@ -184,6 +200,44 @@ jobs:
           path: quirk-compiler/tools/fuzz_findings/
           if-no-files-found: ignore
           retention-days: 7
+
+  macos:
+    # Same toolchain setup as release.yml's macos-arm64 job.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        # llvm@14 is keg-only on Homebrew, so it's pinned via LLVM_CONFIG
+        # below. coreutils + gnu-sed: the probe and rehearsal scripts use
+        # `timeout` and GNU sed escapes, which macOS doesn't ship.
+        run: |
+          brew install llvm@14 bdw-gc openssl@3 coreutils gnu-sed
+          echo "$(brew --prefix coreutils)/libexec/gnubin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix gnu-sed)/libexec/gnubin"   >> "$GITHUB_PATH"
+
+      - name: Bootstrap stdlib
+        working-directory: quirk-compiler
+        run: make bootstrap-stdlib
+
+      - name: Build
+        working-directory: quirk-compiler
+        env:
+          LLVM_CONFIG: /opt/homebrew/opt/llvm@14/bin/llvm-config
+          CPATH: /opt/homebrew/opt/bdw-gc/include:/opt/homebrew/opt/openssl@3/include
+          LIBRARY_PATH: /opt/homebrew/opt/bdw-gc/lib:/opt/homebrew/opt/openssl@3/lib
+        run: make -j"$(sysctl -n hw.ncpu)"
+
+      - name: Run probe suite
+        working-directory: quirk-compiler
+        env:
+          QUIRK_HOME: ${{ github.workspace }}/quirk-compiler
+          QUIRK_CHECK_HEADERS: "1"
+        run: tools/check_probes.sh
+
+      - name: Rehearse the release
+        working-directory: quirk-compiler
+        run: tools/rehearse_release.sh
 
   ubsan:
     # Same shape as `test` but builds the runtime under UBSan so latent

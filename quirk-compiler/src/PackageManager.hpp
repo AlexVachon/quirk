@@ -68,7 +68,7 @@ static std::string self_binary();
 
 namespace qpm {
 
-constexpr const char* QUIRK_VERSION = "7.3.1";
+constexpr const char* QUIRK_VERSION = "7.4.0";
 
 namespace fs = std::filesystem;
 
@@ -225,6 +225,11 @@ inline int run_curl(const std::vector<std::string>& args, std::string* out, pid_
 // Content-Length of the final (2xx) response after redirects, or -1
 // when the server doesn't say or the URL doesn't resolve to a file.
 inline long long remote_size(const std::string& url) {
+    if (url.rfind("file://", 0) == 0) {
+        std::error_code ec;
+        auto size = fs::file_size(url.substr(7), ec);
+        return ec ? -1 : (long long)size;
+    }
     std::string out;
     if (run_curl({"-sIL", "--max-time", "10", url}, &out) != 0) return -1;
     long long size = -1;
@@ -4920,7 +4925,16 @@ inline int quirk_compare_versions(const std::string& a_in, const std::string& b_
         int y = i < pb.size() ? pb[i] : 0;
         if (x != y) return x - y;
     }
-    return 0;
+    // Same X.Y.Z: a pre-release sorts below its release (SemVer), so an
+    // rc user is offered `7.4.0` once it ships. Two pre-releases of the
+    // same version compare by their suffix text (`rc.1` < `rc.2`).
+    auto pre = [](const std::string& s) {
+        auto dash = s.find('-');
+        return dash == std::string::npos ? std::string() : s.substr(dash + 1);
+    };
+    std::string xa = pre(a), xb = pre(b);
+    if (xa.empty() != xb.empty()) return xa.empty() ? 1 : -1;
+    return xa.compare(xb);
 }
 
 // True when the running binary lives in a source-tree checkout — i.e. has
@@ -4940,10 +4954,12 @@ inline bool quirk_is_dev_build() {
 
 // Fetch the latest `v[0-9]*` release tag, with a 3-second curl timeout
 // so a slow network never makes Quirk feel laggy. Returns "" on failure.
+// Pre-releases (`v7.4.0-rc.1` — any `-`) are skipped: `update` and the
+// daily notice only offer stable releases; install an rc explicitly.
 inline std::string quirk_fetch_latest_tag() {
     std::string cmd = std::string("curl -fsSL --max-time 3 '") + QUIRK_RELEASES_API_URL
                     + "' 2>/dev/null"
-                    + R"SH( | grep -oE '"tag_name"[[:space:]]*:[[:space:]]*"v[0-9][^"]*"')SH"
+                    + R"SH( | grep -oE '"tag_name"[[:space:]]*:[[:space:]]*"v[0-9][^"-]*"')SH"
                     + R"SH( | head -1)SH"
                     + R"SH( | sed -E 's/.*"tag_name"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')SH";
     FILE* p = popen(cmd.c_str(), "r");
@@ -5361,6 +5377,8 @@ static int cmd_compiler(const std::vector<std::string>& args) {
             if (tag.empty()) continue;
             std::cout << "  " << tag;
             if (tag == current) std::cout << log::dim("  (current)");
+            if (tag.find('-') != std::string::npos)
+                std::cout << log::dim("  (pre-release — `quirk compiler install " + tag + "`)");
             std::cout << "\n";
             any = true;
         }

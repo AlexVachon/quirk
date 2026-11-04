@@ -97,11 +97,12 @@ esac
 # published most recently — so once an extension release lands, blindly
 # trusting /latest sends us off looking for a compiler tarball at
 # `vscode-v0.2.1`. List releases instead and pick the first whose tag
-# matches `v<digit>...` — that's a compiler release.
+# matches `v<digit>...` — that's a compiler release. Pre-releases
+# (`v7.4.0-rc.1`, any `-`) are skipped; pin one with --version.
 if [ -z "${QUIRK_VERSION:-}" ]; then
     api="https://api.github.com/repos/${QUIRK_REPO}/releases?per_page=30"
     tag=$(curl -fsSL "$api" \
-        | grep -E '"tag_name"\s*:\s*"v[0-9]' \
+        | grep -E '"tag_name"\s*:\s*"v[0-9][^"-]*"' \
         | head -1 \
         | sed -E 's/.*"tag_name"\s*:\s*"([^"]+)".*/\1/')
     if [ -z "$tag" ]; then

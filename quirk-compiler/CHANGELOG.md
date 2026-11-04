@@ -5,6 +5,37 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.4.0] — 2026-11-04 — release rehearsal, macOS CI, pre-releases
+
+Releases used to be tested only when they shipped: v7.0.1's macOS build
+broke in the release job after the tag was out, and 7.3.0's stdlib
+assets first ran on the real release. Now:
+
+- **Every push rehearses the release.** `tools/rehearse_release.sh`
+  packages the commit exactly as the release does (compiler tarball +
+  per-package stdlib assets), serves it from a local `file://` release,
+  and installs it with `quirk compiler install` in a throwaway HOME,
+  over an older stdlib. It fails if the checksum isn't verified, any
+  package is missing, misversioned or warned about, the changed /
+  removed packages aren't reported, the installed compiler can't run a
+  program, or a reinstall reports changes. The Test workflow runs it.
+- **CI builds macOS.** A new `macos` job in the Test workflow builds on
+  macOS arm64, runs the probe suite and the release rehearsal.
+- **Pre-releases.** Tag `v7.5.0-rc.1` to publish a pre-release
+  (release.yml already marked them). `quirk compiler update`, the
+  daily notice and install.sh now skip pre-releases; install one with
+  `quirk compiler install v7.5.0-rc.1`, and `quirk compiler list` marks
+  them. Versions compare SemVer-style: `7.5.0-rc.1` < `7.5.0`, so an rc
+  user is offered the final release.
+- `tools/package_release.sh` is the one place the release layout lives;
+  both release jobs use it, and it refuses to package when the tag
+  doesn't match the binary's version.
+- The Test workflow can be run by hand on any branch
+  (`gh workflow run test.yml --ref <branch>`).
+- `make stdlib-assets` only replaces its own files, so the output dir
+  can hold the compiler tarball too. `file://` downloads report their
+  size.
+
 ## [7.3.1] — 2026-11-04 — no update notice after updating
 
 `quirk compiler update` ended with "A new Quirk release is available:

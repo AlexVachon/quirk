@@ -228,10 +228,11 @@ bootstrap-stdlib:
 # Per-package release assets: `stdlib-<name>-<ver>.tar.gz` for each
 # bootstrapped package plus `stdlib.lock` (`<name> <tag> <bytes> <sha256>`),
 # which `quirk compiler update` downloads one by one (7.3.0+). Run after
-# bootstrap-stdlib; the release workflow uploads `$(STDLIB_ASSETS)/*`.
+# bootstrap-stdlib; the release workflow uploads them. Only these files
+# are replaced, so the dir can also hold the compiler tarball.
 STDLIB_ASSETS ?= stdlib-assets
 stdlib-assets:
-	@rm -rf "$(STDLIB_ASSETS)" && mkdir -p "$(STDLIB_ASSETS)"
+	@mkdir -p "$(STDLIB_ASSETS)" && rm -f "$(STDLIB_ASSETS)"/stdlib-*.tar.gz "$(STDLIB_ASSETS)/stdlib.lock"
 	@echo "# <name> <tag> <bytes> <sha256>" > "$(STDLIB_ASSETS)/stdlib.lock"
 	@for d in packages/*/; do                                                     \
 	    n=$$(basename "$$d"); v=$$(cat "$$d/.version" 2>/dev/null);               \
@@ -241,7 +242,7 @@ stdlib-assets:
 	    sum=$$( (sha256sum "$$f" 2>/dev/null || shasum -a 256 "$$f") | cut -c1-64); \
 	    echo "$$n $$v $$(wc -c < "$$f" | tr -d ' ') $$sum" >> "$(STDLIB_ASSETS)/stdlib.lock"; \
 	done
-	@echo "stdlib assets: $$(ls $(STDLIB_ASSETS)/*.tar.gz | wc -l | tr -d ' ') packages → $(STDLIB_ASSETS)/"
+	@echo "stdlib assets: $$(ls $(STDLIB_ASSETS)/stdlib-*.tar.gz | wc -l | tr -d ' ') packages → $(STDLIB_ASSETS)/"
 
 # Convenience: wipe + re-fetch the entire stdlib.
 bootstrap-stdlib-clean:

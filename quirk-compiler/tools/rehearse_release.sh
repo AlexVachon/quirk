@@ -1,0 +1,74 @@
+#!/bin/bash
+# Rehearse a release end to end, without publishing anything: package this
+# checkout exactly as .github/workflows/release.yml does (compiler tarball +
+# per-package stdlib assets + stdlib.lock), serve it from a local `file://`
+# dir, and install it with `quirk compiler install` the way users get it.
+# Fails if any step a user would hit goes wrong. CI runs it on every push.
+#
+# Usage (from quirk-compiler/, after `make bootstrap-stdlib` and `make`):
+#   tools/rehearse_release.sh
+#
+# Everything happens in a temp dir with its own HOME, so ~/.quirk and the
+# GitHub releases are never touched.
+set -euo pipefail
+
+compiler=$(cd "$(dirname "$0")/.." && pwd)
+cd "$compiler"
+version=$(QUIRK_HOME="$compiler" ./bin/quirk --version | awk '{print $2}')
+case "$(uname -s)-$(uname -m)" in
+    Linux-x86_64)  platform=linux-x86_64 ;;
+    Darwin-arm64)  platform=darwin-arm64 ;;
+    *) echo "rehearse_release: no release build for $(uname -s) $(uname -m)" >&2; exit 1 ;;
+esac
+
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+rel="$work/releases/v$version"
+fail() { echo "::error::release rehearsal: $*"; exit 1; }
+
+echo "── packaging quirk $version ($platform)"
+pkg=$(tools/package_release.sh "$version" "$platform" "$rel")
+make --no-print-directory stdlib-assets STDLIB_ASSETS="$rel"
+expected=$(grep -vc '^#' "$rel/stdlib.lock")
+
+# An existing install to upgrade from: same stdlib, but with typing one
+# version behind and an extra package, so the run also exercises the
+# changed / removed reporting.
+dest="$work/install"
+mkdir -p "$dest" "$work/home"
+cp -R packages "$dest/packages"
+echo v0.0.1 > "$dest/packages/typing/.version"
+mkdir "$dest/packages/oldpkg" && echo v0.9.0 > "$dest/packages/oldpkg/.version"
+
+run_install() {
+    HOME="$work/home" QUIRK_HOME="$compiler" QUIRK_NO_UPDATE_CHECK=1 \
+    QUIRK_RELEASE_URL="file://$work/releases" INSTALL_DIR="$dest" \
+        ./bin/quirk compiler install "v$version" 2>&1 | sed 's/\x1b\[[0-9;]*m//g'
+}
+
+echo "── installing v$version from the rehearsal release"
+out=$(run_install) || { echo "$out"; fail "compiler install exited non-zero"; }
+echo "$out"
+grep -q "Verified sha256" <<<"$out"        || fail "compiler tarball wasn't sha256-verified"
+grep -qE "⚠|✗" <<<"$out"                   && fail "install reported a warning or error"
+got=$(grep -cE '^ *Downloading .* \([0-9.]+ [kM]?B\)$' <<<"$out" || true)
+[ "$got" -eq $((expected + 1)) ]           || fail "expected 1 + $expected downloads, saw $got"
+grep -q "Downloading typing 0.0.1 → "  <<<"$out" || fail "typing wasn't reported as updated"
+grep -q "Removed oldpkg" <<<"$out"         || fail "oldpkg wasn't reported as removed"
+
+echo "── checking the installed tree"
+[ "$("$dest/bin/quirk" --version | awk '{print $2}')" = "$version" ] || fail "installed binary isn't $version"
+[ "$(ls "$dest/packages" | wc -l | tr -d ' ')" -eq "$expected" ]     || fail "installed stdlib isn't $expected packages"
+while read -r name tag _; do
+    case "$name" in '#'*|'') continue ;; esac
+    [ "$(cat "$dest/packages/$name/.version")" = "$tag" ] || fail "$name isn't $tag"
+done < "$rel/stdlib.lock"
+printf 'use console\ndefine main() -> void { console.log("rehearsal ok") }\n' > "$work/smoke.quirk"
+smoke=$(HOME="$work/home" QUIRK_HOME="$dest" QUIRK_NO_UPDATE_CHECK=1 "$dest/bin/quirk" "$work/smoke.quirk")
+[ "$smoke" = "rehearsal ok" ] || fail "installed compiler couldn't run a program: $smoke"
+
+echo "── reinstalling over it (nothing changed)"
+again=$(run_install) || { echo "$again"; fail "reinstall exited non-zero"; }
+grep -qE "→|Removed" <<<"$again" && { echo "$again"; fail "reinstall reported changes"; }
+
+echo "release rehearsal: ok ($pkg + $expected stdlib packages)"

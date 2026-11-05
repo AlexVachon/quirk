@@ -1,0 +1,23 @@
+// p106 — List.filter / any / all / find honour the lambda's result (v7.7.2).
+//
+// The runtime tested the lambda's opaque result with `!= NULL`, but in an
+// untyped slot `false` is a boxed Bool, not null — so filter kept every
+// element and any / all / find always "matched". any / all also printed
+// as 1 / 0: the C side returns an int and the lambda-method path passed
+// it through without narrowing to Bool.
+define main() -> void {
+    xs := [1, 2, 3, 4, 5]
+    t := 3
+    if xs.filter(fn(x) => x > 3).str() != "[4, 5]"      { print("FAIL: filter"); return }
+    if xs.filter(fn(x: Int) => x > t).str() != "[4, 5]" { print("FAIL: filter with capture"); return }
+    if xs.filter(fn(x) => x > 9).length() != 0           { print("FAIL: filter to empty"); return }
+    if not xs.any(fn(x) => x > 4)  { print("FAIL: any true"); return }
+    if xs.any(fn(x) => x > 5)      { print("FAIL: any false"); return }
+    if not xs.all(fn(x) => x > 0)  { print("FAIL: all true"); return }
+    if xs.all(fn(x) => x > 1)      { print("FAIL: all false"); return }
+    if xs.find(fn(x) => x % 2 == 0) != 2 { print("FAIL: find"); return }
+    if "${xs.any(fn(x) => x > 4)}" != "true" { print("FAIL: any prints as " + "${xs.any(fn(x) => x > 4)}"); return }
+    words := ["a", "bb", "ccc"]
+    if words.filter(fn(w: String) => w.length() > 1).str() != "[bb, ccc]" { print("FAIL: filter strings"); return }
+    print("PASS: List lambda predicates")
+}

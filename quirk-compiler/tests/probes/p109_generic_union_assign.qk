@@ -1,0 +1,23 @@
+// p109 — assigning a variant to a specialised generic union (v7.7.2).
+//
+// v7.0.1's assignment check (Q0209) rejected `m: Maybe[Int] = Just(5)`:
+// `Just`'s parent is the generic `Maybe`, the slot's type the
+// specialisation `Maybe__Int`. Variants of the generic are accepted;
+// unrelated types still aren't (p104).
+type Maybe[T] = Just(value: T) | Nothing()
+
+define main() -> void {
+    m: Maybe[Int] = Just(5)
+    got := 0
+    match m {
+        case Just as j => got = j.value
+        case Nothing   => got = -1
+    }
+    if got != 5 { print("FAIL: Just(5) read back as " + got.str()); return }
+    n: Maybe[String] = Nothing()
+    match n {
+        case Just as j => { print("FAIL: Nothing matched Just"); return }
+        case Nothing   => got = 0
+    }
+    print("PASS: variants assign to specialised unions")
+}

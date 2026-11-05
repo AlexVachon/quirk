@@ -5,6 +5,32 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.7.2] — 2026-11-05 — four language bugs: filter, exceptions, Doubles, generic unions
+
+Going through the features the changelog had deferred showed most now
+work (default arguments, `Box(42)` inference, custom iterators,
+closures), but turned up four bugs in everyday code — none covered by a
+probe. All four now have one (p106–p109; each fails on 7.6.2).
+
+- **`List.filter` / `any` / `all` / `find` ignored the lambda's result.**
+  The runtime tested it with `!= NULL`, but in an untyped slot `false`
+  is a boxed Bool, not null: `filter` kept every element and `any` /
+  `all` / `find` always matched. They now use the value's truthiness.
+  `any` / `all` also printed `1` / `0` instead of `true` / `false`.
+- **`catch (e: Sub)` didn't catch a subclass without its own `__init`.**
+  `struct NotFound : Exception {}` ran `Exception`'s `__init`, which
+  stamped the exception's `type` as `"Exception"`, so `catch (e: NotFound)`
+  never matched and the exception escaped. The constructed class's name
+  is now stamped when the `__init` is inherited.
+- **A Double combined with an untyped value read it as an Int.**
+  `total = total + x` (total a Double, x a List element) summed
+  `[1.5, 2.25]` to `3.0`. The untyped side is now read as a Double when
+  the other side is one.
+- **`m: Maybe[Int] = Just(5)` was rejected** by 7.0.1's assignment check
+  (Q0209): `Just`'s parent is the generic `Maybe`, the slot's type the
+  specialisation `Maybe__Int`. Variants of the generic are accepted
+  again; unrelated types still aren't.
+
 ## [7.7.1] — 2026-11-05 — `quirk register`: fewer conflicts, re-runnable
 
 Registering two packages at once (`slug`, then `logger`) left the second

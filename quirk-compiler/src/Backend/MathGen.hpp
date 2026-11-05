@@ -100,22 +100,30 @@ class MathGen {
             bool Rptr = R->getType() == i8p;
             bool Lnum = L->getType()->isIntegerTy() || L->getType()->isDoubleTy();
             bool Rnum = R->getType()->isIntegerTy() || R->getType()->isDoubleTy();
-            auto unbox = [&](Value* v, const char* label) -> Value* {
+            // Paired with a Double, the untyped side is decoded as a Double:
+            // `total = total + x` (total: Double, x a List element) read x
+            // as an Int, so 1.5 + 2.25 summed to 3.0.
+            auto unbox = [&](Value* v, const char* label, Value* other) -> Value* {
                 if (!TheModule) return Builder.CreatePtrToInt(v, Type::getInt64Ty(Context), label);
+                if (other->getType()->isDoubleTy()) {
+                    FunctionCallee toD = TheModule->getOrInsertFunction("quirk_opaque_to_double",
+                        FunctionType::get(Type::getDoubleTy(Context), {i8p}, false));
+                    return Builder.CreateCall(toD, {v}, label);
+                }
                 return quirk::decodeUntypedInt(Context, TheModule, Builder, v);
             };
             if (isNumericOp) {
                 // Arithmetic / ordered comparison: unbox any i8* side that
                 // pairs with a number-or-pointer.
-                if (Lptr && (Rnum || Rptr)) L = unbox(L, "unbox_l");
-                if (Rptr && (Lnum || Lptr)) R = unbox(R, "unbox_r");
+                if (Lptr && (Rnum || Rptr)) L = unbox(L, "unbox_l", R);
+                if (Rptr && (Lnum || Lptr)) R = unbox(R, "unbox_r", L);
             } else if (isEqOp) {
                 // `==` / `!=` against a literal int (or a known Int local)
                 // must unbox the i8* side or LLVM ICmp asserts on type
                 // mismatch. Don't touch i8*-vs-i8* — that's a legit
                 // pointer-equality compare (struct identity, etc.).
-                if (Lptr && Rnum) L = unbox(L, "unbox_eq_l");
-                if (Rptr && Lnum) R = unbox(R, "unbox_eq_r");
+                if (Lptr && Rnum) L = unbox(L, "unbox_eq_l", R);
+                if (Rptr && Lnum) R = unbox(R, "unbox_eq_r", L);
             }
         }
 

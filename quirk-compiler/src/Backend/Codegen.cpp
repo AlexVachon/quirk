@@ -2023,7 +2023,11 @@ class LLVMCodegen {
                         callable = Builder.CreateBitCast(callable, callPtrTy);
                     if (fn) {
                         Value* result = Builder.CreateCall(fn, {objPtr, callable});
-                        // any/all: widen i1 to Bool (return from i32 C function handled by compiler)
+                        // any/all are `-> Bool` but the C side returns an `int`
+                        // (declared i32): narrow to i1, or they print as 1 / 0.
+                        if ((member->memberName == "any" || member->memberName == "all")
+                            && result->getType()->isIntegerTy() && !result->getType()->isIntegerTy(1))
+                            result = Builder.CreateICmpNE(result, ConstantInt::get(result->getType(), 0));
                         return result;
                     }
                 }

@@ -1,0 +1,29 @@
+// p107 — catching an exception subclass without its own __init (v7.7.2).
+//
+// `catch (e: T)` compares the exception's `type` text, which each class's
+// own __init stamps with its name. `struct NotFound : Exception {}` has no
+// __init, ran Exception's, and was stamped "Exception" — so
+// `catch (e: NotFound)` never matched and the exception escaped.
+struct NotFound : Exception {}
+struct Denied : Exception {}
+struct Gone : NotFound {}
+
+define raise(k: Int) -> void {
+    if k == 1 { throw NotFound("nf") }
+    if k == 2 { throw Denied("dn") }
+    throw Gone("gn")
+}
+
+define main() -> void {
+    got := ""
+    try { raise(1) } catch (e: NotFound) { got = got + "n" }
+    try { raise(2) } catch (e: NotFound) { got = got + "X" } catch (e: Denied) { got = got + "d" }
+    try { raise(3) } catch (e: NotFound) { got = got + "g" }           // grandchild caught as parent
+    try { raise(1) } catch (e: Exception) { got = got + "e" }          // base still catches all
+    try { raise(2) } catch (e: Denied) { got = got + "d" } finally { got = got + "f" }
+    if got != "ndgedf" { print("FAIL: caught '" + got + "', expected 'ndgedf'"); return }
+    try { raise(3) } catch (e: Gone) {
+        if e.type != "Gone" { print("FAIL: type is " + e.type); return }
+    }
+    print("PASS: exception subclasses are caught")
+}

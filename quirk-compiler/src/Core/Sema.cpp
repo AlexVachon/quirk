@@ -1509,6 +1509,17 @@ void Sema::checkAssignType(const std::string &target, const std::string &value,
     if (unknown(target) || unknown(value)) return;
     if (isCompatibleTypes(target, value)) return;
     if (isCompatibleTypes(baseType(target), baseType(value))) return;
+    // A specialised generic (`Maybe__Int` from `Maybe[Int]`) accepts what
+    // its generic accepts: a variant like `Just` records the generic
+    // union `Maybe` as its parent, not each specialisation. Generic
+    // unions aren't in monoOrigin, so fall back to the `<generic>__<args>`
+    // mangling.
+    {
+        std::string generic;
+        if (auto o = monoOrigin.find(target); o != monoOrigin.end()) generic = o->second.first;
+        else if (auto us = target.find("__"); us != std::string::npos && us > 0) generic = target.substr(0, us);
+        if (!generic.empty() && generic != value && isCompatibleTypes(generic, baseType(value))) return;
+    }
     std::string msg = "cannot assign '" + value + "' to " + what + " of type '" + target + "'";
     if (canonIntType(target) == "Int" && value == "Double")
         msg += " (convert explicitly: `.to_int()` or `as Int`)";

@@ -218,6 +218,15 @@ class StructGen {
         return Builder.CreateCall(allocFn, {ConstantInt::get(Type::getInt32Ty(Context), typeId), size});
     }
 
+    // `cls` is `base` or (transitively) derives from it.
+    bool inheritsFrom(const std::string& cls, const std::string& base) const {
+        if (cls == base) return true;
+        if (!structHierarchy || !structHierarchy->count(cls)) return false;
+        for (const auto& p : structHierarchy->at(cls))
+            if (inheritsFrom(p, base)) return true;
+        return false;
+    }
+
     Value* allocateAndInit(const std::string& name, std::vector<Value*> args) {
         if (!StructTypes.count(name)) {
             std::cerr << "Error: Unknown struct " << name << std::endl;
@@ -245,6 +254,7 @@ class StructGen {
             initFunc = TheModule->getFunction(structInitMap.at(name));
         if (!initFunc)
             initFunc = TheModule->getFunction(initName);
+        const bool ownInit = initFunc != nullptr;
 
         if (!initFunc && structHierarchy && structHierarchy->count(name)) {
             std::function<Function*(const std::string&)> searchHierarchy = [&](const std::string& currentType) -> Function* {
@@ -285,6 +295,19 @@ class StructGen {
                 initArgs.push_back(argVal);
             }
             Builder.CreateCall(initFunc, initArgs);
+
+            // An exception's `type` (what `catch (e: T)` compares) is stamped
+            // at the end of each class's own __init. One without its own
+            // __init (`struct NotFound : Exception {}`) runs the parent's,
+            // which stamped the *parent's* name — so `catch (e: NotFound)`
+            // never matched. Stamp the constructed class's name here.
+            if (!ownInit && StructTypes.count("Exception") && StructTypes.count("String")
+                && inheritsFrom(name, "Exception")) {
+                Value* excPtr = Builder.CreateBitCast(objPtr, PointerType::getUnqual(StructTypes["Exception"]));
+                Value* typeFieldPtr = Builder.CreateStructGEP(StructTypes["Exception"], excPtr, 0);
+                Value* nameStr = allocateAndInit("String", {Builder.CreateGlobalStringPtr(name)});
+                Builder.CreateStore(nameStr, typeFieldPtr);
+            }
 
             // Store __type_id for virtual dispatch (field 0 of vtable-eligible structs)
             if (typeIdMap.count(name) && structLayouts.count(name)) {

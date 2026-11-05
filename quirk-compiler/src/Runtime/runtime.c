@@ -290,6 +290,26 @@ int64_t quirk_opaque_to_int(void* val) {
     return 0;
 }
 
+// Truthiness of a lambda's opaque result, for List.filter / any / all /
+// find. `false`, `0` and `0.0` are boxed (headered Any), not null, so a
+// plain `!= NULL` test counted every result as true and filter kept
+// everything. null, a boxed false / 0 / 0.0 → 0; anything else → 1.
+int32_t quirk_opaque_truthy(void* val) {
+    if (!val) return 0;
+    if ((uintptr_t)val <= 0xFFFFFFFFUL) return 1;        // inline Int (never 0)
+    if (quirk_is_any(val)) {
+        Any* a = (Any*)val;
+        switch (a->tag) {
+            case ANY_INT:
+            case ANY_BOOL:
+            case ANY_CHAR:   return a->ival != 0;
+            case ANY_DOUBLE: return a->dval != 0.0;
+            default:         return a->ptr != NULL;
+        }
+    }
+    return 1;                                            // an object
+}
+
 double quirk_opaque_to_double(void* val) {
     quirk_hdr_note(val, "to_double");
     if (!val) return 0.0;

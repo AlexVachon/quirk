@@ -1,0 +1,20 @@
+// p108 — a Double combined with an untyped value (v7.7.2).
+//
+// `total = total + x` with total a Double and x a List element decoded x
+// as an Int: summing [1.5, 2.25] gave 3.0. The untyped side is now read
+// as a Double when the other side is one.
+define main() -> void {
+    xs := [1.5, 2.25]
+    total := 0.0
+    for x in xs { total = total + x }
+    if total != 3.75          { print("FAIL: sum " + total.str()); return }
+    if xs[0] * 2.0 != 3.0     { print("FAIL: multiply"); return }
+    if 10.0 - xs[1] != 7.75   { print("FAIL: subtract"); return }
+    if not (xs[0] > 1.0)      { print("FAIL: compare"); return }
+    ns := [1, 2, 3]
+    s := 0
+    for n in ns { s = s + n }
+    if s != 6                 { print("FAIL: int sum " + s.str()); return }
+    if ns[0] + 0.5 != 1.5     { print("FAIL: int element + double"); return }
+    print("PASS: Double with untyped values")
+}

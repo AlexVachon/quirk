@@ -42,7 +42,7 @@ echo "$out"
 grep -q "helper 0.1.0 .* via app" <<<"$out" || fail "transitive dependency wasn't installed via app"
 [ -d site-packages/app ] && [ -d site-packages/helper ] || fail "site-packages is missing app or helper"
 grep -q '^app = ' quirk.toml || fail "quirk.toml doesn't record app under its own name"
-grep -q 'quirk-app = \|^helper = ' quirk.toml && fail "quirk.toml records the wrong names (or the transitive dep)"
+grep -qE 'quirk-app = |^helper = ' quirk.toml && fail "quirk.toml records the wrong names (or the transitive dep)"
 grep -q 'name    = "helper"' quirk.lock || fail "quirk.lock is missing the transitive dependency"
 printf 'use app\nuse helper\ndefine main() -> void {\n    if app.app_ok() and helper.helper_ok() { print("imports ok") }\n}\n' > main.qk
 [ "$("$quirk" main.qk </dev/null 2>&1)" = "imports ok" ] || fail "a .qk program couldn't import the installed .qk / .quirk packages"

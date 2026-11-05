@@ -70,7 +70,7 @@ static std::string self_binary();
 
 namespace qpm {
 
-constexpr const char* QUIRK_VERSION = "7.6.1";
+constexpr const char* QUIRK_VERSION = "7.6.2";
 
 namespace fs = std::filesystem;
 
@@ -430,20 +430,33 @@ inline std::vector<Result> download_many(std::vector<Item> items, bool stepLine 
         live = true;
     };
 
-    // Up to 8 curls at once; each reports its HTTP status on stdout.
+    // Up to 8 curls at once; each reports its HTTP status on stdout. A
+    // transient failure — a 5xx / 429 (GitHub answers 504 when its file
+    // backend is slow), a dropped or timed-out connection — is retried
+    // twice, after 0.5s then 1s, before it counts as failed.
+    auto transient = [&](size_t i, long http, int rc) {
+        if (rc == 7 || rc == 28 || rc == 35 || rc == 52 || rc == 55 || rc == 56) return true;
+        if (rc != 0) return false;
+        if (http == 0) return items[i].url.rfind("file://", 0) != 0;   // never got a response
+        return http == 408 || http == 429 || (http >= 500 && http <= 504);
+    };
     struct Proc { pid_t pid; int fd; size_t idx; };
     std::vector<Proc> running;
-    size_t next = 0;
+    std::vector<std::pair<size_t, double>> pending;   // (item, not before this time)
+    for (size_t i = 0; i < items.size(); i++) pending.push_back({i, 0});
+    std::vector<int> attempts(items.size(), 0);
     double lastDraw = 0;
-    while (next < items.size() || !running.empty()) {
-        while (next < items.size() && running.size() < 8) {
-            Proc p{0, -1, next};
-            if (run_curl({"-sL", "--connect-timeout", "15", "-o", items[next].out.string(),
-                          "-w", "%{http_code}", items[next].url}, nullptr, &p.pid, &p.fd) != 0)
-                finish(next, 0, -1);
+    while (!pending.empty() || !running.empty()) {
+        for (size_t k = 0; k < pending.size() && running.size() < 8;) {
+            if (pending[k].second > elapsed()) { k++; continue; }
+            size_t i = pending[k].first;
+            pending.erase(pending.begin() + k);
+            Proc p{0, -1, i};
+            if (run_curl({"-sL", "--connect-timeout", "15", "-o", items[i].out.string(),
+                          "-w", "%{http_code}", items[i].url}, nullptr, &p.pid, &p.fd) != 0)
+                finish(i, 0, -1);
             else
                 running.push_back(p);
-            next++;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
         for (size_t k = 0; k < running.size();) {
@@ -452,9 +465,19 @@ inline std::vector<Result> download_many(std::vector<Item> items, bool stepLine 
             std::string code; char buf[64]; ssize_t n;
             while ((n = read(running[k].fd, buf, sizeof(buf))) > 0) code.append(buf, n);
             close(running[k].fd);
-            finish(running[k].idx, std::atol(code.c_str()),
-                   WIFEXITED(status) ? WEXITSTATUS(status) : -1);
+            size_t i = running[k].idx;
+            long http = std::atol(code.c_str());
+            int rc = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
             running.erase(running.begin() + k);
+            if (transient(i, http, rc) && attempts[i] < 2) {
+                attempts[i]++;
+                log::v("retrying " + items[i].url + " (" + (rc ? "curl " + std::to_string(rc)
+                                                                : "HTTP " + std::to_string(http)) + ")");
+                fs::remove(items[i].out, ec);
+                pending.push_back({i, elapsed() + 0.5 * attempts[i]});
+                continue;
+            }
+            finish(i, http, rc);
         }
         flush_done();
         double t = elapsed();
@@ -5035,8 +5058,21 @@ inline bool quirk_fetch_stdlib_assets(const std::string& tag, const fs::path& wo
             if (std::system(tar.c_str()) != 0 || !fs::is_directory(dest / e.name)) why = "couldn't unpack";
         }
         if (!why.empty()) {
-            log::warn(e.name + ": " + why + " — using the stdlib bundled with " + tag);
-            return false;
+            // Only this package falls back to the copy bundled in the
+            // compiler tarball (same content; no .sha256, so the next
+            // update re-downloads just this one). The others keep the
+            // assets that downloaded and verified.
+            fs::remove_all(dest / e.name, ec);
+            ec.clear();
+            fs::copy(stagePkg / e.name, dest / e.name,
+                     fs::copy_options::recursive | fs::copy_options::copy_symlinks, ec);
+            if (ec || !fs::is_directory(dest / e.name)) {
+                log::warn(e.name + ": " + why + " — using the stdlib bundled with " + tag);
+                return false;
+            }
+            log::warn(e.name + ": " + why + " — installed the copy bundled with " + tag);
+            count++;
+            continue;
         }
         std::ofstream(dest / e.name / ".sha256") << e.sha << "\n";
         count++;

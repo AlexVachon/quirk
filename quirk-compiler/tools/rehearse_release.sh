@@ -91,4 +91,25 @@ third=$(run_install) || { echo "$third"; fail "reinstall exited non-zero"; }
 [ "$(cat "$dest/packages/csv/.sha256")" = "$(awk '$1=="csv"{print $4}' "$rel/stdlib.lock")" ] \
     || fail "csv's .sha256 wasn't refreshed"
 
+echo "── installing over HTTP from a flaky server (csv: one 504, crypto: always 504)"
+# A transient 504 must be retried; a persistent one must fall back to the
+# bundled copy for that package only, keeping the other downloads.
+fresh="$work/flaky-install"
+port=$((20000 + $$ % 20000))
+python3 -I -u tools/flaky_server.py "$work/releases" "$port" 2>/dev/null &
+server=$!
+trap 'kill $server 2>/dev/null; rm -rf "$work"' EXIT
+sleep 1
+flaky=$(HOME="$work/home" QUIRK_HOME="$compiler" QUIRK_NO_UPDATE_CHECK=1 \
+        QUIRK_RELEASE_URL="http://127.0.0.1:$port" INSTALL_DIR="$fresh" \
+        ./bin/quirk compiler install "v$version" 2>&1 </dev/null | sed 's/\x1b\[[0-9;]*m//g') \
+    || { echo "$flaky"; fail "install from the flaky server exited non-zero"; }
+kill $server 2>/dev/null || true
+grep -q "crypto: HTTP 504 — installed the copy bundled" <<<"$flaky" || { echo "$flaky"; fail "crypto didn't fall back on its own"; }
+grep -q "csv:" <<<"$flaky" && { echo "$flaky"; fail "csv's transient 504 wasn't retried"; }
+[ -f "$fresh/packages/csv/.sha256" ] || fail "csv wasn't installed from its (retried) download"
+[ ! -f "$fresh/packages/crypto/.sha256" ] && [ -d "$fresh/packages/crypto" ] || fail "crypto should be the bundled copy"
+[ "$(ls "$fresh"/packages/*/.sha256 | wc -l | tr -d ' ')" -eq $((expected - 1)) ] \
+    || fail "the other packages didn't keep their downloads"
+
 echo "release rehearsal: ok ($pkg + $expected stdlib packages)"

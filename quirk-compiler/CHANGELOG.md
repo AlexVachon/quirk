@@ -5,6 +5,27 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.6.2] — 2026-11-05 — retry flaky downloads, per-package fallback
+
+An update got `crypto: HTTP 504 — using the stdlib bundled with v7.6.1`:
+GitHub's file backend timed out on one of the 24 stdlib packages. The
+install was still correct, but:
+
+- **The 504 wasn't retried.** Downloads now retry transient failures —
+  5xx / 429 / 408 responses and dropped or timed-out connections — twice,
+  after 0.5s and 1s. Permanent ones (404, …) aren't retried.
+- **One failure threw away the other 23 downloads** and installed the
+  whole stdlib from the copy bundled in the compiler tarball, with no
+  checksums recorded, so the next update downloaded all 24 again. Now
+  only the package that still fails uses its bundled copy
+  (`crypto: HTTP 504 — installed the copy bundled with v7.6.1`); the
+  rest keep their verified downloads, and the next update fetches just
+  that one.
+
+The release rehearsal now also installs from a local HTTP server that
+fails on purpose (`tools/flaky_server.py`): one package gets a 504 once
+and must be retried, another always does and must fall back on its own.
+
 ## [7.6.1] — 2026-11-05 — one line and one bar for the stdlib
 
 `quirk compiler update` printed a line and a bar per stdlib package (48

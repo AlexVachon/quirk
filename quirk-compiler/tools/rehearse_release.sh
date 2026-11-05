@@ -98,7 +98,9 @@ fresh="$work/flaky-install"
 port=$((20000 + $$ % 20000))
 python3 -I -u tools/flaky_server.py "$work/releases" "$port" 2>/dev/null &
 server=$!
-trap 'kill $server 2>/dev/null; rm -rf "$work"' EXIT
+# `|| true`: the server is usually gone already, and under `set -e` a
+# failing `kill` here would turn a passing run's exit status into 1.
+trap 'kill $server 2>/dev/null || true; rm -rf "$work"' EXIT
 sleep 1
 flaky=$(HOME="$work/home" QUIRK_HOME="$compiler" QUIRK_NO_UPDATE_CHECK=1 \
         QUIRK_RELEASE_URL="http://127.0.0.1:$port" INSTALL_DIR="$fresh" \

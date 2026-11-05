@@ -5,6 +5,23 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.6.1] — 2026-11-05 — one line and one bar for the stdlib
+
+`quirk compiler update` printed a line and a bar per stdlib package (48
+lines for 24 packages). The packages being downloaded are now listed on
+one `Downloading` line, wrapped to the terminal, under a single progress
+bar for the whole batch:
+
+```
+ Downloading argparse (1.0.0), console (1.0.0), crypto (1.0.0), csv (1.0.0),
+             …, typing (1.15.1 → 1.15.2), url (1.0.0), uuid (1.0.0, new)
+             ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 84.7 kB/84.7 kB 58.0 kB/s
+```
+
+A changed package shows `old → new`, a new one `, new`. Unchanged
+packages still aren't downloaded (`Up to date N stdlib packages`). Off a
+terminal the bar is replaced by the total size and time.
+
 ## [7.6.0] — 2026-11-05 — `.qk` source files
 
 `.qk` is now the preferred extension for Quirk source; `.quirk` keeps

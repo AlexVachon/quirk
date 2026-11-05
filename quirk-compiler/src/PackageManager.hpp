@@ -56,6 +56,7 @@ static std::string self_binary();
 }  // namespace qpm
 #include <sys/stat.h>
 #include <sys/utsname.h>
+#include <sys/ioctl.h>
 #include <fcntl.h>
 #include <cstdio>
 #include <thread>
@@ -69,7 +70,7 @@ static std::string self_binary();
 
 namespace qpm {
 
-constexpr const char* QUIRK_VERSION = "7.6.0";
+constexpr const char* QUIRK_VERSION = "7.6.1";
 
 namespace fs = std::filesystem;
 
@@ -279,6 +280,28 @@ inline void draw_bar(uintmax_t got, long long total, double secs) {
     std::cerr << line << std::flush;
 }
 
+// `a, b, c` wrapped to the terminal width, continuation lines indented to
+// column 13 (under a step line's text). Items are (plain text for width,
+// text to print).
+inline std::string wrap_list(const std::vector<std::pair<std::string, std::string>>& items) {
+    int width = 80;
+    struct winsize ws;
+    if (::isatty(STDOUT_FILENO) && ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_col > 40)
+        width = ws.ws_col;
+    std::string out;
+    int col = 13;
+    for (size_t i = 0; i < items.size(); i++) {
+        std::string sep = i + 1 < items.size() ? "," : "";
+        int w = 0;                                // display columns (UTF-8 aware)
+        for (unsigned char ch : items[i].first + sep) w += (ch & 0xC0) != 0x80;
+        if (i > 0 && col + 1 + w > width) { out += "\n" + std::string(13, ' '); col = 13; }
+        else if (i > 0) { out += " "; col += 1; }
+        out += items[i].second + sep;
+        col += w;
+    }
+    return out;
+}
+
 // One file for `download_many`. `label` names it in its step line; an
 // empty label downloads silently (probes, small metadata). `size`: the
 // expected bytes if known, -1 = ask the server first (HEAD), -2 = don't
@@ -300,25 +323,32 @@ struct Item {
 //   - several: each item's step line + full bar prints as it finishes,
 //     in the order given, under one live "n/N" line. The live line never
 //     spans more than one row, so short terminals can't garble it.
+//   - `batchLabel` set: that one step line, then ONE bar for the whole
+//     batch (item labels unused) — the stdlib's "argparse (1.0.0), …".
 // Off a terminal the bars are replaced by a size (+ time) line.
 // `stepLine = false` (single item only) skips the step line, for callers
 // that printed their own.
-inline std::vector<Result> download_many(std::vector<Item> items, bool stepLine = true) {
+inline std::vector<Result> download_many(std::vector<Item> items, bool stepLine = true,
+                                         const std::string& batchLabel = "") {
     std::vector<Result> res(items.size());
     if (items.empty()) return res;
     const bool quiet = log::quiet_flag();
     const bool tty   = ::isatty(STDERR_FILENO);
+    const bool batch = !batchLabel.empty() && !quiet;
     std::vector<size_t> shown;                    // labelled items, in order
     for (size_t i = 0; i < items.size(); i++)
-        if (!items[i].label.empty() && !quiet) shown.push_back(i);
+        if (!batch && !items[i].label.empty() && !quiet) shown.push_back(i);
     const bool single = shown.size() == 1 && items.size() <= 2;
 
     long long grand = 0;
-    for (size_t i : shown) {
+    for (size_t i = 0; i < items.size(); i++) {
         Item& it = items[i];
+        bool counted = batch || std::find(shown.begin(), shown.end(), i) != shown.end();
+        if (!counted) continue;
         if (it.size == -1) it.size = remote_size(it.url);
         if (it.size > 0) grand += it.size;
     }
+    if (batch) log::step("Downloading", batchLabel);
     auto step_text = [&](const Item& it) {
         return it.label + (it.size > 0 ? log::dim(" (" + human_bytes((double)it.size) + ")") : "");
     };
@@ -382,7 +412,13 @@ inline std::vector<Result> download_many(std::vector<Item> items, bool stepLine 
             }
         }
     };
+    auto batch_got = [&] {
+        uintmax_t got = 0;
+        for (size_t i = 0; i < items.size(); i++) got += size_of(i);
+        return got;
+    };
     auto draw_live = [&](double t) {
+        if (batch)  { draw_bar(batch_got(), grand, t); live = true; return; }
         if (single) { draw_bar(size_of(shown[0]), items[shown[0]].size, t); live = true; return; }
         size_t n = 0; uintmax_t got = 0;
         for (size_t i : shown) { n += done[i]; got += size_of(i); }
@@ -422,11 +458,26 @@ inline std::vector<Result> download_many(std::vector<Item> items, bool stepLine 
         }
         flush_done();
         double t = elapsed();
-        if (!tty || shown.empty() || t < 0.2 || t - lastDraw < 0.1) continue;
+        if (!tty || (shown.empty() && !batch) || t < 0.2 || t - lastDraw < 0.1) continue;
         draw_live(t);
         lastDraw = t;
     }
     flush_done();
+    if (batch) {
+        bool allOk = std::all_of(res.begin(), res.end(), [](const Result& r) { return r.ok; });
+        uintmax_t got = 0;
+        for (const auto& r : res) got += r.bytes;
+        double secs = elapsed();
+        if (allOk && tty) {
+            draw_bar(got, grand > 0 ? grand : (long long)got, secs);
+            std::cerr << "\n";
+            live = false;
+        } else if (allOk) {
+            char t[32];
+            std::snprintf(t, sizeof(t), "%.1fs", secs);
+            std::cout << std::string(13, ' ') << log::dim(human_bytes((double)got) + " in " + t) << "\n";
+        }
+    }
     if (live) std::cerr << "\r\x1b[2K" << std::flush;
     return res;
 }
@@ -4933,6 +4984,7 @@ inline bool quirk_fetch_stdlib_assets(const std::string& tag, const fs::path& wo
     std::vector<Entry> entries;
     int reused = 0;
     std::vector<net::Item> items;
+    std::vector<std::pair<std::string, std::string>> labels;
     std::ifstream in(lock);
     std::string line;
     while (std::getline(in, line)) {
@@ -4941,13 +4993,18 @@ inline bool quirk_fetch_stdlib_assets(const std::string& tag, const fs::path& wo
         long long size = -1;
         if (line.empty() || line[0] == '#' || !(ls >> name >> ver >> size >> sha)) continue;
         std::string file = "stdlib-" + name + "-" + bare(ver) + ".tar.gz";
-        // `typing 1.15.2`, `typing 1.15.1 → 1.15.2` when it changed, `uuid 1.0.0 new`.
-        std::string label = name + " " + bare(ver);
+        // `typing (1.15.2)`; `typing (1.15.1 → 1.15.2)` when it changed;
+        // `uuid (1.0.0, new)`. (plain for width, display) for wrap_list.
+        std::string inner = bare(ver), shown = bare(ver);
         auto it = before.find(name);
-        if (it == before.end() && !before.empty())
-            label += " " + log::bold("new");
-        else if (it != before.end() && !it->second.empty() && it->second != ver)
-            label = name + " " + bare(it->second) + " → " + log::bold(bare(ver));
+        if (it == before.end() && !before.empty()) {
+            inner += ", new";
+            shown += ", " + log::bold("new");
+        } else if (it != before.end() && !it->second.empty() && it->second != ver) {
+            inner = bare(it->second) + " → " + bare(ver);
+            shown = bare(it->second) + " → " + log::bold(bare(ver));
+        }
+        std::pair<std::string, std::string> label{name + " (" + inner + ")", name + " (" + shown + ")"};
         auto read1 = [](const fs::path& f) {
             std::ifstream in(f);
             std::string v; in >> v;
@@ -4961,11 +5018,13 @@ inline bool quirk_fetch_stdlib_assets(const std::string& tag, const fs::path& wo
             fs::remove_all(dest / name, ec);
         }
         entries.push_back({name, ver, sha, work / file});
-        items.push_back({base + file, work / file, label, size});
+        items.push_back({base + file, work / file, "", size});
+        labels.push_back(label);
     }
-    // The rest in one concurrent batch: they're a few kB each, so the
-    // cost is round trips, not bandwidth.
-    std::vector<net::Result> got = net::download_many(items);
+    // The rest in one concurrent batch under one line and one bar:
+    // they're a few kB each, so the cost is round trips, not bandwidth.
+    std::vector<net::Result> got = items.empty() ? std::vector<net::Result>{}
+                                 : net::download_many(items, true, net::wrap_list(labels));
     int count = reused;
     for (size_t i = 0; i < entries.size(); i++) {
         const Entry& e = entries[i];

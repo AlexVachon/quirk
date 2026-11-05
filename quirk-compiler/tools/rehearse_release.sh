@@ -51,9 +51,16 @@ out=$(run_install) || { echo "$out"; fail "compiler install exited non-zero"; }
 echo "$out"
 grep -q "Verified sha256" <<<"$out"        || fail "compiler tarball wasn't sha256-verified"
 grep -qE "⚠|✗" <<<"$out"                   && fail "install reported a warning or error"
-got=$(grep -cE '^ *Downloading .* \([0-9.]+ [kM]?B\)$' <<<"$out" || true)
-[ "$got" -eq $((expected + 1)) ]           || fail "expected 1 + $expected downloads, saw $got"
-grep -q "Downloading typing 0.0.1 → "  <<<"$out" || fail "typing wasn't reported as updated"
+# One line for the compiler tarball, one (wrapped) line for the whole
+# stdlib batch naming every package — `name (version)` — under one bar.
+grep -qE "^ *Downloading quirk-$version-$platform\.tar\.gz \([0-9.]+ [kM]?B\)$" <<<"$out" \
+    || fail "no download line for the compiler tarball"
+[ "$(grep -c '^ *Downloading' <<<"$out")" -eq 2 ] || fail "expected 2 Downloading lines (compiler + stdlib batch)"
+while read -r name tag _; do
+    case "$name" in '#'*|'') continue ;; esac
+    grep -qE "(^|[ ,])$name \(" <<<"$out" || fail "the stdlib batch line doesn't name $name"
+done < "$rel/stdlib.lock"
+grep -q "typing (0.0.1 → " <<<"$out" || fail "typing wasn't reported as updated"
 grep -q "Removed oldpkg" <<<"$out"         || fail "oldpkg wasn't reported as removed"
 
 echo "── checking the installed tree"
@@ -67,7 +74,8 @@ printf 'use console\ndefine main() -> void { console.log("rehearsal ok") }\n' > 
 smoke=$(HOME="$work/home" QUIRK_HOME="$dest" QUIRK_NO_UPDATE_CHECK=1 "$dest/bin/quirk" "$work/smoke.quirk")
 [ "$smoke" = "rehearsal ok" ] || fail "installed compiler couldn't run a program: $smoke"
 
-count_pkg_downloads() { grep -cE '^ *Downloading [a-z]+ ' <<<"$1" || true; }
+# Packages named on the stdlib batch line(s): `name (version)` entries.
+count_pkg_downloads() { grep -oE '(^|[ ,])[a-z]+ \([0-9][^)]*\)' <<<"$1" | grep -vc 'quirk-' || true; }
 
 echo "── reinstalling over it (nothing changed: no package downloads)"
 again=$(run_install) || { echo "$again"; fail "reinstall exited non-zero"; }
@@ -78,7 +86,7 @@ grep -q "Up to date $expected stdlib packages" <<<"$again" || { echo "$again"; f
 echo "── reinstalling with one package's checksum stale (only it downloads)"
 echo 0000 > "$dest/packages/csv/.sha256"
 third=$(run_install) || { echo "$third"; fail "reinstall exited non-zero"; }
-[ "$(count_pkg_downloads "$third")" -eq 1 ] && grep -q "Downloading csv " <<<"$third" \
+[ "$(count_pkg_downloads "$third")" -eq 1 ] && grep -q "Downloading csv (" <<<"$third" \
     || { echo "$third"; fail "a stale package wasn't the only one downloaded"; }
 [ "$(cat "$dest/packages/csv/.sha256")" = "$(awk '$1=="csv"{print $4}' "$rel/stdlib.lock")" ] \
     || fail "csv's .sha256 wasn't refreshed"

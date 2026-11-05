@@ -68,7 +68,7 @@ static std::string self_binary();
 
 namespace qpm {
 
-constexpr const char* QUIRK_VERSION = "7.4.0";
+constexpr const char* QUIRK_VERSION = "7.5.0";
 
 namespace fs = std::filesystem;
 
@@ -278,76 +278,163 @@ inline void draw_bar(uintmax_t got, long long total, double secs) {
     std::cerr << line << std::flush;
 }
 
-// Fetch `url` into `out`. `label` names it in the step line; an empty
-// label downloads silently (probes, small metadata). `sizeHint`:
-// -1 = ask the server first (HEAD), -2 = don't ask (codeload tarballs,
-// which are generated on the fly and never report a size).
-// `stepLine = false` keeps the bar / size but skips the step line, for
-// callers that already printed their own.
-inline Result download(const std::string& url, const fs::path& out,
-                       const std::string& label = "", long long sizeHint = -1,
-                       bool stepLine = true) {
-    Result r;
-    const bool show = !label.empty() && !log::quiet_flag();
-    const bool bar  = show && ::isatty(STDERR_FILENO);
-    long long total = sizeHint == -1 && show ? remote_size(url) : (sizeHint >= 0 ? sizeHint : -1);
-    if (show && stepLine)
-        log::step("Downloading", label + (total > 0 ? log::dim(" (" + human_bytes((double)total) + ")") : ""));
-    log::v(url);
-    std::cout << std::flush;   // step line before the bar (stderr)
+// One file for `download_many`. `label` names it in its step line; an
+// empty label downloads silently (probes, small metadata). `size`: the
+// expected bytes if known, -1 = ask the server first (HEAD), -2 = don't
+// ask (codeload tarballs are generated on the fly and never report one).
+struct Item {
+    std::string url;
+    fs::path out;
+    std::string label;
+    long long size = -1;
+};
+
+// Fetch every item, up to 8 at a time, each in its own curl process. A
+// batch of small files then costs about one round trip, not one per file
+// (24 stdlib packages: ~10s → ~1s). Separate processes rather than
+// `curl --parallel`: curl 7.68 (Ubuntu 20.04) drops a few of GitHub's
+// redirected transfers in parallel mode — 0 bytes, status 000, exit 0.
+// Display:
+//   - one labelled item: its step line, then a live bar (pip-style);
+//   - several: each item's step line + full bar prints as it finishes,
+//     in the order given, under one live "n/N" line. The live line never
+//     spans more than one row, so short terminals can't garble it.
+// Off a terminal the bars are replaced by a size (+ time) line.
+// `stepLine = false` (single item only) skips the step line, for callers
+// that printed their own.
+inline std::vector<Result> download_many(std::vector<Item> items, bool stepLine = true) {
+    std::vector<Result> res(items.size());
+    if (items.empty()) return res;
+    const bool quiet = log::quiet_flag();
+    const bool tty   = ::isatty(STDERR_FILENO);
+    std::vector<size_t> shown;                    // labelled items, in order
+    for (size_t i = 0; i < items.size(); i++)
+        if (!items[i].label.empty() && !quiet) shown.push_back(i);
+    const bool single = shown.size() == 1 && items.size() <= 2;
+
+    long long grand = 0;
+    for (size_t i : shown) {
+        Item& it = items[i];
+        if (it.size == -1) it.size = remote_size(it.url);
+        if (it.size > 0) grand += it.size;
+    }
+    auto step_text = [&](const Item& it) {
+        return it.label + (it.size > 0 ? log::dim(" (" + human_bytes((double)it.size) + ")") : "");
+    };
+    if (single && stepLine) log::step("Downloading", step_text(items[shown[0]]));
+    std::cout << std::flush;   // step lines before the bar (stderr)
 
     std::error_code ec;
-    fs::remove(out, ec);
-    pid_t pid; int fd;
+    for (auto& it : items) { log::v(it.url); fs::remove(it.out, ec); }
     auto t0 = std::chrono::steady_clock::now();
-    if (run_curl({"-sL", "--connect-timeout", "15",
-                  "-o", out.string(), "-w", "%{http_code}", url}, nullptr, &pid, &fd) != 0) {
-        r.curlRc = -1;
-        return r;
-    }
     auto elapsed = [&] {
         return std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     };
-    // Poll curl often (so a quick download's time is accurate), redraw
-    // the bar every 100ms, and not at all for quick misses.
-    int status = 0;
-    bool drew = false;
+    std::vector<int> done(items.size(), 0);       // 0 running, 1 finished
+    size_t nextShown = 0;                         // next item in `shown` to print
+    bool live = false;                            // a live line is on screen
+    auto size_of = [&](size_t i) -> uintmax_t {
+        return fs::exists(items[i].out, ec) ? fs::file_size(items[i].out, ec) : 0;
+    };
+    auto finish = [&](size_t i, long http, int curlRc) {
+        Result& r = res[i];
+        r.http  = http;
+        r.curlRc = curlRc;
+        r.secs  = elapsed();
+        r.bytes = size_of(i);
+        // file:// has no HTTP status (curl reports 000).
+        bool isFile = items[i].url.rfind("file://", 0) == 0;
+        r.ok = curlRc == 0 && (isFile || (http >= 200 && http < 300));
+        if (!r.ok) fs::remove(items[i].out, ec);
+        done[i] = 1;
+    };
+    // Print finished labelled items, in order, above the live line.
+    auto flush_done = [&] {
+        while (nextShown < shown.size() && done[shown[nextShown]]) {
+            size_t i = shown[nextShown++];
+            const Result& r = res[i];
+            if (single) {
+                if (r.ok && tty) {
+                    draw_bar(r.bytes, items[i].size > 0 ? items[i].size : (long long)r.bytes, r.secs);
+                    std::cerr << "\n";
+                } else if (live) {
+                    std::cerr << "\r\x1b[2K" << std::flush;
+                } else if (r.ok) {
+                    char t[32];
+                    std::snprintf(t, sizeof(t), "%.1fs", r.secs);
+                    std::cout << std::string(13, ' ')
+                              << log::dim(human_bytes((double)r.bytes) + " in "
+                                          + (r.secs < 60 ? std::string(t) : clock_str(r.secs))) << "\n";
+                }
+                live = false;
+                continue;
+            }
+            if (live) { std::cerr << "\r\x1b[2K" << std::flush; live = false; }
+            if (!r.ok) continue;                  // the caller reports failures
+            log::step("Downloading", step_text(items[i]));
+            if (tty) {
+                std::cout << std::flush;
+                draw_bar(r.bytes, (long long)r.bytes, 0);
+                std::cerr << "\n";
+            } else {
+                std::cout << std::string(13, ' ') << log::dim(human_bytes((double)r.bytes)) << "\n";
+            }
+        }
+    };
+    auto draw_live = [&](double t) {
+        if (single) { draw_bar(size_of(shown[0]), items[shown[0]].size, t); live = true; return; }
+        size_t n = 0; uintmax_t got = 0;
+        for (size_t i : shown) { n += done[i]; got += size_of(i); }
+        if (n == shown.size()) return;
+        std::string line = "\r\x1b[2K" + std::string(13, ' ')
+                         + log::dim(std::to_string(n) + "/" + std::to_string(shown.size()) + " files  ")
+                         + human_bytes((double)got) + (grand > 0 ? "/" + human_bytes((double)grand) : "");
+        std::cerr << line << std::flush;
+        live = true;
+    };
+
+    // Up to 8 curls at once; each reports its HTTP status on stdout.
+    struct Proc { pid_t pid; int fd; size_t idx; };
+    std::vector<Proc> running;
+    size_t next = 0;
     double lastDraw = 0;
-    while (waitpid(pid, &status, WNOHANG) == 0) {
+    while (next < items.size() || !running.empty()) {
+        while (next < items.size() && running.size() < 8) {
+            Proc p{0, -1, next};
+            if (run_curl({"-sL", "--connect-timeout", "15", "-o", items[next].out.string(),
+                          "-w", "%{http_code}", items[next].url}, nullptr, &p.pid, &p.fd) != 0)
+                finish(next, 0, -1);
+            else
+                running.push_back(p);
+            next++;
+        }
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        for (size_t k = 0; k < running.size();) {
+            int status = 0;
+            if (waitpid(running[k].pid, &status, WNOHANG) == 0) { k++; continue; }
+            std::string code; char buf[64]; ssize_t n;
+            while ((n = read(running[k].fd, buf, sizeof(buf))) > 0) code.append(buf, n);
+            close(running[k].fd);
+            finish(running[k].idx, std::atol(code.c_str()),
+                   WIFEXITED(status) ? WEXITSTATUS(status) : -1);
+            running.erase(running.begin() + k);
+        }
+        flush_done();
         double t = elapsed();
-        if (!bar || t < 0.2 || t - lastDraw < 0.1) continue;
-        draw_bar(fs::exists(out, ec) ? fs::file_size(out, ec) : 0, total, t);
-        drew = true;
+        if (!tty || shown.empty() || t < 0.2 || t - lastDraw < 0.1) continue;
+        draw_live(t);
         lastDraw = t;
     }
-    std::string code; char buf[64]; ssize_t n;
-    while ((n = read(fd, buf, sizeof(buf))) > 0) code.append(buf, n);
-    close(fd);
-    r.secs   = elapsed();
-    r.curlRc = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
-    r.http   = std::atol(code.c_str());
-    r.bytes  = fs::exists(out, ec) ? fs::file_size(out, ec) : 0;
-    // file:// has no HTTP status (curl reports 000).
-    bool isFile = url.rfind("file://", 0) == 0;
-    r.ok     = r.curlRc == 0 && (isFile || (r.http >= 200 && r.http < 300));
-    if (!r.ok) fs::remove(out, ec);
+    flush_done();
+    if (live) std::cerr << "\r\x1b[2K" << std::flush;
+    return res;
+}
 
-    // On a terminal a finished download always ends on a full bar, even
-    // one too quick to have drawn any progress.
-    if (bar && r.ok) {
-        draw_bar(r.bytes, total > 0 ? total : (long long)r.bytes, r.secs);
-        std::cerr << "\n";
-    } else if (drew) {
-        std::cerr << "\r\x1b[2K" << std::flush;
-    } else if (show && r.ok) {
-        char t[32];
-        std::snprintf(t, sizeof(t), "%.1fs", r.secs);
-        std::cout << std::string(13, ' ')
-                  << log::dim(human_bytes((double)r.bytes) + " in "
-                              + (r.secs < 60 ? std::string(t) : clock_str(r.secs))) << "\n";
-    }
-    return r;
+// Fetch one file; see `Item` for `label` / `sizeHint`.
+inline Result download(const std::string& url, const fs::path& out,
+                       const std::string& label = "", long long sizeHint = -1,
+                       bool stepLine = true) {
+    return download_many({{url, out, label, sizeHint}}, stepLine)[0];
 }
 
 // Why a download failed, in words.
@@ -1944,6 +2031,25 @@ static std::error_code copy_pruned(const fs::path& src, const fs::path& dst) {
 //
 // On crash mid-copy, leftover staging dirs are reclaimed by `remove_all` on
 // the next install of the same package (we re-prep an empty staging path).
+// What `quirk install` did with each package, for its per-package lines
+// and the final summary — pip's "Using cached" / "Requirement already
+// satisfied", plus `(via parent)` for a transitive dependency.
+struct InstallTally {
+    std::vector<std::string> installed;      // "name version", in install order
+    int downloaded = 0, cached = 0, local = 0, satisfied = 0;
+    std::string via;                         // parent of the package being installed
+};
+static InstallTally& install_tally() { static InstallTally t; return t; }
+// Record one installed package and print its line.
+static void report_installed(const std::string& name, const std::string& version,
+                             const std::string& how, int InstallTally::*counter) {
+    InstallTally& t = install_tally();
+    t.*counter += 1;
+    t.installed.push_back(name + " " + version);
+    log::ok(name + " " + version + (how.empty() ? "" : log::dim(" (" + how + ")"))
+            + (t.via.empty() ? "" : log::dim("  via " + t.via)));
+}
+
 static int materialize_from_cache(const fs::path& cachePath, const fs::path& pkgRoot,
                                   const Manifest& m, bool editable,
                                   const std::string& commit = "") {
@@ -2033,7 +2139,7 @@ static int install_local(const std::string& path_spec, bool editable,
             }
             log::v("cache hit: " + entry.string());
             if (materialize_from_cache(entry, pkgRoot, mCached, false) != 0) return 1;
-            log::ok(m.name + " " + cached + log::dim(" (from cache)"));
+            report_installed(m.name, cached, "from cache", &InstallTally::cached);
             if (outLock) *outLock = {m.name, cached, path_spec, ""};
             return 0;
         }
@@ -2065,10 +2171,10 @@ static int install_local(const std::string& path_spec, bool editable,
             log::v("cache already has " + m.name + "-" + m.version);
         }
         if (materialize_from_cache(entry, pkgRoot, m, false) != 0) return 1;
-        log::ok(m.name + " " + m.version + log::dim(" (snapshot from " + src.string() + ")"));
+        report_installed(m.name, m.version, "snapshot from " + src.string(), &InstallTally::local);
     } else {
         if (materialize_from_cache(src, pkgRoot, m, true) != 0) return 1;
-        log::ok(m.name + " " + m.version + log::dim(" (editable from " + src.string() + ")"));
+        report_installed(m.name, m.version, "editable from " + src.string(), &InstallTally::local);
     }
     if (outLock) *outLock = {m.name, m.version, path_spec, ""};
     return 0;
@@ -2161,7 +2267,7 @@ static int install_one(const std::string& spec_str, bool quiet, bool editable = 
                 fs::create_directories(pkgRoot);
                 log::v("cache hit: " + entry.string());
                 if (materialize_from_cache(entry, pkgRoot, m, false) != 0) return 1;
-                log::ok(pathPart + " " + chosen + log::dim(" (from cache)"));
+                report_installed(pathPart, chosen, "from cache", &InstallTally::cached);
                 if (outLock) *outLock = {pathPart, chosen, spec_str, ""};
                 return 0;
             }
@@ -2334,9 +2440,8 @@ static int install_one(const std::string& spec_str, bool quiet, bool editable = 
 
     log::v("materializing into " + (pkgRoot / m.name).string());
     if (materialize_from_cache(entry, pkgRoot, m, false, commit) != 0) return 1;
-    std::string okMsg = m.name + " " + m.version;
-    if (!commit.empty()) okMsg += log::dim(" (" + commit.substr(0, 7) + ")");
-    log::ok(okMsg);
+    report_installed(m.name, m.version, commit.empty() ? "" : commit.substr(0, 7),
+                     &InstallTally::downloaded);
     if (outLock) *outLock = {m.name, m.version, spec_str, commit};
     return 0;
 }
@@ -2434,8 +2539,34 @@ static int cmd_install(const std::vector<std::string>& args) {
     std::map<std::string, std::string> lockByUrl;
     for (auto& kv : lock) lockByUrl[urlKey(kv.second.source)] = kv.first;
 
+    // The installed name each spec on the command line produced. It's what
+    // `quirk.toml` must record: a package's own name (`prompt`) often
+    // differs from its repo name (`quirk-prompt`), which preview_name sees.
+    std::map<std::string, std::string> nameOfSpec;
+
     // Returns 0 on success, 1 on failure, 2 if skipped (already processed).
     auto install_pending = [&](const Pending& p) -> int {
+        install_tally().via = p.via;
+        auto done = [&](const LockEntry& e, const std::string& spec, const fs::path& pkgDir) {
+            processed[e.name] = {e.version, spec};
+            lock[e.name] = e;
+            if (p.via.empty()) nameOfSpec[p.spec] = e.name;
+            // Queue its own [deps]. The installed dir holds only the
+            // package's sources (a `src/` layout drops quirk.toml), so the
+            // manifest comes from the cache entry, or the source dir for a
+            // local / editable install. Reading only `pkgDir` silently
+            // skipped every transitive dependency.
+            std::string localSrc = e.source.substr(0, e.source.find('@'));
+            for (const fs::path& mf : {pkgDir / "quirk.toml",
+                                       cache_entry(e.name, e.version) / "quirk.toml",
+                                       is_local_path(localSrc) ? fs::absolute(localSrc) / "quirk.toml"
+                                                               : fs::path()}) {
+                Manifest m;
+                if (mf.empty() || !read_manifest(mf.string(), m)) continue;
+                for (auto& dep : m.deps) enqueue(dep.second, e.name, false);
+                break;
+            }
+        };
         std::string name = preview_name(p.spec);
 
         // If preview_name returned the URL basename but the lockfile
@@ -2479,16 +2610,34 @@ static int cmd_install(const std::vector<std::string>& args) {
             if (at != std::string::npos) src = src.substr(0, at);
             std::string pin = le.commit.empty() ? le.version : le.commit;
             std::string lockedSpec = src + "@" + pin;
+            if (!p.editable && !le.version.empty()) {
+                // Already installed at the locked version: nothing to do
+                // (pip's "Requirement already satisfied").
+                fs::path have = package_install_dir() / le.name;
+                if (fs::is_directory(have) && read_current_version(package_install_dir(), le.name) == le.version) {
+                    InstallTally& t = install_tally();
+                    t.satisfied++;
+                    t.installed.push_back(le.name + " " + le.version);
+                    log::ok(le.name + " " + le.version + log::dim(" (already installed)")
+                            + (p.via.empty() ? "" : log::dim("  via " + p.via)));
+                    done(le, lockedSpec, have);
+                    return 0;
+                }
+                // In the cache at the locked version: no download.
+                fs::path entry = cache_entry(le.name, le.version);
+                Manifest cm;
+                if (!entry.empty() && read_manifest((entry / "quirk.toml").string(), cm)) {
+                    fs::create_directories(package_install_dir());
+                    if (materialize_from_cache(entry, package_install_dir(), cm, false, le.commit) == 0) {
+                        report_installed(le.name, le.version, "from cache", &InstallTally::cached);
+                        done(le, lockedSpec, package_install_dir() / le.name);
+                        return 0;
+                    }
+                }
+            }
             LockEntry e;
             if (install_one(lockedSpec, false, p.editable, &e) == 0) {
-                processed[e.name] = {e.version, lockedSpec};
-                lock[e.name] = e;
-                // Recurse into the installed package's deps.
-                fs::path pkgDir = package_install_dir() / e.name;
-                Manifest installed;
-                if (read_manifest((pkgDir / "quirk.toml").string(), installed)) {
-                    for (auto& dep : installed.deps) enqueue(dep.second, e.name, false);
-                }
+                done(e, lockedSpec, package_install_dir() / e.name);
                 return 0;
             }
             if (frozen) {
@@ -2508,17 +2657,12 @@ static int cmd_install(const std::vector<std::string>& args) {
         // `[[package]] name = ""` and on the next run route through the
         // lockfile fast-path with an empty version → "pkg@" spec.
         if (e.name.empty()) return 0;
-        processed[e.name] = {e.version, p.spec};
-        lock[e.name] = e;
-        fs::path pkgDir = package_install_dir() / e.name;
-        Manifest installed;
-        if (read_manifest((pkgDir / "quirk.toml").string(), installed)) {
-            for (auto& dep : installed.deps) enqueue(dep.second, e.name, false);
-        }
+        done(e, p.spec, package_install_dir() / e.name);
         return 0;
     };
 
     // ---- Seed the queue --------------------------------------------------
+    install_tally() = InstallTally{};
     auto t0 = std::chrono::steady_clock::now();
     size_t directCount = 0;
     if (!manifestFile.empty()) {
@@ -2562,7 +2706,8 @@ static int cmd_install(const std::vector<std::string>& args) {
     if (haveManifest) {
         bool dirty = false;
         for (auto& s : specs) {
-            std::string name = preview_name(s);
+            auto real = nameOfSpec.find(s);
+            std::string name = real != nameOfSpec.end() ? real->second : preview_name(s);
             if (name.empty() || !processed.count(name)) continue;
             std::string stored;
             if (is_local_path(s)) {
@@ -2594,13 +2739,22 @@ static int cmd_install(const std::vector<std::string>& args) {
         std::string elapsed = ms < 1000
             ? std::to_string(ms) + "ms"
             : std::to_string(ms / 1000) + "." + std::to_string((ms / 100) % 10) + "s";
-        std::ostringstream tail;
-        tail << okCount << " installed";
+        // pip-style: what's installed now, then how each one got there.
+        const InstallTally& t = install_tally();
+        std::string names;
+        for (size_t i = 0; i < t.installed.size(); i++) names += (i ? ", " : "") + t.installed[i];
+        std::vector<std::string> how;
+        if (t.downloaded) how.push_back(std::to_string(t.downloaded) + " downloaded");
+        if (t.cached)     how.push_back(std::to_string(t.cached) + " from cache");
+        if (t.local)      how.push_back(std::to_string(t.local) + " local");
+        if (t.satisfied)  how.push_back(std::to_string(t.satisfied) + " already installed");
         size_t transitive = okCount > directCount ? okCount - directCount : 0;
-        if (transitive > 0) tail << " (" << transitive << " transitive)";
-        if (failCount > 0)  tail << ", " << failCount << " failed";
-        tail << " " << log::dim("in " + elapsed);
-        log::step("Finished", tail.str());
+        if (transitive)   how.push_back(std::to_string(transitive) + " transitive");
+        if (failCount)    how.push_back(std::to_string(failCount) + " failed");
+        std::string detail;
+        for (size_t i = 0; i < how.size(); i++) detail += (i ? ", " : "") + how[i];
+        log::step("Finished", (names.empty() ? std::string("nothing installed") : names)
+                  + log::dim("  (" + detail + ") in " + elapsed));
     }
     return failCount > 0 ? 1 : 0;
 }
@@ -4739,8 +4893,14 @@ inline std::string quirk_release_base() {
 // compiler tarball. The bundle stays the fallback: for older releases
 // (no lock), or when any package fails, it's used as-is and this
 // returns false. `before` (the stdlib being replaced) marks changes.
+//
+// Like pip's "Requirement already satisfied", a package that's already
+// installed at the same version from the same asset (its `.sha256`,
+// written below, matches the lock) isn't downloaded again: the copy in
+// `installed` is reused. A typical update then fetches only the compiler
+// tarball and whatever packages changed.
 inline bool quirk_fetch_stdlib_assets(const std::string& tag, const fs::path& work,
-                                      const fs::path& stagePkg,
+                                      const fs::path& stagePkg, const fs::path& installed,
                                       const std::map<std::string, std::string>& before) {
     std::string base = quirk_release_base() + tag + "/";
     fs::path lock = work / "stdlib.lock";
@@ -4755,9 +4915,12 @@ inline bool quirk_fetch_stdlib_assets(const std::string& tag, const fs::path& wo
     fs::path dest = work / "stdlib";
     std::error_code ec;
     fs::create_directories(dest, ec);
+    struct Entry { std::string name, ver, sha; fs::path tarball; };
+    std::vector<Entry> entries;
+    int reused = 0;
+    std::vector<net::Item> items;
     std::ifstream in(lock);
     std::string line;
-    int count = 0;
     while (std::getline(in, line)) {
         std::istringstream ls(line);
         std::string name, ver, sha;
@@ -4771,25 +4934,50 @@ inline bool quirk_fetch_stdlib_assets(const std::string& tag, const fs::path& wo
             label += " " + log::bold("new");
         else if (it != before.end() && !it->second.empty() && it->second != ver)
             label = name + " " + bare(it->second) + " → " + log::bold(bare(ver));
-        fs::path tarball = work / file;
-        net::Result r = net::download(base + file, tarball, label, size);
-        std::string why = !r.ok ? net::describe(r)
-                        : quirk_sha256_file(tarball) != sha ? "checksum mismatch" : "";
+        auto read1 = [](const fs::path& f) {
+            std::ifstream in(f);
+            std::string v; in >> v;
+            return v;
+        };
+        fs::path have = installed / name;
+        if (!installed.empty() && read1(have / ".version") == ver && read1(have / ".sha256") == sha) {
+            fs::copy(have, dest / name, fs::copy_options::recursive | fs::copy_options::copy_symlinks, ec);
+            if (!ec) { reused++; continue; }
+            ec.clear();
+            fs::remove_all(dest / name, ec);
+        }
+        entries.push_back({name, ver, sha, work / file});
+        items.push_back({base + file, work / file, label, size});
+    }
+    // The rest in one concurrent batch: they're a few kB each, so the
+    // cost is round trips, not bandwidth.
+    std::vector<net::Result> got = net::download_many(items);
+    int count = reused;
+    for (size_t i = 0; i < entries.size(); i++) {
+        const Entry& e = entries[i];
+        std::string why = !got[i].ok ? net::describe(got[i])
+                        : quirk_sha256_file(e.tarball) != e.sha ? "checksum mismatch" : "";
         if (why.empty()) {
-            std::string tar = "tar -xzf '" + tarball.string() + "' -C '" + dest.string() + "'";
-            if (std::system(tar.c_str()) != 0 || !fs::is_directory(dest / name)) why = "couldn't unpack";
+            std::string tar = "tar -xzf '" + e.tarball.string() + "' -C '" + dest.string() + "'";
+            if (std::system(tar.c_str()) != 0 || !fs::is_directory(dest / e.name)) why = "couldn't unpack";
         }
         if (!why.empty()) {
-            log::warn(name + ": " + why + " — using the stdlib bundled with " + tag);
+            log::warn(e.name + ": " + why + " — using the stdlib bundled with " + tag);
             return false;
         }
+        std::ofstream(dest / e.name / ".sha256") << e.sha << "\n";
         count++;
     }
+    if (reused > 0)
+        log::step("Up to date", std::to_string(reused) + " stdlib package" + (reused == 1 ? "" : "s")
+                  + log::dim(" (same version and checksum — not downloaded)"));
     if (count == 0) return false;
     fs::remove_all(stagePkg, ec);
     fs::rename(dest, stagePkg, ec);
     return !ec;
 }
+
+inline long long quirk_release_asset_size(const std::string& name);
 
 // Download, verify and unpack compiler release `tag` under `work`.
 // Returns the unpacked `quirk-<ver>-<platform>/` directory (flat
@@ -4803,7 +4991,12 @@ inline fs::path quirk_fetch_compiler_release(const std::string& tag, const fs::p
     std::string url = quirk_release_base() + tag + "/" + pkg + ".tar.gz";
     fs::path tarball = work / (pkg + ".tar.gz");
 
-    net::Result r = net::download(url, tarball, pkg + ".tar.gz");
+    // Tarball + checksum sidecar in one batch (one connection, no HEAD
+    // when the releases listing already gave the size).
+    fs::path sidecar = work / (pkg + ".tar.gz.sha256");
+    auto got = net::download_many({{url, tarball, pkg + ".tar.gz", quirk_release_asset_size(pkg + ".tar.gz")},
+                                   {url + ".sha256", sidecar, "", -2}});
+    net::Result r = got[0], sr = got[1];
     if (!r.ok) {
         log::err("download failed: " + net::describe(r));
         if (r.http == 404)
@@ -4816,8 +5009,6 @@ inline fs::path quirk_fetch_compiler_release(const std::string& tag, const fs::p
 
     // The release publishes a `.sha256` sidecar; a mismatch means a
     // corrupted or tampered download. Older releases may lack one.
-    fs::path sidecar = work / (pkg + ".tar.gz.sha256");
-    net::Result sr = net::download(url + ".sha256", sidecar);
     if (sr.ok) {
         std::ifstream in(sidecar);
         std::string expected; in >> expected;
@@ -4952,24 +5143,35 @@ inline bool quirk_is_dev_build() {
     return false;
 }
 
+// The releases-API response from the last quirk_fetch_latest_tag, kept so
+// `compiler update` can read asset sizes from it instead of paying another
+// round trip per file.
+inline std::string& quirk_releases_json() { static std::string body; return body; }
+
 // Fetch the latest `v[0-9]*` release tag, with a 3-second curl timeout
 // so a slow network never makes Quirk feel laggy. Returns "" on failure.
 // Pre-releases (`v7.4.0-rc.1` — any `-`) are skipped: `update` and the
 // daily notice only offer stable releases; install an rc explicitly.
 inline std::string quirk_fetch_latest_tag() {
-    std::string cmd = std::string("curl -fsSL --max-time 3 '") + QUIRK_RELEASES_API_URL
-                    + "' 2>/dev/null"
-                    + R"SH( | grep -oE '"tag_name"[[:space:]]*:[[:space:]]*"v[0-9][^"-]*"')SH"
-                    + R"SH( | head -1)SH"
-                    + R"SH( | sed -E 's/.*"tag_name"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')SH";
-    FILE* p = popen(cmd.c_str(), "r");
-    if (!p) return "";
-    char buf[128]; std::string out;
-    while (fgets(buf, sizeof(buf), p)) out += buf;
-    pclose(p);
-    while (!out.empty() && (out.back() == '\n' || out.back() == '\r' || out.back() == ' '))
-        out.pop_back();
-    return out;
+    std::string& body = quirk_releases_json();
+    body.clear();
+    if (net::run_curl({"-fsSL", "--max-time", "3", QUIRK_RELEASES_API_URL}, &body) != 0) {
+        body.clear();
+        return "";
+    }
+    static const std::regex tagRe(R"re("tag_name"\s*:\s*"(v[0-9][^"-]*)")re");
+    std::smatch m;
+    return std::regex_search(body, m, tagRe) ? m[1].str() : "";
+}
+
+// Size of release asset `name` from the cached releases-API response,
+// or -1 when it isn't there (no response yet, or an older listing).
+inline long long quirk_release_asset_size(const std::string& name) {
+    const std::string& body = quirk_releases_json();
+    auto at = body.find("\"name\": \"" + name + "\"");
+    if (at == std::string::npos) return -1;
+    auto sz = body.find("\"size\":", at);
+    return sz == std::string::npos ? -1 : std::atoll(body.c_str() + sz + 7);
 }
 
 // Either:
@@ -5467,18 +5669,19 @@ static int cmd_compiler(const std::vector<std::string>& args) {
         if (stage.empty()) { fs::remove_all(work, ec); return 1; }
         fs::path stageBin = stage / "bin";
         fs::path stagePkg = stage / "packages";
-        // The stdlib being replaced, to mark what changed.
-        std::map<std::string, std::string> stdlibBefore;
+        // The stdlib being replaced: marks what changed, and unchanged
+        // packages are reused from it instead of downloaded.
+        fs::path installedPkg;
         {
             const char* idEnv = std::getenv("INSTALL_DIR");
             const char* home  = std::getenv("HOME");
             const char* qh    = std::getenv("QUIRK_HOME");
-            stdlibBefore = targetVenv && qh
-                ? quirk_stdlib_versions(fs::path(qh) / "lib" / "quirk" / "stdlib")
-                : quirk_stdlib_versions(((idEnv && *idEnv) ? fs::path(idEnv)
-                                         : fs::path(home ? home : ".") / ".quirk") / "packages");
+            installedPkg = targetVenv && qh
+                ? fs::path(qh) / "lib" / "quirk" / "stdlib"
+                : ((idEnv && *idEnv) ? fs::path(idEnv) : fs::path(home ? home : ".") / ".quirk") / "packages";
         }
-        quirk_fetch_stdlib_assets(version, work, stagePkg, stdlibBefore);
+        std::map<std::string, std::string> stdlibBefore = quirk_stdlib_versions(installedPkg);
+        quirk_fetch_stdlib_assets(version, work, stagePkg, installedPkg, stdlibBefore);
         const std::map<std::string, std::string> stdlibAfter = quirk_stdlib_versions(stagePkg);
         auto make_exec = [&](const fs::path& f) {
             fs::permissions(f,
@@ -5578,6 +5781,96 @@ static int cmd_compiler(const std::vector<std::string>& args) {
     return usage();
 }
 
+// ---------------------- The command table ----------------------
+// Every top-level command, once: `quirk help`, tab completion (bash, zsh,
+// fish), typo suggestions and the "is this a command?" check all read it,
+// so they can't drift apart again. (They were four hand-kept lists: `doc`
+// was missing from completion; `explain` / `watch` / `check` from help.)
+// Dispatch itself stays the if-chain in `dispatch()`; add a row here too.
+struct CliCommand {
+    const char* verb;        // what you type; "" = a help continuation line
+    const char* usage;       // help column 1
+    const char* desc;        // help column 2
+    const char* section;     // help heading
+    const char* aliases;     // "(alias: …)" in help
+    const char* summary;     // completion-menu text when `desc` is per-row
+    const char* replacedBy;  // older spelling: works, hidden, prints a hint
+    bool hidden;             // works but isn't listed (internal / LSP)
+};
+static const std::vector<CliCommand>& cli_commands() {
+    static const std::vector<CliCommand> t = {
+        {"run",        "run <file.quirk> [args...]", "Compile + run a script",          "RUN CODE", "r",  "", "", false},
+        {"",           "",                            "Also: `quirk <file.quirk>`",      "RUN CODE", "",   "", "", false},
+        {"eval",       "eval \"<code>\"",             "Run a one-liner",                 "RUN CODE", "-c", "", "", false},
+        {"module",     "module <name>",               "Invoke a module's main()",        "RUN CODE", "-m", "", "", false},
+        {"test",       "test [<file>...]",            "Run *_test.quirk files",          "RUN CODE", "t",  "", "", false},
+        {"watch",      "watch <file.quirk>",          "Re-run a script on every save",   "RUN CODE", "",   "", "", false},
+        {"repl",       "repl",                        "Interactive shell",               "RUN CODE", "",   "", "", false},
+
+        {"new",        "new <name>",                  "Scaffold a new package directory",          "PROJECT", "", "", "", false},
+        {"init",       "init",                        "Write a quirk.toml in the current dir",     "PROJECT", "", "", "", false},
+        {"venv",       "venv <path>",                 "Create/repair an isolated env",             "PROJECT", "", "", "", false},
+        {"env",        "env",                         "Show the active resolution context",        "PROJECT", "", "", "", false},
+        {"fmt",        "fmt [--check] [<file>...]",   "Reformat source to canonical style",        "PROJECT", "", "", "", false},
+        {"doc",        "doc [--md] <file|dir>...",    "Print docstrings + signatures from source", "PROJECT", "", "", "", false},
+        {"check",      "check [<file.quirk>]",        "Type-check a file, or validate quirk.toml", "PROJECT", "", "", "", false},
+        {"sync",       "sync",                        "Bootstrap from a clone (venv + install)",   "PROJECT", "", "", "", false},
+
+        {"install",    "install [<spec>...]",         "Install dependencies",            "PACKAGES", "i, add", "", "", false},
+        {"upgrade",    "upgrade [<pkg>...]",          "Bump to latest versions",         "PACKAGES", "up",     "", "", false},
+        {"remove",     "remove <pkg>[@<ver>] ...",    "Uninstall",                       "PACKAGES", "rm",     "", "", false},
+        {"list",       "list",                        "List installed packages",         "PACKAGES", "ls",     "", "", false},
+        {"show",       "show <pkg>",                  "Detailed package info",           "PACKAGES", "",       "", "", false},
+        {"deps",       "deps",                        "Print deps in installable form",  "PACKAGES", "",       "", "", false},
+        {"cache",      "cache <subcommand>",          "Cross-project version cache",     "PACKAGES", "",       "", "", false},
+        {"registry",   "registry <subcommand>",       "Name → URL mappings",             "PACKAGES", "",       "", "", false},
+
+        {"auth",       "auth login",                  "Authenticate via GitHub device flow", "PUBLISHING", "", "GitHub auth for publishing packages", "", false},
+        {"",           "auth status / auth logout",   "Inspect or forget the stored token",  "PUBLISHING", "", "", "", false},
+        {"release",    "release [--bump <part>]",     "Validate + tag + push the current package", "PUBLISHING", "", "", "", false},
+        {"register",   "register [<alias>]",          "Make this package installable by name",     "PUBLISHING", "", "", "", false},
+        {"versions",   "versions <name>",             "List every published tag of a package",     "PUBLISHING", "", "", "", false},
+        {"audit",      "audit",                       "Scan installed packages for advisories",    "PUBLISHING", "", "", "", false},
+
+        {"compiler",   "compiler version",            "Print the running compiler version", "COMPILER (self-management)", "", "Manage the compiler itself (update, install, list…)", "", false},
+        {"",           "compiler check",              "Check GitHub for a newer release",   "COMPILER (self-management)", "", "", "", false},
+        {"",           "compiler update",             "Replace this compiler with the latest", "COMPILER (self-management)", "", "", "", false},
+        {"",           "compiler install <vX.Y.Z>",   "Install a specific version",         "COMPILER (self-management)", "", "", "", false},
+        {"",           "compiler list",               "List available releases",            "COMPILER (self-management)", "", "", "", false},
+        {"",           "compiler stdlib",             "List the bundled stdlib + versions", "COMPILER (self-management)", "", "", "", false},
+        {"",           "compiler bump <part>",        "Bump QUIRK_VERSION (compiler maintainers)", "COMPILER (self-management)", "", "", "", false},
+
+        {"help",       "help [<command>]",            "Per-command help",                "MISC", "h, --help", "", "", false},
+        {"explain",    "explain <code>",              "Explain a diagnostic (e.g. Q0209)", "MISC", "",        "", "", false},
+        {"completion", "completion <bash|zsh|fish>",  "Emit shell tab-completion script", "MISC", "",         "", "", false},
+        {"version",    "version",                     "Print the compiler version",      "MISC", "--version", "", "", false},
+
+        // Older spellings: still work, aren't suggested, print a hint.
+        {"packages",      "", "", "", "", "", "list",            false},
+        {"stdlib",        "", "", "", "", "", "compiler stdlib", false},
+        {"bump-compiler", "", "", "", "", "", "compiler bump",   false},
+        {"script",        "", "", "", "", "", "run <name>",      false},
+        // Work, but aren't for everyday use.
+        {"pkg",           "", "", "", "", "", "",                true},   // `quirk pkg <verb>` ≡ `quirk <verb>`
+        {"resolve",       "", "", "", "", "", "",                true},   // module → file, for the LSP
+    };
+    return t;
+}
+
+// The verbs to offer (completion, typo suggestions): listed commands only.
+static std::vector<std::string> cli_listed_verbs() {
+    std::vector<std::string> out;
+    for (const auto& c : cli_commands())
+        if (*c.verb && !c.hidden && !*c.replacedBy) out.push_back(c.verb);
+    return out;
+}
+
+static const CliCommand* cli_find(const std::string& verb) {
+    for (const auto& c : cli_commands())
+        if (verb == c.verb && *c.verb) return &c;
+    return nullptr;
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // `quirk completion <bash|zsh|fish>` — emit a shell completion script
 // to stdout. Install via:
@@ -5603,6 +5896,9 @@ static int cmd_completion(const std::vector<std::string>& args) {
         return shell.empty() ? 1 : 0;
     }
 
+    std::string verbs;
+    for (const auto& v : cli_listed_verbs()) verbs += (verbs.empty() ? "" : " ") + v;
+
     if (shell == "bash" || shell == "zsh") {
         // Zsh: front the bash script with bashcompinit so `complete -F`
         // works. The completion logic itself is identical.
@@ -5625,19 +5921,24 @@ _quirk_complete() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
-    # Top-level verbs (keep in sync with PackageManager.hpp::dispatch).
-    verbs="run repl test fmt install upgrade remove uninstall list packages show init new venv version eval module deps env cache registry register check versions release bump-compiler compiler auth audit script sync stdlib pkg help completion"
+    # Top-level verbs (generated from PackageManager.hpp's cli_commands()).
+    verbs=")BASH" << verbs << R"BASH("
 
-    # First word: a verb, or a script path (`quirk app.quirk` runs it).
+    # First word: a command, or a script path (`quirk app.quirk` runs it).
+    # Files only when no command matches what's typed, or it's a path —
+    # so `quirk r<TAB>` lists commands, `quirk ex<TAB>` finds examples/.
     if [ "$COMP_CWORD" -eq 1 ]; then
         COMPREPLY=($(compgen -W "$verbs" -- "$cur"))
-        _quirk_files
+        if [ ${#COMPREPLY[@]} -eq 0 ] || [[ "$cur" == */* ]]; then
+            COMPREPLY=()
+            _quirk_files
+        fi
         return
     fi
 
     # Dispatch on the verb for smarter per-command completion.
     case "${COMP_WORDS[1]}" in
-        run|fmt|test)
+        run|fmt|test|watch|check|doc)
             _quirk_files
             ;;
         bump-compiler)
@@ -5715,28 +6016,15 @@ function __quirk_verb_is
     test (count $cmd) -ge 2; and test "$cmd[2]" = "$argv[1]"
 end
 
-# Top-level verbs.
-complete -c quirk -n __quirk_needs_verb -a 'run'              -d 'Run a .quirk script'
-complete -c quirk -n __quirk_needs_verb -a 'repl'             -d 'Interactive shell'
-complete -c quirk -n __quirk_needs_verb -a 'test'             -d 'Run *_test.quirk files'
-complete -c quirk -n __quirk_needs_verb -a 'fmt'              -d 'Reformat .quirk source'
-complete -c quirk -n __quirk_needs_verb -a 'install'          -d 'Install a package'
-complete -c quirk -n __quirk_needs_verb -a 'upgrade'          -d 'Upgrade installed packages'
-complete -c quirk -n __quirk_needs_verb -a 'remove'           -d 'Remove a package'
-complete -c quirk -n __quirk_needs_verb -a 'list'             -d 'List installed packages'
-complete -c quirk -n __quirk_needs_verb -a 'show'             -d 'Show package details'
-complete -c quirk -n __quirk_needs_verb -a 'init'             -d 'Init a new package here'
-complete -c quirk -n __quirk_needs_verb -a 'new'              -d 'Scaffold a new package'
-complete -c quirk -n __quirk_needs_verb -a 'venv'             -d 'Virtual environment ops'
-complete -c quirk -n __quirk_needs_verb -a 'version'          -d 'Show compiler version'
-complete -c quirk -n __quirk_needs_verb -a 'env'              -d 'Show environment info'
-complete -c quirk -n __quirk_needs_verb -a 'release'          -d 'Release the current package'
-complete -c quirk -n __quirk_needs_verb -a 'bump-compiler'    -d 'Bump QUIRK_VERSION (dev workflow)'
-complete -c quirk -n __quirk_needs_verb -a 'compiler'         -d 'Manage the compiler binary itself'
-complete -c quirk -n __quirk_needs_verb -a 'auth'             -d 'GitHub auth for publishing packages'
-complete -c quirk -n __quirk_needs_verb -a 'sync'             -d 'Install missing deps'
-complete -c quirk -n __quirk_needs_verb -a 'completion'       -d 'Emit shell completion script'
-complete -c quirk -n __quirk_needs_verb -a 'help'             -d 'Show command help'
+# Top-level verbs (generated from PackageManager.hpp's cli_commands()).
+)FISH";
+        for (const auto& c : cli_commands()) {
+            if (!*c.verb || c.hidden || *c.replacedBy) continue;
+            std::string d = *c.summary ? c.summary : c.desc;
+            for (size_t i = 0; (i = d.find('\'', i)) != std::string::npos; i += 2) d.replace(i, 1, "\\'");
+            std::cout << "complete -c quirk -n __quirk_needs_verb -a '" << c.verb << "' -d '" << d << "'\n";
+        }
+        std::cout << R"FISH(
 
 # Per-verb completions.
 complete -c quirk -n '__quirk_verb_is bump-compiler' -a 'patch minor major'
@@ -7177,55 +7465,27 @@ static void print_pm_help() {
     std::cout <<
         "Quirk — language toolchain & package manager\n"
         "\n"
-        "Usage:  quirk <command> [options] [args...]\n"
-        "\n"
-        "RUN CODE\n"
-        "  run <file.quirk> [args...]      Compile + run a script      (alias: r)\n"
-        "                                  Also: `quirk <file.quirk>`\n"
-        "  eval \"<code>\"                   Run a one-liner             (alias: -c)\n"
-        "  module <name>                   Invoke a module's main()    (alias: -m)\n"
-        "  test [<file>...]                Run *_test.quirk files      (alias: t)\n"
-        "  repl                            Interactive shell\n"
-        "\n"
-        "PROJECT\n"
-        "  new <name>                      Scaffold a new package directory\n"
-        "  init                            Write a quirk.toml in the current dir\n"
-        "  venv <path>                     Create/repair an isolated env\n"
-        "  env                             Show the active resolution context\n"
-        "  fmt [--check] [<file>...]       Reformat source to canonical style\n"
-        "  doc [--md] <file|dir>...        Print docstrings + signatures from source\n"
-        "  sync                            Bootstrap from a clone (venv + install)\n"
-        "\n"
-        "PACKAGES                                            (see also: `quirk pkg help`)\n"
-        "  install [<spec>...]             Install dependencies        (alias: i, add)\n"
-        "  upgrade [<pkg>...]              Bump to latest versions     (alias: up)\n"
-        "  remove <pkg>[@<ver>] ...        Uninstall                   (alias: rm)\n"
-        "  list                            List installed packages     (alias: ls)\n"
-        "  show <pkg>                      Detailed package info\n"
-        "  deps                            Print deps in installable form\n"
-        "  cache <subcommand>              Cross-project version cache\n"
-        "  registry <subcommand>           Name → URL mappings\n"
-        "\n"
-        "PUBLISHING\n"
-        "  auth login                      Authenticate via GitHub device flow\n"
-        "  auth status / auth logout       Inspect or forget the stored token\n"
-        "  release [--bump <part>]         Validate + tag + push the current package\n"
-        "  audit                           Scan installed packages for advisories\n"
-        "  pkg versions <name>             List every published tag of a package\n"
-        "\n"
-        "COMPILER (self-management)\n"
-        "  compiler version                Print the running compiler version\n"
-        "  compiler check                  Check GitHub for a newer release\n"
-        "  compiler update                 Replace this compiler with the latest\n"
-        "  compiler install <vX.Y.Z>       Install a specific version\n"
-        "  compiler list                   List available releases\n"
-        "  compiler stdlib                 Show where the bundled stdlib lives\n"
-        "  compiler bump <part>            Bump QUIRK_VERSION (compiler maintainers)\n"
-        "\n"
-        "MISC\n"
-        "  help [<command>]                Per-command help            (alias: h, --help)\n"
-        "  completion <bash|zsh|fish>      Emit shell tab-completion script\n"
-        "  version                         Print the compiler version (alias: --version)\n"
+        "Usage:  quirk <command> [options] [args...]\n";
+    std::string section;
+    for (const auto& c : cli_commands()) {
+        if (!*c.usage && !*c.desc) continue;           // unlisted
+        if (section != c.section) {
+            section = c.section;
+            std::cout << "\n" << section;
+            if (section == "PACKAGES") std::cout << std::string(44, ' ') << "(see also: `quirk pkg help`)";
+            std::cout << "\n";
+        }
+        std::string usage = c.usage;
+        std::string line = "  " + usage + std::string(usage.size() < 32 ? 32 - usage.size() : 1, ' ') + c.desc;
+        if (*c.aliases) {
+            std::string desc = c.desc;
+            size_t cols = 0;                           // display width (UTF-8 aware)
+            for (unsigned char ch : desc) cols += (ch & 0xC0) != 0x80;
+            line += std::string(cols < 28 ? 28 - cols : 1, ' ') + "(alias: " + c.aliases + ")";
+        }
+        std::cout << line << "\n";
+    }
+    std::cout <<
         "\n"
         "TIPS\n"
         "  • `quirk help <cmd>` for detailed per-command help, e.g. `quirk help compiler`.\n"
@@ -7235,13 +7495,17 @@ static void print_pm_help() {
         "RUN FLAGS  (apply to `quirk run` and bare `quirk <file>`)\n"
         "  --check                         Type-check only, no codegen / run\n"
         "  --debug                         Step through under the (qdb) prompt\n"
-        "  --release | -O0..-O3            LLVM optimisation level (default -O2)\n"
+        "  -O0..-O3                        LLVM optimisation level (default -O1)\n"
+        "  --release                       Same as -O2\n"
         "  -o <file>                       Compile to a native binary at <file>\n"
+        "  --build                         Build into the AOT cache without running\n"
+        "  --no-cache / --no-aot           Skip the bitcode / native-binary cache\n"
         "  --emit-ir / --emit-ast / -v     Diagnostics + IR / AST dumps\n"
         "\n"
         "ENVIRONMENT\n"
         "  QUIRK_HOME                      Stdlib / venv location (auto-detected)\n"
         "  QUIRK_NO_UPDATE_CHECK=1         Suppress the once-per-day update notice\n"
+        "  QUIRK_NO_AOT=1                  Disable the native-binary cache (always JIT)\n"
         "  NO_COLOR=1                      Disable ANSI colors\n"
         "\n"
         "Specs:  <name>[@<ver>]                  resolved via registry/aliases\n"
@@ -7274,17 +7538,7 @@ static size_t verb_edit_distance(const std::string& a, const std::string& b) {
 // Closest-known verb to `q`, or empty if nothing is within typo range.
 // Cutoff matches Sema's: 1 edit for short queries, 2 for longer ones.
 static std::string suggest_known_verb(const std::string& q) {
-    static const std::vector<std::string> known = {
-        // Top-level run/project verbs
-        "run", "eval", "module", "test", "repl",
-        "new", "init", "venv", "env", "fmt", "sync",
-        // Package verbs (canonical forms; aliases get normalized first)
-        "install", "upgrade", "remove", "list", "show", "deps",
-        "cache", "registry", "register", "versions", "audit",
-        // Publishing / compiler / auth
-        "auth", "release", "compiler", "completion", "stdlib",
-        "version", "check", "resolve", "script", "help", "pkg",
-    };
+    static const std::vector<std::string> known = cli_listed_verbs();
     if (q.empty()) return "";
     const size_t cutoff = q.size() <= 4 ? 1 : 2;
     std::pair<size_t, std::string> best{cutoff + 1, ""};
@@ -7334,17 +7588,7 @@ static bool is_subcommand(const std::string& argIn) {
     // to the implicit-run path and tries to open a file literally named
     // "r" — surfaces as "Could not open module 'r'".
     const std::string arg = canonicalize_verb(argIn);
-    return is_pkg_subcommand(arg) ||
-           arg == "pkg" ||
-           arg == "init" || arg == "version" || arg == "venv" ||
-           arg == "run" || arg == "eval" || arg == "module" ||
-           arg == "env" || arg == "new" || arg == "help" || arg == "explain" ||
-           arg == "check" || arg == "watch" ||
-           arg == "script" || arg == "sync" || arg == "stdlib" || arg == "fmt" ||
-           arg == "doc" ||
-           arg == "repl" || arg == "test" || arg == "bump-compiler" ||
-           arg == "compiler" || arg == "auth" || arg == "completion" ||
-           arg == "resolve";
+    return is_pkg_subcommand(arg) || cli_find(arg) != nullptr;
 }
 
 // Drop argv[1] (a verb) and shift everything left. argc decreases by 1.
@@ -7417,6 +7661,10 @@ inline bool dispatch(int& argc, char** argv, int& outRc) {
     // If <file> isn't a path that exists, fall through to a script lookup
     // in ./quirk.toml so `quirk run test` works for a named script.
     if (first == "run") {
+        if (argc >= 3 && (std::string(argv[2]) == "-h" || std::string(argv[2]) == "--help")) {
+            std::cout << help_for("run");
+            outRc = 0; return true;
+        }
         if (argc < 3) {
             std::cerr << "run: need a filename or script name\n";
             outRc = 1; return true;
@@ -7479,6 +7727,16 @@ inline bool dispatch(int& argc, char** argv, int& outRc) {
     // of the dispatch only needs to know about canonical verbs.
     std::string verb = canonicalize_verb(first);
     std::vector<std::string> verbArgs = rest;
+    // `quirk <cmd> -h` / `--help` shows that command's help, for every
+    // command — `quirk new --help` used to scaffold a package named
+    // "--help", and `quirk init --help` wrote a quirk.toml.
+    if (!verbArgs.empty() && (verbArgs[0] == "-h" || verbArgs[0] == "--help") && verb != "pkg") {
+        std::string detail = help_for(verb);
+        if (!detail.empty()) { std::cout << detail; outRc = 0; return true; }
+    }
+    if (const CliCommand* c = cli_find(verb); c && *c->replacedBy && !log::quiet_flag())
+        std::cerr << log::dim("note: `quirk " + verb + "` is now `quirk " + c->replacedBy
+                              + "` (the old spelling still works)") << "\n";
     if (verb == "pkg") {
         if (rest.empty() || rest[0] == "help" || rest[0] == "--help" || rest[0] == "-h") {
             std::cout <<

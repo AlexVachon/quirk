@@ -5,6 +5,91 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.5.0] — 2026-11-05 — project installs fixed, pip-style output, faster downloads, CLI cleanup
+
+### `quirk install` / `quirk sync`
+
+Two bugs broke the npm-style workflow (`quirk.toml` + `quirk.lock`):
+
+- **`quirk install <spec>` didn't record the dependency in `quirk.toml`.**
+  It looked the package up by the name guessed from the spec — the repo
+  name, `quirk-prompt` — but the package records itself as `prompt`, so
+  the lookup missed and nothing was saved. `quirk.lock` was written, but
+  a plain `quirk install` (or `quirk sync` in a fresh clone) then said
+  "no dependencies declared". Deps are now recorded under the name the
+  package actually installed as.
+- **Transitive dependencies were never installed.** The resolver read
+  each installed package's `quirk.toml` to queue its own `[deps]`, but
+  the installed directory holds only the package's sources (a `src/`
+  layout leaves `quirk.toml` behind). It now reads the manifest from the
+  cache entry, or the source directory for local / editable installs.
+
+The output now says what happened to each package, like pip:
+
+```
+  ✓ csv 1.0.0 (already installed)
+  ✓ prompt 1.1.0 (from cache)
+  ✓ helper 0.1.0  via app
+    Finished app 0.2.0, csv 1.0.0, helper 0.1.0, prompt 1.1.0  (1 downloaded, 1 from cache, 2 already installed, 1 transitive) in 0.6s
+```
+
+- A locked package already installed at its locked version is skipped
+  ("already installed"); one in `~/.quirk/cache` at that version is used
+  without touching the network ("from cache"). Before, every install of
+  a GitHub package downloaded it again even with the version cached.
+- Transitive dependencies say which package pulled them in (`via app`).
+- The summary names what's installed and how each one got there.
+- New `tools/check_install.sh` (in the Test workflow, Linux and macOS)
+  covers all of the above with local packages, no network.
+
+### CLI commands
+
+The command list lived in four hand-kept copies (`quirk help`, the usage
+`quirk` prints with no arguments, tab completion, typo suggestions), and
+they had drifted: completion offered hidden duplicates (`uninstall`,
+`packages`, `stdlib`, `bump-compiler`, `script`, …) but not `doc`, and
+help didn't list `explain`, `watch`, `check` or `register`. There is now
+one command table; all four are generated from it.
+
+- Completion offers only the documented commands. Older spellings still
+  work and print a one-line hint: `note: \`quirk stdlib\` is now
+  \`quirk compiler stdlib\``.
+- At the first word, tab offers commands; files and directories only
+  once no command matches or the word contains a `/` (7.1.0 mixed
+  `.git/` and `.vscode/` in with the commands).
+- Help now lists `watch`, `check`, `register`, `versions` and `explain`,
+  and the run flags `--build` / `--no-cache` / `--no-aot`. It said the
+  default optimisation level is `-O2`; it's `-O1` (`--release` = `-O2`).
+- `quirk` with no arguments prints the same page as `quirk help`.
+- `quirk <command> --help` / `-h` shows that command's help for every
+  command. `quirk new --help` used to scaffold a package named `--help`,
+  and `quirk init --help` wrote a `quirk.toml`.
+
+### Faster `quirk compiler update`
+
+`quirk compiler update` took ~12s, nearly all of it the stdlib: each of
+the 24 packages (a few kB) was its own curl, and each paid a DNS lookup
+plus two TLS handshakes (GitHub redirects release downloads) before any
+data moved. An update now takes ~1.3s, most of it the GitHub API call and
+the compiler tarball.
+
+- **Unchanged packages aren't downloaded**, like pip's "Requirement
+  already satisfied". Each installed package records the checksum of the
+  asset it came from (`.sha256`, next to `.version`); when both match
+  `stdlib.lock`, the installed copy is kept and the update says
+  `Up to date 24 stdlib packages`. The first update over a 7.4.0 or
+  older install downloads everything once to record the checksums.
+- Packages that do download run up to 8 at a time. Each still gets its own
+  line and progress bar, printed in order as it finishes, under one live
+  `n/24 files` line.
+- The compiler tarball and its checksum download together, and the
+  tarball's size comes from the releases listing the update already
+  fetched instead of a separate HEAD request.
+- Separate curl processes rather than `curl --parallel`: curl 7.68
+  (Ubuntu 20.04) silently drops a few of GitHub's redirected transfers
+  in parallel mode (0 bytes, status 000, exit 0). A failed download now
+  also reports its own curl error.
+
 ## [7.4.0] — 2026-11-04 — release rehearsal, macOS CI, pre-releases
 
 Releases used to be tested only when they shipped: v7.0.1's macOS build

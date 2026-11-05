@@ -167,6 +167,13 @@ jobs:
         # tag ships them (7.3.0's stdlib assets first ran on the release).
         run: tools/rehearse_release.sh
 
+      - name: Check project installs
+        working-directory: quirk-compiler
+        # `quirk install` / `sync` end to end with local packages (no
+        # network): quirk.toml records deps under their own names,
+        # transitive deps install, repeat installs and the cache are used.
+        run: tools/check_install.sh
+
       - name: Run mutation fuzzer
         id: fuzz
         working-directory: quirk-compiler
@@ -238,6 +245,10 @@ jobs:
       - name: Rehearse the release
         working-directory: quirk-compiler
         run: tools/rehearse_release.sh
+
+      - name: Check project installs
+        working-directory: quirk-compiler
+        run: tools/check_install.sh
 
   ubsan:
     # Same shape as `test` but builds the runtime under UBSan so latent

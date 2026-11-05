@@ -94,7 +94,7 @@ quirk venv myenv                    # creates ./myenv/
 source myenv/bin/activate
 
 (quirk:myenv) $ quirk install github.com/foo/pretty
-(quirk:myenv) $ quirk packages
+(quirk:myenv) $ quirk list
 1 package(s) installed:
   pretty   0.1.0
 

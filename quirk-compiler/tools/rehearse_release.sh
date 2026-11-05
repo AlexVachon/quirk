@@ -67,8 +67,20 @@ printf 'use console\ndefine main() -> void { console.log("rehearsal ok") }\n' > 
 smoke=$(HOME="$work/home" QUIRK_HOME="$dest" QUIRK_NO_UPDATE_CHECK=1 "$dest/bin/quirk" "$work/smoke.quirk")
 [ "$smoke" = "rehearsal ok" ] || fail "installed compiler couldn't run a program: $smoke"
 
-echo "── reinstalling over it (nothing changed)"
+count_pkg_downloads() { grep -cE '^ *Downloading [a-z]+ ' <<<"$1" || true; }
+
+echo "── reinstalling over it (nothing changed: no package downloads)"
 again=$(run_install) || { echo "$again"; fail "reinstall exited non-zero"; }
 grep -qE "→|Removed" <<<"$again" && { echo "$again"; fail "reinstall reported changes"; }
+[ "$(count_pkg_downloads "$again")" -eq 0 ] || { echo "$again"; fail "reinstall downloaded stdlib packages"; }
+grep -q "Up to date $expected stdlib packages" <<<"$again" || { echo "$again"; fail "reinstall didn't reuse all $expected packages"; }
+
+echo "── reinstalling with one package's checksum stale (only it downloads)"
+echo 0000 > "$dest/packages/csv/.sha256"
+third=$(run_install) || { echo "$third"; fail "reinstall exited non-zero"; }
+[ "$(count_pkg_downloads "$third")" -eq 1 ] && grep -q "Downloading csv " <<<"$third" \
+    || { echo "$third"; fail "a stale package wasn't the only one downloaded"; }
+[ "$(cat "$dest/packages/csv/.sha256")" = "$(awk '$1=="csv"{print $4}' "$rel/stdlib.lock")" ] \
+    || fail "csv's .sha256 wasn't refreshed"
 
 echo "release rehearsal: ok ($pkg + $expected stdlib packages)"

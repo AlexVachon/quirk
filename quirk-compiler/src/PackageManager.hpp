@@ -70,7 +70,7 @@ static std::string self_binary();
 
 namespace qpm {
 
-constexpr const char* QUIRK_VERSION = "7.7.0";
+constexpr const char* QUIRK_VERSION = "7.7.1";
 
 namespace fs = std::filesystem;
 
@@ -6315,11 +6315,23 @@ static int publish_to_registry(const std::string& alias, const std::string& repo
         return 1;
     }
     {
-        std::string body;
-        { std::ifstream in(index); body.assign(std::istreambuf_iterator<char>(in), {}); }
-        if (!body.empty() && body.back() != '\n') body += "\n";
-        body += alias + " = \"" + repo + "\"\n";
-        std::ofstream(index) << body;
+        // Insert in name order, not at the end: two registrations open at
+        // once then usually touch different lines instead of always
+        // conflicting on the last one.
+        std::vector<std::string> lines;
+        { std::ifstream in(index); for (std::string l; std::getline(in, l);) lines.push_back(l); }
+        static const std::regex entryRe(R"re(^\s*([A-Za-z0-9_-]+)\s*=)re");
+        size_t at = lines.size(), lastEntry = std::string::npos;
+        for (size_t i = 0; i < lines.size(); i++) {
+            std::smatch em;
+            if (!std::regex_search(lines[i], em, entryRe)) continue;
+            if (em[1].str() > alias) { at = i; break; }
+            lastEntry = i;
+        }
+        if (at == lines.size() && lastEntry != std::string::npos) at = lastEntry + 1;
+        lines.insert(lines.begin() + at, alias + " = \"" + repo + "\"");
+        std::ofstream out(index);
+        for (const auto& l : lines) out << l << "\n";
     }
     const std::string br = "register-" + alias;
     const std::string git = "git -C " + q;
@@ -6332,7 +6344,7 @@ static int publish_to_registry(const std::string& alias, const std::string& repo
         std::cout << "    " << log::dim("dry run — would push branch " + br + " and open a PR with:") << "\n"
                   << std::flush;
         std::system((git + " --no-pager diff HEAD~1 --stat --color=never; " + git
-                     + " --no-pager diff HEAD~1 --color=never -U0 | grep '^+[^+]'").c_str());
+                     + " --no-pager diff HEAD~1 --color=never -U1 | grep -E '^[+ ]' | grep -v '^+++'").c_str());
         cleanup(); return 0;
     }
     // Push to the registry itself when allowed, else to your fork of it.
@@ -6342,12 +6354,15 @@ static int publish_to_registry(const std::string& alias, const std::string& repo
         char buf[16] = {0};
         if (pp) { if (fgets(buf, sizeof(buf), pp)) perm = buf; pclose(pp); }
     }
+    // `register-<alias>` is this registration's own branch, so it's
+    // force-pushed: re-running `quirk register` (after a conflict, or a
+    // repo change) replaces the branch instead of failing on it.
     std::string head = br;
     if (perm.rfind("true", 0) == 0) {
-        if (sh(git + " push -q origin " + br) != 0) { log::err("couldn't push to github.com/" + regRepo); cleanup(); return 1; }
+        if (sh(git + " push -q --force origin " + br) != 0) { log::err("couldn't push to github.com/" + regRepo); cleanup(); return 1; }
     } else {
         if (sh("cd " + q + " && gh repo fork --remote --remote-name fork") != 0
-            || sh(git + " push -q fork " + br) != 0) {
+            || sh(git + " push -q --force fork " + br) != 0) {
             log::err("couldn't fork github.com/" + regRepo + " and push to it");
             cleanup(); return 1;
         }
@@ -6359,6 +6374,23 @@ static int publish_to_registry(const std::string& alias, const std::string& repo
         }
         while (!user.empty() && std::isspace((unsigned char)user.back())) user.pop_back();
         head = user + ":" + br;
+    }
+    // A PR already open for the branch now shows the new commit: done.
+    {
+        std::string open;
+        if (FILE* pp = popen(("gh pr list --repo " + regRepo + " --head " + br
+                              + " --state open --json url --jq '.[0].url' 2>/dev/null").c_str(), "r")) {
+            char buf[512] = {0};
+            if (fgets(buf, sizeof(buf), pp)) open = buf;
+            pclose(pp);
+        }
+        while (!open.empty() && std::isspace((unsigned char)open.back())) open.pop_back();
+        if (!open.empty()) {
+            log::ok("updated " + open);
+            std::cout << "    " << log::dim("once it's merged, anyone can run:  quirk install " + alias) << "\n";
+            cleanup();
+            return 0;
+        }
     }
     std::string prUrl;
     {

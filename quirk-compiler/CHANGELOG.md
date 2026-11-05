@@ -5,6 +5,23 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.7.1] — 2026-11-05 — `quirk register`: fewer conflicts, re-runnable
+
+Registering two packages at once (`slug`, then `logger`) left the second
+pull request with a merge conflict: both appended their line at the end
+of the registry index, so once one was merged the other no longer
+applied. And re-running `quirk register` couldn't fix it, because its
+`register-<name>` branch already existed.
+
+- The new line is inserted in name order instead of appended, so
+  simultaneous registrations usually touch different lines.
+- `register-<name>` is the registration's own branch, so it's now
+  force-pushed: re-running `quirk register` replaces it. If a pull
+  request is already open for it, that one is updated (`✓ updated …`)
+  instead of a second one being opened.
+- `--dry-run` shows the change with a line of context, so you can see
+  where the entry lands.
+
 ## [7.7.0] — 2026-11-05 — `quirk register` publishes; `update` waits for builds
 
 ### `quirk register` opens a pull request to the public registry

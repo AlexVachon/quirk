@@ -70,7 +70,7 @@ static std::string self_binary();
 
 namespace qpm {
 
-constexpr const char* QUIRK_VERSION = "7.6.2";
+constexpr const char* QUIRK_VERSION = "7.7.0";
 
 namespace fs = std::filesystem;
 
@@ -5257,20 +5257,49 @@ inline bool quirk_is_dev_build() {
 // round trip per file.
 inline std::string& quirk_releases_json() { static std::string body; return body; }
 
-// Fetch the latest `v[0-9]*` release tag, with a 3-second curl timeout
-// so a slow network never makes Quirk feel laggy. Returns "" on failure.
-// Pre-releases (`v7.4.0-rc.1` — any `-`) are skipped: `update` and the
-// daily notice only offer stable releases; install an rc explicitly.
+// The newest stable release in a GitHub releases-API response that has a
+// build for `platform` uploaded (`quirk-<ver>-<platform>.tar.gz`). A
+// release is published as soon as it's tagged but its builds take a few
+// minutes, so a newer release still building is skipped and returned in
+// `*building` instead. Pre-releases (`v7.4.0-rc.1` — any `-`) are
+// skipped: `update` and the daily notice only offer stable releases;
+// install an rc explicitly. An empty `platform` skips the build check.
+inline std::string quirk_pick_latest_tag(const std::string& body, const std::string& platform,
+                                         std::string* building = nullptr) {
+    static const std::regex tagRe(R"re("tag_name"\s*:\s*"(v[0-9][^"]*)")re");
+    std::vector<std::pair<size_t, std::string>> tags;   // (offset, tag), newest first
+    for (auto it = std::sregex_iterator(body.begin(), body.end(), tagRe); it != std::sregex_iterator(); ++it)
+        tags.push_back({(size_t)it->position(), (*it)[1].str()});
+    for (size_t k = 0; k < tags.size(); k++) {
+        const std::string& tag = tags[k].second;
+        if (tag.find('-') != std::string::npos) continue;
+        if (platform.empty()) return tag;
+        // A release's assets follow its tag_name, before the next release's.
+        size_t from = tags[k].first, to = k + 1 < tags.size() ? tags[k + 1].first : body.size();
+        std::string asset = "\"name\": \"quirk-" + tag.substr(1) + "-" + platform + ".tar.gz\"";
+        if (body.find(asset, from) < to) return tag;
+        if (building && building->empty()) *building = tag;
+    }
+    return "";
+}
+
+// A newer release that's published but whose build for this platform
+// isn't uploaded yet (set by quirk_fetch_latest_tag; "" if none).
+inline std::string& quirk_release_building() { static std::string t; return t; }
+
+// Fetch the latest installable release tag (see quirk_pick_latest_tag),
+// with a 3-second curl timeout so a slow network never makes Quirk feel
+// laggy. Returns "" on failure.
 inline std::string quirk_fetch_latest_tag() {
     std::string& body = quirk_releases_json();
     body.clear();
+    quirk_release_building().clear();
     if (net::run_curl({"-fsSL", "--max-time", "3", QUIRK_RELEASES_API_URL}, &body) != 0) {
         body.clear();
         return "";
     }
-    static const std::regex tagRe(R"re("tag_name"\s*:\s*"(v[0-9][^"-]*)")re");
-    std::smatch m;
-    return std::regex_search(body, m, tagRe) ? m[1].str() : "";
+    std::string why;
+    return quirk_pick_latest_tag(body, quirk_release_platform(&why), &quirk_release_building());
 }
 
 // Size of release asset `name` from the cached releases-API response,
@@ -5751,6 +5780,9 @@ static int cmd_compiler(const std::vector<std::string>& args) {
                 log::err("couldn't reach the GitHub releases API (offline, or rate-limited?)");
                 return 1;
             }
+            if (!quirk_release_building().empty())
+                log::note(quirk_release_building() + " is published but still building — "
+                          "it'll be offered once its build is uploaded (usually a few minutes)");
             int cmp = quirk_compare_versions(version, QUIRK_VERSION);
             if (cmp <= 0 && !force) {
                 if (cmp == 0) log::ok("quirk " + std::string(QUIRK_VERSION) + " is already the latest release");
@@ -6224,6 +6256,130 @@ static int cmd_versions(const std::vector<std::string>& args) {
     return 0;
 }
 
+// Open a pull request adding `<alias> = "<repo>"` to the public registry
+// index (a GitHub repo — `quirk-pkg/registry` by default), with the gh
+// CLI: clone it, add the line on a `register-<alias>` branch, push it
+// (to a fork when you can't push to the registry itself), and open the
+// PR. `dryRun` stops before pushing and shows the change instead.
+// Returns 0 when the PR was opened (or the entry is already listed).
+static int publish_to_registry(const std::string& alias, const std::string& repo, bool dryRun) {
+    // https://raw.githubusercontent.com/<owner>/<repo>/<branch>/<path>
+    const std::string url = resolve_registry_url();
+    const std::string rawPfx = "https://raw.githubusercontent.com/";
+    std::vector<std::string> parts;
+    if (url.rfind(rawPfx, 0) == 0) {
+        std::stringstream ss(url.substr(rawPfx.size()));
+        for (std::string part; std::getline(ss, part, '/');) parts.push_back(part);
+    }
+    if (parts.size() < 4) {
+        log::warn("the registry (" + url + ") isn't a GitHub repo — add this line to it by hand:");
+        std::cerr << "    " << alias << " = \"" << repo << "\"\n";
+        return 1;
+    }
+    const std::string regRepo = parts[0] + "/" + parts[1], branch = parts[2];
+    std::string indexPath;
+    for (size_t i = 3; i < parts.size(); i++) indexPath += (i > 3 ? "/" : "") + parts[i];
+
+    if (std::system("command -v gh >/dev/null 2>&1") != 0
+        || std::system("gh auth status >/dev/null 2>&1") != 0) {
+        log::warn("publishing needs the GitHub CLI, logged in (`gh auth login`)");
+        std::cerr << "    " << log::dim("or open a PR on github.com/" + regRepo + " adding: "
+                                        + alias + " = \"" + repo + "\"") << "\n";
+        return 1;
+    }
+
+    char tmpl[] = "/tmp/quirk-register-XXXXXX";
+    char* tdir = mkdtemp(tmpl);
+    if (!tdir) { log::err("register: couldn't create a temp dir"); return 1; }
+    const fs::path work = tdir, clone = work / "registry";
+    std::error_code ec;
+    auto cleanup = [&] { fs::remove_all(work, ec); };
+    auto sh = [](const std::string& cmd) { return std::system((cmd + " >/dev/null 2>&1").c_str()); };
+    const std::string q = "'" + clone.string() + "'";
+
+    log::step("Publishing", alias + " → " + repo + log::dim("  (PR to github.com/" + regRepo + ")"));
+    if (sh("gh repo clone " + regRepo + " " + q + " -- --depth 1 --branch " + branch) != 0) {
+        log::err("couldn't clone github.com/" + regRepo);
+        cleanup(); return 1;
+    }
+    const fs::path index = clone / indexPath;
+    auto entries = read_kv_file(index);
+    if (auto it = entries.find(alias); it != entries.end()) {
+        cleanup();
+        if (it->second == repo || it->second.rfind(repo + "@", 0) == 0) {
+            log::ok(alias + " is already in the public registry");
+            return 0;
+        }
+        log::err("'" + alias + "' is already taken in the public registry (→ " + it->second + ")");
+        std::cerr << "    " << log::dim("pick another name: quirk register <other-name>") << "\n";
+        return 1;
+    }
+    {
+        std::string body;
+        { std::ifstream in(index); body.assign(std::istreambuf_iterator<char>(in), {}); }
+        if (!body.empty() && body.back() != '\n') body += "\n";
+        body += alias + " = \"" + repo + "\"\n";
+        std::ofstream(index) << body;
+    }
+    const std::string br = "register-" + alias;
+    const std::string git = "git -C " + q;
+    if (sh(git + " checkout -q -b " + br) != 0 || sh(git + " add -- " + indexPath) != 0
+        || sh(git + " commit -q -m 'Register " + alias + " (" + repo + ")'") != 0) {
+        log::err("couldn't commit the registry change (is git's user.name / user.email set?)");
+        cleanup(); return 1;
+    }
+    if (dryRun) {
+        std::cout << "    " << log::dim("dry run — would push branch " + br + " and open a PR with:") << "\n"
+                  << std::flush;
+        std::system((git + " --no-pager diff HEAD~1 --stat --color=never; " + git
+                     + " --no-pager diff HEAD~1 --color=never -U0 | grep '^+[^+]'").c_str());
+        cleanup(); return 0;
+    }
+    // Push to the registry itself when allowed, else to your fork of it.
+    std::string perm;
+    {
+        FILE* pp = popen(("gh api repos/" + regRepo + " --jq .permissions.push 2>/dev/null").c_str(), "r");
+        char buf[16] = {0};
+        if (pp) { if (fgets(buf, sizeof(buf), pp)) perm = buf; pclose(pp); }
+    }
+    std::string head = br;
+    if (perm.rfind("true", 0) == 0) {
+        if (sh(git + " push -q origin " + br) != 0) { log::err("couldn't push to github.com/" + regRepo); cleanup(); return 1; }
+    } else {
+        if (sh("cd " + q + " && gh repo fork --remote --remote-name fork") != 0
+            || sh(git + " push -q fork " + br) != 0) {
+            log::err("couldn't fork github.com/" + regRepo + " and push to it");
+            cleanup(); return 1;
+        }
+        std::string user;
+        if (FILE* pp = popen("gh api user --jq .login 2>/dev/null", "r")) {
+            char buf[128] = {0};
+            if (fgets(buf, sizeof(buf), pp)) user = buf;
+            pclose(pp);
+        }
+        while (!user.empty() && std::isspace((unsigned char)user.back())) user.pop_back();
+        head = user + ":" + br;
+    }
+    std::string prUrl;
+    {
+        std::string cmd = "cd " + q + " && gh pr create --repo " + regRepo + " --base " + branch
+                        + " --head " + head + " --title 'Register " + alias + "'"
+                        + " --body 'Adds `" + alias + " = \"" + repo + "\"` to the registry"
+                        + " (opened by `quirk register`).' 2>&1";
+        if (FILE* pp = popen(cmd.c_str(), "r")) {
+            char buf[512];
+            while (fgets(buf, sizeof(buf), pp)) prUrl += buf;
+            if (pclose(pp) != 0) { log::err("couldn't open the pull request: " + prUrl); cleanup(); return 1; }
+        }
+    }
+    while (!prUrl.empty() && std::isspace((unsigned char)prUrl.back())) prUrl.pop_back();
+    if (auto nl = prUrl.rfind('\n'); nl != std::string::npos) prUrl = prUrl.substr(nl + 1);
+    log::ok("opened " + prUrl);
+    std::cout << "    " << log::dim("once it's merged, anyone can run:  quirk install " + alias) << "\n";
+    cleanup();
+    return 0;
+}
+
 // `quirk pkg register [<alias>]` — register THIS project under a name,
 // reading the manifest's `name` and `repository` fields. Lets a package
 // author do one command from inside their repo and have it findable by
@@ -6236,11 +6392,15 @@ static int cmd_register(const std::vector<std::string>& args) {
         return 1;
     }
 
-    // Allow `--skip-checks` for power users / CI that already validated.
-    bool skipChecks = false;
+    // `--skip-checks`: for power users / CI that already validated.
+    // `--local`: only this machine's alias, no PR. `--dry-run`: show the
+    // registry change without pushing or opening the PR.
+    bool skipChecks = false, localOnly = false, dryRun = false;
     std::vector<std::string> aliasArgs;
     for (auto& a : args) {
         if (a == "--skip-checks") skipChecks = true;
+        else if (a == "--local")  localOnly = true;
+        else if (a == "--dry-run") dryRun = true;
         else aliasArgs.push_back(a);
     }
 
@@ -6271,6 +6431,18 @@ static int cmd_register(const std::vector<std::string>& args) {
         repo = repo.substr(0, repo.size() - 4);
 
     std::string alias = aliasArgs.empty() ? m.name : aliasArgs[0];
+    // Both end up in shell commands and the registry index: keep them plain.
+    static const std::regex aliasRe("^[a-z0-9][a-z0-9_-]*$");
+    static const std::regex repoRe("^github\\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$");
+    if (!std::regex_match(alias, aliasRe)) {
+        log::err("register: '" + alias + "' isn't a valid name (lowercase letters, digits, - and _)");
+        return 1;
+    }
+    if (!localOnly && !std::regex_match(repo, repoRe)) {
+        log::err("register: the public registry needs a GitHub repository (github.com/<owner>/<repo>), got " + repo);
+        std::cerr << "    " << log::dim("`quirk register --local` saves the alias for this machine only") << "\n";
+        return 1;
+    }
     auto aliases = read_kv_file(aliases_path());
     auto existing = aliases.find(alias);
     if (existing != aliases.end() && existing->second != repo) {
@@ -6282,9 +6454,9 @@ static int cmd_register(const std::vector<std::string>& args) {
     aliases[alias] = repo;
     write_kv_file(aliases_path(), aliases,
                   "Quirk package aliases. `name = \"github.com/owner/repo\"`");
-    std::cout << "Registered: " << alias << " → " << repo << "\n";
-    std::cout << "  Others can now run:  quirk pkg install " << alias << "\n";
-    return 0;
+    log::ok("saved " + alias + " → " + repo + log::dim("  (this machine: ~/.quirk/aliases.toml)"));
+    if (localOnly) return 0;
+    return publish_to_registry(alias, repo, dryRun);
 }
 
 // ----------------------- Advisories (security audit) ------------------
@@ -7446,11 +7618,17 @@ static std::string help_for(const std::string& cmdIn) {
                "      --lib        scaffold src/index.qk exposing a public\n"
                "                   function (no main) — the library shape\n";
     if (cmd == "register")
-        return "quirk pkg register [<alias>] [--skip-checks]\n"
-               "    Register THIS project under a short name so others can\n"
-               "    `quirk pkg install <alias>`. Reads `name` and `repository`\n"
-               "    from ./quirk.toml. With no <alias>, uses the manifest name.\n"
-               "    Runs `quirk pkg check` first; --skip-checks bypasses it.\n";
+        return "quirk register [<alias>] [--local] [--dry-run] [--skip-checks]\n"
+               "    Make THIS project installable by a short name: `quirk install\n"
+               "    <alias>`. Reads `name` and `repository` from ./quirk.toml (with\n"
+               "    no <alias>, uses the manifest name), saves the alias on this\n"
+               "    machine, and opens a pull request adding it to the public\n"
+               "    registry (github.com/quirk-pkg/registry, via the gh CLI; from a\n"
+               "    fork if you can't push there). Once it's merged, the name\n"
+               "    works for everyone.\n"
+               "      --local        only save the alias on this machine\n"
+               "      --dry-run      show the registry change; don't push or open the PR\n"
+               "      --skip-checks  skip the `quirk pkg check` validation\n";
     if (cmd == "check")
         return "quirk pkg check\n"
                "    Validate ./quirk.toml + package layout. Reports manifest\n"

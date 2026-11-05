@@ -5,6 +5,41 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.7.0] — 2026-11-05 — `quirk register` publishes; `update` waits for builds
+
+### `quirk register` opens a pull request to the public registry
+
+`quirk register` only saved the name in `~/.quirk/aliases.toml` — on your
+own machine — yet printed "Others can now run: quirk pkg install <name>".
+Nobody else could. It now also publishes: with the gh CLI it clones the
+registry (`github.com/quirk-pkg/registry`), adds `<name> = "<repo>"` on a
+`register-<name>` branch, pushes it (to your fork when you can't push to
+the registry), and opens the pull request. Once it's merged, `quirk
+install <name>` works for everyone.
+
+- `--local` only saves the alias on this machine; `--dry-run` shows the
+  registry change without pushing or opening anything.
+- A name already listed for the same repo is reported as done; one taken
+  by another repo is refused.
+- Names must be `[a-z0-9_-]`, and the repository a GitHub one.
+- A registry configured outside GitHub gets the line to add by hand.
+
+### `update` waits for a release's build
+
+A release is published the moment it's tagged, but its builds take a few
+minutes to upload, so `quirk compiler update` run in between failed with
+`release v7.6.1 has no linux-x86_64 build (yet?)`. `update`, `compiler
+check` and the daily notice now pick the newest stable release that has
+a build for this platform uploaded. A newer one still building is
+mentioned instead:
+
+```
+  · v7.6.4 is published but still building — it'll be offered once its build is uploaded (usually a few minutes)
+  ✓ quirk 7.6.3 is already the latest release
+```
+
+`quirk compiler install <version>` still installs exactly what you name.
+
 ## [7.6.2] — 2026-11-05 — retry flaky downloads, per-package fallback
 
 An update got `crypto: HTTP 504 — using the stdlib bundled with v7.6.1`:

@@ -311,7 +311,7 @@ jobs:
         run: |
           set +e
           fails=0
-          for p in tests/probes/p*.quirk; do
+          for p in tests/probes/p*.quirk tests/probes/p*.qk; do
             out=$(timeout 15 ./bin/quirk-cpp run --no-aot --no-cache "$p" 2>&1)
             # UBSan format: "<file>:<line>:<col>: runtime error: <msg>".
             # The leading path+line:col is what distinguishes a real

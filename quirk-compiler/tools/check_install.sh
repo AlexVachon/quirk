@@ -23,14 +23,15 @@ q() { "$quirk" "$@" </dev/null 2>&1 | sed 's/\x1b\[[0-9;]*m//g'; }
 
 # Two local packages in `src/` layout; the directory names differ from the
 # package names, as a GitHub repo name (`quirk-csv`) differs from `csv`.
-mkpkg() {   # <dir> <name> <version> [<dep-name> <dep-path>]
+# `app` is written in `.qk`, `helper` in `.quirk`: both must install and import.
+mkpkg() {   # <dir> <name> <version> <ext> [<dep-name> <dep-path>]
     mkdir -p "$work/$1/src"
     printf 'name = "%s"\nversion = "%s"\n' "$2" "$3" > "$work/$1/quirk.toml"
-    [ $# -gt 3 ] && printf '\n[deps]\n%s = "%s"\n' "$4" "$5" >> "$work/$1/quirk.toml"
-    echo "define ${2}_ok() -> Bool { return true }" > "$work/$1/src/index.quirk"
+    [ $# -gt 4 ] && printf '\n[deps]\n%s = "%s"\n' "$5" "$6" >> "$work/$1/quirk.toml"
+    echo "define ${2}_ok() -> Bool { return true }" > "$work/$1/src/index$4"
 }
-mkpkg quirk-helper helper 0.1.0
-mkpkg quirk-app app 0.2.0 helper "$work/quirk-helper"
+mkpkg quirk-helper helper 0.1.0 .quirk
+mkpkg quirk-app app 0.2.0 .qk helper "$work/quirk-helper"
 
 mkdir "$work/proj" && cd "$work/proj"
 q init >/dev/null
@@ -43,6 +44,8 @@ grep -q "helper 0.1.0 .* via app" <<<"$out" || fail "transitive dependency wasn'
 grep -q '^app = ' quirk.toml || fail "quirk.toml doesn't record app under its own name"
 grep -q 'quirk-app = \|^helper = ' quirk.toml && fail "quirk.toml records the wrong names (or the transitive dep)"
 grep -q 'name    = "helper"' quirk.lock || fail "quirk.lock is missing the transitive dependency"
+printf 'use app\nuse helper\ndefine main() -> void {\n    if app.app_ok() and helper.helper_ok() { print("imports ok") }\n}\n' > main.qk
+[ "$("$quirk" main.qk </dev/null 2>&1)" = "imports ok" ] || fail "a .qk program couldn't import the installed .qk / .quirk packages"
 
 echo "── quirk install (everything present)"
 out=$(q install)

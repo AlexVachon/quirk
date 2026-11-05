@@ -1,0 +1,4 @@
+// Shadowed by both.qk — p105 fails if this one is picked.
+define which() -> String {
+    return "quirk"
+}

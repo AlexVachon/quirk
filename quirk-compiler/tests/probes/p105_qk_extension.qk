@@ -1,0 +1,15 @@
+// p105 — `.qk` source files (v7.6.0).
+//
+// `.qk` is the preferred extension; `.quirk` still works. This probe is
+// itself a `.qk` file, imports a `.qk` module and a `.quirk` one, and a
+// module present in both extensions resolves to the `.qk` file.
+from .qk_fixtures.greet use { greet }
+from .qk_fixtures.legacy use { legacy }
+from .qk_fixtures.both use { which }
+
+define main() -> void {
+    if greet("qk") != "hello qk" { print("FAIL: .qk module"); return }
+    if legacy() != "legacy ok"   { print("FAIL: .quirk module from a .qk file"); return }
+    if which() != "qk"           { print("FAIL: both.qk should shadow both.quirk, got " + which()); return }
+    print("PASS: .qk sources")
+}

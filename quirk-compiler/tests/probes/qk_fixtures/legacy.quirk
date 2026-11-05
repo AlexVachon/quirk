@@ -1,0 +1,4 @@
+// A `.quirk` module, imported from a `.qk` file (p105).
+define legacy() -> String {
+    return "legacy ok"
+}

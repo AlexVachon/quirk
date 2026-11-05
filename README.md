@@ -1,8 +1,8 @@
-# Quirk (.quirk) Language Reference
+# Quirk (.qk) Language Reference
 
 **Compiler:** 5.2.0  
 **Language spec:** rev 3  
-**Extension:** `.quirk`  
+**Extension:** `.qk` (`.quirk` also works)  
 **Runtime:** LLVM JIT + native binary output
 
 Quirk is a compiled, statically-typed language with Python-like syntax, struct-based OOP, first-class functions, sum types (tagged unions + generics, since v3.0.0), and a rich standard library. It compiles to native code via LLVM and uses the Boehm GC for memory management.
@@ -79,7 +79,7 @@ print(greet("Quirk"))
 ```
 
 ```bash
-quirk hello.quirk
+quirk hello.qk
 ```
 
 > **See it in a real app:** [`examples/todo_cli/`](examples/todo_cli/)
@@ -1236,22 +1236,22 @@ print(v)
 
 ```bash
 # Run immediately (JIT)
-quirk program.quirk
+quirk program.qk
 
 # Step through interactively under the (qdb) debugger
-quirk --debug program.quirk
+quirk --debug program.qk
 
 # Emit LLVM IR
-quirk --emit-ir program.quirk
+quirk --emit-ir program.qk
 
 # Compile to native binary
-quirk -o output program.quirk
+quirk -o output program.qk
 
 # Verbose compilation output
-quirk -v program.quirk
+quirk -v program.qk
 
 # Dump AST
-quirk --emit-ast program.quirk
+quirk --emit-ast program.qk
 ```
 
 For the full CLI reference (subcommands, package manager, debugger commands, …) see [COMMANDS.md](COMMANDS.md).

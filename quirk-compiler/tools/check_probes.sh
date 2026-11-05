@@ -1,5 +1,5 @@
 #!/bin/bash
-# Run every tests/probes/p*.quirk and fail on anything but a clean pass.
+# Run every tests/probes/p*.quirk / p*.qk and fail on anything but a clean pass.
 #
 # A probe fails when it
 #   - crashes (ICE, malformed IR, SIGSEGV / SIGABRT) or times out,
@@ -17,7 +17,7 @@
 QUIRK=${1:-./bin/quirk-cpp}
 fails=0
 total=0
-for p in tests/probes/p*.quirk; do
+for p in tests/probes/p*.quirk tests/probes/p*.qk; do
     total=$((total + 1))
     out=$(timeout 10 "$QUIRK" run --no-aot --no-cache "$p" 2>&1 < /dev/null)
     rc=$?

@@ -2,6 +2,17 @@
 
 All notable changes to the extension land here. Versioning follows SemVer; minor bumps for new features, patches for fixes.
 
+## [0.3.0] — 2026-11-05 — `.qk` files
+
+`.qk` is now the preferred Quirk extension (compiler 7.6.0); `.quirk`
+keeps working. The extension opens `.qk` files as Quirk, and every
+place that looks a module up by path — import completion, go-to
+definition, hover, find references, rename, and the LSP — tries
+`<name>.qk` before `<name>.quirk`.
+
+Also fixed: import completion offered `csv.q` for a `csv.quirk` module
+(it trimmed 3 characters off a 6-character extension).
+
 ## [0.2.23] — 2026-08-18 — module-level constants export + no "unused" on public API
 
 Two related fixes, both surfaced while dogfooding `qcm` against the

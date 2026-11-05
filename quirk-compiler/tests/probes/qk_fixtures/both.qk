@@ -1,0 +1,4 @@
+// `both.qk` and `both.quirk` exist side by side: `.qk` must win (p105).
+define which() -> String {
+    return "qk"
+}

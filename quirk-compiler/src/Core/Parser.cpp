@@ -1114,9 +1114,7 @@ std::unique_ptr<Node> Parser::parseFor() {
 // libs/sys/index.quirk             -> "Sys"
 // userfile.quirk                   -> "Userfile"
 std::string Parser::computeModulePrefix() const {
-    std::string p = this->filePath;
-    if (p.size() >= 6 && p.substr(p.size() - 6) == ".quirk")
-        p = p.substr(0, p.size() - 6);
+    std::string p = quirk_src::strip(this->filePath);
     for (char& c : p) if (c == '\\') c = '/';
 
     std::vector<std::string> parts;

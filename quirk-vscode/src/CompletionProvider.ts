@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import { resolveQuirkHome } from './ImportProvider';
+import { withExts, isQuirkSource, stripQuirkExt, isEntryFile } from './sourceExt';
 
 const FILE_CACHE_TTL_MS = 5000;
 const EXISTS_CACHE_TTL_MS = 2000;
@@ -1646,14 +1647,14 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
             if (fs.existsSync(targetDir) && isDirSafely(targetDir)) {
                 try {
                     for (const f of fs.readdirSync(targetDir)) {
-                        if (f.startsWith('.') || f === '__init.quirk' || f === 'index.quirk') continue;
+                        if (f.startsWith('.') || isEntryFile(f)) continue;
                         // Skip bucket dirs only at the top level (no subpath yet).
                         if (!searchDirRel && BUCKETS.has(f)) continue;
                         let name = f, kind = vscode.CompletionItemKind.Folder;
                         const fullPath = path.join(targetDir, f);
                         if (!isDirSafely(fullPath)) {
-                            if (!f.endsWith('.quirk')) continue;
-                            name = f.substring(0, f.length - 3);
+                            if (!isQuirkSource(f)) continue;
+                            name = stripQuirkExt(f);
                             kind = vscode.CompletionItemKind.Module;
                         }
                         if (!completions.some(c => c.label === name)) {
@@ -1692,12 +1693,9 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
             let searchDir = path.dirname(currentFile);
             for (let i = 1; i < dotCount; i++) searchDir = path.dirname(searchDir);
             const targetBase = subPath ? path.join(searchDir, subPath) : searchDir;
-            const cand1 = targetBase + '.quirk';
-            if (this.fileExists(cand1)) return cand1;
-            const cand2 = path.join(targetBase, 'index.quirk');
-            if (this.fileExists(cand2)) return cand2;
-            const cand3 = path.join(targetBase, '__init.quirk');
-            if (this.fileExists(cand3)) return cand3;
+            for (const c of [...withExts(targetBase), ...withExts(path.join(targetBase, 'index')),
+                             ...withExts(path.join(targetBase, '__init'))])
+                if (this.fileExists(c)) return c;
             return null;
         }
 
@@ -1705,11 +1703,11 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
         const relPath = modulePath.replace(/\./g, '/');
         for (const root of searchRoots) {
             const candidates = [
-                path.join(root, relPath + '.quirk'),
-                path.join(root, relPath, 'index.quirk'),
-                path.join(root, relPath, '__init.quirk'),
-                path.join(root, relPath, 'src', 'index.quirk'),
-                path.join(root, relPath, 'src', relPath + '.quirk'),
+                ...withExts(path.join(root, relPath)),
+                ...withExts(path.join(root, relPath, 'index')),
+                ...withExts(path.join(root, relPath, '__init')),
+                ...withExts(path.join(root, relPath, 'src', 'index')),
+                ...withExts(path.join(root, relPath, 'src', relPath)),
             ];
             for (const c of candidates) if (this.fileExists(c)) return c;
         }
@@ -1791,21 +1789,21 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
                     if (isDir) {
                         // Package — stdlib layout (`<entry>/index.quirk`) or
                         // package layout (`<entry>/src/index.quirk`).
-                        if (fs.existsSync(path.join(fullPath, 'index.quirk')) ||
-                            fs.existsSync(path.join(fullPath, 'src', 'index.quirk')) ||
-                            fs.existsSync(path.join(fullPath, 'src', entry + '.quirk'))) {
+                        if ([...withExts(path.join(fullPath, 'index')),
+                             ...withExts(path.join(fullPath, 'src', 'index')),
+                             ...withExts(path.join(fullPath, 'src', entry))].some(c => fs.existsSync(c))) {
                             add(entry, entry);
                         }
                         // Sub-modules: <root>/<entry>/<sub>.quirk → `use entry.sub`
                         try {
                             for (const sub of fs.readdirSync(fullPath)) {
-                                if (sub.startsWith('.') || sub === 'index.quirk' || sub === '__init.quirk' || !sub.endsWith('.quirk')) continue;
-                                const subAlias = sub.slice(0, -3);
+                                if (sub.startsWith('.') || isEntryFile(sub) || !isQuirkSource(sub)) continue;
+                                const subAlias = stripQuirkExt(sub);
                                 add(subAlias, `${entry}.${subAlias}`);
                             }
                         } catch { }
-                    } else if (entry.endsWith('.quirk')) {
-                        const alias = entry.slice(0, -3);
+                    } else if (isQuirkSource(entry)) {
+                        const alias = stripQuirkExt(entry);
                         add(alias, alias);
                     }
                 }

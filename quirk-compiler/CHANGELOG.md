@@ -5,6 +5,35 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.6.0] — 2026-11-05 — `.qk` source files
+
+`.qk` is now the preferred extension for Quirk source; `.quirk` keeps
+working everywhere, so nothing has to be renamed. A project can mix the
+two and rename files one at a time.
+
+- **Imports:** every module lookup tries `<name>.qk` before
+  `<name>.quirk` (and likewise `index.qk`, `src/index.qk`, …). When both
+  exist, `.qk` wins.
+- **Commands:** `quirk <file>.qk`, `run`, `check <file>.qk`, `watch`,
+  `fmt` and `doc` (directory walks), and `quirk test` (`*_test.qk` as
+  well as `*_test.quirk`).
+- **New files use `.qk`:** `quirk new` scaffolds `src/index.qk` and
+  `tests/<name>_test.qk`. `quirk init` does too, but leaves an existing
+  `src/index.quirk` or `tests/index_test.quirk` alone instead of writing
+  a `.qk` next to it that would shadow it.
+- **Packages:** a package written in `.qk` installs and imports like any
+  other (`src/index.qk` is recognised as the `src/` layout).
+- **Tab completion** (bash, zsh, fish) offers `.qk` files.
+- **Editor:** the VS Code extension (0.3.0) opens `.qk` files as Quirk,
+  and its import completion, go-to-definition and the LSP resolve `.qk`
+  modules.
+
+The extension rules live in one place, `include/source_ext.hpp` (and
+`sourceExt.ts` in the editor packages). The stdlib packages stay
+`.quirk` for now. New probe p105 (itself a `.qk` file) locks imports of
+`.qk` and `.quirk` modules and the `.qk`-wins rule; the install check
+now installs a `.qk` package and runs a `.qk` program that imports it.
+
 ## [7.5.0] — 2026-11-05 — project installs fixed, pip-style output, faster downloads, CLI cleanup
 
 ### `quirk install` / `quirk sync`

@@ -326,11 +326,10 @@ std::string resolveImportPath(const std::string& moduleName, const std::string& 
 
         std::string subPath = effectiveName.substr(dotCount);
 
-        fs::path candidateFile = baseDir / (subPath + ".quirk");
-        if (fs::exists(candidateFile)) return candidateFile.string();
-
-        fs::path candidateInit = baseDir / subPath / "index.quirk";
-        if (fs::exists(candidateInit)) return candidateInit.string();
+        for (const std::string& stem : {(baseDir / subPath).string(),
+                                        (baseDir / subPath / "index").string()})
+            for (const std::string& candidate : quirk_src::variants(stem))
+                if (fs::exists(candidate)) return candidate;
 
         // Fall through to the absolute search below: relative walks that
         // miss (e.g. `from ...sys` inside an installed typing package
@@ -356,11 +355,13 @@ std::string resolveImportPath(const std::string& moduleName, const std::string& 
     std::string relPath = effectiveName;
     std::replace(relPath.begin(), relPath.end(), '.', '/');
 
-    std::vector<std::string> variants = {
-        relPath + ".quirk",
-        relPath + "/index.quirk",
-        relPath + "/src/index.quirk",                       // package layout: pkg/src/index.quirk
-        relPath + "/src/" + relPath + ".quirk",
+    // Extension-less stems, in priority order; each is tried as `.qk`
+    // then `.quirk` below.
+    std::vector<std::string> stems = {
+        relPath,
+        relPath + "/index",
+        relPath + "/src/index",                       // package layout: pkg/src/index.qk
+        relPath + "/src/" + relPath,
     };
 
     // Sub-module access through a `src/`-layout package: when the import is
@@ -393,10 +394,13 @@ std::string resolveImportPath(const std::string& moduleName, const std::string& 
                 if (i > k) suffix += '/';
                 suffix += parts[i];
             }
-            variants.push_back(prefix + "/src/" + suffix + ".quirk");
-            variants.push_back(prefix + "/src/" + suffix + "/index.quirk");
+            stems.push_back(prefix + "/src/" + suffix);
+            stems.push_back(prefix + "/src/" + suffix + "/index");
         }
     }
+    std::vector<std::string> variants;
+    for (const auto& stem : stems)
+        for (const auto& v : quirk_src::variants(stem)) variants.push_back(v);
 
     for (const auto& root : getSearchPaths()) {
         for (const auto& variant : variants) {

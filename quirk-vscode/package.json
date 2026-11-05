@@ -2,7 +2,7 @@
   "name": "quirk",
   "displayName": "Quirk",
   "description": "Language support, interactive debugger, and Run/Debug integration for the Quirk programming language.",
-  "version": "0.2.23",
+  "version": "0.3.0",
   "publisher": "quirk",
   "license": "MIT",
   "icon": "icons/icon.png",
@@ -40,6 +40,7 @@
           "quirk"
         ],
         "extensions": [
+          ".qk",
           ".quirk"
         ],
         "configuration": "./language-configuration.json",
@@ -181,7 +182,7 @@
         "properties": {
           "file": {
             "type": "string",
-            "description": "The .quirk file to compile and run."
+            "description": "The .qk / .quirk file to compile and run."
           }
         }
       }
@@ -200,7 +201,7 @@
             "properties": {
               "program": {
                 "type": "string",
-                "description": "Path to the .quirk file to debug.",
+                "description": "Path to the .qk / .quirk file to debug.",
                 "default": "${file}"
               },
               "args": {

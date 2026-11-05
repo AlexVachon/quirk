@@ -1,0 +1,4 @@
+// A `.qk` module (imported by p105).
+define greet(who: String) -> String {
+    return "hello " + who
+}

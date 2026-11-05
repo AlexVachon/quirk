@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { maskLine } from './utils/maskLine';
+import { QUIRK_GLOB } from './sourceExt';
 
 export class QuirkReferenceProvider implements vscode.ReferenceProvider {
 
@@ -33,7 +34,7 @@ export class QuirkReferenceProvider implements vscode.ReferenceProvider {
         if (isLocal) {
             filesToSearch = [document.uri];
         } else {
-            filesToSearch = await vscode.workspace.findFiles('**/*.quirk', '**/node_modules/**');
+            filesToSearch = await vscode.workspace.findFiles(QUIRK_GLOB, '**/node_modules/**');
         }
 
         const locations: vscode.Location[] = [];

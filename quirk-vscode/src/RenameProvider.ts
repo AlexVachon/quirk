@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { maskLine } from './utils/maskLine';
+import { QUIRK_GLOB } from './sourceExt';
 
 export class QuirkRenameProvider implements vscode.RenameProvider {
 
@@ -52,7 +53,7 @@ export class QuirkRenameProvider implements vscode.RenameProvider {
         if (isLocal) {
             filesToSearch = [document.uri];
         } else {
-            filesToSearch = await vscode.workspace.findFiles('**/*.quirk', '**/node_modules/**');
+            filesToSearch = await vscode.workspace.findFiles(QUIRK_GLOB, '**/node_modules/**');
         }
 
         for (const uri of filesToSearch) {

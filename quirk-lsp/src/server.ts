@@ -84,6 +84,7 @@ import { URL, fileURLToPath } from 'url';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { withExts, isQuirkSource } from './sourceExt';
 
 // One JSON-RPC connection over stdio, plus a document store.
 //
@@ -754,7 +755,7 @@ function findDeclarationsTransitively(
       let base = dir;
       for (let k = 1; k < dots; k++) base = path.dirname(base);
       const candidate = tail ? path.join(base, tail) : base;
-      for (const p of [candidate + '.quirk', path.join(candidate, 'index.quirk')]) {
+      for (const p of [...withExts(candidate), ...withExts(path.join(candidate, 'index'))]) {
         if (fs.existsSync(p)) { nextPath = p; break; }
       }
     } else {
@@ -924,7 +925,7 @@ function* walkQuirkFiles(root: string): Generator<string> {
       if (e.isDirectory()) {
         if (SKIP_DIRS.has(e.name)) continue;
         stack.push(full);
-      } else if (e.isFile() && e.name.endsWith('.quirk')) {
+      } else if (e.isFile() && isQuirkSource(e.name)) {
         yield full;
         if (++visited >= MAX_FILES) return;
       }
@@ -1602,7 +1603,7 @@ function findSignatureTransitively(
       let base = dir;
       for (let k = 1; k < dots; k++) base = path.dirname(base);
       const candidate = tail ? path.join(base, tail) : base;
-      for (const p of [candidate + '.quirk', path.join(candidate, 'index.quirk')]) {
+      for (const p of [...withExts(candidate), ...withExts(path.join(candidate, 'index'))]) {
         if (fs.existsSync(p)) { nextPath = p; break; }
       }
     } else {

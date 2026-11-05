@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
+import { withExts } from './sourceExt';
 
 // Read the `name = "..."` field from a quirk.toml. Returns "" on miss.
 // Cheap, regex-based — full TOML parsing isn't needed for one scalar.
@@ -30,10 +31,10 @@ function resolveSelfPackage(projectRoot: string, modulePath: string): string | n
     const pkgName = readPackageName(path.join(projectRoot, 'quirk.toml'));
     if (!pkgName || pkgName !== modulePath) return null;
     for (const c of [
-        path.join(projectRoot, 'src', 'index.quirk'),
-        path.join(projectRoot, 'src', pkgName + '.quirk'),
-        path.join(projectRoot, pkgName + '.quirk'),
-        path.join(projectRoot, pkgName, 'index.quirk'),
+        ...withExts(path.join(projectRoot, 'src', 'index')),
+        ...withExts(path.join(projectRoot, 'src', pkgName)),
+        ...withExts(path.join(projectRoot, pkgName)),
+        ...withExts(path.join(projectRoot, pkgName, 'index')),
     ]) {
         if (fs.existsSync(c)) return c;
     }
@@ -51,9 +52,9 @@ export function resolveModulePath(projectRoot: string, currentFile: string, modu
         for (let i = 1; i < m[1].length; i++) searchDir = path.dirname(searchDir);
         const subPath = m[2].replace(/\./g, '/');
         for (const c of [
-            path.join(searchDir, subPath + '.quirk'),
-            path.join(searchDir, subPath, 'index.quirk'),
-            path.join(searchDir, subPath, '__init.quirk'),
+            ...withExts(path.join(searchDir, subPath)),
+            ...withExts(path.join(searchDir, subPath, 'index')),
+            ...withExts(path.join(searchDir, subPath, '__init')),
         ]) if (fs.existsSync(c)) return c;
         return null;
     }
@@ -91,11 +92,11 @@ export function resolveModulePath(projectRoot: string, currentFile: string, modu
     );
     for (const root of roots) {
         for (const c of [
-            path.join(root, relPath + '.quirk'),
-            path.join(root, relPath, 'index.quirk'),
-            path.join(root, relPath, '__init.quirk'),
-            path.join(root, relPath, 'src', 'index.quirk'),
-            path.join(root, relPath, 'src', relPath + '.quirk'),
+            ...withExts(path.join(root, relPath)),
+            ...withExts(path.join(root, relPath, 'index')),
+            ...withExts(path.join(root, relPath, '__init')),
+            ...withExts(path.join(root, relPath, 'src', 'index')),
+            ...withExts(path.join(root, relPath, 'src', relPath)),
         ]) if (fs.existsSync(c)) return c;
     }
     return null;
@@ -730,11 +731,11 @@ export class QuirkDefinitionProvider implements vscode.DefinitionProvider {
         const relPath = modulePath.replace(/\./g, '/');
         for (const root of this.getSearchRoots(projectRoot)) {
             const candidates = [
-                path.join(root, relPath + '.quirk'),
-                path.join(root, relPath, 'index.quirk'),
-                path.join(root, relPath, '__init.quirk'),
-                path.join(root, relPath, 'src', 'index.quirk'),
-                path.join(root, relPath, 'src', relPath + '.quirk'),
+                ...withExts(path.join(root, relPath)),
+                ...withExts(path.join(root, relPath, 'index')),
+                ...withExts(path.join(root, relPath, '__init')),
+                ...withExts(path.join(root, relPath, 'src', 'index')),
+                ...withExts(path.join(root, relPath, 'src', relPath)),
             ];
             for (const c of candidates) if (fs.existsSync(c)) return c;
         }
@@ -747,12 +748,10 @@ export class QuirkDefinitionProvider implements vscode.DefinitionProvider {
         let searchDir = path.dirname(currentFile);
         for (let i = 1; i < m[1].length; i++) searchDir = path.dirname(searchDir);
         const subPath = m[2].replace(/\./g, '/');
-        const v1 = path.join(searchDir, subPath + '.quirk');
-        const v2 = path.join(searchDir, subPath, 'index.quirk');
-        const v3 = path.join(searchDir, subPath, '__init.quirk');
-        if (fs.existsSync(v1)) return v1;
-        if (fs.existsSync(v2)) return v2;
-        if (fs.existsSync(v3)) return v3;
+        for (const c of [...withExts(path.join(searchDir, subPath)),
+                         ...withExts(path.join(searchDir, subPath, 'index')),
+                         ...withExts(path.join(searchDir, subPath, '__init'))])
+            if (fs.existsSync(c)) return c;
         return null;
     }
 

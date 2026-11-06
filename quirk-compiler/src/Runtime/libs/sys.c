@@ -52,16 +52,9 @@ static void quirk_crash_handler(int sig) {
                         :                    "fatal signal";
     fprintf(stderr, "\nQuirk runtime error: %s\n", signame);
     if (quirk_shadow_sp > 0) {
-        fprintf(stderr, "Traceback (most recent call last):\n");
-        for (int i = 0; i < quirk_shadow_sp; i++) {
-            const char* fn = quirk_shadow_stack[i].func_name ? quirk_shadow_stack[i].func_name : "?";
-            const char* fl = quirk_shadow_stack[i].file_name ? quirk_shadow_stack[i].file_name : "?";
-            int ln = quirk_shadow_stack[i].line;
-            if (ln > 0)
-                fprintf(stderr, "  [%d] %s  (%s:%d)\n", i, fn, fl, ln);
-            else
-                fprintf(stderr, "  [%d] %s  (%s)\n", i, fn, fl);
-        }
+        static char tb[16384];
+        quirk_format_frames_elided(tb, sizeof(tb), quirk_shadow_sp);
+        fprintf(stderr, "Traceback (most recent call last):\n%s", tb);
     } else {
         fprintf(stderr, "(no Quirk stack frames recorded)\n");
     }
@@ -133,24 +126,24 @@ int quirk_shadow_sp = 0;
 void quirk_push_frame(const char* func, const char* file, int line) {
     if (quirk_shadow_sp >= 1024) {
         // Stack overflow — print trace and abort with a clear message.
-        fprintf(stderr, "\nQuirk runtime error: stack overflow\n");
-        fprintf(stderr, "Traceback (most recent call last):\n");
-        for (int i = 0; i < quirk_shadow_sp; i++) {
-            const char* fn = quirk_shadow_stack[i].func_name ? quirk_shadow_stack[i].func_name : "?";
-            const char* fl = quirk_shadow_stack[i].file_name ? quirk_shadow_stack[i].file_name : "?";
-            int ln = quirk_shadow_stack[i].line;
-            if (ln > 0)
-                fprintf(stderr, "  [%d] %s  (%s:%d)\n", i, fn, fl, ln);
-            else
-                fprintf(stderr, "  [%d] %s  (%s)\n", i, fn, fl);
-        }
+        fprintf(stderr, "\nQuirk runtime error: stack overflow (recursion deeper than 1024 calls)\n");
+        static char tb[16384];
+        quirk_format_frames_elided(tb, sizeof(tb), quirk_shadow_sp);
+        fprintf(stderr, "Traceback (most recent call last):\n%s", tb);
         fprintf(stderr, "  ... (attempting to call: %s)\n", func ? func : "?");
+        signal(SIGABRT, SIG_DFL);  // don't print the traceback twice
         abort();
     }
     quirk_shadow_stack[quirk_shadow_sp].func_name = func;
     quirk_shadow_stack[quirk_shadow_sp].file_name = file;
     quirk_shadow_stack[quirk_shadow_sp].line      = line;
+    quirk_shadow_stack[quirk_shadow_sp].cur_line  = 0;
     quirk_shadow_sp++;
+}
+
+int32_t* quirk_push_frame_l(const char* func, const char* file, int line) {
+    quirk_push_frame(func, file, line);
+    return (int32_t*)&quirk_shadow_stack[quirk_shadow_sp - 1].cur_line;
 }
 
 void quirk_pop_frame() {

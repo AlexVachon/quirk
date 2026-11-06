@@ -1501,6 +1501,7 @@ int main(int argc, char* argv[]) {
         codegen.setOptLevel(opts.optLevel);
         codegen.setDebugMode(opts.debugMode);
         codegen.setSourceMap(sourceMap);
+        codegen.setEntryFile(fs::absolute(opts.inputFile).string());
         codegen.compile(ast, dest);
         dest.flush();
 
@@ -1533,6 +1534,7 @@ int main(int argc, char* argv[]) {
             codegen.setOptLevel(opts.optLevel);
             codegen.setDebugMode(opts.debugMode);
             codegen.setSourceMap(sourceMap);
+            codegen.setEntryFile(fs::absolute(opts.inputFile).string());
             codegen.compile(ast, irDest);
         }
 
@@ -1598,6 +1600,7 @@ int main(int argc, char* argv[]) {
             codegen.setOptLevel(opts.optLevel);
             codegen.setDebugMode(opts.debugMode);
             codegen.setSourceMap(sourceMap);
+            codegen.setEntryFile(fs::absolute(opts.inputFile).string());
             codegen.compile(ast, irDest);
         }
         if (runAotPipeline(irPath, binPath.string(), runtimePath, opts.verbose) != 0) {
@@ -1623,6 +1626,7 @@ int main(int argc, char* argv[]) {
         codegen.setOptLevel(opts.optLevel);
         codegen.setDebugMode(opts.debugMode);
         codegen.setSourceMap(sourceMap);
+        codegen.setEntryFile(fs::absolute(opts.inputFile).string());
         auto [module, ctx] = codegen.compileAndRelease(ast);
 
         // Save bitcode for next run BEFORE the JIT consumes the module —

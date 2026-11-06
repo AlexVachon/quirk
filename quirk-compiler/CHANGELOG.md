@@ -5,6 +5,39 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.9.2] — 2026-11-06 — Python-style tracebacks with line numbers
+
+- **Uncaught runtime errors print a traceback.** An `IndexError`,
+  `ZeroDivisionError`, overflow, `TypeError`, … raised by the runtime
+  printed only `IndexError: …`; now it prints the call stack first, like
+  a `throw` does. All uncaught exceptions go to stderr.
+- **Every frame names the line that was running**, with its source
+  line, oldest call first:
+
+  ```
+  Traceback (most recent call last):
+    File "/path/app.qk", line 12, in main
+      print(mid(7))
+    File "/path/app.qk", line 9, in mid
+      return check(n) + a
+    File "/path/app.qk", line 3, in check
+      throw ValueError("too big: ${x}")
+  ValueError: too big: 7
+  ```
+
+  Frames used to carry only the function's definition line and were
+  listed innermost-first (`at check (file)`), with the throwing
+  function repeated under its symbol name (`App$check`). Methods show
+  as `Acct.withdraw`. The same layout is used by `e.traceback`,
+  `e.print_traceback()`, `with_cause` chains, crash (SIGSEGV) reports
+  and stack overflows, which now show the oldest 3 and newest 8 frames
+  instead of all 1024. `e.callee` is the readable name too.
+- **Scripts without `main()`** label the top frame with the entry file;
+  it named the first imported stdlib file
+  (`packages/typing/collections/list.quirk`).
+- Cost: one store per statement. It doesn't show on the benchmarks; a loop
+  of trivial statements runs up to ~30% slower.
+
 ## [7.9.1] — 2026-11-06 — Callable defaults, default pad, `__add__`, typed List elements
 
 - **Default parameters work through a Callable.** `apply(greet, "Bob")`

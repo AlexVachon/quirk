@@ -13,6 +13,7 @@
 #include "llvm/Transforms/InstCombine/InstCombine.h"
 #include "llvm/Transforms/IPO.h"
 
+#include <filesystem>
 #include <functional>
 #include <iostream>
 #include <map>
@@ -155,6 +156,40 @@ class LLVMCodegen {
     }
 
     void setSourceMap(const std::map<std::string, std::string>& sm) { sourceMap = sm; }
+    // The user's entry file (absolute); names the `main` frame in tracebacks.
+    void setEntryFile(const std::string& f) { entryFile = f; }
+    std::string entryFile;
+    // This function's shadow-frame cur_line slot (from quirk_push_frame_l)
+    // and its source file; handleStatement stores each statement's line.
+    Value* curLineSlot = nullptr;
+    std::string curLineFile;
+    // Same file, however it's spelled: the parser stores some nodes'
+    // paths relative to the cwd (`tests/x.qk`) and others absolute.
+    std::map<std::string, std::string> canonPathCache;
+    const std::string& canonPath(const std::string& p) {
+        auto it = canonPathCache.find(p);
+        if (it != canonPathCache.end()) return it->second;
+        std::error_code ec;
+        std::string c = std::filesystem::weakly_canonical(std::filesystem::absolute(p, ec), ec).string();
+        if (ec || c.empty()) c = p;
+        return canonPathCache.emplace(p, c).first->second;
+    }
+
+    // How a function appears in tracebacks: `P.label`, not `P_label`.
+    static std::string frameName(const FunctionNode* fn) {
+        const std::string& n = fn->name;
+        const std::string& c = fn->cls;
+        if (!c.empty() && n.size() > c.size() && n.compare(0, c.size(), c) == 0 && n[c.size()] == '_')
+            return c + "." + (n.compare(c.size(), 2, "__") == 0 && n.compare(c.size(), 6, "__init") == 0
+                              ? n.substr(c.size()) : n.substr(c.size() + 1));
+        return n;
+    }
+
+    FunctionCallee pushFrameLFn() {
+        Type* i8p = Type::getInt8PtrTy(Context);
+        return TheModule->getOrInsertFunction("quirk_push_frame_l",
+            PointerType::getUnqual(Type::getInt32Ty(Context)), i8p, i8p, Type::getInt32Ty(Context));
+    }
 
     [[noreturn]] void fatalError(const std::string& msg, int line, int col) {
         std::cerr << quirk::errorTag(msg) << msg << "\n";
@@ -714,6 +749,10 @@ class LLVMCodegen {
                 }
             }
         }
+        // Scripts with no explicit main(): the entry file. The first node
+        // with a path is usually a stdlib import (the traceback's `main`
+        // frame used to name packages/typing/collections/list.quirk).
+        if (mainFile.empty()) mainFile = entryFile;
         if (mainFile.empty()) {
             // Fall back to the first user node with a path — covers scripts
             // with no explicit main() (top-level code only).
@@ -723,14 +762,11 @@ class LLVMCodegen {
         }
         if (mainFile.empty()) mainFile = "main";  // last-resort sentinel
 
-        FunctionCallee pushFrame = TheModule->getOrInsertFunction("quirk_push_frame",
-            Type::getVoidTy(Context), Type::getInt8PtrTy(Context), Type::getInt8PtrTy(Context),
-            Type::getInt32Ty(Context));
-
         Value* mainFuncName = Builder.CreateGlobalStringPtr("main");
         Value* mainFileName = Builder.CreateGlobalStringPtr(mainFile);
-        Builder.CreateCall(pushFrame, {mainFuncName, mainFileName,
-            ConstantInt::get(Type::getInt32Ty(Context), 0)});
+        curLineSlot = Builder.CreateCall(pushFrameLFn(), {mainFuncName, mainFileName,
+            ConstantInt::get(Type::getInt32Ty(Context), 0)}, "main_line");
+        curLineFile = mainFile;
         // ---------------------------------------------
         
         for (const auto& node : nodes) {
@@ -794,6 +830,12 @@ class LLVMCodegen {
     }
 
     void compileFunction(FunctionNode* node) {
+        // A nested function / method compiled mid-body must not leave its
+        // line slot behind for the enclosing function's remaining statements.
+        struct LineSlotRestore {
+            Value*& slot; std::string& file; Value* s; std::string f;
+            ~LineSlotRestore() { slot = s; file = f; }
+        } lineSlotRestore{curLineSlot, curLineFile, curLineSlot, curLineFile};
         std::string prevClass = currentCodegenClass;
         currentCodegenClass = node->cls;
 
@@ -831,20 +873,20 @@ class LLVMCodegen {
         // correct frame depth (this function's, not the caller's). The
         // matching pop happens at function exit; pushing earlier within the
         // same body doesn't change pop balance.
+        curLineSlot = nullptr;
+        curLineFile.clear();
         if (!node->isDecoratorWrapper) {
-            FunctionCallee pushFrame = TheModule->getOrInsertFunction("quirk_push_frame",
-                Type::getVoidTy(Context), Type::getInt8PtrTy(Context), Type::getInt8PtrTy(Context),
-                Type::getInt32Ty(Context));
-
-            Value* funcNameVal = Builder.CreateGlobalStringPtr(node->name);
+            Value* funcNameVal = Builder.CreateGlobalStringPtr(frameName(node));
             // Prefer the AST node's filePath (the actual source path) over
             // moduleName (a logical name like "math"). DAP clients open
             // frames by clicking the source link; a bare module name fails
             // the file-exists check in the IDE.
             std::string fnFile = !node->filePath.empty() ? node->filePath : node->moduleName;
+            if (!node->filePath.empty()) fnFile = canonPath(node->filePath);
             Value* fileNameVal = Builder.CreateGlobalStringPtr(fnFile);
             Value* lineNumVal  = ConstantInt::get(Type::getInt32Ty(Context), node->line);
-            Builder.CreateCall(pushFrame, {funcNameVal, fileNameVal, lineNumVal});
+            curLineSlot = Builder.CreateCall(pushFrameLFn(), {funcNameVal, fileNameVal, lineNumVal}, "line_slot");
+            curLineFile = fnFile;
         }
 
         size_t paramIdx = 0;
@@ -2954,6 +2996,19 @@ class LLVMCodegen {
     
     void handleStatement(Node* node, Function* parentFunc) {
         if (Builder.GetInsertBlock()->getTerminator()) return;
+
+        // Record the running line in this function's shadow frame, for
+        // tracebacks. Only when the slot belongs to the function being
+        // emitted (lambda / thunk bodies have none) and the statement is
+        // from the same file (main's prologue also runs imported modules'
+        // top-level code).
+        if (curLineSlot && node->line > 0 &&
+            (node->filePath.empty() || node->filePath == curLineFile ||
+             canonPath(node->filePath) == canonPath(curLineFile))) {
+            if (auto* inst = dyn_cast<Instruction>(curLineSlot);
+                inst && inst->getFunction() == Builder.GetInsertBlock()->getParent())
+                Builder.CreateStore(ConstantInt::get(Type::getInt32Ty(Context), node->line), curLineSlot);
+        }
 
         // When --debug is on, give the runtime a chance to pause at each
         // statement. The hook is a no-op unless the user has armed step mode

@@ -1,0 +1,15 @@
+// expect-error: , line 11, in mid
+// p124 — an uncaught runtime error prints a traceback (v7.9.2). Errors
+// raised by the runtime (IndexError, ZeroDivisionError, …) used to print
+// only `IndexError: …`, with no frames at all.
+
+define boom(x: Int) -> Int {
+    xs := [1]
+    return xs[x]
+}
+define mid() -> Int {
+    return boom(5)
+}
+define main() -> void {
+    print(mid())
+}

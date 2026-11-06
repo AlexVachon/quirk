@@ -1,0 +1,48 @@
+// p123 — tracebacks name the running line of every frame (v7.9.2).
+// Frames used to carry only the function's definition line, listed
+// innermost-first as `at fn (file)`, and the throwing function appeared
+// under its LLVM symbol (`P123_traceback_lines$check`).
+
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+struct Acct {
+    bal: Int
+    define withdraw(self, n: Int) -> void {
+        if n > self.bal {
+            throw ValueError("insufficient")
+        }
+        self.bal = self.bal - n
+    }
+}
+
+define run(a: Acct) -> void {
+    x := 1
+    a.withdraw(50 + x)
+}
+
+define index_it(xs: List, i: Int) -> Any {
+    return xs[i]
+}
+
+define main() -> void {
+    try {
+        run(Acct(10))
+    } catch (e: ValueError) {
+        if e.callee != "Acct.withdraw"                    { fail("callee: " + e.callee); return }
+        if e.line != 12                                   { fail("throw line"); return }
+        if not e.traceback.contains(", line 29, in main") { fail("main frame line"); return }
+        if not e.traceback.contains(", line 20, in run")  { fail("run frame line"); return }
+        if not e.traceback.contains("    a.withdraw(50 + x)") { fail("source line"); return }
+        if e.traceback.find("in main") > e.traceback.find("in run") { fail("oldest first"); return }
+        if e.traceback.contains("in Acct.withdraw")             { fail("innermost frame duplicated"); return }
+    }
+    // A runtime (C-side) error knows its Quirk frame and line too.
+    try {
+        index_it([1, 2], 9)
+    } catch (e: IndexError) {
+        if e.callee != "index_it"                         { fail("C callee: " + e.callee); return }
+        if e.line != 24                                   { fail("C line: " + e.line.str()); return }
+        if not e.traceback.contains(", line 41, in main") { fail("C main line"); return }
+    }
+    print("p123 ok")
+}

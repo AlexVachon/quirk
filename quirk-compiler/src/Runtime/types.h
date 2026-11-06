@@ -108,8 +108,19 @@ typedef struct {
 typedef struct {
     const char* func_name;
     const char* file_name;
-    int         line;
+    int         line;      // line of the function's definition
+    int         cur_line;  // line of the statement running now (0 = unknown)
 } ShadowFrame;
+
+// Push a frame and return its cur_line slot; compiled code stores each
+// statement's line there so tracebacks can name the failing line.
+int32_t* quirk_push_frame_l(const char* func, const char* file, int line);
+// Append frames [from, to) of the shadow stack to buf, Python-style
+// (`  File "f", line N, in fn` + the source line). Returns bytes written.
+int quirk_format_frames(char* buf, int cap, int from, int to);
+int quirk_format_frames_elided(char* buf, int cap, int to);
+// Print an uncaught exception (traceback + `Type: message`) to stderr.
+void quirk_print_uncaught(void* exc);
 
 typedef struct {
     void* fn;   // i8* (*fn)(i8* env, i8* arg0, ...)

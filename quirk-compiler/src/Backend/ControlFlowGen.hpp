@@ -1,4 +1,5 @@
 #pragma once
+#include <filesystem>
 #include <functional>
 #include <iostream>
 #include "ast.hpp"
@@ -320,12 +321,11 @@ class ControlFlowGen {
     // Called at every "unhandled exception" site instead of the bare runtime stub.
     void emitUnhandledException(std::map<std::string, StructType*>& StructTypes) {
         Value* rawExc = Builder.CreateCall(TheModule->getFunction("quirk_get_exception"));
-        Function* printFn = TheModule->getFunction("Exception_print_traceback");
-        if (printFn && StructTypes.count("Exception")) {
-            Type* selfTy = printFn->getFunctionType()->getParamType(0);
-            Value* casted = Builder.CreateBitCast(rawExc, selfTy);
-            Builder.CreateCall(printFn, {casted});
-        }
+        // Traceback + `Type: message` to stderr (Exception.print_traceback
+        // writes to stdout, where it mixes with the program's output).
+        FunctionCallee printFn = TheModule->getOrInsertFunction("quirk_print_uncaught",
+            Type::getVoidTy(Context), Type::getInt8PtrTy(Context));
+        Builder.CreateCall(printFn, {Builder.CreateBitCast(rawExc, Type::getInt8PtrTy(Context))});
         Builder.CreateCall(TheModule->getFunction("quirk_unhandled_exception"));
         Builder.CreateUnreachable();
     }
@@ -482,6 +482,12 @@ class ControlFlowGen {
 
             Value* fileFieldPtr = Builder.CreateStructGEP(StructTypes["Exception"], baseExc, 2);
             std::string currentModule = node->moduleName.empty() ? "unknown_file" : node->moduleName;
+            if (!node->filePath.empty()) {
+                std::error_code ec;
+                currentModule = std::filesystem::weakly_canonical(
+                    std::filesystem::absolute(node->filePath, ec), ec).string();
+                if (ec || currentModule.empty()) currentModule = node->filePath;
+            }
             Value* rawFileName = Builder.CreateGlobalStringPtr(currentModule);
             std::vector<Value*> fileArgs = {rawFileName};
             Builder.CreateStore(initHelper("String", fileArgs), fileFieldPtr);

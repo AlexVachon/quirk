@@ -166,6 +166,22 @@ jobs:
         # VS Code extension and quirk-lsp read them.
         run: tools/check_editor_json.sh
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: quirk-lsp smoke test
+        working-directory: quirk-lsp
+        env:
+          QUIRK_HOME: ${{ github.workspace }}/quirk-compiler
+          QUIRK: ${{ github.workspace }}/quirk-compiler/bin/quirk
+        # Starts the built server over stdio and checks diagnostics (with
+        # codes, live on unsaved edits) and inlay-hint types end to end.
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+          npm test
+
       - name: Rehearse the release
         working-directory: quirk-compiler
         # Package this commit exactly as release.yml would (compiler

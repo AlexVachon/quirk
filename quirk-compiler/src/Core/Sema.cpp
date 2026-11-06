@@ -630,6 +630,17 @@ std::string Sema::monoDisplay(const std::string& msg) const {
     return out + hint + note;
 }
 
+bool Sema::addError(ErrorRecord e) {
+    // Compare the first line only: specializations add
+    // "\n  note: while instantiating `f[Int]`" to the generic's message.
+    auto head = [](const std::string& m) { return m.substr(0, m.find('\n')); };
+    for (const auto& x : errors)
+        if (x.line == e.line && x.col == e.col && x.filePath == e.filePath && head(x.msg) == head(e.msg))
+            return false;
+    errors.push_back(std::move(e));
+    return true;
+}
+
 [[noreturn]] void Sema::fatalError(const std::string& rawMsg, int line, int col,
                                     const std::string& filePath) {
     const std::string msg = monoDisplay(rawMsg);
@@ -639,6 +650,12 @@ std::string Sema::monoDisplay(const std::string& msg) const {
     std::string path = (!filePath.empty())                          ? filePath
                      : (lastNode && !lastNode->filePath.empty()) ? lastNode->filePath
                      : currentFilePath;
+    // Inside a guarded statement / function: record it and unwind to the
+    // guard, which carries on with the next one. Past kMaxErrors, stop.
+    if (recoveryDepth > 0 && errors.size() < kMaxErrors) {
+        addError({msg, path, line, col, {}});
+        throw SemaAbort{};
+    }
     // Flush accumulated warnings + errors first (a warning often explains
     // the fatal error, e.g. stdlib-type shadowing), then print this one and exit
     if (!warnings.empty()) flushWarnings();
@@ -655,7 +672,7 @@ void Sema::reportError(const std::string& msg, int line, int col,
     std::string path = (!filePath.empty())                          ? filePath
                      : (lastNode && !lastNode->filePath.empty()) ? lastNode->filePath
                      : currentFilePath;
-    errors.push_back({monoDisplay(msg), path, line, col, {}});
+    addError({monoDisplay(msg), path, line, col, {}});
 }
 
 void Sema::reportError(const std::string& msg,
@@ -668,7 +685,7 @@ void Sema::reportError(const std::string& msg,
     std::string path = (!filePath.empty())                          ? filePath
                      : (lastNode && !lastNode->filePath.empty()) ? lastNode->filePath
                      : currentFilePath;
-    errors.push_back({monoDisplay(msg), path, line, col, suggestions});
+    addError({monoDisplay(msg), path, line, col, suggestions});
 }
 
 // Damerau-Levenshtein distance — counts single-char transpositions as
@@ -1100,11 +1117,11 @@ bool Sema::analyze(std::vector<std::unique_ptr<Node>> &nodes)
         {
             if (monoDeferrable(f) && !monoUsed.count(f)) continue;   // checked on first use
             if (f->isSpecialization) monoChecked.insert(f);
-            checkFunction(f);
+            recoverable([&] { checkFunction(f); });
         }
         else if (auto use = dynamic_cast<UseNode *>(node))
         {
-            checkUse(use);
+            recoverable([&] { checkUse(use); });
         }
         else if (dynamic_cast<InterfaceNode*>(node))
         {
@@ -1541,7 +1558,40 @@ void Sema::checkAssignType(const std::string &target, const std::string &value,
     reportError(msg, node->line, node->col, node->filePath);
 }
 
+template <class F> bool Sema::recoverable(F&& fn) {
+    const size_t depth = scopeStack.size();
+    const std::string cls = currentClass;
+    FunctionNode* fnNode = currentFunctionNode;
+    const std::string file = currentFilePath;
+    recoveryDepth++;
+    try {
+        fn();
+        recoveryDepth--;
+        return true;
+    } catch (const SemaAbort&) {
+        recoveryDepth--;
+        while (scopeStack.size() > depth) scopeStack.pop_back();
+        currentClass = cls;
+        currentFunctionNode = fnNode;
+        currentFilePath = file;
+        return false;
+    }
+}
+
 void Sema::checkStatement(Node *node)
+{
+    if (recoverable([&] { checkStatementImpl(node); })) return;
+    // A declaration that failed still declares its name, so the rest of
+    // the body doesn't report "undefined variable" for every later use.
+    if (auto* vd = dynamic_cast<VarDeclNode*>(node)) {
+        auto* lit = dynamic_cast<LiteralNode*>(vd->lhs.get());
+        bool isDecl = vd->op == ":=" || !vd->typeAnnotation.empty();
+        if (lit && isDecl && !scopeStack.empty() && !scopeStack.back().count(lit->value))
+            defineVariable(lit->value, vd->typeAnnotation.empty() ? "Any" : vd->typeAnnotation);
+    }
+}
+
+void Sema::checkStatementImpl(Node *node)
 {
     if (auto v = dynamic_cast<VarDeclNode *>(node))
         checkVarDecl(v);
@@ -3675,10 +3725,13 @@ void Sema::checkReturn(ReturnNode *node)
         return;
     }
 
-    if (!isCompatibleTypes(target, actual))
+    // `unknown`: the expression already reported its own error.
+    if (actual != "unknown" && !isCompatibleTypes(target, actual))
     {
-        std::cerr << "Error: Function " << currentFunctionNode->name
-                << " expected " << target << " but got " << actual << std::endl;
-        exit(1);
+        std::string fn = currentFunctionNode->name;
+        if (!currentFunctionNode->cls.empty() && fn.rfind(currentFunctionNode->cls + "_", 0) == 0)
+            fn = currentFunctionNode->cls + "." + fn.substr(currentFunctionNode->cls.size() + 1);
+        fatalError("cannot return '" + actual + "' from '" + fn + "', which returns '" + target + "'",
+                   node->line, node->col, node->filePath);
     }
 }

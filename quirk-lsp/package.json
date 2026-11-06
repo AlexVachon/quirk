@@ -1,6 +1,6 @@
 {
   "name": "quirk-lsp",
-  "version": "0.23.0",
+  "version": "0.24.0",
   "description": "Language Server Protocol implementation for Quirk. Spawns `quirk --check --diagnostics-json` on every save to surface compiler diagnostics in any LSP-aware editor (VSCode, Neovim, Helix, Zed, JetBrains).",
   "license": "MIT",
   "author": "Alexandre Vachon",
@@ -18,7 +18,8 @@
   "scripts": {
     "build": "tsc -p .",
     "watch": "tsc -p . --watch",
-    "clean": "rm -rf out"
+    "clean": "rm -rf out",
+    "test": "node test/smoke.js"
   },
   "dependencies": {
     "vscode-languageserver": "^8.1.0",

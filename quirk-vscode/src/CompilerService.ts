@@ -1,9 +1,10 @@
-// Compiler-backed checks (extension 0.4.0, compiler 7.9.3+).
+// Compiler-backed checks (extension 0.4.0+, compiler 7.9.3+; live checks 0.5.0 / 7.9.4).
 //
 // The rest of the extension reads Quirk with regexes, which can't see type
 // errors (Q0209 "cannot assign 'String' to 'n' of type 'Int'"), and can only
-// guess a variable's type. This module asks the compiler instead, on open and
-// on save (the compiler reads the file from disk, like quirk-lsp does):
+// guess a variable's type. This module asks the compiler instead: on open, on
+// save and — with compiler 7.9.4+, which reads the unsaved buffer from stdin
+// (`--stdin-source`) — as you type, half a second after the last keystroke:
 //
 //   quirk --check --diagnostics-json <file>  → one JSON diagnostic per line
 //   quirk --symbols-json <file>              → declarations with their types
@@ -39,6 +40,7 @@ interface CompilerSymbol {
 }
 
 const TIMEOUT_MS = 15000;
+const TYPING_DELAY_MS = 500;
 const VAR_KINDS = new Set(['variable', 'parameter', 'module_const']);
 
 const reportedLines = new Map<string, Set<number>>();       // uri → 0-based lines
@@ -49,13 +51,14 @@ let compilerCommand = 'quirk';
 let compilerEnv: NodeJS.ProcessEnv = process.env;
 let collection: vscode.DiagnosticCollection | undefined;
 let onResults: ((doc: vscode.TextDocument) => void) | undefined;
+let supportsStdin = false;   // compiler ≥ 7.9.4: `--stdin-source`
 
 function sameFile(a: string, b: string): boolean {
     if (a === b) return true;
     try { return fs.realpathSync(a) === fs.realpathSync(b); } catch { return path.resolve(a) === path.resolve(b); }
 }
 
-function runCompiler(args: string[], cwd: string, key: string): Promise<string | null> {
+function runCompiler(args: string[], cwd: string, key: string, input?: string): Promise<string | null> {
     return new Promise(resolve => {
         let out = '';
         let child: ChildProcess;
@@ -69,6 +72,10 @@ function runCompiler(args: string[], cwd: string, key: string): Promise<string |
         list.push(child);
         running.set(key, list);
         const timer = setTimeout(() => child.kill(), TIMEOUT_MS);
+        if (input !== undefined) {
+            child.stdin?.on('error', () => { /* child exited early */ });
+            child.stdin?.end(input);
+        }
         child.stdout?.on('data', (d: Buffer) => { out += d.toString(); });
         child.stderr?.on('data', () => { /* human-readable copy; JSON is on stdout */ });
         const done = (ok: boolean) => {
@@ -116,11 +123,19 @@ async function check(doc: vscode.TextDocument): Promise<void> {
     const key = doc.uri.toString();
     for (const c of running.get(key) ?? []) c.kill();   // superseded by this run
     const cwd = path.dirname(file);
+    const version = doc.version;
+    // With stdin support the compiler checks the buffer as shown, saved
+    // or not; otherwise it reads the file from disk.
+    const input = supportsStdin ? doc.getText() : undefined;
+    const extra = supportsStdin ? ['--stdin-source'] : [];
 
     const [diagOut, symOut] = await Promise.all([
-        runCompiler(['--check', '--diagnostics-json', file], cwd, key),
-        runCompiler(['--symbols-json', file], cwd, key),
+        runCompiler(['--check', '--diagnostics-json', ...extra, file], cwd, key, input),
+        runCompiler(['--symbols-json', ...extra, file], cwd, key, input),
     ]);
+    // Edited while the compiler ran: a newer check is queued; positions
+    // from this one would be off.
+    if (doc.version !== version) return;
 
     if (diagOut !== null && collection) {
         const diags = parseLines<CompilerDiag>(diagOut).filter(d => d.path && sameFile(d.path, file));
@@ -174,6 +189,19 @@ export function startCompilerService(
     onResults = afterResults;
     context.subscriptions.push(collection);
 
+    // `quirk --version` → "quirk 7.9.4": live checking needs ≥ 7.9.4.
+    const probe = spawn(command, ['--version'], { env: compilerEnv });
+    let vOut = '';
+    probe.stdout?.on('data', (d: Buffer) => { vOut += d.toString(); });
+    probe.on('error', () => { /* no compiler: open/save checks just fail quietly */ });
+    probe.on('close', () => {
+        const m = /(\d+)\.(\d+)\.(\d+)/.exec(vOut);
+        if (!m) return;
+        const [maj, min, pat] = [Number(m[1]), Number(m[2]), Number(m[3])];
+        supportsStdin = maj > 7 || (maj === 7 && (min > 9 || (min === 9 && pat >= 4)));
+    });
+
+    const typingTimers = new Map<string, ReturnType<typeof setTimeout>>();
     const checkedOnce = new Set<string>();
     const maybeCheck = (doc: vscode.TextDocument) => {
         checkedOnce.add(doc.uri.toString());
@@ -184,12 +212,24 @@ export function startCompilerService(
     context.subscriptions.push(
         vscode.workspace.onDidOpenTextDocument(maybeCheck),
         vscode.workspace.onDidSaveTextDocument(maybeCheck),
+        vscode.workspace.onDidChangeTextDocument(e => {
+            if (!supportsStdin || e.document.languageId !== 'quirk' || e.contentChanges.length === 0) return;
+            const key = e.document.uri.toString();
+            const t = typingTimers.get(key);
+            if (t) clearTimeout(t);
+            typingTimers.set(key, setTimeout(() => {
+                typingTimers.delete(key);
+                maybeCheck(e.document);
+            }, TYPING_DELAY_MS));
+        }),
         vscode.window.onDidChangeActiveTextEditor(ed => {
             if (ed && !checkedOnce.has(ed.document.uri.toString())) maybeCheck(ed.document);
         }),
         vscode.workspace.onDidCloseTextDocument(doc => {
             const key = doc.uri.toString();
             for (const c of running.get(key) ?? []) c.kill();
+            const t = typingTimers.get(key);
+            if (t) { clearTimeout(t); typingTimers.delete(key); }
             collection?.delete(doc.uri);
             reportedLines.delete(key);
             varSymbols.delete(key);

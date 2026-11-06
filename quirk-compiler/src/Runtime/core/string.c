@@ -696,78 +696,133 @@ String* make_String(const char* raw) {
     return s;
 }
 
+// ---- Case mapping -----------------------------------------------------
+// Simple (one-to-one) mappings for ASCII, Latin-1, Latin Extended-A, Greek
+// and Cyrillic — enough for most European text, without locale tables
+// (C's towupper only maps ASCII in the "C" locale). ß has no one-character
+// upper case and stays ß.
+static uint32_t u8_decode(const unsigned char* p, int64_t avail, int* used) {
+    int n = u8_bytes(p[0]);
+    if (n > avail) n = 1;
+    for (int i = 1; i < n; i++) if (!u8_cont(p[i])) { n = 1; break; }
+    *used = n;
+    switch (n) {
+        case 2: return ((uint32_t)(p[0] & 0x1F) << 6) | (p[1] & 0x3F);
+        case 3: return ((uint32_t)(p[0] & 0x0F) << 12) | ((uint32_t)(p[1] & 0x3F) << 6) | (p[2] & 0x3F);
+        case 4: return ((uint32_t)(p[0] & 0x07) << 18) | ((uint32_t)(p[1] & 0x3F) << 12)
+                     | ((uint32_t)(p[2] & 0x3F) << 6) | (p[3] & 0x3F);
+        default: return p[0];
+    }
+}
+static int u8_encode(uint32_t cp, char* out) {
+    if (cp < 0x80)    { out[0] = (char)cp; return 1; }
+    if (cp < 0x800)   { out[0] = (char)(0xC0 | (cp >> 6)); out[1] = (char)(0x80 | (cp & 0x3F)); return 2; }
+    if (cp < 0x10000) { out[0] = (char)(0xE0 | (cp >> 12)); out[1] = (char)(0x80 | ((cp >> 6) & 0x3F));
+                        out[2] = (char)(0x80 | (cp & 0x3F)); return 3; }
+    out[0] = (char)(0xF0 | (cp >> 18)); out[1] = (char)(0x80 | ((cp >> 12) & 0x3F));
+    out[2] = (char)(0x80 | ((cp >> 6) & 0x3F)); out[3] = (char)(0x80 | (cp & 0x3F)); return 4;
+}
+// Latin Extended-A: alternating upper/lower pairs.
+static int cp_pair_upper_even(uint32_t c) {
+    return (c >= 0x0100 && c <= 0x0137 && c != 0x0130 && c != 0x0131) ||
+           (c >= 0x014A && c <= 0x0177) || (c >= 0x0460 && c <= 0x0481) ||
+           (c >= 0x048A && c <= 0x04BF) || (c >= 0x04D0 && c <= 0x04FF);
+}
+static int cp_pair_upper_odd(uint32_t c) {
+    return (c >= 0x0139 && c <= 0x0148) || (c >= 0x0179 && c <= 0x017E) ||
+           (c >= 0x04C1 && c <= 0x04CE);
+}
+static uint32_t cp_upper(uint32_t c) {
+    if (c < 0x80) return (c >= 'a' && c <= 'z') ? c - 32 : c;
+    if ((c >= 0xE0 && c <= 0xFE && c != 0xF7)) return c - 32;
+    if (c == 0xFF) return 0x0178;
+    if (c == 0xB5) return 0x039C;
+    if (cp_pair_upper_even(c)) return (c & 1) ? c - 1 : c;
+    if (cp_pair_upper_odd(c))  return (c & 1) ? c : c - 1;
+    if (c == 0x017F) return 'S';
+    if (c >= 0x03B1 && c <= 0x03C9) return c == 0x03C2 ? 0x03A3 : c - 32;   // final sigma → Σ
+    if (c == 0x03AC) return 0x0386;
+    if (c >= 0x03AD && c <= 0x03AF) return c - 37;
+    if (c == 0x03CC) return 0x038C;
+    if (c == 0x03CD || c == 0x03CE) return c - 63;
+    if (c >= 0x0430 && c <= 0x044F) return c - 32;
+    if (c >= 0x0450 && c <= 0x045F) return c - 80;
+    return c;
+}
+static uint32_t cp_lower(uint32_t c) {
+    if (c < 0x80) return (c >= 'A' && c <= 'Z') ? c + 32 : c;
+    if ((c >= 0xC0 && c <= 0xDE && c != 0xD7)) return c + 32;
+    if (c == 0x0178) return 0xFF;
+    if (cp_pair_upper_even(c)) return (c & 1) ? c : c + 1;
+    if (cp_pair_upper_odd(c))  return (c & 1) ? c + 1 : c;
+    if (c >= 0x0391 && c <= 0x03A9 && c != 0x03A2) return c + 32;
+    if (c == 0x0386) return 0x03AC;
+    if (c >= 0x0388 && c <= 0x038A) return c + 37;
+    if (c == 0x038C) return 0x03CC;
+    if (c == 0x038E || c == 0x038F) return c + 63;
+    if (c >= 0x0410 && c <= 0x042F) return c + 32;
+    if (c >= 0x0400 && c <= 0x040F) return c + 80;
+    return c;
+}
+static int cp_is_upper(uint32_t c) { return cp_lower(c) != c; }
+static int cp_is_lower(uint32_t c) { return cp_upper(c) != c || c == 0xDF || c == 0x0138 || c == 0x03C2; }
+static int cp_is_alpha(uint32_t c) {
+    if (c < 0x80) return isalpha((int)c) != 0;
+    if (cp_is_upper(c) || cp_is_lower(c)) return 1;
+    return c == 0xAA || c == 0xBA ||
+           (c >= 0x0370 && c <= 0x03FF && c != 0x037E && c != 0x0387) ||   // Greek
+           (c >= 0x0400 && c <= 0x052F && !(c >= 0x0482 && c <= 0x0489)) ||   // Cyrillic
+           (c >= 0x05D0 && c <= 0x05EA) || (c >= 0x0620 && c <= 0x064A) ||   // Hebrew, Arabic
+           (c >= 0x3041 && c <= 0x30FF && c != 0x30FB) ||                       // kana
+           (c >= 0x4E00 && c <= 0x9FFF) || (c >= 0xAC00 && c <= 0xD7A3);        // CJK, Hangul
+}
+
+enum { CASE_UPPER, CASE_LOWER, CASE_SWAP, CASE_TITLE, CASE_CAPITALIZE, CASE_SENTENCE };
+static String* u8_case(String* self, int mode) {
+    if (!self || !self->buffer) return make_String("");
+    const unsigned char* p = (const unsigned char*)self->buffer;
+    int64_t n = self->length;
+    char* out = (char*)malloc((size_t)n * 2 + 4);   // mappings here never grow past 2×
+    int64_t o = 0;
+    int prev_cased = 0, first = 1, expect_capital = 1;
+    for (int64_t i = 0; i < n; ) {
+        int used;
+        uint32_t c = u8_decode(p + i, n - i, &used);
+        uint32_t r = c;
+        int alpha = cp_is_alpha(c);
+        switch (mode) {
+            case CASE_UPPER: r = cp_upper(c); break;
+            case CASE_LOWER: r = cp_lower(c); break;
+            case CASE_SWAP:  r = cp_is_upper(c) ? cp_lower(c) : cp_upper(c); break;
+            case CASE_TITLE: r = prev_cased ? cp_lower(c) : cp_upper(c); prev_cased = alpha; break;
+            case CASE_CAPITALIZE: r = first ? cp_upper(c) : cp_lower(c); break;
+            case CASE_SENTENCE:
+                if (alpha) { r = expect_capital ? cp_upper(c) : cp_lower(c); expect_capital = 0; }
+                else if (c == '.' || c == '!' || c == '?') expect_capital = 1;
+                break;
+        }
+        if (r == c) { memcpy(out + o, p + i, (size_t)used); o += used; }
+        else o += u8_encode(r, out + o);
+        i += used;
+        first = 0;
+    }
+    out[o] = '\0';
+    return make_String_taking_ownership(out);
+}
+
 // ==========================================
 //  METHODS
 // ==========================================
 
-String* Core_String_String_upper(String* self) {
-    if (!self || !self->buffer)
-        return make_String("");
-    char* temp = (char*)malloc(self->length + 1);
-    for (int i = 0; i < self->length; i++)
-        temp[i] = toupper((unsigned char)self->buffer[i]);
-    temp[self->length] = '\0';
-    return make_String_taking_ownership(temp);
-}
+String* Core_String_String_upper(String* self) { return u8_case(self, CASE_UPPER); }
 
-String* Core_String_String_lower(String* self) {
-    if (!self || !self->buffer)
-        return make_String("");
-    char* temp = (char*)malloc(self->length + 1);
-    for (int i = 0; i < self->length; i++)
-        temp[i] = tolower((unsigned char)self->buffer[i]);
-    temp[self->length] = '\0';
-    return make_String_taking_ownership(temp);
-}
+String* Core_String_String_lower(String* self) { return u8_case(self, CASE_LOWER); }
 
-String* Core_String_String_title(String* self) {
-    if (!self || !self->buffer)
-        return make_String("");
-    char* temp = (char*)malloc(self->length + 1);
-    int prev_is_cased = 0;
-    for (int i = 0; i < self->length; i++) {
-        char c = self->buffer[i];
-        temp[i] = prev_is_cased ? tolower((unsigned char)c)
-                                : toupper((unsigned char)c);
-        prev_is_cased = isalpha((unsigned char)c);
-    }
-    temp[self->length] = '\0';
-    return make_String_taking_ownership(temp);
-}
+String* Core_String_String_title(String* self) { return u8_case(self, CASE_TITLE); }
 
-String* Core_String_String_capitalize(String* self) {
-    if (!self || !self->buffer)
-        return make_String("");
-    char* temp = (char*)malloc(self->length + 1);
-    if (self->length > 0) {
-        temp[0] = toupper((unsigned char)self->buffer[0]);
-        for (int i = 1; i < self->length; i++)
-            temp[i] = tolower((unsigned char)self->buffer[i]);
-    }
-    temp[self->length] = '\0';
-    return make_String_taking_ownership(temp);
-}
+String* Core_String_String_capitalize(String* self) { return u8_case(self, CASE_CAPITALIZE); }
 
-String* Core_String_String_sentence_case(String* self) {
-    if (!self || !self->buffer)
-        return make_String("");
-    char* temp = (char*)malloc(self->length + 1);
-    int expect_capital = 1;
-    for (int i = 0; i < self->length; i++) {
-        char c = self->buffer[i];
-        if (isalpha((unsigned char)c)) {
-            temp[i] = expect_capital ? toupper((unsigned char)c)
-                                     : tolower((unsigned char)c);
-            expect_capital = 0;
-        } else {
-            temp[i] = c;
-            if (c == '.' || c == '!' || c == '?')
-                expect_capital = 1;
-        }
-    }
-    temp[self->length] = '\0';
-    return make_String_taking_ownership(temp);
-}
+String* Core_String_String_sentence_case(String* self) { return u8_case(self, CASE_SENTENCE); }
 
 static int is_url_safe(char c) {
     return isalnum((unsigned char)c) || c == '-' || c == '_' || c == '.' ||
@@ -1119,22 +1174,7 @@ String* Core_String_String_rstrip(String* self) {
     return Core_String_String_trim(self);
 }
 
-String* Core_String_String_swapcase(String* self) {
-    if (!self || !self->buffer)
-        return make_String("");
-    char* temp = (char*)malloc(self->length + 1);
-    for (int i = 0; i < self->length; i++) {
-        char c = self->buffer[i];
-        if (isupper((unsigned char)c))
-            temp[i] = tolower((unsigned char)c);
-        else if (islower((unsigned char)c))
-            temp[i] = toupper((unsigned char)c);
-        else
-            temp[i] = c;
-    }
-    temp[self->length] = '\0';
-    return make_String_taking_ownership(temp);
-}
+String* Core_String_String_swapcase(String* self) { return u8_case(self, CASE_SWAP); }
 
 int Core_String_String_is_space(String* self) {
     if (!self || self->length == 0)
@@ -1163,37 +1203,46 @@ int Core_String_String_is_digit(String* self) {
 }
 
 int Core_String_String_is_upper(String* self) {
-    if (!self || self->length == 0) return 0;
+    if (!self || !self->buffer || self->length == 0) return 0;
+    const unsigned char* p = (const unsigned char*)self->buffer;
     int saw_letter = 0;
-    for (int i = 0; i < self->length; i++) {
-        unsigned char c = (unsigned char)self->buffer[i];
-        if (isalpha(c)) {
+    for (int64_t i = 0; i < self->length; ) {
+        int used;
+        uint32_t c = u8_decode(p + i, self->length - i, &used);
+        i += used;
+        if (cp_is_alpha(c)) {
             saw_letter = 1;
-            if (!isupper(c)) return 0;
+            if (!cp_is_upper(c)) return 0;
         }
     }
     return saw_letter;
 }
 
 int Core_String_String_is_lower(String* self) {
-    if (!self || self->length == 0) return 0;
+    if (!self || !self->buffer || self->length == 0) return 0;
+    const unsigned char* p = (const unsigned char*)self->buffer;
     int saw_letter = 0;
-    for (int i = 0; i < self->length; i++) {
-        unsigned char c = (unsigned char)self->buffer[i];
-        if (isalpha(c)) {
+    for (int64_t i = 0; i < self->length; ) {
+        int used;
+        uint32_t c = u8_decode(p + i, self->length - i, &used);
+        i += used;
+        if (cp_is_alpha(c)) {
             saw_letter = 1;
-            if (!islower(c)) return 0;
+            if (!cp_is_lower(c)) return 0;
         }
     }
     return saw_letter;
 }
 
 int Core_String_String_is_alpha(String* self) {
-    if (!self || self->length == 0)
-        return 0;
-    for (int i = 0; i < self->length; i++)
-        if (!isalpha((unsigned char)self->buffer[i]))
-            return 0;
+    if (!self || !self->buffer || self->length == 0) return 0;
+    const unsigned char* p = (const unsigned char*)self->buffer;
+    for (int64_t i = 0; i < self->length; ) {
+        int used;
+        uint32_t c = u8_decode(p + i, self->length - i, &used);
+        i += used;
+        if (!cp_is_alpha(c)) return 0;
+    }
     return 1;
 }
 

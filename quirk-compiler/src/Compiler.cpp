@@ -53,6 +53,10 @@ namespace fs = std::filesystem;
 // symbol. Flipped by `--diagnostics-json`; consulted by every error
 // printer (Parser::flushErrors, Sema::printSemaError, etc).
 bool g_diagnostics_json = false;
+// `--stdin-source`: the entry file's text comes from stdin (an editor's
+// unsaved buffer) while its path still anchors imports and positions.
+static bool g_stdin_source = false;
+static std::string g_stdin_source_path, g_stdin_source_text;
 
 struct CompilerOptions {
     std::string inputFile;
@@ -489,14 +493,19 @@ std::vector<std::unique_ptr<Node>> processFile(const std::string& filePath,
         return {};
     loadedModules.insert(absPath);
 
-    std::ifstream file(filePath);
-    if (!file.is_open()) {
-        std::cerr << "Error: Could not open module '" << filePath << "'" << std::endl;
-        exit(1);
+    std::string source;
+    if (g_stdin_source && absPath == g_stdin_source_path) {
+        source = g_stdin_source_text;
+    } else {
+        std::ifstream file(filePath);
+        if (!file.is_open()) {
+            std::cerr << "Error: Could not open module '" << filePath << "'" << std::endl;
+            exit(1);
+        }
+        std::stringstream buffer;
+        buffer << file.rdbuf();
+        source = buffer.str();
     }
-    std::stringstream buffer;
-    buffer << file.rdbuf();
-    std::string source = buffer.str();
     sourceMap[absPath] = source;
 
     Lexer lexer(source);
@@ -1297,6 +1306,7 @@ int main(int argc, char* argv[]) {
             opts.buildOnly    = true;
             opts.runImmediate = false;
         }
+        else if (arg == "--stdin-source") g_stdin_source = true;
         else if (arg == "--diagnostics-json") {
             // Structured error mode for tooling (LSP). Switches every
             // error printer to NDJSON-on-stdout; the bitcode cache is
@@ -1333,6 +1343,12 @@ int main(int argc, char* argv[]) {
         std::cerr << "Error: No input file specified." << std::endl;
         printUsage();
         return 1;
+    }
+    // `--stdin-source`: the editor's unsaved text for the entry file.
+    if (g_stdin_source && !opts.inputFile.empty()) {
+        std::stringstream ss; ss << std::cin.rdbuf();
+        g_stdin_source_text = ss.str();
+        g_stdin_source_path = fs::absolute(opts.inputFile).string();
     }
 
     // Pipes / process substitution (`quirk <(...)`, `/dev/stdin`) can only
@@ -1480,6 +1496,13 @@ int main(int argc, char* argv[]) {
     sema.setSourceMap(sourceMap);
     sema.setUserFile(fs::absolute(opts.inputFile).string());
     if (!sema.analyze(ast)) {
+        // Sema checks every statement even after an error, so the symbol
+        // table is still worth having: editors keep hover / completion
+        // types on a file with mistakes in it.
+        if (opts.checkOnly && opts.symbolsJson) {
+            emitSymbols(ast);
+            std::cout.flush();
+        }
         if (!g_diagnostics_json) std::cerr << "Compilation failed." << std::endl;
         return 1;
     }

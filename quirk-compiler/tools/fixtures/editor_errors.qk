@@ -1,5 +1,15 @@
-// Fixture for tools/check_editor_json.sh — diagnostics carry their code.
+// Fixture for tools/check_editor_json.sh — every error, with its code.
 define main() -> void {
     n: Int := "oops"
     print(nope)
+    m := n + 1
 }
+define label(k: Int) -> String {
+    return k
+}
+define ident[T](x: T) -> T {
+    y: Int := "bad"
+    return x
+}
+print(ident(1))
+print(ident("s"))

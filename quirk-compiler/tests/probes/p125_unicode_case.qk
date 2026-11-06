@@ -1,0 +1,22 @@
+// p125 — case conversion handles non-ASCII letters (v7.9.4). upper /
+// lower / title / capitalize / swapcase / is_upper / is_lower / is_alpha
+// only knew ASCII: "héllo".upper() was "HéLLO".
+
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+define main() -> void {
+    if "héllo".upper() != "HÉLLO"               { fail("upper Latin-1"); return }
+    if "ÉCOLE".lower() != "école"               { fail("lower Latin-1"); return }
+    if "ΣΟΦΙΑ".lower() != "σοφια"               { fail("lower Greek"); return }
+    if "привет".upper() != "ПРИВЕТ"             { fail("upper Cyrillic"); return }
+    if "łódź".upper() != "ŁÓDŹ"                 { fail("upper Latin Extended-A"); return }
+    if "élan vital".title() != "Élan Vital"     { fail("title"); return }
+    if "ÉLAN".capitalize() != "Élan"            { fail("capitalize"); return }
+    if "Ça Va".swapcase() != "çA vA"            { fail("swapcase"); return }
+    if not "ÉTÉ".is_upper() or "Été".is_upper() { fail("is_upper"); return }
+    if not "été".is_lower()                     { fail("is_lower"); return }
+    if not "héllo".is_alpha() or "é1".is_alpha() { fail("is_alpha"); return }
+    if "straße".upper() != "STRAßE"             { fail("ß has no 1-char upper case"); return }
+    if "MiXeD 123".lower() != "mixed 123"       { fail("ASCII unchanged"); return }
+    print("p125 ok")
+}

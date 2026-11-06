@@ -61,6 +61,9 @@ class Sema {
         std::vector<std::string> suggestions;
     };
     std::vector<ErrorRecord> errors;
+    // Append unless the same error was already recorded at the same place
+    // (a generic body is re-checked per specialization). False if dropped.
+    bool addError(ErrorRecord e);
     std::vector<ErrorRecord> warnings;
 
     // Per-identifier usage table. Filled by resolveVariable on every
@@ -257,7 +260,15 @@ class Sema {
 
     void checkFunction(FunctionNode* node);
     void checkVarDecl(VarDeclNode* node);
-    void checkStatement(Node* node);
+    void checkStatement(Node* node);       // guarded: recovers from an error
+    void checkStatementImpl(Node* node);
+    // Run `fn` so a fatal error inside it is recorded and checking goes on
+    // with the next statement / function (every error in one run, as
+    // editors want). Returns false when it failed.
+    template <class F> bool recoverable(F&& fn);
+    struct SemaAbort {};
+    int recoveryDepth = 0;
+    static constexpr size_t kMaxErrors = 50;
     void checkIf(IfNode* node);
     void checkWhile(WhileNode* node);
     void checkFor(ForNode* node);

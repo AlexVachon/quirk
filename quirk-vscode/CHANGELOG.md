@@ -2,6 +2,15 @@
 
 All notable changes to the extension land here. Versioning follows SemVer; minor bumps for new features, patches for fixes.
 
+## [0.5.0] — 2026-11-06 — checks as you type, every error at once
+
+- **Compiler checks follow your typing.** With compiler 7.9.4+ the
+  extension sends the unsaved buffer to the compiler half a second after
+  you stop typing, so errors and types update without saving. Older
+  compilers keep checking on open and save.
+- **Every error shows at once** (compiler 7.9.4+), and hover / completion
+  types stay available while the file has errors.
+
 ## [0.4.0] — 2026-11-06 — compiler errors in the editor, compiler types, debugger lines
 
 Needs compiler 7.9.3 for error codes and the new types; older compilers

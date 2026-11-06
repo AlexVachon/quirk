@@ -69,6 +69,7 @@ inline const std::vector<ErrorCode>& knownErrorCodes() {
         {207, std::regex("^'(if|elif|while)' condition must be 'Bool'")},
         {208, std::regex("^Int literal [0-9]+ is out of range")},
         {209, std::regex("^cannot assign '[^']*' to ")},
+        {210, std::regex("^cannot return '[^']*' from ")},
         // Struct / inheritance
         {300, std::regex("^can only throw struct objects")},
         {301, std::regex("^catch type '[^']*' does not inherit from 'Exception'")},
@@ -248,6 +249,17 @@ inline const std::vector<ErrorDoc>& errorDocs() {
          "// good — convert, or a new binding:\n"
          "n = \"1\".to_int()\n"
          "label := \"one\""},
+        {210, "Returned value doesn't match the declared return type",
+         "A function declared `-> T` must return a `T` from every `return`.",
+         "Convert the value, fix the declared type, or return the right variable.",
+         "// bad:\n"
+         "define label(n: Int) -> String {\n"
+         "    return n                  // Q0210\n"
+         "}\n\n"
+         "// good:\n"
+         "define label(n: Int) -> String {\n"
+         "    return n.str()\n"
+         "}"},
 
         {301, "Catch type does not inherit from 'Exception'",
          "The `catch (e: T)` type must be a struct that inherits (directly or transitively) from `Exception`.",

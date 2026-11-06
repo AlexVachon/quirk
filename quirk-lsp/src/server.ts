@@ -79,7 +79,7 @@ import {
   TextEdit,
 } from 'vscode-languageserver/node';
 import { TextDocument } from 'vscode-languageserver-textdocument';
-import { spawn, spawnSync } from 'child_process';
+import { spawn, spawnSync, ChildProcessWithoutNullStreams } from 'child_process';
 import { URL, fileURLToPath } from 'url';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -152,12 +152,40 @@ function resolveQuirkBin(settingsPath: string | undefined): string {
 
 let quirkBinary = 'quirk';
 let workspaceFolders: WorkspaceFolder[] = [];
+// Compiler 7.9.4+ reads an unsaved buffer from stdin (`--stdin-source`),
+// so checks can follow typing instead of waiting for a save.
+let supportsStdin = false;
+
+function probeCompilerVersion(): void {
+  const r = spawnSync(quirkBinary, ['--version'], { encoding: 'utf8' });
+  const m = /(\d+)\.(\d+)\.(\d+)/.exec(r.stdout ?? '');
+  if (!m) return;
+  const [maj, min, pat] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  supportsStdin = maj > 7 || (maj === 7 && (min > 9 || (min === 9 && pat >= 4)));
+}
+
+// Spawn the compiler on `document`: with stdin support it gets the text
+// as the editor shows it, saved or not; otherwise it reads the file.
+function spawnOnDocument(args: string[], filePath: string, document: TextDocument): ChildProcessWithoutNullStreams {
+  const child = spawn(quirkBinary, supportsStdin ? [...args, '--stdin-source', filePath] : [...args, filePath], {
+    cwd: path.dirname(filePath),
+    stdio: 'pipe',
+  });
+  if (supportsStdin) {
+    child.stdin.on('error', () => { /* exited early */ });
+    child.stdin.end(document.getText());
+  } else {
+    child.stdin.end();
+  }
+  return child;
+}
 
 connection.onInitialize((params: InitializeParams): InitializeResult => {
   // The client may pass `initializationOptions = { quirk: { executablePath: ... } }`
   // (Neovim / Helix LSP configs commonly do this) — pick it up if present.
   const opts = params.initializationOptions as { quirk?: { executablePath?: string } } | undefined;
   quirkBinary = resolveQuirkBin(opts?.quirk?.executablePath);
+  probeCompilerVersion();
 
   // `workspaceFolders` drives the find-references walk: every .quirk
   // file under each folder gets scanned (with a few sensible
@@ -240,10 +268,8 @@ async function checkDocument(document: TextDocument): Promise<void> {
     return;
   }
 
-  const child = spawn(quirkBinary, ['--check', '--diagnostics-json', filePath], {
-    cwd: path.dirname(filePath),
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
+  const version = document.version;
+  const child = spawnOnDocument(['--check', '--diagnostics-json'], filePath, document);
 
   let stdout = '';
   child.stdout.on('data', (chunk) => { stdout += chunk.toString('utf8'); });
@@ -261,6 +287,8 @@ async function checkDocument(document: TextDocument): Promise<void> {
   await new Promise<void>((resolve) => {
     child.on('close', () => resolve());
   });
+  // Edited while the compiler ran: a newer check is queued.
+  if (documents.get(document.uri)?.version !== version) return;
 
   // Bucket diagnostics by their reported `path` so each open document
   // gets only the diagnostics that belong to it. Cross-file errors (e.g.
@@ -316,12 +344,29 @@ function recordUri(p: string): string | null {
   catch { return null; }
 }
 
-// Trigger a check on open + save. Skipping on `didChangeContent` means
-// the LSP doesn't run the compiler on every keystroke — fast typists
-// would queue up many parallel compilations otherwise.
+// Check on open + save, and — when the compiler can read the buffer from
+// stdin — half a second after typing stops (debounced per document, so
+// fast typists don't queue up parallel compilations).
+const TYPING_DELAY_MS = 500;
+const typingTimers = new Map<string, ReturnType<typeof setTimeout>>();
 documents.onDidOpen((e) => { void checkDocument(e.document); void refreshSymbols(e.document); });
 documents.onDidSave((e) => { void checkDocument(e.document); void refreshSymbols(e.document); });
-documents.onDidClose((e) => { symbolCache.delete(e.document.uri); });
+documents.onDidChangeContent((e) => {
+  if (!supportsStdin) return;
+  const uri = e.document.uri;
+  const t = typingTimers.get(uri);
+  if (t) clearTimeout(t);
+  typingTimers.set(uri, setTimeout(() => {
+    typingTimers.delete(uri);
+    const doc = documents.get(uri);
+    if (doc) { void checkDocument(doc); void refreshSymbols(doc); }
+  }, TYPING_DELAY_MS));
+});
+documents.onDidClose((e) => {
+  symbolCache.delete(e.document.uri);
+  const t = typingTimers.get(e.document.uri);
+  if (t) { clearTimeout(t); typingTimers.delete(e.document.uri); }
+});
 
 // ──────────────────────────────────────────────────────────────────────
 // Symbol table cache (`quirk --symbols-json`)
@@ -337,10 +382,8 @@ async function refreshSymbols(document: TextDocument): Promise<void> {
   const filePath = uriToPath(document.uri);
   if (!filePath) return;
 
-  const child = spawn(quirkBinary, ['--symbols-json', filePath], {
-    cwd: path.dirname(filePath),
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
+  const version = document.version;
+  const child = spawnOnDocument(['--symbols-json'], filePath, document);
   let stdout = '';
   child.stdout.on('data', (chunk) => { stdout += chunk.toString('utf8'); });
   child.on('error', (err) => {
@@ -348,6 +391,7 @@ async function refreshSymbols(document: TextDocument): Promise<void> {
   });
 
   await new Promise<void>((resolve) => { child.on('close', () => resolve()); });
+  if (documents.get(document.uri)?.version !== version) return;
 
   const records: QuirkSymbol[] = [];
   for (const line of stdout.split('\n')) {
@@ -2022,7 +2066,8 @@ connection.onRequest('textDocument/inlayHint', (params: InlayHintParams): InlayH
 
   const hints: InlayHint[] = [];
   for (const s of symbols) {
-    if (s.kind !== 'variable') continue;
+    // Top-level `x := …` is reported as `module_const`; it gets a hint too.
+    if (s.kind !== 'variable' && s.kind !== 'module_const') continue;
     if (!s.type) continue;
     if (s.file !== filePath) continue;
 

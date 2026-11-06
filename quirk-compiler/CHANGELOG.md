@@ -5,6 +5,35 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.9.4] — 2026-11-06 — every error at once, live editor checks, Unicode case
+
+- **Every error in a file is reported, not just the first.** Sema used to
+  stop at the first error, so fixing one revealed the next. It now
+  records the error, skips that statement and carries on — through every
+  function, method and top-level statement — up to 50 errors. A failed
+  declaration (`n: Int := "x"`) still defines `n`, so later uses don't
+  pile up "undefined variable" errors, and an error in a generic body is
+  reported once, not once per specialization. `--symbols-json` still
+  emits the symbol table when there are errors, so editors keep types.
+- **New Q0210** for a `return` that doesn't match the declared type. It
+  used to print a bare `Error: Function f expected String but got Int`
+  with no position and stop compiling.
+- **`--stdin-source`** reads the entry file's text from stdin while
+  keeping its path (for imports and positions). Editors use it to check
+  the unsaved buffer as you type — VS Code extension 0.5.0 and
+  quirk-lsp 0.24.0 do.
+- **Case conversion handles non-ASCII letters.** `upper`, `lower`,
+  `title`, `capitalize`, `sentence_case`, `swapcase`, `is_upper`,
+  `is_lower` and `is_alpha` only knew ASCII (`"héllo".upper()` was
+  `"HéLLO"`). They now map Latin-1, Latin Extended-A, Greek and Cyrillic
+  (`"HÉLLO"`, `"ΣΟΦΙΑ".lower()` → `"σοφια"`); `is_alpha` also accepts
+  Hebrew, Arabic, kana, CJK and Hangul letters. `ß` has no single-letter
+  upper case and stays `ß`.
+- `tests/fs_test.quirk` cleans up a nested directory left by an earlier
+  failed run (it failed until `/tmp/quirk_fs_test` was removed by hand).
+- CI starts quirk-lsp and checks its diagnostics, live updates and inlay
+  hints (`quirk-lsp/test/smoke.js`).
+
 ## [7.9.3] — 2026-11-06 — editor support: error codes, full types, debugger lines
 
 For VS Code extension 0.4.0 and quirk-lsp 0.23.0.

@@ -32,13 +32,16 @@ want_type('variable',     'i',      'module', 'Int')
 want_type('variable',     'q',      'module', 'P')
 if [s for s in syms if s['kind'] == 'variable' and s['name'] == 'best' and s['line'] == 10]:
     fails.append("re-assignment `best = p` reported as a declaration")
-codes = {(d['line'], d.get('code')) for d in diags}
-for want in [(3, 'Q0209'), (4, 'Q0100')]:
-    if want not in codes:
-        fails.append(f"diagnostic line {want[0]} code {want[1]} missing (got {sorted(codes)})")
+# Every error in the file, once each: Sema carries on after an error, a
+# failed declaration still defines its name (no "undefined 'n'" on line 5),
+# and a generic body's error isn't repeated per specialization.
+got = sorted((d['line'], d.get('code')) for d in diags)
+want = [(3, 'Q0209'), (4, 'Q0100'), (8, 'Q0210'), (11, 'Q0209')]
+if got != want:
+    fails.append(f"diagnostics {got}, want {want}")
 for f in fails:
     print("FAIL", f)
-print(f"editor json: {6 + 1 + 2 - len(fails)}/9 checks passed")
+print(f"editor json: {8 - len(fails)}/8 checks passed")
 sys.exit(1 if fails else 0)
 PY
 rm -f /tmp/qk_sym.$$ /tmp/qk_diag.$$

@@ -1,5 +1,17 @@
 use fs
 
+// Delete `path` and everything under it (fs has no recursive remove).
+define remove_tree(path: String) -> void {
+    if fs.is_dir(path) {
+        for entry in fs.list_dir(path) {
+            remove_tree(fs.join(path, entry))
+        }
+        fs.rmdir(path)
+    } else {
+        fs.remove(path)
+    }
+}
+
 define main() -> void {
     print("=== path helpers ===")
     print("join('/etc', 'hosts')         = ${fs.join('/etc', 'hosts')}")
@@ -27,13 +39,9 @@ define main() -> void {
     print("=== mutation: mkdir / rename / remove / rmdir ===")
     base := "/tmp/quirk_fs_test"
     if fs.exists(base) {
-        // Clean up from a prior failed run.
-        if fs.is_dir(base) {
-            for entry in fs.list_dir(base) {
-                fs.remove(fs.join(base, entry))
-            }
-            fs.rmdir(base)
-        }
+        // Clean up from a prior failed run (it may have died with
+        // `deep/nested/path` still there).
+        remove_tree(base)
     }
 
     fs.mkdir(base)

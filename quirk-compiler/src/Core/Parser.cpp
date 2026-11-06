@@ -1961,8 +1961,10 @@ void Parser::flushErrors() const {
             std::cout << "{\"level\":\"error\",\"msg\":\"" << esc
                       << "\",\"path\":\""                 << e.filePath
                       << "\",\"line\":"                   << e.line
-                      << ",\"col\":"                      << e.col
-                      << "}\n";
+                      << ",\"col\":"                      << e.col;
+            if (int code = quirk::matchErrorCode(e.msg); code > 0)
+                std::cout << ",\"code\":\"" << quirk::formatCode(code) << "\"";
+            std::cout << "}\n";
             std::cout.flush();
             continue;
         }

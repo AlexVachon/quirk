@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { compilerVarType } from './CompilerService';
 import * as fs from 'fs';
 import * as path from 'path';
 import { QuirkCompletionProvider } from './CompletionProvider';
@@ -413,7 +414,9 @@ export class QuirkHoverProvider implements vscode.HoverProvider {
                 // For variable hovers (not define/struct lines) show inferred type
                 const isDefLine = /^\s*(?:extern\s+)?(?:define|def|init|struct|enum|interface)\b/.test(defLine);
                 if (!isDefLine) {
-                    const inferredType = _sharedFormatter.inferTypeOfVariable(document, position, word);
+                    // The compiler's type keeps generic arguments (`List[P]`).
+                    const inferredType = compilerVarType(document, position, word)
+                        ?? _sharedFormatter.inferTypeOfVariable(document, position, word);
                     if (inferredType) {
                         md.appendMarkdown(`\n\n**Type:** \`${inferredType}\``);
                     }

@@ -510,6 +510,9 @@ static void emitDiagnosticJson(const char* level, const std::string& msg,
               << "\",\"path\":\"" << json_escape(path)
               << "\",\"line\":"   << line
               << ",\"col\":"      << col;
+    // Stable code (`Q0209`) so editors can show it and link `quirk explain`.
+    if (int code = quirk::matchErrorCode(msg); code > 0)
+        std::cout << ",\"code\":\"" << quirk::formatCode(code) << "\"";
     if (!suggestions.empty()) {
         std::cout << ",\"suggestions\":[";
         for (size_t i = 0; i < suggestions.size(); i++) {
@@ -1844,6 +1847,8 @@ void Sema::checkFor(ForNode *node)
         itemType = elemStruct;
         node->elemType = elemStruct;
     }
+    node->itemType  = enumerate ? "Int" : itemType;
+    node->itemType2 = enumerate ? itemType : "Any";
     enterScope();
     if (enumerate) {
         defineVariable(node->varName, "Int");

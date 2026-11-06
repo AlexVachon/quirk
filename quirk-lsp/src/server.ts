@@ -115,6 +115,8 @@ interface QuirkDiag {
   // the suggested name. Present only on the undefined-name error
   // today; more diagnostic kinds can opt in later.
   suggestions?: string[];
+  // Stable error code (`Q0209`), compiler 7.9.3+; `quirk explain <code>`.
+  code?: string;
 }
 
 // Symbol-table NDJSON record emitted by `quirk --symbols-json`. Same
@@ -280,6 +282,7 @@ async function checkDocument(document: TextDocument): Promise<void> {
       range: rangeFromQuirkDiag(rec),
       message: rec.msg,
       source: 'quirk',
+      code: rec.code,
       // Stash compiler-supplied "did you mean … ?" candidates on the
       // diagnostic itself. The code-action handler reads them back
       // out of `params.context.diagnostics[*].data` when the cursor
@@ -2032,7 +2035,13 @@ connection.onRequest('textDocument/inlayHint', (params: InlayHintParams): InlayH
     // `col` points at the start of the LHS, but `lineText.indexOf`
     // is more forgiving for tab/space differences after the compiler
     // round-trip.
-    const identCol = lineText.indexOf(s.name, Math.max(0, s.col - 1));
+    // Whole-word match: a `for` loop variable's record points at the
+    // `for` keyword, where a plain indexOf would find `o` inside `for`.
+    const escName = s.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const wordRe = new RegExp(`(?<![A-Za-z0-9_])${escName}(?![A-Za-z0-9_])`, 'g');
+    wordRe.lastIndex = Math.max(0, s.col - 1);
+    const wm = wordRe.exec(lineText);
+    const identCol = wm ? wm.index : -1;
     if (identCol < 0) continue;
     const after = lineText.slice(identCol + s.name.length);
     // Skip the hint when the source already shows a type annotation

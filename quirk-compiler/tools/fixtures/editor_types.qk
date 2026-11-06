@@ -1,0 +1,16 @@
+// Fixture for tools/check_editor_json.sh — the types editors show.
+struct P {
+    name: String
+    age: Int
+}
+define oldest(ps: List[P]) -> P {
+    best := ps[0]
+    for p in ps {
+        if p.age > best.age { best = p }
+    }
+    return best
+}
+people := [P("a", 3), P("b", 5)]
+for i, q in people {
+    print(q.name)
+}

@@ -5,6 +5,29 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.9.3] — 2026-11-06 — editor support: error codes, full types, debugger lines
+
+For VS Code extension 0.4.0 and quirk-lsp 0.23.0.
+
+- **`--diagnostics-json` records carry the error code** (`"code":"Q0209"`)
+  for Sema and parse errors, so editors can show it next to the message.
+- **`--symbols-json` reports the types editors need:**
+  - parameters and variables keep their generic arguments
+    (`ps: List[P]`, not `List`);
+  - `for` loop variables are listed, with their type (`p: P` over a
+    `List[P]`; `i: Int` and the element for `for i, x in xs`);
+  - declarations inside `if` / `while` / `for` / `try` / `with` blocks
+    are listed (only the function's top level was);
+  - top-level variables have their type;
+  - re-assignments (`x = v`) are no longer reported as declarations.
+- **Debugger (`qdb`) backtraces show each frame's running line** —
+  the call site for callers — instead of the function's `define` line.
+- `tools/check_editor_json.sh` (run in CI) locks the JSON both editors
+  read. quirk-lsp 0.23.0 passes the code through and places loop-variable
+  inlay hints on the variable, not inside the `for` keyword.
+- Regenerated `docs/stdlib` (it had picked up a stray `.venv` copy of the
+  stdlib under `html`).
+
 ## [7.9.2] — 2026-11-06 — Python-style tracebacks with line numbers
 
 - **Uncaught runtime errors print a traceback.** An `IndexError`,

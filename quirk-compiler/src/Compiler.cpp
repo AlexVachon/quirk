@@ -1096,27 +1096,54 @@ static void emitSymbol(const char* kind, const std::string& name,
 // inspect the LHS of each VarDeclNode for a bare identifier (the
 // common `x := value` shape). Destructuring (`(a, b) := tuple`) is
 // rare today and can be folded in later.
+// The type to show for a declaration: as written (`List[P]`, kept past
+// the monomorphisation rewrite to `List`), else annotated, else inferred.
+static std::string declTypeOf(const VarDeclNode* vd) {
+    if (!vd->writtenAnnotation.empty()) return vd->writtenAnnotation;
+    if (!vd->typeAnnotation.empty())    return vd->typeAnnotation;
+    return vd->inferredType;
+}
+
+// Walk a body for variable declarations, descending into blocks (if /
+// while / for / try / with) with the same scope — Quirk variables are
+// function-scoped. `for` loop variables are reported with the type Sema
+// gave them.
+static void emitBodyVariables(const std::vector<std::unique_ptr<Node>>& body,
+                              const std::string& scope);
+static void emitStmtVariables(Node* n, const std::string& scope) {
+    {
+        if (auto vd = dynamic_cast<VarDeclNode*>(n)) {
+            // Declarations only: `x = v` re-assigns an existing name.
+            bool isDecl = vd->op == ":=" || !vd->typeAnnotation.empty();
+            if (auto* lit = dynamic_cast<LiteralNode*>(vd->lhs.get()); lit && isDecl)
+                emitSymbol("variable", lit->value, scope,
+                           vd->filePath, vd->line, vd->col, declTypeOf(vd));
+        } else if (auto f = dynamic_cast<ForNode*>(n)) {
+            auto shown = [](const std::string& t) { return t == "Any" ? std::string() : t; };
+            if (f->destructureVars.empty()) {
+                emitSymbol("variable", f->varName, scope, f->filePath, f->line, f->col, shown(f->itemType));
+                if (!f->varName2.empty())
+                    emitSymbol("variable", f->varName2, scope, f->filePath, f->line, f->col, shown(f->itemType2));
+            }
+            emitBodyVariables(f->body, scope);
+        } else if (auto i = dynamic_cast<IfNode*>(n)) {
+            emitBodyVariables(i->thenBranch, scope);
+            for (auto& b : i->elIfBranches) emitBodyVariables(b.body, scope);
+            emitBodyVariables(i->elseBranch, scope);
+        } else if (auto w = dynamic_cast<WhileNode*>(n)) {
+            emitBodyVariables(w->body, scope);
+        } else if (auto t = dynamic_cast<TryCatchNode*>(n)) {
+            emitBodyVariables(t->tryBlock, scope);
+            for (auto& cb : t->catchBlocks) emitBodyVariables(cb.body, scope);
+            emitBodyVariables(t->finallyBlock, scope);
+        } else if (auto w2 = dynamic_cast<WithNode*>(n)) {
+            emitBodyVariables(w2->body, scope);
+        }
+    }
+}
 static void emitBodyVariables(const std::vector<std::unique_ptr<Node>>& body,
                               const std::string& scope) {
-    for (auto& stmt : body) {
-        if (auto vd = dynamic_cast<VarDeclNode*>(stmt.get())) {
-            if (auto* lit = dynamic_cast<LiteralNode*>(vd->lhs.get())) {
-                // Prefer the explicit `typeAnnotation` (what the user
-                // typed) over `inferredType` (what Sema decided). The
-                // LSP needs the inferred form to render an inlay hint
-                // — there's no point putting a hint where the user
-                // already wrote one.
-                const std::string& ty = !vd->typeAnnotation.empty()
-                    ? vd->typeAnnotation
-                    : vd->inferredType;
-                emitSymbol("variable", lit->value, scope,
-                           vd->filePath, vd->line, vd->col, ty);
-            }
-        }
-        // Could recurse into IfNode / WhileNode / ForNode bodies for
-        // block-scoped declarations. Skipped for the first cut to keep
-        // the LSP's scope model simple (function-level granularity).
-    }
+    for (auto& stmt : body) emitStmtVariables(stmt.get(), scope);
 }
 
 static void emitSymbols(const std::vector<std::unique_ptr<Node>>& ast) {
@@ -1153,7 +1180,8 @@ static void emitSymbols(const std::vector<std::unique_ptr<Node>>& ast) {
             const std::string& paramScope = isMethod ? displayName : fn->name;
             for (const auto& p : fn->parameters) {
                 emitSymbol("parameter", p.name, paramScope,
-                           fn->filePath, fn->line, fn->col, p.type);
+                           fn->filePath, fn->line, fn->col,
+                           p.writtenType.empty() ? p.type : p.writtenType);
             }
             emitBodyVariables(fn->body, paramScope);
         }
@@ -1189,8 +1217,14 @@ static void emitSymbols(const std::vector<std::unique_ptr<Node>>& ast) {
             if (auto* lit = dynamic_cast<LiteralNode*>(vd->lhs.get())) {
                 emitSymbol("module_const", lit->value, "module",
                            vd->filePath, vd->line, vd->col,
-                           vd->typeAnnotation);
+                           declTypeOf(vd));
             }
+        }
+        else if (dynamic_cast<ForNode*>(node.get()) || dynamic_cast<IfNode*>(node.get()) ||
+                 dynamic_cast<WhileNode*>(node.get()) || dynamic_cast<TryCatchNode*>(node.get()) ||
+                 dynamic_cast<WithNode*>(node.get())) {
+            // Top-level blocks in a script without main().
+            emitStmtVariables(node.get(), "module");
         }
     }
     std::cout.flush();

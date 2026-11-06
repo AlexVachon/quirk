@@ -24,13 +24,35 @@ Construct a Response. Sets `ok` based on the status code range.
 
 Compact form: `<Response [200]>`.
 
+#### `define json(self) -> Any`
+
+Parse the response body as JSON. Equivalent to
+`encoding.json.parse(self.text)`. Returns the decoded value
+(Map / List / String / Int / Double / Bool / null) typed as Any.
+
+Throws ValueError when the body isn't valid JSON. Status code is
+not consulted — callers wanting a strict "2xx + valid JSON" path
+should check `self.ok` first.
+
+Annotate the receiving variable with the concrete type you expect
+(`data: Map := resp.json()`) — bare `data :=` keeps the binding as
+Any, which downstream `.get` / `.length` calls won't pick the
+right method for.
+
+@example
+resp := http.get("https://api.example.com/user/42")
+if resp.ok {
+    data: Map := resp.json()
+    print(data.get("name"))
+}
+
 #### `define request(method: String, target: String, data: String = "", headers: Map = Map(), params: Map = Map(), follow_redirects: Bool = true) -> Response`
 
 Send a single HTTP request and return the response. Lower-level form
 behind `get`/`post`/`delete`/`post_json`.
 
 @param method HTTP verb (GET, POST, DELETE, PUT, ...) — case-insensitive.
-@param target Full URL starting with `http://`. HTTPS is not supported.
+@param target Full URL starting with `http://` or `https://`.
 @param data Request body — pass "" for GET/DELETE.
 @param headers Extra headers to send (case-preserved). Caller-supplied
        Host / User-Agent / Connection / Content-Length override the defaults.
@@ -113,6 +135,35 @@ a String. An empty string indicates the peer closed the connection.
 #### `extern define close(fd: Int) -> void`
 
 Close socket `fd`, releasing the OS resource.
+
+#### `extern define tls_connect(host: String, port: Int) -> Int`
+
+Open a TLS-wrapped TCP connection to `host:port`. The handshake is
+performed eagerly with SNI set to `host` and the cert verified
+against the system CA bundle. Returns an opaque handle (Int) for
+use with `tls_send` / `tls_recv` / `tls_close`, or `-1` on any
+failure (DNS, connect, handshake, or verification).
+
+Used by the `https://` path in `net.http`; most users want
+`http.get(url)` rather than calling this directly.
+
+#### `extern define tls_send(handle: Int, data: String) -> Int`
+
+Send `data` over a TLS handle returned by `tls_connect`. Returns
+the number of bytes accepted by SSL_write (may be less than
+`data.length()` for partial writes).
+
+#### `extern define tls_recv(handle: Int, size: Int) -> String`
+
+Read up to `size` plaintext bytes from a TLS handle. Returns the
+data as a String. An empty string indicates the peer closed the
+connection (or an SSL_read error — TLS-aware HTTP clients treat
+either the same way: stop reading and assemble what we have).
+
+#### `extern define tls_close(handle: Int) -> void`
+
+Tear down a TLS handle: SSL_shutdown + SSL_free + close the
+underlying TCP fd, and release the slot back to the table.
 
 
 ## `net/server.quirk`

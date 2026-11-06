@@ -76,11 +76,11 @@ export class QuirkDebugSession extends DebugSession {
     // node's chunk boundaries don't respect newlines.
     private stderrBuf = '';
 
-    // The (file, line) from the most recent `stopped` event. The shadow
-    // stack records each frame's *definition* line, not its currently-
-    // executing line, so without overlaying this on top of `bt`'s frame 0
-    // VSCode highlights the function's `define` line (or nothing, when
-    // it's the synthetic main frame with line 0).
+    // The (file, line) from the most recent `stopped` event. Since compiler
+    // 7.9.3 `bt` reports each frame's running line (the call site for
+    // callers), so this overlay only matters for frame 0 on older
+    // compilers, whose frames carried just the `define` line (0 for the
+    // synthetic main frame).
     private lastStopFile = '';
     private lastStopLine = 0;
 

@@ -1,0 +1,5 @@
+// Fixture for tools/check_editor_json.sh — diagnostics carry their code.
+define main() -> void {
+    n: Int := "oops"
+    print(nope)
+}

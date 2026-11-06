@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import { getDeadLines } from './DeadCodeProvider';
 import { maskLine, maskLineWithState, TripleState } from './utils/maskLine';
 import { resolveModulePath, findProjectRootFor, resolveQuirkHome } from './ImportProvider';
+import { compilerReportedLines } from './CompilerService';
 
 // Regex sources reused across pass-1 (for the current doc) and the
 // exports scanner (for referenced modules). Kept as strings so we
@@ -1092,7 +1093,12 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
         }
     });
 
-    quirkDiagnostics.set(doc.uri, diagnostics);
+    // The compiler's own diagnostic wins on a line it reported (one
+    // "undefined variable" squiggle, not a compiler error plus a lint).
+    const compilerLines = compilerReportedLines(doc.uri);
+    quirkDiagnostics.set(doc.uri, compilerLines
+        ? diagnostics.filter(d => !compilerLines.has(d.range.start.line))
+        : diagnostics);
 }
 
 export function subscribeToDocumentChanges(context: vscode.ExtensionContext, quirkDiagnostics: vscode.DiagnosticCollection): void {

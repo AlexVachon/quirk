@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { compilerVarType } from './CompilerService';
 import * as fs from 'fs';
 import * as path from 'path';
 import { resolveQuirkHome } from './ImportProvider';
@@ -97,6 +98,10 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
         const indexAccessMatch = /([a-zA-Z0-9_]+)\[[^\]]*\][ \t]*\.[a-zA-Z0-9_]*$/.exec(linePrefix);
         if (indexAccessMatch) {
             const containerVar = indexAccessMatch[1];
+            // `people[0].` where the compiler typed people as List[P].
+            const full = compilerVarType(document, position, containerVar);
+            const elemM = full ? /^List\[([A-Za-z_]\w*)\]$/.exec(full) : null;
+            if (elemM) return this.provideObjectMemberCompletions(document, position, '', elemM[1]);
             const containerType = this.inferTypeOfVariable(document, position, containerVar);
             if (containerType === 'String') return this.provideObjectMemberCompletions(document, position, '', 'String');
             if (containerType === 'List') {
@@ -670,6 +675,11 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
         position: vscode.Position,
         variableName: string
     ): string | null {
+        // The compiler's answer, when it has one (`List[P]` → `List`: the
+        // member tables below are keyed by base type).
+        const fromCompiler = compilerVarType(document, position, variableName);
+        if (fromCompiler) return fromCompiler.replace(/\[.*$/, '').replace(/\?$/, '');
+
         const textBeforeCursor = document.getText(new vscode.Range(new vscode.Position(0, 0), position));
         const lines = textBeforeCursor.split(/\r?\n/);
 

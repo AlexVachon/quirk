@@ -5,7 +5,8 @@ import { QuirkDefinitionProvider } from './ImportProvider';
 import { QuirkCompletionProvider } from './CompletionProvider';
 import { QuirkHoverProvider } from './HoverProvider';
 import { QuirkSemanticTokensProvider, legend } from './SemanticTokensProvider';
-import { subscribeToDocumentChanges } from './DiagnosticsProvider';
+import { subscribeToDocumentChanges, refreshDiagnostics } from './DiagnosticsProvider';
+import { startCompilerService } from './CompilerService';
 import { QuirkDocumentSymbolProvider } from './OutlineProvider';
 import { QuirkSignatureHelpProvider } from './SignatureHelpProvider';
 import { QuirkQuickFixProvider } from './QuickFixProvider';
@@ -98,6 +99,17 @@ export function activate(context: vscode.ExtensionContext) {
     const quirkDiagnostics = vscode.languages.createDiagnosticCollection("quirk");
     context.subscriptions.push(quirkDiagnostics);
     subscribeToDocumentChanges(context, quirkDiagnostics);
+
+    // --- COMPILER-BACKED DIAGNOSTICS + TYPES (open / save) ---
+    {
+        const lookup = findCompiler();
+        if (lookup.verified) {
+            const home = vscode.workspace.getConfiguration('quirk').get<string>('quirkHome')?.trim()
+                || undefined;
+            startCompilerService(context, lookup.command, home,
+                doc => refreshDiagnostics(doc, quirkDiagnostics));
+        }
+    }
 
     // --- DEAD CODE HIGHLIGHTING ---
     if (vscode.window.activeTextEditor) {

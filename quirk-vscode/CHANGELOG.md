@@ -2,6 +2,29 @@
 
 All notable changes to the extension land here. Versioning follows SemVer; minor bumps for new features, patches for fixes.
 
+## [0.4.0] — 2026-11-06 — compiler errors in the editor, compiler types, debugger lines
+
+Needs compiler 7.9.3 for error codes and the new types; older compilers
+still give the diagnostics.
+
+- **The compiler's errors show as you work.** On open and save the
+  extension runs `quirk --check --diagnostics-json`, so type errors the
+  regex linter can't see — `cannot assign 'String' to 'n' of type 'Int'`
+  (Q0209), wrong argument counts, unknown members — are underlined, with
+  their code (`quirk explain Q0209`). Where the compiler reports a line,
+  the extension's own lint for that line is dropped, so a mistake isn't
+  flagged twice.
+- **Hover and `.` completion use the compiler's types.** Variables,
+  parameters and loop variables show what the compiler inferred, generic
+  arguments included: `people: List[P]`, `p: P` inside
+  `for p in people`, and `people[0].` completes `P`'s fields. The
+  regex inference is the fallback (before the first save, or while the
+  file has errors the compiler stops at).
+- **Hover docs refreshed from the stdlib:** `Int` is a 64-bit integer,
+  and the index no longer carries stale duplicate entries.
+- **Debugger call stack shows the running line of every frame.** Callers
+  pointed at their `define` line; they now point at the call.
+
 ## [0.3.0] — 2026-11-05 — `.qk` files
 
 `.qk` is now the preferred Quirk extension (compiler 7.6.0); `.quirk`

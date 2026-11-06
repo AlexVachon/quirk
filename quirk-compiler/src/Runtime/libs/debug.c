@@ -481,7 +481,11 @@ static void Debug__print_backtrace(void) {
             fputs(",\"file\":", stderr);
             Debug__json_str(stderr,
                 quirk_shadow_stack[i].file_name ? quirk_shadow_stack[i].file_name : "?");
-            fprintf(stderr, ",\"line\":%d}", quirk_shadow_stack[i].line);
+            // cur_line is the statement each frame is running (the call
+            // site, for every frame but the top); line is the definition.
+            int ln = quirk_shadow_stack[i].cur_line > 0 ? quirk_shadow_stack[i].cur_line
+                                                         : quirk_shadow_stack[i].line;
+            fprintf(stderr, ",\"line\":%d,\"defLine\":%d}", ln, quirk_shadow_stack[i].line);
         }
         fprintf(stderr, "]}\n");
         return;
@@ -490,7 +494,8 @@ static void Debug__print_backtrace(void) {
     for (int i = 0; i < quirk_shadow_sp; i++) {
         const char* fn = quirk_shadow_stack[i].func_name ? quirk_shadow_stack[i].func_name : "?";
         const char* fl = quirk_shadow_stack[i].file_name ? quirk_shadow_stack[i].file_name : "?";
-        int ln = quirk_shadow_stack[i].line;
+        int ln = quirk_shadow_stack[i].cur_line > 0 ? quirk_shadow_stack[i].cur_line
+                                                     : quirk_shadow_stack[i].line;
         if (ln > 0)
             fprintf(stderr, "    [%d] %s  (%s:%d)\n", i, fn, fl, ln);
         else

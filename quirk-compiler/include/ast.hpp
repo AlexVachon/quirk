@@ -564,6 +564,9 @@ class ForNode : public Node {
     // Iterating a `List[S]` (S a user struct): the element type Sema
     // inferred, so Codegen binds the loop variable as S*.
     std::string elemType;
+    // Types Sema gave the loop variables (`P`, `String`, `Any`, …), for
+    // `--symbols-json` hovers: varName, and varName2 when present.
+    std::string itemType, itemType2;
 
     ForNode(std::string name, bool ref, std::unique_ptr<Node> iter)
         : varName(name), isRef(ref), iterable(std::move(iter)) {}

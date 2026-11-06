@@ -665,7 +665,7 @@ Converts to `Result`: `Some(v)` → `Ok(v)`; `None` → `Err(err)`.
 
 Boolean type. Only two values: `true` and `false`.
 
-#### `extern define parse(s: String) -> Bool`
+#### `define parse(s: String) -> Bool`
 
 Parses `"true"` or `"false"`.
 @param s: String
@@ -684,13 +684,13 @@ x := 3.14
 print(x.ceil())    // 4.0
 print(x.str())     // "3.14"
 
-#### `extern define sqrt(self) -> Double`
+#### `define sqrt(self) -> Double`
 
 Returns the square root.
 @returns: Double
 @throws ValueError — if the value is negative
 
-#### `extern define parse(s: String) -> Double`
+#### `define parse(s: String) -> Double`
 
 Parses a string as a floating-point number.
 @param s: String
@@ -703,7 +703,7 @@ Parses a string as a floating-point number.
 ### `struct Int : Primitive, Comparable, Parseable`
 
 64-bit signed integer.
-Supports arithmetic operators (`+`, `-`, `*`, `/`, `%`, `**`) and comparisons.
+Supports arithmetic operators (`+`, `-`, `*`, `/`, `%`; `n.pow(e)` for powers) and comparisons.
 
 @example:
 n := 42
@@ -711,23 +711,23 @@ print(n.str())       // "42"
 print(n.is_even())   // true
 print(n.pow(2))      // 1764
 
-#### `extern define str(self) -> String`
+#### `define str(self) -> String`
 
 Returns the string representation of this integer.
 @returns: String
 
-#### `extern define abs(self) -> Int`
+#### `define abs(self) -> Int`
 
 Returns the absolute value.
 @returns: Int
 
-#### `extern define pow(self, exp: Int) -> Int`
+#### `define pow(self, exp: Int) -> Int`
 
 Returns `self` raised to the power `exp`.
 @param exp: Int — exponent (must be ≥ 0)
 @returns: Int
 
-#### `extern define parse(s: String) -> Int`
+#### `define parse(s: String) -> Int`
 
 Parses a string as an integer.
 @param s: String

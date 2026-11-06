@@ -2902,6 +2902,8 @@ std::string Sema::checkCall(CallNode *node)
                         if (f->moduleName == mod || f->moduleName.rfind(mod + ".", 0) == 0) { fn = f; break; }
             }
             if (!fn) fn = lookupTopLevel(funcName);
+            if (fn && !fn->linkageName.empty() && fn->linkageName != funcName)
+                node->resolvedLinkageName = fn->linkageName;
             if (fn) {
                 bool anyKwarg = false;
                 for (auto& a : node->args) if (!a.name.empty()) { anyKwarg = true; break; }
@@ -3345,10 +3347,22 @@ FunctionNode* Sema::lookupTopLevel(const std::string& name) {
             if (srcIt != mvIt->second.visibleSymbolSources.end()) {
                 const std::string& src = srcIt->second;
                 std::string srcPkg = pkgOf(src);
-                for (FunctionNode* f : cit->second) {
-                    if (f->moduleName == src) return f;
+                // Same module first, compared loosely (`encoding.hex` vs
+                // `Encoding_Hex` / `encoding.hex.index`); only then any
+                // module of the same package. The package match alone sent
+                // `hex` (`encode` from encoding.hex) and `b64` (`encode`
+                // from encoding.base64) to the same function.
+                auto norm = [](std::string m) {
+                    for (auto& ch : m) ch = (ch == '_' || ch == '/') ? '.' : (char)std::tolower((unsigned char)ch);
+                    const std::string idx = ".index";
+                    if (m.size() > idx.size() && m.compare(m.size() - idx.size(), idx.size(), idx) == 0)
+                        m = m.substr(0, m.size() - idx.size());
+                    return m;
+                };
+                for (FunctionNode* f : cit->second)
+                    if (f->moduleName == src || norm(f->moduleName) == norm(src)) return f;
+                for (FunctionNode* f : cit->second)
                     if (pkgOf(f->moduleName) == srcPkg) return f;
-                }
             }
             for (FunctionNode* f : cit->second) {
                 if (mvIt->second.visibleModules.count(f->moduleName))
@@ -3364,7 +3378,9 @@ FunctionNode* Sema::lookupTopLevel(const std::string& name) {
         //    last-write-wins behaviour for cases that worked
         //    before this disambiguation existed.
     }
-    auto it = methodRegistry[""].find(name);
+    // The source name, not the alias: `from m use { encode as b64 }` with
+    // a single `encode` around made `b64(...)` "undefined".
+    auto it = methodRegistry[""].find(lookupName);
     return it == methodRegistry[""].end() ? nullptr : it->second;
 }
 

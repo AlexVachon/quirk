@@ -1,0 +1,14 @@
+// p117 — Map printing and `\$` (v7.8.1).
+//
+// Map.__str quoted every value that wasn't a number or Bool, so a nested
+// List / Map / struct printed as a string: `{"a": [1, 2]}` came out as
+// `{"a": "[1, 2]"}`. Only Strings are quoted now. And `\$` kept its
+// backslash, so there was no way to write a literal `${` in a string.
+define main() -> void {
+    m := {"a": [1, 2], "b": "s", "c": 3, "d": null, "e": {"x": 1}}
+    want := "{\"a\": [1, 2], \"b\": \"s\", \"c\": 3, \"d\": null, \"e\": {\"x\": 1}}"
+    if m.str() != want { print("FAIL: map str " + m.str()); return }
+    if "cost \$5" != "cost " + "$" + "5" { print("FAIL: \\$ escape"); return }
+    if "\${x}".length() != 4 { print("FAIL: literal \${ (" + "\${x}" + ")"); return }
+    print("PASS: map str and \\$")
+}

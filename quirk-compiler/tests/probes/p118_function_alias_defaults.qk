@@ -1,0 +1,19 @@
+// p118 — calling a named function through a variable keeps its defaults (v7.8.1).
+//
+// `f := greet` then `f("ed")` went through a Callable, whose thunk expects
+// every parameter: the omitted defaulted one arrived as garbage
+// ("null ednull"). A local bound to a named function now calls it directly.
+define greet(name: String, greeting: String = "hello") -> String {
+    return greeting + " " + name
+}
+define shout(name: String, greeting: String = "HEY") -> String {
+    return greeting + " " + name
+}
+define main() -> void {
+    f := greet
+    if f("ed") != "hello ed"      { print("FAIL: default through alias: " + f("ed")); return }
+    if f("ed", "hi") != "hi ed"   { print("FAIL: explicit arg through alias"); return }
+    f = shout
+    if f("al") != "HEY al"        { print("FAIL: reassigned alias"); return }
+    print("PASS: function alias defaults")
+}

@@ -277,14 +277,13 @@ String* Core_Collections_Map_Map___str(Map* self) {
 
         String* vs = quirk_opaque_to_string(entry->value);
         const char* vstr = (vs && vs->buffer) ? vs->buffer : "null";
-        // Numbers print bare: inline Ints, and boxed Int / Double / Bool
-        // (Int 0 is always boxed — see Core_Primitives_Any_box_int).
-        int is_int_val = entry->value && (uintptr_t)entry->value <= 0xFFFFFFFFUL;
-        if (!is_int_val && quirk_is_any(entry->value)) {
-            int32_t tg = ((Any*)entry->value)->tag;
-            is_int_val = (tg == ANY_INT || tg == ANY_DOUBLE || tg == ANY_BOOL);
-        }
-        int vquote = !is_int_val;
+        // Only Strings are quoted. Numbers / Bools / null print bare, and so
+        // do Lists, Maps, Sets, Tuples and structs — `{"a": [1, 2]}` printed
+        // as `{"a": "[1, 2]"}`. (An untyped value without a header is a
+        // legacy raw string, still quoted.)
+        uint32_t vt = quirk_type_of(entry->value);
+        int vquote = entry->value && (uintptr_t)entry->value > 0xFFFFFFFFUL
+                     && (vt == QT_STRING || vt == QT_CSTR || vt == QT_NONE);
 
         int needed = (first ? 0 : 2) + 1 + strlen(k) + 3 + (vquote ? 2 : 0) + strlen(vstr) + 1;
         while (len + needed + 2 >= cap) { cap *= 2; buf = (char*)realloc(buf, cap); }

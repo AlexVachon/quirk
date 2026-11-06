@@ -131,6 +131,10 @@ class LLVMCodegen {
     bool inModuleScope = false;
     std::map<std::string, std::string> activeModuleAliases;
     std::map<std::string, std::string> callableReturnTypes; // varName → inferred return type
+    // `f := greet` — a local bound to a named function. Calls through it
+    // compile as direct calls, so omitted defaulted arguments are filled
+    // in (through the Callable they arrived as garbage: "null ednull").
+    std::map<std::string, std::string> functionAliasVars;
     std::map<std::string, int> variadicCallableStart;       // varName → first variadic arg index (-1 = not variadic)
     std::set<std::string> externBoolReturnFunctions;       // LLVM names widened i1→i32 for C ABI
 
@@ -854,6 +858,7 @@ class LLVMCodegen {
 
         varInterfaceTypes.clear();
         varListOfInterface.clear();
+        functionAliasVars.clear();
         for (; argIt != F->arg_end(); ++argIt) {
             if (paramIdx >= node->parameters.size()) break;
             const Parameter& param = node->parameters[paramIdx++];
@@ -1108,6 +1113,9 @@ class LLVMCodegen {
                     case '\\': res += '\\'; break;
                     case '"':  res += '\"'; break;
                     case '\'': res += '\''; break;
+                    // `\$` is a literal `$`: the lexer already keeps it from
+                    // starting `${…}`, but the backslash was left in.
+                    case '$':  res += '$'; break;
                     case 'x': {
                         // \xNN — 2 hex digits (e.g. \x1b for ESC)
                         auto isHex = [](char c) {
@@ -1751,6 +1759,15 @@ class LLVMCodegen {
     Value* handleCall(CallNode* call) 
     {
         if (auto lit = dynamic_cast<LiteralNode*>(call->callee.get())) {
+            if (auto fa = functionAliasVars.find(lit->value); fa != functionAliasVars.end()) {
+                const std::string alias = lit->value;
+                lit->value = fa->second;
+                Value* r = handleCall(call);
+                lit->value = alias;
+                return r;
+            }
+        }
+        if (auto lit = dynamic_cast<LiteralNode*>(call->callee.get())) {
             if (verbose) std::cerr << "[Codegen]     handleCall: callee = " << lit->value << "\n";
 
             // --- FIXED: Super keyword codegen ---
@@ -2077,11 +2094,25 @@ class LLVMCodegen {
                     // whichever was registered last. Module-keyed lookup picks
                     // the right one.
                     Function* func = nullptr;
+                    if (!call->resolvedLinkageName.empty())       // Sema's pick (see Sema)
+                        func = TheModule->getFunction(call->resolvedLinkageName);
                     const std::string& modName = activeModuleAliases[lit->value];
-                    auto mit = moduleFunctionIndex.find({modName, memberName});
-                    if (mit != moduleFunctionIndex.end()) {
-                        const std::string& ln = mit->second->linkageName;
-                        func = TheModule->getFunction(ln.empty() ? memberName : ln);
+                    // The alias records the dotted module (`encoding.hex`);
+                    // the index keys use the parser's `Encoding_Hex` /
+                    // `encoding_hex`. The dotted form never matched, so
+                    // `hex.encode` fell back to the bare name and called
+                    // whichever `encode` was loaded last (base64's).
+                    std::string underscored = modName;
+                    std::replace(underscored.begin(), underscored.end(), '.', '_');
+                    std::string lowered = underscored;
+                    for (auto& ch : lowered) ch = (char)std::tolower((unsigned char)ch);
+                    for (const std::string& key : {modName, underscored, lowered}) {
+                        if (func) break;
+                        auto mit = moduleFunctionIndex.find({key, memberName});
+                        if (mit != moduleFunctionIndex.end()) {
+                            const std::string& ln = mit->second->linkageName;
+                            func = TheModule->getFunction(ln.empty() ? memberName : ln);
+                        }
                     }
                     if (!func) func = resolveFunction(memberName);
                     if (!func)
@@ -3212,6 +3243,13 @@ class LLVMCodegen {
             }
         }
 
+        if (auto lhsLit = dynamic_cast<LiteralNode*>(vdecl->lhs.get())) {
+            auto* rhs = dynamic_cast<LiteralNode*>(vdecl->expression.get());
+            bool isFnRef = rhs && functionDeclarations.count(rhs->value) && !varGen->exists(rhs->value)
+                           && vdecl->op != "+=" && vdecl->op != "-=";
+            if (isFnRef) functionAliasVars[lhsLit->value] = rhs->value;
+            else functionAliasVars.erase(lhsLit->value);
+        }
         // Track Callable return types and variadic info for direct lambda invocation
         if (auto lambda = dynamic_cast<LambdaNode*>(vdecl->expression.get())) {
             if (auto lhsLit = dynamic_cast<LiteralNode*>(vdecl->lhs.get())) {

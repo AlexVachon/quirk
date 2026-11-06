@@ -1,0 +1,17 @@
+// p119 — same-named functions from different modules (v7.8.1).
+//
+// `encoding.base64` and `encoding.hex` both export `encode`:
+// - `from encoding.base64 use { encode as b64 }` alone made `b64`
+//   "undefined" (the fallback looked the alias up, not `encode`);
+// - with both aliased, both resolved to the same `encode`;
+// - `url` calls `hex.encode` internally, and that resolved to base64's
+//   once the program imported it — url.quote("a b") gave "a%IA==b".
+use url
+from encoding.base64 use { encode as b64 }
+from encoding.hex use { encode as hex }
+define main() -> void {
+    if b64("hello") != "aGVsbG8="    { print("FAIL: b64 alias: " + b64("hello")); return }
+    if hex("AB") != "4142"           { print("FAIL: hex alias: " + hex("AB")); return }
+    if url.quote("a b&c") != "a%20b%26c" { print("FAIL: url.quote with base64 imported: " + url.quote("a b&c")); return }
+    print("PASS: same-named imports")
+}

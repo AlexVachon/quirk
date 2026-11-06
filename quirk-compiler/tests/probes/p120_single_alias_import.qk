@@ -1,0 +1,6 @@
+// p120 — a single aliased import resolves (v7.8.1). See p119.
+from encoding.base64 use { encode as b64 }
+define main() -> void {
+    if b64("hi") != "aGk=" { print("FAIL: " + b64("hi")); return }
+    print("PASS: single alias")
+}

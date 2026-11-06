@@ -5,6 +5,33 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.8.1] — 2026-11-06 — sweep, part 2: imports, Map printing, function values
+
+Second batch of the core-language sweep (Option / Result, generics,
+type aliases and unions, named / variadic arguments, f-string formats,
+Queue, nested data, itertools / statistics / crypto / url / csv / time /
+base64). Option, Result and generics were clean; these weren't. Probes
+p117–p120 lock them.
+
+- **Same-named functions from different modules collided.**
+  `encoding.base64` and `encoding.hex` both export `encode`:
+  - `from encoding.base64 use { encode as b64 }` on its own made `b64`
+    "undefined" (the lookup used the alias instead of `encode`);
+  - with both imported under aliases, both resolved to the same one;
+  - `url` calls `hex.encode` internally, which resolved to base64's as
+    soon as a program imported it: `url.quote("a b")` gave `a%IA==b`.
+    The module-qualified lookup compared `encoding.hex` with the index
+    key `Encoding_Hex` and fell back to the bare name.
+- **A Map printed nested values as strings:** `{"a": [1, 2]}` came out
+  as `{"a": "[1, 2]"}` (likewise Maps, Sets, structs and `null`). Only
+  Strings are quoted now.
+- **Calling a named function through a variable dropped its defaults:**
+  `f := greet` then `f("ed")` gave `null ednull`. A local bound to a
+  named function now calls it directly. (Passing it as a `Callable`
+  parameter and omitting arguments there still can't fill defaults.)
+- **`\$` kept its backslash,** so a literal `${` couldn't be written.
+  `"\${x}"` is now the text `${x}`.
+
 ## [7.8.0] — 2026-11-06 — core-language sweep: 13 fixes
 
 A sweep of self-checking programs over the core language (strings,

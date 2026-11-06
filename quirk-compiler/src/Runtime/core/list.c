@@ -329,6 +329,37 @@ List* Core_Collections_List_List_filter(List* self, Callable* cb) {
     return result;
 }
 
+// `xs.sort()` / `xs.sort(cmp)`: a stable merge sort, in place; returns
+// self. Without a comparator, values compare as `<` does on untyped
+// values (numbers numerically, Strings by text — quirk_opaque_cmp). With
+// one, `cmp(a, b)` returns < 0 when a goes first, > 0 when after. (It was
+// an insertion sort in Quirk, O(n^2), and the comparator was required.)
+extern int32_t quirk_opaque_cmp(void* a, void* b);
+extern int64_t quirk_opaque_to_int(void* val);
+static int list_sort_cmp(Callable* cb, void* a, void* b) {
+    if (!cb) return quirk_opaque_cmp(a, b);
+    int64_t r = quirk_opaque_to_int(((LambdaFn2)cb->fn)(cb->env, a, b));
+    return (r > 0) - (r < 0);
+}
+static void list_merge_sort(void** xs, void** tmp, int64_t n, Callable* cb) {
+    if (n < 2) return;
+    int64_t mid = n / 2;
+    list_merge_sort(xs, tmp, mid, cb);
+    list_merge_sort(xs + mid, tmp, n - mid, cb);
+    int64_t i = 0, j = mid, k = 0;
+    while (i < mid && j < n)
+        tmp[k++] = (list_sort_cmp(cb, xs[j], xs[i]) < 0) ? xs[j++] : xs[i++];   // ties keep order
+    while (i < mid) tmp[k++] = xs[i++];
+    while (j < n)   tmp[k++] = xs[j++];
+    memcpy(xs, tmp, n * sizeof(void*));
+}
+List* Core_Collections_List_List_sort(List* self, Callable* cb) {
+    if (!self || self->size < 2) return self;
+    void** tmp = (void**)GC_malloc(self->size * sizeof(void*));
+    list_merge_sort(self->data, tmp, self->size, cb);
+    return self;
+}
+
 void Core_Collections_List_List_each(List* self, Callable* cb) {
     LambdaFn1 fn = (LambdaFn1)cb->fn;
     for (int i = 0; i < self->size; i++)

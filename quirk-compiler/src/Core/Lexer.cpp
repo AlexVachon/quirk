@@ -175,6 +175,18 @@ Token Lexer::nextToken()
     // 4. Handle Numbers
     if (isdigit(c))
     {
+        // Digits with `_` separators between them (`1_000`, `0xFF_FF`):
+        // an underscore is skipped only when a digit of the same kind
+        // follows, so `1_` / `1__0` keep the `_` (and fail to parse).
+        auto digits = [&](auto isDigit) {
+            std::string out;
+            while (isDigit(peek()) || (peek() == '_' && isDigit(peek(1)) && !out.empty())) {
+                char ch = advance();
+                if (ch != '_') out += ch;
+            }
+            return out;
+        };
+        auto isDec = [](char ch) { return ch >= '0' && ch <= '9'; };
         // Hex literal: 0xFF, 0xCafe — converted to a decimal string token
         // so the rest of the pipeline (Sema, Codegen) doesn't need to know
         // about the base. Keep the loop tight; bail to decimal scanning if
@@ -185,7 +197,7 @@ Token Lexer::nextToken()
             auto isHex = [](char ch) {
                 return (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F');
             };
-            while (isHex(peek())) hex += advance();
+            hex = digits(isHex);
             if (hex.empty()) return {TokenType::ERROR, "0x", startLine, startCol};
             long long v = std::stoll(hex, nullptr, 16);
             return {TokenType::INT_LITERAL, std::to_string(v), startLine, startCol};
@@ -194,15 +206,14 @@ Token Lexer::nextToken()
         if (peek() == '0' && (peek(1) == 'b' || peek(1) == 'B')) {
             advance(); advance(); // consume "0b"
             std::string bin;
-            while (peek() == '0' || peek() == '1') bin += advance();
+            bin = digits([](char ch) { return ch == '0' || ch == '1'; });
             if (bin.empty()) return {TokenType::ERROR, "0b", startLine, startCol};
             long long v = std::stoll(bin, nullptr, 2);
             return {TokenType::INT_LITERAL, std::to_string(v), startLine, startCol};
         }
 
-        std::string num;
-        while (isdigit(peek()))
-            num += advance();
+        std::string num = digits(isDec);
+        bool isFloat = false;
 
         // ONLY consume dot if the NEXT char is a digit
         // This allows "10.str()" to work (dot belongs to member access)
@@ -210,12 +221,23 @@ Token Lexer::nextToken()
         if (peek() == '.' && isdigit(peek(1)))
         {
             num += advance();
-            while (isdigit(peek()))
-                num += advance();
-            return {TokenType::FLOAT_LITERAL, num, startLine, startCol};
+            num += digits(isDec);
+            isFloat = true;
+        }
+        // Exponent: `1e20`, `2.5e-3`, `1E+6` — always a Double. Later
+        // stages recognise a Double literal by its `.`, so `1e20` is
+        // written `1.0e20` (same value).
+        if ((peek() == 'e' || peek() == 'E') &&
+            (isdigit(peek(1)) || ((peek(1) == '+' || peek(1) == '-') && isdigit(peek(2)))))
+        {
+            if (!isFloat) num += ".0";
+            num += advance();
+            if (peek() == '+' || peek() == '-') num += advance();
+            num += digits(isDec);
+            isFloat = true;
         }
 
-        return {TokenType::INT_LITERAL, num, startLine, startCol};
+        return {isFloat ? TokenType::FLOAT_LITERAL : TokenType::INT_LITERAL, num, startLine, startCol};
     }
 
     // 5. Multi-character Operators

@@ -491,7 +491,6 @@ class BuiltinGen {
             Type* ty = val->getType();
             Value* fmtStr = Builder.CreateGlobalStringPtr(newline ? "%s\n" : "%s");
             Value* fmtInt = Builder.CreateGlobalStringPtr(newline ? "%lld\n" : "%lld");
-            Value* fmtFlt = Builder.CreateGlobalStringPtr(newline ? "%f\n" : "%f");
 
             if (ty->isIntegerTy(1)) {
                 Value* s = Builder.CreateSelect(val,
@@ -503,7 +502,10 @@ class BuiltinGen {
             } else if (ty->isIntegerTy()) {
                 Builder.CreateCall(printfFunc, {fmtInt, Builder.CreateSExtOrTrunc(val, Type::getInt64Ty(Context))});
             } else if (ty->isDoubleTy()) {
-                Builder.CreateCall(printfFunc, {fmtFlt, val});
+                // quirk_print_double: same text as Double.str() (1.5, not 1.500000).
+                Builder.CreateCall(TheModule->getOrInsertFunction("quirk_print_double",
+                    Type::getVoidTy(Context), Type::getDoubleTy(Context), Type::getInt32Ty(Context)),
+                    {val, Builder.getInt32(newline ? 1 : 0)});
             } else {
                 // Anything else: convert to String then print the buffer
                 Value* strObj = valueToString(val);
@@ -718,8 +720,9 @@ class BuiltinGen {
                     Builder.CreateCall(printfFunc, {fmt, Builder.CreateSExtOrTrunc(val, Type::getInt64Ty(Context))});
                 }
             } else if (type->isDoubleTy()) {
-                Value* fmt = Builder.CreateGlobalStringPtr("%f\n");
-                Builder.CreateCall(printfFunc, {fmt, val});
+                Builder.CreateCall(TheModule->getOrInsertFunction("quirk_print_double",
+                    Type::getVoidTy(Context), Type::getDoubleTy(Context), Type::getInt32Ty(Context)),
+                    {val, Builder.getInt32(1)});
             } else if (type->isPointerTy() && type->getPointerElementType()->isIntegerTy(8)) {
                 // i8* may be a boxed String* (from map.get / Any-typed returns).
                 // quirk_print_opaque distinguishes heap String* from tagged-int pointers.

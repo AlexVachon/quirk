@@ -94,6 +94,28 @@ class MathGen {
         // covers the early-init path where setModule hasn't fired.
         bool isNumericOp = (op=="+"||op=="-"||op=="*"||op=="/"||op=="%"||op==">"||op=="<"||op==">="||op=="<=");
         bool isEqOp     = (op == "==" || op == "!=");
+        // `==` / `!=` on two collections (List / Map / Set / Tuple) or two
+        // untyped values compares contents (quirk_opaque_eq — strings and
+        // numbers by value, collections recursively, other objects by
+        // identity). It compared pointers, so `[1, 2] == [1, 2]` was false.
+        if (TheModule && isEqOp && L->getType()->isPointerTy() && L->getType() == R->getType()
+            && !isa<ConstantPointerNull>(L) && !isa<ConstantPointerNull>(R)) {
+            Type* el = L->getType()->getPointerElementType();
+            bool untyped = el->isIntegerTy(8);
+            bool coll = false;
+            if (auto* st = dyn_cast<StructType>(el); st && st->hasName()) {
+                std::string n = st->getName().str();
+                coll = (n == "List" || n == "Map" || n == "Set" || n == "Tuple");
+            }
+            if (untyped || coll) {
+                Type* i8p = Type::getInt8PtrTy(Context);
+                FunctionCallee eq = TheModule->getOrInsertFunction("quirk_opaque_eq",
+                    FunctionType::get(Type::getInt32Ty(Context), {i8p, i8p}, false));
+                Value* r = Builder.CreateCall(eq, {Builder.CreateBitCast(L, i8p), Builder.CreateBitCast(R, i8p)}, "val_eq");
+                Value* zero = ConstantInt::get(Type::getInt32Ty(Context), 0);
+                return op == "==" ? Builder.CreateICmpNE(r, zero, "eq") : Builder.CreateICmpEQ(r, zero, "ne");
+            }
+        }
         // Both sides untyped (List elements, Map values, a reduce
         // accumulator): what to do depends on the values, so the runtime
         // decides — String concat, Double math or Int math (see

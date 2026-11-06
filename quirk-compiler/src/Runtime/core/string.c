@@ -1,4 +1,36 @@
 #include <ctype.h>
+
+// ---- UTF-8 ------------------------------------------------------------
+// Text is UTF-8. Positions and lengths seen from Quirk count characters
+// (code points), as in Python: "héllo".length() is 5, not 6. The String's
+// `length` field stays the byte count. ASCII text takes the same paths
+// with one byte per character.
+static int u8_cont(unsigned char c) { return (c & 0xC0) == 0x80; }
+static int u8_bytes(unsigned char lead) {
+    if (lead < 0x80) return 1;
+    if ((lead & 0xE0) == 0xC0) return 2;
+    if ((lead & 0xF0) == 0xE0) return 3;
+    if ((lead & 0xF8) == 0xF0) return 4;
+    return 1;   // invalid lead byte: one byte, one character
+}
+// Characters in the first `nbytes` bytes of `buf`.
+static int64_t u8_count(const char* buf, int64_t nbytes) {
+    int64_t n = 0;
+    for (int64_t i = 0; i < nbytes; i++) if (!u8_cont((unsigned char)buf[i])) n++;
+    return n;
+}
+static int64_t u8_len(const String* s) {
+    return (s && s->buffer) ? u8_count(s->buffer, s->length) : 0;
+}
+// Byte offset of character `ci` (0..len; past the end → the byte length).
+static int64_t u8_offset(const String* s, int64_t ci) {
+    int64_t b = 0;
+    while (ci > 0 && b < s->length) {
+        b += u8_bytes((unsigned char)s->buffer[b]);
+        ci--;
+    }
+    return b > s->length ? s->length : b;
+}
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -250,6 +282,37 @@ static int extract_width(const char* spec) {
     return w;
 }
 
+// `${s:>8}` pads with printf's `%8s`, which counts bytes: a String with
+// multi-byte characters came out short. Top up to `width` characters on
+// the padding side (left unless the spec has '-').
+static void utf8_fix_width(char* out, size_t size, const char* spec) {
+    int w = extract_width(spec);
+    int64_t chars = u8_count(out, (int64_t)strlen(out));
+    if (w <= 0 || chars >= w) return;
+    size_t missing = (size_t)(w - chars), n = strlen(out);
+    if (n + missing + 1 > size) return;
+    if (strchr(spec, '-')) {
+        memset(out + n, ' ', missing);
+    } else {
+        memmove(out + missing, out, n);
+        memset(out, ' ', missing);
+    }
+    out[n + missing] = '\0';
+}
+
+// `${s:^9}`: centre `text` in `width` characters (extra space on the
+// right, as Python). Done here rather than through printf + re-centring,
+// which counted bytes.
+static void utf8_center(char* out, size_t size, const char* text, int width) {
+    int64_t n = (int64_t)strlen(text), chars = u8_count(text, n);
+    int64_t total = width > chars ? width - chars : 0, left = total / 2, right = total - left;
+    if ((size_t)(left + n + right + 1) > size) { snprintf(out, size, "%s", text); return; }
+    memset(out, ' ', left);
+    memcpy(out + left, text, n);
+    memset(out + left + n, ' ', right);
+    out[left + n + right] = '\0';
+}
+
 static void append_formatted(char** buf,
                       int* cap,
                       int* len,
@@ -301,7 +364,8 @@ static void append_formatted(char** buf,
             if (strpbrk(format_string, "dxfge")) strcpy(format_string, "%s");
             ensure_type_suffix(format_string, sizeof(format_string), 's');
             snprintf(output_buffer, 256, format_string, cstr);
-            if (center) center_in_field(output_buffer, sizeof(output_buffer), extract_width(translated));
+            if (center) utf8_center(output_buffer, sizeof(output_buffer), cstr, extract_width(translated));
+            else utf8_fix_width(output_buffer, sizeof(output_buffer), translated);
             buffer_append(buf, cap, len, output_buffer);
         } else {
             buffer_append(buf, cap, len, cstr);
@@ -354,7 +418,7 @@ static void append_formatted(char** buf,
                 ensure_type_suffix(format_string, sizeof(format_string), 'g');
                 snprintf(output_buffer, 256, format_string, a->dval);
             } else {
-                snprintf(output_buffer, 256, "%g", a->dval);
+                quirk_format_double(a->dval, output_buffer, 256);
             }
             if (commas) insert_thousand_commas(output_buffer, sizeof(output_buffer));
             if (center) center_in_field(output_buffer, sizeof(output_buffer), extract_width(translated));
@@ -371,7 +435,8 @@ static void append_formatted(char** buf,
                     strcpy(format_string, "%s");
                 ensure_type_suffix(format_string, sizeof(format_string), 's');
                 snprintf(output_buffer, 256, format_string, cstr);
-                if (center) center_in_field(output_buffer, sizeof(output_buffer), extract_width(translated));
+                if (center) utf8_center(output_buffer, sizeof(output_buffer), cstr, extract_width(translated));
+                else utf8_fix_width(output_buffer, sizeof(output_buffer), translated);
                 buffer_append(buf, cap, len, output_buffer);
             } else {
                 buffer_append(buf, cap, len, cstr);
@@ -538,16 +603,20 @@ String* quirk_string_char_at(String* self, int64_t index) {
     if (!self || !self->buffer) {
         quirk_throw_exception("IndexError", "string index on null string");
     }
-    if (index < 0) index += self->length;
-    if (index < 0 || index >= self->length) {
+    int64_t clen = u8_len(self);
+    if (index < 0) index += clen;
+    if (index < 0 || index >= clen) {
         char buf[128];
         snprintf(buf, sizeof(buf),
-                 "string index %lld out of range (length: %lld)", (long long)index, (long long)self->length);
+                 "string index %lld out of range (length: %lld)", (long long)index, (long long)clen);
         quirk_throw_exception("IndexError", buf);
     }
-    char* raw = (char*)GC_malloc(2);
-    raw[0] = self->buffer[index];
-    raw[1] = '\0';
+    int64_t off = u8_offset(self, index);
+    int nb = u8_bytes((unsigned char)self->buffer[off]);
+    if (off + nb > self->length) nb = (int)(self->length - off);
+    char* raw = (char*)GC_malloc(nb + 1);
+    memcpy(raw, self->buffer + off, nb);
+    raw[nb] = '\0';
     return make_String(raw);
 }
 
@@ -582,11 +651,14 @@ int Core_String_StringIterator___has_next(StringIterator* self) {
 
 String* Core_String_StringIterator___next(StringIterator* self) {
     if (!self || !self->str_ref) return make_String("");
-    char c = self->str_ref->buffer[self->idx];
-    self->idx++;
-    char* raw = (char*)malloc(2);
-    raw[0] = c;
-    raw[1] = '\0';
+    // One character (all its UTF-8 bytes); idx is a byte position.
+    String* str = self->str_ref;
+    int nb = u8_bytes((unsigned char)str->buffer[self->idx]);
+    if (self->idx + nb > str->length) nb = (int)(str->length - self->idx);
+    char* raw = (char*)malloc(nb + 1);
+    memcpy(raw, str->buffer + self->idx, nb);
+    raw[nb] = '\0';
+    self->idx += nb;
     return make_String_taking_ownership(raw);
 }
 
@@ -761,7 +833,7 @@ int64_t Core_String_String_find(String* self, String* sub) {
     if (self->length < 0 || self->length > (1 << 24)) return -1;
     if (sub->length < 0 || sub->length > (1 << 24)) return -1;
     char* ptr = strstr(self->buffer, sub->buffer);
-    return (ptr == NULL) ? -1 : (int)(ptr - self->buffer);
+    return (ptr == NULL) ? -1 : u8_count(self->buffer, ptr - self->buffer);   // a character position
 }
 
 int64_t Core_String_String_index(String* self, String* sub) {
@@ -862,9 +934,16 @@ String* Core_String_String_repeat(String* self, int64_t n) {
 String* Core_String_String_reverse(String* self) {
     if (!self || !self->buffer)
         return make_String("");
+    // Reverse the characters, keeping each one's UTF-8 bytes in order.
     char* result = (char*)malloc(self->length + 1);
-    for (int i = 0; i < self->length; i++)
-        result[i] = self->buffer[self->length - 1 - i];
+    int64_t out = self->length;
+    for (int64_t i = 0; i < self->length;) {
+        int nb = u8_bytes((unsigned char)self->buffer[i]);
+        if (i + nb > self->length) nb = (int)(self->length - i);
+        out -= nb;
+        memcpy(result + out, self->buffer + i, nb);
+        i += nb;
+    }
     result[self->length] = '\0';
     return make_String_taking_ownership(result);
 }
@@ -880,16 +959,20 @@ int Core_String_String_startswith(String* self, String* prefix) {
 String* Core_String_String_substring(String* self, int64_t start, int64_t end) {
     if (!self || !self->buffer)
         return make_String("");
+    // start / end are character positions.
+    int64_t clen = u8_len(self);
     if (start < 0)
-        start += self->length;
+        start += clen;
     if (end < 0)
-        end += self->length;
+        end += clen;
     if (start < 0)
         start = 0;
-    if (end > self->length)
-        end = self->length;
+    if (end > clen)
+        end = clen;
     if (start >= end)
         return make_String("");
+    start = u8_offset(self, start);
+    end = u8_offset(self, end);
     int64_t new_len = end - start;
     char* temp = (char*)malloc(new_len + 1);
     memcpy(temp, self->buffer + start, new_len);
@@ -991,45 +1074,42 @@ String* Core_String_String_join(String* self, List* items) {
     return make_String_taking_ownership(result);
 }
 
-String* Core_String_String_zfill(String* self, int64_t width) {
+// Pad `self` to `width` characters with the first character of `pad`
+// (a space when empty): `side` 'l' = text on the left (ljust), 'r' = on
+// the right (rjust / zfill), 'c' = centred.
+static String* u8_pad(String* self, int64_t width, String* pad, char side) {
     if (!self || !self->buffer)
         return make_String("");
-    if (self->length >= width)
+    const char* pc = (pad && pad->buffer && pad->length > 0) ? pad->buffer : " ";
+    int pb = u8_bytes((unsigned char)pc[0]);
+    int64_t clen = u8_len(self);
+    if (clen >= width)
         return make_String(self->buffer);
-    int64_t padding = width - self->length;
-    char* result = (char*)malloc(width + 1);
-    memset(result, '0', padding);
-    memcpy(result + padding, self->buffer, self->length);
-    result[width] = '\0';
+    int64_t total = width - clen;
+    int64_t left = side == 'l' ? 0 : side == 'r' ? total : total / 2;
+    int64_t right = total - left;
+    char* result = (char*)malloc((left + right) * pb + self->length + 1);
+    char* w = result;
+    for (int64_t k = 0; k < left; k++) { memcpy(w, pc, pb); w += pb; }
+    memcpy(w, self->buffer, self->length); w += self->length;
+    for (int64_t k = 0; k < right; k++) { memcpy(w, pc, pb); w += pb; }
+    *w = '\0';
     return make_String_taking_ownership(result);
+}
+
+String* Core_String_String_zfill(String* self, int64_t width) {
+    String zero = {0};
+    zero.buffer = (char*)"0";
+    zero.length = 1;
+    return u8_pad(self, width, &zero, 'r');
 }
 
 String* Core_String_String_ljust(String* self, int64_t width, String* pad) {
-    if (!self || !self->buffer)
-        return make_String("");
-    char pad_char = (pad && pad->length > 0) ? pad->buffer[0] : ' ';
-    if (self->length >= width)
-        return make_String(self->buffer);
-    int64_t padding = width - self->length;
-    char* result = (char*)malloc(width + 1);
-    memcpy(result, self->buffer, self->length);
-    memset(result + self->length, pad_char, padding);
-    result[width] = '\0';
-    return make_String_taking_ownership(result);
+    return u8_pad(self, width, pad, 'l');
 }
 
 String* Core_String_String_rjust(String* self, int64_t width, String* pad) {
-    if (!self || !self->buffer)
-        return make_String("");
-    char pad_char = (pad && pad->length > 0) ? pad->buffer[0] : ' ';
-    if (self->length >= width)
-        return make_String(self->buffer);
-    int64_t padding = width - self->length;
-    char* result = (char*)malloc(width + 1);
-    memset(result, pad_char, padding);
-    memcpy(result + padding, self->buffer, self->length);
-    result[width] = '\0';
-    return make_String_taking_ownership(result);
+    return u8_pad(self, width, pad, 'r');
 }
 
 String* Core_String_String_lstrip(String* self) {
@@ -1070,20 +1150,7 @@ int Core_String_String_contains(String* self, String* sub) {
 }
 
 String* Core_String_String_center(String* self, int64_t width, String* pad) {
-    if (!self || !self->buffer)
-        return make_String("");
-    char pad_char = (pad && pad->length > 0) ? pad->buffer[0] : ' ';
-    if (self->length >= width)
-        return make_String(self->buffer);
-    int64_t total_padding = width - self->length;
-    int left = total_padding / 2;
-    int right = total_padding - left;
-    char* result = (char*)malloc(width + 1);
-    memset(result, pad_char, left);
-    memcpy(result + left, self->buffer, self->length);
-    memset(result + left + self->length, pad_char, right);
-    result[width] = '\0';
-    return make_String_taking_ownership(result);
+    return u8_pad(self, width, pad, 'c');
 }
 
 int Core_String_String_is_digit(String* self) {
@@ -1195,7 +1262,7 @@ char Core_String_String_to_char(String* self) {
 
 char* Core_String_float_to_str(double val) {
     char* buf = (char*)malloc(64);
-    snprintf(buf, 64, "%g", val);
+    quirk_format_double(val, buf, 64);
     return buf;
 }
 
@@ -1383,8 +1450,7 @@ String* Core_String_String_format(String* self, List* args) {
 }
 
 int64_t Core_String_String_length(String* self) {
-    if (!self) return 0;
-    return self->length;
+    return u8_len(self);
 }
 
 // _str_join(parts: List<String>) -> String — single-pass

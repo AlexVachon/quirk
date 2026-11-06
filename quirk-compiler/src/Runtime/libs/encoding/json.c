@@ -288,7 +288,7 @@ static void Json__serialize_any(void* val, AnyTag hint, char** buf, int* cap, in
         char numbuf[64];
         switch (hint) {
             case ANY_INT:    snprintf(numbuf, 64, "%lld", (long long)a->ival);  Json__buf_append(buf, cap, len, numbuf); return;
-            case ANY_DOUBLE: snprintf(numbuf, 64, "%g", a->dval);  Json__buf_append(buf, cap, len, numbuf); return;
+            case ANY_DOUBLE: quirk_format_double(a->dval, numbuf, 64);  Json__buf_append(buf, cap, len, numbuf); return;
             case ANY_BOOL:   Json__buf_append(buf, cap, len, a->ival ? "true" : "false"); return;
             case ANY_CHAR: {
                 char cb[3] = {'"', (char)a->ival, '"'}; cb[3] = '\0';

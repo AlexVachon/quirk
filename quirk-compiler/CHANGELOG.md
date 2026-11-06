@@ -5,6 +5,38 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.9.0] — 2026-11-06 — Doubles print as 1.5, == on collections, UTF-8 strings, 1_000, sort()
+
+Five behaviour changes. Programs that print Doubles, compare
+collections or measure non-ASCII strings may see different output.
+
+- **Doubles read the same everywhere, Python-style.** `print(1.5)`
+  printed `1.500000` while `"${1.5}"` and `1.5.str()` printed `1.5`, and
+  those used `%g`, which kept 6 significant digits (`3.14159265` →
+  `3.14159`, `1234567.5` → `1.23457e+06`). Every path — print, `.str()`,
+  interpolation, List / Map printing, JSON — now writes the shortest
+  text that reads back as the same value: `1.5`, `0.30000000000000004`,
+  `3.141592653589793`, `1e+20`, and whole numbers keep a `.0`
+  (`4.0`), so a Double never reads as an Int.
+- **`==` compares collections by contents.** `[1, 2] == [1, 2]` was
+  `false` (it compared identity). Lists, Tuples, Maps (in any key order)
+  and Sets now compare their elements, recursively — so do `in` and
+  `!=`. Structs without `__eq` still compare identity.
+- **String positions count characters, not bytes.** `"héllo".length()`
+  was 6. `length`, `s[i]`, iteration, `find` / `index`, `substring`,
+  `reverse`, `ljust` / `rjust` / `center` / `zfill` and f-string widths
+  (`${s:>8}`) now work on Unicode characters (code points), as in
+  Python. ASCII text behaves as before.
+- **Number literals:** `1_000_000`, `0xFF_FF`, `0b1010_1010`, `3.141_592`
+  (underscores between digits), and exponents `1e20`, `2.5e-3`, `1E+6`
+  (always Doubles) — both used to fail to parse.
+- **`sort()` without a comparator** sorts in natural order (numbers
+  numerically, Strings alphabetically); `sort(cmp)` as before. It's now
+  a native stable merge sort — it was an O(n²) insertion sort. Needs
+  `typing` v1.16.0 (bootstrap pin bumped).
+
+Probe p121 locks all five.
+
 ## [7.8.1] — 2026-11-06 — sweep, part 2: imports, Map printing, function values
 
 Second batch of the core-language sweep (Option / Result, generics,

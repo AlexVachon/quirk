@@ -240,7 +240,7 @@ static int debug_format_local_value(const DebugLocal* d, char* out, size_t out_s
     switch (d->tag) {
         case DBG_TAG_I32:    snprintf(out, out_sz, "%d",   *(int32_t*)d->addr); break;
         case DBG_TAG_I64:    snprintf(out, out_sz, "%lld", (long long)*(int64_t*)d->addr); break;
-        case DBG_TAG_DOUBLE: snprintf(out, out_sz, "%g",   *(double*)d->addr); break;
+        case DBG_TAG_DOUBLE: quirk_format_double(*(double*)d->addr, out, out_sz); break;
         case DBG_TAG_BOOL: {
             unsigned char b = *(unsigned char*)d->addr;
             snprintf(out, out_sz, "%s", (b & 1) ? "true" : "false");

@@ -44,11 +44,39 @@ int Core_Primitives_Int_is_odd(int64_t self) {
 //  DOUBLE METHODS
 // ==========================================
 
+void quirk_format_double(double v, char* out, size_t n) {
+    if (isnan(v)) { snprintf(out, n, "nan"); return; }
+    if (isinf(v)) { snprintf(out, n, v < 0 ? "-inf" : "inf"); return; }
+    // Shortest text that round-trips (%g alone keeps 6 significant
+    // digits: 3.14159265 → "3.14159", 1234567.5 → "1.23457e+06"). Plain
+    // decimals for 1e-4 <= |v| < 1e16, an exponent outside — as Python.
+    double a = fabs(v);
+    if (a == 0.0 || (a >= 1e-4 && a < 1e16)) {
+        for (int d = 0; d <= 20; d++) {
+            snprintf(out, n, "%.*f", d, v);
+            if (strtod(out, NULL) == v) break;
+        }
+    } else {
+        for (int prec = 1; prec <= 17; prec++) {
+            snprintf(out, n, "%.*g", prec, v);
+            if (strtod(out, NULL) == v) break;
+        }
+    }
+    // Whole numbers keep a ".0" so a Double never reads as an Int.
+    if (!strpbrk(out, ".eEn")) strncat(out, ".0", n - strlen(out) - 1);
+}
+
+void quirk_print_double(double v, int32_t newline) {
+    char buf[64];
+    quirk_format_double(v, buf, sizeof(buf));
+    fputs(buf, stdout);
+    if (newline) fputc('\n', stdout);
+}
+
 // Converts raw double -> String Object
 String* Core_Primitives_Double_str(double self) {
     char buffer[64];
-    // %g automatically removes trailing zeros
-    snprintf(buffer, 64, "%g", self);
+    quirk_format_double(self, buffer, sizeof(buffer));
     return make_String(buffer);
 }
 

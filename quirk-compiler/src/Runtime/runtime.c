@@ -404,6 +404,38 @@ int32_t quirk_opaque_eq(void* a, void* b) {
         }
         if ((ta == QT_STRING && tb == QT_NONE) || (ta == QT_NONE && tb == QT_STRING))
             return Core_String_String___eq((String*)a, (String*)b);
+        // Collections compare by contents (recursively): `[1, 2] == [1, 2]`,
+        // `{"a": [1]} == {"a": [1]}`. They compared identity, so two equal
+        // lists were never `==`.
+        if (ta == tb && (ta == QT_LIST || ta == QT_TUPLE)) {
+            int64_t na = (ta == QT_LIST) ? ((List*)a)->size : ((Tuple*)a)->size;
+            int64_t nb = (ta == QT_LIST) ? ((List*)b)->size : ((Tuple*)b)->size;
+            void** da = (ta == QT_LIST) ? ((List*)a)->data : ((Tuple*)a)->data;
+            void** db = (ta == QT_LIST) ? ((List*)b)->data : ((Tuple*)b)->data;
+            if (na != nb) return 0;
+            for (int64_t i = 0; i < na; i++)
+                if (!quirk_opaque_eq(da[i], db[i])) return 0;
+            return 1;
+        }
+        if (ta == tb && ta == QT_MAP) {
+            Map* ma = (Map*)a; Map* mb = (Map*)b;
+            if (ma->size != mb->size) return 0;
+            for (int64_t i = 0; i < ma->order_size; i++) {
+                MapEntry* e = &ma->entries[i];
+                if (!e->is_occupied) continue;
+                MapEntry* o = Map__lookup(mb, e->key);
+                if (!o || !quirk_opaque_eq(e->value, o->value)) return 0;
+            }
+            return 1;
+        }
+        if (ta == tb && ta == QT_SET) {
+            Set* sa = (Set*)a; Set* sb = (Set*)b;
+            if (sa->size != sb->size) return 0;
+            for (int64_t i = 0; i < sa->order_size; i++)
+                if (sa->entries[i].is_occupied && !Core_Collections_Set_Set_has(sb, sa->entries[i].value))
+                    return 0;
+            return 1;
+        }
         return 0;
     }
     // Neither has a header (selfhost values): legacy String-shape eq.

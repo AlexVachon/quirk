@@ -236,4 +236,10 @@ static inline char* make_safe_cstr(String* s) {
     return safe;
 }
 
+
+// The text of a Double, everywhere one is shown (print, .str(), "${x}",
+// List / Map printing, JSON): the shortest form that reads back as the
+// same value, with ".0" on whole numbers — 1.5, 0.1, 4.0, 1e+20, inf.
+void quirk_format_double(double v, char* out, size_t n);
+
 #endif

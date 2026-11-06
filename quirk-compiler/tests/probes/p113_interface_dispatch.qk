@@ -23,8 +23,8 @@ struct Square : Rect {
 define describe(s: Shape) -> String { return s.name() + ":" + s.area().str() }
 
 define main() -> void {
-    if describe(Rect(2.0, 3.0)) != "rect:6"  { print("FAIL: interface param"); return }
-    if describe(Square(3.0)) != "square:9"   { print("FAIL: inherited implementation"); return }
+    if describe(Rect(2.0, 3.0)) != "rect:6.0"  { print("FAIL: interface param"); return }
+    if describe(Square(3.0)) != "square:9.0"   { print("FAIL: inherited implementation"); return }
     one: Shape = Square(2.0)
     if one.area() != 4.0                     { print("FAIL: interface-typed variable"); return }
     shapes: List[Shape] = [Rect(1.0, 1.0), Square(2.0)]

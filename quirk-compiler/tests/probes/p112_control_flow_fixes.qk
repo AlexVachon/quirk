@@ -1,0 +1,35 @@
+// p112 — control-flow fixes (v7.8.0).
+//
+// - `continue` in `for i in a..b` jumped past the increment: an infinite loop.
+// - A local assigned inside a `try` and read after the catch lost the
+//   assignment when optimised (setjmp/longjmp restored the register).
+// - `x > 3 ? a : b` parsed as `x > (3 ? a : b)`.
+// - A line starting with `(` or `[` continued the previous expression:
+//   `x := 5` then `(p, q) := pair` parsed as `5(p, q)`.
+define main() -> void {
+    s := 0
+    for i in 0..10 {
+        if i % 2 == 0 { continue }
+        s = s + i
+    }
+    if s != 25 { print("FAIL: continue in range loop"); return }
+    out := ""
+    n := 0
+    try {
+        out = out + "a"
+        n = n + 1
+        throw ValueError("x")
+    } catch (e: ValueError) {
+        out = out + "b"
+    }
+    if out != "ab" or n != 1 { print("FAIL: try-block assignments lost (" + out + ")"); return }
+    x := 5
+    if (x > 3 ? "yes" : "no") != "yes" { print("FAIL: ?: precedence"); return }
+    pair := (1, 2)
+    (p, q) := pair
+    if p + q != 3 { print("FAIL: destructure after an assignment line"); return }
+    t := 0
+    [1, 2].each(fn(v) { nonlocal t; t = t + v })
+    if t != 3 { print("FAIL: statement starting with [ (" + t.str() + ")"); return }
+    print("PASS: control flow")
+}

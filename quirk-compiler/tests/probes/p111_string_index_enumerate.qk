@@ -1,0 +1,27 @@
+// p111 — `s[i]` is a String; `for i, x in xs` enumerates (v7.8.0).
+//
+// `s[0]` returned the character code (72 for "H") while Sema typed it as
+// a String, so using it as one crashed. `for i, x in [10, 20]` bound i to
+// the element and left x null; over a List (anything without a key/value
+// iterator) it now gives the index and the element. Maps keep `k, v`.
+define main() -> void {
+    s := "Hey"
+    if s[0] != "H" or s[-1] != "y"  { print("FAIL: s[i]"); return }
+    rev := ""
+    i := 0
+    while i < s.length() { rev = s[i] + rev; i = i + 1 }
+    if rev != "yeH"                 { print("FAIL: building from s[i]"); return }
+    total := 0
+    for j, x in [10, 20, 30] {
+        if j == 1 { continue }
+        total = total + j * 100 + x
+    }
+    if total != 240                 { print("FAIL: enumerate List (" + total.str() + ")"); return }
+    pairs := ""
+    for j, c in "ab" { pairs = pairs + j.str() + c }
+    if pairs != "0a1b"              { print("FAIL: enumerate String"); return }
+    kv := ""
+    for k, v in {"a": 1} { kv = k + v.str() }
+    if kv != "a1"                   { print("FAIL: Map key/value"); return }
+    print("PASS: s[i] and enumerate")
+}

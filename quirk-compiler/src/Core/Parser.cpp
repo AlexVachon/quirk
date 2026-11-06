@@ -667,9 +667,23 @@ std::unique_ptr<Node> Parser::parseExpression(int min_precedence) {
         int next_prec = getPrecedence(type);
         if (type == TokenType::LPAREN)
             next_prec = 50;
+        // A `(` that starts a new line begins the next statement, not a
+        // call: `x := 5` followed by `(p, q) := pair` parsed as `5(p, q)`
+        // and failed at `:=`.
+        // Same for `[`: `check(...)` then `[1, 2].each(...)` on the next
+        // line was read as indexing the call's result.
+        if ((type == TokenType::LPAREN || type == TokenType::LBRACKET)
+            && pos > 0 && tokens[pos].line != tokens[pos - 1].line)
+            next_prec = 0;
         // `not in` compound operator: same precedence as `in`
         if (type == TokenType::NOT && pos + 1 < (int)tokens.size() && tokens[pos + 1].type == TokenType::IN)
             next_prec = 10;
+        // `cond ? a : b` binds loosely, like the `if` ternary: `?` is
+        // precedence 40 for the postfix presence check `x?`, which made
+        // `x > 3 ? "y" : "n"` parse as `x > (3 ? "y" : "n")`.
+        if (type == TokenType::QUESTION && pos + 1 < (int)tokens.size()
+            && canStartTernaryExpr(tokens[pos + 1].type))
+            next_prec = 2;
         // Python-style ternary `val if cond else other`: only infix on same line
         if (type == TokenType::IF && pos > 0 && tokens[pos].line != tokens[pos - 1].line)
             next_prec = 0;

@@ -1,0 +1,6 @@
+// expect-error: 'clear()' returns nothing
+// p116 — calling a method on a call that returns nothing (v7.8.0).
+// `xs.clear().length()` reached codegen and died as "malformed IR".
+define main() -> void {
+    print([1, 2].clear().length())
+}

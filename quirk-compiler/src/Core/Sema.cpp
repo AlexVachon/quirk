@@ -379,6 +379,7 @@ void Sema::rewriteTypeAnnotations(Node* n) {
         return;
     }
     if (auto* v = dynamic_cast<VarDeclNode*>(n)) {
+        if (v->writtenAnnotation.empty()) v->writtenAnnotation = v->typeAnnotation;
         v->typeAnnotation = monoRewriteType(v->typeAnnotation);
         if (v->expression) rewriteTypeAnnotations(v->expression.get());
         return;
@@ -1821,9 +1822,19 @@ void Sema::checkFor(ForNode *node)
         }
     }
 
+    // `for i, x in xs` over something without a key/value iterator (a
+    // List, a String, …) enumerates: `i` is the index, `x` the element.
+    // `for k, v in m` over a Map keeps its key/value meaning.
+    bool enumerate = !node->varName2.empty() && structRegistry.count(iterType)
+                     && !findMethod(iterType, iterType + "___iter_pairs");
     enterScope();
-    defineVariable(node->varName, itemType);
-    if (!node->varName2.empty()) defineVariable(node->varName2, "Any", false, true);
+    if (enumerate) {
+        defineVariable(node->varName, "Int");
+        defineVariable(node->varName2, itemType);
+    } else {
+        defineVariable(node->varName, itemType);
+        if (!node->varName2.empty()) defineVariable(node->varName2, "Any", false, true);
+    }
     for (const auto& dv : node->destructureVars)
         defineVariable(dv, "Any", false, true);
     for (auto &s : node->body)
@@ -2251,6 +2262,10 @@ std::string Sema::checkBinaryOp(BinaryOpNode *node)
         // operator-overload methods that wrap union/difference.
         if (lType == "Set" && rType == "Set")
             return "Set";
+        // Both untyped: the runtime decides (String concat / Double / Int),
+        // so the result is untyped too — not Int.
+        if (lType == "Any" && rType == "Any")
+            return "Any";
         if (compatibleOperands(lType, rType)) {
             if (lType == "Double" || rType == "Double")
                 return "Double";
@@ -2300,6 +2315,8 @@ std::string Sema::checkBinaryOp(BinaryOpNode *node)
         bool eachOk = (isNumeric(lType) || isUnknown(lType)) &&
                       (isNumeric(rType) || isUnknown(rType));
         if (eachOk && !enumRegistry.count(lType) && !enumRegistry.count(rType)) {
+            if (lType == "Any" && rType == "Any")
+                return "Any";      // decided at runtime (quirk_opaque_binop)
             if (lType == "Double" || rType == "Double")
                 return "Double";
             return "Int";
@@ -2835,6 +2852,27 @@ std::string Sema::checkCall(CallNode *node)
         }
 
         std::string objType = checkExpression(m->object.get());
+        // `xs.clear().length()`: calling a method on a call that returns
+        // nothing reached Codegen and died as malformed IR. Reported only
+        // when the inner method is declared `-> void` — Sema also says
+        // "void" for types it can't resolve, which must keep deferring.
+        if (objType == "void") {
+            if (auto* inner = dynamic_cast<CallNode*>(m->object.get()))
+                if (auto* im = dynamic_cast<MemberAccessNode*>(inner->callee.get())) {
+                    std::string recv = baseType(checkExpression(im->object.get()));
+                    std::function<FunctionNode*(const std::string&)> find = [&](const std::string& t) -> FunctionNode* {
+                        auto sIt = structRegistry.find(t);
+                        if (sIt == structRegistry.end()) return nullptr;
+                        if (FunctionNode* f = findMethod(t, t + "_" + im->memberName)) return f;
+                        for (const auto& p : sIt->second->parents) if (FunctionNode* f = find(p)) return f;
+                        return nullptr;
+                    };
+                    if (FunctionNode* f = find(recv); f && f->returnType == "void")
+                        fatalError("'" + im->memberName + "()' returns nothing, so '." + m->memberName
+                                   + "()' can't be called on its result",
+                                   node->line, node->col, node->filePath);
+                }
+        }
         // Strip Optional marker and generic type args before method lookup
         if (!objType.empty() && objType.back() == '?') objType.pop_back();
         objType = baseType(objType);
@@ -3004,10 +3042,44 @@ std::string Sema::checkCall(CallNode *node)
                 {"length",     "Int"},
             }},
         };
+        // Argument count against a method's declaration, like top-level
+        // calls get. Without it, `"ab".ljust(4)` (needs a pad) or
+        // `[3, 1].sort()` (needs a comparator) reached Codegen with too
+        // few operands and died as "Internal compiler error: malformed IR".
+        auto checkMethodArity = [&](FunctionNode* func, const std::string& display) {
+            bool anyKwarg = false;
+            for (auto& a : node->args) if (!a.name.empty()) { anyKwarg = true; break; }
+            if (!func || anyKwarg) return;
+            int required = 0, total = 0;
+            for (const auto& p : func->parameters) {
+                if (p.isVariadic) return;
+                if (p.name == "self") continue;
+                total++;
+                if (!p.defaultValue) required++;
+            }
+            int provided = (int)node->args.size();
+            if (provided >= required && provided <= total) return;
+            std::string expect = (required == total)
+                ? std::to_string(required) + " argument" + (required == 1 ? "" : "s")
+                : "between " + std::to_string(required) + " and " + std::to_string(total) + " arguments";
+            fatalError(display + "() takes " + expect + " but " + std::to_string(provided) + " "
+                       + (provided == 1 ? "was" : "were") + " given",
+                       node->line, node->col, node->filePath);
+        };
+        auto findInHierarchy = [&](const std::string& type, auto& self) -> FunctionNode* {
+            auto sIt = structRegistry.find(type);
+            if (sIt == structRegistry.end()) return nullptr;
+            if (FunctionNode* f = findMethod(type, type + "_" + m->memberName)) return f;
+            for (const std::string& parent : sIt->second->parents)
+                if (FunctionNode* f = self(parent, self)) return f;
+            return nullptr;
+        };
+
         auto bmIt = builtinMethods.find(objType);
         if (bmIt != builtinMethods.end()) {
             auto mIt = bmIt->second.find(m->memberName);
             if (mIt != bmIt->second.end()) {
+                checkMethodArity(findInHierarchy(objType, findInHierarchy), objType + "." + m->memberName);
                 for (auto& a : node->args) checkExpression(a.value.get());
                 return mIt->second;
             }
@@ -3032,6 +3104,7 @@ std::string Sema::checkCall(CallNode *node)
                     func = findMethod(currentType, currentType + "__init");
                 }
                 if (func) {
+                    checkMethodArity(func, objType + "." + m->memberName);
                     for (size_t i = 0; i < node->args.size() && i < func->parameters.size(); ++i) {
                         if (func->parameters[i].isVariadic) break;
                         std::string argType = checkExpression(node->args[i].value.get());

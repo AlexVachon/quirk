@@ -1,5 +1,6 @@
 // [runtime.c]
 // The "Unity Build" approach: Include the C files directly.
+#include <math.h>
 #include <gc.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -407,6 +408,68 @@ int32_t quirk_opaque_eq(void* a, void* b) {
     }
     // Neither has a header (selfhost values): legacy String-shape eq.
     return Core_String_String___eq((String*)a, (String*)b);
+}
+
+// `a <op> b` when neither side's type is known at compile time — List
+// elements, Map values, a reduce accumulator. Codegen used to decode both
+// as Ints, so [1.5, 2.5].sum() was 3 and ws[0] + ws[1] on Strings was 0.
+// Decided here from the values: `+` with a String concatenates; a Double
+// on either side computes in floating point; otherwise checked Int math.
+// op: 0 `+`, 1 `-`, 2 `*`, 3 `/`, 4 `%`. Returns an untyped value.
+extern String* Core_String_String___add(String* self, String* other);
+extern void quirk_throw_exception(const char* type_name, const char* message);
+void* quirk_int_to_opaque(int64_t v);
+static int quirk_opaque_is_double(void* v) {
+    return v && (uintptr_t)v > 0xFFFFFFFFUL && quirk_is_any(v) && ((Any*)v)->tag == ANY_DOUBLE;
+}
+static int quirk_opaque_is_string(void* v) {
+    uint32_t t = quirk_type_of(v);
+    return t == QT_STRING || t == QT_CSTR;
+}
+void* quirk_opaque_binop(int32_t op, void* a, void* b) {
+    if (op == 0 && (quirk_opaque_is_string(a) || quirk_opaque_is_string(b)))
+        return Core_String_String___add(quirk_opaque_to_string(a), quirk_opaque_to_string(b));
+    if (quirk_opaque_is_double(a) || quirk_opaque_is_double(b)) {
+        double x = quirk_opaque_to_double(a), y = quirk_opaque_to_double(b), r = 0;
+        switch (op) {
+            case 0: r = x + y; break;
+            case 1: r = x - y; break;
+            case 2: r = x * y; break;
+            case 3: r = x / y; break;
+            case 4: r = fmod(x, y); break;
+        }
+        return Core_Primitives_Any_box_double(r);
+    }
+    int64_t x = quirk_opaque_to_int(a), y = quirk_opaque_to_int(b), r = 0;
+    switch (op) {
+        case 0: if (__builtin_add_overflow(x, y, &r)) quirk_int_overflow("+", x, y); break;
+        case 1: if (__builtin_sub_overflow(x, y, &r)) quirk_int_overflow("-", x, y); break;
+        case 2: if (__builtin_mul_overflow(x, y, &r)) quirk_int_overflow("*", x, y); break;
+        case 3:
+        case 4:
+            if (y == 0) quirk_throw_exception("ZeroDivisionError",
+                                              op == 3 ? "integer division by zero" : "integer modulo by zero");
+            r = (op == 3) ? x / y : x % y;
+            break;
+    }
+    return quirk_int_to_opaque(r);
+}
+
+// Three-way compare (<0, 0, >0) of two untyped values, for `<` / `>` /
+// `<=` / `>=` when neither side's type is known: Strings by text, a
+// Double on either side in floating point, otherwise as Ints.
+int32_t quirk_opaque_cmp(void* a, void* b) {
+    if (quirk_opaque_is_string(a) && quirk_opaque_is_string(b)) {
+        const char* x = quirk_opaque_to_string(a)->buffer;
+        const char* y = quirk_opaque_to_string(b)->buffer;
+        return strcmp(x ? x : "", y ? y : "");
+    }
+    if (quirk_opaque_is_double(a) || quirk_opaque_is_double(b)) {
+        double x = quirk_opaque_to_double(a), y = quirk_opaque_to_double(b);
+        return (x > y) - (x < y);
+    }
+    int64_t x = quirk_opaque_to_int(a), y = quirk_opaque_to_int(b);
+    return (x > y) - (x < y);
 }
 
 void* quirk_opaque_check_struct_or_null(void* val, const char* type_name) {

@@ -253,6 +253,9 @@ class VarDeclNode : public Node {
     std::unique_ptr<Node> expression;
     std::string op;
     std::string typeAnnotation;
+    // The annotation as written, before monomorphisation rewrites it
+    // (`List[Shape]` becomes `List`). Codegen reads the element type here.
+    std::string writtenAnnotation;
     // Type Sema settled on after checking the RHS, when the user
     // didn't write an explicit `typeAnnotation`. Used by the
     // `--symbols-json` walker so the LSP can emit inlay hints next

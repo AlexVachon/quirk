@@ -5,6 +5,63 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.8.0] — 2026-11-06 — core-language sweep: 13 fixes
+
+A sweep of self-checking programs over the core language (strings,
+lists, maps, sets, tuples, numbers, structs, interfaces, enums, match,
+closures, control flow, the common stdlib modules) found these. Each is
+locked by a probe (p110–p116) that fails on 7.7.1.
+
+**Wrong results**
+- **Two untyped operands were always treated as Ints.** List elements,
+  Map values and reduce accumulators: `[1.5, 2.5].sum()` was `3`,
+  `ws[0] + ws[1]` on Strings was `0`, `["b", "a"].min()` compared
+  garbage. The runtime now decides from the values: `+` with a String
+  concatenates, a Double on either side computes in floating point,
+  otherwise checked Int math. The result is untyped.
+- **`s[i]` returned the character code** (72 for `"H"`) although it's
+  typed as a String, so using it as one crashed. It's now a
+  one-character String (negative `i` counts from the end).
+- **`for i, x in xs` bound `i` to the element and left `x` null.** Over
+  a List or String (anything without a key/value iterator) it now
+  enumerates: `i` is the index, `x` the element. Maps keep `k, v`.
+- **A `try` block's assignments could be lost.** A local assigned inside
+  `try` and read after the catch got its old value back when optimised
+  (the throw's longjmp restored the register): `try { out = out + "a";
+  throw … }` lost the `"a"`. A function containing a `try` is now not
+  optimised. The existing `exceptions_full_test` had two checks failing
+  because of this.
+- **`nonlocal x` inside a lambda didn't share the enclosing `x`** unless
+  the enclosing scope also wrote `nonlocal x`; a counter closure
+  returned 1 forever. The inner declaration alone now shares it.
+
+**Hangs and crashes**
+- **`continue` in `for i in a..b` looped forever** — it skipped the
+  increment.
+- **Calling a method through an interface type didn't compile**
+  (`s.area()` with `s: Shape` → "Unknown method 'String.area'").
+  Interface-typed parameters, variables and `for x in xs` over a
+  `List[Interface]` now dispatch on the object's runtime type; a
+  subclass inherits its parent's implementation.
+- **A struct method named `name()`, `value()`, `ordinal()`, … was
+  never called** — it was taken for an enum accessor and read a field.
+- **A local reassigned from an untyped value** (`arr = m.get(k)` with
+  `arr: List`) stored it unconverted: invalid IR that only the
+  optimiser happened to delete. `-O0` and `--debug` crashed on any
+  program importing `toml`.
+
+**Parsing and errors**
+- **A line starting with `(` or `[` continued the previous line:**
+  `x := 5` then `(p, q) := pair` parsed as the call `5(p, q)`.
+- **`x > 3 ? a : b` parsed as `x > (3 ? a : b)`.** The `?:` ternary now
+  binds loosely, like `a if c else b`; the postfix `x?` is unchanged.
+- **A wrong argument count to a built-in method** (`"ab".ljust(4)`,
+  `[3, 1].sort()`) crashed the compiler; it's now `String.ljust() takes
+  2 arguments but 1 was given`.
+- **Calling a method on a `void` result** (`xs.clear().length()`)
+  crashed the compiler; it's now an error saying `clear()` returns
+  nothing.
+
 ## [7.7.2] — 2026-11-05 — four language bugs: filter, exceptions, Doubles, generic unions
 
 Going through the features the changelog had deferred showed most now

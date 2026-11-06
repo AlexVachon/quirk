@@ -1,6 +1,7 @@
 #pragma once
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Module.h"
+#include "CoerceGen.hpp"
 #include <map>
 #include <set>
 #include <iostream>
@@ -206,6 +207,13 @@ class VariableGen {
             return;
         }
         Value* slot = NamedValues[name];
+        // Convert to the slot's type: `arr = root.get(name)` with `arr: List`
+        // stored the untyped i8* straight into the List* slot — invalid IR
+        // that only the optimiser's dead-store removal ever hid, so -O0 /
+        // --debug failed on any program importing toml.
+        if (auto* a = dyn_cast<AllocaInst>(slot))
+            if (val->getType() != a->getAllocatedType())
+                val = quirk::coerceToType(val, a->getAllocatedType(), Context, Builder, TheModule);
         Builder.CreateStore(val, slot);
     }
 

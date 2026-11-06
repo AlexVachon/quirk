@@ -94,6 +94,30 @@ class MathGen {
         // covers the early-init path where setModule hasn't fired.
         bool isNumericOp = (op=="+"||op=="-"||op=="*"||op=="/"||op=="%"||op==">"||op=="<"||op==">="||op=="<=");
         bool isEqOp     = (op == "==" || op == "!=");
+        // Both sides untyped (List elements, Map values, a reduce
+        // accumulator): what to do depends on the values, so the runtime
+        // decides — String concat, Double math or Int math (see
+        // quirk_opaque_binop). Decoding both as Ints made
+        // [1.5, 2.5].sum() 3 and "a" + "b" from a List 0.
+        {
+            Type* i8p = Type::getInt8PtrTy(Context);
+            if (TheModule && L->getType() == i8p && R->getType() == i8p && isNumericOp) {
+                static const std::map<std::string, int> arith = {{"+", 0}, {"-", 1}, {"*", 2}, {"/", 3}, {"%", 4}};
+                if (auto it = arith.find(op); it != arith.end()) {
+                    FunctionCallee binop = TheModule->getOrInsertFunction("quirk_opaque_binop",
+                        FunctionType::get(i8p, {Type::getInt32Ty(Context), i8p, i8p}, false));
+                    return Builder.CreateCall(binop, {ConstantInt::get(Type::getInt32Ty(Context), it->second), L, R}, "dyn_op");
+                }
+                FunctionCallee cmp = TheModule->getOrInsertFunction("quirk_opaque_cmp",
+                    FunctionType::get(Type::getInt32Ty(Context), {i8p, i8p}, false));
+                Value* c = Builder.CreateCall(cmp, {L, R}, "dyn_cmp");
+                Value* zero = ConstantInt::get(Type::getInt32Ty(Context), 0);
+                if (op == ">")  return Builder.CreateICmpSGT(c, zero, "dyn_gt");
+                if (op == "<")  return Builder.CreateICmpSLT(c, zero, "dyn_lt");
+                if (op == ">=") return Builder.CreateICmpSGE(c, zero, "dyn_ge");
+                return Builder.CreateICmpSLE(c, zero, "dyn_le");
+            }
+        }
         {
             Type* i8p = Type::getInt8PtrTy(Context);
             bool Lptr = L->getType() == i8p;

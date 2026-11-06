@@ -1,0 +1,36 @@
+// p113 — calling methods through an interface type (v7.8.0).
+//
+// An interface-typed value is an untyped pointer, and the method-call path
+// treated it as a String: `s.area()` with `s: Shape` failed to compile
+// ("Unknown method 'String.area'"). Calls now dispatch on the object's
+// runtime type. Also: a struct method named `name()` / `value()` was taken
+// for an enum accessor and read a field instead of calling the method.
+interface Shape {
+    define area(self) -> Double
+    define name(self) -> String
+}
+struct Rect : Shape {
+    w: Double
+    h: Double
+    define __init(self, w: Double, h: Double) { self.w = w; self.h = h }
+    define area(self) -> Double { return self.w * self.h }
+    define name(self) -> String { return "rect" }
+}
+struct Square : Rect {
+    define __init(self, side: Double) { super().__init(side, side) }
+    define name(self) -> String { return "square" }
+}
+define describe(s: Shape) -> String { return s.name() + ":" + s.area().str() }
+
+define main() -> void {
+    if describe(Rect(2.0, 3.0)) != "rect:6"  { print("FAIL: interface param"); return }
+    if describe(Square(3.0)) != "square:9"   { print("FAIL: inherited implementation"); return }
+    one: Shape = Square(2.0)
+    if one.area() != 4.0                     { print("FAIL: interface-typed variable"); return }
+    shapes: List[Shape] = [Rect(1.0, 1.0), Square(2.0)]
+    names := ""
+    for sh in shapes { names = names + sh.name() + " " }
+    if names != "rect square "               { print("FAIL: loop over List[Shape]: '" + names + "'"); return }
+    if Rect(1.0, 1.0).name() != "rect"       { print("FAIL: struct method named name()"); return }
+    print("PASS: interface dispatch")
+}

@@ -168,6 +168,18 @@ class ControlFlowGen {
             if (!iterFunc) iterFunc = resolveFunc(structName + "__iter");
             if (!iterFunc) { std::cerr << "Error: Struct '" << structName << "' does not implement __iter()." << std::endl; exit(1); }
 
+            // `for i, x in xs` without a key/value iterator enumerates:
+            // `i` counts from 0, `x` is the element. (It bound i to the
+            // element and left x null.)
+            const bool enumerate = !node->varName2.empty()
+                                   && !resolveFunc(structName + "___iter_pairs");
+            Value* counter = nullptr;
+            if (enumerate) {
+                IRBuilder<> entry(&parentFunc->getEntryBlock(), parentFunc->getEntryBlock().begin());
+                counter = entry.CreateAlloca(Type::getInt64Ty(Context), nullptr, "enum_idx");
+                Builder.CreateStore(ConstantInt::get(Type::getInt64Ty(Context), 0), counter);
+            }
+
             Value* iteratorObj = Builder.CreateCall(iterFunc, {iterable}, "iter");
             StructType* iterStructType = cast<StructType>(iteratorObj->getType()->getPointerElementType());
             std::string iterName = iterStructType->getName().str();
@@ -216,11 +228,16 @@ class ControlFlowGen {
                         node->destructureVars[di]);
                     varGen->defineLocalVariable(node->destructureVars[di], elem);
                 }
+            } else if (enumerate) {
+                Value* idx = Builder.CreateLoad(Type::getInt64Ty(Context), counter, "idx");
+                Builder.CreateStore(Builder.CreateAdd(idx, ConstantInt::get(Type::getInt64Ty(Context), 1)), counter);
+                varGen->defineLocalVariable(node->varName, idx);
+                varGen->defineLocalVariable(node->varName2, item);
             } else {
                 varGen->defineLocalVariable(keyVar, item);
             }
 
-            if (isPair) {
+            if (isPair && !enumerate) {
                 Function* curValFunc = resolveFunc(iterName + "___current_value");
                 if (curValFunc) {
                     Value* val = Builder.CreateCall(curValFunc, {iteratorObj}, "pair_val");
@@ -308,6 +325,15 @@ class ControlFlowGen {
                           std::map<std::string, std::vector<std::string>>& structHierarchy) {
         BasicBlock* tryBB = BasicBlock::Create(Context, "try_block", parentFunc);
         BasicBlock* endBB = BasicBlock::Create(Context, "end_try",   parentFunc);
+
+        // A throw longjmps back to the _setjmp below. Optimised, a local
+        // assigned inside the try block lives in a register, and the jump
+        // restores its old value: `try { out = out + "a"; throw … }` lost
+        // the "a". `returns_twice` alone doesn't prevent that (C requires
+        // `volatile`), so a function containing a try isn't optimised.
+        parentFunc->removeFnAttr(Attribute::AlwaysInline);
+        parentFunc->addFnAttr(Attribute::NoInline);
+        parentFunc->addFnAttr(Attribute::OptimizeNone);
 
         Value* jmpBuf   = Builder.CreateCall(TheModule->getFunction("quirk_get_jmp_buf"));
         Value* setjmpRes = Builder.CreateCall(TheModule->getFunction("_setjmp"), {jmpBuf});

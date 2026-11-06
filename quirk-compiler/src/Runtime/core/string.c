@@ -530,6 +530,27 @@ String* Core_String_String___repr(String* self) {
     return make_String(raw);
 }
 
+// `s[i]` — the character at `i` as a one-character String (negative `i`
+// counts from the end). Sema types `s[i]` as String; codegen used to
+// return the character code as an Int, which crashed wherever the result
+// was used as a String.
+String* quirk_string_char_at(String* self, int64_t index) {
+    if (!self || !self->buffer) {
+        quirk_throw_exception("IndexError", "string index on null string");
+    }
+    if (index < 0) index += self->length;
+    if (index < 0 || index >= self->length) {
+        char buf[128];
+        snprintf(buf, sizeof(buf),
+                 "string index %lld out of range (length: %lld)", (long long)index, (long long)self->length);
+        quirk_throw_exception("IndexError", buf);
+    }
+    char* raw = (char*)GC_malloc(2);
+    raw[0] = self->buffer[index];
+    raw[1] = '\0';
+    return make_String(raw);
+}
+
 int Core_String_String___get(String* self, int index) {
     if (!self || !self->buffer) {
         quirk_throw_exception("IndexError", "string index on null string");

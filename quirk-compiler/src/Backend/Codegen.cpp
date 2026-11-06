@@ -68,6 +68,21 @@ class LLVMCodegen {
     std::map<std::string, StructType*> StructTypes;
 
     std::map<std::string, std::vector<std::string>> structHierarchy;
+    // Interfaces: method → declared return type, and the interfaces each
+    // extends. Interface-typed values are untyped pointers (an interface
+    // has no layout), so calls through one dispatch on the object's
+    // runtime type — see emitInterfaceDispatch.
+    std::map<std::string, std::map<std::string, std::string>> interfaceMethods;
+    std::map<std::string, std::vector<std::string>> interfaceExtends;
+    // Each struct's declared parents and interfaces (structHierarchy keeps
+    // only struct parents; Sema files interfaces under StructNode::interfaces).
+    std::map<std::string, std::vector<std::string>> declaredParents;
+    // Local name → interface type, for parameters / variables declared
+    // with one (reset per function, like varEnumTypes).
+    std::map<std::string, std::string> varInterfaceTypes;
+    // Local name → interface, for `xs: List[Shape]`: its loop variable is
+    // a Shape.
+    std::map<std::string, std::string> varListOfInterface;
 
     // Virtual dispatch tables
     // Virtual-dispatch state moved into StructGen (v2.3.3 locality
@@ -265,6 +280,24 @@ class LLVMCodegen {
             if (auto u = dynamic_cast<UseNode*>(node.get())) handleUse(u);
         }
         // --------------------------------------------
+
+        for (const auto& node : nodes)
+            if (auto sn = dynamic_cast<StructNode*>(node.get())) {
+                auto& dp = declaredParents[sn->name];
+                dp = sn->parents;
+                dp.insert(dp.end(), sn->interfaces.begin(), sn->interfaces.end());   // set by Sema
+            }
+        for (const auto& node : nodes)
+            if (auto in = dynamic_cast<InterfaceNode*>(node.get())) {
+                interfaceExtends[in->name] = in->extends;
+                auto& ms = interfaceMethods[in->name];
+                for (const auto& fm : in->methods) {
+                    // Parsed as `<Interface>_<method>`, like struct methods.
+                    std::string mn = fm->name;
+                    if (mn.rfind(in->name + "_", 0) == 0) mn = mn.substr(in->name.size() + 1);
+                    ms[mn] = fm->returnType;
+                }
+            }
 
         if (verbose) std::cerr << "[Codegen] Pass 1: Registering opaque struct types\n";
         for (const auto& node : nodes) {
@@ -819,11 +852,15 @@ class LLVMCodegen {
             varGen->defineArgument("self", selfArg);
         }
 
+        varInterfaceTypes.clear();
+        varListOfInterface.clear();
         for (; argIt != F->arg_end(); ++argIt) {
             if (paramIdx >= node->parameters.size()) break;
-            std::string argName = node->parameters[paramIdx++].name;
+            const Parameter& param = node->parameters[paramIdx++];
+            std::string argName = param.name;
             argIt->setName(argName);
             varGen->defineArgument(argName, &*argIt);
+            if (interfaceMethods.count(param.type)) varInterfaceTypes[argName] = param.type;
         }
 
         // --- where clause guard ---
@@ -1267,6 +1304,51 @@ class LLVMCodegen {
     }
 
     // Collect free variable names referenced in the lambda body
+    // Move local `varName` into a GC heap cell, so this scope and every
+    // closure capturing it share one mutable slot (what `nonlocal x` does).
+    void promoteToNonlocalCell(const std::string& varName) {
+        if (!varGen->exists(varName) || varGen->isNonlocal(varName)) return;
+        Value* curVal = varGen->resolveVariable(varName);
+        if (!curVal) return;
+        FunctionCallee gcMallocFn = TheModule->getOrInsertFunction(
+            "GC_malloc", Type::getInt8PtrTy(Context), Type::getInt64Ty(Context));
+        // Box for the cell — routes Int/Double/Bool through
+        // Any* heap-box so 0/false aren't stored as NULL.
+        Value* boxed = varGen->boxForNonlocalCell(curVal);
+        Value* cell = Builder.CreateCall(gcMallocFn,
+            {ConstantInt::get(Type::getInt64Ty(Context), 8)}, varName + "_cell");
+        Value* cellI8pp = Builder.CreateBitCast(cell,
+            PointerType::getUnqual(Type::getInt8PtrTy(Context)));
+        Builder.CreateStore(boxed, cellI8pp);
+        // Replaces the existing variable binding.
+        varGen->defineNonlocalCell(varName, cell);
+    }
+
+    // Names a lambda body declares `nonlocal` (in nested blocks and inner
+    // lambdas too).
+    void collectDeclaredNonlocals(const std::vector<std::unique_ptr<Node>>& stmts, std::set<std::string>& out) {
+        for (const auto& st : stmts) {
+            Node* n = st.get();
+            if (auto nl = dynamic_cast<NonlocalNode*>(n)) {
+                if (!nl->isGlobal) out.insert(nl->vars.begin(), nl->vars.end());
+            } else if (auto i = dynamic_cast<IfNode*>(n)) {
+                collectDeclaredNonlocals(i->thenBranch, out);
+                for (auto& eb : i->elIfBranches) collectDeclaredNonlocals(eb.body, out);
+                collectDeclaredNonlocals(i->elseBranch, out);
+            } else if (auto w = dynamic_cast<WhileNode*>(n)) {
+                collectDeclaredNonlocals(w->body, out);
+            } else if (auto f = dynamic_cast<ForNode*>(n)) {
+                collectDeclaredNonlocals(f->body, out);
+            } else if (auto t = dynamic_cast<TryCatchNode*>(n)) {
+                collectDeclaredNonlocals(t->tryBlock, out);
+                for (auto& cb : t->catchBlocks) collectDeclaredNonlocals(cb.body, out);
+                collectDeclaredNonlocals(t->finallyBlock, out);
+            } else if (auto m = dynamic_cast<MatchNode*>(n)) {
+                for (auto& arm : m->arms) collectDeclaredNonlocals(arm.body, out);
+            }
+        }
+    }
+
     void collectFreeVars(LambdaNode* node, std::vector<std::string>& freeVars) {
         std::set<std::string> paramSet;
         for (const auto& p : node->params) paramSet.insert(p.name);
@@ -1368,6 +1450,17 @@ class LLVMCodegen {
         // 1. Collect captures
         std::vector<std::string> captureNames;
         collectFreeVars(node, captureNames);
+
+        // `nonlocal x` inside the lambda shares the enclosing `x` — as in
+        // Python, without the enclosing scope also writing `nonlocal x`.
+        // It used to need both: with only the inner one, the lambda
+        // mutated its own copy and a counter closure returned 1 forever.
+        if (!node->isExpression) {
+            std::set<std::string> declared;
+            collectDeclaredNonlocals(node->stmtBody, declared);
+            for (const auto& name : captureNames)
+                if (declared.count(name) && varGen->hasLocal(name)) promoteToNonlocalCell(name);
+        }
 
         // Resolve current values of captured variables
         // For nonlocal (cell-boxed) vars, capture the raw cell i8* so the lambda shares mutation.
@@ -1544,6 +1637,115 @@ class LLVMCodegen {
             if (lastDot != std::string::npos) alias = alias.substr(lastDot + 1);
             activeModuleAliases[alias] = node->moduleName;
         }
+    }
+
+    // `iface` or an interface it (transitively) extends declares `method`;
+    // returns its declared return type, or "" if none does.
+    std::string interfaceMethodReturn(const std::string& iface, const std::string& method) {
+        auto it = interfaceMethods.find(iface);
+        if (it != interfaceMethods.end()) {
+            auto m = it->second.find(method);
+            if (m != it->second.end()) return m->second.empty() ? "void" : m->second;
+        }
+        auto ex = interfaceExtends.find(iface);
+        if (ex != interfaceExtends.end())
+            for (const auto& parent : ex->second) {
+                std::string r = interfaceMethodReturn(parent, method);
+                if (!r.empty()) return r;
+            }
+        return "";
+    }
+
+    // `cls` (or an ancestor, or an interface it implements) is `target`.
+    bool derivesFrom(const std::string& cls, const std::string& target, std::set<std::string>& seen) {
+        if (cls == target) return true;
+        if (!seen.insert(cls).second) return false;
+        for (const auto* parents : {declaredParents.count(cls) ? &declaredParents[cls] : nullptr,
+                                    structHierarchy.count(cls) ? &structHierarchy[cls] : nullptr,
+                                    interfaceExtends.count(cls) ? &interfaceExtends[cls] : nullptr})
+            if (parents)
+                for (const auto& p : *parents)
+                    if (derivesFrom(p, target, seen)) return true;
+        return false;
+    }
+
+    // `obj.method(args)` where `obj` is declared with an interface type.
+    // The value is an untyped pointer (an interface has no layout); the
+    // method-call path used to treat it as a String ("Unknown method
+    // 'String.area'"). Switch on the object's runtime type id (its header)
+    // over every struct implementing the interface and call that struct's
+    // method — its own or an inherited one. Another type throws TypeError.
+    // Returns nullptr to fall back when the interface doesn't declare it.
+    Value* emitInterfaceDispatch(const std::string& iface, const std::string& method,
+                                 Value* obj, CallNode* call) {
+        std::string retName = interfaceMethodReturn(iface, method);
+        if (retName.empty()) return nullptr;
+        Type* retTy = typeGen->getLLVMType(retName);
+        const bool isVoid = retTy->isVoidTy();
+
+        // (struct, method function) for each implementation.
+        std::vector<std::pair<std::string, Function*>> impls;
+        for (const auto& [name, st] : StructTypes) {
+            std::set<std::string> seen;
+            if (!structGen->isVtableEligible(name) || !derivesFrom(name, iface, seen)) continue;
+            std::function<Function*(const std::string&)> find = [&](const std::string& c) -> Function* {
+                std::string fn = (method.rfind("__", 0) == 0) ? c + method : c + "_" + method;
+                if (Function* f = TheModule->getFunction(fn)) return f;
+                if (Function* f = resolveFunction(fn)) return f;
+                if (structHierarchy.count(c))
+                    for (const auto& p : structHierarchy[c])
+                        if (Function* f = find(p)) return f;
+                return nullptr;
+            };
+            if (Function* f = find(name)) impls.push_back({name, f});
+        }
+        if (impls.empty()) return nullptr;
+
+        std::vector<Value*> rawArgs;
+        for (const auto& a : call->args) rawArgs.push_back(handleExpression(a.value.get()));
+        auto coerce = [&](Value* v, Type* want) -> Value* {
+            if (!v || v->getType() == want) return v;
+            return quirk::coerceToType(v, want, Context, Builder, TheModule.get());
+        };
+
+        // The type id sits in the 8-byte header just before the object.
+        Type* i8 = Type::getInt8Ty(Context);
+        Type* i32 = Type::getInt32Ty(Context);
+        Value* obj8 = Builder.CreateBitCast(obj, Type::getInt8PtrTy(Context));
+        Value* tidAddr = Builder.CreateBitCast(
+            Builder.CreateGEP(i8, obj8, ConstantInt::get(Type::getInt64Ty(Context), -4)),
+            PointerType::getUnqual(i32));
+        Value* tid = Builder.CreateLoad(i32, tidAddr, "iface_tid");
+
+        Function* fn = Builder.GetInsertBlock()->getParent();
+        BasicBlock* noneBB  = BasicBlock::Create(Context, "iface_none", fn);
+        BasicBlock* mergeBB = BasicBlock::Create(Context, "iface_merge", fn);
+        SwitchInst* sw = Builder.CreateSwitch(tid, noneBB, (unsigned)impls.size());
+        std::vector<std::pair<BasicBlock*, Value*>> results;
+        for (const auto& [name, f] : impls) {
+            BasicBlock* bb = BasicBlock::Create(Context, "iface_" + name, fn);
+            sw->addCase(Builder.getInt32(structGen->objectTypeId(name)), bb);
+            Builder.SetInsertPoint(bb);
+            std::vector<Value*> args = {Builder.CreateBitCast(obj, f->getFunctionType()->getParamType(0))};
+            for (size_t i = 0; i < rawArgs.size(); i++)
+                args.push_back(i + 1 < f->arg_size()
+                    ? coerce(rawArgs[i], f->getFunctionType()->getParamType(i + 1)) : rawArgs[i]);
+            Value* r = Builder.CreateCall(f, args);
+            if (!isVoid) results.push_back({Builder.GetInsertBlock(), coerce(r, retTy)});
+            Builder.CreateBr(mergeBB);
+        }
+        Builder.SetInsertPoint(noneBB);
+        FunctionCallee thrower = TheModule->getOrInsertFunction("quirk_throw_exception",
+            Type::getVoidTy(Context), Type::getInt8PtrTy(Context), Type::getInt8PtrTy(Context));
+        Builder.CreateCall(thrower, {Builder.CreateGlobalStringPtr("TypeError"),
+            Builder.CreateGlobalStringPtr("value doesn't implement " + iface + "." + method + "()")});
+        Builder.CreateUnreachable();
+
+        Builder.SetInsertPoint(mergeBB);
+        if (isVoid) return nullptr;
+        PHINode* phi = Builder.CreatePHI(retTy, (unsigned)results.size(), "iface_r");
+        for (auto& [bb, v] : results) phi->addIncoming(v, bb);
+        return phi;
     }
 
     Value* handleCall(CallNode* call) 
@@ -1751,7 +1953,24 @@ class LLVMCodegen {
                     "value", "name", "ordinal",
                     "values", "names", "variants"
                 };
-                if (call->args.empty() && enumAccessors.count(member->memberName)) {
+                // Taken on any receiver, the shortcut hid struct methods with
+                // these names: `shape.name()` read a field `name` instead of
+                // calling the method. When some struct or interface declares
+                // the method, only a receiver known to be an enum takes it.
+                bool knownEnum = false;
+                if (auto* el = dynamic_cast<LiteralNode*>(member->object.get()))
+                    knownEnum = varEnumTypes.count(el->value) || enumVariants.count(el->value);
+                else if (auto* em = dynamic_cast<MemberAccessNode*>(member->object.get()))
+                    if (auto* eml = dynamic_cast<LiteralNode*>(em->object.get()))
+                        knownEnum = enumVariants.count(eml->value) > 0;
+                bool userMethod = false;
+                if (!knownEnum && enumAccessors.count(member->memberName)) {
+                    for (const auto& [sn, parents] : declaredParents)
+                        if (TheModule->getFunction(sn + "_" + member->memberName)) { userMethod = true; break; }
+                    for (const auto& [in, ms] : interfaceMethods)
+                        if (ms.count(member->memberName)) { userMethod = true; break; }
+                }
+                if (call->args.empty() && enumAccessors.count(member->memberName) && !userMethod) {
                     if (member->memberName == "name") {
                         std::string enumName;
                         if (auto* nameLit = dynamic_cast<LiteralNode*>(member->object.get())) {
@@ -1936,6 +2155,15 @@ class LLVMCodegen {
                 if (objPtr->getType()->isPointerTy() && objPtr->getType()->getPointerElementType()->isPointerTy()) {
                     objPtr = Builder.CreateLoad(objPtr->getType()->getPointerElementType(), objPtr);
                 }
+                // Declared with an interface type: dispatch on the object's
+                // runtime type instead of treating the pointer as a String.
+                if (objPtr->getType()->isPointerTy() && objPtr->getType()->getPointerElementType()->isIntegerTy(8))
+                    if (auto* recv = dynamic_cast<LiteralNode*>(member->object.get()))
+                        if (auto vi = varInterfaceTypes.find(recv->value); vi != varInterfaceTypes.end()) {
+                            BasicBlock* startBB = Builder.GetInsertBlock();
+                            Value* r = emitInterfaceDispatch(vi->second, member->memberName, objPtr, call);
+                            if (r || Builder.GetInsertBlock() != startBB) return r;
+                        }
                 if (objPtr->getType()->isPointerTy() && objPtr->getType()->getPointerElementType()->isIntegerTy(8)) {
                     // i8* is a boxed list element (String* or tagged int cast to void*); unbox via
                     // quirk_opaque_to_string_or_null so a null receiver (Map.get miss) stays null —
@@ -2693,26 +2921,7 @@ class LLVMCodegen {
             if (!nl->isGlobal) {
                 // For each declared nonlocal var: box current value and move it to a GC heap cell.
                 // Both this scope and any lambda that captures it will share the cell pointer.
-                FunctionCallee gcMallocFn = TheModule->getOrInsertFunction(
-                    "GC_malloc", Type::getInt8PtrTy(Context), Type::getInt64Ty(Context));
-                for (const auto& varName : nl->vars) {
-                    if (!varGen->exists(varName)) continue;
-                    if (varGen->isNonlocal(varName)) continue; // already a heap cell
-                    Value* curVal = varGen->resolveVariable(varName);
-                    if (!curVal) continue;
-                    // Box for the cell — routes Int/Double/Bool through
-                    // Any* heap-box so 0/false aren't stored as NULL.
-                    Value* boxed = varGen->boxForNonlocalCell(curVal);
-                    // Allocate a single-pointer cell (8 bytes)
-                    Value* cell = Builder.CreateCall(gcMallocFn,
-                        {ConstantInt::get(Type::getInt64Ty(Context), 8)}, varName + "_cell");
-                    // Store boxed value into the cell
-                    Value* cellI8pp = Builder.CreateBitCast(cell,
-                        PointerType::getUnqual(Type::getInt8PtrTy(Context)));
-                    Builder.CreateStore(boxed, cellI8pp);
-                    // Register as nonlocal cell — replaces the existing variable binding
-                    varGen->defineNonlocalCell(varName, cell);
-                }
+                for (const auto& varName : nl->vars) promoteToNonlocalCell(varName);
             }
             // global: no-op for now (module-level mutable globals not yet supported)
         }
@@ -2777,10 +2986,14 @@ class LLVMCodegen {
 
                 BasicBlock* condBB  = BasicBlock::Create(Context, "range_cond",  curFn);
                 BasicBlock* bodyBB  = BasicBlock::Create(Context, "range_body",  curFn);
+                BasicBlock* incBB   = BasicBlock::Create(Context, "range_inc",   curFn);
                 BasicBlock* afterBB = BasicBlock::Create(Context, "range_after", curFn);
 
+                // `continue` goes through the increment: it used to jump
+                // straight to the condition, so the counter never moved
+                // and `for i in 0..10 { if … { continue } }` never ended.
                 flowGen->breakStack.push_back(afterBB);
-                flowGen->continueStack.push_back(condBB);
+                flowGen->continueStack.push_back(incBB);
 
                 Builder.CreateBr(condBB);
                 Builder.SetInsertPoint(condBB);
@@ -2791,13 +3004,13 @@ class LLVMCodegen {
                 Builder.SetInsertPoint(bodyBB);
                 varGen->defineLocalVariable(f->varName, counter);
                 for (auto& stmt : f->body) handleStatement(stmt.get(), curFn);
-                if (!Builder.GetInsertBlock()->getTerminator()) {
-                    Value* next = Builder.CreateAdd(
-                        Builder.CreateLoad(intTy, counterSlot),
-                        ConstantInt::get(intTy, 1), "range_next");
-                    Builder.CreateStore(next, counterSlot);
-                    Builder.CreateBr(condBB);
-                }
+                if (!Builder.GetInsertBlock()->getTerminator()) Builder.CreateBr(incBB);
+                Builder.SetInsertPoint(incBB);
+                Value* next = Builder.CreateAdd(
+                    Builder.CreateLoad(intTy, counterSlot),
+                    ConstantInt::get(intTy, 1), "range_next");
+                Builder.CreateStore(next, counterSlot);
+                Builder.CreateBr(condBB);
 
                 flowGen->breakStack.pop_back();
                 flowGen->continueStack.pop_back();
@@ -2806,6 +3019,9 @@ class LLVMCodegen {
                 return;
             }
 
+            if (auto* it = dynamic_cast<LiteralNode*>(f->iterable.get()))
+                if (auto li = varListOfInterface.find(it->value); li != varListOfInterface.end())
+                    varInterfaceTypes[f->varName] = li->second;
             flowGen->generateFor(
                 f, parentFunc,
                 [this](Node* n) { return this->handleExpression(n); },
@@ -2983,8 +3199,18 @@ class LLVMCodegen {
     }
 
     void handleVarDecl(VarDeclNode* vdecl) {
-        if (auto lhs = dynamic_cast<LiteralNode*>(vdecl->lhs.get()))
+        if (auto lhs = dynamic_cast<LiteralNode*>(vdecl->lhs.get())) {
             if (verbose) std::cerr << "[Codegen]     handleVarDecl: " << lhs->value << " (op: " << vdecl->op << ")\n";
+            // `x: Shape = …` / `xs: List[Shape] = …` with an interface:
+            // remember it for interface dispatch (emitInterfaceDispatch).
+            const std::string& ann = vdecl->writtenAnnotation.empty() ? vdecl->typeAnnotation
+                                                                      : vdecl->writtenAnnotation;
+            if (interfaceMethods.count(ann)) varInterfaceTypes[lhs->value] = ann;
+            if (ann.rfind("List[", 0) == 0 && ann.back() == ']') {
+                std::string elem = ann.substr(5, ann.size() - 6);
+                if (interfaceMethods.count(elem)) varListOfInterface[lhs->value] = elem;
+            }
+        }
 
         // Track Callable return types and variadic info for direct lambda invocation
         if (auto lambda = dynamic_cast<LambdaNode*>(vdecl->expression.get())) {
@@ -4500,20 +4726,20 @@ Value* LLVMCodegen::handleExpression(Node* node) {
                     }
                 }
             }
-            // String character indexing: call Core_String_String___get for bounds checking
+            // String character indexing: `s[i]` is a one-character String
+            // (bounds-checked, negative counts from the end).
             if (L->getType()->isPointerTy()) {
                 Type* elem = L->getType()->getPointerElementType();
                 bool isStrStruct = elem->isStructTy() &&
                     cast<StructType>(elem)->getName().contains("String");
                 if (isStrStruct) {
-                    Type* i32Ty = Type::getInt32Ty(Context);
+                    Type* i64Ty = Type::getInt64Ty(Context);
                     Type* strPtrTy = L->getType();
                     FunctionCallee getFn = TheModule->getOrInsertFunction(
-                        "Core_String_String___get",
-                        i32Ty, strPtrTy, i32Ty);
+                        "quirk_string_char_at", strPtrTy, strPtrTy, i64Ty);
                     Value* idx = R;
-                    if (!idx->getType()->isIntegerTy(32))
-                        idx = Builder.CreateIntCast(idx, i32Ty, true);
+                    if (!idx->getType()->isIntegerTy(64))
+                        idx = Builder.CreateIntCast(idx, i64Ty, true);
                     return Builder.CreateCall(getFn, {L, idx}, "char_at");
                 }
             }

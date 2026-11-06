@@ -1,0 +1,32 @@
+// p114 — closure sharing and clearer errors (v7.8.0).
+//
+// `nonlocal x` inside a lambda shares the enclosing x, as in Python. It
+// used to need `nonlocal x` in the enclosing scope too; without it the
+// lambda mutated a copy and a counter closure returned 1 forever.
+// (Wrong argument counts to methods and calling a method on a `void`
+// result now give errors instead of "malformed IR" — see tools.)
+define make_counter() -> Callable {
+    count := 0
+    return fn() {
+        nonlocal count
+        count = count + 1
+        return count
+    }
+}
+define main() -> void {
+    c := make_counter()
+    c()
+    c()
+    got: Int = c()
+    if got != 3 { print("FAIL: counter closure returned " + got.str()); return }
+    other := make_counter()
+    first: Int = other()
+    if first != 1 { print("FAIL: closures share a counter"); return }
+    total := 0
+    [1, 2, 3].each(fn(x) {
+        nonlocal total
+        total = total + x
+    })
+    if total != 6 { print("FAIL: each with nonlocal: " + total.str()); return }
+    print("PASS: closures")
+}

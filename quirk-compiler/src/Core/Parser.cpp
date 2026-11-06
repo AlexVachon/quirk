@@ -1574,6 +1574,13 @@ std::unique_ptr<StructNode> Parser::parseStruct() {
             // e.g. extern define to_float in struct String in libs/core/string.quirk
             //   -> "Core_String" + "_" + "String" + "_" + "to_float"
             //   -> "Core_String_String_to_float"
+            // Python-style dunders (`__add__`, `__str__`, `__eq__`) are
+            // accepted as aliases for Quirk's `__add` / `__str` / `__eq`.
+            // Without this they compiled as ordinary methods and the
+            // operator silently fell through to the runtime TypeError.
+            if (func->name.size() > 4 && func->name.compare(0, 2, "__") == 0 &&
+                func->name.compare(func->name.size() - 2, 2, "__") == 0)
+                func->name = func->name.substr(0, func->name.size() - 2);
             std::string rawMethodName = func->name; // e.g. "to_float", "__add", "__init"
 
             if (isInit) {

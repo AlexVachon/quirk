@@ -5,6 +5,29 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.9.1] — 2026-11-06 — Callable defaults, default pad, `__add__`, typed List elements
+
+- **Default parameters work through a Callable.** `apply(greet, "Bob")`
+  where `greet(name, greeting = "Hello")` and `apply` calls `f(x)`
+  crashed with SIGSEGV — the missing argument was read as garbage.
+  Every Callable call now passes a trailing end-of-arguments marker, and
+  the wrapper for a function with defaults fills each missing one. This
+  also covers `xs.map(f)` and the other native List / Map callbacks.
+- **`ljust` / `rjust` / `center` pad with a space by default.**
+  `"ab".ljust(5)` was an arity error; the pad argument is now optional
+  (typing v1.16.1).
+- **Python-style dunders work.** `define __add__(self, o)` (and
+  `__eq__`, `__str__`, …) compiled as an ordinary method, so `a + b`
+  failed at runtime with "unsupported operand types". `__name__` is now
+  an alias for Quirk's `__name`.
+- **Elements of a `List[S]` are typed `S`.** `people[0].name` and
+  `for p in people { p.age }` were "'Any' has no member" errors unless
+  each read was bound with an annotation. A list is known to hold `S`
+  when it is a literal of `S(...)` values, annotated `List[S]`, a
+  `List[S]` parameter, or returned by a `-> List[S]` function; indexing,
+  `for` and `for i, x` then yield `S`. Mixed lists and generic structs
+  (`Box[Int]`) keep the old behaviour.
+
 ## [7.9.0] — 2026-11-06 — Doubles print as 1.5, == on collections, UTF-8 strings, 1_000, sort()
 
 Five behaviour changes. Programs that print Doubles, compare

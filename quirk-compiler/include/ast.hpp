@@ -90,6 +90,9 @@ class WithNode : public Node {
 struct Parameter {
     std::string name;
     std::string type;
+    // The type as written, before monomorphisation rewrites
+    // `List[Shape]` to `List`; Sema reads the element type here.
+    std::string writtenType;
     bool isRef = false;
     bool isVariadic = false;
     std::unique_ptr<Node> defaultValue = nullptr;
@@ -100,6 +103,9 @@ class FunctionNode : public Node {
     std::string name;
     std::string cls;
     std::string returnType = "void";
+    // Return type as written (`List[Shape]`), before monomorphisation
+    // rewrites it to `List`; Sema reads the element type here.
+    std::string writtenReturnType;
     std::vector<Parameter> parameters;
     std::vector<std::unique_ptr<Node>> body;
 
@@ -334,6 +340,9 @@ class BinaryOpNode : public Node {
     std::string op;
     std::unique_ptr<Node> left;
     std::unique_ptr<Node> right;
+    // `[]` on a `List[S]` (S a user struct): Sema records S so Codegen
+    // casts the opaque element to S* and `xs[0].field` works.
+    std::string elemType;
 
     BinaryOpNode(std::string op,
                  std::unique_ptr<Node> l,
@@ -552,6 +561,9 @@ class ForNode : public Node {
     bool isRef;
     std::unique_ptr<Node> iterable;
     std::vector<std::unique_ptr<Node>> body;
+    // Iterating a `List[S]` (S a user struct): the element type Sema
+    // inferred, so Codegen binds the loop variable as S*.
+    std::string elemType;
 
     ForNode(std::string name, bool ref, std::unique_ptr<Node> iter)
         : varName(name), isRef(ref), iterable(std::move(iter)) {}

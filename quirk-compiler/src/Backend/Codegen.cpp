@@ -1267,14 +1267,49 @@ class LLVMCodegen {
         BasicBlock* entryBB = BasicBlock::Create(Context, "entry", thunk);
         Builder.SetInsertPoint(entryBB);
 
-        // Unbox each arg according to its declared parameter type.
+        // Unbox each arg according to its declared parameter type. A slot
+        // with a default is only real if neither it nor an earlier slot is
+        // the QUIRK_NOARG sentinel (emitCallableCall appends one after the
+        // last real argument); otherwise the default expression is used.
         std::vector<Value*> realArgs;
         auto argIt = thunk->arg_begin();
         ++argIt; // skip env
+        Value* sentinel = nullptr;
+        Value* ended = nullptr; // i1: the sentinel was seen at or before this slot
         for (size_t i = 0; i < funcNode->parameters.size(); i++, ++argIt) {
             Value* raw = &*argIt;
-            raw->setName(funcNode->parameters[i].name);
-            realArgs.push_back(unboxLambdaParam(raw, funcNode->parameters[i].type));
+            auto& param = funcNode->parameters[i];
+            raw->setName(param.name);
+            if (!sentinel) sentinel = noArgSentinel();
+            Value* isEnd = Builder.CreateICmpEQ(raw, sentinel, param.name + "_noarg");
+            ended = ended ? Builder.CreateOr(ended, isEnd) : isEnd;
+            if (!param.defaultValue) {
+                realArgs.push_back(unboxLambdaParam(raw, param.type));
+                continue;
+            }
+            Function* fn = Builder.GetInsertBlock()->getParent();
+            BasicBlock* givenBB = BasicBlock::Create(Context, param.name + "_given", fn);
+            BasicBlock* dfltBB  = BasicBlock::Create(Context, param.name + "_default", fn);
+            BasicBlock* joinBB  = BasicBlock::Create(Context, param.name + "_join", fn);
+            Builder.CreateCondBr(ended, dfltBB, givenBB);
+            Builder.SetInsertPoint(givenBB);
+            Value* given = unboxLambdaParam(raw, param.type);
+            BasicBlock* givenEnd = Builder.GetInsertBlock();
+            Builder.SetInsertPoint(dfltBB);
+            Value* dflt = handleExpression(param.defaultValue.get());
+            if (dflt && given && dflt->getType() != given->getType())
+                dflt = quirk::coerceToType(dflt, given->getType(), Context, Builder, TheModule.get());
+            if (!dflt || !given || dflt->getType() != given->getType())
+                dflt = given ? Constant::getNullValue(given->getType()) : nullptr;
+            BasicBlock* dfltEnd = Builder.GetInsertBlock();
+            Builder.CreateBr(joinBB);
+            Builder.SetInsertPoint(givenEnd);
+            Builder.CreateBr(joinBB);
+            Builder.SetInsertPoint(joinBB);
+            PHINode* phi = Builder.CreatePHI(given->getType(), 2, param.name);
+            phi->addIncoming(given, givenEnd);
+            phi->addIncoming(dflt, dfltEnd);
+            realArgs.push_back(phi);
         }
 
         // Call the real function and box the result back to i8*.
@@ -1288,6 +1323,17 @@ class LLVMCodegen {
         if (savedBB) Builder.SetInsertPoint(savedBB);
         functionThunkCache[fnName] = thunk;
         return thunk;
+    }
+
+    // Address of the runtime's QUIRK_NOARG marker (see types.h).
+    Value* noArgSentinel() {
+        Type* i8Ty = Type::getInt8Ty(Context);
+        GlobalVariable* gv = TheModule->getNamedGlobal("quirk_noarg_sentinel");
+        if (!gv)
+            gv = new GlobalVariable(*TheModule, i8Ty, false,
+                                    GlobalValue::ExternalLinkage, nullptr,
+                                    "quirk_noarg_sentinel");
+        return gv;
     }
 
     // Allocate a Callable struct {thunk, null} pointing at the function `fnName`.
@@ -1620,15 +1666,18 @@ class LLVMCodegen {
         Value* fnPtr    = Builder.CreateLoad(i8PtrTy, fnField, "fn_ptr");
         Value* envPtr   = Builder.CreateLoad(i8PtrTy, envField, "env_ptr");
 
-        // Build call type: i8*(i8* env, i8* arg, ...)
+        // Build call type: i8*(i8* env, i8* arg, ..., i8* QUIRK_NOARG).
+        // The trailing sentinel tells a defaults-aware thunk where the real
+        // arguments stop; callees with no defaults simply ignore it.
         std::vector<Type*> callTypes = {i8PtrTy};
-        for (size_t i = 0; i < argVals.size(); i++) callTypes.push_back(i8PtrTy);
+        for (size_t i = 0; i <= argVals.size(); i++) callTypes.push_back(i8PtrTy);
         FunctionType* callTy = FunctionType::get(i8PtrTy, callTypes, false);
 
         Value* fnCast = Builder.CreateBitCast(fnPtr, PointerType::getUnqual(callTy));
 
         std::vector<Value*> callArgs = {envPtr};
         for (Value* v : argVals) callArgs.push_back(boxToVoidPtr(v));
+        callArgs.push_back(noArgSentinel());
 
         return Builder.CreateCall(callTy, fnCast, callArgs, "lambda_result");
     }
@@ -4234,6 +4283,16 @@ Value* LLVMCodegen::handleExpression(Node* node) {
     // RangeLiteralNode in non-for-loop expression context is not supported directly
     if (dynamic_cast<RangeLiteralNode*>(node)) return nullptr;
 
+    if (auto binOp = dynamic_cast<BinaryOpNode*>(node);
+        binOp && binOp->op == "[]" && !binOp->elemType.empty() && StructTypes.count(binOp->elemType)) {
+        // `xs[i]` on a List[S]: Sema proved the element is an S.
+        std::string et = std::move(binOp->elemType);
+        Value* v = handleExpression(node);
+        binOp->elemType = et;
+        if (v && v->getType() == Type::getInt8PtrTy(Context))
+            v = Builder.CreateBitCast(v, PointerType::getUnqual(StructTypes[et]), "elem");
+        return v;
+    }
     if (auto binOp = dynamic_cast<BinaryOpNode*>(node)) {
         if (binOp->op == "not") return mathGen->generateNot(handleExpression(binOp->left.get()));
 

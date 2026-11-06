@@ -259,8 +259,8 @@ int Core_Collections_List_List_contains(List* self, void* elem) {
 //  FUNCTIONAL METHODS (lambda support)
 // ==========================================
 
-typedef void* (*LambdaFn1)(void* env, void* arg);
-typedef void* (*LambdaFn2)(void* env, void* acc, void* arg);
+typedef void* (*LambdaFn1)(void* env, void* arg, void* end);
+typedef void* (*LambdaFn2)(void* env, void* acc, void* arg, void* end);
 
 // `xs * n` — fresh List with self's elements repeated n times.
 // `[0] * 5` → `[0, 0, 0, 0, 0]`. n<=0 returns the empty list.
@@ -313,7 +313,7 @@ List* Core_Collections_List_List_map(List* self, Callable* cb) {
     List* result = (List*)quirk_alloc(QT_LIST, sizeof(List));
     Core_Collections_List_List___init(result);
     for (int i = 0; i < self->size; i++)
-        Core_Collections_List_List_append(result, fn(cb->env, self->data[i]));
+        Core_Collections_List_List_append(result, fn(cb->env, self->data[i], QUIRK_NOARG));
     return result;
 }
 
@@ -324,7 +324,7 @@ List* Core_Collections_List_List_filter(List* self, Callable* cb) {
     List* result = (List*)quirk_alloc(QT_LIST, sizeof(List));
     Core_Collections_List_List___init(result);
     for (int i = 0; i < self->size; i++)
-        if (quirk_opaque_truthy(fn(cb->env, self->data[i])))
+        if (quirk_opaque_truthy(fn(cb->env, self->data[i], QUIRK_NOARG)))
             Core_Collections_List_List_append(result, self->data[i]);
     return result;
 }
@@ -338,7 +338,7 @@ extern int32_t quirk_opaque_cmp(void* a, void* b);
 extern int64_t quirk_opaque_to_int(void* val);
 static int list_sort_cmp(Callable* cb, void* a, void* b) {
     if (!cb) return quirk_opaque_cmp(a, b);
-    int64_t r = quirk_opaque_to_int(((LambdaFn2)cb->fn)(cb->env, a, b));
+    int64_t r = quirk_opaque_to_int(((LambdaFn2)cb->fn)(cb->env, a, b, QUIRK_NOARG));
     return (r > 0) - (r < 0);
 }
 static void list_merge_sort(void** xs, void** tmp, int64_t n, Callable* cb) {
@@ -363,34 +363,34 @@ List* Core_Collections_List_List_sort(List* self, Callable* cb) {
 void Core_Collections_List_List_each(List* self, Callable* cb) {
     LambdaFn1 fn = (LambdaFn1)cb->fn;
     for (int i = 0; i < self->size; i++)
-        fn(cb->env, self->data[i]);
+        fn(cb->env, self->data[i], QUIRK_NOARG);
 }
 
 void* Core_Collections_List_List_reduce(List* self, void* initial, Callable* cb) {
     LambdaFn2 fn = (LambdaFn2)cb->fn;
     void* acc = initial;
     for (int i = 0; i < self->size; i++)
-        acc = fn(cb->env, acc, self->data[i]);
+        acc = fn(cb->env, acc, self->data[i], QUIRK_NOARG);
     return acc;
 }
 
 int Core_Collections_List_List_any(List* self, Callable* cb) {
     LambdaFn1 fn = (LambdaFn1)cb->fn;
     for (int i = 0; i < self->size; i++)
-        if (quirk_opaque_truthy(fn(cb->env, self->data[i]))) return 1;
+        if (quirk_opaque_truthy(fn(cb->env, self->data[i], QUIRK_NOARG))) return 1;
     return 0;
 }
 
 int Core_Collections_List_List_all(List* self, Callable* cb) {
     LambdaFn1 fn = (LambdaFn1)cb->fn;
     for (int i = 0; i < self->size; i++)
-        if (!quirk_opaque_truthy(fn(cb->env, self->data[i]))) return 0;
+        if (!quirk_opaque_truthy(fn(cb->env, self->data[i], QUIRK_NOARG))) return 0;
     return 1;
 }
 
 void* Core_Collections_List_List_find(List* self, Callable* cb) {
     LambdaFn1 fn = (LambdaFn1)cb->fn;
     for (int i = 0; i < self->size; i++)
-        if (quirk_opaque_truthy(fn(cb->env, self->data[i]))) return self->data[i];
+        if (quirk_opaque_truthy(fn(cb->env, self->data[i], QUIRK_NOARG))) return self->data[i];
     return NULL;
 }

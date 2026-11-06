@@ -153,7 +153,8 @@ STDLIB_TAG_prompt ?= v1.1.0
 # compiler's export-check on the very natural `from typing.prelude
 # use { Map, List }` shape. v1.15.2 documents Int as 64-bit (v7.0.0).
 # v1.16.0: List.sort's comparator is optional (native sort, v7.9.0).
-STDLIB_TAG_typing ?= v1.16.0
+# v1.16.1: ljust / rjust / center pad with a space by default (v7.9.1).
+STDLIB_TAG_typing ?= v1.16.1
 # html v1.0.0 is the initial release (compiler v3.5.0+). The
 # explicit pin keeps a global STDLIB_TAG bump from accidentally
 # pulling a v2 with potentially breaking changes.

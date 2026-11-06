@@ -379,13 +379,13 @@ MapPairIterator* Core_Collections_Map_Map___iter_pairs(Map* self) {
 //  FUNCTIONAL METHODS (lambda support)
 // ==========================================
 
-typedef void* (*LambdaFn1)(void* env, void* arg);
+typedef void* (*LambdaFn1)(void* env, void* arg, void* end);
 
 void Core_Collections_Map_Map_each(Map* self, Callable* cb) {
     LambdaFn2 fn = (LambdaFn2)cb->fn;
     for (int i = 0; i < self->order_size; i++) {
         MapEntry* e = &self->entries[i];
-        if (e->is_occupied) fn(cb->env, make_String(e->key), e->value);
+        if (e->is_occupied) fn(cb->env, make_String(e->key), e->value, QUIRK_NOARG);
     }
 }
 
@@ -393,7 +393,7 @@ void Core_Collections_Map_Map_each_value(Map* self, Callable* cb) {
     LambdaFn1 fn = (LambdaFn1)cb->fn;
     for (int i = 0; i < self->order_size; i++) {
         MapEntry* e = &self->entries[i];
-        if (e->is_occupied) fn(cb->env, e->value);
+        if (e->is_occupied) fn(cb->env, e->value, QUIRK_NOARG);
     }
 }
 
@@ -401,6 +401,6 @@ void Core_Collections_Map_Map_each_key(Map* self, Callable* cb) {
     LambdaFn1 fn = (LambdaFn1)cb->fn;
     for (int i = 0; i < self->order_size; i++) {
         MapEntry* e = &self->entries[i];
-        if (e->is_occupied) fn(cb->env, make_String(e->key));
+        if (e->is_occupied) fn(cb->env, make_String(e->key), QUIRK_NOARG);
     }
 }

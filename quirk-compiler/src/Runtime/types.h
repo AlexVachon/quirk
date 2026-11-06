@@ -116,6 +116,12 @@ typedef struct {
     void* env;  // captured variable struct, may be NULL
 } Callable;
 
+// Trailing "no more arguments" marker passed after the real args of every
+// Callable call. Thunks for functions with default parameters compare their
+// optional slots against it so `f(x)` through a Callable fills the defaults.
+extern char quirk_noarg_sentinel;
+#define QUIRK_NOARG ((void*)&quirk_noarg_sentinel)
+
 typedef struct {
     void** data;
     int64_t size;

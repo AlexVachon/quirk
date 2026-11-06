@@ -1,0 +1,82 @@
+// p122 — four v7.9.1 fixes.
+//  1. A function with default params passed as a Callable and called with
+//     fewer args fills the defaults (was: garbage args → SIGSEGV).
+//  2. ljust / rjust / center pad with a space by default.
+//  3. Python-style dunders (`__add__`, `__eq__`, `__str__`) work like
+//     `__add` / `__eq` / `__str` (was: silently ignored → TypeError).
+//  4. Elements of a List[S] (inferred from a literal, annotated, a param or
+//     a `-> List[S]` return) are typed S: `xs[0].field`, `for p in xs`.
+
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+define greet(name: String, greeting: String = "Hello") -> String {
+    return "${greeting}, ${name}"
+}
+define scale(x: Int, k: Int = 10, off: Double = 0.5) -> Double {
+    return x * k + off
+}
+define apply1(f: Callable, x: Any) -> Any { return f(x) }
+define apply2(f: Callable, x: Any, y: Any) -> Any { return f(x, y) }
+
+struct Vec {
+    x: Int
+    y: Int
+    define __add__(self, o: Vec) -> Vec { return Vec(self.x + o.x, self.y + o.y) }
+    define __eq__(self, o: Vec) -> Bool { return self.x == o.x and self.y == o.y }
+    define __str__(self) -> String { return "(${self.x}, ${self.y})" }
+}
+
+struct P {
+    name: String
+    age: Int
+    define label(self) -> String { return self.name + "/" + self.age.str() }
+}
+define make_people() -> List[P] { return [P("m", 1), P("n", 2)] }
+define oldest(ps: List[P]) -> String {
+    best := ps[0]
+    for p in ps {
+        if p.age > best.age { best = p }
+    }
+    return best.name
+}
+
+define main() -> void {
+    // 1. Callable defaults
+    if apply1(greet, "Bob") != "Hello, Bob"           { fail("callable default String"); return }
+    if apply2(greet, "Bob", "Hi") != "Hi, Bob"        { fail("callable explicit"); return }
+    if apply1(scale, 3) != 30.5                       { fail("callable two defaults"); return }
+    if apply2(scale, 3, 2) != 6.5                     { fail("callable one default"); return }
+    if ["a", "b"].map(greet) != ["Hello, a", "Hello, b"] { fail("native map defaults"); return }
+
+    // 2. default pad
+    if "[" + "ab".ljust(5) + "]" != "[ab   ]"         { fail("ljust"); return }
+    if "[" + "ab".rjust(5) + "]" != "[   ab]"         { fail("rjust"); return }
+    if "[" + "ab".center(6) + "]" != "[  ab  ]"       { fail("center"); return }
+    if "ab".ljust(4, ".") != "ab.."                   { fail("explicit pad"); return }
+
+    // 3. Python-style dunders
+    v := Vec(1, 2) + Vec(3, 4)
+    if v.x != 4 or v.y != 6                           { fail("__add__"); return }
+    if not (v == Vec(4, 6))                           { fail("__eq__"); return }
+    if "${v}" != "(4, 6)"                             { fail("__str__"); return }
+
+    // 4. List[S] element typing
+    people := [P("a", 3), P("b", 5), P("c", 4)]
+    if people[0].name != "a"                          { fail("index field"); return }
+    total := 0
+    for p in people { total = total + p.age }
+    if total != 12                                    { fail("for field"); return }
+    if people[2].label() != "c/4"                     { fail("index method"); return }
+    people[0].age = 30
+    if people[0].age != 30                            { fail("index field assign"); return }
+    if oldest(people) != "a"                          { fail("List[P] param"); return }
+    ys: List[P] := []
+    ys.append(P("z", 9))
+    if ys[0].age != 9                                 { fail("annotated List[P]"); return }
+    if make_people()[1].name != "n"                   { fail("List[P] return"); return }
+    seen := ""
+    for i, p in people { seen = seen + "${i}${p.name}" }
+    if seen != "0a1b2c"                               { fail("enumerate"); return }
+
+    print("p122 ok")
+}

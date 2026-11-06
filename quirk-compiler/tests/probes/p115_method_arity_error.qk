@@ -1,7 +1,8 @@
-// expect-error: String.ljust() takes 2 arguments but 1 was given
+// expect-error: String.ljust() takes between 1 and 2 arguments but 0 were given
 // p115 — wrong argument count to a method is reported (v7.8.0).
-// Calls to built-in methods weren't arity-checked: `"ab".ljust(4)` (pad
-// is required) reached codegen and died as "malformed IR".
+// Calls to built-in methods weren't arity-checked: a missing argument
+// reached codegen and died as "malformed IR". (Since v7.9.1 `pad` has a
+// default, so `ljust(4)` is fine and `ljust()` is the error case.)
 define main() -> void {
-    print("ab".ljust(4))
+    print("ab".ljust())
 }

@@ -291,6 +291,9 @@ int64_t quirk_opaque_to_int(void* val) {
     return 0;
 }
 
+// See QUIRK_NOARG in types.h. Only its address matters.
+char quirk_noarg_sentinel = 0;
+
 // Truthiness of a lambda's opaque result, for List.filter / any / all /
 // find. `false`, `0` and `0.0` are boxed (headered Any), not null, so a
 // plain `!= NULL` test counted every result as true and filter kept

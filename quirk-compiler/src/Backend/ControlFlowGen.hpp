@@ -205,6 +205,12 @@ class ControlFlowGen {
 
             Value* item = Builder.CreateCall(nextFunc, {iteratorObj}, "item");
 
+            if (!node->elemType.empty() && item->getType() == Type::getInt8PtrTy(Context))
+                if (StructType* est = StructType::getTypeByName(Context, node->elemType)
+                                      ? StructType::getTypeByName(Context, node->elemType)
+                                      : StructType::getTypeByName(Context, "struct." + node->elemType))
+                    item = Builder.CreateBitCast(item, PointerType::getUnqual(est), node->varName);
+
             if (!node->destructureVars.empty() && !pairFromTuple) {
                 // Tuple destructuring: for (a, b) in items
                 Function* getFn = TheModule->getFunction("Core_Collections_Tuple_Tuple___get");
@@ -287,6 +293,12 @@ class ControlFlowGen {
             if (!nextFunc) nextFunc = resolveFunc(iterName + "__next");
 
             Value* item = Builder.CreateCall(nextFunc, {iteratorObj});
+
+            if (!node->elemType.empty() && item->getType() == Type::getInt8PtrTy(Context))
+                if (StructType* est = StructType::getTypeByName(Context, node->elemType)
+                                      ? StructType::getTypeByName(Context, node->elemType)
+                                      : StructType::getTypeByName(Context, "struct." + node->elemType))
+                    item = Builder.CreateBitCast(item, PointerType::getUnqual(est), node->varName);
             varGen->defineLocalVariable(node->varName, item);
 
             breakStack.push_back(afterBB);

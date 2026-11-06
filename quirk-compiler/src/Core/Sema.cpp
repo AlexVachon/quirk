@@ -373,7 +373,11 @@ void Sema::rewriteTypeAnnotations(Node* n) {
         return;
     }
     if (auto* f = dynamic_cast<FunctionNode*>(n)) {
-        for (auto& p : f->parameters) p.type = monoRewriteType(p.type);
+        for (auto& p : f->parameters) {
+            if (p.writtenType.empty()) p.writtenType = p.type;
+            p.type = monoRewriteType(p.type);
+        }
+        if (f->writtenReturnType.empty()) f->writtenReturnType = f->returnType;
         f->returnType = monoRewriteType(f->returnType);
         for (auto& s : f->body) rewriteTypeAnnotations(s.get());
         return;
@@ -1332,7 +1336,11 @@ void Sema::checkFunction(FunctionNode *f)
         }
     }
     for (const auto &param : f->parameters)
-        defineVariable(param.name, param.type.empty() ? "Any" : param.type, false, true);
+        {
+            std::string pt = param.type.empty() ? "Any" : param.type;
+            if (pt == "List" && !listElemStruct(param.writtenType).empty()) pt = param.writtenType;
+            defineVariable(param.name, pt, false, true);
+        }
 
     // Type-check default values against the declared parameter type.
     // A mismatched default (`raw: Int = "Hello"`) used to slip past
@@ -1445,6 +1453,9 @@ void Sema::checkVarDecl(VarDeclNode *node)
         if (isDecl || !alreadyDefined) {
             std::string finalType =
                 node->typeAnnotation.empty() ? exprType : node->typeAnnotation;
+            if (!node->writtenAnnotation.empty() && node->typeAnnotation == "List" &&
+                !listElemStruct(node->writtenAnnotation).empty())
+                finalType = node->writtenAnnotation;
             // Type-alias substitution (v3.12.0). `type Headers = Map`
             // means `h: Headers := Map()` should land `h` in scope
             // as the underlying type AND have the AST annotation
@@ -1808,6 +1819,8 @@ void Sema::checkFor(ForNode *node)
 
     std::string iterType = checkExpression(node->iterable.get());
     std::string itemType = "Any";
+    std::string elemStruct = listElemStruct(iterType);
+    iterType = baseType(iterType);
 
     if (iterType == "String")
         itemType = "String";    // iterating a String yields length-1 Strings
@@ -1827,6 +1840,10 @@ void Sema::checkFor(ForNode *node)
     // `for k, v in m` over a Map keeps its key/value meaning.
     bool enumerate = !node->varName2.empty() && structRegistry.count(iterType)
                      && !findMethod(iterType, iterType + "___iter_pairs");
+    if (!elemStruct.empty() && node->destructureVars.empty()) {
+        itemType = elemStruct;
+        node->elemType = elemStruct;
+    }
     enterScope();
     if (enumerate) {
         defineVariable(node->varName, "Int");
@@ -1857,8 +1874,16 @@ std::string Sema::checkExpressionImpl(Node *node)
         return checkConstructor(c);
     if (auto m = dynamic_cast<MemberAccessNode *>(node))
         return checkMemberAccess(m);
-    if (auto c = dynamic_cast<CallNode *>(node))
-        return checkCall(c);
+    if (auto c = dynamic_cast<CallNode *>(node)) {
+        std::string t = checkCall(c);
+        // `define f() -> List[P]`: keep the element type for the caller.
+        if (t == "List")
+            if (auto* callee = dynamic_cast<LiteralNode*>(c->callee.get()))
+                if (FunctionNode* fn = findMethod("", callee->value))
+                    if (!listElemStruct(fn->writtenReturnType).empty())
+                        return fn->writtenReturnType;
+        return t;
+    }
     if (auto arr = dynamic_cast<ListLiteralNode *>(node))
         return checkListLiteral(arr);
     if (auto map = dynamic_cast<MapLiteralNode *>(node))
@@ -2041,6 +2066,10 @@ std::string Sema::checkBinaryOp(BinaryOpNode *node)
     // Array Access
     if (node->op == "[]")
     {
+        if (std::string es = listElemStruct(lType); !es.empty() && rType == "Int") {
+            node->elemType = es;
+            return es;
+        }
         lType = baseType(lType); // strip generic args: "List[T]" -> "List"
         if (structRegistry.count(lType))
         {
@@ -3165,8 +3194,16 @@ std::string Sema::checkListLiteral(ListLiteralNode *node)
     lastNode = node;
     if (!structRegistry.count("List"))
         fatalError("'List' type not available — is core loaded?", node->line, node->col, node->filePath);
-    for (auto &elem : node->elements)
-        checkExpression(elem.get());
+    std::string common;
+    bool uniform = !node->elements.empty();
+    for (auto &elem : node->elements) {
+        std::string t = checkExpression(elem.get());
+        if (common.empty()) common = t;
+        else if (t != common) uniform = false;
+    }
+    // `[P(..), P(..)]` is a List[P]: indexing and iterating it yield P.
+    if (uniform && !listElemStruct("List[" + common + "]").empty())
+        return "List[" + common + "]";
     return "List";
 }
 
@@ -3196,6 +3233,21 @@ static bool isKnownType(const std::string& t) {
         "Null","null"
     };
     return known.count(t) > 0;
+}
+
+std::string Sema::listElemStruct(const std::string& t) const {
+    if (baseType(t) != "List") return "";
+    auto args = extractTypeArgs(t);
+    if (args.size() != 1) return "";
+    const std::string& e = args[0];
+    static const std::set<std::string> builtin = {
+        "Int","Double","Bool","Char","String","Any","List","Map","Set","Queue",
+        "Tuple","Callable","Type","File","Null"};
+    if (builtin.count(e) || e.find('[') != std::string::npos) return "";
+    auto it = structRegistry.find(e);
+    if (it == structRegistry.end() || !it->second->typeParams.empty() ||
+        !it->second->genericBase.empty()) return "";
+    return e;
 }
 
 bool Sema::isGenericParam(const std::string& t) const {

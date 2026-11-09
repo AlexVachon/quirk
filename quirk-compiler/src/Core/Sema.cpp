@@ -1930,7 +1930,31 @@ std::string Sema::checkExpressionImpl(Node *node)
     if (auto m = dynamic_cast<MemberAccessNode *>(node))
         return checkMemberAccess(m);
     if (auto c = dynamic_cast<CallNode *>(node)) {
+        // `async` / `await` (parser-generated calls, see rewriteAsyncDefine).
+        if (auto* callee = dynamic_cast<LiteralNode*>(c->callee.get());
+            callee && (callee->value == "__await" || callee->value == "__quirk_spawn") && c->args.size() == 1) {
+            std::string argT = checkExpression(c->args[0].value.get());
+            if (callee->value == "__quirk_spawn") return "Task";
+            // await Task[T] → T; await [tasks] → List; anything else → itself.
+            std::string res;
+            if (baseType(argT) == "Task") {
+                auto targs = extractTypeArgs(argT);
+                res = targs.size() == 1 ? targs[0] : "Any";
+            } else if (baseType(argT) == "List") {
+                res = "List";
+            } else {
+                res = argT;
+            }
+            c->awaitType = res;
+            return res;
+        }
         std::string t = checkCall(c);
+        // `async define f() -> T` returns Task[T]: keep T for `await`.
+        if (t == "Task")
+            if (auto* callee = dynamic_cast<LiteralNode*>(c->callee.get()))
+                if (FunctionNode* fn = findMethod("", callee->value))
+                    if (baseType(fn->writtenReturnType) == "Task")
+                        return fn->writtenReturnType;
         // `define f() -> List[P]`: keep the element type for the caller.
         if (t == "List")
             if (auto* callee = dynamic_cast<LiteralNode*>(c->callee.get()))
@@ -3322,7 +3346,7 @@ std::string Sema::checkMapLiteral(MapLiteralNode *node)
 static bool isKnownType(const std::string& t) {
     static const std::set<std::string> known = {
         "Int","Double","Bool","Char","String","Any","void","List","Map","Tuple",
-        "Set","Queue","File","Callable","auto","unknown",
+        "Set","Queue","File","Callable","Task","auto","unknown",
         "int","double","bool","char","string","cstring",
         "Null","null"
     };

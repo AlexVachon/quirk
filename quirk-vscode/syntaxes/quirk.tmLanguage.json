@@ -129,7 +129,7 @@
       "patterns": [
         {
           "name": "keyword.control.quirk",
-          "match": "\\b(if|else|elif|while|for|in|return|break|continue|with|as|try|catch|throw|finally|from|match|case|where|is|not|and|or|nonlocal|global)\\b|(?<![.\\w])assert\\b(?!\\s*(?::=|=[^=]|\\.|:))"
+          "match": "\\b(if|else|elif|while|for|in|return|break|continue|with|as|try|catch|throw|finally|from|match|case|where|is|not|and|or|nonlocal|global)\\b|(?<![.\\w])assert\\b(?!\\s*(?::=|=[^=]|\\.|:))|(?<![.\\w])async(?=\\s+define\\b)|(?<![.\\w])await\\b(?=\\s*[\\w(\\[\"'])"
         },
         {
           "name": "keyword.other.wildcard.quirk",

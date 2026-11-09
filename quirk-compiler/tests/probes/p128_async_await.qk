@@ -1,0 +1,58 @@
+// p128 — `async define` / `await` (v7.12.0). Calling an async function
+// starts a task; `await` gets its result or re-raises its exception;
+// `await [tasks]` gets all results; tasks run while others wait.
+use sys
+
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+async define napping(label: String, ms: Int) -> String {
+    sys.sleep(ms)
+    return label
+}
+
+async define square(n: Int) -> Int { return n * n }
+
+async define broken() -> Int { throw ValueError("task broke") }
+
+async define fan_out(n: Int) -> Int {
+    tasks := []
+    i := 1
+    while i <= n {
+        tasks.append(square(i))
+        i = i + 1
+    }
+    total := 0
+    for v in await tasks { total = total + v }
+    return total
+}
+
+hits := 0
+async define hit() { hits = hits + 1 }
+
+define main() -> void {
+    if await square(7) != 49                     { fail("await value"); return }
+    if (await square(3)) + 1 != 10               { fail("await in an expression"); return }
+    if await [square(2), square(3)] != [4, 9]    { fail("await a list"); return }
+    if await fan_out(4) != 30                    { fail("tasks starting tasks"); return }
+    caught := ""
+    try {
+        n := await broken()
+        print(n)
+    } catch (e: ValueError) {
+        caught = e.message
+    }
+    if caught != "task broke"                    { fail("exception through await: " + caught); return }
+    await [hit(), hit(), hit()]
+    if hits != 3                                 { fail("void tasks"); return }
+    if await 5 != 5                              { fail("await a plain value"); return }
+
+    // Four 200 ms sleeps overlap (sequentially they'd take 800 ms).
+    t0 := sys.now_ms()
+    names := await [napping("a", 200), napping("b", 200), napping("c", 200), napping("d", 200)]
+    took := sys.now_ms() - t0
+    if names != ["a", "b", "c", "d"]             { fail("results in order"); return }
+    if took >= 700                               { fail("tasks didn't overlap: " + took.str() + " ms"); return }
+    t := square(9)
+    if type(t) != "Task"                         { fail("type of a task: " + type(t)); return }
+    print("p128 ok")
+}

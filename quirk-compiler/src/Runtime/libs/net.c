@@ -66,7 +66,10 @@ int64_t Net_listen(int64_t sockfd, int64_t backlog) {
 int64_t Net_accept(int64_t sockfd) {
     struct sockaddr_in cli_addr;
     socklen_t clilen = sizeof(cli_addr);
-    return accept(sockfd, (struct sockaddr *) &cli_addr, &clilen);
+    quirk_gil_release();   // other tasks run while this waits for a client
+    int fd = accept(sockfd, (struct sockaddr *) &cli_addr, &clilen);
+    quirk_gil_acquire();
+    return fd;
 }
 
 int64_t Net_connect(int64_t sockfd, String* host, int64_t port) {
@@ -85,16 +88,26 @@ int64_t Net_connect(int64_t sockfd, String* host, int64_t port) {
     memcpy(&serv_addr.sin_addr.s_addr, server->h_addr, server->h_length);
     serv_addr.sin_port = htons(port);
 
-    return connect(sockfd, (struct sockaddr*)&serv_addr, sizeof(serv_addr));
+    quirk_gil_release();
+    int rc = connect(sockfd, (struct sockaddr*)&serv_addr, sizeof(serv_addr));
+    quirk_gil_acquire();
+    return rc;
 }
 int64_t Net_send(int64_t sockfd, String* data) {
     if (!data || !data->buffer) return 0;
-    return send(sockfd, data->buffer, data->length, 0);
+    const char* buf = data->buffer;
+    int64_t len = data->length;
+    quirk_gil_release();
+    int64_t n = send(sockfd, buf, len, 0);
+    quirk_gil_acquire();
+    return n;
 }
 
 String* Net_recv(int64_t sockfd, int64_t size) {
     char* buffer = GC_malloc(size + 1);
+    quirk_gil_release();
     int n = recv(sockfd, buffer, size, 0);
+    quirk_gil_acquire();
     if (n < 0) return make_String("");
     buffer[n] = '\0';
     return make_String(buffer);
@@ -199,7 +212,10 @@ int64_t Net_tls_connect(String* host, int64_t port) {
     memcpy(&serv_addr.sin_addr.s_addr, server->h_addr, server->h_length);
     serv_addr.sin_port = htons(port);
 
-    if (connect(sockfd, (struct sockaddr*)&serv_addr, sizeof(serv_addr)) < 0) {
+    quirk_gil_release();
+    int crc = connect(sockfd, (struct sockaddr*)&serv_addr, sizeof(serv_addr));
+    quirk_gil_acquire();
+    if (crc < 0) {
         close(sockfd);
         return -1;
     }
@@ -218,7 +234,10 @@ int64_t Net_tls_connect(String* host, int64_t port) {
     SSL_set1_host(ssl, safe_host);
 
     SSL_set_fd(ssl, sockfd);
-    if (SSL_connect(ssl) != 1) {
+    quirk_gil_release();
+    int hs = SSL_connect(ssl);
+    quirk_gil_acquire();
+    if (hs != 1) {
         SSL_free(ssl);
         close(sockfd);
         return -1;
@@ -240,7 +259,10 @@ int64_t Net_tls_send(int64_t handle, String* data) {
     if (handle < 0 || handle >= QUIRK_TLS_SLOTS) return -1;
     if (!g_tls_slots[handle].in_use) return -1;
     if (!data || !data->buffer) return 0;
-    int64_t n = SSL_write(g_tls_slots[handle].ssl, data->buffer, data->length);
+    SSL* wssl = g_tls_slots[handle].ssl;
+    quirk_gil_release();
+    int64_t n = SSL_write(wssl, data->buffer, data->length);
+    quirk_gil_acquire();
     return n;
 }
 
@@ -249,7 +271,10 @@ String* Net_tls_recv(int64_t handle, int64_t size) {
     if (!g_tls_slots[handle].in_use) return make_String("");
     if (size <= 0) return make_String("");
     char* buffer = (char*)GC_malloc(size + 1);
-    int64_t n = SSL_read(g_tls_slots[handle].ssl, buffer, size);
+    SSL* rssl = g_tls_slots[handle].ssl;
+    quirk_gil_release();
+    int64_t n = SSL_read(rssl, buffer, size);
+    quirk_gil_acquire();
     if (n <= 0) {
         // n=0 → clean close; n<0 → error or want-read. Either way
         // the caller's recv loop reads "no more bytes" the same as

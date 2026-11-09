@@ -3,22 +3,22 @@
 Bigger pieces of work, roughly in priority order. Small fixes go straight
 into a release; this list is for things that need a plan.
 
-## 1. Concurrency
+## 1. Concurrency — follow-ups
 
-Quirk has no threads or async: the runtime never creates a thread and the
-`net` HTTP server handles one request at a time, so a slow request blocks
-every other client. This is the biggest gap for anything web-facing.
+`async define` / `await` shipped in 7.12.0 (tasks on threads that take
+turns; see core/task.c). Not done yet:
 
-Options to weigh:
-
-- **Tasks + channels** (`spawn(fn() { … })`, `Channel()` with `send` /
-  `receive`), on OS threads. Needs the runtime made thread-safe: the
-  shadow call stack (tracebacks) and the try/catch stack become
-  per-thread, and the GC must know about the threads (Boehm GC's
-  `GC_pthread_create`).
-- **An event loop for `net`** (non-blocking sockets, callbacks or
-  `async`/`await`). Fixes the server without general threading, but is a
-  bigger language change if it needs `async`.
+- `async` methods (`async define` inside a struct), generic and variadic
+  async functions.
+- Cancelling a task, and timeouts (`await` with a deadline).
+- Name lookup (`gethostbyname`) still blocks every task; switch net.c to
+  `getaddrinfo`, which is thread-safe, and release the lock around it.
+- File I/O and `console.input` don't let other tasks run while they block.
+- Calling a struct method on an untyped (`Any`) value, e.g.
+  `items()[0].go()` when `items()` returns a plain `List`, fails at build
+  time ("Unknown method 'String.go'"); it needs the element type
+  (`-> List[Item]`) or an annotation. Runtime dispatch by type id would fix
+  it.
 
 ## 2. Performance
 

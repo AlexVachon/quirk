@@ -177,6 +177,11 @@ class LLVMCodegen {
 
     // How a function appears in tracebacks: `P.label`, not `P_label`.
     static std::string frameName(const FunctionNode* fn) {
+        // `async define f`'s body is compiled as `f__async_impl`.
+        static const std::string kAsync = "__async_impl";
+        if (fn->cls.empty() && fn->name.size() > kAsync.size() &&
+            fn->name.compare(fn->name.size() - kAsync.size(), kAsync.size(), kAsync) == 0)
+            return fn->name.substr(0, fn->name.size() - kAsync.size());
         const std::string& n = fn->name;
         const std::string& c = fn->cls;
         if (!c.empty() && n.size() > c.size() && n.compare(0, c.size(), c) == 0 && n[c.size()] == '_')
@@ -791,6 +796,7 @@ class LLVMCodegen {
         // the current block doesn't already have a terminator (explicit return 0 already
         // popped the frame and emitted ret via ReturnNode handling).
         if (!Builder.GetInsertBlock()->getTerminator()) {
+            Builder.CreateCall(TheModule->getOrInsertFunction("quirk_tasks_main_done", Type::getVoidTy(Context)));
             FunctionCallee popFrame = TheModule->getOrInsertFunction("quirk_pop_frame", Type::getVoidTy(Context));
             Builder.CreateCall(popFrame);
             Builder.CreateRet(ConstantInt::get(Type::getInt32Ty(Context), 0));
@@ -1847,6 +1853,24 @@ class LLVMCodegen {
         return phi;
     }
 
+    // Append the default values of a constructor's missing trailing
+    // arguments (its own __init, or the nearest inherited one).
+    void fillConstructorDefaults(const std::string& type, std::vector<Value*>& args) {
+        std::string initName = type + "__init";
+        std::string currentType = type;
+        while (!functionDeclarations.count(initName) && structHierarchy.count(currentType) &&
+               !structHierarchy[currentType].empty()) {
+            currentType = structHierarchy[currentType][0];
+            initName = currentType + "__init";
+        }
+        if (!functionDeclarations.count(initName)) return;
+        FunctionNode* funcNode = functionDeclarations[initName];
+        // `self` is already stripped from the parameters by the parser.
+        for (size_t i = args.size(); i < funcNode->parameters.size(); i++)
+            if (funcNode->parameters[i].defaultValue)
+                args.push_back(handleExpression(funcNode->parameters[i].defaultValue.get()));
+    }
+
     Value* handleCall(CallNode* call) 
     {
         if (auto lit = dynamic_cast<LiteralNode*>(call->callee.get())) {
@@ -1860,6 +1884,29 @@ class LLVMCodegen {
         }
         if (auto lit = dynamic_cast<LiteralNode*>(call->callee.get())) {
             if (verbose) std::cerr << "[Codegen]     handleCall: callee = " << lit->value << "\n";
+
+            // `async define` wrapper: start the body as a task (core/task.c).
+            if (lit->value == "__quirk_spawn" && call->args.size() == 1) {
+                Type* i8p = Type::getInt8PtrTy(Context);
+                Value* fn = handleExpression(call->args[0].value.get());
+                if (!fn) return nullptr;
+                FunctionCallee spawnFn = TheModule->getOrInsertFunction("quirk_task_spawn", i8p, i8p);
+                return Builder.CreateCall(spawnFn, {Builder.CreateBitCast(fn, i8p)}, "task");
+            }
+            // `await x`: wait for a task (or a list of them), then unbox the
+            // value to the type Sema gave it.
+            if (lit->value == "__await" && call->args.size() == 1) {
+                Type* i8p = Type::getInt8PtrTy(Context);
+                Value* v = handleExpression(call->args[0].value.get());
+                if (!v) return nullptr;
+                FunctionCallee awaitFn = TheModule->getOrInsertFunction("quirk_task_await", i8p, i8p);
+                Value* raw = Builder.CreateCall(awaitFn, {boxToVoidPtr(v)}, "awaited");
+                const std::string& t = call->awaitType;
+                if (t.empty() || t == "Any" || t == "void") return raw;
+                if (t == "List" || t.rfind("List[", 0) == 0)
+                    return Builder.CreateBitCast(raw, typeGen->getLLVMType("List"));
+                return unboxLambdaParam(raw, t);
+            }
 
             // --- FIXED: Super keyword codegen ---
             if (lit->value == "super") {
@@ -1943,28 +1990,7 @@ class LLVMCodegen {
                 std::vector<Value*> args;
                 for (auto& a : call->args) args.push_back(handleExpression(a.value.get()));
 
-                // --- FIX: Resolve Default Arguments for Constructors ---
-                std::string initName = lit->value + "__init";
-                
-                // 1. Find the correct __init (handling inheritance)
-                std::string currentType = lit->value;
-                while (!functionDeclarations.count(initName) && structHierarchy.count(currentType) && !structHierarchy[currentType].empty()) {
-                    currentType = structHierarchy[currentType][0];
-                    initName = currentType + "__init";
-                }
-
-                // 2. Fill missing arguments from defaults
-                if (functionDeclarations.count(initName)) {
-                    FunctionNode* funcNode = functionDeclarations[initName];
-                    // Note: 'self' is already stripped from funcNode->parameters in Parser
-                    for (size_t i = args.size(); i < funcNode->parameters.size(); i++) {
-                        if (funcNode->parameters[i].defaultValue) {
-                            args.push_back(handleExpression(funcNode->parameters[i].defaultValue.get()));
-                        }
-                    }
-                }
-                // -------------------------------------------------------
-
+                fillConstructorDefaults(lit->value, args);
                 return structGen->allocateAndInit(lit->value, args);
             }
 
@@ -2177,6 +2203,9 @@ class LLVMCodegen {
                     if (StructTypes.count(memberName)) {
                         std::vector<Value*> args;
                         for (auto& a : call->args) args.push_back(handleExpression(a.value.get()));
+                        // `socket.Socket()` needs its defaults like `Socket()` —
+                        // without them __init got too few operands (malformed IR).
+                        fillConstructorDefaults(memberName, args);
                         return structGen->allocateAndInit(memberName, args);
                     }
 
@@ -3198,6 +3227,9 @@ class LLVMCodegen {
                 if (!retVal) return;
             }
 
+            // `return` from main: report failed tasks nobody awaited (core/task.c).
+            if (parentFunc->getName() == "main")
+                Builder.CreateCall(TheModule->getOrInsertFunction("quirk_tasks_main_done", Type::getVoidTy(Context)));
             // 2. NOW safely pop the shadow stack frame.
             // --- NEW: INJECT SHADOW STACK POP ON EXPLICIT RETURN ---
             FunctionCallee popFrame = TheModule->getOrInsertFunction("quirk_pop_frame", Type::getVoidTy(Context));

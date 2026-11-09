@@ -1,0 +1,29 @@
+// p129 — two parser / codegen fixes found while adding async (v7.12.0).
+//  1. A statement starting with a call followed by a member call —
+//     `Server().listen(…)`, `make()[0].go()` — was "Unexpected token: .".
+//  2. A module-qualified constructor (`socket.Socket()`) didn't fill its
+//     default arguments: malformed IR.
+use net.socket
+
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+calls := 0
+struct Counter {
+    n: Int
+    define bump(self) -> void { calls = calls + self.n }
+}
+define counters() -> List[Counter] { return [Counter(5)] }
+
+define main() -> void {
+    Counter(2).bump()
+    if calls != 2                         { fail("Ctor(…).method() as a statement"); return }
+    c: Counter = counters()[0]
+    c.bump()
+    if calls != 7                         { fail("assigned from call()[i]"); return }
+    counters()[0].bump()
+    if calls != 12                        { fail("call()[i].method() as a statement"); return }
+    s := socket.Socket()
+    if s._fd < 0                          { fail("socket.Socket() default argument"); return }
+    s.close()
+    print("p129 ok")
+}

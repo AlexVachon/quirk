@@ -1,6 +1,9 @@
 // [runtime.c]
 // The "Unity Build" approach: Include the C files directly.
 #include <math.h>
+// Thread-aware GC (`async` tasks run on threads): must precede <gc.h>.
+#define GC_THREADS
+#include <pthread.h>
 #include <gc.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -43,6 +46,7 @@ static char* __gc_strdup(const char* s) {
 #include "core/queue.c"
 #include "core/callable.c"
 #include "core/exceptions.c"
+#include "core/task.c"
 
 #include "libs/file.c"
 #include "libs/sys.c"
@@ -154,6 +158,7 @@ static const char* quirk_type_id_name(uint32_t t) {
         case QT_SET:      return "Set";
         case QT_TUPLE:    return "Tuple";
         case QT_CALLABLE: return "Callable";
+        case QT_TASK:     return "Task";
         case QT_QUEUE:    return "Queue";
         case QT_TYPE:     return "Type";
         case QT_FILE:     return "File";

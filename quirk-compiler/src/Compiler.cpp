@@ -967,7 +967,7 @@ static int runAotPipeline(const std::string& irPath,
     }
     std::string runtimeDir = fs::path(runtimePath).parent_path().string();
     std::string linkCmd = "gcc " + tmpObj + " " + runtimePath
-                        + " -lgc -lm -o " + tmpBin
+                        + " -lgc -lm -lpthread -o " + tmpBin
                         + " -Wl,-rpath," + runtimeDir;
     if (verbose) std::cerr << "build: " << linkCmd << "\n";
     if (std::system(linkCmd.c_str()) != 0) {
@@ -1243,10 +1243,32 @@ static void emitSymbols(const std::vector<std::unique_ptr<Node>>& ast) {
     for (auto& node : ast)
         if (auto s = dynamic_cast<StructNode*>(node.get()))
             if (!s->genericDisplayName.empty()) g_symDisplayNames[s->name] = s->genericDisplayName;
+    // `async define f` is compiled as a wrapper `f` plus the body
+    // `f__async_impl`; editors should see one `f` returning Task[T].
+    static const std::string kAsync = "__async_impl";
+    std::set<std::string> asyncNames;
+    for (auto& node : ast)
+        if (auto fn = dynamic_cast<FunctionNode*>(node.get()))
+            if (fn->cls.empty() && fn->name.size() > kAsync.size() &&
+                fn->name.compare(fn->name.size() - kAsync.size(), kAsync.size(), kAsync) == 0)
+                asyncNames.insert(fn->name.substr(0, fn->name.size() - kAsync.size()));
     for (auto& node : ast) {
         if (node->isSpecialization) continue;   // monomorphized copies
         if (auto fn = dynamic_cast<FunctionNode*>(node.get())) {
             if (fn->isExtern) continue;     // external decls: declared, not defined here
+            if (fn->cls.empty() && asyncNames.count(fn->name)) continue;   // the async wrapper
+            if (fn->cls.empty() && fn->name.size() > kAsync.size() &&
+                asyncNames.count(fn->name.substr(0, fn->name.size() - kAsync.size()))) {
+                const std::string shown = fn->name.substr(0, fn->name.size() - kAsync.size());
+                const std::string ret = fn->writtenReturnType.empty() ? fn->returnType : fn->writtenReturnType;
+                emitSymbol("function", shown, "module", fn->filePath, fn->line, fn->col,
+                           ret.empty() || ret == "void" ? "Task" : "Task[" + ret + "]");
+                for (const auto& p : fn->parameters)
+                    emitSymbol("parameter", p.name, shown, fn->filePath, fn->line, fn->col,
+                               p.writtenType.empty() ? p.type : p.writtenType);
+                emitBodyVariables(fn->body, shown);
+                continue;
+            }
             // Top-level functions have empty `cls`; methods carry their
             // owning struct's name. Use that to pick "function" vs
             // "method" + the right scope.
@@ -1693,7 +1715,7 @@ int main(int argc, char* argv[]) {
         // Link: object + runtime.so → output binary
         std::string runtimeDir = fs::path(runtimePath).parent_path().string();
         std::string linkCmd = "gcc " + objPath + " " + runtimePath
-                            + " -lgc -lm -o " + opts.outputFile
+                            + " -lgc -lm -lpthread -o " + opts.outputFile
                             + " -Wl,-rpath," + runtimeDir;
         log.debug("Linking: " + linkCmd);
         if (int r = std::system(linkCmd.c_str())) {

@@ -496,6 +496,35 @@ define factorial(n: Int) -> Int {
 }
 ```
 
+### Async Functions
+
+Calling an `async define` function starts it as a **task** and returns a
+`Task` at once; `await` waits for it and gives its result — or re-raises
+the exception it ended with. `await [t1, t2, …]` waits for all of them and
+returns their results in order.
+
+```quirk
+use net.http
+
+async define fetch(url: String) -> String {
+    return http.get(url).text
+}
+
+define main() -> void {
+    a := fetch("https://example.com/a")     // both start right away
+    b := fetch("https://example.com/b")
+    print(await a)
+    pages := await [fetch("https://example.com/c"), fetch("https://example.com/d")]
+}
+```
+
+Tasks take turns: one runs at a time, and it lets the others run while it
+waits — in `await`, `sys.sleep`, or network I/O. So two tasks never touch
+the same variable at the same moment, and slow I/O in one doesn't hold up
+the rest (`net.server` handles each connection as a task). `await` works
+anywhere, not only inside `async` functions. A task that fails and is never
+awaited is reported when `main` returns.
+
 ---
 
 ## 7. Lambdas

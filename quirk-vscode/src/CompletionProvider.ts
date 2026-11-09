@@ -1296,6 +1296,8 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
             ['try',      'try {\n    $0\n} catch (${1:e}: ${2:Exception}) {\n    \n}','Try-catch block'],
             ['throw',    'throw ${1:Exception}("${2:message}")',                   'Throw an exception'],
             ['assert',   'assert ${1:condition}',                                  'Fail with AssertionError unless the condition holds'],
+            ['async',    'async define ${1:name}(${2}) -> ${3:Type} {\n\t${4}\n}',     'A function that runs as a task (await its result)'],
+            ['await',    'await ${1:task}',                                        'Wait for a task and get its result'],
             ['match',    'match ${1:value} {\n    case ${2:pattern} => $0\n    case _ => \n}', 'Match statement'],
             ['case',     'case ${1:pattern} => $0',                                'Match arm'],
             ['return'],  ['break'],   ['continue'],

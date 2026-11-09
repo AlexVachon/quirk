@@ -57,7 +57,8 @@ public:
         if (typeName == "double" || typeName == "Double") return Type::getDoubleTy(Context);
         if (typeName == "void") return Type::getVoidTy(Context);
 
-        if (typeName == "ptr" || typeName == "cstring" || typeName == "string" || typeName == "Any" || typeName == "any")
+        if (typeName == "ptr" || typeName == "cstring" || typeName == "string" || typeName == "Any" || typeName == "any" ||
+            typeName == "Task" || typeName.rfind("Task[", 0) == 0)   // a running `async` call (core/task.c)
             return Type::getInt8PtrTy(Context);
 
         // Strip generic type parameters: "List[T]" → "List", "Map[K,V]" → "Map"

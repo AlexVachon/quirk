@@ -2,6 +2,12 @@
 
 All notable changes to the extension land here. Versioning follows SemVer; minor bumps for new features, patches for fixes.
 
+## [0.8.0] — 2026-11-09 — `async` / `await`
+
+- `async define` and `await` (compiler 7.12.0) are highlighted as
+  keywords where they act as keywords (`async` before `define`, `await`
+  before an expression), with hovers and completions.
+
 ## [0.7.0] — 2026-11-09 — tests in the Testing panel, `assert`
 
 - **Quirk tests appear in VS Code's Testing panel** (compiler 7.10.0+).

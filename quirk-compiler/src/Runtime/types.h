@@ -32,8 +32,15 @@ enum QuirkTypeId {
     QT_STRING, QT_LIST, QT_MAP, QT_SET, QT_TUPLE, QT_ANY, QT_CALLABLE,
     QT_QUEUE, QT_EXCEPTION, QT_ITERATOR, QT_TYPE, QT_FILE, QT_OTHER,
     QT_CSTR = 14,          // raw NUL-terminated char* (selfhost String values)
+    QT_TASK = 15,          // a running / finished `async define` call (core/task.c)
     QT_STRUCT_BASE = 100   // user struct: QT_STRUCT_BASE + codegen type id
 };
+
+// The scheduler lock (core/task.c): one task runs Quirk code at a time.
+// C functions that block (sleep, socket I/O) release it around the
+// blocking call so other tasks run meanwhile. No-ops until a task exists.
+void quirk_gil_release(void);
+void quirk_gil_acquire(void);
 
 // Allocate `size` bytes of zeroed, GC-managed memory with a header.
 void* quirk_alloc(uint32_t type_id, size_t size);
@@ -111,6 +118,34 @@ typedef struct {
     int         line;      // line of the function's definition
     int         cur_line;  // line of the statement running now (0 = unknown)
 } ShadowFrame;
+
+// Everything a thread of Quirk code needs on its own (each `async` task runs
+// on a thread): its call stack (tracebacks), try/catch stack and the
+// exception in flight. One thread-local pointer to it — the initial-exec
+// TLS model makes that a single register-relative load; per-variable
+// `__thread` arrays in a shared library went through __tls_get_addr on
+// every function call (2× slower calls). The main thread uses a static
+// struct; tasks allocate theirs as a GC root (it holds the exception).
+#include <setjmp.h>
+typedef struct {
+    ShadowFrame shadow_stack[1024];
+    int         shadow_sp;
+    jmp_buf     try_stack[256];
+    int         try_depth;               // -1: no enclosing try
+    int         saved_shadow_sp[256];
+    void*       active_exception;
+} QuirkThreadState;
+#if defined(__GNUC__) && !defined(__APPLE__)
+extern __thread QuirkThreadState* quirk_ts __attribute__((tls_model("initial-exec")));
+#else
+extern __thread QuirkThreadState* quirk_ts;
+#endif
+#define quirk_shadow_stack      (quirk_ts->shadow_stack)
+#define quirk_shadow_sp         (quirk_ts->shadow_sp)
+#define quirk_try_stack         (quirk_ts->try_stack)
+#define quirk_try_depth         (quirk_ts->try_depth)
+#define quirk_saved_shadow_sp   (quirk_ts->saved_shadow_sp)
+#define quirk_active_exception  (quirk_ts->active_exception)
 
 // Push a frame and return its cur_line slot; compiled code stores each
 // statement's line there so tracebacks can name the failing line.

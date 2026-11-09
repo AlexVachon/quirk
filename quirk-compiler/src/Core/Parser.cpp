@@ -54,6 +54,7 @@ std::vector<std::unique_ptr<Node>> Parser::parse() {
         // access, or call — terminated by EOL or the next `@`/`define`.
         std::vector<std::unique_ptr<Node>> pendingDecorators;
         try {
+            if (peek().type == TokenType::IDENTIFIER && peek().value == "async") rewriteAsyncDefine();
             while (peek().type == TokenType::AT) {
                 Token at = advance();
                 auto dec = parseExpression(0);
@@ -425,6 +426,21 @@ std::unique_ptr<Node> Parser::parseExpression(int min_precedence) {
         left = std::make_unique<LiteralNode>("null");
     } else if (t.type == TokenType::SUPER) {
         left = std::make_unique<LiteralNode>("super");
+    } else if (t.type == TokenType::IDENTIFIER && t.value == "await" && pos < (int)tokens.size() &&
+               tokens[pos].line == t.line &&
+               (tokens[pos].type == TokenType::IDENTIFIER || tokens[pos].type == TokenType::LPAREN ||
+                tokens[pos].type == TokenType::LBRACKET || tokens[pos].type == TokenType::STRING_LITERAL ||
+                tokens[pos].type == TokenType::INT_LITERAL || tokens[pos].type == TokenType::FLOAT_LITERAL ||
+                tokens[pos].type == TokenType::SUPER || tokens[pos].type == TokenType::QUIRK_NULL)) {
+        // `await <expr>` — takes a primary with its calls, indexing and
+        // member access (as in Python): `await f(x).y + 1` is
+        // `(await (f(x).y)) + 1`. Lowered to a call Sema and Codegen know.
+        auto operand = parseExpression(36);
+        auto call = std::make_unique<CallNode>(std::make_unique<LiteralNode>("__await"));
+        call->line = t.line; call->col = t.col; call->filePath = filePath;
+        Arg a; a.value = std::move(operand);
+        call->args.push_back(std::move(a));
+        left = std::move(call);
     } else if (t.type == TokenType::IDENTIFIER || t.type == TokenType::TYPE_KW) {
         left = std::make_unique<LiteralNode>(t.value);
     } else if (t.type == TokenType::NOT) {
@@ -988,12 +1004,120 @@ bool Parser::rewriteAssert() {
     return true;
 }
 
+// `async define NAME(PARAMS) -> RET { BODY }` becomes
+//
+//   define NAME__async_impl(PARAMS) -> RET { BODY }
+//   define NAME(PARAMS) -> Task[RET] {
+//       return __quirk_spawn(fn() { return NAME__async_impl(ARG, …) })
+//   }
+//
+// so calling NAME starts the body as a task (core/task.c) and returns it;
+// `await` gets RET back. Rewritten at the token level, like `assert`.
+bool Parser::rewriteAsyncDefine() {
+    const int start = pos;
+    if (start + 2 >= (int)tokens.size() || tokens[start + 1].type != TokenType::DEFINE) return false;
+    const Token kw = tokens[start];
+    const int nameIdx = start + 2;
+    if (tokens[nameIdx].type != TokenType::IDENTIFIER) return false;
+    if (tokens[nameIdx + 1].type != TokenType::LPAREN) {
+        reportError("`async define` doesn't support generic functions yet", tokens[nameIdx + 1]);
+    }
+    // PARAMS: the tokens between the parentheses.
+    int i = nameIdx + 1, depth = 0, paramsEnd = -1;
+    for (; i < (int)tokens.size(); i++) {
+        if (tokens[i].type == TokenType::LPAREN || tokens[i].type == TokenType::LBRACKET) depth++;
+        else if (tokens[i].type == TokenType::RPAREN || tokens[i].type == TokenType::RBRACKET) {
+            if (--depth == 0) { paramsEnd = i; break; }
+        }
+    }
+    if (paramsEnd < 0) return false;
+    // Argument names: the first identifier of each top-level parameter.
+    std::vector<std::string> argNames;
+    {
+        bool expectName = true;
+        int d = 0;
+        for (int k = nameIdx + 2; k < paramsEnd; k++) {
+            const Token& t = tokens[k];
+            if (t.type == TokenType::LPAREN || t.type == TokenType::LBRACKET) d++;
+            else if (t.type == TokenType::RPAREN || t.type == TokenType::RBRACKET) d--;
+            else if (d == 0 && t.type == TokenType::COMMA) { expectName = true; continue; }
+            if (d == 0 && (t.type == TokenType::ELLIPSIS || (t.type == TokenType::STAR && expectName)))
+                reportError("`async define` doesn't support variadic parameters yet", t);
+            if (expectName && t.type == TokenType::IDENTIFIER) {
+                if (t.value == "self") reportError("`async define` doesn't support methods yet", t);
+                argNames.push_back(t.value);
+                expectName = false;
+            } else if (expectName && t.type == TokenType::REF) {
+                continue;
+            }
+        }
+    }
+    // RET: between `->` and the body's `{` (none: void).
+    int bodyOpen = paramsEnd + 1;
+    int retStart = -1, retEnd = -1;
+    if (bodyOpen < (int)tokens.size() && tokens[bodyOpen].type == TokenType::ARROW) {
+        retStart = bodyOpen + 1;
+        int k = retStart;
+        while (k < (int)tokens.size() && tokens[k].type != TokenType::LBRACE) k++;
+        retEnd = k;
+        bodyOpen = k;
+    }
+    if (bodyOpen >= (int)tokens.size() || tokens[bodyOpen].type != TokenType::LBRACE) return false;
+    int bodyClose = -1;
+    depth = 0;
+    for (int k = bodyOpen; k < (int)tokens.size(); k++) {
+        if (tokens[k].type == TokenType::LBRACE) depth++;
+        else if (tokens[k].type == TokenType::RBRACE && --depth == 0) { bodyClose = k; break; }
+    }
+    if (bodyClose < 0) return false;
+    bool isVoid = retStart < 0 || (retEnd == retStart + 1 && tokens[retStart].value == "void");
+
+    const std::string name = tokens[nameIdx].value;
+    const std::string impl = name + "__async_impl";
+    std::string args;
+    for (size_t k = 0; k < argNames.size(); k++) args += (k ? ", " : "") + argNames[k];
+
+    // The implementation: the original function, renamed.
+    std::vector<Token> gen;
+    for (int k = start + 1; k <= bodyClose; k++) {
+        Token t = tokens[k];
+        if (k == nameIdx) t.value = impl;
+        gen.push_back(t);
+    }
+    // The wrapper: same parameters (defaults included), returns the task.
+    auto at = [&](Token t) { t.line = kw.line; t.col = kw.col; return t; };
+    gen.push_back(at({TokenType::DEFINE, "define", 0, 0}));
+    gen.push_back(at({TokenType::IDENTIFIER, name, 0, 0}));
+    for (int k = nameIdx + 1; k <= paramsEnd; k++) gen.push_back(tokens[k]);
+    gen.push_back(at({TokenType::ARROW, "->", 0, 0}));
+    gen.push_back(at({TokenType::IDENTIFIER, "Task", 0, 0}));
+    if (!isVoid) {
+        gen.push_back(at({TokenType::LBRACKET, "[", 0, 0}));
+        for (int k = retStart; k < retEnd; k++) gen.push_back(tokens[k]);
+        gen.push_back(at({TokenType::RBRACKET, "]", 0, 0}));
+    }
+    std::string body = isVoid
+        ? "{\n return __quirk_spawn(fn() { " + impl + "(" + args + ") })\n}\n"
+        : "{\n return __quirk_spawn(fn() { return " + impl + "(" + args + ") })\n}\n";
+    Lexer lx(body);
+    for (const Token& t : lx.tokenize()) {
+        if (t.type == TokenType::EOF_TOKEN) continue;
+        gen.push_back(at(t));
+    }
+    tokens.erase(tokens.begin() + start, tokens.begin() + bodyClose + 1);
+    tokens.insert(tokens.begin() + start, gen.begin(), gen.end());
+    return true;
+}
+
 std::unique_ptr<Node> Parser::parseStatementImpl() {
     // Skip any leading `;` — they act as empty statement separators, so a
     // line like `a := 1; b := 2` parses two statements without complaint.
     while (peek().type == TokenType::SEMICOLON) advance();
     if (peek().type == TokenType::IDENTIFIER && peek().value == "assert" && rewriteAssert())
         return parseStatementImpl();
+    if (peek().type == TokenType::IDENTIFIER && peek().value == "async" &&
+        pos + 1 < (int)tokens.size() && tokens[pos + 1].type == TokenType::DEFINE)
+        reportError("`async define` must be at the top level of a file (not inside a function)", peek());
     TokenType type = peek().type;
     int currentLine = peek().line;
 
@@ -1164,8 +1288,20 @@ std::unique_ptr<Node> Parser::parseStatementImpl() {
         if (isAssignment)
             return parseVarDecl();
         if (pos + 1 < static_cast<int>(tokens.size()) &&
-            tokens[pos + 1].type == TokenType::LPAREN)
-            return parseCall();
+            tokens[pos + 1].type == TokenType::LPAREN) {
+            const int callStart = pos;
+            auto call = parseCall();
+            // `Server().listen(…)` / `make()[0].go()`: the call is only the
+            // start of the expression — re-parse it whole (parseCall stops
+            // after one call, leaving `.listen(…)` as a stray token).
+            TokenType nt = peek().type;
+            if ((nt == TokenType::DOT || nt == TokenType::QUESTION_DOT || nt == TokenType::LBRACKET) &&
+                peek().line == tokens[pos - 1].line) {
+                pos = callStart;
+                return parseExpression(0);
+            }
+            return call;
+        }
     }
     // Tuple destructuring: (a, b) := rhs
     if (type == TokenType::LPAREN) {

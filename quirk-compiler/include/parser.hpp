@@ -54,6 +54,9 @@ class Parser {
     // `assert cond[, msg]` → the equivalent `if not … { throw AssertionError(…) }`
     // tokens, spliced in place of the statement. True when it rewrote one.
     bool rewriteAssert();
+    // `async define f(…) -> T { … }` → the body as `f__async_impl` plus a
+    // `define f(…) -> Task[T]` that starts it as a task. True when rewritten.
+    bool rewriteAsyncDefine();
     int assertCount = 0;
 
 public:

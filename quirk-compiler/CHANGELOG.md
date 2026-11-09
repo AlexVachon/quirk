@@ -5,6 +5,49 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.12.0] — 2026-11-09 — `async define` / `await`
+
+- **Async functions.** Calling an `async define` function starts it as a
+  task and returns a `Task` at once; `await task` waits for it and gives
+  its result, or re-raises the exception it ended with:
+
+  ```quirk
+  async define fetch(url: String) -> String {
+      return http.get(url).text
+  }
+
+  a := fetch(url_a)                       // both start right away
+  b := fetch(url_b)
+  print(await a)
+  pages := await [fetch(x), fetch(y)]     // all of them, in order
+  ```
+
+  `await` works anywhere, not just inside async functions, and on any
+  value (a non-task is returned as is). Tasks may start and await other
+  tasks. A task that fails and is never awaited is reported when `main`
+  returns.
+- **How it runs.** Each task has its own thread, but only one runs Quirk
+  code at a time — they pass a single lock, the way an event loop passes
+  control. A task lets the others run while it waits: in `await`,
+  `sys.sleep`, and socket I/O (`accept`, `connect`, `send`, `recv`, TLS).
+  So tasks never race on a variable, and slow I/O in one doesn't block the
+  rest. The GC is thread-aware (`GC_THREADS`).
+- **The HTTP server handles each connection as a task** (net v1.3.0):
+  a slow handler no longer holds up other clients — four 300 ms requests
+  take ~300 ms, not 1.2 s.
+- Per-thread runtime state (call stack for tracebacks, try/catch stack,
+  the exception in flight) lives in one struct behind a single
+  initial-exec thread-local pointer, so function calls cost the same as
+  before.
+- Fixed: a statement that starts with a call and goes on with a member
+  call — `Server().listen(…)`, `make()[0].go()` — was a syntax error.
+- Fixed: a module-qualified constructor (`socket.Socket()`) didn't fill in
+  default arguments (malformed IR).
+- `make` rebuilds the runtime when any runtime source changes (the list of
+  runtime files was hand-written and missed some).
+- VS Code extension 0.8.0 highlights `async` / `await`, with hovers and
+  completions.
+
 ## [7.11.1] — 2026-11-09 — Bool in Map / List, `fs.remove_tree`, `ß`
 
 - **A Bool stored as a value stays a Bool.** `m.put(k, true)`,

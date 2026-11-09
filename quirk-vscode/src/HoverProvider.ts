@@ -151,6 +151,8 @@ export class QuirkHoverProvider implements vscode.HoverProvider {
             'try':      '**`try`** — begin an exception-safe block.',
             'catch':    '**`catch`** — handle a thrown exception.\n\n```quirk\ncatch (e: Exception) { print(e.message) }\n```',
             'throw':    '**`throw`** — raise an exception. Bare `throw` re-raises the current exception.\n\n```quirk\nthrow TypeError("Expected Int")\n```',
+            'async':    '**`async define`** — calling the function starts it as a task and returns a `Task` right away; `await` gets the result.\n\n```quirk\nasync define fetch(url: String) -> String { ... }\n\nt := fetch("https://example.com")   // starts running\nprint(await t)\n```',
+            'await':    '**`await`** — wait for a task and get its result (or its exception, re-raised here). `await [t1, t2]` waits for all of them and returns their results. While one task waits, others run.\n\n```quirk\npages := await [fetch(a), fetch(b)]\n```',
             'assert':   '**`assert`** — fail with an `AssertionError` unless the condition holds. A failed comparison shows both sides.\n\n```quirk\nassert total == 10\nassert user.name == "ann", "wrong user"\n// AssertionError: assert total == 10 failed: left is 9, right is 10\n```',
             'finally':  '**`finally`** — block that always runs after try/catch, whether or not an exception was thrown.\n\n```quirk\ntry { f := File("x.txt", "r") } catch (e: Exception) { ... } finally { f.close() }\n```',
             'return':   '**`return`** — return a value from a function.',

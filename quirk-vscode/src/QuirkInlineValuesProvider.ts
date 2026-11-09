@@ -21,7 +21,7 @@ import * as vscode from 'vscode';
 // just mean a few false positives in the inline values; harmless.
 const QUIRK_KEYWORDS = new Set([
     'define', 'fn', 'extern', 'return', 'if', 'elif', 'else', 'while', 'for',
-    'in', 'break', 'continue', 'match', 'case', 'try', 'catch', 'throw', 'assert',
+    'in', 'break', 'continue', 'match', 'case', 'try', 'catch', 'throw', 'assert', 'async', 'await',
     'with', 'use', 'from', 'as', 'struct', 'class', 'interface', 'enum',
     'type', 'const', 'static', 'nonlocal', 'global', 'self', 'where',
     'true', 'false', 'null', 'and', 'or', 'not', 'del',

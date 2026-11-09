@@ -132,7 +132,7 @@ const KEYWORDS = new Set([
     'define', 'struct', 'if', 'else', 'elif', 'while', 'for', 'in',
     'return', 'break', 'continue', 'use', 'from', 'with', 'as',
     'extern', 'true', 'false', 'null', 'del', 'init', 'def',
-    'const', 'ref', 'try', 'catch', 'throw', 'assert', 'finally', 'and', 'or', 'not', 'super', 'enum',
+    'const', 'ref', 'try', 'catch', 'throw', 'assert', 'async', 'await', 'finally', 'and', 'or', 'not', 'super', 'enum',
     'match', 'case', '_', 'where', 'is',
     'fn', 'nonlocal', 'global', 'interface'
 ]);

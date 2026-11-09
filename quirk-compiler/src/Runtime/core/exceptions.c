@@ -7,13 +7,14 @@
 #include "../types.h"
 
 // --- EXCEPTION HANDLING RUNTIME ---
-jmp_buf quirk_try_stack[256];
-int quirk_try_depth = -1;
-void* quirk_active_exception = NULL;
-
-extern int quirk_shadow_sp;
-extern ShadowFrame quirk_shadow_stack[];
-int quirk_saved_shadow_sp[256];
+// Per-thread state (call stack, try stack, exception in flight): see
+// QuirkThreadState in types.h. The main thread's is this static one.
+static QuirkThreadState quirk_main_ts = { .try_depth = -1 };
+#if defined(__GNUC__) && !defined(__APPLE__)
+__thread QuirkThreadState* quirk_ts __attribute__((tls_model("initial-exec"))) = &quirk_main_ts;
+#else
+__thread QuirkThreadState* quirk_ts = &quirk_main_ts;
+#endif
 
 void* quirk_get_jmp_buf() {
     quirk_try_depth++;

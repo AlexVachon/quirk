@@ -318,6 +318,9 @@ class CallNode : public Node {
     // when set. Empty by default — non-collision calls go through
     // the existing path unchanged.
     std::string resolvedLinkageName;
+    // `await x` (lowered to `__await(x)`): the type Sema gave the result,
+    // so Codegen unboxes the task's value to it.
+    std::string awaitType;
 
     CallNode(std::unique_ptr<Node> callTarget)
         : callee(std::move(callTarget)) {}

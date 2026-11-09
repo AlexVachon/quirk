@@ -45,8 +45,7 @@
 #include "../types.h"   // ShadowFrame lives here
 
 // Stack storage + counter are defined in sys.c; we only consume them.
-extern ShadowFrame quirk_shadow_stack[1024];
-extern int quirk_shadow_sp;
+// quirk_shadow_stack / quirk_shadow_sp: the thread's QuirkThreadState (types.h).
 
 // ---------------------------------------------------------------------------
 //  JSON event mode — when QUIRK_DBG_JSON=1 (set by the VSCode adapter), qdb

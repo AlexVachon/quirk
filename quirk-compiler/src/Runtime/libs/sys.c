@@ -123,8 +123,7 @@ char* Sys_srcline(const char* filename, int64_t target_line) {
 // --- QUIRK SHADOW STACK ---
 #include "../types.h"
 
-ShadowFrame quirk_shadow_stack[1024];
-int quirk_shadow_sp = 0;
+// The call stack lives in the thread's QuirkThreadState (types.h).
 
 void quirk_push_frame(const char* func, const char* file, int line) {
     if (quirk_shadow_sp >= 1024) {
@@ -374,7 +373,9 @@ void Sys_sleep(int64_t ms) {
     struct timespec ts;
     ts.tv_sec  = ms / 1000;
     ts.tv_nsec = (long)(ms % 1000) * 1000000L;
+    quirk_gil_release();   // other tasks run meanwhile
     nanosleep(&ts, NULL);
+    quirk_gil_acquire();
 #endif
 }
 

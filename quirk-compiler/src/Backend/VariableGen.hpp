@@ -111,9 +111,33 @@ class VariableGen {
         return Builder.CreateBitCast(val, i8p);
     }
 
+    // In-place String append (`s = s + e`): per variable, an i32 flag that
+    // is 1 only while the variable holds the sole reference to its String
+    // (see quirk_str_append). Every read or write of the variable outside
+    // the append itself clears it.
+    std::map<std::string, AllocaInst*> ownedLocal;
+    std::map<std::string, GlobalVariable*> ownedGlobal;
+    bool suppressOwnedClear = false;
+    void clearOwned(const std::string& name, bool local) {
+        if (suppressOwnedClear) return;
+        Type* i32 = Type::getInt32Ty(Context);
+        if (local) {
+            auto it = ownedLocal.find(name);
+            // Only from the flag's own function (a lambda body is another).
+            if (it != ownedLocal.end() && Builder.GetInsertBlock() &&
+                it->second->getFunction() == Builder.GetInsertBlock()->getParent())
+                Builder.CreateStore(ConstantInt::get(i32, 0), it->second);
+        } else {
+            auto it = ownedGlobal.find(name);
+            if (it != ownedGlobal.end() && Builder.GetInsertBlock())
+                Builder.CreateStore(ConstantInt::get(i32, 0), it->second);
+        }
+    }
+
     void clear() {
         NamedValues.clear();
         nonlocalVars.clear();
+        ownedLocal.clear();
         // globalVars intentionally preserved — it's module-scoped state.
     }
 
@@ -143,6 +167,7 @@ class VariableGen {
 
     // Handle 'x := 10'
     void defineLocalVariable(const std::string& name, Value* val) {
+        clearOwned(name, true);   // a new value: nobody's proven it unique yet
         if (NamedValues.count(name)) {
             Value* existingSlot = NamedValues[name];
             if (existingSlot->getType()->getPointerElementType() == val->getType()) {
@@ -178,6 +203,7 @@ class VariableGen {
         // after locals so a local shadow takes precedence, but before
         // nonlocal cell handling.
         else if (globalVars.count(name)) {
+            clearOwned(name, false);
             GlobalVariable* gv = globalVars[name];
             Type* gvTy = gv->getValueType();
             if (val->getType() != gvTy) {
@@ -207,6 +233,7 @@ class VariableGen {
             return;
         }
         Value* slot = NamedValues[name];
+        clearOwned(name, true);
         // Convert to the slot's type: `arr = root.get(name)` with `arr: List`
         // stored the untyped i8* straight into the List* slot — invalid IR
         // that only the optimiser's dead-store removal ever hid, so -O0 /
@@ -224,12 +251,14 @@ class VariableGen {
             // Fall back to the module-level slot if there's one.
             auto git = globalVars.find(name);
             if (git != globalVars.end()) {
+                clearOwned(name, false);
                 return Builder.CreateLoad(git->second->getValueType(), git->second, name.c_str());
             }
             return nullptr;
         }
 
         Value* slot = NamedValues[name];
+        clearOwned(name, true);
 
         // Nonlocal: double-load through cell pointer
         if (nonlocalVars.count(name)) {

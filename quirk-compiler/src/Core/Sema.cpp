@@ -1415,6 +1415,26 @@ void Sema::checkFunction(FunctionNode *f)
     currentScope = prevScope;
 }
 
+// Is this expression a String without type-checking it again (that would
+// repeat its errors and usage records)? A string literal, an interpolated
+// string (`"…".format(…)`), or a variable of type String. Used to mark
+// `s = s + e` for the in-place append.
+bool Sema::isEvidentlyString(Node* e) {
+    if (auto* lit = dynamic_cast<LiteralNode*>(e)) {
+        if (!lit->value.empty() && lit->value[0] == '"') return true;
+        for (int i = (int)scopeStack.size() - 1; i >= 0; i--) {
+            auto it = scopeStack[i].find(lit->value);
+            if (it != scopeStack[i].end()) return it->second.type == "String";
+        }
+        return false;
+    }
+    if (auto* call = dynamic_cast<CallNode*>(e))
+        if (auto* mem = dynamic_cast<MemberAccessNode*>(call->callee.get()); mem && mem->memberName == "format")
+            if (auto* lit = dynamic_cast<LiteralNode*>(mem->object.get()); lit && !lit->value.empty() && lit->value[0] == '"')
+                return true;
+    return false;
+}
+
 void Sema::checkVarDecl(VarDeclNode *node)
 {
     lastNode = node;
@@ -1511,6 +1531,14 @@ void Sema::checkVarDecl(VarDeclNode *node)
             // Reassignment — mark the existing binding as used
             std::string varType = resolveVariable(lit->value);
             if (node->op == "=") checkAssignType(varType, exprType, "'" + lit->value + "'", node);
+            // String append (`s = s + e` / `s += e`): Codegen's in-place path.
+            if (varType == "String") {
+                if (node->op == "+=" && exprType == "String") node->stringAppend = true;
+                else if (node->op == "=")
+                    if (auto* bin = dynamic_cast<BinaryOpNode*>(node->expression.get()); bin && bin->op == "+")
+                        if (auto* l = dynamic_cast<LiteralNode*>(bin->left.get()); l && l->value == lit->value)
+                            if (isEvidentlyString(bin->right.get())) node->stringAppend = true;
+            }
         }
     }
     else if (auto member = dynamic_cast<MemberAccessNode *>(node->lhs.get()))

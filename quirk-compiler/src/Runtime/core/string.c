@@ -545,6 +545,47 @@ String* Core_String_String___mul(String* self, int64_t n) {
     return make_String_taking_ownership(buf);
 }
 
+// `x = x + e` / `x += e` for a String variable (compiler 7.15.0).
+// *owned is the compiler's proof that `x` holds the only reference to this
+// String — it's set here and cleared by any other read or write of the
+// variable. Owned: append into the buffer's spare room, in place (growing it
+// by doubling), so a loop of appends is linear. Not owned: a fresh String
+// with room to grow. Bytes [0, length) of a String are never changed while
+// anything else might hold it.
+String* Core_String_String___add(String* self, String* other);
+String* quirk_str_append(String* x, String* e, int32_t* owned) {
+    const char* eb = (e && e->buffer) ? e->buffer : "";
+    int64_t el = (e && e->buffer) ? e->length : 0;
+    if (!x || !x->buffer) {
+        if (owned) *owned = 0;
+        return Core_String_String___add(x, e);
+    }
+    int64_t need = x->length + el + 1;
+    if (owned && *owned) {
+        size_t cap = GC_size(x->buffer);
+        if ((size_t)need > cap) {
+            size_t ncap = (size_t)need * 2;
+            char* nb = (char*)GC_malloc_atomic(ncap);
+            memcpy(nb, x->buffer, (size_t)x->length);
+            x->buffer = nb;
+        }
+        memcpy(x->buffer + x->length, eb, (size_t)el);
+        x->length += el;
+        x->buffer[x->length] = '\0';
+        return x;
+    }
+    size_t ncap = (size_t)need * 2 < 64 ? 64 : (size_t)need * 2;
+    char* nb = (char*)GC_malloc_atomic(ncap);
+    memcpy(nb, x->buffer, (size_t)x->length);
+    memcpy(nb + x->length, eb, (size_t)el);
+    nb[x->length + el] = '\0';
+    String* r = (String*)quirk_alloc(QT_STRING, sizeof(String));
+    r->buffer = nb;
+    r->length = x->length + el;
+    if (owned) *owned = 1;
+    return r;
+}
+
 String* Core_String_String___add(String* self, String* other) {
     self = quirk_ensure_string(self);
     other = quirk_ensure_string(other);

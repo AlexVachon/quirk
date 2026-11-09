@@ -261,6 +261,7 @@ class Sema {
     void checkFunction(FunctionNode* node);
     void checkVarDecl(VarDeclNode* node);
     void checkStatement(Node* node);       // guarded: recovers from an error
+    bool isEvidentlyString(Node* e);
     void checkStatementImpl(Node* node);
     // Run `fn` so a fatal error inside it is recorded and checking goes on
     // with the next statement / function (every error in one run, as

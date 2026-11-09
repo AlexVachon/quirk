@@ -5,6 +5,21 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.15.0] — 2026-11-09 — fast `s = s + x`
+
+- **Building a string with `s = s + x` (or `s += x`) in a loop is linear.**
+  Each append copied the whole string, so 200 000 appends took ~5 s; now
+  0.09 s (JIT), a few milliseconds compiled. When the compiler can prove
+  the variable holds the only reference to its String, the append writes
+  into spare room in its buffer (growing it by doubling) instead of
+  copying. Any other use of the variable — passing it to a function,
+  storing it in a list or map, assigning it to another variable, capturing
+  it in a closure, printing it — makes the next append copy as before, so
+  a String held anywhere else never changes. Applies to local variables
+  and to the entry file's top-level variables, when the appended value is
+  evidently a String (a literal, an interpolated string or a String
+  variable); `nonlocal` variables use the ordinary path.
+
 ## [7.14.0] — 2026-11-09 — performance: strings, GC, line tracking, startup
 
 - **String interpolation is ~12× faster and uses ~13× less memory.** Every

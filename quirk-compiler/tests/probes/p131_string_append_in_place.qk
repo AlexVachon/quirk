@@ -1,0 +1,73 @@
+// p131 — `s = s + e` / `s += e` appends in place when `s` holds the only
+// reference to its String (v7.15.0): linear instead of quadratic — and a
+// String anything else holds never changes.
+use sys
+
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+log := []
+g := "g"
+define remember() -> void { log.append(g) }
+
+define punctuate(s: String) -> String {
+    s = s + "!"
+    s += "?"
+    return s
+}
+
+define build(n: Int) -> String {
+    s := ""
+    i := 0
+    while i < n {
+        s += "ab"
+        i = i + 1
+    }
+    return s
+}
+
+define main() -> void {
+    // Speed: 200 000 appends (quadratic copying took ~5 s).
+    t0 := sys.now_ms()
+    big := build(200000)
+    if big.length() != 400000                     { fail("length " + big.length().str()); return }
+    if sys.now_ms() - t0 > 2000                   { fail("appending isn't linear"); return }
+
+    // Values held elsewhere never change.
+    s := "x"
+    saved := []
+    i := 0
+    while i < 4 {
+        saved.append(s)
+        s = s + "y"
+        i = i + 1
+    }
+    if saved != ["x", "xy", "xyy", "xyyy"]        { fail("list copies changed"); return }
+    t := s
+    s += "z"
+    if t != "xyyyy" or s != "xyyyyz"              { fail("alias changed"); return }
+    u := "q"
+    grab := fn() => u
+    u = u + "r"
+    if grab() != "q"                              { fail("closure copy changed"); return }
+    w := "z"
+    w = w + w
+    w = w + w
+    if w != "zzzz"                                { fail("self-append"); return }
+    base := "base"
+    if punctuate(base) != "base!?" or base != "base" { fail("caller's string changed"); return }
+    k := "k"
+    k = k + "1"
+    m := Map()
+    m.put(k, 1)
+    k = k + "2"
+    if m.keys() != ["k1"] or k != "k12"           { fail("map key changed"); return }
+    // A module global read by another function between appends.
+    j := 0
+    while j < 4 {
+        g = g + "+"
+        if j % 2 == 0 { remember() }
+        j = j + 1
+    }
+    if log != ["g+", "g+++"] or g != "g++++"      { fail("global read elsewhere: " + "${log}"); return }
+    print("p131 ok")
+}

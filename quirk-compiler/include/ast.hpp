@@ -269,6 +269,9 @@ class VarDeclNode : public Node {
     // still reflects what the user actually typed.
     std::string inferredType;
     bool isConst = false;
+    // `x = x + e` / `x += e` with x and e Strings (Sema): Codegen may append
+    // in place when it can prove x holds the only reference (quirk_str_append).
+    bool stringAppend = false;
 
     VarDeclNode(std::unique_ptr<Node> left,
                 std::unique_ptr<Node> expr,

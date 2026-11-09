@@ -777,6 +777,27 @@ class LLVMCodegen {
         curLineFile = mainFile;
         // ---------------------------------------------
         
+        {
+            // `s = s + e` in main / top-level code of the entry file. (A
+            // library's module globals can be read from other modules
+            // without going through the flag, so they're left out.)
+            std::set<std::string> appends;
+            std::vector<std::unique_ptr<Node>> none;
+            for (const auto& node : nodes) {
+                if (auto func = dynamic_cast<FunctionNode*>(node.get())) {
+                    if (func->name == "main" && func->cls.empty()) collectStringAppends(func->body, appends);
+                    continue;
+                }
+                if (node->filePath.empty() || canonPath(node->filePath) != canonPath(entryFile)) continue;
+                if (dynamic_cast<StructNode*>(node.get()) || dynamic_cast<InterfaceNode*>(node.get())) continue;
+                // A top-level statement: scan it as a one-statement body.
+                std::vector<std::unique_ptr<Node>> one;
+                one.emplace_back(node.get());
+                collectStringAppends(one, appends);
+                one[0].release();
+            }
+            if (!appends.empty() && !entryFile.empty()) setupStringAppendFlags(appends, mainFunc, true);
+        }
         for (const auto& node : nodes) {
             if (!node->filePath.empty()) currentFilePath = node->filePath;
             if (auto func = dynamic_cast<FunctionNode*>(node.get())) {
@@ -1104,6 +1125,11 @@ class LLVMCodegen {
             return;
         }
 
+        {
+            std::set<std::string> appends;
+            collectStringAppends(node->body, appends);
+            if (!appends.empty()) setupStringAppendFlags(appends, F, false);
+        }
         for (const auto& stmt : node->body) {
             handleStatement(stmt.get(), F);
         }
@@ -3393,7 +3419,95 @@ class LLVMCodegen {
         }
     }
 
+    // Names updated by `s = s + e` / `s += e` (Sema's stringAppend) in a
+    // body, descending into blocks but not into lambdas (other functions).
+    static void collectStringAppends(const std::vector<std::unique_ptr<Node>>& body, std::set<std::string>& out) {
+        for (const auto& st : body) {
+            Node* n = st.get();
+            if (auto* vd = dynamic_cast<VarDeclNode*>(n)) {
+                if (vd->stringAppend)
+                    if (auto* lit = dynamic_cast<LiteralNode*>(vd->lhs.get())) out.insert(lit->value);
+            } else if (auto* i = dynamic_cast<IfNode*>(n)) {
+                collectStringAppends(i->thenBranch, out);
+                for (auto& b : i->elIfBranches) collectStringAppends(b.body, out);
+                collectStringAppends(i->elseBranch, out);
+            } else if (auto* w = dynamic_cast<WhileNode*>(n)) {
+                collectStringAppends(w->body, out);
+            } else if (auto* f = dynamic_cast<ForNode*>(n)) {
+                collectStringAppends(f->body, out);
+            } else if (auto* t = dynamic_cast<TryCatchNode*>(n)) {
+                collectStringAppends(t->tryBlock, out);
+                for (auto& c : t->catchBlocks) collectStringAppends(c.body, out);
+                collectStringAppends(t->finallyBlock, out);
+            } else if (auto* w2 = dynamic_cast<WithNode*>(n)) {
+                collectStringAppends(w2->body, out);
+            }
+        }
+    }
+
+    // Before a body is compiled: one ownership flag (0) per appended name,
+    // so every read of the name — wherever it is in the body — clears it.
+    // `globalsToo`: top-level code, whose variables are module globals.
+    void setupStringAppendFlags(const std::set<std::string>& names, Function* F, bool globalsToo) {
+        Type* i32 = Type::getInt32Ty(Context);
+        IRBuilder<> entry(&F->getEntryBlock(), F->getEntryBlock().begin());
+        for (const auto& n : names) {
+            AllocaInst* a = entry.CreateAlloca(i32, nullptr, n + "__owned");
+            entry.CreateStore(ConstantInt::get(i32, 0), a);
+            varGen->ownedLocal[n] = a;
+            if (globalsToo && !varGen->ownedGlobal.count(n))
+                varGen->ownedGlobal[n] = new GlobalVariable(*TheModule, i32, false, GlobalValue::InternalLinkage,
+                                                            ConstantInt::get(i32, 0), n + "__owned");
+        }
+    }
+
+    // `s = s + e` / `s += e` on a String variable that may hold the only
+    // reference to its String: quirk_str_append extends it in place when the
+    // ownership flag says so (linear appends instead of quadratic copies).
+    // Returns false to use the ordinary path.
+    bool tryStringAppend(VarDeclNode* vdecl) {
+        auto* lit = dynamic_cast<LiteralNode*>(vdecl->lhs.get());
+        if (!lit) return false;
+        const std::string& name = lit->value;
+        if (varGen->isNonlocal(name)) return false;
+        Value* flag = nullptr;
+        if (varGen->hasLocal(name)) {
+            auto it = varGen->ownedLocal.find(name);
+            if (it == varGen->ownedLocal.end() || it->second->getFunction() != Builder.GetInsertBlock()->getParent())
+                return false;
+            flag = it->second;
+        } else {
+            auto it = varGen->ownedGlobal.find(name);
+            if (it == varGen->ownedGlobal.end() || !varGen->exists(name)) return false;
+            flag = it->second;
+        }
+        Node* rhs = vdecl->expression.get();
+        if (vdecl->op == "=")
+            if (auto* bin = dynamic_cast<BinaryOpNode*>(rhs)) rhs = bin->right.get();
+        Type* strPtr = StructTypes.count("String") ? PointerType::getUnqual(StructTypes["String"]) : nullptr;
+        if (!strPtr) return false;
+        varGen->suppressOwnedClear = true;
+        Value* old = varGen->resolveVariable(name);
+        varGen->suppressOwnedClear = false;
+        if (!old || old->getType() != strPtr) return false;
+        Value* ev = handleExpression(rhs);   // reads of `name` in here clear the flag
+        if (!ev) return false;
+        if (ev->getType() != strPtr) {
+            if (!ev->getType()->isPointerTy()) return false;   // Sema said String; be safe
+            ev = quirk::coerceToType(Builder.CreateBitCast(ev, Type::getInt8PtrTy(Context)), strPtr,
+                                     Context, Builder, TheModule.get());
+        }
+        FunctionCallee app = TheModule->getOrInsertFunction("quirk_str_append", strPtr, strPtr, strPtr,
+                                                           PointerType::getUnqual(Type::getInt32Ty(Context)));
+        Value* res = Builder.CreateCall(app, {old, ev, flag}, name);
+        varGen->suppressOwnedClear = true;
+        varGen->updateLocalVariable(name, res);
+        varGen->suppressOwnedClear = false;
+        return true;
+    }
+
     void handleVarDecl(VarDeclNode* vdecl) {
+        if (vdecl->stringAppend && tryStringAppend(vdecl)) return;
         if (auto lhs = dynamic_cast<LiteralNode*>(vdecl->lhs.get())) {
             if (verbose) std::cerr << "[Codegen]     handleVarDecl: " << lhs->value << " (op: " << vdecl->op << ")\n";
             // `x: Shape = …` / `xs: List[Shape] = …` with an interface:

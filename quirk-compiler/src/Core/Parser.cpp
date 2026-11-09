@@ -1006,14 +1006,15 @@ bool Parser::rewriteAssert() {
 
 // `async define NAME(PARAMS) -> RET { BODY }` becomes
 //
-//   define NAME__async_impl(PARAMS) -> RET { BODY }
+//   define NAME__async_impl(PARAMS) -> RET { BODY }     (in a struct:
+//   a method too, and the wrapper calls self.NAME__async_impl)
 //   define NAME(PARAMS) -> Task[RET] {
 //       return __quirk_spawn(fn() { return NAME__async_impl(ARG, …) })
 //   }
 //
 // so calling NAME starts the body as a task (core/task.c) and returns it;
 // `await` gets RET back. Rewritten at the token level, like `assert`.
-bool Parser::rewriteAsyncDefine() {
+bool Parser::rewriteAsyncDefine(bool inStruct) {
     const int start = pos;
     if (start + 2 >= (int)tokens.size() || tokens[start + 1].type != TokenType::DEFINE) return false;
     const Token kw = tokens[start];
@@ -1044,8 +1045,10 @@ bool Parser::rewriteAsyncDefine() {
             if (d == 0 && (t.type == TokenType::ELLIPSIS || (t.type == TokenType::STAR && expectName)))
                 reportError("`async define` doesn't support variadic parameters yet", t);
             if (expectName && t.type == TokenType::IDENTIFIER) {
-                if (t.value == "self") reportError("`async define` doesn't support methods yet", t);
-                argNames.push_back(t.value);
+                // `self` is the receiver of an async method, not an argument.
+                if (t.value == "self" && !inStruct)
+                    reportError("`self` outside a struct", t);
+                if (t.value != "self") argNames.push_back(t.value);
                 expectName = false;
             } else if (expectName && t.type == TokenType::REF) {
                 continue;
@@ -1096,9 +1099,11 @@ bool Parser::rewriteAsyncDefine() {
         for (int k = retStart; k < retEnd; k++) gen.push_back(tokens[k]);
         gen.push_back(at({TokenType::RBRACKET, "]", 0, 0}));
     }
+    // A method's body runs as `self.NAME__async_impl(…)`.
+    const std::string target = inStruct ? "self." + impl : impl;
     std::string body = isVoid
-        ? "{\n return __quirk_spawn(fn() { " + impl + "(" + args + ") })\n}\n"
-        : "{\n return __quirk_spawn(fn() { return " + impl + "(" + args + ") })\n}\n";
+        ? "{\n return __quirk_spawn(fn() { " + target + "(" + args + ") })\n}\n"
+        : "{\n return __quirk_spawn(fn() { return " + target + "(" + args + ") })\n}\n";
     Lexer lx(body);
     for (const Token& t : lx.tokenize()) {
         if (t.type == TokenType::EOF_TOKEN) continue;
@@ -1792,6 +1797,9 @@ std::unique_ptr<StructNode> Parser::parseStruct() {
     // --------------------------------------------------
 
     while (peek().type != TokenType::RBRACE && !isAtEnd()) {
+        // `async define m(self, …)` in a struct: an async method.
+        if (peek().type == TokenType::IDENTIFIER && peek().value == "async")
+            rewriteAsyncDefine(/*inStruct=*/true);
         
         if (peek().type == TokenType::USE) {
             advance();

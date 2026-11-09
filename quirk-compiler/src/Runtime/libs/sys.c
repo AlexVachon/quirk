@@ -304,7 +304,9 @@ String* Sys_read_password() {
     DWORD mode = 0;
     GetConsoleMode(h, &mode);
     SetConsoleMode(h, mode & ~ENABLE_ECHO_INPUT);
+    quirk_gil_release();
     char* got = fgets(buffer, sizeof(buffer), stdin);
+    quirk_gil_acquire();
     SetConsoleMode(h, mode);
 #else
     struct termios old, neu;
@@ -314,7 +316,9 @@ String* Sys_read_password() {
         neu.c_lflag &= ~(unsigned)ECHO;
         tcsetattr(fileno(stdin), TCSANOW, &neu);
     }
+    quirk_gil_release();
     char* got = fgets(buffer, sizeof(buffer), stdin);
+    quirk_gil_acquire();
     if (has_tty) {
         tcsetattr(fileno(stdin), TCSANOW, &old);
         // Echo a newline since the user's CR didn't display.
@@ -331,7 +335,7 @@ String* Sys_read_password() {
 // character value as an Int (so callers can compare to e.g. 27 for ESC,
 // 13 for Enter, 0x41 for 'A', or special codes from arrow keys via
 // subsequent reads — Up = ESC '[' 'A', etc.).
-int64_t Sys_read_key() {
+static int64_t sys__read_key_raw(void) {
 #ifdef _WIN32
     return _getch();
 #else
@@ -352,6 +356,13 @@ int64_t Sys_read_key() {
 #endif
 }
 
+int64_t Sys_read_key() {
+    quirk_gil_release();   // other tasks run while this waits for a key
+    int64_t c = sys__read_key_raw();
+    quirk_gil_acquire();
+    return c;
+}
+
 // Monotonic clock in milliseconds. Use deltas only — absolute value is
 // not relative to the Unix epoch. Suitable for `console.time/time_end`.
 int64_t Sys_now_ms() {
@@ -370,12 +381,8 @@ void Sys_sleep(int64_t ms) {
 #ifdef _WIN32
     Sleep((DWORD)ms);
 #else
-    struct timespec ts;
-    ts.tv_sec  = ms / 1000;
-    ts.tv_nsec = (long)(ms % 1000) * 1000000L;
-    quirk_gil_release();   // other tasks run meanwhile
-    nanosleep(&ts, NULL);
-    quirk_gil_acquire();
+    // Other tasks run meanwhile; in a task, task.cancel() cuts it short.
+    quirk_task_sleep(ms);
 #endif
 }
 

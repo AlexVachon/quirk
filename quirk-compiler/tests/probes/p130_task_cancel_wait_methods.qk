@@ -1,0 +1,75 @@
+// p130 — task.cancel() / .wait(ms) / .done() and async methods (v7.13.0).
+use sys
+
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+async define sleeper(label: String) -> String {
+    try {
+        while true { sys.sleep(1000) }
+    } catch (e: CancelledError) {
+        return label + " stopped"
+    }
+    return "unreachable"
+}
+
+async define slow() -> Int {
+    sys.sleep(3000)
+    return 1
+}
+
+async define quick() -> Int {
+    sys.sleep(50)
+    return 7
+}
+
+struct Counter {
+    n: Int
+    async define add(self, k: Int) -> Int {
+        sys.sleep(20)
+        self.n = self.n + k
+        return self.n
+    }
+    async define boom(self) -> Int { throw RuntimeError("method failed") }
+}
+
+define main() -> void {
+    // cancel() interrupts a sleep; the task can catch CancelledError.
+    t0 := sys.now_ms()
+    s := sleeper("s")
+    sys.sleep(50)
+    if s.done()                                   { fail("done() before cancel"); return }
+    s.cancel()
+    if await s != "s stopped"                     { fail("cancelled task's result"); return }
+    if sys.now_ms() - t0 > 900                    { fail("cancel didn't cut the sleep short"); return }
+
+    // Awaiting a task cancelled before it could react raises CancelledError.
+    w := slow()
+    w.cancel()
+    got := ""
+    try {
+        print(await w)
+    } catch (e: CancelledError) {
+        got = "cancelled"
+    }
+    if got != "cancelled"                         { fail("awaiting a cancelled task"); return }
+
+    // wait(ms): bounded wait, true once finished.
+    q := quick()
+    if q.wait(0)                                  { fail("wait(0) on a running task"); return }
+    if not q.wait(2000)                           { fail("wait(2000)"); return }
+    if not q.done()                               { fail("done() after finishing"); return }
+    if await q != 7                               { fail("await after wait"); return }
+
+    // Async methods.
+    c := Counter(0)
+    totals := await [c.add(1), c.add(2), c.add(3)]
+    if c.n != 6 or totals.length() != 3           { fail("async methods: " + c.n.str()); return }
+    caught := ""
+    try {
+        await c.boom()
+    } catch (e: RuntimeError) {
+        caught = e.message
+    }
+    if caught != "method failed"                  { fail("async method exception"); return }
+    print("p130 ok")
+}

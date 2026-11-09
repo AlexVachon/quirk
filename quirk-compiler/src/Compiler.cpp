@@ -1246,19 +1246,20 @@ static void emitSymbols(const std::vector<std::unique_ptr<Node>>& ast) {
     // `async define f` is compiled as a wrapper `f` plus the body
     // `f__async_impl`; editors should see one `f` returning Task[T].
     static const std::string kAsync = "__async_impl";
-    std::set<std::string> asyncNames;
+    std::set<std::string> asyncNames;   // functions and `<Struct>_<method>`
+    auto isAsyncImpl = [&](const std::string& n) {
+        return n.size() > kAsync.size() && n.compare(n.size() - kAsync.size(), kAsync.size(), kAsync) == 0;
+    };
     for (auto& node : ast)
         if (auto fn = dynamic_cast<FunctionNode*>(node.get()))
-            if (fn->cls.empty() && fn->name.size() > kAsync.size() &&
-                fn->name.compare(fn->name.size() - kAsync.size(), kAsync.size(), kAsync) == 0)
+            if (isAsyncImpl(fn->name))
                 asyncNames.insert(fn->name.substr(0, fn->name.size() - kAsync.size()));
     for (auto& node : ast) {
         if (node->isSpecialization) continue;   // monomorphized copies
         if (auto fn = dynamic_cast<FunctionNode*>(node.get())) {
             if (fn->isExtern) continue;     // external decls: declared, not defined here
-            if (fn->cls.empty() && asyncNames.count(fn->name)) continue;   // the async wrapper
-            if (fn->cls.empty() && fn->name.size() > kAsync.size() &&
-                asyncNames.count(fn->name.substr(0, fn->name.size() - kAsync.size()))) {
+            if (asyncNames.count(fn->name)) continue;   // the async wrapper
+            if (fn->cls.empty() && isAsyncImpl(fn->name)) {
                 const std::string shown = fn->name.substr(0, fn->name.size() - kAsync.size());
                 const std::string ret = fn->writtenReturnType.empty() ? fn->returnType : fn->writtenReturnType;
                 emitSymbol("function", shown, "module", fn->filePath, fn->line, fn->col,
@@ -1284,11 +1285,18 @@ static void emitSymbols(const std::vector<std::unique_ptr<Node>>& ast) {
                 else if (fn->name.rfind(fn->cls + "_", 0) == 0)
                     displayName = fn->name.substr(fn->cls.size() + 1);
             }
+            std::string shownType = fn->returnType;
+            if (isMethod && isAsyncImpl(displayName)) {
+                // An async method's body: show it as the method, returning Task[T].
+                displayName = displayName.substr(0, displayName.size() - kAsync.size());
+                const std::string ret = fn->writtenReturnType.empty() ? fn->returnType : fn->writtenReturnType;
+                shownType = ret.empty() || ret == "void" ? "Task" : "Task[" + ret + "]";
+            }
             emitSymbol(isMethod ? "method" : "function",
                        displayName,
                        isMethod ? fn->cls : std::string("module"),
                        fn->filePath, fn->line, fn->col,
-                       fn->returnType);
+                       shownType);
             // Parameters: scope is the function's own name. Use the
             // *display* name for methods so the LSP can attach params
             // to the right outline node (`Point.norm`'s `self`).

@@ -489,6 +489,21 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
         if (!typeName) return [];
         const projectRoot = this.findProjectRoot(document.uri.fsPath);
 
+        // A Task (an `async define` call) is built in: its three methods.
+        if (typeName === 'Task') {
+            const mk = (name: string, snippet: string, doc: string) => {
+                const it = new vscode.CompletionItem(name, vscode.CompletionItemKind.Method);
+                it.insertText = new vscode.SnippetString(snippet);
+                it.documentation = new vscode.MarkdownString(doc);
+                return it;
+            };
+            return [
+                mk('done', 'done()', '`done() -> Bool` — finished (successfully or not), without waiting.'),
+                mk('wait', 'wait(${1:ms})', '`wait(ms: Int) -> Bool` — wait up to `ms` milliseconds; true if it finished. `await` it for the result.'),
+                mk('cancel', 'cancel()', '`cancel()` — ask the task to stop: it gets a `CancelledError` at its next `sleep` / `await` / `wait`.'),
+            ];
+        }
+
         // Enum-instance completions: when typeName is an enum declared
         // in this file, offer `.value` (backing value), `.str` (string
         // form), `.name` (variant name). `.value` is the v2.2.4+

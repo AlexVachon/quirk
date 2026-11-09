@@ -525,6 +525,27 @@ the rest (`net.server` handles each connection as a task). `await` works
 anywhere, not only inside `async` functions. A task that fails and is never
 awaited is reported when `main` returns.
 
+A task also has three methods: `t.done()` (finished yet?), `t.wait(ms)`
+(wait at most `ms` milliseconds; true if it finished — `await` it for the
+result) and `t.cancel()`, which asks it to stop: the task gets a
+`CancelledError` at its next `sys.sleep`, `await` or `wait` (a sleep in
+progress is cut short), and can catch it to clean up.
+
+```quirk
+async define worker() {
+    try {
+        while true { poll(); sys.sleep(1000) }
+    } catch (e: CancelledError) {
+        print("stopping")
+    }
+}
+
+w := worker()
+if not w.wait(5000) { w.cancel() }      // a five-second timeout
+```
+
+Struct methods can be `async define` too (`async define fetch(self, url: String) -> String`).
+
 ---
 
 ## 7. Lambdas

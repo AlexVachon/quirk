@@ -5,15 +5,13 @@ into a release; this list is for things that need a plan.
 
 ## 1. Concurrency — follow-ups
 
-`async define` / `await` shipped in 7.12.0 (tasks on threads that take
-turns; see core/task.c). Not done yet:
+`async define` / `await` (7.12.0) and `cancel` / `wait` / `done`, async
+methods, non-blocking DNS / file / console reads (7.13.0) are done. Left:
 
-- `async` methods (`async define` inside a struct), generic and variadic
-  async functions.
-- Cancelling a task, and timeouts (`await` with a deadline).
-- Name lookup (`gethostbyname`) still blocks every task; switch net.c to
-  `getaddrinfo`, which is thread-safe, and release the lock around it.
-- File I/O and `console.input` don't let other tasks run while they block.
+- Generic and variadic async functions (`async define f[T](…)`,
+  `...args`).
+- Cancelling a task blocked in socket I/O: it takes effect at its next
+  `sleep` / `await` / `wait`, not while `recv` waits.
 - Calling a struct method on an untyped (`Any`) value, e.g.
   `items()[0].go()` when `items()` returns a plain `List`, fails at build
   time ("Unknown method 'String.go'"); it needs the element type

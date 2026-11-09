@@ -72,6 +72,22 @@ int64_t Net_accept(int64_t sockfd) {
     return fd;
 }
 
+// Host name → IPv4 address. getaddrinfo is thread-safe (gethostbyname
+// returns a shared static buffer), so other tasks run during the lookup.
+static int net__resolve_ipv4(const char* host, struct in_addr* out) {
+    struct addrinfo hints, *res = NULL;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    quirk_gil_release();
+    int rc = getaddrinfo(host, NULL, &hints, &res);
+    quirk_gil_acquire();
+    if (rc != 0 || !res) return -1;
+    *out = ((struct sockaddr_in*)res->ai_addr)->sin_addr;
+    freeaddrinfo(res);
+    return 0;
+}
+
 int64_t Net_connect(int64_t sockfd, String* host, int64_t port) {
     if (!host || !host->buffer) return -1;
     
@@ -79,13 +95,9 @@ int64_t Net_connect(int64_t sockfd, String* host, int64_t port) {
     if (!safe_host) return -1;
 
     struct sockaddr_in serv_addr;
-    struct hostent *server = gethostbyname(safe_host); 
-    
-    if (server == NULL) return -1;
-
     memset(&serv_addr, 0, sizeof(serv_addr));
+    if (net__resolve_ipv4(safe_host, &serv_addr.sin_addr) != 0) return -1;
     serv_addr.sin_family = AF_INET;
-    memcpy(&serv_addr.sin_addr.s_addr, server->h_addr, server->h_length);
     serv_addr.sin_port = htons(port);
 
     quirk_gil_release();
@@ -200,8 +212,8 @@ int64_t Net_tls_connect(String* host, int64_t port) {
     char* safe_host = make_safe_cstr(host);
     if (!safe_host) return -1;
 
-    struct hostent* server = gethostbyname(safe_host);
-    if (!server) return -1;
+    struct in_addr resolved;
+    if (net__resolve_ipv4(safe_host, &resolved) != 0) return -1;
 
     int sockfd = socket(AF_INET, SOCK_STREAM, 0);
     if (sockfd < 0) return -1;
@@ -209,7 +221,7 @@ int64_t Net_tls_connect(String* host, int64_t port) {
     struct sockaddr_in serv_addr;
     memset(&serv_addr, 0, sizeof(serv_addr));
     serv_addr.sin_family = AF_INET;
-    memcpy(&serv_addr.sin_addr.s_addr, server->h_addr, server->h_length);
+    serv_addr.sin_addr = resolved;
     serv_addr.sin_port = htons(port);
 
     quirk_gil_release();

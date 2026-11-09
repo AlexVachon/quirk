@@ -321,6 +321,9 @@ class CallNode : public Node {
     // `await x` (lowered to `__await(x)`): the type Sema gave the result,
     // so Codegen unboxes the task's value to it.
     std::string awaitType;
+    // `task.done()` / `.cancel()` / `.wait(ms)` on a Task: the method, so
+    // Codegen calls the runtime (Task has no struct declaration).
+    std::string taskMethod;
 
     CallNode(std::unique_ptr<Node> callTarget)
         : callee(std::move(callTarget)) {}

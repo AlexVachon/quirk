@@ -56,7 +56,7 @@ class Parser {
     bool rewriteAssert();
     // `async define f(…) -> T { … }` → the body as `f__async_impl` plus a
     // `define f(…) -> Task[T]` that starts it as a task. True when rewritten.
-    bool rewriteAsyncDefine();
+    bool rewriteAsyncDefine(bool inStruct = false);
     int assertCount = 0;
 
 public:

@@ -41,6 +41,8 @@ enum QuirkTypeId {
 // blocking call so other tasks run meanwhile. No-ops until a task exists.
 void quirk_gil_release(void);
 void quirk_gil_acquire(void);
+// `sys.sleep` in a task: interruptible by `task.cancel()`.
+void quirk_task_sleep(int64_t ms);
 
 // Allocate `size` bytes of zeroed, GC-managed memory with a header.
 void* quirk_alloc(uint32_t type_id, size_t size);
@@ -134,6 +136,7 @@ typedef struct {
     int         try_depth;               // -1: no enclosing try
     int         saved_shadow_sp[256];
     void*       active_exception;
+    void*       task;                    // this thread's QuirkTask (NULL: main)
 } QuirkThreadState;
 #if defined(__GNUC__) && !defined(__APPLE__)
 extern __thread QuirkThreadState* quirk_ts __attribute__((tls_model("initial-exec")));

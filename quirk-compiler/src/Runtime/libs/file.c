@@ -29,7 +29,11 @@ String* Io_File_File_read_line(File* self) {
     if (!self || !self->is_open || !self->handle) return make_String("");
     
     char buffer[2048]; // Supports lines up to 2048 chars
-    if (fgets(buffer, sizeof(buffer), (FILE*)self->handle)) {
+    // Other tasks run while this waits (stdin: console.input).
+    quirk_gil_release();
+    char* got = fgets(buffer, sizeof(buffer), (FILE*)self->handle);
+    quirk_gil_acquire();
+    if (got) {
         // Trim the trailing newline
         buffer[strcspn(buffer, "\n")] = 0;
         return make_String(buffer);
@@ -49,7 +53,9 @@ String* Io_File_File_read(File* self) {
     char* buf = malloc(length + 1);
     if (!buf) return make_String("");
 
+    quirk_gil_release();
     size_t read_bytes = fread(buf, 1, length, (FILE*)self->handle);
+    quirk_gil_acquire();
     buf[read_bytes] = '\0';
 
     return make_String_taking_ownership(buf);

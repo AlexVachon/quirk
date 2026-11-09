@@ -182,7 +182,9 @@ class LLVMCodegen {
         if (fn->cls.empty() && fn->name.size() > kAsync.size() &&
             fn->name.compare(fn->name.size() - kAsync.size(), kAsync.size(), kAsync) == 0)
             return fn->name.substr(0, fn->name.size() - kAsync.size());
-        const std::string& n = fn->name;
+        std::string n = fn->name;
+        if (n.size() > kAsync.size() && n.compare(n.size() - kAsync.size(), kAsync.size(), kAsync) == 0)
+            n = n.substr(0, n.size() - kAsync.size());
         const std::string& c = fn->cls;
         if (!c.empty() && n.size() > c.size() && n.compare(0, c.size(), c) == 0 && n[c.size()] == '_')
             return c + "." + (n.compare(c.size(), 2, "__") == 0 && n.compare(c.size(), 6, "__init") == 0
@@ -1873,6 +1875,29 @@ class LLVMCodegen {
 
     Value* handleCall(CallNode* call) 
     {
+        // `task.done()` / `.cancel()` / `.wait(ms)` (Sema set taskMethod).
+        if (!call->taskMethod.empty()) {
+            auto* mem = dynamic_cast<MemberAccessNode*>(call->callee.get());
+            Type* i8p = Type::getInt8PtrTy(Context);
+            Type* i32 = Type::getInt32Ty(Context);
+            Type* i64 = Type::getInt64Ty(Context);
+            Value* task = mem ? handleExpression(mem->object.get()) : nullptr;
+            if (!task) return nullptr;
+            task = boxToVoidPtr(task);
+            if (call->taskMethod == "cancel") {
+                Builder.CreateCall(TheModule->getOrInsertFunction("quirk_task_cancel", Type::getVoidTy(Context), i8p), {task});
+                return nullptr;
+            }
+            Value* r;
+            if (call->taskMethod == "wait") {
+                Value* ms = handleExpression(call->args[0].value.get());
+                if (ms->getType() != i64) ms = quirk::coerceToType(ms, i64, Context, Builder, TheModule.get());
+                r = Builder.CreateCall(TheModule->getOrInsertFunction("quirk_task_wait", i32, i8p, i64), {task, ms});
+            } else {
+                r = Builder.CreateCall(TheModule->getOrInsertFunction("quirk_task_done", i32, i8p), {task});
+            }
+            return Builder.CreateICmpNE(r, ConstantInt::get(i32, 0), "task_" + call->taskMethod);
+        }
         if (auto lit = dynamic_cast<LiteralNode*>(call->callee.get())) {
             if (auto fa = functionAliasVars.find(lit->value); fa != functionAliasVars.end()) {
                 const std::string alias = lit->value;

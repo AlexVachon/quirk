@@ -5,6 +5,23 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.13.0] — 2026-11-09 — cancel / wait tasks, async methods, more I/O that yields
+
+- **`task.cancel()`** asks a task to stop: it gets a `CancelledError` at
+  its next `sys.sleep`, `await` or `wait` — a sleep in progress is cut
+  short — and can catch it to clean up. Awaiting a cancelled task raises
+  `CancelledError` (new in typing v1.17.0).
+- **`task.wait(ms)`** waits at most `ms` milliseconds and returns whether
+  the task finished (`await` it for the result); with `cancel()` that's a
+  timeout: `if not t.wait(5000) { t.cancel() }`. **`task.done()`** checks
+  without waiting.
+- **Async methods**: `async define m(self, …) -> T` inside a struct.
+- **More waiting lets other tasks run**: host-name lookup (now
+  `getaddrinfo`, which is thread-safe — `gethostbyname` returned a shared
+  buffer and couldn't be released), file reads, `console.input` /
+  `password` / `read_key`.
+- VS Code extension 0.8.1 completes a task's `done` / `wait` / `cancel`.
+
 ## [7.12.0] — 2026-11-09 — `async define` / `await`
 
 - **Async functions.** Calling an `async define` function starts it as a

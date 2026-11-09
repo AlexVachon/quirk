@@ -2,6 +2,11 @@
 
 All notable changes to the extension land here. Versioning follows SemVer; minor bumps for new features, patches for fixes.
 
+## [0.8.1] — 2026-11-09 — Task completions
+
+- `t.` on a task (compiler 7.13.0) completes `done()`, `wait(ms)` and
+  `cancel()`.
+
 ## [0.8.0] — 2026-11-09 — `async` / `await`
 
 - `async define` and `await` (compiler 7.12.0) are highlighted as

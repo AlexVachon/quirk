@@ -135,7 +135,8 @@ STDLIB_TAG_prompt ?= v1.1.0
 # v1.16.0: List.sort's comparator is optional (native sort, v7.9.0).
 # v1.16.1: ljust / rjust / center pad with a space by default (v7.9.1).
 # v1.16.2: Exception.print_traceback() writes to stderr (v7.11.1).
-STDLIB_TAG_typing ?= v1.16.2
+# v1.17.0: CancelledError, for task.cancel() (v7.13.0).
+STDLIB_TAG_typing ?= v1.17.0
 # html v1.0.0 is the initial release (compiler v3.5.0+). The
 # explicit pin keeps a global STDLIB_TAG bump from accidentally
 # pulling a v2 with potentially breaking changes.

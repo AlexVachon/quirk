@@ -1950,11 +1950,33 @@ std::string Sema::checkExpressionImpl(Node *node)
         }
         std::string t = checkCall(c);
         // `async define f() -> T` returns Task[T]: keep T for `await`.
-        if (t == "Task")
-            if (auto* callee = dynamic_cast<LiteralNode*>(c->callee.get()))
+        if (t == "Task") {
+            if (auto* callee = dynamic_cast<LiteralNode*>(c->callee.get())) {
                 if (FunctionNode* fn = findMethod("", callee->value))
                     if (baseType(fn->writtenReturnType) == "Task")
                         return fn->writtenReturnType;
+            } else if (auto* mem = dynamic_cast<MemberAccessNode*>(c->callee.get())) {
+                // An async method: obj.m() — find m on obj's type (or a
+                // parent). checkCall already typed the object; asking again
+                // is only safe (no duplicate errors / usages) for a variable.
+                auto* objLit = dynamic_cast<LiteralNode*>(mem->object.get());
+                std::string objT;
+                if (objLit)
+                    for (int i = (int)scopeStack.size() - 1; i >= 0 && objT.empty(); i--) {
+                        auto vIt = scopeStack[i].find(objLit->value);
+                        if (vIt != scopeStack[i].end()) objT = baseType(vIt->second.type);
+                    }
+                for (std::string ty = objT; !ty.empty(); ) {
+                    if (FunctionNode* fn = findMethod(ty, ty + "_" + mem->memberName)) {
+                        if (baseType(fn->writtenReturnType) == "Task") return fn->writtenReturnType;
+                        break;
+                    }
+                    auto sIt = structRegistry.find(ty);
+                    ty = (sIt != structRegistry.end() && sIt->second && !sIt->second->parents.empty())
+                        ? sIt->second->parents[0] : "";
+                }
+            }
+        }
         // `define f() -> List[P]`: keep the element type for the caller.
         if (t == "List")
             if (auto* callee = dynamic_cast<LiteralNode*>(c->callee.get()))
@@ -3180,6 +3202,27 @@ std::string Sema::checkCall(CallNode *node)
             return nullptr;
         };
 
+        // Methods on a Task (it's built in, not a struct).
+        if (baseType(objType) == "Task") {
+            const std::string& mname = m->memberName;
+            static const std::map<std::string, std::pair<int, std::string>> taskMethods = {
+                {"done", {0, "Bool"}}, {"cancel", {0, "void"}}, {"wait", {1, "Bool"}}};
+            auto it = taskMethods.find(mname);
+            if (it == taskMethods.end())
+                fatalError("Unknown method 'Task." + mname + "'\n  hint: a Task has done(), cancel() and wait(ms); `await` it for its result",
+                           m->line, m->col, m->filePath);
+            if ((int)node->args.size() != it->second.first)
+                fatalError("Task." + mname + "() takes " + std::to_string(it->second.first) + " argument" +
+                           (it->second.first == 1 ? "" : "s") + " but " + std::to_string(node->args.size()) +
+                           (node->args.size() == 1 ? " was" : " were") + " given", node->line, node->col, node->filePath);
+            for (auto& a : node->args) {
+                std::string at = checkExpression(a.value.get());
+                if (mname == "wait" && !isCompatibleTypes("Int", at))
+                    fatalError("argument 1 of Task.wait() expected 'Int' but got '" + at + "'", node->line, node->col, node->filePath);
+            }
+            node->taskMethod = mname;
+            return it->second.second;
+        }
         auto bmIt = builtinMethods.find(objType);
         if (bmIt != builtinMethods.end()) {
             auto mIt = bmIt->second.find(m->memberName);

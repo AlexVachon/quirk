@@ -2,6 +2,18 @@
 
 All notable changes to the extension land here. Versioning follows SemVer; minor bumps for new features, patches for fixes.
 
+## [0.7.0] — 2026-11-09 — tests in the Testing panel, `assert`
+
+- **Quirk tests appear in VS Code's Testing panel** (compiler 7.10.0+).
+  Every `*_test.qk` file is listed with its `define test_*()` functions;
+  ▶ buttons in the gutter run one test, a file, or everything. Results
+  show per test, with the test's output in Test Results, and a failure is
+  marked at the failing line (from its traceback). Tests after one that
+  crashed are marked skipped. A file with its own `main()` is one test.
+- **`assert`** (compiler 7.11.0) is highlighted as a keyword at the start
+  of a statement, has a hover and a completion; `console.assert(…)` is
+  still a method.
+
 ## [0.6.1] — 2026-11-09 — test snippets
 
 - `test` snippet: a `define test_…()` function for `quirk test`

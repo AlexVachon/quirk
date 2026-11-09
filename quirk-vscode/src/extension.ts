@@ -7,6 +7,7 @@ import { QuirkHoverProvider } from './HoverProvider';
 import { QuirkSemanticTokensProvider, legend } from './SemanticTokensProvider';
 import { subscribeToDocumentChanges, refreshDiagnostics } from './DiagnosticsProvider';
 import { startCompilerService } from './CompilerService';
+import { registerTestProvider } from './TestProvider';
 import { QuirkDocumentSymbolProvider } from './OutlineProvider';
 import { QuirkSignatureHelpProvider } from './SignatureHelpProvider';
 import { QuirkQuickFixProvider } from './QuickFixProvider';
@@ -108,6 +109,7 @@ export function activate(context: vscode.ExtensionContext) {
                 || undefined;
             startCompilerService(context, lookup.command, home,
                 doc => refreshDiagnostics(doc, quirkDiagnostics));
+            registerTestProvider(context, lookup.command, home);
         }
     }
 

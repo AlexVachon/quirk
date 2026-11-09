@@ -5,6 +5,33 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.11.0] — 2026-11-09 — `assert` statement; the repo's tests use `quirk test`
+
+- **`assert cond[, msg]`** throws `AssertionError` unless `cond` holds.
+  A failed comparison shows both sides, like pytest:
+
+  ```quirk
+  assert total == 10
+  // AssertionError: assert total == 10 failed: left is 9, right is 10
+  assert xs.length() < 2, "too long"
+  // AssertionError: too long (assert xs.length() < 2: left is 3, right is 2)
+  ```
+
+  Each side is evaluated once; `==`, `!=`, `<`, `>`, `<=`, `>=` and `in`
+  get the two-sided message, any other condition says which assert
+  failed. Before this, `assert x == 1` was accepted and silently did
+  nothing (a bare name followed by a discarded comparison). `assert`
+  remains an ordinary name where it isn't a statement — `console.assert(…)`
+  and `assert := 5` still work.
+- **`quirk test --exclude <substr>`** skips files whose path contains it
+  (repeatable).
+- The repo's own tests are `define test_*()` functions now (21 files,
+  converted mechanically with identical results), and CI runs
+  `quirk test`, which fails on a failed assertion — the old step only
+  caught crashes.
+- Generated temporaries (`assert`'s `__qa_*`, `quirk test`'s `__qt_*`)
+  are left out of `--symbols-json`.
+
 ## [7.10.0] — 2026-11-09 — `quirk test` runs `test_*` functions
 
 - **Tests are plain functions.** In a `*_test.qk` file every

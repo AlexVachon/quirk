@@ -1,0 +1,46 @@
+// p126 — the `assert` statement (v7.11.0). `assert cond[, msg]` throws
+// AssertionError unless cond holds; a failed comparison names both sides.
+// Before, `assert x == 1` parsed as a bare name and a discarded comparison
+// and silently did nothing.
+
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+calls := 0
+define nine() -> Int {
+    calls = calls + 1
+    return 9
+}
+
+define message_of(f: Callable) -> String {
+    try {
+        f()
+    } catch (e: AssertionError) {
+        return e.message
+    }
+    return "(no error)"
+}
+
+define main() -> void {
+    xs := [1, 2, 3]
+    if message_of(fn() { assert nine() == 10 }) != "assert nine() == 10 failed: left is 9, right is 10" {
+        fail("comparison message: " + message_of(fn() { assert nine() == 10 })); return
+    }
+    calls = 0
+    message_of(fn() { assert nine() == 10 })
+    if calls != 1                                        { fail("left side evaluated once"); return }
+    if message_of(fn() { assert xs.length() < 2, "too long" }) != "too long (assert xs.length() < 2: left is 3, right is 2)" {
+        fail("custom message"); return
+    }
+    if message_of(fn() { assert xs.is_empty() }) != "assert xs.is_empty() failed" { fail("plain condition"); return }
+    if message_of(fn() { assert 7 in xs }) != "assert 7 in xs failed: left is 7, right is [1, 2, 3]" { fail("in"); return }
+    if message_of(fn() { assert xs == [1, 2, 3] }) != "(no error)" { fail("passing assert threw"); return }
+    if message_of(fn() { assert true and xs.length() == 3 }) != "(no error)" { fail("and"); return }
+    if message_of(fn() { assert xs == [1,
+        2] }) != "assert xs == [1, … failed: left is [1, 2, 3], right is [1, 2]" { fail("multi-line"); return }
+    // Still a plain name elsewhere.
+    assert := 41
+    assert = assert + 1
+    if assert != 42                                      { fail("assert as a variable"); return }
+    assert nine() == 9
+    print("p126 ok")
+}

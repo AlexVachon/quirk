@@ -823,6 +823,22 @@ try {
 }
 ```
 
+### Assert
+
+`assert` throws an `AssertionError` unless its condition holds. When the
+condition is a comparison, the message shows both sides:
+
+```quirk
+assert total == 10
+// AssertionError: assert total == 10 failed: left is 9, right is 10
+
+assert user.name == "ann", "wrong user"
+// AssertionError: wrong user (assert user.name == "ann": left is bob, right is ann)
+```
+
+In a `*_test.qk` file it's the simplest way to write a test (see
+[`quirk test`](COMMANDS.md#quirk-test)).
+
 ### Automatic Exceptions
 
 ```quirk

@@ -118,7 +118,7 @@ functions run before and after every test.
 use test
 
 define test_addition() -> void {
-    test.assert_eq(2 + 2, 4)
+    assert 2 + 2 == 4             // a failed comparison shows both sides
 }
 
 define test_parse_rejects_text() -> void {

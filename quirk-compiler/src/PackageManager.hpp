@@ -70,7 +70,7 @@ static std::string self_binary();
 
 namespace qpm {
 
-constexpr const char* QUIRK_VERSION = "7.10.0";
+constexpr const char* QUIRK_VERSION = "7.11.0";
 
 namespace fs = std::filesystem;
 
@@ -4354,6 +4354,7 @@ static int cmd_test(const std::vector<std::string>& args) {
     int  timeoutSecs = 30;           // 0 = no cap
     std::string filter;
     std::string onlyTests;           // -k: test-name substring
+    std::vector<std::string> excludes;   // --exclude: skip files whose path contains these
     for (size_t i = 0; i < args.size(); i++) {
         const std::string& a = args[i];
         if (a == "--help" || a == "-h") {
@@ -4370,6 +4371,7 @@ static int cmd_test(const std::vector<std::string>& args) {
                 "  -k <substr>           Run only tests whose name contains <substr>\n"
                 "  -v, --verbose         Print each test's output, passing ones too\n"
                 "  --filter <substr>     Run only files whose path contains <substr>\n"
+                "  --exclude <substr>    Skip files whose path contains <substr> (repeatable)\n"
                 "  --timeout <secs>      Per-file wall-clock cap (default 30, 0 = off)\n"
                 "                        Tests over the cap fail with exit 124.\n";
             return 0;
@@ -4378,6 +4380,10 @@ static int cmd_test(const std::vector<std::string>& args) {
         if (a == "-k") {
             if (i + 1 >= args.size()) { log::err("test: -k needs a substring"); return 1; }
             onlyTests = args[++i]; continue;
+        }
+        if (a == "--exclude") {
+            if (i + 1 >= args.size()) { log::err("test: --exclude needs a substring"); return 1; }
+            excludes.push_back(args[++i]); continue;
         }
         if (a == "--filter") {
             if (i + 1 >= args.size()) { log::err("test: --filter needs a substring"); return 1; }
@@ -4428,6 +4434,12 @@ static int cmd_test(const std::vector<std::string>& args) {
         }
     }
     std::sort(files.begin(), files.end());
+
+    if (!excludes.empty())
+        files.erase(std::remove_if(files.begin(), files.end(), [&](const fs::path& p) {
+            for (const auto& x : excludes) if (p.string().find(x) != std::string::npos) return true;
+            return false;
+        }), files.end());
 
     if (!filter.empty()) {
         auto before = files.size();

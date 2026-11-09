@@ -151,6 +151,7 @@ export class QuirkHoverProvider implements vscode.HoverProvider {
             'try':      '**`try`** — begin an exception-safe block.',
             'catch':    '**`catch`** — handle a thrown exception.\n\n```quirk\ncatch (e: Exception) { print(e.message) }\n```',
             'throw':    '**`throw`** — raise an exception. Bare `throw` re-raises the current exception.\n\n```quirk\nthrow TypeError("Expected Int")\n```',
+            'assert':   '**`assert`** — fail with an `AssertionError` unless the condition holds. A failed comparison shows both sides.\n\n```quirk\nassert total == 10\nassert user.name == "ann", "wrong user"\n// AssertionError: assert total == 10 failed: left is 9, right is 10\n```',
             'finally':  '**`finally`** — block that always runs after try/catch, whether or not an exception was thrown.\n\n```quirk\ntry { f := File("x.txt", "r") } catch (e: Exception) { ... } finally { f.close() }\n```',
             'return':   '**`return`** — return a value from a function.',
             'for':      '**`for`** — iterate over a collection.\n\n```quirk\nfor item in list { ... }\n```',
@@ -166,7 +167,10 @@ export class QuirkHoverProvider implements vscode.HoverProvider {
             'false':    '**`false`** — boolean literal `false`',
             'null':     '**`null`** — null / no value',
         };
-        if (word in keywordHovers) {
+        // `console.assert(…)` is a method, not the `assert` statement.
+        const charBefore = range.start.character > 0
+            ? document.lineAt(range.start.line).text[range.start.character - 1] : '';
+        if (word in keywordHovers && !(word === 'assert' && charBefore === '.')) {
             const md = new vscode.MarkdownString(keywordHovers[word]);
             md.isTrusted = true;
             return new vscode.Hover(md);

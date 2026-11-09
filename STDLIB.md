@@ -446,7 +446,9 @@ define main() -> void {
 
 Assertions for `quirk test`. In a `*_test.qk` file, every
 `define test_*()` is a test; `quirk test` runs each one separately and
-reports it (see [COMMANDS.md](COMMANDS.md#quirk-test)).
+reports it (see [COMMANDS.md](COMMANDS.md#quirk-test)). The built-in
+`assert x == y` statement covers most checks; these helpers add
+approximate comparison, expected exceptions and containment.
 
 ```quirk
 // tests/math_test.qk

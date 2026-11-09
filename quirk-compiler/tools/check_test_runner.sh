@@ -28,7 +28,9 @@ expect "$out" '✓ test_before$'                         "tests before a crash"
 expect "$out" '✗ test_crashes$'                        "the crashing test"
 expect "$out" 'test_after \(not run'                   "tests after a crash are listed as not run"
 expect "$out" '✓ .*plain_main_test.qk'                 "main() file runs as one test"
-expect "$out" 'tests: 3 passed, 4 failed / 7 total'    "exact totals"
+expect "$out" '✗ test_plain_assert$'                   "a plain assert"
+expect "$out" 'assert total == 10 failed: left is 9, right is 10' "assert shows both sides"
+expect "$out" 'tests: 3 passed, 5 failed / 8 total'    "exact totals"
 
 out=$(NO_COLOR=1 "$QUIRK" test -k assert "$F" 2>&1)
 expect "$out" '✗ test_assert_fails$'                   "-k selects by name"

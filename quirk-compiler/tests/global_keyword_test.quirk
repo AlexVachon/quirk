@@ -4,9 +4,7 @@
 // GlobalVariable, so `global` is informational today; the test pins that
 // behaviour so the hint stays consistent if codegen ever starts using it.
 
-use console
 use test
-from test use { TestCase }
 
 // ─── Module-level state ──────────────────────────────────────────────
 counter := 0
@@ -34,45 +32,39 @@ define record_implicitly() -> void {
     counter = counter + 1
 }
 
-define main() -> void {
-
-    t_simple := TestCase("`global` declaration before mutation works", fn() {
-        counter = 0
-        total_calls = 0
-        record_call()
-        record_call()
-        test.assert_eq(counter, 2)
-        test.assert_eq(total_calls, 2)
-    })
-
-    t_string_global := TestCase("`global` works for String-typed module vars", fn() {
-        config_name = "default"
-        rename("production")
-        test.assert_eq(config_name, "production")
-        rename("default")
-    })
-
-    t_implicit_matches_explicit := TestCase("implicit and `global`-declared writes hit the same storage", fn() {
-        counter = 0
-        record_call()       // counter+=1 via global-declared function
-        record_implicitly() // counter+=1 via implicit module access
-        record_call()       // counter+=1 via global-declared function
-        test.assert_eq(counter, 3)
-    })
-
-    t_multi_var := TestCase("comma-separated `global a, b` declares both", fn() {
-        counter = 100
-        total_calls = 200
-        record_call()
-        test.assert_eq(counter, 101)
-        test.assert_eq(total_calls, 201)
-    })
-
-    fails := test.run_all([t_simple, t_string_global,
-                            t_implicit_matches_explicit, t_multi_var])
-    if fails > 0 {
-        console.error("global keyword tests failed (" + fails.str() + ")")
-    } else {
-        console.info("all global keyword tests passed")
-    }
+// `global` declaration before mutation works
+define test_simple() -> void {
+    counter = 0
+    total_calls = 0
+    record_call()
+    record_call()
+    test.assert_eq(counter, 2)
+    test.assert_eq(total_calls, 2)
 }
+
+// `global` works for String-typed module vars
+define test_string_global() -> void {
+    config_name = "default"
+    rename("production")
+    test.assert_eq(config_name, "production")
+    rename("default")
+}
+
+// implicit and `global`-declared writes hit the same storage
+define test_implicit_matches_explicit() -> void {
+    counter = 0
+    record_call()       // counter+=1 via global-declared function
+    record_implicitly() // counter+=1 via implicit module access
+    record_call()       // counter+=1 via global-declared function
+    test.assert_eq(counter, 3)
+}
+
+// comma-separated `global a, b` declares both
+define test_multi_var() -> void {
+    counter = 100
+    total_calls = 200
+    record_call()
+    test.assert_eq(counter, 101)
+    test.assert_eq(total_calls, 201)
+}
+

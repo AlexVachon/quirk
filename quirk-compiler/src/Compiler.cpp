@@ -1164,6 +1164,9 @@ static std::map<std::string, std::string> g_symDisplayNames;
 static void emitSymbol(const char* kind, const std::string& name,
                        const std::string& scope, const std::string& file,
                        int line, int col, const std::string& rawType = "") {
+    // Temporaries the compiler generates (`assert`'s __qa_*, `quirk test`'s
+    // __qt_*) aren't the user's names.
+    if (name.rfind("__qa_", 0) == 0 || name.rfind("__qt_", 0) == 0) return;
     std::string type = rawType;
     {
         bool nullable = !type.empty() && type.back() == '?';

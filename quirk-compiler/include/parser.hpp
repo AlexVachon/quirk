@@ -29,7 +29,7 @@ struct GenericTemplate {
 struct ParseError {};
 
 class Parser {
-    const std::vector<Token>& tokens;
+    std::vector<Token> tokens;            // own copy: `assert` rewrites in place
     const std::string& source;
     std::string filePath;
     int pos = 0;
@@ -51,6 +51,10 @@ class Parser {
     // next line inside a `define` body can still be type-checked.
     // Used by every `while (peek() != RBRACE) parseStatement()` loop.
     void syncStatement();
+    // `assert cond[, msg]` → the equivalent `if not … { throw AssertionError(…) }`
+    // tokens, spliced in place of the statement. True when it rewrote one.
+    bool rewriteAssert();
+    int assertCount = 0;
 
 public:
     Parser(const std::vector<Token>& tokens, const std::string& source, const std::string& filePath = "unknown_file");

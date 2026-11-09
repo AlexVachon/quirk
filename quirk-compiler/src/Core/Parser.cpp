@@ -844,10 +844,156 @@ std::unique_ptr<Node> Parser::parseStatement() {
     return stmt;
 }
 
+// `assert <cond>[, <msg>]` — Python's assert, with pytest's habit of showing
+// both sides of a failed comparison. Rewritten at the token level into
+//
+//   if true {
+//       __qa_l<N> := (<left>)
+//       __qa_r<N> := (<right>)
+//       if not (__qa_l<N> <op> __qa_r<N>) {
+//           throw AssertionError("assert {} failed: left is {}, right is {}"
+//                                .format("<source text>", __qa_l<N>, __qa_r<N>))
+//       }
+//   }
+//
+// (each side evaluated once), or `if not (<cond>) { throw … }` when the
+// condition isn't a single comparison. Every generated token carries the
+// assert's line, so errors and tracebacks point at it. `assert` stays a
+// plain name everywhere else (`console.assert(…)`, `assert := …`).
+bool Parser::rewriteAssert() {
+    const int start = pos;
+    const Token kw = tokens[start];
+    if (start + 1 >= (int)tokens.size()) return false;
+    const Token& next = tokens[start + 1];
+    switch (next.type) {
+        case TokenType::DOT: case TokenType::ASSIGN: case TokenType::ASSIGN_INIT:
+        case TokenType::COLON: case TokenType::PLUS_ASSIGN: case TokenType::MINUS_ASSIGN:
+        case TokenType::STAR_ASSIGN: case TokenType::SLASH_ASSIGN: case TokenType::PERCENT_ASSIGN:
+        case TokenType::RBRACE: case TokenType::SEMICOLON: case TokenType::EOF_TOKEN:
+            return false;
+        default: break;
+    }
+    if (next.line != kw.line) return false;
+
+    // The statement: to the end of the line, or further while brackets
+    // are open; stops at `}` / `;` that close the enclosing block.
+    int end = start + 1, depth = 0, comma = -1;
+    for (; end < (int)tokens.size(); end++) {
+        const Token& t = tokens[end];
+        if (t.type == TokenType::EOF_TOKEN) break;
+        // A line break ends it — unless a bracket left open on the previous
+        // line carried the expression over.
+        if (depth == 0 && end > start + 1 && t.line != tokens[end - 1].line) break;
+        if (depth == 0 && (t.type == TokenType::RBRACE || t.type == TokenType::SEMICOLON)) break;
+        if (t.type == TokenType::LPAREN || t.type == TokenType::LBRACKET || t.type == TokenType::LBRACE) depth++;
+        else if (t.type == TokenType::RPAREN || t.type == TokenType::RBRACKET || t.type == TokenType::RBRACE) depth--;
+        else if (depth == 0 && t.type == TokenType::COMMA && comma < 0) comma = end;
+    }
+    const int condEnd = comma >= 0 ? comma : end;
+    if (condEnd <= start + 1) return false;
+
+    // A comparison at the top of the condition (not under and / or / not).
+    int op = -1;
+    depth = 0;
+    for (int i = start + 1; i < condEnd; i++) {
+        const Token& t = tokens[i];
+        if (t.type == TokenType::LPAREN || t.type == TokenType::LBRACKET || t.type == TokenType::LBRACE) { depth++; continue; }
+        if (t.type == TokenType::RPAREN || t.type == TokenType::RBRACKET || t.type == TokenType::RBRACE) { depth--; continue; }
+        if (depth != 0) continue;
+        if (t.type == TokenType::AND || t.type == TokenType::OR || t.type == TokenType::NOT ||
+            t.type == TokenType::QUESTION || t.type == TokenType::NULL_COALESCE || t.type == TokenType::IS) { op = -2; break; }
+        bool cmp = t.type == TokenType::EQUAL || t.type == TokenType::NOT_EQUAL || t.type == TokenType::LESS ||
+                   t.type == TokenType::GREATER || t.type == TokenType::LESS_EQUAL ||
+                   t.type == TokenType::GREATER_EQUAL || t.type == TokenType::IN;
+        if (cmp) { if (op == -1) op = i; else { op = -2; break; } }
+    }
+    if (op == start + 1 || op == condEnd - 1) op = -2;
+
+    // The condition as written, for the message: its source text on the
+    // assert's line (up to the `, msg` comma when that's on the same line).
+    std::string srcText;
+    {
+        int ln = 1;
+        size_t b = 0;
+        while (ln < kw.line && b < source.size()) { if (source[b] == '\n') ln++; b++; }
+        size_t e = source.find('\n', b);
+        std::string lineText = source.substr(b, e == std::string::npos ? std::string::npos : e - b);
+        size_t from = (size_t)std::max(0, tokens[start + 1].col - 1);
+        size_t to = lineText.size();
+        if (comma >= 0 && tokens[comma].line == kw.line) to = (size_t)std::max(0, tokens[comma].col - 1);
+        else if (end < (int)tokens.size() && tokens[end].line == kw.line &&
+                 tokens[end].type != TokenType::EOF_TOKEN)
+            to = (size_t)std::max(0, tokens[end].col - 1);   // `}` / `;` after it on the line
+        else {
+            // drop a trailing `// comment`
+            char q = 0;
+            for (size_t k = from; k < lineText.size(); k++) {
+                char c = lineText[k];
+                if (q) { if (c == '\\') k++; else if (c == q) q = 0; continue; }
+                if (c == '"' || c == '\'') q = c;
+                else if (c == '/' && k + 1 < lineText.size() && lineText[k + 1] == '/') { to = k; break; }
+            }
+        }
+        if (from < lineText.size()) srcText = lineText.substr(from, to > from ? to - from : 0);
+        while (!srcText.empty() && std::isspace((unsigned char)srcText.back())) srcText.pop_back();
+        if (end > start + 1 && tokens[end - 1].line != kw.line) srcText += " …";
+    }
+    std::string esc;
+    for (char c : srcText) {
+        if (c == '\\' || c == '"') esc += '\\';
+        if (c == '$') { esc += "\\$"; continue; }
+        esc += c;
+    }
+
+    const std::string n = std::to_string(++assertCount);
+    const std::string L = "__qa_l" + n, R = "__qa_r" + n;
+    const bool hasMsg = comma >= 0 && comma + 1 < end;
+    std::string tmpl;
+    if (op >= 0) {
+        // `;` after each declaration: the generated tokens share one line,
+        // and `(x) if …` on one line would read as a ternary. (Not before a
+        // `}` — the block parser doesn't take an empty statement there.)
+        tmpl = "if true {\n " + L + " := (__QA_LEFT__);\n " + R + " := (__QA_RIGHT__);\n"
+               " if not (" + L + " __QA_OP__ " + R + ") {\n throw AssertionError(" +
+               (hasMsg ? std::string("\"{} (assert {}: left is {}, right is {})\".format((__QA_MSG__), __QA_SRC__, ")
+                       : std::string("\"assert {} failed: left is {}, right is {}\".format(__QA_SRC__, ")) +
+               L + ", " + R + "))\n }\n}\n";
+    } else {
+        tmpl = "if not (__QA_COND__) {\n throw AssertionError(" +
+               (hasMsg ? std::string("\"{} (assert {} failed)\".format((__QA_MSG__), __QA_SRC__)")
+                       : std::string("\"assert {} failed\".format(__QA_SRC__)")) + ")\n}\n";
+    }
+
+    Lexer lx(tmpl);
+    std::vector<Token> gen;
+    for (const Token& t : lx.tokenize()) {
+        if (t.type == TokenType::EOF_TOKEN) continue;
+        auto splice = [&](int a, int b) { for (int i = a; i < b; i++) gen.push_back(tokens[i]); };
+        if (t.type == TokenType::IDENTIFIER && t.value == "__QA_LEFT__")  { splice(start + 1, op); continue; }
+        if (t.type == TokenType::IDENTIFIER && t.value == "__QA_RIGHT__") { splice(op + 1, condEnd); continue; }
+        if (t.type == TokenType::IDENTIFIER && t.value == "__QA_OP__")    { gen.push_back(tokens[op]); continue; }
+        if (t.type == TokenType::IDENTIFIER && t.value == "__QA_COND__")  { splice(start + 1, condEnd); continue; }
+        if (t.type == TokenType::IDENTIFIER && t.value == "__QA_MSG__")   { splice(comma + 1, end); continue; }
+        Token g = t;
+        if (t.type == TokenType::IDENTIFIER && t.value == "__QA_SRC__") {
+            g.type = TokenType::STRING_LITERAL;
+            g.value = "\"" + esc + "\"";
+        }
+        g.line = kw.line;
+        g.col = kw.col;
+        gen.push_back(g);
+    }
+    tokens.erase(tokens.begin() + start, tokens.begin() + end);
+    tokens.insert(tokens.begin() + start, gen.begin(), gen.end());
+    return true;
+}
+
 std::unique_ptr<Node> Parser::parseStatementImpl() {
     // Skip any leading `;` — they act as empty statement separators, so a
     // line like `a := 1; b := 2` parses two statements without complaint.
     while (peek().type == TokenType::SEMICOLON) advance();
+    if (peek().type == TokenType::IDENTIFIER && peek().value == "assert" && rewriteAssert())
+        return parseStatementImpl();
     TokenType type = peek().type;
     int currentLine = peek().line;
 

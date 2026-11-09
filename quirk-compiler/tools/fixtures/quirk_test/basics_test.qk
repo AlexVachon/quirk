@@ -23,3 +23,8 @@ define test_runtime_error() -> void {
 define test_takes_args(x: Int) -> void { throw RuntimeError("not a test: has a parameter") }
 
 define helper() -> Int { return 1 }
+
+define test_plain_assert() -> void {
+    total := 9
+    assert total == 10
+}

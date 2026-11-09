@@ -7,6 +7,7 @@ Official language support for [Quirk](https://github.com/AlexVachon/quirk) — a
 ## Features
 
 - **Full syntax highlighting** — tuned TextMate grammar covering Quirk's structs, lambdas, pattern matching, interpolated strings, generics, and the spread/range operators.
+- **Testing panel** — every `define test_*()` in `*_test.qk` files, with ▶ buttons in the gutter; failures are marked at the failing line.
 - **Interactive debugger** — F5 launches the qdb stepper with gutter breakpoints, the Variables panel, the Call Stack, hover-evaluate, and Python-style inline value decorations next to each variable reference on paused lines.
 - **Smart completions** — context-aware suggestions for stdlib modules, struct fields, method names, lambda params, generic type params, and `case`-arm bindings.
 - **Hover docs** — Python-Pylance-style `(kind) name` prefixes (`(function)`, `(method)`, `(struct)`, `(parameter)`, `(constant)`, `(variable)`), inline docstrings pulled from `--- ... ---` blocks above definitions, full signature display, and the compiler's type for variables (`people: List[P]`, `p: P` in `for p in people`).

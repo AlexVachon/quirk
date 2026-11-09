@@ -121,6 +121,21 @@ jobs:
           echo "stdlib failures: $fails"
           exit $fails
 
+      - name: Run tests (quirk test)
+        working-directory: quirk-compiler
+        env:
+          QUIRK_HOME: ${{ github.workspace }}/quirk-compiler
+        # Every `define test_*()` in tests/*_test.quirk must pass — the step
+        # above only catches crashes. Excluded: server_test (a demo server
+        # that runs until killed), custom_package_test (needs the `slug`
+        # package installed), http_client_test (its own step below, against
+        # a local fixture) and test_test (checks the framework counts
+        # deliberately failing cases).
+        run: >
+          bin/quirk test tests --timeout 60
+          --exclude server_test --exclude custom_package_test
+          --exclude http_client_test --exclude test_test
+
       - name: Run http client tests against in-repo fixture
         working-directory: quirk-compiler
         env:

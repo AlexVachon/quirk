@@ -70,7 +70,7 @@ static std::string self_binary();
 
 namespace qpm {
 
-constexpr const char* QUIRK_VERSION = "7.16.0";
+constexpr const char* QUIRK_VERSION = "7.17.0";
 
 namespace fs = std::filesystem;
 
@@ -3118,60 +3118,327 @@ static int cmd_list() {
     return 0;
 }
 
-static int cmd_show(const std::vector<std::string>& args) {
+// ----------------------- Package discovery (search / show) --------------
+// The registry index is only `name = "url"` lines, so descriptions and
+// versions come from each package's own quirk.toml on its default branch
+// (raw.githubusercontent.com/<owner>/<repo>/HEAD/<file>). Fetched files
+// are cached for 24h under ~/.quirk/cache/_meta/<owner>-<repo>/; a file
+// the repo doesn't have leaves a `<file>.missing` marker so it isn't
+// asked for again until the cache expires.
+
+static int stdout_cols() {
+    struct winsize ws;
+    if (::isatty(STDOUT_FILENO) && ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_col > 40)
+        return ws.ws_col;
+    return 100;
+}
+
+static bool file_younger_than(const fs::path& p, long secs) {
+    struct stat st;
+    if (::stat(p.c_str(), &st) != 0) return false;
+    return ::time(nullptr) - st.st_mtime < secs;
+}
+
+static constexpr long DISCOVERY_TTL = 24 * 60 * 60;
+
+// Re-download the registry index when it's missing, older than a day, or
+// `force`. Silent; a failed fetch keeps whatever copy is already cached.
+static void refresh_registry_index(bool force) {
+    fs::path cache = registry_cache_path();
+    if (!force && file_younger_than(cache, DISCOVERY_TTL)) return;
+    fs::path tmp = cache.string() + ".tmp";
+    if (net::download(resolve_registry_url(), tmp).ok) {
+        std::error_code ec;
+        fs::rename(tmp, cache, ec);
+    }
+}
+
+// Fetch `file` from the default branch of every repo in `urls` (GitHub
+// only), up to 8 at once. Returns the local path per URL, empty when the
+// repo has no such file or couldn't be reached.
+static std::vector<fs::path> fetch_repo_files(const std::vector<std::string>& urls,
+                                              const std::string& file, bool refresh) {
+    std::vector<fs::path> out(urls.size());
+    std::vector<net::Item> items;
+    std::vector<size_t> idx;
+    fs::path base = cache_dir() / "_meta";
+    for (size_t i = 0; i < urls.size(); i++) {
+        std::string ownerRepo = github_owner_repo(urls[i]);
+        if (ownerRepo.empty()) continue;
+        std::string dirName = ownerRepo;
+        for (char& c : dirName) if (c == '/') c = '-';
+        fs::path dir = base / dirName;
+        fs::path f = dir / file, missing = dir / (file + ".missing");
+        if (!refresh && file_younger_than(f, DISCOVERY_TTL)) { out[i] = f; continue; }
+        if (!refresh && file_younger_than(missing, DISCOVERY_TTL)) continue;
+        std::error_code ec;
+        fs::create_directories(dir, ec);
+        items.push_back({"https://raw.githubusercontent.com/" + ownerRepo + "/HEAD/" + file,
+                         dir / (file + ".tmp"), "", -2});
+        idx.push_back(i);
+    }
+    if (items.empty()) return out;
+    auto res = net::download_many(items, false);
+    for (size_t k = 0; k < items.size(); k++) {
+        fs::path dir = items[k].out.parent_path();
+        fs::path f = dir / file, missing = dir / (file + ".missing");
+        std::error_code ec;
+        if (res[k].ok) {
+            fs::rename(items[k].out, f, ec);
+            fs::remove(missing, ec);
+            out[idx[k]] = f;
+        } else if (res[k].http == 404) {
+            fs::remove(f, ec);
+            std::ofstream(missing.string()).put('\n');
+        } else if (fs::exists(f)) {
+            out[idx[k]] = f;                      // offline: keep the stale copy
+        }
+    }
+    return out;
+}
+
+static std::string lowercase(std::string s) {
+    for (char& c : s) c = (char)std::tolower((unsigned char)c);
+    return s;
+}
+
+// First `width` display columns of `s` (UTF-8 aware), with "…" when cut.
+static std::string clip_cols(const std::string& s, int width) {
+    if (width <= 1) return "";
+    int cols = 0;
+    for (unsigned char ch : s) cols += (ch & 0xC0) != 0x80;
+    if (cols <= width) return s;
+    std::string out;
+    int c = 0;
+    for (size_t i = 0; i < s.size(); i++) {
+        unsigned char ch = (unsigned char)s[i];
+        if ((ch & 0xC0) != 0x80) { if (c == width - 1) break; c++; }
+        out += s[i];
+    }
+    return out + "…";
+}
+
+// `quirk search [<term>...] [--refresh]`: every registry, stdlib and
+// local-alias package whose name or description contains all the terms
+// (case-insensitive). No terms lists everything.
+static int cmd_search(const std::vector<std::string>& args) {
+    bool refresh = false;
+    std::vector<std::string> terms;
+    for (auto& a : args) {
+        if (a == "--refresh") refresh = true;
+        else if (!a.empty() && a[0] == '-') {
+            std::cerr << "search: unknown option '" << a << "'\n";
+            return 1;
+        } else terms.push_back(lowercase(a));
+    }
+    refresh_registry_index(refresh);
+
+    struct Entry { std::string name, url, source; };
+    std::map<std::string, Entry> all;             // sorted by name
+    for (auto& kv : stdlib_registry()) all[kv.first] = {kv.first, kv.second, "stdlib"};
+    for (auto& kv : read_kv_file(registry_cache_path()))
+        if (!all.count(kv.first)) all[kv.first] = {kv.first, kv.second, ""};
+    // An alias wins the URL (as `install` resolves it), but a published
+    // package keeps its stdlib / registry label.
+    for (auto& kv : read_kv_file(aliases_path())) {
+        auto it = all.find(kv.first);
+        if (it == all.end()) all[kv.first] = {kv.first, kv.second, "alias"};
+        else it->second.url = kv.second;
+    }
+
+    std::vector<Entry> entries;
+    std::vector<std::string> urls;
+    for (auto& kv : all) {
+        std::string u = kv.second.url;
+        auto at = u.find('@');
+        if (at != std::string::npos) u = u.substr(0, at);
+        entries.push_back(kv.second);
+        urls.push_back(u);
+    }
+    const bool tty = ::isatty(STDERR_FILENO) && !log::quiet_flag();
+    if (tty) std::cerr << log::dim("Fetching package info…") << std::flush;
+    auto files = fetch_repo_files(urls, "quirk.toml", refresh);
+    if (tty) std::cerr << "\r\x1b[2K" << std::flush;
+
+    struct Row { std::string name, version, desc, source; };
+    std::vector<Row> rows;
+    for (size_t i = 0; i < entries.size(); i++) {
+        Manifest m;
+        if (!files[i].empty()) read_manifest(files[i].string(), m);
+        std::string hay = lowercase(entries[i].name + " " + m.description);
+        bool match = true;
+        for (auto& t : terms) if (hay.find(t) == std::string::npos) { match = false; break; }
+        if (!match) continue;
+        rows.push_back({entries[i].name, files[i].empty() ? "?" : m.version,
+                        m.description, entries[i].source});
+    }
+    // An exact name match goes first.
+    if (terms.size() == 1)
+        std::stable_partition(rows.begin(), rows.end(),
+                              [&](const Row& r) { return lowercase(r.name) == terms[0]; });
+    if (rows.empty()) {
+        std::cout << "No packages match";
+        for (auto& t : terms) std::cout << " '" << t << "'";
+        std::cout << ".\n";
+        return 1;
+    }
+    size_t nameW = 0, verW = 0;
+    for (auto& r : rows) { nameW = std::max(nameW, r.name.size()); verW = std::max(verW, r.version.size()); }
+    const int cols = stdout_cols();
+    for (auto& r : rows) {
+        std::string tag = r.source.empty() ? "" : " (" + r.source + ")";
+        int room = cols - 2 - (int)nameW - 2 - (int)verW - 2 - (int)tag.size();
+        std::cout << "  " << log::bold(r.name) << std::string(nameW - r.name.size() + 2, ' ')
+                  << log::GREEN() << r.version << log::RESET()
+                  << std::string(verW - r.version.size() + 2, ' ')
+                  << clip_cols(r.desc, room) << log::dim(tag) << "\n";
+    }
+    return 0;
+}
+
+// Print README text: all of it with `full`, else the first 30 lines and a
+// pointer to the rest.
+static void print_readme(const fs::path& readme, const std::string& pkg, bool full) {
+    std::ifstream in(readme);
+    std::vector<std::string> lines;
+    std::string line;
+    while (std::getline(in, line)) lines.push_back(line);
+    while (!lines.empty() && trim(lines.back()).empty()) lines.pop_back();
+    if (lines.empty()) return;
+    const size_t cap = 30;
+    size_t n = full ? lines.size() : std::min(lines.size(), cap);
+    std::cout << "\n";
+    for (size_t i = 0; i < n; i++) std::cout << "  " << lines[i] << "\n";
+    if (n < lines.size())
+        std::cout << "  " << log::dim("… " + std::to_string(lines.size() - n)
+                                      + " more lines (quirk show " + pkg + " --readme)") << "\n";
+}
+
+static int cmd_show(const std::vector<std::string>& argsIn) {
+    bool refresh = false, readmeOnly = false, noReadme = false;
+    std::vector<std::string> args;
+    for (auto& a : argsIn) {
+        if (a == "--refresh") refresh = true;
+        else if (a == "--readme") readmeOnly = true;
+        else if (a == "--no-readme") noReadme = true;
+        else if (!a.empty() && a[0] == '-') {
+            std::cerr << "show: unknown option '" << a << "'\n";
+            return 1;
+        } else args.push_back(a);
+    }
     if (args.empty()) {
         std::cerr << "show: need a package name\n";
         return 1;
     }
-    fs::path pkgRoot = package_install_dir();
-    fs::path p = pkgRoot / args[0];
-    if (!fs::exists(p)) {
-        std::cerr << args[0] << ": not installed\n";
-        return 1;
-    }
-    Manifest m;
-    if (!read_manifest((p / "quirk.toml").string(), m)) {
-        std::cout << args[0] << " (installed; no manifest)\n";
-        return 0;
-    }
     auto kv = [](const std::string& k, const std::string& v) {
         std::cout << log::dim(k + std::string(13 - k.size(), ' ')) << v << "\n";
     };
-    kv("name:",    log::bold(m.name));
-    kv("version:", std::string(log::GREEN()) + m.version + log::RESET());
-    if (!m.description.empty()) kv("description:", m.description);
-    if (!m.author.empty())      kv("author:",      m.author);
-    if (!m.license.empty())     kv("license:",     m.license);
-    if (!m.repository.empty())  kv("repository:",  m.repository);
-    if (!m.homepage.empty())    kv("homepage:",    m.homepage);
+    auto strip = [](std::string u) {
+        auto at = u.find('@');
+        return at == std::string::npos ? u : u.substr(0, at);
+    };
 
-    // Pull commit SHA from the dist-info if available.
-    fs::path di = find_dist_info(pkgRoot, args[0]);
-    if (!di.empty()) {
-        std::ifstream meta(di / "METADATA");
-        std::string line;
-        while (std::getline(meta, line)) {
-            if (line.rfind("Commit: ", 0) == 0) {
-                kv("commit:", line.substr(8));
-                break;
-            }
+    // What to describe: `<name>` (registry / aliases / stdlib, or just
+    // installed) or a repo URL.
+    const std::string spec = args[0];
+    const bool isUrl = spec.find('/') != std::string::npos;
+    fs::path pkgRoot = package_install_dir();
+    std::string name = isUrl ? spec.substr(spec.find_last_of('/') + 1) : spec;
+    std::string url;
+    Manifest m;
+    bool haveManifest = false;
+    if (!isUrl && fs::exists(pkgRoot / name / "quirk.toml"))    // legacy installs kept it
+        haveManifest = read_manifest((pkgRoot / name / "quirk.toml").string(), m);
+    if (isUrl) url = strip(spec);
+    else if (haveManifest && !m.repository.empty()) url = strip(m.repository);
+    else {
+        url = strip(registry_lookup(name));
+        if (url.empty() && !fs::exists(pkgRoot / name)) {
+            refresh_registry_index(true);
+            url = strip(registry_lookup(name));
         }
     }
+    if (url.empty() && !fs::exists(pkgRoot / name)) {
+        log::err("show: '" + spec + "' isn't installed or in the registry");
+        std::cerr << "    " << log::dim("try `quirk search " + spec + "`") << "\n";
+        return 1;
+    }
+    if (!haveManifest && !url.empty()) {
+        auto f = fetch_repo_files({url}, "quirk.toml", refresh);
+        haveManifest = !f[0].empty() && read_manifest(f[0].string(), m);
+        if (isUrl && haveManifest && !m.name.empty()) name = m.name;
+    }
 
-    if (!m.deps.empty()) {
+    fs::path readme;
+    if (fs::exists(pkgRoot / name / "README.md")) readme = pkgRoot / name / "README.md";
+    else if ((readmeOnly || !noReadme) && !url.empty())
+        readme = fetch_repo_files({url}, "README.md", refresh)[0];
+    if (readmeOnly) {
+        if (readme.empty()) { std::cerr << name << ": no README.md\n"; return 1; }
+        print_readme(readme, name, true);
+        return 0;
+    }
+
+    const bool installed = fs::exists(pkgRoot / name);
+    std::string current = installed ? read_current_version(pkgRoot, name) : "";
+    if (current.empty() && installed && haveManifest && fs::exists(pkgRoot / name / "quirk.toml"))
+        current = m.version;
+    std::string latest;
+    if (!url.empty()) {
+        auto tags = discover_tags(url, refresh);
+        if (!tags.empty()) latest = (tags[0][0] == 'v') ? tags[0].substr(1) : tags[0];
+    }
+
+    kv("name:", log::bold(haveManifest && !m.name.empty() ? m.name : name));
+    if (!current.empty()) kv("version:", std::string(log::GREEN()) + current + log::RESET());
+    if (!latest.empty()) {
+        if (!current.empty() && compare_versions(latest, current) > 0)
+            kv("latest:", std::string(log::YELLOW()) + latest + log::RESET()
+                          + log::dim("  (quirk upgrade " + name + ")"));
+        else if (current.empty())
+            kv("latest:", std::string(log::GREEN()) + latest + log::RESET());
+        else
+            kv("latest:", latest);
+    } else if (current.empty() && haveManifest) {
+        kv("version:", m.version + log::dim("  (untagged)"));
+    }
+    if (haveManifest) {
+        if (!m.description.empty())   kv("description:", m.description);
+        if (!m.author.empty())        kv("author:",      m.author);
+        if (!m.license.empty())       kv("license:",     m.license);
+        if (!m.quirk_version.empty()) kv("requires:",    "quirk " + m.quirk_version);
+        if (!m.homepage.empty())      kv("homepage:",    m.homepage);
+    }
+    if (!url.empty()) kv("source:", url);
+    if (installed) {
+        fs::path di = find_dist_info(pkgRoot, name);
+        std::string commit;
+        if (!di.empty()) {
+            std::ifstream meta(di / "METADATA");
+            std::string line;
+            while (std::getline(meta, line))
+                if (line.rfind("Commit: ", 0) == 0) { commit = line.substr(8); break; }
+        }
+        if (!commit.empty()) kv("commit:", commit);
+        kv("installed:", "yes" + log::dim("  (" + (pkgRoot / name).string() + ")"));
+    } else {
+        kv("installed:", "no" + log::dim("  (quirk install " + (isUrl ? spec : name) + ")"));
+    }
+    if (haveManifest && !m.deps.empty()) {
         std::cout << log::dim("deps:") << "\n";
         for (auto& d : m.deps) std::cout << "  " << d.first << " = " << d.second << "\n";
     }
-    auto cached = list_cached_versions(args[0]);
+    auto cached = list_cached_versions(name);
     if (cached.size() > 1) {
         std::cout << log::dim("cached versions: ");
         for (size_t i = 0; i < cached.size(); i++) {
             if (i) std::cout << ", ";
             std::cout << cached[i];
-            if (cached[i] == m.version) std::cout << " " << log::GREEN() << "(active)" << log::RESET();
+            if (cached[i] == current) std::cout << " " << log::GREEN() << "(active)" << log::RESET();
         }
         std::cout << "\n";
     }
+    if (!readme.empty()) print_readme(readme, name, false);
     return 0;
 }
 
@@ -6112,7 +6379,8 @@ static const std::vector<CliCommand>& cli_commands() {
         {"upgrade",    "upgrade [<pkg>...]",          "Bump to latest versions",         "PACKAGES", "up",     "", "", false},
         {"remove",     "remove <pkg>[@<ver>] ...",    "Uninstall",                       "PACKAGES", "rm",     "", "", false},
         {"list",       "list",                        "List installed packages",         "PACKAGES", "ls",     "", "", false},
-        {"show",       "show <pkg>",                  "Detailed package info",           "PACKAGES", "",       "", "", false},
+        {"search",     "search [<term>...]",          "Find packages in the registry",   "PACKAGES", "",       "", "", false},
+        {"show",       "show <pkg>",                  "Package info, latest version, README", "PACKAGES", "",  "", "", false},
         {"deps",       "deps",                        "Print deps in installable form",  "PACKAGES", "",       "", "", false},
         {"cache",      "cache <subcommand>",          "Cross-project version cache",     "PACKAGES", "",       "", "", false},
         {"registry",   "registry <subcommand>",       "Name → URL mappings",             "PACKAGES", "",       "", "", false},
@@ -7718,8 +7986,21 @@ static std::string help_for(const std::string& cmdIn) {
                "    Short aliases: quirk ls, quirk -p, quirk packages\n"
                "    Print installed packages with versions.\n";
     if (cmd == "show")
-        return "quirk show <pkg>\n"
-               "    Print the manifest of an installed package.\n";
+        return "quirk show <pkg|url> [--readme] [--no-readme] [--refresh]\n"
+               "    Describe a package: version, latest published tag, description,\n"
+               "    author, license, deps, then the start of its README. Works for\n"
+               "    packages that aren't installed yet (looked up in the registry,\n"
+               "    read from the repo's default branch).\n"
+               "      --readme     print only the README, in full\n"
+               "      --no-readme  skip the README\n"
+               "      --refresh    re-fetch instead of using the 24h cache\n";
+    if (cmd == "search")
+        return "quirk search [<term>...] [--refresh]\n"
+               "    List registry, stdlib and local-alias packages whose name or\n"
+               "    description contains every term (case-insensitive). With no\n"
+               "    terms, lists them all. Descriptions come from each package's\n"
+               "    quirk.toml and are cached for 24h; --refresh re-fetches.\n"
+               "    Then `quirk show <name>` for details.\n";
     if (cmd == "deps")
         return "quirk deps\n"
                "    Print installed packages as `name = \"version\"` lines.\n"
@@ -8049,7 +8330,7 @@ static bool is_pkg_subcommand(const std::string& arg) {
     std::string c = canonicalize_verb(arg);
     return c == "install" || c == "upgrade" || c == "remove" ||
            c == "list" || c == "packages" ||
-           c == "show" || c == "deps" || c == "cache" ||
+           c == "show" || c == "search" || c == "deps" || c == "cache" ||
            c == "registry" || c == "register" || c == "check" ||
            c == "versions" || c == "release" || c == "audit";
 }
@@ -8266,6 +8547,7 @@ inline bool dispatch(int& argc, char** argv, int& outRc) {
     else if (verb == "list" ||
              verb == "packages")     outRc = cmd_list();
     else if (verb == "show")         outRc = cmd_show(verbArgs);
+    else if (verb == "search")       outRc = cmd_search(verbArgs);
     else if (verb == "init")         outRc = cmd_init(verbArgs);
     else if (verb == "new")          outRc = cmd_new(verbArgs);
     else if (verb == "venv")         outRc = cmd_venv(verbArgs);

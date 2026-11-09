@@ -5,6 +5,19 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.17.0] — 2026-11-09 — package discovery
+
+- **`quirk search [<term>...]`** lists the registry, stdlib and local-alias
+  packages whose name or description contains every term, with their
+  version. Descriptions come from each package's `quirk.toml`, fetched in
+  parallel and cached for a day (`--refresh` re-fetches).
+- **`quirk show <pkg>`** now also prints the latest published version
+  (with an upgrade hint when it's newer than the installed one) and the
+  start of the README (`--readme` for all of it, `--no-readme` for none),
+  and works for packages that aren't installed — by registry name or repo
+  URL. It used to need a `quirk.toml` in the install directory, which
+  current installs don't keep, so it only printed "no manifest".
+
 ## [7.16.0] — 2026-11-09 — methods on untyped values, cancellable socket I/O, generic / variadic async
 
 - **Calling a struct method on an untyped value works.** `p.speak()` where

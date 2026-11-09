@@ -20,7 +20,8 @@ The `quirk` binary is both the compiler/runner and the package manager. This pag
 | [`quirk up [pkg ...]`](#quirk-upgrade) | `upgrade`, `pkg upgrade` | Bump installed versions |
 | [`quirk rm <pkg>`](#quirk-remove) | `un`, `uninstall`, `remove`, `pkg remove` | Uninstall a package or one version |
 | [`quirk ls`](#quirk-list) | `list`, `packages`, `-p`, `pkg -l`/`--list` | List installed packages |
-| [`quirk show <pkg>`](#quirk-show) | `pkg show` | Detailed info on one package |
+| [`quirk search [term ...]`](#quirk-search) | `pkg search` | Find packages in the registry |
+| [`quirk show <pkg>`](#quirk-show) | `pkg show` | Package info, latest version and README |
 | [`quirk deps`](#quirk-deps) | `pkg deps` | Print installed packages in deps format |
 | [`quirk cache`](#quirk-pkg-cache) | `pkg cache`, `cache -l`/`--list` | Manage the cross-project version cache |
 | [`quirk registry`](#quirk-pkg-registry) | `pkg registry`, `registry -l`/`--list` | Manage name → URL mappings |
@@ -443,21 +444,46 @@ $ quirk list
   pretty    1.0.0
 ```
 
+### `quirk search`
+
+Synopsis: `quirk search [<term> ...] [--refresh]`
+
+Lists the registry, stdlib and local-alias packages whose name or description contains every term (case-insensitive); with no terms, all of them. Descriptions and versions come from each package's `quirk.toml` on its default branch, fetched in parallel and cached for 24h (`~/.quirk/cache/_meta/`); `--refresh` re-fetches them and the registry index. Exits 1 when nothing matches.
+
+```
+$ quirk search slug
+  slug  1.0.1  Convert strings to URL-safe slugs
+
+$ quirk search csv
+  csv  1.0.0  RFC 4180-style comma-separated-values reader and writer. … (stdlib)
+```
+
 ### `quirk show`
 
-Synopsis: `quirk show <pkg>`
+Synopsis: `quirk show <pkg|url> [--readme] [--no-readme] [--refresh]`
 
-Detailed info: manifest fields, deps, and all installed versions.
+Installed version, latest published tag, manifest fields, deps, cached versions, then the first 30 lines of the README. Works for packages that aren't installed: the name is looked up in the registry (or give a repo URL) and the manifest / README are read from the repo.
 
 ```
 $ quirk show slug
 name:        slug
-version:     0.2.0
+version:     1.0.0
+latest:      1.0.1  (quirk upgrade slug)
 description: Convert strings to URL-safe slugs
 author:      Alex Vachon <alex.vachon@outlook.com>
 license:     MIT
-installed versions: 0.1.0, 0.2.0 (active)
+requires:    quirk >=7.6.0
+source:      github.com/AlexVachon/slug
+installed:   yes  (./site-packages/slug)
+cached versions: 1.0.0 (active), 1.0.1
+
+  # slug
+  …
 ```
+
+- `--readme` — print only the README, in full.
+- `--no-readme` — skip the README.
+- `--refresh` — re-fetch instead of using the 24h cache.
 
 ### `quirk deps`
 

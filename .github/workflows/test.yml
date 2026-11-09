@@ -189,6 +189,14 @@ jobs:
         # crashes and -k, on tools/fixtures/quirk_test.
         run: tools/check_test_runner.sh
 
+      - name: Check package discovery
+        working-directory: quirk-compiler
+        env:
+          QUIRK_HOME: ${{ github.workspace }}/quirk-compiler
+        # `quirk search` / `quirk show` against a file:// registry and
+        # pre-filled caches — no network.
+        run: tools/check_discovery.sh
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -304,6 +312,14 @@ jobs:
         # `define test_*()` discovery, per-test results, setup/teardown,
         # crashes and -k, on tools/fixtures/quirk_test.
         run: tools/check_test_runner.sh
+
+      - name: Check package discovery
+        working-directory: quirk-compiler
+        env:
+          QUIRK_HOME: ${{ github.workspace }}/quirk-compiler
+        # `quirk search` / `quirk show` against a file:// registry and
+        # pre-filled caches — no network.
+        run: tools/check_discovery.sh
 
       - name: Rehearse the release
         working-directory: quirk-compiler

@@ -7,7 +7,8 @@ quirk install <pkg>      install a dependency
 quirk upgrade [pkg]      bump to latest
 quirk remove <pkg>       uninstall
 quirk list               (alias: packages, -p)
-quirk show <pkg>         package details
+quirk search <term>      find packages in the registry
+quirk show <pkg>         details, latest version, README
 quirk init               scaffold a quirk.toml in cwd
 quirk venv <name>        create an isolated environment
 ```
@@ -232,7 +233,8 @@ define test_format_roundtrip() -> void {
 | `quirk upgrade [pkg ...]` | Re-clone at HEAD (use to bump from a pinned tag to latest) |
 | `quirk remove <pkg ...>` | Delete from package dir + manifest |
 | `quirk list` / `packages` / `-p` | Print installed packages with versions |
-| `quirk show <pkg>` | Print one package's manifest |
+| `quirk search [term ...]` | Find registry / stdlib packages by name or description |
+| `quirk show <pkg>` | Version, latest tag, manifest and README — installed or not |
 | `quirk init` | Scaffold a `quirk.toml` for the current directory |
 | `quirk venv <name>` | Create an isolated environment at `./<name>/` |
 | `quirk version` / `--version` | Print the Quirk compiler version |

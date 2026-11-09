@@ -1,0 +1,25 @@
+// Fixture for tools/check_test_runner.sh.
+use test
+
+runs := 0
+
+define setup() -> void { runs = runs + 1 }
+
+define teardown() -> void {
+    if runs == 3 { throw RuntimeError("cleanup broke") }
+}
+
+define test_passes() -> void { test.assert_eq(2 + 2, 4) }
+
+define test_assert_fails() -> void { test.assert_eq("a" + "b", "abc") }
+
+define test_teardown_fails() -> void { test.assert_true(true) }
+
+define test_runtime_error() -> void {
+    xs := [1]
+    print(xs[3])
+}
+
+define test_takes_args(x: Int) -> void { throw RuntimeError("not a test: has a parameter") }
+
+define helper() -> Int { return 1 }

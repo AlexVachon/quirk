@@ -165,6 +165,8 @@ STDLIB_TAG_html ?= v1.0.1
 # pure-Quirk one-liner so v1.2.0 has no additional compiler
 # requirement beyond what v1.1.0 already needed.
 STDLIB_TAG_net ?= v1.2.0
+# test v1.1.0 documents `quirk test`'s `define test_*()` discovery (v7.10.0).
+STDLIB_TAG_test ?= v1.1.0
 
 # --- INSTALL / UNINSTALL --------------------------------------------------
 # Copy the freshly-built compiler + runtime into $(PREFIX) (default
@@ -201,6 +203,7 @@ bootstrap-stdlib:
 	        typing) tag="$(STDLIB_TAG_typing)" ;;                                 \
 	        html)   tag="$(STDLIB_TAG_html)"   ;;                                 \
 	        net)    tag="$(STDLIB_TAG_net)"    ;;                                 \
+	        test)   tag="$(STDLIB_TAG_test)"   ;;                                 \
 	    esac;                                                                     \
 	    if [ -f "packages/$$pkg/index.quirk" ] &&                                 \
 	       [ "$$(cat packages/$$pkg/.version 2>/dev/null)" = "$$tag" ]; then      \

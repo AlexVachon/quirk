@@ -2,6 +2,11 @@
 
 All notable changes to the extension land here. Versioning follows SemVer; minor bumps for new features, patches for fixes.
 
+## [0.6.1] — 2026-11-09 — test snippets
+
+- `test` snippet: a `define test_…()` function for `quirk test`
+  (compiler 7.10.0); `setup` snippet: `setup()` / `teardown()`.
+
 ## [0.6.0] — 2026-11-09 — quick fixes for compiler errors
 
 Ctrl+. on a compiler error offers:

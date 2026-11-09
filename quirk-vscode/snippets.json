@@ -301,5 +301,29 @@
         "prefix": "throw",
         "body": "throw ${1:Exception}(\"${2:message}\")",
         "description": "Throw an exception"
+    },
+
+    "Test Function": {
+        "prefix": "test",
+        "body": [
+            "define test_${1:name}() -> void {",
+            "    test.assert_eq(${2:actual}, ${3:expected})",
+            "}"
+        ],
+        "description": "A test that `quirk test` runs (in a *_test.qk file, with `use test`)"
+    },
+
+    "Test Setup / Teardown": {
+        "prefix": "setup",
+        "body": [
+            "define setup() -> void {",
+            "    ${1}",
+            "}",
+            "",
+            "define teardown() -> void {",
+            "    ${2}",
+            "}"
+        ],
+        "description": "Run before / after every test in a *_test.qk file"
     }
 }

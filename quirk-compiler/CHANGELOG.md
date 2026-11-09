@@ -5,6 +5,42 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.10.0] — 2026-11-09 — `quirk test` runs `test_*` functions
+
+- **Tests are plain functions.** In a `*_test.qk` file every
+  `define test_*()` that takes no arguments is a test — no `TestCase`
+  list, lambdas or `main()`:
+
+  ```quirk
+  use test
+
+  define test_addition() -> void {
+      test.assert_eq(2 + 2, 4)
+  }
+  ```
+
+  `quirk test` generates the runner: each test runs on its own, so a
+  failing assertion or runtime error fails that test and the rest still
+  run. Optional `setup()` / `teardown()` run around every test; a failing
+  teardown fails its test. Each test gets a ✓ / ✗ line, and failures
+  show the test's output and traceback (the generated runner's frame is
+  left out). Tests after one that crashes the process are listed as not
+  run.
+- **`quirk test -k <substr>`** runs only tests whose name contains it.
+  Paths may be files or directories.
+- **Exact counts.** The summary counts tests from the runner itself; it
+  used to scrape "N passed" from the output, so a test file with a plain
+  `main()` showed `cases: 0`. Such files still work and count as one test
+  each (they fail when they exit non-zero). The summary row is now
+  "tests:".
+- `quirk test`'s per-file time limit works on macOS (it needed coreutils
+  `timeout`; it now also finds Homebrew's `gtimeout`, or runs uncapped).
+- A crash (SIGSEGV, stack overflow) no longer loses what the program had
+  printed to a pipe — stdout is flushed before the crash report.
+- `test` stdlib v1.1.0: its docs describe the new workflow. `COMMANDS.md`
+  has a `quirk test` section; `STDLIB.md` and `PACKAGES.md` show
+  `test_*` functions. `tools/check_test_runner.sh` (in CI) covers it.
+
 ## [7.9.5] — 2026-11-09 — unknown methods caught by `--check`, better hints
 
 - **Unknown methods are reported by the type checker.** `p.gret()` or

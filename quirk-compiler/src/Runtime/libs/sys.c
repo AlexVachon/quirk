@@ -50,6 +50,9 @@ static void quirk_crash_handler(int sig) {
                         : (sig == SIGBUS)  ? "SIGBUS (bus error)"
                         : (sig == SIGFPE)  ? "SIGFPE (arithmetic error)"
                         :                    "fatal signal";
+    // Piped stdout is block-buffered; keep what the program printed so far
+    // (`quirk test` reads its per-test markers from it).
+    fflush(stdout);
     fprintf(stderr, "\nQuirk runtime error: %s\n", signame);
     if (quirk_shadow_sp > 0) {
         static char tb[16384];
@@ -126,6 +129,7 @@ int quirk_shadow_sp = 0;
 void quirk_push_frame(const char* func, const char* file, int line) {
     if (quirk_shadow_sp >= 1024) {
         // Stack overflow — print trace and abort with a clear message.
+        fflush(stdout);
         fprintf(stderr, "\nQuirk runtime error: stack overflow (recursion deeper than 1024 calls)\n");
         static char tb[16384];
         quirk_format_frames_elided(tb, sizeof(tb), quirk_shadow_sp);

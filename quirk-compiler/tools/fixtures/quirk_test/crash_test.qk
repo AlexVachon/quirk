@@ -1,0 +1,5 @@
+// Fixture for tools/check_test_runner.sh: a test that kills the process.
+define down(n: Int) -> Int { return down(n + 1) }
+define test_before() -> void { print("fine") }
+define test_crashes() -> void { print(down(0)) }
+define test_after() -> void { print("never runs") }

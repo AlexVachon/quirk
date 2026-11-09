@@ -70,7 +70,7 @@ static std::string self_binary();
 
 namespace qpm {
 
-constexpr const char* QUIRK_VERSION = "7.9.5";
+constexpr const char* QUIRK_VERSION = "7.10.0";
 
 namespace fs = std::filesystem;
 
@@ -4175,7 +4175,20 @@ struct TestFileResult {
     int exitCode = 0;
     bool sawSummary = false;
     std::string tail;     // last lines of output for diagnostic display
+    // `define test_*()` files: one entry per test, from the generated
+    // runner's `##quirk-test:` marker lines (see testHarnessSource).
+    struct Case { std::string name; bool ok = false; std::string output; bool ran = true; };
+    std::vector<Case> cases;
+    bool structured = false;
 };
+
+// A traceback line for the runner `main()` quirk test generates: it has no
+// source line under it, so it's just noise in a test's failure.
+static bool is_generated_main_frame(const std::string& line, const std::string& next) {
+    return line.rfind("  File \"", 0) == 0 && line.size() > 9 &&
+           line.compare(line.size() - 9, 9, ", in main") == 0 &&
+           next.rfind("    ", 0) != 0;
+}
 
 // Run one test file: spawn `<self> run <file>` and parse the framework's
 // summary. The framework prints either "N passed" (success) or
@@ -4187,19 +4200,33 @@ struct TestFileResult {
 // `timeout(1)` from coreutils (always present on Linux); on a kill the
 // exit code surfaces as 124 and the file shows up as a failure with a
 // "(timeout)" annotation. 0 disables the cap.
-static TestFileResult run_one_test_file(const fs::path& file, int timeoutSecs) {
+static TestFileResult run_one_test_file(const fs::path& file, int timeoutSecs,
+                                        const std::string& onlyTests = "") {
     TestFileResult r;
     r.file = file.string();
     // QUIRK_DEBUG_SKIP=1 turns any `debug.breakpoint()` left in the
     // source into a no-op so tests never hang waiting on stdin.
     // Anyone wanting an interactive break should `quirk run` the file
     // directly.
+    // coreutils `timeout`; macOS has none by default (Homebrew installs it
+    // as `gtimeout`). Without either the cap is skipped.
+    static const std::string timeoutBin = [] {
+        if (std::system("command -v timeout >/dev/null 2>&1") == 0) return std::string("timeout");
+        if (std::system("command -v gtimeout >/dev/null 2>&1") == 0) return std::string("gtimeout");
+        return std::string();
+    }();
     std::string cmd;
-    if (timeoutSecs > 0) {
-        cmd = "timeout --foreground " + std::to_string(timeoutSecs) + "s ";
+    if (timeoutSecs > 0 && !timeoutBin.empty()) {
+        cmd = timeoutBin + " --foreground " + std::to_string(timeoutSecs) + "s ";
     }
+    // --test-harness: a file of `define test_*()` functions (no main) gets a
+    // generated runner; files with their own main() run unchanged.
+    std::string k;
+    for (char c : onlyTests) { if (c == '\'') k += "'\\''"; else k += c; }
     cmd += "env QUIRK_DEBUG_SKIP=1 \"" + self_binary()
-        + "\" run \"" + file.string() + "\" 2>&1";
+        + "\" run --test-harness"
+        + (onlyTests.empty() ? std::string() : " '--test-k=" + k + "'")
+        + " \"" + file.string() + "\" 2>&1";
     FILE* pipe = popen(cmd.c_str(), "r");
     if (!pipe) { r.failed = 1; r.exitCode = -1; return r; }
     std::string out;
@@ -4213,7 +4240,31 @@ static TestFileResult run_one_test_file(const fs::path& file, int timeoutSecs) {
     std::istringstream iss(out);
     std::string line;
     std::vector<std::string> lines;
+    TestFileResult::Case* open = nullptr;
+    std::vector<std::string> planned;   // every test the runner will call
     while (std::getline(iss, line)) {
+        // Generated-runner markers: one test's output sits between them.
+        static const std::string kStart = "##quirk-test:start ",
+                                 kPass  = "##quirk-test:pass ",
+                                 kFail  = "##quirk-test:fail ";
+        if (line.rfind("##quirk-test:begin", 0) == 0) {
+            r.structured = true;
+            std::istringstream names(line.substr(18));
+            for (std::string n; names >> n; ) planned.push_back(n);
+            continue;
+        }
+        if (line.rfind(kStart, 0) == 0) {
+            r.structured = true;
+            r.cases.push_back({line.substr(kStart.size()), false, ""});
+            open = &r.cases.back();
+            continue;
+        }
+        if (open && (line.rfind(kPass, 0) == 0 || line.rfind(kFail, 0) == 0)) {
+            open->ok = line.rfind(kPass, 0) == 0;
+            open = nullptr;
+            continue;
+        }
+        if (open) { open->output += line + "\n"; continue; }
         lines.push_back(line);
 
         // Strip ANSI escapes so "\x1b[32m12 passed\x1b[0m" matches.
@@ -4261,6 +4312,36 @@ static TestFileResult run_one_test_file(const fs::path& file, int timeoutSecs) {
         }
     }
 
+    if (r.structured) {
+        // A test that never reported crashed the process (or hit the
+        // timeout) — the tests after it didn't run.
+        if (open) open->output += r.exitCode == 124 ? "(timed out)\n" : "(the test crashed the process)\n";
+        // Tests after a crash never started: list them as not run.
+        for (const auto& n : planned) {
+            bool seen = false;
+            for (auto& c : r.cases) if (c.name == n) { seen = true; break; }
+            if (!seen) r.cases.push_back({n, false, "", false});
+        }
+        r.passed = r.failed = 0;
+        for (auto& c : r.cases) {
+            if (!c.ran) continue;
+            (c.ok ? r.passed : r.failed)++;
+            std::istringstream os(c.output);
+            std::vector<std::string> ol;
+            for (std::string l; std::getline(os, l); ) ol.push_back(l);
+            std::string kept;
+            for (size_t i = 0; i < ol.size(); i++)
+                if (!is_generated_main_frame(ol[i], i + 1 < ol.size() ? ol[i + 1] : ""))
+                    kept += ol[i] + "\n";
+            c.output = kept;
+        }
+        r.sawSummary = true;
+    } else if (!r.sawSummary) {
+        // A plain main() test file is one test: it passed if it exited 0.
+        (r.exitCode == 0 ? r.passed : r.failed) = 1;
+        r.sawSummary = true;
+    }
+
     // Keep the last ~15 lines for the tail diagnostic on failure.
     size_t start = lines.size() > 15 ? lines.size() - 15 : 0;
     for (size_t i = start; i < lines.size(); i++) r.tail += lines[i] + "\n";
@@ -4272,21 +4353,32 @@ static int cmd_test(const std::vector<std::string>& args) {
     bool verbose = false;
     int  timeoutSecs = 30;           // 0 = no cap
     std::string filter;
+    std::string onlyTests;           // -k: test-name substring
     for (size_t i = 0; i < args.size(); i++) {
         const std::string& a = args[i];
         if (a == "--help" || a == "-h") {
             std::cout <<
                 "quirk test [flags] [<path>...]\n"
-                "    Discover *_test.qk files and run them with the test framework.\n"
-                "    Default path is ./tests if it exists, else the current directory.\n"
+                "    Run the tests in *_test.qk files (default: ./tests if it exists,\n"
+                "    else the current directory; paths may be files or directories).\n"
                 "\n"
-                "  -v, --verbose         Print each file's full output\n"
+                "    Every `define test_*()` in a test file is a test; each runs on its\n"
+                "    own, so one failure doesn't stop the rest. Optional `setup()` /\n"
+                "    `teardown()` run around each test. A file with its own main()\n"
+                "    runs as one test (it fails when it exits non-zero).\n"
+                "\n"
+                "  -k <substr>           Run only tests whose name contains <substr>\n"
+                "  -v, --verbose         Print each test's output, passing ones too\n"
                 "  --filter <substr>     Run only files whose path contains <substr>\n"
                 "  --timeout <secs>      Per-file wall-clock cap (default 30, 0 = off)\n"
                 "                        Tests over the cap fail with exit 124.\n";
             return 0;
         }
         if (a == "-v" || a == "--verbose") { verbose = true; continue; }
+        if (a == "-k") {
+            if (i + 1 >= args.size()) { log::err("test: -k needs a substring"); return 1; }
+            onlyTests = args[++i]; continue;
+        }
         if (a == "--filter") {
             if (i + 1 >= args.size()) { log::err("test: --filter needs a substring"); return 1; }
             filter = args[++i]; continue;
@@ -4353,6 +4445,19 @@ static int cmd_test(const std::vector<std::string>& args) {
         return 0;
     }
 
+    // -k selects tests by name. A file with its own main() has no named
+    // tests, so it runs only when its file name matches.
+    if (!onlyTests.empty()) {
+        static const std::regex hasMain(R"((^|\n)\s*define\s+main\s*\()");
+        files.erase(std::remove_if(files.begin(), files.end(), [&](const fs::path& p) {
+            std::ifstream in(p);
+            std::stringstream ss; ss << in.rdbuf();
+            return std::regex_search(ss.str(), hasMain) &&
+                   p.filename().string().find(onlyTests) == std::string::npos;
+        }), files.end());
+        if (files.empty()) { log::note("no tests match -k '" + onlyTests + "'"); return 0; }
+    }
+
     std::cout << log::bold("Running ") << files.size() << " test file(s)\n\n";
 
     int totalPassed = 0, totalFailed = 0, filesOk = 0, filesFail = 0;
@@ -4362,7 +4467,7 @@ static int cmd_test(const std::vector<std::string>& args) {
         // show both the "…" and final lines, which is noisy.
         bool tty = log::stdout_is_tty();
         if (tty) std::cout << log::dim("  …") << " " << f.string() << std::flush;
-        auto res = run_one_test_file(f, timeoutSecs);
+        auto res = run_one_test_file(f, timeoutSecs, onlyTests);
         totalPassed += res.passed;
         totalFailed += res.failed;
         // A file is a failure only if the process itself didn't exit 0.
@@ -4400,16 +4505,32 @@ static int cmd_test(const std::vector<std::string>& args) {
             failures.push_back(res);
             std::cout << "  " << log::RED() << "✗" << log::RESET() << " "
                       << f.string();
-            if (!tally.empty())
-                std::cout << "  " << log::dim(tally);
-            else if (res.exitCode == 124)
+            if (res.exitCode == 124)
                 std::cout << "  " << log::dim("(timeout)");
-            else
+            else if (!res.structured && res.passed + res.failed <= 1)
                 std::cout << "  " << log::dim("(exit " + std::to_string(res.exitCode) + ")");
+            else if (!tally.empty())
+                std::cout << "  " << log::dim(tally);
             std::cout << "\n";
         }
 
-        if (verbose) {
+        if (res.structured) {
+            if (res.cases.empty())
+                std::cout << "      " << log::dim(onlyTests.empty() ? "(no test_* functions)"
+                                                                     : "(no tests match -k)") << "\n";
+            for (auto& c : res.cases) {
+                if (!c.ran) {
+                    std::cout << "      " << log::dim("- " + c.name + " (not run: an earlier test crashed)") << "\n";
+                    continue;
+                }
+                std::cout << "      " << (c.ok ? std::string(log::GREEN()) + "✓" : std::string(log::RED()) + "✗")
+                          << log::RESET() << " " << c.name << "\n";
+                if (verbose && !c.output.empty()) {
+                    std::istringstream os(c.output);
+                    for (std::string l; std::getline(os, l); ) std::cout << "          " << log::dim(l) << "\n";
+                }
+            }
+        } else if (verbose) {
             std::cout << log::dim("─── output ───") << "\n" << res.tail
                       << log::dim("──────────────") << "\n";
         }
@@ -4419,6 +4540,24 @@ static int cmd_test(const std::vector<std::string>& args) {
     if (filesFail > 0) {
         std::cout << log::bold("Failures:") << "\n";
         for (auto& res : failures) {
+            if (res.structured) {
+                // Each failed test with what it printed (its traceback).
+                for (auto& c : res.cases) {
+                    if (c.ok || !c.ran) continue;
+                    std::cout << log::RED() << "  " << res.file << " :: " << c.name << log::RESET() << "\n";
+                    std::istringstream os(c.output);
+                    for (std::string l; std::getline(os, l); ) std::cout << "      " << l << "\n";
+                    std::cout << "\n";
+                }
+                // Compile errors and the like come before the first test.
+                if (res.cases.empty() && !res.tail.empty()) {
+                    std::cout << log::RED() << "  " << res.file << log::RESET() << "\n";
+                    std::istringstream iss(res.tail);
+                    for (std::string l; std::getline(iss, l); ) std::cout << "      " << l << "\n";
+                    std::cout << "\n";
+                }
+                continue;
+            }
             std::cout << log::RED() << "  " << res.file << log::RESET() << "\n";
             // Indent the captured tail.
             std::istringstream iss(res.tail);
@@ -4444,7 +4583,7 @@ static int cmd_test(const std::vector<std::string>& args) {
               << filesFail << " failed" << log::RESET()
               << log::dim(" / " + std::to_string(totalFiles) + " total")
               << "\n"
-              << "  cases: "
+              << "  tests: "
               << log::GREEN() << totalPassed << " passed" << log::RESET()
               << ", "
               << (totalFailed > 0 ? log::RED() : log::DIM())
@@ -5944,7 +6083,7 @@ static const std::vector<CliCommand>& cli_commands() {
         {"",           "",                            "Also: `quirk <file.qk>`",      "RUN CODE", "",   "", "", false},
         {"eval",       "eval \"<code>\"",             "Run a one-liner",                 "RUN CODE", "-c", "", "", false},
         {"module",     "module <name>",               "Invoke a module's main()",        "RUN CODE", "-m", "", "", false},
-        {"test",       "test [<file>...]",            "Run *_test.qk files",          "RUN CODE", "t",  "", "", false},
+        {"test",       "test [<path>...]",            "Run test_* functions in *_test.qk files", "RUN CODE", "t",  "", "", false},
         {"watch",      "watch <file.qk>",          "Re-run a script on every save",   "RUN CODE", "",   "", "", false},
         {"repl",       "repl",                        "Interactive shell",               "RUN CODE", "",   "", "", false},
 
@@ -7719,12 +7858,13 @@ static std::string help_for(const std::string& cmdIn) {
                "    With no args: list available scripts.\n"
                "    `quirk run <name>` also works as long as <name> isn't a path.\n";
     if (cmd == "test" || cmd == "t")
-        return "quirk test [<file>...]\n"
+        return "quirk test [-k <name>] [-v] [<path>...]\n"
                "    Short alias: quirk t\n"
-               "    Run *_test.qk files. With no args, runs every test under\n"
-               "    tests/ and src/. Each file's `main()` is invoked; non-zero\n"
-               "    exit means failure. Set QUIRK_TEST_FILTER=<substr> to run\n"
-               "    only matching files.\n";
+               "    Run the tests in *_test.qk files (default: ./tests, else the\n"
+               "    current directory). Every `define test_*()` is a test and runs on\n"
+               "    its own; optional setup() / teardown() run around each one. A\n"
+               "    file with its own main() runs as one test. -k <name> runs only\n"
+               "    tests whose name contains <name>. See `quirk test --help`.\n";
     if (cmd == "auth")
         return "quirk auth login                              GitHub device-flow login\n"
                "quirk auth status                             show stored token + scopes\n"

@@ -166,6 +166,14 @@ jobs:
         # VS Code extension and quirk-lsp read them.
         run: tools/check_editor_json.sh
 
+      - name: Check quirk test
+        working-directory: quirk-compiler
+        env:
+          QUIRK_HOME: ${{ github.workspace }}/quirk-compiler
+        # `define test_*()` discovery, per-test results, setup/teardown,
+        # crashes and -k, on tools/fixtures/quirk_test.
+        run: tools/check_test_runner.sh
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -273,6 +281,14 @@ jobs:
         # `--symbols-json` types and `--diagnostics-json` codes, as the
         # VS Code extension and quirk-lsp read them.
         run: tools/check_editor_json.sh
+
+      - name: Check quirk test
+        working-directory: quirk-compiler
+        env:
+          QUIRK_HOME: ${{ github.workspace }}/quirk-compiler
+        # `define test_*()` discovery, per-test results, setup/teardown,
+        # crashes and -k, on tools/fixtures/quirk_test.
+        run: tools/check_test_runner.sh
 
       - name: Rehearse the release
         working-directory: quirk-compiler

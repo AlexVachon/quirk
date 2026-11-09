@@ -444,34 +444,32 @@ define main() -> void {
 
 ## `test`
 
+Assertions for `quirk test`. In a `*_test.qk` file, every
+`define test_*()` is a test; `quirk test` runs each one separately and
+reports it (see [COMMANDS.md](COMMANDS.md#quirk-test)).
+
 ```quirk
+// tests/math_test.qk
 use test
-from test use { TestCase }
+
+define test_addition() -> void {
+    test.assert_eq(2 + 2, 4)
+}
+
+define test_parse_rejects_text() -> void {
+    test.assert_throws(fn() { Int.parse("x") }, "ValueError")
+}
 ```
 
 | Function | |
 |----------|--|
-| `TestCase(name, fn)` | Constructor for a test case |
-| `test.run_all(cases) -> Int` | Returns failure count |
-| `test.assert_eq(actual, expected)` | |
-| `test.assert_ne(actual, expected)` | |
-| `test.assert_true(cond)` / `assert_false(cond)` | |
-| `test.assert_approx(actual, expected, eps)` | Doubles |
-| `test.assert_throws(fn)` | Function should throw |
-| `test.assert_contains(haystack, needle)` | Substring or list element |
-
-```quirk
-use test
-from test use { TestCase }
-
-define main() -> void {
-    t1 := TestCase("addition", fn() { test.assert_eq(2 + 2, 4) })
-    t2 := TestCase("string concat", fn() {
-        test.assert_eq("a" + "b", "ab")
-    })
-    test.run_all([t1, t2])
-}
-```
+| `test.assert_eq(actual, expected, msg = "")` | Equal by value (collections by contents) |
+| `test.assert_ne(actual, expected, msg = "")` | |
+| `test.assert_true(cond, msg = "")` / `assert_false(cond, msg = "")` | |
+| `test.assert_approx(actual, expected, tolerance = 0.0001, msg = "")` | Doubles |
+| `test.assert_throws(fn, type = "", msg = "")` | `fn` must throw (an exception of `type`, if given) |
+| `test.assert_contains(haystack, needle, msg = "")` | Substring or list element |
+| `TestCase(name, fn)` + `test.run_all(cases) -> Int` | Run a list of cases from your own `main()`; returns the failure count |
 
 ---
 

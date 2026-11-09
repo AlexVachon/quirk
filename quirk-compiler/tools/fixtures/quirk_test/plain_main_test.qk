@@ -1,0 +1,2 @@
+// Fixture for tools/check_test_runner.sh: an old-style test with main().
+define main() -> void { print("ok") }

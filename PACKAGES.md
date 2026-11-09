@@ -136,7 +136,7 @@ my-lib/
 ├── src/
 │   └── index.quirk         # module entry point — `use my-lib` resolves here
 └── tests/
-    └── my_lib_test.quirk   # optional; run with `quirk tests/*.quirk`
+    └── my_lib_test.qk      # optional; run with `quirk test`
 ```
 
 The compiler resolves `use my-lib` to either:
@@ -208,21 +208,15 @@ That's it — there's no central registry. The package spec IS the source locati
 
 ### Testing your library
 
-```bash
-quirk tests/my_lib_test.quirk
-```
-
-Use the `test` stdlib module for a structured runner:
+Put tests in `tests/*_test.qk` and run `quirk test`. Every `define test_*()`
+is a test:
 
 ```quirk
 use test
-from test use { TestCase }
+use my-lib
 
-define main() -> void {
-    t1 := TestCase("format roundtrip", fn() {
-        test.assert_eq(my_lib.format(42), "42")
-    })
-    test.run_all([t1])
+define test_format_roundtrip() -> void {
+    test.assert_eq(my_lib.format(42), "42")
 }
 ```
 

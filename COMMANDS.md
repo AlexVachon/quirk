@@ -9,6 +9,7 @@ The `quirk` binary is both the compiler/runner and the package manager. This pag
 | [`quirk run <file>`](#quirk-run) | `quirk <file>` | Run a Quirk script |
 | [`quirk eval "<code>"`](#quirk-eval) | `-c` | Run an inline one-liner |
 | [`quirk module <name>`](#quirk-module) | `-m` | Run an installed module's `main()` |
+| [`quirk test [<path>...]`](#quirk-test) | `t` | Run the `test_*` functions in `*_test.qk` files |
 | [`quirk --debug <file>`](#quirk---debug) | — | Run under the interactive `(qdb)` line stepper |
 | [`quirk new <name>`](#quirk-new) | — | Scaffold a new package |
 | [`quirk init`](#quirk-init) | — | Write a `quirk.toml` in the current dir |
@@ -95,6 +96,53 @@ quirk -m my-lib --debug some-arg
 ```
 
 Mirrors `python -m <module>`. Arguments after the module name are forwarded to its `main()` via `sys.argv()`.
+
+---
+
+### `quirk test`
+
+```bash
+quirk test                       # every *_test.qk under ./tests (or the current directory)
+quirk test tests/math_test.qk    # one file (or pass directories)
+quirk test -k parse              # only tests whose name contains "parse"
+quirk test -v                    # also show what passing tests printed
+```
+
+In a `*_test.qk` file, every `define test_*()` that takes no arguments is a
+test. Each one runs on its own — a failing assertion or a runtime error fails
+that test and the rest still run. Optional `setup()` and `teardown()`
+functions run before and after every test.
+
+```quirk
+// tests/math_test.qk
+use test
+
+define test_addition() -> void {
+    test.assert_eq(2 + 2, 4)
+}
+
+define test_parse_rejects_text() -> void {
+    test.assert_throws(fn() { Int.parse("x") }, "ValueError")
+}
+```
+
+```
+  ✗ tests/math_test.qk  (1 passed, 1 failed)
+      ✓ test_addition
+      ✗ test_parse_rejects_text
+
+Failures:
+  tests/math_test.qk :: test_parse_rejects_text
+      Traceback (most recent call last):
+        File "tests/math_test.qk", line 9, in test_parse_rejects_text
+          test.assert_throws(fn() { Int.parse("x") }, "ValueError")
+      AssertionError: assert_throws failed: expected ValueError but no exception was thrown
+```
+
+A test file with its own `main()` runs as a single test, which fails if it
+exits non-zero. Each file has a 30 s cap (`--timeout <secs>`, `0` for none);
+`--filter <substr>` selects files by path. Exit status is 1 when any test
+failed.
 
 ---
 

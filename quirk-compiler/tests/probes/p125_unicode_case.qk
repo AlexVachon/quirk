@@ -16,7 +16,8 @@ define main() -> void {
     if not "ÉTÉ".is_upper() or "Été".is_upper() { fail("is_upper"); return }
     if not "été".is_lower()                     { fail("is_lower"); return }
     if not "héllo".is_alpha() or "é1".is_alpha() { fail("is_alpha"); return }
-    if "straße".upper() != "STRAßE"             { fail("ß has no 1-char upper case"); return }
+    if "straße".upper() != "STRASSE"            { fail("ß upper-cases to SS"); return }
+    if "ßa".title() != "Ssa"                    { fail("ß title-cases to Ss"); return }
     if "MiXeD 123".lower() != "mixed 123"       { fail("ASCII unchanged"); return }
     print("p125 ok")
 }

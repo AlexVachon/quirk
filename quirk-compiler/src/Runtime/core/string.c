@@ -699,8 +699,7 @@ String* make_String(const char* raw) {
 // ---- Case mapping -----------------------------------------------------
 // Simple (one-to-one) mappings for ASCII, Latin-1, Latin Extended-A, Greek
 // and Cyrillic — enough for most European text, without locale tables
-// (C's towupper only maps ASCII in the "C" locale). ß has no one-character
-// upper case and stays ß.
+// (C's towupper only maps ASCII in the "C" locale). ß upper-cases to "SS".
 static uint32_t u8_decode(const unsigned char* p, int64_t avail, int* used) {
     int n = u8_bytes(p[0]);
     if (n > avail) n = 1;
@@ -790,16 +789,28 @@ static String* u8_case(String* self, int mode) {
         uint32_t c = u8_decode(p + i, n - i, &used);
         uint32_t r = c;
         int alpha = cp_is_alpha(c);
+        int up = 0;   // this character is being upper-cased
         switch (mode) {
-            case CASE_UPPER: r = cp_upper(c); break;
-            case CASE_LOWER: r = cp_lower(c); break;
-            case CASE_SWAP:  r = cp_is_upper(c) ? cp_lower(c) : cp_upper(c); break;
-            case CASE_TITLE: r = prev_cased ? cp_lower(c) : cp_upper(c); prev_cased = alpha; break;
-            case CASE_CAPITALIZE: r = first ? cp_upper(c) : cp_lower(c); break;
+            case CASE_UPPER: up = 1; break;
+            case CASE_LOWER: break;
+            case CASE_SWAP:  up = !cp_is_upper(c); break;
+            case CASE_TITLE: up = !prev_cased; prev_cased = alpha; break;
+            case CASE_CAPITALIZE: up = first; break;
             case CASE_SENTENCE:
-                if (alpha) { r = expect_capital ? cp_upper(c) : cp_lower(c); expect_capital = 0; }
+                if (alpha) { up = expect_capital; expect_capital = 0; }
                 else if (c == '.' || c == '!' || c == '?') expect_capital = 1;
                 break;
+        }
+        if (mode != CASE_SENTENCE || alpha) r = up ? cp_upper(c) : cp_lower(c);
+        // ß has no one-letter capital: "SS" in upper case, "Ss" as the
+        // first letter of a title-cased word (as in Python).
+        if (c == 0xDF && up) {
+            int whole = mode == CASE_UPPER || mode == CASE_SWAP;
+            out[o++] = 'S';
+            out[o++] = whole ? 'S' : 's';
+            i += used;
+            first = 0;
+            continue;
         }
         if (r == c) { memcpy(out + o, p + i, (size_t)used); o += used; }
         else o += u8_encode(r, out + o);

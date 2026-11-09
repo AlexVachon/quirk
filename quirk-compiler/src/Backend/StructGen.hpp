@@ -163,10 +163,12 @@ class StructGen {
 
     // An Int stored in an untyped (i8*) slot, via boxIntToOpaque (inline
     // when it fits in 32 bits, else boxed; 0 → the shared boxed zero, so
-    // a Map value 0 doesn't read back as null). Other widths (Bool /
-    // Char) keep the plain inline encoding.
+    // a Map value 0 doesn't read back as null); a Bool as a boxed Bool.
+    // Char keeps the plain inline encoding.
     Value* encodeUntypedInt(Value* v, Type* target) {
-        if (v->getType()->isIntegerTy(64) || v->getType()->isIntegerTy(32))
+        // Bool (i1) too: boxIntToOpaque boxes it as a Bool — inline, `false`
+        // would be the null pointer.
+        if (v->getType()->isIntegerTy(64) || v->getType()->isIntegerTy(32) || v->getType()->isIntegerTy(1))
             return quirk::boxIntToOpaque(Context, TheModule, Builder, v, target);
         return Builder.CreateIntToPtr(v, target);
     }

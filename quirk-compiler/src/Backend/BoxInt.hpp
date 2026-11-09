@@ -44,6 +44,15 @@ inline llvm::Value* boxIntToOpaque(
         }
         return boxed;
     };
+
+    // A Bool (i1) boxes as a Bool. As an Int, `true` became 1 and `false`
+    // became 0 — the null pointer — so `m.put(k, false)`, `xs.append(true)`
+    // and `m[k] = false` stored 1 / null.
+    if (val->getType()->isIntegerTy(1)) {
+        FunctionCallee boxBool = TheModule->getOrInsertFunction(
+            "Core_Primitives_Any_box_bool", FunctionType::get(i8PtrTy, {i32}, false));
+        return finalize(Builder.CreateCall(boxBool, {Builder.CreateZExt(val, i32)}));
+    }
     // Widen to Int's i64 (Bool zero-extends, narrower ints sign-extend).
     Value* v = val;
     if (v->getType()->isIntegerTy(1)) v = Builder.CreateZExt(v, i64);

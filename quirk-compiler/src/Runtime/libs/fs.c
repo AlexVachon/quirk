@@ -168,6 +168,42 @@ int64_t Fs_remove_raw(String* path) {
     return remove(p) == 0 ? 0 : -1;
 }
 
+#ifndef _WIN32
+// Delete `p` and, for a directory, everything under it. Symlinks are
+// removed themselves, never followed (lstat), as `rm -rf` does.
+static int fs__remove_tree(const char* p) {
+    struct stat st;
+    if (lstat(p, &st) != 0) return -1;
+    if (!S_ISDIR(st.st_mode)) return unlink(p) == 0 ? 0 : -1;
+    DIR* d = opendir(p);
+    if (!d) return -1;
+    int rc = 0;
+    struct dirent* e;
+    size_t plen = strlen(p);
+    while ((e = readdir(d)) != NULL) {
+        if (strcmp(e->d_name, ".") == 0 || strcmp(e->d_name, "..") == 0) continue;
+        size_t n = plen + 1 + strlen(e->d_name) + 1;
+        char* child = (char*)malloc(n);
+        snprintf(child, n, "%s/%s", p, e->d_name);
+        if (fs__remove_tree(child) != 0) rc = -1;
+        free(child);
+    }
+    closedir(d);
+    if (rc == 0 && rmdir(p) != 0) rc = -1;
+    return rc;
+}
+#endif
+
+int64_t Fs_remove_tree_raw(String* path) {
+    char* p = make_safe_cstr(path);
+    if (!p || !*p) return -1;
+#ifdef _WIN32
+    return -1;   // not implemented on Windows yet
+#else
+    return fs__remove_tree(p);
+#endif
+}
+
 int64_t Fs_rename_raw(String* from, String* to) {
     char* a = make_safe_cstr(from);
     char* b = make_safe_cstr(to);

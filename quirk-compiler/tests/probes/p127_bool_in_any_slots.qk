@@ -1,0 +1,23 @@
+// p127 — a Bool stored where any value can go stays a Bool (v7.11.1).
+// `m.put(k, true)` / `xs.append(true)` stored the Int 1, and `false` was
+// the Int 0 — the null pointer — so `m[k] = false` read back as null and
+// json.dumps wrote `"ok":1`.
+
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+define main() -> void {
+    m := Map()
+    m.put("t", true)
+    m.put("f", false)
+    m["g"] = false
+    if type(m.get("t")) != "Bool"         { fail("put true is " + type(m.get("t"))); return }
+    if m.get("f") == null                 { fail("put false read back as null"); return }
+    if m["g"] == null                     { fail("m[k] = false read back as null"); return }
+    if "${m}" != "{\"t\": true, \"f\": false, \"g\": false}" { fail("map prints " + "${m}"); return }
+    xs := []
+    xs.append(true)
+    xs.append(false)
+    if "${xs}" != "[true, false]"         { fail("list prints " + "${xs}"); return }
+    if type(xs[1]) != "Bool"              { fail("appended false is " + type(xs[1])); return }
+    print("p127 ok")
+}

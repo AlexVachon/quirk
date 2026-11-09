@@ -1,17 +1,5 @@
 use fs
 
-// Delete `path` and everything under it (fs has no recursive remove).
-define remove_tree(path: String) -> void {
-    if fs.is_dir(path) {
-        for entry in fs.list_dir(path) {
-            remove_tree(fs.join(path, entry))
-        }
-        fs.rmdir(path)
-    } else {
-        fs.remove(path)
-    }
-}
-
 define main() -> void {
     print("=== path helpers ===")
     print("join('/etc', 'hosts')         = ${fs.join('/etc', 'hosts')}")
@@ -41,7 +29,7 @@ define main() -> void {
     if fs.exists(base) {
         // Clean up from a prior failed run (it may have died with
         // `deep/nested/path` still there).
-        remove_tree(base)
+        fs.remove_tree(base)
     }
 
     fs.mkdir(base)

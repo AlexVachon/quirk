@@ -189,6 +189,15 @@ void quirk_capture_traceback(void* exc_ptr) {
 
 static const char* qs_cstr(String* s) { return (s && s->buffer) ? s->buffer : ""; }
 
+// `Exception.print_traceback()` (typing's exceptions/base.quirk): to stderr
+// like an uncaught exception's, after anything already printed to stdout.
+void Core_Exceptions_Base__eprint(String* text) {
+    fflush(stdout);
+    fputs(text && text->buffer ? text->buffer : "", stderr);
+    fputc('\n', stderr);
+    fflush(stderr);
+}
+
 void quirk_print_uncaught(void* exc_ptr) {
     QuirkException* exc = (QuirkException*)exc_ptr;
     fflush(stdout);

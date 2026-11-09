@@ -154,7 +154,8 @@ STDLIB_TAG_prompt ?= v1.1.0
 # use { Map, List }` shape. v1.15.2 documents Int as 64-bit (v7.0.0).
 # v1.16.0: List.sort's comparator is optional (native sort, v7.9.0).
 # v1.16.1: ljust / rjust / center pad with a space by default (v7.9.1).
-STDLIB_TAG_typing ?= v1.16.1
+# v1.16.2: Exception.print_traceback() writes to stderr (v7.11.1).
+STDLIB_TAG_typing ?= v1.16.2
 # html v1.0.0 is the initial release (compiler v3.5.0+). The
 # explicit pin keeps a global STDLIB_TAG bump from accidentally
 # pulling a v2 with potentially breaking changes.
@@ -167,6 +168,8 @@ STDLIB_TAG_html ?= v1.0.1
 STDLIB_TAG_net ?= v1.2.0
 # test v1.1.0 documents `quirk test`'s `define test_*()` discovery (v7.10.0).
 STDLIB_TAG_test ?= v1.1.0
+# fs v1.1.0 adds remove_tree (runtime Fs_remove_tree_raw, v7.11.1).
+STDLIB_TAG_fs ?= v1.1.0
 
 # --- INSTALL / UNINSTALL --------------------------------------------------
 # Copy the freshly-built compiler + runtime into $(PREFIX) (default
@@ -204,6 +207,7 @@ bootstrap-stdlib:
 	        html)   tag="$(STDLIB_TAG_html)"   ;;                                 \
 	        net)    tag="$(STDLIB_TAG_net)"    ;;                                 \
 	        test)   tag="$(STDLIB_TAG_test)"   ;;                                 \
+	        fs)     tag="$(STDLIB_TAG_fs)"     ;;                                 \
 	    esac;                                                                     \
 	    if [ -f "packages/$$pkg/index.quirk" ] &&                                 \
 	       [ "$$(cat packages/$$pkg/.version 2>/dev/null)" = "$$tag" ]; then      \

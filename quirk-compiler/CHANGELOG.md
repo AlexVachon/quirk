@@ -5,6 +5,27 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.11.1] — 2026-11-09 — Bool in Map / List, `fs.remove_tree`, `ß`
+
+- **A Bool stored as a value stays a Bool.** `m.put(k, true)`,
+  `xs.append(true)` and struct fields typed `Any` stored the Int `1`, and
+  `false` was the Int `0` — the null pointer — so `m[k] = false` read
+  back as `null`, `type(...)` said `Int`, and `json.dumps` wrote
+  `"ok":1`. Map and list literals were already right.
+- **`fs.remove_tree(path)`** deletes a directory and everything in it,
+  like `rm -rf`. Symlinks are removed themselves, never followed (fs
+  v1.1.0).
+- **`"straße".upper()` is `"STRASSE"`** (and `"ß…".title()` starts
+  `"Ss"`), as in Python; `ß` has no one-letter capital.
+- **`Exception.print_traceback()` writes to stderr**, like an uncaught
+  exception (typing v1.16.2).
+- `tests/encoding_test.quirk` no longer claims `json.dumps` turns the
+  String `"30"` into the number `30` — it never did, and shouldn't.
+- The `fs`, `encoding`, `regex`, `datetime` and `net` packages have
+  `quirk test` suites in their repos.
+- `TODO.md` lists the larger work ahead: concurrency, performance,
+  package discovery.
+
 ## [7.11.0] — 2026-11-09 — `assert` statement; the repo's tests use `quirk test`
 
 - **`assert cond[, msg]`** throws `AssertionError` unless `cond` holds.

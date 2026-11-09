@@ -5,6 +5,35 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.18.0] — 2026-11-09 — `process`, fields on untyped values
+
+- **New stdlib package `process`** (v1.0.1): run other programs.
+  `process.run(["git", "status"])` waits and returns a `RunResult` with
+  `code`, `stdout`, `stderr`, `timed_out` and `ok`; options `input`,
+  `cwd`, `env` / `inherit_env`, `timeout_ms`, `check`, `capture`,
+  `merge_stderr`. `process.shell(cmd)` goes through `/bin/sh -c`;
+  `process.output(args)` returns just stdout and throws `ProcessError` on
+  failure. `process.spawn(args)` returns a `Process` to `write` to,
+  `read` / `read_line` / `lines` from, `communicate` with, `wait` /
+  `wait_for` / `done`, `terminate` or `kill`. Arguments go to the program
+  as-is (no shell quoting); a missing program throws `FileNotFoundError`.
+  stdout and stderr are read together, so a program filling one pipe
+  can't stall. In an `async` task every wait lets other tasks run, and
+  `task.cancel()` kills the program and raises `CancelledError`. Until
+  now `sys.run(cmd)` (the exit code only) was the only way to start a
+  program. POSIX only for now.
+- **Reading a struct field from an untyped value works.** `resp.code`
+  where `resp` came from a `Callable`, a `Map.get` or a plain `List` was
+  a build error ("'Any' has no member 'code'") unless the binding was
+  annotated. It now reads the field after checking the value's runtime
+  type, over every struct with that field; the result has the field's
+  type when those structs agree (`resp.code + 1` is Int arithmetic). A
+  value of another type raises `TypeError`; `?.` gives null.
+- Fixed: `name: T = value` inside a function, where a module-level
+  variable has the same name — including one in the importing script —
+  wrote through that variable instead of declaring a local, and typed the
+  local as the global's type.
+
 ## [7.17.0] — 2026-11-09 — package discovery
 
 - **`quirk search [<term>...]`** lists the registry, stdlib and local-alias

@@ -2624,6 +2624,27 @@ std::string Sema::checkMemberAccess(MemberAccessNode *node)
                         [](char c) { return std::isdigit(static_cast<unsigned char>(c)); })) {
             return "Any";
         }
+        // A field of some struct, read from an untyped value (a Callable's
+        // result, a Map.get, a plain List's element): Codegen reads it
+        // after checking the value's runtime type. Typed as the field's
+        // type when every struct with that field agrees.
+        if (objType == "Any") {
+            static const std::set<std::string> runtimeTypes = {
+                "String", "List", "Map", "Set", "Queue", "Tuple", "Any", "File", "Callable", "Task"};
+            std::set<std::string> fieldTypes;
+            for (const auto& [sName, sNode] : structRegistry) {
+                if (runtimeTypes.count(sName)) continue;
+                std::string ft = resolveMember(sName, node->memberName);
+                if (ft == "unknown" || ft == "method") continue;
+                if (sNode && std::find(sNode->typeParams.begin(), sNode->typeParams.end(), baseType(ft))
+                        != sNode->typeParams.end()) ft = "Any";
+                fieldTypes.insert(ft);
+            }
+            if (!fieldTypes.empty()) {
+                node->dynFieldType = fieldTypes.size() == 1 ? *fieldTypes.begin() : "Any";
+                return node->dynFieldType;
+            }
+        }
         std::string msg = "'" + objType + "' has no member '" + node->memberName + "'";
         // The usual cause of an unexpected `Any` is a value flowing through
         // a `Callable` (whose return is type-erased) or a Map/List read.

@@ -2,6 +2,13 @@
 
 All notable changes to the extension land here. Versioning follows SemVer; minor bumps for new features, patches for fixes.
 
+## [0.8.2] — 2026-11-09 — `process` hovers
+
+- Hovers and completions for the new `process` stdlib package (compiler
+  7.17.0): `process.run`, `shell`, `output`, `spawn` and the `Process` /
+  `RunResult` members. The stdlib index also picks up `fs.remove_tree`,
+  `CancelledError` and the other symbols added since 0.8.1.
+
 ## [0.8.1] — 2026-11-09 — Task completions
 
 - `t.` on a task (compiler 7.13.0) completes `done()`, `wait(ms)` and

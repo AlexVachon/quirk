@@ -1951,6 +1951,71 @@ class LLVMCodegen {
         return phi;
     }
 
+    // `x.field` where x is an untyped value (a Callable's result, Map.get,
+    // a plain List's element): switch on its runtime type over every struct
+    // with that field and load it. `semaType` is what Sema typed the read
+    // (the field's type when all those structs agree, else "Any"); the
+    // result has that type, or is boxed for "Any". nullptr: no struct here
+    // has the field.
+    Value* emitDynamicField(const std::string& field, Value* obj, const std::string& semaType) {
+        std::vector<std::string> owners;
+        for (const auto& [name, st] : StructTypes) {
+            if (structGen->isVtableEligible(name) && structGen->hasField(name, field)) owners.push_back(name);
+        }
+        if (owners.empty()) return nullptr;
+        std::sort(owners.begin(), owners.end());
+
+        Type* i8p = Type::getInt8PtrTy(Context);
+        Type* i32 = Type::getInt32Ty(Context);
+        obj = Builder.CreateBitCast(obj, i8p);
+        FunctionCallee typeOf = TheModule->getOrInsertFunction("quirk_type_id_of", i32, i8p);
+        Value* tid = Builder.CreateCall(typeOf, {obj}, "dynf_tid");
+
+        Function* fn = Builder.GetInsertBlock()->getParent();
+        BasicBlock* noneBB  = BasicBlock::Create(Context, "dynf_none", fn);
+        BasicBlock* mergeBB = BasicBlock::Create(Context, "dynf_merge", fn);
+        SwitchInst* sw = Builder.CreateSwitch(tid, noneBB, (unsigned)owners.size());
+        std::vector<std::pair<BasicBlock*, Value*>> results;
+        for (const auto& name : owners) {
+            BasicBlock* bb = BasicBlock::Create(Context, "dynf_" + name, fn);
+            sw->addCase(Builder.getInt32(structGen->objectTypeId(name)), bb);
+            Builder.SetInsertPoint(bb);
+            Value* typed = Builder.CreateBitCast(obj, PointerType::getUnqual(StructTypes[name]));
+            Value* v = structGen->generateMemberAccess(typed, field);
+            results.push_back({Builder.GetInsertBlock(), v});
+        }
+        // One LLVM type across the cases: use it as is; else box them all.
+        bool same = true;
+        for (auto& r : results) same = same && r.second && r.second->getType() == results[0].second->getType();
+        Type* want = semaType == "Any" ? nullptr : typeGen->getLLVMType(semaType);
+        bool direct = same && results[0].second && (!want || results[0].second->getType() == want) && semaType != "Any";
+        for (auto& r : results) {
+            Builder.SetInsertPoint(r.first);
+            if (!direct) {
+                r.second = r.second ? boxToVoidPtr(r.second) : (Value*)ConstantPointerNull::get(cast<PointerType>(i8p));
+                if (r.second->getType() != i8p) r.second = Builder.CreateBitCast(r.second, i8p);
+            }
+            r.first = Builder.GetInsertBlock();
+            Builder.CreateBr(mergeBB);
+        }
+        Builder.SetInsertPoint(noneBB);
+        FunctionCallee thrower = TheModule->getOrInsertFunction("quirk_throw_exception",
+            Type::getVoidTy(Context), i8p, i8p);
+        Value* isNull = Builder.CreateICmpEQ(obj, ConstantPointerNull::get(cast<PointerType>(i8p)));
+        Value* msg = Builder.CreateSelect(isNull,
+            Builder.CreateGlobalStringPtr("null has no field '" + field + "' (use ?. to allow null)"),
+            Builder.CreateGlobalStringPtr("value has no field '" + field + "' (it isn't one of the structs that define it)"));
+        Builder.CreateCall(thrower, {Builder.CreateGlobalStringPtr("TypeError"), msg});
+        Builder.CreateUnreachable();
+
+        Builder.SetInsertPoint(mergeBB);
+        Type* phiTy = direct ? results[0].second->getType() : i8p;
+        PHINode* phi = Builder.CreatePHI(phiTy, (unsigned)results.size(), "dynf_r");
+        for (auto& [bb, v] : results) phi->addIncoming(v, bb);
+        if (!direct && want && semaType != "Any") return emitUnboxToType(phi, want);
+        return phi;
+    }
+
     // Append the default values of a constructor's missing trailing
     // arguments (its own __init, or the nearest inherited one).
     void fillConstructorDefaults(const std::string& type, std::vector<Value*>& args) {
@@ -3835,7 +3900,10 @@ class LLVMCodegen {
                     GlobalValue::InternalLinkage, initVal, lhs->value);
                 Builder.CreateStore(val, gv);
                 varGen->defineGlobal(lhs->value, gv);
-            } else if (!inModuleScope && vdecl->op == ":=" && !varGen->hasLocal(lhs->value)) {
+            } else if (!inModuleScope && (vdecl->op == ":=" || !vdecl->typeAnnotation.empty())
+                       && !varGen->hasLocal(lhs->value)) {
+                // (`name: T = value` is a declaration too: it shadows a
+                // global just like `:=` instead of writing through it.)
                 // Inside a function body, a fresh `name := value`
                 // declaration always creates a LOCAL that shadows any
                 // module-level same-named binding. Without this guard,
@@ -5717,6 +5785,32 @@ Value* LLVMCodegen::handleExpression(Node* node) {
                 return Builder.CreateCall(getFn,
                     {tupPtr, ConstantInt::get(getFn->getFunctionType()->getParamType(1), idx)},
                     "tup_" + member->memberName);
+            }
+        }
+
+        // A struct field read from an untyped value (Sema set dynFieldType).
+        if (!member->dynFieldType.empty() && objPtr && objPtr->getType()->isPointerTy() &&
+            objPtr->getType()->getPointerElementType()->isIntegerTy(8)) {
+            if (!member->isSafeAccess) {
+                if (Value* v = emitDynamicField(member->memberName, objPtr, member->dynFieldType)) return v;
+            } else {
+                // obj?.field: null stays null (zero for a primitive field).
+                Function* fnc = Builder.GetInsertBlock()->getParent();
+                BasicBlock* preBB  = Builder.GetInsertBlock();
+                BasicBlock* readBB = BasicBlock::Create(Context, "dynf_safe", fnc);
+                BasicBlock* doneBB = BasicBlock::Create(Context, "dynf_safe_done", fnc);
+                Builder.CreateCondBr(Builder.CreateICmpEQ(objPtr, Constant::getNullValue(objPtr->getType())),
+                                     doneBB, readBB);
+                Builder.SetInsertPoint(readBB);
+                Value* v = emitDynamicField(member->memberName, objPtr, member->dynFieldType);
+                if (!v) v = ConstantPointerNull::get(cast<PointerType>(Type::getInt8PtrTy(Context)));
+                BasicBlock* readEnd = Builder.GetInsertBlock();
+                Builder.CreateBr(doneBB);
+                Builder.SetInsertPoint(doneBB);
+                PHINode* phi = Builder.CreatePHI(v->getType(), 2, "dynf_safe_r");
+                phi->addIncoming(Constant::getNullValue(v->getType()), preBB);
+                phi->addIncoming(v, readEnd);
+                return phi;
             }
         }
 

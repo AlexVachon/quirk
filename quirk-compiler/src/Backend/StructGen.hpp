@@ -80,6 +80,13 @@ class StructGen {
     // the mutators below during its pre-scan passes; the dispatch
     // site at method-call time reads through the queries.
     void markVtableEligible(const std::string& name) { vtableEligible.insert(name); }
+    // True when struct `name`'s layout (inherited fields included) has `field`.
+    bool hasField(const std::string& name, const std::string& field) const {
+        auto it = structLayouts.find(name);
+        return it != structLayouts.end() &&
+               std::find(it->second.begin(), it->second.end(), field) != it->second.end();
+    }
+
     bool isVtableEligible(const std::string& name) const {
         return vtableEligible.count(name) > 0;
     }

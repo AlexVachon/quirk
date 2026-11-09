@@ -19,6 +19,7 @@
 - [`itertools`](itertools.md)
 - [`math`](math.md)
 - [`net`](net.md)
+- [`process`](process.md)
 - [`prompt`](prompt.md)
 - [`random`](random.md)
 - [`regex`](regex.md)

@@ -71,6 +71,7 @@ static void* __gc_text_alloc(size_t n) {
 #include "libs/crypto.c"
 #include "libs/random.c"
 #include "libs/debug.c"
+#include "libs/process.c"
 
 #include "libs/encoding/json.c"
 #include "libs/encoding/base64.c"

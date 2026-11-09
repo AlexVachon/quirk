@@ -242,6 +242,10 @@ class MemberAccessNode : public Node {
     std::unique_ptr<Node> object;
     std::string memberName;
     bool isSafeAccess = false;  // true when accessed via ?.
+    // Set by Sema for a field read on an untyped (`Any`) receiver that some
+    // struct has: the field's type if every such struct agrees, else "Any".
+    // Codegen then reads it by switching on the value's runtime type.
+    std::string dynFieldType;
 
     MemberAccessNode(std::unique_ptr<Node> obj, std::string member)
         : object(std::move(obj)), memberName(member) {}

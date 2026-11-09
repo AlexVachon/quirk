@@ -185,8 +185,8 @@ Compact form: `<Request GET /path>`.
 #### `define listen(self, host: String, port: Int, handler: Callable) -> void`
 
 Block forever, accepting connections on `host:port` and dispatching
-each parsed `Request` to `handler`. The handler returns a `Response`
-which is sent back and the connection is closed.
+each parsed `Request` to `handler` in its own task. The handler returns
+a `Response`, which is sent back before the connection is closed.
 
 Exceptions raised by the handler are caught and converted to a plain
 500 — they don't take the server down.
@@ -202,9 +202,9 @@ Stop the accept-loop on the next iteration.
 
 ### `struct Server`
 
-A simple HTTP/1.1 server. Holds the listener socket and an exit flag so
-`stop()` can break the accept-loop from another thread once Quirk gains
-that ability — for now `listen` runs forever.
+A simple HTTP/1.1 server. Each connection is handled in its own task, so
+requests are served concurrently: while one handler waits (on a socket,
+`sys.sleep`, or `await`), others run.
 
 
 ## `net/socket.quirk`

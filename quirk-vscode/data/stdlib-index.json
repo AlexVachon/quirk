@@ -26,6 +26,15 @@
 "doc": "A first-class function value produced by a lambda expression (`fn(...) => ...`).\nCallables can be stored in variables, passed as arguments, and invoked\nby higher-order methods such as `List.map`, `List.filter`, and `List.each`.\n\n@example:\ndouble := fn(x: Int) => x * 2\nprint(double(21))                      // 42\nevens := [1, 2, 3, 4].filter(fn(x: Int) => x % 2 == 0)"
 }
 ],
+"CancelledError": [
+{
+"package": "typing",
+"qualified": "CancelledError",
+"kind": "struct",
+"signature": "struct CancelledError : Exception {",
+"doc": "Raised inside a task when `task.cancel()` was called \u2014 at the task's next\n`sys.sleep`, `await` or `wait` (a sleep in progress is cut short). Catch it\nto clean up; awaiting a cancelled task raises it too.\n\n@example:\nasync define worker() {\n    try {\n        while true { sys.sleep(100) }\n    } catch (e: CancelledError) {\n        print(\"stopping\")\n    }\n}"
+}
+],
 "Comparable": [
 {
 "package": "typing",
@@ -305,6 +314,24 @@
 "doc": "Implemented by types that have a human-readable string representation.\nAny struct implementing `Printable` can be passed directly to `print()`.\n\n@example\nstruct Point : Printable {\n    x: Int\n    y: Int\n\n    define __str(self) -> String {\n        return \"(\" + self.x + \", \" + self.y + \")\"\n    }\n}\n\np := Point(3, 4)\nprint(p)   // (3, 4)"
 }
 ],
+"Process": [
+{
+"package": "process",
+"qualified": "Process",
+"kind": "struct",
+"signature": "struct Process {",
+"doc": "A running program, from `process.spawn`.\n  `pid`   \u2014 its process id\n  `args`  \u2014 what was run\n  `code`  \u2014 exit code once it has finished (after `wait`, `done` or\n            `communicate`); -1 before"
+}
+],
+"ProcessError": [
+{
+"package": "process",
+"qualified": "ProcessError",
+"kind": "struct",
+"signature": "struct ProcessError : RuntimeError {",
+"doc": "Thrown by `run(check=true)`, `shell(check=true)` and `output` when the\nprogram exits with a non-zero code. The message names the command, the\nexit code and the first line of its stderr."
+}
+],
 "Queue": [
 {
 "package": "typing",
@@ -359,6 +386,15 @@
 "doc": ""
 }
 ],
+"RunResult": [
+{
+"package": "process",
+"qualified": "RunResult",
+"kind": "struct",
+"signature": "struct RunResult {",
+"doc": "A finished program.\n  `args`       \u2014 what was run\n  `code`       \u2014 exit code; `-N` when it was killed by signal N\n  `stdout`     \u2014 everything it wrote to stdout (\"\" when not captured)\n  `stderr`     \u2014 everything it wrote to stderr (\"\" when not captured or\n                 merged into stdout)\n  `timed_out`  \u2014 killed because `timeout_ms` passed\n  `ok`         \u2014 `code == 0`"
+}
+],
 "RuntimeError": [
 {
 "package": "typing",
@@ -374,7 +410,7 @@
 "qualified": "Server",
 "kind": "struct",
 "signature": "struct Server {",
-"doc": "A simple HTTP/1.1 server. Holds the listener socket and an exit flag so\n`stop()` can break the accept-loop from another thread once Quirk gains\nthat ability \u2014 for now `listen` runs forever."
+"doc": "A simple HTTP/1.1 server. Each connection is handled in its own task, so\nrequests are served concurrently: while one handler waits (on a socket,\n`sys.sleep`, or `await`), others run."
 }
 ],
 "Set": [
@@ -1311,6 +1347,15 @@
 "doc": "Change current working directory. @throws IOError on failure."
 }
 ],
+"check": [
+{
+"package": "process",
+"qualified": "ProcessError.check",
+"kind": "method",
+"signature": "define check(self) -> void {",
+"doc": "Throw `ProcessError` unless the program exited with code 0."
+}
+],
 "choice": [
 {
 "package": "math",
@@ -1412,6 +1457,24 @@
 "kind": "define",
 "signature": "extern define close(fd: Int) -> void",
 "doc": "Close socket `fd`, releasing the OS resource."
+}
+],
+"close_stdin": [
+{
+"package": "process",
+"qualified": "ProcessError.close_stdin",
+"kind": "method",
+"signature": "define close_stdin(self) -> void {",
+"doc": "Close the program's stdin, so it sees end of input."
+}
+],
+"communicate": [
+{
+"package": "process",
+"qualified": "ProcessError.communicate",
+"kind": "method",
+"signature": "define communicate(self, input: String = \"\", timeout_ms: Int = -1) -> RunResult {",
+"doc": "Send `input` to stdin (then close it), read stdout and stderr to the\nend and wait for the program \u2014 all at once, so it can't stall on a\nfull pipe. With `timeout_ms`, the program is killed when it runs out."
 }
 ],
 "compile": [
@@ -1647,6 +1710,15 @@
 "kind": "method",
 "signature": "define distance(self, other: String) -> Int",
 "doc": "Computes the Levenshtein edit distance between this string and `other`.\n@param other: String\n@returns: Int \u2014 number of single-character edits needed"
+}
+],
+"done": [
+{
+"package": "process",
+"qualified": "ProcessError.done",
+"kind": "method",
+"signature": "define done(self) -> Bool {",
+"doc": "True once the program has finished. Doesn't wait."
 }
 ],
 "dot": [
@@ -2429,6 +2501,15 @@
 "doc": "Returns all keys as a `List` of `String`.\n@returns: List"
 }
 ],
+"kill": [
+{
+"package": "process",
+"qualified": "ProcessError.kill",
+"kind": "method",
+"signature": "define kill(self) -> void {",
+"doc": "Stop it now (SIGKILL) and wait for it."
+}
+],
 "last": [
 {
 "package": "typing",
@@ -2484,6 +2565,13 @@
 ],
 "lines": [
 {
+"package": "process",
+"qualified": "ProcessError.lines",
+"kind": "method",
+"signature": "define lines(self) -> List {",
+"doc": "Every remaining line of stdout."
+},
+{
 "package": "typing",
 "qualified": "StringIterator.lines",
 "kind": "method",
@@ -2513,7 +2601,7 @@
 "qualified": "Request.listen",
 "kind": "method",
 "signature": "define listen(self, host: String, port: Int, handler: Callable) -> void {",
-"doc": "Block forever, accepting connections on `host:port` and dispatching\neach parsed `Request` to `handler`. The handler returns a `Response`\nwhich is sent back and the connection is closed.\n\nExceptions raised by the handler are caught and converted to a plain\n500 \u2014 they don't take the server down.\n\n@example\nServer().listen(\"0.0.0.0\", 8080, fn(req: Request) -> Response {\n    return Response(200, \"hi\", Map())\n})"
+"doc": "Block forever, accepting connections on `host:port` and dispatching\neach parsed `Request` to `handler` in its own task. The handler returns\na `Response`, which is sent back before the connection is closed.\n\nExceptions raised by the handler are caught and converted to a plain\n500 \u2014 they don't take the server down.\n\n@example\nServer().listen(\"0.0.0.0\", 8080, fn(req: Request) -> Response {\n    return Response(200, \"hi\", Map())\n})"
 },
 {
 "package": "net",
@@ -2891,6 +2979,15 @@
 "doc": "Returns `self` if `Ok`, else calls `f(error)` for recovery."
 }
 ],
+"output": [
+{
+"package": "process",
+"qualified": "ProcessError.output",
+"kind": "method",
+"signature": "define output(args: List, cwd: String = \"\", env: Map = Map(), timeout_ms: Int = -1) -> String {",
+"doc": "Run a program and return its stdout, with one trailing newline removed.\nThrows `ProcessError` when it exits with a non-zero code.\n@example\nsha := process.output([\"git\", \"rev-parse\", \"HEAD\"])"
+}
+],
 "parse": [
 {
 "package": "argparse",
@@ -3044,6 +3141,15 @@
 "kind": "define",
 "signature": "extern define pi() -> Double",
 "doc": "\u03c0 \u2014 circle's circumference / diameter. \u2248 3.14159265358979"
+}
+],
+"pid": [
+{
+"package": "process",
+"qualified": "pid",
+"kind": "define",
+"signature": "extern define pid() -> Int",
+"doc": "This process's id."
 }
 ],
 "platform": [
@@ -3290,6 +3396,22 @@
 "kind": "method",
 "signature": "extern define read(self) -> String",
 "doc": "Read the entire file into a String. Returns \"\" on error or empty file.\n@returns The file contents as a String."
+},
+{
+"package": "process",
+"qualified": "ProcessError.read",
+"kind": "method",
+"signature": "define read(self, size: Int = 65536) -> String {",
+"doc": "Up to `size` bytes of stdout, waiting until some arrive. \"\" once it's all been read."
+}
+],
+"read_err": [
+{
+"package": "process",
+"qualified": "ProcessError.read_err",
+"kind": "method",
+"signature": "define read_err(self, size: Int = 65536) -> String {",
+"doc": "Up to `size` bytes of stderr; \"\" once it's all been read."
 }
 ],
 "read_file": [
@@ -3317,6 +3439,13 @@
 "kind": "method",
 "signature": "extern define read_line(self) -> String",
 "doc": "Read one line from the file. The trailing `\\n` is stripped.\nReturns the empty string at EOF; check both for empty content and EOF\nby comparing against `\"\"` plus a separate `is_open` check if needed.\nMaximum line length is 2048 characters."
+},
+{
+"package": "process",
+"qualified": "ProcessError.read_line",
+"kind": "method",
+"signature": "define read_line(self) -> String {",
+"doc": "The next line of stdout, without its newline; null at the end of output."
 }
 ],
 "read_password": [
@@ -3376,6 +3505,15 @@
 "kind": "define",
 "signature": "extern define remove_raw(path: String) -> Int",
 "doc": "Delete a file. @throws IOError on failure."
+}
+],
+"remove_tree_raw": [
+{
+"package": "fs",
+"qualified": "remove_tree_raw",
+"kind": "define",
+"signature": "extern define remove_tree_raw(path: String) -> Int",
+"doc": "Delete `path` and everything under it, like `rm -rf`. A file is simply\ndeleted; symlinks are removed themselves, never followed.\n@throws IOError if `path` doesn't exist or anything in it can't be removed.\n@example\nfs.remove_tree(\"build/tmp\")"
 }
 ],
 "rename_raw": [
@@ -3467,6 +3605,13 @@
 }
 ],
 "run": [
+{
+"package": "process",
+"qualified": "ProcessError.run",
+"kind": "method",
+"signature": "define run(args: List, input: String = \"\", cwd: String = \"\", env: Map = Map(), inherit_env: Bool = true, timeout_ms: Int = -1, check: Bool = false, capture: Bool = true, merge_stderr: Bool = false) -> RunResult {",
+"doc": "Run a program to completion and return its `RunResult`.\n\n`input` is sent to its stdin (otherwise stdin is this process's).\nstdout and stderr are captured unless `capture=false` (then they go to\nthis process's terminal); `merge_stderr=true` captures both, interleaved,\nin `stdout`. `timeout_ms` kills it when time runs out; `check=true`\nthrows `ProcessError` on a non-zero exit.\n@throws FileNotFoundError when the program can't be found.\n@example\nr := process.run([\"ls\", \"-1\"], cwd=\"/tmp\")\nfor name in r.stdout.split(\"\\n\") { print(name) }\n@example\nprocess.run([\"make\", \"test\"], capture=false, check=true)"
+},
 {
 "package": "sys",
 "qualified": "run",
@@ -3622,6 +3767,15 @@
 "doc": "Number of frames currently on the Quirk shadow stack (per-thread call depth)."
 }
 ],
+"shell": [
+{
+"package": "process",
+"qualified": "ProcessError.shell",
+"kind": "method",
+"signature": "define shell(command: String, input: String = \"\", cwd: String = \"\", env: Map = Map(), inherit_env: Bool = true, timeout_ms: Int = -1, check: Bool = false, capture: Bool = true, merge_stderr: Bool = false) -> RunResult {",
+"doc": "`run` through the shell: `/bin/sh -c command`, so pipes, globs,\nredirects and `$VARS` work. Only for commands you wrote \u2014 never paste\nuntrusted input into one (use `run` with an args List instead).\n@example\nr := process.shell(\"ls *.qk | wc -l\")\nprint(r.stdout.trim())"
+}
+],
 "shuffle": [
 {
 "package": "math",
@@ -3663,6 +3817,15 @@
 "kind": "define",
 "signature": "extern define sign_int(x: Int) -> Int",
 "doc": "Signum of an Int: -1 (negative), 0, or +1 (positive). Wrapped by `sign_i`."
+}
+],
+"signal": [
+{
+"package": "process",
+"qualified": "ProcessError.signal",
+"kind": "method",
+"signature": "define signal(self, sig: Int) -> void {",
+"doc": "Send signal `sig` (15 = SIGTERM, 9 = SIGKILL, 2 = SIGINT, ...). No-op once it has finished."
 }
 ],
 "sin": [
@@ -3738,6 +3901,15 @@
 "kind": "method",
 "signature": "define sort(self, cb: Callable = null) -> List",
 "doc": "Sorts the list in place (stable) and returns it, for chaining.\nWith no comparator, values sort in natural order: numbers\nnumerically, Strings alphabetically. With one, `cb(a, b)` returns\na negative Int when `a` goes first, positive when after, zero when\nequal.\n\n@param cb: Callable \u2014 optional `fn(a, b) => Int`\n@returns: List \u2014 the (now-sorted) self\n\n@example:\n[3, 1, 2].sort()                        // [1, 2, 3]\n[\"b\", \"a\"].sort()                       // [\"a\", \"b\"]\n[3, 1, 2].sort(fn(a, b) => b - a)       // [3, 2, 1]"
+}
+],
+"spawn": [
+{
+"package": "process",
+"qualified": "ProcessError.spawn",
+"kind": "method",
+"signature": "define spawn(args: List, cwd: String = \"\", env: Map = Map(), inherit_env: Bool = true, stdin: String = \"pipe\", stdout: String = \"pipe\", stderr: String = \"pipe\") -> Process {",
+"doc": "Start a program and return without waiting for it.\n\n`stdin` / `stdout` / `stderr` each say where that stream goes:\n`\"pipe\"` (default \u2014 use `write` / `read` / `read_line` / `communicate`),\n`\"inherit\"` (this process's terminal), `\"null\"` (discard / empty input);\n`stderr=\"stdout\"` sends stderr into the stdout pipe.\n\nRead its output to the end (or `communicate`) before `wait`ing: a\nprogram that fills an unread pipe stops until someone reads it.\n@throws FileNotFoundError when the program can't be found.\n@example\np := process.spawn([\"tail\", \"-f\", \"app.log\"], stderr=\"null\")\nfor i in 0..5 { print(p.read_line()) }\np.kill()"
 }
 ],
 "split": [
@@ -3971,6 +4143,13 @@
 }
 ],
 "terminate": [
+{
+"package": "process",
+"qualified": "ProcessError.terminate",
+"kind": "method",
+"signature": "define terminate(self) -> void {",
+"doc": "Ask it to stop (SIGTERM)."
+},
 {
 "package": "sys",
 "qualified": "terminate",
@@ -4356,6 +4535,24 @@
 "doc": "Quirk version string, e.g. `\"0.1.0\"`."
 }
 ],
+"wait": [
+{
+"package": "process",
+"qualified": "ProcessError.wait",
+"kind": "method",
+"signature": "define wait(self) -> Int {",
+"doc": "Wait for the program to finish; returns its exit code (`-N`: killed by signal N)."
+}
+],
+"wait_for": [
+{
+"package": "process",
+"qualified": "ProcessError.wait_for",
+"kind": "method",
+"signature": "define wait_for(self, timeout_ms: Int) -> Bool {",
+"doc": "Wait up to `timeout_ms`; true if it finished (its code is then in `code`)."
+}
+],
 "weekday": [
 {
 "package": "time",
@@ -4379,6 +4576,13 @@
 "kind": "method",
 "signature": "extern define write(self, data: String) -> void",
 "doc": "Write `data` to the file at the current position and flush immediately.\nNo newline is appended \u2014 include `\\n` in `data` if you want one."
+},
+{
+"package": "process",
+"qualified": "ProcessError.write",
+"kind": "method",
+"signature": "define write(self, data: String) -> void {",
+"doc": "Write `data` to the program's stdin. Throws `IOError` if stdin isn't a pipe or the program closed it."
 }
 ],
 "write_dicts": [

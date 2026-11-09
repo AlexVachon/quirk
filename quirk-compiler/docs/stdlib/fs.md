@@ -51,6 +51,14 @@ Remove an empty directory. @throws IOError on failure (incl. non-empty dir).
 
 Delete a file. @throws IOError on failure.
 
+#### `extern define remove_tree_raw(path: String) -> Int`
+
+Delete `path` and everything under it, like `rm -rf`. A file is simply
+deleted; symlinks are removed themselves, never followed.
+@throws IOError if `path` doesn't exist or anything in it can't be removed.
+@example
+fs.remove_tree("build/tmp")
+
 #### `extern define rename_raw(src: String, dst: String) -> Int`
 
 Rename / move from one path to another. Atomic on the same filesystem.

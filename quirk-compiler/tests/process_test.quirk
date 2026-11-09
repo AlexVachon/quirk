@@ -1,0 +1,216 @@
+use process
+use test
+use time
+
+// ───── run ─────
+define test_run_captures_stdout() -> void {
+    r := process.run(["echo", "hello", "world"])
+    test.assert_eq(r.code, 0)
+    test.assert_true(r.ok)
+    test.assert_eq(r.stdout, "hello world\n")
+    test.assert_eq(r.stderr, "")
+}
+
+define test_run_exit_code_and_stderr() -> void {
+    r := process.run(["sh", "-c", "echo out; echo err >&2; exit 3"])
+    test.assert_eq(r.code, 3)
+    test.assert_false(r.ok)
+    test.assert_eq(r.stdout, "out\n")
+    test.assert_eq(r.stderr, "err\n")
+}
+
+define test_run_input_to_stdin() -> void {
+    r := process.run(["sort"], input="b\na\nc\n")
+    test.assert_eq(r.stdout, "a\nb\nc\n")
+}
+
+define test_run_args_are_not_shell_parsed() -> void {
+    r := process.run(["printf", "%s|", "a b", "\$HOME", "*"])
+    test.assert_eq(r.stdout, "a b|\$HOME|*|")
+}
+
+define test_run_cwd() -> void {
+    test.assert_eq(process.run(["pwd"], cwd="/").stdout, "/\n")
+}
+
+define test_run_env_added() -> void {
+    r := process.run(["sh", "-c", "echo \$QK_A-\$QK_B"], env={ "QK_A": "1", "QK_B": "two" })
+    test.assert_eq(r.stdout, "1-two\n")
+}
+
+define test_run_env_replaced() -> void {
+    r := process.run(["/usr/bin/env"], env={ "ONLY": "1" }, inherit_env=false)
+    test.assert_eq(r.stdout, "ONLY=1\n")
+}
+
+define test_run_merge_stderr() -> void {
+    r := process.run(["sh", "-c", "echo a; echo b >&2"], merge_stderr=true)
+    test.assert_eq(r.stdout, "a\nb\n")
+    test.assert_eq(r.stderr, "")
+}
+
+define test_run_timeout_kills() -> void {
+    t0 := time.now_ms()
+    r := process.run(["sleep", "5"], timeout_ms=200)
+    test.assert_true(r.timed_out)
+    test.assert_eq(r.code, -9)
+    test.assert_true(time.now_ms() - t0 < 3000)
+}
+
+// Output bigger than a pipe buffer on both streams at once: must not
+// deadlock.
+define test_run_large_output_both_streams() -> void {
+    r := process.run(["sh", "-c", "head -c 300000 /dev/zero | tr '\\0' a; head -c 200000 /dev/zero | tr '\\0' b >&2"])
+    test.assert_eq(r.stdout.length(), 300000)
+    test.assert_eq(r.stderr.length(), 200000)
+}
+
+define test_run_large_input_round_trip() -> void {
+    data := "x".repeat(1000000)
+    r := process.run(["cat"], input=data)
+    test.assert_true(r.stdout == data)
+}
+
+define test_missing_program_throws() -> void {
+    caught := ""
+    try {
+        process.run(["no-such-program-qk"])
+    } catch (e: FileNotFoundError) {
+        caught = e.message
+    }
+    test.assert_contains(caught, "no-such-program-qk")
+}
+
+define test_check_throws_process_error() -> void {
+    caught := ""
+    try {
+        process.run(["sh", "-c", "echo boom >&2; exit 2"], check=true)
+    } catch (e: ProcessError) {
+        caught = e.message
+    }
+    test.assert_contains(caught, "exited with code 2: boom")
+}
+
+define test_result_check() -> void {
+    process.run(["true"]).check()
+    caught := false
+    try {
+        process.run(["false"]).check()
+    } catch (e: ProcessError) {
+        caught = true
+    }
+    test.assert_true(caught)
+}
+
+define test_bad_mode_throws() -> void {
+    caught := ""
+    try {
+        process.spawn(["true"], stdout="file")
+    } catch (e: ValueError) {
+        caught = e.message
+    }
+    test.assert_contains(caught, "stdout must be")
+}
+
+// ───── shell / output ─────
+define test_shell() -> void {
+    r := process.shell("echo one two | wc -w")
+    test.assert_eq(r.stdout.trim(), "2")
+}
+
+define test_output_strips_newline() -> void {
+    test.assert_eq(process.output(["printf", "abc\n"]), "abc")
+    test.assert_eq(process.output(["printf", "a\n\n"]), "a\n")
+}
+
+define test_output_throws_on_failure() -> void {
+    caught := false
+    try {
+        process.output(["false"])
+    } catch (e: ProcessError) {
+        caught = true
+    }
+    test.assert_true(caught)
+}
+
+// ───── spawn ─────
+define test_spawn_write_and_read_lines() -> void {
+    p := process.spawn(["cat"])
+    p.write("line one\nline two\n")
+    test.assert_eq(p.read_line(), "line one")
+    test.assert_eq(p.read_line(), "line two")
+    p.close_stdin()
+    test.assert_true(p.read_line() == null)
+    test.assert_eq(p.wait(), 0)
+    test.assert_eq(p.code, 0)
+}
+
+define test_spawn_lines() -> void {
+    p := process.spawn(["sh", "-c", "for i in 1 2 3; do echo \$i; done"])
+    test.assert_eq(p.lines(), ["1", "2", "3"])
+    test.assert_eq(p.wait(), 0)
+}
+
+define test_spawn_communicate() -> void {
+    p := process.spawn(["sh", "-c", "cat; echo done >&2"])
+    r := p.communicate(input="abc")
+    test.assert_eq(r.stdout, "abc")
+    test.assert_eq(r.stderr, "done\n")
+    test.assert_eq(p.code, 0)
+}
+
+define test_spawn_kill_and_done() -> void {
+    p := process.spawn(["sleep", "10"])
+    test.assert_false(p.done())
+    test.assert_false(p.wait_for(50))
+    p.kill()
+    test.assert_eq(p.code, -9)
+    test.assert_true(p.done())
+}
+
+define test_spawn_terminate() -> void {
+    p := process.spawn(["sleep", "10"])
+    p.terminate()
+    test.assert_eq(p.wait(), -15)
+}
+
+define test_spawn_null_stdout() -> void {
+    p := process.spawn(["echo", "hidden"], stdout="null")
+    test.assert_eq(p.read(), "")
+    test.assert_eq(p.wait(), 0)
+}
+
+// ───── tasks ─────
+async define _slow_echo(n: Int) -> Int {
+    r := process.run(["sh", "-c", "sleep 0.3; echo " + n.str()])
+    return r.stdout.trim().to_int()
+}
+
+define test_runs_in_tasks_overlap() -> void {
+    t0 := time.now_ms()
+    a := _slow_echo(1)
+    b := _slow_echo(2)
+    c := _slow_echo(3)
+    test.assert_eq(await a + await b + await c, 6)
+    test.assert_true(time.now_ms() - t0 < 800)
+}
+
+async define _wait_forever() -> Int {
+    p := process.spawn(["sleep", "30"])
+    return p.wait()
+}
+
+define test_cancel_kills_the_child() -> void {
+    t := _wait_forever()
+    time.sleep(100)
+    t.cancel()
+    caught := false
+    try {
+        await t
+    } catch (e: CancelledError) {
+        caught = true
+    }
+    test.assert_true(caught)
+    left := process.run(["sh", "-c", "pgrep -P " + process.pid().str() + " sleep || true"])
+    test.assert_eq(left.stdout, "")
+}

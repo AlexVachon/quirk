@@ -119,7 +119,7 @@ $(DRIVER): $(TARGET)
 # bump the version inline below and re-run.
 STDLIB_PACKAGES = \
 	argparse console crypto csv datetime debug encoding fs html io itertools \
-	math net prompt random regex statistics sys test time toml typing url uuid
+	math net process prompt random regex statistics sys test time toml typing url uuid
 STDLIB_OWNER ?= AlexVachon
 STDLIB_TAG   ?= v1.0.0
 
@@ -152,6 +152,8 @@ STDLIB_TAG_net ?= v1.3.0
 STDLIB_TAG_test ?= v1.1.0
 # fs v1.1.0 adds remove_tree (runtime Fs_remove_tree_raw, v7.11.1).
 STDLIB_TAG_fs ?= v1.1.0
+# process v1.0.0 is the initial release; v1.0.1 requires compiler 7.18.0 (runtime Process_*).
+STDLIB_TAG_process ?= v1.0.1
 
 # --- INSTALL / UNINSTALL --------------------------------------------------
 # Copy the freshly-built compiler + runtime into $(PREFIX) (default
@@ -190,6 +192,7 @@ bootstrap-stdlib:
 	        net)    tag="$(STDLIB_TAG_net)"    ;;                                 \
 	        test)   tag="$(STDLIB_TAG_test)"   ;;                                 \
 	        fs)     tag="$(STDLIB_TAG_fs)"     ;;                                 \
+	        process) tag="$(STDLIB_TAG_process)" ;;                               \
 	    esac;                                                                     \
 	    if [ -f "packages/$$pkg/index.quirk" ] &&                                 \
 	       [ "$$(cat packages/$$pkg/.version 2>/dev/null)" = "$$tag" ]; then      \

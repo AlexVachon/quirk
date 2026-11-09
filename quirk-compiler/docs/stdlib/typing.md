@@ -289,6 +289,21 @@ define assert_positive(n: Int) -> void {
     }
 }
 
+### `struct CancelledError : Exception`
+
+Raised inside a task when `task.cancel()` was called — at the task's next
+`sys.sleep`, `await` or `wait` (a sleep in progress is cut short). Catch it
+to clean up; awaiting a cancelled task raises it too.
+
+@example:
+async define worker() {
+    try {
+        while true { sys.sleep(100) }
+    } catch (e: CancelledError) {
+        print("stopping")
+    }
+}
+
 ### `struct NullError : RuntimeError`
 
 Raised when a null value is accessed where a non-null value is required. Inherits from RuntimeError.

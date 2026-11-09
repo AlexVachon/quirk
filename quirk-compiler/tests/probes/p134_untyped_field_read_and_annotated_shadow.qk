@@ -1,0 +1,85 @@
+// p134 — two v7.17.0 fixes:
+//  1. A struct field read from an untyped value — a Callable's result, a
+//     Map.get, a plain List's element — dispatches on the runtime type.
+//     It was a build error ("'Any' has no member 'code'") unless the
+//     binding was annotated. Typed as the field's type when every struct
+//     with that field agrees (so `r.code + 1` is Int arithmetic).
+//  2. `name: T = value` inside a function declares a local even when a
+//     module-level global has the same name. It used to write through the
+//     global (and type the local as the global's type).
+
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+struct Resp {
+    code: Int
+    body: String
+    define __init(self, code: Int, body: String) -> void {
+        self.code = code
+        self.body = body
+    }
+}
+struct Tag {
+    code: String
+    define __init(self, code: String) -> void { self.code = code }
+}
+struct Child : Resp {
+    extra: Int
+    define __init(self, code: Int, body: String, extra: Int) -> void {
+        super().__init(code, body)
+        self.extra = extra
+    }
+}
+
+define make(c: Int) -> Resp { return Resp(c, "ok") }
+define handler() -> Resp { return Resp(200, "hi") }
+
+define via_callable(cb: Callable, v: Int) -> Int {
+    r := cb(v)
+    return r.code + 1
+}
+
+g := Resp(5, "global")
+
+define shadow() -> Int {
+    g: String = "local"
+    return g.length()
+}
+
+define main() -> void {
+    h := handler
+    resp := h()
+    if resp.code != 200 { fail("callable result .code: " + resp.code.str()) }
+    if resp.body.upper() != "HI" { fail("callable result .body") }
+    if via_callable(make, 7) != 8 { fail("Callable param result") }
+
+    f := fn(x) => make(x)
+    if f(404).code != 404 { fail("lambda result") }
+
+    m := { "a": Resp(1, "x") }
+    if m.get("a").code != 1 { fail("Map.get result") }
+
+    items := [Resp(1, "a"), Child(2, "b", 3)]
+    total := 0
+    for it in items { total = total + it.code }
+    if total != 3 { fail("list elements incl. subclass: " + total.str()) }
+
+    mixed := [Resp(9, "r"), Tag("t")]
+    if mixed[0].code.str() != "9" { fail("mixed field types (Int)") }
+    if mixed[1].code.str() != "t" { fail("mixed field types (String)") }
+
+    caught := ""
+    try {
+        bad := ["str"]
+        print(bad[0].extra)
+    } catch (e: TypeError) {
+        caught = e.message
+    }
+    if not caught.contains("no field 'extra'") { fail("wrong runtime type: " + caught) }
+
+    none := m.get("zzz")
+    if none?.code != 0 { fail("?. on null") }
+
+    if shadow() != 5 { fail("annotated local length") }
+    if g.code != 5 or g.body != "global" { fail("global was overwritten by the annotated local") }
+    print("ok")
+}

@@ -18,14 +18,17 @@ methods, non-blocking DNS / file / console reads (7.13.0) are done. Left:
   (`-> List[Item]`) or an annotation. Runtime dispatch by type id would fix
   it.
 
-## 2. Performance
+## 2. Performance — follow-ups
 
-- Per-statement line tracking (7.9.2, for tracebacks) costs up to ~30% in
-  loops of trivial statements. Skip the store for statements that can't
-  fail or call anything (plain arithmetic on locals, assignments of
-  literals), or store only before calls and operations that can throw.
-- Profile string building (repeated `+`, `.format`) and `Map` lookups,
-  the usual hot paths in scripts.
+Done in 7.14.0: line tracking only costs on error paths (LineStorePass),
+string text is pointer-free for the GC, `"${…}"` results are right-sized,
+and `quirk run` builds a native binary in the background. Left:
+
+- `s = s + x` in a loop copies the whole string each time (O(n²): 200k
+  appends take ~5 s). Appending in place is only safe when nothing else
+  holds the old string, which needs ownership information the compiler
+  doesn't have yet. Until then: collect pieces in a List and
+  `"".join(parts)`.
 
 ## 3. Package discovery
 

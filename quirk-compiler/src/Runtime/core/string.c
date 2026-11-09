@@ -1074,7 +1074,7 @@ List* Core_String_String_split(String* self, String* delim) {
     List* list = (List*)quirk_alloc(QT_LIST, sizeof(List));
     list->size = 0;
     list->capacity = count;
-    list->data = (void**)malloc(sizeof(void*) * count);
+    list->data = (void**)GC_malloc(sizeof(void*) * count);   // pointers: scanned
 
     if (!sep) {
         // Split into chars
@@ -1112,7 +1112,7 @@ String* Core_String_String_join(String* self, List* items) {
     // The old fast-path inlined the tagged-Int case and assumed
     // every non-Int item was a String*, which SIGSEGV'd on heap-
     // tagged Doubles passed to `print([1.5, 2.5])`.
-    String** rendered = (String**)malloc(items->size * sizeof(String*));
+    String** rendered = (String**)GC_malloc(items->size * sizeof(String*));   // pointers: scanned
     int total_len = 0;
     for (int i = 0; i < items->size; i++) {
         rendered[i] = quirk_opaque_to_string(items->data[i]);
@@ -1339,7 +1339,7 @@ List* Core_String_String_lines(String* self) {
     List* list = (List*)quirk_alloc(QT_LIST, sizeof(List));
     list->size = 0;
     list->capacity = count;
-    list->data = (void**)malloc(sizeof(void*) * count);
+    list->data = (void**)GC_malloc(sizeof(void*) * count);   // pointers: scanned
     char* start = self->buffer;
     ptr = self->buffer;
     while (*ptr) {
@@ -1456,7 +1456,10 @@ String* Core_String_String_format_map(String* self, List* keys, List* values) {
 String* Core_String_String_format_list(String* self, List* args) {
     if (!self || !self->buffer)
         return make_String("");
-    int cap = 2048;
+    // Sized for the template plus a typical argument each; it grows when
+    // needed. (A flat 2 KB start, kept by the result, made 300k short
+    // interpolated strings hold ~600 MB.)
+    int cap = (int)self->length + 24 * (int)(args ? args->size : 0) + 16;
     int len = 0;
     char* res = (char*)malloc(cap);
     res[0] = '\0';
@@ -1501,6 +1504,12 @@ String* Core_String_String_format_list(String* self, List* args) {
         char c[2] = {*ptr, '\0'};
         buffer_append(&res, &cap, &len, c);
         ptr++;
+    }
+    // Keep only what's used: the String holds this buffer for its lifetime.
+    if (cap > len + 1 + 32) {
+        char* exact = (char*)malloc(len + 1);
+        memcpy(exact, res, len + 1);
+        res = exact;
     }
     return make_String_taking_ownership(res);
 }

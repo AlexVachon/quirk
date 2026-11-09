@@ -33,6 +33,8 @@
 #include <sstream>
 #include <vector>
 #include <unistd.h>
+#include <sys/wait.h>
+#include <fcntl.h>
 #include <pthread.h>
 
 #include "PackageManager.hpp"
@@ -984,6 +986,32 @@ static int runAotPipeline(const std::string& irPath,
     return 0;
 }
 
+// Start `quirk --build <file>` detached (double fork: no zombie even if
+// this run lasts long; own session; output discarded; lower priority).
+// Skipped when the binary exists, or an earlier build for this key failed
+// (`<bin>.failed` — e.g. llc / gcc missing) so runs don't keep retrying.
+static void spawnBackgroundAotBuild(const std::string& input, const std::string& key, int optLevel) {
+    fs::path bin = buildCachePathFor(key);
+    std::error_code ec;
+    if (fs::exists(bin, ec) || fs::exists(bin.string() + ".failed", ec)) return;
+    std::string self = qpm::self_binary();
+    std::string inputAbs = fs::absolute(input, ec).string();
+    pid_t pid = fork();
+    if (pid < 0) return;
+    if (pid == 0) {
+        if (fork() != 0) _exit(0);      // the grandchild builds; the child exits
+        setsid();
+        int devnull = open("/dev/null", O_RDWR);
+        if (devnull >= 0) { dup2(devnull, 0); dup2(devnull, 1); dup2(devnull, 2); }
+        if (nice(10) == -1) { /* best effort */ }
+        std::string opt = "-O" + std::to_string(optLevel);
+        execl(self.c_str(), self.c_str(), "--build", opt.c_str(), inputAbs.c_str(), (char*)nullptr);
+        _exit(127);
+    }
+    int st = 0;
+    waitpid(pid, &st, 0);               // the child exits at once
+}
+
 // `execv` the cached binary, forwarding the script's argv. Returns
 // only on failure — on success this process is replaced. argv[0] is
 // the script path (matches the JIT convention so `sys.argv()[0]`
@@ -1545,6 +1573,11 @@ int main(int argc, char* argv[]) {
                 touchCacheEntry(cp);
                 auto ctx = std::make_unique<llvm::LLVMContext>();
                 if (auto cached = loadCachedBitcode(cp, *ctx)) {
+                    // Second run of an unchanged script: build the native
+                    // binary in the background so later runs exec it
+                    // (~80 ms of JIT work → a few ms).
+                    if (opts.useAotCache && !g_test_harness && !g_stdin_source)
+                        spawnBackgroundAotBuild(opts.inputFile, key, opts.optLevel);
                     std::string runtimePath = resolveRuntimeSoPath();
                     return runJITModule(std::move(cached), std::move(ctx),
                                         runtimePath, opts.inputFile, scriptArgs);
@@ -1759,7 +1792,9 @@ int main(int argc, char* argv[]) {
             return 0;
         }
 
-        std::string irPath = "/tmp/quirk_" + baseName + "_aot.ll";
+        // Per process: two builds of same-named scripts (or the same one,
+        // from background builds) mustn't share the temp IR file.
+        std::string irPath = "/tmp/quirk_" + baseName + "_aot." + std::to_string(getpid()) + ".ll";
         {
             std::error_code EC;
             llvm::raw_fd_ostream irDest(irPath, EC, llvm::sys::fs::OF_None);
@@ -1779,6 +1814,10 @@ int main(int argc, char* argv[]) {
         if (runAotPipeline(irPath, binPath.string(), runtimePath, opts.verbose) != 0) {
             std::cerr << "build: AOT pipeline failed — leaving cache untouched\n";
             std::error_code ec; fs::remove(irPath, ec);
+            // Remember it, so background builds (spawnBackgroundAotBuild)
+            // don't retry this key on every run.
+            fs::create_directories(binPath.parent_path(), ec);
+            std::ofstream(binPath.string() + ".failed") << "AOT build failed\n";
             return 1;
         }
         std::error_code ec; fs::remove(irPath, ec);

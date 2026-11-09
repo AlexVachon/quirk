@@ -67,6 +67,13 @@ quirk run -v tests/parser_test.quirk
 quirk run --check src/index.quirk
 ```
 
+Runs are cached under `~/.quirk/cache`. The first run of a script compiles
+it in memory (JIT); the second reuses the compiled code and builds a native
+binary in the background; from then on `quirk run` starts that binary
+directly (a few milliseconds instead of ~80). Any change to the script or
+its imports gets a new entry. `--no-aot` (or `QUIRK_NO_AOT=1`) always uses
+the JIT; `--no-cache` skips the cache entirely.
+
 ### `quirk eval`
 
 Synopsis: `quirk eval "<code>"` &nbsp;·&nbsp; alias: `quirk -c "<code>"`

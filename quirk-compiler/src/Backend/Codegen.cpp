@@ -14,6 +14,7 @@
 #include "llvm/Transforms/IPO.h"
 
 #include <filesystem>
+#include "LineStorePass.hpp"
 #include <functional>
 #include <iostream>
 #include <map>
@@ -823,6 +824,7 @@ class LLVMCodegen {
     // Compile to IR file (used by --emit-ir and --compile-only)
     void compile(const std::vector<std::unique_ptr<Node>>& nodes, raw_ostream& out = errs()) {
         buildIR(nodes);
+        if (!debugMode) quirk::sinkLineStores(*TheModule);   // LineStorePass.hpp
         runOptimizations();
         if (verbose) std::cerr << "[Codegen] emitting IR\n";
         TheModule->print(out, nullptr);
@@ -833,6 +835,7 @@ class LLVMCodegen {
     std::pair<std::unique_ptr<Module>, std::unique_ptr<LLVMContext>>
     compileAndRelease(const std::vector<std::unique_ptr<Node>>& nodes) {
         buildIR(nodes);
+        if (!debugMode) quirk::sinkLineStores(*TheModule);   // LineStorePass.hpp
         runOptimizations();
         return { std::move(TheModule), std::move(pCtx) };
     }

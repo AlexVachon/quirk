@@ -5,6 +5,36 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.14.0] — 2026-11-09 — performance: strings, GC, line tracking, startup
+
+- **String interpolation is ~12× faster and uses ~13× less memory.** Every
+  `"${…}"` result kept a 2 KB buffer: 300 000 short interpolated strings
+  took 2.5 s and 1.4 GB, now 0.21 s and 109 MB.
+- **String text is invisible to the GC's pointer scan.** Buffers were
+  allocated as if they could hold pointers, so every collection scanned
+  all text and could keep unrelated objects alive. Building strings with
+  `+` is ~2× faster (0.35 → 0.17 s for 300k), Map-heavy code ~3× (0.48 →
+  0.16 s for 200k put + get).
+- **Line tracking costs nothing on the normal path.** The per-statement
+  line store (for tracebacks) is now dropped where the next statement
+  overwrites it before anything could read it, and moved into the cold
+  error paths (overflow, division by zero) where only those read it.
+  Tracebacks keep their exact lines for exceptions and runtime errors; a
+  crash with no call involved (a null field read) reports the last line
+  that made a call.
+- **`quirk run` starts scripts in ~10 ms after the second run.** The
+  native-binary cache was only filled by an explicit `quirk build`; now
+  the second run of an unchanged script builds it in the background, and
+  later runs exec it directly instead of JIT-compiling (~80 ms). A build
+  that fails (no `llc` / `gcc`) isn't retried for that version of the
+  script. The AOT temp IR file is per process (concurrent builds of
+  same-named scripts clobbered each other).
+- For comparison with Python on the same small programs: list append and
+  sum 0.03 s vs 0.22 s, objects and method calls 0.03 s vs 0.42 s, a
+  300k-entry Map 0.11 s vs 0.14 s, split / join / string methods 0.08 s vs
+  0.07 s. The known slow case is `s = s + x` in a loop (quadratic); use
+  `"".join(parts)`.
+
 ## [7.13.0] — 2026-11-09 — cancel / wait tasks, async methods, more I/O that yields
 
 - **`task.cancel()`** asks a task to stop: it gets a `CancelledError` at

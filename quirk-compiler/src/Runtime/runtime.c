@@ -26,7 +26,8 @@ static void* __gc_calloc(size_t n, size_t s) {
 static char* __gc_strdup(const char* s) {
     if (!s) return NULL;
     size_t n = strlen(s);
-    char* out = (char*)GC_malloc(n + 1);
+    // Text: pointer-free memory the GC doesn't scan.
+    char* out = (char*)GC_malloc_atomic(n + 1);
     if (out) memcpy(out, s, n + 1);
     return out;
 }
@@ -36,7 +37,19 @@ static char* __gc_strdup(const char* s) {
                     //       sys.c no longer needs its own definition.
 
 // Note: Ensure these paths match your actual directory structure
+// string.c allocates text: its `malloc` is pointer-free (GC_malloc_atomic,
+// zeroed like GC_malloc) so the collector doesn't scan string bytes for
+// pointers; its few pointer arrays call GC_malloc directly.
+static void* __gc_text_alloc(size_t n) {
+    void* p = GC_malloc_atomic(n);
+    if (p) memset(p, 0, n);
+    return p;
+}
+#undef malloc
+#define malloc(x) __gc_text_alloc(x)
 #include "core/string.c"
+#undef malloc
+#define malloc(x) GC_malloc(x)
 #include "core/primitives.c"
 #include "core/list.c"
 #include "core/map.c"

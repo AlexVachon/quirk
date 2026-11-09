@@ -1884,6 +1884,73 @@ class LLVMCodegen {
         return phi;
     }
 
+    // `x.m(args)` where x is an untyped value (a plain List's element, a
+    // Map.get result) and String has no `m`: dispatch on the value's runtime
+    // type over every struct with a method `m` taking that many arguments.
+    // The result is boxed (Sema typed the call Any). nullptr: no struct has
+    // such a method (the caller keeps its old String treatment).
+    Value* emitDynamicDispatch(const std::string& method, Value* obj, CallNode* call) {
+        std::vector<std::pair<std::string, Function*>> impls;
+        for (const auto& [name, st] : StructTypes) {
+            if (!structGen->isVtableEligible(name)) continue;
+            std::function<Function*(const std::string&)> find = [&](const std::string& c) -> Function* {
+                std::string fn = (method.rfind("__", 0) == 0) ? c + method : c + "_" + method;
+                if (Function* f = TheModule->getFunction(fn)) return f;
+                if (Function* f = resolveFunction(fn)) return f;
+                if (structHierarchy.count(c))
+                    for (const auto& p : structHierarchy[c])
+                        if (Function* f = find(p)) return f;
+                return nullptr;
+            };
+            if (Function* f = find(name))
+                if (f->arg_size() == call->args.size() + 1) impls.push_back({name, f});
+        }
+        if (impls.empty()) return nullptr;
+        std::sort(impls.begin(), impls.end());
+
+        Type* i8p = Type::getInt8PtrTy(Context);
+        Type* i32 = Type::getInt32Ty(Context);
+        std::vector<Value*> rawArgs;
+        for (const auto& a : call->args) rawArgs.push_back(handleExpression(a.value.get()));
+        obj = Builder.CreateBitCast(obj, i8p);
+        FunctionCallee typeOf = TheModule->getOrInsertFunction("quirk_type_id_of", i32, i8p);
+        Value* tid = Builder.CreateCall(typeOf, {obj}, "dyn_tid");
+
+        Function* fn = Builder.GetInsertBlock()->getParent();
+        BasicBlock* noneBB  = BasicBlock::Create(Context, "dyn_none", fn);
+        BasicBlock* mergeBB = BasicBlock::Create(Context, "dyn_merge", fn);
+        SwitchInst* sw = Builder.CreateSwitch(tid, noneBB, (unsigned)impls.size());
+        std::vector<std::pair<BasicBlock*, Value*>> results;
+        for (const auto& [name, f] : impls) {
+            BasicBlock* bb = BasicBlock::Create(Context, "dyn_" + name, fn);
+            sw->addCase(Builder.getInt32(structGen->objectTypeId(name)), bb);
+            Builder.SetInsertPoint(bb);
+            std::vector<Value*> args = {Builder.CreateBitCast(obj, f->getFunctionType()->getParamType(0))};
+            for (size_t i = 0; i < rawArgs.size(); i++) {
+                Value* v = rawArgs[i];
+                Type* want = f->getFunctionType()->getParamType(i + 1);
+                if (v && v->getType() != want) v = quirk::coerceToType(v, want, Context, Builder, TheModule.get());
+                args.push_back(v);
+            }
+            Value* r = Builder.CreateCall(f, args);
+            Value* boxed = f->getReturnType()->isVoidTy()
+                ? (Value*)ConstantPointerNull::get(cast<PointerType>(i8p)) : boxToVoidPtr(r);
+            results.push_back({Builder.GetInsertBlock(), boxed});
+            Builder.CreateBr(mergeBB);
+        }
+        Builder.SetInsertPoint(noneBB);
+        FunctionCallee thrower = TheModule->getOrInsertFunction("quirk_throw_exception",
+            Type::getVoidTy(Context), i8p, i8p);
+        Builder.CreateCall(thrower, {Builder.CreateGlobalStringPtr("TypeError"),
+            Builder.CreateGlobalStringPtr("value has no method " + method + "() (it isn't one of the structs that define it)")});
+        Builder.CreateUnreachable();
+
+        Builder.SetInsertPoint(mergeBB);
+        PHINode* phi = Builder.CreatePHI(i8p, (unsigned)results.size(), "dyn_r");
+        for (auto& [bb, v] : results) phi->addIncoming(v, bb);
+        return phi;
+    }
+
     // Append the default values of a constructor's missing trailing
     // arguments (its own __init, or the nearest inherited one).
     void fillConstructorDefaults(const std::string& type, std::vector<Value*>& args) {
@@ -2369,6 +2436,21 @@ class LLVMCodegen {
                             Value* r = emitInterfaceDispatch(vi->second, member->memberName, objPtr, call);
                             if (r || Builder.GetInsertBlock() != startBB) return r;
                         }
+                // An untyped value with a method String doesn't have: it's
+                // some struct — dispatch on its runtime type.
+                if (objPtr->getType()->isPointerTy() && objPtr->getType()->getPointerElementType()->isIntegerTy(8) &&
+                    !TheModule->getFunction("Core_String_String_" + member->memberName) &&
+                    !resolveFunction("String_" + member->memberName) &&
+                    !resolveFunction("String___" + member->memberName.substr(member->memberName.rfind("__", 0) == 0 ? 2 : 0))) {
+                    BasicBlock* startBB = Builder.GetInsertBlock();
+                    Value* r = emitDynamicDispatch(member->memberName, objPtr, call);
+                    if (r || Builder.GetInsertBlock() != startBB) return r;
+                    // Neither String nor any struct has it: no value could.
+                    fatalError("no type has a method '" + member->memberName + "' with " +
+                               std::to_string(call->args.size()) + " argument" + (call->args.size() == 1 ? "" : "s") +
+                               " (the receiver's type isn't known here — annotate it to get a precise error)",
+                               member->line, member->col);
+                }
                 if (objPtr->getType()->isPointerTy() && objPtr->getType()->getPointerElementType()->isIntegerTy(8)) {
                     // i8* is a boxed list element (String* or tagged int cast to void*); unbox via
                     // quirk_opaque_to_string_or_null so a null receiver (Map.get miss) stays null —
@@ -2814,10 +2896,12 @@ class LLVMCodegen {
         }
         if (usedSpreadDirect) return;
 
+        // `f(a, ...xs)`: the spread lists, to splice element by element into
+        // the variadic List (pushing the List itself made it one element).
+        std::set<size_t> spreadAt;   // indexes into variadicBundle
         for (const auto& arg : astArgs) {
             if (arg.isSpread) {
-                // Spread into variadic bundle: treat the list as individual elements
-                // For now just push the whole list value (it IS a List already)
+                spreadAt.insert(variadicBundle.size());
                 variadicBundle.push_back(handleExpression(arg.value.get()));
                 continue;
             }
@@ -2860,7 +2944,15 @@ class LLVMCodegen {
         Value* variadicList = nullptr;
         if (isVariadic) {
             std::vector<Value*> castedVariadic;
-            for (Value* vArg : variadicBundle) {
+            std::vector<Value*> spreads;            // in bundle order, after the singles
+            std::vector<size_t> spreadPos;          // how many singles precede each
+            for (size_t bi = 0; bi < variadicBundle.size(); bi++) {
+                Value* vArg = variadicBundle[bi];
+                if (spreadAt.count(bi)) {
+                    spreads.push_back(vArg);
+                    spreadPos.push_back(castedVariadic.size());
+                    continue;
+                }
                 Type* ty = vArg->getType();
                 if (ty->isPointerTy() && ty->getPointerElementType()->isStructTy()) {
                     StructType* st = cast<StructType>(ty->getPointerElementType());
@@ -2887,7 +2979,30 @@ class LLVMCodegen {
                 vArg = boxToVoidPtr(vArg);
                 castedVariadic.push_back(vArg);
             }
-            variadicList = structGen->createListFromValues(castedVariadic);
+            if (spreads.empty()) {
+                variadicList = structGen->createListFromValues(castedVariadic);
+            } else {
+                // Rebuild in argument order: runs of singles, then each spread
+                // list's elements (List.append_all).
+                std::vector<Value*> none;
+                variadicList = structGen->createListFromValues(none);
+                Type* listPtr = variadicList->getType();
+                FunctionCallee appendFn = TheModule->getOrInsertFunction("Core_Collections_List_List_append",
+                    Type::getVoidTy(Context), listPtr, Type::getInt8PtrTy(Context));
+                FunctionCallee extendFn = TheModule->getOrInsertFunction("Core_Collections_List_List_append_all",
+                    Type::getVoidTy(Context), listPtr, listPtr);
+                size_t next = 0;
+                for (size_t k = 0; k <= spreads.size(); k++) {
+                    size_t upto = k < spreads.size() ? spreadPos[k] : castedVariadic.size();
+                    for (; next < upto; next++)
+                        Builder.CreateCall(appendFn, {variadicList, Builder.CreateBitCast(castedVariadic[next], Type::getInt8PtrTy(Context))});
+                    if (k < spreads.size()) {
+                        Value* sp = spreads[k];
+                        if (sp->getType() != listPtr) sp = Builder.CreateBitCast(sp, listPtr);
+                        Builder.CreateCall(extendFn, {variadicList, sp});
+                    }
+                }
+            }
         }
 
         // Emit each LLVM param slot in order (offset..fixedArgCount).

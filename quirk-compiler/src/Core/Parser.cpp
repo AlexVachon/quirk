@@ -1020,11 +1020,22 @@ bool Parser::rewriteAsyncDefine(bool inStruct) {
     const Token kw = tokens[start];
     const int nameIdx = start + 2;
     if (tokens[nameIdx].type != TokenType::IDENTIFIER) return false;
-    if (tokens[nameIdx + 1].type != TokenType::LPAREN) {
-        reportError("`async define` doesn't support generic functions yet", tokens[nameIdx + 1]);
+    // Generic: `async define f[T](…)` — the [T] goes on both halves; the
+    // wrapper's call to the body infers T from the arguments.
+    int genStart = -1, genEnd = -1;   // [genStart, genEnd]: `[` … `]`
+    int parenIdx = nameIdx + 1;
+    if (tokens[parenIdx].type == TokenType::LBRACKET) {
+        int d = 0;
+        for (int k = parenIdx; k < (int)tokens.size(); k++) {
+            if (tokens[k].type == TokenType::LBRACKET) d++;
+            else if (tokens[k].type == TokenType::RBRACKET && --d == 0) { genStart = parenIdx; genEnd = k; break; }
+        }
+        if (genEnd < 0) return false;
+        parenIdx = genEnd + 1;
     }
+    if (tokens[parenIdx].type != TokenType::LPAREN) return false;
     // PARAMS: the tokens between the parentheses.
-    int i = nameIdx + 1, depth = 0, paramsEnd = -1;
+    int i = parenIdx, depth = 0, paramsEnd = -1;
     for (; i < (int)tokens.size(); i++) {
         if (tokens[i].type == TokenType::LPAREN || tokens[i].type == TokenType::LBRACKET) depth++;
         else if (tokens[i].type == TokenType::RPAREN || tokens[i].type == TokenType::RBRACKET) {
@@ -1035,20 +1046,23 @@ bool Parser::rewriteAsyncDefine(bool inStruct) {
     // Argument names: the first identifier of each top-level parameter.
     std::vector<std::string> argNames;
     {
-        bool expectName = true;
+        bool expectName = true, variadic = false;
         int d = 0;
-        for (int k = nameIdx + 2; k < paramsEnd; k++) {
+        for (int k = parenIdx + 1; k < paramsEnd; k++) {
             const Token& t = tokens[k];
             if (t.type == TokenType::LPAREN || t.type == TokenType::LBRACKET) d++;
             else if (t.type == TokenType::RPAREN || t.type == TokenType::RBRACKET) d--;
-            else if (d == 0 && t.type == TokenType::COMMA) { expectName = true; continue; }
-            if (d == 0 && (t.type == TokenType::ELLIPSIS || (t.type == TokenType::STAR && expectName)))
-                reportError("`async define` doesn't support variadic parameters yet", t);
+            else if (d == 0 && t.type == TokenType::COMMA) { expectName = true; variadic = false; continue; }
+            // `...args` / `*args`: the wrapper forwards it as `...args`.
+            if (d == 0 && expectName && (t.type == TokenType::ELLIPSIS || t.type == TokenType::STAR)) {
+                variadic = true;
+                continue;
+            }
             if (expectName && t.type == TokenType::IDENTIFIER) {
                 // `self` is the receiver of an async method, not an argument.
                 if (t.value == "self" && !inStruct)
                     reportError("`self` outside a struct", t);
-                if (t.value != "self") argNames.push_back(t.value);
+                if (t.value != "self") argNames.push_back(variadic ? "..." + t.value : t.value);
                 expectName = false;
             } else if (expectName && t.type == TokenType::REF) {
                 continue;
@@ -1091,7 +1105,7 @@ bool Parser::rewriteAsyncDefine(bool inStruct) {
     auto at = [&](Token t) { t.line = kw.line; t.col = kw.col; return t; };
     gen.push_back(at({TokenType::DEFINE, "define", 0, 0}));
     gen.push_back(at({TokenType::IDENTIFIER, name, 0, 0}));
-    for (int k = nameIdx + 1; k <= paramsEnd; k++) gen.push_back(tokens[k]);
+    for (int k = nameIdx + 1; k <= paramsEnd; k++) gen.push_back(tokens[k]);   // [T] and (params)
     gen.push_back(at({TokenType::ARROW, "->", 0, 0}));
     gen.push_back(at({TokenType::IDENTIFIER, "Task", 0, 0}));
     if (!isVoid) {

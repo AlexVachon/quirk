@@ -5,6 +5,27 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.16.0] — 2026-11-09 — methods on untyped values, cancellable socket I/O, generic / variadic async
+
+- **Calling a struct method on an untyped value works.** `p.speak()` where
+  `p` is an element of a plain `List`, a `Map.get` result or anything else
+  typed `Any` was a build error ("Unknown method 'String.speak'") unless
+  the value was annotated. It now dispatches on the value's runtime type
+  over every struct with that method (and argument count); a value whose
+  type doesn't have it raises `TypeError`. A method no type has at all is
+  still a build error, now saying so plainly. String methods on untyped
+  strings work as before.
+- **`task.cancel()` interrupts a task blocked in socket I/O.** `recv`,
+  `accept`, `send`, TLS reads / writes and `connect` (now non-blocking in
+  a task) wait in `poll()` together with the task's wake-up pipe, so the
+  task gets its `CancelledError` right away — before, only at its next
+  `sleep` / `await` / `wait`.
+- **Generic and variadic `async define`**: `async define first[T](xs:
+  List[T]) -> T`, `async define total(...nums: List) -> Int`.
+- Fixed: spreading a list into a variadic parameter after a fixed
+  argument — `join("-", ...parts)` — passed the whole list as one
+  element.
+
 ## [7.15.0] — 2026-11-09 — fast `s = s + x`
 
 - **Building a string with `s = s + x` (or `s += x`) in a loop is linear.**

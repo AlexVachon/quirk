@@ -23,6 +23,11 @@
 #include <pthread.h>
 #include <time.h>
 #include <errno.h>
+#ifndef _WIN32
+#include <poll.h>
+#include <unistd.h>
+#include <fcntl.h>
+#endif
 
 typedef struct QuirkTask {
     Callable* fn;
@@ -32,6 +37,8 @@ typedef struct QuirkTask {
     int retrieved;             // somebody awaited it
     int cancel_requested;      // task.cancel() was called
     int cancel_raised;         // ...and the task has seen its CancelledError
+    int wake[2];               // pipe: cancel() writes to it to wake a task
+    int has_wake;              //   blocked in socket I/O (quirk_wait_io)
     struct QuirkTask* next;    // quirk_tasks: unfinished / failed-unawaited
 } QuirkTask;
 
@@ -91,6 +98,9 @@ static void* quirk_task_main(void* arg) {
         t->exception = quirk_get_exception();
     }
     t->done = 1;
+#ifndef _WIN32
+    if (t->has_wake) { close(t->wake[0]); close(t->wake[1]); t->has_wake = 0; }
+#endif
     // Succeeded, or failed and already awaited: nothing left to report.
     // A cancelled task isn't a failure to report either — somebody asked.
     if (!t->exception || t->retrieved || t->cancel_requested) quirk_tasks_remove(t);
@@ -237,6 +247,9 @@ void quirk_task_cancel(void* v) {
     if (t->done) return;
     t->cancel_requested = 1;
     pthread_cond_broadcast(&quirk_sched);   // cut short its sleep / await
+#ifndef _WIN32
+    if (t->has_wake) { ssize_t w = write(t->wake[1], "x", 1); (void)w; }   // ...or socket wait
+#endif
 }
 
 // `sys.sleep(ms)` inside a task: a timed wait on the scheduler condition,
@@ -258,4 +271,34 @@ void quirk_task_sleep(int64_t ms) {
         if (pthread_cond_timedwait(&quirk_sched, &quirk_gil, &until) == ETIMEDOUT) break;
     }
     quirk_task_check_cancel();
+}
+
+// Before a blocking socket call (net.c), with the lock held: in a task, wait
+// until `fd` is ready (for writing when `for_write`) while other tasks run —
+// or until task.cancel(), which raises CancelledError here. Outside a task
+// it returns at once (the call itself blocks, as before).
+void quirk_wait_io(int fd, int for_write) {
+#ifndef _WIN32
+    QuirkTask* me = (QuirkTask*)quirk_ts->task;
+    if (!me || !quirk_gil_on || fd < 0) return;
+    quirk_task_check_cancel();
+    if (!me->has_wake) {
+        if (pipe(me->wake) != 0) return;
+        fcntl(me->wake[0], F_SETFL, O_NONBLOCK);
+        fcntl(me->wake[1], F_SETFL, O_NONBLOCK);
+        me->has_wake = 1;
+    }
+    struct pollfd fds[2] = {
+        { fd, (short)(for_write ? POLLOUT : POLLIN), 0 },
+        { me->wake[0], POLLIN, 0 },
+    };
+    pthread_mutex_unlock(&quirk_gil);
+    int rc;
+    do { rc = poll(fds, 2, -1); } while (rc < 0 && errno == EINTR);
+    pthread_mutex_lock(&quirk_gil);
+    if (fds[1].revents & POLLIN) { char b[16]; while (read(me->wake[0], b, sizeof b) > 0) {} }
+    quirk_task_check_cancel();
+#else
+    (void)fd; (void)for_write;
+#endif
 }

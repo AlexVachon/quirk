@@ -1,0 +1,62 @@
+// p132 — three v7.16.0 fixes.
+//  1. A struct method called on an untyped value (an element of a plain
+//     List, a Map.get result) dispatches on its runtime type; it was a build
+//     error ("Unknown method 'String.speak'").
+//  2. `async define` works with type parameters and variadic parameters.
+//  3. `f(a, ...xs)` splices xs into a variadic parameter (it passed the
+//     whole list as one element when a fixed argument came first).
+
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+struct Cat {
+    name: String
+    define speak(self) -> String { return self.name + " meows" }
+    define legs(self) -> Int { return 4 }
+}
+struct Bird {
+    name: String
+    define speak(self) -> String { return self.name + " tweets" }
+    define legs(self) -> Int { return 2 }
+    define fly(self) -> String { return self.name + " flies" }
+}
+define pets() -> List { return [Cat("Tom"), Bird("Tweety")] }
+
+async define identity[T](x: T) -> T { return x }
+async define total(...nums: List) -> Int {
+    s := 0
+    for n in nums { s = s + n }
+    return s
+}
+define joined(sep: String, ...parts: List) -> String { return sep.join(parts) }
+
+define main() -> void {
+    said := []
+    legs := 0
+    for p in pets() {
+        said.append(p.speak())
+        legs = legs + p.legs()
+    }
+    if said != ["Tom meows", "Tweety tweets"] or legs != 6 { fail("dispatch on list elements"); return }
+    m := Map()
+    m.put("c", Cat("Kit"))
+    if m.get("c").speak() != "Kit meows"          { fail("dispatch on Map.get"); return }
+    msg := ""
+    try {
+        v := m.get("c")
+        v.fly()
+    } catch (e: TypeError) {
+        msg = "TypeError"
+    }
+    if msg != "TypeError"                         { fail("a Cat can't fly(): TypeError"); return }
+    if pets()[1].fly() != "Tweety flies"          { fail("dispatch to the one struct with fly()"); return }
+
+    if await identity(41) + 1 != 42               { fail("generic async (Int)"); return }
+    if (await identity("ab")).upper() != "AB"     { fail("generic async (String)"); return }
+    if await total(1, 2, 3) != 6                  { fail("variadic async"); return }
+    if await total() != 0                         { fail("variadic async, no args"); return }
+
+    xs := ["a", "b"]
+    if joined("-", ...xs) != "a-b"                { fail("spread after a fixed arg"); return }
+    if joined("-", "x", ...xs, "y") != "x-a-b-y"  { fail("spread between args"); return }
+    print("p132 ok")
+}

@@ -16,6 +16,7 @@
     typedef int socklen_t;
 #else
     #include <unistd.h>
+    #include <fcntl.h>
     #include <sys/socket.h>
     #include <arpa/inet.h>
     #include <netinet/in.h>
@@ -66,10 +67,37 @@ int64_t Net_listen(int64_t sockfd, int64_t backlog) {
 int64_t Net_accept(int64_t sockfd) {
     struct sockaddr_in cli_addr;
     socklen_t clilen = sizeof(cli_addr);
+    quirk_wait_io((int)sockfd, 0);   // a task: other tasks run; cancel() interrupts
     quirk_gil_release();   // other tasks run while this waits for a client
     int fd = accept(sockfd, (struct sockaddr *) &cli_addr, &clilen);
     quirk_gil_acquire();
     return fd;
+}
+
+// connect(), letting other tasks run meanwhile. In a task it connects
+// non-blocking and waits in quirk_wait_io, so task.cancel() interrupts it
+// (raising CancelledError); elsewhere it blocks with the lock released.
+static int net__connect(int fd, struct sockaddr_in* addr) {
+#ifndef _WIN32
+    if (quirk_ts->task) {
+        int flags = fcntl(fd, F_GETFL, 0);
+        fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+        int rc = connect(fd, (struct sockaddr*)addr, sizeof(*addr));
+        if (rc < 0 && errno == EINPROGRESS) {
+            quirk_wait_io(fd, 1);
+            int err = 0;
+            socklen_t len = sizeof(err);
+            getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &len);
+            rc = err == 0 ? 0 : -1;
+        }
+        fcntl(fd, F_SETFL, flags);
+        return rc;
+    }
+#endif
+    quirk_gil_release();
+    int rc = connect(fd, (struct sockaddr*)addr, sizeof(*addr));
+    quirk_gil_acquire();
+    return rc;
 }
 
 // Host name → IPv4 address. getaddrinfo is thread-safe (gethostbyname
@@ -100,15 +128,13 @@ int64_t Net_connect(int64_t sockfd, String* host, int64_t port) {
     serv_addr.sin_family = AF_INET;
     serv_addr.sin_port = htons(port);
 
-    quirk_gil_release();
-    int rc = connect(sockfd, (struct sockaddr*)&serv_addr, sizeof(serv_addr));
-    quirk_gil_acquire();
-    return rc;
+    return net__connect((int)sockfd, &serv_addr);
 }
 int64_t Net_send(int64_t sockfd, String* data) {
     if (!data || !data->buffer) return 0;
     const char* buf = data->buffer;
     int64_t len = data->length;
+    quirk_wait_io((int)sockfd, 1);
     quirk_gil_release();
     int64_t n = send(sockfd, buf, len, 0);
     quirk_gil_acquire();
@@ -117,6 +143,7 @@ int64_t Net_send(int64_t sockfd, String* data) {
 
 String* Net_recv(int64_t sockfd, int64_t size) {
     char* buffer = GC_malloc(size + 1);
+    quirk_wait_io((int)sockfd, 0);
     quirk_gil_release();
     int n = recv(sockfd, buffer, size, 0);
     quirk_gil_acquire();
@@ -224,9 +251,7 @@ int64_t Net_tls_connect(String* host, int64_t port) {
     serv_addr.sin_addr = resolved;
     serv_addr.sin_port = htons(port);
 
-    quirk_gil_release();
-    int crc = connect(sockfd, (struct sockaddr*)&serv_addr, sizeof(serv_addr));
-    quirk_gil_acquire();
+    int crc = net__connect(sockfd, &serv_addr);
     if (crc < 0) {
         close(sockfd);
         return -1;
@@ -272,6 +297,7 @@ int64_t Net_tls_send(int64_t handle, String* data) {
     if (!g_tls_slots[handle].in_use) return -1;
     if (!data || !data->buffer) return 0;
     SSL* wssl = g_tls_slots[handle].ssl;
+    quirk_wait_io(SSL_get_fd(wssl), 1);
     quirk_gil_release();
     int64_t n = SSL_write(wssl, data->buffer, data->length);
     quirk_gil_acquire();
@@ -284,6 +310,8 @@ String* Net_tls_recv(int64_t handle, int64_t size) {
     if (size <= 0) return make_String("");
     char* buffer = (char*)GC_malloc(size + 1);
     SSL* rssl = g_tls_slots[handle].ssl;
+    // Already-decrypted bytes are buffered in the SSL object: no wait then.
+    if (SSL_pending(rssl) <= 0) quirk_wait_io(SSL_get_fd(rssl), 0);
     quirk_gil_release();
     int64_t n = SSL_read(rssl, buffer, size);
     quirk_gil_acquire();

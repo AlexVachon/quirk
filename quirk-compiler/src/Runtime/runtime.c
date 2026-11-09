@@ -100,6 +100,11 @@ void QuirkRuntime_init(int argc, char** argv) {
 //   1. Tagged integer: pointer value <= 0xFFFFFFFF (inttoptr i32 -> i8*)
 //   2. Any*: first 4 bytes are a valid AnyTag (0..ANY_NULL=8)
 //   3. String*: first field is a heap pointer to char buffer
+// The runtime type id of an untyped value (QT_NONE for null, inline ints
+// and anything without a header) — safe on any i8*. Used by compiled code
+// to dispatch a method call on an `Any` value.
+uint32_t quirk_type_id_of(const void* p) { return quirk_type_of(p); }
+
 void* quirk_alloc(uint32_t type_id, size_t size) {
     char* block = (char*)GC_malloc(sizeof(QuirkHeader) + (size ? size : 1));
     QuirkHeader* h = (QuirkHeader*)block;

@@ -43,6 +43,9 @@ void quirk_gil_release(void);
 void quirk_gil_acquire(void);
 // `sys.sleep` in a task: interruptible by `task.cancel()`.
 void quirk_task_sleep(int64_t ms);
+// Before a blocking socket call in a task: wait for `fd` while other tasks
+// run, or raise CancelledError on task.cancel() (core/task.c).
+void quirk_wait_io(int fd, int for_write);
 
 // Allocate `size` bytes of zeroed, GC-managed memory with a header.
 void* quirk_alloc(uint32_t type_id, size_t size);

@@ -544,7 +544,10 @@ w := worker()
 if not w.wait(5000) { w.cancel() }      // a five-second timeout
 ```
 
-Struct methods can be `async define` too (`async define fetch(self, url: String) -> String`).
+Struct methods can be `async define` too (`async define fetch(self, url: String) -> String`),
+and so can generic and variadic functions (`async define first[T](xs: List[T]) -> T`,
+`async define total(...nums: List) -> Int`). `cancel()` also interrupts a task
+blocked in socket I/O (`recv`, `accept`, `connect`, `send`).
 
 ---
 

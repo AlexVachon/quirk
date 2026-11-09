@@ -1,0 +1,55 @@
+// p133 — task.cancel() interrupts a task blocked in socket I/O (v7.16.0):
+// `recv` / `accept` / `connect` wait in poll() alongside the task's wake-up
+// pipe. Before, cancellation took effect only at the next sleep / await.
+use sys
+use net.socket
+
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+async define silent_server(port: Int) {
+    l := socket.Socket()
+    l.bind("127.0.0.1", port)
+    l.listen(4)
+    c := l.accept()
+    sys.sleep(10000)          // accepts, never answers
+}
+
+async define reader(port: Int) -> String {
+    s := socket.Socket()
+    s.connect("127.0.0.1", port)
+    try {
+        return s.recv(100)
+    } catch (e: CancelledError) {
+        return "recv cancelled"
+    }
+    return ""
+}
+
+async define acceptor(port: Int) -> String {
+    l := socket.Socket()
+    l.bind("127.0.0.1", port)
+    l.listen(4)
+    try {
+        l.accept()
+    } catch (e: CancelledError) {
+        return "accept cancelled"
+    }
+    return ""
+}
+
+define main() -> void {
+    port := 18000 + sys.now_ms() % 2000
+    srv := silent_server(port)
+    sys.sleep(100)
+    t0 := sys.now_ms()
+    r := reader(port)
+    a := acceptor(port + 1)
+    sys.sleep(200)
+    r.cancel()
+    a.cancel()
+    if await r != "recv cancelled"               { fail("recv not cancelled"); return }
+    if await a != "accept cancelled"             { fail("accept not cancelled"); return }
+    if sys.now_ms() - t0 > 3000                  { fail("cancel took too long"); return }
+    srv.cancel()
+    print("p133 ok")
+}

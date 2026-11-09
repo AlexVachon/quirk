@@ -2,6 +2,22 @@
 
 All notable changes to the extension land here. Versioning follows SemVer; minor bumps for new features, patches for fixes.
 
+## [0.6.0] — 2026-11-09 — quick fixes for compiler errors
+
+Ctrl+. on a compiler error offers:
+
+- **"Change to `name`"** for a misspelled variable, field or method —
+  the compiler's own suggestions (`cuont` → `count`, `p.nmae` → `p.name`,
+  `p.gret()` → `p.greet()`, `m.contains(k)` → `m.has(k)`). Members and
+  methods need compiler 7.9.5.
+- **Type mismatches** (Q0209 / Q0210): convert the value —
+  `n: Int := "5".to_int()`, `return k.str()`,
+  `(count + 1).str()` (parenthesised when needed) — or change the
+  variable's declared type.
+- "Remove unused declaration" is no longer offered on the first line of a
+  multi-line `define` / `struct`, where it deleted only that line and
+  left the body behind.
+
 ## [0.5.0] — 2026-11-06 — checks as you type, every error at once
 
 - **Compiler checks follow your typing.** With compiler 7.9.4+ the

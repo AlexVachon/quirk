@@ -58,6 +58,7 @@ inline const std::vector<ErrorCode>& knownErrorCodes() {
         {102, std::regex("^Cannot resolve module")},
         {103, std::regex("^module '[^']*' has no function")},
         {104, std::regex("^Unknown method '")},
+        {105, std::regex("^'[^']*' has no member '")},
         // Type checking
         {200, std::regex("^argument \\d+ of ")},
         {201, std::regex("^'.' operands must be numeric")},
@@ -171,13 +172,23 @@ inline const std::vector<ErrorDoc>& errorDocs() {
 
         {104, "Unknown method 'Type.method'",
          "The receiver type has no method with that name. Sema knows the receiver's static type (e.g. `Int`, `String`, or a user struct) and checks against its declared method set.",
-         "Check the spelling; if the receiver could be `Any`, cast first (`x.to_str()`, `x.to_int()`). For structs, extend the type with `extend Foo { define ... }` to add a method.",
+         "Check the spelling — the hint suggests the closest method. If the receiver is `Any`, annotate the binding with its real type first (`n: Int := m.get(\"n\")`).",
          "// bad:\n"
          "n := 42\n"
          "n.definitely_not_a_method()   // Q0104\n\n"
          "// good — use an actual method:\n"
          "n := 42\n"
          "n.str()"},
+
+        {105, "Unknown field or member",
+         "The value's type has no field, method or property with that name.",
+         "Check the spelling — the hint lists the closest names. If the value is `Any` (a Callable result, `Map.get`), annotate the binding to give it a type: `p: Person := m.get(\"p\")`.",
+         "// bad:\n"
+         "struct P { name: String }\n"
+         "p := P(\"a\")\n"
+         "print(p.nmae)               // Q0105\n\n"
+         "// good:\n"
+         "print(p.name)"},
 
         {200, "Argument N of 'foo' expected T but got U",
          "A function/method call passed an argument whose static type doesn't match the declared parameter type.",

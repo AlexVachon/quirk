@@ -9,9 +9,10 @@ F=tools/fixtures
 
 "$QUIRK" --symbols-json "$F/editor_types.qk" > /tmp/qk_sym.$$ || true
 "$QUIRK" --check --diagnostics-json "$F/editor_errors.qk" > /tmp/qk_diag.$$ || true
+"$QUIRK" --check --diagnostics-json "$F/editor_fixes.qk" > /tmp/qk_fix.$$ || true
 
 rc=0
-python3 - /tmp/qk_sym.$$ /tmp/qk_diag.$$ <<'PY' || rc=$?
+python3 - /tmp/qk_sym.$$ /tmp/qk_diag.$$ /tmp/qk_fix.$$ <<'PY' || rc=$?
 import json, sys
 def load(p):
     return [json.loads(l) for l in open(p) if l.strip().startswith('{')]
@@ -39,10 +40,16 @@ got = sorted((d['line'], d.get('code')) for d in diags)
 want = [(3, 'Q0209'), (4, 'Q0100'), (8, 'Q0210'), (11, 'Q0209')]
 if got != want:
     fails.append(f"diagnostics {got}, want {want}")
+# Unknown members / methods are found by `--check` (Sema), with hints the
+# editors turn into quick fixes. Methods used to be caught only by Codegen.
+fixd = sorted((d['line'], d.get('code'), 'did you mean `' + w + '`' in d['msg'])
+              for d in load(sys.argv[3]) for w in ['name', 'greet'] if f'`{w}`' in d['msg'])
+if fixd != [(8, 'Q0105', True), (9, 'Q0104', True)]:
+    fails.append(f"member / method typos {fixd}, want Q0105 on line 8 and Q0104 on line 9 with hints")
 for f in fails:
     print("FAIL", f)
-print(f"editor json: {8 - len(fails)}/8 checks passed")
+print(f"editor json: {9 - len(fails)}/9 checks passed")
 sys.exit(1 if fails else 0)
 PY
-rm -f /tmp/qk_sym.$$ /tmp/qk_diag.$$
+rm -f /tmp/qk_sym.$$ /tmp/qk_diag.$$ /tmp/qk_fix.$$
 exit $rc

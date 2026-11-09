@@ -3077,7 +3077,6 @@ std::string Sema::checkCall(CallNode *node)
             {"String", {
                 {"to_int",     "Int"},
                 {"to_float",   "Double"},
-                {"to_double",  "Double"},
                 {"to_bool",    "Bool"},
                 {"lower",      "String"},
                 {"upper",      "String"},
@@ -3087,7 +3086,6 @@ std::string Sema::checkCall(CallNode *node)
                 {"is_upper",   "Bool"},
                 {"is_lower",   "Bool"},
                 {"trim",       "String"},
-                {"strip",      "String"},
                 {"split",      "List"},
                 {"join",       "String"},
                 {"find",       "Int"},
@@ -3102,7 +3100,6 @@ std::string Sema::checkCall(CallNode *node)
             {"Int", {
                 {"str",        "String"},
                 {"to_float",   "Double"},
-                {"to_double",  "Double"},
                 {"parse",      "Int"},
             }},
             {"Double", {
@@ -3119,12 +3116,10 @@ std::string Sema::checkCall(CallNode *node)
                 {"length",     "Int"},
                 {"append",     "void"},
                 {"pop",        "Any"},
-                {"join",       "String"},
             }},
             {"Map", {
                 {"get",        "Any"},
                 {"put",        "void"},
-                {"contains",   "Bool"},
                 {"length",     "Int"},
             }},
         };
@@ -3213,6 +3208,50 @@ std::string Sema::checkCall(CallNode *node)
 
             std::string retType = searchMethod(objType, searchMethod);
             if (!retType.empty()) return retType;
+
+            // No such method on a concrete struct. Codegen would stop with
+            // "Unknown method" at build time; report it here so `--check`
+            // (and the editors) see it too. Skipped: fields called like
+            // methods, the members Codegen synthesizes for every struct,
+            // interfaces and generic parameters (dispatched at runtime).
+            static const std::set<std::string> synthesized = {
+                "str", "traceback", "__name", "__class", "__parent", "__init"};
+            // Codegen also accepts `xs.set(i, v)` for a `__set` dunder.
+            auto hasDunder = [&](const std::string& type, auto& self) -> bool {
+                auto sIt = structRegistry.find(type);
+                if (sIt == structRegistry.end()) return false;
+                if (findMethod(type, type + "___" + m->memberName)) return true;
+                for (const std::string& parent : sIt->second->parents)
+                    if (self(parent, self)) return true;
+                return false;
+            };
+            if (!synthesized.count(m->memberName) && !interfaceRegistry.count(objType) &&
+                !isGenericParam(objType) && resolveMember(objType, m->memberName) == "unknown" &&
+                !hasDunder(objType, hasDunder)) {
+                for (auto& a : node->args) checkExpression(a.value.get());
+                // Names from other languages whose Quirk spelling is too far
+                // off for the edit-distance suggestions to find.
+                static const std::map<std::pair<std::string, std::string>, std::string> equivalents = {
+                    {{"Map", "contains"},     "`has`"},
+                    {{"Map", "contains_key"}, "`has`"},
+                    {{"Map", "set"},          "`put`"},
+                    {{"List", "join"},        "`sep.join(list)` (join is a String method)"},
+                    {{"List", "push"},        "`append`"},
+                    {{"List", "size"},        "`length`"},
+                    {{"List", "len"},         "`length`"},
+                    {{"String", "len"},       "`length`"},
+                    {{"String", "size"},      "`length`"},
+                    {{"String", "to_double"}, "`to_float`"},
+                    {{"Int", "to_double"},    "`to_float`"},
+                    {{"String", "strip"},     "`trim`"},
+                };
+                std::string hint;
+                auto eq = equivalents.find({objType, m->memberName});
+                if (eq != equivalents.end()) hint = "\n  hint: did you mean " + eq->second + "?";
+                else hint = formatHint(suggestMembers(objType, m->memberName));
+                fatalError("Unknown method '" + objType + "." + m->memberName + "'" + hint,
+                           m->line, m->col, m->filePath);
+            }
         }
     }
     // Last resort: the callee is some other expression form, e.g. a chained

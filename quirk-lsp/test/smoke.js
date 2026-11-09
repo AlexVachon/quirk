@@ -17,6 +17,7 @@ const quirk = process.env.QUIRK || 'quirk';
 const fixtures = path.resolve(__dirname, '..', '..', 'quirk-compiler', 'tools', 'fixtures');
 const errorsFile = path.join(fixtures, 'editor_errors.qk');
 const typesFile = path.join(fixtures, 'editor_types.qk');
+const fixesFile = path.join(fixtures, 'editor_fixes.qk');
 
 const server = spawn(process.execPath, [path.join(__dirname, '..', 'out', 'server.js')], {
     stdio: ['pipe', 'pipe', 'inherit'],
@@ -111,6 +112,24 @@ function check(cond, what) { if (!cond) fails.push(what); else console.log('  ok
     const at = (line) => hints.filter((h) => h.position.line === line - 1).map((h) => `${h.position.character}${h.label}`);
     check(at(13).includes('6: List[P]'), `people: List[P] hint (line 13: ${at(13)})`);
     check(at(8).includes('9: P'), `for-loop variable hint placed after 'p', not inside 'for' (line 8: ${at(8)})`);
+
+    // 4. Quick fixes from the compiler's "did you mean" hints.
+    const fixUri = pathToFileURL(fixesFile).href;
+    const onFix = waitFor('textDocument/publishDiagnostics', (p) => p.uri === fixUri, 'diagnostics for fixes');
+    notify('textDocument/didOpen', { textDocument: {
+        uri: fixUri, languageId: 'quirk', version: 1, text: fs.readFileSync(fixesFile, 'utf8') } });
+    const d4 = await onFix;
+    const titles = [];
+    for (const diag of d4.diagnostics) {
+        const acts = await request('textDocument/codeAction', { textDocument: { uri: fixUri },
+            range: diag.range, context: { diagnostics: [diag] } }) || [];
+        for (const a of acts) {
+            const edits = a.edit?.changes?.[fixUri] ?? [];
+            titles.push(`${diag.code}:${edits.map((e) => e.newText).join(',')}`);
+        }
+    }
+    check(titles.includes('Q0105:name') && titles.includes('Q0104:greet'),
+          `member / method typos offer the right fix (got ${titles.join(' ')})`);
 
     await request('shutdown', null);
     notify('exit', null);

@@ -27,6 +27,7 @@ interface CompilerDiag {
     line: number;   // 1-based
     col: number;    // 1-based
     code?: string;  // `Q0209`
+    suggestions?: string[];   // "did you mean …" names (undefined-name errors)
 }
 
 interface CompilerSymbol {
@@ -46,6 +47,12 @@ const VAR_KINDS = new Set(['variable', 'parameter', 'module_const']);
 const reportedLines = new Map<string, Set<number>>();       // uri → 0-based lines
 const varSymbols = new Map<string, CompilerSymbol[]>();     // uri → this file's variables
 const running = new Map<string, ChildProcess[]>();          // uri → in-flight children
+// "did you mean" names per diagnostic. Keyed by position + message: VS Code
+// hands code-action providers copies of the diagnostics, not the originals.
+const suggestionsOf = new Map<string, Map<string, string[]>>();   // uri → key → names
+function diagKey(d: vscode.Diagnostic): string {
+    return `${d.range.start.line}:${d.range.start.character}|${d.message}`;
+}
 
 let compilerCommand = 'quirk';
 let compilerEnv: NodeJS.ProcessEnv = process.env;
@@ -99,7 +106,7 @@ function parseLines<T>(text: string): T[] {
     return out;
 }
 
-function toDiagnostic(doc: vscode.TextDocument, d: CompilerDiag): vscode.Diagnostic {
+function toDiagnostic(doc: vscode.TextDocument, d: CompilerDiag, names: Map<string, string[]>): vscode.Diagnostic {
     const lineIdx = Math.min(Math.max(d.line - 1, 0), Math.max(doc.lineCount - 1, 0));
     const text = doc.lineAt(lineIdx).text;
     const startCol = Math.min(Math.max(d.col - 1, 0), text.length);
@@ -114,7 +121,21 @@ function toDiagnostic(doc: vscode.TextDocument, d: CompilerDiag): vscode.Diagnos
     const diag = new vscode.Diagnostic(range, d.msg.replace(/\n\s+/g, '\n'), severity);
     diag.source = 'quirk';
     if (d.code) diag.code = d.code;
+    // Replacement names, for quick fixes: the JSON list when present,
+    // otherwise identifiers in the "hint: did you mean `a`, `b` or `c`?"
+    // line (unknown members / methods carry it in the message).
+    let found = d.suggestions ?? [];
+    if (found.length === 0) {
+        const hint = /did you mean ([^?\n]*)\?/.exec(d.msg);
+        if (hint) found = [...hint[1].matchAll(/`([A-Za-z_]\w*)`/g)].map(m => m[1]);
+    }
+    if (found.length > 0) names.set(diagKey(diag), found);
     return diag;
+}
+
+/** Names the compiler suggested for this diagnostic ("did you mean …"). */
+export function compilerSuggestions(uri: vscode.Uri, diag: vscode.Diagnostic): string[] {
+    return suggestionsOf.get(uri.toString())?.get(diagKey(diag)) ?? [];
 }
 
 async function check(doc: vscode.TextDocument): Promise<void> {
@@ -139,7 +160,9 @@ async function check(doc: vscode.TextDocument): Promise<void> {
 
     if (diagOut !== null && collection) {
         const diags = parseLines<CompilerDiag>(diagOut).filter(d => d.path && sameFile(d.path, file));
-        const list = diags.map(d => toDiagnostic(doc, d));
+        const names = new Map<string, string[]>();
+        const list = diags.map(d => toDiagnostic(doc, d, names));
+        suggestionsOf.set(key, names);
         collection.set(doc.uri, list);
         reportedLines.set(key, new Set(list.map(d => d.range.start.line)));
     }
@@ -233,6 +256,7 @@ export function startCompilerService(
             collection?.delete(doc.uri);
             reportedLines.delete(key);
             varSymbols.delete(key);
+            suggestionsOf.delete(key);
             checkedOnce.delete(key);
         }),
     );

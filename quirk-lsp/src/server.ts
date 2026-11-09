@@ -315,7 +315,16 @@ async function checkDocument(document: TextDocument): Promise<void> {
       // diagnostic itself. The code-action handler reads them back
       // out of `params.context.diagnostics[*].data` when the cursor
       // hovers over this diagnostic.
-      data: rec.suggestions && rec.suggestions.length ? { suggestions: rec.suggestions } : undefined,
+      data: (() => {
+        // Undefined names carry a `suggestions` list; unknown members and
+        // methods put theirs in the message ("hint: did you mean `a`?").
+        let names = rec.suggestions ?? [];
+        if (names.length === 0) {
+          const hint = /did you mean ([^?\n]*)\?/.exec(rec.msg);
+          if (hint) names = [...hint[1].matchAll(/`([A-Za-z_]\w*)`/g)].map((m) => m[1]);
+        }
+        return names.length ? { suggestions: names } : undefined;
+      })(),
     });
     byUri.set(uri, list);
   }

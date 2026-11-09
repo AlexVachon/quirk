@@ -1,0 +1,10 @@
+// Fixture for quirk-lsp/test/smoke.js — "did you mean" quick fixes.
+struct P {
+    name: String
+    define greet(self) -> String { return "hi" }
+}
+define main() -> void {
+    p := P("a")
+    print(p.nmae)
+    print(p.gret())
+}

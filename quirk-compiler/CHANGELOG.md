@@ -5,6 +5,26 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.9.5] — 2026-11-09 — unknown methods caught by `--check`, better hints
+
+- **Unknown methods are reported by the type checker.** `p.gret()` or
+  `"x".uper()` passed `quirk --check` (and so showed nothing in editors)
+  and only failed when the program was built. Sema now reports them —
+  Q0104, with a "did you mean `greet`?" hint — alongside every other
+  error. Fields called like methods, `xs.set(i, v)` (the `__set` dunder),
+  interfaces and generic parameters are unaffected.
+- **Hints for names from other languages:** `m.contains(k)` → `has`,
+  `xs.join(",")` → `sep.join(list)`, `xs.size()` / `len()` → `length`,
+  `s.strip()` → `trim`, `.to_double()` → `to_float`, `xs.push(x)` →
+  `append`.
+- Sema's table of built-in methods listed five that don't exist
+  (`String.strip`, `String.to_double`, `Int.to_double`, `List.join`,
+  `Map.contains`), so it accepted them and the build failed later. Removed.
+- **New Q0105** for an unknown field or member (`'P' has no member
+  'nmae'`), so it gets a code and `quirk explain Q0105`. Q0104's
+  explanation no longer suggests a `to_str()` method that doesn't exist.
+- For VS Code extension 0.6.0 and quirk-lsp 0.25.0 (quick fixes).
+
 ## [7.9.4] — 2026-11-06 — every error at once, live editor checks, Unicode case
 
 - **Every error in a file is reported, not just the first.** Sema used to

@@ -9,6 +9,9 @@
     #include <dlfcn.h>
     #include <unistd.h>
     #include <time.h>
+#else
+    // windows.h's CreateWindow macro would rename the SDL table's member.
+    #undef CreateWindow
 #endif
 
 #include "window_font.h"

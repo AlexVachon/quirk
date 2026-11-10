@@ -154,7 +154,8 @@ STDLIB_TAG_test ?= v1.1.0
 # fs v1.2.0: walk, glob, temp files, copy, read/write_text (runtime v7.19.0).
 STDLIB_TAG_fs ?= v1.2.0
 # process v1.0.0 is the initial release; v1.0.1 requires compiler 7.18.0 (runtime Process_*).
-STDLIB_TAG_process ?= v1.0.1
+STDLIB_TAG_process ?= v1.0.2
+# process v1.0.2: shell() uses cmd.exe /c on Windows (sys.platform, v7.24.0).
 # window v1.0.0 is the initial release (runtime Window_*, SDL2 via dlopen, v7.20.0).
 # window v1.1.0: PNG / JPEG / GIF / TGA images, sprite-sheet regions, alpha (v7.22.0).
 STDLIB_TAG_window ?= v1.1.0

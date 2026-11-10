@@ -1,10 +1,9 @@
 # Native Windows port
 
-Status: **in progress** — Stages 1–3 done (2026-11-10): the compiler
-and runtime build with MSVC / clang on `windows-latest`, and Quirk
-programs run through the JIT (printing, strings, structs, exceptions,
-files, GC, async tasks). Stage 4 (the test suite, `process`, `regex`,
-`window`, `net`) next. Until it's done, use Quirk on Windows
+Status: **builds from source; experimental.** Stages 1–4 done
+(2026-11-10): the compiler and runtime build with MSVC / clang on
+`windows-latest`, and the test suite passes there (281 / 282 — the last
+one waits on `quirk-process` v1.0.2). No Windows release yet (Stage 5). Until it's done, use Quirk on Windows
 through WSL — see [INSTALL.md → Windows (WSL)](../../INSTALL.md#windows-wsl).
 
 Work happens on the `windows-probe` branch. Every change is behind
@@ -49,11 +48,15 @@ Runtime (C): 35 errors —
    `Core_*` / `Fs_*` / ... symbol exported (the JIT resolves them by name),
    ORC JIT on COFF, Boehm GC init; audit `long` (32-bit on Windows) in
    generated code and C externs.
-4. **Libraries** — `process` (`CreateProcess` + pipes), `regex` (PCRE2),
+4. ✅ **Libraries** — `process` (`CreateProcess` + pipes), `regex` (vendored musl / TRE),
    `window` (`LoadLibrary("SDL2.dll")`), `net` (Winsock init), AOT
    linking with `link.exe` / `lld-link`; then run the test suite in a
    Windows CI job.
-5. **Release** — Windows build in `release.yml`, `install.ps1`.
+5. **Release** — Windows build in `release.yml`, `install.ps1`; AOT
+   linking with `link.exe` / `lld-link` (the background `--build` cache
+   isn't wired yet, so programs always run through the JIT); the package
+   manager's `tar` / `git` steps and the REPL's history on Windows; a
+   Windows job in `test.yml`.
 
 ## What changed for Windows (so far)
 
@@ -72,6 +75,12 @@ Runtime (C): 35 errors —
 - Runtime: tasks register their threads with the GC; `fs` temp files,
   `walk`, `remove_tree`, wildcard matching; sockets close with
   `closesocket`; `regex` raises "not supported on Windows yet".
+- `process`: `libs/process_win32.c` (`CreateProcess`, reader / writer
+  threads for `communicate`, `TerminateProcess` with exit code -N);
+  `process.shell` uses `cmd.exe /c`.
+- `regex`: musl's POSIX regex (TRE) vendored in
+  `src/third_party/musl_regex`, linked into `runtime.dll`.
+- `window`: `SDL2.dll` via `LoadLibrary`.
 - `tools/windows_build.sh` builds `runtime.dll` (every external symbol
   exported via a generated `.def`) and `quirk.exe`, then smoke-tests.
 

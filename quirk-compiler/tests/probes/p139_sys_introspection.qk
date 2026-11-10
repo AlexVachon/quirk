@@ -1,0 +1,31 @@
+// p139 — v7.24.0: sys functions that were declared but missing from the
+// runtime (a program calling one failed to link: "Symbols not found:
+// Sys_platform").
+use sys
+
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+define main() -> void {
+    p := sys.platform()
+    if p != "linux" and p != "darwin" and p != "win32" { fail("platform: " + p) }
+    b := sys.byteorder()
+    if b != "little" and b != "big" { fail("byteorder: " + b) }
+    if sys.maxsize() != 9223372036854775807 { fail("maxsize") }
+    if sys.getdefaultencoding() != "utf-8" { fail("getdefaultencoding") }
+    if sys.copyright().length() == 0 { fail("copyright") }
+    if sys.getsizeof("hello") <= 0 or sys.getsizeof([1, 2, 3]) <= 0 or sys.getsizeof(5) != 8 { fail("getsizeof") }
+    sys.setrecursionlimit(500)
+    if sys.getrecursionlimit() != 500 { fail("recursion limit") }
+    if sys.exc_info() != null { fail("exc_info outside a catch") }
+    inside := false
+    try {
+        throw ValueError("x")
+    } catch (e: ValueError) {
+        inside = sys.exc_info() != null
+    }
+    if not inside { fail("exc_info inside a catch") }
+    sys.capture_backtrace()
+    if sys.backtrace_size() < 1 or not sys.backtrace_frame(0).startswith("main") { fail("backtrace") }
+    if sys.executable().length() == 0 { fail("executable") }
+    print("ok")
+}

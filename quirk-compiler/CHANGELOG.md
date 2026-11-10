@@ -5,6 +5,25 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.24.0] — 2026-11-10 — native Windows (experimental), `sys` gaps, `eval` imports
+
+- **Quirk builds and runs natively on Windows** — from source, experimental
+  (no Windows release yet): MSVC / clang with LLVM 14 from conda-forge,
+  `tools/windows_build.sh`; the test suite passes on `windows-latest`.
+  Everything is behind `_WIN32` — Linux and macOS are unchanged. Status
+  and what's left: `docs/WINDOWS-PORT.md`. On Windows today, WSL is still
+  the recommended way (INSTALL.md).
+- **`sys.platform()`, `sys.byteorder()`, `sys.maxsize()`,
+  `sys.getsizeof()`, `sys.getdefaultencoding()`, `sys.copyright()`,
+  `sys.get/setrecursionlimit()`, `sys.exc_info()` and the backtrace trio
+  work** — they were declared in `sys` but missing from the runtime, so a
+  program calling one failed to link.
+- **`quirk eval 'use process ...'` imports the module.** Imports ended up
+  inside the generated `main()`, where they do nothing — so
+  `process.run` silently called `sys.run`.
+- `process` v1.0.2: `process.shell` uses `cmd.exe /c` on Windows.
+- Fixed: turning a `Char` into JSON wrote one byte past a 3-byte buffer.
+
 ## [7.23.0] — 2026-11-10 — `print(a, b)` on one line
 
 - **`print` with several values writes them on one line, separated by a

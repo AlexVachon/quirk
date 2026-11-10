@@ -2,6 +2,10 @@
 
 All notable changes to the extension land here. Versioning follows SemVer; minor bumps for new features, patches for fixes.
 
+## [1.1.3] — 2026-11-10
+
+- Updated stdlib hovers (compiler 7.24.0): `process.shell` on Windows.
+
 ## [1.1.2] — 2026-11-10
 
 - The `print` hover and completion describe `print(a, b, sep=, end=)`

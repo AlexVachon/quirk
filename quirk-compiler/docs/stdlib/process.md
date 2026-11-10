@@ -106,8 +106,8 @@ process.run(["make", "test"], capture=false, check=true)
 
 #### `define shell(command: String, input: String = "", cwd: String = "", env: Map = Map(), inherit_env: Bool = true, timeout_ms: Int = -1, check: Bool = false, capture: Bool = true, merge_stderr: Bool = false) -> RunResult`
 
-`run` through the shell: `/bin/sh -c command`, so pipes, globs,
-redirects and `$VARS` work. Only for commands you wrote — never paste
+`run` through the shell — `/bin/sh -c command` (Windows: `cmd.exe /c`),
+so pipes, globs, redirects and variables work. Only for commands you wrote — never paste
 untrusted input into one (use `run` with an args List instead).
 @example
 r := process.shell("ls *.qk | wc -l")

@@ -337,7 +337,15 @@ String* Window_error() {
 int64_t Window_open_raw(String* title, int64_t width, int64_t height, int64_t flags) {
     if (!qsdl_load()) return -1;
     if (!qsdl.inited) {
-        if (flags & 8) { qsdl.SetHint("SDL_VIDEODRIVER", "dummy"); qwin_headless = 1; }
+        if (flags & 8) {
+            // The environment variable, not just the hint: SDL before 2.0.22
+            // only reads SDL_VIDEODRIVER from the environment.
+#ifndef _WIN32
+            setenv("SDL_VIDEODRIVER", "dummy", 1);
+#endif
+            qsdl.SetHint("SDL_VIDEODRIVER", "dummy");
+            qwin_headless = 1;
+        }
         qsdl.SetHint("SDL_NO_SIGNAL_HANDLERS", "1");      // keep Ctrl+C for Quirk
         if (qsdl.Init(QSDL_INIT_VIDEO) != 0) { qwin_set_err("can't start SDL video"); return -1; }
         qsdl.inited = 1;

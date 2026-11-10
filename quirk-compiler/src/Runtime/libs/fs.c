@@ -194,11 +194,49 @@ static int fs__remove_tree(const char* p) {
 }
 #endif
 
+#ifdef _WIN32
+// Delete `p` and everything under it. Read-only files are made writable
+// first; a symlinked / junction directory is removed itself, never
+// followed. 0 ok, -1 if anything couldn't be removed.
+static int fs__win_remove_tree(const char* p) {
+    DWORD attr = GetFileAttributesA(p);
+    if (attr == INVALID_FILE_ATTRIBUTES) return -1;
+    if (!(attr & FILE_ATTRIBUTE_DIRECTORY)) {
+        if (attr & FILE_ATTRIBUTE_READONLY) SetFileAttributesA(p, attr & ~FILE_ATTRIBUTE_READONLY);
+        return DeleteFileA(p) ? 0 : -1;
+    }
+    if (attr & FILE_ATTRIBUTE_REPARSE_POINT) return RemoveDirectoryA(p) ? 0 : -1;
+    size_t pl = strlen(p);
+    char* pattern = (char*)GC_malloc_atomic(pl + 3);
+    memcpy(pattern, p, pl);
+    memcpy(pattern + pl, "\\*", 3);
+    int rc = 0;
+    WIN32_FIND_DATAA fd;
+    HANDLE h = FindFirstFileA(pattern, &fd);
+    if (h != INVALID_HANDLE_VALUE) {
+        do {
+            const char* nm = fd.cFileName;
+            if (strcmp(nm, ".") == 0 || strcmp(nm, "..") == 0) continue;
+            size_t nl = strlen(nm);
+            char* child = (char*)GC_malloc_atomic(pl + nl + 2);
+            memcpy(child, p, pl);
+            child[pl] = '\\';
+            memcpy(child + pl + 1, nm, nl + 1);
+            if (fs__win_remove_tree(child) != 0) rc = -1;
+        } while (FindNextFileA(h, &fd));
+        FindClose(h);
+    }
+    if (attr & FILE_ATTRIBUTE_READONLY) SetFileAttributesA(p, attr & ~FILE_ATTRIBUTE_READONLY);
+    if (!RemoveDirectoryA(p)) rc = -1;
+    return rc;
+}
+#endif
+
 int64_t Fs_remove_tree_raw(String* path) {
     char* p = make_safe_cstr(path);
     if (!p || !*p) return -1;
 #ifdef _WIN32
-    return -1;   // not implemented on Windows yet
+    return fs__win_remove_tree(p);
 #else
     return fs__remove_tree(p);
 #endif
@@ -306,13 +344,58 @@ String* Fs_realpath(String* path) {
 // Shell-style match of one name against `pattern` (`*`, `?`, `[a-z]`,
 // `[!x]`). Unless `hidden`, a leading `.` must be matched explicitly, as
 // in the shell.
+#ifdef _WIN32
+// fnmatch for one name (Windows has none): `*`, `?`, `[abc]` / `[a-z]` /
+// `[!x]` (or `[^x]`), `\x` for a literal x. With `period`, a leading `.`
+// only matches a literal `.` in the pattern.
+static int fs__wildmatch(const char* p, const char* s, int period) {
+    if (period && *s == '.' && *p != '.') return 0;
+    for (; *p; p++, s++) {
+        switch (*p) {
+            case '*': {
+                while (*p == '*') p++;
+                if (!*p) return 1;
+                for (; *s; s++) if (fs__wildmatch(p, s, 0)) return 1;
+                return 0;
+            }
+            case '?':
+                if (!*s) return 0;
+                break;
+            case '[': {
+                if (!*s) return 0;
+                const char* q = p + 1;
+                int negate = (*q == '!' || *q == '^');
+                if (negate) q++;
+                int matched = 0;
+                unsigned char c = (unsigned char)*s;
+                do {
+                    unsigned char lo = (unsigned char)*q, hi = lo;
+                    if (q[1] == '-' && q[2] && q[2] != ']') { hi = (unsigned char)q[2]; q += 2; }
+                    if (c >= lo && c <= hi) matched = 1;
+                    q++;
+                } while (*q && *q != ']');
+                if (*q != ']') { if ((unsigned char)*p != c) return 0; break; }   // no closing ]: literal '['
+                if (matched == negate) return 0;
+                p = q;
+                break;
+            }
+            case '\\':
+                if (p[1]) p++;
+                /* fallthrough */
+            default:
+                if (*p != *s) return 0;
+        }
+    }
+    return *s == '\0';
+}
+#endif
+
 int Fs_match_raw(String* pattern, String* name, int64_t hidden) {
     char* pt = make_safe_cstr(pattern);
     char* nm = make_safe_cstr(name);
     if (!pt || !nm) return 0;
 #ifdef _WIN32
-    (void)hidden;
-    return strcmp(pt, nm) == 0;
+    return fs__wildmatch(pt, nm, !hidden);
 #else
     return fnmatch(pt, nm, hidden ? 0 : FNM_PERIOD) == 0;
 #endif

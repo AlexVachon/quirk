@@ -139,10 +139,27 @@ while i < 200000 {
     i = i + 1
 }
 print("gc ok", s)'
+    smoke task_one 'async define one() -> Int { return 1 }
+print(await one())'
+    smoke task_sleep 'use sys
+async define nap() -> Int {
+    sys.sleep(10)
+    return 2
+}
+t := nap()
+print(await t)'
     smoke tasks 'async define sq(n: Int) -> Int { return n * n }
 a := sq(3)
 b := sq(4)
 print(await a + await b)'
+    smoke task_throw 'async define bad() -> Int { throw ValueError("in task") }
+try {
+    print(await bad())
+} catch (e: ValueError) {
+    print("task error:", e.message)
+}'
+    smoke matches 'use fs
+print(fs.matches("*.qk", "main.qk"), fs.matches("?ain.[a-z]k", "main.qk"), fs.matches("[!a]*", "main.qk"), fs.matches("*", ".env"), fs.matches("*.qk", "main.py"))'
     smoke repl_eval 'print(1, 2, 3, sep="-")'
     step "quirk eval"
     timeout 60 ./bin/quirk.exe eval 'print("eval works")' 2>&1 | head -5 | tee -a "$LOG"

@@ -56,7 +56,14 @@ class BuiltinGen {
         Function::Create(FunctionType::get(voidPtrTy, false), Function::ExternalLinkage, "quirk_get_current_jmp_buf", TheModule);
         Function::Create(FunctionType::get(voidTy, false), Function::ExternalLinkage, "quirk_unhandled_exception", TheModule);
 
+#ifdef _WIN32
+        // Windows x64: _setjmp(buf, frame). A NULL frame makes longjmp a
+        // plain jump — with a frame it unwinds through SEH tables that JIT
+        // code doesn't have (and Quirk has no destructors to run).
+        Function* sj = Function::Create(FunctionType::get(i32Ty, {voidPtrTy, voidPtrTy}, false), Function::ExternalLinkage, "_setjmp", TheModule);
+#else
         Function* sj = Function::Create(FunctionType::get(i32Ty, {voidPtrTy}, false), Function::ExternalLinkage, "_setjmp", TheModule);
+#endif
         sj->addFnAttr(Attribute::ReturnsTwice);
         Function::Create(FunctionType::get(voidTy, {voidPtrTy, i32Ty}, false), Function::ExternalLinkage, "longjmp", TheModule);
 

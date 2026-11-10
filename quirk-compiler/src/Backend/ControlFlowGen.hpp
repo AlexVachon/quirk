@@ -348,7 +348,12 @@ class ControlFlowGen {
         parentFunc->addFnAttr(Attribute::OptimizeNone);
 
         Value* jmpBuf   = Builder.CreateCall(TheModule->getFunction("quirk_get_jmp_buf"));
+#ifdef _WIN32
+        Value* setjmpRes = Builder.CreateCall(TheModule->getFunction("_setjmp"),
+            {jmpBuf, ConstantPointerNull::get(Type::getInt8PtrTy(Context))});   // see BuiltinGen
+#else
         Value* setjmpRes = Builder.CreateCall(TheModule->getFunction("_setjmp"), {jmpBuf});
+#endif
         Value* isCatch  = Builder.CreateICmpNE(setjmpRes, ConstantInt::get(Type::getInt32Ty(Context), 0));
 
         BasicBlock* firstEvalBB = BasicBlock::Create(Context, "catch_eval_0", parentFunc);

@@ -1879,7 +1879,7 @@ static int try_codeload_tarball(const std::string& ownerRepo, const std::string&
     std::string tar = "tar -xzf \"" + tmpTar.string()
                     + "\" -C \"" + extractDir.string() + "\"";
     if (quiet) tar += " 2>/dev/null";
-    if (std::system(tar.c_str()) != 0) {
+    if (qplat::run_shell(tar.c_str()) != 0) {
         fs::remove(tmpTar, ec);
         fs::remove_all(extractDir, ec);
         return 1;
@@ -2441,7 +2441,7 @@ static int install_one(const std::string& spec_str, bool quiet, bool editable = 
             if (!ref.empty()) cmd += " --branch \"" + ref + "\"";
             cmd += " \"" + spec.url + "\" \"" + tmp.string() + "\"";
             cmd += " 2>/dev/null";
-            return std::system(cmd.c_str());
+            return qplat::run_shell(cmd.c_str());
         };
         int rc = run_clone(spec.ref);
         if (rc != 0 && !spec.ref.empty()) {
@@ -4457,8 +4457,8 @@ static TestFileResult run_one_test_file(const fs::path& file, int timeoutSecs,
     // coreutils `timeout`; macOS has none by default (Homebrew installs it
     // as `gtimeout`). Without either the cap is skipped.
     static const std::string timeoutBin = [] {
-        if (std::system("command -v timeout >/dev/null 2>&1") == 0) return std::string("timeout");
-        if (std::system("command -v gtimeout >/dev/null 2>&1") == 0) return std::string("gtimeout");
+        if (qplat::run_shell("command -v timeout >/dev/null 2>&1") == 0) return std::string("timeout");
+        if (qplat::run_shell("command -v gtimeout >/dev/null 2>&1") == 0) return std::string("gtimeout");
         return std::string();
     }();
     std::string cmd;
@@ -4947,7 +4947,7 @@ static int cmd_release(const std::vector<std::string>& args) {
         if (rewrite_manifest_version("quirk.toml", next) != 0) return 1;
         std::string cmd = "git add quirk.toml && git commit -m \"release v"
                        + next + "\" 2>&1";
-        if (std::system(cmd.c_str()) != 0) {
+        if (qplat::run_shell(cmd.c_str()) != 0) {
             std::cerr << "release: failed to commit version bump\n";
             return 1;
         }
@@ -4992,7 +4992,7 @@ static int cmd_release(const std::vector<std::string>& args) {
 
     // Tag the current HEAD.
     std::string cmd = "git tag " + tag + " 2>&1";
-    if (std::system(cmd.c_str()) != 0) {
+    if (qplat::run_shell(cmd.c_str()) != 0) {
         std::cerr << "release: failed to create tag\n";
         return 1;
     }
@@ -5048,9 +5048,9 @@ static int cmd_release(const std::vector<std::string>& args) {
         // HTTPS URL when using a credential helper, since helpers don't
         // fire on SSH transports.
         std::string quirk_token = quirk_load_github_token();
-        bool gh_installed = (std::system("command -v gh >/dev/null 2>&1") == 0);
+        bool gh_installed = (qplat::run_shell("command -v gh >/dev/null 2>&1") == 0);
         bool gh_authed    = gh_installed
-                         && (std::system("gh auth status >/dev/null 2>&1") == 0);
+                         && (qplat::run_shell("gh auth status >/dev/null 2>&1") == 0);
 
         std::string push_pfx;
         std::string push_target;
@@ -5263,13 +5263,13 @@ static int cmd_bump_compiler(const std::vector<std::string>& args) {
         add_cmd += " \"" + rel_cl.string() + "\"";
     }
     add_cmd += " 2>&1";
-    if (std::system(add_cmd.c_str()) != 0) {
+    if (qplat::run_shell(add_cmd.c_str()) != 0) {
         log::err("git add failed");
         return 1;
     }
     std::string commit_cmd = "cd \"" + repo_root.string() + "\" && git commit -m \"release v"
                            + newVersion + "\" 2>&1";
-    if (std::system(commit_cmd.c_str()) != 0) {
+    if (qplat::run_shell(commit_cmd.c_str()) != 0) {
         log::err("git commit failed (nothing to commit?)");
         return 1;
     }
@@ -5278,7 +5278,7 @@ static int cmd_bump_compiler(const std::vector<std::string>& args) {
     if (!tag) return 0;
     std::string tag_cmd = "cd \"" + repo_root.string() + "\" && git tag -a v"
                         + newVersion + " -m \"Quirk " + newVersion + "\" 2>&1";
-    if (std::system(tag_cmd.c_str()) != 0) {
+    if (qplat::run_shell(tag_cmd.c_str()) != 0) {
         log::err("git tag failed");
         return 1;
     }
@@ -5287,7 +5287,7 @@ static int cmd_bump_compiler(const std::vector<std::string>& args) {
     if (!push) return 0;
     std::string push_cmd = "cd \"" + repo_root.string() + "\" && git push && git push origin v"
                          + newVersion + " 2>&1";
-    if (std::system(push_cmd.c_str()) != 0) {
+    if (qplat::run_shell(push_cmd.c_str()) != 0) {
         log::err("git push failed");
         return 1;
     }
@@ -5456,7 +5456,7 @@ inline bool quirk_fetch_stdlib_assets(const std::string& tag, const fs::path& wo
                         : quirk_sha256_file(e.tarball) != e.sha ? "checksum mismatch" : "";
         if (why.empty()) {
             std::string tar = "tar -xzf '" + e.tarball.string() + "' -C '" + dest.string() + "'";
-            if (std::system(tar.c_str()) != 0 || !fs::is_directory(dest / e.name)) why = "couldn't unpack";
+            if (qplat::run_shell(tar.c_str()) != 0 || !fs::is_directory(dest / e.name)) why = "couldn't unpack";
         }
         if (!why.empty()) {
             // Only this package falls back to the copy bundled in the
@@ -5539,7 +5539,7 @@ inline fs::path quirk_fetch_compiler_release(const std::string& tag, const fs::p
 
     log::step("Unpacking", pkg + ".tar.gz");
     std::string tar = "tar -xzf '" + tarball.string() + "' -C '" + work.string() + "'";
-    if (std::system(tar.c_str()) != 0 || !fs::exists(work / pkg / "bin" / "quirk")) {
+    if (qplat::run_shell(tar.c_str()) != 0 || !fs::exists(work / pkg / "bin" / "quirk")) {
         log::err("couldn't unpack " + pkg + ".tar.gz");
         return {};
     }
@@ -5551,7 +5551,7 @@ inline fs::path quirk_fetch_compiler_release(const std::string& tag, const fs::p
 inline void quirk_install_vscode_extension(const fs::path& work) {
     const char* cc = std::getenv("CODE_CMD");
     std::string code = (cc && *cc) ? cc : "code";
-    if (std::system(("command -v '" + code + "' >/dev/null 2>&1").c_str()) != 0) {
+    if (qplat::run_shell(("command -v '" + code + "' >/dev/null 2>&1").c_str()) != 0) {
         log::warn("'" + code + "' is not on PATH — skipping the VSCode extension "
                   "(set CODE_CMD=codium / cursor / … for another editor)");
         return;
@@ -5570,7 +5570,7 @@ inline void quirk_install_vscode_extension(const fs::path& work) {
     net::Result r = net::download(vsixUrl, vsix, vsix.filename().string());
     if (!r.ok) { log::warn("extension download failed: " + net::describe(r)); return; }
     log::step("Installing", "VSCode extension into '" + code + "'");
-    if (std::system(("'" + code + "' --install-extension '" + vsix.string() + "' >/dev/null").c_str()) != 0)
+    if (qplat::run_shell(("'" + code + "' --install-extension '" + vsix.string() + "' >/dev/null").c_str()) != 0)
         log::warn("extension install failed — install it manually: " + code
                   + " --install-extension " + vsixUrl);
     else
@@ -6686,8 +6686,8 @@ static int publish_to_registry(const std::string& alias, const std::string& repo
     std::string indexPath;
     for (size_t i = 3; i < parts.size(); i++) indexPath += (i > 3 ? "/" : "") + parts[i];
 
-    if (std::system("command -v gh >/dev/null 2>&1") != 0
-        || std::system("gh auth status >/dev/null 2>&1") != 0) {
+    if (qplat::run_shell("command -v gh >/dev/null 2>&1") != 0
+        || qplat::run_shell("gh auth status >/dev/null 2>&1") != 0) {
         log::warn("publishing needs the GitHub CLI, logged in (`gh auth login`)");
         std::cerr << "    " << log::dim("or open a PR on github.com/" + regRepo + " adding: "
                                         + alias + " = \"" + repo + "\"") << "\n";
@@ -6700,7 +6700,7 @@ static int publish_to_registry(const std::string& alias, const std::string& repo
     const fs::path work = tdir, clone = work / "registry";
     std::error_code ec;
     auto cleanup = [&] { fs::remove_all(work, ec); };
-    auto sh = [](const std::string& cmd) { return std::system((cmd + " >/dev/null 2>&1").c_str()); };
+    auto sh = [](const std::string& cmd) { return qplat::run_shell((cmd + " >/dev/null 2>&1").c_str()); };
     const std::string q = "'" + clone.string() + "'";
 
     log::step("Publishing", alias + " → " + repo + log::dim("  (PR to github.com/" + regRepo + ")"));
@@ -6749,7 +6749,7 @@ static int publish_to_registry(const std::string& alias, const std::string& repo
     if (dryRun) {
         std::cout << "    " << log::dim("dry run — would push branch " + br + " and open a PR with:") << "\n"
                   << std::flush;
-        std::system((git + " --no-pager diff HEAD~1 --stat --color=never; " + git
+        qplat::run_shell((git + " --no-pager diff HEAD~1 --stat --color=never; " + git
                      + " --no-pager diff HEAD~1 --color=never -U1 | grep -E '^[+ ]' | grep -v '^+++'").c_str());
         cleanup(); return 0;
     }
@@ -7420,7 +7420,7 @@ static int cmd_watch(const std::vector<std::string>& args) {
 
     // Detect available watcher.
     auto haveCmd = [](const std::string& c) {
-        return std::system(("command -v " + c + " >/dev/null 2>&1").c_str()) == 0;
+        return qplat::run_shell(("command -v " + c + " >/dev/null 2>&1").c_str()) == 0;
     };
     std::string watcher;
     if (haveCmd("inotifywait"))     watcher = "inotifywait";
@@ -7434,7 +7434,7 @@ static int cmd_watch(const std::vector<std::string>& args) {
     // Initial run.
     std::cout << "\033[1;36m[watch]\033[0m " << target << " — Ctrl+C to stop\n";
     std::string quickRun = bin + " " + target;
-    std::system(quickRun.c_str());
+    qplat::run_shell(quickRun.c_str());
 
     // Loop: block on watcher until a change fires, then re-run.
     std::string cmd;
@@ -7459,7 +7459,7 @@ static int cmd_watch(const std::vector<std::string>& args) {
         if (!relevant) continue;
 
         std::cout << "\n\033[1;36m[watch]\033[0m " << target << " changed — re-running\n";
-        std::system(quickRun.c_str());
+        qplat::run_shell(quickRun.c_str());
     }
     return 0;
 }
@@ -7567,7 +7567,7 @@ static int cmd_eval(const std::vector<std::string>& args) {
         out << "define main() -> void {\n    " << code << "\n}\n";
     }
     std::string cmd = "\"" + self_binary() + "\" \"" + tmp.string() + "\"";
-    int rc = std::system(cmd.c_str());
+    int rc = qplat::run_shell(cmd.c_str());
     std::error_code ec;
     fs::remove(tmp, ec);
     return WIFEXITED(rc) ? WEXITSTATUS(rc) : 1;
@@ -7639,7 +7639,7 @@ static int cmd_script(const std::vector<std::string>& args) {
         if (s.first != name) continue;
         std::string cmd = s.second;
         for (size_t i = 1; i < args.size(); i++) cmd += " \"" + args[i] + "\"";
-        int rc = std::system(cmd.c_str());
+        int rc = qplat::run_shell(cmd.c_str());
         return WIFEXITED(rc) ? WEXITSTATUS(rc) : 1;
     }
     std::cerr << "script: '" << name << "' not found in ./quirk.toml [scripts]\n";
@@ -7707,7 +7707,7 @@ static int cmd_module(const std::vector<std::string>& args) {
     }
     std::string cmd = "\"" + self_binary() + "\" \"" + file.string() + "\"";
     for (size_t i = 1; i < args.size(); i++) cmd += " \"" + args[i] + "\"";
-    int rc = std::system(cmd.c_str());
+    int rc = qplat::run_shell(cmd.c_str());
     return WIFEXITED(rc) ? WEXITSTATUS(rc) : 1;
 }
 

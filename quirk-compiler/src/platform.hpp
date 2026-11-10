@@ -66,6 +66,19 @@ inline int unsetenv(const char* name) { return _putenv_s(name, ""); }
 
 namespace qplat {
 
+// std::system, quoted the way cmd.exe needs on Windows: it strips the
+// outer quotes of a command that starts with a quoted program path
+// ("The filename, directory name, or volume label syntax is incorrect"),
+// so the whole command gets one more pair.
+inline int run_shell(const std::string& cmd) {
+#ifdef _WIN32
+    return std::system(("\"" + cmd + "\"").c_str());
+#else
+    return std::system(cmd.c_str());
+#endif
+}
+inline int run_shell(const char* cmd) { return run_shell(std::string(cmd ? cmd : "")); }
+
 // The runtime library next to the quirk binary, and the Boehm GC
 // library names the JIT loads before it.
 #ifdef _WIN32

@@ -124,10 +124,14 @@ print(m.get("a"), [P(2), P(3)])'
 }
 print("after")'
     smoke files 'use fs
-p := fs.temp_file(suffix=".txt")
+d := fs.temp_dir()
+p := fs.join(d, "a.txt")
 fs.write_text(p, "hi there")
-print(fs.read_text(p), fs.size(p))
-fs.remove(p)'
+fs.mkdir(fs.join(d, "sub"))
+fs.write_text(fs.join(d, "sub/b.qk"), "x")
+print(fs.read_text(p), fs.size(p), fs.walk(d).length(), fs.glob(d + "/**/*.qk").length())
+fs.remove_tree(d)
+print(fs.exists(d))'
     smoke gc 's := ""
 i := 0
 while i < 200000 {

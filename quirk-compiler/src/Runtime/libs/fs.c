@@ -318,11 +318,43 @@ int Fs_match_raw(String* pattern, String* name, int64_t hidden) {
 #endif
 }
 
-#ifndef _WIN32
 static int fs__cmp_names(const void* a, const void* b) {
     return strcmp(*(char* const*)a, *(char* const*)b);
 }
 
+#ifdef _WIN32
+// Sorted entry names of `dir` (no `.` / `..`); NULL if it can't be read.
+static char** fs__sorted_names(const char* dir, size_t* count) {
+    size_t dl = strlen(dir);
+    char* pattern = (char*)GC_malloc_atomic(dl + 3);
+    memcpy(pattern, dir, dl);
+    memcpy(pattern + dl, "\\*", 3);
+    WIN32_FIND_DATAA fd;
+    HANDLE h = FindFirstFileA(pattern, &fd);
+    if (h == INVALID_HANDLE_VALUE) return NULL;
+    size_t n = 0, cap = 32;
+    char** names = (char**)GC_malloc(cap * sizeof(char*));
+    do {
+        const char* nm = fd.cFileName;
+        if (strcmp(nm, ".") == 0 || strcmp(nm, "..") == 0) continue;
+        if (n == cap) {
+            char** grown = (char**)GC_malloc(cap * 2 * sizeof(char*));
+            memcpy(grown, names, n * sizeof(char*));
+            names = grown;
+            cap *= 2;
+        }
+        size_t len = strlen(nm);
+        names[n] = (char*)GC_malloc_atomic(len + 1);
+        memcpy(names[n], nm, len + 1);
+        n++;
+    } while (FindNextFileA(h, &fd));
+    FindClose(h);
+    qsort(names, n, sizeof(char*), fs__cmp_names);
+    *count = n;
+    return names;
+}
+#define lstat stat     // no symlink distinction in the walk on Windows
+#else
 // Sorted entry names of `dir` (no `.` / `..`); NULL if it can't be read.
 static char** fs__sorted_names(const char* dir, size_t* count) {
     DIR* d = opendir(dir);
@@ -348,6 +380,7 @@ static char** fs__sorted_names(const char* dir, size_t* count) {
     *count = n;
     return names;
 }
+#endif
 
 static char* fs__join(const char* a, const char* b) {
     size_t la = strlen(a), lb = strlen(b);
@@ -379,7 +412,6 @@ static void fs__walk(const char* dir, List* out, int dirs, int files, int follow
         }
     }
 }
-#endif
 
 // Every path under `root` (not `root` itself), as `root/…` strings.
 // flags: 1 files, 2 directories, 4 follow symlinked directories,
@@ -389,16 +421,40 @@ List* Fs_walk_raw(String* root, int64_t flags, int64_t max_depth) {
     List* out = fs__new_list();
     char* r = make_safe_cstr(root);
     if (!r) return out;
-#ifndef _WIN32
     fs__walk(r, out, (flags & 2) != 0, (flags & 1) != 0, (flags & 4) != 0, max_depth, (flags & 8) != 0);
-#endif
     return out;
 }
 
 static const char* fs__tmp_root(void) {
+#ifdef _WIN32
+    static char buf[MAX_PATH + 1];
+    DWORD n = GetTempPathA(sizeof buf, buf);
+    if (n == 0 || n > MAX_PATH) return ".";
+    while (n > 3 && (buf[n - 1] == '\\' || buf[n - 1] == '/')) buf[--n] = '\0';
+    return buf;
+#else
     const char* t = getenv("TMPDIR");
     return (t && *t) ? t : "/tmp";
+#endif
 }
+
+#ifdef _WIN32
+// `<dir>/<prefix>` + 6 random [a-z0-9] + `<suffix>` (a candidate name).
+static char* fs__win_temp_name(const char* dir, const char* prefix, const char* suffix) {
+    static unsigned long long counter = 0;
+    unsigned long long seed = GetTickCount64() ^ ((unsigned long long)GetCurrentProcessId() << 32) ^ (++counter * 0x9E3779B97F4A7C15ULL);
+    char rnd[7];
+    for (int i = 0; i < 6; i++) { rnd[i] = "abcdefghijklmnopqrstuvwxyz0123456789"[seed % 36]; seed = seed / 36 + (seed << 7) + 0x2545F4914F6CDD1DULL; }
+    rnd[6] = '\0';
+    char* base = fs__join(dir, prefix);
+    size_t lb = strlen(base), ls = strlen(suffix);
+    char* out = (char*)GC_malloc_atomic(lb + 6 + ls + 1);
+    memcpy(out, base, lb);
+    memcpy(out + lb, rnd, 6);
+    memcpy(out + lb + 6, suffix, ls + 1);
+    return out;
+}
+#endif
 
 // Directory temp files go in ($TMPDIR, else /tmp).
 String* Fs_temp_root() {
@@ -409,7 +465,14 @@ String* Fs_temp_root() {
 // failure. `dir` "" = the temp root.
 String* Fs_temp_dir_raw(String* dir, String* prefix) {
 #ifdef _WIN32
-    (void)dir; (void)prefix;
+    char* d = make_safe_cstr(dir);
+    char* pre = make_safe_cstr(prefix);
+    if (!d || !*d) d = (char*)fs__tmp_root();
+    for (int attempt = 0; attempt < 100; attempt++) {
+        char* path = fs__win_temp_name(d, pre ? pre : "", "");
+        if (CreateDirectoryA(path, NULL)) return make_String(path);
+        if (GetLastError() != ERROR_ALREADY_EXISTS) break;
+    }
     return make_String("");
 #else
     char* d = make_safe_cstr(dir);
@@ -430,7 +493,16 @@ String* Fs_temp_dir_raw(String* dir, String* prefix) {
 // failure.
 String* Fs_temp_file_raw(String* dir, String* prefix, String* suffix) {
 #ifdef _WIN32
-    (void)dir; (void)prefix; (void)suffix;
+    char* d = make_safe_cstr(dir);
+    char* pre = make_safe_cstr(prefix);
+    char* suf = make_safe_cstr(suffix);
+    if (!d || !*d) d = (char*)fs__tmp_root();
+    for (int attempt = 0; attempt < 100; attempt++) {
+        char* path = fs__win_temp_name(d, pre ? pre : "", suf ? suf : "");
+        HANDLE h = CreateFileA(path, GENERIC_WRITE, 0, NULL, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, NULL);
+        if (h != INVALID_HANDLE_VALUE) { CloseHandle(h); return make_String(path); }
+        if (GetLastError() != ERROR_FILE_EXISTS) break;
+    }
     return make_String("");
 #else
     char* d = make_safe_cstr(dir);

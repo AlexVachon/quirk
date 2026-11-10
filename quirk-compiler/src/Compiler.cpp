@@ -960,7 +960,7 @@ static int runAotPipeline(const std::string& irPath,
     std::string llcCmd = "llc-14 -filetype=obj -relocation-model=pic -O2 "
                        + irPath + " -o " + tmpObj;
     if (verbose) std::cerr << "build: " << llcCmd << "\n";
-    if (std::system(llcCmd.c_str()) != 0) {
+    if (qplat::run_shell(llcCmd.c_str()) != 0) {
         std::error_code ec; fs::remove(tmpObj, ec);
         return 1;
     }
@@ -969,7 +969,7 @@ static int runAotPipeline(const std::string& irPath,
                         + " -lgc -lm -lpthread -o " + tmpBin
                         + " -Wl,-rpath," + runtimeDir;
     if (verbose) std::cerr << "build: " << linkCmd << "\n";
-    if (std::system(linkCmd.c_str()) != 0) {
+    if (qplat::run_shell(linkCmd.c_str()) != 0) {
         std::error_code ec;
         fs::remove(tmpObj, ec);
         fs::remove(tmpBin, ec);
@@ -1729,7 +1729,7 @@ int main(int argc, char* argv[]) {
         std::string llcCmd = "llc-14 -filetype=obj -relocation-model=pic -O2 "
                            + irPath + " -o " + objPath;
         log.debug("Compiling: " + llcCmd);
-        if (int r = std::system(llcCmd.c_str())) {
+        if (int r = qplat::run_shell(llcCmd.c_str())) {
             std::cerr << "Error: llc failed (exit " << r << ")" << std::endl;
             return 1;
         }
@@ -1740,7 +1740,7 @@ int main(int argc, char* argv[]) {
                             + " -lgc -lm -lpthread -o " + opts.outputFile
                             + " -Wl,-rpath," + runtimeDir;
         log.debug("Linking: " + linkCmd);
-        if (int r = std::system(linkCmd.c_str())) {
+        if (int r = qplat::run_shell(linkCmd.c_str())) {
             std::cerr << "Error: linker failed (exit " << r << ")" << std::endl;
             return 1;
         }

@@ -13,7 +13,12 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <time.h>
+#ifdef _WIN32
+#include <process.h>          // _getpid
+#define getpid _getpid
+#else
 #include <unistd.h>
+#endif
 #include "../types.h"
 
 extern void* GC_malloc(size_t);

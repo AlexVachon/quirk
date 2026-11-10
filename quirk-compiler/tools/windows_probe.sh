@@ -26,6 +26,19 @@ export MSYS2_ARG_CONV_EXCL='*'   # keep Git Bash from rewriting flags into paths
 INC="-Iinclude -I$LIB/include"
 
 total_err=0
+# MSVC cl.exe (from msvc-dev-cmd) for the C++: clang 14 can't read the
+# current Visual Studio STL headers.
+probe_cl() {   # probe_cl <file> <flags...>
+    local file="$1"; shift
+    local log="$OUT/$(echo "$file" | tr '/' '_').log"
+    cl.exe /nologo /Zs "$@" "$file" > "$log" 2>&1
+    local rc=$?
+    local errs warns
+    errs=$(grep -cE ': (fatal )?error C[0-9]+' "$log" || true)
+    warns=$(grep -cE ': warning C[0-9]+' "$log" || true)
+    total_err=$((total_err + errs))
+    printf '%-44s rc=%-3s errors=%-5s warnings=%s\n' "$file" "$rc" "$errs" "$warns" | tee -a "$OUT/summary.txt"
+}
 probe() {   # probe <compiler> <file> <flags...>
     local comp="$1" file="$2"; shift 2
     local log="$OUT/$(echo "$file" | tr '/' '_').log"
@@ -40,9 +53,12 @@ probe() {   # probe <compiler> <file> <flags...>
     printf '%-44s rc=%-3s errors=%-5s warnings=%s\n' "$file" "$rc" "$errs" "$warns" | tee -a "$OUT/summary.txt"
 }
 
-echo "== compiler (C++17, LLVM 14)" | tee -a "$OUT/summary.txt"
+echo "== compiler (C++17, LLVM 14, MSVC cl)" | tee -a "$OUT/summary.txt"
+WLLVM_INC="$(cygpath -w "$LLVM_INC" 2>/dev/null || echo "$LLVM_INC")"
+WLIB_INC="$(cygpath -w "$LIB/include" 2>/dev/null || echo "$LIB/include")"
 for f in src/*.cpp src/Core/*.cpp src/Backend/*.cpp; do
-    probe "$CXX" "$f" -std=c++17 -O0 $INC $LLVM_CXXFLAGS -D_CRT_SECURE_NO_WARNINGS
+    probe_cl "$f" /std:c++17 /EHsc /permissive- /utf-8 /Iinclude "/I$WLLVM_INC" "/I$WLIB_INC" \
+        /D__STDC_CONSTANT_MACROS /D__STDC_FORMAT_MACROS /D__STDC_LIMIT_MACROS /D_CRT_SECURE_NO_WARNINGS /DNOMINMAX
 done
 
 echo "== runtime (C, unity build)" | tee -a "$OUT/summary.txt"
@@ -55,7 +71,7 @@ echo "TOTAL errors: $total_err" | tee -a "$OUT/summary.txt"
 
 # The most common error messages across all files.
 echo "== most common errors" >> "$OUT/summary.txt"
-cat "$OUT"/*.log | grep -E '(^| )(fatal )?error: ' | sed -E 's/.*error: //' | sed -E "s/'[^']*'/'X'/g" \
+cat "$OUT"/*.log | grep -E '(^| )(fatal )?error: |: (fatal )?error C[0-9]+' | sed -E 's/.*error( C[0-9]+)?: //' | sed -E "s/'[^']*'/'X'/g" \
     | sort | uniq -c | sort -rn | head -40 >> "$OUT/summary.txt"
 cat "$OUT/summary.txt"
 exit 0

@@ -7563,8 +7563,20 @@ static int cmd_eval(const std::vector<std::string>& args) {
     fs::path tmp = fs::temp_directory_path()
         / ("quirk_eval_" + std::to_string(getpid()) + ".quirk");
     {
+        // Imports go above main(): a `use` inside a function body doesn't
+        // import anything (`quirk eval 'use process ...'` then resolved
+        // `process.run` to sys.run).
+        std::istringstream lines(code);
+        std::string line, imports, body;
+        bool inBody = false;
+        while (std::getline(lines, line)) {
+            std::string t = line.substr(std::min(line.find_first_not_of(" \t"), line.size()));
+            bool isImport = !inBody && (t.rfind("use ", 0) == 0 || t.rfind("from ", 0) == 0);
+            if (isImport) imports += t + "\n";
+            else { if (!t.empty()) inBody = true; body += "    " + line + "\n"; }
+        }
         std::ofstream out(tmp);
-        out << "define main() -> void {\n    " << code << "\n}\n";
+        out << imports << "define main() -> void {\n" << body << "}\n";
     }
     std::string cmd = "\"" + self_binary() + "\" \"" + tmp.string() + "\"";
     int rc = qplat::run_shell(cmd.c_str());

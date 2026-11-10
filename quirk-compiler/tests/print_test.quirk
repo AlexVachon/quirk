@@ -6,7 +6,7 @@ use sys
 use test
 
 define out(code: String) -> String {
-    return process.run([sys.executable(), "eval", code]).stdout
+    return process.run([sys.executable(), "eval", code]).stdout.replace("\r\n", "\n")   // Windows text mode
 }
 
 define test_values_on_one_line() -> void {
@@ -29,7 +29,7 @@ define test_sep_and_end() -> void {
 define run_file(code: String) -> String {
     path := fs.temp_file(suffix=".qk")
     fs.write_text(path, code)
-    r := process.run([sys.executable(), path]).stdout
+    r := process.run([sys.executable(), path]).stdout.replace("\r\n", "\n")
     fs.remove(path)
     return r
 }

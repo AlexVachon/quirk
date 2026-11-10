@@ -726,6 +726,6 @@ int64_t Window_ticks() {
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
 #else
-    return 0;
+    return (int64_t)GetTickCount64();
 #endif
 }

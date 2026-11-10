@@ -1,6 +1,11 @@
 use process
+use sys
 use test
 use time
+
+// Cases that rely on POSIX tools / paths (sort, printf, pwd, /usr/bin/env,
+// /bin/sh) are skipped on Windows.
+windows := sys.platform() == "win32"
 
 // ───── run ─────
 define test_run_captures_stdout() -> void {
@@ -20,16 +25,19 @@ define test_run_exit_code_and_stderr() -> void {
 }
 
 define test_run_input_to_stdin() -> void {
+    if windows { return }
     r := process.run(["sort"], input="b\na\nc\n")
     test.assert_eq(r.stdout, "a\nb\nc\n")
 }
 
 define test_run_args_are_not_shell_parsed() -> void {
+    if windows { return }
     r := process.run(["printf", "%s|", "a b", "\$HOME", "*"])
     test.assert_eq(r.stdout, "a b|\$HOME|*|")
 }
 
 define test_run_cwd() -> void {
+    if windows { return }
     test.assert_eq(process.run(["pwd"], cwd="/").stdout, "/\n")
 }
 
@@ -39,6 +47,7 @@ define test_run_env_added() -> void {
 }
 
 define test_run_env_replaced() -> void {
+    if windows { return }
     r := process.run(["/usr/bin/env"], env={ "ONLY": "1" }, inherit_env=false)
     test.assert_eq(r.stdout, "ONLY=1\n")
 }
@@ -114,6 +123,7 @@ define test_bad_mode_throws() -> void {
 
 // ───── shell / output ─────
 define test_shell() -> void {
+    if windows { return }
     r := process.shell("echo one two | wc -w")
     test.assert_eq(r.stdout.trim(), "2")
 }
@@ -213,4 +223,11 @@ define test_cancel_kills_the_child() -> void {
     test.assert_true(caught)
     left := process.run(["sh", "-c", "pgrep -P " + process.pid().str() + " sleep || true"])
     test.assert_eq(left.stdout, "")
+}
+
+define test_shell_on_windows() -> void {
+    if not windows { return }
+    r := process.shell("echo hi")
+    test.assert_eq(r.stdout.trim(), "hi")
+    test.assert_eq(process.shell("exit 3").code, 3)
 }

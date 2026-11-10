@@ -177,6 +177,78 @@ String* Sys_shadow_frame(int64_t index) {
     return make_String(buf);
 }
 
+// --- Introspection (declared in packages/sys; were missing from the
+// runtime, so programs calling them failed to link) ---
+
+String* Sys_platform() {
+#if defined(_WIN32)
+    return make_String("win32");
+#elif defined(__APPLE__)
+    return make_String("darwin");
+#elif defined(__linux__)
+    return make_String("linux");
+#else
+    return make_String("unknown");
+#endif
+}
+
+String* Sys_byteorder() {
+    const uint16_t one = 1;
+    return make_String(*(const uint8_t*)&one ? "little" : "big");
+}
+
+String* Sys_copyright() {
+    return make_String("Copyright (c) Alex Vachon. Quirk is MIT-licensed.");
+}
+
+String* Sys_getdefaultencoding() {
+    return make_String("utf-8");
+}
+
+int64_t Sys_maxsize() {
+    return INT64_MAX;
+}
+
+// Stored and returned; the JIT runs main on a 64 MB stack, so this isn't
+// enforced (deep recursion still ends in a stack overflow).
+static int64_t sys__recursion_limit = 1000;
+int64_t Sys_getrecursionlimit() { return sys__recursion_limit; }
+void Sys_setrecursionlimit(int64_t limit) { if (limit > 0) sys__recursion_limit = limit; }
+
+// Bytes the GC set aside for a heap object; 8 for anything else (an Int,
+// a tagged value, null).
+int64_t Sys_getsizeof(void* obj) {
+    uintptr_t u = (uintptr_t)obj;
+    if (u <= 0xFFFFFFFFUL) return 8;
+    void* base = GC_base(obj);          // NULL for static data (string literals, ...)
+    if (!base) {
+        if (quirk_type_of(obj) == QT_STRING) return (int64_t)(sizeof(String) + ((String*)obj)->length + 1);
+        return 8;
+    }
+    return (int64_t)GC_size(base);
+}
+
+// The exception being handled (inside a `catch`), or null.
+void* Sys_exc_info() {
+    return quirk_active_exception;
+}
+
+// A snapshot of the Quirk call stack (the shadow stack, innermost first),
+// formatted like Sys_shadow_frame.
+static String** sys__bt = NULL;
+static int64_t sys__bt_size = 0;
+void Sys_capture_backtrace() {
+    int64_t n = quirk_shadow_sp;
+    sys__bt = (String**)GC_malloc(sizeof(String*) * (size_t)(n > 0 ? n : 1));
+    for (int64_t i = 0; i < n; i++) sys__bt[i] = Sys_shadow_frame(n - 1 - i);
+    sys__bt_size = n;
+}
+int64_t Sys_backtrace_size() { return sys__bt_size; }
+String* Sys_backtrace_frame(int64_t index) {
+    if (index < 0 || index >= sys__bt_size || !sys__bt) return make_String("");
+    return sys__bt[index];
+}
+
 // --- SYSTEM BUILTINS ---
 
 int64_t Sys_arg_count() {

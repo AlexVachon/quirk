@@ -19,13 +19,13 @@ define main() -> void {
 
     print("=== inspection ===")
     print("cwd:                  ${fs.cwd()}")
-    print("exists('/tmp'):       ${fs.exists('/tmp')}")
+    print("exists('/tmp'):       ${fs.exists(fs.temp_root())}")
     print("exists('/no_such'):   ${fs.exists('/no_such_xyz')}")
-    print("is_dir('/tmp'):       ${fs.is_dir('/tmp')}")
-    print("is_file('/tmp'):      ${fs.is_file('/tmp')}")
+    print("is_dir('/tmp'):       ${fs.is_dir(fs.temp_root())}")
+    print("is_file('/tmp'):      ${fs.is_file(fs.temp_root())}")
 
     print("=== mutation: mkdir / rename / remove / rmdir ===")
-    base := "/tmp/quirk_fs_test"
+    base := fs.join(fs.temp_root(), "quirk_fs_test")
     if fs.exists(base) {
         // Clean up from a prior failed run (it may have died with
         // `deep/nested/path` still there).

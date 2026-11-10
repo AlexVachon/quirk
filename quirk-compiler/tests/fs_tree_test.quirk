@@ -2,7 +2,10 @@
 // Every test works in a fresh temp directory.
 use fs
 use process
+use sys
 use test
+
+windows := sys.platform() == "win32"
 
 root := ""
 start := fs.cwd()
@@ -42,8 +45,10 @@ define test_temp_dir_is_new_and_private() -> void {
     test.assert_true(fs.is_dir(a))
     test.assert_true(fs.basename(a).startswith("quirk-"))
     test.assert_true(a.startswith(fs.temp_root()))
-    mode := process.run(["ls", "-ld", a]).stdout
-    test.assert_true(mode.startswith("drwx------"))
+    if not windows {
+        mode := process.run(["ls", "-ld", a]).stdout
+        test.assert_true(mode.startswith("drwx------"))
+    }
     fs.rmdir(a)
     fs.rmdir(b)
 }
@@ -122,6 +127,7 @@ define test_walk_max_depth() -> void {
 }
 
 define test_walk_does_not_follow_links_by_default() -> void {
+    if windows { return }   // ln / chmod / .sh
     fs.mkdir(fs.join(root, "links"))
     process.run(["ln", "-s", fs.join(root, "docs"), fs.join(root, "links/docs")], check=true)
     test.assert_true(fs.is_link(fs.join(root, "links/docs")))
@@ -178,6 +184,7 @@ define test_copy_file_and_into_dir() -> void {
 }
 
 define test_copy_keeps_permissions() -> void {
+    if windows { return }   // ln / chmod / .sh
     script := fs.join(root, "run.sh")
     fs.write_text(script, "#!/bin/sh\necho hi\n")
     process.run(["chmod", "755", script], check=true)
@@ -214,7 +221,8 @@ define test_copy_tree() -> void {
 define test_absolute() -> void {
     fs.chdir(fs.join(root, "src"))
     real_root := fs.absolute(root)
-    test.assert_eq(fs.absolute("lib/../main.qk"), real_root + "/src/main.qk")
+    got := fs.absolute("lib/../main.qk").replace("\\", "/")
+    test.assert_eq(got, real_root.replace("\\", "/") + "/src/main.qk")
     caught := false
     try {
         fs.absolute("nope.qk")

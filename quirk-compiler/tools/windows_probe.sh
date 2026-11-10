@@ -18,7 +18,11 @@ echo "llvm-config: $LLVM_CONFIG ($("$LLVM_CONFIG" --version 2>&1))" | tee -a "$O
 CXX="$(command -v clang++ || echo "$LIB/bin/clang++.exe")"
 CC="$(command -v clang || echo "$LIB/bin/clang.exe")"
 echo "clang++: $CXX ($("$CXX" --version 2>&1 | head -1))" | tee -a "$OUT/summary.txt"
-LLVM_CXXFLAGS="$("$LLVM_CONFIG" --cxxflags 2>/dev/null | tr -d '\r')"
+# llvm-config prints MSVC-style flags on Windows (-std:c++14, /EHs-c-),
+# which the clang driver rejects: take only the include dir.
+LLVM_INC="$("$LLVM_CONFIG" --includedir 2>/dev/null | tr -d '\r')"
+LLVM_CXXFLAGS="-I$LLVM_INC -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -fno-exceptions"
+export MSYS2_ARG_CONV_EXCL='*'   # keep Git Bash from rewriting flags into paths
 INC="-Iinclude -I$LIB/include"
 
 total_err=0

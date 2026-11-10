@@ -27,8 +27,8 @@ jobs:
       - name: Install toolchain
         run: |
           conda install -y -c conda-forge llvmdev=14.0.6 clangdev=14.0.6 clang=14.0.6 \
-            bdw-gc openssl sdl2 zlib zstd
-          conda list | grep -iE 'llvm|clang|bdw|openssl|sdl2'
+            bdw-gc openssl sdl2 zlib zstd pthreads-win32
+          conda list | grep -iE 'llvm|clang|bdw|openssl|sdl2|pthread'
 
       - name: Probe compile
         working-directory: quirk-compiler

@@ -17,6 +17,14 @@ typedef ptrdiff_t regoff_t;
 #define hidden
 #endif
 
+/* POSIX <limits.h> values (musl's) that the Windows CRT doesn't define. */
+#ifndef RE_DUP_MAX
+#define RE_DUP_MAX 255
+#endif
+#ifndef CHARCLASS_NAME_MAX
+#define CHARCLASS_NAME_MAX 14
+#endif
+
 
 typedef struct re_pattern_buffer {
 	size_t re_nsub;

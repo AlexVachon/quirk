@@ -1,15 +1,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#ifdef _WIN32
-// Windows has no <regex.h>: compile the vendored musl regex (TRE, POSIX
-// ERE — the same semantics as Linux's). Its directory is on the include
-// path in the Windows build, for its own `#include <regex.h>`.
-#include "../../third_party/musl_regex/regcomp.c"
-#include "../../third_party/musl_regex/regexec.c"
-#include "../../third_party/musl_regex/regerror.c"
-#include "../../third_party/musl_regex/tre-mem.c"
-#endif
+// Windows has no <regex.h>: the Windows build puts the vendored musl regex
+// (src/third_party/musl_regex — TRE, POSIX ERE, the same semantics as
+// Linux's) on the include path and links its .c files into runtime.dll.
 #include <regex.h>
 #include <gc.h>
 #include "../types.h"

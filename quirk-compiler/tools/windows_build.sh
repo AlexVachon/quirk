@@ -42,6 +42,15 @@ clang -c src/Runtime/runtime.c -O2 -o obj/win/runtime.o -Isrc/Runtime -Isrc/thir
 # registers every thread itself via DllMain, pthreads-win32's included.)
 echo "rc=$?" | tee -a "$LOG"
 
+step "runtime: musl regex"
+REGEX_OBJS=()
+for f in regcomp regexec regerror tre-mem; do
+    clang -c "src/third_party/musl_regex/$f.c" -O2 -o "obj/win/rx_$f.o" -Isrc/third_party/musl_regex \
+        -D_CRT_SECURE_NO_WARNINGS -D_MT -D_DLL -Xclang --dependent-lib=msvcrt -w >> "$LOG" 2>&1
+    echo "$f rc=$?" | tee -a "$LOG"
+    REGEX_OBJS+=("obj/win/rx_$f.o")
+done
+
 step "runtime: export list"
 {
     echo "LIBRARY runtime"
@@ -52,7 +61,7 @@ step "runtime: export list"
 echo "$(($(wc -l < obj/win/runtime.def) - 2)) symbols" | tee -a "$LOG"
 
 step "runtime: link"
-clang -shared obj/win/runtime.o -o bin/runtime.dll -Wl,/DEF:"$(w obj/win/runtime.def)" -Wl,/NODEFAULTLIB:libcmt.lib \
+clang -shared obj/win/runtime.o "${REGEX_OBJS[@]}" -o bin/runtime.dll -Wl,/DEF:"$(w obj/win/runtime.def)" -Wl,/NODEFAULTLIB:libcmt.lib \
     -L"$CLIB/lib" ${GC_LIB:+-l${GC_LIB%.lib}} ${PTHREAD_LIB:+-l${PTHREAD_LIB%.lib}} \
     ${SSL_LIB:+-l${SSL_LIB%.lib}} ${CRYPTO_LIB:+-l${CRYPTO_LIB%.lib}} -lws2_32 -ladvapi32 -luser32 >> "$LOG" 2>&1
 echo "rc=$?" | tee -a "$LOG"

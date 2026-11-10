@@ -29,10 +29,12 @@ total_err=0
 probe() {   # probe <compiler> <file> <flags...>
     local comp="$1" file="$2"; shift 2
     local log="$OUT/$(echo "$file" | tr '/' '_').log"
-    "$comp" "$@" -c "$file" -o /dev/null -ferror-limit=0 > "$log" 2>&1
+    # -fsyntax-only: every compile error, no output file (Windows clang
+    # can't write to /dev/null).
+    "$comp" "$@" -fsyntax-only "$file" -ferror-limit=0 > "$log" 2>&1
     local rc=$?
     local errs warns
-    errs=$(grep -c ' error: ' "$log" || true)
+    errs=$(grep -cE '(^| )(fatal )?error: ' "$log" || true)
     warns=$(grep -c ' warning: ' "$log" || true)
     total_err=$((total_err + errs))
     printf '%-44s rc=%-3s errors=%-5s warnings=%s\n' "$file" "$rc" "$errs" "$warns" | tee -a "$OUT/summary.txt"
@@ -53,7 +55,7 @@ echo "TOTAL errors: $total_err" | tee -a "$OUT/summary.txt"
 
 # The most common error messages across all files.
 echo "== most common errors" >> "$OUT/summary.txt"
-cat "$OUT"/*.log | grep ' error: ' | sed -E 's/.* error: //' | sed -E "s/'[^']*'/'X'/g" \
+cat "$OUT"/*.log | grep -E '(^| )(fatal )?error: ' | sed -E 's/.*error: //' | sed -E "s/'[^']*'/'X'/g" \
     | sort | uniq -c | sort -rn | head -40 >> "$OUT/summary.txt"
 cat "$OUT/summary.txt"
 exit 0

@@ -35,7 +35,9 @@ echo "gc=$GC_LIB pthread=$PTHREAD_LIB ssl=$SSL_LIB crypto=$CRYPTO_LIB" | tee -a 
 # ---------- runtime.dll ----------
 step "runtime: compile"
 clang -c src/Runtime/runtime.c -O2 -o obj/win/runtime.o -Isrc/Runtime -I"$LIB/include" \
-    -D_CRT_SECURE_NO_WARNINGS -DGC_WIN32_PTHREADS -DGC_DLL >> "$LOG" 2>&1
+    -D_CRT_SECURE_NO_WARNINGS -DGC_DLL >> "$LOG" 2>&1
+# (No GC_WIN32_PTHREADS: conda's gc has no pthread redirects; gc.dll
+# registers every thread itself via DllMain, pthreads-win32's included.)
 echo "rc=$?" | tee -a "$LOG"
 
 step "runtime: export list"
@@ -79,7 +81,11 @@ if [ $ok -eq 1 ]; then
     step "link quirk.exe"
     LLVM_LIBS=$("$LLVM_CONFIG" --libnames all 2>/dev/null | tr -d '\r')
     SYS_LIBS=$("$LLVM_CONFIG" --system-libs 2>/dev/null | tr -d '\r')
-    link.exe /nologo /OUT:"$(w bin/quirk.exe)" "${OBJS[@]}" /LIBPATH:"$WLIB\\lib" $LLVM_LIBS $SYS_LIBS \
+    # Git Bash's /usr/bin/link (coreutils) shadows MSVC's link.exe.
+    MSVC_LINK="$(cygpath -u "${VCToolsInstallDir:-}")/bin/Hostx64/x64/link.exe"
+    [ -x "$MSVC_LINK" ] || MSVC_LINK="$(where.exe link.exe 2>/dev/null | tr -d '\r' | grep -i 'Microsoft Visual Studio' | head -1)"
+    echo "linker: $MSVC_LINK" | tee -a "$LOG"
+    "$MSVC_LINK" /nologo /OUT:"$(w bin/quirk.exe)" "${OBJS[@]}" /LIBPATH:"$WLIB\\lib" $LLVM_LIBS $SYS_LIBS \
         ws2_32.lib advapi32.lib shell32.lib ole32.lib uuid.lib psapi.lib ntdll.lib > "$OUT/link.log" 2>&1
     rc=$?
     grep -iE 'error|unresolved' "$OUT/link.log" | head -40 | tee -a "$LOG"

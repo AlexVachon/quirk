@@ -32,10 +32,7 @@
 #include <set>
 #include <sstream>
 #include <vector>
-#include <unistd.h>
-#include <sys/wait.h>
-#include <fcntl.h>
-#include <pthread.h>
+#include "platform.hpp"
 
 #include "PackageManager.hpp"
 

@@ -56,7 +56,10 @@ probe() {   # probe <compiler> <file> <flags...>
 echo "== compiler (C++17, LLVM 14, MSVC cl)" | tee -a "$OUT/summary.txt"
 WLLVM_INC="$(cygpath -w "$LLVM_INC" 2>/dev/null || echo "$LLVM_INC")"
 WLIB_INC="$(cygpath -w "$LIB/include" 2>/dev/null || echo "$LIB/include")"
-for f in src/*.cpp src/Core/*.cpp src/Backend/*.cpp; do
+# The translation units the Makefile builds (Compiler.cpp #includes
+# Codegen.cpp and the backend headers).
+SRCS=$(sed -n 's/^SRCS *= *//p' Makefile)
+for f in $SRCS; do
     probe_cl "$f" /std:c++17 /EHsc /permissive- /utf-8 /Iinclude "/I$WLLVM_INC" "/I$WLIB_INC" \
         /D__STDC_CONSTANT_MACROS /D__STDC_FORMAT_MACROS /D__STDC_LIMIT_MACROS /D_CRT_SECURE_NO_WARNINGS /DNOMINMAX
 done

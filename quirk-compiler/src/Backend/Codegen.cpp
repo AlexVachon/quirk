@@ -12,6 +12,13 @@
 #include "llvm/Transforms/Scalar.h"
 #include "llvm/Transforms/InstCombine/InstCombine.h"
 #include "llvm/Transforms/IPO.h"
+// Used directly (GCC's headers happen to pull these in; MSVC's don't).
+#include "llvm/Pass.h"
+#include "llvm/MC/TargetRegistry.h"
+#include "llvm/Support/Host.h"
+#include "llvm/Support/TargetSelect.h"
+#include "llvm/Target/TargetMachine.h"
+#include "llvm/Target/TargetOptions.h"
 
 #include <filesystem>
 #include "LineStorePass.hpp"

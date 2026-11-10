@@ -37,8 +37,7 @@
 #include <filesystem>
 #include <cstdlib>
 #include <system_error>
-#include <unistd.h>
-#include <sys/wait.h>
+#include "platform.hpp"          // unistd / sys/wait / ... (Win32 on Windows)
 
 #if defined(__APPLE__)
 #include <mach-o/dyld.h>
@@ -54,10 +53,7 @@ namespace qpm {
 // Defined further down where the package-manager helpers live.
 static std::string self_binary();
 }  // namespace qpm
-#include <sys/stat.h>
-#include <sys/utsname.h>
-#include <sys/ioctl.h>
-#include <fcntl.h>
+#include "platform.hpp"
 #include <cstdio>
 #include <thread>
 #include <chrono>

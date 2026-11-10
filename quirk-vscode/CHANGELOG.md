@@ -2,6 +2,11 @@
 
 All notable changes to the extension land here. Versioning follows SemVer; minor bumps for new features, patches for fixes.
 
+## [1.1.2] — 2026-11-10
+
+- The `print` hover and completion describe `print(a, b, sep=, end=)`
+  (compiler 7.23.0 prints several values on one line).
+
 ## [1.1.1] — 2026-11-10
 
 - Hovers and completions for `window` v1.1.0 (compiler 7.22.0): image

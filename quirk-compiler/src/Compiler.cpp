@@ -1023,6 +1023,15 @@ static int execCachedBinary(const std::string& binPath,
     argv.push_back(const_cast<char*>(inputFile.c_str()));
     for (const auto& a : scriptArgs) argv.push_back(const_cast<char*>(a.c_str()));
     argv.push_back(nullptr);
+    // The program's own `sys.executable()` should name quirk, not the
+    // cached binary it now runs as.
+#if defined(__linux__)
+    {
+        char self[4096];
+        ssize_t n = readlink("/proc/self/exe", self, sizeof(self) - 1);
+        if (n > 0) { self[n] = '\0'; setenv("QUIRK_EXE", self, 1); }
+    }
+#endif
     execv(binPath.c_str(), argv.data());
     // execv only returns on failure.
     std::perror("quirk: execv cached binary");

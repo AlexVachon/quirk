@@ -65,6 +65,8 @@ Source builds, other platforms, and dependency lists: see [INSTALL.md](INSTALL.m
 ```quirk
 // Hello, World!
 print("Hello, World!")
+print("Quirk", 7, true)            // Quirk 7 true
+print("a", "b", sep=", ", end="!\n")  // a, b!
 
 // Variables
 name := "Quirk"

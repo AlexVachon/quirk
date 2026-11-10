@@ -5,6 +5,20 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.23.0] — 2026-11-10 — `print(a, b)` on one line
+
+- **`print` with several values writes them on one line, separated by a
+  space**, as in Python: `print("x =", 5)` prints `x = 5`. Until now each
+  value went on its own line. **This changes the output of programs that
+  pass `print` more than one value** — join them yourself (`print(a + b)`)
+  if you relied on the old layout, or use `sep="\n"`.
+- `print` takes Python's `sep=` (between values, default `" "`) and
+  `end=` (after them, default `"\n"`): `print(a, b, sep=", ")`,
+  `print("Loading", end="")`. `print()` alone prints an empty line.
+- `sys.executable()` works — it was declared but missing from the
+  runtime, so any program using it failed to link. It names the quirk
+  executable, also when the program runs from the compile cache.
+
 ## [7.22.0] — 2026-11-10 — PNG / JPEG images, String-named methods on untyped values
 
 - **`window` v1.1.0: PNG, JPEG, GIF and TGA images** as well as BMP —

@@ -606,6 +606,17 @@ void quirk_print_opaque(void* val) {
     printf("%s\n", s->buffer ? s->buffer : "");
 }
 
+// print()'s separators and line ending.
+void quirk_print_text(const char* s) {
+    if (s) fputs(s, stdout);
+}
+
+// The same without the newline (print() writes its own separators).
+void quirk_print_opaque_bare(void* val) {
+    String* s = quirk_opaque_to_string(val);
+    fputs(s->buffer ? s->buffer : "", stdout);
+}
+
 // Return the type name of an opaque i8* value — safe version of Core_Primitives_Any_get_type
 // that handles tagged integers without dereferencing invalid addresses.
 String* quirk_opaque_get_type(void* val) {

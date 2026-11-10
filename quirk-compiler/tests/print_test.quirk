@@ -1,0 +1,40 @@
+// print(): values separated by `sep` (" "), then `end` ("\n") — v7.23.0.
+// Each case runs in a child `quirk eval` so its exact stdout can be checked.
+use fs
+use process
+use sys
+use test
+
+define out(code: String) -> String {
+    return process.run([sys.executable(), "eval", code]).stdout
+}
+
+define test_values_on_one_line() -> void {
+    test.assert_eq(out("print(\"a\", 1, 2.5, true)"), "a 1 2.5 true\n")
+}
+
+define test_single_and_empty() -> void {
+    test.assert_eq(out("print(\"solo\")"), "solo\n")
+    test.assert_eq(out("print()"), "\n")
+}
+
+define test_sep_and_end() -> void {
+    test.assert_eq(out("print(\"x\", \"y\", sep=\", \")"), "x, y\n")
+    test.assert_eq(out("print(\"a\", end=\"\")\nprint(\"b\")"), "ab\n")
+    test.assert_eq(out("print(1, 2, 3, sep=\"-\", end=\"!\\n\")"), "1-2-3!\n")
+    test.assert_eq(out("s := \"|\"\nprint(1, 2, sep=s)"), "1|2\n")
+}
+
+// A whole program (eval can't define structs): run it from a temp file.
+define run_file(code: String) -> String {
+    path := fs.temp_file(suffix=".qk")
+    fs.write_text(path, code)
+    r := process.run([sys.executable(), path]).stdout
+    fs.remove(path)
+    return r
+}
+
+define test_structs_and_untyped() -> void {
+    code := "struct P {\n    x: Int\n    define __init(self, x: Int) -> void { self.x = x }\n    define __str(self) -> String { return \"P\" + self.x.str() }\n}\nl := [1, \"two\"]\nprint(P(3), l[0], l[1])"
+    test.assert_eq(run_file(code), "P3 1 two\n")
+}

@@ -1336,7 +1336,7 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
 
         // ---- Built-ins ----
         const builtins: [string, string, string?][] = [
-            ['print',     '`print(value)` — print to stdout',                          'print(${1:value})'],
+            ['print',     '`print(value, ..., sep=, end=)` — print to stdout',          'print(${1:value})'],
             ['printf',    '`printf(fmt, ...)` — formatted print',                   'printf(${1:fmt}${2:, args})'],
             ['type',      '`type(value) → String` — return the type name of a value', 'type(${1:value})'],
             ['exit',      '`exit(code)` — terminate program',                       'exit(${1:0})'],

@@ -184,6 +184,31 @@ String* Sys_arg_get(int64_t index) {
     return make_String(quirk_argv[index]);
 }
 
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
+
+// Absolute path of the quirk executable running this program. A cached
+// (AOT) program runs as its own binary; the driver passes its path in
+// QUIRK_EXE. "" if it can't be found.
+String* Sys_executable() {
+    const char* env = getenv("QUIRK_EXE");
+    if (env && *env) return make_String((char*)env);
+    char buf[PATH_MAX];
+#if defined(__linux__)
+    ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    if (n > 0) { buf[n] = '\0'; return make_String(buf); }
+#elif defined(__APPLE__)
+    uint32_t size = sizeof(buf);
+    if (_NSGetExecutablePath(buf, &size) == 0) {
+        char resolved[PATH_MAX];
+        if (realpath(buf, resolved)) return make_String(resolved);
+        return make_String(buf);
+    }
+#endif
+    return make_String("");
+}
+
 String* Sys_prefix() {
     return make_String("/usr/local"); 
 }

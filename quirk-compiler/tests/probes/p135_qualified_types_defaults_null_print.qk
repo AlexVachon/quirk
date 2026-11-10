@@ -1,7 +1,8 @@
 // p135 — three v7.20.0 fixes:
 //  1. `module.Type` in an annotation — `p: process.Process`,
-//     `-> process.RunResult` — names the struct. A parameter typed that
-//     way was silently untyped, and a return type didn't parse.
+//     `-> process.RunResult`, `catch (e: process.ProcessError)` — names
+//     the struct. A parameter typed that way was silently untyped; a
+//     return type or catch type didn't parse.
 //  2. A method called on an untyped value with some arguments left to
 //     their defaults (`x.communicate()`) dispatches; it was rejected as
 //     "no type has a method ... with 0 arguments".
@@ -38,6 +39,21 @@ define main() -> void {
 
     out := untyped_finish(process.spawn(["echo", "x"], stdin="null"))
     if out != "x\n" { fail("untyped call with defaults: '" + out + "'") }
+
+    caught := ""
+    try {
+        process.run(["false"], check=true)
+    } catch (e: process.ProcessError) {
+        caught = e.message
+    }
+    if not caught.contains("exited with code 1") { fail("qualified catch type: " + caught) }
+    anon := false
+    try {
+        process.output(["false"])
+    } catch (process.ProcessError) {
+        anon = true
+    }
+    if not anon { fail("qualified anonymous catch") }
 
     print(maybe(true))
     print(maybe(false))

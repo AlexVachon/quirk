@@ -2350,26 +2350,33 @@ std::unique_ptr<Node> Parser::parseTry() {
         CatchBlock cb;
 
         consume(TokenType::LPAREN, "Expected '('");
+        // One exception type; `module.Type` (`window.WindowError`) names
+        // the struct after the last dot, as in annotations.
+        auto catchType = [&]() {
+            std::string t = advance().value;
+            if (t == "`") t = advance().value;
+            if (t.find('.') != std::string::npos && t.back() != '.') t = t.substr(t.rfind('.') + 1);
+            while (peek().type == TokenType::DOT && pos + 1 < (int)tokens.size() &&
+                   tokens[pos + 1].type == TokenType::IDENTIFIER) {
+                advance();
+                t = advance().value;
+            }
+            return t;
+        };
         // Support both  catch (e: Type)  and type-only  catch (Type)
-        std::string first = advance().value;
-        if (first == "`") first = advance().value;
-        if (match(TokenType::COLON)) {
+        if (pos + 1 < (int)tokens.size() && tokens[pos + 1].type == TokenType::COLON) {
             // Named form: catch (e: Type, Type2, ...)
-            cb.varName = first;
+            cb.varName = advance().value;
+            advance();   // ':'
             do {
-                std::string t = advance().value;
-                if (t == "`") t = advance().value;
-                cb.types.push_back(t);
+                cb.types.push_back(catchType());
             } while (match(TokenType::COMMA));
         } else {
             // Anonymous form: catch (Type, Type2, ...) — no binding variable
             cb.varName = "";
-            cb.types.push_back(first);
-            while (match(TokenType::COMMA)) {
-                std::string t = advance().value;
-                if (t == "`") t = advance().value;
-                cb.types.push_back(t);
-            }
+            do {
+                cb.types.push_back(catchType());
+            } while (match(TokenType::COMMA));
         }
 
         consume(TokenType::RPAREN, "Expected ')'");

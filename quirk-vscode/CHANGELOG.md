@@ -7,6 +7,11 @@ All notable changes to the extension land here. Versioning follows SemVer; minor
 - Hovers and completions for the new `window` stdlib package (compiler
   7.20.0): `window.open`, `run`, colours, and the `Window` / `Event` /
   `Image` members.
+- No more "declared but never used" warnings for function parameters — a
+  callback often has to accept ones it ignores (`define frame(w,
+  events)`). An unused `catch (e: T)` variable's warning now suggests
+  `catch (T)`.
+- `catch (e: module.Type)` gives `e` that type for hovers and completions.
 
 ## [0.8.3] — 2026-11-10 — new `fs` functions
 

@@ -221,6 +221,12 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
     // the nearest predecessor declaration via binary search in O(log K)
     // instead of an O(N) backward line scan per identifier reference.
     const declarationLinesByName = new Map<string, number[]>();
+    // Declarations that never get an "unused" warning: function
+    // parameters (a callback's signature often needs ones it ignores —
+    // `define frame(w, events)` for window.run) and catch variables get a
+    // hint instead (see Pass 3).
+    const parameterDecls = new Set<string>();
+    const catchDecls = new Set<string>();
     const recordDeclaration = (name: string, line: number, range: vscode.Range) => {
         declarations.set(`${line}_${name}`, range);
         let arr = declarationLinesByName.get(name);
@@ -603,6 +609,7 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
                 if (!isExtern && !isBodyless && pName !== 'self' && !BUILTINS.has(pName)) {
                     const startIdx = originalLine.indexOf(pName, funcMatch.index);
                     recordDeclaration(pName, i, new vscode.Range(i, startIdx, i, startIdx + pName.length));
+                    parameterDecls.add(`${i}_${pName}`);
                 }
             }
         }
@@ -808,15 +815,17 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
                 }
             }
 
-            const catchMatch = /\bcatch\s*\(\s*([a-zA-Z_]\w*)\s*:\s*([a-zA-Z_]\w*)/.exec(maskedLine);
+            const catchMatch = /\bcatch\s*\(\s*([a-zA-Z_]\w*)\s*:\s*([a-zA-Z_][\w.]*)/.exec(maskedLine);
             if (catchMatch) {
                 const vName = catchMatch[1];
                 if (!locals.has(vName)) {
                     locals.add(vName);
                     const startIdx = originalLine.indexOf(vName, catchMatch.index);
                     recordDeclaration(vName, i, new vscode.Range(i, startIdx, i, startIdx + vName.length));
+                    catchDecls.add(`${i}_${vName}`);
                 }
-                localTypes.set(vName, catchMatch[2]); // e: WhereConditionError → WhereConditionError
+                // e: WhereConditionError → WhereConditionError; e: window.WindowError → WindowError
+                localTypes.set(vName, catchMatch[2].split('.').pop() || catchMatch[2]);
             }
 
             // Lambda params: fn(x: Int, y) => ... or fn(x) { ... }
@@ -1068,6 +1077,7 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
             const cleanKey = key.replace(/^\d+_/, '');
 
             if (cleanKey.startsWith('_')) return;
+            if (parameterDecls.has(key)) return;
 
             // Suppress warnings for declarations on dead code lines
             if (deadLines.has(range.start.line)) return;
@@ -1082,7 +1092,9 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
 
             const diagnostic = new vscode.Diagnostic(
                 range,
-                `'${cleanKey}' is declared but never used.`,
+                catchDecls.has(key)
+                    ? `'${cleanKey}' is declared but never used — write \`catch (Type)\` when you don't need the exception.`
+                    : `'${cleanKey}' is declared but never used.`,
                 vscode.DiagnosticSeverity.Warning
             );
 

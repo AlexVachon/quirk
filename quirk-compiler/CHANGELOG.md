@@ -20,8 +20,9 @@ only for breaking changes.
   programs without windows don't need SDL2 installed; without it,
   `window.open` throws `WindowError` saying what to install.
 - **`module.Type` annotations work**: `define f(w: window.Window) ->
-  window.Window`. A parameter typed that way was silently untyped, and
-  such a return type didn't parse.
+  window.Window`, `catch (e: window.WindowError)`. A parameter typed that
+  way was silently untyped; such a return type or catch type didn't
+  parse.
 - A method called on an untyped value now dispatches when the call leaves
   trailing parameters to their defaults (it was rejected as "no type has
   a method ... with N arguments").

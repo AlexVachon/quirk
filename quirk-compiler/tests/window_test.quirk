@@ -20,7 +20,7 @@ define test_colours() -> void {
     caught := false
     try {
         window.hex("nope")
-    } catch (e: ValueError) {
+    } catch (ValueError) {
         caught = true
     }
     test.assert_true(caught)
@@ -133,13 +133,13 @@ define test_screenshot_and_image() -> void {
 define test_load_missing_image_throws() -> void {
     if not window.available() { return }
     w := open("img", 10, 10)
-    caught := false
+    caught := ""
     try {
         w.load_image("/nonexistent/x.bmp")
-    } catch (e: WindowError) {
-        caught = true
+    } catch (e: window.WindowError) {
+        caught = e.message
     }
-    test.assert_true(caught)
+    test.assert_contains(caught, "/nonexistent/x.bmp")
     w.close()
 }
 

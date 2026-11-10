@@ -1,3 +1,7 @@
+#ifdef _WIN32
+// Windows: CreateProcess / pipes / threads — the same Process_* entry points.
+#include "process_win32.c"
+#else
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -511,3 +515,4 @@ int64_t Process_pid() {
     return (int64_t)getpid();
 #endif
 }
+#endif  // !_WIN32

@@ -291,7 +291,7 @@ static void Json__serialize_any(void* val, AnyTag hint, char** buf, int* cap, in
             case ANY_DOUBLE: quirk_format_double(a->dval, numbuf, 64);  Json__buf_append(buf, cap, len, numbuf); return;
             case ANY_BOOL:   Json__buf_append(buf, cap, len, a->ival ? "true" : "false"); return;
             case ANY_CHAR: {
-                char cb[3] = {'"', (char)a->ival, '"'}; cb[3] = '\0';
+                char cb[4] = {'"', (char)a->ival, '"', '\0'};
                 Json__buf_append(buf, cap, len, cb); return;
             }
             case ANY_STRING: Json__buf_append_escaped(buf, cap, len, a->ptr ? ((String*)a->ptr)->buffer : NULL); return;

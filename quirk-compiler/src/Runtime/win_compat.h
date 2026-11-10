@@ -39,5 +39,14 @@ static int quirk_win_clock_gettime(int clk, struct timespec* ts) {
 #define clock_gettime(clk, ts) quirk_win_clock_gettime((clk), (ts))
 #endif
 
+// nanosleep (task.c, sys.sleep outside a task): millisecond Sleep.
+static int quirk_win_nanosleep(const struct timespec* req, struct timespec* rem) {
+    (void)rem;
+    DWORD ms = (DWORD)(req->tv_sec * 1000 + req->tv_nsec / 1000000);
+    Sleep(ms);
+    return 0;
+}
+#define nanosleep(req, rem) quirk_win_nanosleep((req), (rem))
+
 #endif  // _WIN32
 #endif  // QUIRK_WIN_COMPAT_H

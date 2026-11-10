@@ -14,6 +14,7 @@
     #include <ws2tcpip.h>
     #pragma comment(lib, "ws2_32.lib")
     typedef int socklen_t;
+    #define net__close_fd(fd) closesocket(fd)
 #else
     #include <unistd.h>
     #include <fcntl.h>
@@ -25,6 +26,7 @@
     #include <errno.h>
     #define INVALID_SOCKET -1
     #define SOCKET_ERROR -1
+    #define net__close_fd(fd) close(fd)
 #endif
 
 #ifndef QUIRK_TYPES_H
@@ -55,7 +57,7 @@ int64_t Net_bind(int64_t sockfd, String* host, int64_t port) {
     // TIME_WAIT — the standard server-restart case. Without this every
     // test run would have to wait ~60s before the port frees.
     int one = 1;
-    setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+    setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, (const char*)&one, sizeof(one));
 
     return bind(sockfd, (struct sockaddr *) &serv_addr, sizeof(serv_addr));
 }
@@ -253,13 +255,13 @@ int64_t Net_tls_connect(String* host, int64_t port) {
 
     int crc = net__connect(sockfd, &serv_addr);
     if (crc < 0) {
-        close(sockfd);
+        net__close_fd(sockfd);
         return -1;
     }
 
     SSL* ssl = SSL_new(g_tls_ctx);
     if (!ssl) {
-        close(sockfd);
+        net__close_fd(sockfd);
         return -1;
     }
 
@@ -276,7 +278,7 @@ int64_t Net_tls_connect(String* host, int64_t port) {
     quirk_gil_acquire();
     if (hs != 1) {
         SSL_free(ssl);
-        close(sockfd);
+        net__close_fd(sockfd);
         return -1;
     }
 
@@ -284,7 +286,7 @@ int64_t Net_tls_connect(String* host, int64_t port) {
     if (h < 0) {
         SSL_shutdown(ssl);
         SSL_free(ssl);
-        close(sockfd);
+        net__close_fd(sockfd);
         return -1;
     }
     g_tls_slots[h].ssl = ssl;

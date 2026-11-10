@@ -77,8 +77,18 @@ static void quirk_deadline(struct timespec* ts, int64_t ms) {
     if (ts->tv_nsec >= 1000000000L) { ts->tv_sec++; ts->tv_nsec -= 1000000000L; }
 }
 
+#ifndef QUIRK_SETJMP
+#define QUIRK_SETJMP(buf) _setjmp(buf)
+#endif
+
 static void* quirk_task_main(void* arg) {
     QuirkTask* t = (QuirkTask*)arg;
+#ifdef _WIN32
+    // Linux's gc.h redirects pthread_create so the GC knows every thread;
+    // on Windows the thread registers itself, before its first allocation.
+    struct GC_stack_base sb;
+    int gc_registered = GC_get_stack_base(&sb) == GC_SUCCESS && GC_register_my_thread(&sb) == GC_SUCCESS;
+#endif
     // This thread's call / try stacks; a GC root, since it can hold the
     // only reference to an exception being thrown.
     QuirkThreadState* ts = (QuirkThreadState*)GC_malloc_uncollectable(sizeof(QuirkThreadState));
@@ -88,7 +98,7 @@ static void* quirk_task_main(void* arg) {
     quirk_ts = ts;
     pthread_mutex_lock(&quirk_gil);
     jmp_buf* jb = (jmp_buf*)quirk_get_jmp_buf();
-    if (_setjmp(*jb) == 0) {
+    if (QUIRK_SETJMP(*jb) == 0) {
         quirk_task_check_cancel();   // cancelled before it got to run
         typedef void* (*Thunk0)(void* env, void* end);
         t->result = ((Thunk0)t->fn->fn)(t->fn->env, QUIRK_NOARG);
@@ -108,6 +118,9 @@ static void* quirk_task_main(void* arg) {
     pthread_mutex_unlock(&quirk_gil);
     quirk_ts = &quirk_main_ts;   // nothing on this thread runs Quirk code now
     GC_free(ts);
+#ifdef _WIN32
+    if (gc_registered) GC_unregister_my_thread();
+#endif
     return NULL;
 }
 
@@ -135,6 +148,10 @@ void* quirk_task_spawn(Callable* fn) {
     t->fn = fn;
     t->next = quirk_tasks;
     quirk_tasks = t;
+#ifdef _WIN32
+    static int gc_threads_allowed = 0;
+    if (!gc_threads_allowed) { GC_allow_register_threads(); gc_threads_allowed = 1; }
+#endif
     pthread_t th;
     pthread_attr_t attr;
     pthread_attr_init(&attr);

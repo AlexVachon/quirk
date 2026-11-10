@@ -48,6 +48,15 @@ static int quirk_win_nanosleep(const struct timespec* req, struct timespec* rem)
 }
 #define nanosleep(req, rem) quirk_win_nanosleep((req), (rem))
 
+// setjmp without SEH unwinding. clang turns a plain `_setjmp(buf)` into
+// `_setjmp(buf, frame)`, and longjmp to such a buffer unwinds through SEH
+// tables that JIT code doesn't have — a crash. A NULL frame makes longjmp
+// a plain jump (the generated code calls it the same way, see
+// BuiltinGen.hpp). Declared under its own name: the CRT's prototype has
+// one parameter.
+__attribute__((returns_twice)) int quirk_win_setjmp2(void* buf, void* frame) __asm__("_setjmp");
+#define QUIRK_SETJMP(buf) quirk_win_setjmp2((void*)(buf), (void*)0)
+
 // The C library functions generated code calls directly (printf, fopen,
 // malloc, ...). The JIT binds those names to these wrappers on Windows
 // (Compiler.cpp): the UCRT exports no `printf` symbol, so a plain lookup

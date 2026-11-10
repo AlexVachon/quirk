@@ -163,6 +163,13 @@ print(fs.matches("*.qk", "main.qk"), fs.matches("?ain.[a-z]k", "main.qk"), fs.ma
     smoke repl_eval 'print(1, 2, 3, sep="-")'
     step "quirk eval"
     timeout 60 ./bin/quirk.exe eval 'print("eval works")' 2>&1 | head -5 | tee -a "$LOG"
+
+    # The real test suite (as CI runs it on Linux), file by file.
+    step "test suite"
+    timeout 1500 ./bin/quirk.exe test tests --timeout 60 --exclude server_test --exclude custom_package_test \
+        --exclude http_client_test --exclude test_test > "$OUT/tests.txt" 2>&1
+    echo "rc=$?" | tee -a "$LOG"
+    grep -E '^  (✓|✗) |^Summary|files:|tests:' "$OUT/tests.txt" | tee -a "$LOG"
 fi
 echo "== done" | tee -a "$LOG"
 exit 0

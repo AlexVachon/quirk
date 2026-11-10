@@ -1,6 +1,10 @@
 # Native Windows port
 
-Status: **in progress** (Stage 1). Until it's done, use Quirk on Windows
+Status: **in progress** — Stages 1–3 done (2026-11-10): the compiler
+and runtime build with MSVC / clang on `windows-latest`, and Quirk
+programs run through the JIT (printing, strings, structs, exceptions,
+files, GC, async tasks). Stage 4 (the test suite, `process`, `regex`,
+`window`, `net`) next. Until it's done, use Quirk on Windows
 through WSL — see [INSTALL.md → Windows (WSL)](../../INSTALL.md#windows-wsl).
 
 Work happens on the `windows-probe` branch. Every change is behind
@@ -36,12 +40,12 @@ Runtime (C): 35 errors —
 
 ## Stages
 
-1. **Runtime compiles** (syntax) with clang on Windows — include order,
+1. ✅ **Runtime compiles** (syntax) with clang on Windows — include order,
    time, signals, limits; `regex` stubbed (raises "not supported on Windows
    yet") until a real backend.
-2. **Compiler compiles** with MSVC — port the driver's process / terminal
+2. ✅ **Compiler compiles** with MSVC — port the driver's process / terminal
    code (`CreateProcess`, pipes, console API; REPL without linenoise).
-3. **Links and runs hello-world** — runtime as a DLL with every
+3. ✅ **Links and runs hello-world** — runtime as a DLL with every
    `Core_*` / `Fs_*` / ... symbol exported (the JIT resolves them by name),
    ORC JIT on COFF, Boehm GC init; audit `long` (32-bit on Windows) in
    generated code and C externs.
@@ -50,6 +54,26 @@ Runtime (C): 35 errors —
    linking with `link.exe` / `lld-link`; then run the test suite in a
    Windows CI job.
 5. **Release** — Windows build in `release.yml`, `install.ps1`.
+
+## What changed for Windows (so far)
+
+- `src/Runtime/win_compat.h` — Windows headers in Winsock-first order,
+  `PATH_MAX`, `clock_gettime`, `nanosleep`; `quirk_crt_*` wrappers the
+  JIT binds `printf` / `fopen` / `malloc` / ... to (one CRT, one stdout);
+  `QUIRK_SETJMP` (no SEH unwind).
+- `src/platform.hpp` + `src/platform_win32.cpp` — the driver's OS layer:
+  process spawning (`CreateProcess` + pipes), detached background builds,
+  the big-stack JIT thread, terminal width, temp files, `run_shell`
+  quoting for `cmd.exe`. Only `platform_win32.cpp` includes `<windows.h>`
+  (its `ERROR` / `CONST` / `TRUE` macros and its `TokenType` enum
+  constant clash with the compiler's names).
+- Codegen: `_setjmp(buf, NULL)` on Windows (no SEH unwinding through JIT
+  frames).
+- Runtime: tasks register their threads with the GC; `fs` temp files,
+  `walk`, `remove_tree`, wildcard matching; sockets close with
+  `closesocket`; `regex` raises "not supported on Windows yet".
+- `tools/windows_build.sh` builds `runtime.dll` (every external symbol
+  exported via a generated `.def`) and `quirk.exe`, then smoke-tests.
 
 ## Running the probe
 

@@ -2,6 +2,29 @@
 
 All notable changes to the extension land here. Versioning follows SemVer; minor bumps for new features, patches for fixes.
 
+## [1.0.0] — 2026-11-10 — on Open VSX
+
+The first stable release. From here, settings and command IDs only
+change in a major version.
+
+- **Published on [Open VSX](https://open-vsx.org/extension/quirk/quirk)**:
+  Cursor, VSCodium, Windsurf, Gitpod and other Open VSX editors install
+  (and update) Quirk from their Extensions sidebar. VS Code users keep
+  installing the `.vsix` from GitHub Releases — the README has a one-line
+  install / update command.
+- **Quirk: Select Environment** (`quirk.selectEnvironment`) replaces
+  "Select Interpreter": it picks the `QUIRK_HOME` or venv used by
+  IntelliSense, Run and Debug. The old command ID still works, so existing
+  keybindings keep working.
+- Command titles are all `Quirk: …` ("Quirk: Debug File", "Quirk: Debug
+  using launch.json").
+
+Everything since 0.1: highlighting, hovers and completions for the whole
+stdlib, compiler diagnostics with quick fixes, go-to-definition /
+references / rename, `quirk fmt` formatting, the Testing panel, the qdb
+debugger, `async` / `await`, and the `process`, `fs` and `window`
+packages.
+
 ## [0.8.4] — 2026-11-10 — `window`
 
 - Hovers and completions for the new `window` stdlib package (compiler

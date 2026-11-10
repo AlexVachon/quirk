@@ -29,15 +29,16 @@ jobs:
     # Hoist secrets to job-level env so step `if:` conditions can check
     # whether they're populated — GH Actions forbids `secrets.X` in `if:`
     # expressions, but `env.X` is fine once the env block is in place.
+    # (No VS Code Marketplace publishing: the extension ships on Open VSX
+    # and as a .vsix on GitHub Releases.)
     env:
-      VSCE_PAT: ${{ secrets.VSCE_PAT }}
       OVSX_PAT: ${{ secrets.OVSX_PAT }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22   # current ovsx needs require(esm): Node 22.12+
           cache: npm
           cache-dependency-path: quirk-vscode/package-lock.json
 
@@ -93,22 +94,8 @@ jobs:
           generate_release_notes: true
           name: "quirk-vscode ${{ steps.ver.outputs.version }}"
 
-      - name: Publish to VSCode Marketplace
-        # Requires the `VSCE_PAT` repo secret — Settings → Secrets and
-        # variables → Actions → New repository secret. The PAT comes from
-        # dev.azure.com with the "Marketplace > Manage" scope.
-        if: (github.event_name == 'push' || inputs.dry_run != true) && env.VSCE_PAT != ''
-        run: npx --yes @vscode/vsce@latest publish --packagePath ./*.vsix --pat "$VSCE_PAT"
-
-      - name: Warn if VSCE_PAT missing
-        if: (github.event_name == 'push' || inputs.dry_run != true) && env.VSCE_PAT == ''
-        run: |
-          echo "::warning::VSCE_PAT secret is not set — the .vsix was built but NOT published."
-          echo "Add it at: Settings → Secrets and variables → Actions → New repository secret"
-
       - name: Publish to Open VSX (Cursor / VSCodium)
-        # Optional second marketplace. Skipped silently when the
-        # OVSX_PAT secret isn't set — Open VSX uses its own token from
-        # https://open-vsx.org/user-settings/tokens.
+        # Skipped when the OVSX_PAT secret isn't set — Open VSX uses its
+        # own token from https://open-vsx.org/user-settings/tokens.
         if: (github.event_name == 'push' || inputs.dry_run != true) && env.OVSX_PAT != ''
         run: npx --yes ovsx@latest publish ./*.vsix --pat "$OVSX_PAT"

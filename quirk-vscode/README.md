@@ -25,24 +25,19 @@ Official language support for [Quirk](https://github.com/AlexVachon/quirk) — a
    ```
    Add the two `export` lines it prints to your shell profile. Other platforms: see the [INSTALL guide](https://github.com/AlexVachon/quirk/blob/main/INSTALL.md).
 
-2. **Install this extension.** Quirk ships its VSCode extension as a `.vsix` on the GitHub Releases page (not the Marketplace yet):
+2. **Install this extension.**
 
-   - Browse to https://github.com/AlexVachon/quirk/releases
-   - Find the latest **`quirk-vscode vX.Y.Z`** release (tagged `vscode-v*`)
-   - Download `quirk-X.Y.Z.vsix`
-   - Install it:
+   - **Cursor, VSCodium, Windsurf, Gitpod** and other editors that use [Open VSX](https://open-vsx.org/extension/quirk/quirk): search for **Quirk** in the Extensions sidebar and click Install. Updates arrive automatically.
+   - **VS Code**: Quirk isn't on Microsoft's Marketplace; install the `.vsix` from GitHub Releases. Latest version, one line (needs the [`gh`](https://cli.github.com/) CLI):
      ```bash
-     code --install-extension /path/to/quirk-X.Y.Z.vsix
+     tag=$(gh release list --repo AlexVachon/quirk --limit 100 --json tagName \
+             --jq '[.[].tagName | select(startswith("vscode-v"))][0]') && \
+       gh release download "$tag" --repo AlexVachon/quirk --pattern '*.vsix' --dir /tmp --clobber && \
+       code --install-extension /tmp/quirk-${tag#vscode-v}.vsix
      ```
-     Or, in VSCode: open the Extensions sidebar (`Ctrl+Shift+X`) → click the `…` menu → **Install from VSIX…**
+     Or by hand: on https://github.com/AlexVachon/quirk/releases open the newest **`quirk-vscode vX.Y.Z`** release, download `quirk-X.Y.Z.vsix`, then `code --install-extension quirk-X.Y.Z.vsix` — or in VS Code: Extensions sidebar (`Ctrl+Shift+X`) → `…` menu → **Install from VSIX…**. Run the same steps again to update.
 
-   One-liner (Linux/macOS, requires the [`gh`](https://cli.github.com/) CLI):
-   ```bash
-   gh release download --repo AlexVachon/quirk --pattern '*.vsix' --dir /tmp && \
-     code --install-extension /tmp/quirk-*.vsix
-   ```
-
-3. **Open a `.quirk` file.** The extension auto-activates. If the compiler isn't found, the status bar shows a warning — click it to set `quirk.compilerPath` or `quirk.quirkHome`.
+3. **Open a `.qk` (or `.quirk`) file.** The extension auto-activates. If the compiler isn't found, the status bar shows a warning — click it to set `quirk.compilerPath` or `quirk.quirkHome`. **Quirk: Select Environment** (or the status bar item) picks the `QUIRK_HOME` / venv to use.
 
 4. **Run** with `Ctrl+F5` or click the `▷` button in the editor title. **Debug** with `F5` — set a gutter breakpoint and the stepper pauses there.
 

@@ -2,7 +2,7 @@
   "name": "quirk",
   "displayName": "Quirk",
   "description": "Language support, interactive debugger, and Run/Debug integration for the Quirk programming language.",
-  "version": "0.8.4",
+  "version": "1.0.0",
   "publisher": "quirk",
   "license": "MIT",
   "icon": "icons/icon.png",
@@ -79,16 +79,16 @@
       },
       {
         "command": "quirk.debugFile",
-        "title": "Quirk Debugger: Debug Quirk File",
+        "title": "Quirk: Debug File",
         "icon": "$(debug-alt)"
       },
       {
         "command": "quirk.debugLaunchJson",
-        "title": "Quirk Debugger: Debug using launch.json"
+        "title": "Quirk: Debug using launch.json"
       },
       {
-        "command": "quirk.selectInterpreter",
-        "title": "Quirk: Select Interpreter"
+        "command": "quirk.selectEnvironment",
+        "title": "Quirk: Select Environment"
       }
     ],
     "keybindings": [

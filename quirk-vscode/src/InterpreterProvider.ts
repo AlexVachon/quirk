@@ -311,7 +311,7 @@ async function createVenvFlow(): Promise<void> {
                         : vscode.ConfigurationTarget.Global,
                 );
                 activateInAllTerminals(venvPath);
-                vscode.window.showInformationMessage(`Quirk interpreter set to: ${venvPath}`);
+                vscode.window.showInformationMessage(`Quirk environment set to: ${venvPath}`);
                 return;
             }
         }
@@ -420,8 +420,8 @@ export function registerInterpreterPicker(context: vscode.ExtensionContext): voi
     );
     // Status bar item — clickable, always visible while a Quirk file is open.
     const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
-    statusBar.command = 'quirk.selectInterpreter';
-    statusBar.tooltip = 'Click to choose the Quirk interpreter (QUIRK_HOME) used by IntelliSense.';
+    statusBar.command = 'quirk.selectEnvironment';
+    statusBar.tooltip = 'Click to choose the Quirk environment (QUIRK_HOME or a venv) used by IntelliSense and Run.';
     const refreshStatusBar = () => {
         statusBar.text = `$(symbol-namespace) Quirk: ${activeInterpreterLabel()}`;
         const editor = vscode.window.activeTextEditor;
@@ -439,8 +439,7 @@ export function registerInterpreterPicker(context: vscode.ExtensionContext): voi
 
     // Command: open the picker (Python-extension style — flat list with top
     // actions, placeholder shows the active selection).
-    context.subscriptions.push(
-        vscode.commands.registerCommand('quirk.selectInterpreter', async () => {
+    const selectEnvironment = async () => {
             const interpreters = detectInterpreters().filter(i => i.kind !== 'browse');
             const cfg = vscode.workspace.getConfiguration('quirk');
             const inspected = cfg.inspect<string>('quirkHome');
@@ -460,7 +459,7 @@ export function registerInterpreterPicker(context: vscode.ExtensionContext): voi
                     __action: 'create',
                 },
                 {
-                    label: '$(folder-opened) Enter interpreter path…',
+                    label: '$(folder-opened) Enter environment path…',
                     description: 'Pick a directory containing bin/quirk',
                     __action: 'browse',
                 },
@@ -550,8 +549,12 @@ export function registerInterpreterPicker(context: vscode.ExtensionContext): voi
             }
 
             vscode.window.showInformationMessage(
-                target ? `Quirk interpreter: ${target}` : 'Quirk interpreter: global'
+                target ? `Quirk environment: ${target}` : 'Quirk environment: global'
             );
-        }),
+    };
+    context.subscriptions.push(
+        vscode.commands.registerCommand('quirk.selectEnvironment', selectEnvironment),
+        // Pre-1.0 name, kept so existing keybindings still work.
+        vscode.commands.registerCommand('quirk.selectInterpreter', selectEnvironment),
     );
 }

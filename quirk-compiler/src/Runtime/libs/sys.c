@@ -47,7 +47,9 @@ static char** quirk_argv = NULL;
 static void quirk_crash_handler(int sig) {
     const char* signame = (sig == SIGSEGV) ? "SIGSEGV (null dereference or bad memory access)"
                         : (sig == SIGABRT) ? "SIGABRT (abort / assertion failure)"
+#ifdef SIGBUS
                         : (sig == SIGBUS)  ? "SIGBUS (bus error)"
+#endif
                         : (sig == SIGFPE)  ? "SIGFPE (arithmetic error)"
                         :                    "fatal signal";
     // Piped stdout is block-buffered; keep what the program printed so far
@@ -73,7 +75,9 @@ void Sys_init(int argc, char** argv) {
     // restores the previous handler, so our handler fires for genuine crashes only.
     signal(SIGSEGV, quirk_crash_handler);
     signal(SIGABRT, quirk_crash_handler);
+#ifdef SIGBUS
     signal(SIGBUS,  quirk_crash_handler);
+#endif
     signal(SIGFPE,  quirk_crash_handler);
     #ifdef _WIN32
     WSADATA wsaData;

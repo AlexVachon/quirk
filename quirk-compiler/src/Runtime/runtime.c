@@ -1,5 +1,8 @@
 // [runtime.c]
 // The "Unity Build" approach: Include the C files directly.
+#ifdef _WIN32
+#include "win_compat.h"   // Windows headers in the right order, POSIX shims
+#endif
 #include <math.h>
 // Thread-aware GC (`async` tasks run on threads): must precede <gc.h>.
 #define GC_THREADS

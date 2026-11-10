@@ -1,0 +1,41 @@
+name: Windows probe
+
+# Experimental: how far does Quirk get on Windows? Sets up LLVM 14 /
+# clang 14 / Boehm GC / OpenSSL / SDL2 from conda-forge and compiles every
+# source file, recording errors per file (tools/windows_probe.sh). Never
+# fails the build — read the summary in the job log or the artifact.
+on:
+  push:
+    branches: [windows-probe]
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: conda-incubator/setup-miniconda@v3
+        with:
+          miniforge-version: latest
+          activate-environment: qprobe
+          channels: conda-forge
+
+      - name: Install toolchain
+        run: |
+          conda install -y -c conda-forge llvmdev=14.0.6 clangdev=14.0.6 clang=14.0.6 \
+            bdw-gc openssl sdl2 zlib zstd
+          conda list | grep -iE 'llvm|clang|bdw|openssl|sdl2'
+
+      - name: Probe compile
+        working-directory: quirk-compiler
+        run: bash tools/windows_probe.sh
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-probe
+          path: quirk-compiler/windows-probe/

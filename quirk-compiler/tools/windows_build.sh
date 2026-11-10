@@ -19,22 +19,22 @@ LOG="$OUT/build.txt"
 step() { echo "== $*" | tee -a "$LOG"; }
 w() { cygpath -w "$1" 2>/dev/null || echo "$1"; }
 
-LIB="$CONDA_PREFIX/Library"
-WLIB="$(w "$LIB")"
-LLVM_CONFIG="$LIB/bin/llvm-config"
+CLIB="$CONDA_PREFIX/Library"   # not LIB: MSVC's linker reads $LIB for the SDK libraries
+WLIB="$(w "$CLIB")"
+LLVM_CONFIG="$CLIB/bin/llvm-config"
 LLVM_INC="$(w "$("$LLVM_CONFIG" --includedir | tr -d '\r')")"
 
 step "libraries available"
-ls "$LIB/lib" | grep -iE '^(gc|libgc|pthread|libssl|libcrypto|ssl|crypto)' | tee -a "$LOG"
-GC_LIB=$(ls "$LIB/lib" | grep -iE '^(gc|libgc)\.lib$' | head -1)
-PTHREAD_LIB=$(ls "$LIB/lib" | grep -iE '^pthread.*\.lib$' | head -1)
-SSL_LIB=$(ls "$LIB/lib" | grep -iE '^libssl\.lib$' | head -1)
-CRYPTO_LIB=$(ls "$LIB/lib" | grep -iE '^libcrypto\.lib$' | head -1)
+ls "$CLIB/lib" | grep -iE '^(gc|libgc|pthread|libssl|libcrypto|ssl|crypto)' | tee -a "$LOG"
+GC_LIB=$(ls "$CLIB/lib" | grep -iE '^(gc|libgc)\.lib$' | head -1)
+PTHREAD_LIB=$(ls "$CLIB/lib" | grep -iE '^pthread.*\.lib$' | head -1)
+SSL_LIB=$(ls "$CLIB/lib" | grep -iE '^libssl\.lib$' | head -1)
+CRYPTO_LIB=$(ls "$CLIB/lib" | grep -iE '^libcrypto\.lib$' | head -1)
 echo "gc=$GC_LIB pthread=$PTHREAD_LIB ssl=$SSL_LIB crypto=$CRYPTO_LIB" | tee -a "$LOG"
 
 # ---------- runtime.dll ----------
 step "runtime: compile"
-clang -c src/Runtime/runtime.c -O2 -o obj/win/runtime.o -Isrc/Runtime -I"$LIB/include" \
+clang -c src/Runtime/runtime.c -O2 -o obj/win/runtime.o -Isrc/Runtime -I"$CLIB/include" \
     -D_CRT_SECURE_NO_WARNINGS -DGC_DLL >> "$LOG" 2>&1
 # (No GC_WIN32_PTHREADS: conda's gc has no pthread redirects; gc.dll
 # registers every thread itself via DllMain, pthreads-win32's included.)
@@ -44,14 +44,14 @@ step "runtime: export list"
 {
     echo "LIBRARY runtime"
     echo "EXPORTS"
-    "$LIB/bin/llvm-nm" --defined-only --extern-only obj/win/runtime.o 2>>"$LOG" \
+    "$CLIB/bin/llvm-nm" --defined-only --extern-only obj/win/runtime.o 2>>"$LOG" \
         | awk '$2 ~ /^[TDBR]$/ {print "    " $3}' | sort -u
 } > obj/win/runtime.def
 echo "$(($(wc -l < obj/win/runtime.def) - 2)) symbols" | tee -a "$LOG"
 
 step "runtime: link"
 clang -shared obj/win/runtime.o -o bin/runtime.dll -Wl,/DEF:"$(w obj/win/runtime.def)" \
-    -L"$LIB/lib" ${GC_LIB:+-l${GC_LIB%.lib}} ${PTHREAD_LIB:+-l${PTHREAD_LIB%.lib}} \
+    -L"$CLIB/lib" ${GC_LIB:+-l${GC_LIB%.lib}} ${PTHREAD_LIB:+-l${PTHREAD_LIB%.lib}} \
     ${SSL_LIB:+-l${SSL_LIB%.lib}} ${CRYPTO_LIB:+-l${CRYPTO_LIB%.lib}} -lws2_32 -ladvapi32 -luser32 >> "$LOG" 2>&1
 echo "rc=$?" | tee -a "$LOG"
 ls -la bin/runtime.dll 2>&1 | tee -a "$LOG"
@@ -95,7 +95,7 @@ fi
 
 # ---------- smoke test ----------
 if [ -f bin/quirk.exe ] && [ -f bin/runtime.dll ]; then
-    export PATH="$PWD/bin:$LIB/bin:$PATH"
+    export PATH="$PWD/bin:$CLIB/bin:$PATH"
     export QUIRK_HOME="$(w "$PWD")"
     step "quirk --version"
     timeout 60 ./bin/quirk.exe --version 2>&1 | head -5 | tee -a "$LOG"

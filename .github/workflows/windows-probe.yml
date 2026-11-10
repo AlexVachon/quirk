@@ -29,12 +29,21 @@ jobs:
       - name: Install toolchain
         run: |
           conda install -y -c conda-forge llvmdev=14.0.6 clangdev=14.0.6 clang=14.0.6 \
-            bdw-gc openssl sdl2 zlib zstd pthreads-win32
+            bdw-gc openssl sdl2 zlib zstd pthreads-win32 make
           conda list | grep -iE 'llvm|clang|bdw|openssl|sdl2|pthread'
 
       - name: Probe compile
         working-directory: quirk-compiler
         run: bash tools/windows_probe.sh
+
+      - name: Bootstrap stdlib
+        working-directory: quirk-compiler
+        continue-on-error: true
+        run: make bootstrap-stdlib
+
+      - name: Build + smoke test
+        working-directory: quirk-compiler
+        run: bash tools/windows_build.sh
 
       - uses: actions/upload-artifact@v4
         if: always()

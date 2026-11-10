@@ -68,7 +68,8 @@ echo "== runtime (C, unity build)" | tee -a "$OUT/summary.txt"
 probe "$CC" src/Runtime/runtime.c -O0 -Isrc/Runtime -I"$LIB/include" -D_CRT_SECURE_NO_WARNINGS
 
 echo "== third party" | tee -a "$OUT/summary.txt"
-[ -f src/third_party/linenoise/linenoise.c ] && probe "$CC" src/third_party/linenoise/linenoise.c -O0
+# linenoise.c needs termios; Windows builds linenoise_win32.c instead.
+probe "$CC" src/third_party/linenoise/linenoise_win32.c -O0
 
 echo "TOTAL errors: $total_err" | tee -a "$OUT/summary.txt"
 

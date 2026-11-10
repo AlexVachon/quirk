@@ -818,14 +818,14 @@ static std::string resolveRuntimeSoPath() {
     std::string runtimePath;
     std::string exe = qpm::self_binary();
     if (!exe.empty() && exe != "quirk") {
-        fs::path next = fs::path(exe).parent_path() / "runtime.so";
+        fs::path next = fs::path(exe).parent_path() / qplat::RUNTIME_LIB;
         if (fs::exists(next)) runtimePath = next.string();
     }
     if (const char* envHome = std::getenv("QUIRK_HOME")) {
-        std::string venvRuntime = std::string(envHome) + "/bin/runtime.so";
+        std::string venvRuntime = std::string(envHome) + "/bin/" + qplat::RUNTIME_LIB;
         if (fs::exists(venvRuntime)) runtimePath = venvRuntime;
     }
-    if (runtimePath.empty()) runtimePath = "./bin/runtime.so";
+    if (runtimePath.empty()) runtimePath = std::string("./bin/") + qplat::RUNTIME_LIB;
     return runtimePath;
 }
 
@@ -1034,7 +1034,7 @@ static int runJITModule(std::unique_ptr<llvm::Module> module,
     llvm::InitializeNativeTargetAsmPrinter();
     llvm::InitializeNativeTargetAsmParser();
 
-    for (const char* gcLib : {"libgc.so.1", "libgc.so"}) {
+    for (const char* gcLib : qplat::GC_LIBS) {
         std::string errMsg;
         if (!llvm::sys::DynamicLibrary::LoadLibraryPermanently(gcLib, &errMsg)) break;
     }

@@ -66,6 +66,19 @@ inline int unsetenv(const char* name) { return _putenv_s(name, ""); }
 
 namespace qplat {
 
+// The runtime library next to the quirk binary, and the Boehm GC
+// library names the JIT loads before it.
+#ifdef _WIN32
+inline constexpr const char* RUNTIME_LIB = "runtime.dll";
+inline constexpr const char* GC_LIBS[] = {"gc.dll", "libgc.dll"};
+#elif defined(__APPLE__)
+inline constexpr const char* RUNTIME_LIB = "runtime.so";
+inline constexpr const char* GC_LIBS[] = {"libgc.1.dylib", "libgc.dylib", "libgc.so.1", "libgc.so"};
+#else
+inline constexpr const char* RUNTIME_LIB = "runtime.so";
+inline constexpr const char* GC_LIBS[] = {"libgc.so.1", "libgc.so"};
+#endif
+
 // A started program whose stdout is a pipe we read.
 struct Child {
 #ifdef _WIN32

@@ -1074,6 +1074,23 @@ static int runJITModule(std::unique_ptr<llvm::Module> module,
                   << llvm::toString(rtGenOrErr.takeError()) << std::endl;
         return 1;
     }
+#ifdef _WIN32
+    // Bind the C library names generated code calls to the runtime's
+    // quirk_crt_* wrappers (one CRT, one stdout buffer — see win_compat.h).
+    // Defined in the JITDylib itself, so they win over the process search.
+    {
+        std::string libErr;
+        auto rtLib = llvm::sys::DynamicLibrary::getPermanentLibrary(runtimePath.c_str(), &libErr);
+        llvm::orc::SymbolMap crt;
+        for (const char* n : {"printf", "sprintf", "fopen", "fclose", "fwrite", "fread", "fseek",
+                              "ftell", "strlen", "malloc", "free", "exit", "write"}) {
+            void* p = rtLib.getAddressOfSymbol((std::string("quirk_crt_") + n).c_str());
+            if (p) crt[JIT->mangleAndIntern(n)] = llvm::JITEvaluatedSymbol(
+                llvm::pointerToJITTargetAddress(p), llvm::JITSymbolFlags::Exported);
+        }
+        if (!crt.empty()) llvm::cantFail(JD.define(llvm::orc::absoluteSymbols(std::move(crt))));
+    }
+#endif
     JD.addGenerator(std::move(*rtGenOrErr));
 
     if (auto err = JIT->addIRModule(

@@ -34,8 +34,10 @@ echo "gc=$GC_LIB pthread=$PTHREAD_LIB ssl=$SSL_LIB crypto=$CRYPTO_LIB" | tee -a 
 
 # ---------- runtime.dll ----------
 step "runtime: compile"
+# The shared CRT (msvcrt.lib -> ucrtbase.dll), like quirk.exe's /MD:
+# one heap and one stdout between the two.
 clang -c src/Runtime/runtime.c -O2 -o obj/win/runtime.o -Isrc/Runtime -I"$CLIB/include" \
-    -D_CRT_SECURE_NO_WARNINGS -DGC_DLL >> "$LOG" 2>&1
+    -D_CRT_SECURE_NO_WARNINGS -DGC_DLL -D_MT -D_DLL -Xclang --dependent-lib=msvcrt >> "$LOG" 2>&1
 # (No GC_WIN32_PTHREADS: conda's gc has no pthread redirects; gc.dll
 # registers every thread itself via DllMain, pthreads-win32's included.)
 echo "rc=$?" | tee -a "$LOG"
@@ -50,7 +52,7 @@ step "runtime: export list"
 echo "$(($(wc -l < obj/win/runtime.def) - 2)) symbols" | tee -a "$LOG"
 
 step "runtime: link"
-clang -shared obj/win/runtime.o -o bin/runtime.dll -Wl,/DEF:"$(w obj/win/runtime.def)" \
+clang -shared obj/win/runtime.o -o bin/runtime.dll -Wl,/DEF:"$(w obj/win/runtime.def)" -Wl,/NODEFAULTLIB:libcmt.lib \
     -L"$CLIB/lib" ${GC_LIB:+-l${GC_LIB%.lib}} ${PTHREAD_LIB:+-l${PTHREAD_LIB%.lib}} \
     ${SSL_LIB:+-l${SSL_LIB%.lib}} ${CRYPTO_LIB:+-l${CRYPTO_LIB%.lib}} -lws2_32 -ladvapi32 -luser32 >> "$LOG" 2>&1
 echo "rc=$?" | tee -a "$LOG"
@@ -99,10 +101,47 @@ if [ -f bin/quirk.exe ] && [ -f bin/runtime.dll ]; then
     export QUIRK_HOME="$(w "$PWD")"
     step "quirk --version"
     timeout 60 ./bin/quirk.exe --version 2>&1 | head -5 | tee -a "$LOG"
-    step "hello world (JIT)"
-    printf 'print("Hello from Quirk on Windows", 1 + 2)\n' > obj/win/hello.qk
-    timeout 120 ./bin/quirk.exe --no-aot --no-cache obj/win/hello.qk 2>&1 | head -30 | tee -a "$LOG"
-    echo "rc=${PIPESTATUS[0]}" | tee -a "$LOG"
+    smoke() {   # smoke <name> <program>
+        step "smoke: $1"
+        printf '%s\n' "$2" > "obj/win/$1.qk"
+        timeout 120 ./bin/quirk.exe --no-aot --no-cache "obj/win/$1.qk" 2>&1 | head -30 | tee -a "$LOG"
+        echo "rc=${PIPESTATUS[0]}" | tee -a "$LOG"
+    }
+    smoke hello 'print("Hello from Quirk on Windows", 1 + 2)'
+    smoke strings 'name := "Quirk"
+print("${name} has ${name.length()} letters", name.upper(), [1, 2, 3].map(fn(x) => x * 2))'
+    smoke structs 'struct P {
+    x: Int
+    define __init(self, x: Int) -> void { self.x = x }
+    define __str(self) -> String { return "P(" + self.x.str() + ")" }
+}
+m := {"a": P(1)}
+print(m.get("a"), [P(2), P(3)])'
+    smoke exceptions 'try {
+    throw ValueError("boom")
+} catch (e: ValueError) {
+    print("caught:", e.message)
+}
+print("after")'
+    smoke files 'use fs
+p := fs.temp_file(suffix=".txt")
+fs.write_text(p, "hi there")
+print(fs.read_text(p), fs.size(p))
+fs.remove(p)'
+    smoke gc 's := ""
+i := 0
+while i < 200000 {
+    s = "x" + i.str()
+    i = i + 1
+}
+print("gc ok", s)'
+    smoke tasks 'async define sq(n: Int) -> Int { return n * n }
+a := sq(3)
+b := sq(4)
+print(await a + await b)'
+    smoke repl_eval 'print(1, 2, 3, sep="-")'
+    step "quirk eval"
+    timeout 60 ./bin/quirk.exe eval 'print("eval works")' 2>&1 | head -5 | tee -a "$LOG"
 fi
 echo "== done" | tee -a "$LOG"
 exit 0

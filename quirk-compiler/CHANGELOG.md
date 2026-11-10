@@ -5,6 +5,24 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.19.0] — 2026-11-10 — fs: walk, glob, temp files, copy
+
+- **`fs` v1.2.0** — the file system chores scripts and build tools need:
+  - `fs.walk(root)`: every file under a directory, depth first and
+    sorted (`dirs=`, `files=`, `hidden=`, `follow_links=`, `max_depth=`).
+  - `fs.glob("src/**/*_test.qk")`: paths matching a pattern, sorted;
+    `**` spans any number of directories, dotfiles only when asked
+    (`hidden=true`). `fs.matches(pattern, name)` checks one name.
+  - `fs.temp_dir()` / `fs.temp_file(suffix=".json")`: new private
+    (owner-only) directories and files with unique names, in
+    `fs.temp_root()` (`$TMPDIR`, else `/tmp`) or `dir=`.
+  - `fs.copy(src, dst)` (into `dst` when it's a directory, keeping
+    permissions) and `fs.copy_tree(src, dst)`.
+  - `fs.read_text(p)`, `fs.write_text(p, text)`, `fs.append_text(p,
+    text)`: whole files in one call (`FileNotFoundError` for a missing
+    file).
+  - `fs.is_link(p)` and `fs.absolute(p)` (symlinks and `..` resolved).
+
 ## [7.18.0] — 2026-11-09 — `process`, fields on untyped values
 
 - **New stdlib package `process`** (v1.0.1): run other programs.

@@ -1,0 +1,225 @@
+// fs v1.2.0: walk, glob, match, temp files, copy, read/write, links.
+// Every test works in a fresh temp directory.
+use fs
+use process
+use test
+
+root := ""
+start := fs.cwd()
+
+define setup() -> void {
+    root = fs.temp_dir(prefix="qk-fs-test-")
+    for d in ["src", "src/lib", "src/lib/deep", "docs", ".hidden"] {
+        fs.mkdir(fs.join(root, d))
+    }
+    files := ["src/main.qk", "src/util.qk", "src/main_test.qk", "src/lib/a.qk",
+              "src/lib/deep/b_test.qk", "src/lib/notes.txt", "docs/guide.md",
+              "README.md", ".env", ".hidden/secret.qk"]
+    for f in files {
+        fs.write_text(fs.join(root, f), "file " + f)
+    }
+}
+
+define teardown() -> void {
+    fs.chdir(start)
+    if fs.exists(root) { fs.remove_tree(root) }
+}
+
+define rel(paths: List) -> List {
+    out := []
+    for p in paths {
+        s: String = p
+        out.append(s.substring(root.length() + 1, s.length()))
+    }
+    return out
+}
+
+// ───── temp files ─────
+define test_temp_dir_is_new_and_private() -> void {
+    a := fs.temp_dir()
+    b := fs.temp_dir()
+    test.assert_ne(a, b)
+    test.assert_true(fs.is_dir(a))
+    test.assert_true(fs.basename(a).startswith("quirk-"))
+    test.assert_true(a.startswith(fs.temp_root()))
+    mode := process.run(["ls", "-ld", a]).stdout
+    test.assert_true(mode.startswith("drwx------"))
+    fs.rmdir(a)
+    fs.rmdir(b)
+}
+
+define test_temp_file_prefix_suffix_dir() -> void {
+    f := fs.temp_file(prefix="cfg-", suffix=".json", dir=root)
+    test.assert_true(fs.is_file(f))
+    test.assert_eq(fs.dirname(f), root)
+    test.assert_true(fs.basename(f).startswith("cfg-"))
+    test.assert_eq(fs.extname(f), ".json")
+    test.assert_eq(fs.size(f), 0)
+}
+
+define test_temp_dir_in_missing_dir_throws() -> void {
+    caught := false
+    try {
+        fs.temp_dir(dir=fs.join(root, "nope"))
+    } catch (e: IOError) {
+        caught = true
+    }
+    test.assert_true(caught)
+}
+
+// ───── read / write ─────
+define test_write_read_append() -> void {
+    p := fs.join(root, "out.txt")
+    fs.write_text(p, "one\n")
+    fs.append_text(p, "two\n")
+    test.assert_eq(fs.read_text(p), "one\ntwo\n")
+    fs.write_text(p, "")
+    test.assert_eq(fs.read_text(p), "")
+}
+
+define test_read_large_file() -> void {
+    p := fs.join(root, "big.txt")
+    data := "0123456789".repeat(50000)
+    fs.write_text(p, data)
+    test.assert_true(fs.read_text(p) == data)
+}
+
+define test_read_missing_throws_file_not_found() -> void {
+    caught := ""
+    try {
+        fs.read_text(fs.join(root, "missing.txt"))
+    } catch (e: FileNotFoundError) {
+        caught = e.message
+    }
+    test.assert_contains(caught, "missing.txt")
+}
+
+define test_read_directory_throws() -> void {
+    caught := false
+    try {
+        fs.read_text(root)
+    } catch (e: IOError) {
+        caught = true
+    }
+    test.assert_true(caught)
+}
+
+// ───── walk ─────
+define test_walk_files_sorted_skips_hidden() -> void {
+    test.assert_eq(rel(fs.walk(root)), ["README.md", "docs/guide.md", "src/lib/a.qk",
+        "src/lib/deep/b_test.qk", "src/lib/notes.txt", "src/main.qk", "src/main_test.qk", "src/util.qk"])
+}
+
+define test_walk_dirs_and_hidden() -> void {
+    got := rel(fs.walk(root, dirs=true, files=false, hidden=true))
+    test.assert_eq(got, [".hidden", "docs", "src", "src/lib", "src/lib/deep"])
+    test.assert_contains(rel(fs.walk(root, hidden=true)), ".env")
+}
+
+define test_walk_max_depth() -> void {
+    test.assert_eq(rel(fs.walk(root, max_depth=0)), ["README.md"])
+    test.assert_eq(rel(fs.walk(fs.join(root, "src"), dirs=true, max_depth=0)).length(), 4)
+}
+
+define test_walk_does_not_follow_links_by_default() -> void {
+    fs.mkdir(fs.join(root, "links"))
+    process.run(["ln", "-s", fs.join(root, "docs"), fs.join(root, "links/docs")], check=true)
+    test.assert_true(fs.is_link(fs.join(root, "links/docs")))
+    test.assert_false(fs.is_link(fs.join(root, "docs")))
+    test.assert_eq(rel(fs.walk(fs.join(root, "links"))), ["links/docs"])
+    test.assert_eq(rel(fs.walk(fs.join(root, "links"), follow_links=true)), ["links/docs/guide.md"])
+}
+
+// ───── match / glob ─────
+define test_matches() -> void {
+    test.assert_true(fs.matches("*.qk", "main.qk"))
+    test.assert_false(fs.matches("*.qk", "main.qkx"))
+    test.assert_true(fs.matches("?ain.[a-z]k", "main.qk"))
+    test.assert_true(fs.matches("[!a]*", "main.qk"))
+    test.assert_false(fs.matches("*", ".env"))
+    test.assert_true(fs.matches("*", ".env", hidden=true))
+    test.assert_true(fs.matches(".*", ".env"))
+}
+
+define test_glob_one_level() -> void {
+    fs.chdir(root)
+    test.assert_eq(fs.glob("src/*.qk"), ["src/main.qk", "src/main_test.qk", "src/util.qk"])
+    test.assert_eq(fs.glob("*.md"), ["README.md"])
+    test.assert_eq(fs.glob("*/*.md"), ["docs/guide.md"])
+}
+
+define test_glob_double_star() -> void {
+    fs.chdir(root)
+    test.assert_eq(fs.glob("src/**/*_test.qk"), ["src/lib/deep/b_test.qk", "src/main_test.qk"])
+    test.assert_eq(fs.glob("**/*.md"), ["README.md", "docs/guide.md"])
+    test.assert_eq(fs.glob("**/b_test.qk"), ["src/lib/deep/b_test.qk"])
+}
+
+define test_glob_hidden() -> void {
+    fs.chdir(root)
+    test.assert_eq(fs.glob("**/*.qk").length(), 5)
+    test.assert_eq(fs.glob("**/*.qk", hidden=true).length(), 6)
+    test.assert_eq(fs.glob(".*"), [".env", ".hidden"])
+}
+
+define test_glob_absolute_and_literal() -> void {
+    test.assert_eq(fs.glob(root + "/docs/*"), [root + "/docs/guide.md"])
+    test.assert_eq(fs.glob(root + "/README.md"), [root + "/README.md"])
+    test.assert_eq(fs.glob(root + "/nope/*.qk"), [])
+}
+
+// ───── copy ─────
+define test_copy_file_and_into_dir() -> void {
+    src := fs.join(root, "README.md")
+    test.assert_eq(fs.copy(src, fs.join(root, "copy.md")), fs.join(root, "copy.md"))
+    test.assert_eq(fs.read_text(fs.join(root, "copy.md")), "file README.md")
+    test.assert_eq(fs.copy(src, fs.join(root, "docs")), fs.join(root, "docs/README.md"))
+    test.assert_true(fs.is_file(fs.join(root, "docs/README.md")))
+}
+
+define test_copy_keeps_permissions() -> void {
+    script := fs.join(root, "run.sh")
+    fs.write_text(script, "#!/bin/sh\necho hi\n")
+    process.run(["chmod", "755", script], check=true)
+    fs.copy(script, fs.join(root, "run2.sh"))
+    test.assert_eq(process.run([fs.join(root, "run2.sh")]).stdout, "hi\n")
+}
+
+define test_copy_missing_throws() -> void {
+    caught := false
+    try {
+        fs.copy(fs.join(root, "nope"), fs.join(root, "x"))
+    } catch (e: FileNotFoundError) {
+        caught = true
+    }
+    test.assert_true(caught)
+}
+
+define test_copy_tree() -> void {
+    dst := fs.join(root, "backup/src")
+    fs.copy_tree(fs.join(root, "src"), dst)
+    test.assert_eq(rel(fs.walk(dst)), ["backup/src/lib/a.qk", "backup/src/lib/deep/b_test.qk",
+        "backup/src/lib/notes.txt", "backup/src/main.qk", "backup/src/main_test.qk", "backup/src/util.qk"])
+    test.assert_eq(fs.read_text(fs.join(dst, "lib/deep/b_test.qk")), "file src/lib/deep/b_test.qk")
+    caught := false
+    try {
+        fs.copy_tree(fs.join(root, "src"), dst)
+    } catch (e: IOError) {
+        caught = true
+    }
+    test.assert_true(caught)
+}
+
+// ───── absolute ─────
+define test_absolute() -> void {
+    fs.chdir(fs.join(root, "src"))
+    real_root := fs.absolute(root)
+    test.assert_eq(fs.absolute("lib/../main.qk"), real_root + "/src/main.qk")
+    caught := false
+    try {
+        fs.absolute("nope.qk")
+    } catch (e: FileNotFoundError) {
+        caught = true
+    }
+    test.assert_true(caught)
+}

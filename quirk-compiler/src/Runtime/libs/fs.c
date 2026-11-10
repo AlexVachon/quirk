@@ -264,3 +264,268 @@ int64_t Fs_chdir_raw(String* path) {
     return chdir(p) == 0 ? 0 : -1;
 #endif
 }
+
+// ---------------------------------------------------------------------------
+//  v7.19.0: links, realpath, glob matching, recursive walk, temp files,
+//  copy, whole-file read / write. POSIX only; the Windows build gets
+//  failure stubs.
+// ---------------------------------------------------------------------------
+#ifndef _WIN32
+#include <fnmatch.h>
+#include <fcntl.h>
+#include <limits.h>
+#endif
+
+// True if `path` itself is a symbolic link (not followed).
+int Fs_is_link(String* path) {
+    char* p = make_safe_cstr(path);
+    if (!p) return 0;
+#ifdef _WIN32
+    return 0;
+#else
+    struct stat st;
+    return lstat(p, &st) == 0 && S_ISLNK(st.st_mode);
+#endif
+}
+
+// Absolute path with symlinks, `.` and `..` resolved; "" if it doesn't exist.
+String* Fs_realpath(String* path) {
+    char* p = make_safe_cstr(path);
+    if (!p) return make_String("");
+#ifdef _WIN32
+    char buf[1024];
+    if (!_fullpath(buf, p, sizeof buf)) return make_String("");
+    return make_String(buf);
+#else
+    char buf[PATH_MAX];
+    if (!realpath(p, buf)) return make_String("");
+    return make_String(buf);
+#endif
+}
+
+// Shell-style match of one name against `pattern` (`*`, `?`, `[a-z]`,
+// `[!x]`). Unless `hidden`, a leading `.` must be matched explicitly, as
+// in the shell.
+int Fs_match_raw(String* pattern, String* name, int64_t hidden) {
+    char* pt = make_safe_cstr(pattern);
+    char* nm = make_safe_cstr(name);
+    if (!pt || !nm) return 0;
+#ifdef _WIN32
+    (void)hidden;
+    return strcmp(pt, nm) == 0;
+#else
+    return fnmatch(pt, nm, hidden ? 0 : FNM_PERIOD) == 0;
+#endif
+}
+
+#ifndef _WIN32
+static int fs__cmp_names(const void* a, const void* b) {
+    return strcmp(*(char* const*)a, *(char* const*)b);
+}
+
+// Sorted entry names of `dir` (no `.` / `..`); NULL if it can't be read.
+static char** fs__sorted_names(const char* dir, size_t* count) {
+    DIR* d = opendir(dir);
+    if (!d) return NULL;
+    size_t n = 0, cap = 32;
+    char** names = (char**)GC_malloc(cap * sizeof(char*));
+    struct dirent* e;
+    while ((e = readdir(d)) != NULL) {
+        if (strcmp(e->d_name, ".") == 0 || strcmp(e->d_name, "..") == 0) continue;
+        if (n == cap) {
+            char** grown = (char**)GC_malloc(cap * 2 * sizeof(char*));
+            memcpy(grown, names, n * sizeof(char*));
+            names = grown;
+            cap *= 2;
+        }
+        size_t len = strlen(e->d_name);
+        names[n] = (char*)GC_malloc_atomic(len + 1);
+        memcpy(names[n], e->d_name, len + 1);
+        n++;
+    }
+    closedir(d);
+    qsort(names, n, sizeof(char*), fs__cmp_names);
+    *count = n;
+    return names;
+}
+
+static char* fs__join(const char* a, const char* b) {
+    size_t la = strlen(a), lb = strlen(b);
+    int slash = la > 0 && a[la - 1] != '/';
+    char* out = (char*)GC_malloc_atomic(la + slash + lb + 1);
+    memcpy(out, a, la);
+    if (slash) out[la] = '/';
+    memcpy(out + la + slash, b, lb + 1);
+    return out;
+}
+
+// Depth-first, names sorted in each directory, directories listed before
+// their contents. `depth` -1 = unlimited.
+static void fs__walk(const char* dir, List* out, int dirs, int files, int follow,
+                     int64_t depth, int hidden) {
+    size_t n = 0;
+    char** names = fs__sorted_names(dir, &n);
+    if (!names) return;
+    for (size_t i = 0; i < n; i++) {
+        if (!hidden && names[i][0] == '.') continue;
+        char* full = fs__join(dir, names[i]);
+        struct stat st;
+        if ((follow ? stat(full, &st) : lstat(full, &st)) != 0) continue;
+        if (S_ISDIR(st.st_mode)) {
+            if (dirs) Core_Collections_List_List_append(out, make_String(full));
+            if (depth != 0) fs__walk(full, out, dirs, files, follow, depth < 0 ? -1 : depth - 1, hidden);
+        } else if (files) {
+            Core_Collections_List_List_append(out, make_String(full));
+        }
+    }
+}
+#endif
+
+// Every path under `root` (not `root` itself), as `root/…` strings.
+// flags: 1 files, 2 directories, 4 follow symlinked directories,
+// 8 include hidden (dot) entries. `max_depth` -1 = unlimited, 0 = only
+// `root`'s own entries.
+List* Fs_walk_raw(String* root, int64_t flags, int64_t max_depth) {
+    List* out = fs__new_list();
+    char* r = make_safe_cstr(root);
+    if (!r) return out;
+#ifndef _WIN32
+    fs__walk(r, out, (flags & 2) != 0, (flags & 1) != 0, (flags & 4) != 0, max_depth, (flags & 8) != 0);
+#endif
+    return out;
+}
+
+static const char* fs__tmp_root(void) {
+    const char* t = getenv("TMPDIR");
+    return (t && *t) ? t : "/tmp";
+}
+
+// Directory temp files go in ($TMPDIR, else /tmp).
+String* Fs_temp_root() {
+    return make_String((char*)fs__tmp_root());
+}
+
+// Create a fresh, private (0700) directory `<dir>/<prefix>XXXXXX`; "" on
+// failure. `dir` "" = the temp root.
+String* Fs_temp_dir_raw(String* dir, String* prefix) {
+#ifdef _WIN32
+    (void)dir; (void)prefix;
+    return make_String("");
+#else
+    char* d = make_safe_cstr(dir);
+    char* pre = make_safe_cstr(prefix);
+    if (!d || !*d) d = (char*)fs__tmp_root();
+    if (!pre) pre = "";
+    char* tmpl = fs__join(d, pre);
+    size_t len = strlen(tmpl);
+    char* buf = (char*)GC_malloc_atomic(len + 7);
+    memcpy(buf, tmpl, len);
+    memcpy(buf + len, "XXXXXX", 7);
+    if (!mkdtemp(buf)) return make_String("");
+    return make_String(buf);
+#endif
+}
+
+// Create a fresh, empty (0600) file `<dir>/<prefix>XXXXXX<suffix>`; "" on
+// failure.
+String* Fs_temp_file_raw(String* dir, String* prefix, String* suffix) {
+#ifdef _WIN32
+    (void)dir; (void)prefix; (void)suffix;
+    return make_String("");
+#else
+    char* d = make_safe_cstr(dir);
+    char* pre = make_safe_cstr(prefix);
+    char* suf = make_safe_cstr(suffix);
+    if (!d || !*d) d = (char*)fs__tmp_root();
+    if (!pre) pre = "";
+    if (!suf) suf = "";
+    char* tmpl = fs__join(d, pre);
+    size_t lt = strlen(tmpl), ls = strlen(suf);
+    char* buf = (char*)GC_malloc_atomic(lt + 6 + ls + 1);
+    memcpy(buf, tmpl, lt);
+    memcpy(buf + lt, "XXXXXX", 6);
+    memcpy(buf + lt + 6, suf, ls + 1);
+    int fd = mkstemps(buf, (int)ls);
+    if (fd < 0) return make_String("");
+    close(fd);
+    return make_String(buf);
+#endif
+}
+
+// Copy file `src` to `dst` (replacing it), keeping the permission bits.
+// 0 on success, -1 on failure.
+int64_t Fs_copy_raw(String* src, String* dst) {
+#ifdef _WIN32
+    char* s = make_safe_cstr(src);
+    char* d = make_safe_cstr(dst);
+    if (!s || !d) return -1;
+    return CopyFileA(s, d, FALSE) ? 0 : -1;
+#else
+    char* s = make_safe_cstr(src);
+    char* d = make_safe_cstr(dst);
+    if (!s || !d) return -1;
+    int in = open(s, O_RDONLY);
+    if (in < 0) return -1;
+    struct stat st;
+    if (fstat(in, &st) != 0 || S_ISDIR(st.st_mode)) { close(in); return -1; }
+    int out = open(d, O_WRONLY | O_CREAT | O_TRUNC, st.st_mode & 07777);
+    if (out < 0) { close(in); return -1; }
+    char buf[65536];
+    ssize_t n;
+    int rc = 0;
+    while ((n = read(in, buf, sizeof buf)) > 0) {
+        char* p = buf;
+        while (n > 0) {
+            ssize_t w = write(out, p, (size_t)n);
+            if (w < 0) { if (errno == EINTR) continue; rc = -1; break; }
+            p += w;
+            n -= w;
+        }
+        if (rc) break;
+    }
+    if (n < 0) rc = -1;
+    fchmod(out, st.st_mode & 07777);
+    if (close(out) != 0) rc = -1;
+    close(in);
+    return rc;
+#endif
+}
+
+// The whole file as a String, or null if it can't be read.
+String* Fs_read_text_raw(String* path) {
+    char* p = make_safe_cstr(path);
+    if (!p) return NULL;
+    FILE* f = fopen(p, "rb");
+    if (!f) return NULL;
+    size_t cap = 65536, len = 0;
+    char* buf = (char*)GC_malloc_atomic(cap);
+    for (;;) {
+        if (len + 4096 + 1 > cap) {
+            char* grown = (char*)GC_malloc_atomic(cap * 2);
+            memcpy(grown, buf, len);
+            buf = grown;
+            cap *= 2;
+        }
+        size_t n = fread(buf + len, 1, cap - len - 1, f);
+        len += n;
+        if (n == 0) break;
+    }
+    int err = ferror(f);
+    fclose(f);
+    if (err) return NULL;
+    buf[len] = '\0';
+    return make_String_taking_ownership(buf);
+}
+
+// Write `data` to `path` (replacing it, or appending with `append`).
+// 0 on success, -1 on failure.
+int64_t Fs_write_text_raw(String* path, String* data, int64_t append) {
+    char* p = make_safe_cstr(path);
+    if (!p) return -1;
+    FILE* f = fopen(p, append ? "ab" : "wb");
+    if (!f) return -1;
+    size_t len = (data && data->buffer) ? (size_t)data->length : 0;
+    int rc = (len == 0 || fwrite(data->buffer, 1, len, f) == len) ? 0 : -1;
+    if (fclose(f) != 0) rc = -1;
+    return rc;
+}

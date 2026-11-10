@@ -151,7 +151,8 @@ STDLIB_TAG_net ?= v1.3.0
 # test v1.1.0 documents `quirk test`'s `define test_*()` discovery (v7.10.0).
 STDLIB_TAG_test ?= v1.1.0
 # fs v1.1.0 adds remove_tree (runtime Fs_remove_tree_raw, v7.11.1).
-STDLIB_TAG_fs ?= v1.1.0
+# fs v1.2.0: walk, glob, temp files, copy, read/write_text (runtime v7.19.0).
+STDLIB_TAG_fs ?= v1.2.0
 # process v1.0.0 is the initial release; v1.0.1 requires compiler 7.18.0 (runtime Process_*).
 STDLIB_TAG_process ?= v1.0.1
 

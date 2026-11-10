@@ -2,6 +2,12 @@
 
 All notable changes to the extension land here. Versioning follows SemVer; minor bumps for new features, patches for fixes.
 
+## [0.8.3] — 2026-11-10 — new `fs` functions
+
+- Hovers and completions for `fs` v1.2.0 (compiler 7.19.0): `walk`,
+  `glob`, `matches`, `temp_dir`, `temp_file`, `copy`, `copy_tree`,
+  `read_text`, `write_text`, `append_text`, `is_link`, `absolute`.
+
 ## [0.8.2] — 2026-11-09 — `process` hovers
 
 - Hovers and completions for the new `process` stdlib package (compiler

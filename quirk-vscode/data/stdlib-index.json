@@ -993,6 +993,15 @@
 "doc": "Absolute value of a Double. (`abs` is the Int version.)"
 }
 ],
+"absolute": [
+{
+"package": "fs",
+"qualified": "absolute",
+"kind": "define",
+"signature": "define absolute(path: String) -> String {",
+"doc": "The absolute, canonical form of `path`: symlinks, `.` and `..` resolved.\n@throws FileNotFoundError if `path` doesn't exist.\n@example fs.absolute(\"../notes.txt\")   // \"/home/me/notes.txt\""
+}
+],
 "accept": [
 {
 "package": "net",
@@ -1095,6 +1104,15 @@
 "kind": "method",
 "signature": "define append_all(self, other: List) -> void",
 "doc": "Append every element of `other` to `self` in place. Mutates\n`self`; returns nothing. Use `+` if you want a fresh List\ninstead of mutating. (Named `append_all` rather than the\nPython-conventional `extend` because `extend` is a reserved\nkeyword in Quirk \u2014 `extend Foo { ... }` blocks add methods to\nan existing struct.)\n\n@example xs.append_all([4, 5, 6])  // xs is now [1, 2, 3, 4, 5, 6]"
+}
+],
+"append_text": [
+{
+"package": "fs",
+"qualified": "append_text",
+"kind": "define",
+"signature": "define append_text(path: String, text: String) -> void {",
+"doc": "Append `text` to file `path`, creating it if needed. @throws IOError on failure."
 }
 ],
 "arg_count": [
@@ -1525,6 +1543,24 @@
 "kind": "define",
 "signature": "extern define connect(fd: Int, host: String, port: Int) -> Int",
 "doc": "Connect socket `fd` to a remote `host:port`. Returns 0 on success.\n@example connect(fd, \"example.com\", 80)"
+}
+],
+"copy": [
+{
+"package": "fs",
+"qualified": "copy",
+"kind": "define",
+"signature": "define copy(src: String, dst: String) -> String {",
+"doc": "Copy file `src` to `dst`, keeping its permissions. If `dst` is an\nexisting directory, the copy goes inside it under the same name. An\nexisting file at the destination is replaced. Returns the path written.\n@throws FileNotFoundError if `src` doesn't exist; IOError otherwise.\n@example fs.copy(\"config.toml\", \"backup/\")   // \"backup/config.toml\""
+}
+],
+"copy_tree": [
+{
+"package": "fs",
+"qualified": "copy_tree",
+"kind": "define",
+"signature": "define copy_tree(src: String, dst: String) -> void {",
+"doc": "Copy directory `src` and everything in it (hidden files included) to\n`dst`, which must not exist yet. Symlinks are copied as the files they\npoint to.\n@throws FileNotFoundError if `src` isn't a directory; IOError if `dst`\n        exists or anything can't be copied.\n@example fs.copy_tree(\"assets\", \"dist/assets\")"
 }
 ],
 "copyright": [
@@ -2124,6 +2160,15 @@
 "doc": "Approximate size of `obj` in bytes (best-effort)."
 }
 ],
+"glob": [
+{
+"package": "fs",
+"qualified": "glob",
+"kind": "define",
+"signature": "define glob(pattern: String, hidden: Bool = false) -> List {",
+"doc": "Paths matching `pattern`, sorted. Each `/`-separated part of the pattern\nis matched against one level of the tree (see `matches`); a part that is\nexactly `**` matches any number of directories, including none. Names\nstarting with `.` only match when the pattern part starts with `.`, or\nwith `hidden=true`. Relative patterns give paths relative to the\ncurrent directory.\n@example fs.glob(\"*.qk\")              // [\"main.qk\", \"util.qk\"]\n@example fs.glob(\"src/**/*_test.qk\")  // test files at any depth under src"
+}
+],
 "group": [
 {
 "package": "console",
@@ -2375,6 +2420,15 @@
 "kind": "method",
 "signature": "define is_leap(year: Int) -> Bool {",
 "doc": "Standard Gregorian leap-year rule: divisible by 4, except centuries that\naren't divisible by 400. 2000 was leap; 1900 wasn't.\n\n@example\nis_leap(2024)   // true\nis_leap(2023)   // false\nis_leap(2000)   // true\nis_leap(1900)   // false"
+}
+],
+"is_link": [
+{
+"package": "fs",
+"qualified": "is_link",
+"kind": "define",
+"signature": "extern define is_link(path: String) -> Bool",
+"doc": "True if `path` is itself a symbolic link (whatever it points to)."
 }
 ],
 "is_nan": [
@@ -2695,6 +2749,15 @@
 "kind": "method",
 "signature": "define map_err(self, f: Callable) -> Result {",
 "doc": "Maps `Err(e)` to `Err(f(e))`; `Ok(v)` stays `Ok(v)`."
+}
+],
+"matches": [
+{
+"package": "fs",
+"qualified": "matches",
+"kind": "define",
+"signature": "define matches(pattern: String, name: String, hidden: Bool = false) -> Bool {",
+"doc": "True if file name `name` matches the shell-style `pattern`: `*` (any\nrun of characters), `?` (one character), `[abc]` / `[a-z]` / `[!x]`\n(one character from a set). A leading `.` must be matched explicitly\nunless `hidden` is true. Matches a single name, not a path \u2014 see `glob`.\n@example fs.matches(\"*.qk\", \"main.qk\")    // true"
 }
 ],
 "max": [
@@ -3457,6 +3520,15 @@
 "doc": "Reads one line from stdin with echo disabled. The trailing newline is stripped.\nUsed by `console.password`."
 }
 ],
+"read_text": [
+{
+"package": "fs",
+"qualified": "read_text",
+"kind": "define",
+"signature": "define read_text(path: String) -> String {",
+"doc": "The whole contents of file `path`.\n@throws FileNotFoundError if it doesn't exist; IOError if it can't be read.\n@example config := fs.read_text(\"config.toml\")"
+}
+],
 "recv": [
 {
 "package": "net",
@@ -4124,6 +4196,33 @@
 "doc": "\u03c4 \u2014 full turn in radians. `tau == 2 * pi`. \u2248 6.28318530717959"
 }
 ],
+"temp_dir": [
+{
+"package": "fs",
+"qualified": "temp_dir",
+"kind": "define",
+"signature": "define temp_dir(prefix: String = \"quirk-\", dir: String = \"\") -> String {",
+"doc": "Create a new, empty, private (owner-only) directory with a unique name\nlike `/tmp/quirk-a8Xk2p` and return its path. It's yours to delete\n(`fs.remove_tree`).\n@param prefix start of the directory name\n@param dir    where to create it (\"\" = `fs.temp_root()`)\n@throws IOError if it can't be created.\n@example\nwork := fs.temp_dir(prefix=\"build-\")\n// ...\nfs.remove_tree(work)"
+}
+],
+"temp_file": [
+{
+"package": "fs",
+"qualified": "temp_file",
+"kind": "define",
+"signature": "define temp_file(prefix: String = \"quirk-\", suffix: String = \"\", dir: String = \"\") -> String {",
+"doc": "Create a new, empty, private (owner-only) file with a unique name like\n`/tmp/quirk-a8Xk2p.json` and return its path. It's yours to delete\n(`fs.remove`).\n@param prefix start of the file name\n@param suffix end of the file name (e.g. \".json\")\n@param dir    where to create it (\"\" = `fs.temp_root()`)\n@throws IOError if it can't be created."
+}
+],
+"temp_root": [
+{
+"package": "fs",
+"qualified": "temp_root",
+"kind": "define",
+"signature": "extern define temp_root() -> String",
+"doc": "The directory temporary files go in: `$TMPDIR`, else `/tmp`."
+}
+],
 "terminal_cols": [
 {
 "package": "sys",
@@ -4553,6 +4652,15 @@
 "doc": "Wait up to `timeout_ms`; true if it finished (its code is then in `code`)."
 }
 ],
+"walk": [
+{
+"package": "fs",
+"qualified": "walk",
+"kind": "define",
+"signature": "define walk(root: String, dirs: Bool = false, files: Bool = true, hidden: Bool = false, follow_links: Bool = false, max_depth: Int = -1) -> List {",
+"doc": "Every path under directory `root` (not `root` itself), depth first and\nsorted by name within each directory, as `root/...` strings.\n@param dirs         also list directories (each before its contents)\n@param files        list files (and other non-directories)\n@param hidden       include names starting with `.` (and descend into them)\n@param follow_links descend into symlinked directories\n@param max_depth    how deep to go: 0 = only `root`'s own entries, -1 = all\n@example\nfor path in fs.walk(\"src\") {\n    if fs.extname(path) == \".qk\" { print(path) }\n}"
+}
+],
 "weekday": [
 {
 "package": "time",
@@ -4601,6 +4709,15 @@
 "kind": "define",
 "signature": "define write_file(path: String, records: List, delim: String = \",\") -> void {",
 "doc": "Write `records` to `path` as CSV."
+}
+],
+"write_text": [
+{
+"package": "fs",
+"qualified": "write_text",
+"kind": "define",
+"signature": "define write_text(path: String, text: String) -> void {",
+"doc": "Write `text` to file `path`, replacing what was there (creating it if\nneeded). @throws IOError on failure."
 }
 ],
 "year": [

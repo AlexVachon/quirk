@@ -183,3 +183,70 @@ define test_sleep() -> void {
     window.sleep(30)
     test.assert_true(window.ticks() - t0 >= 29)
 }
+
+// ───── image formats (tests/fixtures/images) ─────
+images := "tests/fixtures/images/"
+
+define test_png_with_transparency() -> void {
+    if not window.available() { return }
+    w := open("png", 20, 20)
+    img := w.load_image(images + "rgba.png")
+    test.assert_eq(img.width, 4)
+    test.assert_eq(img.height, 4)
+    w.clear(window.rgb(10, 20, 30))
+    w.image(img, 0, 0)
+    test.assert_eq(w.pixel(0, 0), 0xff0000)
+    test.assert_eq(w.pixel(1, 1), 0x00ff00)
+    test.assert_eq(w.pixel(2, 2), 0x0000ff)
+    test.assert_eq(w.pixel(0, 3), 0xffffff)
+    test.assert_eq(w.pixel(3, 0), 0x0a141e)          // transparent column shows the background
+    w.image(img, 10, 10, width=8, height=8)          // scaled 2x
+    test.assert_eq(w.pixel(11, 13), 0x00ff00)
+    w.close()
+}
+
+define test_jpeg_and_gif() -> void {
+    if not window.available() { return }
+    w := open("jpg", 20, 20)
+    jpg := w.load_image(images + "solid.jpg")
+    test.assert_eq(jpg.width, 8)
+    w.image(jpg, 0, 0)
+    c := window.channels(w.pixel(4, 4))
+    test.assert_true(c[0] > 190 and c[0] < 210 and c[1] > 90 and c[1] < 110 and c[2] > 40 and c[2] < 60)
+    gif := w.load_image(images + "checker.gif")
+    w.image(gif, 10, 10)
+    test.assert_eq(w.pixel(10, 10), 0xff0000)
+    test.assert_eq(w.pixel(11, 10), 0x0000ff)
+    w.close()
+}
+
+define test_sprite_sheet_region_and_alpha() -> void {
+    if not window.available() { return }
+    w := open("sheet", 40, 20)
+    sheet := w.load_image(images + "sheet.png")
+    test.assert_eq(sheet.width, 64)
+    w.clear(window.black())
+    w.image(sheet, 0, 0, src_x=32, src_w=16, src_h=16)   // third frame: blue
+    test.assert_eq(w.pixel(8, 8), 0x0000ff)
+    test.assert_eq(w.pixel(20, 8), 0x000000)              // only 16px drawn
+    w.image(sheet, 20, 0, src_x=48)                        // last frame to the edge
+    test.assert_eq(w.pixel(30, 8), 0xffff00)
+    w.clear(window.black())
+    w.image(sheet, 0, 0, src_w=16, alpha=128)              // half-transparent red
+    c := window.channels(w.pixel(4, 4))
+    test.assert_true(c[0] > 110 and c[0] < 140)
+    w.close()
+}
+
+define test_bad_image_file_throws() -> void {
+    if not window.available() { return }
+    w := open("bad", 10, 10)
+    caught := ""
+    try {
+        w.load_image(images + "not_an_image.png")
+    } catch (e: window.WindowError) {
+        caught = e.message
+    }
+    test.assert_contains(caught, "not an image")
+    w.close()
+}

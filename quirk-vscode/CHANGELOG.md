@@ -2,6 +2,12 @@
 
 All notable changes to the extension land here. Versioning follows SemVer; minor bumps for new features, patches for fixes.
 
+## [1.1.1] — 2026-11-10
+
+- Hovers and completions for `window` v1.1.0 (compiler 7.22.0): image
+  formats, `Window.image`'s `src_x` / `src_y` / `src_w` / `src_h` /
+  `alpha` options.
+
 ## [1.1.0] — 2026-11-10 — `ui`
 
 - Hovers and completions for the new `ui` widget package (compiler

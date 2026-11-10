@@ -194,7 +194,7 @@
 "qualified": "Image",
 "kind": "struct",
 "signature": "struct Image {",
-"doc": "A BMP image loaded for one window (`Window.load_image`)."
+"doc": "An image loaded for one window (`Window.load_image`); `width` / `height` in pixels."
 }
 ],
 "IndexError": [
@@ -2594,8 +2594,8 @@
 "package": "window",
 "qualified": "WindowError.image",
 "kind": "method",
-"signature": "define image(self, img: Image, x: Int, y: Int, width: Int = -1, height: Int = -1) -> void {",
-"doc": "Draw `img` with its top-left at (x, y), scaled to width x height (-1 = its own size)."
+"signature": "define image(self, img: Image, x: Int, y: Int, width: Int = -1, height: Int = -1, src_x: Int = 0, src_y: Int = 0, src_w: Int = -1, src_h: Int = -1, alpha: Int = 255) -> void {",
+"doc": "Draw `img` with its top-left corner at (x, y).\n@param width, height  scale it to this size (-1 = natural size)\n@param src_x, src_y, src_w, src_h  draw only this rectangle of the\n       image (a sprite-sheet frame); -1 widths run to the edge\n@param alpha  opacity, 0 (invisible) to 255 (opaque)\n@example w.image(logo, 10, 10)\n@example w.image(sheet, x, y, src_x=frame * 32, src_w=32, src_h=32)"
 }
 ],
 "implementation": [
@@ -3080,7 +3080,7 @@
 "qualified": "WindowError.load_image",
 "kind": "method",
 "signature": "define load_image(self, path: String) -> Image {",
-"doc": "Load a BMP image to draw in this window.\n@throws WindowError if it can't be read."
+"doc": "Load an image file to draw in this window: PNG (with transparency),\nJPEG, BMP, GIF (its first frame) or TGA.\n@throws WindowError if it doesn't exist or can't be decoded.\n@example logo := w.load_image(\"assets/logo.png\")"
 }
 ],
 "loads": [

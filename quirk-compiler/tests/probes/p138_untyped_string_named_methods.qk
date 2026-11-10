@@ -1,0 +1,32 @@
+// p138 — v7.22.0: a method name String also has (`contains`, `length`,
+// `find`, ...) called on an untyped value picks by runtime type: the
+// struct's method for a struct, the String method for a String. It always
+// took the String path, so a struct receiver crashed (SIGSEGV).
+
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+struct Box {
+    x: Int
+    w: Int
+    define __init(self, x: Int, w: Int) -> void {
+        self.x = x
+        self.w = w
+    }
+    define contains(self, px: Int) -> Bool { return px >= self.x and px < self.x + self.w }
+    define length(self) -> Int { return self.w }
+}
+
+define main() -> void {
+    items := [Box(0, 10), "hello", Box(20, 5)]
+    lens := []
+    for it in items { lens.append(it.length()) }
+    if lens[0] != 10 or lens[1] != 5 or lens[2] != 5 { fail("length by runtime type") }
+    if not items[0].contains(5) { fail("struct contains (inside)") }
+    if items[2].contains(5) { fail("struct contains (outside)") }
+    s := items[1]
+    if not s.contains("ell") { fail("String contains on an untyped String") }
+    if s.upper() != "HELLO" { fail("String-only method still works") }
+    words := ["alpha", "beta"]
+    if words[1].length() != 4 or not words[1].contains("et") { fail("List[String] elements") }
+    print("ok")
+}

@@ -87,12 +87,20 @@ Returns the width drawn, in pixels.
 
 #### `define load_image(self, path: String) -> Image`
 
-Load a BMP image to draw in this window.
-@throws WindowError if it can't be read.
+Load an image file to draw in this window: PNG (with transparency),
+JPEG, BMP, GIF (its first frame) or TGA.
+@throws WindowError if it doesn't exist or can't be decoded.
+@example logo := w.load_image("assets/logo.png")
 
-#### `define image(self, img: Image, x: Int, y: Int, width: Int = -1, height: Int = -1) -> void`
+#### `define image(self, img: Image, x: Int, y: Int, width: Int = -1, height: Int = -1, src_x: Int = 0, src_y: Int = 0, src_w: Int = -1, src_h: Int = -1, alpha: Int = 255) -> void`
 
-Draw `img` with its top-left at (x, y), scaled to width x height (-1 = its own size).
+Draw `img` with its top-left corner at (x, y).
+@param width, height  scale it to this size (-1 = natural size)
+@param src_x, src_y, src_w, src_h  draw only this rectangle of the
+       image (a sprite-sheet frame); -1 widths run to the edge
+@param alpha  opacity, 0 (invisible) to 255 (opaque)
+@example w.image(logo, 10, 10)
+@example w.image(sheet, x, y, src_x=frame * 32, src_w=32, src_h=32)
 
 #### `define present(self) -> void`
 
@@ -168,7 +176,7 @@ Something that happened to a window. `kind` is one of:
 
 ### `struct Image`
 
-A BMP image loaded for one window (`Window.load_image`).
+An image loaded for one window (`Window.load_image`); `width` / `height` in pixels.
 
 ### `struct Window`
 

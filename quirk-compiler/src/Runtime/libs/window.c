@@ -13,6 +13,26 @@
 
 #include "window_font.h"
 
+// Image decoding (PNG / JPEG / BMP / GIF / TGA): stb_image, vendored in
+// src/third_party/stb. Allocations go through the scanned GC heap — the
+// JPEG decoder keeps pointers to other buffers inside its own structs.
+#define STB_IMAGE_IMPLEMENTATION
+#define STBI_ONLY_PNG
+#define STBI_ONLY_JPEG
+#define STBI_ONLY_BMP
+#define STBI_ONLY_GIF
+#define STBI_ONLY_TGA
+#define STBI_NO_LINEAR
+#define STBI_NO_HDR
+#define STBI_MALLOC(sz)        GC_malloc(sz)
+#define STBI_REALLOC(p, newsz) GC_realloc(p, newsz)
+#define STBI_FREE(p)           ((void)(p))
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-function"
+#pragma GCC diagnostic ignored "-Wsign-compare"
+#include "../../third_party/stb/stb_image.h"
+#pragma GCC diagnostic pop
+
 // ---------------------------------------------------------------------------
 //  Windows with 2D drawing, for packages/window/index.quirk.
 //  Naming: Window_<name>.
@@ -47,6 +67,7 @@ typedef struct { uint8_t bytes[56]; } QSdlEvent;
 #define QSDL_RENDERER_ACCELERATED 0x00000002u
 #define QSDL_RENDERER_VSYNC       0x00000004u
 #define QSDL_PIXELFORMAT_ARGB8888 0x16362004u
+#define QSDL_PIXELFORMAT_ABGR8888 0x16762004u   // bytes R,G,B,A on little-endian
 #define QSDL_BLENDMODE_BLEND      1
 
 #define QSDL_QUIT            0x100
@@ -603,21 +624,31 @@ int64_t Window_save_bmp_raw(int64_t h, String* path) {
     return rc == 0 ? 0 : -1;
 }
 
-// ----- images (BMP) -----
+// ----- images (PNG / JPEG / BMP / GIF / TGA) -----
 
 #define QIMG_MAX 1024
 static struct { int used; int64_t win; void* tex; int w, h; } qimgs[QIMG_MAX];
 
-// Load a BMP file for drawing in window `h`; returns an image handle or -1.
+// Load an image file for drawing in window `h`; returns an image handle
+// or -1. A GIF gives its first frame. Decoding runs with the task lock
+// released.
 int64_t Window_image_load_raw(int64_t h, String* path) {
     QWin* w = qwin_get(h);
     char* p = path ? make_safe_cstr(path) : NULL;
     if (!w || !p) return -1;
-    void* rw = qsdl.RWFromFile(p, "rb");
-    void* surf = rw ? qsdl.LoadBMP_RW(rw, 1) : NULL;
-    if (!surf) { qwin_set_err("can't load the image"); return -1; }
-    void* tex = qsdl.CreateTextureFromSurface(w->ren, surf);
-    qsdl.FreeSurface(surf);
+    int iw = 0, ih = 0, chans = 0;
+    quirk_gil_release();
+    unsigned char* px = stbi_load(p, &iw, &ih, &chans, 4);
+    quirk_gil_acquire();
+    if (!px) {
+        FILE* probe = fopen(p, "rb");
+        if (!probe) snprintf(qwin_err, sizeof qwin_err, "no such file");
+        else { fclose(probe); snprintf(qwin_err, sizeof qwin_err, "not an image it can read (%s)", stbi_failure_reason()); }
+        return -1;
+    }
+    void* tex = qsdl.CreateTexture(w->ren, QSDL_PIXELFORMAT_ABGR8888, 0, iw, ih);
+    if (tex) qsdl.UpdateTexture(tex, NULL, px, iw * 4);
+    stbi_image_free(px);
     if (!tex) { qwin_set_err("can't make a texture"); return -1; }
     int slot = -1;
     for (int i = 0; i < QIMG_MAX && slot < 0; i++) if (!qimgs[i].used) slot = i;
@@ -640,12 +671,19 @@ List* Window_image_size_raw(int64_t img) {
     return res;
 }
 
-// Draw image `img` at (x, y), scaled to w x h (-1: its own size).
-void Window_image_draw_raw(int64_t h, int64_t img, int64_t x, int64_t y, int64_t dw, int64_t dh) {
+// Draw the part (sx, sy, sw, sh) of image `img` (sw / sh -1: to its
+// right / bottom edge) at (x, y), scaled to dw x dh (-1: the part's own
+// size), with opacity `alpha` 0-255.
+void Window_image_draw_raw(int64_t h, int64_t img, int64_t x, int64_t y, int64_t dw, int64_t dh,
+                           int64_t sx, int64_t sy, int64_t sw, int64_t sh, int64_t alpha) {
     QWin* w = qwin_get(h);
     if (!w || img < 0 || img >= QIMG_MAX || !qimgs[img].used || qimgs[img].win != h) return;
-    QSdlRect dst = { (int)x, (int)y, dw < 0 ? qimgs[img].w : (int)dw, dh < 0 ? qimgs[img].h : (int)dh };
-    qsdl.RenderCopy(w->ren, qimgs[img].tex, NULL, &dst);
+    int iw = qimgs[img].w, ih = qimgs[img].h;
+    QSdlRect src = { (int)sx, (int)sy, sw < 0 ? iw - (int)sx : (int)sw, sh < 0 ? ih - (int)sy : (int)sh };
+    if (src.w <= 0 || src.h <= 0) return;
+    QSdlRect dst = { (int)x, (int)y, dw < 0 ? src.w : (int)dw, dh < 0 ? src.h : (int)dh };
+    qsdl.SetTextureAlphaMod(qimgs[img].tex, (uint8_t)(alpha < 0 ? 0 : alpha > 255 ? 255 : alpha));
+    qsdl.RenderCopy(w->ren, qimgs[img].tex, &src, &dst);
 }
 
 static void qwin_free_images_of(int64_t h) {

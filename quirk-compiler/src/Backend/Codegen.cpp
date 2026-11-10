@@ -109,6 +109,20 @@ class LLVMCodegen {
     // `self.gender.value` (gender: Gender on the struct) can resolve
     // to the right backed-enum runtime helper.
     std::map<std::string, std::map<std::string, std::string>> structFieldTypes;
+    // True for expressions that can be evaluated twice harmlessly
+    // (literals, variables, field reads, arithmetic / comparisons on them).
+    bool isPureExpr(Node* n) {
+        if (!n) return true;
+        if (dynamic_cast<LiteralNode*>(n)) return true;
+        if (auto m = dynamic_cast<MemberAccessNode*>(n)) return isPureExpr(m->object.get());
+        if (auto b = dynamic_cast<BinaryOpNode*>(n)) return isPureExpr(b->left.get()) && isPureExpr(b->right.get());
+        return false;
+    }
+
+    // Calls re-generated on the String path of a runtime String-or-struct
+    // choice (see the untyped-receiver dispatch in handleCall).
+    std::set<CallNode*> forcedStringCalls;
+    int dynRecvCounter = 0;
 
     std::map<std::string, std::string> sourceMap;
     std::string currentFilePath;
@@ -1945,7 +1959,8 @@ class LLVMCodegen {
         return node;
     }
 
-    Value* emitDynamicDispatch(const std::string& method, Value* obj, CallNode* call) {
+    Value* emitDynamicDispatch(const std::string& method, Value* obj, CallNode* call,
+                               BasicBlock* fallback = nullptr) {
         std::vector<std::pair<std::string, Function*>> impls;
         for (const auto& [name, st] : StructTypes) {
             if (!structGen->isVtableEligible(name)) continue;
@@ -1958,10 +1973,16 @@ class LLVMCodegen {
                         if (Function* f = find(p)) return f;
                 return nullptr;
             };
-            if (Function* f = find(name))
+            if (Function* f = find(name)) {
+                // Only methods on real struct objects: the primitives (Int,
+                // Double, Bool) are registered as structs too, but their
+                // `self` is a raw number, not something a pointer can be.
+                Type* selfTy = f->arg_size() > 0 ? f->getFunctionType()->getParamType(0) : nullptr;
+                if (!selfTy || !selfTy->isPointerTy() || !selfTy->getPointerElementType()->isStructTy()) continue;
                 if (f->arg_size() == call->args.size() + 1 ||
                     (f->arg_size() > call->args.size() + 1 && dynDefaults(f, call->args.size()) != nullptr))
                     impls.push_back({name, f});
+            }
         }
         if (impls.empty()) return nullptr;
         std::sort(impls.begin(), impls.end());
@@ -2008,11 +2029,15 @@ class LLVMCodegen {
             Builder.CreateBr(mergeBB);
         }
         Builder.SetInsertPoint(noneBB);
-        FunctionCallee thrower = TheModule->getOrInsertFunction("quirk_throw_exception",
-            Type::getVoidTy(Context), i8p, i8p);
-        Builder.CreateCall(thrower, {Builder.CreateGlobalStringPtr("TypeError"),
-            Builder.CreateGlobalStringPtr("value has no method " + method + "() (it isn't one of the structs that define it)")});
-        Builder.CreateUnreachable();
+        if (fallback) {
+            Builder.CreateBr(fallback);           // not one of those structs: caller's String path
+        } else {
+            FunctionCallee thrower = TheModule->getOrInsertFunction("quirk_throw_exception",
+                Type::getVoidTy(Context), i8p, i8p);
+            Builder.CreateCall(thrower, {Builder.CreateGlobalStringPtr("TypeError"),
+                Builder.CreateGlobalStringPtr("value has no method " + method + "() (it isn't one of the structs that define it)")});
+            Builder.CreateUnreachable();
+        }
 
         Builder.SetInsertPoint(mergeBB);
         PHINode* phi = Builder.CreatePHI(i8p, (unsigned)results.size(), "dyn_r");
@@ -2684,6 +2709,68 @@ class LLVMCodegen {
                                std::to_string(call->args.size()) + " argument" + (call->args.size() == 1 ? "" : "s") +
                                " (the receiver's type isn't known here — annotate it to get a precise error)",
                                member->line, member->col);
+                }
+                // An untyped value and a method String has *and* some struct has
+                // (`x.contains(...)`, `x.length()`): decide at runtime — the
+                // struct's method for those structs, the String method
+                // otherwise. It always took the String path, so a struct
+                // receiver crashed.
+                bool pureArgs = true;
+                for (auto& a : call->args) pureArgs = pureArgs && !a.isSpread && isPureExpr(a.value.get());
+                if (objPtr->getType()->isPointerTy() && objPtr->getType()->getPointerElementType()->isIntegerTy(8) &&
+                    !forcedStringCalls.count(call) && !member->isSafeAccess && pureArgs) {
+                    Function* curFn = Builder.GetInsertBlock()->getParent();
+                    BasicBlock* strBB = BasicBlock::Create(Context, "dyn_str", curFn);
+                    BasicBlock* startBB = Builder.GetInsertBlock();
+                    Value* fromStruct = emitDynamicDispatch(member->memberName, objPtr, call, strBB);
+                    if (!fromStruct && Builder.GetInsertBlock() == startBB) {
+                        strBB->eraseFromParent();           // no struct has it: plain String path below
+                    } else {
+                        BasicBlock* structEnd = Builder.GetInsertBlock();
+                        BasicBlock* mergeBB = BasicBlock::Create(Context, "dyn_str_merge", curFn);
+                        // String path, on the already-evaluated receiver.
+                        Builder.SetInsertPoint(strBB);
+                        std::string tmp = "__qdyn_recv" + std::to_string(dynRecvCounter++);
+                        varGen->defineLocalVariable(tmp, objPtr);
+                        std::unique_ptr<Node> saved = std::move(member->object);
+                        member->object = std::make_unique<LiteralNode>(tmp);
+                        forcedStringCalls.insert(call);
+                        Value* fromString = handleCall(call);
+                        forcedStringCalls.erase(call);
+                        member->object = std::move(saved);
+                        BasicBlock* strEnd = Builder.GetInsertBlock();
+                        // Merge as the String method's result type (what Sema typed the call).
+                        Type* rt = (fromString && !fromString->getType()->isVoidTy()) ? fromString->getType() : nullptr;
+                        Value* structVal = nullptr;
+                        if (fromStruct) {
+                            Builder.SetInsertPoint(structEnd);
+                            if (rt) {
+                                Type* i8p = Type::getInt8PtrTy(Context);
+                                Value* boxed = fromStruct->getType() == i8p ? fromStruct : Builder.CreateBitCast(fromStruct, i8p);
+                                if (rt == i8p) structVal = boxed;
+                                else if (rt->isIntegerTy(1)) {
+                                    FunctionCallee toBool = TheModule->getOrInsertFunction("quirk_any_as_bool",
+                                        Type::getInt32Ty(Context), i8p);
+                                    structVal = Builder.CreateICmpNE(Builder.CreateCall(toBool, {boxed}),
+                                                                     ConstantInt::get(Type::getInt32Ty(Context), 0));
+                                } else if (rt->isIntegerTy() || rt->isDoubleTy() ||
+                                           (rt->isPointerTy() && rt->getPointerElementType()->isStructTy()))
+                                    structVal = emitUnboxToType(boxed, rt);
+                                else
+                                    structVal = Builder.CreateBitCast(boxed, rt);
+                            }
+                            structEnd = Builder.GetInsertBlock();
+                            Builder.CreateBr(mergeBB);
+                        }
+                        Builder.SetInsertPoint(strEnd);
+                        if (!strEnd->getTerminator()) Builder.CreateBr(mergeBB);
+                        Builder.SetInsertPoint(mergeBB);
+                        if (!rt) return nullptr;
+                        PHINode* phi = Builder.CreatePHI(rt, 2, "dyn_str_r");
+                        if (fromStruct) phi->addIncoming(structVal, structEnd);
+                        phi->addIncoming(fromString, strEnd);
+                        return phi;
+                    }
                 }
                 if (objPtr->getType()->isPointerTy() && objPtr->getType()->getPointerElementType()->isIntegerTy(8)) {
                     // i8* is a boxed list element (String* or tagged int cast to void*); unbox via

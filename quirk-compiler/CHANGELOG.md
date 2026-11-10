@@ -5,6 +5,21 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.22.0] — 2026-11-10 — PNG / JPEG images, String-named methods on untyped values
+
+- **`window` v1.1.0: PNG, JPEG, GIF and TGA images** as well as BMP —
+  `w.load_image("logo.png")`, transparency included. `w.image(...)` can
+  draw part of an image (`src_x=`, `src_y=`, `src_w=`, `src_h=` — sprite
+  sheets) and fade it (`alpha=` 0-255). Decoding uses the vendored
+  [stb_image](https://github.com/nothings/stb) (public domain / MIT), so
+  there's no new system dependency; a file that isn't an image throws
+  `WindowError` saying why.
+- **A method name String also has, on an untyped value** —
+  `item.contains(x)`, `item.length()`, `item.find(...)` where `item` is a
+  plain List's element — now calls the struct's method when the value is
+  a struct, and the String method when it's a String. It always took the
+  String path, so a struct crashed.
+
 ## [7.21.0] — 2026-11-10 — `ui` widgets, closures and `not` fixed
 
 - **New stdlib package `ui`** (v1.0.0): widgets for `window`.

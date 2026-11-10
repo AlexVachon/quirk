@@ -29,6 +29,8 @@ quirk --version
 
 Source builds, other platforms, and dependency lists: see [INSTALL.md](INSTALL.md).
 
+**On Windows**, use WSL: `wsl --install -d Ubuntu`, then run the same command inside Ubuntu — see [INSTALL.md → Windows (WSL)](INSTALL.md#windows-wsl). VS Code's WSL mode and `window` / `ui` windows work there.
+
 ---
 
 ## Table of Contents

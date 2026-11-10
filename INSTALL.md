@@ -32,7 +32,8 @@ curl -fsSL https://raw.githubusercontent.com/AlexVachon/quirk/main/install.sh | 
 
 If you don't pass `--with-extension`, the installer just prints the link to grab the `.vsix` manually. `--install-extension` still works as a legacy alias.
 
-Other platforms (macOS, Windows, ARM): build from source — see below.
+Other platforms (macOS, ARM): build from source — see below. **Windows:**
+use WSL — see [Windows (WSL)](#windows-wsl).
 
 ---
 
@@ -74,8 +75,42 @@ export QUIRK_HOME="$(pwd)"
 export PATH="$QUIRK_HOME/bin:$PATH"
 ```
 
-**Windows:** not yet supported. The runtime uses `dlopen` and POSIX
-`termios`; Windows shims are tracked for a later release.
+**Windows:** use WSL — see [Windows (WSL)](#windows-wsl). A native port
+is in progress ([docs/WINDOWS-PORT.md](quirk-compiler/docs/WINDOWS-PORT.md)).
+
+---
+
+## Windows (WSL)
+
+Quirk runs on Windows through **WSL** (Windows Subsystem for Linux), with
+everything working: the compiler, the stdlib, the VS Code extension, and
+`window` / `ui` windows (shown on your desktop by WSLg).
+
+1. **Install WSL** (Windows 10 2004+ / Windows 11). In PowerShell as
+   administrator:
+   ```powershell
+   wsl --install -d Ubuntu
+   ```
+   Restart when asked, then open **Ubuntu** from the Start menu and pick a
+   user name and password.
+2. **Install Quirk inside Ubuntu**, like on Linux:
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/AlexVachon/quirk/main/install.sh | sh
+   ```
+   and add the two `export` lines it prints to `~/.bashrc`.
+   For windows (`use window` / `use ui`) also run
+   `sudo apt install libsdl2-2.0-0`.
+3. **VS Code:** install VS Code on Windows, then the **WSL** extension
+   (`ms-vscode-remote.remote-wsl`). In the Ubuntu terminal, `cd` to your
+   project and run `code .` — VS Code opens connected to WSL. Install the
+   Quirk extension *in WSL* (the `.vsix` from
+   [Releases](https://github.com/AlexVachon/quirk/releases):
+   Extensions → `…` → **Install from VSIX…**). Cursor and VSCodium users
+   can install **Quirk** from Open VSX.
+
+Tips: keep projects inside the Linux file system (`~/code/...`, not
+`/mnt/c/...`) — it's much faster; `explorer.exe .` opens the current
+folder in Windows Explorer.
 
 ---
 

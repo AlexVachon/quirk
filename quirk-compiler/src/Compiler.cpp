@@ -1474,16 +1474,11 @@ int main(int argc, char* argv[]) {
             && !fs::is_directory(opts.inputFile, ec)) {
             std::ifstream in(opts.inputFile, std::ios::binary);
             std::stringstream ss; ss << in.rdbuf();
-            static std::string spooled =
-                (fs::temp_directory_path() / "quirk-stdin-XXXXXX.quirk").string();
-            int fd = mkstemps(spooled.data(), 6);
-            if (fd >= 0) {
-                std::string src = ss.str();
-                if (::write(fd, src.data(), src.size()) == (ssize_t)src.size()) {
-                    opts.inputFile = spooled;
-                    std::atexit([] { std::remove(spooled.c_str()); });
-                }
-                ::close(fd);
+            static std::string spooled;
+            spooled = qplat::write_temp_file("quirk-stdin-", ".quirk", ss.str());
+            if (!spooled.empty()) {
+                opts.inputFile = spooled;
+                std::atexit([] { std::remove(spooled.c_str()); });
             }
         }
     }

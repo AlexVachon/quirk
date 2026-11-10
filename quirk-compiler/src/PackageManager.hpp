@@ -3439,10 +3439,7 @@ static std::string self_binary() {
     }
     return "quirk";
 #elif defined(_WIN32)
-    char buf[4096];
-    DWORD n = GetModuleFileNameA(nullptr, buf, sizeof(buf));
-    if (n > 0 && n < sizeof(buf)) return std::string(buf, n);
-    return "quirk";
+    return qplat::self_exe();
 #else
     // Linux (and WSL, which is Linux): /proc/self/exe.
     char buf[4096];
@@ -5327,10 +5324,7 @@ static const char* QUIRK_RELEASE_DOWNLOAD_URL =
 // or "" when no prebuilt compiler ships for it (`why` says so).
 inline std::string quirk_release_platform(std::string* why) {
 #ifdef _WIN32
-    std::string os = "Windows", arch = "x86_64";
-    SYSTEM_INFO si;
-    GetNativeSystemInfo(&si);
-    if (si.wProcessorArchitecture == PROCESSOR_ARCHITECTURE_ARM64) arch = "arm64";
+    std::string os = "Windows", arch = qplat::native_arch();
 #else
     struct utsname u;
     if (uname(&u) != 0) { *why = "couldn't detect the platform"; return ""; }

@@ -183,6 +183,8 @@ class StructField {
     std::string name;
     std::string type;
     std::unique_ptr<Node> defaultValue;
+    // Not declared: inferred from `self.name = ...` in __init (Parser).
+    bool implicit = false;
 };
 
 class StructNode : public Node {

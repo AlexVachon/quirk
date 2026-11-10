@@ -1,0 +1,288 @@
+// ui v1.0.0, headless: layout, events routed by App.dispatch, widget
+// state and drawing. Every test is skipped (passes) without SDL2.
+use window
+use ui
+use test
+
+define new_app() -> ui.App {
+    return ui.App("ui test", 400, 300, headless=true)
+}
+
+define ev(kind: String) -> window.Event {
+    return window.Event(kind)
+}
+
+define click(app: ui.App, x: Int, y: Int) -> void {
+    d := ev("mouse_down")
+    d.x = x
+    d.y = y
+    d.button = 1
+    app.dispatch(d)
+    u := ev("mouse_up")
+    u.x = x
+    u.y = y
+    u.button = 1
+    app.dispatch(u)
+}
+
+define click_on(app: ui.App, w: ui.Widget) -> void {
+    click(app, w.x + w.width / 2, w.y + w.height / 2)
+}
+
+define key(app: ui.App, k: String) -> void {
+    e := ev("key_down")
+    e.key = k
+    app.dispatch(e)
+}
+
+define typed(app: ui.App, s: String) -> void {
+    e := ev("text")
+    e.text = s
+    app.dispatch(e)
+}
+
+// ───── layout ─────
+define test_column_stacks_and_stretches() -> void {
+    if not window.available() { return }
+    app := new_app()
+    a := ui.Label("one")
+    b := ui.Button("two")
+    app.root = ui.Column([a, b], padding=10, spacing=6)
+    app.layout()
+    test.assert_eq(a.x, 10)
+    test.assert_eq(a.y, 10)
+    test.assert_eq(a.width, 380)
+    test.assert_eq(a.height, 16)
+    test.assert_eq(b.y, 32)
+    test.assert_eq(b.height, 28)
+    app.close()
+}
+
+define test_expand_takes_free_space() -> void {
+    if not window.available() { return }
+    app := new_app()
+    top := ui.Label("top")
+    filler := ui.Spacer()
+    bottom := ui.Button("bottom")
+    app.root = ui.Column([top, filler, bottom])
+    app.layout()
+    test.assert_eq(bottom.y + bottom.height, 300)
+    row_a := ui.Button("a")
+    row_b := ui.TextInput()
+    row_b.expand = true
+    app.root = ui.Row([row_a, row_b], padding=0, spacing=4)
+    app.layout()
+    test.assert_eq(row_b.x + row_b.width, 400)
+    app.close()
+}
+
+define test_hidden_widgets_take_no_space() -> void {
+    if not window.available() { return }
+    app := new_app()
+    a := ui.Label("a")
+    b := ui.Label("b")
+    c := ui.Label("c")
+    b.visible = false
+    app.root = ui.Column([a, b, c], spacing=4)
+    app.layout()
+    test.assert_eq(c.y, 20)
+    app.close()
+}
+
+// ───── widgets ─────
+define test_button_click_and_keyboard() -> void {
+    if not window.available() { return }
+    app := new_app()
+    count := 0
+    btn := ui.Button("Go", on_click=fn() { count = count + 1 })
+    app.root = ui.Column([btn], padding=8)
+    app.layout()
+    click_on(app, btn)
+    test.assert_eq(count, 1)
+    test.assert_true(btn.focused)
+    key(app, "return")
+    key(app, "space")
+    test.assert_eq(count, 3)
+    btn.enabled = false
+    click_on(app, btn)
+    test.assert_eq(count, 3)
+    app.close()
+}
+
+define test_release_outside_does_not_click() -> void {
+    if not window.available() { return }
+    app := new_app()
+    count := 0
+    btn := ui.Button("Go", on_click=fn() { count = count + 1 })
+    app.root = ui.Column([btn], padding=8)
+    app.layout()
+    d := ev("mouse_down")
+    d.x = btn.x + 2
+    d.y = btn.y + 2
+    d.button = 1
+    app.dispatch(d)
+    test.assert_true(btn.pressed)
+    u := ev("mouse_up")
+    u.x = 390
+    u.y = 290
+    u.button = 1
+    app.dispatch(u)
+    test.assert_false(btn.pressed)
+    test.assert_eq(count, 0)
+    app.close()
+}
+
+define test_checkbox_toggles() -> void {
+    if not window.available() { return }
+    app := new_app()
+    seen := []
+    box := ui.Checkbox("Agree", on_change=fn(on) { seen.append(on) })
+    app.root = ui.Column([box], padding=8)
+    app.layout()
+    click_on(app, box)
+    test.assert_true(box.checked)
+    key(app, "space")
+    test.assert_false(box.checked)
+    test.assert_eq(seen.length(), 2)
+    app.close()
+}
+
+define test_text_input_editing() -> void {
+    if not window.available() { return }
+    app := new_app()
+    changes := 0
+    submitted := ""
+    input := ui.TextInput(placeholder="name", on_change=fn(s) { changes = changes + 1 },
+                          on_submit=fn(s) { submitted = s })
+    app.root = ui.Column([input], padding=8)
+    app.layout()
+    click_on(app, input)
+    test.assert_true(input.focused)
+    typed(app, "Héllo")
+    test.assert_eq(input.text, "Héllo")
+    test.assert_eq(input.cursor, 5)
+    key(app, "home")
+    typed(app, ">")
+    key(app, "end")
+    key(app, "backspace")
+    key(app, "left")
+    key(app, "delete")
+    test.assert_eq(input.text, ">Hél")
+    key(app, "return")
+    test.assert_eq(submitted, ">Hél")
+    test.assert_eq(changes, 4)
+    app.close()
+}
+
+define test_slider_mouse_and_keys() -> void {
+    if not window.available() { return }
+    app := new_app()
+    s := ui.Slider(min=0, max=10, value=5)
+    app.root = ui.Column([s], padding=8)
+    app.layout()
+    click(app, s.x + 8, s.y + s.height / 2)
+    test.assert_eq(s.value, 0)
+    click(app, s.x + s.width - 8, s.y + s.height / 2)
+    test.assert_eq(s.value, 10)
+    key(app, "left")
+    key(app, "left")
+    test.assert_eq(s.value, 8)
+    key(app, "home")
+    test.assert_eq(s.value, 0)
+    s.set(99)
+    test.assert_eq(s.value, 10)
+    app.close()
+}
+
+define test_list_view_select_and_scroll() -> void {
+    if not window.available() { return }
+    app := new_app()
+    picked := ""
+    items := ["a", "b", "c", "d", "e", "f", "g", "h"]
+    lv := ui.ListView(items, on_select=fn(i, item) { picked = item }, rows=3)
+    app.root = ui.Column([lv], padding=8)
+    app.layout()
+    click(app, lv.x + 10, lv.y + 2 + 24 + 5)
+    test.assert_eq(lv.selected, 1)
+    test.assert_eq(picked, "b")
+    key(app, "end")
+    test.assert_eq(lv.selected, 7)
+    test.assert_eq(picked, "h")
+    key(app, "up")
+    test.assert_eq(lv.selected, 6)
+    app.close()
+}
+
+// ───── focus ─────
+define test_tab_cycles_focus() -> void {
+    if not window.available() { return }
+    app := new_app()
+    a := ui.TextInput()
+    lbl := ui.Label("not focusable")
+    b := ui.Button("b")
+    c := ui.Checkbox("c")
+    app.root = ui.Column([a, lbl, ui.Row([b, c])])
+    app.layout()
+    key(app, "tab")
+    test.assert_true(a.focused)
+    key(app, "tab")
+    test.assert_true(b.focused)
+    test.assert_false(a.focused)
+    key(app, "tab")
+    test.assert_true(c.focused)
+    key(app, "tab")
+    test.assert_true(a.focused)
+    shift_tab := ev("key_down")
+    shift_tab.key = "tab"
+    shift_tab.shift = true
+    app.dispatch(shift_tab)
+    test.assert_true(c.focused)
+    app.close()
+}
+
+define test_keys_go_to_the_focused_widget() -> void {
+    if not window.available() { return }
+    app := new_app()
+    a := ui.TextInput()
+    b := ui.TextInput()
+    app.root = ui.Column([a, b])
+    app.layout()
+    click_on(app, b)
+    typed(app, "x")
+    test.assert_eq(a.text, "")
+    test.assert_eq(b.text, "x")
+    click(app, 399, 299)
+    test.assert_true(app.focus == null)
+    typed(app, "y")
+    test.assert_eq(b.text, "x")
+    app.close()
+}
+
+// ───── drawing / frames ─────
+define test_step_draws_theme_and_widgets() -> void {
+    if not window.available() { return }
+    app := ui.App("draw", 200, 100, theme=ui.light(), headless=true)
+    btn := ui.Button("OK")
+    app.root = ui.Column([btn], padding=10)
+    test.assert_true(app.step())
+    test.assert_eq(app.win.pixel(2, 2), window.hex("#f4f5f7") % 16777216)
+    test.assert_eq(app.win.pixel(btn.x + 2, btn.y + 2), window.hex("#2f6fde") % 16777216)
+    app.close()
+    test.assert_false(app.step())
+}
+
+define test_on_frame_runs_each_step() -> void {
+    if not window.available() { return }
+    app := new_app()
+    frames := 0
+    app.on_frame = fn() { frames = frames + 1 }
+    app.step()
+    app.step()
+    test.assert_eq(frames, 2)
+    app.close()
+}
+
+define test_mix() -> void {
+    test.assert_eq(ui.mix(window.rgb(0, 0, 0), window.rgb(200, 100, 50), 50), window.rgb(100, 50, 25))
+    test.assert_eq(ui.mix(window.red(), window.blue(), 0), window.red())
+}

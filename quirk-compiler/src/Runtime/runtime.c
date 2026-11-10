@@ -675,6 +675,20 @@ List* quirk_enum_values_str(const char* packed, int32_t count) {
 // (pointer value <= 0xFFFFFFFF; quirk_opaque_to_int sign-extends it
 // back), otherwise — and for 0, which inline would be null — a headered
 // Any box.
+// `f(...)` where `f` is an untyped value: it must be a Callable (or an
+// Any boxing one). Returns the Callable*, else raises TypeError.
+void* quirk_expect_callable(void* v) {
+    uint32_t t = quirk_type_of(v);
+    if (t == QT_CALLABLE) return v;
+    if (t == QT_ANY || (v && quirk_is_any(v))) {
+        Any* a = (Any*)v;
+        if (a->tag == ANY_CALLABLE && a->ptr) return a->ptr;
+    }
+    quirk_throw_exception("TypeError", v ? "this value isn't a function, so it can't be called"
+                                         : "null isn't a function, so it can't be called");
+    return NULL;
+}
+
 void* quirk_int_to_opaque(int64_t v) {
     if (v != 0 && v >= INT32_MIN && v <= INT32_MAX)
         return (void*)(uintptr_t)(uint32_t)(int32_t)v;

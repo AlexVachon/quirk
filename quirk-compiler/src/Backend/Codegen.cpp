@@ -1482,6 +1482,36 @@ class LLVMCodegen {
         }
     }
 
+    // Names a lambda body assigns (`x = ...`, `x += ...`) and names it
+    // declares itself (`x := ...`), through nested blocks — not into
+    // nested lambdas, which get their own analysis.
+    void collectAssignedNames(const std::vector<std::unique_ptr<Node>>& stmts,
+                              std::set<std::string>& assigned, std::set<std::string>& declared) {
+        for (const auto& st : stmts) {
+            Node* n = st.get();
+            if (auto vd = dynamic_cast<VarDeclNode*>(n)) {
+                if (auto lit = dynamic_cast<LiteralNode*>(vd->lhs.get())) {
+                    if (vd->op == ":=" || !vd->typeAnnotation.empty()) declared.insert(lit->value);
+                    else assigned.insert(lit->value);
+                }
+            } else if (auto i = dynamic_cast<IfNode*>(n)) {
+                collectAssignedNames(i->thenBranch, assigned, declared);
+                for (auto& eb : i->elIfBranches) collectAssignedNames(eb.body, assigned, declared);
+                collectAssignedNames(i->elseBranch, assigned, declared);
+            } else if (auto w = dynamic_cast<WhileNode*>(n)) {
+                collectAssignedNames(w->body, assigned, declared);
+            } else if (auto f = dynamic_cast<ForNode*>(n)) {
+                collectAssignedNames(f->body, assigned, declared);
+            } else if (auto t = dynamic_cast<TryCatchNode*>(n)) {
+                collectAssignedNames(t->tryBlock, assigned, declared);
+                for (auto& cb : t->catchBlocks) collectAssignedNames(cb.body, assigned, declared);
+                collectAssignedNames(t->finallyBlock, assigned, declared);
+            } else if (auto m = dynamic_cast<MatchNode*>(n)) {
+                for (auto& arm : m->arms) collectAssignedNames(arm.body, assigned, declared);
+            }
+        }
+    }
+
     void collectFreeVars(LambdaNode* node, std::vector<std::string>& freeVars) {
         std::set<std::string> paramSet;
         for (const auto& p : node->params) paramSet.insert(p.name);
@@ -1519,7 +1549,9 @@ class LLVMCodegen {
                 // For `:=` declarations the LHS is a brand-new local
                 // binding and doesn't need capture.
                 walk(v->expression.get());
-                if (v->op == "=") walk(v->lhs.get());
+                // Compound assignments (`x += 1`) read the target too — it
+                // wasn't captured, and the lambda's `+=` compiled to nothing.
+                if (v->op != ":=" && v->typeAnnotation.empty()) walk(v->lhs.get());
             }
             else if (auto r = dynamic_cast<ReturnNode*>(n)) { walk(r->expression.get()); }
             else if (auto i = dynamic_cast<IfNode*>(n)) {
@@ -1591,8 +1623,17 @@ class LLVMCodegen {
         if (!node->isExpression) {
             std::set<std::string> declared;
             collectDeclaredNonlocals(node->stmtBody, declared);
-            for (const auto& name : captureNames)
-                if (declared.count(name) && varGen->hasLocal(name)) promoteToNonlocalCell(name);
+            // A captured variable the lambda assigns (`count = count + 1`,
+            // `done = true`) is shared with the enclosing function too, as
+            // in JavaScript / Swift closures. Without `nonlocal` the lambda
+            // used to change its own copy, silently — a click handler's
+            // `clicks = clicks + 1` never reached the caller.
+            std::set<std::string> assigned, ownDecls;
+            collectAssignedNames(node->stmtBody, assigned, ownDecls);
+            for (const auto& name : captureNames) {
+                bool shared = declared.count(name) || (assigned.count(name) && !ownDecls.count(name));
+                if (shared && varGen->hasLocal(name)) promoteToNonlocalCell(name);
+            }
         }
 
         // Resolve current values of captured variables
@@ -1722,8 +1763,10 @@ class LLVMCodegen {
         // 8. Allocate and populate Callable struct
         StructType* callableTy = StructTypes["Callable"];
         uint64_t callSz = TheModule->getDataLayout().getTypeAllocSize(callableTy);
-        Value* callableRaw = Builder.CreateCall(
-            gcMallocFn, {ConstantInt::get(Type::getInt64Ty(Context), callSz)}, "callable");
+        // quirk_alloc: the runtime type header lets an untyped value be
+        // recognised as a Callable (`h()` on a List element).
+        Value* callableRaw = structGen->emitQuirkAlloc(structGen->objectTypeId("Callable"),
+            ConstantInt::get(Type::getInt64Ty(Context), callSz));
         Value* callablePtr = Builder.CreateBitCast(
             callableRaw, PointerType::getUnqual(callableTy));
 
@@ -2044,6 +2087,57 @@ class LLVMCodegen {
 
     // Append the default values of a constructor's missing trailing
     // arguments (its own __init, or the nearest inherited one).
+    // The arguments for constructor call `Type(...)`: positional ones in
+    // order, `name=value` ones matched to __init's parameter names, and
+    // defaults for the rest. (Named arguments used to be taken as
+    // positional, so `App("t", 1, 2, headless=true)` passed `true` as the
+    // 4th parameter.)
+    std::vector<Value*> constructorArgs(const std::string& type, CallNode* call) {
+        std::vector<Value*> args;
+        bool anyNamed = false;
+        for (auto& a : call->args) anyNamed = anyNamed || !a.name.empty();
+        FunctionNode* init = nullptr;
+        for (std::string c = type; !c.empty(); ) {
+            auto it = functionDeclarations.find(c + "__init");
+            if (it != functionDeclarations.end()) { init = it->second; break; }
+            c = (structHierarchy.count(c) && !structHierarchy[c].empty()) ? structHierarchy[c][0] : "";
+        }
+        if (!anyNamed || !init) {
+            for (auto& a : call->args) args.push_back(handleExpression(a.value.get()));
+            fillConstructorDefaults(type, args);
+            return args;
+        }
+        const auto& params = init->parameters;
+        std::vector<Value*> slots(params.size(), nullptr);
+        size_t next = 0;
+        for (auto& a : call->args) {
+            size_t idx = params.size();
+            if (a.name.empty()) {
+                while (next < params.size() && slots[next]) next++;
+                idx = next;
+            } else {
+                for (size_t i = 0; i < params.size(); i++)
+                    if (params[i].name == a.name) { idx = i; break; }
+                if (idx == params.size())
+                    fatalError(type + "() has no parameter '" + a.name + "'", call->line, call->col);
+            }
+            if (idx >= params.size())
+                fatalError("too many arguments for " + type + "()", call->line, call->col);
+            if (slots[idx])
+                fatalError(type + "() got parameter '" + params[idx].name + "' twice", call->line, call->col);
+            slots[idx] = handleExpression(a.value.get());
+        }
+        for (size_t i = 0; i < params.size(); i++) {
+            if (!slots[i]) {
+                if (!params[i].defaultValue)
+                    fatalError(type + "() is missing argument '" + params[i].name + "'", call->line, call->col);
+                slots[i] = handleExpression(params[i].defaultValue.get());
+            }
+            args.push_back(slots[i]);
+        }
+        return args;
+    }
+
     void fillConstructorDefaults(const std::string& type, std::vector<Value*>& args) {
         std::string initName = type + "__init";
         std::string currentType = type;
@@ -2199,10 +2293,7 @@ class LLVMCodegen {
             }
 
             if (StructTypes.count(lit->value)) {
-                std::vector<Value*> args;
-                for (auto& a : call->args) args.push_back(handleExpression(a.value.get()));
-
-                fillConstructorDefaults(lit->value, args);
+                std::vector<Value*> args = constructorArgs(lit->value, call);
                 return structGen->allocateAndInit(lit->value, args);
             }
 
@@ -2278,6 +2369,23 @@ class LLVMCodegen {
                             return Builder.CreateBitCast(raw, PointerType::getUnqual(StructTypes[retType]));
                         return raw;
                     }
+                }
+            }
+
+            // An untyped variable (a plain List's element, a Map.get result,
+            // an Any parameter) called like a function: it's a Callable at
+            // runtime, or a TypeError.
+            if (varGen->exists(lit->value) && StructTypes.count("Callable")) {
+                Value* val = varGen->resolveVariable(lit->value);
+                if (val && val->getType()->isPointerTy() &&
+                    val->getType()->getPointerElementType()->isIntegerTy(8)) {
+                    Type* i8p = Type::getInt8PtrTy(Context);
+                    FunctionCallee expect = TheModule->getOrInsertFunction("quirk_expect_callable", i8p, i8p);
+                    Value* fnPtr = Builder.CreateCall(expect, {val});
+                    fnPtr = Builder.CreateBitCast(fnPtr, PointerType::getUnqual(StructTypes["Callable"]));
+                    std::vector<Value*> argVals;
+                    for (auto& a : call->args) argVals.push_back(handleExpression(a.value.get()));
+                    return emitCallableCall(fnPtr, argVals);
                 }
             }
 
@@ -2413,11 +2521,9 @@ class LLVMCodegen {
                 if (!litIsLocal && activeModuleAliases.count(lit->value)) {
                     std::string memberName = member->memberName;
                     if (StructTypes.count(memberName)) {
-                        std::vector<Value*> args;
-                        for (auto& a : call->args) args.push_back(handleExpression(a.value.get()));
                         // `socket.Socket()` needs its defaults like `Socket()` —
                         // without them __init got too few operands (malformed IR).
-                        fillConstructorDefaults(memberName, args);
+                        std::vector<Value*> args = constructorArgs(memberName, call);
                         return structGen->allocateAndInit(memberName, args);
                     }
 
@@ -2502,6 +2608,43 @@ class LLVMCodegen {
                     return phi;
                 }
                 return nullptr;
+            }
+
+            // `obj.handler(args)` where `handler` is a Callable *field* (not
+            // a method): call what the field holds. It used to fall through
+            // the method lookup and silently do nothing.
+            if (objPtr && objPtr->getType()->isPointerTy() &&
+                objPtr->getType()->getPointerElementType()->isStructTy() && StructTypes.count("Callable")) {
+                StructType* ost = cast<StructType>(objPtr->getType()->getPointerElementType());
+                std::string oName = ost->getName().str();
+                if (oName.rfind("struct.", 0) == 0) oName = oName.substr(7);
+                bool isMethod = false;
+                for (std::string c = oName; !c.empty() && !isMethod; ) {
+                    isMethod = TheModule->getFunction(c + "_" + member->memberName) ||
+                               resolveFunction(c + "_" + member->memberName);
+                    c = (structHierarchy.count(c) && !structHierarchy[c].empty()) ? structHierarchy[c][0] : "";
+                }
+                Value* fieldPtr = isMethod ? nullptr : structGen->getMemberPtr(objPtr, member->memberName);
+                Type* callablePtrTy = PointerType::getUnqual(StructTypes["Callable"]);
+                if (fieldPtr) {
+                    Type* ft = fieldPtr->getType()->getPointerElementType();
+                    bool isCallableField = ft == callablePtrTy;
+                    if (!isCallableField) {
+                        auto& fields = structFieldTypes[oName];
+                        auto fIt = fields.find(member->memberName);
+                        isCallableField = fIt != fields.end() && fIt->second == "Callable";
+                    }
+                    if (isCallableField) {
+                        Value* fnVal = Builder.CreateLoad(ft, fieldPtr, member->memberName);
+                        Type* i8p = Type::getInt8PtrTy(Context);
+                        FunctionCallee expect = TheModule->getOrInsertFunction("quirk_expect_callable", i8p, i8p);
+                        Value* fnPtr = Builder.CreateCall(expect, {Builder.CreateBitCast(fnVal, i8p)});
+                        fnPtr = Builder.CreateBitCast(fnPtr, callablePtrTy);
+                        std::vector<Value*> argVals;
+                        for (auto& a : call->args) argVals.push_back(handleExpression(a.value.get()));
+                        return emitCallableCall(fnPtr, argVals);
+                    }
+                }
             }
 
             if (!objPtr) {
@@ -3909,6 +4052,24 @@ class LLVMCodegen {
             if (varGen->exists(lhs->value)) {
                 wasVal = varGen->resolveVariable(lhs->value); 
                 
+                // A shared (nonlocal / closure-captured) variable reads back
+                // untyped (i8*): unbox it to the operand's type first —
+                // applyCompoundAssignment took any i8* for a C string, so
+                // `count += 10` in a closure concatenated text.
+                Type* i8pTy = Type::getInt8PtrTy(Context);
+                if (vdecl->op != "=" && vdecl->op != ":=" && varGen->isNonlocal(lhs->value) &&
+                    wasVal && wasVal->getType() == i8pTy && val) {
+                    Type* nt = val->getType();
+                    bool isStr = nt->isPointerTy() && nt->getPointerElementType()->isStructTy() &&
+                                 StructTypes.count("String") && nt->getPointerElementType() == StructTypes["String"];
+                    if (isStr && vdecl->op == "+=") {
+                        FunctionCallee toStr = TheModule->getOrInsertFunction("quirk_opaque_to_string",
+                            PointerType::getUnqual(StructTypes["String"]), i8pTy);
+                        wasVal = Builder.CreateCall(toStr, {wasVal});
+                    } else if (nt->isIntegerTy() || nt->isDoubleTy()) {
+                        wasVal = emitUnboxToType(wasVal, nt);
+                    }
+                }
                 // --- NEW: Use helper for Local Variables ---
                 val = applyCompoundAssignment(vdecl->op, wasVal, val);
             }
@@ -3970,6 +4131,65 @@ class LLVMCodegen {
             Value* objPtr = handleExpression(member->object.get());
             if (objPtr->getType()->isPointerTy() && objPtr->getType()->getPointerElementType()->isPointerTy())
                 objPtr = Builder.CreateLoad(objPtr->getType()->getPointerElementType(), objPtr);
+
+            // `x.field = v` on an untyped value (Sema set dynFieldType):
+            // switch on its runtime type over the structs with that field.
+            if (!member->dynFieldType.empty() && objPtr->getType()->isPointerTy() &&
+                objPtr->getType()->getPointerElementType()->isIntegerTy(8)) {
+                std::vector<std::string> owners;
+                for (const auto& [name, st] : StructTypes)
+                    if (structGen->isVtableEligible(name) && structGen->hasField(name, member->memberName))
+                        owners.push_back(name);
+                if (!owners.empty()) {
+                    std::sort(owners.begin(), owners.end());
+                    Type* i8p = Type::getInt8PtrTy(Context);
+                    Type* i32 = Type::getInt32Ty(Context);
+                    FunctionCallee typeOf = TheModule->getOrInsertFunction("quirk_type_id_of", i32, i8p);
+                    Value* tid = Builder.CreateCall(typeOf, {objPtr}, "dynset_tid");
+                    Function* fn = Builder.GetInsertBlock()->getParent();
+                    BasicBlock* noneBB = BasicBlock::Create(Context, "dynset_none", fn);
+                    BasicBlock* doneBB = BasicBlock::Create(Context, "dynset_done", fn);
+                    SwitchInst* sw = Builder.CreateSwitch(tid, noneBB, (unsigned)owners.size());
+                    for (const auto& name : owners) {
+                        BasicBlock* bb = BasicBlock::Create(Context, "dynset_" + name, fn);
+                        sw->addCase(Builder.getInt32(structGen->objectTypeId(name)), bb);
+                        Builder.SetInsertPoint(bb);
+                        Value* typed = Builder.CreateBitCast(objPtr, PointerType::getUnqual(StructTypes[name]));
+                        Value* fieldPtr = structGen->getMemberPtr(typed, member->memberName);
+                        Type* fieldType = fieldPtr->getType()->getPointerElementType();
+                        Value* v = val;
+                        if (vdecl->op != "=") {
+                            Value* was = Builder.CreateLoad(fieldType, fieldPtr, "dynset_was");
+                            Value* rhs = v;
+                            if (rhs->getType() != fieldType && !(fieldType->isPointerTy() && rhs->getType()->isPointerTy()))
+                                rhs = quirk::coerceToType(rhs, fieldType, Context, Builder, TheModule.get());
+                            v = applyCompoundAssignment(vdecl->op, was, rhs);
+                        }
+                        if (v->getType() != fieldType) {
+                            if (v->getType()->isPointerTy() && v->getType()->getPointerElementType()->isIntegerTy(8) &&
+                                (fieldType->isIntegerTy() || fieldType->isDoubleTy() ||
+                                 (fieldType->isPointerTy() && fieldType->getPointerElementType()->isStructTy())))
+                                v = emitUnboxToType(v, fieldType);
+                            else
+                                v = quirk::coerceToType(v, fieldType, Context, Builder, TheModule.get());
+                        }
+                        Builder.CreateStore(v, fieldPtr);
+                        Builder.CreateBr(doneBB);
+                    }
+                    Builder.SetInsertPoint(noneBB);
+                    FunctionCallee thrower = TheModule->getOrInsertFunction("quirk_throw_exception",
+                        Type::getVoidTy(Context), i8p, i8p);
+                    Value* isNull = Builder.CreateICmpEQ(objPtr, ConstantPointerNull::get(cast<PointerType>(i8p)));
+                    Value* msg = Builder.CreateSelect(isNull,
+                        Builder.CreateGlobalStringPtr("null has no field '" + member->memberName + "'"),
+                        Builder.CreateGlobalStringPtr("value has no field '" + member->memberName +
+                                                      "' (it isn't one of the structs that define it)"));
+                    Builder.CreateCall(thrower, {Builder.CreateGlobalStringPtr("TypeError"), msg});
+                    Builder.CreateUnreachable();
+                    Builder.SetInsertPoint(doneBB);
+                    return;
+                }
+            }
 
             Value* memberPtr = structGen->getMemberPtr(objPtr, member->memberName);
             if (memberPtr) {

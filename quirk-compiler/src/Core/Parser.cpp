@@ -444,7 +444,11 @@ std::unique_ptr<Node> Parser::parseExpression(int min_precedence) {
     } else if (t.type == TokenType::IDENTIFIER || t.type == TokenType::TYPE_KW) {
         left = std::make_unique<LiteralNode>(t.value);
     } else if (t.type == TokenType::NOT) {
-        auto operand = parseExpression(0);
+        // `not` binds tighter than `and` / `or` (6 / 5) but looser than
+        // comparisons, as in Python: `not a or b` is `(not a) or b`,
+        // `not x > 5` is `not (x > 5)`. It parsed its operand at 0, so
+        // `not a or b` meant `not (a or b)`.
+        auto operand = parseExpression(7);
         left =
             std::make_unique<BinaryOpNode>("not", std::move(operand), nullptr);
     } else if (t.type == TokenType::MINUS) {
@@ -2013,7 +2017,7 @@ std::unique_ptr<StructNode> Parser::parseStruct() {
                     }
                 }
 
-                node->fields.push_back({fieldName, inferredType, nullptr});
+                node->fields.push_back({fieldName, inferredType, nullptr, /*implicit=*/true});
                 declaredFields.insert(fieldName);
             }
             break; // only scan the first __init

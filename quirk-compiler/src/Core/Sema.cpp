@@ -1061,6 +1061,31 @@ bool Sema::analyze(std::vector<std::unique_ptr<Node>> &nodes)
     for (const auto &node : nodes) registerTopLevel(node.get());
     monoPass1Done = true;
 
+    // A field inferred from `self.x = ...` in a subclass's __init that a
+    // parent already declares is the parent's field, not a second one —
+    // it had type Any and shadowed the parent's (`self.expand = n == 0`
+    // in a Widget subclass made every untyped `w.expand` read Any).
+    for (auto& [sName, sNode] : structRegistry) {
+        if (!sNode) continue;
+        auto& fs = sNode->fields;
+        fs.erase(std::remove_if(fs.begin(), fs.end(), [&](const StructField& f) {
+            if (!f.implicit) return false;
+            std::function<bool(const std::string&)> inParents = [&](const std::string& st) -> bool {
+                auto it = structRegistry.find(st);
+                if (it == structRegistry.end() || !it->second) return false;
+                for (const auto& p : it->second->parents) {
+                    auto pit = structRegistry.find(p);
+                    if (pit == structRegistry.end() || !pit->second) continue;
+                    for (const auto& pf : pit->second->fields)
+                        if (pf.name == f.name) return true;
+                    if (inParents(p)) return true;
+                }
+                return false;
+            };
+            return inParents(sName);
+        }), fs.end());
+    }
+
     // Pass 2: Analyze Bodies
     enterScope();
 
@@ -1544,6 +1569,21 @@ void Sema::checkVarDecl(VarDeclNode *node)
     else if (auto member = dynamic_cast<MemberAccessNode *>(node->lhs.get()))
     {
         std::string objType = checkExpression(member->object.get());
+        // `x.field = v` on an untyped value: Codegen stores it after
+        // checking the value's runtime type (see dynamicFieldType).
+        {
+            std::string base = objType;
+            if (!base.empty() && base.back() == '?') base.pop_back();
+            if (baseType(base) == "Any" && resolveMember("Any", member->memberName) == "unknown") {
+                std::string ft = dynamicFieldType(member->memberName);
+                if (!ft.empty()) {
+                    member->dynFieldType = ft;
+                    if (node->op == "=" && ft != "Any")
+                        checkAssignType(ft, exprType, "field '" + member->memberName + "'", node);
+                    return;
+                }
+            }
+        }
         if (resolveMember(objType, member->memberName) == "unknown") {
             std::string msg = "member '" + member->memberName + "' not found in '" + objType + "'";
             msg += formatHint(suggestMembers(baseType(objType), member->memberName));
@@ -2629,19 +2669,9 @@ std::string Sema::checkMemberAccess(MemberAccessNode *node)
         // after checking the value's runtime type. Typed as the field's
         // type when every struct with that field agrees.
         if (objType == "Any") {
-            static const std::set<std::string> runtimeTypes = {
-                "String", "List", "Map", "Set", "Queue", "Tuple", "Any", "File", "Callable", "Task"};
-            std::set<std::string> fieldTypes;
-            for (const auto& [sName, sNode] : structRegistry) {
-                if (runtimeTypes.count(sName)) continue;
-                std::string ft = resolveMember(sName, node->memberName);
-                if (ft == "unknown" || ft == "method") continue;
-                if (sNode && std::find(sNode->typeParams.begin(), sNode->typeParams.end(), baseType(ft))
-                        != sNode->typeParams.end()) ft = "Any";
-                fieldTypes.insert(ft);
-            }
-            if (!fieldTypes.empty()) {
-                node->dynFieldType = fieldTypes.size() == 1 ? *fieldTypes.begin() : "Any";
+            std::string ft = dynamicFieldType(node->memberName);
+            if (!ft.empty()) {
+                node->dynFieldType = ft;
                 return node->dynFieldType;
             }
         }
@@ -2684,25 +2714,71 @@ std::string Sema::checkMemberAccess(MemberAccessNode *node)
     return type;
 }
 
+// Which __init parameter each argument fills: positional ones in order,
+// `name=value` ones by name (-1: no such parameter / too many).
+static std::vector<int> initArgSlots(FunctionNode* init, const std::vector<std::string>& argNames) {
+    std::vector<int> slots(argNames.size(), -1);
+    std::vector<bool> used(init->parameters.size(), false);
+    for (size_t a = 0; a < argNames.size(); a++) {
+        if (argNames[a].empty()) continue;
+        for (size_t i = 0; i < init->parameters.size(); i++)
+            if (init->parameters[i].name == argNames[a]) { slots[a] = (int)i; used[i] = true; break; }
+    }
+    size_t next = 0;
+    for (size_t a = 0; a < argNames.size(); a++) {
+        if (!argNames[a].empty()) continue;
+        while (next < used.size() && used[next]) next++;
+        if (next < used.size()) { slots[a] = (int)next; used[next] = true; }
+    }
+    return slots;
+}
+
 void Sema::checkInitArgTypes(const std::string& name, FunctionNode* init,
                               const std::vector<std::string>& argTypes,
-                              int line, int col, const std::string& filePath) {
-    for (size_t i = 0; i < argTypes.size() && i < init->parameters.size(); ++i) {
+                              int line, int col, const std::string& filePath,
+                              const std::vector<std::string>& argNames) {
+    std::vector<int> slots = argNames.empty() ? std::vector<int>() : initArgSlots(init, argNames);
+    for (size_t a = 0; a < argTypes.size(); ++a) {
+        int i = slots.empty() ? (int)a : slots[a];
+        if (i < 0 || i >= (int)init->parameters.size()) continue;
         const auto& param = init->parameters[i];
         if (param.isVariadic) break;
         const std::string& paramType = param.type;
-        const std::string& argType   = argTypes[i];
+        const std::string& argType   = argTypes[a];
         if (paramType.empty()) continue;       // untyped param — accept anything
         if (argType.empty()) continue;         // unknown arg type — defer
         if (isCompatibleTypes(paramType, argType)) continue;
-        fatalError("argument " + std::to_string(i + 1) + " of " + name +
+        std::string which = (!argNames.empty() && !argNames[a].empty())
+            ? "argument '" + argNames[a] + "'" : "argument " + std::to_string(a + 1);
+        fatalError(which + " of " + name +
                    "() expected '" + paramType + "' but got '" + argType + "'",
                    line, col, filePath);
     }
 }
 
 void Sema::checkInitArgCount(const std::string& name, FunctionNode* init,
-                              int provided, int line, int col, const std::string& filePath) {
+                              int provided, int line, int col, const std::string& filePath,
+                              const std::vector<std::string>& argNames) {
+    bool anyNamed = false;
+    for (auto& n : argNames) anyNamed = anyNamed || !n.empty();
+    if (anyNamed) {
+        for (auto& n : argNames) {
+            if (n.empty()) continue;
+            bool known = false;
+            for (auto& p : init->parameters) known = known || p.name == n;
+            if (!known) fatalError(name + "() has no parameter '" + n + "'", line, col, filePath);
+        }
+        std::vector<int> slots = initArgSlots(init, argNames);
+        std::vector<bool> filled(init->parameters.size(), false);
+        for (int sIdx : slots) {
+            if (sIdx < 0) fatalError("too many arguments for " + name + "()", line, col, filePath);
+            filled[sIdx] = true;
+        }
+        for (size_t i = 0; i < init->parameters.size(); i++)
+            if (!filled[i] && !init->parameters[i].defaultValue && !init->parameters[i].isVariadic)
+                fatalError(name + "() is missing argument '" + init->parameters[i].name + "'", line, col, filePath);
+        return;
+    }
     int required = 0, total = 0;
     bool hasVariadic = false;
     for (const auto& p : init->parameters) {
@@ -2729,13 +2805,14 @@ std::string Sema::checkConstructor(ConstructorNode *node)
     if (methodRegistry.count(node->structName) &&
         methodRegistry[node->structName].count(initName)) {
         FunctionNode* init = methodRegistry[node->structName][initName];
+        std::vector<std::string> argNames;   // ConstructorNode args are positional
         checkInitArgCount(node->structName, init,
-                          (int)node->args.size(), node->line, node->col, node->filePath);
+                          (int)node->args.size(), node->line, node->col, node->filePath, argNames);
         std::vector<std::string> argTypes;
         argTypes.reserve(node->args.size());
         for (auto& a : node->args) argTypes.push_back(checkExpression(a.value.get()));
         checkInitArgTypes(node->structName, init, argTypes,
-                          node->line, node->col, node->filePath);
+                          node->line, node->col, node->filePath, argNames);
     }
 
     return node->structName;
@@ -2784,10 +2861,12 @@ std::string Sema::checkCall(CallNode *node)
             if (methodRegistry.count(l->value) &&
                 methodRegistry[l->value].count(initName)) {
                 FunctionNode* init = methodRegistry[l->value][initName];
+                std::vector<std::string> argNames;
+                for (auto& a : node->args) argNames.push_back(a.name);
                 checkInitArgCount(l->value, init,
-                                  (int)node->args.size(), node->line, node->col, node->filePath);
+                                  (int)node->args.size(), node->line, node->col, node->filePath, argNames);
                 checkInitArgTypes(l->value, init, argTypes,
-                                  node->line, node->col, node->filePath);
+                                  node->line, node->col, node->filePath, argNames);
             }
             return l->value;
         }
@@ -3769,6 +3848,26 @@ std::string Sema::resolveVariable(const std::string &name)
     reportError("undefined variable or function '" + name + "'",
                 suggestNames(name));
     return "unknown";  // allow analysis to continue
+}
+
+// The type of field `field` across every struct that has one (a read or
+// write on an untyped value dispatches over them at runtime): that type
+// when they all agree, "Any" when they differ, "" when no struct has it.
+std::string Sema::dynamicFieldType(const std::string &field)
+{
+    static const std::set<std::string> runtimeTypes = {
+        "String", "List", "Map", "Set", "Queue", "Tuple", "Any", "File", "Callable", "Task"};
+    std::set<std::string> fieldTypes;
+    for (const auto& [sName, sNode] : structRegistry) {
+        if (runtimeTypes.count(sName)) continue;
+        std::string ft = resolveMember(sName, field);
+        if (ft == "unknown" || ft == "method") continue;
+        if (sNode && std::find(sNode->typeParams.begin(), sNode->typeParams.end(), baseType(ft))
+                != sNode->typeParams.end()) ft = "Any";
+        fieldTypes.insert(ft);
+    }
+    if (fieldTypes.empty()) return "";
+    return fieldTypes.size() == 1 ? *fieldTypes.begin() : "Any";
 }
 
 std::string Sema::resolveMember(const std::string &sName, const std::string &mName)

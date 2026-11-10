@@ -29,6 +29,7 @@
 - [`time`](time.md)
 - [`toml`](toml.md)
 - [`typing`](typing.md)
+- [`ui`](ui.md)
 - [`url`](url.md)
 - [`uuid`](uuid.md)
 - [`window`](window.md)

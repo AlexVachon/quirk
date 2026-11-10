@@ -1,4 +1,13 @@
 {
+"App": [
+{
+"package": "ui",
+"qualified": "App",
+"kind": "struct",
+"signature": "struct App {",
+"doc": "A window showing a widget tree. Set `root`, then `run()`.\n  `theme`     \u2014 colours (`ui.dark()` by default)\n  `on_frame`  \u2014 optional `fn()` called once per frame before drawing\n  `focus`     \u2014 the widget with the keyboard focus (or null)\n`step()` runs one frame yourself (custom loops, tests)."
+}
+],
 "AssertionError": [
 {
 "package": "typing",
@@ -17,6 +26,15 @@
 "doc": "Boolean type. Only two values: `true` and `false`."
 }
 ],
+"Button": [
+{
+"package": "ui",
+"qualified": "Button",
+"kind": "struct",
+"signature": "struct Button : Widget {",
+"doc": "A push button. `on_click` (no arguments) runs when it's clicked, or\nwhen it has the focus and Enter / Space is pressed."
+}
+],
 "Callable": [
 {
 "package": "typing",
@@ -33,6 +51,24 @@
 "kind": "struct",
 "signature": "struct CancelledError : Exception {",
 "doc": "Raised inside a task when `task.cancel()` was called \u2014 at the task's next\n`sys.sleep`, `await` or `wait` (a sleep in progress is cut short). Catch it\nto clean up; awaiting a cancelled task raises it too.\n\n@example:\nasync define worker() {\n    try {\n        while true { sys.sleep(100) }\n    } catch (e: CancelledError) {\n        print(\"stopping\")\n    }\n}"
+}
+],
+"Checkbox": [
+{
+"package": "ui",
+"qualified": "Checkbox",
+"kind": "struct",
+"signature": "struct Checkbox : Widget {",
+"doc": "A box that's ticked or not, with a label. `on_change(checked)` runs when\nthe user toggles it."
+}
+],
+"Column": [
+{
+"package": "ui",
+"qualified": "Column",
+"kind": "struct",
+"signature": "struct Column : Widget {",
+"doc": "Children stacked top to bottom, each as wide as the column. Free height\ngoes to children with `expand = true`."
 }
 ],
 "Comparable": [
@@ -233,6 +269,15 @@
 "doc": "Key + value extracted from a `key = value` line. Bare-key syntax only\nfor now (no quoted keys)."
 }
 ],
+"Label": [
+{
+"package": "ui",
+"qualified": "Label",
+"kind": "struct",
+"signature": "struct Label : Widget {",
+"doc": "Text. \"\\n\" starts a new line. `color` -1 uses the theme's text colour;\n`align` is \"left\", \"center\" or \"right\"."
+}
+],
 "List": [
 {
 "package": "typing",
@@ -240,6 +285,15 @@
 "kind": "struct",
 "signature": "struct List : Printable, Representable, Sizeable, Iterable {",
 "doc": "A dynamic, ordered sequence of values of any type.\nElements are zero-indexed. Lists grow automatically as items are appended.\n\n@example:\nnums := [1, 2, 3]\nnums.append(4)\nprint(nums.length())    // 4\nprint(nums[0])          // 1\ndoubled := nums.map(fn(x: Int) => x * 2)"
+}
+],
+"ListView": [
+{
+"package": "ui",
+"qualified": "ListView",
+"kind": "struct",
+"signature": "struct ListView : Widget {",
+"doc": "A scrollable list of items (anything with `.str()`), one selectable.\n`on_select(index, item)` runs when the selection changes; `selected` is\nthe index (-1 = none). `rows` sets how many rows it asks room for."
 }
 ],
 "Map": [
@@ -303,6 +357,15 @@
 "kind": "struct",
 "signature": "type Option[T] = Some(value: T) | None()",
 "doc": ""
+}
+],
+"Panel": [
+{
+"package": "ui",
+"qualified": "Theme.Panel",
+"kind": "method",
+"signature": "define Panel(children: List, padding: Int = 12, spacing: Int = 8, expand: Bool = false) -> Column {",
+"doc": "A Column drawn on a raised surface with a border (12px padding by default)."
 }
 ],
 "Parseable": [
@@ -404,6 +467,15 @@
 "doc": ""
 }
 ],
+"Row": [
+{
+"package": "ui",
+"qualified": "Row",
+"kind": "struct",
+"signature": "struct Row : Widget {",
+"doc": "Children side by side, each as tall as the row. Free width goes to\nchildren with `expand = true`."
+}
+],
 "RunResult": [
 {
 "package": "process",
@@ -449,6 +521,15 @@
 "doc": "Implemented by types that have a finite, countable number of elements.\n`String`, `List`, `Map`, `Set`, and `Queue` all implement `Sizeable`.\n\n@example\ndefine is_empty[T](col: T) -> Bool where T: Sizeable {\n    return col.length() == 0\n}"
 }
 ],
+"Slider": [
+{
+"package": "ui",
+"qualified": "Slider",
+"kind": "struct",
+"signature": "struct Slider : Widget {",
+"doc": "Pick a number between `min` and `max` by dragging (or with the arrow\nkeys, by `step`). `on_change(value)` runs when it moves."
+}
+],
 "Socket": [
 {
 "package": "net",
@@ -476,6 +557,15 @@
 "doc": ""
 }
 ],
+"Spacer": [
+{
+"package": "ui",
+"qualified": "Spacer",
+"kind": "struct",
+"signature": "struct Spacer : Widget {",
+"doc": "Empty space that takes whatever its container has left over."
+}
+],
 "String": [
 {
 "package": "typing",
@@ -501,6 +591,24 @@
 "kind": "struct",
 "signature": "struct TestCase {",
 "doc": "A single named test. Construct with `TestCase(\"name\", fn() { ... })`.\nThe lambda body uses `test.assert_*` helpers; any AssertionError fails\nthe case. Other exceptions also fail it (their type is shown)."
+}
+],
+"TextInput": [
+{
+"package": "ui",
+"qualified": "TextInput",
+"kind": "struct",
+"signature": "struct TextInput : Widget {",
+"doc": "A one-line text field. Type when it has the focus (click it or Tab to\nit); Left / Right / Home / End move the cursor, Backspace / Delete\nerase. `on_change(text)` runs on every edit, `on_submit(text)` on Enter.\n`columns` sets its width in characters."
+}
+],
+"Theme": [
+{
+"package": "ui",
+"qualified": "Theme",
+"kind": "struct",
+"signature": "struct Theme {",
+"doc": "Colours and sizes every widget draws with. Make your own by changing a\ncopy of `ui.dark()` / `ui.light()`.\n  `background` \u2014 the window; `surface` \u2014 panels; `text`, `muted` \u2014 text\n  `accent` / `accent_text` \u2014 buttons, checks, sliders, selection\n  `input` \u2014 text field / list background; `border`; `focus` \u2014 focus ring\n  `scale` \u2014 text size multiplier (1 = 8x16 pixel characters)"
 }
 ],
 "Tuple": [
@@ -564,6 +672,15 @@
 "kind": "struct",
 "signature": "struct WhereConditionError : RuntimeError {",
 "doc": "Raised when a function's `where` precondition is violated at runtime.\nInherits from RuntimeError.\n\n@example:\ndefine sqrt(x: Double) -> Double where x >= 0.0 {\n    return x\n}\n\ntry {\n    sqrt(-1.0)\n} catch (e: WhereConditionError) {\n    print(\"Precondition failed: \" + e.message)\n}"
+}
+],
+"Widget": [
+{
+"package": "ui",
+"qualified": "Widget",
+"kind": "struct",
+"signature": "struct Widget {",
+"doc": "What every widget has. Layout fills in `x`, `y`, `width`, `height` each\nframe; `min_w` / `min_h` are the size the widget asks for.\n  `expand`   \u2014 take a share of the container's free space\n  `visible`  \u2014 false: not drawn and takes no space\n  `enabled`  \u2014 false: drawn dimmed, ignores input\n  `hovered`, `focused`, `pressed` \u2014 set by the App\nTo make your own widget, subclass it and override `measure`, `draw` and\n`handle` (and `children` for containers)."
 }
 ],
 "Window": [
@@ -1070,6 +1187,20 @@
 "kind": "method",
 "signature": "define add(self, val: Any) -> void",
 "doc": "Adds a value to the set. Does nothing if already present.\n@param val: Any"
+},
+{
+"package": "ui",
+"qualified": "Theme.add",
+"kind": "method",
+"signature": "define add(self, w: Widget) -> void {",
+"doc": "Add a widget at the end."
+},
+{
+"package": "ui",
+"qualified": "Theme.add",
+"kind": "method",
+"signature": "define add(self, w: Widget) -> void {",
+"doc": "Add a widget at the end."
 }
 ],
 "add_seconds": [
@@ -1401,6 +1532,15 @@
 "doc": "The colour's red, green, blue and alpha parts (0-255)."
 }
 ],
+"char_w": [
+{
+"package": "ui",
+"qualified": "Theme.char_w",
+"kind": "method",
+"signature": "define char_w(self) -> Int {",
+"doc": "Width of one character."
+}
+],
 "chdir_raw": [
 {
 "package": "fs",
@@ -1417,6 +1557,15 @@
 "kind": "method",
 "signature": "define check(self) -> void {",
 "doc": "Throw `ProcessError` unless the program exited with code 0."
+}
+],
+"children": [
+{
+"package": "ui",
+"qualified": "Theme.children",
+"kind": "method",
+"signature": "define children(self) -> List {",
+"doc": "Child widgets (containers)."
 }
 ],
 "choice": [
@@ -1515,6 +1664,15 @@
 "doc": "Erase the current line and move the cursor to column 0.\nPairs with `put` for in-place updates (progress bars, spinners)."
 }
 ],
+"click": [
+{
+"package": "ui",
+"qualified": "Theme.click",
+"kind": "method",
+"signature": "define click(self) -> void {",
+"doc": "Press the button from code."
+}
+],
 "close": [
 {
 "package": "io",
@@ -1536,6 +1694,13 @@
 "kind": "define",
 "signature": "extern define close(fd: Int) -> void",
 "doc": "Close socket `fd`, releasing the OS resource."
+},
+{
+"package": "ui",
+"qualified": "Theme.close",
+"kind": "method",
+"signature": "define close(self) -> void {",
+"doc": "Close the window (ends `run`)."
 },
 {
 "package": "window",
@@ -1611,6 +1776,15 @@
 "kind": "define",
 "signature": "extern define connect(fd: Int, host: String, port: Int) -> Int",
 "doc": "Connect socket `fd` to a remote `host:port`. Returns 0 on success.\n@example connect(fd, \"example.com\", 80)"
+}
+],
+"contains": [
+{
+"package": "ui",
+"qualified": "Theme.contains",
+"kind": "method",
+"signature": "define contains(self, px: Int, py: Int) -> Bool {",
+"doc": "True if (px, py) is inside the widget's box."
 }
 ],
 "copy": [
@@ -1690,6 +1864,15 @@
 "kind": "define",
 "signature": "define cycle(items: List, total: Int) -> List {",
 "doc": "Cycle `items` to produce a List of length `total`. Empty input yields an\nempty list regardless of `total`.\n\n@example\ncycle([1, 2, 3], 7)   // [1, 2, 3, 1, 2, 3, 1]"
+}
+],
+"dark": [
+{
+"package": "ui",
+"qualified": "Theme.dark",
+"kind": "method",
+"signature": "define dark() -> Theme {",
+"doc": "Light text on dark grey, blue accent."
 }
 ],
 "day": [
@@ -1807,6 +1990,15 @@
 "doc": "Everything before the final path component. `\"a/b/c.txt\"` \u2192 `\"a/b\"`.\nReturns \"\" if the path has no separators."
 }
 ],
+"dispatch": [
+{
+"package": "ui",
+"qualified": "Theme.dispatch",
+"kind": "method",
+"signature": "define dispatch(self, e: window.Event) -> void {",
+"doc": "Route one event to the widget it's for (also usable from tests)."
+}
+],
 "distance": [
 {
 "package": "typing",
@@ -1832,6 +2024,15 @@
 "kind": "method",
 "signature": "define dot(self, other: Vector2) -> Double {",
 "doc": "Dot product: `a \u00b7 b = a.x*b.x + a.y*b.y`. Useful for projections,\nangle calculations (`cos \u03b8 = dot(a, b) / (|a| * |b|)`), and detecting\northogonality (dot == 0)."
+}
+],
+"draw": [
+{
+"package": "ui",
+"qualified": "Theme.draw",
+"kind": "method",
+"signature": "define draw(self, win: window.Window, t: Theme) -> void {",
+"doc": "Draw into `win` inside the widget's box."
 }
 ],
 "drop_while": [
@@ -2133,6 +2334,15 @@
 "doc": "Floating-point remainder of `a / b` with the sign of `a`.\n@example math.fmod(10.0, 3.0)  // 1.0"
 }
 ],
+"focus_on": [
+{
+"package": "ui",
+"qualified": "Theme.focus_on",
+"kind": "method",
+"signature": "define focus_on(self, w: Widget) -> void {",
+"doc": "Give `w` the keyboard focus (null: nobody)."
+}
+],
 "format": [
 {
 "package": "datetime",
@@ -2300,6 +2510,15 @@
 "doc": "Group items by the value produced by `key_fn`. Returns a Map from\nstringified key to a List of items with that key. Order of insertion in\neach group is preserved.\n\n@example\nwords := [\"pear\", \"plum\", \"apple\", \"peach\", \"apricot\"]\ngroupby(fn(w) => w.substring(0, 1), words)\n// {\"p\": [\"pear\", \"plum\", \"peach\"], \"a\": [\"apple\", \"apricot\"]}"
 }
 ],
+"handle": [
+{
+"package": "ui",
+"qualified": "Theme.handle",
+"kind": "method",
+"signature": "define handle(self, e: window.Event) -> Bool {",
+"doc": "React to an event; true if the widget used it."
+}
+],
 "has": [
 {
 "package": "typing",
@@ -2442,6 +2661,15 @@
 "doc": "Like `input` but returns `null` on an empty reply instead of re-prompting.\nUse when the caller wants to handle the \"user didn't say anything\" branch\nitself \u2014 e.g. asking a custom follow-up before re-prompting, or skipping\nthe field entirely.\n\n    name := prompt.input_optional(\"Your name\")\n    match name {\n        case null => print(\"(skipped)\")\n        case _    => print(\"hi, \" + name)\n    }"
 }
 ],
+"insert": [
+{
+"package": "ui",
+"qualified": "Theme.insert",
+"kind": "method",
+"signature": "define insert(self, s: String) -> void {",
+"doc": "Insert `s` at the cursor, as typing would."
+}
+],
 "intersection": [
 {
 "package": "typing",
@@ -2572,6 +2800,13 @@
 }
 ],
 "is_open": [
+{
+"package": "ui",
+"qualified": "Theme.is_open",
+"kind": "method",
+"signature": "define is_open(self) -> Bool {",
+"doc": "True until the window is closed."
+},
 {
 "package": "window",
 "qualified": "WindowError.is_open",
@@ -2711,6 +2946,15 @@
 "doc": "Returns the last element in insertion order, or `null` when\nthe set is empty. Parallel to List.last()."
 }
 ],
+"layout": [
+{
+"package": "ui",
+"qualified": "Theme.layout",
+"kind": "method",
+"signature": "define layout(self) -> void {",
+"doc": "Measure and place the tree to fill the window."
+}
+],
 "length": [
 {
 "package": "typing",
@@ -2748,7 +2992,23 @@
 "doc": "Returns the number of key-value pairs.\n@returns: Int"
 }
 ],
+"light": [
+{
+"package": "ui",
+"qualified": "Theme.light",
+"kind": "method",
+"signature": "define light() -> Theme {",
+"doc": "Dark text on white, blue accent."
+}
+],
 "line": [
+{
+"package": "ui",
+"qualified": "Theme.line",
+"kind": "method",
+"signature": "define line(self) -> Int {",
+"doc": "Height of one line of text."
+},
 {
 "package": "window",
 "qualified": "WindowError.line",
@@ -2970,6 +3230,15 @@
 "doc": "Arithmetic mean. Throws `ValueError` on empty input.\n\n@example\nmean([1, 2, 3, 4])   // 2.5"
 }
 ],
+"measure": [
+{
+"package": "ui",
+"qualified": "Theme.measure",
+"kind": "method",
+"signature": "define measure(self, t: Theme) -> void {",
+"doc": "Work out `min_w` / `min_h` (containers measure their children first)."
+}
+],
 "median": [
 {
 "package": "statistics",
@@ -3038,6 +3307,15 @@
 "kind": "define",
 "signature": "extern define minute(epoch: Int, utc: Int) -> Int",
 "doc": "Minute 0-59."
+}
+],
+"mix": [
+{
+"package": "ui",
+"qualified": "mix",
+"kind": "define",
+"signature": "define mix(a: Int, b: Int, percent: Int) -> Int {",
+"doc": "Blend colour `a` toward `b` by `percent` (0 = a, 100 = b). For hover and\npressed shades."
 }
 ],
 "mkdir": [
@@ -3389,6 +3667,15 @@
 "kind": "method",
 "signature": "define pixel(self, x: Int, y: Int) -> Int {",
 "doc": "The colour (0xRRGGBB, opaque) of pixel (x, y) in what's been drawn \u2014 mostly for tests."
+}
+],
+"place": [
+{
+"package": "ui",
+"qualified": "Theme.place",
+"kind": "method",
+"signature": "define place(self, x: Int, y: Int, width: Int, height: Int) -> void {",
+"doc": "Take the box (x, y, width, height); containers place their children inside."
 }
 ],
 "platform": [
@@ -3913,6 +4200,13 @@
 "doc": "Executes a shell command and returns the OS exit status (0 = success).\n@example\nif sys.run(\"git status\") != 0 { print(\"not a repo\") }"
 },
 {
+"package": "ui",
+"qualified": "Theme.run",
+"kind": "method",
+"signature": "define run(self, fps: Int = 60) -> void {",
+"doc": "Run until the window closes, about `fps` frames a second."
+},
+{
 "package": "window",
 "qualified": "WindowError.run",
 "kind": "method",
@@ -3986,6 +4280,13 @@
 "kind": "define",
 "signature": "define select(message: String, options: List, default_idx: Int = 0) -> String {",
 "doc": "Pick one option from a numbered list. Renders:\n\n    Mode?\n      1) fast        [default]\n      2) thorough\n      3) debug\n    Choice (1-3, default 1): _\n\nReturns the selected option's text. `default_idx` is zero-based; out-\nof-range values fall back to the first option."
+},
+{
+"package": "ui",
+"qualified": "Theme.select",
+"kind": "method",
+"signature": "define select(self, i: Int) -> void {",
+"doc": "Select row `i` (clamped); runs `on_select` if it changed."
 }
 ],
 "select_index": [
@@ -4020,6 +4321,15 @@
 "kind": "define",
 "signature": "extern define send(fd: Int, data: String) -> Int",
 "doc": "Send `data` over socket `fd`. Returns the number of bytes sent (may be\nless than `data.length()` for partial sends)."
+}
+],
+"set": [
+{
+"package": "ui",
+"qualified": "Theme.set",
+"kind": "method",
+"signature": "define set(self, v: Int) -> void {",
+"doc": "Set the value (clamped to min..max); runs `on_change` if it changed."
 }
 ],
 "set_title": [
@@ -4368,6 +4678,15 @@
 "doc": "Standard output wrapped as a `File`. See `stdin()` for handle semantics."
 }
 ],
+"step": [
+{
+"package": "ui",
+"qualified": "Theme.step",
+"kind": "method",
+"signature": "define step(self) -> Bool {",
+"doc": "One frame: handle events, lay out, draw, present. False once the window is closed."
+}
+],
 "stop": [
 {
 "package": "net",
@@ -4704,6 +5023,15 @@
 "kind": "method",
 "signature": "define today() -> DateTime {",
 "doc": "The current local date+time. Synonym for `now()`."
+}
+],
+"toggle": [
+{
+"package": "ui",
+"qualified": "Theme.toggle",
+"kind": "method",
+"signature": "define toggle(self) -> void {",
+"doc": "Flip it, as a click would (runs `on_change`)."
 }
 ],
 "tomorrow": [

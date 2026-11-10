@@ -119,7 +119,7 @@ $(DRIVER): $(TARGET)
 # bump the version inline below and re-run.
 STDLIB_PACKAGES = \
 	argparse console crypto csv datetime debug encoding fs html io itertools \
-	math net process prompt random regex statistics sys test time toml typing url uuid window
+	math net process prompt random regex statistics sys test time toml typing ui url uuid window
 STDLIB_OWNER ?= AlexVachon
 STDLIB_TAG   ?= v1.0.0
 
@@ -157,6 +157,8 @@ STDLIB_TAG_fs ?= v1.2.0
 STDLIB_TAG_process ?= v1.0.1
 # window v1.0.0 is the initial release (runtime Window_*, SDL2 via dlopen, v7.20.0).
 STDLIB_TAG_window ?= v1.0.0
+# ui v1.0.0 is the initial release (pure Quirk on window; compiler v7.21.0).
+STDLIB_TAG_ui ?= v1.0.0
 
 # --- INSTALL / UNINSTALL --------------------------------------------------
 # Copy the freshly-built compiler + runtime into $(PREFIX) (default
@@ -197,6 +199,7 @@ bootstrap-stdlib:
 	        fs)     tag="$(STDLIB_TAG_fs)"     ;;                                 \
 	        process) tag="$(STDLIB_TAG_process)" ;;                               \
 	        window) tag="$(STDLIB_TAG_window)" ;;                                 \
+	        ui)     tag="$(STDLIB_TAG_ui)"     ;;                                 \
 	    esac;                                                                     \
 	    if [ -f "packages/$$pkg/index.quirk" ] &&                                 \
 	       [ "$$(cat packages/$$pkg/.version 2>/dev/null)" = "$$tag" ]; then      \

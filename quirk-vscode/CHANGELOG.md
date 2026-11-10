@@ -2,6 +2,12 @@
 
 All notable changes to the extension land here. Versioning follows SemVer; minor bumps for new features, patches for fixes.
 
+## [1.1.0] — 2026-11-10 — `ui`
+
+- Hovers and completions for the new `ui` widget package (compiler
+  7.21.0): `ui.App`, `Label`, `Button`, `Checkbox`, `TextInput`, `Slider`,
+  `ListView`, `Column`, `Row`, `Panel`, `Spacer`, themes.
+
 ## [1.0.0] — 2026-11-10 — on Open VSX
 
 The first stable release. From here, settings and command IDs only

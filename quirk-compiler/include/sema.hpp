@@ -131,7 +131,7 @@ class Sema {
                                                  const std::string& query,
                                                  size_t maxN = 3);
     void checkInitArgCount(const std::string& name, FunctionNode* init,
-                           int provided, int line, int col, const std::string& filePath);
+                           int provided, int line, int col, const std::string& filePath, const std::vector<std::string>& argNames = {});
     // Type-check each positional arg against the corresponding init param.
     // Catches things like `User(name, age_string, gender_string)` where
     // age/gender are declared `Int`/`Gender` — without this, the mismatch
@@ -140,7 +140,7 @@ class Sema {
     // either CallNode::Arg or ConstructorArg without templating.
     void checkInitArgTypes(const std::string& name, FunctionNode* init,
                            const std::vector<std::string>& argTypes,
-                           int line, int col, const std::string& filePath);
+                           int line, int col, const std::string& filePath, const std::vector<std::string>& argNames = {});
 
     // --- NEW: Per-Module Visibility Map ---
     std::map<std::string, VisibilityContext> moduleVisibility;
@@ -257,6 +257,7 @@ class Sema {
 
     std::string resolveVariable(const std::string& name);
     std::string resolveMember(const std::string& structName, const std::string& memberName);
+    std::string dynamicFieldType(const std::string& field);
 
     void checkFunction(FunctionNode* node);
     void checkVarDecl(VarDeclNode* node);

@@ -5,6 +5,40 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.21.0] — 2026-11-10 — `ui` widgets, closures and `not` fixed
+
+- **New stdlib package `ui`** (v1.0.0): widgets for `window`.
+  `ui.App(title, w, h)` holds a widget tree — `Label`, `Button`,
+  `Checkbox`, `TextInput`, `Slider`, `ListView` — laid out with `Column`,
+  `Row`, `Panel` and `Spacer` (padding, spacing, `expand` for free
+  space). Callbacks: `Button(on_click=fn() { ... })`, `on_change`,
+  `on_submit`, `on_select`. Mouse (with capture while a button is held),
+  keyboard to the focused widget, Tab / Shift+Tab focus, Enter / Space /
+  arrows, `ui.dark()` / `ui.light()` themes, `app.step()` / `dispatch()`
+  for custom loops and headless tests. Pure Quirk — subclass `ui.Widget`
+  for your own.
+- **`not` binds tighter than `and` / `or`**, as in Python: `not a or b`
+  is `(not a) or b`. It parsed as `not (a or b)` — **this changes the
+  result of such expressions**; `not x > 5` is still `not (x > 5)`.
+- **A lambda that assigns a variable of the enclosing function shares it**
+  (`clicks = clicks + 1` in a click handler), as closures do in
+  JavaScript / Swift. Without `nonlocal` the lambda changed a private
+  copy and the caller never saw it. A lambda's own `x := ...` stays its
+  own.
+- `x += ...` (and `-=`, `*=`, ...) inside a lambda did nothing at all —
+  the variable wasn't captured. Fixed, also with `nonlocal`.
+- `obj.handler()` where `handler` is a `Callable` *field* calls it (it
+  silently did nothing, `self.on_click()` included).
+- Calling an untyped value works — `for h in handlers { h() }` — and a
+  value that isn't a function raises `TypeError`. Lambdas now carry the
+  runtime type header.
+- Assigning a field on an untyped value works: `w.x = 5`, `w.x += 1`.
+- Named arguments to constructors: `App("t", 400, 300, headless=true)`
+  passed `true` as the 4th parameter. They now match `__init`'s
+  parameter names (unknown, repeated and missing ones are errors).
+- A subclass's `self.field = ...` for a field its parent declares no
+  longer adds a second, `Any`-typed copy of the field.
+
 ## [7.20.0] — 2026-11-10 — windows
 
 - **New stdlib package `window`** (v1.0.0): open windows and draw in

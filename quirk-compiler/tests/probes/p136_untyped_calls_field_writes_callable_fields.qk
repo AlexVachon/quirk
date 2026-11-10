@@ -1,0 +1,72 @@
+// p136 — v7.21.0 fixes (found building the `ui` widget library):
+//  1. Calling an untyped value: `for h in handlers { h() }`. Was "Unknown
+//     function 'h'". A value that isn't a function raises TypeError.
+//  2. Lambdas carry the runtime type header (they were GC_malloc'd raw),
+//     so an untyped one is recognised as a Callable.
+//  3. Assigning a field on an untyped value — `w.x = 5`, `w.x += 1` —
+//     dispatches on its runtime type ("member 'x' not found in 'Any'").
+//  4. `obj.handler()` where `handler` is a Callable field calls it. It
+//     silently did nothing (inside methods too: `self.on_click()`).
+
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+struct Button {
+    x: Int
+    label: String
+    on_click: Callable
+    define __init(self, label: String) -> void {
+        self.x = 0
+        self.label = label
+        self.on_click = null
+    }
+    define click(self) -> void {
+        if self.on_click != null { self.on_click() }
+    }
+}
+
+struct Slider {
+    x: Int
+    define __init(self) -> void { self.x = 100 }
+}
+
+hits := 0
+
+define main() -> void {
+    calls := []
+    handlers := [fn() { calls.append("a") }, fn() { calls.append("b") }]
+    for h in handlers { h() }
+    if calls.length() != 2 or calls[1] != "b" { fail("untyped call: " + calls.length().str()) }
+
+    caught := ""
+    try {
+        notfn := [5]
+        f := notfn[0]
+        f()
+    } catch (e: TypeError) {
+        caught = e.message
+    }
+    if not caught.contains("isn't a function") { fail("calling a non-function: " + caught) }
+
+    widgets := [Button("ok"), Slider()]
+    for w in widgets { w.x = w.x + 10 }
+    for w in widgets { w.x += 1 }
+    if widgets[0].x != 11 { fail("untyped field write (Button): " + widgets[0].x.str()) }
+    if widgets[1].x != 111 { fail("untyped field write (Slider): " + widgets[1].x.str()) }
+    widgets[0].label = "renamed"
+    if widgets[0].label != "renamed" { fail("untyped String field write") }
+    bad := false
+    try {
+        strs := ["text"]
+        strs[0].x = 1
+    } catch (TypeError) {
+        bad = true
+    }
+    if not bad { fail("field write on a value without the field") }
+
+    b := Button("go")
+    b.on_click = fn() { hits = hits + 1 }
+    b.click()
+    b.on_click()
+    if hits != 2 { fail("Callable field call: " + hits.str()) }
+    print("ok")
+}

@@ -1,0 +1,82 @@
+// p137 — v7.21.0 fixes (found building the `ui` widget library):
+//  1. `not` binds tighter than `and` / `or`: `not a or b` is `(not a) or b`
+//     (it parsed as `not (a or b)`), still looser than comparisons.
+//  2. Named arguments to constructors: `App("t", 1, headless=true)` was
+//     taken positionally (`true` landed in the 3rd parameter).
+//  3. A subclass's `self.x = ...` for a field its parent declares no longer
+//     adds a second, Any-typed field (it shadowed the parent's).
+//  4. A lambda assigning a captured local (`count = count + 1`) shares it
+//     with the enclosing function; it used to change a private copy.
+
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+struct Opts {
+    title: String
+    width: Int
+    dark: Bool
+    flag: Bool
+    define __init(self, title: String, width: Int = 100, dark: Bool = true, flag: Bool = false) -> void {
+        self.title = title
+        self.width = width
+        self.dark = dark
+        self.flag = flag
+    }
+}
+
+struct Base {
+    grow: Bool
+    define __init(self) -> void { self.grow = false }
+}
+struct Filler : Base {
+    size: Int
+    define __init(self, size: Int) -> void {
+        super().__init()
+        self.size = size
+        self.grow = size == 0
+    }
+}
+
+define run(cb: Callable) -> void { cb() }
+
+define counter() -> Int {
+    count := 0
+    run(fn() { count = count + 1 })
+    run(fn() { count += 10 })
+    return count
+}
+
+define shadowed() -> Int {
+    count := 5
+    run(fn() {
+        count := 100
+        count = count + 1
+    })
+    return count
+}
+
+define main() -> void {
+    a := true
+    b := false
+    if not (not a or not b) { fail("not a or not b") }
+    if not true or false { fail("not true or false") }
+    if not false and false { fail("not false and false") }
+    x := 3
+    if not (not x > 5) { fail("not x > 5 (comparison binds tighter)") }
+
+    o := Opts("t", flag=true)
+    if o.width != 100 or not o.dark or not o.flag { fail("named ctor arg skipping defaults") }
+    o2 := Opts(width=7, title="w")
+    if o2.title != "w" or o2.width != 7 { fail("named ctor args out of order") }
+
+    items := [Filler(5), Base()]
+    k := 0
+    for it in items {
+        if it.grow { k = k + 1 }
+    }
+    if k != 0 { fail("inherited Bool field read through an untyped value: " + k.str()) }
+    if not Filler(0).grow { fail("subclass init writes the parent's field") }
+
+    if counter() != 11 { fail("closure assignment shared: " + counter().str()) }
+    if shadowed() != 5 { fail("lambda's own := variable must not leak out") }
+    print("ok")
+}

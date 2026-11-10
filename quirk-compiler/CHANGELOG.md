@@ -5,6 +5,30 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.20.0] — 2026-11-10 — windows
+
+- **New stdlib package `window`** (v1.0.0): open windows and draw in
+  them. `window.open("Title", 640, 480)` returns a `Window`; each frame,
+  read `w.events()` (keys, typed text, mouse, wheel, resize, focus,
+  close), draw with `clear`, `rect`, `line`, `circle`, `point`, `text`
+  (built-in 8x16 font with Latin-1 accents, `scale=`) and `image` (BMP),
+  then `present()`. `window.run(w, frame, fps=60)` runs that loop for
+  you. Colours via `window.rgb` / `rgba` / `hex` and named ones; several
+  windows at once; `screenshot(path)` and `pixel(x, y)`; `headless=true`
+  for drawing without a display (tests, CI). Backed by SDL2, loaded only
+  when a window opens — so the runtime still has no new dependency and
+  programs without windows don't need SDL2 installed; without it,
+  `window.open` throws `WindowError` saying what to install.
+- **`module.Type` annotations work**: `define f(w: window.Window) ->
+  window.Window`. A parameter typed that way was silently untyped, and
+  such a return type didn't parse.
+- A method called on an untyped value now dispatches when the call leaves
+  trailing parameters to their defaults (it was rejected as "no type has
+  a method ... with N arguments").
+- `print(v)` of a struct-typed null prints `null` instead of crashing in
+  the struct's `__str`.
+- The runtime links `libdl` (for loading SDL2 on demand).
+
 ## [7.19.0] — 2026-11-10 — fs: walk, glob, temp files, copy
 
 - **`fs` v1.2.0** — the file system chores scripts and build tools need:

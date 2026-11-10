@@ -80,6 +80,15 @@
 "doc": ""
 }
 ],
+"Event": [
+{
+"package": "window",
+"qualified": "Event",
+"kind": "struct",
+"signature": "struct Event {",
+"doc": "Something that happened to a window. `kind` is one of:\n  \"close\"       \u2014 the close button (or Ctrl+C / quit); the window closes\n                  unless `keep_open` was set\n  \"key_down\" / \"key_up\" \u2014 `key` is the key's name in lower case: \"a\",\n                  \"escape\", \"return\", \"space\", \"left\", \"f1\", \"left_shift\"...;\n                  `repeat` is true for auto-repeat; `shift` / `ctrl` /\n                  `alt` / `meta` say which modifiers were held\n  \"text\"        \u2014 typed text (`text`), with the keyboard layout and\n                  accents applied \u2014 use this for text entry, not key_down\n  \"mouse_move\"  \u2014 `x`, `y`; `left` true while the left button is held\n  \"mouse_down\" / \"mouse_up\" \u2014 `x`, `y`, `button` (1 left, 2 middle,\n                  3 right), `clicks` (2 for a double click)\n  \"wheel\"       \u2014 `dx`, `dy` (positive = away from you / right)\n  \"resize\"      \u2014 new `width`, `height`\n  \"focus\" / \"blur\" \u2014 the window gained / lost keyboard focus"
+}
+],
 "Exception": [
 {
 "package": "typing",
@@ -141,6 +150,15 @@
 "kind": "struct",
 "signature": "struct ISerializable {",
 "doc": "Serialization interface for Quirk structs.\n\nInherit `ISerializable` and override `to_json()` to make any struct\nserializable \u2014 including as the `json:` argument to `net.http` requests.\n\n@example\nstruct User : ISerializable {\n    name: String\n    age: Int\n\n    define __init(self, name: String, age: Int) -> void {\n        self.name = name\n        self.age = age\n    }\n\n    define to_json(self) -> String {\n        return \"{\\\"name\\\":\\\"\" + self.name + \"\\\",\\\"age\\\":\" + self.age.str() + \"}\"\n    }\n}\n\nuser := User(\"Alice\", 30)\nres := http.post(\"http://api.example.com/users\", json: user)"
+}
+],
+"Image": [
+{
+"package": "window",
+"qualified": "Image",
+"kind": "struct",
+"signature": "struct Image {",
+"doc": "A BMP image loaded for one window (`Window.load_image`)."
 }
 ],
 "IndexError": [
@@ -546,6 +564,24 @@
 "kind": "struct",
 "signature": "struct WhereConditionError : RuntimeError {",
 "doc": "Raised when a function's `where` precondition is violated at runtime.\nInherits from RuntimeError.\n\n@example:\ndefine sqrt(x: Double) -> Double where x >= 0.0 {\n    return x\n}\n\ntry {\n    sqrt(-1.0)\n} catch (e: WhereConditionError) {\n    print(\"Precondition failed: \" + e.message)\n}"
+}
+],
+"Window": [
+{
+"package": "window",
+"qualified": "Window",
+"kind": "struct",
+"signature": "struct Window {",
+"doc": "An open window (from `window.open`). Draw into it, then `present()` to\nshow the frame; drawing starts from what the last frame left unless you\n`clear` first.\n  `keep_open`  \u2014 set true to handle \"close\" events yourself (e.g. \"save\n                 changes?\") instead of closing at once"
+}
+],
+"WindowError": [
+{
+"package": "window",
+"qualified": "WindowError",
+"kind": "struct",
+"signature": "struct WindowError : RuntimeError {",
+"doc": "Thrown when a window can't be opened (no SDL2, no display, ...)."
 }
 ],
 "ZeroDivisionError": [
@@ -1356,6 +1392,15 @@
 "doc": "Concatenate two Lists in order.\n@example chain([1, 2], [3, 4])   // [1, 2, 3, 4]"
 }
 ],
+"channels": [
+{
+"package": "window",
+"qualified": "WindowError.channels",
+"kind": "method",
+"signature": "define channels(color: Int) -> List {",
+"doc": "The colour's red, green, blue and alpha parts (0-255)."
+}
+],
 "chdir_raw": [
 {
 "package": "fs",
@@ -1388,6 +1433,15 @@
 "kind": "define",
 "signature": "extern define choice(items: List) -> Any",
 "doc": "Pick a random element from a non-empty list. Returns null if empty."
+}
+],
+"circle": [
+{
+"package": "window",
+"qualified": "WindowError.circle",
+"kind": "method",
+"signature": "define circle(self, cx: Int, cy: Int, radius: Int, color: Int, fill: Bool = true) -> void {",
+"doc": "A circle centred on (cx, cy); `fill=false` draws the outline."
 }
 ],
 "clamp": [
@@ -1443,6 +1497,13 @@
 "kind": "method",
 "signature": "define clear(self) -> void",
 "doc": "Removes all elements."
+},
+{
+"package": "window",
+"qualified": "WindowError.clear",
+"kind": "method",
+"signature": "define clear(self, color: Int = black()) -> void {",
+"doc": "Fill the whole window with `color`."
 }
 ],
 "clear_line": [
@@ -1475,6 +1536,13 @@
 "kind": "define",
 "signature": "extern define close(fd: Int) -> void",
 "doc": "Close socket `fd`, releasing the OS resource."
+},
+{
+"package": "window",
+"qualified": "WindowError.close",
+"kind": "method",
+"signature": "define close(self) -> void {",
+"doc": "Close the window. Further drawing is ignored."
 }
 ],
 "close_stdin": [
@@ -1879,6 +1947,15 @@
 "doc": "Converts to `Option` of the error: `Err(e)` \u2192 `Some(e)`; `Ok(_)` \u2192 `None`."
 }
 ],
+"events": [
+{
+"package": "window",
+"qualified": "WindowError.events",
+"kind": "method",
+"signature": "define events(self) -> List {",
+"doc": "Every event since the last call (an empty List if none). Doesn't wait."
+}
+],
 "exc_info": [
 {
 "package": "sys",
@@ -2081,6 +2158,15 @@
 "doc": "Format `epoch` with a strftime-style spec. Empty spec falls back to\n`\"%Y-%m-%dT%H:%M:%S\"`."
 }
 ],
+"free": [
+{
+"package": "window",
+"qualified": "WindowError.free",
+"kind": "method",
+"signature": "define free(self) -> void {",
+"doc": "Release the image's memory. Drawing it afterwards does nothing."
+}
+],
 "from_iso": [
 {
 "package": "datetime",
@@ -2230,6 +2316,24 @@
 "doc": "Returns `true` if the value is in the set.\n@param val: Any\n@returns: Bool"
 }
 ],
+"height": [
+{
+"package": "window",
+"qualified": "WindowError.height",
+"kind": "method",
+"signature": "define height(self) -> Int {",
+"doc": "Drawable height in pixels."
+}
+],
+"hex": [
+{
+"package": "window",
+"qualified": "WindowError.hex",
+"kind": "method",
+"signature": "define hex(code: String) -> Int {",
+"doc": "A colour from `\"#rrggbb\"`, `\"#rrggbbaa\"`, `\"#rgb\"` (with or without `#`).\n@throws ValueError for anything else.\n@example window.hex(\"#ff8800\")"
+}
+],
 "hmac_sha256": [
 {
 "package": "crypto",
@@ -2264,6 +2368,15 @@
 "kind": "define",
 "signature": "extern define hypot(x: Double, y: Double) -> Double",
 "doc": "Euclidean distance from origin: `sqrt(x*x + y*y)` without intermediate overflow.\n@example math.hypot(3.0, 4.0)  // 5.0"
+}
+],
+"image": [
+{
+"package": "window",
+"qualified": "WindowError.image",
+"kind": "method",
+"signature": "define image(self, img: Image, x: Int, y: Int, width: Int = -1, height: Int = -1) -> void {",
+"doc": "Draw `img` with its top-left at (x, y), scaled to width x height (-1 = its own size)."
 }
 ],
 "implementation": [
@@ -2458,6 +2571,15 @@
 "doc": "Returns true when the result is `Ok`."
 }
 ],
+"is_open": [
+{
+"package": "window",
+"qualified": "WindowError.is_open",
+"kind": "method",
+"signature": "define is_open(self) -> Bool {",
+"doc": "True until the window is closed (by `close()` or its close button)."
+}
+],
 "is_some": [
 {
 "package": "typing",
@@ -2546,6 +2668,15 @@
 "doc": "Parse the response body as JSON. Equivalent to\n`encoding.json.parse(self.text)`. Returns the decoded value\n(Map / List / String / Int / Double / Bool / null) typed as Any.\n\nThrows ValueError when the body isn't valid JSON. Status code is\nnot consulted \u2014 callers wanting a strict \"2xx + valid JSON\" path\nshould check `self.ok` first.\n\nAnnotate the receiving variable with the concrete type you expect\n(`data: Map := resp.json()`) \u2014 bare `data :=` keeps the binding as\nAny, which downstream `.get` / `.length` calls won't pick the\nright method for.\n\n@example\nresp := http.get(\"https://api.example.com/user/42\")\nif resp.ok {\n    data: Map := resp.json()\n    print(data.get(\"name\"))\n}"
 }
 ],
+"key_down": [
+{
+"package": "window",
+"qualified": "WindowError.key_down",
+"kind": "method",
+"signature": "define key_down(self, key: String) -> Bool {",
+"doc": "True while `key` (a key name, as in `Event.key`) is held down."
+}
+],
 "keys": [
 {
 "package": "typing",
@@ -2617,6 +2748,15 @@
 "doc": "Returns the number of key-value pairs.\n@returns: Int"
 }
 ],
+"line": [
+{
+"package": "window",
+"qualified": "WindowError.line",
+"kind": "method",
+"signature": "define line(self, x1: Int, y1: Int, x2: Int, y2: Int, color: Int) -> void {",
+"doc": "A straight line from (x1, y1) to (x2, y2)."
+}
+],
 "lines": [
 {
 "package": "process",
@@ -2672,6 +2812,15 @@
 "kind": "define",
 "signature": "define load(file: File) -> Any {",
 "doc": "Read the entire contents of `file` and parse as JSON.\n\n@example\nwith File(\"config.json\", \"r\") as f {\n    config: Map = json.load(f)\n    print(config.get(\"host\"))\n}"
+}
+],
+"load_image": [
+{
+"package": "window",
+"qualified": "WindowError.load_image",
+"kind": "method",
+"signature": "define load_image(self, path: String) -> Image {",
+"doc": "Load a BMP image to draw in this window.\n@throws WindowError if it can't be read."
 }
 ],
 "loads": [
@@ -2945,6 +3094,15 @@
 "doc": "Full English month name for `month` (1-12)."
 }
 ],
+"mouse": [
+{
+"package": "window",
+"qualified": "WindowError.mouse",
+"kind": "method",
+"signature": "define mouse(self) -> Tuple {",
+"doc": "The mouse position (x, y) from the latest event."
+}
+],
 "mtime": [
 {
 "package": "fs",
@@ -3015,6 +3173,15 @@
 "kind": "method",
 "signature": "define ok_or(self, err: Any) -> Result {",
 "doc": "Converts to `Result`: `Some(v)` \u2192 `Ok(v)`; `None` \u2192 `Err(err)`."
+}
+],
+"open": [
+{
+"package": "window",
+"qualified": "WindowError.open",
+"kind": "method",
+"signature": "define open(title: String, width: Int, height: Int, resizable: Bool = false, hidden: Bool = false, vsync: Bool = true, headless: Bool = false) -> Window {",
+"doc": "Open a window `width` x `height` pixels, centred on the screen.\n@param resizable let the user resize it (\"resize\" events tell you)\n@param hidden    don't show it (drawing and `screenshot` still work)\n@param vsync     make `present` wait for the display's refresh\n@param headless  no display at all (CI, servers): an off-screen window\n                 for drawing and screenshots. Applies from the first\n                 window opened.\n@throws WindowError when it can't be opened (no SDL2, no display...).\n@example w := window.open(\"Paint\", 800, 600, resizable=true)"
 }
 ],
 "option": [
@@ -3215,6 +3382,15 @@
 "doc": "This process's id."
 }
 ],
+"pixel": [
+{
+"package": "window",
+"qualified": "WindowError.pixel",
+"kind": "method",
+"signature": "define pixel(self, x: Int, y: Int) -> Int {",
+"doc": "The colour (0xRRGGBB, opaque) of pixel (x, y) in what's been drawn \u2014 mostly for tests."
+}
+],
 "platform": [
 {
 "package": "sys",
@@ -3222,6 +3398,15 @@
 "kind": "define",
 "signature": "extern define platform() -> String",
 "doc": "Platform identifier, e.g. `\"linux\"`, `\"darwin\"`, `\"win32\"`."
+}
+],
+"point": [
+{
+"package": "window",
+"qualified": "WindowError.point",
+"kind": "method",
+"signature": "define point(self, x: Int, y: Int, color: Int) -> void {",
+"doc": "One pixel."
 }
 ],
 "pop": [
@@ -3301,6 +3486,15 @@
 "kind": "define",
 "signature": "extern define prefix() -> String",
 "doc": "Installation prefix \u2014 directory containing `bin/quirk` and `libs/`."
+}
+],
+"present": [
+{
+"package": "window",
+"qualified": "WindowError.present",
+"kind": "method",
+"signature": "define present(self) -> void {",
+"doc": "Show everything drawn since the last `present`."
 }
 ],
 "print_help": [
@@ -3529,6 +3723,15 @@
 "doc": "The whole contents of file `path`.\n@throws FileNotFoundError if it doesn't exist; IOError if it can't be read.\n@example config := fs.read_text(\"config.toml\")"
 }
 ],
+"rect": [
+{
+"package": "window",
+"qualified": "WindowError.rect",
+"kind": "method",
+"signature": "define rect(self, x: Int, y: Int, width: Int, height: Int, color: Int, fill: Bool = true) -> void {",
+"doc": "A rectangle with its top-left corner at (x, y); `fill=false` draws the outline."
+}
+],
 "recv": [
 {
 "package": "net",
@@ -3658,6 +3861,24 @@
 "doc": "Returns a fresh List with elements in reverse order. Does not\nmutate `self`.\n\n@example [1, 2, 3].reverse()    // [3, 2, 1]"
 }
 ],
+"rgb": [
+{
+"package": "window",
+"qualified": "WindowError.rgb",
+"kind": "method",
+"signature": "define rgb(r: Int, g: Int, b: Int) -> Int {",
+"doc": "An opaque colour from red, green, blue (0-255 each)."
+}
+],
+"rgba": [
+{
+"package": "window",
+"qualified": "WindowError.rgba",
+"kind": "method",
+"signature": "define rgba(r: Int, g: Int, b: Int, a: Int) -> Int {",
+"doc": "A colour with transparency: `a` 0 (invisible) to 255 (opaque)."
+}
+],
 "rmdir_raw": [
 {
 "package": "fs",
@@ -3690,6 +3911,13 @@
 "kind": "define",
 "signature": "define run(command: String) -> Int {",
 "doc": "Executes a shell command and returns the OS exit status (0 = success).\n@example\nif sys.run(\"git status\") != 0 { print(\"not a repo\") }"
+},
+{
+"package": "window",
+"qualified": "WindowError.run",
+"kind": "method",
+"signature": "define run(w: Window, frame: Callable, fps: Int = 60) -> void {",
+"doc": "Run window `w` until it closes: each frame, call `frame(w, events)` with\nthat frame's events, then `present`, then wait so frames come about\n`fps` times a second. `frame` draws the whole frame (start with\n`w.clear(...)`).\n@example\ndefine frame(w: window.Window, events: List) -> void {\n    w.clear(window.black())\n    w.text(\"Frame at \" + window.ticks().str() + \"ms\", 10, 10)\n}\nwindow.run(window.open(\"Demo\", 400, 300), frame)"
 }
 ],
 "run_all": [
@@ -3708,6 +3936,15 @@
 "kind": "define",
 "signature": "define sample(items: List, k: Int) -> List {",
 "doc": "Return `k` distinct elements drawn from `items`. Throws if `k > items.length()`.\nImplemented as a partial Fisher-Yates over a copy so the caller's list\nisn't disturbed. O(k) work in the average case.\n\n@example\ndeck := [1,2,3,4,5,6,7,8,9,10]\nhand := random.sample(deck, 5)"
+}
+],
+"screenshot": [
+{
+"package": "window",
+"qualified": "WindowError.screenshot",
+"kind": "method",
+"signature": "define screenshot(self, path: String) -> void {",
+"doc": "Save what's been drawn as a BMP image.\n@throws WindowError on failure."
 }
 ],
 "second": [
@@ -3783,6 +4020,15 @@
 "kind": "define",
 "signature": "extern define send(fd: Int, data: String) -> Int",
 "doc": "Send `data` over socket `fd`. Returns the number of bytes sent (may be\nless than `data.length()` for partial sends)."
+}
+],
+"set_title": [
+{
+"package": "window",
+"qualified": "WindowError.set_title",
+"kind": "method",
+"signature": "define set_title(self, title: String) -> void {",
+"doc": "Change the title bar text."
 }
 ],
 "setrecursionlimit": [
@@ -3955,6 +4201,13 @@
 "kind": "define",
 "signature": "extern define sleep(ms: Int) -> void",
 "doc": "Suspend the current thread for `ms` milliseconds. Negative values are no-ops."
+},
+{
+"package": "window",
+"qualified": "WindowError.sleep",
+"kind": "method",
+"signature": "extern define sleep(ms: Int) -> void",
+"doc": "Pause for `ms` milliseconds (other tasks run meanwhile)."
 }
 ],
 "socket": [
@@ -4280,6 +4533,33 @@
 "kind": "define",
 "signature": "extern define test_raw(handle: Any, s: String) -> Bool",
 "doc": "True iff the compiled pattern matches anywhere in `s`."
+}
+],
+"text": [
+{
+"package": "window",
+"qualified": "WindowError.text",
+"kind": "method",
+"signature": "define text(self, text: String, x: Int, y: Int, color: Int = white(), scale: Int = 1) -> Int {",
+"doc": "Draw `text` with its top-left corner at (x, y) in the built-in font\n(8x16 pixels per character at `scale=1`; \"\\n\" starts a new line).\nReturns the width drawn, in pixels."
+}
+],
+"text_width": [
+{
+"package": "window",
+"qualified": "text_width",
+"kind": "define",
+"signature": "extern define text_width(text: String, scale: Int = 1) -> Int",
+"doc": "Width in pixels of `text` drawn with `Window.text` at `scale` (its\nlongest line). For centring and layout.\n@example x := (w.width() - window.text_width(\"Paused\", 2)) / 2"
+}
+],
+"ticks": [
+{
+"package": "window",
+"qualified": "ticks",
+"kind": "define",
+"signature": "extern define ticks() -> Int",
+"doc": "Milliseconds on a steady clock (for timing frames and animation)."
 }
 ],
 "time": [
@@ -4643,6 +4923,15 @@
 "doc": "Wait for the program to finish; returns its exit code (`-N`: killed by signal N)."
 }
 ],
+"wait_event": [
+{
+"package": "window",
+"qualified": "WindowError.wait_event",
+"kind": "method",
+"signature": "define wait_event(self, timeout_ms: Int = -1) -> Event {",
+"doc": "Wait for the next event, up to `timeout_ms` (-1: until one comes);\nnull on timeout or once the window is closed. Other tasks run while\nit waits. For programs that only redraw when something happens."
+}
+],
 "wait_for": [
 {
 "package": "process",
@@ -4668,6 +4957,15 @@
 "kind": "define",
 "signature": "extern define weekday(epoch: Int, utc: Int) -> Int",
 "doc": "Day of week, 0-6 (0=Sunday, 6=Saturday)."
+}
+],
+"width": [
+{
+"package": "window",
+"qualified": "WindowError.width",
+"kind": "method",
+"signature": "define width(self) -> Int {",
+"doc": "Drawable width in pixels."
 }
 ],
 "write": [

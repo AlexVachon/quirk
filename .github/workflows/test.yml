@@ -65,7 +65,7 @@ jobs:
           apt-get install -y --no-install-recommends \
             build-essential gcc g++ make pkg-config \
             llvm-14 libllvm14 llvm-14-dev clang-14 \
-            libgc-dev libssl-dev
+            libgc-dev libssl-dev libsdl2-2.0-0
 
       - uses: actions/checkout@v4
 
@@ -274,7 +274,7 @@ jobs:
         # below. coreutils + gnu-sed: the probe and rehearsal scripts use
         # `timeout` and GNU sed escapes, which macOS doesn't ship.
         run: |
-          brew install llvm@14 bdw-gc openssl@3 coreutils gnu-sed
+          brew install llvm@14 bdw-gc openssl@3 coreutils gnu-sed sdl2
           echo "$(brew --prefix coreutils)/libexec/gnubin" >> "$GITHUB_PATH"
           echo "$(brew --prefix gnu-sed)/libexec/gnubin"   >> "$GITHUB_PATH"
 
@@ -361,7 +361,7 @@ jobs:
           apt-get install -y --no-install-recommends \
             build-essential gcc g++ make pkg-config \
             llvm-14 libllvm14 llvm-14-dev clang-14 \
-            libgc-dev libssl-dev libubsan1
+            libgc-dev libssl-dev libubsan1 libsdl2-2.0-0
 
       - uses: actions/checkout@v4
 

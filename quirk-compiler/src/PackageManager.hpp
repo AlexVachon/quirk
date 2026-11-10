@@ -70,7 +70,7 @@ static std::string self_binary();
 
 namespace qpm {
 
-constexpr const char* QUIRK_VERSION = "7.19.0";
+constexpr const char* QUIRK_VERSION = "7.20.0";
 
 namespace fs = std::filesystem;
 
@@ -1676,6 +1676,7 @@ static const std::map<std::string, std::string>& stdlib_registry() {
         {"typing",     "github.com/AlexVachon/quirk-typing"},
         {"url",        "github.com/AlexVachon/quirk-url"},
         {"uuid",       "github.com/AlexVachon/quirk-uuid"},
+        {"window",     "github.com/AlexVachon/quirk-window"},
     };
     return reg;
 }

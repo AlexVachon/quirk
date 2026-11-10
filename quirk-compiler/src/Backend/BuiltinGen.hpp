@@ -669,6 +669,18 @@ class BuiltinGen {
                         }
                     }
                 } else {
+                    // A null struct value prints "null" (its __str would
+                    // dereference it).
+                    Function* curFn = Builder.GetInsertBlock()->getParent();
+                    BasicBlock* nullBB = BasicBlock::Create(Context, "print_null", curFn);
+                    BasicBlock* objBB  = BasicBlock::Create(Context, "print_obj", curFn);
+                    BasicBlock* doneBB = BasicBlock::Create(Context, "print_done", curFn);
+                    Builder.CreateCondBr(Builder.CreateIsNull(val), nullBB, objBB);
+                    Builder.SetInsertPoint(nullBB);
+                    Builder.CreateCall(printfFunc, {Builder.CreateGlobalStringPtr("%s\n"),
+                                                    Builder.CreateGlobalStringPtr("null")});
+                    Builder.CreateBr(doneBB);
+                    Builder.SetInsertPoint(objBB);
                     Value* strObj = structGen->generateStrCall(val, structName);
                     if (strObj) {
                         if (strObj->getType()->isPointerTy() &&
@@ -704,6 +716,8 @@ class BuiltinGen {
                         Value* nameVal = Builder.CreateGlobalStringPtr(structName);
                         Builder.CreateCall(printfFunc, {fmt, nameVal, val});
                     }
+                    if (!Builder.GetInsertBlock()->getTerminator()) Builder.CreateBr(doneBB);
+                    Builder.SetInsertPoint(doneBB);
                 }
             } else if (type->isIntegerTy()) {
                 if (type->getIntegerBitWidth() == 1) {

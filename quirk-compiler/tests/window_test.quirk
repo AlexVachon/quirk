@@ -1,0 +1,185 @@
+// window v1.0.0, headless (SDL's dummy video driver — no display needed).
+// Needs SDL2 installed; every test is skipped (passes) when it isn't.
+use window
+use fs
+use test
+
+bg := window.rgb(10, 20, 30)
+
+define open(title: String, width: Int, height: Int) -> window.Window {
+    return window.open(title, width, height, headless=true)
+}
+
+// ───── colours ─────
+define test_colours() -> void {
+    test.assert_eq(window.rgb(255, 136, 0), window.hex("#ff8800"))
+    test.assert_eq(window.hex("#f80"), window.hex("ff8800"))
+    test.assert_eq(window.channels(window.rgba(1, 2, 3, 4)), [1, 2, 3, 4])
+    test.assert_eq(window.channels(window.hex("#11223380")), [17, 34, 51, 128])
+    test.assert_eq(window.channels(window.rgb(300, -5, 7)), [255, 0, 7, 255])
+    caught := false
+    try {
+        window.hex("nope")
+    } catch (e: ValueError) {
+        caught = true
+    }
+    test.assert_true(caught)
+}
+
+define test_text_width() -> void {
+    test.assert_eq(window.text_width("abc"), 24)
+    test.assert_eq(window.text_width("abc", 2), 48)
+    test.assert_eq(window.text_width("ab\nlonger"), 48)
+    test.assert_eq(window.text_width("é"), 8)
+}
+
+// ───── drawing ─────
+define test_open_and_size() -> void {
+    if not window.available() { return }
+    w := open("size", 120, 80)
+    test.assert_true(w.is_open())
+    test.assert_eq(w.width(), 120)
+    test.assert_eq(w.height(), 80)
+    test.assert_eq(w.str(), "Window(\"size\", 120x80)")
+    w.close()
+    test.assert_false(w.is_open())
+}
+
+define test_shapes() -> void {
+    if not window.available() { return }
+    w := open("shapes", 200, 100)
+    w.clear(bg)
+    w.rect(10, 10, 20, 20, window.rgb(255, 0, 0))
+    w.rect(50, 10, 20, 20, window.rgb(0, 0, 255), fill=false)
+    w.circle(100, 50, 10, window.rgb(0, 255, 0))
+    w.line(0, 99, 199, 99, window.white())
+    w.point(199, 0, window.rgb(1, 2, 3))
+    test.assert_eq(w.pixel(0, 0), 0x0a141e)
+    test.assert_eq(w.pixel(15, 15), 0xff0000)
+    test.assert_eq(w.pixel(50, 15), 0x0000ff)
+    test.assert_eq(w.pixel(60, 20), 0x0a141e)
+    test.assert_eq(w.pixel(100, 50), 0x00ff00)
+    test.assert_eq(w.pixel(100, 41), 0x00ff00)
+    test.assert_eq(w.pixel(100, 38), 0x0a141e)
+    test.assert_eq(w.pixel(120, 99), 0xffffff)
+    test.assert_eq(w.pixel(199, 0), 0x010203)
+    w.close()
+}
+
+define test_transparency_blends() -> void {
+    if not window.available() { return }
+    w := open("alpha", 20, 20)
+    w.clear(window.rgb(0, 0, 0))
+    w.rect(0, 0, 20, 20, window.rgba(255, 255, 255, 128))
+    c := window.channels(w.pixel(5, 5))
+    test.assert_true(c[0] > 100 and c[0] < 160)
+    w.close()
+}
+
+define test_text_draws_in_its_cell() -> void {
+    if not window.available() { return }
+    w := open("text", 100, 40)
+    w.clear(bg)
+    test.assert_eq(w.text("Hi", 10, 10, window.rgb(0, 0, 255)), 16)
+    inside := 0
+    outside := 0
+    for y in 0..40 {
+        for x in 0..100 {
+            if w.pixel(x, y) == 0x0000ff {
+                if x >= 10 and x < 26 and y >= 10 and y < 26 { inside = inside + 1 } else { outside = outside + 1 }
+            }
+        }
+    }
+    test.assert_true(inside > 20)
+    test.assert_eq(outside, 0)
+    w.close()
+}
+
+define test_two_windows_are_separate() -> void {
+    if not window.available() { return }
+    a := open("a", 30, 30)
+    b := open("b", 30, 30)
+    a.clear(window.rgb(255, 0, 0))
+    b.clear(window.rgb(0, 255, 0))
+    test.assert_eq(a.pixel(5, 5), 0xff0000)
+    test.assert_eq(b.pixel(5, 5), 0x00ff00)
+    b.close()
+    test.assert_true(a.is_open())
+    a.close()
+}
+
+define test_screenshot_and_image() -> void {
+    if not window.available() { return }
+    dir := fs.temp_dir()
+    w := open("shot", 40, 30)
+    w.clear(window.rgb(0, 128, 255))
+    w.rect(0, 0, 10, 10, window.yellow())
+    path := fs.join(dir, "shot.bmp")
+    w.screenshot(path)
+    test.assert_true(fs.size(path) > 40 * 30 * 3)
+    img := w.load_image(path)
+    test.assert_eq(img.width, 40)
+    test.assert_eq(img.height, 30)
+    w.clear(window.black())
+    w.image(img, 0, 0)
+    test.assert_eq(w.pixel(20, 20), 0x0080ff)
+    test.assert_eq(w.pixel(5, 5), window.channels(window.yellow())[0] * 65536 + window.channels(window.yellow())[1] * 256 + window.channels(window.yellow())[2])
+    w.image(img, 0, 0, 80, 60)
+    img.free()
+    w.close()
+    fs.remove_tree(dir)
+}
+
+define test_load_missing_image_throws() -> void {
+    if not window.available() { return }
+    w := open("img", 10, 10)
+    caught := false
+    try {
+        w.load_image("/nonexistent/x.bmp")
+    } catch (e: WindowError) {
+        caught = true
+    }
+    test.assert_true(caught)
+    w.close()
+}
+
+// ───── events / loop ─────
+define test_events_and_wait() -> void {
+    if not window.available() { return }
+    w := open("events", 10, 10)
+    // Drain the startup events (focus...), which can arrive a little late.
+    tries := 0
+    while w.wait_event(50) != null and tries < 20 { tries = tries + 1 }
+    t0 := window.ticks()
+    e := w.wait_event(50)
+    test.assert_true(e == null)
+    test.assert_true(window.ticks() - t0 >= 40)
+    w.close()
+    test.assert_eq(w.events().length(), 0)
+}
+
+frames := 0
+
+define _frame(w: window.Window, events: List) -> void {
+    frames = frames + 1
+    w.clear(window.blue())
+    w.circle(5, 5, 3, window.white())
+    if frames == 5 { w.close() }
+}
+
+define test_run_calls_frame_until_closed() -> void {
+    if not window.available() { return }
+    frames = 0
+    w := open("run", 20, 20)
+    t0 := window.ticks()
+    window.run(w, _frame, fps=100)
+    test.assert_eq(frames, 5)
+    test.assert_false(w.is_open())
+    test.assert_true(window.ticks() - t0 >= 30)
+}
+
+define test_sleep() -> void {
+    t0 := window.ticks()
+    window.sleep(30)
+    test.assert_true(window.ticks() - t0 >= 29)
+}

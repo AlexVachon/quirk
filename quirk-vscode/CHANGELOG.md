@@ -2,6 +2,12 @@
 
 All notable changes to the extension land here. Versioning follows SemVer; minor bumps for new features, patches for fixes.
 
+## [0.8.4] — 2026-11-10 — `window`
+
+- Hovers and completions for the new `window` stdlib package (compiler
+  7.20.0): `window.open`, `run`, colours, and the `Window` / `Event` /
+  `Image` members.
+
 ## [0.8.3] — 2026-11-10 — new `fs` functions
 
 - Hovers and completions for `fs` v1.2.0 (compiler 7.19.0): `walk`,

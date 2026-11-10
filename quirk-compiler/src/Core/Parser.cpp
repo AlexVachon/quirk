@@ -2599,6 +2599,14 @@ bool Parser::isGenericArgList() const {
 
 std::string Parser::parseTypeString() {
     std::string t = advance().value; // base type identifier
+    // `module.Type` (e.g. `w: window.Window`): struct names are global, so
+    // the type is the part after the last dot.
+    if (t.find('.') != std::string::npos && t.back() != '.') t = t.substr(t.rfind('.') + 1);
+    while (peek().type == TokenType::DOT && pos + 1 < (int)tokens.size() &&
+           tokens[pos + 1].type == TokenType::IDENTIFIER) {
+        advance();                 // '.'
+        t = advance().value;       // keep the last component
+    }
     if (peek().type == TokenType::QUESTION) { advance(); t += "?"; }
     // Generic args: List[T]  or  Map[K, V]  — only when [ contains only identifiers
     if (peek().type == TokenType::LBRACKET && isGenericArgList()) {

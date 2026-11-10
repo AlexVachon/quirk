@@ -1,0 +1,45 @@
+// p135 — three v7.20.0 fixes:
+//  1. `module.Type` in an annotation — `p: process.Process`,
+//     `-> process.RunResult` — names the struct. A parameter typed that
+//     way was silently untyped, and a return type didn't parse.
+//  2. A method called on an untyped value with some arguments left to
+//     their defaults (`x.communicate()`) dispatches; it was rejected as
+//     "no type has a method ... with 0 arguments".
+//  3. `print(v)` where `v` is a struct-typed null prints "null" instead
+//     of crashing in its __str.
+use process
+
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+define finish(p: process.Process) -> process.RunResult {
+    return p.communicate(input="hi")
+}
+
+define untyped_finish(p: Any) -> String {
+    r := p.communicate()
+    return r.stdout
+}
+
+struct Box {
+    v: Int
+    define __init(self, v: Int) -> void { self.v = v }
+    define __str(self) -> String { return "Box(" + self.v.str() + ")" }
+}
+
+define maybe(ok: Bool) -> Box {
+    if ok { return Box(1) }
+    return null
+}
+
+define main() -> void {
+    r := finish(process.spawn(["cat"]))
+    if r.stdout != "hi" { fail("qualified param / return type: " + r.stdout) }
+    if not r.ok { fail("RunResult fields through a qualified return type") }
+
+    out := untyped_finish(process.spawn(["echo", "x"], stdin="null"))
+    if out != "x\n" { fail("untyped call with defaults: '" + out + "'") }
+
+    print(maybe(true))
+    print(maybe(false))
+    print("ok")
+}

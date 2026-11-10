@@ -1889,6 +1889,19 @@ class LLVMCodegen {
     // type over every struct with a method `m` taking that many arguments.
     // The result is boxed (Sema typed the call Any). nullptr: no struct has
     // such a method (the caller keeps its old String treatment).
+    // The AST of method `f` when every parameter after the first `given`
+    // (not counting `self`) has a default value; else nullptr.
+    FunctionNode* dynDefaults(Function* f, size_t given) {
+        auto it = functionDeclarations.find(f->getName().str());
+        if (it == functionDeclarations.end()) return nullptr;
+        FunctionNode* node = it->second;
+        size_t off = (!node->parameters.empty() && node->parameters[0].name == "self") ? 1 : 0;
+        if (node->parameters.size() - off != f->arg_size() - 1) return nullptr;
+        for (size_t i = given + off; i < node->parameters.size(); i++)
+            if (!node->parameters[i].defaultValue) return nullptr;
+        return node;
+    }
+
     Value* emitDynamicDispatch(const std::string& method, Value* obj, CallNode* call) {
         std::vector<std::pair<std::string, Function*>> impls;
         for (const auto& [name, st] : StructTypes) {
@@ -1903,7 +1916,9 @@ class LLVMCodegen {
                 return nullptr;
             };
             if (Function* f = find(name))
-                if (f->arg_size() == call->args.size() + 1) impls.push_back({name, f});
+                if (f->arg_size() == call->args.size() + 1 ||
+                    (f->arg_size() > call->args.size() + 1 && dynDefaults(f, call->args.size()) != nullptr))
+                    impls.push_back({name, f});
         }
         if (impls.empty()) return nullptr;
         std::sort(impls.begin(), impls.end());
@@ -1931,6 +1946,17 @@ class LLVMCodegen {
                 Type* want = f->getFunctionType()->getParamType(i + 1);
                 if (v && v->getType() != want) v = quirk::coerceToType(v, want, Context, Builder, TheModule.get());
                 args.push_back(v);
+            }
+            // Trailing parameters the call left out: their default values.
+            if (args.size() < f->arg_size()) {
+                FunctionNode* node = dynDefaults(f, rawArgs.size());
+                size_t off = (!node->parameters.empty() && node->parameters[0].name == "self") ? 1 : 0;
+                for (size_t i = args.size(); i < f->arg_size(); i++) {
+                    Value* v = handleExpression(node->parameters[i - 1 + off].defaultValue.get());
+                    Type* want = f->getFunctionType()->getParamType(i);
+                    if (v && v->getType() != want) v = quirk::coerceToType(v, want, Context, Builder, TheModule.get());
+                    args.push_back(v);
+                }
             }
             Value* r = Builder.CreateCall(f, args);
             Value* boxed = f->getReturnType()->isVoidTy()

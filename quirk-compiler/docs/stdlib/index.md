@@ -31,3 +31,4 @@
 - [`typing`](typing.md)
 - [`url`](url.md)
 - [`uuid`](uuid.md)
+- [`window`](window.md)

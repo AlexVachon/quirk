@@ -65,7 +65,7 @@ for f in $SRCS; do
 done
 
 echo "== runtime (C, unity build)" | tee -a "$OUT/summary.txt"
-probe "$CC" src/Runtime/runtime.c -O0 -Isrc/Runtime -I"$LIB/include" -D_CRT_SECURE_NO_WARNINGS
+probe "$CC" src/Runtime/runtime.c -O0 -Isrc/Runtime -Isrc/third_party/musl_regex -I"$LIB/include" -D_CRT_SECURE_NO_WARNINGS
 
 echo "== third party" | tee -a "$OUT/summary.txt"
 # linenoise.c needs termios; Windows builds linenoise_win32.c instead.

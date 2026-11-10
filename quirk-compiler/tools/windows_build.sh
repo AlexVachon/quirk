@@ -36,7 +36,7 @@ echo "gc=$GC_LIB pthread=$PTHREAD_LIB ssl=$SSL_LIB crypto=$CRYPTO_LIB" | tee -a 
 step "runtime: compile"
 # The shared CRT (msvcrt.lib -> ucrtbase.dll), like quirk.exe's /MD:
 # one heap and one stdout between the two.
-clang -c src/Runtime/runtime.c -O2 -o obj/win/runtime.o -Isrc/Runtime -I"$CLIB/include" \
+clang -c src/Runtime/runtime.c -O2 -o obj/win/runtime.o -Isrc/Runtime -Isrc/third_party/musl_regex -I"$CLIB/include" \
     -D_CRT_SECURE_NO_WARNINGS -DGC_DLL -D_MT -D_DLL -Xclang --dependent-lib=msvcrt >> "$LOG" 2>&1
 # (No GC_WIN32_PTHREADS: conda's gc has no pthread redirects; gc.dll
 # registers every thread itself via DllMain, pthreads-win32's included.)

@@ -332,6 +332,8 @@ String* Fs_realpath(String* path) {
     if (!p) return make_String("");
 #ifdef _WIN32
     char buf[1024];
+    // _fullpath doesn't check the path exists; realpath does.
+    if (GetFileAttributesA(p) == INVALID_FILE_ATTRIBUTES) return make_String("");
     if (!_fullpath(buf, p, sizeof buf)) return make_String("");
     return make_String(buf);
 #else

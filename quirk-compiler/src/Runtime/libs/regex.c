@@ -2,23 +2,14 @@
 #include <stdlib.h>
 #include <string.h>
 #ifdef _WIN32
-// No POSIX regex on Windows yet (a PCRE2 backend is Stage 4 of
-// docs/WINDOWS-PORT.md): every entry point raises.
-#include <gc.h>
-#include "../types.h"
-extern void quirk_throw_exception(const char* type_name, const char* message);
-static void regex__unsupported(void) {
-    quirk_throw_exception("RuntimeError", "regex isn't supported on Windows yet");
-}
-void* Regex_compile_raw(String* pattern, String* flags) { (void)pattern; (void)flags; regex__unsupported(); return NULL; }
-int Regex_test_raw(void* h, String* s) { (void)h; (void)s; regex__unsupported(); return 0; }
-int64_t Regex_find_at(void* h, String* s, int64_t from) { (void)h; (void)s; (void)from; regex__unsupported(); return -1; }
-int64_t Regex_group_count(void* h) { (void)h; regex__unsupported(); return 0; }
-int64_t Regex_group_start(void* h, int64_t i) { (void)h; (void)i; regex__unsupported(); return -1; }
-int64_t Regex_group_end(void* h, int64_t i) { (void)h; (void)i; regex__unsupported(); return -1; }
-String* Regex_replace_all_raw(void* h, String* s, String* r) { (void)h; (void)r; regex__unsupported(); return s; }
-List* Regex_split_raw(void* h, String* s) { (void)h; (void)s; regex__unsupported(); return NULL; }
-#else
+// Windows has no <regex.h>: compile the vendored musl regex (TRE, POSIX
+// ERE — the same semantics as Linux's). Its directory is on the include
+// path in the Windows build, for its own `#include <regex.h>`.
+#include "../../third_party/musl_regex/regcomp.c"
+#include "../../third_party/musl_regex/regexec.c"
+#include "../../third_party/musl_regex/regerror.c"
+#include "../../third_party/musl_regex/tre-mem.c"
+#endif
 #include <regex.h>
 #include <gc.h>
 #include "../types.h"
@@ -284,4 +275,3 @@ List* Regex_split_raw(void* handle, String* s) {
     }
     return result;
 }
-#endif  // !_WIN32

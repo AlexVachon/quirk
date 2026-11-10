@@ -202,6 +202,9 @@ String* Sys_executable() {
 #if defined(__linux__)
     ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
     if (n > 0) { buf[n] = '\0'; return make_String(buf); }
+#elif defined(_WIN32)
+    DWORD n = GetModuleFileNameA(NULL, buf, sizeof(buf));
+    if (n > 0 && n < sizeof(buf)) return make_String(buf);
 #elif defined(__APPLE__)
     uint32_t size = sizeof(buf);
     if (_NSGetExecutablePath(buf, &size) == 0) {

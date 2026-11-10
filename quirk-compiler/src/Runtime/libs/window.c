@@ -12,6 +12,9 @@
 #else
     // windows.h's CreateWindow macro would rename the SDL table's member.
     #undef CreateWindow
+    // SDL2.dll through the Win32 loader, with the same calls as dlopen.
+    #define dlopen(name, flags) ((void*)LoadLibraryA(name))
+    #define dlsym(lib, sym)     ((void*)GetProcAddress((HMODULE)(lib), (sym)))
 #endif
 
 #include "window_font.h"
@@ -143,13 +146,12 @@ static void qwin_set_err(const char* what) {
 static int qsdl_load(void) {
     if (qsdl.loaded) return qsdl.loaded == 1;
     qsdl.loaded = -1;
-#ifdef _WIN32
-    snprintf(qwin_err, sizeof qwin_err, "windows aren't supported on Windows yet");
-    return 0;
-#else
+    {
     const char* names[] = {
         getenv("QUIRK_SDL2"),
-#ifdef __APPLE__
+#if defined(_WIN32)
+        "SDL2.dll",
+#elif defined(__APPLE__)
         "libSDL2-2.0.0.dylib", "/opt/homebrew/lib/libSDL2-2.0.0.dylib",
         "/usr/local/lib/libSDL2-2.0.0.dylib", "libSDL2.dylib",
 #else
@@ -160,7 +162,9 @@ static int qsdl_load(void) {
         if (names[i] && *names[i]) qsdl.lib = dlopen(names[i], RTLD_NOW | RTLD_LOCAL);
     if (!qsdl.lib) {
         snprintf(qwin_err, sizeof qwin_err,
-#ifdef __APPLE__
+#if defined(_WIN32)
+                 "SDL2 isn't installed (put SDL2.dll next to quirk.exe or on PATH)"
+#elif defined(__APPLE__)
                  "SDL2 isn't installed (brew install sdl2)"
 #else
                  "SDL2 isn't installed (e.g. sudo apt install libsdl2-2.0-0)"
@@ -200,7 +204,7 @@ static int qsdl_load(void) {
     #undef QLOAD
     qsdl.loaded = 1;
     return 1;
-#endif
+    }
 }
 
 // ----- windows -----
@@ -709,6 +713,8 @@ void Window_sleep(int64_t ms) {
 #ifndef _WIN32
     struct timespec ts = { (time_t)(ms / 1000), (long)(ms % 1000) * 1000000L };
     while (nanosleep(&ts, &ts) != 0 && errno == EINTR) {}
+#else
+    Sleep((DWORD)ms);
 #endif
     quirk_gil_acquire();
 }

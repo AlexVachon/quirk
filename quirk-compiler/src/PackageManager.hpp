@@ -1820,7 +1820,7 @@ static std::vector<std::string> discover_tags(const std::string& gitUrl, bool fo
     // Use cached list if fresh enough (24h). Simple `stat`-based check.
     if (!forceRefresh && !cache.empty() && fs::exists(cache)) {
         struct stat st;
-        if (::stat(cache.c_str(), &st) == 0) {
+        if (::stat(cache.string().c_str(), &st) == 0) {
             auto now = ::time(nullptr);
             if (now - st.st_mtime < 24 * 60 * 60) {
                 std::ifstream in(cache);
@@ -3134,7 +3134,7 @@ static int stdout_cols() {
 
 static bool file_younger_than(const fs::path& p, long secs) {
     struct stat st;
-    if (::stat(p.c_str(), &st) != 0) return false;
+    if (::stat(p.string().c_str(), &st) != 0) return false;
     return ::time(nullptr) - st.st_mtime < secs;
 }
 
@@ -6979,7 +6979,7 @@ static int fetch_advisories(bool forceRefresh, bool quiet = false) {
     if (cache.empty()) return 1;
     if (!forceRefresh && fs::exists(cache)) {
         struct stat st;
-        if (::stat(cache.c_str(), &st) == 0
+        if (::stat(cache.string().c_str(), &st) == 0
             && ::time(nullptr) - st.st_mtime < 24 * 60 * 60) {
             return 0;  // cache is fresh
         }

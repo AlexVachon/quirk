@@ -21,8 +21,12 @@
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
+#ifndef NOGDI
+#define NOGDI           // wingdi.h's ERROR macro breaks `enum { OK, WARN, ERROR }`
+#endif
 #include <winsock2.h>
 #include <windows.h>
+#undef ERROR
 #include <io.h>
 #include <process.h>
 #include <direct.h>

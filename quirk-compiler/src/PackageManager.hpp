@@ -192,32 +192,17 @@ struct Result {
 };
 
 // Run curl with `args` (no shell), capturing what it writes to stdout.
-inline int run_curl(const std::vector<std::string>& args, std::string* out, pid_t* bg = nullptr,
-                    int* outFd = nullptr) {
-    int pipefd[2];
-    if (pipe(pipefd) != 0) return -1;
-    pid_t pid = fork();
-    if (pid < 0) { close(pipefd[0]); close(pipefd[1]); return -1; }
-    if (pid == 0) {
-        dup2(pipefd[1], STDOUT_FILENO);
-        int devnull = open("/dev/null", O_WRONLY);
-        if (devnull >= 0) dup2(devnull, STDERR_FILENO);
-        close(pipefd[0]); close(pipefd[1]);
-        std::vector<char*> argv;
-        argv.push_back(const_cast<char*>("curl"));
-        for (auto& a : args) argv.push_back(const_cast<char*>(a.c_str()));
-        argv.push_back(nullptr);
-        execvp("curl", argv.data());
-        _exit(127);
-    }
-    close(pipefd[1]);
-    if (bg) { *bg = pid; *outFd = pipefd[0]; return 0; }
-    char buf[4096]; ssize_t n;
-    while ((n = read(pipefd[0], buf, sizeof(buf))) > 0) if (out) out->append(buf, n);
-    close(pipefd[0]);
-    int status = 0;
-    waitpid(pid, &status, 0);
-    return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+// With `bg`, returns at once (0 = started) and leaves the running curl
+// in *bg for the caller to read and wait for.
+inline int run_curl(const std::vector<std::string>& args, std::string* out, qplat::Child* bg = nullptr) {
+    std::vector<std::string> argv = {"curl"};
+    argv.insert(argv.end(), args.begin(), args.end());
+    qplat::Child c;
+    if (!qplat::spawn_capture(argv, c)) return -1;
+    if (bg) { *bg = c; return 0; }
+    std::string text = qplat::read_all(c);
+    if (out) out->append(text);
+    return qplat::wait_exit(c);
 }
 
 // Content-Length of the final (2xx) response after redirects, or -1
@@ -280,10 +265,8 @@ inline void draw_bar(uintmax_t got, long long total, double secs) {
 // column 13 (under a step line's text). Items are (plain text for width,
 // text to print).
 inline std::string wrap_list(const std::vector<std::pair<std::string, std::string>>& items) {
-    int width = 80;
-    struct winsize ws;
-    if (::isatty(STDOUT_FILENO) && ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_col > 40)
-        width = ws.ws_col;
+    int width = qplat::stdout_cols(80);
+    if (width <= 40) width = 80;
     std::string out;
     int col = 13;
     for (size_t i = 0; i < items.size(); i++) {
@@ -436,7 +419,7 @@ inline std::vector<Result> download_many(std::vector<Item> items, bool stepLine 
         if (http == 0) return items[i].url.rfind("file://", 0) != 0;   // never got a response
         return http == 408 || http == 429 || (http >= 500 && http <= 504);
     };
-    struct Proc { pid_t pid; int fd; size_t idx; };
+    struct Proc { qplat::Child child; size_t idx; };
     std::vector<Proc> running;
     std::vector<std::pair<size_t, double>> pending;   // (item, not before this time)
     for (size_t i = 0; i < items.size(); i++) pending.push_back({i, 0});
@@ -447,23 +430,20 @@ inline std::vector<Result> download_many(std::vector<Item> items, bool stepLine 
             if (pending[k].second > elapsed()) { k++; continue; }
             size_t i = pending[k].first;
             pending.erase(pending.begin() + k);
-            Proc p{0, -1, i};
+            Proc p{qplat::Child{}, i};
             if (run_curl({"-sL", "--connect-timeout", "15", "-o", items[i].out.string(),
-                          "-w", "%{http_code}", items[i].url}, nullptr, &p.pid, &p.fd) != 0)
+                          "-w", "%{http_code}", items[i].url}, nullptr, &p.child) != 0)
                 finish(i, 0, -1);
             else
                 running.push_back(p);
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
         for (size_t k = 0; k < running.size();) {
-            int status = 0;
-            if (waitpid(running[k].pid, &status, WNOHANG) == 0) { k++; continue; }
-            std::string code; char buf[64]; ssize_t n;
-            while ((n = read(running[k].fd, buf, sizeof(buf))) > 0) code.append(buf, n);
-            close(running[k].fd);
+            int rc = -1;
+            if (!qplat::try_wait(running[k].child, &rc)) { k++; continue; }
+            std::string code = qplat::read_all(running[k].child);
             size_t i = running[k].idx;
             long http = std::atol(code.c_str());
-            int rc = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
             running.erase(running.begin() + k);
             if (transient(i, http, rc) && attempts[i] < 2) {
                 attempts[i]++;
@@ -2903,7 +2883,7 @@ static int cmd_sync(const std::vector<std::string>& args) {
     bool hadSavedHome = false;
     if (!venvDir.empty() && !alreadyActive) {
         if (const char* h = std::getenv("QUIRK_HOME")) { savedHome = h; hadSavedHome = true; }
-        setenv("QUIRK_HOME", venvDir.c_str(), 1);
+        setenv("QUIRK_HOME", venvDir.string().c_str(), 1);
     }
 
     bool hasLock = fs::exists("quirk.lock");
@@ -3126,10 +3106,8 @@ static int cmd_list() {
 // asked for again until the cache expires.
 
 static int stdout_cols() {
-    struct winsize ws;
-    if (::isatty(STDOUT_FILENO) && ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_col > 40)
-        return ws.ws_col;
-    return 100;
+    int c = qplat::stdout_cols(100);
+    return c > 40 ? c : 100;
 }
 
 static bool file_younger_than(const fs::path& p, long secs) {
@@ -3459,6 +3437,11 @@ static std::string self_binary() {
         if (realpath(buf, resolved)) return resolved;
         return buf;
     }
+    return "quirk";
+#elif defined(_WIN32)
+    char buf[4096];
+    DWORD n = GetModuleFileNameA(nullptr, buf, sizeof(buf));
+    if (n > 0 && n < sizeof(buf)) return std::string(buf, n);
     return "quirk";
 #else
     // Linux (and WSL, which is Linux): /proc/self/exe.
@@ -5343,9 +5326,16 @@ static const char* QUIRK_RELEASE_DOWNLOAD_URL =
 // Release tarball suffix for this machine ("linux-x86_64", "darwin-arm64"),
 // or "" when no prebuilt compiler ships for it (`why` says so).
 inline std::string quirk_release_platform(std::string* why) {
+#ifdef _WIN32
+    std::string os = "Windows", arch = "x86_64";
+    SYSTEM_INFO si;
+    GetNativeSystemInfo(&si);
+    if (si.wProcessorArchitecture == PROCESSOR_ARCHITECTURE_ARM64) arch = "arm64";
+#else
     struct utsname u;
     if (uname(&u) != 0) { *why = "couldn't detect the platform"; return ""; }
     std::string os = u.sysname, arch = u.machine;
+#endif
     if (os == "Linux" && (arch == "x86_64" || arch == "amd64")) return "linux-x86_64";
     if (os == "Darwin" && (arch == "arm64" || arch == "aarch64")) return "darwin-arm64";
     *why = "no prebuilt compiler for " + os + " " + arch
@@ -6027,7 +6017,9 @@ static int cmd_auth(const std::vector<std::string>& args) {
         fs::path dir = af.parent_path();
         std::error_code ec;
         fs::create_directories(dir, ec);
+#ifndef _WIN32
         ::chmod(dir.c_str(), 0700);
+#endif
 
         // Build a tiny ISO-8601 timestamp without bringing in <chrono> heavyweight.
         std::time_t now = std::time(nullptr);
@@ -6042,7 +6034,9 @@ static int cmd_auth(const std::vector<std::string>& args) {
             << "  \"obtained_at\":  \"" << ts << "\"\n"
             << "}\n";
         out.close();
-        ::chmod(af.c_str(), 0600);
+#ifndef _WIN32
+        ::chmod(af.c_str(), 0600);     // Windows: the user profile is already private
+#endif
 
         log::ok("Logged in as " + (username.empty() ? std::string("?") : username));
         std::cout << "  Token saved to " << af.string() << " (chmod 600).\n";
@@ -6215,8 +6209,8 @@ static int cmd_compiler(const std::vector<std::string>& args) {
         // Download + verify + unpack once into a staging dir, then copy
         // into the target, so a failure halfway can't leave a
         // half-installed toolchain.
-        char tmpl[] = "/tmp/quirk-update-XXXXXX";
-        char* tdir = mkdtemp(tmpl);
+        std::string tdirStr = qplat::make_temp_dir("quirk-update-");
+        const char* tdir = tdirStr.empty() ? nullptr : tdirStr.c_str();
         if (!tdir) {
             log::err("compiler " + sub + ": couldn't create a staging dir");
             return 1;
@@ -6706,8 +6700,8 @@ static int publish_to_registry(const std::string& alias, const std::string& repo
         return 1;
     }
 
-    char tmpl[] = "/tmp/quirk-register-XXXXXX";
-    char* tdir = mkdtemp(tmpl);
+    std::string tdirStr = qplat::make_temp_dir("quirk-register-");
+    const char* tdir = tdirStr.empty() ? nullptr : tdirStr.c_str();
     if (!tdir) { log::err("register: couldn't create a temp dir"); return 1; }
     const fs::path work = tdir, clone = work / "registry";
     std::error_code ec;

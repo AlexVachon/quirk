@@ -993,20 +993,7 @@ static void spawnBackgroundAotBuild(const std::string& input, const std::string&
     if (fs::exists(bin, ec) || fs::exists(bin.string() + ".failed", ec)) return;
     std::string self = qpm::self_binary();
     std::string inputAbs = fs::absolute(input, ec).string();
-    pid_t pid = fork();
-    if (pid < 0) return;
-    if (pid == 0) {
-        if (fork() != 0) _exit(0);      // the grandchild builds; the child exits
-        setsid();
-        int devnull = open("/dev/null", O_RDWR);
-        if (devnull >= 0) { dup2(devnull, 0); dup2(devnull, 1); dup2(devnull, 2); }
-        if (nice(10) == -1) { /* best effort */ }
-        std::string opt = "-O" + std::to_string(optLevel);
-        execl(self.c_str(), self.c_str(), "--build", opt.c_str(), inputAbs.c_str(), (char*)nullptr);
-        _exit(127);
-    }
-    int st = 0;
-    waitpid(pid, &st, 0);               // the child exits at once
+    qplat::spawn_detached({self, "--build", "-O" + std::to_string(optLevel), inputAbs});
 }
 
 // `execv` the cached binary, forwarding the script's argv. Returns
@@ -1115,40 +1102,16 @@ static int runJITModule(std::unique_ptr<llvm::Module> module,
     // typing/collections/list.quirk — exhausts. Running on a
     // larger stack via pthread sidesteps the issue without
     // making the regression on already-flat code worse.
-    struct ThreadArgs {
-        int (*fn)(int, char**);
-        int argc;
-        char** argv;
-        int result;
-    };
-    ThreadArgs ta{mainFn, (int)scriptArgv.size(), scriptArgv.data(), 0};
-
-    pthread_attr_t attr;
-    pthread_attr_init(&attr);
-    pthread_attr_setstacksize(&attr, 64 * 1024 * 1024);
-
-    pthread_t worker;
-    int trc = pthread_create(&worker, &attr,
-        +[](void* arg) -> void* {
-            auto* t = static_cast<ThreadArgs*>(arg);
-            t->result = t->fn(t->argc, t->argv);
-            return nullptr;
-        }, &ta);
-    pthread_attr_destroy(&attr);
-    if (trc != 0) {
-        // Fall back to direct call on the main thread if the
-        // worker spawn failed (unlikely on Linux).
-        ta.result = mainFn(ta.argc, ta.argv);
-    } else {
-        pthread_join(worker, nullptr);
-    }
+    // (POSIX: a pthread with a 64 MB stack; Windows: CreateThread.)
+    int programResult = qplat::run_on_big_stack(mainFn, (int)scriptArgv.size(),
+                                                scriptArgv.data(), 64 * 1024 * 1024);
     // Forward the program's exit code to the shell verbatim. A
     // nonzero return from `main` is a program-level signal, NOT a
     // compiler error — the driver used to shout `Error: Program
     // exited with code N` on any nonzero, which conflated normal
     // program semantics with compilation failure. The user can read
     // the exit code via `$?` if they need it.
-    return ta.result;
+    return programResult;
 }
 
 // ==========================================================

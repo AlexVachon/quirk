@@ -411,6 +411,15 @@ static std::vector<std::string>& getSearchPaths() {
         }
 
         if (!envHome) {
+            // The install the running binary came from: <root>/bin/quirk
+            // next to <root>/packages/ (install.sh / install.ps1 with a
+            // custom --dir / -Dir, an unpacked release tarball). Same
+            // directory as ~/.quirk/packages/ for a default install.
+            std::string exe = qpm::self_binary();
+            std::error_code ec;
+            fs::path rootPkgs = fs::path(exe).parent_path().parent_path() / "packages";
+            if (!exe.empty() && exe != "quirk" && fs::is_directory(rootPkgs, ec))
+                p.push_back(rootPkgs.string() + "/");
             p.push_back("/usr/local/lib/quirk/packages/");
             p.push_back("/usr/local/lib/quirk/");
         }

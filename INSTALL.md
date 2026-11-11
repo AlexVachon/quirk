@@ -33,7 +33,8 @@ curl -fsSL https://raw.githubusercontent.com/AlexVachon/quirk/main/install.sh | 
 If you don't pass `--with-extension`, the installer just prints the link to grab the `.vsix` manually. `--install-extension` still works as a legacy alias.
 
 Other platforms (macOS, ARM): build from source — see below. **Windows:**
-use WSL — see [Windows (WSL)](#windows-wsl).
+a native build (experimental) — see [Windows (native)](#windows-native) —
+or WSL, see [Windows (WSL)](#windows-wsl).
 
 ---
 
@@ -75,8 +76,45 @@ export QUIRK_HOME="$(pwd)"
 export PATH="$QUIRK_HOME/bin:$PATH"
 ```
 
-**Windows:** use WSL — see [Windows (WSL)](#windows-wsl). A native port
-is in progress ([docs/WINDOWS-PORT.md](quirk-compiler/docs/WINDOWS-PORT.md)).
+**Windows:** see [Windows (native)](#windows-native) or
+[Windows (WSL)](#windows-wsl).
+
+---
+
+## Windows (native)
+
+**Experimental**, from 7.25.0 (Windows 10 1803+ / Windows 11, x86_64).
+In PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/AlexVachon/quirk/main/install.ps1 | iex
+```
+
+It installs into `%USERPROFILE%\.quirk` and adds `%USERPROFILE%\.quirk\bin`
+to your user PATH. Open a new terminal, then `quirk --version`. With
+options, download the script first:
+
+```powershell
+irm https://raw.githubusercontent.com/AlexVachon/quirk/main/install.ps1 -OutFile install.ps1
+.\install.ps1 -Dir C:\tools\quirk -NoModifyPath -WithExtension
+```
+
+What works: running programs (the JIT), the REPL, the stdlib, the package
+manager, `quirk test`, venvs (`.venv\bin\activate.bat` in cmd,
+`. .venv\bin\Activate.ps1` in PowerShell), `window` / `ui`, and
+`quirk compiler update`.
+
+Building executables (`quirk -o app.exe`, and the background build cache
+that makes repeated runs start faster) needs a linker plus the Windows SDK
+libraries: install **Visual Studio Build Tools** ("Desktop development
+with C++") and run quirk from a *Developer PowerShell*, or put LLVM's
+`lld-link` on PATH. Without one, programs still run, through the JIT. An
+`.exe` built with `-o` finds `runtime.dll` through PATH, so keep quirk's
+`bin` on PATH (or copy the DLLs from it next to the `.exe`).
+
+Status, the build-from-source steps and what's left:
+[docs/WINDOWS-PORT.md](quirk-compiler/docs/WINDOWS-PORT.md). If something
+doesn't work natively, WSL (below) is the fully supported route.
 
 ---
 

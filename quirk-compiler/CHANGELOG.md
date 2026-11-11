@@ -5,6 +5,26 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.25.0] — 2026-11-11 — Windows release (experimental)
+
+- **Prebuilt Windows build** (x86_64, experimental): install with
+  `irm https://raw.githubusercontent.com/AlexVachon/quirk/main/install.ps1 | iex`
+  (INSTALL.md → Windows (native)). The release now carries
+  `quirk-<ver>-windows-x86_64.tar.gz` with `quirk.exe`, `runtime.dll` and
+  the DLLs they need.
+- On Windows: the package manager (`new`, `install`, `test`, `deps`,
+  `show`, `search`, `compiler update`), building executables (`-o`,
+  `--build`, the background build cache — needs Visual Studio Build Tools
+  or `lld-link`), venvs from cmd and PowerShell (`activate.bat`,
+  `Activate.ps1`), and a REPL with line editing and saved history.
+- **`quirk install <name>` works on a fresh machine** — it fetches the
+  package index when the name isn't in the local copy (it used to fail
+  with "not a known package" until something else had fetched it).
+- A release unpacked anywhere finds its stdlib without `QUIRK_HOME`
+  (`<root>/bin/quirk` next to `<root>/packages/`).
+- Temporary IR files go in the system temp directory (`$TMPDIR`), not
+  always `/tmp`.
+
 ## [7.24.0] — 2026-11-10 — native Windows (experimental), `sys` gaps, `eval` imports
 
 - **Quirk builds and runs natively on Windows** — from source, experimental

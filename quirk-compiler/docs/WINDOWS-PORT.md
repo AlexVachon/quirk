@@ -3,8 +3,8 @@
 Status: **builds from source; experimental.** Stages 1–4 done
 (2026-11-10): the compiler and runtime build with MSVC / clang on
 `windows-latest`, and the test suite passes there (281 / 282 — the last
-one waits on `quirk-process` v1.0.2). No Windows release yet (Stage 5). Until it's done, use Quirk on Windows
-through WSL — see [INSTALL.md → Windows (WSL)](../../INSTALL.md#windows-wsl).
+one waits on `quirk-process` v1.0.2). First Windows release: 7.25.0
+(experimental; [INSTALL.md → Windows (native)](../../INSTALL.md#windows-native)). WSL remains the fully supported route — see [INSTALL.md → Windows (WSL)](../../INSTALL.md#windows-wsl).
 
 Work happens on the `windows-probe` branch. Every change is behind
 `#ifdef _WIN32` (or Windows-only files), so Linux and macOS builds are
@@ -68,9 +68,19 @@ Runtime (C): 35 errors —
      using the JIT. A cached `.exe` runs as a child with quirk's `bin` dir
      on PATH (no `exec` on Windows); `-o` output finds `runtime.dll`
      through PATH.
-   - venv `activate` for `cmd` / PowerShell; REPL history.
-   - Windows build in `release.yml`, `install.ps1`; a Windows job in
-     `test.yml`.
+   - ✅ venvs: `activate.bat` / `deactivate.bat` / `Activate.ps1` (and
+     `bin/activate` exports a `C:/` QUIRK_HOME under Git Bash); a venv
+     copies `quirk.exe` plus the DLLs beside it.
+   - ✅ REPL: a console line editor (`linenoise_win32.c`: arrows, Home /
+     End, Ctrl-A/E/K/U/L, history saved across sessions).
+   - ✅ Release: `windows-x86_64` job in `release.yml` (continue-on-error
+     for now); `tools/package_release.sh` bundles `quirk.exe`,
+     `runtime.dll` / `.lib` and the non-system DLLs they import;
+     `install.ps1`; the probe installs the package with `install.ps1` and
+     runs it on a bare PATH. `compiler update` knows `windows-x86_64` and
+     sets in-use `.exe` / `.dll` files aside as `.old`.
+   - A Windows job in `test.yml` that fails the build (the probe
+     workflow never does).
 
 ## What changed for Windows (so far)
 

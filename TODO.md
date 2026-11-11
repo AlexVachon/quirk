@@ -5,12 +5,11 @@ into a release; this list is for things that need a plan.
 
 ## 1. Native Windows port — release (Stage 5)
 
-Builds from source and passes the test suite on Windows (7.24.0). Left:
-a Windows release build + `install.ps1`, AOT linking, the package
-manager's `tar` / `git` steps, REPL history, a Windows CI job. See
-[quirk-compiler/docs/WINDOWS-PORT.md](quirk-compiler/docs/WINDOWS-PORT.md)
-for findings, the toolchain and the stage list. Windows users use WSL
-meanwhile (INSTALL.md).
+First Windows release in 7.25.0 (experimental): `install.ps1`, package
+manager, AOT, venvs, REPL. Left: a Windows job in `test.yml` that fails
+the build; drop `continue-on-error` from the release job after a couple
+of clean releases. See
+[quirk-compiler/docs/WINDOWS-PORT.md](quirk-compiler/docs/WINDOWS-PORT.md).
 
 ## 2. `ui` follow-ups
 

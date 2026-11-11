@@ -55,8 +55,9 @@ windows-*)
             [ -f "$d/$1" ] && { echo "$d/$1"; return; }
             # case-insensitive match (imports say KERNEL32.dll, files say kernel32.dll)
             local hit; hit=$(ls "$d" 2>/dev/null | grep -ix "$1" | head -1)
-            [ -n "$hit" ] && { echo "$d/$hit"; return; }
+            [ -n "$hit" ] && { echo "$d/$hit"; return 0; }
         done
+        return 0   # not found: prints nothing (set -e would end the script on a 1)
     }
     queue=("$stage/$pkg/bin/quirk.exe" "$stage/$pkg/bin/runtime.dll")
     for extra in SDL2.dll vcruntime140.dll vcruntime140_1.dll msvcp140.dll; do

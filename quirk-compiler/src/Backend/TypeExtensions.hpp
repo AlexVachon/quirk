@@ -107,6 +107,7 @@ private:
                             strSelf = Builder.CreateBitCast(v, PointerType::getUnqual(structTypes->at(cur)));
                     }
                 }
+                strFunc = structGen->virtualStr(name, strFunc);   // subclass __str
                 if (strFunc) {
                     Value* strObj = Builder.CreateCall(strFunc, {strSelf});
                     if (strObj->getType()->isPointerTy() &&

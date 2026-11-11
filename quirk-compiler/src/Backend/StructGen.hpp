@@ -124,8 +124,63 @@ class StructGen {
         return Builder.CreateCall(strFunc, {castedSelf}, "str_res");
     }
 
-    // The `__str` a struct (or its nearest ancestor) defines, or nullptr.
+    // `__str` for a value whose static type is `structName`: the static
+    // one, or — when subclasses define their own — a dispatcher on the
+    // object's __type_id (so print / interpolation / .str() of a Base-typed
+    // value holding a Leaf use Leaf's __str).
     Function* findStrFunction(const std::string& structName) {
+        return virtualStr(structName, findStaticStrFunction(structName));
+    }
+
+    // `staticFn` (the __str resolved for static type `structName`), or a
+    // `<structName>___str__vdispatch(self)` with the same signature that
+    // switches on __type_id to each descendant's own __str.
+    Function* virtualStr(const std::string& structName, Function* staticFn) {
+        if (!staticFn || !isVtableEligible(structName) || !structHierarchy) return staticFn;
+        if (staticFn->arg_size() != 1) return staticFn;
+        std::vector<std::pair<int, Function*>> cases;
+        for (const auto& [name, id] : typeIdMap) {
+            if (name == structName || !inheritsFrom(name, structName)) continue;
+            Function* f = findStaticStrFunction(name);
+            if (f && f != staticFn && f->arg_size() == 1) cases.push_back({id, f});
+        }
+        if (cases.empty()) return staticFn;
+        std::string thunkName = structName + "___str__vdispatch";
+        if (Function* existing = TheModule->getFunction(thunkName)) return existing;
+
+        LLVMContext& C = TheModule->getContext();
+        FunctionType* ft = staticFn->getFunctionType();
+        Function* th = Function::Create(ft, Function::InternalLinkage, thunkName, TheModule);
+        IRBuilderBase::InsertPointGuard guard(Builder);
+        BasicBlock* entry = BasicBlock::Create(C, "entry", th);
+        BasicBlock* dflt = BasicBlock::Create(C, "static", th);
+        Builder.SetInsertPoint(entry);
+        Value* self = th->getArg(0);
+        Value* tid = Builder.CreateLoad(Type::getInt32Ty(C),
+            Builder.CreateBitCast(self, PointerType::getUnqual(Type::getInt32Ty(C))), "tid");
+        SwitchInst* sw = Builder.CreateSwitch(tid, dflt, (unsigned)cases.size());
+        Type* retTy = ft->getReturnType();
+        for (const auto& [id, f] : cases) {
+            BasicBlock* bb = BasicBlock::Create(C, "t" + std::to_string(id), th);
+            sw->addCase(ConstantInt::get(Type::getInt32Ty(C), id), bb);
+            Builder.SetInsertPoint(bb);
+            Value* arg = self;
+            Type* want = f->getFunctionType()->getParamType(0);
+            if (arg->getType() != want) arg = Builder.CreateBitCast(arg, want);
+            Value* r = Builder.CreateCall(f, {arg});
+            if (r->getType() != retTy) {
+                if (r->getType()->isPointerTy() && retTy->isPointerTy()) r = Builder.CreateBitCast(r, retTy);
+                else { Builder.CreateBr(dflt); continue; }
+            }
+            Builder.CreateRet(r);
+        }
+        Builder.SetInsertPoint(dflt);
+        Builder.CreateRet(Builder.CreateCall(staticFn, {self}));
+        return th;
+    }
+
+    // The `__str` a struct (or its nearest ancestor) defines, or nullptr.
+    Function* findStaticStrFunction(const std::string& structName) {
         std::string funcName = structName + "___str";
         Function* strFunc = TheModule->getFunction(funcName);
         if (!strFunc) {

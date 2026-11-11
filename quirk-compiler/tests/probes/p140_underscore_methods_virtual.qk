@@ -1,0 +1,57 @@
+// p140 — v7.27.0: methods whose names start with `_`, and __str, dispatch virtually.
+// `_hook` mangles to `Cls__hook`, which the override map filed under
+// `__hook` while calls looked up `_hook` — so a subclass override was
+// silently ignored whenever the base class called `self._hook()`.
+
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+struct Base {
+    define __init(self) -> void { }
+    define _hook(self) -> String { return "base" }
+    define hook(self) -> String { return "base" }
+    define _two(self, a: Int, b: Int) -> Int { return a + b }
+    define run(self) -> String { return self._hook() + "/" + self.hook() }
+    define sum(self) -> Int { return self._two(2, 3) }
+    define __str(self) -> String { return "Base" }
+}
+
+struct Mid : Base {
+    define __init(self) -> void { super().__init() }
+    define _hook(self) -> String { return "mid" }
+}
+
+struct Leaf : Mid {
+    define __init(self) -> void { super().__init() }
+    define _hook(self) -> String { return "leaf+" + super()._hook() }
+    define hook(self) -> String { return "leaf" }
+    define _two(self, a: Int, b: Int) -> Int { return a * b }
+    define __str(self) -> String { return "Leaf" }
+}
+
+define main() -> void {
+    if Base().run() != "base/base" { fail("base: " + Base().run()) }
+    if Mid().run() != "mid/base" { fail("mid: " + Mid().run()) }
+    if Leaf().run() != "leaf+mid/leaf" { fail("leaf: " + Leaf().run()) }
+    if Leaf().sum() != 6 { fail("_two with args: " + Leaf().sum().str()) }
+    // Through a base-typed variable and a list.
+    b: Base = Leaf()
+    if b._hook() != "leaf+mid" { fail("base-typed call: " + b._hook()) }
+    xs: List = [Base(), Mid(), Leaf()]
+    got := ""
+    for x in xs {
+        y: Base = x
+        got = got + y._hook() + ","
+    }
+    if got != "base,mid,leaf+mid," { fail("list: " + got) }
+    // __str overrides dispatch too (they didn't through a base-typed value:
+    // `Cls___str` was filed under "___str", looked up as "__str"), in
+    // every place a value becomes text.
+    if b.str() != "Leaf" { fail(".str(): " + b.str()) }
+    if b.__str() != "Leaf" { fail(".__str(): " + b.__str()) }
+    if "${b}" != "Leaf" { fail("interpolation: ${b}") }
+    shown: List = [b, Base()]
+    if shown.str() != "[Leaf, Base]" { fail("list: " + shown.str()) }
+    m: Base = Mid()
+    if m.str() != "Base" { fail("inherited __str: " + m.str()) }
+    print("p140 ok")
+}

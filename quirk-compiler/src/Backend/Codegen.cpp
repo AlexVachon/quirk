@@ -754,7 +754,7 @@ class LLVMCodegen {
             for (const auto& [sname, sid] : structGen->typeIds()) {
                 if (!StructTypes.count(sname) || StructTypes[sname]->isOpaque()) continue;
                 Value* strFn = ConstantPointerNull::get(cast<PointerType>(i8p));
-                if (Function* f = structGen->findStrFunction(sname))
+                if (Function* f = structGen->findStaticStrFunction(sname))
                     if (f->arg_size() == 1 && f->getReturnType()->isPointerTy())
                         strFn = Builder.CreateBitCast(f, i8p);
                 std::string shown = builtinGen->displayNames.count(sname)
@@ -2991,8 +2991,34 @@ class LLVMCodegen {
                         isSuperCall = (lit2->value == "super");
 
                 const std::vector<std::pair<std::string,int>>* overridesPtr = nullptr;
-                if (!isSuperCall && objPtr && structGen->isVtableEligible(typeName))
-                    overridesPtr = structGen->getOverrides(typeName, member->memberName);
+                std::string dispatchSuffix;   // set when keyed on the resolved name
+                if (!isSuperCall && objPtr && structGen->isVtableEligible(typeName)) {
+                    // Same key the override map was built with (Post-Pass-3
+                    // methodSuffix): `_hook` mangles to `Cls__hook`, whose
+                    // suffix reads as `__hook`, so look it up that way —
+                    // otherwise `_`-prefixed methods were never overridden.
+                    // Methods mangle as `Cls_<name>` (only __init is `Cls__init`),
+                    // and the map's key is what follows `Cls`, minus one `_`
+                    // unless that leaves a leading `__`: `hook` -> "hook",
+                    // `_hook` -> "__hook", `__str` -> "___str".
+                    const std::string& mn = member->memberName;
+                    std::string key = (!mn.empty() && mn[0] == '_') ? "_" + mn : mn;
+                    // When the call resolved to the type's own function under
+                    // another name (`b.str()` -> `Base___str`), key on that.
+                    if (func) {
+                        std::string fname = func->getName().str();
+                        if (fname.size() > typeName.size() && fname.compare(0, typeName.size(), typeName) == 0) {
+                            std::string sfx = fname.substr(typeName.size());
+                            std::string k2 = (sfx.size() >= 2 && sfx[0] == '_' && sfx[1] == '_') ? sfx
+                                           : (!sfx.empty() && sfx[0] == '_') ? sfx.substr(1) : "";
+                            if (!k2.empty() && structGen->getOverrides(typeName, k2)) {
+                                key = k2;
+                                dispatchSuffix = sfx;
+                            }
+                        }
+                    }
+                    overridesPtr = structGen->getOverrides(typeName, key);
+                }
                 if (overridesPtr) {
                     const auto& overrides = *overridesPtr;
 
@@ -3030,10 +3056,15 @@ class LLVMCodegen {
 
                     for (const auto& [subName, subId] : overrides) {
                         const std::string& mn = member->memberName;
-                        std::string subFnName = (mn.size() >= 2 && mn[0] == '_' && mn[1] == '_')
-                            ? subName + mn : subName + "_" + mn;
+                        std::string subFnName = dispatchSuffix.empty() ? subName + "_" + mn
+                                                                       : subName + dispatchSuffix;
                         Function* subFn = TheModule->getFunction(subFnName);
                         if (!subFn) subFn = resolveFunction(subFnName);
+                        if (!subFn && mn.size() >= 2 && mn[0] == '_' && mn[1] == '_') {
+                            subFnName = subName + mn;            // `Cls__init` form
+                            subFn = TheModule->getFunction(subFnName);
+                            if (!subFn) subFn = resolveFunction(subFnName);
+                        }
                         if (!subFn) continue;
 
                         BasicBlock* caseBB = BasicBlock::Create(Context, "vd_" + subName, curFn);
@@ -3287,7 +3318,7 @@ class LLVMCodegen {
                     if (st->getName().str().find("String") == std::string::npos) {
                         std::string sName = st->getName().str();
                         if (sName.find("struct.") == 0) sName = sName.substr(7);
-                        Function* strFunc = TheModule->getFunction(sName + "___str");
+                        Function* strFunc = structGen->virtualStr(sName, TheModule->getFunction(sName + "___str"));
                         if (strFunc) {
                             vArg = Builder.CreateCall(strFunc, {vArg});
                             if (vArg->getType()->isPointerTy() &&
@@ -4520,6 +4551,7 @@ class LLVMCodegen {
                             strSelf = Builder.CreateBitCast(v, PointerType::getUnqual(StructTypes[current]));
                     }
                 }
+                strFunc = structGen->virtualStr(name, strFunc);   // subclass __str
                 if (strFunc) {
                     Value* strObj = Builder.CreateCall(strFunc, {strSelf});
                     if (strObj->getType()->isPointerTy() &&
@@ -5657,6 +5689,7 @@ Value* LLVMCodegen::handleExpression(Node* node) {
                                     strSelf = Builder.CreateBitCast(val, PointerType::getUnqual(StructTypes[cur]));
                             }
                         }
+                        strFunc = structGen->virtualStr(sName, strFunc);   // subclass __str
                         if (strFunc) {
                             Value* ret = Builder.CreateCall(strFunc, {strSelf});
                             if (ret->getType()->isPointerTy() && ret->getType()->getPointerElementType()->isIntegerTy(8)) {

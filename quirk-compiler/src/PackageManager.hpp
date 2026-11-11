@@ -852,7 +852,7 @@ static const char* activate_template() {
         "\n"
         "# If a Quirk venv is already active, switch cleanly instead of stacking.\n"
         "if [ -n \"${_OLD_QUIRK_HOME+x}\" ] && type deactivate >/dev/null 2>&1; then\n"
-        "    if [ \"$QUIRK_HOME\" = \"$_VENV_DIR\" ]; then\n"
+        "    if [ \"$QUIRK_HOME\" = \"$_VENV_DIR\" ] || [ \"$QUIRK_HOME\" = \"$(cygpath -m \"$_VENV_DIR\" 2>/dev/null)\" ]; then\n"
         "        unset _VENV_SCRIPT _VENV_DIR\n"
         "        return 0 2>/dev/null || exit 0\n"
         "    fi\n"
@@ -867,8 +867,9 @@ static const char* activate_template() {
         "export _OLD_PATH=\"$PATH\"\n"
         "export _OLD_PS1=\"${PS1-}\"\n"
         "\n"
-        "export QUIRK_HOME=\"$_VENV_DIR\"\n"
-        "export VIRTUAL_ENV=\"$_VENV_DIR\"     # conventional; tools like Starship pick this up\n"
+        "# Git Bash / MSYS2 on Windows: quirk.exe wants C:/... paths, PATH stays POSIX.\n"
+        "export QUIRK_HOME=\"$(cygpath -m \"$_VENV_DIR\" 2>/dev/null || printf '%s' \"$_VENV_DIR\")\"\n"
+        "export VIRTUAL_ENV=\"$QUIRK_HOME\"     # conventional; tools like Starship pick this up\n"
         "export PATH=\"$_VENV_DIR/bin:$PATH\"\n"
         "if [ -z \"${QUIRK_VENV_DISABLE_PROMPT-}\" ]; then\n"
         "    export PS1=\"(quirk:$(basename \"$_VENV_DIR\")) $PS1\"\n"
@@ -888,6 +889,82 @@ static const char* activate_template() {
         "    unset _OLD_QUIRK_HOME _OLD_PATH _OLD_PS1 _VENV_DIR _VENV_SCRIPT\n"
         "    unset -f deactivate\n"
         "}\n";
+}
+
+// Windows: cmd.exe and PowerShell activation (bin/ is on PATH while
+// active, so `deactivate` finds deactivate.bat in cmd; in PowerShell it's
+// a function). bin/activate (bash) is still written — Git Bash uses it,
+// and it marks the directory as a venv.
+static const char* activate_bat_template() {
+    return
+        "@echo off\r\n"
+        "rem Activate from cmd.exe:  <venv>\\bin\\activate.bat     (undo: deactivate)\r\n"
+        "if defined _QUIRK_ACTIVE call \"%~dp0deactivate.bat\"\r\n"
+        "set \"_QUIRK_ACTIVE=1\"\r\n"
+        "set \"_OLD_QUIRK_PATH=%PATH%\"\r\n"
+        "set \"_OLD_QUIRK_PROMPT=%PROMPT%\"\r\n"
+        "set \"_OLD_QUIRK_HOME=%QUIRK_HOME%\"\r\n"
+        "for %%I in (\"%~dp0..\") do set \"QUIRK_HOME=%%~fI\"\r\n"
+        "set \"VIRTUAL_ENV=%QUIRK_HOME%\"\r\n"
+        "set \"PATH=%QUIRK_HOME%\\bin;%PATH%\"\r\n"
+        "if not defined PROMPT set \"PROMPT=$P$G\"\r\n"
+        "if not defined QUIRK_VENV_DISABLE_PROMPT for %%I in (\"%QUIRK_HOME%\") do set \"PROMPT=(quirk:%%~nxI) %PROMPT%\"\r\n";
+}
+
+static const char* deactivate_bat_template() {
+    return
+        "@echo off\r\n"
+        "rem Undo activate.bat.\r\n"
+        "if not defined _QUIRK_ACTIVE goto :eof\r\n"
+        "set \"PATH=%_OLD_QUIRK_PATH%\"\r\n"
+        "set \"PROMPT=%_OLD_QUIRK_PROMPT%\"\r\n"
+        "set \"QUIRK_HOME=%_OLD_QUIRK_HOME%\"\r\n"
+        "set \"VIRTUAL_ENV=\"\r\n"
+        "set \"_OLD_QUIRK_PATH=\"\r\n"
+        "set \"_OLD_QUIRK_PROMPT=\"\r\n"
+        "set \"_OLD_QUIRK_HOME=\"\r\n"
+        "set \"_QUIRK_ACTIVE=\"\r\n";
+}
+
+static const char* activate_ps1_template() {
+    return
+        "# Activate from PowerShell:  . <venv>\\bin\\Activate.ps1     (undo: deactivate)\r\n"
+        "# If scripts are blocked: Set-ExecutionPolicy -Scope CurrentUser RemoteSigned\r\n"
+        "if (Get-Command deactivate -CommandType Function -ErrorAction SilentlyContinue) { deactivate }\r\n"
+        "$global:_QUIRK_OLD_PATH = $env:PATH\r\n"
+        "$global:_QUIRK_OLD_HOME = $env:QUIRK_HOME\r\n"
+        "$_quirkVenv = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path\r\n"
+        "$env:QUIRK_HOME = $_quirkVenv\r\n"
+        "$env:VIRTUAL_ENV = $_quirkVenv\r\n"
+        "$env:PATH = (Join-Path $_quirkVenv 'bin') + [IO.Path]::PathSeparator + $env:PATH\r\n"
+        "Remove-Variable _quirkVenv\r\n"
+        "if (-not $env:QUIRK_VENV_DISABLE_PROMPT) {\r\n"
+        "    Copy-Item function:prompt function:global:_quirk_old_prompt\r\n"
+        "    function global:prompt { '(quirk:' + (Split-Path $env:VIRTUAL_ENV -Leaf) + ') ' + (_quirk_old_prompt) }\r\n"
+        "}\r\n"
+        "function global:deactivate {\r\n"
+        "    $env:PATH = $global:_QUIRK_OLD_PATH\r\n"
+        "    if ($global:_QUIRK_OLD_HOME) { $env:QUIRK_HOME = $global:_QUIRK_OLD_HOME }\r\n"
+        "    else { Remove-Item env:QUIRK_HOME -ErrorAction SilentlyContinue }\r\n"
+        "    Remove-Item env:VIRTUAL_ENV -ErrorAction SilentlyContinue\r\n"
+        "    if (Test-Path function:global:_quirk_old_prompt) {\r\n"
+        "        Copy-Item function:global:_quirk_old_prompt function:global:prompt -Force\r\n"
+        "        Remove-Item function:global:_quirk_old_prompt\r\n"
+        "    }\r\n"
+        "    Remove-Variable -Scope Global _QUIRK_OLD_PATH, _QUIRK_OLD_HOME -ErrorAction SilentlyContinue\r\n"
+        "    Remove-Item function:global:deactivate\r\n"
+        "}\r\n";
+}
+
+// The command that activates `venvDir` in this platform's usual shell.
+static std::string activate_hint(const std::string& venvDir) {
+#ifdef _WIN32
+    std::string d = venvDir;
+    for (char& c : d) if (c == '/') c = '\\';
+    return d + "\\bin\\activate.bat   (PowerShell: . " + d + "\\bin\\Activate.ps1)";
+#else
+    return "source " + venvDir + "/bin/activate";
+#endif
 }
 
 // Write the venv's metadata file. Modeled on Python's pyvenv.cfg: a tiny
@@ -1055,16 +1132,34 @@ static int build_venv(const fs::path& venvDir, bool repair) {
         }
     };
     if (!binPath.empty()) {
+#ifdef _WIN32
+        // quirk.exe plus every DLL beside it: runtime.dll and what it
+        // loads (GC, pthreads, OpenSSL, ...), and runtime.lib for `-o`.
+        install_bin(binPath, venvDir / "bin" / "quirk.exe");
+        std::error_code dec;
+        for (auto& e : fs::directory_iterator(binPath.parent_path(), dec)) {
+            std::string ext = e.path().extension().string();
+            for (char& c : ext) c = (char)std::tolower((unsigned char)c);
+            if (ext == ".dll" || e.path().filename() == "runtime.lib")
+                install_bin(e.path(), venvDir / "bin" / e.path().filename());
+        }
+#else
         install_bin(binPath, venvDir / "bin" / "quirk");
         fs::path rt = binPath.parent_path() / "runtime.so";
         if (fs::exists(rt)) install_bin(rt, venvDir / "bin" / "runtime.so");
+#endif
     }
 
     // Always (re)write the activate script — it's small and may have changed
     // between compiler versions.
     {
-        std::ofstream activate(venvDir / "bin" / "activate");
+        std::ofstream activate(venvDir / "bin" / "activate", std::ios::binary);
         activate << activate_template();
+#ifdef _WIN32
+        std::ofstream(venvDir / "bin" / "activate.bat", std::ios::binary) << activate_bat_template();
+        std::ofstream(venvDir / "bin" / "deactivate.bat", std::ios::binary) << deactivate_bat_template();
+        std::ofstream(venvDir / "bin" / "Activate.ps1", std::ios::binary) << activate_ps1_template();
+#endif
     }
 
     // .gitignore so the venv is auto-ignored if added to a repo without one.
@@ -1101,7 +1196,7 @@ static int cmd_venv_new(const std::vector<std::string>& args) {
     }
     if (build_venv(venvDir, /*repair=*/false) != 0) return 1;
     std::cout << "Activate with:\n"
-              << "    " << log::bold("source " + venvDir.string() + "/bin/activate") << "\n";
+              << "    " << log::bold(activate_hint(venvDir.string())) << "\n";
     return 0;
 }
 
@@ -2916,8 +3011,7 @@ static int cmd_sync(const std::vector<std::string>& args) {
         std::string label = createdVenv ? "Activate the venv with:"
                                         : "To use the venv, run:";
         std::cout << "\n" << label << "\n"
-                  << "    " << log::bold("source " + fs::relative(venvDir).string()
-                                         + "/bin/activate") << "\n";
+                  << "    " << log::bold(activate_hint(fs::relative(venvDir).string())) << "\n";
     }
     return 0;
 }

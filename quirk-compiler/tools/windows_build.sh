@@ -170,6 +170,9 @@ try {
     smoke matches 'use fs
 print(fs.matches("*.qk", "main.qk"), fs.matches("?ain.[a-z]k", "main.qk"), fs.matches("[!a]*", "main.qk"), fs.matches("*", ".env"), fs.matches("*.qk", "main.py"))'
     smoke repl_eval 'print(1, 2, 3, sep="-")'
+    step "repl: piped input + history file"
+    printf 'x := 40 + 2\nprint(x)\n' | timeout 60 ./bin/quirk.exe repl 2>&1 | tail -2 | tee -a "$LOG"
+    tail -2 "$HOME/.quirk/repl_history" 2>&1 | tee -a "$LOG"
     step "quirk eval"
     timeout 60 ./bin/quirk.exe eval 'print("eval works")' 2>&1 | head -5 | tee -a "$LOG"
 
@@ -205,6 +208,16 @@ QK
             echo "no obj/win/$prog.exe" | tee -a "$LOG"
         fi
     done
+
+    # venvs: create one, activate it from cmd.exe and PowerShell, run in it.
+    step "venv"
+    rm -rf obj/win/venv
+    timeout 120 ./bin/quirk.exe venv new obj/win/venv 2>&1 | tail -3 | tee -a "$LOG"
+    ls obj/win/venv/bin 2>&1 | tr '\n' ' ' | tee -a "$LOG"; echo | tee -a "$LOG"
+    printf '@echo off\r\ncall obj\\win\\venv\\bin\\activate.bat\r\necho cmd QUIRK_HOME=%%QUIRK_HOME%%\r\nwhere quirk\r\nquirk obj\\win\\hello.qk\r\ncall deactivate\r\necho cmd after=%%QUIRK_HOME%%\r\n' > obj/win/venvtest.bat
+    timeout 120 cmd //c "obj\\win\\venvtest.bat" 2>&1 | head -10 | tee -a "$LOG"
+    printf '. obj\\win\\venv\\bin\\Activate.ps1\r\n"ps QUIRK_HOME=$env:QUIRK_HOME"\r\n(Get-Command quirk).Source\r\nquirk obj\\win\\hello.qk\r\ndeactivate\r\n"ps after=$env:QUIRK_HOME"\r\n' > obj/win/venvtest.ps1
+    timeout 120 powershell -NoProfile -ExecutionPolicy Bypass -File obj/win/venvtest.ps1 2>&1 | head -10 | tee -a "$LOG"
 
     # The AOT build cache: `--build` once, then `quirk file` runs the
     # cached .exe (argv, exit code passed through).

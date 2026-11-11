@@ -919,6 +919,10 @@ static std::string detectArchTag() {
     return "linux-arm64";
 #elif defined(__linux__) && defined(__x86_64__)
     return "linux-x86_64";
+#elif defined(_WIN32) && defined(_M_ARM64)
+    return "windows-arm64";
+#elif defined(_WIN32) && defined(_M_X64)
+    return "windows-x86_64";
 #else
     return "unknown-arch";
 #endif

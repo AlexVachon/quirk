@@ -59,9 +59,15 @@ Runtime (C): 35 errors —
      quoting), `have_command` (`where`), `git -C`, System32 bsdtar,
      in-process SHA-256, home dir from `USERPROFILE`, `install` refreshes
      the registry index on a miss.
-   - AOT / `-o` with `link.exe` / `lld-link` (off on Windows for now:
-     `-o` reports "not supported yet", no background build cache, so
-     programs always run through the JIT).
+   - ✅ AOT: `-o`, `--build` and the background build cache. IR → COFF
+     object in-process (no `llc`), CRT names renamed to the runtime's
+     `quirk_crt_*` wrappers (as the JIT binds them), linked with
+     `lld-link` / `link.exe` against `runtime.lib`. Needs a linker and the
+     Windows SDK libraries (a Visual Studio Build Tools prompt); without
+     one, `-o` says so and background builds record `.failed` and keep
+     using the JIT. A cached `.exe` runs as a child with quirk's `bin` dir
+     on PATH (no `exec` on Windows); `-o` output finds `runtime.dll`
+     through PATH.
    - venv `activate` for `cmd` / PowerShell; REPL history.
    - Windows build in `release.yml`, `install.ps1`; a Windows job in
      `test.yml`.

@@ -199,9 +199,9 @@ jobs:
     # SDL2 for the rest. package_release.sh bundles the DLLs quirk.exe
     # and runtime.dll load; the package is then installed with
     # install.ps1 and run on a bare PATH before it's uploaded.
-    # `continue-on-error` until a couple of clean Windows releases.
+    # No `continue-on-error` since 7.29.0 (7.25.0-7.28.0 built cleanly): a
+    # broken Windows build fails the release run like the others.
     runs-on: windows-latest
-    continue-on-error: true
     defaults:
       run:
         shell: bash -el {0}

@@ -163,7 +163,8 @@ STDLIB_TAG_window ?= v1.2.0
 # ui v1.0.0 is the initial release (pure Quirk on window; compiler v7.21.0).
 # ui v1.1.0: selection + clipboard in text fields, TextArea, ScrollView,
 # Dropdown, tooltips (needs window v1.2.0, compiler v7.26.0).
-STDLIB_TAG_ui ?= v1.1.0
+# ui v1.2.0: undo / redo, RadioGroup, ProgressBar, Tabs (compiler v7.27.0).
+STDLIB_TAG_ui ?= v1.2.0
 
 # --- INSTALL / UNINSTALL --------------------------------------------------
 # Copy the freshly-built compiler + runtime into $(PREFIX) (default

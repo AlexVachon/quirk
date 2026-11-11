@@ -7,15 +7,15 @@ into a release; this list is for things that need a plan.
 
 First Windows release in 7.25.0 (experimental): `install.ps1`, package
 manager, AOT, venvs, REPL; a failing Windows job in `test.yml` since
-7.28.0. Left: drop `continue-on-error` from the release job after a
-couple of clean releases (7.25.0-7.27.0 were clean). See
+7.28.0; the release job fails on a broken Windows build since 7.29.0. See
 [quirk-compiler/docs/WINDOWS-PORT.md](quirk-compiler/docs/WINDOWS-PORT.md).
 
 ## 2. `ui` follow-ups
 
 Done in ui 1.1 (compiler 7.26.0): selection + clipboard, TextArea,
-ScrollView, Dropdown, tooltips. Next ideas: word wrap in TextArea, undo
-/ redo, tabs, radio buttons, a progress bar, menus.
+ScrollView, Dropdown, tooltips; ui 1.2 (7.29.0): undo / redo,
+RadioGroup, ProgressBar, Tabs. Next ideas: word wrap in TextArea, menus
+/ a menu bar, a context menu, a tree view, a table / grid.
 
 ## Housekeeping
 

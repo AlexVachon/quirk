@@ -5,6 +5,20 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.29.0] — 2026-11-11 — `ui` 1.2: undo, radio groups, progress bars, tabs
+
+- **`ui` v1.2.0:**
+  - Undo / redo in text fields and areas: Ctrl+Z, Ctrl+Y or
+    Ctrl+Shift+Z (Cmd on macOS); typing a word is one step,
+    `field.undo()` / `field.redo()` from code.
+  - `ui.RadioGroup(options, selected=, on_change=)` — one of several.
+  - `ui.ProgressBar(value=, max=, show_text=)`.
+  - `ui.Tabs(titles, pages)` — one page at a time under a row of tabs
+    (click, Left / Right, Ctrl+Tab); `tabs.add(title, page)`.
+- The Windows release build is no longer allowed to fail quietly: a
+  broken Windows build fails the release run (7.25.0–7.28.0 built
+  cleanly).
+
 ## [7.28.0] — 2026-11-11 — untyped method calls, Windows CI
 
 - **A method that both `String` and one of your structs define, called

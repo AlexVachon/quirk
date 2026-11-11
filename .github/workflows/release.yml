@@ -187,3 +187,80 @@ jobs:
           generate_release_notes: false   # the linux job already wrote them
           draft: false
           prerelease: ${{ contains(github.ref_name, '-') }}
+
+  windows-x86_64:
+    # First Windows build (7.25.0, experimental — docs/WINDOWS-PORT.md).
+    # Same toolchain as the windows-probe workflow: MSVC for the compiler,
+    # conda-forge LLVM 14 / clang 14 / bdw-gc / pthreads-win32 / OpenSSL /
+    # SDL2 for the rest. package_release.sh bundles the DLLs quirk.exe
+    # and runtime.dll load; the package is then installed with
+    # install.ps1 and run on a bare PATH before it's uploaded.
+    # `continue-on-error` until a couple of clean Windows releases.
+    runs-on: windows-latest
+    continue-on-error: true
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ilammy/msvc-dev-cmd@v1
+
+      - uses: conda-incubator/setup-miniconda@v3
+        with:
+          miniforge-version: latest
+          activate-environment: qbuild
+          channels: conda-forge
+
+      - name: Install toolchain
+        run: |
+          conda install -y -c conda-forge llvmdev=14.0.6 clangdev=14.0.6 clang=14.0.6 \
+            bdw-gc openssl sdl2 zlib zstd pthreads-win32 make lld=14.0.6
+
+      - name: Bootstrap stdlib
+        working-directory: quirk-compiler
+        run: make bootstrap-stdlib
+
+      - name: Build
+        working-directory: quirk-compiler
+        env:
+          QUIRK_WIN_SKIP_TESTS: "1"
+        run: |
+          bash tools/windows_build.sh
+          test -f bin/quirk.exe && test -f bin/runtime.dll
+
+      - name: Package
+        id: pkg
+        run: |
+          PKG=$(quirk-compiler/tools/package_release.sh "${GITHUB_REF_NAME#v}" windows-x86_64 "$PWD")
+          echo "pkg=${PKG}" >> "$GITHUB_OUTPUT"
+
+      - name: Install with install.ps1, run on a bare PATH
+        shell: pwsh
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'quirk-install'
+          $env:QUIRK_INSTALL_TARBALL = (Resolve-Path "${{ steps.pkg.outputs.pkg }}.tar.gz").Path
+          ./install.ps1 -Dir $dir -NoModifyPath
+          $env:Path = "$dir\bin;$env:SystemRoot\System32;$env:SystemRoot"
+          Remove-Item env:QUIRK_HOME -ErrorAction SilentlyContinue
+          Remove-Item env:CONDA_PREFIX -ErrorAction SilentlyContinue
+          quirk --version
+          $p = Join-Path $env:RUNNER_TEMP 'smoke.qk'
+          @'
+          use regex
+          use crypto
+          use fs
+          print("hello from Windows CI", regex.test("[a-z]+[0-9]", "abc123"), crypto.sha256("hi").length(), fs.exists("."))
+          '@ | Set-Content $p
+          quirk --no-aot $p
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ steps.pkg.outputs.pkg }}.tar.gz
+            ${{ steps.pkg.outputs.pkg }}.tar.gz.sha256
+          generate_release_notes: false   # the linux job already wrote them
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}

@@ -45,6 +45,39 @@ jobs:
         working-directory: quirk-compiler
         run: bash tools/windows_build.sh
 
+      - name: Package (release rehearsal)
+        working-directory: quirk-compiler
+        run: |
+          v=$(./bin/quirk.exe --version | tr -d '\r' | awk '{print $2}')
+          tools/package_release.sh "$v" windows-x86_64 "$PWD/windows-probe/pkg"
+          ls -la windows-probe/pkg
+
+      - name: Install the package with install.ps1, run it on a bare PATH
+        shell: pwsh
+        run: |
+          $tb = Get-ChildItem quirk-compiler/windows-probe/pkg/*.tar.gz | Select-Object -First 1
+          $dir = Join-Path $env:RUNNER_TEMP 'quirk-install'
+          $env:QUIRK_INSTALL_TARBALL = $tb.FullName
+          ./install.ps1 -Dir $dir -NoModifyPath
+          # Only Windows itself on PATH, no QUIRK_HOME, no conda: every DLL
+          # quirk needs must be in the package.
+          $env:Path = "$dir\bin;$env:SystemRoot\System32;$env:SystemRoot"
+          Remove-Item env:QUIRK_HOME -ErrorAction SilentlyContinue
+          Remove-Item env:CONDA_PREFIX -ErrorAction SilentlyContinue
+          Get-ChildItem "$dir\bin" | Format-Table Name, Length
+          quirk --version
+          $p = Join-Path $env:RUNNER_TEMP 'pkg_smoke.qk'
+          @'
+          use regex
+          use crypto
+          use fs
+          use net
+          print("installed quirk:", regex.test("[a-z]+[0-9]", "abc123"), crypto.sha256("hi").length())
+          print(fs.exists(fs.temp_dir()))
+          '@ | Set-Content $p
+          quirk --no-aot $p
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:

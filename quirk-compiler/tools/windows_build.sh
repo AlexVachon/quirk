@@ -215,7 +215,7 @@ QK
     timeout 120 ./bin/quirk.exe venv new obj/win/venv 2>&1 | tail -3 | tee -a "$LOG"
     ls obj/win/venv/bin 2>&1 | tr '\n' ' ' | tee -a "$LOG"; echo | tee -a "$LOG"
     printf '@echo off\r\ncall obj\\win\\venv\\bin\\activate.bat\r\necho cmd QUIRK_HOME=%%QUIRK_HOME%%\r\nwhere quirk\r\nquirk obj\\win\\hello.qk\r\ncall deactivate\r\necho cmd after=%%QUIRK_HOME%%\r\n' > obj/win/venvtest.bat
-    timeout 120 cmd //c "obj\\win\\venvtest.bat" 2>&1 | head -10 | tee -a "$LOG"
+    timeout 120 cmd /c "obj\\win\\venvtest.bat" < /dev/null 2>&1 | head -10 | tee -a "$LOG"
     printf '. obj\\win\\venv\\bin\\Activate.ps1\r\n"ps QUIRK_HOME=$env:QUIRK_HOME"\r\n(Get-Command quirk).Source\r\nquirk obj\\win\\hello.qk\r\ndeactivate\r\n"ps after=$env:QUIRK_HOME"\r\n' > obj/win/venvtest.ps1
     timeout 120 powershell -NoProfile -ExecutionPolicy Bypass -File obj/win/venvtest.ps1 2>&1 | head -10 | tee -a "$LOG"
 
@@ -228,11 +228,15 @@ QK
     echo "rc=${PIPESTATUS[0]} (expect 3)" | tee -a "$LOG"
 
     # The real test suite (as CI runs it on Linux), file by file.
+    if [ "${QUIRK_WIN_SKIP_TESTS:-0}" = "1" ]; then
+        step "test suite skipped (QUIRK_WIN_SKIP_TESTS=1)"
+    else
     step "test suite"
     timeout 1500 ./bin/quirk.exe test tests --timeout 60 --exclude server_test --exclude custom_package_test \
         --exclude http_client_test --exclude test_test > "$OUT/tests.txt" 2>&1
     echo "rc=$?" | tee -a "$LOG"
     grep -E '^  (✓|✗) |^Summary|files:|tests:' "$OUT/tests.txt" | tee -a "$LOG"
+    fi
 fi
 echo "== done" | tee -a "$LOG"
 exit 0

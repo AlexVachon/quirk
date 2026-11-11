@@ -5449,6 +5449,7 @@ inline std::string quirk_release_platform(std::string* why) {
 #endif
     if (os == "Linux" && (arch == "x86_64" || arch == "amd64")) return "linux-x86_64";
     if (os == "Darwin" && (arch == "arm64" || arch == "aarch64")) return "darwin-arm64";
+    if (os == "Windows" && arch == "x86_64") return "windows-x86_64";
     *why = "no prebuilt compiler for " + os + " " + arch
          + " — build from source: https://github.com/AlexVachon/quirk#building";
     return "";
@@ -5609,6 +5610,38 @@ inline bool quirk_fetch_stdlib_assets(const std::string& tag, const fs::path& wo
 
 inline long long quirk_release_asset_size(const std::string& name);
 
+// The compiler binary's file name in a release's / install's bin/.
+inline const char* quirk_bin_name() {
+#ifdef _WIN32
+    return "quirk.exe";
+#else
+    return "quirk";
+#endif
+}
+
+// Remove `p` (file or directory). On Windows a running .exe or a loaded
+// .dll can't be deleted but can be renamed: those are set aside as
+// `<name>.old` (the next update deletes them) so a new copy can take
+// the name.
+inline void quirk_remove_or_set_aside(const fs::path& p) {
+    std::error_code ec;
+    fs::remove_all(p, ec);
+#ifdef _WIN32
+    if (!fs::exists(p, ec)) return;
+    if (fs::is_directory(p, ec)) {
+        std::vector<fs::path> kids;
+        for (auto& e : fs::directory_iterator(p, ec)) kids.push_back(e.path());
+        for (auto& k : kids) quirk_remove_or_set_aside(k);
+        fs::remove(p, ec);   // fails while set-aside files remain; fine
+        return;
+    }
+    if (p.extension() == ".old") return;          // still in use from last time
+    fs::path aside = p; aside += ".old";
+    fs::remove(aside, ec);
+    fs::rename(p, aside, ec);
+#endif
+}
+
 // Download, verify and unpack compiler release `tag` under `work`.
 // Returns the unpacked `quirk-<ver>-<platform>/` directory (flat
 // `bin/` + `packages/` layout), or "" after logging why it failed.
@@ -5659,7 +5692,7 @@ inline fs::path quirk_fetch_compiler_release(const std::string& tag, const fs::p
 
     log::step("Unpacking", pkg + ".tar.gz");
     std::string tar = qplat::tar_cmd() + " -xzf \"" + tarball.string() + "\" -C \"" + work.string() + "\"";
-    if (qplat::run_shell(tar.c_str()) != 0 || !fs::exists(work / pkg / "bin" / "quirk")) {
+    if (qplat::run_shell(tar.c_str()) != 0 || !fs::exists(work / pkg / "bin" / quirk_bin_name())) {
         log::err("couldn't unpack " + pkg + ".tar.gz");
         return {};
     }
@@ -6367,7 +6400,7 @@ static int cmd_compiler(const std::vector<std::string>& args) {
                          : fs::path(home ? home : ".") / ".quirk";
             log::step("Installing", "into " + dir.string());
             fs::create_directories(dir, ec);
-            for (const char* d : {"bin", "lib", "libs", "packages"}) fs::remove_all(dir / d, ec);
+            for (const char* d : {"bin", "lib", "libs", "packages"}) quirk_remove_or_set_aside(dir / d);
             ec.clear();
             fs::copy(stage, dir, fs::copy_options::recursive | fs::copy_options::copy_symlinks
                                | fs::copy_options::overwrite_existing, ec);
@@ -6376,7 +6409,7 @@ static int cmd_compiler(const std::vector<std::string>& args) {
                 fs::remove_all(work, ec);
                 return 1;
             }
-            make_exec(dir / "bin" / "quirk");
+            make_exec(dir / "bin" / quirk_bin_name());
         }
 
         if (targetVenv) {
@@ -6395,13 +6428,21 @@ static int cmd_compiler(const std::vector<std::string>& args) {
             fs::create_directories(venvBin);
             fs::create_directories(venvLib);
 
-            for (const std::string& f : {"quirk", "runtime.so"}) {
+#ifdef _WIN32
+            // quirk.exe, runtime.dll / .lib and the DLLs they load.
+            std::vector<std::string> binFiles;
+            for (auto& e : fs::directory_iterator(stageBin, ec))
+                if (e.is_regular_file()) binFiles.push_back(e.path().filename().string());
+#else
+            std::vector<std::string> binFiles{"quirk", "runtime.so"};
+#endif
+            for (const std::string& f : binFiles) {
                 fs::path src = stageBin / f;
                 if (!fs::exists(src, ec)) continue;
                 fs::path dst = venvBin / f;
-                if (fs::exists(dst, ec) || fs::is_symlink(dst, ec)) fs::remove(dst, ec);
+                if (fs::exists(dst, ec) || fs::is_symlink(dst, ec)) quirk_remove_or_set_aside(dst);
                 fs::copy_file(src, dst, fs::copy_options::overwrite_existing, ec);
-                if (f == "quirk") make_exec(dst);
+                if (f == quirk_bin_name()) make_exec(dst);
             }
 
             int swapped = 0;

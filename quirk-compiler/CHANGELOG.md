@@ -5,6 +5,19 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.28.0] — 2026-11-11 — untyped method calls, Windows CI
+
+- **A method that both `String` and one of your structs define, called
+  on an untyped value, uses the right one** in two cases that still took
+  the `String` path or crashed:
+  - the two return different types (`Box.split` returning a String vs
+    `String.split` returning a List) — the struct's result was read as
+    the wrong type: empty output or a SIGBUS;
+  - an argument allocates or has effects (`b.join([1])`, `b.join(f())`)
+    — the runtime check was skipped. Such arguments still run once.
+- CI: a Windows job in the Test workflow that fails the build when the
+  Windows build, a smoke program or the test suite fails.
+
 ## [7.27.0] — 2026-11-11 — compiler fixes: overrides, unary minus, comparisons, name clashes
 
 - **Subclass overrides of `_`-prefixed methods are used.** When a base

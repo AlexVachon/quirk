@@ -13,6 +13,12 @@ name: Test
 #               so a macOS-only break shows up here instead of in the
 #               release build after the tag is out (v7.0.1).
 #
+#   windows   — the native Windows build (MSVC + conda-forge LLVM 14,
+#               tools/windows_build.sh in strict mode): fails when
+#               quirk.exe / runtime.dll don't build, a smoke program
+#               fails, or the test suite has failures (v7.28.0). The
+#               windows-probe workflow keeps the never-failing variant.
+#
 #   ubsan     — same probes, with the runtime built under
 #               -fsanitize=undefined. Catches latent UB (signed
 #               overflow, null deref, OOB, alignment, etc.) that a
@@ -413,3 +419,47 @@ jobs:
           done
           echo "UBSan failures: $fails"
           exit $fails
+
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ilammy/msvc-dev-cmd@v1
+
+      - uses: conda-incubator/setup-miniconda@v3
+        with:
+          miniforge-version: latest
+          activate-environment: qtest
+          channels: conda-forge
+
+      - name: Install toolchain
+        run: |
+          conda install -y -c conda-forge llvmdev=14.0.6 clangdev=14.0.6 clang=14.0.6 \
+            bdw-gc openssl sdl2 zlib zstd pthreads-win32 make lld=14.0.6
+
+      - name: Bootstrap stdlib
+        working-directory: quirk-compiler
+        run: make bootstrap-stdlib
+
+      - name: Build, smoke-test and run the test suite (strict)
+        working-directory: quirk-compiler
+        env:
+          QUIRK_WIN_STRICT: "1"
+        run: bash tools/windows_build.sh
+
+      - name: Show failing tests
+        if: failure()
+        working-directory: quirk-compiler
+        run: |
+          grep -A25 '^Failures:' windows-probe/tests.txt 2>/dev/null | head -80 || true
+          tail -40 windows-probe/build.txt 2>/dev/null || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-test
+          path: quirk-compiler/windows-probe/

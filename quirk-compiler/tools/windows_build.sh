@@ -8,7 +8,10 @@
 #   bin/quirk.exe    — the compiler (MSVC cl), linked against LLVM 14
 #
 # Then a smoke test: --version, and a one-line program through the JIT.
-# Prints each step's outcome; exits 0 so the job's other steps still run.
+# Prints each step's outcome; exits 0 so the job's other steps still run —
+# unless QUIRK_WIN_STRICT=1 (test.yml's Windows job): then it exits 1 when
+# quirk.exe / runtime.dll didn't build, hello world failed, or the test
+# suite had failures.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 export MSYS2_ARG_CONV_EXCL='*'
@@ -17,6 +20,7 @@ mkdir -p "$OUT" bin obj/win
 LOG="$OUT/build.txt"
 : > "$LOG"
 step() { echo "== $*" | tee -a "$LOG"; }
+FAILED=()            # what strict mode fails the build for
 w() { cygpath -w "$1" 2>/dev/null || echo "$1"; }
 
 CLIB="$CONDA_PREFIX/Library"   # not LIB: MSVC's linker reads $LIB for the SDK libraries
@@ -114,7 +118,10 @@ if [ -f bin/quirk.exe ] && [ -f bin/runtime.dll ]; then
         step "smoke: $1"
         printf '%s\n' "$2" > "obj/win/$1.qk"
         timeout 120 ./bin/quirk.exe --no-aot --no-cache "obj/win/$1.qk" 2>&1 | head -30 | tee -a "$LOG"
-        echo "rc=${PIPESTATUS[0]}" | tee -a "$LOG"
+        local rc=${PIPESTATUS[0]}
+        echo "rc=$rc" | tee -a "$LOG"
+        [ $rc -ne 0 ] && FAILED+=("smoke: $1 (rc=$rc)")
+        return 0
     }
     smoke hello 'print("Hello from Quirk on Windows", 1 + 2)'
     smoke strings 'name := "Quirk"
@@ -234,9 +241,17 @@ QK
     step "test suite"
     timeout 1500 ./bin/quirk.exe test tests --timeout 60 --exclude server_test --exclude custom_package_test \
         --exclude http_client_test --exclude test_test > "$OUT/tests.txt" 2>&1
-    echo "rc=$?" | tee -a "$LOG"
+    trc=$?
+    echo "rc=$trc" | tee -a "$LOG"
+    [ $trc -ne 0 ] && FAILED+=("test suite (rc=$trc)")
     grep -E '^  (✓|✗) |^Summary|files:|tests:' "$OUT/tests.txt" | tee -a "$LOG"
     fi
 fi
 echo "== done" | tee -a "$LOG"
+[ -f bin/quirk.exe ] || FAILED+=("quirk.exe didn't build")
+[ -f bin/runtime.dll ] || FAILED+=("runtime.dll didn't build")
+if [ "${QUIRK_WIN_STRICT:-0}" = "1" ] && [ ${#FAILED[@]} -gt 0 ]; then
+    printf 'FAILED: %s\n' "${FAILED[@]}" | tee -a "$LOG"
+    exit 1
+fi
 exit 0

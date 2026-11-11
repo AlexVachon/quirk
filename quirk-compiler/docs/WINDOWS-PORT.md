@@ -79,8 +79,9 @@ Runtime (C): 35 errors —
      `install.ps1`; the probe installs the package with `install.ps1` and
      runs it on a bare PATH. `compiler update` knows `windows-x86_64` and
      sets in-use `.exe` / `.dll` files aside as `.old`.
-   - A Windows job in `test.yml` that fails the build (the probe
-     workflow never does).
+   - ✅ A Windows job in `test.yml` (`tools/windows_build.sh` with
+     `QUIRK_WIN_STRICT=1`) that fails the build; the probe workflow
+     keeps the never-failing variant for experiments.
 
 ## What changed for Windows (so far)
 

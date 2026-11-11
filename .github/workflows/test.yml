@@ -43,6 +43,10 @@ jobs:
     runs-on: ubuntu-22.04
     container:
       image: ubuntu:20.04
+      # Public resolvers: Azure's (168.63.129.16, the runner default) stopped
+      # resolving *.ubuntu.com on 2026-11-11, so apt-get couldn't reach the
+      # archive (github.com etc. still resolved). Harmless when it works.
+      options: --dns 8.8.8.8 --dns 1.1.1.1
     env:
       DEBIAN_FRONTEND: noninteractive
     steps:
@@ -339,6 +343,10 @@ jobs:
     runs-on: ubuntu-22.04
     container:
       image: ubuntu:20.04
+      # Public resolvers: Azure's (168.63.129.16, the runner default) stopped
+      # resolving *.ubuntu.com on 2026-11-11, so apt-get couldn't reach the
+      # archive (github.com etc. still resolved). Harmless when it works.
+      options: --dns 8.8.8.8 --dns 1.1.1.1
     env:
       DEBIAN_FRONTEND: noninteractive
     steps:

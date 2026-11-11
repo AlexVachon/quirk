@@ -137,11 +137,9 @@ jobs:
     # this job just verifies CI can produce a runnable arm64 binary and
     # uploads it alongside the linux tarball.
     #
-    # `continue-on-error: true` keeps a macOS failure from blocking a
-    # release while the platform is in its first-shipping window. Drop
-    # the flag once we have a couple of clean macOS releases.
+    # No `continue-on-error` since 7.29.0 (every release from 1.3 on had
+    # a macOS build): a broken macOS build fails the release run.
     runs-on: macos-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 

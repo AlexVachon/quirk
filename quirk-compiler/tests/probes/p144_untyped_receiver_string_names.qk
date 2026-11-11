@@ -1,0 +1,44 @@
+// p144 — v7.28.0: an untyped receiver calling a method that both String
+// and a struct define picks by runtime type — also when the two return
+// different types (`Box.split` -> String vs String.split -> List: the
+// Box's String was read as a List — empty output or SIGBUS), and when
+// an argument allocates or has effects (`b.join([1])` skipped the check
+// and always ran String.join). Such arguments are evaluated once.
+
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+struct Box {
+    define __init(self) -> void { }
+    define split(self, s: String) -> String { return "box-split" }
+    define join(self, xs: List) -> String { return "box-join" }
+    define upper(self) -> String { return "box-upper" }
+}
+
+count := 0
+
+define arg() -> List {
+    count = count + 1
+    return ["p", "q"]
+}
+
+define split_of(b) -> String {
+    return b.split(",").str()
+}
+
+define join_of(b) -> String {
+    return b.join(arg())
+}
+
+define main() -> void {
+    if split_of(Box()) != "box-split" { fail("Box.split: " + split_of(Box())) }
+    if split_of("a,b") != "[a, b]" { fail("String.split: " + split_of("a,b")) }
+    if join_of(Box()) != "box-join" { fail("Box.join") }
+    if join_of("-") != "p-q" { fail("String.join: " + join_of("-")) }
+    if count != 2 { fail("argument evaluated " + count.str() + " times for 2 calls") }
+    b := Box()
+    xs: List = [b, "x"]
+    got := ""
+    for v in xs { got = got + v.upper() + "," }
+    if got != "box-upper,X," { fail("upper: " + got) }
+    print("p144 ok")
+}

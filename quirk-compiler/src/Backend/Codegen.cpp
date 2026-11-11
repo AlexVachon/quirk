@@ -1967,7 +1967,8 @@ class LLVMCodegen {
     }
 
     Value* emitDynamicDispatch(const std::string& method, Value* obj, CallNode* call,
-                               BasicBlock* fallback = nullptr) {
+                               BasicBlock* fallback = nullptr,
+                               std::vector<Type*>* returnTypes = nullptr) {
         std::vector<std::pair<std::string, Function*>> impls;
         for (const auto& [name, st] : StructTypes) {
             if (!structGen->isVtableEligible(name)) continue;
@@ -1993,6 +1994,8 @@ class LLVMCodegen {
         }
         if (impls.empty()) return nullptr;
         std::sort(impls.begin(), impls.end());
+        if (returnTypes)
+            for (const auto& impl : impls) returnTypes->push_back(impl.second->getReturnType());
 
         Type* i8p = Type::getInt8PtrTy(Context);
         Type* i32 = Type::getInt32Ty(Context);
@@ -2722,14 +2725,36 @@ class LLVMCodegen {
                 // struct's method for those structs, the String method
                 // otherwise. It always took the String path, so a struct
                 // receiver crashed.
-                bool pureArgs = true;
-                for (auto& a : call->args) pureArgs = pureArgs && !a.isSpread && isPureExpr(a.value.get());
+                bool noSpread = true;
+                for (auto& a : call->args) noSpread = noSpread && !a.isSpread;
+                // Arguments evaluated ahead into temporaries (below); put back
+                // when this call is done — every path after this reads them.
+                std::vector<std::pair<size_t, std::unique_ptr<Node>>> savedArgs;
+                struct RestoreArgs {
+                    CallNode* c;
+                    std::vector<std::pair<size_t, std::unique_ptr<Node>>>& saved;
+                    ~RestoreArgs() { for (auto& [i, n] : saved) c->args[i].value = std::move(n); }
+                } restoreArgs{call, savedArgs};
                 if (objPtr->getType()->isPointerTy() && objPtr->getType()->getPointerElementType()->isIntegerTy(8) &&
-                    !forcedStringCalls.count(call) && !member->isSafeAccess && pureArgs) {
+                    !forcedStringCalls.count(call) && !member->isSafeAccess && noSpread) {
+                    // Both paths below evaluate the arguments: an argument with
+                    // effects or allocation (`b.join([1])`) is evaluated once
+                    // here, into a temporary both paths read. (They used to
+                    // skip the runtime check entirely, taking the String path.)
+                    for (size_t ai = 0; ai < call->args.size(); ai++) {
+                        if (isPureExpr(call->args[ai].value.get())) continue;
+                        Value* v = handleExpression(call->args[ai].value.get());
+                        if (!v) continue;
+                        std::string tmp = "__qdyn_arg" + std::to_string(dynRecvCounter++);
+                        varGen->defineLocalVariable(tmp, v);
+                        savedArgs.push_back({ai, std::move(call->args[ai].value)});
+                        call->args[ai].value = std::make_unique<LiteralNode>(tmp);
+                    }
                     Function* curFn = Builder.GetInsertBlock()->getParent();
                     BasicBlock* strBB = BasicBlock::Create(Context, "dyn_str", curFn);
                     BasicBlock* startBB = Builder.GetInsertBlock();
-                    Value* fromStruct = emitDynamicDispatch(member->memberName, objPtr, call, strBB);
+                    std::vector<Type*> structRets;
+                    Value* fromStruct = emitDynamicDispatch(member->memberName, objPtr, call, strBB, &structRets);
                     if (!fromStruct && Builder.GetInsertBlock() == startBB) {
                         strBB->eraseFromParent();           // no struct has it: plain String path below
                     } else {
@@ -2746,8 +2771,22 @@ class LLVMCodegen {
                         forcedStringCalls.erase(call);
                         member->object = std::move(saved);
                         BasicBlock* strEnd = Builder.GetInsertBlock();
-                        // Merge as the String method's result type (what Sema typed the call).
+                        // Merge as the String method's result type (what Sema typed the call)
+                        // — unless a struct's method returns something else (`Box.split`
+                        // -> String vs String.split -> List): then both stay boxed (Any),
+                        // or the struct's String was read as a List.
                         Type* rt = (fromString && !fromString->getType()->isVoidTy()) ? fromString->getType() : nullptr;
+                        if (rt) {
+                            bool same = true;
+                            for (Type* t : structRets) same = same && t == rt;
+                            if (!same) {
+                                Type* i8p = Type::getInt8PtrTy(Context);
+                                Builder.SetInsertPoint(strEnd);
+                                fromString = boxToVoidPtr(fromString);
+                                strEnd = Builder.GetInsertBlock();
+                                rt = i8p;
+                            }
+                        }
                         Value* structVal = nullptr;
                         if (fromStruct) {
                             Builder.SetInsertPoint(structEnd);

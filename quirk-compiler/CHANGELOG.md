@@ -5,6 +5,20 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.30.0] — 2026-11-11 — `and` / `or` short-circuit, untyped indexing, `ui` 1.3
+
+- **`and` / `or` short-circuit.** Both sides were always evaluated, so
+  the null guard `x != null and x.f()` crashed when `x` was null, and a
+  right side with effects ran even when the left decided the result.
+- **Indexing an untyped value works**: `rows[1][0]` for a List of Lists,
+  a lambda parameter's `r[0]`, `item["name"]` on a Map from a List,
+  and `x[i] = v` on them. They compiled to raw memory reads and writes
+  (garbage, crashes, or "array index must be 'Int'").
+- **`ui` v1.3.0:** `ui.MenuBar` / `ui.Menu` / `ui.MenuItem` (shortcut
+  labels, separators, disabled items, keyboard), right-click menus
+  (`widget.context_menu`), `ui.TreeView` of `ui.TreeNode`s,
+  `ui.Table(columns, rows)` (sortable), and `app.on_key` for shortcuts.
+
 ## [7.29.0] — 2026-11-11 — `ui` 1.2: undo, radio groups, progress bars, tabs
 
 - **`ui` v1.2.0:**

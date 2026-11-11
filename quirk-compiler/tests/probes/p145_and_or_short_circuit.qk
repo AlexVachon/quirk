@@ -1,0 +1,49 @@
+// p145 — v7.30.0: `and` / `or` short-circuit. Both sides were evaluated
+// (an i1 `and`), so the null-guard `x != null and x.f()` dereferenced
+// null (SIGSEGV), and a right side with effects always ran.
+
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+struct B {
+    x: Int
+    define __init(self) -> void { self.x = 1 }
+    define is_one(self) -> Bool { return self.x == 1 }
+}
+
+struct Holder {
+    bar: B
+    define __init(self) -> void { self.bar = null }
+    define guarded(self) -> Bool { return self.bar != null and self.bar.is_one() }
+    define either(self) -> Bool { return self.bar == null or self.bar.x == 7 }
+}
+
+calls := 0
+
+define bump(v: Bool) -> Bool {
+    calls = calls + 1
+    return v
+}
+
+define main() -> void {
+    h := Holder()
+    if h.guarded() { fail("null and ... was true") }
+    if not h.either() { fail("null or ... was false") }
+    if h.bar != null and h.bar.x == 1 { fail("if-condition guard") }
+    ok := h.bar == null or h.bar.is_one()
+    if not ok { fail("assignment guard") }
+    h.bar = B()
+    if not h.guarded() { fail("non-null and") }
+    // The right side runs only when needed.
+    calls = 0
+    r1 := false and bump(true)
+    r2 := true or bump(true)
+    if calls != 0 { fail("right side ran " + calls.str() + " times when it didn't decide") }
+    r3 := true and bump(false)
+    r4 := false or bump(true)
+    if calls != 2 { fail("right side should run twice, ran " + calls.str()) }
+    if r1 or not r2 or r3 or not r4 { fail("results") }
+    // Chains and nesting.
+    if not (true and true and not false) { fail("chain") }
+    if (false or false) or (true and false) { fail("nested") }
+    print("p145 ok")
+}

@@ -2291,6 +2291,10 @@ std::string Sema::checkBinaryOp(BinaryOpNode *node)
                 return func->returnType;
             }
         }
+        // An untyped value may be a Map (`row["name"]` on a List element or
+        // a Map.get result): any key; the runtime checks (quirk_opaque_index).
+        if (lType == "Any" || lType == "auto" || lType.empty())
+            return "Any";
         if (rType != "Int")
             fatalError("array index must be 'Int', got '" + rType + "'",
                        node->line, node->col, node->filePath);

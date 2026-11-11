@@ -69,15 +69,34 @@ class MathGen {
         return Builder.CreateNot(toBool(val), "not_result");
     }
 
+    // `a and b` / `a or b`, short-circuiting: `b` runs only when `a`
+    // doesn't decide the result. Both sides used to be evaluated (an i1
+    // `and`), so `x != null and x.f()` dereferenced the null.
     Value* generateLogicOp(std::string op, Value* leftVal, Node* rightNode,
                            std::function<Value*(Node*)> exprHandler) {
+        if (op != "and" && op != "or") return nullptr;
+        if (!leftVal) return nullptr;
         Value* L = toBool(leftVal);
+        bool isAnd = op == "and";
+        Function* fn = Builder.GetInsertBlock()->getParent();
+        BasicBlock* lhsEnd = Builder.GetInsertBlock();
+        BasicBlock* rhsBB = BasicBlock::Create(Context, isAnd ? "and_rhs" : "or_rhs", fn);
+        BasicBlock* endBB = BasicBlock::Create(Context, isAnd ? "and_end" : "or_end", fn);
+        if (isAnd) Builder.CreateCondBr(L, rhsBB, endBB);
+        else       Builder.CreateCondBr(L, endBB, rhsBB);
+
+        Builder.SetInsertPoint(rhsBB);
         Value* rightVal = exprHandler(rightNode);
-        if (!rightVal) return nullptr;
-        Value* R = toBool(rightVal);
-        if (op == "and") return Builder.CreateAnd(L, R, "and_result");
-        if (op == "or")  return Builder.CreateOr(L, R, "or_result");
-        return nullptr;
+        Value* R = rightVal ? toBool(rightVal) : ConstantInt::getFalse(Context);
+        BasicBlock* rhsEnd = Builder.GetInsertBlock();
+        bool rhsFallsThrough = !rhsEnd->getTerminator();
+        if (rhsFallsThrough) Builder.CreateBr(endBB);
+
+        Builder.SetInsertPoint(endBB);
+        PHINode* phi = Builder.CreatePHI(Type::getInt1Ty(Context), 2, isAnd ? "and_result" : "or_result");
+        phi->addIncoming(isAnd ? ConstantInt::getFalse(Context) : ConstantInt::getTrue(Context), lhsEnd);
+        if (rhsFallsThrough) phi->addIncoming(R, rhsEnd);
+        return phi;
     }
 
     Value* generateBinaryOp(std::string op, Value* L, Value* R) {

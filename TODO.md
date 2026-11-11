@@ -14,8 +14,9 @@ manager, AOT, venvs, REPL; a failing Windows job in `test.yml` since
 
 Done in ui 1.1 (compiler 7.26.0): selection + clipboard, TextArea,
 ScrollView, Dropdown, tooltips; ui 1.2 (7.29.0): undo / redo,
-RadioGroup, ProgressBar, Tabs. Next ideas: word wrap in TextArea, menus
-/ a menu bar, a context menu, a tree view, a table / grid.
+RadioGroup, ProgressBar, Tabs; ui 1.3 (7.30.0): menus, context menus,
+TreeView, Table. Next ideas: word wrap in TextArea, editable table
+cells, drag and drop, a color picker, a file dialog.
 
 ## Housekeeping
 

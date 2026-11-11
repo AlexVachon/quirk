@@ -646,6 +646,68 @@ void quirk_print_opaque_bare(void* val) {
     fputs(s->buffer ? s->buffer : "", stdout);
 }
 
+// `x[key]` on an untyped value (a List's element, a Callable's argument,
+// Map.get): look it up by what the value is — List / Tuple by index, Map
+// by key, String by character. It was compiled as a raw pointer read, so
+// `rows[1][0]` returned garbage. Anything else can't be indexed.
+String* quirk_opaque_get_type(void* val);
+
+// `x[key] = value` on an untyped value: List by index, Map by key.
+void quirk_opaque_set_index(void* obj, void* key, void* value) {
+    extern void quirk_throw_exception(const char* type_name, const char* message);
+    if (!obj || (uintptr_t)obj <= 0xFFFFFFFFUL) {
+        quirk_throw_exception("TypeError", "this value can't be assigned with [ ]");
+        return;
+    }
+    void* target = obj;
+    if (quirk_is_any(obj) && ((Any*)obj)->tag == ANY_PTR && ((Any*)obj)->ptr) target = ((Any*)obj)->ptr;
+    switch (quirk_type_of(target)) {
+        case QT_LIST:
+            Core_Collections_List_List___set((List*)target, quirk_opaque_to_int(key), value);
+            return;
+        case QT_MAP: {
+            String* k = (quirk_type_of(key) == QT_STRING) ? (String*)key : quirk_opaque_to_string(key);
+            Core_Collections_Map_Map_put((Map*)target, k, value);
+            return;
+        }
+        default: break;
+    }
+    String* t = quirk_opaque_get_type(obj);
+    char msg[160];
+    snprintf(msg, sizeof msg, "a %s value can't be assigned with [ ]", t && t->buffer ? t->buffer : "?");
+    quirk_throw_exception("TypeError", msg);
+}
+
+void* quirk_opaque_index(void* obj, void* key) {
+    extern void quirk_throw_exception(const char* type_name, const char* message);
+    if (!obj) { quirk_throw_exception("TypeError", "can't index null"); return NULL; }
+    if ((uintptr_t)obj <= 0xFFFFFFFFUL) { quirk_throw_exception("TypeError", "an Int can't be indexed"); return NULL; }
+    void* target = obj;
+    if (quirk_is_any(obj) && ((Any*)obj)->tag == ANY_PTR && ((Any*)obj)->ptr) target = ((Any*)obj)->ptr;
+    switch (quirk_type_of(target)) {
+        case QT_LIST:
+            return Core_Collections_List_List___get((List*)target, quirk_opaque_to_int(key));
+        case QT_TUPLE: {
+            extern void* Core_Collections_Tuple_Tuple___get(Tuple* t, int64_t i);
+            return Core_Collections_Tuple_Tuple___get((Tuple*)target, quirk_opaque_to_int(key));
+        }
+        case QT_MAP: {
+            String* k = (quirk_type_of(key) == QT_STRING) ? (String*)key : quirk_opaque_to_string(key);
+            return Core_Collections_Map_Map___get((Map*)target, k);
+        }
+        case QT_STRING: {
+            extern String* quirk_string_char_at(String* s, int64_t i);
+            return quirk_string_char_at((String*)target, quirk_opaque_to_int(key));
+        }
+        default: break;
+    }
+    String* t = quirk_opaque_get_type(obj);
+    char msg[160];
+    snprintf(msg, sizeof msg, "a %s value can't be indexed with [ ]", t && t->buffer ? t->buffer : "?");
+    quirk_throw_exception("TypeError", msg);
+    return NULL;
+}
+
 // Return the type name of an opaque i8* value — safe version of Core_Primitives_Any_get_type
 // that handles tagged integers without dereferencing invalid addresses.
 String* quirk_opaque_get_type(void* val) {

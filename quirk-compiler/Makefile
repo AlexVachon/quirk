@@ -164,7 +164,8 @@ STDLIB_TAG_window ?= v1.2.0
 # ui v1.1.0: selection + clipboard in text fields, TextArea, ScrollView,
 # Dropdown, tooltips (needs window v1.2.0, compiler v7.26.0).
 # ui v1.2.0: undo / redo, RadioGroup, ProgressBar, Tabs (compiler v7.27.0).
-STDLIB_TAG_ui ?= v1.2.0
+# ui v1.3.0: menus, context menus, TreeView, Table (compiler v7.30.0).
+STDLIB_TAG_ui ?= v1.3.0
 
 # --- INSTALL / UNINSTALL --------------------------------------------------
 # Copy the freshly-built compiler + runtime into $(PREFIX) (default

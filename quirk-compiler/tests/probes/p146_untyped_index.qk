@@ -1,0 +1,42 @@
+// p146 — v7.30.0: `x[i]` / `x[i] = v` on an untyped value (a List's
+// element, a lambda's parameter, Map.get) look it up by what the value
+// is. They compiled to a raw pointer read / store: `rows[1][0]` was
+// garbage, `row["name"]` didn't compile, `x[k] = v` was malformed IR.
+
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+define first(r) -> String {
+    return r[0].str()
+}
+
+define main() -> void {
+    rows := [["banana", 12], ["apple", 3]]
+    x := rows[1]
+    if x[0].str() != "apple" { fail("rows[1][0]: " + x[0].str()) }
+    if x[1] != 3 { fail("rows[1][1]") }
+    if first(rows[0]) != "banana" { fail("untyped parameter") }
+    pick := fn(r) => r[1]
+    if pick(rows[0]) != 12 { fail("lambda parameter") }
+    data := [{"name": "ann"}, (4, 5), "hey", [10, 20, 30]]
+    m := data[0]
+    if m["name"] != "ann" { fail("map in a list") }
+    t := data[1]
+    if t[1] != 5 { fail("tuple in a list") }
+    s := data[2]
+    if s[0] != "h" or s[-1] != "y" { fail("string in a list") }
+    xs := data[3]
+    if xs[-1] != 30 { fail("negative index") }
+    xs[0] = 99
+    m["name"] = "bob"
+    if data[3].str() != "[99, 20, 30]" { fail("assign into a list: " + data[3].str()) }
+    if data[0].str() != "{\"name\": \"bob\"}" { fail("assign into a map: " + data[0].str()) }
+    raised := false
+    try {
+        v := data[3]
+        print(v[7])
+    } catch (e: IndexError) {
+        raised = true
+    }
+    if not raised { fail("out of range") }
+    print("p146 ok")
+}

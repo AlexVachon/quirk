@@ -4470,6 +4470,14 @@ class LLVMCodegen {
                     }
                 }
                 
+                // Untyped receiver: the runtime picks List / Map (was a raw store).
+                if (ptr->getType()->isPointerTy() && ptr->getType()->getPointerElementType()->isIntegerTy(8)) {
+                    Type* i8p = Type::getInt8PtrTy(Context);
+                    FunctionCallee setFn = TheModule->getOrInsertFunction("quirk_opaque_set_index",
+                        Type::getVoidTy(Context), i8p, i8p, i8p);
+                    Builder.CreateCall(setFn, {ptr, boxToVoidPtr(index), boxToVoidPtr(val)});
+                    return;
+                }
                 if (val->getType()->isPointerTy()) {
                     ptr = Builder.CreateBitCast(ptr, PointerType::getUnqual(Type::getInt8PtrTy(Context)));
                     Value* elementPtr = Builder.CreateGEP(Type::getInt8PtrTy(Context), ptr, index);
@@ -5666,8 +5674,11 @@ Value* LLVMCodegen::handleExpression(Node* node) {
                 }
             }
             if (L->getType()->isPointerTy() && L->getType()->getPointerElementType()->isIntegerTy(8)) {
-                Value* ptr = Builder.CreateBitCast(L, PointerType::getUnqual(Type::getInt8PtrTy(Context)));
-                return Builder.CreateLoad(Type::getInt8PtrTy(Context), Builder.CreateGEP(Type::getInt8PtrTy(Context), ptr, R));
+                // Untyped value: the runtime looks at what it is (List,
+                // Tuple, Map, String). This was a raw pointer read.
+                Type* i8p = Type::getInt8PtrTy(Context);
+                FunctionCallee idxFn = TheModule->getOrInsertFunction("quirk_opaque_index", i8p, i8p, i8p);
+                return Builder.CreateCall(idxFn, {L, boxToVoidPtr(R)}, "dyn_index");
             }
             Value* ptr = Builder.CreateBitCast(L, Type::getInt32PtrTy(Context));
             return Builder.CreateLoad(Type::getInt32Ty(Context), Builder.CreateGEP(Type::getInt32Ty(Context), ptr, R));

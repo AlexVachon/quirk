@@ -38,6 +38,9 @@
 #include <cstdlib>
 #include <system_error>
 #include "platform.hpp"          // unistd / sys/wait / ... (Win32 on Windows)
+#include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/StringRef.h"
+#include "llvm/Support/SHA256.h" // quirk_sha256_file (no sha256sum needed)
 
 #if defined(__APPLE__)
 #include <mach-o/dyld.h>
@@ -775,7 +778,7 @@ inline std::string resolve_self_package(const std::string& moduleName,
 // Get the current resolved revision of a checked-out repo.
 static std::string git_head(const fs::path& dir) {
     std::string cmd = "git -C \"" + dir.string() + "\" rev-parse HEAD 2>/dev/null";
-    FILE* pipe = popen(cmd.c_str(), "r");
+    FILE* pipe = qplat::popen_cmd(cmd.c_str(), "r");
     if (!pipe) return "";
     char buf[64]; std::string out;
     while (fgets(buf, sizeof(buf), pipe)) out += buf;
@@ -1279,7 +1282,7 @@ static std::string prompt_default(const std::string& label, const std::string& d
 // "Name <email>" or empty if either is missing.
 static std::string guess_author() {
     auto run = [](const std::string& cmd) -> std::string {
-        FILE* p = popen(cmd.c_str(), "r");
+        FILE* p = qplat::popen_cmd(cmd.c_str(), "r");
         if (!p) return "";
         char buf[256]; std::string out;
         while (fgets(buf, sizeof(buf), p)) out += buf;
@@ -1296,7 +1299,7 @@ static std::string guess_author() {
 
 // Best-effort guess at the repository URL from `git remote`.
 static std::string guess_repo() {
-    FILE* p = popen("git remote get-url origin 2>/dev/null", "r");
+    FILE* p = qplat::popen_cmd("git remote get-url origin 2>/dev/null", "r");
     if (!p) return "";
     char buf[512]; std::string out;
     while (fgets(buf, sizeof(buf), p)) out += buf;
@@ -1820,7 +1823,7 @@ static std::vector<std::string> discover_tags(const std::string& gitUrl, bool fo
         if (url.size() < 4 || url.substr(url.size() - 4) != ".git") url += ".git";
     }
     std::string cmd = "git ls-remote --tags --refs \"" + url + "\" 2>/dev/null";
-    FILE* p = popen(cmd.c_str(), "r");
+    FILE* p = qplat::popen_cmd(cmd.c_str(), "r");
     if (!p) return tags;
     char buf[1024];
     while (fgets(buf, sizeof(buf), p)) {
@@ -3462,7 +3465,7 @@ struct CheckFinding {
 
 // Run shell command, capture stdout. Returns trimmed output.
 static std::string capture(const std::string& cmd) {
-    FILE* p = popen((cmd + " 2>/dev/null").c_str(), "r");
+    FILE* p = qplat::popen_cmd((cmd + " 2>/dev/null").c_str(), "r");
     if (!p) return "";
     char buf[1024]; std::string out;
     while (fgets(buf, sizeof(buf), p)) out += buf;
@@ -3597,7 +3600,7 @@ static std::vector<CheckFinding> validate_package(const Manifest& m) {
     // --- Compile check on the entry --------------------------------------
     if (fs::exists(entry)) {
         std::string cmd = "\"" + self_binary() + "\" --check \"" + entry.string() + "\" 2>&1";
-        FILE* p = popen(cmd.c_str(), "r");
+        FILE* p = qplat::popen_cmd(cmd.c_str(), "r");
         std::string output;
         char buf[2048];
         while (p && fgets(buf, sizeof(buf), p)) output += buf;
@@ -4162,7 +4165,7 @@ static int cmd_fmt(const std::vector<std::string>& args) {
 //   • current line — the expression or statement just typed. Run once.
 //
 // Each turn writes `<preamble>\n<state>\n<wrapper(current)>` to a temp file
-// and execs the compiler on it via popen(). Slow per command (~100ms) but
+// and execs the compiler on it via qplat::popen_cmd(). Slow per command (~100ms) but
 // correct, and crucially insulates the REPL from JIT/codegen state leakage.
 //
 // Special commands:
@@ -4257,7 +4260,7 @@ static int repl_run_program(const std::string& fullProgram, const fs::path& tmp)
     }
     // Use the running quirk binary so we don't depend on PATH.
     std::string cmd = self_binary() + " " + tmp.string() + " 2>&1";
-    FILE* p = popen(cmd.c_str(), "r");
+    FILE* p = qplat::popen_cmd(cmd.c_str(), "r");
     if (!p) { log::err("repl: failed to spawn compiler"); return 1; }
     char buf[4096];
     while (size_t n = fread(buf, 1, sizeof(buf), p)) std::cout.write(buf, n);
@@ -4457,9 +4460,13 @@ static TestFileResult run_one_test_file(const fs::path& file, int timeoutSecs,
     // coreutils `timeout`; macOS has none by default (Homebrew installs it
     // as `gtimeout`). Without either the cap is skipped.
     static const std::string timeoutBin = [] {
-        if (qplat::run_shell("command -v timeout >/dev/null 2>&1") == 0) return std::string("timeout");
-        if (qplat::run_shell("command -v gtimeout >/dev/null 2>&1") == 0) return std::string("gtimeout");
+#ifdef _WIN32
+        return std::string();           // no timeout(1): the cap is skipped
+#else
+        if (qplat::have_command("timeout")) return std::string("timeout");
+        if (qplat::have_command("gtimeout")) return std::string("gtimeout");
         return std::string();
+#endif
     }();
     std::string cmd;
     if (timeoutSecs > 0 && !timeoutBin.empty()) {
@@ -4467,13 +4474,21 @@ static TestFileResult run_one_test_file(const fs::path& file, int timeoutSecs,
     }
     // --test-harness: a file of `define test_*()` functions (no main) gets a
     // generated runner; files with their own main() run unchanged.
+#ifdef _WIN32
+    // No env(1): set it here (the child inherits it); cmd.exe quotes with ".
+    setenv("QUIRK_DEBUG_SKIP", "1", 1);
+    cmd += "\"" + self_binary() + "\" run --test-harness"
+        + (onlyTests.empty() ? std::string() : " \"--test-k=" + onlyTests + "\"")
+        + " \"" + file.string() + "\" 2>&1";
+#else
     std::string k;
     for (char c : onlyTests) { if (c == '\'') k += "'\\''"; else k += c; }
     cmd += "env QUIRK_DEBUG_SKIP=1 \"" + self_binary()
         + "\" run --test-harness"
         + (onlyTests.empty() ? std::string() : " '--test-k=" + k + "'")
         + " \"" + file.string() + "\" 2>&1";
-    FILE* pipe = popen(cmd.c_str(), "r");
+#endif
+    FILE* pipe = qplat::popen_cmd(cmd.c_str(), "r");
     if (!pipe) { r.failed = 1; r.exitCode = -1; return r; }
     std::string out;
     char buf[4096];
@@ -5005,7 +5020,7 @@ static int cmd_release(const std::vector<std::string>& args) {
         // partial publish. Captured output is echoed in real-time AND
         // saved so we can emit a targeted hint for common auth failures.
         auto run_capture = [](const std::string& cmd) -> std::pair<int, std::string> {
-            FILE* p = popen((cmd + " 2>&1").c_str(), "r");
+            FILE* p = qplat::popen_cmd((cmd + " 2>&1").c_str(), "r");
             if (!p) return {-1, ""};
             char buf[1024]; std::string out;
             while (fgets(buf, sizeof(buf), p)) {
@@ -5048,7 +5063,7 @@ static int cmd_release(const std::vector<std::string>& args) {
         // HTTPS URL when using a credential helper, since helpers don't
         // fire on SSH transports.
         std::string quirk_token = quirk_load_github_token();
-        bool gh_installed = (qplat::run_shell("command -v gh >/dev/null 2>&1") == 0);
+        bool gh_installed = qplat::have_command("gh");
         bool gh_authed    = gh_installed
                          && (qplat::run_shell("gh auth status >/dev/null 2>&1") == 0);
 
@@ -5256,7 +5271,7 @@ static int cmd_bump_compiler(const std::vector<std::string>& args) {
     // Stage the version bump (and CHANGELOG.md if it exists alongside).
     fs::path rel_hpp  = fs::relative(src_path, repo_root);
     fs::path changelog = compiler_root / "CHANGELOG.md";
-    std::string add_cmd = "cd \"" + repo_root.string() + "\" && git add \""
+    std::string add_cmd = "git -C \"" + repo_root.string() + "\" add \""
                         + rel_hpp.string() + "\"";
     if (fs::exists(changelog)) {
         fs::path rel_cl = fs::relative(changelog, repo_root);
@@ -5267,7 +5282,7 @@ static int cmd_bump_compiler(const std::vector<std::string>& args) {
         log::err("git add failed");
         return 1;
     }
-    std::string commit_cmd = "cd \"" + repo_root.string() + "\" && git commit -m \"release v"
+    std::string commit_cmd = "git -C \"" + repo_root.string() + "\" commit -m \"release v"
                            + newVersion + "\" 2>&1";
     if (qplat::run_shell(commit_cmd.c_str()) != 0) {
         log::err("git commit failed (nothing to commit?)");
@@ -5276,7 +5291,7 @@ static int cmd_bump_compiler(const std::vector<std::string>& args) {
     log::ok("committed `release v" + newVersion + "`");
 
     if (!tag) return 0;
-    std::string tag_cmd = "cd \"" + repo_root.string() + "\" && git tag -a v"
+    std::string tag_cmd = "git -C \"" + repo_root.string() + "\" tag -a v"
                         + newVersion + " -m \"Quirk " + newVersion + "\" 2>&1";
     if (qplat::run_shell(tag_cmd.c_str()) != 0) {
         log::err("git tag failed");
@@ -5285,7 +5300,7 @@ static int cmd_bump_compiler(const std::vector<std::string>& args) {
     log::ok("tagged v" + newVersion);
 
     if (!push) return 0;
-    std::string push_cmd = "cd \"" + repo_root.string() + "\" && git push && git push origin v"
+    std::string push_cmd = "git -C \"" + repo_root.string() + "\" push && git -C \"" + repo_root.string() + "\" push origin v"
                          + newVersion + " 2>&1";
     if (qplat::run_shell(push_cmd.c_str()) != 0) {
         log::err("git push failed");
@@ -5339,15 +5354,18 @@ inline std::string quirk_release_platform(std::string* why) {
 
 // sha256 of a file via sha256sum / shasum (whichever exists), "" if neither.
 inline std::string quirk_sha256_file(const fs::path& f) {
-    for (const char* tool : {"sha256sum", "shasum -a 256"}) {
-        std::string cmd = std::string(tool) + " '" + f.string() + "' 2>/dev/null";
-        FILE* p = popen(cmd.c_str(), "r");
-        if (!p) continue;
-        char buf[256] = {0};
-        std::string out = fgets(buf, sizeof(buf), p) ? buf : "";
-        if (pclose(p) == 0 && out.size() >= 64) return out.substr(0, 64);
-    }
-    return "";
+    // In-process (LLVM's SHA256): no sha256sum / shasum needed, on any OS.
+    std::ifstream in(f, std::ios::binary);
+    if (!in) return "";
+    llvm::SHA256 h;
+    char buf[65536];
+    while (in.read(buf, sizeof buf) || in.gcount() > 0)
+        h.update(llvm::ArrayRef<uint8_t>(reinterpret_cast<const uint8_t*>(buf), (size_t)in.gcount()));
+    auto digest = h.final();
+    static const char* hex = "0123456789abcdef";
+    std::string out;
+    for (uint8_t b : digest) { out += hex[b >> 4]; out += hex[b & 15]; }
+    return out;
 }
 
 // Stdlib package → version tag, for a `packages/`-style dir. Versions
@@ -5455,7 +5473,7 @@ inline bool quirk_fetch_stdlib_assets(const std::string& tag, const fs::path& wo
         std::string why = !got[i].ok ? net::describe(got[i])
                         : quirk_sha256_file(e.tarball) != e.sha ? "checksum mismatch" : "";
         if (why.empty()) {
-            std::string tar = "tar -xzf '" + e.tarball.string() + "' -C '" + dest.string() + "'";
+            std::string tar = "tar -xzf \"" + e.tarball.string() + "\" -C \"" + dest.string() + "\"";
             if (qplat::run_shell(tar.c_str()) != 0 || !fs::is_directory(dest / e.name)) why = "couldn't unpack";
         }
         if (!why.empty()) {
@@ -5538,7 +5556,7 @@ inline fs::path quirk_fetch_compiler_release(const std::string& tag, const fs::p
     }
 
     log::step("Unpacking", pkg + ".tar.gz");
-    std::string tar = "tar -xzf '" + tarball.string() + "' -C '" + work.string() + "'";
+    std::string tar = "tar -xzf \"" + tarball.string() + "\" -C \"" + work.string() + "\"";
     if (qplat::run_shell(tar.c_str()) != 0 || !fs::exists(work / pkg / "bin" / "quirk")) {
         log::err("couldn't unpack " + pkg + ".tar.gz");
         return {};
@@ -5551,18 +5569,18 @@ inline fs::path quirk_fetch_compiler_release(const std::string& tag, const fs::p
 inline void quirk_install_vscode_extension(const fs::path& work) {
     const char* cc = std::getenv("CODE_CMD");
     std::string code = (cc && *cc) ? cc : "code";
-    if (qplat::run_shell(("command -v '" + code + "' >/dev/null 2>&1").c_str()) != 0) {
+    if (!qplat::have_command(code)) {
         log::warn("'" + code + "' is not on PATH — skipping the VSCode extension "
                   "(set CODE_CMD=codium / cursor / … for another editor)");
         return;
     }
-    std::string cmd = std::string("curl -fsSL '") + QUIRK_RELEASES_API_URL
-                    + "' 2>/dev/null | grep -oE 'https://[^\"]+\\.vsix' | head -n 1";
-    std::string vsixUrl;
-    if (FILE* p = popen(cmd.c_str(), "r")) {
-        char buf[1024];
-        if (fgets(buf, sizeof(buf), p)) vsixUrl = buf;
-        pclose(p);
+    // The first .vsix asset URL in the releases API answer (no grep / head).
+    std::string json, vsixUrl;
+    net::run_curl({"-fsSL", QUIRK_RELEASES_API_URL}, &json);
+    {
+        std::smatch m;
+        static const std::regex vsixRe(R"(https://[^"]+\.vsix)");
+        if (std::regex_search(json, m, vsixRe)) vsixUrl = m.str(0);
     }
     while (!vsixUrl.empty() && std::isspace((unsigned char)vsixUrl.back())) vsixUrl.pop_back();
     if (vsixUrl.empty()) { log::warn("no published Quirk VSCode extension found — skipping"); return; }
@@ -5570,7 +5588,7 @@ inline void quirk_install_vscode_extension(const fs::path& work) {
     net::Result r = net::download(vsixUrl, vsix, vsix.filename().string());
     if (!r.ok) { log::warn("extension download failed: " + net::describe(r)); return; }
     log::step("Installing", "VSCode extension into '" + code + "'");
-    if (qplat::run_shell(("'" + code + "' --install-extension '" + vsix.string() + "' >/dev/null").c_str()) != 0)
+    if (qplat::run_shell(("\"" + code + "\" --install-extension \"" + vsix.string() + "\" >/dev/null")) != 0)
         log::warn("extension install failed — install it manually: " + code
                   + " --install-extension " + vsixUrl);
     else
@@ -5879,7 +5897,7 @@ inline std::string quirk_json_str(const std::string& body, const std::string& ke
 // Shell out to curl. Captures stdout, discards stderr (the URLs we hit
 // have small, well-defined JSON responses; we don't need progress chatter).
 inline std::string quirk_curl(const std::string& cmd) {
-    FILE* p = popen((cmd + " 2>/dev/null").c_str(), "r");
+    FILE* p = qplat::popen_cmd((cmd + " 2>/dev/null").c_str(), "r");
     if (!p) return "";
     char buf[1024]; std::string out;
     while (fgets(buf, sizeof(buf), p)) out += buf;
@@ -6106,7 +6124,7 @@ static int cmd_compiler(const std::vector<std::string>& args) {
                         + "' 2>/dev/null"
                         + R"SH( | grep -oE '"tag_name"[[:space:]]*:[[:space:]]*"v[0-9][^"]*"')SH"
                         + R"SH( | sed -E 's/.*"tag_name"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')SH";
-        FILE* p = popen(cmd.c_str(), "r");
+        FILE* p = qplat::popen_cmd(cmd.c_str(), "r");
         if (!p) {
             log::err("compiler list: failed to fetch the GitHub releases list");
             return 1;
@@ -6756,7 +6774,7 @@ static int publish_to_registry(const std::string& alias, const std::string& repo
     // Push to the registry itself when allowed, else to your fork of it.
     std::string perm;
     {
-        FILE* pp = popen(("gh api repos/" + regRepo + " --jq .permissions.push 2>/dev/null").c_str(), "r");
+        FILE* pp = qplat::popen_cmd(("gh api repos/" + regRepo + " --jq .permissions.push 2>/dev/null").c_str(), "r");
         char buf[16] = {0};
         if (pp) { if (fgets(buf, sizeof(buf), pp)) perm = buf; pclose(pp); }
     }
@@ -6773,7 +6791,7 @@ static int publish_to_registry(const std::string& alias, const std::string& repo
             cleanup(); return 1;
         }
         std::string user;
-        if (FILE* pp = popen("gh api user --jq .login 2>/dev/null", "r")) {
+        if (FILE* pp = qplat::popen_cmd("gh api user --jq .login 2>/dev/null", "r")) {
             char buf[128] = {0};
             if (fgets(buf, sizeof(buf), pp)) user = buf;
             pclose(pp);
@@ -6784,7 +6802,7 @@ static int publish_to_registry(const std::string& alias, const std::string& repo
     // A PR already open for the branch now shows the new commit: done.
     {
         std::string open;
-        if (FILE* pp = popen(("gh pr list --repo " + regRepo + " --head " + br
+        if (FILE* pp = qplat::popen_cmd(("gh pr list --repo " + regRepo + " --head " + br
                               + " --state open --json url --jq '.[0].url' 2>/dev/null").c_str(), "r")) {
             char buf[512] = {0};
             if (fgets(buf, sizeof(buf), pp)) open = buf;
@@ -6804,7 +6822,7 @@ static int publish_to_registry(const std::string& alias, const std::string& repo
                         + " --head " + head + " --title 'Register " + alias + "'"
                         + " --body 'Adds `" + alias + " = \"" + repo + "\"` to the registry"
                         + " (opened by `quirk register`).' 2>&1";
-        if (FILE* pp = popen(cmd.c_str(), "r")) {
+        if (FILE* pp = qplat::popen_cmd(cmd.c_str(), "r")) {
             char buf[512];
             while (fgets(buf, sizeof(buf), pp)) prUrl += buf;
             if (pclose(pp) != 0) { log::err("couldn't open the pull request: " + prUrl); cleanup(); return 1; }
@@ -7445,7 +7463,7 @@ static int cmd_watch(const std::vector<std::string>& args) {
         cmd = "fswatch -1 " + abs.string();
     }
     while (true) {
-        FILE* p = popen(cmd.c_str(), "r");
+        FILE* p = qplat::popen_cmd(cmd.c_str(), "r");
         if (!p) { std::cerr << "watch: popen failed\n"; return 1; }
         char buf[512]; std::string changed;
         while (fgets(buf, sizeof(buf), p)) changed += buf;

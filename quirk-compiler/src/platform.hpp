@@ -70,11 +70,37 @@ namespace qplat {
 // outer quotes of a command that starts with a quoted program path
 // ("The filename, directory name, or volume label syntax is incorrect"),
 // so the whole command gets one more pair.
+// Commands are written for sh; on Windows, cmd.exe spells /dev/null NUL.
+inline std::string shell_fixup(std::string cmd) {
+#ifdef _WIN32
+    for (size_t at; (at = cmd.find("/dev/null")) != std::string::npos; ) cmd.replace(at, 9, "NUL");
+#endif
+    return cmd;
+}
+
 inline int run_shell(const std::string& cmd) {
 #ifdef _WIN32
-    return std::system(("\"" + cmd + "\"").c_str());
+    return std::system(("\"" + shell_fixup(cmd) + "\"").c_str());
 #else
     return std::system(cmd.c_str());
+#endif
+}
+
+// popen with the same fix-ups (and cmd.exe's outer quotes) as run_shell.
+inline FILE* popen_cmd(const std::string& cmd, const char* mode) {
+#ifdef _WIN32
+    return _popen(("\"" + shell_fixup(cmd) + "\"").c_str(), mode);
+#else
+    return ::popen(cmd.c_str(), mode);
+#endif
+}
+
+// True if `name` is a program on PATH.
+inline bool have_command(const std::string& name) {
+#ifdef _WIN32
+    return run_shell("where \"" + name + "\" >NUL 2>&1") == 0;
+#else
+    return run_shell("command -v '" + name + "' >/dev/null 2>&1") == 0;
 #endif
 }
 inline int run_shell(const char* cmd) { return run_shell(std::string(cmd ? cmd : "")); }

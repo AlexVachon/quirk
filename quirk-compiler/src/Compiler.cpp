@@ -988,6 +988,12 @@ static int runAotPipeline(const std::string& irPath,
 // Skipped when the binary exists, or an earlier build for this key failed
 // (`<bin>.failed` — e.g. llc / gcc missing) so runs don't keep retrying.
 static void spawnBackgroundAotBuild(const std::string& input, const std::string& key, int optLevel) {
+#ifdef _WIN32
+    // AOT (llc + a linker) isn't wired on Windows yet: programs run
+    // through the JIT every time (docs/WINDOWS-PORT.md, Stage 5).
+    (void)input; (void)key; (void)optLevel;
+    return;
+#endif
     fs::path bin = buildCachePathFor(key);
     std::error_code ec;
     if (fs::exists(bin, ec) || fs::exists(bin.string() + ".failed", ec)) return;
@@ -1702,6 +1708,11 @@ int main(int argc, char* argv[]) {
     // 6b. NATIVE BINARY OUTPUT (-o <file>)
     // =======================================================
     if (!opts.outputFile.empty()) {
+#ifdef _WIN32
+        std::cerr << "Error: building an executable (-o) isn't supported on Windows yet — "
+                     "run the program with `quirk " << opts.inputFile << "`" << std::endl;
+        return 1;
+#endif
         // Emit optimised IR to a temp file, then compile + link via llc-14 + gcc.
         // This is the same pipeline used by --emit-ir; it's reliable and avoids
         // having to manage TargetMachine lifetime alongside the running compiler.

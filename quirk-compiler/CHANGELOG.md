@@ -5,6 +5,22 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.26.0] — 2026-11-11 — `ui` 1.1: selection, clipboard, TextArea, ScrollView, Dropdown, tooltips
+
+- **`ui` v1.1.0:**
+  - Text fields select text: Shift + arrows / Home / End, mouse drag,
+    double-click (word), triple-click (line), Ctrl+A. Ctrl+C / X / V
+    copy, cut and paste through the system clipboard (Cmd on macOS), and
+    Ctrl + arrows / Backspace / Delete work by word.
+  - `ui.TextArea` — multi-line text that scrolls.
+  - `ui.ScrollView(content, height=)` — scrolls content that's taller
+    (wheel, scroll bar, or Tab to a widget out of view).
+  - `ui.Dropdown(options, ...)` — pick one from a list that opens below.
+  - Tooltips: `widget.tooltip = "..."` or `ui.tooltip(widget, "...")`.
+- **`window` v1.2.0:** `w.clip(x, y, width, height)` / `w.unclip()` limit
+  drawing to a rectangle; `window.clipboard()` / `window.set_clipboard(text)`.
+  Both need this compiler's runtime.
+
 ## [7.25.1] — 2026-11-11 — Windows: UTF-8 console output
 
 - **Windows: `├──`, `✓` and other non-ASCII output show correctly** in

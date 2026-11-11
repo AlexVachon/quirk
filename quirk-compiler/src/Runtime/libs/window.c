@@ -134,6 +134,10 @@ static struct {
     int (*SaveBMP_RW)(void*, void*, int);
     void* (*CreateRGBSurfaceWithFormat)(uint32_t, int, int, int, uint32_t);
     void (*FreeSurface)(void*);
+    int (*RenderSetClipRect)(void*, const QSdlRect*);
+    int (*SetClipboardText)(const char*);
+    char* (*GetClipboardText)(void);
+    void (*Free)(void*);
 } qsdl;
 
 static char qwin_err[512] = "";
@@ -201,6 +205,10 @@ static int qsdl_load(void) {
     QLOAD(SaveBMP_RW, "SDL_SaveBMP_RW")
     QLOAD(CreateRGBSurfaceWithFormat, "SDL_CreateRGBSurfaceWithFormat")
     QLOAD(FreeSurface, "SDL_FreeSurface")
+    QLOAD(RenderSetClipRect, "SDL_RenderSetClipRect")
+    QLOAD(SetClipboardText, "SDL_SetClipboardText")
+    QLOAD(GetClipboardText, "SDL_GetClipboardText")
+    QLOAD(Free, "SDL_free")
     #undef QLOAD
     qsdl.loaded = 1;
     return 1;
@@ -590,6 +598,41 @@ List* Window_size_raw(int64_t h) {
     Core_Collections_List_List_append(res, quirk_int_to_opaque(ww));
     Core_Collections_List_List_append(res, quirk_int_to_opaque(hh));
     return res;
+}
+
+// Limit drawing to a rectangle (scrolling areas, popups); width < 0
+// lifts the limit. Window_clear still clears the whole window.
+void Window_clip_raw(int64_t h, int64_t x, int64_t y, int64_t cw, int64_t ch) {
+    QWin* w = qwin_get(h);
+    if (!w) return;
+    if (cw < 0) { qsdl.RenderSetClipRect(w->ren, NULL); return; }
+    QSdlRect r = { (int)x, (int)y, (int)(cw > 0 ? cw : 0), (int)(ch > 0 ? ch : 0) };
+    qsdl.RenderSetClipRect(w->ren, &r);
+}
+
+// The clipboard. The system one once a (non-headless) window has started
+// SDL's video; otherwise — headless tests, before any window — a copy kept
+// here, so copy / paste still round-trips.
+static char* qwin_clipboard = NULL;
+
+void Window_set_clipboard_raw(String* text) {
+    const char* t = text ? make_safe_cstr(text) : "";
+    size_t n = strlen(t);
+    char* copy = (char*)malloc(n + 1);
+    if (copy) { memcpy(copy, t, n + 1); qwin_clipboard = copy; }
+    if (qsdl.loaded == 1 && qsdl.inited && !qwin_headless) qsdl.SetClipboardText(t);
+}
+
+String* Window_clipboard_raw() {
+    if (qsdl.loaded == 1 && qsdl.inited && !qwin_headless) {
+        char* t = qsdl.GetClipboardText();
+        if (t) {
+            String* s = make_String(t);
+            qsdl.Free(t);
+            return s;
+        }
+    }
+    return make_String(qwin_clipboard ? qwin_clipboard : "");
 }
 
 void Window_set_title_raw(int64_t h, String* title) {

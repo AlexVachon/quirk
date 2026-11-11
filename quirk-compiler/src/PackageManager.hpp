@@ -1428,7 +1428,7 @@ static bool is_active_venv() {
 // parent ~/.quirk/ if missing. Mirrors `pip install --user` / `cargo install`
 // — user-scoped, no root needed, persists across projects.
 static fs::path user_packages_dir() {
-    const char* home = std::getenv("HOME");
+    const char* home = qplat::home_env();
     if (!home || !*home) return {};
     fs::path base = fs::path(home) / ".quirk" / "packages";
     std::error_code ec;
@@ -1524,7 +1524,7 @@ static constexpr const char* DEFAULT_REGISTRY_URL =
     "https://raw.githubusercontent.com/quirk-pkg/registry/main/index.toml";
 
 static fs::path quirk_home_dir() {
-    const char* h = std::getenv("HOME");
+    const char* h = qplat::home_env();
     if (!h) return {};
     fs::path q = fs::path(h) / ".quirk";
     std::error_code ec;
@@ -1664,6 +1664,8 @@ static const std::map<std::string, std::string>& stdlib_registry() {
 // Look up <name> in user aliases first, then the cached registry,
 // then the compiler-shipped stdlib registry. Returns the URL/spec
 // the user should install, or empty if not found.
+static void refresh_registry_index(bool force);
+
 static std::string registry_lookup(const std::string& name) {
     auto aliases = read_kv_file(aliases_path());
     auto it = aliases.find(name);
@@ -1940,7 +1942,7 @@ static int download_github_tarball(const std::string& ownerRepo, const std::stri
 }
 
 static fs::path cache_dir() {
-    const char* h = std::getenv("HOME");
+    const char* h = qplat::home_env();
     if (!h) return {};
     fs::path c = fs::path(h) / ".quirk" / "cache";
     std::error_code ec;
@@ -2175,7 +2177,7 @@ static int install_local(const std::string& path_spec, bool editable,
                          LockEntry* outLock = nullptr) {
     fs::path src = path_spec;
     if (!path_spec.empty() && path_spec[0] == '~') {
-        const char* home = std::getenv("HOME");
+        const char* home = qplat::home_env();
         if (home) src = fs::path(home) / path_spec.substr(path_spec.size() > 1 && path_spec[1] == '/' ? 2 : 1);
     }
     std::error_code ec;
@@ -2343,6 +2345,12 @@ static int install_one(const std::string& spec_str, bool quiet, bool editable = 
         // Try the registry / aliases.
         log::v("registry lookup: " + pathPart);
         std::string resolved = registry_lookup(pathPart);
+        if (resolved.empty()) {
+            // Fresh machine (no registry-cache.toml yet) or a stale index:
+            // fetch it once and retry, like `quirk show` does.
+            refresh_registry_index(true);
+            resolved = registry_lookup(pathPart);
+        }
         if (!resolved.empty()) {
             log::v("resolved → " + resolved);
             // User pin > registry default pin. Strip any `@…` already on the
@@ -4296,7 +4304,7 @@ static int cmd_repl(const std::vector<std::string>& args) {
     // so scripted REPL sessions still work; arrow-key recall + line edit
     // only activate when stdin is a real terminal.
     fs::path histPath;
-    if (const char* home = std::getenv("HOME")) {
+    if (const char* home = qplat::home_env()) {
         histPath = fs::path(home) / ".quirk" / "repl_history";
         std::error_code ec;
         fs::create_directories(histPath.parent_path(), ec);
@@ -5616,7 +5624,7 @@ inline void quirk_install_vscode_extension(const fs::path& work) {
 // ─────────────────────────────────────────────────────────────────────────
 
 inline fs::path quirk_update_cache_file() {
-    const char* home = std::getenv("HOME");
+    const char* home = qplat::home_env();
     if (!home || !*home) return {};
     return fs::path(home) / ".quirk" / "update-check.json";
 }
@@ -5851,7 +5859,7 @@ inline std::string quirk_oauth_client_id() {
 }
 
 inline fs::path quirk_auth_file() {
-    const char* home = std::getenv("HOME");
+    const char* home = qplat::home_env();
     if (!home || !*home) return {};
     return fs::path(home) / ".quirk" / "auth.json";
 }
@@ -6238,7 +6246,7 @@ static int cmd_compiler(const std::vector<std::string>& args) {
         fs::path installedPkg;
         {
             const char* idEnv = std::getenv("INSTALL_DIR");
-            const char* home  = std::getenv("HOME");
+            const char* home  = qplat::home_env();
             const char* qh    = std::getenv("QUIRK_HOME");
             installedPkg = targetVenv && qh
                 ? fs::path(qh) / "lib" / "quirk" / "stdlib"
@@ -6260,7 +6268,7 @@ static int cmd_compiler(const std::vector<std::string>& args) {
             // `packages/`. Removing `bin/` while this binary runs from it
             // is fine: the running image stays mapped until exit.
             const char* idEnv = std::getenv("INSTALL_DIR");
-            const char* home  = std::getenv("HOME");
+            const char* home  = qplat::home_env();
             fs::path dir = (idEnv && *idEnv) ? fs::path(idEnv)
                          : fs::path(home ? home : ".") / ".quirk";
             log::step("Installing", "into " + dir.string());
@@ -7616,7 +7624,7 @@ static fs::path locate_module_file(const std::string& name) {
         roots.push_back(home / "lib" / "quirk");
         roots.push_back(home / "libs");
     }
-    if (const char* hm = std::getenv("HOME"))
+    if (const char* hm = qplat::home_env())
         roots.push_back(fs::path(hm) / ".quirk" / "packages");
     fs::path stdlib = find_system_stdlib();
     if (!stdlib.empty()) roots.push_back(stdlib);
@@ -7804,8 +7812,8 @@ static int cmd_env() {
     kv("stdlib:",       stdlib.empty() ? log::dim("(not found)") : stdlib.string());
     kv("stdlib v:",     std::string(QUIRK_VERSION)
                       + log::dim("  (bundled with compiler — `quirk stdlib` to inspect)"));
-    kv("user-global:",  std::getenv("HOME")
-        ? std::string(std::getenv("HOME")) + "/.quirk/packages"
+    kv("user-global:",  qplat::home_env()
+        ? std::string(qplat::home_env()) + "/.quirk/packages"
         : log::dim("(no $HOME)"));
     return 0;
 }

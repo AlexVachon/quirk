@@ -66,6 +66,16 @@ inline int unsetenv(const char* name) { return _putenv_s(name, ""); }
 
 namespace qplat {
 
+// The user's home directory: $HOME, or on Windows %USERPROFILE% when HOME
+// isn't set (cmd.exe / PowerShell; Git Bash sets HOME). nullptr if neither.
+inline const char* home_env() {
+    const char* h = std::getenv("HOME");
+#ifdef _WIN32
+    if (!h || !*h) h = std::getenv("USERPROFILE");
+#endif
+    return h;
+}
+
 // std::system, quoted the way cmd.exe needs on Windows: it strips the
 // outer quotes of a command that starts with a quoted program path
 // ("The filename, directory name, or volume label syntax is incorrect"),

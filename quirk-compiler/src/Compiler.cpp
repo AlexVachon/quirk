@@ -334,7 +334,7 @@ static std::vector<std::string>& getSearchPaths() {
         // User-global installs — `pip install --user` / `cargo install` equivalent.
         // Skipped when a venv is active so the venv stays a closed world.
         if (!isVenv) {
-            if (const char* home = std::getenv("HOME")) {
+            if (const char* home = qplat::home_env()) {
                 p.push_back(std::string(home) + "/.quirk/packages/");
             }
         }
@@ -343,7 +343,7 @@ static std::vector<std::string>& getSearchPaths() {
         // checking both old and new locations during the migration so
         // an old `~/.quirk/libs/` still works while users upgrade.
         p.push_back("./libs/");
-        if (const char* home2 = std::getenv("HOME")) {
+        if (const char* home2 = qplat::home_env()) {
             p.push_back(std::string(home2) + "/.quirk/libs/");
         }
 
@@ -784,7 +784,7 @@ static std::string computeCacheKey(const std::string& inputPath, int optLevel) {
 }
 
 static fs::path cachePathFor(const std::string& key) {
-    const char* home = std::getenv("HOME");
+    const char* home = qplat::home_env();
     fs::path root = home ? fs::path(home) / ".quirk" / "cache"
                          : fs::temp_directory_path() / "quirk-cache";
     return root / (key + ".bc");
@@ -862,7 +862,7 @@ static std::string detectArchTag() {
 }
 
 static fs::path buildCachePathFor(const std::string& key) {
-    const char* home = std::getenv("HOME");
+    const char* home = qplat::home_env();
     fs::path root = home ? fs::path(home) / ".quirk" / "cache" / "build"
                          : fs::temp_directory_path() / "quirk-cache-build";
     return root / (key + "-" + detectArchTag()) / "quirk-bin";
@@ -1680,7 +1680,7 @@ int main(int argc, char* argv[]) {
     if (opts.emitIR || !opts.runImmediate) {
         std::string irPath = opts.emitIR
             ? (baseDir + "/" + baseName + ".ll")
-            : ("/tmp/quirk_" + baseName + ".ll");
+            : ((fs::temp_directory_path() / "quirk_").string() + baseName + ".ll");
 
         std::error_code EC;
         raw_fd_ostream dest(irPath, EC, sys::fs::OF_None);
@@ -1716,8 +1716,8 @@ int main(int argc, char* argv[]) {
         // Emit optimised IR to a temp file, then compile + link via llc-14 + gcc.
         // This is the same pipeline used by --emit-ir; it's reliable and avoids
         // having to manage TargetMachine lifetime alongside the running compiler.
-        std::string irPath  = "/tmp/quirk_" + baseName + ".ll";
-        std::string objPath = "/tmp/quirk_" + baseName + ".o";
+        std::string irPath  = (fs::temp_directory_path() / "quirk_").string() + baseName + ".ll";
+        std::string objPath = (fs::temp_directory_path() / "quirk_").string() + baseName + ".o";
 
         {
             std::error_code EC;
@@ -1786,7 +1786,7 @@ int main(int argc, char* argv[]) {
 
         // Per process: two builds of same-named scripts (or the same one,
         // from background builds) mustn't share the temp IR file.
-        std::string irPath = "/tmp/quirk_" + baseName + "_aot." + std::to_string(getpid()) + ".ll";
+        std::string irPath = (fs::temp_directory_path() / "quirk_").string() + baseName + "_aot." + std::to_string(getpid()) + ".ll";
         {
             std::error_code EC;
             llvm::raw_fd_ostream irDest(irPath, EC, llvm::sys::fs::OF_None);

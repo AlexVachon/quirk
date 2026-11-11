@@ -70,7 +70,7 @@ static bool windowsEmitObject(const std::string& irPath, const std::string& objP
     mod->setTargetTriple(triple);
     mod->setDataLayout(tm->createDataLayout());
     std::error_code ec;
-    llvm::raw_fd_ostream out(objPath, ec, llvm::sys::std::filesystem::OF_None);
+    llvm::raw_fd_ostream out(objPath, ec, llvm::sys::fs::OF_None);
     if (ec) { err = "can't write " + objPath + ": " + ec.message(); return false; }
     llvm::legacy::PassManager pm;
     if (tm->addPassesToEmitFile(pm, out, nullptr, llvm::CGFT_ObjectFile)) {

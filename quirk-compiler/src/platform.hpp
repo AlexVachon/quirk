@@ -169,6 +169,9 @@ std::string read_all(Child& c);
 bool try_wait(Child& c, int* code);
 int wait_exit(Child& c);
 void spawn_detached(const std::vector<std::string>& argv);
+// Switch the console to UTF-8 output / input (restored at exit): the
+// legacy code page (437, 850, ...) shows UTF-8 text as mojibake.
+void utf8_console();
 // Run `program` with argv (argv[0] is what the child sees as its name) and
 // this process's stdin / stdout / stderr; its exit code, -1 if it couldn't start.
 int spawn_wait(const std::string& program, const std::vector<std::string>& argv);
@@ -191,6 +194,8 @@ inline int stdout_cols(int fallback) {
         return ws.ws_col;
     return fallback;
 }
+
+inline void utf8_console() {}   // POSIX terminals are UTF-8 already
 
 // A fresh private directory `<tmp>/<prefix>XXXXXX`; "" on failure.
 inline std::string make_temp_dir(const std::string& prefix) {

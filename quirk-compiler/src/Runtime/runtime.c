@@ -89,7 +89,27 @@ static void* __gc_text_alloc(size_t n) {
 
 extern void Random_init(void);
 
+#ifdef _WIN32
+// Programs print UTF-8; the Windows console decodes with its legacy code
+// page unless told otherwise. For executables built with `-o` (under
+// quirk the driver already did this). Restored at exit.
+static UINT quirk_old_out_cp, quirk_old_in_cp;
+static void quirk_restore_console_cp(void) {
+    SetConsoleOutputCP(quirk_old_out_cp);
+    SetConsoleCP(quirk_old_in_cp);
+}
+#endif
+
 void QuirkRuntime_init(int argc, char** argv) {
+#ifdef _WIN32
+    quirk_old_out_cp = GetConsoleOutputCP();
+    quirk_old_in_cp = GetConsoleCP();
+    if (quirk_old_out_cp && quirk_old_out_cp != CP_UTF8) {
+        SetConsoleOutputCP(CP_UTF8);
+        SetConsoleCP(CP_UTF8);
+        atexit(quirk_restore_console_cp);
+    }
+#endif
     GC_INIT();             // <--- USE MACRO: Handles stack base detection automatically
     // Boehm starts with a tiny heap and collects every few hundred KB,
     // so allocation-heavy loops (string building, short-lived lists)

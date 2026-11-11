@@ -1488,6 +1488,7 @@ static void emitSymbols(const std::vector<std::unique_ptr<Node>>& ast) {
 // ==========================================================
 
 int main(int argc, char* argv[]) {
+    qplat::utf8_console();   // Windows: UTF-8 output (├──, ✓, …); no-op elsewhere
     if (argc < 2) {
         printUsage();
         return 1;

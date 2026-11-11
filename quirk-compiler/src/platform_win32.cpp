@@ -155,6 +155,20 @@ void spawn_detached(const std::vector<std::string>& argv) {
     }
 }
 
+static UINT g_oldOutCP = 0, g_oldInCP = 0;
+
+void utf8_console() {
+    if (g_oldOutCP) return;
+    g_oldOutCP = GetConsoleOutputCP();
+    g_oldInCP = GetConsoleCP();
+    if (!g_oldOutCP) return;                       // no console (piped / detached)
+    SetConsoleOutputCP(CP_UTF8);
+    SetConsoleCP(CP_UTF8);
+    // The code page belongs to the console, not this process: put the
+    // shell's back on the way out.
+    atexit([] { SetConsoleOutputCP(g_oldOutCP); SetConsoleCP(g_oldInCP); });
+}
+
 int spawn_wait(const std::string& program, const std::vector<std::string>& argv) {
     STARTUPINFOA si{};
     si.cb = sizeof(si);

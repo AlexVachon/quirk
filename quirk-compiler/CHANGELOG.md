@@ -5,6 +5,14 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.25.1] — 2026-11-11 — Windows: UTF-8 console output
+
+- **Windows: `├──`, `✓` and other non-ASCII output show correctly** in
+  PowerShell / cmd. The console decoded quirk's UTF-8 with its legacy
+  code page (437 / 850), so `quirk new` printed `Ôö£ÔöÇÔöÇ` for `├──`.
+  quirk, and executables built with `-o`, switch the console to UTF-8
+  while they run and put the previous code page back on exit.
+
 ## [7.25.0] — 2026-11-11 — Windows release (experimental)
 
 - **Prebuilt Windows build** (x86_64, experimental): install with

@@ -76,6 +76,22 @@ inline const char* home_env() {
     return h;
 }
 
+// The tar to extract .tar.gz with. On Windows, the bsdtar Windows 10+
+// ships in System32: a GNU tar found first on PATH (Git Bash, MSYS2)
+// reads "C:\\..." as a remote host:path. --force-local covers the rest.
+inline std::string tar_cmd() {
+#ifdef _WIN32
+    if (const char* root = std::getenv("SystemRoot")) {
+        std::string t = std::string(root) + "\\System32\\tar.exe";
+        std::error_code ec;
+        if (std::filesystem::exists(t, ec)) return "\"" + t + "\"";
+    }
+    return "tar --force-local";
+#else
+    return "tar";
+#endif
+}
+
 // std::system, quoted the way cmd.exe needs on Windows: it strips the
 // outer quotes of a command that starts with a quoted program path
 // ("The filename, directory name, or volume label syntax is incorrect"),

@@ -1881,7 +1881,7 @@ static int try_codeload_tarball(const std::string& ownerRepo, const std::string&
         log::v(url + ": " + net::describe(r));
         return 1;
     }
-    std::string tar = "tar -xzf \"" + tmpTar.string()
+    std::string tar = qplat::tar_cmd() + " -xzf \"" + tmpTar.string()
                     + "\" -C \"" + extractDir.string() + "\"";
     if (quiet) tar += " 2>/dev/null";
     if (qplat::run_shell(tar.c_str()) != 0) {
@@ -5481,7 +5481,7 @@ inline bool quirk_fetch_stdlib_assets(const std::string& tag, const fs::path& wo
         std::string why = !got[i].ok ? net::describe(got[i])
                         : quirk_sha256_file(e.tarball) != e.sha ? "checksum mismatch" : "";
         if (why.empty()) {
-            std::string tar = "tar -xzf \"" + e.tarball.string() + "\" -C \"" + dest.string() + "\"";
+            std::string tar = qplat::tar_cmd() + " -xzf \"" + e.tarball.string() + "\" -C \"" + dest.string() + "\"";
             if (qplat::run_shell(tar.c_str()) != 0 || !fs::is_directory(dest / e.name)) why = "couldn't unpack";
         }
         if (!why.empty()) {
@@ -5564,7 +5564,7 @@ inline fs::path quirk_fetch_compiler_release(const std::string& tag, const fs::p
     }
 
     log::step("Unpacking", pkg + ".tar.gz");
-    std::string tar = "tar -xzf \"" + tarball.string() + "\" -C \"" + work.string() + "\"";
+    std::string tar = qplat::tar_cmd() + " -xzf \"" + tarball.string() + "\" -C \"" + work.string() + "\"";
     if (qplat::run_shell(tar.c_str()) != 0 || !fs::exists(work / pkg / "bin" / "quirk")) {
         log::err("couldn't unpack " + pkg + ".tar.gz");
         return {};

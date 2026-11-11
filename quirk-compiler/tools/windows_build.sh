@@ -180,8 +180,8 @@ print(fs.matches("*.qk", "main.qk"), fs.matches("?ain.[a-z]k", "main.qk"), fs.ma
     ( cd "$PM" && timeout 120 ../../../bin/quirk.exe new demo 2>&1 | tail -3 ) | tee -a "$LOG"
     if [ -d "$PM/demo" ]; then
         ( cd "$PM/demo" && timeout 300 ../../../../bin/quirk.exe install slug 2>&1 | tail -4 ) | tee -a "$LOG"
-        printf 'use slug\nprint(slug.slugify("Hello Windows World"))\n' > "$PM/demo/use_slug.qk"
-        ( cd "$PM/demo" && timeout 120 ../../../../bin/quirk.exe use_slug.qk 2>&1 | tail -3 ) | tee -a "$LOG"
+        printf 'use slug\nprint(slug.slug("Hello Windows World"))\n' > "$PM/demo/use_slug.qk"
+        ( cd "$PM/demo" && timeout 120 ../../../../bin/quirk.exe use_slug.qk 2>&1 | tail -8 ) | tee -a "$LOG"
         ( cd "$PM/demo" && timeout 300 ../../../../bin/quirk.exe test 2>&1 | tail -4 ) | tee -a "$LOG"
         ( cd "$PM/demo" && timeout 60 ../../../../bin/quirk.exe deps 2>&1 | tail -3 ) | tee -a "$LOG"
     fi

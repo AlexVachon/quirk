@@ -169,6 +169,9 @@ std::string read_all(Child& c);
 bool try_wait(Child& c, int* code);
 int wait_exit(Child& c);
 void spawn_detached(const std::vector<std::string>& argv);
+// Run `program` with argv (argv[0] is what the child sees as its name) and
+// this process's stdin / stdout / stderr; its exit code, -1 if it couldn't start.
+int spawn_wait(const std::string& program, const std::vector<std::string>& argv);
 int run_on_big_stack(int (*fn)(int, char**), int argc, char** argv, size_t stack);
 std::string self_exe();
 std::string native_arch();

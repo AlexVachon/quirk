@@ -206,6 +206,14 @@ QK
         fi
     done
 
+    # The AOT build cache: `--build` once, then `quirk file` runs the
+    # cached .exe (argv, exit code passed through).
+    step "aot: build cache"
+    printf 'use sys\nprint("cached run, args:", sys.argv())\nsys.exit(3)\n' > obj/win/cached.qk
+    timeout 180 ./bin/quirk.exe --build obj/win/cached.qk 2>&1 | tail -3 | tee -a "$LOG"
+    timeout 60 ./bin/quirk.exe obj/win/cached.qk one two 2>&1 | head -5 | tee -a "$LOG"
+    echo "rc=${PIPESTATUS[0]} (expect 3)" | tee -a "$LOG"
+
     # The real test suite (as CI runs it on Linux), file by file.
     step "test suite"
     timeout 1500 ./bin/quirk.exe test tests --timeout 60 --exclude server_test --exclude custom_package_test \

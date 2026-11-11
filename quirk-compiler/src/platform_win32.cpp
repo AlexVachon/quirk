@@ -155,6 +155,21 @@ void spawn_detached(const std::vector<std::string>& argv) {
     }
 }
 
+int spawn_wait(const std::string& program, const std::vector<std::string>& argv) {
+    STARTUPINFOA si{};
+    si.cb = sizeof(si);
+    PROCESS_INFORMATION pi{};
+    std::string cmd = command_line(argv);
+    if (!CreateProcessA(program.c_str(), cmd.data(), nullptr, nullptr, TRUE, 0, nullptr, nullptr, &si, &pi))
+        return -1;
+    CloseHandle(pi.hThread);
+    WaitForSingleObject(pi.hProcess, INFINITE);
+    DWORD ec = 0;
+    GetExitCodeProcess(pi.hProcess, &ec);
+    CloseHandle(pi.hProcess);
+    return (int)ec;
+}
+
 int run_on_big_stack(int (*fn)(int, char**), int argc, char** argv, size_t stack) {
     struct Args { int (*fn)(int, char**); int argc; char** argv; int result; };
     Args a{fn, argc, argv, 0};

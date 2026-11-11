@@ -928,7 +928,11 @@ static fs::path buildCachePathFor(const std::string& key) {
     const char* home = qplat::home_env();
     fs::path root = home ? fs::path(home) / ".quirk" / "cache" / "build"
                          : fs::temp_directory_path() / "quirk-cache-build";
+#ifdef _WIN32
+    return root / (key + "-" + detectArchTag()) / "quirk-bin.exe";
+#else
     return root / (key + "-" + detectArchTag()) / "quirk-bin";
+#endif
 }
 
 // ==========================================================
@@ -1019,6 +1023,24 @@ static int runAotPipeline(const std::string& irPath,
     // other. Final move is atomic on POSIX.
     std::string tmpObj = outPath + ".o.tmp." + std::to_string(getpid());
     std::string tmpBin = outPath + ".tmp." + std::to_string(getpid());
+#ifdef _WIN32
+    {
+        tmpObj = outPath + ".obj.tmp." + std::to_string(getpid());
+        tmpBin = outPath + ".tmp." + std::to_string(getpid()) + ".exe";
+        std::string err;
+        bool ok = windowsEmitObject(irPath, tmpObj, err) &&
+                  windowsLinkExe(tmpObj, tmpBin, runtimePath, err);
+        std::error_code ec;
+        fs::remove(tmpObj, ec);
+        if (!ok) {
+            if (verbose) std::cerr << "build: " << err << "\n";
+            fs::remove(tmpBin, ec);
+            return 1;
+        }
+        fs::rename(tmpBin, outPath, ec);
+        return ec ? 1 : 0;
+    }
+#endif
 
     std::string llcCmd = "llc-14 -filetype=obj -relocation-model=pic -O2 "
                        + irPath + " -o " + tmpObj;
@@ -1051,12 +1073,6 @@ static int runAotPipeline(const std::string& irPath,
 // Skipped when the binary exists, or an earlier build for this key failed
 // (`<bin>.failed` — e.g. llc / gcc missing) so runs don't keep retrying.
 static void spawnBackgroundAotBuild(const std::string& input, const std::string& key, int optLevel) {
-#ifdef _WIN32
-    // AOT (llc + a linker) isn't wired on Windows yet: programs run
-    // through the JIT every time (docs/WINDOWS-PORT.md, Stage 5).
-    (void)input; (void)key; (void)optLevel;
-    return;
-#endif
     fs::path bin = buildCachePathFor(key);
     std::error_code ec;
     if (fs::exists(bin, ec) || fs::exists(bin.string() + ".failed", ec)) return;
@@ -1083,6 +1099,24 @@ static int execCachedBinary(const std::string& binPath,
         char self[4096];
         ssize_t n = readlink("/proc/self/exe", self, sizeof(self) - 1);
         if (n > 0) { self[n] = '\0'; setenv("QUIRK_EXE", self, 1); }
+    }
+#endif
+#ifdef _WIN32
+    {
+        // No exec on Windows: run it as a child with our console and pass
+        // its exit code through. runtime.dll (and the GC / pthread / SSL
+        // DLLs) sit next to it in quirk's bin dir; put that on PATH.
+        std::string self = qplat::self_exe();
+        _putenv_s("QUIRK_EXE", self.c_str());
+        std::string binDir = fs::path(self).parent_path().string();
+        const char* path = std::getenv("PATH");
+        std::string newPath = binDir + ";" + (path ? path : "");
+        _putenv_s("PATH", newPath.c_str());
+        std::vector<std::string> args;
+        for (size_t i = 0; argv[i]; i++) args.push_back(argv[i]);
+        int rc = qplat::spawn_wait(binPath, args);
+        if (rc == -1) std::cerr << "quirk: couldn't run cached binary " << binPath << "\n";
+        return rc;
     }
 #endif
     execv(binPath.c_str(), argv.data());

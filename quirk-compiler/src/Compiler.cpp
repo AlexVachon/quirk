@@ -42,6 +42,69 @@
 
 #include "Backend/Codegen.cpp"
 
+#ifdef _WIN32
+// ---- `-o` on Windows: IR -> COFF object in-process, then lld-link / link.exe.
+// The C library names generated code calls are renamed to the runtime's
+// quirk_crt_* wrappers, the same binding the JIT makes (see win_compat.h):
+// the UCRT exports no `printf`, and one CRT means one stdout buffer.
+static bool windowsEmitObject(const std::string& irPath, const std::string& objPath, std::string& err) {
+    llvm::LLVMContext ctx;
+    llvm::SMDiagnostic diag;
+    auto mod = llvm::parseIRFile(irPath, diag, ctx);
+    if (!mod) { err = "can't read the generated IR: " + diag.getMessage().str(); return false; }
+    for (const char* n : {"printf", "sprintf", "fopen", "fclose", "fwrite", "fread", "fseek",
+                          "ftell", "strlen", "malloc", "free", "exit", "write", "GC_malloc"}) {
+        if (llvm::Function* f = mod->getFunction(n))
+            if (f->isDeclaration()) f->setName(std::string("quirk_crt_") + n);
+    }
+    llvm::InitializeNativeTarget();
+    llvm::InitializeNativeTargetAsmPrinter();
+    std::string triple = llvm::sys::getDefaultTargetTriple();
+    std::string lookupErr;
+    const llvm::Target* target = llvm::TargetRegistry::lookupTarget(triple, lookupErr);
+    if (!target) { err = "no LLVM target for " + triple + ": " + lookupErr; return false; }
+    llvm::TargetOptions to;
+    std::unique_ptr<llvm::TargetMachine> tm(target->createTargetMachine(
+        triple, llvm::sys::getHostCPUName(), "", to, llvm::Reloc::PIC_, llvm::None,
+        llvm::CodeGenOpt::Default));
+    mod->setTargetTriple(triple);
+    mod->setDataLayout(tm->createDataLayout());
+    std::error_code ec;
+    llvm::raw_fd_ostream out(objPath, ec, llvm::sys::std::filesystem::OF_None);
+    if (ec) { err = "can't write " + objPath + ": " + ec.message(); return false; }
+    llvm::legacy::PassManager pm;
+    if (tm->addPassesToEmitFile(pm, out, nullptr, llvm::CGFT_ObjectFile)) {
+        err = "LLVM can't emit an object file for " + triple; return false;
+    }
+    pm.run(*mod);
+    out.flush();
+    return true;
+}
+
+// Links against runtime.lib (the import library next to runtime.dll) and
+// the shared CRT. Needs a linker plus the Windows SDK / MSVC libraries —
+// a Visual Studio (Build Tools) developer prompt has both.
+static bool windowsLinkExe(const std::string& objPath, const std::string& outPath,
+                           const std::string& runtimePath, std::string& err) {
+    std::filesystem::path rtLib = std::filesystem::path(runtimePath).replace_extension(".lib");
+    if (!std::filesystem::exists(rtLib)) { err = "missing " + rtLib.string() + " (the runtime's import library)"; return false; }
+    std::string linker = qplat::have_command("lld-link") ? "lld-link"
+                       : qplat::have_command("link.exe") ? "link.exe" : "";
+    if (linker.empty()) {
+        err = "-o needs a linker: run from a Visual Studio developer prompt (link.exe) "
+              "or put LLVM's lld-link on PATH";
+        return false;
+    }
+    std::string out = outPath;
+    if (std::filesystem::path(out).extension().empty()) out += ".exe";
+    std::string cmd = linker + " /nologo /subsystem:console /out:\"" + out + "\" \"" + objPath
+                    + "\" \"" + rtLib.string() + "\" msvcrt.lib ucrt.lib vcruntime.lib kernel32.lib"
+                      " /nodefaultlib:libcmt.lib";
+    if (int r = qplat::run_shell(cmd)) { err = "linker failed (exit " + std::to_string(r) + "): " + cmd; return false; }
+    return true;
+}
+#endif
+
 namespace fs = std::filesystem;
 
 // ==========================================================
@@ -1709,9 +1772,34 @@ int main(int argc, char* argv[]) {
     // =======================================================
     if (!opts.outputFile.empty()) {
 #ifdef _WIN32
-        std::cerr << "Error: building an executable (-o) isn't supported on Windows yet — "
-                     "run the program with `quirk " << opts.inputFile << "`" << std::endl;
-        return 1;
+        {
+            std::string irPath  = (fs::temp_directory_path() / "quirk_").string() + baseName + ".ll";
+            std::string objPath = (fs::temp_directory_path() / "quirk_").string() + baseName + ".obj";
+            {
+                std::error_code EC;
+                llvm::raw_fd_ostream irDest(irPath, EC, llvm::sys::fs::OF_None);
+                if (EC) {
+                    std::cerr << "Error: cannot open temp IR file '" << irPath
+                              << "': " << EC.message() << std::endl;
+                    return 1;
+                }
+                LLVMCodegen codegen;
+                codegen.setVerbose(opts.verbose);
+                codegen.setOptLevel(opts.optLevel);
+                codegen.setDebugMode(opts.debugMode);
+                codegen.setSourceMap(sourceMap);
+                codegen.setEntryFile(fs::absolute(opts.inputFile).string());
+                codegen.compile(ast, irDest);
+            }
+            std::string err;
+            if (!windowsEmitObject(irPath, objPath, err) ||
+                !windowsLinkExe(objPath, opts.outputFile, runtimePath, err)) {
+                std::cerr << "Error: " << err << std::endl;
+                return 1;
+            }
+            log.debug("Binary written to " + opts.outputFile);
+            return 0;
+        }
 #endif
         // Emit optimised IR to a temp file, then compile + link via llc-14 + gcc.
         // This is the same pipeline used by --emit-ir; it's reliable and avoids

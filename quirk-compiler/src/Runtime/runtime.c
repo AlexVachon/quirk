@@ -12,6 +12,12 @@
 #include <stdio.h>
 #include <string.h>
 
+#ifdef _WIN32
+// Executables built with `-o` call GC_malloc through the runtime
+// (Compiler.cpp renames it with the CRT names), so they link runtime.lib only.
+__declspec(dllexport) void* quirk_crt_GC_malloc(size_t n) { return GC_malloc(n); }
+#endif
+
 // --- HIJACK MACROS ---
 #define malloc(x) GC_malloc(x)
 #define realloc(x, y) GC_realloc(x, y)

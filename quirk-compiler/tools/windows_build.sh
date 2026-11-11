@@ -65,7 +65,7 @@ clang -shared obj/win/runtime.o "${REGEX_OBJS[@]}" -o bin/runtime.dll -Wl,/DEF:"
     -L"$CLIB/lib" ${GC_LIB:+-l${GC_LIB%.lib}} ${PTHREAD_LIB:+-l${PTHREAD_LIB%.lib}} \
     ${SSL_LIB:+-l${SSL_LIB%.lib}} ${CRYPTO_LIB:+-l${CRYPTO_LIB%.lib}} -lws2_32 -ladvapi32 -luser32 >> "$LOG" 2>&1
 echo "rc=$?" | tee -a "$LOG"
-ls -la bin/runtime.dll 2>&1 | tee -a "$LOG"
+ls -la bin/runtime.dll bin/runtime.lib 2>&1 | tee -a "$LOG"
 
 # ---------- quirk.exe ----------
 CLFLAGS=(/nologo /c /O2 /std:c++17 /EHsc /permissive- /utf-8 /MD /Iinclude /Isrc "/I$LLVM_INC" "/I$WLIB\\include"
@@ -187,7 +187,24 @@ print(fs.matches("*.qk", "main.qk"), fs.matches("?ain.[a-z]k", "main.qk"), fs.ma
     fi
     timeout 120 ./bin/quirk.exe show slug --no-readme 2>&1 | head -4 | tee -a "$LOG"
     timeout 120 ./bin/quirk.exe search csv 2>&1 | head -3 | tee -a "$LOG"
-    timeout 60 ./bin/quirk.exe -o obj/win/x.exe obj/win/hello.qk 2>&1 | head -2 | tee -a "$LOG"
+
+    # -o: IR -> COFF object in-process, then lld-link / link.exe.
+    step "aot: -o"
+    cat > obj/win/aot.qk <<'QK'
+use fs
+struct P { x: Int }
+try { throw ValueError("boom") } catch (e: ValueError) { print("caught", e.message) }
+print("hi", [1, 2, 3].map(fn(x) => x * 2), P(3).x, fs.exists("."))
+QK
+    for prog in hello aot; do
+        timeout 180 ./bin/quirk.exe -o "obj/win/$prog.exe" "obj/win/$prog.qk" 2>&1 | tail -8 | tee -a "$LOG"
+        if [ -f "obj/win/$prog.exe" ]; then
+            timeout 60 "./obj/win/$prog.exe" 2>&1 | head -10 | tee -a "$LOG"
+            echo "rc=${PIPESTATUS[0]}" | tee -a "$LOG"
+        else
+            echo "no obj/win/$prog.exe" | tee -a "$LOG"
+        fi
+    done
 
     # The real test suite (as CI runs it on Linux), file by file.
     step "test suite"

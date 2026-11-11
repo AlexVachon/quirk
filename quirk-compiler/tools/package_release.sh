@@ -67,8 +67,12 @@ windows-*)
         cur=${queue[0]}; queue=("${queue[@]:1}")
         for dll in $("$objdump_bin" -p "$cur" 2>/dev/null | tr -d '\r' | awk '/DLL Name:/ {print $3}'); do
             ls "$stage/$pkg/bin" | grep -qix "$dll" && continue
+            # Part of Windows (kernel32, ucrtbase, the api-ms-win-* UCRT
+            # forwarders conda also ships): not bundled.
+            case "$(echo "$dll" | tr '[:upper:]' '[:lower:]')" in api-ms-win-*|ucrtbase*) continue ;; esac
+            [ -f "${SYSTEMROOT:-C:/Windows}/System32/$dll" ] && continue
             f=$(find_dll "$dll")
-            [ -z "$f" ] && continue          # a Windows DLL (kernel32, ucrtbase, api-ms-*)
+            [ -z "$f" ] && continue
             cp "$f" "$stage/$pkg/bin/"
             queue+=("$stage/$pkg/bin/$(basename "$f")")
         done

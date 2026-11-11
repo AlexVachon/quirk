@@ -52,7 +52,7 @@ if (-not (Test-Path $tar)) {
 # `v<digit>...` tag without a pre-release suffix.
 $local = $env:QUIRK_INSTALL_TARBALL
 if ($local) {
-    if (-not ($local -match 'quirk-(.+)-windows-x86_64\.tar\.gz$')) { Write-Error "QUIRK_INSTALL_TARBALL must be a quirk-<version>-windows-x86_64.tar.gz" }
+    if (-not ((Split-Path -Leaf $local) -match '^quirk-(.+)-windows-x86_64\.tar\.gz$')) { Write-Error "QUIRK_INSTALL_TARBALL must be a quirk-<version>-windows-x86_64.tar.gz" }
     $Version = "v" + $Matches[1]
 }
 if (-not $Version) {

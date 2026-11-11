@@ -5,6 +5,26 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.27.0] — 2026-11-11 — compiler fixes: overrides, unary minus, comparisons, name clashes
+
+- **Subclass overrides of `_`-prefixed methods are used.** When a base
+  class called `self._hook()`, a subclass's `_hook` was silently ignored
+  (public names were fine).
+- **A subclass's `__str` is used through a base-typed value** —
+  `print(w)`, `"${w}"`, `w.str()`, lists of them — for `w: Base` holding
+  a `Leaf`. They all printed the base class's text.
+- **`-self.f()`, `-f(x)`, `-xs[i]` work**: unary minus now applies after
+  member access, calls and indexing. They were parsed as `(0 - self).f()`
+  and failed to compile.
+- **`base == sub` compiles** for a struct and one it inherits from
+  (`widget == dropdown`), comparing identity. Unrelated structs are still
+  an error.
+- **Tests inside a package's own directory** keep their own helpers: a
+  test's `define open(...)` no longer gets replaced by the package's
+  `open` (both had the same internal name).
+- **A struct named `E` or `T`** no longer breaks `Result[T, E]` from
+  `typing` ("Unknown method 'E.str'").
+
 ## [7.26.0] — 2026-11-11 — `ui` 1.1: selection, clipboard, TextArea, ScrollView, Dropdown, tooltips
 
 - **`ui` v1.1.0:**

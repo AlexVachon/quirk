@@ -1,0 +1,4 @@
+--- A library function the test file below also names a helper after. ---
+define open(title: String, width: Int, height: Int, flag: Bool = false, more: Int = 0) -> String {
+    return "pkg:" + title
+}

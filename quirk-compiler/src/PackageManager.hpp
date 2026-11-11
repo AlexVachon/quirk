@@ -69,7 +69,7 @@ static std::string self_binary();
 
 namespace qpm {
 
-constexpr const char* QUIRK_VERSION = "7.26.0";
+constexpr const char* QUIRK_VERSION = "7.27.0";
 
 namespace fs = std::filesystem;
 
@@ -741,12 +741,25 @@ static fs::path find_project_root(fs::path start) {
 // inside the slug project resolves to its own src/, and so functions defined
 // in slug/src/index.quirk get `Slug_*` linkage names without needing the file
 // to live under libs/ or packages/.
+//
+// Only the library's own sources count — `src/...`, `<name>/...` or a
+// top-level `<name>.qk` (the layouts resolve_self_package loads). A test or
+// example inside the project is a separate program: it gets its own prefix,
+// or its `define open(...)` and the library's `open` both became
+// `<Name>$open` and one silently replaced the other.
 static std::string project_name_for_file(const std::string& filePath) {
     fs::path root = find_project_root(filePath);
     if (root.empty()) return "";
     Manifest m;
     if (!read_manifest((root / "quirk.toml").string(), m)) return "";
-    return m.name;
+    std::error_code ec;
+    fs::path rel = fs::relative(fs::absolute(filePath, ec), fs::absolute(root, ec), ec);
+    if (ec || rel.empty()) return "";
+    std::string first = rel.begin()->string();
+    bool topLevelFile = std::next(rel.begin()) == rel.end();
+    if (first == "src" || first == m.name) return m.name;
+    if (topLevelFile && rel.stem().string() == m.name) return m.name;
+    return "";
 }
 
 // Resolve a `use <name>` to a file inside a project rooted at a `quirk.toml`

@@ -452,7 +452,12 @@ std::unique_ptr<Node> Parser::parseExpression(int min_precedence) {
         left =
             std::make_unique<BinaryOpNode>("not", std::move(operand), nullptr);
     } else if (t.type == TokenType::MINUS) {
-        auto operand = parseExpression(50);
+        // The operand takes its member access, calls and indexing (40 / 50)
+        // before the minus applies, but not `as` (35) or `*` (30): `-a.b()`
+        // is `-(a.b())`, `-xs[0]` is `-(xs[0])`, `-x as Float` is
+        // `(-x) as Float`. At 50 it stopped before `.` / `(` / `[`, so
+        // `-self.f()` meant `(0 - self).f()`.
+        auto operand = parseExpression(35);
         auto zero = std::make_unique<LiteralNode>("0");
         left = std::make_unique<BinaryOpNode>("-", std::move(zero),
                                               std::move(operand));

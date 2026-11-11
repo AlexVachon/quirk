@@ -1,0 +1,34 @@
+// p142 — v7.27.0: `==` / `!=` between a struct and one it inherits from
+// compare identity. `widget == dropdown` was a type error
+// ("incompatible types: 'Widget' and 'Dropdown'"); unrelated structs
+// still are.
+
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+struct W {
+    define __init(self) -> void { }
+}
+
+struct D : W {
+    define __init(self) -> void { super().__init() }
+    define is_me(self, w: W) -> Bool { return w == self }
+}
+
+struct Leaf2 : D {
+    define __init(self) -> void { super().__init() }
+}
+
+define main() -> void {
+    d := D()
+    w: W = d
+    other: W = W()
+    if not d.is_me(w) { fail("same object") }
+    if d.is_me(other) { fail("different objects") }
+    if not (w == d) { fail("base == sub") }
+    if not (d != other) { fail("sub != base") }
+    e := Leaf2()
+    ew: W = e
+    if not (ew == e) { fail("grandparent == grandchild") }
+    if e == d { fail("Leaf2 vs D") }
+    print("p142 ok")
+}

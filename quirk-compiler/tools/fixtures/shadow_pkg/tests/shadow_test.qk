@@ -1,0 +1,13 @@
+// A test helper with the same name as a function of the package under
+// test. Inside the package's own directory both got the linkage name
+// `Shadowpkg$open` and the helper was replaced (7.27.0 fix).
+use shadowpkg
+use test
+
+define open(title: String, width: Int, height: Int) -> String {
+    return "local:" + shadowpkg.open(title, width, height, flag=true)
+}
+
+define test_local_helper_wins() -> void {
+    test.assert_eq(open("x", 1, 2), "local:pkg:x")
+}

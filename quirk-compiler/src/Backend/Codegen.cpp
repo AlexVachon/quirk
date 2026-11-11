@@ -5787,6 +5787,17 @@ Value* LLVMCodegen::handleExpression(Node* node) {
                     }
                     return result;
                 }
+                // No __eq: `==` / `!=` between two different struct types
+                // (a base and a subclass — Sema allows only related ones)
+                // compares identity; ICmp needs one pointer type.
+                if ((binOp->op == "==" || binOp->op == "!=") && L->getType() != R->getType() &&
+                    R->getType()->getPointerElementType()->isStructTy()) {
+                    Type* i8p = Type::getInt8PtrTy(Context);
+                    Value* lp = Builder.CreateBitCast(L, i8p);
+                    Value* rp = Builder.CreateBitCast(R, i8p);
+                    return binOp->op == "==" ? Builder.CreateICmpEQ(lp, rp, "same_obj")
+                                             : Builder.CreateICmpNE(lp, rp, "other_obj");
+                }
             }
         }
         if (binOp->op == "??") {

@@ -1,0 +1,35 @@
+// p143 — v7.27.0: a struct named like a generic's type parameter (`E` /
+// `T` of the stdlib's `Result[T, E]`) no longer replaces that parameter.
+// `struct E` alone failed to compile: Err.error was laid out as an `E*`
+// and `e.error.str()` in typing/result.quirk was "Unknown method 'E.str'".
+from typing use { Result, Ok, Err }
+
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+struct E {
+    code: Int
+    define __init(self, code: Int) -> void { self.code = code }
+    define __str(self) -> String { return "E(" + self.code.str() + ")" }
+}
+
+struct T {
+    define __init(self) -> void { }
+}
+
+define half(n: Int) -> Result {
+    if n % 2 == 1 { return Err(E(n)) }
+    return Ok(n / 2)
+}
+
+define main() -> void {
+    r := half(8)
+    if not r.is_ok() or r.unwrap() != 4 { fail("Ok") }
+    bad := half(3)
+    if not bad.is_err() { fail("is_err") }
+    if bad.unwrap_or(-1) != -1 { fail("unwrap_or") }
+    if bad.unwrap_err().str() != "E(3)" { fail("unwrap_err: " + bad.unwrap_err().str()) }
+    // The user's own E keeps its type.
+    x := E(5)
+    if x.code != 5 or x.str() != "E(5)" { fail("struct E itself") }
+    print("p143 ok")
+}

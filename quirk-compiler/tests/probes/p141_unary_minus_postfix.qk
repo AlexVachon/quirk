@@ -1,0 +1,34 @@
+// p141 — v7.27.0: unary minus applies after member access, calls and
+// indexing. Its operand was parsed at precedence 50, which stopped before
+// `.` / `(` / `[`: `-self.f()` was `(0 - self).f()` (a type error),
+// `-f(2)` was `(0 - f)(2)`.
+
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+define f(x: Int) -> Int { return x + 1 }
+
+struct P {
+    n: Int
+    define __init(self) -> void { self.n = 4 }
+    define get(self) -> Int { return 3 }
+    define neg(self) -> Int { return -self.get() }
+    define negf(self) -> Int { return -self.n }
+}
+
+define main() -> void {
+    p := P()
+    xs := [5, 6]
+    x := 3
+    if p.neg() != -3 { fail("-self.get()") }
+    if p.negf() != -4 { fail("-self.n") }
+    if -p.get() != -3 { fail("-p.get()") }
+    if -f(2) != -3 { fail("-f(2)") }
+    if -xs[1] != -6 { fail("-xs[1]") }
+    if -x * 2 != -6 { fail("-x * 2") }
+    if 2 * -x != -6 { fail("2 * -x") }
+    if 10 - -x != 13 { fail("10 - -x") }
+    if --x != 3 { fail("--x") }
+    if -x.str().length() != -1 { fail("-x.str().length()") }
+    if (-x as Float) != -3.0 { fail("-x as Float") }
+    print("p141 ok")
+}

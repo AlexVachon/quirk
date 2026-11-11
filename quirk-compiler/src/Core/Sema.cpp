@@ -1086,6 +1086,39 @@ bool Sema::analyze(std::vector<std::unique_ptr<Node>> &nodes)
         }), fs.end());
     }
 
+    // A generic's type parameter named like a declared struct / enum —
+    // `type Result[T, E]` with a user `struct E` — would resolve to that
+    // type: Err.error was laid out as an `E*` and `e.error.str()` failed
+    // ("Unknown method 'E.str'"). Inside its generic the parameter is
+    // type-erased, so spell it `Any` there (fields, and the parameter /
+    // return types of the generic's methods). Non-colliding parameters are
+    // left alone.
+    {
+        auto erase = [](const std::string& t, const std::set<std::string>& ps) -> std::string {
+            if (ps.count(t)) return "Any";
+            if (!t.empty() && t.back() == '?' && ps.count(t.substr(0, t.size() - 1))) return "Any";
+            return t;
+        };
+        std::map<std::string, std::set<std::string>> erased;
+        for (auto& [sName, sNode] : structRegistry) {
+            if (!sNode || sNode->typeParams.empty()) continue;
+            std::set<std::string> hit;
+            for (const auto& tp : sNode->typeParams)
+                if (structRegistry.count(tp) || enumRegistry.count(tp)) hit.insert(tp);
+            if (hit.empty()) continue;
+            erased[sName] = hit;
+            for (auto& f : sNode->fields) f.type = erase(f.type, hit);
+        }
+        if (!erased.empty())
+            for (const auto& node : nodes)
+                if (auto fn = dynamic_cast<FunctionNode*>(node.get())) {
+                    auto it = erased.find(fn->cls);
+                    if (it == erased.end()) continue;
+                    for (auto& prm : fn->parameters) prm.type = erase(prm.type, it->second);
+                    fn->returnType = erase(fn->returnType, it->second);
+                }
+    }
+
     // Pass 2: Analyze Bodies
     enterScope();
 
@@ -2301,6 +2334,12 @@ std::string Sema::checkBinaryOp(BinaryOpNode *node)
             if (lType == rType) ok = true;
             // Anything against Any/Null/empty/auto is deferred.
             else if (isUnknownEarly(lType) || isUnknownEarly(rType)) ok = true;
+            // `==` / `!=` between a struct and one it inherits from (or that
+            // inherits from it): `widget == dropdown` asks whether they're
+            // the same object.
+            else if ((node->op == "==" || node->op == "!=") &&
+                     structRegistry.count(lType) && structRegistry.count(rType) &&
+                     (inheritsFromException(lType, rType) || inheritsFromException(rType, lType))) ok = true;
             // Numeric coercion across Int/Double.
             else if (isNumericEarly(lType) && isNumericEarly(rType)) ok = true;
             // `+` with String operand is concat — handled below.
@@ -2542,6 +2581,11 @@ std::string Sema::checkBinaryOp(BinaryOpNode *node)
         node->op == "<=" || node->op == "==" || node->op == "!=")
     {
         if (compatibleOperands(lType, rType)) return "Bool";
+        // Identity: a struct against its ancestor or descendant (see above).
+        if ((node->op == "==" || node->op == "!=") &&
+            structRegistry.count(lType) && structRegistry.count(rType) &&
+            (inheritsFromException(lType, rType) || inheritsFromException(rType, lType)))
+            return "Bool";
         fatalError("cannot compare '" + lType + "' with '" + rType +
                    "' (operator '" + node->op + "')",
                    node->line, node->col, node->filePath);

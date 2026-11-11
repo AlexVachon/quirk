@@ -36,5 +36,11 @@ out=$(NO_COLOR=1 "$QUIRK" test -k assert "$F" 2>&1)
 expect "$out" '✗ test_assert_fails$'                   "-k selects by name"
 reject "$out" 'test_passes|plain_main_test'             "-k deselects the rest"
 
+# Inside a package's own directory, a test helper named like a package
+# function is the test's own function.
+QABS="$(cd "$(dirname "$QUIRK")" && pwd)/$(basename "$QUIRK")"
+out=$(cd tools/fixtures/shadow_pkg && NO_COLOR=1 "$QABS" test 2>&1)
+expect "$out" 'tests: 1 passed, 0 failed / 1 total'    "test helper named like a package function"
+
 echo "quirk test runner: $([ $fails -eq 0 ] && echo ok || echo "$fails failed")"
 exit $fails

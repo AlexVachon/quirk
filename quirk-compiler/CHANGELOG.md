@@ -15,8 +15,12 @@ only for breaking changes.
     the wrong type: empty output or a SIGBUS;
   - an argument allocates or has effects (`b.join([1])`, `b.join(f())`)
     — the runtime check was skipped. Such arguments still run once.
+- Windows: `window.ticks()` and `sys.now_ms()` use the precise clock
+  (they moved in ~15.6 ms steps), and `window.sleep(ms)` never returns
+  early.
 - CI: a Windows job in the Test workflow that fails the build when the
-  Windows build, a smoke program or the test suite fails.
+  Windows build, a smoke program or the test suite fails. (It found the
+  clock issue above on its first run.)
 
 ## [7.27.0] — 2026-11-11 — compiler fixes: overrides, unary minus, comparisons, name clashes
 

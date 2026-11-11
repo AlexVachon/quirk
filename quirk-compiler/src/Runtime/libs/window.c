@@ -750,6 +750,17 @@ void Window_image_free_raw(int64_t img) {
 // ----- time -----
 
 // Pause `ms` milliseconds with the task lock released.
+#ifdef _WIN32
+// Milliseconds on the precise monotonic clock (QueryPerformanceCounter via
+// win_compat.h). GetTickCount64 only moves in ~15.6 ms steps, so ticks()
+// around a 30 ms sleep could read 15.
+static int64_t qwin_precise_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+#endif
+
 void Window_sleep(int64_t ms) {
     if (ms <= 0) return;
     quirk_gil_release();
@@ -757,18 +768,19 @@ void Window_sleep(int64_t ms) {
     struct timespec ts = { (time_t)(ms / 1000), (long)(ms % 1000) * 1000000L };
     while (nanosleep(&ts, &ts) != 0 && errno == EINTR) {}
 #else
+    // Sleep() can wake up to one timer tick (~15.6 ms) early: top up until
+    // the full time has passed on the precise clock.
+    int64_t until = qwin_precise_ms() + ms;
     Sleep((DWORD)ms);
+    for (int64_t now = qwin_precise_ms(); now < until; now = qwin_precise_ms())
+        Sleep((DWORD)(until - now > 1 ? until - now - 1 : 0));
 #endif
     quirk_gil_acquire();
 }
 
 // Milliseconds since an arbitrary start (monotonic).
 int64_t Window_ticks() {
-#ifndef _WIN32
-    struct timespec ts;
+    struct timespec ts;   // precise on Windows too (QueryPerformanceCounter, win_compat.h)
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
-#else
-    return (int64_t)GetTickCount64();
-#endif
 }

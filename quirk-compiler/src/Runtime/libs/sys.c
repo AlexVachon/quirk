@@ -470,14 +470,12 @@ int64_t Sys_read_key() {
 // Monotonic clock in milliseconds. Use deltas only — absolute value is
 // not relative to the Unix epoch. Suitable for `console.time/time_end`.
 int64_t Sys_now_ms() {
-#ifdef _WIN32
-    return (int64_t)GetTickCount64();
-#else
+    // Windows too: win_compat.h's CLOCK_MONOTONIC is QueryPerformanceCounter
+    // (GetTickCount64 moved in ~15.6 ms steps).
     struct timespec ts;
     if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return 0;
     long long ms = (long long)ts.tv_sec * 1000LL + ts.tv_nsec / 1000000LL;
     return (int64_t)ms;
-#endif
 }
 
 void Sys_sleep(int64_t ms) {

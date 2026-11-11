@@ -52,11 +52,19 @@ Runtime (C): 35 errors —
    `window` (`LoadLibrary("SDL2.dll")`), `net` (Winsock init), AOT
    linking with `link.exe` / `lld-link`; then run the test suite in a
    Windows CI job.
-5. **Release** — Windows build in `release.yml`, `install.ps1`; AOT
-   linking with `link.exe` / `lld-link` (the background `--build` cache
-   isn't wired yet, so programs always run through the JIT); the package
-   manager's `tar` / `git` steps and the REPL's history on Windows; a
-   Windows job in `test.yml`.
+5. **Release** — in progress:
+   - ✅ package manager on Windows (`new`, `install`, `test`, `deps`,
+     `show`, `search` smoke-tested in CI): shell commands via
+     `qplat::popen_cmd` / `run_shell` (`/dev/null` → `NUL`, `cmd.exe`
+     quoting), `have_command` (`where`), `git -C`, System32 bsdtar,
+     in-process SHA-256, home dir from `USERPROFILE`, `install` refreshes
+     the registry index on a miss.
+   - AOT / `-o` with `link.exe` / `lld-link` (off on Windows for now:
+     `-o` reports "not supported yet", no background build cache, so
+     programs always run through the JIT).
+   - venv `activate` for `cmd` / PowerShell; REPL history.
+   - Windows build in `release.yml`, `install.ps1`; a Windows job in
+     `test.yml`.
 
 ## What changed for Windows (so far)
 

@@ -166,7 +166,8 @@ STDLIB_TAG_window ?= v1.2.0
 # ui v1.2.0: undo / redo, RadioGroup, ProgressBar, Tabs (compiler v7.27.0).
 # ui v1.3.0: menus, context menus, TreeView, Table (compiler v7.30.0).
 # ui v1.4.0: word wrap, editable tables, ColorPicker, FileDialog, drag and drop (compiler v7.31.0).
-STDLIB_TAG_ui ?= v1.4.0
+# ui v1.5.0: working menu shortcuts, SplitView, Toolbar, StatusBar, DatePicker (compiler v7.32.0).
+STDLIB_TAG_ui ?= v1.5.0
 
 # --- INSTALL / UNINSTALL --------------------------------------------------
 # Copy the freshly-built compiler + runtime into $(PREFIX) (default

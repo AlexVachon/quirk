@@ -3109,29 +3109,49 @@ class LLVMCodegen {
                         return v;
                     };
 
-                    for (const auto& [subName, subId] : overrides) {
-                        const std::string& mn = member->memberName;
-                        std::string subFnName = dispatchSuffix.empty() ? subName + "_" + mn
-                                                                       : subName + dispatchSuffix;
-                        Function* subFn = TheModule->getFunction(subFnName);
-                        if (!subFn) subFn = resolveFunction(subFnName);
-                        if (!subFn && mn.size() >= 2 && mn[0] == '_' && mn[1] == '_') {
-                            subFnName = subName + mn;            // `Cls__init` form
-                            subFn = TheModule->getFunction(subFnName);
-                            if (!subFn) subFn = resolveFunction(subFnName);
+                    // Every struct below `typeName` gets a case: its own method,
+                    // or the nearest one it inherits (a `Toolbar : Row` uses
+                    // Row's `children`). Only the structs that define the
+                    // method used to — a grandchild that didn't fell back to
+                    // the base's version.
+                    const std::string& mn = member->memberName;
+                    auto ownFn = [&](const std::string& cls) -> Function* {
+                        std::string fn = dispatchSuffix.empty() ? cls + "_" + mn : cls + dispatchSuffix;
+                        Function* f = TheModule->getFunction(fn);
+                        if (!f) f = resolveFunction(fn);
+                        if (!f && mn.size() >= 2 && mn[0] == '_' && mn[1] == '_') {
+                            f = TheModule->getFunction(cls + mn);            // `Cls__init` form
+                            if (!f) f = resolveFunction(cls + mn);
                         }
-                        if (!subFn) continue;
+                        return f;
+                    };
+                    std::function<Function*(const std::string&)> nearestFn = [&](const std::string& cls) -> Function* {
+                        if (cls == typeName) return nullptr;
+                        if (Function* f = ownFn(cls)) return f;
+                        if (structHierarchy.count(cls))
+                            for (const auto& par : structHierarchy[cls])
+                                if (structGen->inheritsFrom(par, typeName))
+                                    if (Function* f = nearestFn(par)) return f;
+                        return nullptr;
+                    };
+                    std::vector<std::tuple<std::string, int, Function*>> cases;
+                    for (const auto& [cname, cid] : structGen->typeIds()) {
+                        if (cname == typeName || !structGen->inheritsFrom(cname, typeName)) continue;
+                        if (Function* f = nearestFn(cname)) if (f != func) cases.push_back({cname, cid, f});
+                    }
+                    (void)overrides;
+                    for (const auto& [subName, subId, subFn] : cases) {
 
                         BasicBlock* caseBB = BasicBlock::Create(Context, "vd_" + subName, curFn);
                         sw->addCase(ConstantInt::get(Type::getInt32Ty(Context), subId), caseBB);
                         Builder.SetInsertPoint(caseBB);
 
                         Value* castSelf = objPtr;
-                        if (StructTypes.count(subName)) {
-                            Type* subPtrTy = PointerType::getUnqual(StructTypes[subName]);
-                            if (castSelf->getType() != subPtrTy)
-                                castSelf = Builder.CreateBitCast(castSelf, subPtrTy, "as_" + subName);
-                        }
+                        // `self` as the method's class (an inherited method's
+                        // is the ancestor that defines it).
+                        Type* selfTy = subFn->arg_size() > 0 ? subFn->getFunctionType()->getParamType(0) : nullptr;
+                        if (selfTy && selfTy->isPointerTy() && castSelf->getType() != selfTy)
+                            castSelf = Builder.CreateBitCast(castSelf, selfTy, "as_" + subName);
                         std::vector<Value*> subArgs = {castSelf};
                         for (size_t i = 0; i < rawArgs.size(); i++) {
                             size_t pi = i + 1;

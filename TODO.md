@@ -16,9 +16,10 @@ Done in ui 1.1 (compiler 7.26.0): selection + clipboard, TextArea,
 ScrollView, Dropdown, tooltips; ui 1.2 (7.29.0): undo / redo,
 RadioGroup, ProgressBar, Tabs; ui 1.3 (7.30.0): menus, context menus,
 TreeView, Table; ui 1.4 (7.31.0): word wrap, editable cells,
-ColorPicker, FileDialog, drag and drop. Next ideas: a date picker,
-split panes, toolbars / icons, a status bar, keyboard shortcuts shown
-in menus that also work.
+ColorPicker, FileDialog, drag and drop; ui 1.5 (7.32.0): working menu
+shortcuts, SplitView, Toolbar, StatusBar, DatePicker. Next ideas: a
+TrueType font (the 8x16 bitmap one is ASCII + Latin-1), images in
+lists / tables, a canvas widget for custom drawing, animations.
 
 ## Housekeeping
 

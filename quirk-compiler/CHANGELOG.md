@@ -5,6 +5,19 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.32.0] — 2026-11-13 — inherited overrides, `ui` 1.5
+
+- **A struct uses the override it inherits.** With `Toolbar : Row` and
+  `Row` overriding `Widget.children`, a `Toolbar` called through a
+  `Widget` got `Widget`'s version — only structs that define a method
+  themselves were dispatched to.
+- **`n := 5` after `n: String` in the same function is an error**
+  ("'n' is already a 'String' in this function") instead of an internal
+  compiler error.
+- **`ui` v1.5.0:** a MenuItem's `shortcut` ("Ctrl+S", "F5", ...) runs it
+  from anywhere in the window; `ui.SplitView`, `ui.Toolbar` /
+  `ui.ToolButton` (image icons), `ui.StatusBar`, `ui.DatePicker`.
+
 ## [7.31.0] — 2026-11-13 — `ui` 1.4, Bool and lambda-name fixes
 
 - **`b: Bool = list[0]` reads the value.** An untyped value (a List

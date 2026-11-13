@@ -1,0 +1,47 @@
+// p149 — v7.32.0: a struct that inherits a method its parent overrides
+// (Toolbar : Row, Row overrides Widget.children) uses the parent's version
+// through a base-typed value. Dispatch only had cases for structs that
+// define the method, so the grandchild got the base's version (ui's
+// Toolbar buttons couldn't be clicked: its children() was []).
+
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+struct Base {
+    define __init(self) -> void { }
+    define name(self) -> String { return "base" }
+    define kids(self) -> Int { return 0 }
+}
+
+struct Mid : Base {
+    define __init(self) -> void { super().__init() }
+    define kids(self) -> Int { return 2 }
+}
+
+struct Leaf : Mid {
+    define __init(self) -> void { super().__init() }
+    define name(self) -> String { return "leaf" }
+}
+
+struct Deeper : Leaf {
+    define __init(self) -> void { super().__init() }
+}
+
+define count(b: Base) -> Int {
+    return b.kids()
+}
+
+define main() -> void {
+    if count(Mid()) != 2 { fail("Mid") }
+    if count(Leaf()) != 2 { fail("Leaf inherits Mid.kids: " + count(Leaf()).str()) }
+    if count(Deeper()) != 2 { fail("Deeper inherits Mid.kids") }
+    d: Base = Deeper()
+    if d.name() != "leaf" { fail("Deeper inherits Leaf.name: " + d.name()) }
+    xs: List = [Base(), Mid(), Leaf(), Deeper()]
+    total := 0
+    for x in xs {
+        b: Base = x
+        total = total + b.kids()
+    }
+    if total != 6 { fail("list: " + total.str()) }
+    print("p149 ok")
+}

@@ -1548,6 +1548,23 @@ void Sema::checkVarDecl(VarDeclNode *node)
             if (scopeStack[i].count(lit->value)) { alreadyDefined = true; break; }
         }
 
+        // `n := 5` where this function already has `n: String`: a function
+        // keeps one slot per name, so the second binding would reuse the
+        // String one (an internal compiler error on the next use). Say so.
+        if (node->op == ":=" && node->typeAnnotation.empty() && alreadyDefined) {
+            for (int i = (int)scopeStack.size() - 1; i >= 1; i--) {
+                auto it = scopeStack[i].find(lit->value);
+                if (it == scopeStack[i].end()) continue;
+                const std::string& old = it->second.type;
+                bool known = !old.empty() && old != "Any" && old != "auto" && !exprType.empty() &&
+                             exprType != "Any" && exprType != "auto" && exprType != "Null";
+                if (known && !isCompatibleTypes(old, exprType))
+                    reportError("'" + lit->value + "' is already a '" + old + "' in this function; " +
+                                "`:=` can't make it a '" + exprType + "' (use another name)",
+                                node->line, node->col, node->filePath);
+                break;
+            }
+        }
         if (isDecl || !alreadyDefined) {
             std::string finalType =
                 node->typeAnnotation.empty() ? exprType : node->typeAnnotation;

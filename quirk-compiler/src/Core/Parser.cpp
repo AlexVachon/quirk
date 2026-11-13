@@ -1803,7 +1803,16 @@ std::unique_ptr<StructNode> Parser::parseStruct() {
 
     if (match(TokenType::COLON)) {
         do {
-            node->parents.push_back(advance().value);
+            // `struct WarningButton : ui.Button` — a parent from another
+            // module. Struct names are registered globally, so the last part
+            // is the struct.
+            std::string parent = advance().value;
+            while (peek().type == TokenType::DOT && pos + 1 < (int)tokens.size() &&
+                   tokens[pos + 1].type == TokenType::IDENTIFIER) {
+                advance();                       // '.'
+                parent = advance().value;
+            }
+            node->parents.push_back(parent);
         } while (match(TokenType::COMMA));
     }
 
@@ -1827,7 +1836,13 @@ std::unique_ptr<StructNode> Parser::parseStruct() {
         if (peek().type == TokenType::USE) {
             advance();
             do {
-                node->parents.push_back(advance().value);
+                std::string parent = advance().value;
+                while (peek().type == TokenType::DOT && pos + 1 < (int)tokens.size() &&
+                       tokens[pos + 1].type == TokenType::IDENTIFIER) {
+                    advance();
+                    parent = advance().value;
+                }
+                node->parents.push_back(parent);
             } while (match(TokenType::COMMA));
         }
         else if (peek().type == TokenType::EXTERN &&

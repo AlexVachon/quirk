@@ -5,6 +5,17 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.34.0] — 2026-11-13 — extend a module's struct; editor fixes
+
+- **`struct WarningButton : ui.Button`** — a struct can extend one from
+  another module (also in a struct's `use` list). The parser only took a
+  bare name ("Expected '{' (found '.')").
+- **`ui.Theme(...)` and other `module.Struct(...)` calls check their
+  arguments inside functions** too — a missing one ("Theme() is missing
+  argument 'focus'") was only reported at the top level.
+- `ui` v1.6.1 (no unused bindings); VS Code extension 1.1.4: Ctrl+click
+  into a venv's packages, far fewer false warnings (see its changelog).
+
 ## [7.33.0] — 2026-11-13 — TrueType fonts, named-argument checks, `ui` 1.6
 
 - **TrueType fonts** (`window` v1.3.0): `window.load_font(path, size)`

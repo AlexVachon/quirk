@@ -169,7 +169,8 @@ STDLIB_TAG_window ?= v1.3.0
 # ui v1.4.0: word wrap, editable tables, ColorPicker, FileDialog, drag and drop (compiler v7.31.0).
 # ui v1.5.0: working menu shortcuts, SplitView, Toolbar, StatusBar, DatePicker (compiler v7.32.0).
 # ui v1.6.0: theme fonts, ListItem icons, Canvas, animations (compiler v7.33.0).
-STDLIB_TAG_ui ?= v1.6.0
+# ui v1.6.1: no unused bindings (editor warnings).
+STDLIB_TAG_ui ?= v1.6.1
 
 # --- INSTALL / UNINSTALL --------------------------------------------------
 # Copy the freshly-built compiler + runtime into $(PREFIX) (default

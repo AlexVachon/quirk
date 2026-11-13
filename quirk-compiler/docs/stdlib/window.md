@@ -29,6 +29,23 @@ A colour from `"#rrggbb"`, `"#rrggbbaa"`, `"#rgb"` (with or without `#`).
 
 The colour's red, green, blue and alpha parts (0-255).
 
+#### `define width(self, text: String) -> Int`
+
+Width in pixels of `text` (its longest line) in this font.
+
+#### `define free(self) -> void`
+
+Release the font. Drawing with it afterwards does nothing.
+
+#### `define load_font(path: String, size: Int) -> Font`
+
+Load a font file (`.ttf`, or `.otf` with TrueType outlines) at `size`
+pixels tall.
+@throws WindowError if the file can't be read or isn't a font.
+@example
+f := window.load_font("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 18)
+w.text("Grüße — ünïcödé ✓", 20, 20, window.white(), font=f)
+
 #### `define free(self) -> void`
 
 Release the image's memory. Drawing it afterwards does nothing.
@@ -79,7 +96,7 @@ One pixel.
 
 A circle centred on (cx, cy); `fill=false` draws the outline.
 
-#### `define text(self, text: String, x: Int, y: Int, color: Int = white(), scale: Int = 1) -> Int`
+#### `define text(self, text: String, x: Int, y: Int, color: Int = white(), scale: Int = 1, font: Font = null) -> Int`
 
 Draw `text` with its top-left corner at (x, y) in the built-in font
 (8x16 pixels per character at `scale=1`; "\n" starts a new line).
@@ -113,6 +130,15 @@ Drawable width in pixels.
 #### `define height(self) -> Int`
 
 Drawable height in pixels.
+
+#### `define clip(self, x: Int, y: Int, width: Int, height: Int) -> void`
+
+Only draw inside the rectangle (x, y, width, height) until `unclip()`
+— for scrolling areas and panels. `clear` still clears everything.
+
+#### `define unclip(self) -> void`
+
+Draw anywhere again (undoes `clip`).
 
 #### `define set_title(self, title: String) -> void`
 
@@ -174,6 +200,14 @@ Something that happened to a window. `kind` is one of:
   "resize"      — new `width`, `height`
   "focus" / "blur" — the window gained / lost keyboard focus
 
+### `struct Font`
+
+A TrueType / OpenType font at one pixel size (`window.load_font`). Pass
+it to `Window.text(..., font=f)`. Text is UTF-8 — any character the font
+has is drawn. `size` is the requested height; `ascent` / `descent` are
+how far glyphs reach above / below the baseline, `line_height` the
+distance between lines. One Font works in every window.
+
 ### `struct Image`
 
 An image loaded for one window (`Window.load_image`); `width` / `height` in pixels.
@@ -198,3 +232,12 @@ longest line). For centring and layout.
 #### `extern define ticks() -> Int`
 
 Milliseconds on a steady clock (for timing frames and animation).
+
+#### `define clipboard() -> String`
+
+The text on the system clipboard ("" if none). Before any window is open,
+or with headless windows, a clipboard private to the program.
+
+#### `define set_clipboard(text: String) -> void`
+
+Put `text` on the clipboard (see `clipboard()`).

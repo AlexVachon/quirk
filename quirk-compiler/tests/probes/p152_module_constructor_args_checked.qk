@@ -1,0 +1,12 @@
+// p152 — v7.34.0: `module.Struct(...)` inside a function checks its
+// arguments like a bare `Struct(...)`. A missing one wasn't reported.
+// expect-error: is missing argument 'focus'
+use ui
+
+define make() -> ui.Theme {
+    return ui.Theme(1, 2, 3, 4, 5, 6, 7, 8, scale=2)
+}
+
+define main() -> void {
+    print(make().scale)
+}

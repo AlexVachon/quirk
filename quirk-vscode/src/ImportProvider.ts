@@ -44,6 +44,38 @@ function resolveSelfPackage(projectRoot: string, modulePath: string): string | n
 // Standalone module-path resolver used by DiagnosticsProvider too.
 // Mirrors the compiler's order: project-local packages first, then venv, then
 // stdlib. Returns the resolved .quirk file path, or null if nothing matches.
+// Where `use x.y` looks, in the compiler's order (Compiler.cpp
+// getSearchPaths): the project's site-packages / packages, then the venv /
+// QUIRK_HOME (its site-packages first — where `quirk install` puts packages
+// in a venv — then the stdlib), the user-global ~/.quirk/packages outside a
+// venv, legacy libs/, and the project's src/. Every provider uses this list,
+// so Ctrl+click, completion and diagnostics agree with `quirk run`.
+export function moduleSearchRoots(projectRoot: string): string[] {
+    const roots: string[] = [
+        path.join(projectRoot, 'site-packages'),
+        path.join(projectRoot, 'packages'),
+    ];
+    const home = resolveQuirkHome(projectRoot);
+    const isVenv = !!home && fs.existsSync(path.join(home, 'bin', 'activate'));
+    if (home) {
+        roots.push(
+            path.join(home, 'lib', 'quirk', 'site-packages'),
+            path.join(home, 'lib', 'quirk', 'packages'),   // pre-2.2.11 venvs
+            path.join(home, 'lib', 'quirk', 'stdlib'),
+            path.join(home, 'lib', 'quirk'),               // dev install
+            path.join(home, 'site-packages'),
+            path.join(home, 'packages'),                   // 1.0.8+ install layout
+        );
+    }
+    const userHome = process.env['HOME'] || process.env['USERPROFILE'];
+    if (!isVenv && userHome) roots.push(path.join(userHome, '.quirk', 'packages'));
+    roots.push(path.join(projectRoot, 'libs'));            // legacy pre-1.0.8
+    if (home) roots.push(path.join(home, 'libs'));
+    if (!isVenv && userHome) roots.push(path.join(userHome, '.quirk', 'libs'));
+    roots.push(path.join(projectRoot, 'src'));
+    return roots;
+}
+
 export function resolveModulePath(projectRoot: string, currentFile: string, modulePath: string): string | null {
     if (modulePath.startsWith('.')) {
         const m = /^(\.+)(.*)$/.exec(modulePath);
@@ -69,28 +101,7 @@ export function resolveModulePath(projectRoot: string, currentFile: string, modu
     }
 
     const relPath = modulePath.replace(/\./g, '/');
-    const roots: string[] = [path.join(projectRoot, 'packages')];
-    const home = resolveQuirkHome(projectRoot);
-    const isVenv = !!home && fs.existsSync(path.join(home, 'bin', 'activate'));
-    if (home) {
-        roots.push(
-            path.join(home, 'lib', 'quirk', 'packages'),
-            path.join(home, 'lib', 'quirk', 'stdlib'),
-            path.join(home, 'lib', 'quirk'),
-            path.join(home, 'packages'),  // 1.0.8+ install layout
-            path.join(home, 'libs'),      // legacy pre-1.0.8
-        );
-    }
-    // User-global packages — skipped when a venv is active (pip-style isolation).
-    if (!isVenv && process.env['HOME']) {
-        roots.push(path.join(process.env['HOME'], '.quirk', 'packages'));
-    }
-    roots.push(
-        path.join(projectRoot, 'packages'),
-        path.join(projectRoot, 'libs'),   // legacy
-        path.join(projectRoot, 'src'),
-    );
-    for (const root of roots) {
+    for (const root of moduleSearchRoots(projectRoot)) {
         for (const c of [
             ...withExts(path.join(root, relPath)),
             ...withExts(path.join(root, relPath, 'index')),
@@ -103,14 +114,25 @@ export function resolveModulePath(projectRoot: string, currentFile: string, modu
 }
 
 // Walk up to find the project root the same way the providers do.
+// A directory that holds a venv (`.venv` / `venv` with bin/activate) is a
+// project root too: a folder with just `main.qk` and `.venv/` had no marker,
+// the search walked past it, the venv was never found, and Ctrl+click
+// opened the global ~/.quirk/packages copy instead of the venv's.
+function isProjectRoot(dir: string): boolean {
+    return fs.existsSync(path.join(dir, 'quirk.toml')) ||
+        fs.existsSync(path.join(dir, '.venv', 'bin', 'activate')) ||
+        fs.existsSync(path.join(dir, 'venv', 'bin', 'activate')) ||
+        fs.existsSync(path.join(dir, 'Makefile')) ||
+        fs.existsSync(path.join(dir, 'site-packages')) ||
+        fs.existsSync(path.join(dir, 'packages')) ||
+        fs.existsSync(path.join(dir, 'libs'));
+}
+
 export function findProjectRootFor(filePath: string): string {
     let dir = path.dirname(filePath);
     const stopAt = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(filePath))?.uri.fsPath || '/';
     while (dir.length >= stopAt.length) {
-        if (fs.existsSync(path.join(dir, 'quirk.toml')) ||
-            fs.existsSync(path.join(dir, 'Makefile')) ||
-            fs.existsSync(path.join(dir, 'packages')) ||
-            fs.existsSync(path.join(dir, 'libs'))) return dir;
+        if (isProjectRoot(dir)) return dir;
         const parent = path.dirname(dir);
         if (parent === dir) break;
         dir = parent;
@@ -756,60 +778,16 @@ export class QuirkDefinitionProvider implements vscode.DefinitionProvider {
     }
 
     private getSearchRoots(projectRoot: string): string[] {
-        const roots: string[] = [];
-        // Project-local packages win (matches the compiler's resolver order).
-        roots.push(path.join(projectRoot, 'packages'));
-        const home = resolveQuirkHome(projectRoot);
-        const isVenv = !!home && fs.existsSync(path.join(home, 'bin', 'activate'));
-        if (home) {
-            roots.push(
-                path.join(home, 'lib', 'quirk', 'packages'),
-                path.join(home, 'lib', 'quirk', 'stdlib'),  // new venv layout
-                path.join(home, 'lib', 'quirk'),             // legacy / dev install
-                path.join(home, 'packages'),                 // 1.0.8+ install layout
-                path.join(home, 'libs')                      // legacy pre-1.0.8
-            );
-        }
-        // User-global packages — skipped when a venv is active.
-        if (!isVenv && process.env['HOME']) {
-            roots.push(path.join(process.env['HOME'], '.quirk', 'packages'));
-        }
-        roots.push(
-            path.join(projectRoot, 'packages'),
-            path.join(projectRoot, 'libs'),   // legacy
-            path.join(projectRoot, 'src'),
-        );
-        return roots;
+        return moduleSearchRoots(projectRoot);
     }
 
+    // The stdlib's prelude (typing/...) lives in the same roots.
     private getLibRoots(projectRoot: string): string[] {
-        const roots: string[] = [];
-        const home = resolveQuirkHome(projectRoot);
-        if (home) roots.push(
-            path.join(home, 'packages'),
-            path.join(home, 'libs'),
-            path.join(home, 'lib', 'quirk'),
-        );
-        roots.push(
-            path.join(projectRoot, 'packages'),
-            path.join(projectRoot, 'libs'),
-            path.join(projectRoot, 'src'),
-        );
-        return roots;
+        return moduleSearchRoots(projectRoot);
     }
 
     private findProjectRoot(currentFile: string): string {
-        let dir = path.dirname(currentFile);
-        while (dir.length > 3) {
-            if (fs.existsSync(path.join(dir, 'quirk.toml')) ||
-                fs.existsSync(path.join(dir, 'Makefile')) ||
-                fs.existsSync(path.join(dir, 'packages')) ||
-                fs.existsSync(path.join(dir, 'libs'))) return dir;
-            const parent = path.dirname(dir);
-            if (parent === dir) break;
-            dir = parent;
-        }
-        return dir;
+        return findProjectRootFor(currentFile);
     }
 
     private getFileContent(filePath: string): string {

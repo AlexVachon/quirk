@@ -1,11 +1,20 @@
 {
+"Animation": [
+{
+"package": "ui",
+"qualified": "Animation",
+"kind": "struct",
+"signature": "struct Animation {",
+"doc": "A running animation (`app.animate`). `cancel()` stops it (no more\n`on_step`, no `on_done`); `done` says whether it has finished."
+}
+],
 "App": [
 {
 "package": "ui",
 "qualified": "App",
 "kind": "struct",
 "signature": "struct App {",
-"doc": "A window showing a widget tree. Set `root`, then `run()`.\n  `theme`     \u2014 colours (`ui.dark()` by default)\n  `on_frame`  \u2014 optional `fn()` called once per frame before drawing\n  `focus`     \u2014 the widget with the keyboard focus (or null)\n`step()` runs one frame yourself (custom loops, tests)."
+"doc": "A window showing a widget tree. Set `root`, then `run()`.\n  `theme`     \u2014 colours (`ui.dark()` by default)\n  `on_frame`  \u2014 optional `fn()` called once per frame before drawing\n  `focus`     \u2014 the widget with the keyboard focus (or null)\n  `tooltip_delay` \u2014 ms the mouse rests on a widget before its tooltip shows\n  `on_key`    \u2014 optional `fn(e)` called for every key press, before the\n                focused widget sees it (shortcuts: `if e.ctrl and e.key == \"s\"`)\n`step()` runs one frame yourself (custom loops, tests)."
 }
 ],
 "AssertionError": [
@@ -53,6 +62,15 @@
 "doc": "Raised inside a task when `task.cancel()` was called \u2014 at the task's next\n`sys.sleep`, `await` or `wait` (a sleep in progress is cut short). Catch it\nto clean up; awaiting a cancelled task raises it too.\n\n@example:\nasync define worker() {\n    try {\n        while true { sys.sleep(100) }\n    } catch (e: CancelledError) {\n        print(\"stopping\")\n    }\n}"
 }
 ],
+"Canvas": [
+{
+"package": "ui",
+"qualified": "Canvas",
+"kind": "struct",
+"signature": "struct Canvas : Widget {",
+"doc": "A widget you draw yourself: `on_draw(win, x, y, width, height)` runs every\nframe (drawing is clipped to the canvas), `on_event(e)` gets its mouse\nevents (coordinates are the window's) and keys while it has the focus.\n`width` / `height` are the size it asks for; with `expand` it takes free\nspace."
+}
+],
 "Checkbox": [
 {
 "package": "ui",
@@ -60,6 +78,15 @@
 "kind": "struct",
 "signature": "struct Checkbox : Widget {",
 "doc": "A box that's ticked or not, with a label. `on_change(checked)` runs when\nthe user toggles it."
+}
+],
+"ColorPicker": [
+{
+"package": "ui",
+"qualified": "ColorPicker",
+"kind": "struct",
+"signature": "struct ColorPicker : Widget {",
+"doc": "Pick a colour: a square for saturation (left \u2192 right) and brightness\n(bottom \u2192 top), a strip for the hue, and a swatch with its hex code.\nDrag in either, or with the focus: Left / Right saturation, Up / Down\nbrightness, Page Up / Page Down hue. `color` is the colour (a `window`\ncolour Int); `on_change(color)` runs when it changes."
 }
 ],
 "Column": [
@@ -80,6 +107,15 @@
 "doc": "Implemented by types that support ordering and equality comparisons.\nRequired for use in sorted collections, binary search, and generic\nfunctions that need to compare values.\n\n@example\nstruct Temperature : Comparable {\n    degrees: Double\n\n    define __lt(self, other: Temperature) -> Bool {\n        return self.degrees < other.degrees\n    }\n\n    define __eq(self, other: Temperature) -> Bool {\n        return self.degrees == other.degrees\n    }\n}"
 }
 ],
+"DatePicker": [
+{
+"package": "ui",
+"qualified": "DatePicker",
+"kind": "struct",
+"signature": "struct DatePicker : Widget {",
+"doc": "A date field that opens a month calendar. `year`, `month` (1-12), `day`;\n`text()` is \"YYYY-MM-DD\". Click the field (or Space / Enter / Alt+Down) to\nopen it; in the calendar click a day, `<` / `>` change month, arrows move\nby day / week, Page Up / Page Down by month, Enter picks, Escape closes.\n`on_change(year, month, day)` runs when the date changes."
+}
+],
 "DateTime": [
 {
 "package": "datetime",
@@ -96,6 +132,15 @@
 "kind": "struct",
 "signature": "struct Double : Primitive, Comparable, Parseable {",
 "doc": "64-bit IEEE 754 floating-point number.\n\n@example:\nx := 3.14\nprint(x.ceil())    // 4.0\nprint(x.str())     // \"3.14\""
+}
+],
+"Dropdown": [
+{
+"package": "ui",
+"qualified": "Dropdown",
+"kind": "struct",
+"signature": "struct Dropdown : Widget {",
+"doc": "Pick one of `options` (anything with `.str()`) from a list that opens\nbelow the field. Click it, or Space / Enter / Alt+Down when focused;\nUp / Down change the choice directly while it's closed. `selected` is\nthe index; `on_change(index, item)` runs when it changes."
 }
 ],
 "Equatable": [
@@ -143,6 +188,15 @@
 "doc": "A handle for reading and writing to the OS file system.\nSupports the `with` statement for automatic close on scope exit.\n\nUse `sys.stdin()`, `sys.stdout()`, `sys.stderr()` to wrap the standard\nstreams as Files (those wrappers ignore `close()`)."
 }
 ],
+"FileDialog": [
+{
+"package": "ui",
+"qualified": "FileDialog",
+"kind": "struct",
+"signature": "struct FileDialog : Widget {",
+"doc": "A window-sized dialog to pick a file (`mode=\"open\"`), a name to save as\n(`mode=\"save\"`) or a folder (`mode=\"folder\"`), starting in `dir`.\n`filter` (e.g. \"*.qk\") limits the files shown. `show()` opens it;\n`on_pick(path)` runs with the full path chosen, `on_cancel()` (optional)\nwhen it's dismissed. Double-click or Enter opens a folder or picks a\nfile; Backspace goes up a folder; Tab moves between the list and the\nname field; Escape cancels. While it's open it takes all input."
+}
+],
 "FileIterator": [
 {
 "package": "io",
@@ -159,6 +213,15 @@
 "kind": "struct",
 "signature": "struct FileNotFoundError : IOError {",
 "doc": "Raised when a file or directory cannot be found at the given path.\nInherits from IOError.\n\n@note Catch IOError instead if you want to handle all I/O failures together.\n\n@example:\ntry {\n    f := File(\"config.json\", \"r\")\n} catch (e: FileNotFoundError) {\n    print(\"Missing file: \" + e.message)\n}"
+}
+],
+"Font": [
+{
+"package": "window",
+"qualified": "Font",
+"kind": "struct",
+"signature": "struct Font {",
+"doc": "A TrueType / OpenType font at one pixel size (`window.load_font`). Pass\nit to `Window.text(..., font=f)`. Text is UTF-8 \u2014 any character the font\nhas is drawn. `size` is the requested height; `ascent` / `descent` are\nhow far glyphs reach above / below the baseline, `line_height` the\ndistance between lines. One Font works in every window."
 }
 ],
 "Hashable": [
@@ -287,6 +350,15 @@
 "doc": "A dynamic, ordered sequence of values of any type.\nElements are zero-indexed. Lists grow automatically as items are appended.\n\n@example:\nnums := [1, 2, 3]\nnums.append(4)\nprint(nums.length())    // 4\nprint(nums[0])          // 1\ndoubled := nums.map(fn(x: Int) => x * 2)"
 }
 ],
+"ListItem": [
+{
+"package": "ui",
+"qualified": "ListItem",
+"kind": "struct",
+"signature": "struct ListItem {",
+"doc": "An entry for a ListView or a Table cell with an `icon` (an image file,\ndrawn at the text's height) before its `text`; `data` keeps anything you\nwant with it. Its `.str()` is `text`, so sorting and `on_select` work as\nwith plain strings."
+}
+],
 "ListView": [
 {
 "package": "ui",
@@ -312,6 +384,33 @@
 "kind": "struct",
 "signature": "struct Match {",
 "doc": "Result of `Regex.find`. `start` and `end` are byte offsets into the input\nString; `text` is the substring `[start, end)`; `groups` is a `List<String>`\nof the captured groups (group 0 = full match is NOT included \u2014 `text` is\nthe whole match)."
+}
+],
+"Menu": [
+{
+"package": "ui",
+"qualified": "Menu",
+"kind": "struct",
+"signature": "struct Menu : Widget {",
+"doc": "A list of `ui.MenuItem`s that pops up: under a `ui.MenuBar` title, or\nwhere the user right-clicks a widget whose `context_menu` it is\n(`menu.open_at(x, y)` from code). Click an item, or Up / Down and Enter;\nEscape closes it."
+}
+],
+"MenuBar": [
+{
+"package": "ui",
+"qualified": "MenuBar",
+"kind": "struct",
+"signature": "struct MenuBar : Widget {",
+"doc": "A row of menu titles, usually at the top of the window:\n`ui.MenuBar([\"File\", \"Edit\"], [file_menu, edit_menu])`. Click a title to\nopen its menu; while one is open, moving over another title (or Left /\nRight) switches to it."
+}
+],
+"MenuItem": [
+{
+"package": "ui",
+"qualified": "MenuItem",
+"kind": "struct",
+"signature": "struct MenuItem {",
+"doc": "One entry of a `ui.Menu`: `text`, `on_click` (no arguments), an optional\n`shortcut` label shown on the right (just text \u2014 bind the keys yourself\nwith `app.on_key`), and `enabled`. `ui.MenuItem(\"-\")` is a separator."
 }
 ],
 "None": [
@@ -413,6 +512,15 @@
 "doc": "Thrown by `run(check=true)`, `shell(check=true)` and `output` when the\nprogram exits with a non-zero code. The message names the command, the\nexit code and the first line of its stderr."
 }
 ],
+"ProgressBar": [
+{
+"package": "ui",
+"qualified": "ProgressBar",
+"kind": "struct",
+"signature": "struct ProgressBar : Widget {",
+"doc": "How far along something is: `value` out of `max` (clamped), drawn as a\nfilled bar. `show_text` adds the percentage. Set `value` as work\nprogresses."
+}
+],
 "Queue": [
 {
 "package": "typing",
@@ -420,6 +528,15 @@
 "kind": "struct",
 "signature": "struct Queue : Printable, Sizeable, Iterable {",
 "doc": "A double-ended queue (deque) supporting O(1) push/pop at both ends.\nUseful for BFS, sliding windows, and task scheduling.\n\n@example:\nq := Queue()\nq.push_back(1)\nq.push_back(2)\nq.push_front(0)\nprint(q.pop_front())  // 0\nprint(q.peek_front()) // 1\nprint(q.size())       // 2"
+}
+],
+"RadioGroup": [
+{
+"package": "ui",
+"qualified": "RadioGroup",
+"kind": "struct",
+"signature": "struct RadioGroup : Widget {",
+"doc": "One choice out of `options` (anything with `.str()`), shown as a column\nof round buttons. Click one, or Up / Down (Left / Right) when it has the\nfocus. `selected` is the index (-1 = none); `on_change(index, item)` runs\nwhen it changes."
 }
 ],
 "Regex": [
@@ -494,6 +611,15 @@
 "doc": "Raised for generic runtime errors that don't fit a more specific category.\nParent of NotImplementedError and NullError.\n\n@warning Avoid throwing RuntimeError directly when a more specific subclass applies.\n\n@example:\ndefine run(mode: String) -> void {\n    if mode != \"fast\" and mode != \"slow\" {\n        throw RuntimeError(\"Unknown mode: \" + mode)\n    }\n}"
 }
 ],
+"ScrollView": [
+{
+"package": "ui",
+"qualified": "ScrollView",
+"kind": "struct",
+"signature": "struct ScrollView : Widget {",
+"doc": "Shows `content` (any widget, usually a Column) in an area `height`\npixels tall that scrolls when the content is taller: mouse wheel, drag\nthe scroll bar, or Tab to a widget that's out of view. `offset` is how\nfar it's scrolled (pixels). With `expand` it takes its container's free\nheight instead."
+}
+],
 "Server": [
 {
 "package": "net",
@@ -566,6 +692,24 @@
 "doc": "Empty space that takes whatever its container has left over."
 }
 ],
+"SplitView": [
+{
+"package": "ui",
+"qualified": "SplitView",
+"kind": "struct",
+"signature": "struct SplitView : Widget {",
+"doc": "Two widgets side by side (or stacked: `vertical=true`) with a divider\nyou drag to share the space. `ratio` is the first pane's share in\npercent; `min_size` the smallest a pane gets (pixels). It takes its\ncontainer's free space (`expand`) unless told otherwise."
+}
+],
+"StatusBar": [
+{
+"package": "ui",
+"qualified": "StatusBar",
+"kind": "struct",
+"signature": "struct StatusBar : Widget {",
+"doc": "A strip of text sections along the bottom of a window:\n`ui.StatusBar([\"Ready\", \"Ln 1, Col 1\"])`. The first section takes the\nfree space; the others are right-aligned. `set(i, text)` changes one."
+}
+],
 "String": [
 {
 "package": "typing",
@@ -584,6 +728,24 @@
 "doc": "Parsed string result paired with the index of the closing quote so\nthe caller can detect trailing junk."
 }
 ],
+"Table": [
+{
+"package": "ui",
+"qualified": "Table",
+"kind": "struct",
+"signature": "struct Table : Widget {",
+"doc": "Rows of values under column headers: `ui.Table([\"Name\", \"Size\"], rows)`,\neach row a List (anything with `.str()`). Columns size to their content\n(or set `widths`); click a row (or Up / Down) to select it, click a\nheader to sort by that column (again: reverse). `on_select(index, row)`\nruns when the selection changes \u2014 `index` into `rows`, whatever the sort.\nWith `editable=true` a cell can be changed in place: Left / Right pick\nthe column, Enter / F2 or a double-click edit it, Enter saves, Escape\ncancels. The new value goes into `rows` (an Int column stays an Int when\nthe text is a number) and `on_edit(index, column, value)` runs."
+}
+],
+"Tabs": [
+{
+"package": "ui",
+"qualified": "Tabs",
+"kind": "struct",
+"signature": "struct Tabs : Widget {",
+"doc": "Pages under a row of tabs: `ui.Tabs([\"General\", \"Advanced\"], [page1, page2])`.\nClick a tab, or Left / Right when the tab row has the focus. `selected`\nis the page shown; `on_change(index, title)` runs when it changes;\n`add(title, page)` adds one."
+}
+],
 "TestCase": [
 {
 "package": "test",
@@ -593,13 +755,31 @@
 "doc": "A single named test. Construct with `TestCase(\"name\", fn() { ... })`.\nThe lambda body uses `test.assert_*` helpers; any AssertionError fails\nthe case. Other exceptions also fail it (their type is shown)."
 }
 ],
+"TextArea": [
+{
+"package": "ui",
+"qualified": "TextArea",
+"kind": "struct",
+"signature": "struct TextArea : TextEdit {",
+"doc": "Multi-line text. Enter starts a new line; Up / Down / Page Up / Page Down\nmove between lines, Home / End to the start / end of the line (with Ctrl:\nof the text). Editing, selection and copy / paste as for `TextEdit`.\n`rows` / `columns` set the size it asks for; it scrolls (wheel, or by\nfollowing the cursor) when the text is bigger. With `wrap=true` long\nlines break at spaces to fit the width (and the keys move along the\nwrapped lines) instead of scrolling sideways. `on_change(text)` runs on\nevery edit."
+}
+],
+"TextEdit": [
+{
+"package": "ui",
+"qualified": "TextEdit",
+"kind": "struct",
+"signature": "struct TextEdit : Widget {",
+"doc": "What TextInput and TextArea share: the text, a cursor and a selection,\nand the editing keys.\n  `text`             \u2014 the contents; set it to replace them\n  `cursor`           \u2014 position (0 = before the first character)\n  `has_selection()`, `selection_start()`, `selection_end()`,\n  `selected_text()`, `select(start, end)`, `select_all()`\n  `insert(s)`        \u2014 type `s` at the cursor (replacing the selection)\n  `copy()`, `cut()`, `paste()` \u2014 through the system clipboard\n  `undo()`, `redo()` \u2014 Ctrl+Z, Ctrl+Y / Ctrl+Shift+Z\nKeys: Shift + arrows / Home / End select, Ctrl+A selects everything,\nCtrl+C / X / V copy, cut and paste (Cmd on macOS), Ctrl + Left / Right\nmove by word, Ctrl + Backspace / Delete erase a word. Mouse: click to\nplace the cursor, drag or Shift+click to select, double-click selects a\nword, triple-click a line."
+}
+],
 "TextInput": [
 {
 "package": "ui",
 "qualified": "TextInput",
 "kind": "struct",
-"signature": "struct TextInput : Widget {",
-"doc": "A one-line text field. Type when it has the focus (click it or Tab to\nit); Left / Right / Home / End move the cursor, Backspace / Delete\nerase. `on_change(text)` runs on every edit, `on_submit(text)` on Enter.\n`columns` sets its width in characters."
+"signature": "struct TextInput : TextEdit {",
+"doc": "A one-line text field. Type when it has the focus (click it or Tab to\nit); editing, selection and copy / paste as described for `TextEdit`.\n`on_change(text)` runs on every edit, `on_submit(text)` on Enter.\n`columns` sets its width in characters."
 }
 ],
 "Theme": [
@@ -608,7 +788,43 @@
 "qualified": "Theme",
 "kind": "struct",
 "signature": "struct Theme {",
-"doc": "Colours and sizes every widget draws with. Make your own by changing a\ncopy of `ui.dark()` / `ui.light()`.\n  `background` \u2014 the window; `surface` \u2014 panels; `text`, `muted` \u2014 text\n  `accent` / `accent_text` \u2014 buttons, checks, sliders, selection\n  `input` \u2014 text field / list background; `border`; `focus` \u2014 focus ring\n  `scale` \u2014 text size multiplier (1 = 8x16 pixel characters)"
+"doc": "Colours and sizes every widget draws with. Make your own by changing a\ncopy of `ui.dark()` / `ui.light()`.\n  `background` \u2014 the window; `surface` \u2014 panels; `text`, `muted` \u2014 text\n  `accent` / `accent_text` \u2014 buttons, checks, sliders, selection\n  `input` \u2014 text field / list background; `border`; `focus` \u2014 focus ring\n  `scale` \u2014 text size multiplier (1 = 8x16 pixel characters)\n  `font`  \u2014 a `window.Font` for all text (null: the built-in 8x16 font);\n            `theme.font = window.load_font(\"DejaVuSans.ttf\", 15)`"
+}
+],
+"ToolButton": [
+{
+"package": "ui",
+"qualified": "ToolButton",
+"kind": "struct",
+"signature": "struct ToolButton : Widget {",
+"doc": "A button for a `ui.Toolbar`: an `icon` (an image file \u2014 PNG, JPEG, BMP,\nGIF, TGA \u2014 drawn 16x16 times the theme scale) and / or `text`, plus a\n`tooltip`. `on_click` like a Button. `ui.ToolButton(\"-\")` is a separator."
+}
+],
+"Toolbar": [
+{
+"package": "ui",
+"qualified": "Toolbar",
+"kind": "struct",
+"signature": "struct Toolbar : Row {",
+"doc": "A row of `ui.ToolButton`s on a raised strip, usually under the menu bar."
+}
+],
+"TreeNode": [
+{
+"package": "ui",
+"qualified": "TreeNode",
+"kind": "struct",
+"signature": "struct TreeNode {",
+"doc": "One node of a `ui.TreeView`: `text`, `children` (TreeNodes), whether it's\n`expanded`, and `data` \u2014 anything you want to keep with it.\n`add(child)` adds a child and returns it."
+}
+],
+"TreeView": [
+{
+"package": "ui",
+"qualified": "TreeView",
+"kind": "struct",
+"signature": "struct TreeView : Widget {",
+"doc": "A tree of `ui.TreeNode`s, nested nodes indented. Click the arrow (or\ndouble-click the row) to expand / collapse; click a row to select it.\nKeys: Up / Down move, Right expands (or goes to the first child), Left\ncollapses (or goes to the parent), Enter toggles. `on_select(node)` runs\nwhen the selection changes; `selected` is the node (or null)."
 }
 ],
 "Tuple": [
@@ -680,7 +896,7 @@
 "qualified": "Widget",
 "kind": "struct",
 "signature": "struct Widget {",
-"doc": "What every widget has. Layout fills in `x`, `y`, `width`, `height` each\nframe; `min_w` / `min_h` are the size the widget asks for.\n  `expand`   \u2014 take a share of the container's free space\n  `visible`  \u2014 false: not drawn and takes no space\n  `enabled`  \u2014 false: drawn dimmed, ignores input\n  `hovered`, `focused`, `pressed` \u2014 set by the App\nTo make your own widget, subclass it and override `measure`, `draw` and\n`handle` (and `children` for containers)."
+"doc": "What every widget has. Layout fills in `x`, `y`, `width`, `height` each\nframe; `min_w` / `min_h` are the size the widget asks for.\n  `expand`   \u2014 take a share of the container's free space\n  `visible`  \u2014 false: not drawn and takes no space\n  `enabled`  \u2014 false: drawn dimmed, ignores input\n  `hovered`, `focused`, `pressed` \u2014 set by the App\n  `tooltip`  \u2014 text shown when the mouse rests on it (\"\" = none)\n  `context_menu` \u2014 a `ui.Menu` opened by a right-click on it (or null)\n  `on_drag`  \u2014 `fn() => data`: the widget can be dragged, carrying `data`\n  `on_drop`  \u2014 `fn(data)`: something dragged can be dropped on it\nTo make your own widget, subclass it and override `measure`, `draw` and\n`handle` (and `children` for containers)."
 }
 ],
 "Window": [
@@ -1201,6 +1417,20 @@
 "kind": "method",
 "signature": "define add(self, w: Widget) -> void {",
 "doc": "Add a widget at the end."
+},
+{
+"package": "ui",
+"qualified": "Theme.add",
+"kind": "method",
+"signature": "define add(self, child: TreeNode) -> TreeNode {",
+"doc": "Add `child` under this node; returns it."
+},
+{
+"package": "ui",
+"qualified": "Theme.add",
+"kind": "method",
+"signature": "define add(self, title: String, page: Widget) -> void {",
+"doc": "Add a page with its tab title."
 }
 ],
 "add_seconds": [
@@ -1235,6 +1465,24 @@
 "kind": "method",
 "signature": "define and_then(self, f: Callable) -> Result {",
 "doc": "Monadic bind: `f` must return a `Result`. Chains fallible steps."
+}
+],
+"animate": [
+{
+"package": "ui",
+"qualified": "Theme.animate",
+"kind": "method",
+"signature": "define animate(self, duration: Int, on_step: Callable, ease: String = \"in_out\", on_done: Callable = null) -> Animation {",
+"doc": "Animate over `duration` ms: `on_step(t)` runs every frame with the\neased progress `t` (0.0 \u2192 1.0; the last call is exactly 1.0), then\n`on_done()`. `ease` is \"linear\", \"in\", \"out\", \"in_out\" or \"back\".\n@example\napp.animate(300, fn(t) { panel.x_offset = ui.lerp(-200, 0, t) }, ease=\"out\")"
+}
+],
+"animating": [
+{
+"package": "ui",
+"qualified": "Theme.animating",
+"kind": "method",
+"signature": "define animating(self) -> Bool {",
+"doc": "True while an animation is running."
 }
 ],
 "ansi": [
@@ -1487,6 +1735,22 @@
 "doc": "The host machine's byte order: `\"little\"` or `\"big\"`."
 }
 ],
+"cancel": [
+{
+"package": "ui",
+"qualified": "Theme.cancel",
+"kind": "method",
+"signature": "define cancel(self) -> void {",
+"doc": "Dismiss the dialog without a choice."
+},
+{
+"package": "ui",
+"qualified": "Theme.cancel",
+"kind": "method",
+"signature": "define cancel(self) -> void {",
+"doc": "Stop it where it is."
+}
+],
 "capture_backtrace": [
 {
 "package": "sys",
@@ -1538,7 +1802,7 @@
 "qualified": "Theme.char_w",
 "kind": "method",
 "signature": "define char_w(self) -> Int {",
-"doc": "Width of one character."
+"doc": "Width of one (average) character \u2014 for sizes given in characters."
 }
 ],
 "chdir_raw": [
@@ -1671,6 +1935,31 @@
 "kind": "method",
 "signature": "define click(self) -> void {",
 "doc": "Press the button from code."
+},
+{
+"package": "ui",
+"qualified": "Theme.click",
+"kind": "method",
+"signature": "define click(self) -> void {",
+"doc": "Press it from code."
+}
+],
+"clip": [
+{
+"package": "window",
+"qualified": "WindowError.clip",
+"kind": "method",
+"signature": "define clip(self, x: Int, y: Int, width: Int, height: Int) -> void {",
+"doc": "Only draw inside the rectangle (x, y, width, height) until `unclip()`\n\u2014 for scrolling areas and panels. `clear` still clears everything."
+}
+],
+"clipboard": [
+{
+"package": "window",
+"qualified": "clipboard",
+"kind": "define",
+"signature": "define clipboard() -> String {",
+"doc": "The text on the system clipboard (\"\" if none). Before any window is open,\nor with headless windows, a clipboard private to the program."
 }
 ],
 "close": [
@@ -1700,6 +1989,27 @@
 "qualified": "Theme.close",
 "kind": "method",
 "signature": "define close(self) -> void {",
+"doc": "Hide the calendar."
+},
+{
+"package": "ui",
+"qualified": "Theme.close",
+"kind": "method",
+"signature": "define close(self) -> void {",
+"doc": "Hide the list."
+},
+{
+"package": "ui",
+"qualified": "Theme.close",
+"kind": "method",
+"signature": "define close(self) -> void {",
+"doc": "Hide it."
+},
+{
+"package": "ui",
+"qualified": "Theme.close",
+"kind": "method",
+"signature": "define close(self) -> void {",
 "doc": "Close the window (ends `run`)."
 },
 {
@@ -1717,6 +2027,15 @@
 "kind": "method",
 "signature": "define close_stdin(self) -> void {",
 "doc": "Close the program's stdin, so it sees end of input."
+}
+],
+"color_to_hsv": [
+{
+"package": "ui",
+"qualified": "Theme.color_to_hsv",
+"kind": "method",
+"signature": "define color_to_hsv(color: Int) -> List {",
+"doc": "[hue 0-359, saturation 0-100, value 0-100] of a colour."
 }
 ],
 "communicate": [
@@ -1794,6 +2113,13 @@
 "kind": "define",
 "signature": "define copy(src: String, dst: String) -> String {",
 "doc": "Copy file `src` to `dst`, keeping its permissions. If `dst` is an\nexisting directory, the copy goes inside it under the same name. An\nexisting file at the destination is replaced. Returns the path written.\n@throws FileNotFoundError if `src` doesn't exist; IOError otherwise.\n@example fs.copy(\"config.toml\", \"backup/\")   // \"backup/config.toml\""
+},
+{
+"package": "ui",
+"qualified": "Theme.copy",
+"kind": "method",
+"signature": "define copy(self) -> void {",
+"doc": "Copy the selection to the clipboard."
 }
 ],
 "copy_tree": [
@@ -1848,6 +2174,15 @@
 "doc": "Counts how many elements equal `value`. Linear scan; uses `==`\nso user structs with `__eq` overloads count correctly.\n\n@example [1, 2, 1, 1, 3].count(1)    // 3"
 }
 ],
+"cut": [
+{
+"package": "ui",
+"qualified": "Theme.cut",
+"kind": "method",
+"signature": "define cut(self) -> void {",
+"doc": "Copy the selection to the clipboard and remove it."
+}
+],
 "cwd": [
 {
 "package": "fs",
@@ -1900,6 +2235,13 @@
 "kind": "method",
 "signature": "define days_in_month(year: Int, month: Int) -> Int {",
 "doc": "Number of days in `month` (1-12) of `year`. Handles February's leap-year\nadjustment via `is_leap`."
+},
+{
+"package": "ui",
+"qualified": "Theme.days_in_month",
+"kind": "method",
+"signature": "define days_in_month(year: Int, month: Int) -> Int {",
+"doc": "Days in `month` (1-12) of `year`."
 }
 ],
 "decode": [
@@ -1925,6 +2267,15 @@
 "kind": "method",
 "signature": "define delete(target: String, headers: Map = Map()) -> Response {",
 "doc": "HTTP DELETE.\n@example resp := http.delete(\"http://api/users/42\")"
+}
+],
+"depth": [
+{
+"package": "ui",
+"qualified": "Theme.depth",
+"kind": "method",
+"signature": "define depth(self) -> Int {",
+"doc": "How deep it is (0 for a root)."
 }
 ],
 "diff_days": [
@@ -2026,6 +2377,15 @@
 "doc": "Dot product: `a \u00b7 b = a.x*b.x + a.y*b.y`. Useful for projections,\nangle calculations (`cos \u03b8 = dot(a, b) / (|a| * |b|)`), and detecting\northogonality (dot == 0)."
 }
 ],
+"dragging": [
+{
+"package": "ui",
+"qualified": "Theme.dragging",
+"kind": "method",
+"signature": "define dragging(self) -> Bool {",
+"doc": "True while something is being dragged (see `Widget.on_drag`)."
+}
+],
 "draw": [
 {
 "package": "ui",
@@ -2033,6 +2393,22 @@
 "kind": "method",
 "signature": "define draw(self, win: window.Window, t: Theme) -> void {",
 "doc": "Draw into `win` inside the widget's box."
+},
+{
+"package": "ui",
+"qualified": "Theme.draw",
+"kind": "method",
+"signature": "define draw(self) -> void {",
+"doc": "Draw the tree, open popups and the tooltip (what `step` shows)."
+}
+],
+"draw_text": [
+{
+"package": "ui",
+"qualified": "Theme.draw_text",
+"kind": "method",
+"signature": "define draw_text(self, win: window.Window, s: String, x: Int, y: Int, color: Int) -> void {",
+"doc": "Draw `s` at (x, y) in the theme's font."
 }
 ],
 "drop_while": [
@@ -2103,6 +2479,33 @@
 "kind": "method",
 "signature": "define each_value(self, cb: Callable) -> void",
 "doc": "Calls `cb` for each value only.\n@param cb: Callable \u2014 `fn(value: Any)`"
+}
+],
+"ease": [
+{
+"package": "ui",
+"qualified": "Theme.ease",
+"kind": "method",
+"signature": "define ease(name: String, t: Double) -> Double {",
+"doc": "Easing: progress `t` (0.0-1.0) reshaped \u2014 \"linear\", \"in\" (starts slow),\n\"out\" (ends slow), \"in_out\" (both), \"back\" (overshoots a little, then\nsettles)."
+}
+],
+"edit_cell": [
+{
+"package": "ui",
+"qualified": "Theme.edit_cell",
+"kind": "method",
+"signature": "define edit_cell(self, r: Int, c: Int) -> void {",
+"doc": "Edit cell (row index `r`, column `c`) in place."
+}
+],
+"editing": [
+{
+"package": "ui",
+"qualified": "Theme.editing",
+"kind": "method",
+"signature": "define editing(self) -> Bool {",
+"doc": "True while a cell is being edited."
 }
 ],
 "encode": [
@@ -2284,6 +2687,15 @@
 "doc": "Searches `s` starting at `from_offset` and caches the match groups in the\nhandle. Returns the start offset of the full match, or -1 if no match.\nQuirk wrappers then read group_count/group_start/group_end to assemble Match."
 }
 ],
+"finish_edit": [
+{
+"package": "ui",
+"qualified": "Theme.finish_edit",
+"kind": "method",
+"signature": "define finish_edit(self, save: Bool = true) -> void {",
+"doc": "Stop editing; `save` keeps the typed value."
+}
+],
 "first": [
 {
 "package": "typing",
@@ -2298,6 +2710,15 @@
 "kind": "method",
 "signature": "define first(self) -> Any {",
 "doc": "Returns the first element in insertion order, or `null` when\nthe set is empty. Parallel to List.first(). Useful for\nsentinel-then-iterate patterns where the receiver may or may\nnot have anything yet.\n\n@example pending.first()    // the oldest queued item"
+}
+],
+"fit": [
+{
+"package": "ui",
+"qualified": "Theme.fit",
+"kind": "method",
+"signature": "define fit(self, s: String, px: Int) -> String {",
+"doc": "`s` cut to fit `px` pixels."
 }
 ],
 "flag": [
@@ -2374,6 +2795,13 @@
 "qualified": "WindowError.free",
 "kind": "method",
 "signature": "define free(self) -> void {",
+"doc": "Release the font. Drawing with it afterwards does nothing."
+},
+{
+"package": "window",
+"qualified": "WindowError.free",
+"kind": "method",
+"signature": "define free(self) -> void {",
 "doc": "Release the image's memory. Drawing it afterwards does nothing."
 }
 ],
@@ -2409,6 +2837,13 @@
 "kind": "method",
 "signature": "define get(self, key: String) -> Any",
 "doc": "Returns the value for the given key, or `null` if not found.\n@param key: String \u2014 the key to look up\n@returns: Any \u2014 the associated value, or `null`"
+},
+{
+"package": "ui",
+"qualified": "Theme.get",
+"kind": "method",
+"signature": "define get(self, i: Int) -> String {",
+"doc": "Section `i`'s text (\"\" if there's none)."
 }
 ],
 "get_or": [
@@ -2463,6 +2898,15 @@
 "kind": "define",
 "signature": "define glob(pattern: String, hidden: Bool = false) -> List {",
 "doc": "Paths matching `pattern`, sorted. Each `/`-separated part of the pattern\nis matched against one level of the tree (see `matches`); a part that is\nexactly `**` matches any number of directories, including none. Names\nstarting with `.` only match when the pattern part starts with `.`, or\nwith `hidden=true`. Relative patterns give paths relative to the\ncurrent directory.\n@example fs.glob(\"*.qk\")              // [\"main.qk\", \"util.qk\"]\n@example fs.glob(\"src/**/*_test.qk\")  // test files at any depth under src"
+}
+],
+"go": [
+{
+"package": "ui",
+"qualified": "Theme.go",
+"kind": "method",
+"signature": "define go(self, path: String) -> void {",
+"doc": "Show folder `path`."
 }
 ],
 "group": [
@@ -2535,6 +2979,15 @@
 "doc": "Returns `true` if the value is in the set.\n@param val: Any\n@returns: Bool"
 }
 ],
+"has_selection": [
+{
+"package": "ui",
+"qualified": "Theme.has_selection",
+"kind": "method",
+"signature": "define has_selection(self) -> Bool {",
+"doc": "True when some text is selected."
+}
+],
 "height": [
 {
 "package": "window",
@@ -2545,6 +2998,13 @@
 }
 ],
 "hex": [
+{
+"package": "ui",
+"qualified": "Theme.hex",
+"kind": "method",
+"signature": "define hex(self) -> String {",
+"doc": "The colour as \"#rrggbb\"."
+},
 {
 "package": "window",
 "qualified": "WindowError.hex",
@@ -2616,6 +3076,15 @@
 "doc": "Like `find`, but throws `ValueError` if `sub` is not present.\n@param sub: String\n@returns: Int\n@throws ValueError \u2014 if `sub` is not found"
 }
 ],
+"index_at": [
+{
+"package": "ui",
+"qualified": "Theme.index_at",
+"kind": "method",
+"signature": "define index_at(self, px: Int, py: Int) -> Int {",
+"doc": "The text index under the point (px, py) (where a click puts the cursor)."
+}
+],
 "infinity": [
 {
 "package": "math",
@@ -2667,7 +3136,7 @@
 "qualified": "Theme.insert",
 "kind": "method",
 "signature": "define insert(self, s: String) -> void {",
-"doc": "Insert `s` at the cursor, as typing would."
+"doc": "Insert `s` at the cursor, as typing would (replaces the selection)."
 }
 ],
 "intersection": [
@@ -2815,6 +3284,15 @@
 "doc": "True until the window is closed (by `close()` or its close button)."
 }
 ],
+"is_separator": [
+{
+"package": "ui",
+"qualified": "Theme.is_separator",
+"kind": "method",
+"signature": "define is_separator(self) -> Bool {",
+"doc": "True for a separator line."
+}
+],
 "is_some": [
 {
 "package": "typing",
@@ -2951,6 +3429,13 @@
 "package": "ui",
 "qualified": "Theme.layout",
 "kind": "method",
+"signature": "define layout(self) -> List {",
+"doc": "The rows on screen as [start, end] text ranges (\"\\n\" not included)."
+},
+{
+"package": "ui",
+"qualified": "Theme.layout",
+"kind": "method",
 "signature": "define layout(self) -> void {",
 "doc": "Measure and place the tree to fill the window."
 }
@@ -2992,6 +3477,15 @@
 "doc": "Returns the number of key-value pairs.\n@returns: Int"
 }
 ],
+"lerp": [
+{
+"package": "ui",
+"qualified": "Theme.lerp",
+"kind": "method",
+"signature": "define lerp(a: Int, b: Int, t: Double) -> Int {",
+"doc": "`a` + (`b` - `a`) * `t` (t from 0.0 to 1.0), rounded."
+}
+],
 "light": [
 {
 "package": "ui",
@@ -3031,6 +3525,13 @@
 "kind": "method",
 "signature": "define lines(self) -> List",
 "doc": "Splits on newlines and returns each line as a list element.\n@returns: List"
+},
+{
+"package": "ui",
+"qualified": "Theme.lines",
+"kind": "method",
+"signature": "define lines(self) -> List {",
+"doc": "The text split into lines (at \"\\n\"; wrapping doesn't count)."
 }
 ],
 "list_dir": [
@@ -3072,6 +3573,15 @@
 "kind": "define",
 "signature": "define load(file: File) -> Any {",
 "doc": "Read the entire contents of `file` and parse as JSON.\n\n@example\nwith File(\"config.json\", \"r\") as f {\n    config: Map = json.load(f)\n    print(config.get(\"host\"))\n}"
+}
+],
+"load_font": [
+{
+"package": "window",
+"qualified": "WindowError.load_font",
+"kind": "method",
+"signature": "define load_font(path: String, size: Int) -> Font {",
+"doc": "Load a font file (`.ttf`, or `.otf` with TrueType outlines) at `size`\npixels tall.\n@throws WindowError if the file can't be read or isn't a font.\n@example\nf := window.load_font(\"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf\", 18)\nw.text(\"Gr\u00fc\u00dfe \u2014 \u00fcn\u00efc\u00f6d\u00e9 \u2713\", 20, 20, window.white(), font=f)"
 }
 ],
 "load_image": [
@@ -3167,6 +3677,13 @@
 "kind": "define",
 "signature": "define matches(pattern: String, name: String, hidden: Bool = false) -> Bool {",
 "doc": "True if file name `name` matches the shell-style `pattern`: `*` (any\nrun of characters), `?` (one character), `[abc]` / `[a-z]` / `[!x]`\n(one character from a set). A leading `.` must be matched explicitly\nunless `hidden` is true. Matches a single name, not a path \u2014 see `glob`.\n@example fs.matches(\"*.qk\", \"main.qk\")    // true"
+},
+{
+"package": "ui",
+"qualified": "Theme.matches",
+"kind": "method",
+"signature": "define matches(self, e: window.Event) -> Bool {",
+"doc": "True when key event `e` is this item's `shortcut` (\"Ctrl+S\", \"Ctrl+Shift+N\", \"F5\", \"Delete\"; Ctrl also matches Cmd)."
 }
 ],
 "max": [
@@ -3381,6 +3898,15 @@
 "doc": "The mouse position (x, y) from the latest event."
 }
 ],
+"move_item": [
+{
+"package": "ui",
+"qualified": "Theme.move_item",
+"kind": "method",
+"signature": "define move_item(self, src: Int, dst: Int) -> void {",
+"doc": "Move item `src` to position `dst` (both indices into `items`)."
+}
+],
 "mtime": [
 {
 "package": "fs",
@@ -3455,11 +3981,34 @@
 ],
 "open": [
 {
+"package": "ui",
+"qualified": "Theme.open",
+"kind": "method",
+"signature": "define open(self) -> void {",
+"doc": "Show the calendar (on the chosen date's month)."
+},
+{
+"package": "ui",
+"qualified": "Theme.open",
+"kind": "method",
+"signature": "define open(self) -> void {",
+"doc": "Show the list."
+},
+{
 "package": "window",
 "qualified": "WindowError.open",
 "kind": "method",
 "signature": "define open(title: String, width: Int, height: Int, resizable: Bool = false, hidden: Bool = false, vsync: Bool = true, headless: Bool = false) -> Window {",
 "doc": "Open a window `width` x `height` pixels, centred on the screen.\n@param resizable let the user resize it (\"resize\" events tell you)\n@param hidden    don't show it (drawing and `screenshot` still work)\n@param vsync     make `present` wait for the display's refresh\n@param headless  no display at all (CI, servers): an off-screen window\n                 for drawing and screenshots. Applies from the first\n                 window opened.\n@throws WindowError when it can't be opened (no SDL2, no display...).\n@example w := window.open(\"Paint\", 800, 600, resizable=true)"
+}
+],
+"open_menu": [
+{
+"package": "ui",
+"qualified": "Theme.open_menu",
+"kind": "method",
+"signature": "define open_menu(self, i: Int) -> void {",
+"doc": "Open menu `i` under its title (-1: close)."
 }
 ],
 "option": [
@@ -3494,6 +4043,15 @@
 "kind": "method",
 "signature": "define output(args: List, cwd: String = \"\", env: Map = Map(), timeout_ms: Int = -1) -> String {",
 "doc": "Run a program and return its stdout, with one trailing newline removed.\nThrows `ProcessError` when it exits with a non-zero code.\n@example\nsha := process.output([\"git\", \"rev-parse\", \"HEAD\"])"
+}
+],
+"page": [
+{
+"package": "ui",
+"qualified": "Theme.page",
+"kind": "method",
+"signature": "define page(self) -> Widget {",
+"doc": "The page being shown (null when there are none)."
 }
 ],
 "parse": [
@@ -3615,6 +4173,15 @@
 "doc": "Hidden input. Shells out to console.password, which already disables\nterminal echo via termios in the C runtime. Single-call wrapper so\nclient code doesn't need to know which stdlib module owns the helper."
 }
 ],
+"paste": [
+{
+"package": "ui",
+"qualified": "Theme.paste",
+"kind": "method",
+"signature": "define paste(self) -> void {",
+"doc": "Insert what's on the clipboard."
+}
+],
 "path": [
 {
 "package": "sys",
@@ -3640,6 +4207,15 @@
 "kind": "method",
 "signature": "define peek_front(self) -> Any",
 "doc": "Returns the front element without removing it.\n@returns: Any"
+}
+],
+"percent": [
+{
+"package": "ui",
+"qualified": "Theme.percent",
+"kind": "method",
+"signature": "define percent(self) -> Int {",
+"doc": "Progress from 0 to 100."
 }
 ],
 "pi": [
@@ -4035,6 +4611,15 @@
 "doc": "Read up to `size` bytes from socket `fd`. Returns the data received as\na String. An empty string indicates the peer closed the connection."
 }
 ],
+"redo": [
+{
+"package": "ui",
+"qualified": "Theme.redo",
+"kind": "method",
+"signature": "define redo(self) -> Bool {",
+"doc": "Redo what `undo` took back (Ctrl+Y / Ctrl+Shift+Z)."
+}
+],
 "reduce": [
 {
 "package": "typing",
@@ -4241,6 +4826,15 @@
 "doc": "Save what's been drawn as a BMP image.\n@throws WindowError on failure."
 }
 ],
+"scroll_to": [
+{
+"package": "ui",
+"qualified": "Theme.scroll_to",
+"kind": "method",
+"signature": "define scroll_to(self, pixels: Int) -> void {",
+"doc": "Scroll so `pixels` from the top of the content is at the top (clamped)."
+}
+],
 "second": [
 {
 "package": "time",
@@ -4285,8 +4879,59 @@
 "package": "ui",
 "qualified": "Theme.select",
 "kind": "method",
+"signature": "define select(self, start: Int, end: Int) -> void {",
+"doc": "Select from `start` to `end` (the cursor goes to `end`)."
+},
+{
+"package": "ui",
+"qualified": "Theme.select",
+"kind": "method",
+"signature": "define select(self, i: Int) -> void {",
+"doc": "Choose option `i` (clamped); runs `on_change` if it changed."
+},
+{
+"package": "ui",
+"qualified": "Theme.select",
+"kind": "method",
 "signature": "define select(self, i: Int) -> void {",
 "doc": "Select row `i` (clamped); runs `on_select` if it changed."
+},
+{
+"package": "ui",
+"qualified": "Theme.select",
+"kind": "method",
+"signature": "define select(self, node: TreeNode) -> void {",
+"doc": "Select `node` (null: none); runs `on_select` if it changed."
+},
+{
+"package": "ui",
+"qualified": "Theme.select",
+"kind": "method",
+"signature": "define select(self, i: Int) -> void {",
+"doc": "Select row `i` (an index into `rows`; -1: none); runs `on_select` if it changed."
+},
+{
+"package": "ui",
+"qualified": "Theme.select",
+"kind": "method",
+"signature": "define select(self, i: Int) -> void {",
+"doc": "Choose option `i` (clamped); runs `on_change` if it changed."
+},
+{
+"package": "ui",
+"qualified": "Theme.select",
+"kind": "method",
+"signature": "define select(self, i: Int) -> void {",
+"doc": "Show page `i` (clamped); runs `on_change` if it changed."
+}
+],
+"select_all": [
+{
+"package": "ui",
+"qualified": "Theme.select_all",
+"kind": "method",
+"signature": "define select_all(self) -> void {",
+"doc": "Select everything."
 }
 ],
 "select_index": [
@@ -4305,6 +4950,33 @@
 "kind": "method",
 "signature": "define select_obj(message: String, options: List, format: Callable, default_idx: Int = 0) -> Any {",
 "doc": "Numbered menu over arbitrary objects with a caller-supplied formatter.\nAvoids the \"options must already be strings\" constraint of `select`,\nand returns the **original** option (the actual `Cmd`, `Recipe`,\nwhatever) instead of its rendered label.\n\n@param message: String \u2014 header line shown above the menu\n@param options: List \u2014 arbitrary objects to pick from\n@param format: Callable \u2014 `fn(opt: Any) => String` rendering each row\n@param default_idx: Int \u2014 zero-based default; out-of-range falls to 0\n@returns: Any \u2014 the chosen original option (not the rendered label)\n\n@example:\nchosen: Cmd := select_obj(\"commands:\", commands, fn(c: Any) -> String {\n    cmd: Cmd := c\n    return cmd.label()\n})"
+}
+],
+"selected_text": [
+{
+"package": "ui",
+"qualified": "Theme.selected_text",
+"kind": "method",
+"signature": "define selected_text(self) -> String {",
+"doc": "The selected text (\"\" if none)."
+}
+],
+"selection_end": [
+{
+"package": "ui",
+"qualified": "Theme.selection_end",
+"kind": "method",
+"signature": "define selection_end(self) -> Int {",
+"doc": "Where the selection ends."
+}
+],
+"selection_start": [
+{
+"package": "ui",
+"qualified": "Theme.selection_start",
+"kind": "method",
+"signature": "define selection_start(self) -> Int {",
+"doc": "Where the selection starts (== `selection_end()` when nothing is selected)."
 }
 ],
 "send": [
@@ -4330,6 +5002,40 @@
 "kind": "method",
 "signature": "define set(self, v: Int) -> void {",
 "doc": "Set the value (clamped to min..max); runs `on_change` if it changed."
+},
+{
+"package": "ui",
+"qualified": "Theme.set",
+"kind": "method",
+"signature": "define set(self, i: Int, text: String) -> void {",
+"doc": "Change section `i`'s text (adds sections as needed)."
+}
+],
+"set_clipboard": [
+{
+"package": "window",
+"qualified": "set_clipboard",
+"kind": "define",
+"signature": "define set_clipboard(text: String) -> void {",
+"doc": "Put `text` on the clipboard (see `clipboard()`)."
+}
+],
+"set_color": [
+{
+"package": "ui",
+"qualified": "Theme.set_color",
+"kind": "method",
+"signature": "define set_color(self, color: Int) -> void {",
+"doc": "Set the colour from code (no `on_change`)."
+}
+],
+"set_date": [
+{
+"package": "ui",
+"qualified": "Theme.set_date",
+"kind": "method",
+"signature": "define set_date(self, year: Int, month: Int, day: Int) -> void {",
+"doc": "Set the date (clamped to a real date); runs `on_change` if it changed."
 }
 ],
 "set_title": [
@@ -4402,6 +5108,15 @@
 "kind": "method",
 "signature": "define shell(command: String, input: String = \"\", cwd: String = \"\", env: Map = Map(), inherit_env: Bool = true, timeout_ms: Int = -1, check: Bool = false, capture: Bool = true, merge_stderr: Bool = false) -> RunResult {",
 "doc": "`run` through the shell \u2014 `/bin/sh -c command` (Windows: `cmd.exe /c`),\nso pipes, globs, redirects and variables work. Only for commands you wrote \u2014 never paste\nuntrusted input into one (use `run` with an args List instead).\n@example\nr := process.shell(\"ls *.qk | wc -l\")\nprint(r.stdout.trim())"
+}
+],
+"show": [
+{
+"package": "ui",
+"qualified": "Theme.show",
+"kind": "method",
+"signature": "define show(self) -> void {",
+"doc": "Open the dialog (reading `dir`)."
 }
 ],
 "shuffle": [
@@ -4536,6 +5251,15 @@
 "kind": "method",
 "signature": "define sort(self, cb: Callable = null) -> List",
 "doc": "Sorts the list in place (stable) and returns it, for chaining.\nWith no comparator, values sort in natural order: numbers\nnumerically, Strings alphabetically. With one, `cb(a, b)` returns\na negative Int when `a` goes first, positive when after, zero when\nequal.\n\n@param cb: Callable \u2014 optional `fn(a, b) => Int`\n@returns: List \u2014 the (now-sorted) self\n\n@example:\n[3, 1, 2].sort()                        // [1, 2, 3]\n[\"b\", \"a\"].sort()                       // [\"a\", \"b\"]\n[3, 1, 2].sort(fn(a, b) => b - a)       // [3, 2, 1]"
+}
+],
+"sort_by": [
+{
+"package": "ui",
+"qualified": "Theme.sort_by",
+"kind": "method",
+"signature": "define sort_by(self, c: Int, descending: Bool = false) -> void {",
+"doc": "Sort by column `c` (`descending` for largest / last first)."
 }
 ],
 "spawn": [
@@ -4856,11 +5580,41 @@
 ],
 "text": [
 {
+"package": "ui",
+"qualified": "Theme.text",
+"kind": "method",
+"signature": "define text(self) -> String {",
+"doc": "The chosen option as text (\"\" when none)."
+},
+{
+"package": "ui",
+"qualified": "Theme.text",
+"kind": "method",
+"signature": "define text(self) -> String {",
+"doc": "The date as \"YYYY-MM-DD\"."
+},
+{
+"package": "ui",
+"qualified": "Theme.text",
+"kind": "method",
+"signature": "define text(self) -> String {",
+"doc": "The chosen option as text (\"\" when there are none)."
+},
+{
 "package": "window",
 "qualified": "WindowError.text",
 "kind": "method",
-"signature": "define text(self, text: String, x: Int, y: Int, color: Int = white(), scale: Int = 1) -> Int {",
+"signature": "define text(self, text: String, x: Int, y: Int, color: Int = white(), scale: Int = 1, font: Font = null) -> Int {",
 "doc": "Draw `text` with its top-left corner at (x, y) in the built-in font\n(8x16 pixels per character at `scale=1`; \"\\n\" starts a new line).\nReturns the width drawn, in pixels."
+}
+],
+"text_w": [
+{
+"package": "ui",
+"qualified": "Theme.text_w",
+"kind": "method",
+"signature": "define text_w(self, s: String) -> Int {",
+"doc": "Width in pixels of `s` (its longest line) in the theme's font."
 }
 ],
 "text_width": [
@@ -5032,6 +5786,13 @@
 "kind": "method",
 "signature": "define toggle(self) -> void {",
 "doc": "Flip it, as a click would (runs `on_change`)."
+},
+{
+"package": "ui",
+"qualified": "Theme.toggle",
+"kind": "method",
+"signature": "define toggle(self, node: TreeNode) -> void {",
+"doc": "Expand or collapse `node`."
 }
 ],
 "tomorrow": [
@@ -5043,6 +5804,15 @@
 "doc": "One day in the future, same time-of-day."
 }
 ],
+"tooltip": [
+{
+"package": "ui",
+"qualified": "Theme.tooltip",
+"kind": "method",
+"signature": "define tooltip(w: Widget, text: String) -> Widget {",
+"doc": "Give `w` a tooltip and return it \u2014 for building trees inline:\n`ui.tooltip(ui.Button(\"Save\", on_click=save), \"Write the file (Ctrl+S)\")`."
+}
+],
 "trunc": [
 {
 "package": "math",
@@ -5050,6 +5820,24 @@
 "kind": "define",
 "signature": "extern define trunc(x: Double) -> Double",
 "doc": "Truncate toward zero. `trunc(-2.7) == -2.0`."
+}
+],
+"unclip": [
+{
+"package": "window",
+"qualified": "WindowError.unclip",
+"kind": "method",
+"signature": "define unclip(self) -> void {",
+"doc": "Draw anywhere again (undoes `clip`)."
+}
+],
+"undo": [
+{
+"package": "ui",
+"qualified": "Theme.undo",
+"kind": "method",
+"signature": "define undo(self) -> Bool {",
+"doc": "Undo the last edit (Ctrl+Z); false when there's nothing to undo."
 }
 ],
 "uniform": [
@@ -5242,6 +6030,15 @@
 "doc": "Quirk version string, e.g. `\"0.1.0\"`."
 }
 ],
+"visible_nodes": [
+{
+"package": "ui",
+"qualified": "Theme.visible_nodes",
+"kind": "method",
+"signature": "define visible_nodes(self) -> List {",
+"doc": "The nodes on screen in order (expanded parents' children included)."
+}
+],
 "wait": [
 {
 "package": "process",
@@ -5285,9 +6082,23 @@
 "kind": "define",
 "signature": "extern define weekday(epoch: Int, utc: Int) -> Int",
 "doc": "Day of week, 0-6 (0=Sunday, 6=Saturday)."
+},
+{
+"package": "ui",
+"qualified": "Theme.weekday",
+"kind": "method",
+"signature": "define weekday(year: Int, month: Int, day: Int) -> Int {",
+"doc": "Day of the week of a date: 0 = Monday ... 6 = Sunday."
 }
 ],
 "width": [
+{
+"package": "window",
+"qualified": "WindowError.width",
+"kind": "method",
+"signature": "define width(self, text: String) -> Int {",
+"doc": "Width in pixels of `text` (its longest line) in this font."
+},
 {
 "package": "window",
 "qualified": "WindowError.width",

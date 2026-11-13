@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
+import * as path from 'path';
 import { getDeadLines } from './DeadCodeProvider';
 import { maskLine, maskLineWithState, TripleState } from './utils/maskLine';
 import { resolveModulePath, findProjectRootFor, resolveQuirkHome } from './ImportProvider';
@@ -9,7 +10,7 @@ import { compilerReportedLines } from './CompilerService';
 // exports scanner (for referenced modules). Kept as strings so we
 // can compile flavours (`gm` for the module scanner, `m` inline).
 const EXPORT_DECL_RE_SRC =
-    '^\\s*(?:extern\\s+)?(?:define|def|init|struct|enum|type|interface)\\s+([a-zA-Z_]\\w*)';
+    '^\\s*(?:extern\\s+|async\\s+)?(?:define|def|init|struct|enum|type|interface)\\s+([a-zA-Z_]\\w*)';
 const REEXPORT_RE_SRC =
     '^\\s*from\\s+[.a-zA-Z0-9_/]+\\s+use\\s+\\{([^}]*)\\}';
 
@@ -134,7 +135,7 @@ const KEYWORDS = new Set([
     'extern', 'true', 'false', 'null', 'del', 'init', 'def',
     'const', 'ref', 'try', 'catch', 'throw', 'assert', 'async', 'await', 'finally', 'and', 'or', 'not', 'super', 'enum',
     'match', 'case', '_', 'where', 'is',
-    'fn', 'nonlocal', 'global', 'interface'
+    'fn', 'nonlocal', 'global', 'interface', 'extend'
 ]);
 
 const BUILTINS = new Set([
@@ -148,8 +149,35 @@ const BUILTINS = new Set([
     'true', 'false', 'null',
     'Exception', 'TypeError', 'ValueError', 'IndexError', 'KeyError',
     'IOError', 'FileNotFoundError', 'RuntimeError', 'NotImplementedError',
-    'SocketError', 'ZeroDivisionError', 'AssertionError', 'NullError', 'WhereConditionError'
+    'SocketError', 'ZeroDivisionError', 'AssertionError', 'NullError', 'WhereConditionError',
+    'CancelledError',   // a cancelled async task (typing)
 ]);
+
+// `define name(params) ...` with the parameter list found by matching
+// parentheses — a regex `\(([^)]*)\)` stopped at the first `)`, so a default
+// like `color: Int = window.rgb(76, 141, 255)` cut the list short and every
+// later parameter was "not defined". Same shape as a RegExpExecArray:
+// [0] the signature, [1] the name, [2] the parameter text.
+function matchSignature(s: string): RegExpExecArray | null {
+    const head = /^\s*(?:extern\s+|async\s+)?(?:define|def|init)\s+([a-zA-Z_]\w*)\s*(?:\[[^\]]*\]\s*)?\(/.exec(s);
+    if (!head) return null;
+    const start = head.index + head[0].length;
+    let depth = 1;
+    let k = start;
+    for (; k < s.length; k++) {
+        const c = s[k];
+        if (c === '(' || c === '[' || c === '{') depth++;
+        else if (c === ')' || c === ']' || c === '}') {
+            depth--;
+            if (depth === 0) break;
+        }
+    }
+    if (depth !== 0) return null;
+    const res = [s.slice(head.index, k + 1), head[1], s.slice(start, k)] as unknown as RegExpExecArray;
+    res.index = head.index;
+    res.input = s;
+    return res;
+}
 
 export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: vscode.DiagnosticCollection): void {
     if (doc.languageId !== 'quirk') return;
@@ -190,6 +218,62 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
         const set = collectModuleExports(resolved);
         exportsCache.set(modulePath, set);
         return set;
+    };
+
+    // A package's files are compiled together, so inside a package
+    // (`packages/`, `lib/quirk/`, `stdlib/`) the types, union arms and
+    // enum variants of the sibling files are visible (typing/option.quirk
+    // uses `Result`, `Ok`, `Err` from result.quirk).
+    const siblingTypeNames = (): string[] => {
+        const out: string[] = [];
+        if (!docPath || !/[\\/](?:packages|stdlib|lib[\\/]quirk)[\\/]/.test(docPath)) return out;
+        const dir = path.dirname(docPath);
+        let entries: string[] = [];
+        try { entries = fs.readdirSync(dir); } catch { return out; }
+        for (const name of entries) {
+            if (!/\.(quirk|qk)$/.test(name) || path.join(dir, name) === docPath) continue;
+            let text = '';
+            try { text = fs.readFileSync(path.join(dir, name), 'utf-8'); } catch { continue; }
+            const declRe = /^(?:struct|enum|interface|type)\s+([A-Za-z_]\w*)/gm;
+            let m: RegExpExecArray | null;
+            while ((m = declRe.exec(text)) !== null) out.push(m[1]);
+            // `type Name[T] = Arm(...) | Other` — the arms.
+            const tuRe = /^type\s+[A-Za-z_]\w*(?:\[[^\]]*\])?\s*=\s*(.+)$/gm;
+            while ((m = tuRe.exec(text)) !== null) {
+                for (const arm of m[1].split('|')) {
+                    const a = /^\s*([A-Za-z_]\w*)/.exec(arm);
+                    if (a) out.push(a[1]);
+                }
+            }
+            // Enum variants, one per line or inline.
+            const enumRe = /^enum\s+[A-Za-z_]\w*[^{]*\{([^}]*)\}/gm;
+            while ((m = enumRe.exec(text)) !== null) {
+                for (const v of m[1].split(/[\n,]/)) {
+                    const a = /^\s*([A-Za-z_]\w*)/.exec(v);
+                    if (a) out.push(a[1]);
+                }
+            }
+        }
+        return out;
+    };
+
+    // Top-level struct / enum / interface / type names a module declares.
+    const typesCache = new Map<string, string[]>();
+    const typesForModule = (modulePath: string): string[] => {
+        const hit = typesCache.get(modulePath);
+        if (hit) return hit;
+        const out: string[] = [];
+        const resolved = resolveModulePath(projectRootForImports, docPath, modulePath);
+        if (resolved) {
+            try {
+                const text = fs.readFileSync(resolved, 'utf-8');
+                const re = /^(?:struct|enum|interface|type)\s+([A-Za-z_]\w*)/gm;
+                let m: RegExpExecArray | null;
+                while ((m = re.exec(text)) !== null) out.push(m[1]);
+            } catch { /* unreadable: nothing */ }
+        }
+        typesCache.set(modulePath, out);
+        return out;
     };
 
     // Validate every `{ name1, name2 }` list against the target module's
@@ -250,6 +334,7 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
     };
     const usages = new Set<string>();
     const fileGlobals = new Set<string>();
+    for (const tn of siblingTypeNames()) fileGlobals.add(tn);
     // Module aliases brought into scope by `use X` (allow `X.foo(...)` only).
     const useAliases = new Set<string>();
     // Symbols brought in by `from X use { a, b }` (allow bare `a(...)`).
@@ -375,6 +460,10 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
             const alias = match[1].split(/[\.\/]/).pop();
             if (alias) { fileGlobals.add(alias); useAliases.add(alias); }
             reportUnresolvedImport(i, line, match[1]);
+            // The module's types are usable unqualified too (`use process`
+            // then `catch (e: ProcessError)`): the compiler registers struct
+            // names globally.
+            for (const tn of typesForModule(match[1])) fileGlobals.add(tn);
         }
 
         // from .path as alias — register the alias as a known global
@@ -435,13 +524,13 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
             }
         }
 
-        match = /^\s*(?:extern\s+)?(?:struct|define|def|init)\s+([a-zA-Z_]\w*)/.exec(cleanLine);
+        match = /^\s*(?:extern\s+|async\s+)?(?:struct|define|def|init)\s+([a-zA-Z_]\w*)/.exec(cleanLine);
         if (match) {
             const name = match[1];
             fileGlobals.add(name);
             if (/^\s*(?:extern\s+)?struct\b/.test(cleanLine)) structNames.add(name);
             // Collect generic type params [T, U] so they're not flagged as "not defined"
-            const typeParamMatch = /^\s*(?:extern\s+)?(?:struct|define|def|init)\s+[a-zA-Z_]\w*\s*\[([^\]]+)\]/.exec(cleanLine);
+            const typeParamMatch = /^\s*(?:extern\s+|async\s+)?(?:struct|define|def|init)\s+[a-zA-Z_]\w*\s*\[([^\]]+)\]/.exec(cleanLine);
             if (typeParamMatch) {
                 typeParamMatch[1].split(',').forEach(tp => {
                     const t = tp.trim();
@@ -492,6 +581,8 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
     // Same TripleState pattern as Pass 1, run on each line of Pass 2 to
     // hide triple-quoted content from the identifier scanner.
     let pass2Triple: TripleState = { active: false, quote: '' };
+    // Brackets still open at the end of the previous line (multi-line calls).
+    let bracketCarry: string[] = [];
 
     for (let i = 0; i < lines.length; i++) {
         const originalLine = lines[i];
@@ -520,13 +611,13 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
 
         // Reset scope if we enter a new function (optional [T, U] generic params before `(`)
         // Single-line case first: `define foo(a, b) -> T { ... }` all on this line.
-        let funcMatch = /^\s*(?:extern\s+)?(?:define|def|init)\s+([a-zA-Z_]\w*)\s*(?:\[[^\]]*\]\s*)?\(([^)]*)\)/.exec(maskedLine);
+        let funcMatch = matchSignature(maskedLine);
         // Multi-line fallback: signature opens on this line but `)` lives on a
         // later line. Walk forward, joining as we go, until we find the close.
         // Without this, every parameter in a wrapped signature gets flagged
         // "not defined" because the regex never matches the full param list.
         if (!funcMatch) {
-            const opener = /^\s*(?:extern\s+)?(?:define|def|init)\s+([a-zA-Z_]\w*)\s*(?:\[[^\]]*\]\s*)?\(([^)]*)$/.exec(maskedLine);
+            const opener = /^\s*(?:extern\s+|async\s+)?(?:define|def|init)\s+([a-zA-Z_]\w*)\s*(?:\[[^\]]*\]\s*)?\(/.exec(maskedLine);
             if (opener) {
                 let joined = maskedLine;
                 // Cap the lookahead so a stray `define X(` without a close
@@ -534,9 +625,9 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
                 const maxPeek = Math.min(lines.length, i + 30);
                 for (let j = i + 1; j < maxPeek; j++) {
                     joined += ' ' + lines[j];
-                    if (lines[j].indexOf(')') !== -1) break;
+                    funcMatch = matchSignature(joined);
+                    if (funcMatch) break;
                 }
-                funcMatch = /^\s*(?:extern\s+)?(?:define|def|init)\s+([a-zA-Z_]\w*)\s*(?:\[[^\]]*\]\s*)?\(([^)]*)\)/.exec(joined);
             }
         }
         if (funcMatch) {
@@ -557,7 +648,7 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
             }
 
             // Seed locals with generic type params [T, U] so they're valid inside body
-            const typeParamBlock = /^\s*(?:extern\s+)?(?:define|def|init)\s+[a-zA-Z_]\w*\s*\[([^\]]*)\]/.exec(maskedLine);
+            const typeParamBlock = /^\s*(?:extern\s+|async\s+)?(?:define|def|init)\s+[a-zA-Z_]\w*\s*\[([^\]]*)\]/.exec(maskedLine);
             if (typeParamBlock) {
                 typeParamBlock[1].split(',').forEach(tp => {
                     const t = tp.trim();
@@ -643,20 +734,26 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
             }
         }
 
-        // Collect named argument names: `ident =` patterns at paren-depth > 0.
-        // These are keyword arguments to function calls, not variable declarations.
+        // Collect named argument names: `ident =` directly inside a call's
+        // parentheses. These are keyword arguments, not variable declarations.
+        // The open brackets carry over from the lines above, so a named
+        // argument on a continuation line of a multi-line call (`scale=...`,
+        // `padding=36,`) is recognised too; inside a `{ }` (a lambda body in
+        // the call) `x = ...` is code again.
         const namedArgNames = new Set<string>();
         {
-            let pd = 0;
+            const stack = bracketCarry.slice();
             for (let ci = 0; ci < maskedLine.length; ci++) {
                 const ch = maskedLine[ci];
-                if (ch === '(') { pd++; }
-                else if (ch === ')') { pd--; }
-                else if (pd > 0) {
+                if (ch === '(' || ch === '[' || ch === '{') { stack.push(ch); continue; }
+                if (ch === ')' || ch === ']' || ch === '}') { stack.pop(); continue; }
+                if (stack.length > 0 && stack[stack.length - 1] === '(' && /[a-zA-Z_]/.test(ch) &&
+                    (ci === 0 || !/[\w.]/.test(maskedLine[ci - 1]))) {
                     const m = /^([a-zA-Z_]\w*)\s*=(?![=>])/.exec(maskedLine.slice(ci));
                     if (m) { namedArgNames.add(m[1]); }
                 }
             }
+            bracketCarry = stack.length > 64 ? [] : stack;    // runaway (unbalanced) text: start over
         }
 
         // Collect comprehension variable names from ALL `for var1 (,var2) in` patterns on the line.
@@ -879,7 +976,7 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
         }
 
         // where-clause generic constraint check: warn if bound is a concrete struct, not an interface
-        if (/^\s*(?:extern\s+)?(?:define|def|struct)\b/.test(maskedLine)) {
+        if (/^\s*(?:extern\s+|async\s+)?(?:define|def|struct)\b/.test(maskedLine)) {
             const whereIdx = maskedLine.indexOf(' where ');
             if (whereIdx !== -1) {
                 const whereClause = maskedLine.slice(whereIdx + 7);
@@ -946,7 +1043,10 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
             // Strict-import warning: calling `name(...)` where `name` is only
             // imported as a module via `use X` and not explicitly via
             // `from X use { name }`. Mirrors the compiler's hard error.
-            if (useAliases.has(ident) && !explicitImports.has(ident) && /^\s*\(/.test(restOfLine)) {
+            // A declaration named like the module (`define json(self)` in a
+            // file that does `use encoding.json`) isn't a call.
+            const declaresIt = /\b(?:define|def|init)\s+$/.test(maskedLine.substring(0, match.index));
+            if (useAliases.has(ident) && !explicitImports.has(ident) && /^\s*\(/.test(restOfLine) && !declaresIt) {
                 const range = new vscode.Range(i, match.index, i, match.index + ident.length);
                 diagnostics.push(new vscode.Diagnostic(
                     range,

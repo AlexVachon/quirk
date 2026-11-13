@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { compilerVarType } from './CompilerService';
 import * as fs from 'fs';
 import * as path from 'path';
-import { resolveQuirkHome } from './ImportProvider';
+import { resolveQuirkHome, moduleSearchRoots, findProjectRootFor } from './ImportProvider';
 import { withExts, isQuirkSource, stripQuirkExt, isEntryFile } from './sourceExt';
 
 const FILE_CACHE_TTL_MS = 5000;
@@ -1749,21 +1749,7 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
             return this.searchRootsCache;
         }
 
-        const roots: string[] = [];
-        // Project-local packages win (matches the compiler's resolver order).
-        roots.push(path.join(projectRoot, 'packages'));
-        const isVenv = !!home && fs.existsSync(path.join(home, 'bin', 'activate'));
-        if (home) {
-            roots.push(
-                path.join(home, 'lib', 'quirk', 'packages'),
-                path.join(home, 'lib', 'quirk', 'stdlib'),
-                path.join(home, 'lib', 'quirk')
-            );
-        }
-        // User-global packages — skipped when a venv is active.
-        if (!isVenv && process.env['HOME']) {
-            roots.push(path.join(process.env['HOME'], '.quirk', 'packages'));
-        }
+        const roots: string[] = moduleSearchRoots(projectRoot);
         try {
             for (const item of fs.readdirSync(projectRoot)) {
                 const quirkLib = path.join(projectRoot, item, 'lib', 'quirk');
@@ -1772,12 +1758,6 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
                 }
             }
         } catch { }
-        roots.push(
-            path.join(projectRoot, 'packages'),
-            path.join(projectRoot, 'libs'),   // legacy pre-1.0.8
-            path.join(projectRoot, 'src'),
-        );
-
         this.searchRootsCache = roots;
         this.searchRootsCacheKey = cacheKey;
         return roots;
@@ -1861,18 +1841,7 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
     }
 
     public findProjectRoot(currentFile: string): string {
-        let currentDir = path.dirname(currentFile);
-        const stopAt = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(currentFile))?.uri.fsPath || "/";
-        while (currentDir.length >= stopAt.length) {
-            if (fs.existsSync(path.join(currentDir, 'quirk.toml')) ||
-                fs.existsSync(path.join(currentDir, 'Makefile')) ||
-                fs.existsSync(path.join(currentDir, 'packages')) ||
-                fs.existsSync(path.join(currentDir, 'libs'))) return currentDir;
-            const parent = path.dirname(currentDir);
-            if (parent === currentDir) break;
-            currentDir = parent;
-        }
-        return stopAt;
+        return findProjectRootFor(currentFile);   // same roots as the other providers (venv-aware)
     }
 
     // Read the --- docstring block that sits directly above `struct TypeName` in a .quirk file.

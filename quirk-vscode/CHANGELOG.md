@@ -2,6 +2,28 @@
 
 All notable changes to the extension land here. Versioning follows SemVer; minor bumps for new features, patches for fixes.
 
+## [1.1.4] — 2026-11-13 — fewer false warnings, Ctrl+click in venvs
+
+- **Ctrl+click goes to the venv's copy** of a package: a folder with
+  just `main.qk` and a `.venv/` is a project root now (the search walked
+  past it and opened the global `~/.quirk/packages` copy), and packages
+  `quirk install`ed into a venv (`lib/quirk/site-packages`) are found —
+  Ctrl+click on them went nowhere. Completion and diagnostics use the same
+  search order as the compiler.
+- **No more false warnings** for:
+  - named arguments on a continuation line of a multi-line call
+    (`scale=t.scale, font=t.font)`, `padding=36,`): "'scale' is declared
+    but never used" / "'font' is not defined";
+  - parameters after a default value with commas
+    (`color: Int = window.rgb(76, 141, 255), on_change: ...`);
+  - `async define` functions and their parameters;
+  - `CancelledError`, and a module's types used bare after `use`
+    (`catch (e: ProcessError)` after `use process`);
+  - `extend Name { ... }`, and types shared by a package's files
+    (`typing`'s `Option` / `Result`);
+  - a method named like an imported module (`define json(self)`).
+- Hovers for `ui` 1.6 and `window` 1.3 (fonts, Canvas, DatePicker, ...).
+
 ## [1.1.3] — 2026-11-10
 
 - Updated stdlib hovers (compiler 7.24.0): `process.shell` on Windows.

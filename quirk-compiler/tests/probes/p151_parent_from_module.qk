@@ -1,0 +1,24 @@
+// p151 — v7.34.0: a struct can extend a struct from another module:
+// `struct Warning : ui.Button`. The parser only took a bare name after
+// `:` ("Expected '{' (found '.')").
+use ui
+use window
+
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+struct Warning : ui.Button {
+    level: Int
+    define __init(self, text: String, level: Int) -> void {
+        super().__init(text)
+        self.level = level
+    }
+    define describe(self) -> String { return self.text + "!" + self.level.str() }
+}
+
+define main() -> void {
+    w := Warning("Careful", 3)
+    if w.describe() != "Careful!3" { fail("describe: " + w.describe()) }
+    b: ui.Widget = w
+    if not b.focusable { fail("inherits Button's fields") }
+    print("p151 ok")
+}

@@ -3207,8 +3207,20 @@ std::string Sema::checkCall(CallNode *node)
             for (auto& a : node->args) argTypes.push_back(checkExpression(a.value.get()));
             std::string funcName = m->memberName;
 
-            // 1. Is it a Struct Constructor?
+            // 1. Is it a Struct Constructor? Check its arguments like a
+            //    bare `Theme(...)` (`ui.Theme(...)` missing one wasn't
+            //    reported inside a function).
             if (structRegistry.count(funcName)) {
+                std::string initName = funcName + "__init";
+                if (methodRegistry.count(funcName) && methodRegistry[funcName].count(initName)) {
+                    FunctionNode* init = methodRegistry[funcName][initName];
+                    std::vector<std::string> argNames;
+                    for (auto& a : node->args) argNames.push_back(a.name);
+                    checkInitArgCount(funcName, init, (int)node->args.size(),
+                                      node->line, node->col, node->filePath, argNames);
+                    checkInitArgTypes(funcName, init, argTypes,
+                                      node->line, node->col, node->filePath, argNames);
+                }
                 return funcName;
             }
 

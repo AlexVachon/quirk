@@ -69,7 +69,7 @@ static std::string self_binary();
 
 namespace qpm {
 
-constexpr const char* QUIRK_VERSION = "7.34.0";
+constexpr const char* QUIRK_VERSION = "7.34.1";
 
 namespace fs = std::filesystem;
 
@@ -5446,7 +5446,7 @@ static int cmd_bump_compiler(const std::vector<std::string>& args) {
 // ─────────────────────────────────────────────────────────────────────────
 
 static const char* QUIRK_RELEASES_API_URL =
-    "https://api.github.com/repos/AlexVachon/quirk/releases?per_page=30";
+    "https://api.github.com/repos/AlexVachon/quirk/releases?per_page=15";   // ~1 MB: each release lists ~30 stdlib assets
 static const char* QUIRK_RELEASE_DOWNLOAD_URL =
     "https://github.com/AlexVachon/quirk/releases/download/";
 
@@ -5854,15 +5854,23 @@ inline std::string quirk_pick_latest_tag(const std::string& body, const std::str
 // isn't uploaded yet (set by quirk_fetch_latest_tag; "" if none).
 inline std::string& quirk_release_building() { static std::string t; return t; }
 
-// Fetch the latest installable release tag (see quirk_pick_latest_tag),
-// with a 3-second curl timeout so a slow network never makes Quirk feel
-// laggy. Returns "" on failure.
-inline std::string quirk_fetch_latest_tag() {
+// Whether the last quirk_fetch_latest_tag failed to get a response at all
+// (no network, timeout, rate limit) rather than finding no release.
+inline bool& quirk_fetch_failed_network() { static bool f = false; return f; }
+
+// Fetch the latest installable release tag (see quirk_pick_latest_tag).
+// `timeout_s`: 3 for the background update notice (a slow network never
+// makes Quirk feel laggy); `compiler update` / `check` wait longer — the
+// listing is ~1 MB and with 3 s it failed now and then ("couldn't reach
+// the GitHub releases API") on a connection that was fine. "" on failure.
+inline std::string quirk_fetch_latest_tag(int timeout_s = 3) {
     std::string& body = quirk_releases_json();
     body.clear();
     quirk_release_building().clear();
-    if (net::run_curl({"-fsSL", "--max-time", "3", QUIRK_RELEASES_API_URL}, &body) != 0) {
+    quirk_fetch_failed_network() = false;
+    if (net::run_curl({"-fsSL", "--max-time", std::to_string(timeout_s), QUIRK_RELEASES_API_URL}, &body) != 0) {
         body.clear();
+        quirk_fetch_failed_network() = true;
         return "";
     }
     std::string why;
@@ -6241,9 +6249,11 @@ static int cmd_compiler(const std::vector<std::string>& args) {
     if (sub == "check") {
         // Explicit on-demand check — bypass the once-per-day cache so the
         // user gets a fresh answer right now.
-        std::string tag = quirk_fetch_latest_tag();
+        std::string tag = quirk_fetch_latest_tag(30);
         if (tag.empty()) {
-            log::err("compiler check: couldn't reach GitHub — try again in a moment");
+            log::err(quirk_fetch_failed_network()
+                ? "compiler check: couldn't reach GitHub — try again in a moment"
+                : "compiler check: no release has a build for this platform yet");
             return 1;
         }
         // Update cache so the background notice doesn't redundantly fire today.
@@ -6346,9 +6356,18 @@ static int cmd_compiler(const std::vector<std::string>& args) {
 
         if (version.empty()) {
             log::step("Checking", "for the latest compiler release");
-            version = quirk_fetch_latest_tag();
+            version = quirk_fetch_latest_tag(30);
             if (version.empty()) {
-                log::err("couldn't reach the GitHub releases API (offline, or rate-limited?)");
+                if (quirk_fetch_failed_network()) {
+                    log::err("couldn't reach the GitHub releases API");
+                    std::cerr << "    " << log::dim("check the connection and try again — GitHub also allows only "
+                                                   "60 unauthenticated requests an hour") << "\n";
+                    std::cerr << "    " << log::dim("or install a version directly: `quirk compiler install v"
+                                                   + std::string(QUIRK_VERSION) + "` (any vX.Y.Z)") << "\n";
+                } else {
+                    std::string why;
+                    log::err("no release has a build for " + quirk_release_platform(&why) + " yet");
+                }
                 return 1;
             }
             if (!quirk_release_building().empty())

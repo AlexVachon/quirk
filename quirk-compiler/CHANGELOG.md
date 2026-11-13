@@ -5,6 +5,17 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.34.1] — 2026-11-13 — `compiler update` on a slow moment
+
+- **`quirk compiler update` / `compiler check` wait up to 30 s for the
+  release list** instead of 3 s. The list is ~1 MB (every release carries
+  its stdlib packages), so a slow moment failed with "couldn't reach the
+  GitHub releases API (offline, or rate-limited?)" on a working
+  connection. The background "a new version is out" check keeps its 3 s.
+- It asks for 15 releases instead of 30 (half the download), and says
+  which went wrong: no response (with `quirk compiler install vX.Y.Z` as a
+  way around it) or no build for this platform yet.
+
 ## [7.34.0] — 2026-11-13 — extend a module's struct; editor fixes
 
 - **`struct WarningButton : ui.Button`** — a struct can extend one from

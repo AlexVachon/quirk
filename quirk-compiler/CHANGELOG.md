@@ -5,6 +5,20 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.31.0] — 2026-11-13 — `ui` 1.4, Bool and lambda-name fixes
+
+- **`b: Bool = list[0]` reads the value.** An untyped value (a List
+  element, `Map.get`, a lambda's result) converted to `Bool` kept the
+  pointer's lowest bit, so a stored `true` came out `false`.
+- **A top-level lambda named like a parameter no longer breaks other
+  functions.** With `f := fn() => true` in a program, every function
+  with a parameter `f` (the stdlib's `Result.map`, `and_then`, ...) used
+  the global's return type — the program didn't compile ("malformed IR").
+- **`ui` v1.4.0:** word wrap in `ui.TextArea(wrap=true)`, editable
+  `ui.Table` cells (`editable=true`, `on_edit`), `ui.ColorPicker`,
+  `ui.FileDialog` (open / save / folder), drag and drop (`on_drag` /
+  `on_drop` on any widget), and `ui.ListView(reorderable=true)`.
+
 ## [7.30.0] — 2026-11-11 — `and` / `or` short-circuit, untyped indexing, `ui` 1.3
 
 - **`and` / `or` short-circuit.** Both sides were always evaluated, so

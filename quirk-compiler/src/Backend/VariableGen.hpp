@@ -146,6 +146,9 @@ class VariableGen {
     void defineGlobal(const std::string& name, GlobalVariable* gv) {
         globalVars[name] = gv;
     }
+    bool isLocal(const std::string& name) const {
+        return NamedValues.count(name) > 0;
+    }
     bool isGlobal(const std::string& name) const {
         return globalVars.count(name) > 0;
     }

@@ -1,0 +1,29 @@
+// p148 — v7.31.0: what's known about a lambda variable (its return type,
+// variadic tail) applies only where that variable is meant. Keyed by name
+// alone, a global `f := fn() => true` was used for every `f(...)` — the
+// stdlib's `Result.map(self, f: Callable)` among them: malformed IR for
+// any program with a top-level `f` lambda.
+from typing use { Result, Ok, Err }
+
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+f := fn() => true
+twice := fn(x: Int) => x * 2
+
+define apply(f: Callable, v: Int) -> Int {
+    return f(v)
+}
+
+define uses_global() -> Int {
+    return twice(4) + 1
+}
+
+define main() -> void {
+    if not f() { fail("global lambda") }
+    if apply(fn(x) => x + 1, 1) != 2 { fail("parameter named like the global") }
+    if uses_global() != 9 { fail("global lambda inside a function") }
+    r: Result = Ok(3)
+    m := r.map(fn(x) => x * 10)
+    if m.unwrap() != 30 { fail("Result.map") }
+    print("p148 ok")
+}

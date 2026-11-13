@@ -159,6 +159,21 @@ class LLVMCodegen {
     // in (through the Callable they arrived as garbage: "null ednull").
     std::map<std::string, std::string> functionAliasVars;
     std::map<std::string, int> variadicCallableStart;       // varName → first variadic arg index (-1 = not variadic)
+    // Whose variable the two maps above describe: "<global>" or the LLVM
+    // function a local lives in. Keyed by name alone, a global `f := fn() =>
+    // true` leaked into every function with a parameter `f` (Result.map's
+    // `f(...)` was unboxed as Bool — malformed IR).
+    std::map<std::string, std::string> callableOwner;
+
+    // True when the callable facts recorded for `name` are about the
+    // variable `name` means here.
+    bool callableFactsApply(const std::string& name) {
+        auto it = callableOwner.find(name);
+        if (it == callableOwner.end()) return true;
+        if (it->second == "<global>") return !varGen->isLocal(name);
+        BasicBlock* bb = Builder.GetInsertBlock();
+        return bb && bb->getParent() && bb->getParent()->getName() == it->second;
+    }
     std::set<std::string> externBoolReturnFunctions;       // LLVM names widened i1→i32 for C ABI
 
     // Cache: function name → synthesized `i8*(i8* env, i8*…)` thunk Function*.
@@ -2375,7 +2390,8 @@ class LLVMCodegen {
                         // bit-reinterpretation, which would crash for double
                         // and lose type info for bool). emitBox wraps each
                         // value in the right Any_box_* variant.
-                        int varStart = variadicCallableStart.count(lit->value)
+                        bool facts = callableFactsApply(lit->value);
+                        int varStart = (facts && variadicCallableStart.count(lit->value))
                                        ? variadicCallableStart.at(lit->value) : -1;
                         if (varStart >= 0 && (int)argVals.size() > varStart) {
                             std::vector<Value*> tail;
@@ -2388,7 +2404,7 @@ class LLVMCodegen {
 
                         Value* raw = emitCallableCall(val, argVals);
                         // Unbox the result based on the tracked return type
-                        std::string retType = callableReturnTypes.count(lit->value)
+                        std::string retType = (facts && callableReturnTypes.count(lit->value))
                                               ? callableReturnTypes.at(lit->value) : "";
                         if (retType == "Int" || retType == "Int32") {
                             Value* n = quirk::decodeUntypedInt(Context, TheModule.get(), Builder, raw);
@@ -4051,6 +4067,10 @@ class LLVMCodegen {
                     if (lambda->params[pi].isVariadic) { varStart = pi; break; }
                 }
                 variadicCallableStart[lhsLit->value] = varStart;
+                bool local = varGen->isLocal(lhsLit->value) || !varGen->isGlobal(lhsLit->value);
+                BasicBlock* bb = Builder.GetInsertBlock();
+                callableOwner[lhsLit->value] = (!local || !bb || !bb->getParent())
+                    ? std::string("<global>") : bb->getParent()->getName().str();
             }
         }
 
@@ -4150,6 +4170,10 @@ class LLVMCodegen {
                         // Any* heap allocation it returned the heap
                         // address as an int — garbage.
                         val = emitUnboxToType(val, targetType);
+                    } else if (targetType->isIntegerTy(1)) {
+                        // `b: Bool = list_of_bools[0]`: the value's truth (a
+                        // boxed Bool isn't a tagged int — its low bit was 0).
+                        val = quirk::coerceToType(val, targetType, Context, Builder, TheModule.get());
                     } else if (targetType->isIntegerTy())
                         val = Builder.CreatePtrToInt(val, targetType);
                     else if (targetType->isPointerTy() && targetType->getPointerElementType()->isStructTy()) {

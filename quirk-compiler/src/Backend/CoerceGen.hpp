@@ -126,6 +126,15 @@ inline Value* coerceToType(Value* val, Type* expected,
     // i8* → int (also matches pointer→int when types weren't caught
     // above). Route through quirk_opaque_to_int so both the tagged-
     // int encoding and the heap-Any encoding resolve correctly.
+    // i8* → Bool: a boxed Bool (or Int) by its truth value. Decoding it as
+    // an Int and keeping the low bit made `b: Bool = list_of_bools[0]` false.
+    if (got->isPointerTy() && expected->isIntegerTy(1)) {
+        FunctionCallee asBool = mod->getOrInsertFunction("quirk_any_as_bool",
+            Type::getInt32Ty(ctx), i8p);
+        Value* p = got == i8p ? val : b.CreateBitCast(val, i8p);
+        return b.CreateICmpNE(b.CreateCall(asBool, {p}, "any_truth"),
+                              ConstantInt::get(Type::getInt32Ty(ctx), 0), "coerce_any2bool");
+    }
     if (got->isPointerTy() && expected->isIntegerTy()) {
         Value* asInt = quirk::decodeUntypedInt(ctx, mod, b, val);
         if (expected->isIntegerTy(64)) return asInt;

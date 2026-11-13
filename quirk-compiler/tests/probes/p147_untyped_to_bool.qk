@@ -1,0 +1,29 @@
+// p147 — v7.31.0: an untyped value (a List element, Map.get, a lambda's
+// result) converted to Bool uses its truth value. Typed declarations kept
+// the pointer's low bit, so `b: Bool = [true][0]` was false.
+
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+define want(b: Bool) -> Bool { return b }
+
+define main() -> void {
+    kinds := []
+    kinds.append(true)
+    kinds.append(false)
+    a: Bool = kinds[0]
+    b: Bool = kinds[1]
+    if not a { fail("true from a List") }
+    if b { fail("false from a List") }
+    lit := [true, false, true]
+    c: Bool = lit[2]
+    if not c { fail("list literal") }
+    m: Map = {"on": true, "off": false}
+    on: Bool = m.get("on")
+    off: Bool = m.get("off")
+    if not on or off { fail("Map.get") }
+    if not want(kinds[0]) { fail("argument") }
+    f := fn() => true
+    r: Bool = f()
+    if not r { fail("lambda result") }
+    print("p147 ok")
+}

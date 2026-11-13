@@ -1,0 +1,27 @@
+// p150 — v7.33.0: a method call's `name=value` argument is type-checked
+// against the parameter with that name. Sema checked arguments by
+// position, so `k.m(1, d="z")` was "argument 2 expected 'Int' but got
+// 'String'" (and `w.text(..., font=f)` was checked against `scale`).
+// Code generation always matched them by name.
+
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+struct K {
+    define __init(self) -> void { }
+    define m(self, a: Int, b: Int = 2, c: Int = 3, d: String = "d") -> String {
+        return a.str() + b.str() + c.str() + d
+    }
+}
+
+define top(a: Int, b: Int = 2, d: String = "d") -> String {
+    return a.str() + b.str() + d
+}
+
+define main() -> void {
+    k := K()
+    if k.m(1, c=9) != "129d" { fail("c=9: " + k.m(1, c=9)) }
+    if k.m(1, d="z") != "123z" { fail("d=z: " + k.m(1, d="z")) }
+    if k.m(1, d="q", b=5) != "153q" { fail("out of order: " + k.m(1, d="q", b=5)) }
+    if top(1, d="x") != "12x" { fail("function d=x") }
+    print("p150 ok")
+}

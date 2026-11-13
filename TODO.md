@@ -17,9 +17,10 @@ ScrollView, Dropdown, tooltips; ui 1.2 (7.29.0): undo / redo,
 RadioGroup, ProgressBar, Tabs; ui 1.3 (7.30.0): menus, context menus,
 TreeView, Table; ui 1.4 (7.31.0): word wrap, editable cells,
 ColorPicker, FileDialog, drag and drop; ui 1.5 (7.32.0): working menu
-shortcuts, SplitView, Toolbar, StatusBar, DatePicker. Next ideas: a
-TrueType font (the 8x16 bitmap one is ASCII + Latin-1), images in
-lists / tables, a canvas widget for custom drawing, animations.
+shortcuts, SplitView, Toolbar, StatusBar, DatePicker; ui 1.6 (7.33.0):
+TrueType fonts, ListItem icons, Canvas, animations. Next ideas: high-DPI
+scaling, accessibility (screen readers), IME / composed text input,
+right-to-left text.
 
 ## Housekeeping
 

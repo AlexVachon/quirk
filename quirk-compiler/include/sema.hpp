@@ -242,6 +242,7 @@ class Sema {
     void checkAssignType(const std::string &target, const std::string &value,
                          const std::string &what, VarDeclNode *node);
     bool isGenericParam(const std::string &t) const;
+    int paramIndexFor(FunctionNode* fn, const std::vector<Arg>& args, size_t i);
     // `List[S]` with S a plain (non-generic, non-builtin) struct → "S", else "".
     std::string listElemStruct(const std::string &t) const;
     bool inheritsFromException(const std::string& typeName, const std::string& baseType = "Exception");

@@ -3252,9 +3252,12 @@ std::string Sema::checkCall(CallNode *node)
                                    (provided == 1 ? "was" : "were") + " given",
                                    node->line, node->col, node->filePath);
                     }
-                    // Type-check matching positional args.
-                    for (size_t i = 0; i < argTypes.size() && i < fn->parameters.size(); ++i) {
-                        const auto& param = fn->parameters[i];
+                    // Type-check each argument against its parameter (by name
+                    // for `name=value`).
+                    for (size_t i = 0; i < argTypes.size() && i < node->args.size(); ++i) {
+                        int pi = paramIndexFor(fn, node->args, i);
+                        if (pi < 0 || pi >= (int)fn->parameters.size()) continue;
+                        const auto& param = fn->parameters[pi];
                         if (param.isVariadic) break;
                         const std::string& paramType = param.type;
                         const std::string& argType   = argTypes[i];
@@ -3446,10 +3449,18 @@ std::string Sema::checkCall(CallNode *node)
                 }
                 if (func) {
                     checkMethodArity(func, objType + "." + m->memberName);
-                    for (size_t i = 0; i < node->args.size() && i < func->parameters.size(); ++i) {
-                        if (func->parameters[i].isVariadic) break;
+                    for (size_t i = 0; i < node->args.size(); ++i) {
+                        // A `name=value` argument checks against that parameter
+                        // (it was checked by position: `w.text(..., font=f)`
+                        // against `scale`).
+                        int pi = paramIndexFor(func, node->args, i);
+                        if (pi < 0 || pi >= (int)func->parameters.size()) {
+                            checkExpression(node->args[i].value.get());
+                            continue;
+                        }
+                        if (func->parameters[pi].isVariadic) break;
                         std::string argType = checkExpression(node->args[i].value.get());
-                        const std::string& paramType = func->parameters[i].type;
+                        const std::string& paramType = func->parameters[pi].type;
                         if (!isCompatibleTypes(paramType, argType))
                             fatalError("argument " + std::to_string(i + 1) + " of '" + funcName +
                                        "' expected '" + paramType + "' but got '" + argType + "'",
@@ -3602,6 +3613,17 @@ std::string Sema::listElemStruct(const std::string& t) const {
     if (it == structRegistry.end() || !it->second->typeParams.empty() ||
         !it->second->genericBase.empty()) return "";
     return e;
+}
+
+// The parameter argument `i` of a call fills: by name for `name=value`,
+// else by position. -1 when the name matches no parameter.
+int Sema::paramIndexFor(FunctionNode* fn, const std::vector<Arg>& args, size_t i) {
+    const std::string& nm = args[i].name;
+    size_t off = (!fn->parameters.empty() && fn->parameters[0].name == "self") ? 1 : 0;
+    if (nm.empty()) return (int)(i + off);
+    for (size_t k = 0; k < fn->parameters.size(); ++k)
+        if (fn->parameters[k].name == nm) return (int)k;
+    return -1;
 }
 
 bool Sema::isGenericParam(const std::string& t) const {

@@ -39,6 +39,20 @@
 #include "../../third_party/stb/stb_image.h"
 #pragma GCC diagnostic pop
 
+// TrueType fonts (window.load_font): stb_truetype, vendored next to
+// stb_image. Its allocations go to the GC (glyph bitmaps are copied into
+// textures and dropped).
+#define STB_TRUETYPE_IMPLEMENTATION
+#define STBTT_STATIC
+#define STBTT_malloc(x, u)  ((void)(u), GC_malloc(x))
+#define STBTT_free(x, u)    ((void)(x), (void)(u))
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-function"
+#pragma GCC diagnostic ignored "-Wsign-compare"
+#pragma GCC diagnostic ignored "-Wunused-variable"
+#include "../../third_party/stb/stb_truetype.h"
+#pragma GCC diagnostic pop
+
 // ---------------------------------------------------------------------------
 //  Windows with 2D drawing, for packages/window/index.quirk.
 //  Naming: Window_<name>.
@@ -414,11 +428,13 @@ int64_t Window_open_raw(String* title, int64_t width, int64_t height, int64_t fl
 }
 
 static void qwin_free_images_of(int64_t h);
+static void qfont_free_glyphs_of(int64_t h);
 
 void Window_close_raw(int64_t h) {
     QWin* w = qwin_get(h);
     if (!w) return;
     qwin_free_images_of(h);
+    qfont_free_glyphs_of(h);
     if (w->font) qsdl.DestroyTexture(w->font);
     qsdl.DestroyRenderer(w->ren);
     qsdl.DestroyWindow(w->win);
@@ -783,4 +799,217 @@ int64_t Window_ticks() {
     struct timespec ts;   // precise on Windows too (QueryPerformanceCounter, win_compat.h)
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
+// ----- TrueType fonts -----
+//
+// A font is loaded once at a pixel size. Glyphs are rendered on first use
+// into a white-on-transparent texture per (window, font, code point) and
+// tinted when drawn. Text is UTF-8: any code point the font has works.
+
+#define QFONT_MAX    32
+#define QGLYPH_SLOTS 8192
+
+typedef struct {
+    int64_t win;          // -1 = empty slot
+    int cp;
+    void* tex;
+    int w, h, xoff, yoff;
+} QGlyph;
+
+typedef struct {
+    int used;
+    unsigned char* data;
+    stbtt_fontinfo info;
+    float scale;
+    int size;
+    int ascent, descent, line_gap;
+    QGlyph* glyphs;       // QGLYPH_SLOTS, open addressing
+} QFont;
+
+static QFont qfonts[QFONT_MAX];
+
+static QFont* qfont_get(int64_t f) {
+    if (f < 0 || f >= QFONT_MAX || !qfonts[f].used) return NULL;
+    return &qfonts[f];
+}
+
+// Next code point of UTF-8 text at *i (invalid bytes read as Latin-1).
+static int qutf8_next(const unsigned char* s, size_t n, size_t* i) {
+    unsigned char c = s[*i];
+    int cp, extra;
+    if (c < 0x80) { (*i)++; return c; }
+    if ((c & 0xE0) == 0xC0) { cp = c & 0x1F; extra = 1; }
+    else if ((c & 0xF0) == 0xE0) { cp = c & 0x0F; extra = 2; }
+    else if ((c & 0xF8) == 0xF0) { cp = c & 0x07; extra = 3; }
+    else { (*i)++; return c; }
+    if (*i + (size_t)extra >= n) { (*i)++; return c; }    // cut off at the end
+    size_t j = *i + 1;
+    for (int k = 0; k < extra; k++, j++) {
+        if (j >= n || (s[j] & 0xC0) != 0x80) { (*i)++; return c; }
+        cp = (cp << 6) | (s[j] & 0x3F);
+    }
+    *i = j;
+    return cp;
+}
+
+// Load a .ttf / .otf (TrueType outlines) at `size` pixels; a handle, or
+// -1 (see Window_error).
+int64_t Window_font_load_raw(String* path, int64_t size) {
+    const char* p = path ? make_safe_cstr(path) : "";
+    if (size < 1 || size > 512) { snprintf(qwin_err, sizeof qwin_err, "font size %lld is out of range (1-512)", (long long)size); return -1; }
+    FILE* fp = fopen(p, "rb");
+    if (!fp) { snprintf(qwin_err, sizeof qwin_err, "can't open '%s'", p); return -1; }
+    fseek(fp, 0, SEEK_END);
+    long n = ftell(fp);
+    fseek(fp, 0, SEEK_SET);
+    if (n <= 0) { fclose(fp); snprintf(qwin_err, sizeof qwin_err, "'%s' is empty", p); return -1; }
+    unsigned char* data = (unsigned char*)GC_malloc_atomic((size_t)n);
+    size_t got = data ? fread(data, 1, (size_t)n, fp) : 0;
+    fclose(fp);
+    if (got != (size_t)n) { snprintf(qwin_err, sizeof qwin_err, "can't read '%s'", p); return -1; }
+    int slot = -1;
+    for (int i = 0; i < QFONT_MAX; i++) if (!qfonts[i].used) { slot = i; break; }
+    if (slot < 0) { snprintf(qwin_err, sizeof qwin_err, "too many fonts loaded (max %d)", QFONT_MAX); return -1; }
+    QFont* f = &qfonts[slot];
+    memset(f, 0, sizeof *f);
+    int off = stbtt_GetFontOffsetForIndex(data, 0);
+    if (off < 0 || !stbtt_InitFont(&f->info, data, off)) {
+        snprintf(qwin_err, sizeof qwin_err, "'%s' isn't a TrueType / OpenType font", p);
+        return -1;
+    }
+    f->data = data;
+    f->size = (int)size;
+    f->scale = stbtt_ScaleForPixelHeight(&f->info, (float)size);
+    int a, d, g;
+    stbtt_GetFontVMetrics(&f->info, &a, &d, &g);
+    f->ascent = (int)(a * f->scale + 0.5f);
+    f->descent = (int)(-d * f->scale + 0.5f);
+    f->line_gap = (int)(g * f->scale + 0.5f);
+    f->glyphs = (QGlyph*)GC_malloc(sizeof(QGlyph) * QGLYPH_SLOTS);
+    for (int i = 0; i < QGLYPH_SLOTS; i++) f->glyphs[i].win = -1;
+    f->used = 1;
+    return slot;
+}
+
+void Window_font_free_raw(int64_t fh) {
+    QFont* f = qfont_get(fh);
+    if (!f) return;
+    for (int i = 0; i < QGLYPH_SLOTS; i++)
+        if (f->glyphs[i].win >= 0 && f->glyphs[i].tex) qsdl.DestroyTexture(f->glyphs[i].tex);
+    f->used = 0;
+    f->data = NULL;
+    f->glyphs = NULL;
+}
+
+// [ascent, descent, line height] in pixels.
+List* Window_font_metrics_raw(int64_t fh) {
+    List* res = (List*)quirk_alloc(QT_LIST, sizeof(List));
+    Core_Collections_List_List___init(res);
+    QFont* f = qfont_get(fh);
+    int a = f ? f->ascent : 0, d = f ? f->descent : 0;
+    int lh = f ? f->ascent + f->descent + f->line_gap : 0;
+    Core_Collections_List_List_append(res, quirk_int_to_opaque(a));
+    Core_Collections_List_List_append(res, quirk_int_to_opaque(d));
+    Core_Collections_List_List_append(res, quirk_int_to_opaque(lh));
+    return res;
+}
+
+// Width in pixels of the longest line of `text` in font `fh`.
+int64_t Window_font_text_width_raw(int64_t fh, String* text) {
+    QFont* f = qfont_get(fh);
+    if (!f || !text) return 0;
+    const unsigned char* s = (const unsigned char*)make_safe_cstr(text);
+    size_t n = strlen((const char*)s), i = 0;
+    float pen = 0, widest = 0;
+    int prev = 0;
+    while (i < n) {
+        int cp = qutf8_next(s, n, &i);
+        if (cp == '\n') { if (pen > widest) widest = pen; pen = 0; prev = 0; continue; }
+        int adv, lsb;
+        stbtt_GetCodepointHMetrics(&f->info, cp, &adv, &lsb);
+        if (prev) pen += stbtt_GetCodepointKernAdvance(&f->info, prev, cp) * f->scale;
+        pen += adv * f->scale;
+        prev = cp;
+    }
+    if (pen > widest) widest = pen;
+    return (int64_t)(widest + 0.999f);
+}
+
+static QGlyph* qfont_glyph(QFont* f, int64_t h, QWin* w, int cp) {
+    uint32_t hash = (uint32_t)cp * 2654435761u ^ (uint32_t)h * 40503u;
+    for (int probe = 0; probe < QGLYPH_SLOTS; probe++) {
+        QGlyph* g = &f->glyphs[(hash + (uint32_t)probe) % QGLYPH_SLOTS];
+        if (g->win == h && g->cp == cp) return g;
+        if (g->win >= 0) continue;
+        // Empty: render it.
+        int gw = 0, gh = 0, xo = 0, yo = 0;
+        unsigned char* bmp = stbtt_GetCodepointBitmap(&f->info, 0, f->scale, cp, &gw, &gh, &xo, &yo);
+        g->win = h; g->cp = cp; g->w = gw; g->h = gh; g->xoff = xo; g->yoff = yo; g->tex = NULL;
+        if (bmp && gw > 0 && gh > 0) {
+            uint32_t* px = (uint32_t*)GC_malloc_atomic((size_t)gw * gh * 4);
+            if (px) {
+                for (int k = 0; k < gw * gh; k++) px[k] = ((uint32_t)bmp[k] << 24) | 0x00FFFFFFu;
+                void* tex = qsdl.CreateTexture(w->ren, QSDL_PIXELFORMAT_ARGB8888, 0, gw, gh);
+                if (tex) {
+                    qsdl.UpdateTexture(tex, NULL, px, gw * 4);
+                    qsdl.SetTextureBlendMode(tex, QSDL_BLENDMODE_BLEND);
+                    g->tex = tex;
+                }
+            }
+        }
+        return g;
+    }
+    return NULL;                       // cache full: the glyph isn't drawn
+}
+
+// Draw `text` with its top-left at (x, y) (the first baseline is at
+// y + ascent); "\n" starts a line.
+void Window_font_text_raw(int64_t h, int64_t fh, String* text, int64_t x, int64_t y, int64_t color) {
+    QWin* w = qwin_get(h);
+    QFont* f = qfont_get(fh);
+    if (!w || !f || !text) return;
+    uint8_t a = (uint8_t)((color >> 24) & 0xFF), r = (uint8_t)((color >> 16) & 0xFF);
+    uint8_t gc = (uint8_t)((color >> 8) & 0xFF), b = (uint8_t)(color & 0xFF);
+    const unsigned char* s = (const unsigned char*)make_safe_cstr(text);
+    size_t n = strlen((const char*)s), i = 0;
+    float pen = (float)x;
+    int base = (int)y + f->ascent;
+    int lh = f->ascent + f->descent + f->line_gap;
+    int prev = 0;
+    while (i < n) {
+        int cp = qutf8_next(s, n, &i);
+        if (cp == '\n') { pen = (float)x; base += lh; prev = 0; continue; }
+        if (prev) pen += stbtt_GetCodepointKernAdvance(&f->info, prev, cp) * f->scale;
+        QGlyph* g = qfont_glyph(f, h, w, cp);
+        if (g && g->tex) {
+            qsdl.SetTextureColorMod(g->tex, r, gc, b);
+            qsdl.SetTextureAlphaMod(g->tex, a);
+            QSdlRect dst = { (int)(pen + 0.5f) + g->xoff, base + g->yoff, g->w, g->h };
+            qsdl.RenderCopy(w->ren, g->tex, NULL, &dst);
+        }
+        int adv, lsb;
+        stbtt_GetCodepointHMetrics(&f->info, cp, &adv, &lsb);
+        pen += adv * f->scale;
+        prev = cp;
+    }
+}
+
+static void qfont_free_glyphs_of(int64_t h) {
+    for (int fi = 0; fi < QFONT_MAX; fi++) {
+        QFont* f = &qfonts[fi];
+        if (!f->used || !f->glyphs) continue;
+        for (int i = 0; i < QGLYPH_SLOTS; i++) {
+            QGlyph* g = &f->glyphs[i];
+            if (g->win == h) {
+                if (g->tex) qsdl.DestroyTexture(g->tex);
+                // Keep the slot occupied (a tombstone) so probing still finds
+                // the glyphs after it; it can't match a live window again
+                // until this handle is reused, and then it re-renders.
+                g->tex = NULL;
+                g->w = g->h = 0;
+                g->win = -2;
+            }
+        }
+    }
 }

@@ -7,3 +7,12 @@ sha256 `594c2fe35d49488b4382dbfaec8f98366defca819d916ac95becf3e75f4200b3`.
 Dual-licensed by its author: MIT or public domain (see the end of the
 file). Used by `src/Runtime/libs/window.c` to decode PNG / JPEG / BMP /
 GIF / TGA images for `window.load_image`.
+
+# stb_truetype
+
+`stb_truetype.h` v1.26 from the same repository and commit, unmodified.
+sha256 `a34d8d536ce7c11b9163ab2d524721c1f4df1452cce6595c4f11d3048384f925`.
+
+Same licence (MIT or public domain). Used by `src/Runtime/libs/window.c`
+to rasterize TrueType / OpenType (`.ttf` / `.otf` with TrueType outlines)
+fonts for `window.load_font`.

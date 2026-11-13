@@ -5,6 +5,23 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.33.0] — 2026-11-13 — TrueType fonts, named-argument checks, `ui` 1.6
+
+- **TrueType fonts** (`window` v1.3.0): `window.load_font(path, size)`
+  loads a `.ttf` / `.otf` (TrueType outlines); `w.text(..., font=f)`
+  draws UTF-8 text in it — any character the font has, anti-aliased,
+  kerned — and `f.width(text)` / `f.ascent` / `f.descent` /
+  `f.line_height` measure it. Uses stb_truetype (vendored, public
+  domain). No font file ships with Quirk.
+- **A `name=value` argument is type-checked against the parameter with
+  that name.** Method calls checked them by position: `k.m(1, d="z")`
+  failed with "argument 2 expected 'Int'" when `d` is the 4th parameter.
+- **`ui` v1.6.0:** `theme.font` sets a TrueType font for every widget
+  (text fields place the cursor by real widths, TextArea wraps by
+  pixels); `ui.ListItem(text, icon=)` for icons in lists and tables;
+  `ui.Canvas(on_draw=, on_event=)`; animations with `app.animate(ms,
+  fn(t), ease=)`, `ui.ease`, `ui.lerp`.
+
 ## [7.32.0] — 2026-11-13 — inherited overrides, `ui` 1.5
 
 - **A struct uses the override it inherits.** With `Toolbar : Row` and

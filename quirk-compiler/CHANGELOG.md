@@ -5,6 +5,15 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.41.1] — 2026-11-16 — screen readers: focus on the selected item
+
+- `ui` v1.10.1 (pinned): in a tab strip, list, tree, radio group or table
+  the screen reader's focus is now the selected item, as in native
+  Windows controls — it says "Advanced, tab item" / "photo.png, list
+  item" instead of an unnamed "tab" (first test with Narrator), and
+  choosing another item is spoken as a focus move. A focus that left for
+  nothing and came back is no longer reported twice.
+
 ## [7.41.0] — 2026-11-16 — screen readers on Windows (experimental)
 
 - **`ui` apps reach Windows screen readers** through UI Automation

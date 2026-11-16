@@ -176,7 +176,7 @@
 "qualified": "Event",
 "kind": "struct",
 "signature": "struct Event {",
-"doc": "Something that happened to a window. `kind` is one of:\n  \"close\"       \u2014 the close button (or Ctrl+C / quit); the window closes\n                  unless `keep_open` was set\n  \"key_down\" / \"key_up\" \u2014 `key` is the key's name in lower case: \"a\",\n                  \"escape\", \"return\", \"space\", \"left\", \"f1\", \"left_shift\"...;\n                  `repeat` is true for auto-repeat; `shift` / `ctrl` /\n                  `alt` / `meta` say which modifiers were held\n  \"text\"        \u2014 typed text (`text`), with the keyboard layout and\n                  accents applied \u2014 use this for text entry, not key_down\n  \"compose\"     \u2014 an input method (Chinese, Japanese, Korean, dead keys...)\n                  is composing `text`: show it at the cursor (underlined)\n                  until it arrives as a \"text\" event; `cursor` is the\n                  position inside it and `length` how much of it the\n                  input method has selected (characters). An empty\n                  `text` ends the composition. See `text_input_area`.\n  \"mouse_move\"  \u2014 `x`, `y`; `left` true while the left button is held\n  \"mouse_down\" / \"mouse_up\" \u2014 `x`, `y`, `button` (1 left, 2 middle,\n                  3 right), `clicks` (2 for a double click)\n  \"wheel\"       \u2014 `dx`, `dy` (positive = away from you / right)\n  \"resize\"      \u2014 new `width`, `height`\n  \"focus\" / \"blur\" \u2014 the window gained / lost keyboard focus"
+"doc": "Something that happened to a window. `kind` is one of:\n  \"close\"       \u2014 the close button (or Ctrl+C / quit); the window closes\n                  unless `keep_open` was set\n  \"key_down\" / \"key_up\" \u2014 `key` is the key's name in lower case: \"a\",\n                  \"escape\", \"return\", \"space\", \"left\", \"f1\", \"left_shift\"...;\n                  `repeat` is true for auto-repeat; `shift` / `ctrl` /\n                  `alt` / `meta` say which modifiers were held\n  \"text\"        \u2014 typed text (`text`), with the keyboard layout and\n                  accents applied \u2014 use this for text entry, not key_down\n  \"compose\"     \u2014 an input method (Chinese, Japanese, Korean, dead keys...)\n                  is composing `text`: show it at the cursor (underlined)\n                  until it arrives as a \"text\" event; `cursor` is the\n                  position inside it and `length` how much of it the\n                  input method has selected (characters). An empty\n                  `text` ends the composition. See `text_input_area`.\n  \"access\"      \u2014 a screen reader asks for `action` (\"invoke\", \"toggle\",\n                  \"set_value\", \"set_range\", \"select\", \"expand\",\n                  \"collapse\", \"focus\") on node `target` of the tree sent\n                  with `access_update`; `text` is the new value. `ui`\n                  handles these itself.\n  \"mouse_move\"  \u2014 `x`, `y`; `left` true while the left button is held\n  \"mouse_down\" / \"mouse_up\" \u2014 `x`, `y`, `button` (1 left, 2 middle,\n                  3 right), `clicks` (2 for a double click)\n  \"wheel\"       \u2014 `dx`, `dy` (positive = away from you / right)\n  \"resize\"      \u2014 new `width`, `height`\n  \"focus\" / \"blur\" \u2014 the window gained / lost keyboard focus"
 }
 ],
 "Exception": [
@@ -1396,6 +1396,60 @@
 "doc": "Block until a client connects to listening socket `fd`, returning the new\nclient socket's fd. Negative on error."
 }
 ],
+"access_action": [
+{
+"package": "ui",
+"qualified": "Widget.access_action",
+"kind": "method",
+"signature": "define access_action(self, action: String, value: String, node: AccessNode) -> Bool {",
+"doc": "Do what a screen reader asks: `action` is \"invoke\", \"toggle\",\n\"set_value\" / \"set_range\" (`value`), \"select\", \"expand\" or \"collapse\",\non this widget or one of its items (`node.index`, `node.data`). True if\nit did something."
+}
+],
+"access_active": [
+{
+"package": "window",
+"qualified": "Window.access_active",
+"kind": "method",
+"signature": "define access_active(self) -> Bool {",
+"doc": "True while a screen reader is reading this window (Windows UI\nAutomation; always false elsewhere for now) \u2014 then send it the\naccessibility tree each frame with `access_update`. `ui` does this."
+}
+],
+"access_announce": [
+{
+"package": "window",
+"qualified": "Window.access_announce",
+"kind": "method",
+"signature": "define access_announce(self, text: String) -> void {",
+"doc": "Have the screen reader say `text` (a status message)."
+}
+],
+"access_changed": [
+{
+"package": "window",
+"qualified": "Window.access_changed",
+"kind": "method",
+"signature": "define access_changed(self, id: Int, what: String) -> void {",
+"doc": "Node `id` changed: `what` = \"value\", \"checked\", \"selected\", \"expanded\" or \"name\"."
+}
+],
+"access_focus": [
+{
+"package": "window",
+"qualified": "Window.access_focus",
+"kind": "method",
+"signature": "define access_focus(self, id: Int) -> void {",
+"doc": "Tell the screen reader that keyboard focus moved to node `id`."
+}
+],
+"access_id": [
+{
+"package": "ui",
+"qualified": "Widget.access_id",
+"kind": "method",
+"signature": "define access_id(self) -> Int {",
+"doc": "A number identifying the widget to assistive technology, the same for its whole life."
+}
+],
 "access_name": [
 {
 "package": "ui",
@@ -1432,6 +1486,15 @@
 "doc": "States: \"focusable\", \"focused\", \"disabled\", \"checked\", \"selected\", \"expanded\"..."
 }
 ],
+"access_update": [
+{
+"package": "window",
+"qualified": "Window.access_update",
+"kind": "method",
+"signature": "define access_update(self, ids: List, parents: List, roles: List, names: List, values: List, descs: List, states: List, boxes: List, nums: List) -> void {",
+"doc": "Send the accessibility tree, flattened parents-first (node 0 is the\nwindow): per node its `id` (> 0, stable across frames), the index of\nits parent (-1 for node 0), role, name, value, description, a state\nbitmask (1 focusable, 2 focused, 4 disabled, 8 checked, 16 selected,\n32 expanded, 64 collapsed, 128 editable, 256 multiline), its box as\n4 Ints (x, y, width, height in drawing pixels) in `boxes`, and 4 Ints\nin `nums`: tree level, then range minimum, maximum and value (sliders)."
+}
+],
 "access_value": [
 {
 "package": "ui",
@@ -1448,6 +1511,15 @@
 "kind": "method",
 "signature": "define accessibility(self) -> AccessNode {",
 "doc": "The window as assistive technology (a screen reader) sees it: a tree\nof `AccessNode`s \u2014 role, name, value, states and box of every visible\nwidget and item, open popups (menus, dropdown lists) last. Rebuilt on\neach call.\n@example\nprint(app.accessibility().dump())"
+}
+],
+"accessibility_with_ids": [
+{
+"package": "ui",
+"qualified": "App.accessibility_with_ids",
+"kind": "method",
+"signature": "define accessibility_with_ids(self) -> AccessNode {",
+"doc": "The tree with ids (`AccessNode.id`), as last sent to a screen reader\n\u2014 also what `access` events' targets refer to. Rebuilt on each call."
 }
 ],
 "acos": [

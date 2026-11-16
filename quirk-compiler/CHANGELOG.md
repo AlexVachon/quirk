@@ -5,6 +5,25 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.41.0] — 2026-11-16 — screen readers on Windows (experimental)
+
+- **`ui` apps reach Windows screen readers** through UI Automation
+  (`window` v1.8.0, `ui` v1.10.0, pinned) — **experimental: set
+  `QUIRK_ACCESSIBILITY=1`** while it's being tried with NVDA / Narrator.
+  While a screen reader reads the window, `ui` sends it the accessibility
+  tree each frame; the window runtime answers UI Automation from it
+  (roles as control types, names, values, states, boxes, focus) and
+  raises focus, value, toggle, selection, structure and announcement
+  events. Screen readers can also act: press buttons and menu items,
+  toggle checkboxes, set text fields and sliders, select list / tab /
+  tree / table / dropdown items, expand and collapse — delivered to the
+  program as `access` events that `ui` routes to the widget.
+- The bridge (`src/Runtime/libs/window_uia.c`) loads UIAutomationCore and
+  OleAut32 at runtime — no new link dependencies; elsewhere the calls do
+  nothing.
+- `ui`: stable `AccessNode.id`s, `app.accessibility_with_ids()`,
+  `Widget.access_action`.
+
 ## [7.40.0] — 2026-11-16 — `ui` accessibility tree; `type()` as written
 
 - **`ui` v1.9.0 (pinned): an accessibility tree** — `app.accessibility()`

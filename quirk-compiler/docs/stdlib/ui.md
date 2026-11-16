@@ -101,6 +101,17 @@ States: "focusable", "focused", "disabled", "checked", "selected", "expanded"...
 
 This widget as an `AccessNode` (children included); null when hidden or purely visual.
 
+#### `define access_id(self) -> Int`
+
+A number identifying the widget to assistive technology, the same for its whole life.
+
+#### `define access_action(self, action: String, value: String, node: AccessNode) -> Bool`
+
+Do what a screen reader asks: `action` is "invoke", "toggle",
+"set_value" / "set_range" (`value`), "select", "expand" or "collapse",
+on this widget or one of its items (`node.index`, `node.data`). True if
+it did something.
+
 #### `define contains(self, px: Int, py: Int) -> Bool`
 
 True if (px, py) is inside the widget's box.

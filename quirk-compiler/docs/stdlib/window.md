@@ -28,6 +28,11 @@ Something that happened to a window. `kind` is one of:
                   position inside it and `length` how much of it the
                   input method has selected (characters). An empty
                   `text` ends the composition. See `text_input_area`.
+  "access"      — a screen reader asks for `action` ("invoke", "toggle",
+                  "set_value", "set_range", "select", "expand",
+                  "collapse", "focus") on node `target` of the tree sent
+                  with `access_update`; `text` is the new value. `ui`
+                  handles these itself.
   "mouse_move"  — `x`, `y`; `left` true while the left button is held
   "mouse_down" / "mouse_up" — `x`, `y`, `button` (1 left, 2 middle,
                   3 right), `clicks` (2 for a double click)
@@ -185,6 +190,34 @@ Tell the input method where text is being typed — the cursor's
 rectangle — so its candidate list (Chinese, Japanese, Korean input)
 opens next to it. Call it while a text field has focus (every frame is
 fine; it only reaches the system when the rectangle moves).
+
+#### `define access_active(self) -> Bool`
+
+True while a screen reader is reading this window (Windows UI
+Automation; always false elsewhere for now) — then send it the
+accessibility tree each frame with `access_update`. `ui` does this.
+
+#### `define access_update(self, ids: List, parents: List, roles: List, names: List, values: List, descs: List, states: List, boxes: List, nums: List) -> void`
+
+Send the accessibility tree, flattened parents-first (node 0 is the
+window): per node its `id` (> 0, stable across frames), the index of
+its parent (-1 for node 0), role, name, value, description, a state
+bitmask (1 focusable, 2 focused, 4 disabled, 8 checked, 16 selected,
+32 expanded, 64 collapsed, 128 editable, 256 multiline), its box as
+4 Ints (x, y, width, height in drawing pixels) in `boxes`, and 4 Ints
+in `nums`: tree level, then range minimum, maximum and value (sliders).
+
+#### `define access_focus(self, id: Int) -> void`
+
+Tell the screen reader that keyboard focus moved to node `id`.
+
+#### `define access_changed(self, id: Int, what: String) -> void`
+
+Node `id` changed: `what` = "value", "checked", "selected", "expanded" or "name".
+
+#### `define access_announce(self, text: String) -> void`
+
+Have the screen reader say `text` (a status message).
 
 #### `define simulate_text(self, text: String, compose: Bool = false, cursor: Int = 0, length: Int = 0) -> void`
 

@@ -1,0 +1,29 @@
+// type() gives a type's name as written — `ListItem`, not `ui.ListItem` —
+// also when the program defines a ListItem of its own (7.35's per-module
+// names made it "ui.ListItem", and ui's `type(v) == "ListItem"` checks
+// stopped matching: list entries read as "<ui.ListItem at ...>").
+// Also: ui's accessibility tree (ui v1.9.0).
+use window
+use ui
+
+struct ListItem {
+    n: Int
+}
+
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+define main() -> void {
+    mine := ListItem()
+    if type(mine) != "ListItem" { fail("own type(): " + type(mine)) }
+    li := ui.ListItem("two")
+    if type(li) != "ListItem" { fail("ui type(): " + type(li)) }
+    if not window.available() { return }
+    app := ui.App("probe", 200, 200, headless=true)
+    lv := ui.ListView(["one", ui.ListItem("two")], rows=2)
+    app.root = ui.Column([ui.Label("Files"), lv])
+    app.layout()
+    tree := app.accessibility()
+    if tree.find("two", "listitem") == null { fail("ListItem entry named: " + tree.dump()) }
+    if tree.find("Files", "list") == null { fail("list named by its Label: " + tree.dump()) }
+    app.close()
+}

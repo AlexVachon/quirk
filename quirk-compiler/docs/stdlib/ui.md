@@ -77,6 +77,30 @@ True while an input method is composing text in this widget (it gets every key).
 
 Child widgets (containers).
 
+#### `define access_role(self) -> String`
+
+What the widget is to assistive technology: "button", "checkbox",
+"textbox", "slider", "list", "tab", "menu"... — "group" for a
+container, "none" for something purely visual (a Spacer).
+
+#### `define access_name(self) -> String`
+
+Its accessible name — what a screen reader says: `accessible_name` if
+set, else what the widget shows (a button's text), else the text of a
+Label just before it, else its tooltip.
+
+#### `define access_value(self) -> String`
+
+Its value as text — a field's text, a slider's number — or "".
+
+#### `define access_states(self) -> List`
+
+States: "focusable", "focused", "disabled", "checked", "selected", "expanded"...
+
+#### `define access_node(self) -> AccessNode`
+
+This widget as an `AccessNode` (children included); null when hidden or purely visual.
+
 #### `define contains(self, px: Int, py: Int) -> Bool`
 
 True if (px, py) is inside the widget's box.
@@ -546,64 +570,43 @@ A running animation (`app.animate`). `cancel()` stops it (no more
 
 Stop it where it is.
 
-### `struct App`
+### `struct AccessNode`
 
-A window showing a widget tree. Set `root`, then `run()`.
-  `theme`     — colours (`ui.dark()` by default)
-  `on_frame`  — optional `fn()` called once per frame before drawing
-  `focus`     — the widget with the keyboard focus (or null)
-  `tooltip_delay` — ms the mouse rests on a widget before its tooltip shows
-  `on_key`    — optional `fn(e)` called for every key press, before the
-                focused widget sees it (shortcuts: `if e.ctrl and e.key == "s"`)
-`step()` runs one frame yourself (custom loops, tests).
+One thing in the accessibility tree (`App.accessibility()`) — what a
+screen reader is told about a widget or one of its items: `role`
+("button", "checkbox", "textbox", "list", "listitem", "tab", "menuitem",
+...), `name` (what it's called), `value` (a field's text, a slider's
+number, the selected option), `description`, `states` ("focused",
+"disabled", "checked", "selected", "expanded"...), its box, `children`,
+and the `widget` it came from (null for items). `level` is the depth of
+a tree item.
 
-#### `define animate(self, duration: Int, on_step: Callable, ease: String = "in_out", on_done: Callable = null) -> Animation`
+#### `define has(self, state: String) -> Bool`
 
-Animate over `duration` ms: `on_step(t)` runs every frame with the
-eased progress `t` (0.0 → 1.0; the last call is exactly 1.0), then
-`on_done()`. `ease` is "linear", "in", "out", "in_out" or "back".
-@example
-app.animate(300, fn(t) { panel.x_offset = ui.lerp(-200, 0, t) }, ease="out")
+True if `state` ("focused", "checked"...) is one of its states.
 
-#### `define animating(self) -> Bool`
+#### `define find(self, name: String, role: String = "") -> AccessNode`
 
-True while an animation is running.
+The first node (this one or below) named `name` — and with `role`, when given — or null.
 
-#### `define dragging(self) -> Bool`
+#### `define find_state(self, state: String) -> AccessNode`
 
-True while something is being dragged (see `Widget.on_drag`).
+The first node (this one or below) with `state` (e.g. "focused"), or null.
 
-#### `define is_open(self) -> Bool`
+#### `define describe(self) -> String`
 
-True until the window is closed.
+One line: `button "Save" [focusable, focused]`, with `= value` when it has one.
 
-#### `define close(self) -> void`
+#### `define dump(self, indent: Int = 0) -> String`
 
-Close the window (ends `run`).
+The whole subtree, one `describe()` line per node, indented — for tests and debugging.
 
-#### `define focus_on(self, w: Widget) -> void`
+### `struct AccessEvent`
 
-Give `w` the keyboard focus (null: nobody).
-
-#### `define layout(self) -> void`
-
-Measure and place the tree to fill the window.
-
-#### `define dispatch(self, e: window.Event) -> void`
-
-Route one event to the widget it's for (also usable from tests).
-
-#### `define step(self) -> Bool`
-
-One frame: handle events, lay out, draw, present. False once the window is closed.
-
-#### `define draw(self) -> void`
-
-Draw the tree, open popups and the tooltip (what `step` shows).
-
-#### `define run(self, fps: Int = 60) -> void`
-
-Run until the window closes, about `fps` frames a second.
+A change assistive technology should hear about (`App.on_access`):
+`kind` is "focus" (keyboard focus moved to `node`), "value" (the focused
+widget's name, value or states changed) or "announce" (`App.announce`:
+`node.name` is the message).
 
 
 ### Module-level functions

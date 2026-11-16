@@ -170,7 +170,7 @@ STDLIB_TAG_window ?= v1.7.0
 # ui v1.5.0: working menu shortcuts, SplitView, Toolbar, StatusBar, DatePicker (compiler v7.32.0).
 # ui v1.6.0: theme fonts, ListItem icons, Canvas, animations (compiler v7.33.0).
 # ui v1.6.1: no unused bindings (editor warnings).
-STDLIB_TAG_ui ?= v1.8.0
+STDLIB_TAG_ui ?= v1.9.0
 
 # --- INSTALL / UNINSTALL --------------------------------------------------
 # Copy the freshly-built compiler + runtime into $(PREFIX) (default

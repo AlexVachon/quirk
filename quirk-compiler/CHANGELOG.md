@@ -5,6 +5,23 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.40.0] — 2026-11-16 — `ui` accessibility tree; `type()` as written
+
+- **`ui` v1.9.0 (pinned): an accessibility tree** — `app.accessibility()`
+  gives what assistive technology needs about the window: role, name,
+  value, states and box of every visible widget and of the items in
+  lists, tables, trees, tabs, menus and open dropdowns; fields are named
+  by the Label before them, by a placeholder, or by `accessible_name`.
+  `app.on_access(fn(e))` hears focus moves, value changes and
+  `app.announce(text)`. The platform-neutral half of screen-reader
+  support — the Windows UI Automation bridge is next.
+- **`type(x)` gives the name as written** — `ListItem`, not
+  `ui.ListItem` — also when the program defines a type of the same name
+  (since 7.35 it said `ui.ListItem`, so library checks like
+  `type(v) == "ListItem"` stopped matching: `ui` list entries then
+  showed as `<ui.ListItem at ...>`). Messages and repr still say
+  `ui.ListItem`.
+
 ## [7.39.0] — 2026-11-16 — right-to-left text
 
 - **Hebrew and Arabic are drawn in reading order** (`window` v1.7.0,

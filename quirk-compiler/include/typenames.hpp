@@ -46,4 +46,12 @@ inline std::string displayTypeNames(const std::string& text) {
     return out;
 }
 
+// A display name without its module: `ui.Button` → `Button`,
+// `shapes.Box[Int]` → `Box[Int]` — what type() gives.
+inline std::string withoutModule(const std::string& shown) {
+    size_t br = shown.find('[');
+    size_t dot = shown.rfind('.', br == std::string::npos ? std::string::npos : br);
+    return dot == std::string::npos ? shown : shown.substr(dot + 1);
+}
+
 }  // namespace quirk

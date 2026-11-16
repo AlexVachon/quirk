@@ -562,7 +562,13 @@ class BuiltinGen {
                     if (getType) return Builder.CreateCall(getType, {val});
                 }
                 auto dn = displayNames.find(structName);
-                return makeTypeString(dn != displayNames.end() ? dn->second : structName);
+                std::string shown = dn != displayNames.end() ? dn->second : structName;
+                // The name as written (`Button` for ui.Button), as the
+                // runtime type registration gives for untyped values.
+                if (quirk::typeDisplayNames().count(structName) ||
+                    quirk::typeDisplayNames().count(structName.substr(0, structName.find("__"))))
+                    shown = quirk::withoutModule(shown);
+                return makeTypeString(shown);
             }
             // i8* opaque — may be a tagged integer or boxed Any*; use the safe helper
             // that checks the pointer value before dereferencing (avoids segfault on tagged ints).

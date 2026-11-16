@@ -1,4 +1,22 @@
 {
+"AccessEvent": [
+{
+"package": "ui",
+"qualified": "AccessEvent",
+"kind": "struct",
+"signature": "struct AccessEvent {",
+"doc": "A change assistive technology should hear about (`App.on_access`):\n`kind` is \"focus\" (keyboard focus moved to `node`), \"value\" (the focused\nwidget's name, value or states changed) or \"announce\" (`App.announce`:\n`node.name` is the message)."
+}
+],
+"AccessNode": [
+{
+"package": "ui",
+"qualified": "AccessNode",
+"kind": "struct",
+"signature": "struct AccessNode {",
+"doc": "One thing in the accessibility tree (`App.accessibility()`) \u2014 what a\nscreen reader is told about a widget or one of its items: `role`\n(\"button\", \"checkbox\", \"textbox\", \"list\", \"listitem\", \"tab\", \"menuitem\",\n...), `name` (what it's called), `value` (a field's text, a slider's\nnumber, the selected option), `description`, `states` (\"focused\",\n\"disabled\", \"checked\", \"selected\", \"expanded\"...), its box, `children`,\nand the `widget` it came from (null for items). `level` is the depth of\na tree item."
+}
+],
 "Animation": [
 {
 "package": "ui",
@@ -6,15 +24,6 @@
 "kind": "struct",
 "signature": "struct Animation {",
 "doc": "A running animation (`app.animate`). `cancel()` stops it (no more\n`on_step`, no `on_done`); `done` says whether it has finished."
-}
-],
-"App": [
-{
-"package": "ui",
-"qualified": "App",
-"kind": "struct",
-"signature": "struct App {",
-"doc": "A window showing a widget tree. Set `root`, then `run()`.\n  `theme`     \u2014 colours (`ui.dark()` by default)\n  `on_frame`  \u2014 optional `fn()` called once per frame before drawing\n  `focus`     \u2014 the widget with the keyboard focus (or null)\n  `tooltip_delay` \u2014 ms the mouse rests on a widget before its tooltip shows\n  `on_key`    \u2014 optional `fn(e)` called for every key press, before the\n                focused widget sees it (shortcuts: `if e.ctrl and e.key == \"s\"`)\n`step()` runs one frame yourself (custom loops, tests)."
 }
 ],
 "AssertionError": [
@@ -1387,6 +1396,60 @@
 "doc": "Block until a client connects to listening socket `fd`, returning the new\nclient socket's fd. Negative on error."
 }
 ],
+"access_name": [
+{
+"package": "ui",
+"qualified": "Widget.access_name",
+"kind": "method",
+"signature": "define access_name(self) -> String {",
+"doc": "Its accessible name \u2014 what a screen reader says: `accessible_name` if\nset, else what the widget shows (a button's text), else the text of a\nLabel just before it, else its tooltip."
+}
+],
+"access_node": [
+{
+"package": "ui",
+"qualified": "Widget.access_node",
+"kind": "method",
+"signature": "define access_node(self) -> AccessNode {",
+"doc": "This widget as an `AccessNode` (children included); null when hidden or purely visual."
+}
+],
+"access_role": [
+{
+"package": "ui",
+"qualified": "Widget.access_role",
+"kind": "method",
+"signature": "define access_role(self) -> String {",
+"doc": "What the widget is to assistive technology: \"button\", \"checkbox\",\n\"textbox\", \"slider\", \"list\", \"tab\", \"menu\"... \u2014 \"group\" for a\ncontainer, \"none\" for something purely visual (a Spacer)."
+}
+],
+"access_states": [
+{
+"package": "ui",
+"qualified": "Widget.access_states",
+"kind": "method",
+"signature": "define access_states(self) -> List {",
+"doc": "States: \"focusable\", \"focused\", \"disabled\", \"checked\", \"selected\", \"expanded\"..."
+}
+],
+"access_value": [
+{
+"package": "ui",
+"qualified": "Widget.access_value",
+"kind": "method",
+"signature": "define access_value(self) -> String {",
+"doc": "Its value as text \u2014 a field's text, a slider's number \u2014 or \"\"."
+}
+],
+"accessibility": [
+{
+"package": "ui",
+"qualified": "App.accessibility",
+"kind": "method",
+"signature": "define accessibility(self) -> AccessNode {",
+"doc": "The window as assistive technology (a screen reader) sees it: a tree\nof `AccessNode`s \u2014 role, name, value, states and box of every visible\nwidget and item, open popups (menus, dropdown lists) last. Rebuilt on\neach call.\n@example\nprint(app.accessibility().dump())"
+}
+],
 "acos": [
 {
 "package": "math",
@@ -1492,6 +1555,15 @@
 "kind": "method",
 "signature": "define animating(self) -> Bool {",
 "doc": "True while an animation is running."
+}
+],
+"announce": [
+{
+"package": "ui",
+"qualified": "App.announce",
+"kind": "method",
+"signature": "define announce(self, message: String) -> void {",
+"doc": "Have assistive technology say `message` (an \"announce\" event to\n`on_access`) \u2014 for things that happen without a focus change: \"Saved\",\n\"3 results\"."
 }
 ],
 "ansi": [
@@ -2314,6 +2386,15 @@
 "doc": "How deep it is (0 for a root)."
 }
 ],
+"describe": [
+{
+"package": "ui",
+"qualified": "AccessNode.describe",
+"kind": "method",
+"signature": "define describe(self) -> String {",
+"doc": "One line: `button \"Save\" [focusable, focused]`, with `= value` when it has one."
+}
+],
 "diff_days": [
 {
 "package": "datetime",
@@ -2463,6 +2544,13 @@
 "kind": "define",
 "signature": "define dump(val: Any, file: File) -> void {",
 "doc": "Serialize `val` and write the JSON string to an open File.\n\n@example\nwith File(\"config.json\", \"w\") as f {\n    json.dump(config_map, f)\n}"
+},
+{
+"package": "ui",
+"qualified": "AccessNode.dump",
+"kind": "method",
+"signature": "define dump(self, indent: Int = 0) -> String {",
+"doc": "The whole subtree, one `describe()` line per node, indented \u2014 for tests and debugging."
 }
 ],
 "dumps_pretty": [
@@ -2703,6 +2791,13 @@
 "kind": "method",
 "signature": "define find(self, cb: Callable) -> Any",
 "doc": "Returns the first element that satisfies the predicate, or `null` if none found.\n@param cb: Callable \u2014 `fn(element: T) => Bool`\n@returns: Any \u2014 the matching element, or `null`"
+},
+{
+"package": "ui",
+"qualified": "AccessNode.find",
+"kind": "method",
+"signature": "define find(self, name: String, role: String = \"\") -> AccessNode {",
+"doc": "The first node (this one or below) named `name` \u2014 and with `role`, when given \u2014 or null."
 }
 ],
 "find_all": [
@@ -2721,6 +2816,15 @@
 "kind": "define",
 "signature": "extern define find_at(handle: Any, s: String, from_offset: Int) -> Int",
 "doc": "Searches `s` starting at `from_offset` and caches the match groups in the\nhandle. Returns the start offset of the full match, or -1 if no match.\nQuirk wrappers then read group_count/group_start/group_end to assemble Match."
+}
+],
+"find_state": [
+{
+"package": "ui",
+"qualified": "AccessNode.find_state",
+"kind": "method",
+"signature": "define find_state(self, state: String) -> AccessNode {",
+"doc": "The first node (this one or below) with `state` (e.g. \"focused\"), or null."
 }
 ],
 "finish_edit": [
@@ -3013,6 +3117,13 @@
 "kind": "method",
 "signature": "define has(self, val: Any) -> Bool",
 "doc": "Returns `true` if the value is in the set.\n@param val: Any\n@returns: Bool"
+},
+{
+"package": "ui",
+"qualified": "AccessNode.has",
+"kind": "method",
+"signature": "define has(self, state: String) -> Bool {",
+"doc": "True if `state` (\"focused\", \"checked\"...) is one of its states."
 }
 ],
 "has_rtl": [

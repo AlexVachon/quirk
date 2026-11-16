@@ -816,6 +816,14 @@ class LLVMCodegen {
                         strFn = Builder.CreateBitCast(f, i8p);
                 std::string shown = builtinGen->displayNames.count(sname)
                     ? builtinGen->displayNames[sname] : sname;
+                // type() gives the name as written — `Button`, not
+                // `ui.Button` — so library code comparing type(x) == "Name"
+                // keeps working when a program defines its own Name
+                // (messages and repr still say ui.Button).
+                if (quirk::typeDisplayNames().count(sname) ||
+                    quirk::typeDisplayNames().count(sname.substr(0, sname.find("__")))) {
+                    shown = quirk::withoutModule(shown);
+                }
                 Builder.CreateCall(regFn, {
                     ConstantInt::get(Type::getInt32Ty(Context), structGen->objectTypeId(sname)),
                     Builder.CreateGlobalStringPtr(shown), strFn});

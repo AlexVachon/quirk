@@ -21,7 +21,10 @@ shortcuts, SplitView, Toolbar, StatusBar, DatePicker; ui 1.6 (7.33.0):
 TrueType fonts, ListItem icons, Canvas, animations; window 1.4
 (7.36.0): high DPI; ui 1.7 (7.37.0): IME / composed text input; window
 1.6 (7.38.0): font fallback; window 1.7 / ui 1.8 (7.39.0): right-to-left
-text. Next ideas: accessibility (screen readers); for RTL, explicit
+text; ui 1.9 (7.40.0): accessibility tree (app.accessibility(), on_access).
+Next: the screen-reader bridges — Windows UI Automation first (a COM
+provider per node in the window runtime, tested with NVDA / Narrator),
+then macOS NSAccessibility and Linux AT-SPI. For RTL, explicit
 direction marks (embeddings / isolates) and per-paragraph direction in
 word-wrapped areas; complex scripts beyond joining forms (Indic) would
 need a shaping engine.

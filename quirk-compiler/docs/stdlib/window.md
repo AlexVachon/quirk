@@ -64,6 +64,24 @@ f.add_fallback("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc")
 
 True if every character of `text` can be drawn — by this font or one of its fallbacks.
 
+#### `define caret_x(self, text: String, index: Int) -> Int`
+
+Where the cursor goes before character `index` of `text` (one line),
+in pixels from the left of the drawn text. Right-to-left text
+(Hebrew, Arabic) is drawn in visual order, so this isn't the width of
+the first `index` characters: in "שלום", index 0 is at the right.
+
+#### `define index_at(self, text: String, x: Int) -> Int`
+
+The cursor index (0 to the text's length) nearest to `x` pixels from the left of `text` drawn in this font — where a click goes.
+
+#### `define selection(self, text: String, start: Int, end: Int) -> List`
+
+The pieces of `text` (one line) that characters [start, end) cover,
+as [x, width] pairs from the left — one piece for plain text, more
+when the range crosses between left-to-right and right-to-left runs.
+For drawing a selection.
+
 ### `struct Image`
 
 An image loaded for one window (`Window.load_image`); `width` / `height` in pixels.
@@ -258,6 +276,15 @@ with `Font.add_fallback`.
 @example
 f := window.load_font("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 18)
 w.text("Grüße — 東京 — ✓", 20, 20, window.white(), font=f)
+
+#### `define is_rtl(text: String) -> Bool`
+
+True if `text` (its first line) reads right to left — its first letter
+is Hebrew, Arabic, ... — so it should be aligned to the right.
+
+#### `define has_rtl(text: String) -> Bool`
+
+True if `text` has any right-to-left (Hebrew, Arabic...) characters — then carets and selections need `Font.caret_x` / `selection` rather than prefix widths.
 
 #### `define open(title: String, width: Int, height: Int, resizable: Bool = false, hidden: Bool = false, vsync: Bool = true, headless: Bool = false) -> Window`
 

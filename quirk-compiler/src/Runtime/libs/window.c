@@ -18,6 +18,7 @@
 #endif
 
 #include "window_font.h"
+#include "window_bidi.h"
 
 // Image decoding (PNG / JPEG / BMP / GIF / TGA): stb_image, vendored in
 // src/third_party/stb. Allocations go through the scanned GC heap — the
@@ -1255,12 +1256,243 @@ List* Window_font_metrics_raw(int64_t fh) {
     return res;
 }
 
+
+// ----- line layout (bidi + Arabic joining, see window_bidi.h) -----
+
+static int qfont_has_cb(int c, void* ctx) {
+    QFont* f = (QFont*)ctx;
+    float sc; int fi;
+    return stbtt_FindGlyphIndex(qfont_pick(f, c, &sc, &fi), c) != 0;
+}
+
+// One line laid out left to right: glyph k (visual order) is code point
+// gcp[k] covering logical characters [cstart, cstart + clen), at level
+// lvl (odd = right to left), from x0 to x1.
+typedef struct {
+    int n, nchars, base;
+    int *gcp, *cstart, *clen;
+    unsigned char* lvl;
+    float *x0, *x1;
+    float width;
+} QLine;
+
+// Code points of `s` (UTF-8, no newline handling) into a GC array.
+static int* qutf8_decode(const unsigned char* s, size_t len, int* count) {
+    int* cp = (int*)GC_malloc_atomic(sizeof(int) * (len + 1));
+    size_t i = 0;
+    int n = 0;
+    while (i < len) cp[n++] = qutf8_next(s, len, &i);
+    *count = n;
+    return cp;
+}
+
+static void qline_layout(QFont* f, const int* cps, int n, QLine* L) {
+    L->nchars = n;
+    L->gcp = (int*)GC_malloc_atomic(sizeof(int) * (n + 1));
+    L->cstart = (int*)GC_malloc_atomic(sizeof(int) * (n + 1));
+    L->clen = (int*)GC_malloc_atomic(sizeof(int) * (n + 1));
+    L->lvl = (unsigned char*)GC_malloc_atomic((size_t)n + 1);
+    L->x0 = (float*)GC_malloc_atomic(sizeof(float) * (n + 1));
+    L->x1 = (float*)GC_malloc_atomic(sizeof(float) * (n + 1));
+    int k;
+    int complex = qbidi_needed(cps, n);
+    if (!complex) {
+        for (k = 0; k < n; k++) { L->gcp[k] = cps[k]; L->cstart[k] = k; L->clen[k] = 1; L->lvl[k] = 0; }
+        L->base = 0;
+    } else {
+        int* g = (int*)GC_malloc_atomic(sizeof(int) * (n + 1));
+        int* cs = (int*)GC_malloc_atomic(sizeof(int) * (n + 1));
+        int* cl = (int*)GC_malloc_atomic(sizeof(int) * (n + 1));
+        k = qshape_arabic(cps, n, g, cs, cl, qfont_has_cb, f);
+        int* cls = (int*)GC_malloc_atomic(sizeof(int) * (k + 1));
+        for (int i = 0; i < k; i++) cls[i] = qbidi_class(cps[cs[i]]);
+        unsigned char* lv = (unsigned char*)GC_malloc_atomic((size_t)k + 1);
+        L->base = qbidi_levels(cls, k, -1, lv);
+        // L1: trailing white space goes to the paragraph level.
+        for (int i = k - 1; i >= 0; i--) {
+            int t = qbidi_class(cps[cs[i]]);
+            if (t != QB_WS && t != QB_S) break;
+            lv[i] = (unsigned char)L->base;
+        }
+        int* order = (int*)GC_malloc_atomic(sizeof(int) * (k + 1));
+        qbidi_reorder(lv, k, order);
+        for (int v = 0; v < k; v++) {
+            int i = order[v];
+            int c = g[i];
+            if (lv[i] & 1) c = qbidi_mirror(c);
+            L->gcp[v] = c; L->cstart[v] = cs[i]; L->clen[v] = cl[i]; L->lvl[v] = lv[i];
+        }
+        n = k;
+    }
+    L->n = n;
+    float pen = 0;
+    int prev = 0, prevf = -2;
+    for (int v = 0; v < n; v++) {
+        int c = L->gcp[v], adv, lsb, fi;
+        float sc;
+        stbtt_fontinfo* info = qfont_pick(f, c, &sc, &fi);
+        if (!complex && prev && fi == prevf) pen += stbtt_GetCodepointKernAdvance(info, prev, c) * sc;
+        stbtt_GetCodepointHMetrics(info, c, &adv, &lsb);
+        L->x0[v] = pen;
+        pen += adv * sc;
+        L->x1[v] = pen;
+        prev = c; prevf = fi;
+    }
+    L->width = pen;
+}
+
+// The first line of `text` (up to "\n"), laid out.
+static void qline_of(QFont* f, String* text, QLine* L) {
+    const unsigned char* s = (const unsigned char*)make_safe_cstr(text);
+    size_t len = strlen((const char*)s);
+    const unsigned char* nl = (const unsigned char*)memchr(s, '\n', len);
+    if (nl) len = (size_t)(nl - s);
+    int n;
+    int* cps = qutf8_decode(s, len, &n);
+    qline_layout(f, cps, n, L);
+}
+
+// Visual x of the caret before logical character `i` (0..nchars).
+static float qline_caret(const QLine* L, int i) {
+    if (L->n == 0) return 0;
+    for (int v = 0; v < L->n; v++) {
+        int a = L->cstart[v], len = L->clen[v];
+        if (i >= a && i < a + len) {
+            float frac = (float)(i - a) / (float)len;
+            float w = L->x1[v] - L->x0[v];
+            return (L->lvl[v] & 1) ? L->x1[v] - frac * w : L->x0[v] + frac * w;
+        }
+    }
+    // After the last character: the trailing edge of the logically last glyph.
+    int best = -1, bestEnd = -1;
+    for (int v = 0; v < L->n; v++)
+        if (L->cstart[v] + L->clen[v] > bestEnd) { bestEnd = L->cstart[v] + L->clen[v]; best = v; }
+    return (L->lvl[best] & 1) ? L->x0[best] : L->x1[best];
+}
+
+// The logical caret index nearest to visual x.
+static int qline_index_at(const QLine* L, float x) {
+    if (L->n == 0) return 0;
+    if (x < L->x0[0]) {
+        int v = 0;
+        return (L->lvl[v] & 1) ? L->cstart[v] + L->clen[v] : L->cstart[v];
+    }
+    for (int v = 0; v < L->n; v++) {
+        if (x >= L->x1[v] && v + 1 < L->n) continue;
+        int a = L->cstart[v], len = L->clen[v];
+        float w = L->x1[v] - L->x0[v];
+        float rel = w > 0 ? (x - L->x0[v]) / w : 0;            // 0..1 across the glyph
+        if (rel > 1) rel = 1;
+        if (rel < 0) rel = 0;
+        int part = (int)(rel * len + 0.5f);                     // 0..len from the left
+        return (L->lvl[v] & 1) ? a + len - part : a + part;
+    }
+    return L->nchars;
+}
+
+// [x, width] of the visual pieces covering logical [a, b), appended to `res`.
+static void qline_selection(const QLine* L, int a, int b, List* res) {
+    float runA = 0, runB = -1;
+    for (int v = 0; v < L->n; v++) {
+        int s0 = L->cstart[v], s1 = s0 + L->clen[v];
+        int lo = a > s0 ? a : s0, hi = b < s1 ? b : s1;
+        if (lo >= hi) continue;
+        float w = L->x1[v] - L->x0[v];
+        float f0 = (float)(lo - s0) / (float)(s1 - s0), f1 = (float)(hi - s0) / (float)(s1 - s0);
+        float p0, p1;
+        if (L->lvl[v] & 1) { p0 = L->x1[v] - f1 * w; p1 = L->x1[v] - f0 * w; }
+        else { p0 = L->x0[v] + f0 * w; p1 = L->x0[v] + f1 * w; }
+        if (runB >= 0 && p0 <= runB + 0.5f) { if (p1 > runB) runB = p1; continue; }
+        if (runB >= 0) {
+            Core_Collections_List_List_append(res, quirk_int_to_opaque((int)(runA + 0.5f)));
+            Core_Collections_List_List_append(res, quirk_int_to_opaque((int)(runB - runA + 0.5f)));
+        }
+        runA = p0; runB = p1;
+    }
+    if (runB >= 0) {
+        Core_Collections_List_List_append(res, quirk_int_to_opaque((int)(runA + 0.5f)));
+        Core_Collections_List_List_append(res, quirk_int_to_opaque((int)(runB - runA + 0.5f)));
+    }
+}
+
+int64_t Window_font_caret_x_raw(int64_t fh, String* text, int64_t index) {
+    QFont* f = qfont_get(fh);
+    if (!f || !text) return 0;
+    QLine L;
+    qline_of(f, text, &L);
+    if (index < 0) index = 0;
+    if (index > L.nchars) index = L.nchars;
+    return (int64_t)(qline_caret(&L, (int)index) + 0.5f);
+}
+
+int64_t Window_font_index_at_raw(int64_t fh, String* text, int64_t x) {
+    QFont* f = qfont_get(fh);
+    if (!f || !text) return 0;
+    QLine L;
+    qline_of(f, text, &L);
+    return qline_index_at(&L, (float)x);
+}
+
+List* Window_font_selection_raw(int64_t fh, String* text, int64_t a, int64_t b) {
+    List* res = (List*)quirk_alloc(QT_LIST, sizeof(List));
+    Core_Collections_List_List___init(res);
+    QFont* f = qfont_get(fh);
+    if (!f || !text || b <= a) return res;
+    QLine L;
+    qline_of(f, text, &L);
+    qline_selection(&L, (int)a, (int)b, res);
+    return res;
+}
+
+// 1 if `text` has right-to-left or Arabic characters anywhere (it needs
+// the visual layout to measure carets and selections).
+int64_t Window_text_has_rtl_raw(String* text) {
+    if (!text) return 0;
+    const unsigned char* s = (const unsigned char*)make_safe_cstr(text);
+    int n;
+    int* cps = qutf8_decode(s, strlen((const char*)s), &n);
+    return qbidi_needed(cps, n);
+}
+
+// 1 if the first line of `text` reads right to left (its first strong
+// character is Hebrew / Arabic / ...).
+int64_t Window_text_is_rtl_raw(String* text) {
+    if (!text) return 0;
+    const unsigned char* s = (const unsigned char*)make_safe_cstr(text);
+    size_t n = strlen((const char*)s), i = 0;
+    while (i < n) {
+        int c = qutf8_next(s, n, &i);
+        if (c == '\n') break;
+        int t = qbidi_class(c);
+        if (t == QB_L) return 0;
+        if (t == QB_R || t == QB_AL) return 1;
+    }
+    return 0;
+}
+
 // Width in pixels of the longest line of `text` in font `fh`.
 int64_t Window_font_text_width_raw(int64_t fh, String* text) {
     QFont* f = qfont_get(fh);
     if (!f || !text) return 0;
     const unsigned char* s = (const unsigned char*)make_safe_cstr(text);
     size_t n = strlen((const char*)s), i = 0;
+    {
+        // Right-to-left / Arabic text: measure the laid-out lines.
+        int cnt;
+        int* all = qutf8_decode(s, n, &cnt);
+        if (qbidi_needed(all, cnt)) {
+            float wmax = 0;
+            int start = 0;
+            for (int j = 0; j <= cnt; j++) {
+                if (j < cnt && all[j] != '\n') continue;
+                QLine L;
+                qline_layout(f, all + start, j - start, &L);
+                if (L.width > wmax) wmax = L.width;
+                start = j + 1;
+            }
+            return (int64_t)(wmax + 0.999f);
+        }
+    }
     float pen = 0, widest = 0;
     int prev = 0, prevf = -2;
     while (i < n) {
@@ -1311,24 +1543,9 @@ static QGlyph* qfont_glyph(QFont* f, int64_t h, QWin* w, int cp) {
 
 // Draw `text` with its top-left at (x, y) (the first baseline is at
 // y + ascent); "\n" starts a line.
-void Window_font_text_raw(int64_t h, int64_t fh, String* text, int64_t x, int64_t y, int64_t color) {
-    QWin* w = qwin_get(h);
-    QFont* f = qfont_get(fh);
-    if (!w || !f || !text) return;
-    uint8_t a = (uint8_t)((color >> 24) & 0xFF), r = (uint8_t)((color >> 16) & 0xFF);
-    uint8_t gc = (uint8_t)((color >> 8) & 0xFF), b = (uint8_t)(color & 0xFF);
-    const unsigned char* s = (const unsigned char*)make_safe_cstr(text);
-    size_t n = strlen((const char*)s), i = 0;
-    float pen = (float)x;
-    int base = (int)y + f->ascent;
-    int lh = f->ascent + f->descent + f->line_gap;
-    int prev = 0, prevf = -2;
-    while (i < n) {
-        int cp = qutf8_next(s, n, &i);
-        if (cp == '\n') { pen = (float)x; base += lh; prev = 0; continue; }
-        float fsc; int fi;
-        stbtt_fontinfo* info = qfont_pick(f, cp, &fsc, &fi);
-        if (prev && fi == prevf) pen += stbtt_GetCodepointKernAdvance(info, prev, cp) * fsc;
+// Draw code point `cp` with its origin at (pen, baseline).
+static void qfont_blit(QWin* w, QFont* f, int64_t h, int cp, float pen, int base,
+                       uint8_t r, uint8_t gc, uint8_t b, uint8_t a) {
         QGlyph* g = qfont_glyph(f, h, w, cp);
         if (g && g->tex) {
             qsdl.SetTextureColorMod(g->tex, r, gc, b);
@@ -1346,6 +1563,45 @@ void Window_font_text_raw(int64_t h, int64_t fh, String* text, int64_t x, int64_
                 qsdl.RenderCopy(w->ren, g->tex, NULL, &dst);
             }
         }
+}
+
+void Window_font_text_raw(int64_t h, int64_t fh, String* text, int64_t x, int64_t y, int64_t color) {
+    QWin* w = qwin_get(h);
+    QFont* f = qfont_get(fh);
+    if (!w || !f || !text) return;
+    uint8_t a = (uint8_t)((color >> 24) & 0xFF), r = (uint8_t)((color >> 16) & 0xFF);
+    uint8_t gc = (uint8_t)((color >> 8) & 0xFF), b = (uint8_t)(color & 0xFF);
+    const unsigned char* s = (const unsigned char*)make_safe_cstr(text);
+    size_t n = strlen((const char*)s), i = 0;
+    float pen = (float)x;
+    int base = (int)y + f->ascent;
+    int lh = f->ascent + f->descent + f->line_gap;
+    {
+        // Right-to-left / Arabic text: draw each laid-out line.
+        int cnt;
+        int* all = qutf8_decode(s, n, &cnt);
+        if (qbidi_needed(all, cnt)) {
+            int start = 0;
+            for (int j = 0; j <= cnt; j++) {
+                if (j < cnt && all[j] != '\n') continue;
+                QLine L;
+                qline_layout(f, all + start, j - start, &L);
+                for (int v = 0; v < L.n; v++)
+                    qfont_blit(w, f, h, L.gcp[v], (float)x + L.x0[v], base, r, gc, b, a);
+                base += lh;
+                start = j + 1;
+            }
+            return;
+        }
+    }
+    int prev = 0, prevf = -2;
+    while (i < n) {
+        int cp = qutf8_next(s, n, &i);
+        if (cp == '\n') { pen = (float)x; base += lh; prev = 0; continue; }
+        float fsc; int fi;
+        stbtt_fontinfo* info = qfont_pick(f, cp, &fsc, &fi);
+        if (prev && fi == prevf) pen += stbtt_GetCodepointKernAdvance(info, prev, cp) * fsc;
+        qfont_blit(w, f, h, cp, pen, base, r, gc, b, a);
         int adv, lsb;
         stbtt_GetCodepointHMetrics(info, cp, &adv, &lsb);
         pen += adv * fsc;

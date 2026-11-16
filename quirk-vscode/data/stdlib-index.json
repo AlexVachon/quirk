@@ -1769,6 +1769,15 @@
 "doc": "Captures the C-level backtrace into an internal buffer. Subsequent calls\noverwrite. Used by exception handlers to attach traceback info."
 }
 ],
+"caret_x": [
+{
+"package": "window",
+"qualified": "Font.caret_x",
+"kind": "method",
+"signature": "define caret_x(self, text: String, index: Int) -> Int {",
+"doc": "Where the cursor goes before character `index` of `text` (one line),\nin pixels from the left of the drawn text. Right-to-left text\n(Hebrew, Arabic) is drawn in visual order, so this isn't the width of\nthe first `index` characters: in \"\u05e9\u05dc\u05d5\u05dd\", index 0 is at the right."
+}
+],
 "cbrt": [
 {
 "package": "math",
@@ -3006,6 +3015,15 @@
 "doc": "Returns `true` if the value is in the set.\n@param val: Any\n@returns: Bool"
 }
 ],
+"has_rtl": [
+{
+"package": "window",
+"qualified": "has_rtl",
+"kind": "define",
+"signature": "define has_rtl(text: String) -> Bool {",
+"doc": "True if `text` has any right-to-left (Hebrew, Arabic...) characters \u2014 then carets and selections need `Font.caret_x` / `selection` rather than prefix widths."
+}
+],
 "has_selection": [
 {
 "package": "ui",
@@ -3110,6 +3128,13 @@
 "kind": "method",
 "signature": "define index_at(self, px: Int, py: Int) -> Int {",
 "doc": "The text index under the point (px, py) (where a click puts the cursor)."
+},
+{
+"package": "window",
+"qualified": "Font.index_at",
+"kind": "method",
+"signature": "define index_at(self, text: String, x: Int) -> Int {",
+"doc": "The cursor index (0 to the text's length) nearest to `x` pixels from the left of `text` drawn in this font \u2014 where a click goes."
 }
 ],
 "infinity": [
@@ -3309,6 +3334,15 @@
 "kind": "method",
 "signature": "define is_open(self) -> Bool {",
 "doc": "True until the window is closed (by `close()` or its close button)."
+}
+],
+"is_rtl": [
+{
+"package": "window",
+"qualified": "is_rtl",
+"kind": "define",
+"signature": "define is_rtl(text: String) -> Bool {",
+"doc": "True if `text` (its first line) reads right to left \u2014 its first letter\nis Hebrew, Arabic, ... \u2014 so it should be aligned to the right."
 }
 ],
 "is_separator": [
@@ -4995,6 +5029,15 @@
 "kind": "method",
 "signature": "define selected_text(self) -> String {",
 "doc": "The selected text (\"\" if none)."
+}
+],
+"selection": [
+{
+"package": "window",
+"qualified": "Font.selection",
+"kind": "method",
+"signature": "define selection(self, text: String, start: Int, end: Int) -> List {",
+"doc": "The pieces of `text` (one line) that characters [start, end) cover,\nas [x, width] pairs from the left \u2014 one piece for plain text, more\nwhen the range crosses between left-to-right and right-to-left runs.\nFor drawing a selection."
 }
 ],
 "selection_end": [

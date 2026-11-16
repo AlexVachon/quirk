@@ -5,6 +5,23 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.39.0] — 2026-11-16 — right-to-left text
+
+- **Hebrew and Arabic are drawn in reading order** (`window` v1.7.0,
+  `ui` v1.8.0, pinned). Text was drawn left to right one character at a
+  time: Hebrew came out backwards and Arabic letters unjoined. The window
+  runtime now lays lines out with the Unicode Bidirectional Algorithm
+  (paragraph direction, numbers and neutrals, mirrored brackets; no
+  explicit embeddings) and joins Arabic / Persian letters (initial,
+  medial, final forms and the lam-alef ligature) — in drawing, measuring
+  and everything built on them. Lines without right-to-left characters
+  take the old path unchanged.
+- `ui` text fields and areas: right-to-left lines sit against the right
+  edge; the cursor, clicks, selection (drawn in pieces across direction
+  changes) and Left / Right follow the visual order.
+- `window`: `is_rtl(text)`, `has_rtl(text)`, `Font.caret_x`,
+  `Font.index_at`, `Font.selection`.
+
 ## [7.38.0] — 2026-11-16 — globals survive the GC; font fallback
 
 - **Top-level variables could be freed under a running program.** Module

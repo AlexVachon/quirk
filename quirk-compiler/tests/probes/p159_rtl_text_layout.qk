@@ -1,0 +1,24 @@
+// Right-to-left text (window v1.7.0): direction detection, and — when a
+// font with Hebrew is installed — visual order: in "שלום" the first
+// letter is on the right, so the caret before it is at the text's width
+// and a click at the left edge lands after the last letter.
+use window
+use fs
+
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+define main() -> void {
+    if not window.is_rtl("שלום abc") { fail("is_rtl Hebrew first") }
+    if window.is_rtl("abc שלום") { fail("is_rtl Latin first") }
+    if not window.has_rtl("abc שלום") { fail("has_rtl mixed") }
+    if window.has_rtl("abc 123") { fail("has_rtl Latin") }
+    path := "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+    if not fs.exists(path) { return }
+    f := window.load_font(path, 20)
+    he := "שלום"
+    if f.width(he) - f.caret_x(he, 0) > 1 { fail("caret before the first letter should be at the right") }
+    if f.caret_x(he, 4) != 0 { fail("caret after the last letter should be at the left") }
+    if f.index_at(he, 0) != 4 { fail("index_at left edge") }
+    if f.selection("ab שלום", 1, 5).length() != 2 { fail("mixed selection should be two pieces") }
+    if f.width("سلام") >= f.width("س") + f.width("ل") + f.width("ا") + f.width("م") { fail("Arabic letters should join") }
+}

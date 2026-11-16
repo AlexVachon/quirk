@@ -96,7 +96,9 @@ typedef struct { uint8_t bytes[56]; } QSdlEvent;
 #define QSDL_WINDOWEVENT     0x200
 #define QSDL_KEYDOWN         0x300
 #define QSDL_KEYUP           0x301
+#define QSDL_TEXTEDITING     0x302   // IME composition in progress
 #define QSDL_TEXTINPUT       0x303
+#define QSDL_TEXTEDITING_EXT 0x305   // same, text longer than 32 bytes (SDL 2.0.22+)
 #define QSDL_MOUSEMOTION     0x400
 #define QSDL_MOUSEBUTTONDOWN 0x401
 #define QSDL_MOUSEBUTTONUP   0x402
@@ -158,6 +160,9 @@ static struct {
     // Optional (NULL when this SDL lacks them): high-DPI drawing.
     int (*RenderSetScale)(void*, float, float);
     int (*RenderCopyF)(void*, void*, const QSdlRect*, const QSdlFRect*);
+    // Optional: IME (input methods for Chinese / Japanese / Korean, dead keys).
+    void (*SetTextInputRect)(const QSdlRect*);
+    int (*PushEvent)(QSdlEvent*);
 } qsdl;
 
 static char qwin_err[512] = "";
@@ -232,6 +237,8 @@ static int qsdl_load(void) {
     #undef QLOAD
     *(void**)&qsdl.RenderSetScale = dlsym(qsdl.lib, "SDL_RenderSetScale");
     *(void**)&qsdl.RenderCopyF = dlsym(qsdl.lib, "SDL_RenderCopyF");
+    *(void**)&qsdl.SetTextInputRect = dlsym(qsdl.lib, "SDL_SetTextInputRect");
+    *(void**)&qsdl.PushEvent = dlsym(qsdl.lib, "SDL_PushEvent");
     qsdl.loaded = 1;
     return 1;
     }
@@ -245,11 +252,11 @@ static int qsdl_load(void) {
 typedef struct {
     int kind;              // QEV_*
     int a, b, c, d;
-    char text[32];
+    char text[128];        // key name, typed text, or an IME composition
 } QWinEvent;
 
 enum { QEV_CLOSE = 1, QEV_KEY_DOWN, QEV_KEY_UP, QEV_TEXT, QEV_MOUSE_MOVE, QEV_MOUSE_DOWN,
-       QEV_MOUSE_UP, QEV_WHEEL, QEV_RESIZE, QEV_FOCUS, QEV_BLUR, QEV_EXPOSE };
+       QEV_MOUSE_UP, QEV_WHEEL, QEV_RESIZE, QEV_FOCUS, QEV_BLUR, QEV_EXPOSE, QEV_COMPOSE };
 
 typedef struct {
     int used;
@@ -385,6 +392,33 @@ static void qwin_pump(void) {
                 memcpy(ev.text, se.bytes + 12, 32);
                 ev.text[31] = '\0';
                 break;
+            // The text an input method is composing (shown at the cursor
+            // until it's committed as QEV_TEXT; "" when composition ends).
+            // a = cursor within it, b = length of its selected part, both
+            // in characters.
+            case QSDL_TEXTEDITING:
+                ev.kind = QEV_COMPOSE;
+                memcpy(ev.text, se.bytes + 12, 32);
+                ev.text[31] = '\0';
+                ev.a = qev_i32(&se, 44); ev.b = qev_i32(&se, 48);
+                break;
+            case QSDL_TEXTEDITING_EXT: {
+                char* t;
+                memcpy(&t, se.bytes + 16, sizeof t);
+                ev.kind = QEV_COMPOSE;
+                if (t) {
+                    size_t n = strlen(t);
+                    if (n > sizeof ev.text - 1) {          // cut on a character boundary
+                        n = sizeof ev.text - 1;
+                        while (n > 0 && ((unsigned char)t[n] & 0xC0) == 0x80) n--;
+                    }
+                    memcpy(ev.text, t, n);
+                    ev.text[n] = '\0';
+                    qsdl.Free(t);
+                }
+                ev.a = qev_i32(&se, 24); ev.b = qev_i32(&se, 28);
+                break;
+            }
             case QSDL_MOUSEMOTION:
                 ev.kind = QEV_MOUSE_MOVE;
                 ev.a = qwin_to_logical(w, qev_i32(&se, 20)); ev.b = qwin_to_logical(w, qev_i32(&se, 24));
@@ -459,6 +493,10 @@ int64_t Window_open_raw(String* title, int64_t width, int64_t height, int64_t fl
         // instead of Windows stretching a 96-DPI bitmap (blurry).
         qsdl.SetHint("SDL_WINDOWS_DPI_AWARENESS", "permonitorv2");
         qsdl.SetHint("SDL_WINDOWS_DPI_SCALING", "1");
+        // IME: the input method's own candidate list (Windows), and
+        // compositions longer than 32 bytes in one event (SDL 2.0.22+).
+        qsdl.SetHint("SDL_IME_SHOW_UI", "1");
+        qsdl.SetHint("SDL_IME_SUPPORT_EXTENDED_TEXT", "1");
         if (qsdl.Init(QSDL_INIT_VIDEO) != 0) { qwin_set_err("can't start SDL video"); return -1; }
         qsdl.inited = 1;
         qsdl.StartTextInput();
@@ -707,6 +745,36 @@ List* Window_size_raw(int64_t h) {
 double Window_scale_raw(int64_t h) {
     QWin* w = qwin_get(h);
     return (w && w->scale > 0) ? (double)w->scale : 1.0;
+}
+
+// Where text is being typed (the cursor's rectangle, logical pixels), so
+// the input method opens its candidate list next to it.
+void Window_text_input_area_raw(int64_t h, int64_t x, int64_t y, int64_t rw, int64_t rh) {
+    QWin* w = qwin_get(h);
+    if (!w || !qsdl.SetTextInputRect) return;
+    float u = w->ui > 0 ? w->ui : 1.0f;
+    QSdlRect r = { (int)((float)x * u), (int)((float)y * u), (int)((float)rw * u), (int)((float)rh * u) };
+    qsdl.SetTextInputRect(&r);
+}
+
+// Tests: queue a text (kind 0) or IME composition (kind 1) event for the
+// window through SDL's own event queue, as an input method would.
+void Window_simulate_text_raw(int64_t h, int64_t kind, String* text, int64_t start, int64_t length) {
+    QWin* w = qwin_get(h);
+    if (!w || !qsdl.PushEvent) return;
+    QSdlEvent se;
+    memset(&se, 0, sizeof se);
+    uint32_t type = kind == 1 ? QSDL_TEXTEDITING : QSDL_TEXTINPUT;
+    memcpy(se.bytes, &type, 4);
+    memcpy(se.bytes + 8, &w->id, 4);
+    const char* t = text ? make_safe_cstr(text) : "";
+    size_t n = strlen(t);
+    if (n > 31) { n = 31; while (n > 0 && ((unsigned char)t[n] & 0xC0) == 0x80) n--; }
+    memcpy(se.bytes + 12, t, n);
+    int32_t st = (int32_t)start, ln = (int32_t)length;
+    memcpy(se.bytes + 44, &st, 4);
+    memcpy(se.bytes + 48, &ln, 4);
+    qsdl.PushEvent(&se);
 }
 
 // Limit drawing to a rectangle (scrolling areas, popups); width < 0

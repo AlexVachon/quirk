@@ -1,0 +1,24 @@
+// IME (window v1.5.0): SDL's text-editing events reach programs as
+// "compose" events — the text being composed, its cursor and selected
+// length — before the result arrives as "text". Goes through SDL's own
+// event queue (simulate_text), headless. Skipped without SDL2.
+use window
+
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+define main() -> void {
+    if not window.available() { return }
+    w := window.open("ime", 40, 20, headless=true)
+    w.text_input_area(4, 4, 1, 16)
+    w.simulate_text("にほんご", compose=true, cursor=2, length=2)
+    w.simulate_text("日本語", compose=false)
+    w.simulate_text("", compose=true)
+    got := []
+    for e in w.events() {
+        ev: window.Event = e
+        got.append(ev.kind + "|" + ev.text + "|" + String(ev.cursor) + "|" + String(ev.length))
+    }
+    want := ["compose|にほんご|2|2", "text|日本語|0|0", "compose||0|0"]
+    if got != want { fail("events: " + String(got)) }
+    w.close()
+}

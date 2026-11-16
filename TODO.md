@@ -18,9 +18,10 @@ RadioGroup, ProgressBar, Tabs; ui 1.3 (7.30.0): menus, context menus,
 TreeView, Table; ui 1.4 (7.31.0): word wrap, editable cells,
 ColorPicker, FileDialog, drag and drop; ui 1.5 (7.32.0): working menu
 shortcuts, SplitView, Toolbar, StatusBar, DatePicker; ui 1.6 (7.33.0):
-TrueType fonts, ListItem icons, Canvas, animations. Next ideas: high-DPI
-scaling, accessibility (screen readers), IME / composed text input,
-right-to-left text.
+TrueType fonts, ListItem icons, Canvas, animations; window 1.4
+(7.36.0): high DPI; ui 1.7 (7.37.0): IME / composed text input. Next
+ideas: font fallback (one font draws everything — CJK next to Latin needs
+a font with both), right-to-left text, accessibility (screen readers).
 
 ## Housekeeping
 

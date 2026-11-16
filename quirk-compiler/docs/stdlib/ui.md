@@ -69,6 +69,10 @@ Draw into `win` inside the widget's box.
 
 React to an event; true if the widget used it.
 
+#### `define composing(self) -> Bool`
+
+True while an input method is composing text in this widget (it gets every key).
+
 #### `define children(self) -> List`
 
 Child widgets (containers).

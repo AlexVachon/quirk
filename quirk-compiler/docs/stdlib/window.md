@@ -22,6 +22,12 @@ Something that happened to a window. `kind` is one of:
                   `alt` / `meta` say which modifiers were held
   "text"        — typed text (`text`), with the keyboard layout and
                   accents applied — use this for text entry, not key_down
+  "compose"     — an input method (Chinese, Japanese, Korean, dead keys...)
+                  is composing `text`: show it at the cursor (underlined)
+                  until it arrives as a "text" event; `cursor` is the
+                  position inside it and `length` how much of it the
+                  input method has selected (characters). An empty
+                  `text` ends the composition. See `text_input_area`.
   "mouse_move"  — `x`, `y`; `left` true while the left button is held
   "mouse_down" / "mouse_up" — `x`, `y`, `button` (1 left, 2 middle,
                   3 right), `clicks` (2 for a double click)
@@ -141,6 +147,20 @@ Drawable width in (drawing) pixels — see `scale()`.
 #### `define height(self) -> Int`
 
 Drawable height in (drawing) pixels — see `scale()`.
+
+#### `define text_input_area(self, x: Int, y: Int, width: Int, height: Int) -> void`
+
+Tell the input method where text is being typed — the cursor's
+rectangle — so its candidate list (Chinese, Japanese, Korean input)
+opens next to it. Call it while a text field has focus (every frame is
+fine; it only reaches the system when the rectangle moves).
+
+#### `define simulate_text(self, text: String, compose: Bool = false, cursor: Int = 0, length: Int = 0) -> void`
+
+For tests: queue a "text" event, as if `text` had been typed — or, with
+`compose=true`, a "compose" event (an input method composing `text`,
+its cursor at `cursor`, `length` characters selected). The event comes
+back from `events()` like a real one.
 
 #### `define scale(self) -> Double`
 

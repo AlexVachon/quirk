@@ -160,7 +160,7 @@ STDLIB_TAG_process ?= v1.0.2
 # window v1.1.0: PNG / JPEG / GIF / TGA images, sprite-sheet regions, alpha (v7.22.0).
 # window v1.2.0: clip / unclip, clipboard / set_clipboard (runtime v7.26.0).
 # window v1.3.0: TrueType fonts (runtime stb_truetype, v7.33.0).
-STDLIB_TAG_window ?= v1.4.0
+STDLIB_TAG_window ?= v1.5.0
 # ui v1.0.0 is the initial release (pure Quirk on window; compiler v7.21.0).
 # ui v1.1.0: selection + clipboard in text fields, TextArea, ScrollView,
 # Dropdown, tooltips (needs window v1.2.0, compiler v7.26.0).
@@ -170,7 +170,7 @@ STDLIB_TAG_window ?= v1.4.0
 # ui v1.5.0: working menu shortcuts, SplitView, Toolbar, StatusBar, DatePicker (compiler v7.32.0).
 # ui v1.6.0: theme fonts, ListItem icons, Canvas, animations (compiler v7.33.0).
 # ui v1.6.1: no unused bindings (editor warnings).
-STDLIB_TAG_ui ?= v1.6.1
+STDLIB_TAG_ui ?= v1.7.0
 
 # --- INSTALL / UNINSTALL --------------------------------------------------
 # Copy the freshly-built compiler + runtime into $(PREFIX) (default

@@ -5,6 +5,20 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.37.0] — 2026-11-16 — input methods (Chinese, Japanese, Korean)
+
+- **Typing through an input method works in `ui` text fields** (`ui`
+  v1.7.0, `window` v1.5.0, pinned). The text being composed shows inline
+  at the cursor — underlined, with the input method's selection and
+  cursor — instead of nothing until it was committed; the candidate list
+  opens next to the cursor (it was in a corner of the screen); and keys
+  go to the input method while it composes, so Backspace edits the
+  composition rather than the text and Tab / shortcuts wait.
+- `window`: a "compose" event (`text`, `cursor`, `length`; compositions
+  longer than 32 bytes with SDL 2.0.22+), `w.text_input_area(x, y, w, h)`
+  for the candidate list, `w.simulate_text(...)` to test with. The
+  Windows IME shows its own candidate UI.
+
 ## [7.36.0] — 2026-11-16 — high DPI windows; `Int(x)` / `Double(x)`
 
 - **Sharp windows on high-density screens** (`window` v1.4.0, pinned):

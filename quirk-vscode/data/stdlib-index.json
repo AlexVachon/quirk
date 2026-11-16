@@ -167,7 +167,7 @@
 "qualified": "Event",
 "kind": "struct",
 "signature": "struct Event {",
-"doc": "Something that happened to a window. `kind` is one of:\n  \"close\"       \u2014 the close button (or Ctrl+C / quit); the window closes\n                  unless `keep_open` was set\n  \"key_down\" / \"key_up\" \u2014 `key` is the key's name in lower case: \"a\",\n                  \"escape\", \"return\", \"space\", \"left\", \"f1\", \"left_shift\"...;\n                  `repeat` is true for auto-repeat; `shift` / `ctrl` /\n                  `alt` / `meta` say which modifiers were held\n  \"text\"        \u2014 typed text (`text`), with the keyboard layout and\n                  accents applied \u2014 use this for text entry, not key_down\n  \"mouse_move\"  \u2014 `x`, `y`; `left` true while the left button is held\n  \"mouse_down\" / \"mouse_up\" \u2014 `x`, `y`, `button` (1 left, 2 middle,\n                  3 right), `clicks` (2 for a double click)\n  \"wheel\"       \u2014 `dx`, `dy` (positive = away from you / right)\n  \"resize\"      \u2014 new `width`, `height`\n  \"focus\" / \"blur\" \u2014 the window gained / lost keyboard focus"
+"doc": "Something that happened to a window. `kind` is one of:\n  \"close\"       \u2014 the close button (or Ctrl+C / quit); the window closes\n                  unless `keep_open` was set\n  \"key_down\" / \"key_up\" \u2014 `key` is the key's name in lower case: \"a\",\n                  \"escape\", \"return\", \"space\", \"left\", \"f1\", \"left_shift\"...;\n                  `repeat` is true for auto-repeat; `shift` / `ctrl` /\n                  `alt` / `meta` say which modifiers were held\n  \"text\"        \u2014 typed text (`text`), with the keyboard layout and\n                  accents applied \u2014 use this for text entry, not key_down\n  \"compose\"     \u2014 an input method (Chinese, Japanese, Korean, dead keys...)\n                  is composing `text`: show it at the cursor (underlined)\n                  until it arrives as a \"text\" event; `cursor` is the\n                  position inside it and `length` how much of it the\n                  input method has selected (characters). An empty\n                  `text` ends the composition. See `text_input_area`.\n  \"mouse_move\"  \u2014 `x`, `y`; `left` true while the left button is held\n  \"mouse_down\" / \"mouse_up\" \u2014 `x`, `y`, `button` (1 left, 2 middle,\n                  3 right), `clicks` (2 for a double click)\n  \"wheel\"       \u2014 `dx`, `dy` (positive = away from you / right)\n  \"resize\"      \u2014 new `width`, `height`\n  \"focus\" / \"blur\" \u2014 the window gained / lost keyboard focus"
 }
 ],
 "Exception": [
@@ -2063,6 +2063,15 @@
 "kind": "define",
 "signature": "extern define compile_raw(pattern: String, flags: String) -> Any",
 "doc": "Compile a pattern. Returns an opaque handle stored in `Regex._handle`.\n@throws ValueError if the pattern fails to compile."
+}
+],
+"composing": [
+{
+"package": "ui",
+"qualified": "Widget.composing",
+"kind": "method",
+"signature": "define composing(self) -> Bool {",
+"doc": "True while an input method is composing text in this widget (it gets every key)."
 }
 ],
 "confirm": [
@@ -5180,6 +5189,15 @@
 "doc": "Send signal `sig` (15 = SIGTERM, 9 = SIGKILL, 2 = SIGINT, ...). No-op once it has finished."
 }
 ],
+"simulate_text": [
+{
+"package": "window",
+"qualified": "Window.simulate_text",
+"kind": "method",
+"signature": "define simulate_text(self, text: String, compose: Bool = false, cursor: Int = 0, length: Int = 0) -> void {",
+"doc": "For tests: queue a \"text\" event, as if `text` had been typed \u2014 or, with\n`compose=true`, a \"compose\" event (an input method composing `text`,\nits cursor at `cursor`, `length` characters selected). The event comes\nback from `events()` like a real one."
+}
+],
 "sin": [
 {
 "package": "math",
@@ -5615,6 +5633,15 @@
 "kind": "method",
 "signature": "define text(self, text: String, x: Int, y: Int, color: Int = white(), scale: Int = 1, font: Font = null) -> Int {",
 "doc": "Draw `text` with its top-left corner at (x, y) in the built-in font\n(8x16 pixels per character at `scale=1`; \"\\n\" starts a new line).\nReturns the width drawn, in pixels."
+}
+],
+"text_input_area": [
+{
+"package": "window",
+"qualified": "Window.text_input_area",
+"kind": "method",
+"signature": "define text_input_area(self, x: Int, y: Int, width: Int, height: Int) -> void {",
+"doc": "Tell the input method where text is being typed \u2014 the cursor's\nrectangle \u2014 so its candidate list (Chinese, Japanese, Korean input)\nopens next to it. Call it while a text field has focus (every frame is\nfine; it only reaches the system when the rectangle moves)."
 }
 ],
 "text_w": [

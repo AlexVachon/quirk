@@ -2,6 +2,17 @@
 
 All notable changes to the extension land here. Versioning follows SemVer; minor bumps for new features, patches for fixes.
 
+## [1.1.6] — 2026-11-16 — hover docs for the new window / ui API
+
+- Hover and completion know the `window` / `ui` API added in compiler
+  7.36–7.41 (32 entries): input methods (`Window.text_input_area`,
+  `Window.simulate_text`, `Widget.composing`), font fallback
+  (`Font.add_fallback`, `Font.covers`), right-to-left text
+  (`window.is_rtl`, `window.has_rtl`, `Font.caret_x`, `Font.index_at`,
+  `Font.selection`) and accessibility (`App.accessibility`,
+  `App.announce`, `AccessNode`, `AccessEvent`, `Widget.access_*`,
+  `Window.access_*`).
+
 ## [1.1.5] — 2026-11-16 — right owners in hovers
 
 - **Hover and completion docs name the right type.** The stdlib index filed

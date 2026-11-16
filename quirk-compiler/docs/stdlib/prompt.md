@@ -54,3 +54,43 @@ Pick one option from a numbered list. Renders:
 
 Returns the selected option's text. `default_idx` is zero-based; out-
 of-range values fall back to the first option.
+
+#### `define select_index(message: String, options: List, default_idx: Int = 0) -> _Pick`
+
+Same numbered menu as `select`, but returns the zero-based **index** of
+the chosen option rather than its display string. Useful when you want
+to look up an original object in the caller's data — paired with
+`select_obj` when you'd rather hand the object back directly.
+
+#### `define select_obj(message: String, options: List, format: Callable, default_idx: Int = 0) -> Any`
+
+Numbered menu over arbitrary objects with a caller-supplied formatter.
+Avoids the "options must already be strings" constraint of `select`,
+and returns the **original** option (the actual `Cmd`, `Recipe`,
+whatever) instead of its rendered label.
+
+@param message: String — header line shown above the menu
+@param options: List — arbitrary objects to pick from
+@param format: Callable — `fn(opt: Any) => String` rendering each row
+@param default_idx: Int — zero-based default; out-of-range falls to 0
+@returns: Any — the chosen original option (not the rendered label)
+
+@example:
+chosen: Cmd := select_obj("commands:", commands, fn(c: Any) -> String {
+    cmd: Cmd := c
+    return cmd.label()
+})
+
+#### `define multiselect(message: String, options: List) -> List`
+
+Pick zero-or-more options from a numbered list. Renders the same as
+`select` but takes a comma-separated list of indices:
+
+    Tags?
+      1) urgent
+      2) blocked
+      3) needs-review
+    Pick (comma-separated, blank for none): 1,3
+
+Returns the chosen options as a List<String> in their original order.
+Whitespace and duplicates are tolerated; an empty reply returns [].

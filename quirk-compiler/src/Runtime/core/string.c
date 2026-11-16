@@ -44,7 +44,10 @@ double Core_Primitives_Any_to_float(Any* a);
 extern void quirk_throw_exception(const char* type_name, const char* message);
 extern String* quirk_opaque_to_string(void* val);
 
-#define MAX_SMALL_INT 0xFFFFF
+// Ints that fit in 32 bits travel inline in a pointer (inttoptr) when the
+// value is untyped — same limit as quirk_opaque_to_int. It was 0xFFFFF,
+// so `String(n)` for n > 1048575 read the number as a C string address.
+#define MAX_SMALL_INT 0xFFFFFFFFUL
 
 // ==========================================
 //  HELPERS
@@ -470,7 +473,7 @@ void Core_String_String___init(String* self, char* raw) {
     uintptr_t val = (uintptr_t)raw;
     if (val <= MAX_SMALL_INT) {
         char temp[32];
-        sprintf(temp, "%d", (int)val);
+        sprintf(temp, "%d", (int)(int32_t)val);
         self->length = strlen(temp);
         self->buffer = strdup(temp);
         return;
@@ -542,7 +545,7 @@ static inline String* quirk_ensure_string(String* val) {
     uintptr_t v = (uintptr_t)val;
     if (v <= MAX_SMALL_INT) {
         char temp[32];
-        sprintf(temp, "%d", (int)v);
+        sprintf(temp, "%d", (int)(int32_t)v);
         return make_String(temp);
     }
     return val;
@@ -746,7 +749,7 @@ String* make_String(const char* raw) {
     uintptr_t val = (uintptr_t)raw;
     if (val <= MAX_SMALL_INT) {
         char temp[32];
-        sprintf(temp, "%d", (int)val);
+        sprintf(temp, "%d", (int)(int32_t)val);
         s->length = strlen(temp);
         s->buffer = strdup(temp);
     } else {

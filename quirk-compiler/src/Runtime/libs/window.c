@@ -74,6 +74,7 @@
 void* quirk_int_to_opaque(int64_t v);   // runtime.c
 
 typedef struct { int x, y, w, h; } QSdlRect;
+typedef struct { float x, y, w, h; } QSdlFRect;
 
 // SDL_Event is a 56-byte union; only these offsets are read.
 typedef struct { uint8_t bytes[56]; } QSdlEvent;
@@ -83,6 +84,7 @@ typedef struct { uint8_t bytes[56]; } QSdlEvent;
 #define QSDL_WINDOW_SHOWN         0x00000004u
 #define QSDL_WINDOW_HIDDEN        0x00000008u
 #define QSDL_WINDOW_RESIZABLE     0x00000020u
+#define QSDL_WINDOW_ALLOW_HIGHDPI 0x00002000u
 #define QSDL_RENDERER_SOFTWARE    0x00000001u
 #define QSDL_RENDERER_ACCELERATED 0x00000002u
 #define QSDL_RENDERER_VSYNC       0x00000004u
@@ -101,6 +103,7 @@ typedef struct { uint8_t bytes[56]; } QSdlEvent;
 #define QSDL_MOUSEWHEEL      0x403
 
 #define QSDL_WE_SIZE_CHANGED  6
+#define QSDL_WE_DISPLAY_CHANGED 18   // SDL 2.0.18+: moved to another monitor
 #define QSDL_WE_FOCUS_GAINED 12
 #define QSDL_WE_FOCUS_LOST   13
 #define QSDL_WE_CLOSE        14
@@ -152,6 +155,9 @@ static struct {
     int (*SetClipboardText)(const char*);
     char* (*GetClipboardText)(void);
     void (*Free)(void*);
+    // Optional (NULL when this SDL lacks them): high-DPI drawing.
+    int (*RenderSetScale)(void*, float, float);
+    int (*RenderCopyF)(void*, void*, const QSdlRect*, const QSdlFRect*);
 } qsdl;
 
 static char qwin_err[512] = "";
@@ -224,6 +230,8 @@ static int qsdl_load(void) {
     QLOAD(GetClipboardText, "SDL_GetClipboardText")
     QLOAD(Free, "SDL_free")
     #undef QLOAD
+    *(void**)&qsdl.RenderSetScale = dlsym(qsdl.lib, "SDL_RenderSetScale");
+    *(void**)&qsdl.RenderCopyF = dlsym(qsdl.lib, "SDL_RenderCopyF");
     qsdl.loaded = 1;
     return 1;
     }
@@ -252,6 +260,12 @@ typedef struct {
     uint8_t r, g, b, a;    // current draw colour
     QWinEvent q[QWIN_QUEUE];
     int qhead, qlen;
+    // High DPI. Programs draw in logical pixels; `scale` physical pixels
+    // per logical one = the OS's backing ratio (macOS Retina, Wayland,
+    // Windows with DPI scaling: drawable / window size) x `ui` (an extra
+    // factor from QUIRK_UI_SCALE / GDK_SCALE, for X11 and tests). Window
+    // and mouse coordinates are in window units = logical x ui.
+    float scale, ui;
 } QWin;
 
 static QWin qwins[QWIN_MAX];
@@ -260,6 +274,44 @@ static int qwin_headless = 0;
 static QWin* qwin_get(int64_t h) {
     if (h < 0 || h >= QWIN_MAX || !qwins[h].used) return NULL;
     return &qwins[h];
+}
+
+static void qfont_free_glyphs_of(int64_t h);
+
+// Extra scale factor asked for in the environment: QUIRK_UI_SCALE (any
+// platform), else GDK_SCALE (the GNOME / X11 convention). 1 when unset.
+static float qwin_env_scale(void) {
+    const char* names[] = { "QUIRK_UI_SCALE", "GDK_SCALE" };
+    for (int i = 0; i < 2; i++) {
+        const char* v = getenv(names[i]);
+        if (v && *v) {
+            float f = (float)atof(v);
+            if (f >= 0.5f && f <= 8.0f) return f;
+        }
+    }
+    return 1.0f;
+}
+
+// Re-read the window's pixel ratio (it changes when the window moves to a
+// screen with another density) and apply it to the renderer. Glyphs are
+// rendered at the physical size, so a new scale drops the window's glyphs.
+static void qwin_rescale(QWin* w) {
+    int ww = 0, wh = 0, ow = 0, oh = 0;
+    qsdl.GetWindowSize(w->win, &ww, &wh);
+    qsdl.GetRendererOutputSize(w->ren, &ow, &oh);
+    float ratio = (ww > 0 && ow > 0) ? (float)ow / (float)ww : 1.0f;
+    float s = ratio * w->ui;
+    if (!qsdl.RenderSetScale) s = 1.0f;
+    if (s < 0.25f) s = 0.25f;
+    if (w->scale > 0 && fabsf(s - w->scale) < 0.001f) return;
+    w->scale = s;
+    qsdl.RenderSetScale(w->ren, s, s);
+    qfont_free_glyphs_of(w - qwins);
+}
+
+// Window units (events) → logical pixels.
+static int qwin_to_logical(const QWin* w, int v) {
+    return w->ui == 1.0f ? v : (int)floorf((float)v / w->ui);
 }
 
 static void qwin_push(QWin* w, const QWinEvent* e) {
@@ -300,7 +352,12 @@ static void qwin_pump(void) {
             case QSDL_WINDOWEVENT: {
                 uint8_t we = se.bytes[12];
                 if (we == QSDL_WE_CLOSE) ev.kind = QEV_CLOSE;
-                else if (we == QSDL_WE_SIZE_CHANGED) { ev.kind = QEV_RESIZE; ev.a = qev_i32(&se, 16); ev.b = qev_i32(&se, 20); }
+                else if (we == QSDL_WE_SIZE_CHANGED) {
+                    qwin_rescale(w);
+                    ev.kind = QEV_RESIZE;
+                    ev.a = qwin_to_logical(w, qev_i32(&se, 16)); ev.b = qwin_to_logical(w, qev_i32(&se, 20));
+                }
+                else if (we == QSDL_WE_DISPLAY_CHANGED) qwin_rescale(w);
                 else if (we == QSDL_WE_FOCUS_GAINED) ev.kind = QEV_FOCUS;
                 else if (we == QSDL_WE_FOCUS_LOST) ev.kind = QEV_BLUR;
                 break;
@@ -330,13 +387,13 @@ static void qwin_pump(void) {
                 break;
             case QSDL_MOUSEMOTION:
                 ev.kind = QEV_MOUSE_MOVE;
-                ev.a = qev_i32(&se, 20); ev.b = qev_i32(&se, 24);
+                ev.a = qwin_to_logical(w, qev_i32(&se, 20)); ev.b = qwin_to_logical(w, qev_i32(&se, 24));
                 ev.c = (int)qev_u32(&se, 16);      // buttons held (bit 0 = left)
                 break;
             case QSDL_MOUSEBUTTONDOWN:
             case QSDL_MOUSEBUTTONUP:
                 ev.kind = type == QSDL_MOUSEBUTTONDOWN ? QEV_MOUSE_DOWN : QEV_MOUSE_UP;
-                ev.a = qev_i32(&se, 20); ev.b = qev_i32(&se, 24);
+                ev.a = qwin_to_logical(w, qev_i32(&se, 20)); ev.b = qwin_to_logical(w, qev_i32(&se, 24));
                 ev.c = se.bytes[16];               // 1 left, 2 middle, 3 right
                 ev.d = se.bytes[18];               // clicks
                 break;
@@ -397,6 +454,11 @@ int64_t Window_open_raw(String* title, int64_t width, int64_t height, int64_t fl
             qwin_headless = 1;
         }
         qsdl.SetHint("SDL_NO_SIGNAL_HANDLERS", "1");      // keep Ctrl+C for Quirk
+        // Windows: per-monitor DPI aware, with window coordinates in
+        // logical units and a full-resolution drawable (like macOS) —
+        // instead of Windows stretching a 96-DPI bitmap (blurry).
+        qsdl.SetHint("SDL_WINDOWS_DPI_AWARENESS", "permonitorv2");
+        qsdl.SetHint("SDL_WINDOWS_DPI_SCALING", "1");
         if (qsdl.Init(QSDL_INIT_VIDEO) != 0) { qwin_set_err("can't start SDL video"); return -1; }
         qsdl.inited = 1;
         qsdl.StartTextInput();
@@ -407,8 +469,10 @@ int64_t Window_open_raw(String* title, int64_t width, int64_t height, int64_t fl
     char* t = title ? make_safe_cstr(title) : "";
     uint32_t wf = (flags & 2) ? QSDL_WINDOW_HIDDEN : QSDL_WINDOW_SHOWN;
     if (flags & 1) wf |= QSDL_WINDOW_RESIZABLE;
+    wf |= QSDL_WINDOW_ALLOW_HIGHDPI;
+    float ui = qsdl.RenderSetScale ? qwin_env_scale() : 1.0f;
     void* win = qsdl.CreateWindow(t ? t : "", QSDL_WINDOWPOS_CENTERED, QSDL_WINDOWPOS_CENTERED,
-                                  (int)width, (int)height, wf);
+                                  (int)(width * ui + 0.5f), (int)(height * ui + 0.5f), wf);
     if (!win) { qwin_set_err("can't create the window"); return -1; }
     uint32_t rf = qwin_headless ? QSDL_RENDERER_SOFTWARE : QSDL_RENDERER_ACCELERATED;
     if ((flags & 4) && !qwin_headless) rf |= QSDL_RENDERER_VSYNC;
@@ -424,11 +488,13 @@ int64_t Window_open_raw(String* title, int64_t width, int64_t height, int64_t fl
     w->id = qsdl.GetWindowID(win);
     w->font = qwin_make_font(ren);
     w->r = w->g = w->b = 0; w->a = 255;
+    w->ui = ui;
+    w->scale = 0;
+    qwin_rescale(w);
     return slot;
 }
 
 static void qwin_free_images_of(int64_t h);
-static void qfont_free_glyphs_of(int64_t h);
 
 void Window_close_raw(int64_t h) {
     QWin* w = qwin_get(h);
@@ -492,7 +558,9 @@ static QWin* qwin_draw(int64_t h, int64_t color) {
 
 void Window_clear_raw(int64_t h, int64_t color) {
     QWin* w = qwin_draw(h, color);
-    if (w) qsdl.RenderClear(w->ren);
+    if (!w) return;
+    qwin_rescale(w);           // once a frame: catches a move to another screen
+    qsdl.RenderClear(w->ren);
 }
 
 void Window_rect_raw(int64_t h, int64_t x, int64_t y, int64_t rw, int64_t rh, int64_t color, int64_t fill) {
@@ -513,9 +581,8 @@ void Window_point_raw(int64_t h, int64_t x, int64_t y, int64_t color) {
 }
 
 // Midpoint circle: an outline, or horizontal spans when filled.
-void Window_circle_raw(int64_t h, int64_t cx, int64_t cy, int64_t radius, int64_t color, int64_t fill) {
-    QWin* w = qwin_draw(h, color);
-    if (!w || radius < 0) return;
+// Midpoint circle in the renderer's current units.
+static void qwin_circle(QWin* w, int64_t cx, int64_t cy, int64_t radius, int64_t fill) {
     int x = (int)radius, y = 0, err = 1 - x;
     int lastY = -1;
     while (x >= y) {
@@ -538,6 +605,20 @@ void Window_circle_raw(int64_t h, int64_t cx, int64_t cy, int64_t radius, int64_
         else { x--; err += 2 * (y - x) + 1; }
     }
     if (fill && radius == 0) qsdl.RenderDrawPoint(w->ren, (int)cx, (int)cy);
+}
+
+void Window_circle_raw(int64_t h, int64_t cx, int64_t cy, int64_t radius, int64_t color, int64_t fill) {
+    QWin* w = qwin_draw(h, color);
+    if (!w || radius < 0) return;
+    float sc = w->scale > 0 ? w->scale : 1.0f;
+    if (sc == 1.0f || !qsdl.RenderSetScale) { qwin_circle(w, cx, cy, radius, fill); return; }
+    // High DPI: trace the circle in physical pixels (smooth at 2x, not a
+    // circle of 2x2 blocks), over the same logical pixels.
+    qsdl.RenderSetScale(w->ren, 1.0f, 1.0f);
+    qwin_circle(w, (int64_t)floorf(((float)cx + 0.5f) * sc),
+                (int64_t)floorf(((float)cy + 0.5f) * sc),
+                (int64_t)floorf(((float)radius + 0.5f) * sc - 0.5f + 0.5f), fill);
+    qsdl.RenderSetScale(w->ren, sc, sc);
 }
 
 // Next UTF-8 codepoint of `s` at *i (advances it); invalid bytes give '?'.
@@ -604,16 +685,28 @@ void Window_present_raw(int64_t h) {
 
 // ----- window properties -----
 
-// [width, height] of the drawable area in pixels.
+// [width, height] of the drawable area in logical pixels.
 List* Window_size_raw(int64_t h) {
     List* res = (List*)quirk_alloc(QT_LIST, sizeof(List));
     Core_Collections_List_List___init(res);
     QWin* w = qwin_get(h);
     int ww = 0, hh = 0;
-    if (w) qsdl.GetRendererOutputSize(w->ren, &ww, &hh);
+    if (w) {
+        qsdl.GetRendererOutputSize(w->ren, &ww, &hh);
+        if (w->scale > 0 && w->scale != 1.0f) {
+            ww = (int)((float)ww / w->scale + 0.5f);
+            hh = (int)((float)hh / w->scale + 0.5f);
+        }
+    }
     Core_Collections_List_List_append(res, quirk_int_to_opaque(ww));
     Core_Collections_List_List_append(res, quirk_int_to_opaque(hh));
     return res;
+}
+
+// Physical pixels per logical pixel (2.0 on a Retina / 200% screen).
+double Window_scale_raw(int64_t h) {
+    QWin* w = qwin_get(h);
+    return (w && w->scale > 0) ? (double)w->scale : 1.0;
 }
 
 // Limit drawing to a rectangle (scrolling areas, popups); width < 0
@@ -661,7 +754,9 @@ void Window_set_title_raw(int64_t h, String* title) {
 int64_t Window_pixel_raw(int64_t h, int64_t x, int64_t y) {
     QWin* w = qwin_get(h);
     if (!w) return -1;
-    QSdlRect r = { (int)x, (int)y, 1, 1 };
+    float sc = w->scale > 0 ? w->scale : 1.0f;
+    // The physical pixel at the centre of logical pixel (x, y).
+    QSdlRect r = { (int)(((float)x + 0.5f) * sc), (int)(((float)y + 0.5f) * sc), 1, 1 };
     uint32_t px = 0;
     if (qsdl.RenderReadPixels(w->ren, &r, QSDL_PIXELFORMAT_ARGB8888, &px, 4) != 0) return -1;
     return (int64_t)(px & 0xFFFFFFu);
@@ -944,7 +1039,8 @@ static QGlyph* qfont_glyph(QFont* f, int64_t h, QWin* w, int cp) {
         if (g->win >= 0) continue;
         // Empty: render it.
         int gw = 0, gh = 0, xo = 0, yo = 0;
-        unsigned char* bmp = stbtt_GetCodepointBitmap(&f->info, 0, f->scale, cp, &gw, &gh, &xo, &yo);
+        float gs = f->scale * (w->scale > 0 ? w->scale : 1.0f);   // physical pixels
+        unsigned char* bmp = stbtt_GetCodepointBitmap(&f->info, gs, gs, cp, &gw, &gh, &xo, &yo);
         g->win = h; g->cp = cp; g->w = gw; g->h = gh; g->xoff = xo; g->yoff = yo; g->tex = NULL;
         if (bmp && gw > 0 && gh > 0) {
             uint32_t* px = (uint32_t*)GC_malloc_atomic((size_t)gw * gh * 4);
@@ -985,8 +1081,18 @@ void Window_font_text_raw(int64_t h, int64_t fh, String* text, int64_t x, int64_
         if (g && g->tex) {
             qsdl.SetTextureColorMod(g->tex, r, gc, b);
             qsdl.SetTextureAlphaMod(g->tex, a);
-            QSdlRect dst = { (int)(pen + 0.5f) + g->xoff, base + g->yoff, g->w, g->h };
-            qsdl.RenderCopy(w->ren, g->tex, NULL, &dst);
+            float sc = w->scale > 0 ? w->scale : 1.0f;
+            if (sc != 1.0f && qsdl.RenderCopyF) {
+                // The glyph is at physical size: place it on whole physical
+                // pixels and let the renderer's scale map it back 1:1.
+                float px = floorf(pen * sc + 0.5f) + (float)g->xoff;
+                float py = floorf((float)base * sc + 0.5f) + (float)g->yoff;
+                QSdlFRect dst = { px / sc, py / sc, (float)g->w / sc, (float)g->h / sc };
+                qsdl.RenderCopyF(w->ren, g->tex, NULL, &dst);
+            } else {
+                QSdlRect dst = { (int)(pen + 0.5f) + g->xoff, base + g->yoff, g->w, g->h };
+                qsdl.RenderCopy(w->ren, g->tex, NULL, &dst);
+            }
         }
         int adv, lsb;
         stbtt_GetCodepointHMetrics(&f->info, cp, &adv, &lsb);

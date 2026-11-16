@@ -1,0 +1,38 @@
+// `Int(x)` / `Double(x)` allocated an empty Int / Double and ignored x —
+// an internal compiler error ("Invalid bitcast") once the value was used.
+// They convert now, like Python's int() / float(). Also: `String(n)` for
+// an Int above 1048575 crashed (read as a C string address).
+define check(what: String, got: String, want: String) -> void {
+    if got == want {
+        print("ok " + what)
+    } else {
+        print("FAIL " + what + ": got '" + got + "', want '" + want + "'")
+    }
+}
+
+define main() -> void {
+    d := 2.7
+    check("Int(Double)", String(Int(d)), "2")
+    check("Int(negative Double)", String(Int(-2.7)), "-2")
+    check("Int(String)", String(Int("12") + 1), "13")
+    check("Int(Bool)", String(Int(true)), "1")
+    check("Int(Int)", String(Int(5)), "5")
+    check("Double(Int)", String(Double(3) / 2), "1.5")
+    check("Double(String)", String(Double("2.5") * 2), "5.0")
+    xs: List = [4, 5.5, "6"]
+    check("Int(untyped)", String(Int(xs[0]) + Int(xs[2])), "10")
+    check("Double(untyped)", String(Double(xs[1])), "5.5")
+    n: Int = Int(40 * 1.5 + 0.5)
+    check("Int(expression)", String(n), "60")
+    caught := "no"
+    try {
+        print(Int("x1"))
+    } catch (ValueError) {
+        caught = "ValueError"
+    }
+    check("Int(bad text)", caught, "ValueError")
+    big := 16711680
+    check("String(big Int)", String(big), "16711680")
+    check("String(negative)", String(-2000000), "-2000000")
+    check("String(64-bit)", String(5000000000), "5000000000")
+}

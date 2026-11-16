@@ -236,6 +236,44 @@ class LLVMCodegen {
             PointerType::getUnqual(Type::getInt32Ty(Context)), i8p, i8p, Type::getInt32Ty(Context));
     }
 
+    // `Int(x)` (toInt) / `Double(x)` of an Int, Double, Bool, String or an
+    // untyped value. nullptr for anything else (the caller falls back).
+    Value* emitNumericConversion(bool toInt, Node* argNode) {
+        Value* v = handleExpression(argNode);
+        if (!v) return nullptr;
+        Type* i64 = Type::getInt64Ty(Context);
+        Type* dbl = Type::getDoubleTy(Context);
+        Type* t = v->getType();
+        Type* want = toInt ? i64 : dbl;
+        if (t->isIntegerTy(1)) v = Builder.CreateZExt(v, i64, "conv_b2i"), t = i64;
+        if (t->isIntegerTy())
+            return toInt ? Builder.CreateIntCast(v, i64, true, "conv_i2i")
+                         : Builder.CreateSIToFP(v, dbl, "conv_i2d");
+        if (t->isDoubleTy() || t->isFloatTy())
+            return toInt ? Builder.CreateFPToSI(v, i64, "conv_d2i")
+                         : Builder.CreateFPExt(v, dbl, "conv_d2d");
+        if (!t->isPointerTy()) return nullptr;
+        Type* el = t->getPointerElementType();
+        if (el->isStructTy() && StructTypes.count("String")) {
+            std::string sn = cast<StructType>(el)->getName().str();
+            if (sn.rfind("struct.", 0) == 0) sn = sn.substr(7);
+            if (sn == "String" || structGen->inheritsFrom(sn, "String")) {
+                Value* str = Builder.CreateBitCast(v, PointerType::getUnqual(StructTypes["String"]));
+                FunctionCallee fn = TheModule->getOrInsertFunction(
+                    toInt ? "Core_String_String_to_int" : "Core_String_String_to_float",
+                    FunctionType::get(want, {str->getType()}, false));
+                return Builder.CreateCall(fn, {str}, toInt ? "conv_s2i" : "conv_s2d");
+            }
+        }
+        // Untyped (Any, a List element, ...): the runtime reads what it holds.
+        Type* i8p = Type::getInt8PtrTy(Context);
+        Value* raw = Builder.CreateBitCast(v, i8p);
+        FunctionCallee fn = TheModule->getOrInsertFunction(
+            toInt ? "quirk_convert_to_int" : "quirk_convert_to_double",
+            FunctionType::get(want, {i8p}, false));
+        return Builder.CreateCall(fn, {raw}, toInt ? "conv_o2i" : "conv_o2d");
+    }
+
     [[noreturn]] void fatalError(const std::string& rawMsg, int line, int col) {
         const std::string msg = quirk::displayTypeNames(rawMsg);
         std::cerr << quirk::errorTag(msg) << msg << "\n";
@@ -2344,6 +2382,15 @@ class LLVMCodegen {
                     query = Builder.CreateCall(opaqueToStr, {query});
                 }
                 return Builder.CreateCall(fn, {query, packedPtr, count, namePtr});
+            }
+
+            // `Int(x)` / `Double(x)`: a conversion (Python's int() / float()).
+            // These used to allocate an empty Int / Double "object" and
+            // ignore x — an internal compiler error once the value was used.
+            if ((lit->value == "Int" || lit->value == "Double") && call->args.size() == 1 &&
+                call->args[0].name.empty() && !call->args[0].isSpread) {
+                if (Value* conv = emitNumericConversion(lit->value == "Int", call->args[0].value.get()))
+                    return conv;
             }
 
             if (StructTypes.count(lit->value)) {

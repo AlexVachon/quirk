@@ -13,11 +13,6 @@ A single named test. Construct with `TestCase("name", fn() { ... })`.
 The lambda body uses `test.assert_*` helpers; any AssertionError fails
 the case. Other exceptions also fail it (their type is shown).
 
-#### `define run_all(cases: List) -> Int`
-
-Run every case in `cases`, printing pass/fail marks and a final summary.
-Returns the number of failures (0 == all green).
-
 
 ### Module-level functions
 
@@ -53,3 +48,8 @@ thrown exception's type must match (e.g. `"ValueError"`).
 
 Asserts `haystack` contains `needle` (substring for Strings, element for
 Lists, or anything else with a `.contains` method).
+
+#### `define run_all(cases: List) -> Int`
+
+Run every case in `cases`, printing pass/fail marks and a final summary.
+Returns the number of failures (0 == all green).

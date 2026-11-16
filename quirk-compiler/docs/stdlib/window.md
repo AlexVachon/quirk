@@ -11,23 +11,31 @@
 
 Thrown when a window can't be opened (no SDL2, no display, ...).
 
-#### `define rgb(r: Int, g: Int, b: Int) -> Int`
+### `struct Event`
 
-An opaque colour from red, green, blue (0-255 each).
+Something that happened to a window. `kind` is one of:
+  "close"       — the close button (or Ctrl+C / quit); the window closes
+                  unless `keep_open` was set
+  "key_down" / "key_up" — `key` is the key's name in lower case: "a",
+                  "escape", "return", "space", "left", "f1", "left_shift"...;
+                  `repeat` is true for auto-repeat; `shift` / `ctrl` /
+                  `alt` / `meta` say which modifiers were held
+  "text"        — typed text (`text`), with the keyboard layout and
+                  accents applied — use this for text entry, not key_down
+  "mouse_move"  — `x`, `y`; `left` true while the left button is held
+  "mouse_down" / "mouse_up" — `x`, `y`, `button` (1 left, 2 middle,
+                  3 right), `clicks` (2 for a double click)
+  "wheel"       — `dx`, `dy` (positive = away from you / right)
+  "resize"      — new `width`, `height`
+  "focus" / "blur" — the window gained / lost keyboard focus
 
-#### `define rgba(r: Int, g: Int, b: Int, a: Int) -> Int`
+### `struct Font`
 
-A colour with transparency: `a` 0 (invisible) to 255 (opaque).
-
-#### `define hex(code: String) -> Int`
-
-A colour from `"#rrggbb"`, `"#rrggbbaa"`, `"#rgb"` (with or without `#`).
-@throws ValueError for anything else.
-@example window.hex("#ff8800")
-
-#### `define channels(color: Int) -> List`
-
-The colour's red, green, blue and alpha parts (0-255).
+A TrueType / OpenType font at one pixel size (`window.load_font`). Pass
+it to `Window.text(..., font=f)`. Text is UTF-8 — any character the font
+has is drawn. `size` is the requested height; `ascent` / `descent` are
+how far glyphs reach above / below the baseline, `line_height` the
+distance between lines. One Font works in every window.
 
 #### `define width(self, text: String) -> Int`
 
@@ -37,18 +45,21 @@ Width in pixels of `text` (its longest line) in this font.
 
 Release the font. Drawing with it afterwards does nothing.
 
-#### `define load_font(path: String, size: Int) -> Font`
+### `struct Image`
 
-Load a font file (`.ttf`, or `.otf` with TrueType outlines) at `size`
-pixels tall.
-@throws WindowError if the file can't be read or isn't a font.
-@example
-f := window.load_font("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 18)
-w.text("Grüße — ünïcödé ✓", 20, 20, window.white(), font=f)
+An image loaded for one window (`Window.load_image`); `width` / `height` in pixels.
 
 #### `define free(self) -> void`
 
 Release the image's memory. Drawing it afterwards does nothing.
+
+### `struct Window`
+
+An open window (from `window.open`). Draw into it, then `present()` to
+show the frame; drawing starts from what the last frame left unless you
+`clear` first.
+  `keep_open`  — set true to handle "close" events yourself (e.g. "save
+                 changes?") instead of closing at once
 
 #### `define is_open(self) -> Bool`
 
@@ -125,11 +136,20 @@ Show everything drawn since the last `present`.
 
 #### `define width(self) -> Int`
 
-Drawable width in pixels.
+Drawable width in (drawing) pixels — see `scale()`.
 
 #### `define height(self) -> Int`
 
-Drawable height in pixels.
+Drawable height in (drawing) pixels — see `scale()`.
+
+#### `define scale(self) -> Double`
+
+Physical pixels per drawing pixel: 1.0 on a standard screen, 2.0 on a
+Retina / 200% one. Everything you draw is in drawing pixels — sizes
+and text come out the same physical size on every screen, and text and
+shapes use the full resolution. Use it to pick a sharper image
+(`icon@2x.png` when it's 2 or more). Set QUIRK_UI_SCALE (e.g. 1.5) to
+scale a program where the system doesn't (X11).
 
 #### `define clip(self, x: Int, y: Int, width: Int, height: Int) -> void`
 
@@ -152,6 +172,55 @@ The colour (0xRRGGBB, opaque) of pixel (x, y) in what's been drawn — mostly fo
 
 Save what's been drawn as a BMP image.
 @throws WindowError on failure.
+
+
+### Module-level functions
+
+#### `extern define text_width(text: String, scale: Int = 1) -> Int`
+
+Width in pixels of `text` drawn with `Window.text` at `scale` (its
+longest line). For centring and layout.
+@example x := (w.width() - window.text_width("Paused", 2)) / 2
+
+#### `extern define ticks() -> Int`
+
+Milliseconds on a steady clock (for timing frames and animation).
+
+#### `define clipboard() -> String`
+
+The text on the system clipboard ("" if none). Before any window is open,
+or with headless windows, a clipboard private to the program.
+
+#### `define set_clipboard(text: String) -> void`
+
+Put `text` on the clipboard (see `clipboard()`).
+
+#### `define rgb(r: Int, g: Int, b: Int) -> Int`
+
+An opaque colour from red, green, blue (0-255 each).
+
+#### `define rgba(r: Int, g: Int, b: Int, a: Int) -> Int`
+
+A colour with transparency: `a` 0 (invisible) to 255 (opaque).
+
+#### `define hex(code: String) -> Int`
+
+A colour from `"#rrggbb"`, `"#rrggbbaa"`, `"#rgb"` (with or without `#`).
+@throws ValueError for anything else.
+@example window.hex("#ff8800")
+
+#### `define channels(color: Int) -> List`
+
+The colour's red, green, blue and alpha parts (0-255).
+
+#### `define load_font(path: String, size: Int) -> Font`
+
+Load a font file (`.ttf`, or `.otf` with TrueType outlines) at `size`
+pixels tall.
+@throws WindowError if the file can't be read or isn't a font.
+@example
+f := window.load_font("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 18)
+w.text("Grüße — ünïcödé ✓", 20, 20, window.white(), font=f)
 
 #### `define open(title: String, width: Int, height: Int, resizable: Bool = false, hidden: Bool = false, vsync: Bool = true, headless: Bool = false) -> Window`
 
@@ -181,63 +250,3 @@ define frame(w: window.Window, events: List) -> void {
     w.text("Frame at " + window.ticks().str() + "ms", 10, 10)
 }
 window.run(window.open("Demo", 400, 300), frame)
-
-### `struct Event`
-
-Something that happened to a window. `kind` is one of:
-  "close"       — the close button (or Ctrl+C / quit); the window closes
-                  unless `keep_open` was set
-  "key_down" / "key_up" — `key` is the key's name in lower case: "a",
-                  "escape", "return", "space", "left", "f1", "left_shift"...;
-                  `repeat` is true for auto-repeat; `shift` / `ctrl` /
-                  `alt` / `meta` say which modifiers were held
-  "text"        — typed text (`text`), with the keyboard layout and
-                  accents applied — use this for text entry, not key_down
-  "mouse_move"  — `x`, `y`; `left` true while the left button is held
-  "mouse_down" / "mouse_up" — `x`, `y`, `button` (1 left, 2 middle,
-                  3 right), `clicks` (2 for a double click)
-  "wheel"       — `dx`, `dy` (positive = away from you / right)
-  "resize"      — new `width`, `height`
-  "focus" / "blur" — the window gained / lost keyboard focus
-
-### `struct Font`
-
-A TrueType / OpenType font at one pixel size (`window.load_font`). Pass
-it to `Window.text(..., font=f)`. Text is UTF-8 — any character the font
-has is drawn. `size` is the requested height; `ascent` / `descent` are
-how far glyphs reach above / below the baseline, `line_height` the
-distance between lines. One Font works in every window.
-
-### `struct Image`
-
-An image loaded for one window (`Window.load_image`); `width` / `height` in pixels.
-
-### `struct Window`
-
-An open window (from `window.open`). Draw into it, then `present()` to
-show the frame; drawing starts from what the last frame left unless you
-`clear` first.
-  `keep_open`  — set true to handle "close" events yourself (e.g. "save
-                 changes?") instead of closing at once
-
-
-### Module-level functions
-
-#### `extern define text_width(text: String, scale: Int = 1) -> Int`
-
-Width in pixels of `text` drawn with `Window.text` at `scale` (its
-longest line). For centring and layout.
-@example x := (w.width() - window.text_width("Paused", 2)) / 2
-
-#### `extern define ticks() -> Int`
-
-Milliseconds on a steady clock (for timing frames and animation).
-
-#### `define clipboard() -> String`
-
-The text on the system clipboard ("" if none). Before any window is open,
-or with headless windows, a clipboard private to the program.
-
-#### `define set_clipboard(text: String) -> void`
-
-Put `text` on the clipboard (see `clipboard()`).

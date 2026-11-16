@@ -46,6 +46,9 @@ if resp.ok {
     print(data.get("name"))
 }
 
+
+### Module-level functions
+
 #### `define request(method: String, target: String, data: String = "", headers: Map = Map(), params: Map = Map(), follow_redirects: Bool = true) -> Response`
 
 Send a single HTTP request and return the response. Lower-level form
@@ -182,6 +185,12 @@ A parsed incoming HTTP request — what `Server` hands to your handler.
 
 Compact form: `<Request GET /path>`.
 
+### `struct Server`
+
+A simple HTTP/1.1 server. Each connection is handled in its own task, so
+requests are served concurrently: while one handler waits (on a socket,
+`sys.sleep`, or `await`), others run.
+
 #### `define listen(self, host: String, port: Int, handler: Callable) -> void`
 
 Block forever, accepting connections on `host:port` and dispatching
@@ -199,12 +208,6 @@ Server().listen("0.0.0.0", 8080, fn(req: Request) -> Response {
 #### `define stop(self) -> void`
 
 Stop the accept-loop on the next iteration.
-
-### `struct Server`
-
-A simple HTTP/1.1 server. Each connection is handled in its own task, so
-requests are served concurrently: while one handler waits (on a socket,
-`sys.sleep`, or `await`), others run.
 
 
 ## `net/socket.quirk`

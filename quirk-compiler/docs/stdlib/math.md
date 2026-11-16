@@ -251,6 +251,11 @@ Dot product: `a · b = a.x*b.x + a.y*b.y`. Useful for projections,
 angle calculations (`cos θ = dot(a, b) / (|a| * |b|)`), and detecting
 orthogonality (dot == 0).
 
+### `struct Vector3`
+
+A 3D vector with `Double` components. Currently supports `+` only —
+extend with `__sub`, `__mul`, `dot`, `cross` as needed.
+
 #### `define __init(self, x: Double, y: Double, z: Double) -> void`
 
 Construct a Vector3 from three Doubles.
@@ -262,8 +267,3 @@ Compact human-readable form: `Vec3(x, y, z)`.
 #### `define __add(self, other: Vector3) -> Vector3`
 
 Componentwise addition: `a + b`.
-
-### `struct Vector3`
-
-A 3D vector with `Double` components. Currently supports `+` only —
-extend with `__sub`, `__mul`, `dot`, `cross` as needed.

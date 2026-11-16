@@ -23,11 +23,6 @@ URL omits them) so callers don't need null-checks.
 
 Recompose into a canonical URL string.
 
-#### `define parse(raw: String) -> URL`
-
-Parse a URL string into a `URL` struct. Tolerates missing scheme and
-missing host: e.g. `"/path?x=1"` parses with scheme="" and host="".
-
 
 ### Module-level functions
 
@@ -57,3 +52,8 @@ percent-decoded. Keys with no `=` map to the empty String.
 
 Build a `&`-joined query string from a Map. Each key and value is
 percent-encoded.
+
+#### `define parse(raw: String) -> URL`
+
+Parse a URL string into a `URL` struct. Tolerates missing scheme and
+missing host: e.g. `"/path?x=1"` parses with scheme="" and host="".

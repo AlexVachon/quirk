@@ -37,6 +37,9 @@ Returns a new DateTime offset by `n` seconds (can be negative).
 
 Default str: ISO-8601.
 
+
+### Module-level functions
+
 #### `define now() -> DateTime`
 
 Current local DateTime.

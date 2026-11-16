@@ -345,6 +345,25 @@ int64_t quirk_opaque_to_int(void* val) {
     return 0;
 }
 
+double quirk_opaque_to_double(void* val);
+
+// `Int(x)` / `Double(x)` on an untyped value: like quirk_opaque_to_int /
+// _double, but a String (bare or boxed) is parsed — "12" → 12, and text
+// that isn't a number raises ValueError, as `"x".to_int()` does.
+int64_t quirk_convert_to_int(void* val) {
+    if (quirk_type_of(val) == QT_STRING) return Core_String_String_to_int((String*)val);
+    if (quirk_is_any(val) && ((Any*)val)->tag == ANY_STRING && ((Any*)val)->ptr)
+        return Core_String_String_to_int((String*)((Any*)val)->ptr);
+    return quirk_opaque_to_int(val);
+}
+
+double quirk_convert_to_double(void* val) {
+    if (quirk_type_of(val) == QT_STRING) return Core_String_String_to_float((String*)val);
+    if (quirk_is_any(val) && ((Any*)val)->tag == ANY_STRING && ((Any*)val)->ptr)
+        return Core_String_String_to_float((String*)((Any*)val)->ptr);
+    return quirk_opaque_to_double(val);
+}
+
 // See QUIRK_NOARG in types.h. Only its address matters.
 char quirk_noarg_sentinel = 0;
 

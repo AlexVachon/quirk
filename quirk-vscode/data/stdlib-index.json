@@ -461,8 +461,8 @@
 "Panel": [
 {
 "package": "ui",
-"qualified": "Theme.Panel",
-"kind": "method",
+"qualified": "Panel",
+"kind": "define",
 "signature": "define Panel(children: List, padding: Int = 12, spacing: Int = 8, expand: Bool = false) -> Column {",
 "doc": "A Column drawn on a raised surface with a border (12px padding by default)."
 }
@@ -936,28 +936,28 @@
 },
 {
 "package": "math",
-"qualified": "Vector2.__add",
+"qualified": "Vector3.__add",
 "kind": "method",
 "signature": "define __add(self, other: Vector3) -> Vector3 {",
 "doc": "Componentwise addition: `a + b`."
 },
 {
 "package": "typing",
-"qualified": "ListIterator.__add",
+"qualified": "List.__add",
 "kind": "method",
 "signature": "define __add(self, other: List) -> List",
 "doc": "Concatenation. Returns a fresh List containing every element\nof `self` followed by every element of `other`. Neither input\nis mutated. Called by `xs + ys` at the call site.\n\n@example zs := [1, 2] + [3, 4]   // [1, 2, 3, 4]"
 },
 {
 "package": "typing",
-"qualified": "MapIterator.__add",
+"qualified": "Map.__add",
 "kind": "method",
 "signature": "define __add(self, other: Map) -> Map",
 "doc": "Merge two Maps into a fresh result. Right side wins on key\ncollision \u2014 `{a: 1} + {a: 2}` is `{a: 2}`. Mirrors Python's\n`{**m1, **m2}` precedence. Neither input is mutated. Called\nvia `m1 + m2`."
 },
 {
 "package": "typing",
-"qualified": "SetIterator.__add",
+"qualified": "Set.__add",
 "kind": "method",
 "signature": "define __add(self, other: Set) -> Set { return self.union(other) }",
 "doc": "Operator-overload aliases. `s1 + s2` is union; `s1 - s2` is\ndifference. Sema's binary-op dispatch picks these up\nautomatically via the magic-method path. Both return fresh\nsets and leave the operands untouched.\n\n@example a + b   // union\n@example a - b   // difference"
@@ -1007,14 +1007,14 @@
 "__get": [
 {
 "package": "typing",
-"qualified": "TupleIterator.__get",
+"qualified": "Tuple.__get",
 "kind": "method",
 "signature": "define __get(self, index: Int) -> Any",
 "doc": "Returns the element at the given index.\n@param index: Int \u2014 zero-based position\n@returns: Any \u2014 the element at that index\n@throws IndexError \u2014 if index is out of bounds"
 },
 {
 "package": "typing",
-"qualified": "ListIterator.__get",
+"qualified": "List.__get",
 "kind": "method",
 "signature": "define __get(self, index: Int) -> Any",
 "doc": "Returns the element at the given index.\n@param index: Int \u2014 zero-based position (negative indices not supported)\n@returns: Any \u2014 the element at that index\n@throws IndexError \u2014 if index is out of bounds"
@@ -1023,7 +1023,7 @@
 "__has_next": [
 {
 "package": "io",
-"qualified": "File.__has_next",
+"qualified": "FileIterator.__has_next",
 "kind": "method",
 "signature": "extern define __has_next(self) -> Bool",
 "doc": "True if more lines remain."
@@ -1062,7 +1062,7 @@
 },
 {
 "package": "math",
-"qualified": "Vector2.__init",
+"qualified": "Vector3.__init",
 "kind": "method",
 "signature": "define __init(self, x: Double, y: Double, z: Double) -> void {",
 "doc": "Construct a Vector3 from three Doubles."
@@ -1092,7 +1092,7 @@
 },
 {
 "package": "typing",
-"qualified": "TupleIterator.__iter",
+"qualified": "Tuple.__iter",
 "kind": "method",
 "signature": "define __iter(self) -> TupleIterator",
 "doc": "Returns an iterator over the elements of this tuple.\n@returns: TupleIterator"
@@ -1117,14 +1117,14 @@
 },
 {
 "package": "typing",
-"qualified": "StringIterator.__mul",
+"qualified": "String.__mul",
 "kind": "method",
 "signature": "define __mul(self, n: Int) -> String",
 "doc": "`s * n` repeats `self` `n` times into a fresh String. `n <= 0`\nreturns the empty string (Python semantics).\n\n@example \"-\" * 40   // 40-char separator\n@example \"ab\" * 3   // \"ababab\""
 },
 {
 "package": "typing",
-"qualified": "ListIterator.__mul",
+"qualified": "List.__mul",
 "kind": "method",
 "signature": "define __mul(self, n: Int) -> List",
 "doc": "Repetition. Returns a fresh List with self's elements\nrepeated `n` times. `n <= 0` returns the empty list (Python\nsemantics). Element values are SHARED \u2014 same shape as\nPython's `[0] * 5`; reassigning one element via index in\none row doesn't affect the others, but mutating a shared\ninner object would.\n\n@example zs := [0] * 5           // [0, 0, 0, 0, 0]\n@example pairs := [1, 2] * 3     // [1, 2, 1, 2, 1, 2]"
@@ -1133,7 +1133,7 @@
 "__next": [
 {
 "package": "io",
-"qualified": "File.__next",
+"qualified": "FileIterator.__next",
 "kind": "method",
 "signature": "extern define __next(self) -> String",
 "doc": "Returns the next line; trailing newline stripped."
@@ -1165,7 +1165,7 @@
 "__set": [
 {
 "package": "typing",
-"qualified": "ListIterator.__set",
+"qualified": "List.__set",
 "kind": "method",
 "signature": "define __set(self, index: Int, item: Any) -> void",
 "doc": "Sets the element at the given index.\n@param index: Int \u2014 zero-based position\n@param item: Any \u2014 the new value\n@throws IndexError if index is out of bounds"
@@ -1188,7 +1188,7 @@
 },
 {
 "package": "math",
-"qualified": "Vector2.__str",
+"qualified": "Vector3.__str",
 "kind": "method",
 "signature": "define __str(self) -> String {",
 "doc": "Compact human-readable form: `Vec3(x, y, z)`."
@@ -1223,7 +1223,7 @@
 },
 {
 "package": "typing",
-"qualified": "TupleIterator.__str",
+"qualified": "Tuple.__str",
 "kind": "method",
 "signature": "define __str(self) -> String",
 "doc": "Returns a human-readable string representation of this tuple.\n@returns: String \u2014 e.g. `\"(1, hello, true)\"`"
@@ -1250,7 +1250,7 @@
 "_find_long": [
 {
 "package": "argparse",
-"qualified": "ArgSpec._find_long",
+"qualified": "Parser._find_long",
 "kind": "method",
 "signature": "define _find_long(self, long: String) -> ArgSpec {",
 "doc": "Find a spec by long name. Returns null if not found."
@@ -1259,7 +1259,7 @@
 "_find_short": [
 {
 "package": "argparse",
-"qualified": "ArgSpec._find_short",
+"qualified": "Parser._find_short",
 "kind": "method",
 "signature": "define _find_short(self, short: String) -> ArgSpec {",
 "doc": "Find a spec by short name. Returns null if not found."
@@ -1277,8 +1277,8 @@
 "_is_digit": [
 {
 "package": "toml",
-"qualified": "StringResult._is_digit",
-"kind": "method",
+"qualified": "_is_digit",
+"kind": "define",
 "signature": "define _is_digit(c: String) -> Bool {",
 "doc": "True if `c` (a length-1 String) is an ASCII digit '0'..'9'. String\ncomparisons (`<=`, `>=`) are defined on the stdlib String type, so\nthis is a single comparison-pair on the host runtime."
 }
@@ -1304,8 +1304,8 @@
 "_parse_string": [
 {
 "package": "toml",
-"qualified": "StringResult._parse_string",
-"kind": "method",
+"qualified": "_parse_string",
+"kind": "define",
 "signature": "define _parse_string(line: String, start_idx: Int) -> StringResult {",
 "doc": "Parse a string literal starting at `start_idx` in `line`. Supports\nbasic (`\"...\"` with escapes) and literal (`'...'`, no escapes) forms.\nRaises ValueError on an unterminated string."
 }
@@ -1313,8 +1313,8 @@
 "_parse_value": [
 {
 "package": "toml",
-"qualified": "StringResult._parse_value",
-"kind": "method",
+"qualified": "_parse_value",
+"kind": "define",
 "signature": "define _parse_value(raw: String) -> Any {",
 "doc": "Parse a single value (right-hand side of `key = ...`). Handles\nstrings, integers, booleans, and one-line arrays."
 }
@@ -1399,35 +1399,35 @@
 "add": [
 {
 "package": "typing",
-"qualified": "SetIterator.add",
+"qualified": "Set.add",
 "kind": "method",
 "signature": "define add(self, val: Any) -> void",
 "doc": "Adds a value to the set. Does nothing if already present.\n@param val: Any"
 },
 {
 "package": "ui",
-"qualified": "Theme.add",
+"qualified": "Column.add",
 "kind": "method",
 "signature": "define add(self, w: Widget) -> void {",
 "doc": "Add a widget at the end."
 },
 {
 "package": "ui",
-"qualified": "Theme.add",
+"qualified": "Row.add",
 "kind": "method",
 "signature": "define add(self, w: Widget) -> void {",
 "doc": "Add a widget at the end."
 },
 {
 "package": "ui",
-"qualified": "Theme.add",
+"qualified": "TreeNode.add",
 "kind": "method",
 "signature": "define add(self, child: TreeNode) -> TreeNode {",
 "doc": "Add `child` under this node; returns it."
 },
 {
 "package": "ui",
-"qualified": "Theme.add",
+"qualified": "Tabs.add",
 "kind": "method",
 "signature": "define add(self, title: String, page: Widget) -> void {",
 "doc": "Add a page with its tab title."
@@ -1445,7 +1445,7 @@
 "all": [
 {
 "package": "typing",
-"qualified": "ListIterator.all",
+"qualified": "List.all",
 "kind": "method",
 "signature": "define all(self, cb: Callable) -> Bool",
 "doc": "Returns `true` if every element satisfies the predicate.\n@param cb: Callable \u2014 `fn(element: T) => Bool`\n@returns: Bool"
@@ -1470,7 +1470,7 @@
 "animate": [
 {
 "package": "ui",
-"qualified": "Theme.animate",
+"qualified": "App.animate",
 "kind": "method",
 "signature": "define animate(self, duration: Int, on_step: Callable, ease: String = \"in_out\", on_done: Callable = null) -> Animation {",
 "doc": "Animate over `duration` ms: `on_step(t)` runs every frame with the\neased progress `t` (0.0 \u2192 1.0; the last call is exactly 1.0), then\n`on_done()`. `ease` is \"linear\", \"in\", \"out\", \"in_out\" or \"back\".\n@example\napp.animate(300, fn(t) { panel.x_offset = ui.lerp(-200, 0, t) }, ease=\"out\")"
@@ -1479,7 +1479,7 @@
 "animating": [
 {
 "package": "ui",
-"qualified": "Theme.animating",
+"qualified": "App.animating",
 "kind": "method",
 "signature": "define animating(self) -> Bool {",
 "doc": "True while an animation is running."
@@ -1497,7 +1497,7 @@
 "any": [
 {
 "package": "typing",
-"qualified": "ListIterator.any",
+"qualified": "List.any",
 "kind": "method",
 "signature": "define any(self, cb: Callable) -> Bool",
 "doc": "Returns `true` if at least one element satisfies the predicate.\n@param cb: Callable \u2014 `fn(element: T) => Bool`\n@returns: Bool"
@@ -1506,7 +1506,7 @@
 "append": [
 {
 "package": "typing",
-"qualified": "ListIterator.append",
+"qualified": "List.append",
 "kind": "method",
 "signature": "define append(self, item: Any) -> void",
 "doc": "Appends a value to the end of the list.\n@param item: Any \u2014 the value to add"
@@ -1515,7 +1515,7 @@
 "append_all": [
 {
 "package": "typing",
-"qualified": "ListIterator.append_all",
+"qualified": "List.append_all",
 "kind": "method",
 "signature": "define append_all(self, other: List) -> void",
 "doc": "Append every element of `other` to `self` in place. Mutates\n`self`; returns nothing. Use `+` if you want a fresh List\ninstead of mutating. (Named `append_all` rather than the\nPython-conventional `extend` because `extend` is a reserved\nkeyword in Quirk \u2014 `extend Foo { ... }` blocks add methods to\nan existing struct.)\n\n@example xs.append_all([4, 5, 6])  // xs is now [1, 2, 3, 4, 5, 6]"
@@ -1738,14 +1738,14 @@
 "cancel": [
 {
 "package": "ui",
-"qualified": "Theme.cancel",
+"qualified": "FileDialog.cancel",
 "kind": "method",
 "signature": "define cancel(self) -> void {",
 "doc": "Dismiss the dialog without a choice."
 },
 {
 "package": "ui",
-"qualified": "Theme.cancel",
+"qualified": "Animation.cancel",
 "kind": "method",
 "signature": "define cancel(self) -> void {",
 "doc": "Stop it where it is."
@@ -1790,8 +1790,8 @@
 "channels": [
 {
 "package": "window",
-"qualified": "WindowError.channels",
-"kind": "method",
+"qualified": "channels",
+"kind": "define",
 "signature": "define channels(color: Int) -> List {",
 "doc": "The colour's red, green, blue and alpha parts (0-255)."
 }
@@ -1817,7 +1817,7 @@
 "check": [
 {
 "package": "process",
-"qualified": "ProcessError.check",
+"qualified": "RunResult.check",
 "kind": "method",
 "signature": "define check(self) -> void {",
 "doc": "Throw `ProcessError` unless the program exited with code 0."
@@ -1826,7 +1826,7 @@
 "children": [
 {
 "package": "ui",
-"qualified": "Theme.children",
+"qualified": "Widget.children",
 "kind": "method",
 "signature": "define children(self) -> List {",
 "doc": "Child widgets (containers)."
@@ -1851,7 +1851,7 @@
 "circle": [
 {
 "package": "window",
-"qualified": "WindowError.circle",
+"qualified": "Window.circle",
 "kind": "method",
 "signature": "define circle(self, cx: Int, cy: Int, radius: Int, color: Int, fill: Bool = true) -> void {",
 "doc": "A circle centred on (cx, cy); `fill=false` draws the outline."
@@ -1885,35 +1885,35 @@
 },
 {
 "package": "typing",
-"qualified": "ListIterator.clear",
+"qualified": "List.clear",
 "kind": "method",
 "signature": "define clear(self) -> void",
 "doc": "Removes all elements from the list."
 },
 {
 "package": "typing",
-"qualified": "QueueIterator.clear",
+"qualified": "Queue.clear",
 "kind": "method",
 "signature": "define clear(self) -> void",
 "doc": "Removes all elements."
 },
 {
 "package": "typing",
-"qualified": "MapIterator.clear",
+"qualified": "Map.clear",
 "kind": "method",
 "signature": "define clear(self) -> void",
 "doc": "Removes all entries from the map."
 },
 {
 "package": "typing",
-"qualified": "SetIterator.clear",
+"qualified": "Set.clear",
 "kind": "method",
 "signature": "define clear(self) -> void",
 "doc": "Removes all elements."
 },
 {
 "package": "window",
-"qualified": "WindowError.clear",
+"qualified": "Window.clear",
 "kind": "method",
 "signature": "define clear(self, color: Int = black()) -> void {",
 "doc": "Fill the whole window with `color`."
@@ -1931,14 +1931,14 @@
 "click": [
 {
 "package": "ui",
-"qualified": "Theme.click",
+"qualified": "Button.click",
 "kind": "method",
 "signature": "define click(self) -> void {",
 "doc": "Press the button from code."
 },
 {
 "package": "ui",
-"qualified": "Theme.click",
+"qualified": "ToolButton.click",
 "kind": "method",
 "signature": "define click(self) -> void {",
 "doc": "Press it from code."
@@ -1947,7 +1947,7 @@
 "clip": [
 {
 "package": "window",
-"qualified": "WindowError.clip",
+"qualified": "Window.clip",
 "kind": "method",
 "signature": "define clip(self, x: Int, y: Int, width: Int, height: Int) -> void {",
 "doc": "Only draw inside the rectangle (x, y, width, height) until `unclip()`\n\u2014 for scrolling areas and panels. `clear` still clears everything."
@@ -1986,35 +1986,35 @@
 },
 {
 "package": "ui",
-"qualified": "Theme.close",
+"qualified": "DatePicker.close",
 "kind": "method",
 "signature": "define close(self) -> void {",
 "doc": "Hide the calendar."
 },
 {
 "package": "ui",
-"qualified": "Theme.close",
+"qualified": "Dropdown.close",
 "kind": "method",
 "signature": "define close(self) -> void {",
 "doc": "Hide the list."
 },
 {
 "package": "ui",
-"qualified": "Theme.close",
+"qualified": "Menu.close",
 "kind": "method",
 "signature": "define close(self) -> void {",
 "doc": "Hide it."
 },
 {
 "package": "ui",
-"qualified": "Theme.close",
+"qualified": "App.close",
 "kind": "method",
 "signature": "define close(self) -> void {",
 "doc": "Close the window (ends `run`)."
 },
 {
 "package": "window",
-"qualified": "WindowError.close",
+"qualified": "Window.close",
 "kind": "method",
 "signature": "define close(self) -> void {",
 "doc": "Close the window. Further drawing is ignored."
@@ -2023,7 +2023,7 @@
 "close_stdin": [
 {
 "package": "process",
-"qualified": "ProcessError.close_stdin",
+"qualified": "Process.close_stdin",
 "kind": "method",
 "signature": "define close_stdin(self) -> void {",
 "doc": "Close the program's stdin, so it sees end of input."
@@ -2032,8 +2032,8 @@
 "color_to_hsv": [
 {
 "package": "ui",
-"qualified": "Theme.color_to_hsv",
-"kind": "method",
+"qualified": "color_to_hsv",
+"kind": "define",
 "signature": "define color_to_hsv(color: Int) -> List {",
 "doc": "[hue 0-359, saturation 0-100, value 0-100] of a colour."
 }
@@ -2041,7 +2041,7 @@
 "communicate": [
 {
 "package": "process",
-"qualified": "ProcessError.communicate",
+"qualified": "Process.communicate",
 "kind": "method",
 "signature": "define communicate(self, input: String = \"\", timeout_ms: Int = -1) -> RunResult {",
 "doc": "Send `input` to stdin (then close it), read stdout and stderr to the\nend and wait for the program \u2014 all at once, so it can't stall on a\nfull pipe. With `timeout_ms`, the program is killed when it runs out."
@@ -2050,8 +2050,8 @@
 "compile": [
 {
 "package": "regex",
-"qualified": "Match.compile",
-"kind": "method",
+"qualified": "compile",
+"kind": "define",
 "signature": "define compile(pattern: String, flags: String = \"\") -> Regex {",
 "doc": "Compile a pattern. Equivalent to `Regex(pattern, flags)`."
 }
@@ -2100,7 +2100,7 @@
 "contains": [
 {
 "package": "ui",
-"qualified": "Theme.contains",
+"qualified": "Widget.contains",
 "kind": "method",
 "signature": "define contains(self, px: Int, py: Int) -> Bool {",
 "doc": "True if (px, py) is inside the widget's box."
@@ -2116,7 +2116,7 @@
 },
 {
 "package": "ui",
-"qualified": "Theme.copy",
+"qualified": "TextEdit.copy",
 "kind": "method",
 "signature": "define copy(self) -> void {",
 "doc": "Copy the selection to the clipboard."
@@ -2161,14 +2161,14 @@
 "count": [
 {
 "package": "typing",
-"qualified": "StringIterator.count",
+"qualified": "String.count",
 "kind": "method",
 "signature": "define count(self, sub: String) -> Int",
 "doc": "Returns the number of non-overlapping occurrences of `sub`.\n@param sub: String\n@returns: Int"
 },
 {
 "package": "typing",
-"qualified": "ListIterator.count",
+"qualified": "List.count",
 "kind": "method",
 "signature": "define count(self, value: Any) -> Int {",
 "doc": "Counts how many elements equal `value`. Linear scan; uses `==`\nso user structs with `__eq` overloads count correctly.\n\n@example [1, 2, 1, 1, 3].count(1)    // 3"
@@ -2177,7 +2177,7 @@
 "cut": [
 {
 "package": "ui",
-"qualified": "Theme.cut",
+"qualified": "TextEdit.cut",
 "kind": "method",
 "signature": "define cut(self) -> void {",
 "doc": "Copy the selection to the clipboard and remove it."
@@ -2204,8 +2204,8 @@
 "dark": [
 {
 "package": "ui",
-"qualified": "Theme.dark",
-"kind": "method",
+"qualified": "dark",
+"kind": "define",
 "signature": "define dark() -> Theme {",
 "doc": "Light text on dark grey, blue accent."
 }
@@ -2222,8 +2222,8 @@
 "day_name": [
 {
 "package": "datetime",
-"qualified": "DateTime.day_name",
-"kind": "method",
+"qualified": "day_name",
+"kind": "define",
 "signature": "define day_name(dt: DateTime) -> String {",
 "doc": "Full English weekday name for `dt`. `weekday` is 0=Sunday \u2026 6=Saturday."
 }
@@ -2231,15 +2231,15 @@
 "days_in_month": [
 {
 "package": "datetime",
-"qualified": "DateTime.days_in_month",
-"kind": "method",
+"qualified": "days_in_month",
+"kind": "define",
 "signature": "define days_in_month(year: Int, month: Int) -> Int {",
 "doc": "Number of days in `month` (1-12) of `year`. Handles February's leap-year\nadjustment via `is_leap`."
 },
 {
 "package": "ui",
-"qualified": "Theme.days_in_month",
-"kind": "method",
+"qualified": "days_in_month",
+"kind": "define",
 "signature": "define days_in_month(year: Int, month: Int) -> Int {",
 "doc": "Days in `month` (1-12) of `year`."
 }
@@ -2263,8 +2263,8 @@
 "delete": [
 {
 "package": "net",
-"qualified": "Response.delete",
-"kind": "method",
+"qualified": "delete",
+"kind": "define",
 "signature": "define delete(target: String, headers: Map = Map()) -> Response {",
 "doc": "HTTP DELETE.\n@example resp := http.delete(\"http://api/users/42\")"
 }
@@ -2272,7 +2272,7 @@
 "depth": [
 {
 "package": "ui",
-"qualified": "Theme.depth",
+"qualified": "TreeNode.depth",
 "kind": "method",
 "signature": "define depth(self) -> Int {",
 "doc": "How deep it is (0 for a root)."
@@ -2281,8 +2281,8 @@
 "diff_days": [
 {
 "package": "datetime",
-"qualified": "DateTime.diff_days",
-"kind": "method",
+"qualified": "diff_days",
+"kind": "define",
 "signature": "define diff_days(a: DateTime, b: DateTime) -> Int {",
 "doc": "Whole days between `a` and `b` (signed). Calendar-day boundaries\naren't honored \u2014 this is simply `seconds / 86400`."
 }
@@ -2290,8 +2290,8 @@
 "diff_hours": [
 {
 "package": "datetime",
-"qualified": "DateTime.diff_hours",
-"kind": "method",
+"qualified": "diff_hours",
+"kind": "define",
 "signature": "define diff_hours(a: DateTime, b: DateTime) -> Int {",
 "doc": "Whole hours between `a` and `b` (signed)."
 }
@@ -2299,8 +2299,8 @@
 "diff_minutes": [
 {
 "package": "datetime",
-"qualified": "DateTime.diff_minutes",
-"kind": "method",
+"qualified": "diff_minutes",
+"kind": "define",
 "signature": "define diff_minutes(a: DateTime, b: DateTime) -> Int {",
 "doc": "Whole minutes between `a` and `b` (signed; `b - a`)."
 }
@@ -2317,7 +2317,7 @@
 "difference": [
 {
 "package": "typing",
-"qualified": "SetIterator.difference",
+"qualified": "Set.difference",
 "kind": "method",
 "signature": "define difference(self, other: Set) -> Set",
 "doc": "Returns a new set with elements in this set that are not in `other`.\n@param other: Set\n@returns: Set"
@@ -2344,7 +2344,7 @@
 "dispatch": [
 {
 "package": "ui",
-"qualified": "Theme.dispatch",
+"qualified": "App.dispatch",
 "kind": "method",
 "signature": "define dispatch(self, e: window.Event) -> void {",
 "doc": "Route one event to the widget it's for (also usable from tests)."
@@ -2353,7 +2353,7 @@
 "distance": [
 {
 "package": "typing",
-"qualified": "StringIterator.distance",
+"qualified": "String.distance",
 "kind": "method",
 "signature": "define distance(self, other: String) -> Int",
 "doc": "Computes the Levenshtein edit distance between this string and `other`.\n@param other: String\n@returns: Int \u2014 number of single-character edits needed"
@@ -2362,7 +2362,7 @@
 "done": [
 {
 "package": "process",
-"qualified": "ProcessError.done",
+"qualified": "Process.done",
 "kind": "method",
 "signature": "define done(self) -> Bool {",
 "doc": "True once the program has finished. Doesn't wait."
@@ -2380,7 +2380,7 @@
 "dragging": [
 {
 "package": "ui",
-"qualified": "Theme.dragging",
+"qualified": "App.dragging",
 "kind": "method",
 "signature": "define dragging(self) -> Bool {",
 "doc": "True while something is being dragged (see `Widget.on_drag`)."
@@ -2389,14 +2389,14 @@
 "draw": [
 {
 "package": "ui",
-"qualified": "Theme.draw",
+"qualified": "Widget.draw",
 "kind": "method",
 "signature": "define draw(self, win: window.Window, t: Theme) -> void {",
 "doc": "Draw into `win` inside the widget's box."
 },
 {
 "package": "ui",
-"qualified": "Theme.draw",
+"qualified": "App.draw",
 "kind": "method",
 "signature": "define draw(self) -> void {",
 "doc": "Draw the tree, open popups and the tooltip (what `step` shows)."
@@ -2450,14 +2450,14 @@
 "each": [
 {
 "package": "typing",
-"qualified": "ListIterator.each",
+"qualified": "List.each",
 "kind": "method",
 "signature": "define each(self, cb: Callable) -> void",
 "doc": "Calls `cb` for each element. Returns nothing.\n@param cb: Callable \u2014 `fn(element: T) => void`\n\n@example:\n[1, 2, 3].each(fn(x: Int) => print(x))"
 },
 {
 "package": "typing",
-"qualified": "MapIterator.each",
+"qualified": "Map.each",
 "kind": "method",
 "signature": "define each(self, cb: Callable) -> void",
 "doc": "Calls `cb` for each key-value pair.\n@param cb: Callable \u2014 `fn(key: String, value: Any)`\n\n@example:\nm.each(fn(k: String, v: Any) => print(k + \": \" + v))"
@@ -2466,7 +2466,7 @@
 "each_key": [
 {
 "package": "typing",
-"qualified": "MapIterator.each_key",
+"qualified": "Map.each_key",
 "kind": "method",
 "signature": "define each_key(self, cb: Callable) -> void",
 "doc": "Calls `cb` for each key only.\n@param cb: Callable \u2014 `fn(key: String)`"
@@ -2475,7 +2475,7 @@
 "each_value": [
 {
 "package": "typing",
-"qualified": "MapIterator.each_value",
+"qualified": "Map.each_value",
 "kind": "method",
 "signature": "define each_value(self, cb: Callable) -> void",
 "doc": "Calls `cb` for each value only.\n@param cb: Callable \u2014 `fn(value: Any)`"
@@ -2484,8 +2484,8 @@
 "ease": [
 {
 "package": "ui",
-"qualified": "Theme.ease",
-"kind": "method",
+"qualified": "ease",
+"kind": "define",
 "signature": "define ease(name: String, t: Double) -> Double {",
 "doc": "Easing: progress `t` (0.0-1.0) reshaped \u2014 \"linear\", \"in\" (starts slow),\n\"out\" (ends slow), \"in_out\" (both), \"back\" (overshoots a little, then\nsettles)."
 }
@@ -2493,7 +2493,7 @@
 "edit_cell": [
 {
 "package": "ui",
-"qualified": "Theme.edit_cell",
+"qualified": "Table.edit_cell",
 "kind": "method",
 "signature": "define edit_cell(self, r: Int, c: Int) -> void {",
 "doc": "Edit cell (row index `r`, column `c`) in place."
@@ -2502,7 +2502,7 @@
 "editing": [
 {
 "package": "ui",
-"qualified": "Theme.editing",
+"qualified": "Table.editing",
 "kind": "method",
 "signature": "define editing(self) -> Bool {",
 "doc": "True while a cell is being edited."
@@ -2554,7 +2554,7 @@
 "events": [
 {
 "package": "window",
-"qualified": "WindowError.events",
+"qualified": "Window.events",
 "kind": "method",
 "signature": "define events(self) -> List {",
 "doc": "Every event since the last call (an empty List if none). Doesn't wait."
@@ -2633,7 +2633,7 @@
 },
 {
 "package": "typing",
-"qualified": "ListIterator.filter",
+"qualified": "List.filter",
 "kind": "method",
 "signature": "define filter(self, cb: Callable) -> List",
 "doc": "Returns a new list containing only elements for which `cb` returns `true`.\n@param cb: Callable \u2014 `fn(element: T) => Bool`\n@returns: List \u2014 filtered list\n\n@example:\nevens := [1, 2, 3, 4].filter(fn(x: Int) => x % 2 == 0)  // [2, 4]"
@@ -2642,28 +2642,28 @@
 "find": [
 {
 "package": "regex",
-"qualified": "Match.find",
+"qualified": "Regex.find",
 "kind": "method",
 "signature": "define find(self, s: String) -> Match {",
 "doc": "Find the first match starting at or after `from_offset`. Returns a Match\nwith `text` = full match string and `groups` = captured-group strings.\nReturns null when no match is found."
 },
 {
 "package": "regex",
-"qualified": "Match.find",
-"kind": "method",
+"qualified": "find",
+"kind": "define",
 "signature": "define find(pattern: String, s: String) -> Match {",
 "doc": "One-shot find: compile + find."
 },
 {
 "package": "typing",
-"qualified": "StringIterator.find",
+"qualified": "String.find",
 "kind": "method",
 "signature": "define find(self, sub: String) -> Int",
 "doc": "Returns the index of the first occurrence of `sub`, or `-1` if not found.\n@param sub: String\n@returns: Int"
 },
 {
 "package": "typing",
-"qualified": "ListIterator.find",
+"qualified": "List.find",
 "kind": "method",
 "signature": "define find(self, cb: Callable) -> Any",
 "doc": "Returns the first element that satisfies the predicate, or `null` if none found.\n@param cb: Callable \u2014 `fn(element: T) => Bool`\n@returns: Any \u2014 the matching element, or `null`"
@@ -2672,7 +2672,7 @@
 "find_all": [
 {
 "package": "regex",
-"qualified": "Match.find_all",
+"qualified": "Regex.find_all",
 "kind": "method",
 "signature": "define find_all(self, s: String) -> List {",
 "doc": "Find every non-overlapping match. Returns a List<Match>.\nEmpty matches advance one byte to avoid infinite loops."
@@ -2690,7 +2690,7 @@
 "finish_edit": [
 {
 "package": "ui",
-"qualified": "Theme.finish_edit",
+"qualified": "Table.finish_edit",
 "kind": "method",
 "signature": "define finish_edit(self, save: Bool = true) -> void {",
 "doc": "Stop editing; `save` keeps the typed value."
@@ -2699,14 +2699,14 @@
 "first": [
 {
 "package": "typing",
-"qualified": "ListIterator.first",
+"qualified": "List.first",
 "kind": "method",
 "signature": "define first(self) -> Any {",
 "doc": "Returns the first element, or `null` when the list is empty.\nSame shape as `xs.__get(0)` but null-safe (no index-out-of-range\non empty input).\n\n@example [10, 20, 30].first()   // 10\n@example List().first()         // null"
 },
 {
 "package": "typing",
-"qualified": "SetIterator.first",
+"qualified": "Set.first",
 "kind": "method",
 "signature": "define first(self) -> Any {",
 "doc": "Returns the first element in insertion order, or `null` when\nthe set is empty. Parallel to List.first(). Useful for\nsentinel-then-iterate patterns where the receiver may or may\nnot have anything yet.\n\n@example pending.first()    // the oldest queued item"
@@ -2724,15 +2724,15 @@
 "flag": [
 {
 "package": "argparse",
-"qualified": "ArgSpec.flag",
+"qualified": "Parser.flag",
 "kind": "method",
 "signature": "define flag(self, long: String, short: String, help: String) -> void {",
 "doc": "Add a boolean flag with the given long and short names. Default false."
 },
 {
 "package": "argparse",
-"qualified": "ArgSpec.flag",
-"kind": "method",
+"qualified": "flag",
+"kind": "define",
 "signature": "define flag(args: Map, name: String) -> Bool {",
 "doc": "Convenience: read a flag from a parsed-args Map as a Bool. Equivalent to\n`args.get(name) == \"true\"`.\n@example  if argparse.flag(args, \"verbose\") { ... }"
 }
@@ -2758,7 +2758,7 @@
 "focus_on": [
 {
 "package": "ui",
-"qualified": "Theme.focus_on",
+"qualified": "App.focus_on",
 "kind": "method",
 "signature": "define focus_on(self, w: Widget) -> void {",
 "doc": "Give `w` the keyboard focus (null: nobody)."
@@ -2774,7 +2774,7 @@
 },
 {
 "package": "typing",
-"qualified": "StringIterator.format",
+"qualified": "String.format",
 "kind": "method",
 "signature": "define format(self, ...args: List) -> String",
 "doc": "Returns a new string with each `{0}`, `{1}`, \u2026 placeholder replaced by the\ncorresponding argument.\n@param args: List \u2014 positional values to interpolate\n@returns: String\n@example:\n\"Hello {0}, you are {1}!\".format([\"Alice\", 30])"
@@ -2792,14 +2792,14 @@
 "free": [
 {
 "package": "window",
-"qualified": "WindowError.free",
+"qualified": "Font.free",
 "kind": "method",
 "signature": "define free(self) -> void {",
 "doc": "Release the font. Drawing with it afterwards does nothing."
 },
 {
 "package": "window",
-"qualified": "WindowError.free",
+"qualified": "Image.free",
 "kind": "method",
 "signature": "define free(self) -> void {",
 "doc": "Release the image's memory. Drawing it afterwards does nothing."
@@ -2808,8 +2808,8 @@
 "from_iso": [
 {
 "package": "datetime",
-"qualified": "DateTime.from_iso",
-"kind": "method",
+"qualified": "from_iso",
+"kind": "define",
 "signature": "define from_iso(s: String) -> DateTime {",
 "doc": "Parse an ISO-8601 string (`\"YYYY-MM-DD[Thh:mm:ss[Z]]\"`).\nTrailing `Z` \u2192 UTC; otherwise local. Throws `ValueError` on bad input."
 }
@@ -2817,8 +2817,8 @@
 "from_unix": [
 {
 "package": "datetime",
-"qualified": "DateTime.from_unix",
-"kind": "method",
+"qualified": "from_unix",
+"kind": "define",
 "signature": "define from_unix(epoch: Int) -> DateTime {",
 "doc": "Build a DateTime from an explicit Unix epoch (seconds), interpreted in the\nlocal time zone."
 }
@@ -2826,21 +2826,21 @@
 "get": [
 {
 "package": "net",
-"qualified": "Response.get",
-"kind": "method",
+"qualified": "get",
+"kind": "define",
 "signature": "define get(target: String, headers: Map = Map(), params: Map = Map()) -> Response {",
 "doc": "HTTP GET.\n@param headers Extra request headers (optional).\n@param params Query-string parameters merged into the URL (optional).\n@example resp := http.get(\"http://example.com\")\n@example resp := http.get(\"http://api/search\", params: { \"q\": \"quirk\" })"
 },
 {
 "package": "typing",
-"qualified": "MapIterator.get",
+"qualified": "Map.get",
 "kind": "method",
 "signature": "define get(self, key: String) -> Any",
 "doc": "Returns the value for the given key, or `null` if not found.\n@param key: String \u2014 the key to look up\n@returns: Any \u2014 the associated value, or `null`"
 },
 {
 "package": "ui",
-"qualified": "Theme.get",
+"qualified": "StatusBar.get",
 "kind": "method",
 "signature": "define get(self, i: Int) -> String {",
 "doc": "Section `i`'s text (\"\" if there's none)."
@@ -2849,7 +2849,7 @@
 "get_or": [
 {
 "package": "typing",
-"qualified": "MapIterator.get_or",
+"qualified": "Map.get_or",
 "kind": "method",
 "signature": "define get_or(self, key: String, default: Any) -> Any {",
 "doc": "Returns the value for `key`, or `default` when the key isn't\npresent. Matches Python's `dict.get(key, default)`. Avoids the\n`if m.has(k) { m.get(k) } else { d }` pattern.\n\n@example m.get_or(\"retries\", 3)\n@example headers.get_or(\"Content-Type\", \"application/json\")"
@@ -2903,7 +2903,7 @@
 "go": [
 {
 "package": "ui",
-"qualified": "Theme.go",
+"qualified": "FileDialog.go",
 "kind": "method",
 "signature": "define go(self, path: String) -> void {",
 "doc": "Show folder `path`."
@@ -2957,7 +2957,7 @@
 "handle": [
 {
 "package": "ui",
-"qualified": "Theme.handle",
+"qualified": "Widget.handle",
 "kind": "method",
 "signature": "define handle(self, e: window.Event) -> Bool {",
 "doc": "React to an event; true if the widget used it."
@@ -2966,14 +2966,14 @@
 "has": [
 {
 "package": "typing",
-"qualified": "MapIterator.has",
+"qualified": "Map.has",
 "kind": "method",
 "signature": "define has(self, key: String) -> Bool",
 "doc": "Returns `true` if the key exists in the map.\n@param key: String\n@returns: Bool"
 },
 {
 "package": "typing",
-"qualified": "SetIterator.has",
+"qualified": "Set.has",
 "kind": "method",
 "signature": "define has(self, val: Any) -> Bool",
 "doc": "Returns `true` if the value is in the set.\n@param val: Any\n@returns: Bool"
@@ -2982,7 +2982,7 @@
 "has_selection": [
 {
 "package": "ui",
-"qualified": "Theme.has_selection",
+"qualified": "TextEdit.has_selection",
 "kind": "method",
 "signature": "define has_selection(self) -> Bool {",
 "doc": "True when some text is selected."
@@ -2991,24 +2991,24 @@
 "height": [
 {
 "package": "window",
-"qualified": "WindowError.height",
+"qualified": "Window.height",
 "kind": "method",
 "signature": "define height(self) -> Int {",
-"doc": "Drawable height in pixels."
+"doc": "Drawable height in (drawing) pixels \u2014 see `scale()`."
 }
 ],
 "hex": [
 {
 "package": "ui",
-"qualified": "Theme.hex",
+"qualified": "ColorPicker.hex",
 "kind": "method",
 "signature": "define hex(self) -> String {",
 "doc": "The colour as \"#rrggbb\"."
 },
 {
 "package": "window",
-"qualified": "WindowError.hex",
-"kind": "method",
+"qualified": "hex",
+"kind": "define",
 "signature": "define hex(code: String) -> Int {",
 "doc": "A colour from `\"#rrggbb\"`, `\"#rrggbbaa\"`, `\"#rgb\"` (with or without `#`).\n@throws ValueError for anything else.\n@example window.hex(\"#ff8800\")"
 }
@@ -3034,8 +3034,8 @@
 "humanize": [
 {
 "package": "datetime",
-"qualified": "DateTime.humanize",
-"kind": "method",
+"qualified": "humanize",
+"kind": "define",
 "signature": "define humanize(dt: DateTime, relative_to: DateTime = now()) -> String {",
 "doc": "Approximate relative time vs `relative_to`, e.g. \"2 hours ago\" or\n\"in 3 days\". `relative_to` defaults to \"now\" via `now()`.\nGranularity grows with the gap: seconds \u2192 minutes \u2192 hours \u2192 days \u2192\nweeks \u2192 months \u2192 years.\n\n@example\nhumanize(yesterday())          // \"1 day ago\"\nhumanize(tomorrow())           // \"in 1 day\""
 }
@@ -3052,7 +3052,7 @@
 "image": [
 {
 "package": "window",
-"qualified": "WindowError.image",
+"qualified": "Window.image",
 "kind": "method",
 "signature": "define image(self, img: Image, x: Int, y: Int, width: Int = -1, height: Int = -1, src_x: Int = 0, src_y: Int = 0, src_w: Int = -1, src_h: Int = -1, alpha: Int = 255) -> void {",
 "doc": "Draw `img` with its top-left corner at (x, y).\n@param width, height  scale it to this size (-1 = natural size)\n@param src_x, src_y, src_w, src_h  draw only this rectangle of the\n       image (a sprite-sheet frame); -1 widths run to the edge\n@param alpha  opacity, 0 (invisible) to 255 (opaque)\n@example w.image(logo, 10, 10)\n@example w.image(sheet, x, y, src_x=frame * 32, src_w=32, src_h=32)"
@@ -3070,7 +3070,7 @@
 "index": [
 {
 "package": "typing",
-"qualified": "StringIterator.index",
+"qualified": "String.index",
 "kind": "method",
 "signature": "define index(self, sub: String) -> Int",
 "doc": "Like `find`, but throws `ValueError` if `sub` is not present.\n@param sub: String\n@returns: Int\n@throws ValueError \u2014 if `sub` is not found"
@@ -3079,7 +3079,7 @@
 "index_at": [
 {
 "package": "ui",
-"qualified": "Theme.index_at",
+"qualified": "TextEdit.index_at",
 "kind": "method",
 "signature": "define index_at(self, px: Int, py: Int) -> Int {",
 "doc": "The text index under the point (px, py) (where a click puts the cursor)."
@@ -3133,7 +3133,7 @@
 "insert": [
 {
 "package": "ui",
-"qualified": "Theme.insert",
+"qualified": "TextEdit.insert",
 "kind": "method",
 "signature": "define insert(self, s: String) -> void {",
 "doc": "Insert `s` at the cursor, as typing would (replaces the selection)."
@@ -3142,7 +3142,7 @@
 "intersection": [
 {
 "package": "typing",
-"qualified": "SetIterator.intersection",
+"qualified": "Set.intersection",
 "kind": "method",
 "signature": "define intersection(self, other: Set) -> Set",
 "doc": "Returns a new set containing only elements present in both sets.\n@param other: Set\n@returns: Set"
@@ -3160,28 +3160,28 @@
 "is_empty": [
 {
 "package": "typing",
-"qualified": "ListIterator.is_empty",
+"qualified": "List.is_empty",
 "kind": "method",
 "signature": "define is_empty(self) -> Bool",
 "doc": "Returns `true` if the list has no elements.\n@returns: Bool"
 },
 {
 "package": "typing",
-"qualified": "QueueIterator.is_empty",
+"qualified": "Queue.is_empty",
 "kind": "method",
 "signature": "define is_empty(self) -> Bool",
 "doc": "Returns `true` if the queue is empty.\n@returns: Bool"
 },
 {
 "package": "typing",
-"qualified": "MapIterator.is_empty",
+"qualified": "Map.is_empty",
 "kind": "method",
 "signature": "define is_empty(self) -> Bool { return self.length() == 0 }",
 "doc": "Returns `true` if the map has no entries.\n@returns: Bool"
 },
 {
 "package": "typing",
-"qualified": "SetIterator.is_empty",
+"qualified": "Set.is_empty",
 "kind": "method",
 "signature": "define is_empty(self) -> Bool",
 "doc": "Returns `true` if the set has no elements.\n@returns: Bool"
@@ -3226,8 +3226,8 @@
 "is_leap": [
 {
 "package": "datetime",
-"qualified": "DateTime.is_leap",
-"kind": "method",
+"qualified": "is_leap",
+"kind": "define",
 "signature": "define is_leap(year: Int) -> Bool {",
 "doc": "Standard Gregorian leap-year rule: divisible by 4, except centuries that\naren't divisible by 400. 2000 was leap; 1900 wasn't.\n\n@example\nis_leap(2024)   // true\nis_leap(2023)   // false\nis_leap(2000)   // true\nis_leap(1900)   // false"
 }
@@ -3271,14 +3271,14 @@
 "is_open": [
 {
 "package": "ui",
-"qualified": "Theme.is_open",
+"qualified": "App.is_open",
 "kind": "method",
 "signature": "define is_open(self) -> Bool {",
 "doc": "True until the window is closed."
 },
 {
 "package": "window",
-"qualified": "WindowError.is_open",
+"qualified": "Window.is_open",
 "kind": "method",
 "signature": "define is_open(self) -> Bool {",
 "doc": "True until the window is closed (by `close()` or its close button)."
@@ -3287,7 +3287,7 @@
 "is_separator": [
 {
 "package": "ui",
-"qualified": "Theme.is_separator",
+"qualified": "MenuItem.is_separator",
 "kind": "method",
 "signature": "define is_separator(self) -> Bool {",
 "doc": "True for a separator line."
@@ -3314,8 +3314,8 @@
 "is_weekend": [
 {
 "package": "datetime",
-"qualified": "DateTime.is_weekend",
-"kind": "method",
+"qualified": "is_weekend",
+"kind": "define",
 "signature": "define is_weekend(dt: DateTime) -> Bool {",
 "doc": "True for Saturday and Sunday (where `weekday` is 0=Sunday \u2026 6=Saturday)."
 }
@@ -3350,7 +3350,7 @@
 "items": [
 {
 "package": "typing",
-"qualified": "MapIterator.items",
+"qualified": "Map.items",
 "kind": "method",
 "signature": "define items(self) -> List {",
 "doc": "Returns the map's entries as a List of `[key, value]` lists.\nOrder matches insertion order (matches `keys()` / `values()`).\nUseful for pairwise iteration:\n\n  for pair in m.items() {\n      k := pair.__get(0)\n      v := pair.__get(1)\n      ...\n  }\n\nNOTE: printing a List of nested Lists currently displays as\n`[]` due to a separate display-path bug (raw struct pointers\nstored in collections aren't recognised by\n`quirk_opaque_to_string`). The values are stored correctly\nand iteration works; only the `print()` rendering is wrong.\n\n@example for pair in m.items() { ... }"
@@ -3366,7 +3366,7 @@
 },
 {
 "package": "typing",
-"qualified": "StringIterator.join",
+"qualified": "String.join",
 "kind": "method",
 "signature": "define join(self, items: List) -> String",
 "doc": "Joins a list of strings, inserting `self` between each element.\n@param items: List \u2014 list of String values\n@returns: String\n@example:\n\", \".join([\"a\", \"b\", \"c\"])  // \"a, b, c\""
@@ -3384,7 +3384,7 @@
 "key_down": [
 {
 "package": "window",
-"qualified": "WindowError.key_down",
+"qualified": "Window.key_down",
 "kind": "method",
 "signature": "define key_down(self, key: String) -> Bool {",
 "doc": "True while `key` (a key name, as in `Event.key`) is held down."
@@ -3393,7 +3393,7 @@
 "keys": [
 {
 "package": "typing",
-"qualified": "MapIterator.keys",
+"qualified": "Map.keys",
 "kind": "method",
 "signature": "define keys(self) -> List",
 "doc": "Returns all keys as a `List` of `String`.\n@returns: List"
@@ -3402,7 +3402,7 @@
 "kill": [
 {
 "package": "process",
-"qualified": "ProcessError.kill",
+"qualified": "Process.kill",
 "kind": "method",
 "signature": "define kill(self) -> void {",
 "doc": "Stop it now (SIGKILL) and wait for it."
@@ -3411,14 +3411,14 @@
 "last": [
 {
 "package": "typing",
-"qualified": "ListIterator.last",
+"qualified": "List.last",
 "kind": "method",
 "signature": "define last(self) -> Any {",
 "doc": "Returns the last element, or `null` when the list is empty.\nSame shape as `xs.__get(-1)` but null-safe and slightly clearer\nat the call site.\n\n@example [10, 20, 30].last()    // 30\n@example List().last()          // null"
 },
 {
 "package": "typing",
-"qualified": "SetIterator.last",
+"qualified": "Set.last",
 "kind": "method",
 "signature": "define last(self) -> Any {",
 "doc": "Returns the last element in insertion order, or `null` when\nthe set is empty. Parallel to List.last()."
@@ -3427,14 +3427,14 @@
 "layout": [
 {
 "package": "ui",
-"qualified": "Theme.layout",
+"qualified": "TextArea.layout",
 "kind": "method",
 "signature": "define layout(self) -> List {",
 "doc": "The rows on screen as [start, end] text ranges (\"\\n\" not included)."
 },
 {
 "package": "ui",
-"qualified": "Theme.layout",
+"qualified": "App.layout",
 "kind": "method",
 "signature": "define layout(self) -> void {",
 "doc": "Measure and place the tree to fill the window."
@@ -3443,7 +3443,7 @@
 "length": [
 {
 "package": "typing",
-"qualified": "StringIterator.length",
+"qualified": "String.length",
 "kind": "method",
 "signature": "define length(self) -> Int",
 "doc": "Returns `true` if the string has zero characters.\n@returns: Bool"
@@ -3457,21 +3457,21 @@
 },
 {
 "package": "typing",
-"qualified": "TupleIterator.length",
+"qualified": "Tuple.length",
 "kind": "method",
 "signature": "define length(self) -> Int",
 "doc": "Returns the number of elements in this tuple.\n@returns: Int \u2014 element count"
 },
 {
 "package": "typing",
-"qualified": "ListIterator.length",
+"qualified": "List.length",
 "kind": "method",
 "signature": "define length(self) -> Int",
 "doc": "Returns the number of elements.\n@returns: Int \u2014 element count"
 },
 {
 "package": "typing",
-"qualified": "MapIterator.length",
+"qualified": "Map.length",
 "kind": "method",
 "signature": "define length(self) -> Int",
 "doc": "Returns the number of key-value pairs.\n@returns: Int"
@@ -3480,8 +3480,8 @@
 "lerp": [
 {
 "package": "ui",
-"qualified": "Theme.lerp",
-"kind": "method",
+"qualified": "lerp",
+"kind": "define",
 "signature": "define lerp(a: Int, b: Int, t: Double) -> Int {",
 "doc": "`a` + (`b` - `a`) * `t` (t from 0.0 to 1.0), rounded."
 }
@@ -3489,8 +3489,8 @@
 "light": [
 {
 "package": "ui",
-"qualified": "Theme.light",
-"kind": "method",
+"qualified": "light",
+"kind": "define",
 "signature": "define light() -> Theme {",
 "doc": "Dark text on white, blue accent."
 }
@@ -3505,7 +3505,7 @@
 },
 {
 "package": "window",
-"qualified": "WindowError.line",
+"qualified": "Window.line",
 "kind": "method",
 "signature": "define line(self, x1: Int, y1: Int, x2: Int, y2: Int, color: Int) -> void {",
 "doc": "A straight line from (x1, y1) to (x2, y2)."
@@ -3514,21 +3514,21 @@
 "lines": [
 {
 "package": "process",
-"qualified": "ProcessError.lines",
+"qualified": "Process.lines",
 "kind": "method",
 "signature": "define lines(self) -> List {",
 "doc": "Every remaining line of stdout."
 },
 {
 "package": "typing",
-"qualified": "StringIterator.lines",
+"qualified": "String.lines",
 "kind": "method",
 "signature": "define lines(self) -> List",
 "doc": "Splits on newlines and returns each line as a list element.\n@returns: List"
 },
 {
 "package": "ui",
-"qualified": "Theme.lines",
+"qualified": "TextArea.lines",
 "kind": "method",
 "signature": "define lines(self) -> List {",
 "doc": "The text split into lines (at \"\\n\"; wrapping doesn't count)."
@@ -3553,7 +3553,7 @@
 },
 {
 "package": "net",
-"qualified": "Request.listen",
+"qualified": "Server.listen",
 "kind": "method",
 "signature": "define listen(self, host: String, port: Int, handler: Callable) -> void {",
 "doc": "Block forever, accepting connections on `host:port` and dispatching\neach parsed `Request` to `handler` in its own task. The handler returns\na `Response`, which is sent back before the connection is closed.\n\nExceptions raised by the handler are caught and converted to a plain\n500 \u2014 they don't take the server down.\n\n@example\nServer().listen(\"0.0.0.0\", 8080, fn(req: Request) -> Response {\n    return Response(200, \"hi\", Map())\n})"
@@ -3578,8 +3578,8 @@
 "load_font": [
 {
 "package": "window",
-"qualified": "WindowError.load_font",
-"kind": "method",
+"qualified": "load_font",
+"kind": "define",
 "signature": "define load_font(path: String, size: Int) -> Font {",
 "doc": "Load a font file (`.ttf`, or `.otf` with TrueType outlines) at `size`\npixels tall.\n@throws WindowError if the file can't be read or isn't a font.\n@example\nf := window.load_font(\"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf\", 18)\nw.text(\"Gr\u00fc\u00dfe \u2014 \u00fcn\u00efc\u00f6d\u00e9 \u2713\", 20, 20, window.white(), font=f)"
 }
@@ -3587,7 +3587,7 @@
 "load_image": [
 {
 "package": "window",
-"qualified": "WindowError.load_image",
+"qualified": "Window.load_image",
 "kind": "method",
 "signature": "define load_image(self, path: String) -> Image {",
 "doc": "Load an image file to draw in this window: PNG (with transparency),\nJPEG, BMP, GIF (its first frame) or TGA.\n@throws WindowError if it doesn't exist or can't be decoded.\n@example logo := w.load_image(\"assets/logo.png\")"
@@ -3632,8 +3632,8 @@
 "make": [
 {
 "package": "datetime",
-"qualified": "DateTime.make",
-"kind": "method",
+"qualified": "make",
+"kind": "define",
 "signature": "define make(year: Int, month: Int, day: Int, hour: Int = 0, minute: Int = 0, second: Int = 0) -> DateTime {",
 "doc": "Build a DateTime from explicit calendar components (local time).\n@throws ValueError if the components are out of range."
 }
@@ -3655,7 +3655,7 @@
 },
 {
 "package": "typing",
-"qualified": "ListIterator.map",
+"qualified": "List.map",
 "kind": "method",
 "signature": "define map(self, cb: Callable) -> List",
 "doc": "Transforms each element and returns a new list.\n@param cb: Callable \u2014 `fn(element: T) => U`\n@returns: List \u2014 new list of transformed values\n\n@example:\ndoubled := [1, 2, 3].map(fn(x: Int) => x * 2)  // [2, 4, 6]"
@@ -3680,7 +3680,7 @@
 },
 {
 "package": "ui",
-"qualified": "Theme.matches",
+"qualified": "MenuItem.matches",
 "kind": "method",
 "signature": "define matches(self, e: window.Event) -> Bool {",
 "doc": "True when key event `e` is this item's `shortcut` (\"Ctrl+S\", \"Ctrl+Shift+N\", \"F5\", \"Delete\"; Ctrl also matches Cmd)."
@@ -3696,7 +3696,7 @@
 },
 {
 "package": "typing",
-"qualified": "ListIterator.max",
+"qualified": "List.max",
 "kind": "method",
 "signature": "define max(self) -> Any {",
 "doc": "Largest element (by `>`). Returns `null` on an empty list.\nSame shape as `min()`.\n\n@example [3, 1, 4, 1, 5].max()  // 5"
@@ -3750,7 +3750,7 @@
 "measure": [
 {
 "package": "ui",
-"qualified": "Theme.measure",
+"qualified": "Widget.measure",
 "kind": "method",
 "signature": "define measure(self, t: Theme) -> void {",
 "doc": "Work out `min_w` / `min_h` (containers measure their children first)."
@@ -3793,7 +3793,7 @@
 },
 {
 "package": "typing",
-"qualified": "ListIterator.min",
+"qualified": "List.min",
 "kind": "method",
 "signature": "define min(self) -> Any {",
 "doc": "Smallest element (by `<`). Returns `null` on an empty list.\nUses the first element as the seed so heterogeneous lists\ndon't have to start from a sentinel like `Int.MAX_VALUE`.\n\n@example [3, 1, 4, 1, 5].min()  // 1\n@example List().min()           // null"
@@ -3883,8 +3883,8 @@
 "month_name": [
 {
 "package": "datetime",
-"qualified": "DateTime.month_name",
-"kind": "method",
+"qualified": "month_name",
+"kind": "define",
 "signature": "define month_name(month: Int) -> String {",
 "doc": "Full English month name for `month` (1-12)."
 }
@@ -3892,7 +3892,7 @@
 "mouse": [
 {
 "package": "window",
-"qualified": "WindowError.mouse",
+"qualified": "Window.mouse",
 "kind": "method",
 "signature": "define mouse(self) -> Tuple {",
 "doc": "The mouse position (x, y) from the latest event."
@@ -3901,7 +3901,7 @@
 "move_item": [
 {
 "package": "ui",
-"qualified": "Theme.move_item",
+"qualified": "ListView.move_item",
 "kind": "method",
 "signature": "define move_item(self, src: Int, dst: Int) -> void {",
 "doc": "Move item `src` to position `dst` (both indices into `items`)."
@@ -3919,8 +3919,8 @@
 "multiselect": [
 {
 "package": "prompt",
-"qualified": "_Pick.multiselect",
-"kind": "method",
+"qualified": "multiselect",
+"kind": "define",
 "signature": "define multiselect(message: String, options: List) -> List {",
 "doc": "Pick zero-or-more options from a numbered list. Renders the same as\n`select` but takes a comma-separated list of indices:\n\n    Tags?\n      1) urgent\n      2) blocked\n      3) needs-review\n    Pick (comma-separated, blank for none): 1,3\n\nReturns the chosen options as a List<String> in their original order.\nWhitespace and duplicates are tolerated; an empty reply returns []."
 }
@@ -3946,8 +3946,8 @@
 "now": [
 {
 "package": "datetime",
-"qualified": "DateTime.now",
-"kind": "method",
+"qualified": "now",
+"kind": "define",
 "signature": "define now() -> DateTime {",
 "doc": "Current local DateTime."
 }
@@ -3982,22 +3982,22 @@
 "open": [
 {
 "package": "ui",
-"qualified": "Theme.open",
+"qualified": "DatePicker.open",
 "kind": "method",
 "signature": "define open(self) -> void {",
 "doc": "Show the calendar (on the chosen date's month)."
 },
 {
 "package": "ui",
-"qualified": "Theme.open",
+"qualified": "Dropdown.open",
 "kind": "method",
 "signature": "define open(self) -> void {",
 "doc": "Show the list."
 },
 {
 "package": "window",
-"qualified": "WindowError.open",
-"kind": "method",
+"qualified": "open",
+"kind": "define",
 "signature": "define open(title: String, width: Int, height: Int, resizable: Bool = false, hidden: Bool = false, vsync: Bool = true, headless: Bool = false) -> Window {",
 "doc": "Open a window `width` x `height` pixels, centred on the screen.\n@param resizable let the user resize it (\"resize\" events tell you)\n@param hidden    don't show it (drawing and `screenshot` still work)\n@param vsync     make `present` wait for the display's refresh\n@param headless  no display at all (CI, servers): an off-screen window\n                 for drawing and screenshots. Applies from the first\n                 window opened.\n@throws WindowError when it can't be opened (no SDL2, no display...).\n@example w := window.open(\"Paint\", 800, 600, resizable=true)"
 }
@@ -4005,7 +4005,7 @@
 "open_menu": [
 {
 "package": "ui",
-"qualified": "Theme.open_menu",
+"qualified": "MenuBar.open_menu",
 "kind": "method",
 "signature": "define open_menu(self, i: Int) -> void {",
 "doc": "Open menu `i` under its title (-1: close)."
@@ -4014,7 +4014,7 @@
 "option": [
 {
 "package": "argparse",
-"qualified": "ArgSpec.option",
+"qualified": "Parser.option",
 "kind": "method",
 "signature": "define option(self, long: String, short: String, default: String, help: String) -> void {",
 "doc": "Add a value option with a default."
@@ -4039,8 +4039,8 @@
 "output": [
 {
 "package": "process",
-"qualified": "ProcessError.output",
-"kind": "method",
+"qualified": "output",
+"kind": "define",
 "signature": "define output(args: List, cwd: String = \"\", env: Map = Map(), timeout_ms: Int = -1) -> String {",
 "doc": "Run a program and return its stdout, with one trailing newline removed.\nThrows `ProcessError` when it exits with a non-zero code.\n@example\nsha := process.output([\"git\", \"rev-parse\", \"HEAD\"])"
 }
@@ -4048,7 +4048,7 @@
 "page": [
 {
 "package": "ui",
-"qualified": "Theme.page",
+"qualified": "Tabs.page",
 "kind": "method",
 "signature": "define page(self) -> Widget {",
 "doc": "The page being shown (null when there are none)."
@@ -4057,7 +4057,7 @@
 "parse": [
 {
 "package": "argparse",
-"qualified": "ArgSpec.parse",
+"qualified": "Parser.parse",
 "kind": "method",
 "signature": "define parse(self) -> Map {",
 "doc": "Parse `sys.argv()`, returning a Map<String, String> (or \"true\"/\"false\"\nfor flags \u2014 call `.to_bool()` to convert). On `--help` or `-h`, prints\nusage and exits 0. On any error, prints the error + usage and exits 2."
@@ -4071,8 +4071,8 @@
 },
 {
 "package": "toml",
-"qualified": "StringResult.parse",
-"kind": "method",
+"qualified": "parse",
+"kind": "define",
 "signature": "define parse(text: String) -> Map {",
 "doc": "Parse a complete TOML document into a Map. Sections become nested\nMaps; `[[name]]` headers accumulate Lists of Maps under `name` in\nthe root.\n\nErrors raise ValueError annotated with the offending line number."
 },
@@ -4106,8 +4106,8 @@
 },
 {
 "package": "url",
-"qualified": "URL.parse",
-"kind": "method",
+"qualified": "parse",
+"kind": "define",
 "signature": "define parse(raw: String) -> URL {",
 "doc": "Parse a URL string into a `URL` struct. Tolerates missing scheme and\nmissing host: e.g. `\"/path?x=1\"` parses with scheme=\"\" and host=\"\"."
 }
@@ -4142,8 +4142,8 @@
 "parser": [
 {
 "package": "argparse",
-"qualified": "ArgSpec.parser",
-"kind": "method",
+"qualified": "parser",
+"kind": "define",
 "signature": "define parser(name: String, description: String) -> Parser {",
 "doc": "Construct a new Parser. `name` is shown in the usage line; `description` is\nprinted under it."
 }
@@ -4176,7 +4176,7 @@
 "paste": [
 {
 "package": "ui",
-"qualified": "Theme.paste",
+"qualified": "TextEdit.paste",
 "kind": "method",
 "signature": "define paste(self) -> void {",
 "doc": "Insert what's on the clipboard."
@@ -4194,7 +4194,7 @@
 "peek_back": [
 {
 "package": "typing",
-"qualified": "QueueIterator.peek_back",
+"qualified": "Queue.peek_back",
 "kind": "method",
 "signature": "define peek_back(self) -> Any",
 "doc": "Returns the back element without removing it.\n@returns: Any"
@@ -4203,7 +4203,7 @@
 "peek_front": [
 {
 "package": "typing",
-"qualified": "QueueIterator.peek_front",
+"qualified": "Queue.peek_front",
 "kind": "method",
 "signature": "define peek_front(self) -> Any",
 "doc": "Returns the front element without removing it.\n@returns: Any"
@@ -4212,7 +4212,7 @@
 "percent": [
 {
 "package": "ui",
-"qualified": "Theme.percent",
+"qualified": "ProgressBar.percent",
 "kind": "method",
 "signature": "define percent(self) -> Int {",
 "doc": "Progress from 0 to 100."
@@ -4239,7 +4239,7 @@
 "pixel": [
 {
 "package": "window",
-"qualified": "WindowError.pixel",
+"qualified": "Window.pixel",
 "kind": "method",
 "signature": "define pixel(self, x: Int, y: Int) -> Int {",
 "doc": "The colour (0xRRGGBB, opaque) of pixel (x, y) in what's been drawn \u2014 mostly for tests."
@@ -4248,7 +4248,7 @@
 "place": [
 {
 "package": "ui",
-"qualified": "Theme.place",
+"qualified": "Widget.place",
 "kind": "method",
 "signature": "define place(self, x: Int, y: Int, width: Int, height: Int) -> void {",
 "doc": "Take the box (x, y, width, height); containers place their children inside."
@@ -4266,7 +4266,7 @@
 "point": [
 {
 "package": "window",
-"qualified": "WindowError.point",
+"qualified": "Window.point",
 "kind": "method",
 "signature": "define point(self, x: Int, y: Int, color: Int) -> void {",
 "doc": "One pixel."
@@ -4275,7 +4275,7 @@
 "pop": [
 {
 "package": "typing",
-"qualified": "ListIterator.pop",
+"qualified": "List.pop",
 "kind": "method",
 "signature": "define pop(self) -> Any",
 "doc": "Removes and returns the last element.\n@returns: Any \u2014 the removed element\n@throws IndexError \u2014 if the list is empty"
@@ -4284,7 +4284,7 @@
 "pop_back": [
 {
 "package": "typing",
-"qualified": "QueueIterator.pop_back",
+"qualified": "Queue.pop_back",
 "kind": "method",
 "signature": "define pop_back(self) -> Any",
 "doc": "Removes and returns the back element. Returns `null` if empty.\n@returns: Any"
@@ -4293,7 +4293,7 @@
 "pop_front": [
 {
 "package": "typing",
-"qualified": "QueueIterator.pop_front",
+"qualified": "Queue.pop_front",
 "kind": "method",
 "signature": "define pop_front(self) -> Any",
 "doc": "Removes and returns the front element. Returns `null` if empty.\n@returns: Any"
@@ -4302,7 +4302,7 @@
 "positional": [
 {
 "package": "argparse",
-"qualified": "ArgSpec.positional",
+"qualified": "Parser.positional",
 "kind": "method",
 "signature": "define positional(self, name: String, help: String) -> void {",
 "doc": "Add a positional argument (required, consumed in declaration order)."
@@ -4311,8 +4311,8 @@
 "post": [
 {
 "package": "net",
-"qualified": "Response.post",
-"kind": "method",
+"qualified": "post",
+"kind": "define",
 "signature": "define post(target: String, data: String, headers: Map = Map()) -> Response {",
 "doc": "HTTP POST with a raw body. The body is sent as-is \u2014 set the matching\n`Content-Type` in `headers` if it isn't `application/octet-stream`.\n@example resp := http.post(\"http://api/echo\", \"name=Quirk\")\n@example resp := http.post(url, \"raw\", headers: { \"Content-Type\": \"text/plain\" })"
 }
@@ -4320,8 +4320,8 @@
 "post_json": [
 {
 "package": "net",
-"qualified": "Response.post_json",
-"kind": "method",
+"qualified": "post_json",
+"kind": "define",
 "signature": "define post_json(target: String, body: Any, headers: Map = Map()) -> Response {",
 "doc": "POST a value as JSON. Serializes `body` via `json.dumps` and sets\n`Content-Type: application/json` unless the caller already supplied one.\nAccepts anything `json.dumps` does: Map, List, ISerializable structs, or\na String.\n@example resp := http.post_json(\"http://api/users\", { \"name\": \"Quirk\" })"
 }
@@ -4354,7 +4354,7 @@
 "present": [
 {
 "package": "window",
-"qualified": "WindowError.present",
+"qualified": "Window.present",
 "kind": "method",
 "signature": "define present(self) -> void {",
 "doc": "Show everything drawn since the last `present`."
@@ -4363,7 +4363,7 @@
 "print_help": [
 {
 "package": "argparse",
-"qualified": "ArgSpec.print_help",
+"qualified": "Parser.print_help",
 "kind": "method",
 "signature": "define print_help(self) -> void {",
 "doc": "Print usage to stdout. Called automatically by `parse()` when `--help`\nor `-h` is seen."
@@ -4390,7 +4390,7 @@
 "push_back": [
 {
 "package": "typing",
-"qualified": "QueueIterator.push_back",
+"qualified": "Queue.push_back",
 "kind": "method",
 "signature": "define push_back(self, val: Any) -> void",
 "doc": "Appends a value to the back of the queue.\n@param val: Any"
@@ -4399,7 +4399,7 @@
 "push_front": [
 {
 "package": "typing",
-"qualified": "QueueIterator.push_front",
+"qualified": "Queue.push_front",
 "kind": "method",
 "signature": "define push_front(self, val: Any) -> void",
 "doc": "Prepends a value to the front of the queue.\n@param val: Any"
@@ -4415,7 +4415,7 @@
 },
 {
 "package": "typing",
-"qualified": "MapIterator.put",
+"qualified": "Map.put",
 "kind": "method",
 "signature": "define put(self, key: String, value: Any) -> void",
 "doc": "Inserts or updates a key-value pair.\n@param key: String \u2014 the key\n@param value: Any \u2014 the value to associate"
@@ -4424,7 +4424,7 @@
 "put_all": [
 {
 "package": "typing",
-"qualified": "MapIterator.put_all",
+"qualified": "Map.put_all",
 "kind": "method",
 "signature": "define put_all(self, other: Map) -> void",
 "doc": "Copy every entry from `other` into `self`, overwriting any\nsame-key values with other's. Mutates `self`; returns nothing.\nUse `+` if you want a fresh merged Map instead.\n\n@example m.put_all({ \"auth\": \"token\" })   // updates m in place"
@@ -4519,7 +4519,7 @@
 },
 {
 "package": "process",
-"qualified": "ProcessError.read",
+"qualified": "Process.read",
 "kind": "method",
 "signature": "define read(self, size: Int = 65536) -> String {",
 "doc": "Up to `size` bytes of stdout, waiting until some arrive. \"\" once it's all been read."
@@ -4528,7 +4528,7 @@
 "read_err": [
 {
 "package": "process",
-"qualified": "ProcessError.read_err",
+"qualified": "Process.read_err",
 "kind": "method",
 "signature": "define read_err(self, size: Int = 65536) -> String {",
 "doc": "Up to `size` bytes of stderr; \"\" once it's all been read."
@@ -4562,7 +4562,7 @@
 },
 {
 "package": "process",
-"qualified": "ProcessError.read_line",
+"qualified": "Process.read_line",
 "kind": "method",
 "signature": "define read_line(self) -> String {",
 "doc": "The next line of stdout, without its newline; null at the end of output."
@@ -4589,7 +4589,7 @@
 "rect": [
 {
 "package": "window",
-"qualified": "WindowError.rect",
+"qualified": "Window.rect",
 "kind": "method",
 "signature": "define rect(self, x: Int, y: Int, width: Int, height: Int, color: Int, fill: Bool = true) -> void {",
 "doc": "A rectangle with its top-left corner at (x, y); `fill=false` draws the outline."
@@ -4614,7 +4614,7 @@
 "redo": [
 {
 "package": "ui",
-"qualified": "Theme.redo",
+"qualified": "TextEdit.redo",
 "kind": "method",
 "signature": "define redo(self) -> Bool {",
 "doc": "Redo what `undo` took back (Ctrl+Y / Ctrl+Shift+Z)."
@@ -4623,7 +4623,7 @@
 "reduce": [
 {
 "package": "typing",
-"qualified": "ListIterator.reduce",
+"qualified": "List.reduce",
 "kind": "method",
 "signature": "define reduce(self, initial: Any, cb: Callable) -> Any",
 "doc": "Folds all elements into a single accumulated value.\n@param initial: Any \u2014 the starting accumulator value\n@param cb: Callable \u2014 `fn(acc: T, element: T) => T`\n@returns: Any \u2014 final accumulated value\n\n@example:\nsum := [1, 2, 3].reduce(0, fn(acc: Int, x: Int) => acc + x)  // 6"
@@ -4632,14 +4632,14 @@
 "remove": [
 {
 "package": "typing",
-"qualified": "MapIterator.remove",
+"qualified": "Map.remove",
 "kind": "method",
 "signature": "define remove(self, key: String) -> void",
 "doc": "Removes the entry with the given key. Does nothing if the key is absent.\n@param key: String"
 },
 {
 "package": "typing",
-"qualified": "SetIterator.remove",
+"qualified": "Set.remove",
 "kind": "method",
 "signature": "define remove(self, val: Any) -> void",
 "doc": "Removes a value from the set. Does nothing if absent.\n@param val: Any"
@@ -4684,15 +4684,15 @@
 "replace_all": [
 {
 "package": "regex",
-"qualified": "Match.replace_all",
+"qualified": "Regex.replace_all",
 "kind": "method",
 "signature": "define replace_all(self, s: String, replacement: String) -> String {",
 "doc": "Replace every match with `replacement`. Replacement supports `\\1`, `\\2`, ...\nbackrefs to captured groups. `\\0` is the entire match."
 },
 {
 "package": "regex",
-"qualified": "Match.replace_all",
-"kind": "method",
+"qualified": "replace_all",
+"kind": "define",
 "signature": "define replace_all(pattern: String, s: String, replacement: String) -> String {",
 "doc": "One-shot replace_all."
 }
@@ -4709,8 +4709,8 @@
 "request": [
 {
 "package": "net",
-"qualified": "Response.request",
-"kind": "method",
+"qualified": "request",
+"kind": "define",
 "signature": "define request(method: String, target: String, data: String = \"\", headers: Map = Map(), params: Map = Map(), follow_redirects: Bool = true) -> Response {",
 "doc": "Send a single HTTP request and return the response. Lower-level form\nbehind `get`/`post`/`delete`/`post_json`.\n\n@param method HTTP verb (GET, POST, DELETE, PUT, ...) \u2014 case-insensitive.\n@param target Full URL starting with `http://` or `https://`.\n@param data Request body \u2014 pass \"\" for GET/DELETE.\n@param headers Extra headers to send (case-preserved). Caller-supplied\n       Host / User-Agent / Connection / Content-Length override the defaults.\n@param params Query-string parameters; merged into the URL's existing\n       query and percent-encoded via `url.build_query`.\n@param follow_redirects When true (the default), 3xx responses are\n       followed automatically up to 5 hops. Set to false if you want to\n       inspect or short-circuit the redirect yourself.\n@returns The final `Response`."
 }
@@ -4718,7 +4718,7 @@
 "required": [
 {
 "package": "argparse",
-"qualified": "ArgSpec.required",
+"qualified": "Parser.required",
 "kind": "method",
 "signature": "define required(self, long: String, short: String, help: String) -> void {",
 "doc": "Add a value option that MUST be provided."
@@ -4727,7 +4727,7 @@
 "reverse": [
 {
 "package": "typing",
-"qualified": "ListIterator.reverse",
+"qualified": "List.reverse",
 "kind": "method",
 "signature": "define reverse(self) -> List {",
 "doc": "Returns a fresh List with elements in reverse order. Does not\nmutate `self`.\n\n@example [1, 2, 3].reverse()    // [3, 2, 1]"
@@ -4736,8 +4736,8 @@
 "rgb": [
 {
 "package": "window",
-"qualified": "WindowError.rgb",
-"kind": "method",
+"qualified": "rgb",
+"kind": "define",
 "signature": "define rgb(r: Int, g: Int, b: Int) -> Int {",
 "doc": "An opaque colour from red, green, blue (0-255 each)."
 }
@@ -4745,8 +4745,8 @@
 "rgba": [
 {
 "package": "window",
-"qualified": "WindowError.rgba",
-"kind": "method",
+"qualified": "rgba",
+"kind": "define",
 "signature": "define rgba(r: Int, g: Int, b: Int, a: Int) -> Int {",
 "doc": "A colour with transparency: `a` 0 (invisible) to 255 (opaque)."
 }
@@ -4772,8 +4772,8 @@
 "run": [
 {
 "package": "process",
-"qualified": "ProcessError.run",
-"kind": "method",
+"qualified": "run",
+"kind": "define",
 "signature": "define run(args: List, input: String = \"\", cwd: String = \"\", env: Map = Map(), inherit_env: Bool = true, timeout_ms: Int = -1, check: Bool = false, capture: Bool = true, merge_stderr: Bool = false) -> RunResult {",
 "doc": "Run a program to completion and return its `RunResult`.\n\n`input` is sent to its stdin (otherwise stdin is this process's).\nstdout and stderr are captured unless `capture=false` (then they go to\nthis process's terminal); `merge_stderr=true` captures both, interleaved,\nin `stdout`. `timeout_ms` kills it when time runs out; `check=true`\nthrows `ProcessError` on a non-zero exit.\n@throws FileNotFoundError when the program can't be found.\n@example\nr := process.run([\"ls\", \"-1\"], cwd=\"/tmp\")\nfor name in r.stdout.split(\"\\n\") { print(name) }\n@example\nprocess.run([\"make\", \"test\"], capture=false, check=true)"
 },
@@ -4786,15 +4786,15 @@
 },
 {
 "package": "ui",
-"qualified": "Theme.run",
+"qualified": "App.run",
 "kind": "method",
 "signature": "define run(self, fps: Int = 60) -> void {",
 "doc": "Run until the window closes, about `fps` frames a second."
 },
 {
 "package": "window",
-"qualified": "WindowError.run",
-"kind": "method",
+"qualified": "run",
+"kind": "define",
 "signature": "define run(w: Window, frame: Callable, fps: Int = 60) -> void {",
 "doc": "Run window `w` until it closes: each frame, call `frame(w, events)` with\nthat frame's events, then `present`, then wait so frames come about\n`fps` times a second. `frame` draws the whole frame (start with\n`w.clear(...)`).\n@example\ndefine frame(w: window.Window, events: List) -> void {\n    w.clear(window.black())\n    w.text(\"Frame at \" + window.ticks().str() + \"ms\", 10, 10)\n}\nwindow.run(window.open(\"Demo\", 400, 300), frame)"
 }
@@ -4802,8 +4802,8 @@
 "run_all": [
 {
 "package": "test",
-"qualified": "TestCase.run_all",
-"kind": "method",
+"qualified": "run_all",
+"kind": "define",
 "signature": "define run_all(cases: List) -> Int {",
 "doc": "Run every case in `cases`, printing pass/fail marks and a final summary.\nReturns the number of failures (0 == all green)."
 }
@@ -4817,10 +4817,19 @@
 "doc": "Return `k` distinct elements drawn from `items`. Throws if `k > items.length()`.\nImplemented as a partial Fisher-Yates over a copy so the caller's list\nisn't disturbed. O(k) work in the average case.\n\n@example\ndeck := [1,2,3,4,5,6,7,8,9,10]\nhand := random.sample(deck, 5)"
 }
 ],
+"scale": [
+{
+"package": "window",
+"qualified": "Window.scale",
+"kind": "method",
+"signature": "define scale(self) -> Double {",
+"doc": "Physical pixels per drawing pixel: 1.0 on a standard screen, 2.0 on a\nRetina / 200% one. Everything you draw is in drawing pixels \u2014 sizes\nand text come out the same physical size on every screen, and text and\nshapes use the full resolution. Use it to pick a sharper image\n(`icon@2x.png` when it's 2 or more). Set QUIRK_UI_SCALE (e.g. 1.5) to\nscale a program where the system doesn't (X11)."
+}
+],
 "screenshot": [
 {
 "package": "window",
-"qualified": "WindowError.screenshot",
+"qualified": "Window.screenshot",
 "kind": "method",
 "signature": "define screenshot(self, path: String) -> void {",
 "doc": "Save what's been drawn as a BMP image.\n@throws WindowError on failure."
@@ -4829,7 +4838,7 @@
 "scroll_to": [
 {
 "package": "ui",
-"qualified": "Theme.scroll_to",
+"qualified": "ScrollView.scroll_to",
 "kind": "method",
 "signature": "define scroll_to(self, pixels: Int) -> void {",
 "doc": "Scroll so `pixels` from the top of the content is at the top (clamped)."
@@ -4877,49 +4886,49 @@
 },
 {
 "package": "ui",
-"qualified": "Theme.select",
+"qualified": "TextEdit.select",
 "kind": "method",
 "signature": "define select(self, start: Int, end: Int) -> void {",
 "doc": "Select from `start` to `end` (the cursor goes to `end`)."
 },
 {
 "package": "ui",
-"qualified": "Theme.select",
+"qualified": "RadioGroup.select",
 "kind": "method",
 "signature": "define select(self, i: Int) -> void {",
 "doc": "Choose option `i` (clamped); runs `on_change` if it changed."
 },
 {
 "package": "ui",
-"qualified": "Theme.select",
+"qualified": "ListView.select",
 "kind": "method",
 "signature": "define select(self, i: Int) -> void {",
 "doc": "Select row `i` (clamped); runs `on_select` if it changed."
 },
 {
 "package": "ui",
-"qualified": "Theme.select",
+"qualified": "TreeView.select",
 "kind": "method",
 "signature": "define select(self, node: TreeNode) -> void {",
 "doc": "Select `node` (null: none); runs `on_select` if it changed."
 },
 {
 "package": "ui",
-"qualified": "Theme.select",
+"qualified": "Table.select",
 "kind": "method",
 "signature": "define select(self, i: Int) -> void {",
 "doc": "Select row `i` (an index into `rows`; -1: none); runs `on_select` if it changed."
 },
 {
 "package": "ui",
-"qualified": "Theme.select",
+"qualified": "Dropdown.select",
 "kind": "method",
 "signature": "define select(self, i: Int) -> void {",
 "doc": "Choose option `i` (clamped); runs `on_change` if it changed."
 },
 {
 "package": "ui",
-"qualified": "Theme.select",
+"qualified": "Tabs.select",
 "kind": "method",
 "signature": "define select(self, i: Int) -> void {",
 "doc": "Show page `i` (clamped); runs `on_change` if it changed."
@@ -4928,7 +4937,7 @@
 "select_all": [
 {
 "package": "ui",
-"qualified": "Theme.select_all",
+"qualified": "TextEdit.select_all",
 "kind": "method",
 "signature": "define select_all(self) -> void {",
 "doc": "Select everything."
@@ -4937,8 +4946,8 @@
 "select_index": [
 {
 "package": "prompt",
-"qualified": "_Pick.select_index",
-"kind": "method",
+"qualified": "select_index",
+"kind": "define",
 "signature": "define select_index(message: String, options: List, default_idx: Int = 0) -> _Pick {",
 "doc": "Same numbered menu as `select`, but returns the zero-based **index** of\nthe chosen option rather than its display string. Useful when you want\nto look up an original object in the caller's data \u2014 paired with\n`select_obj` when you'd rather hand the object back directly."
 }
@@ -4946,8 +4955,8 @@
 "select_obj": [
 {
 "package": "prompt",
-"qualified": "_Pick.select_obj",
-"kind": "method",
+"qualified": "select_obj",
+"kind": "define",
 "signature": "define select_obj(message: String, options: List, format: Callable, default_idx: Int = 0) -> Any {",
 "doc": "Numbered menu over arbitrary objects with a caller-supplied formatter.\nAvoids the \"options must already be strings\" constraint of `select`,\nand returns the **original** option (the actual `Cmd`, `Recipe`,\nwhatever) instead of its rendered label.\n\n@param message: String \u2014 header line shown above the menu\n@param options: List \u2014 arbitrary objects to pick from\n@param format: Callable \u2014 `fn(opt: Any) => String` rendering each row\n@param default_idx: Int \u2014 zero-based default; out-of-range falls to 0\n@returns: Any \u2014 the chosen original option (not the rendered label)\n\n@example:\nchosen: Cmd := select_obj(\"commands:\", commands, fn(c: Any) -> String {\n    cmd: Cmd := c\n    return cmd.label()\n})"
 }
@@ -4955,7 +4964,7 @@
 "selected_text": [
 {
 "package": "ui",
-"qualified": "Theme.selected_text",
+"qualified": "TextEdit.selected_text",
 "kind": "method",
 "signature": "define selected_text(self) -> String {",
 "doc": "The selected text (\"\" if none)."
@@ -4964,7 +4973,7 @@
 "selection_end": [
 {
 "package": "ui",
-"qualified": "Theme.selection_end",
+"qualified": "TextEdit.selection_end",
 "kind": "method",
 "signature": "define selection_end(self) -> Int {",
 "doc": "Where the selection ends."
@@ -4973,7 +4982,7 @@
 "selection_start": [
 {
 "package": "ui",
-"qualified": "Theme.selection_start",
+"qualified": "TextEdit.selection_start",
 "kind": "method",
 "signature": "define selection_start(self) -> Int {",
 "doc": "Where the selection starts (== `selection_end()` when nothing is selected)."
@@ -4998,14 +5007,14 @@
 "set": [
 {
 "package": "ui",
-"qualified": "Theme.set",
+"qualified": "Slider.set",
 "kind": "method",
 "signature": "define set(self, v: Int) -> void {",
 "doc": "Set the value (clamped to min..max); runs `on_change` if it changed."
 },
 {
 "package": "ui",
-"qualified": "Theme.set",
+"qualified": "StatusBar.set",
 "kind": "method",
 "signature": "define set(self, i: Int, text: String) -> void {",
 "doc": "Change section `i`'s text (adds sections as needed)."
@@ -5023,7 +5032,7 @@
 "set_color": [
 {
 "package": "ui",
-"qualified": "Theme.set_color",
+"qualified": "ColorPicker.set_color",
 "kind": "method",
 "signature": "define set_color(self, color: Int) -> void {",
 "doc": "Set the colour from code (no `on_change`)."
@@ -5032,7 +5041,7 @@
 "set_date": [
 {
 "package": "ui",
-"qualified": "Theme.set_date",
+"qualified": "DatePicker.set_date",
 "kind": "method",
 "signature": "define set_date(self, year: Int, month: Int, day: Int) -> void {",
 "doc": "Set the date (clamped to a real date); runs `on_change` if it changed."
@@ -5041,7 +5050,7 @@
 "set_title": [
 {
 "package": "window",
-"qualified": "WindowError.set_title",
+"qualified": "Window.set_title",
 "kind": "method",
 "signature": "define set_title(self, title: String) -> void {",
 "doc": "Change the title bar text."
@@ -5104,8 +5113,8 @@
 "shell": [
 {
 "package": "process",
-"qualified": "ProcessError.shell",
-"kind": "method",
+"qualified": "shell",
+"kind": "define",
 "signature": "define shell(command: String, input: String = \"\", cwd: String = \"\", env: Map = Map(), inherit_env: Bool = true, timeout_ms: Int = -1, check: Bool = false, capture: Bool = true, merge_stderr: Bool = false) -> RunResult {",
 "doc": "`run` through the shell \u2014 `/bin/sh -c command` (Windows: `cmd.exe /c`),\nso pipes, globs, redirects and variables work. Only for commands you wrote \u2014 never paste\nuntrusted input into one (use `run` with an args List instead).\n@example\nr := process.shell(\"ls *.qk | wc -l\")\nprint(r.stdout.trim())"
 }
@@ -5113,7 +5122,7 @@
 "show": [
 {
 "package": "ui",
-"qualified": "Theme.show",
+"qualified": "FileDialog.show",
 "kind": "method",
 "signature": "define show(self) -> void {",
 "doc": "Open the dialog (reading `dir`)."
@@ -5165,7 +5174,7 @@
 "signal": [
 {
 "package": "process",
-"qualified": "ProcessError.signal",
+"qualified": "Process.signal",
 "kind": "method",
 "signature": "define signal(self, sig: Int) -> void {",
 "doc": "Send signal `sig` (15 = SIGTERM, 9 = SIGKILL, 2 = SIGINT, ...). No-op once it has finished."
@@ -5206,14 +5215,14 @@
 },
 {
 "package": "typing",
-"qualified": "QueueIterator.size",
+"qualified": "Queue.size",
 "kind": "method",
 "signature": "define size(self) -> Int",
 "doc": "Returns the number of elements.\n@returns: Int"
 },
 {
 "package": "typing",
-"qualified": "SetIterator.size",
+"qualified": "Set.size",
 "kind": "method",
 "signature": "define size(self) -> Int",
 "doc": "Returns the number of elements.\n@returns: Int"
@@ -5229,8 +5238,8 @@
 },
 {
 "package": "window",
-"qualified": "WindowError.sleep",
-"kind": "method",
+"qualified": "sleep",
+"kind": "define",
 "signature": "extern define sleep(ms: Int) -> void",
 "doc": "Pause for `ms` milliseconds (other tasks run meanwhile)."
 }
@@ -5247,7 +5256,7 @@
 "sort": [
 {
 "package": "typing",
-"qualified": "ListIterator.sort",
+"qualified": "List.sort",
 "kind": "method",
 "signature": "define sort(self, cb: Callable = null) -> List",
 "doc": "Sorts the list in place (stable) and returns it, for chaining.\nWith no comparator, values sort in natural order: numbers\nnumerically, Strings alphabetically. With one, `cb(a, b)` returns\na negative Int when `a` goes first, positive when after, zero when\nequal.\n\n@param cb: Callable \u2014 optional `fn(a, b) => Int`\n@returns: List \u2014 the (now-sorted) self\n\n@example:\n[3, 1, 2].sort()                        // [1, 2, 3]\n[\"b\", \"a\"].sort()                       // [\"a\", \"b\"]\n[3, 1, 2].sort(fn(a, b) => b - a)       // [3, 2, 1]"
@@ -5256,7 +5265,7 @@
 "sort_by": [
 {
 "package": "ui",
-"qualified": "Theme.sort_by",
+"qualified": "Table.sort_by",
 "kind": "method",
 "signature": "define sort_by(self, c: Int, descending: Bool = false) -> void {",
 "doc": "Sort by column `c` (`descending` for largest / last first)."
@@ -5265,8 +5274,8 @@
 "spawn": [
 {
 "package": "process",
-"qualified": "ProcessError.spawn",
-"kind": "method",
+"qualified": "spawn",
+"kind": "define",
 "signature": "define spawn(args: List, cwd: String = \"\", env: Map = Map(), inherit_env: Bool = true, stdin: String = \"pipe\", stdout: String = \"pipe\", stderr: String = \"pipe\") -> Process {",
 "doc": "Start a program and return without waiting for it.\n\n`stdin` / `stdout` / `stderr` each say where that stream goes:\n`\"pipe\"` (default \u2014 use `write` / `read` / `read_line` / `communicate`),\n`\"inherit\"` (this process's terminal), `\"null\"` (discard / empty input);\n`stderr=\"stdout\"` sends stderr into the stdout pipe.\n\nRead its output to the end (or `communicate`) before `wait`ing: a\nprogram that fills an unread pipe stops until someone reads it.\n@throws FileNotFoundError when the program can't be found.\n@example\np := process.spawn([\"tail\", \"-f\", \"app.log\"], stderr=\"null\")\nfor i in 0..5 { print(p.read_line()) }\np.kill()"
 }
@@ -5274,14 +5283,14 @@
 "split": [
 {
 "package": "regex",
-"qualified": "Match.split",
+"qualified": "Regex.split",
 "kind": "method",
 "signature": "define split(self, s: String) -> List {",
 "doc": "Split `s` on every match of the pattern. Empty input yields a single\nempty-string element."
 },
 {
 "package": "typing",
-"qualified": "StringIterator.split",
+"qualified": "String.split",
 "kind": "method",
 "signature": "define split(self, delimiter: String) -> List",
 "doc": "Splits the string on `delimiter` and returns a list of substrings.\n@param delimiter: String\n@returns: List \u2014 list of String parts"
@@ -5333,8 +5342,8 @@
 "start_of_day": [
 {
 "package": "datetime",
-"qualified": "DateTime.start_of_day",
-"kind": "method",
+"qualified": "start_of_day",
+"kind": "define",
 "signature": "define start_of_day(dt: DateTime) -> DateTime {",
 "doc": "Truncate `dt` to midnight. Returns a fresh DateTime with the same date\nbut `hour = minute = second = 0`."
 }
@@ -5342,8 +5351,8 @@
 "start_of_month": [
 {
 "package": "datetime",
-"qualified": "DateTime.start_of_month",
-"kind": "method",
+"qualified": "start_of_month",
+"kind": "define",
 "signature": "define start_of_month(dt: DateTime) -> DateTime {",
 "doc": "First day of `dt`'s month, at midnight."
 }
@@ -5351,8 +5360,8 @@
 "start_of_week": [
 {
 "package": "datetime",
-"qualified": "DateTime.start_of_week",
-"kind": "method",
+"qualified": "start_of_week",
+"kind": "define",
 "signature": "define start_of_week(dt: DateTime) -> DateTime {",
 "doc": "Monday of the week containing `dt`, at midnight. Uses ISO weeks\n(Monday = first day). If `dt` already falls on Monday, returns midnight\nof the same day."
 }
@@ -5360,8 +5369,8 @@
 "start_of_year": [
 {
 "package": "datetime",
-"qualified": "DateTime.start_of_year",
-"kind": "method",
+"qualified": "start_of_year",
+"kind": "define",
 "signature": "define start_of_year(dt: DateTime) -> DateTime {",
 "doc": "January 1 of `dt`'s year, at midnight."
 }
@@ -5405,7 +5414,7 @@
 "step": [
 {
 "package": "ui",
-"qualified": "Theme.step",
+"qualified": "App.step",
 "kind": "method",
 "signature": "define step(self) -> Bool {",
 "doc": "One frame: handle events, lay out, draw, present. False once the window is closed."
@@ -5414,7 +5423,7 @@
 "stop": [
 {
 "package": "net",
-"qualified": "Request.stop",
+"qualified": "Server.stop",
 "kind": "method",
 "signature": "define stop(self) -> void {",
 "doc": "Stop the accept-loop on the next iteration."
@@ -5432,7 +5441,7 @@
 "substring": [
 {
 "package": "typing",
-"qualified": "StringIterator.substring",
+"qualified": "String.substring",
 "kind": "method",
 "signature": "define substring(self, start: Int, end: Int) -> String",
 "doc": "Returns the substring from `start` (inclusive) to `end` (exclusive).\n@param start: Int \u2014 start index\n@param end: Int \u2014 end index\n@returns: String\n@throws IndexError \u2014 if indices are out of range"
@@ -5441,7 +5450,7 @@
 "sum": [
 {
 "package": "typing",
-"qualified": "ListIterator.sum",
+"qualified": "List.sum",
 "kind": "method",
 "signature": "define sum(self) -> Any {",
 "doc": "Sum of all elements. Reduces via `+` starting from 0. Works\nfor any numeric type \u2014 Sema's `+` handles Int/Double widening\nso a mixed [Int, Double, ...] list returns a Double total.\n\n@example [1, 2, 3].sum()        // 6\n@example List().sum()           // 0"
@@ -5540,7 +5549,7 @@
 "terminate": [
 {
 "package": "process",
-"qualified": "ProcessError.terminate",
+"qualified": "Process.terminate",
 "kind": "method",
 "signature": "define terminate(self) -> void {",
 "doc": "Ask it to stop (SIGTERM)."
@@ -5556,15 +5565,15 @@
 "test": [
 {
 "package": "regex",
-"qualified": "Match.test",
+"qualified": "Regex.test",
 "kind": "method",
 "signature": "define test(self, s: String) -> Bool {",
 "doc": "True if the pattern matches anywhere in `s`."
 },
 {
 "package": "regex",
-"qualified": "Match.test",
-"kind": "method",
+"qualified": "test",
+"kind": "define",
 "signature": "define test(pattern: String, s: String) -> Bool {",
 "doc": "One-shot test: compile + test. Cheaper to keep a Regex around if reusing."
 }
@@ -5581,28 +5590,28 @@
 "text": [
 {
 "package": "ui",
-"qualified": "Theme.text",
+"qualified": "RadioGroup.text",
 "kind": "method",
 "signature": "define text(self) -> String {",
 "doc": "The chosen option as text (\"\" when none)."
 },
 {
 "package": "ui",
-"qualified": "Theme.text",
+"qualified": "DatePicker.text",
 "kind": "method",
 "signature": "define text(self) -> String {",
 "doc": "The date as \"YYYY-MM-DD\"."
 },
 {
 "package": "ui",
-"qualified": "Theme.text",
+"qualified": "Dropdown.text",
 "kind": "method",
 "signature": "define text(self) -> String {",
 "doc": "The chosen option as text (\"\" when there are none)."
 },
 {
 "package": "window",
-"qualified": "WindowError.text",
+"qualified": "Window.text",
 "kind": "method",
 "signature": "define text(self, text: String, x: Int, y: Int, color: Int = white(), scale: Int = 1, font: Font = null) -> Int {",
 "doc": "Draw `text` with its top-left corner at (x, y) in the built-in font\n(8x16 pixels per character at `scale=1`; \"\\n\" starts a new line).\nReturns the width drawn, in pixels."
@@ -5710,7 +5719,7 @@
 "to_float": [
 {
 "package": "typing",
-"qualified": "StringIterator.to_float",
+"qualified": "String.to_float",
 "kind": "method",
 "signature": "define to_float(self) -> Double",
 "doc": "Parses the string as a floating-point number.\n@returns: Double\n@throws ValueError \u2014 if the string is not a valid number"
@@ -5719,7 +5728,7 @@
 "to_int": [
 {
 "package": "typing",
-"qualified": "StringIterator.to_int",
+"qualified": "String.to_int",
 "kind": "method",
 "signature": "define to_int(self) -> Int",
 "doc": "Parses the string as an integer.\n@returns: Int\n@throws ValueError \u2014 if the string is not a valid integer"
@@ -5737,7 +5746,7 @@
 "to_list": [
 {
 "package": "typing",
-"qualified": "SetIterator.to_list",
+"qualified": "Set.to_list",
 "kind": "method",
 "signature": "extern define to_list(self) -> List",
 "doc": "Materialise the set's elements into a fresh List in insertion\norder. Useful when downstream code wants index/sort/slice\noperations \u2014 Set itself is hash-keyed and doesn't support\n`__get(i)`. Order matches the iterator (insertion order).\n\n@example users.to_list().sort(fn(a, b) => a.name.cmp(b.name))"
@@ -5746,7 +5755,7 @@
 "to_set": [
 {
 "package": "typing",
-"qualified": "ListIterator.to_set",
+"qualified": "List.to_set",
 "kind": "method",
 "signature": "define to_set(self) -> Set {",
 "doc": "Materialise the list's elements into a fresh `Set`, dropping\nduplicates. Useful for quick dedup with set semantics or for\nO(1) membership tests after building from a list.\n\nNote: this introduces a `from .set` import inside the List\npackage \u2014 keep that in mind if you're rebuilding the package\ngraph from scratch.\n\n@example pending := [1, 2, 1, 3].to_set()   // {1, 2, 3}"
@@ -5773,8 +5782,8 @@
 "today": [
 {
 "package": "datetime",
-"qualified": "DateTime.today",
-"kind": "method",
+"qualified": "today",
+"kind": "define",
 "signature": "define today() -> DateTime {",
 "doc": "The current local date+time. Synonym for `now()`."
 }
@@ -5782,14 +5791,14 @@
 "toggle": [
 {
 "package": "ui",
-"qualified": "Theme.toggle",
+"qualified": "Checkbox.toggle",
 "kind": "method",
 "signature": "define toggle(self) -> void {",
 "doc": "Flip it, as a click would (runs `on_change`)."
 },
 {
 "package": "ui",
-"qualified": "Theme.toggle",
+"qualified": "TreeView.toggle",
 "kind": "method",
 "signature": "define toggle(self, node: TreeNode) -> void {",
 "doc": "Expand or collapse `node`."
@@ -5798,8 +5807,8 @@
 "tomorrow": [
 {
 "package": "datetime",
-"qualified": "DateTime.tomorrow",
-"kind": "method",
+"qualified": "tomorrow",
+"kind": "define",
 "signature": "define tomorrow() -> DateTime {",
 "doc": "One day in the future, same time-of-day."
 }
@@ -5807,8 +5816,8 @@
 "tooltip": [
 {
 "package": "ui",
-"qualified": "Theme.tooltip",
-"kind": "method",
+"qualified": "tooltip",
+"kind": "define",
 "signature": "define tooltip(w: Widget, text: String) -> Widget {",
 "doc": "Give `w` a tooltip and return it \u2014 for building trees inline:\n`ui.tooltip(ui.Button(\"Save\", on_click=save), \"Write the file (Ctrl+S)\")`."
 }
@@ -5825,7 +5834,7 @@
 "unclip": [
 {
 "package": "window",
-"qualified": "WindowError.unclip",
+"qualified": "Window.unclip",
 "kind": "method",
 "signature": "define unclip(self) -> void {",
 "doc": "Draw anywhere again (undoes `clip`)."
@@ -5834,7 +5843,7 @@
 "undo": [
 {
 "package": "ui",
-"qualified": "Theme.undo",
+"qualified": "TextEdit.undo",
 "kind": "method",
 "signature": "define undo(self) -> Bool {",
 "doc": "Undo the last edit (Ctrl+Z); false when there's nothing to undo."
@@ -5852,7 +5861,7 @@
 "union": [
 {
 "package": "typing",
-"qualified": "SetIterator.union",
+"qualified": "Set.union",
 "kind": "method",
 "signature": "define union(self, other: Set) -> Set",
 "doc": "Returns a new set containing all elements from both sets.\n@param other: Set\n@returns: Set"
@@ -5868,7 +5877,7 @@
 },
 {
 "package": "typing",
-"qualified": "ListIterator.unique",
+"qualified": "List.unique",
 "kind": "method",
 "signature": "define unique(self) -> List {",
 "doc": "Returns a fresh List with duplicate elements removed. Order\nis preserved: the first occurrence wins. Equality uses `==`\nso user structs with `__eq` overloads dedup correctly.\n\n@example [1, 2, 1, 3, 2].unique()    // [1, 2, 3]\n@example [\"a\", \"b\", \"a\"].unique()    // [\"a\", \"b\"]"
@@ -5961,8 +5970,8 @@
 "utc_from_unix": [
 {
 "package": "datetime",
-"qualified": "DateTime.utc_from_unix",
-"kind": "method",
+"qualified": "utc_from_unix",
+"kind": "define",
 "signature": "define utc_from_unix(epoch: Int) -> DateTime {",
 "doc": "Build a DateTime from an explicit Unix epoch, interpreted as UTC."
 }
@@ -5970,8 +5979,8 @@
 "utc_make": [
 {
 "package": "datetime",
-"qualified": "DateTime.utc_make",
-"kind": "method",
+"qualified": "utc_make",
+"kind": "define",
 "signature": "define utc_make(year: Int, month: Int, day: Int, hour: Int = 0, minute: Int = 0, second: Int = 0) -> DateTime {",
 "doc": "Build a DateTime from explicit calendar components (UTC).\n@throws ValueError on out-of-range components."
 }
@@ -5979,8 +5988,8 @@
 "utc_now": [
 {
 "package": "datetime",
-"qualified": "DateTime.utc_now",
-"kind": "method",
+"qualified": "utc_now",
+"kind": "define",
 "signature": "define utc_now() -> DateTime {",
 "doc": "Current UTC DateTime."
 }
@@ -6006,7 +6015,7 @@
 "values": [
 {
 "package": "typing",
-"qualified": "MapIterator.values",
+"qualified": "Map.values",
 "kind": "method",
 "signature": "define values(self) -> List",
 "doc": "Returns all values as a `List`.\n@returns: List"
@@ -6033,7 +6042,7 @@
 "visible_nodes": [
 {
 "package": "ui",
-"qualified": "Theme.visible_nodes",
+"qualified": "TreeView.visible_nodes",
 "kind": "method",
 "signature": "define visible_nodes(self) -> List {",
 "doc": "The nodes on screen in order (expanded parents' children included)."
@@ -6042,7 +6051,7 @@
 "wait": [
 {
 "package": "process",
-"qualified": "ProcessError.wait",
+"qualified": "Process.wait",
 "kind": "method",
 "signature": "define wait(self) -> Int {",
 "doc": "Wait for the program to finish; returns its exit code (`-N`: killed by signal N)."
@@ -6051,7 +6060,7 @@
 "wait_event": [
 {
 "package": "window",
-"qualified": "WindowError.wait_event",
+"qualified": "Window.wait_event",
 "kind": "method",
 "signature": "define wait_event(self, timeout_ms: Int = -1) -> Event {",
 "doc": "Wait for the next event, up to `timeout_ms` (-1: until one comes);\nnull on timeout or once the window is closed. Other tasks run while\nit waits. For programs that only redraw when something happens."
@@ -6060,7 +6069,7 @@
 "wait_for": [
 {
 "package": "process",
-"qualified": "ProcessError.wait_for",
+"qualified": "Process.wait_for",
 "kind": "method",
 "signature": "define wait_for(self, timeout_ms: Int) -> Bool {",
 "doc": "Wait up to `timeout_ms`; true if it finished (its code is then in `code`)."
@@ -6085,8 +6094,8 @@
 },
 {
 "package": "ui",
-"qualified": "Theme.weekday",
-"kind": "method",
+"qualified": "weekday",
+"kind": "define",
 "signature": "define weekday(year: Int, month: Int, day: Int) -> Int {",
 "doc": "Day of the week of a date: 0 = Monday ... 6 = Sunday."
 }
@@ -6094,17 +6103,17 @@
 "width": [
 {
 "package": "window",
-"qualified": "WindowError.width",
+"qualified": "Font.width",
 "kind": "method",
 "signature": "define width(self, text: String) -> Int {",
 "doc": "Width in pixels of `text` (its longest line) in this font."
 },
 {
 "package": "window",
-"qualified": "WindowError.width",
+"qualified": "Window.width",
 "kind": "method",
 "signature": "define width(self) -> Int {",
-"doc": "Drawable width in pixels."
+"doc": "Drawable width in (drawing) pixels \u2014 see `scale()`."
 }
 ],
 "write": [
@@ -6124,7 +6133,7 @@
 },
 {
 "package": "process",
-"qualified": "ProcessError.write",
+"qualified": "Process.write",
 "kind": "method",
 "signature": "define write(self, data: String) -> void {",
 "doc": "Write `data` to the program's stdin. Throws `IOError` if stdin isn't a pipe or the program closed it."
@@ -6178,8 +6187,8 @@
 "yesterday": [
 {
 "package": "datetime",
-"qualified": "DateTime.yesterday",
-"kind": "method",
+"qualified": "yesterday",
+"kind": "define",
 "signature": "define yesterday() -> DateTime {",
 "doc": "One day in the past, same time-of-day."
 }

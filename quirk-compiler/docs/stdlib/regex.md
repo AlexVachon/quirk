@@ -14,6 +14,10 @@ String; `text` is the substring `[start, end)`; `groups` is a `List<String>`
 of the captured groups (group 0 = full match is NOT included — `text` is
 the whole match).
 
+### `struct Regex`
+
+A compiled regular expression. Construct via `regex.compile(pattern, flags)`.
+
 #### `define test(self, s: String) -> Bool`
 
 True if the pattern matches anywhere in `s`.
@@ -38,26 +42,6 @@ backrefs to captured groups. `\0` is the entire match.
 
 Split `s` on every match of the pattern. Empty input yields a single
 empty-string element.
-
-#### `define compile(pattern: String, flags: String = "") -> Regex`
-
-Compile a pattern. Equivalent to `Regex(pattern, flags)`.
-
-#### `define test(pattern: String, s: String) -> Bool`
-
-One-shot test: compile + test. Cheaper to keep a Regex around if reusing.
-
-#### `define find(pattern: String, s: String) -> Match`
-
-One-shot find: compile + find.
-
-#### `define replace_all(pattern: String, s: String, replacement: String) -> String`
-
-One-shot replace_all.
-
-### `struct Regex`
-
-A compiled regular expression. Construct via `regex.compile(pattern, flags)`.
 
 
 ### Module-level functions
@@ -87,3 +71,19 @@ by `replacement`. The replacement may reference captured groups via
 
 Splits `s` on every match of `handle`'s pattern. Empty matches advance one
 byte to prevent infinite loops.
+
+#### `define compile(pattern: String, flags: String = "") -> Regex`
+
+Compile a pattern. Equivalent to `Regex(pattern, flags)`.
+
+#### `define test(pattern: String, s: String) -> Bool`
+
+One-shot test: compile + test. Cheaper to keep a Regex around if reusing.
+
+#### `define find(pattern: String, s: String) -> Match`
+
+One-shot find: compile + find.
+
+#### `define replace_all(pattern: String, s: String, replacement: String) -> String`
+
+One-shot replace_all.

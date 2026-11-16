@@ -13,9 +13,28 @@ Thrown by `run(check=true)`, `shell(check=true)` and `output` when the
 program exits with a non-zero code. The message names the command, the
 exit code and the first line of its stderr.
 
+### `struct RunResult`
+
+A finished program.
+  `args`       — what was run
+  `code`       — exit code; `-N` when it was killed by signal N
+  `stdout`     — everything it wrote to stdout ("" when not captured)
+  `stderr`     — everything it wrote to stderr ("" when not captured or
+                 merged into stdout)
+  `timed_out`  — killed because `timeout_ms` passed
+  `ok`         — `code == 0`
+
 #### `define check(self) -> void`
 
 Throw `ProcessError` unless the program exited with code 0.
+
+### `struct Process`
+
+A running program, from `process.spawn`.
+  `pid`   — its process id
+  `args`  — what was run
+  `code`  — exit code once it has finished (after `wait`, `done` or
+            `communicate`); -1 before
 
 #### `define write(self, data: String) -> void`
 
@@ -71,6 +90,13 @@ Ask it to stop (SIGTERM).
 
 Stop it now (SIGKILL) and wait for it.
 
+
+### Module-level functions
+
+#### `extern define pid() -> Int`
+
+This process's id.
+
 #### `define spawn(args: List, cwd: String = "", env: Map = Map(), inherit_env: Bool = true, stdin: String = "pipe", stdout: String = "pipe", stderr: String = "pipe") -> Process`
 
 Start a program and return without waiting for it.
@@ -119,29 +145,3 @@ Run a program and return its stdout, with one trailing newline removed.
 Throws `ProcessError` when it exits with a non-zero code.
 @example
 sha := process.output(["git", "rev-parse", "HEAD"])
-
-### `struct RunResult`
-
-A finished program.
-  `args`       — what was run
-  `code`       — exit code; `-N` when it was killed by signal N
-  `stdout`     — everything it wrote to stdout ("" when not captured)
-  `stderr`     — everything it wrote to stderr ("" when not captured or
-                 merged into stdout)
-  `timed_out`  — killed because `timeout_ms` passed
-  `ok`         — `code == 0`
-
-### `struct Process`
-
-A running program, from `process.spawn`.
-  `pid`   — its process id
-  `args`  — what was run
-  `code`  — exit code once it has finished (after `wait`, `done` or
-            `communicate`); -1 before
-
-
-### Module-level functions
-
-#### `extern define pid() -> Int`
-
-This process's id.

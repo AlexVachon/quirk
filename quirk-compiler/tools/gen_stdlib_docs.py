@@ -157,11 +157,15 @@ def parse_file(path: Path) -> list[Entry]:
         if m and not scope_stack:
             indent = len(m.group(1))
             scope_stack.append((m.group(3), brace_depth - line.count("{") + line.count("}")))
-            # If the next line(s) start a new scope, we already pushed.
+            # Next line: without `i += 1` this one was read again and its
+            # `{` counted twice, so the scope never closed and every later
+            # struct's methods were filed under this one.
+            i += 1
             continue
         m = RE_ENUM.match(line)
         if m and not scope_stack:
             scope_stack.append((m.group(2), brace_depth - line.count("{") + line.count("}")))
+            i += 1
             continue
         # `extend X { ... }` — methods inside become methods on X.
         # Treated identically to `struct X { ... }` for scope purposes.

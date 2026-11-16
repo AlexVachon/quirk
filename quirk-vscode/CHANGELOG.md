@@ -2,6 +2,15 @@
 
 All notable changes to the extension land here. Versioning follows SemVer; minor bumps for new features, patches for fixes.
 
+## [1.1.5] — 2026-11-16 — right owners in hovers
+
+- **Hover and completion docs name the right type.** The stdlib index filed
+  every method after the first undocumented struct under that struct —
+  `Window.width` showed as `WindowError.width`, `List.append` as
+  `ListIterator.append`, `ui.TextEdit` methods under `Theme` (256 entries).
+  `List`'s own methods (`append`, `map`, `filter`...) were missing.
+- `window.Window.scale()` (window 1.4.0, high DPI) is documented.
+
 ## [1.1.4] — 2026-11-13 — fewer false warnings, Ctrl+click in venvs
 
 - **Ctrl+click goes to the venv's copy** of a package: a folder with

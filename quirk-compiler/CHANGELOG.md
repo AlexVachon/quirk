@@ -5,6 +5,27 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.36.0] — 2026-11-16 — high DPI windows; `Int(x)` / `Double(x)`
+
+- **Sharp windows on high-density screens** (`window` v1.4.0, pinned):
+  programs draw in logical pixels, so a 400 x 300 window and a 16 px font
+  are the same physical size everywhere, while text, circles and images
+  use the full resolution on macOS Retina, Windows at 150% / 200% (per-
+  monitor DPI aware now — Windows used to stretch a blurry bitmap) and
+  Wayland. Moving a window to another screen re-renders at its density.
+  `w.scale()` gives the factor; `QUIRK_UI_SCALE=2` (or `GDK_SCALE`) scales
+  where the system doesn't (X11). `ui` apps need no change.
+- **`Int(x)` / `Double(x)` convert** (Int, Double, Bool, String, untyped):
+  `Int(2.7)` is 2, `Int("12")` 12 (bad text raises ValueError),
+  `Double(3)` 3.0. They were an internal compiler error ("Invalid
+  bitcast").
+- **`String(n)` for an Int above 1048575 crashed** (SIGSEGV) — e.g.
+  `String(w.pixel(x, y))`.
+- Stdlib docs (`docs/stdlib`, the editor's hover index): methods were
+  filed under the wrong struct after any struct without a docstring
+  (`Window.width` as `WindowError.width`, `List`'s methods missing).
+  VS Code extension 1.1.5 ships the corrected index.
+
 ## [7.35.0] — 2026-11-16 — type names per module; `String(s)`
 
 - **Two files can define the same struct / enum / interface name.** A

@@ -39,6 +39,224 @@ print(nums.length())    // 4
 print(nums[0])          // 1
 doubled := nums.map(fn(x: Int) => x * 2)
 
+#### `define append(self, item: Any) -> void`
+
+Appends a value to the end of the list.
+@param item: Any — the value to add
+
+#### `define append_all(self, other: List) -> void`
+
+Append every element of `other` to `self` in place. Mutates
+`self`; returns nothing. Use `+` if you want a fresh List
+instead of mutating. (Named `append_all` rather than the
+Python-conventional `extend` because `extend` is a reserved
+keyword in Quirk — `extend Foo { ... }` blocks add methods to
+an existing struct.)
+
+@example xs.append_all([4, 5, 6])  // xs is now [1, 2, 3, 4, 5, 6]
+
+#### `define __add(self, other: List) -> List`
+
+Concatenation. Returns a fresh List containing every element
+of `self` followed by every element of `other`. Neither input
+is mutated. Called by `xs + ys` at the call site.
+
+@example zs := [1, 2] + [3, 4]   // [1, 2, 3, 4]
+
+#### `define __mul(self, n: Int) -> List`
+
+Repetition. Returns a fresh List with self's elements
+repeated `n` times. `n <= 0` returns the empty list (Python
+semantics). Element values are SHARED — same shape as
+Python's `[0] * 5`; reassigning one element via index in
+one row doesn't affect the others, but mutating a shared
+inner object would.
+
+@example zs := [0] * 5           // [0, 0, 0, 0, 0]
+@example pairs := [1, 2] * 3     // [1, 2, 1, 2, 1, 2]
+
+#### `define pop(self) -> Any`
+
+Removes and returns the last element.
+@returns: Any — the removed element
+@throws IndexError — if the list is empty
+
+#### `define length(self) -> Int`
+
+Returns the number of elements.
+@returns: Int — element count
+
+#### `define clear(self) -> void`
+
+Removes all elements from the list.
+
+#### `define is_empty(self) -> Bool`
+
+Returns `true` if the list has no elements.
+@returns: Bool
+
+#### `define __get(self, index: Int) -> Any`
+
+Returns the element at the given index.
+@param index: Int — zero-based position (negative indices not supported)
+@returns: Any — the element at that index
+@throws IndexError — if index is out of bounds
+
+#### `define __set(self, index: Int, item: Any) -> void`
+
+Sets the element at the given index.
+@param index: Int — zero-based position
+@param item: Any — the new value
+@throws IndexError if index is out of bounds
+
+#### `define map(self, cb: Callable) -> List`
+
+Transforms each element and returns a new list.
+@param cb: Callable — `fn(element: T) => U`
+@returns: List — new list of transformed values
+
+@example:
+doubled := [1, 2, 3].map(fn(x: Int) => x * 2)  // [2, 4, 6]
+
+#### `define filter(self, cb: Callable) -> List`
+
+Returns a new list containing only elements for which `cb` returns `true`.
+@param cb: Callable — `fn(element: T) => Bool`
+@returns: List — filtered list
+
+@example:
+evens := [1, 2, 3, 4].filter(fn(x: Int) => x % 2 == 0)  // [2, 4]
+
+#### `define sort(self, cb: Callable = null) -> List`
+
+Sorts the list in place (stable) and returns it, for chaining.
+With no comparator, values sort in natural order: numbers
+numerically, Strings alphabetically. With one, `cb(a, b)` returns
+a negative Int when `a` goes first, positive when after, zero when
+equal.
+
+@param cb: Callable — optional `fn(a, b) => Int`
+@returns: List — the (now-sorted) self
+
+@example:
+[3, 1, 2].sort()                        // [1, 2, 3]
+["b", "a"].sort()                       // ["a", "b"]
+[3, 1, 2].sort(fn(a, b) => b - a)       // [3, 2, 1]
+
+#### `define each(self, cb: Callable) -> void`
+
+Calls `cb` for each element. Returns nothing.
+@param cb: Callable — `fn(element: T) => void`
+
+@example:
+[1, 2, 3].each(fn(x: Int) => print(x))
+
+#### `define reduce(self, initial: Any, cb: Callable) -> Any`
+
+Folds all elements into a single accumulated value.
+@param initial: Any — the starting accumulator value
+@param cb: Callable — `fn(acc: T, element: T) => T`
+@returns: Any — final accumulated value
+
+@example:
+sum := [1, 2, 3].reduce(0, fn(acc: Int, x: Int) => acc + x)  // 6
+
+#### `define any(self, cb: Callable) -> Bool`
+
+Returns `true` if at least one element satisfies the predicate.
+@param cb: Callable — `fn(element: T) => Bool`
+@returns: Bool
+
+#### `define all(self, cb: Callable) -> Bool`
+
+Returns `true` if every element satisfies the predicate.
+@param cb: Callable — `fn(element: T) => Bool`
+@returns: Bool
+
+#### `define find(self, cb: Callable) -> Any`
+
+Returns the first element that satisfies the predicate, or `null` if none found.
+@param cb: Callable — `fn(element: T) => Bool`
+@returns: Any — the matching element, or `null`
+
+#### `define first(self) -> Any`
+
+Returns the first element, or `null` when the list is empty.
+Same shape as `xs.__get(0)` but null-safe (no index-out-of-range
+on empty input).
+
+@example [10, 20, 30].first()   // 10
+@example List().first()         // null
+
+#### `define last(self) -> Any`
+
+Returns the last element, or `null` when the list is empty.
+Same shape as `xs.__get(-1)` but null-safe and slightly clearer
+at the call site.
+
+@example [10, 20, 30].last()    // 30
+@example List().last()          // null
+
+#### `define reverse(self) -> List`
+
+Returns a fresh List with elements in reverse order. Does not
+mutate `self`.
+
+@example [1, 2, 3].reverse()    // [3, 2, 1]
+
+#### `define sum(self) -> Any`
+
+Sum of all elements. Reduces via `+` starting from 0. Works
+for any numeric type — Sema's `+` handles Int/Double widening
+so a mixed [Int, Double, ...] list returns a Double total.
+
+@example [1, 2, 3].sum()        // 6
+@example List().sum()           // 0
+
+#### `define min(self) -> Any`
+
+Smallest element (by `<`). Returns `null` on an empty list.
+Uses the first element as the seed so heterogeneous lists
+don't have to start from a sentinel like `Int.MAX_VALUE`.
+
+@example [3, 1, 4, 1, 5].min()  // 1
+@example List().min()           // null
+
+#### `define max(self) -> Any`
+
+Largest element (by `>`). Returns `null` on an empty list.
+Same shape as `min()`.
+
+@example [3, 1, 4, 1, 5].max()  // 5
+
+#### `define unique(self) -> List`
+
+Returns a fresh List with duplicate elements removed. Order
+is preserved: the first occurrence wins. Equality uses `==`
+so user structs with `__eq` overloads dedup correctly.
+
+@example [1, 2, 1, 3, 2].unique()    // [1, 2, 3]
+@example ["a", "b", "a"].unique()    // ["a", "b"]
+
+#### `define to_set(self) -> Set`
+
+Materialise the list's elements into a fresh `Set`, dropping
+duplicates. Useful for quick dedup with set semantics or for
+O(1) membership tests after building from a list.
+
+Note: this introduces a `from .set` import inside the List
+package — keep that in mind if you're rebuilding the package
+graph from scratch.
+
+@example pending := [1, 2, 1, 3].to_set()   // {1, 2, 3}
+
+#### `define count(self, value: Any) -> Int`
+
+Counts how many elements equal `value`. Linear scan; uses `==`
+so user structs with `__eq` overloads count correctly.
+
+@example [1, 2, 1, 1, 3].count(1)    // 3
+
 
 ## `typing/collections/map.quirk`
 
@@ -55,6 +273,115 @@ print(m.get("name"))    // "Alice"
 print(m.has("age"))     // true
 m.remove("age")
 print(m.length())       // 1
+
+#### `define put(self, key: String, value: Any) -> void`
+
+Inserts or updates a key-value pair.
+@param key: String — the key
+@param value: Any — the value to associate
+
+#### `define put_all(self, other: Map) -> void`
+
+Copy every entry from `other` into `self`, overwriting any
+same-key values with other's. Mutates `self`; returns nothing.
+Use `+` if you want a fresh merged Map instead.
+
+@example m.put_all({ "auth": "token" })   // updates m in place
+
+#### `define __add(self, other: Map) -> Map`
+
+Merge two Maps into a fresh result. Right side wins on key
+collision — `{a: 1} + {a: 2}` is `{a: 2}`. Mirrors Python's
+`{**m1, **m2}` precedence. Neither input is mutated. Called
+via `m1 + m2`.
+
+#### `define get(self, key: String) -> Any`
+
+Returns the value for the given key, or `null` if not found.
+@param key: String — the key to look up
+@returns: Any — the associated value, or `null`
+
+#### `define get_or(self, key: String, default: Any) -> Any`
+
+Returns the value for `key`, or `default` when the key isn't
+present. Matches Python's `dict.get(key, default)`. Avoids the
+`if m.has(k) { m.get(k) } else { d }` pattern.
+
+@example m.get_or("retries", 3)
+@example headers.get_or("Content-Type", "application/json")
+
+#### `define has(self, key: String) -> Bool`
+
+Returns `true` if the key exists in the map.
+@param key: String
+@returns: Bool
+
+#### `define remove(self, key: String) -> void`
+
+Removes the entry with the given key. Does nothing if the key is absent.
+@param key: String
+
+#### `define length(self) -> Int`
+
+Returns the number of key-value pairs.
+@returns: Int
+
+#### `define keys(self) -> List`
+
+Returns all keys as a `List` of `String`.
+@returns: List
+
+#### `define items(self) -> List`
+
+Returns the map's entries as a List of `[key, value]` lists.
+Order matches insertion order (matches `keys()` / `values()`).
+Useful for pairwise iteration:
+
+  for pair in m.items() {
+      k := pair.__get(0)
+      v := pair.__get(1)
+      ...
+  }
+
+NOTE: printing a List of nested Lists currently displays as
+`[]` due to a separate display-path bug (raw struct pointers
+stored in collections aren't recognised by
+`quirk_opaque_to_string`). The values are stored correctly
+and iteration works; only the `print()` rendering is wrong.
+
+@example for pair in m.items() { ... }
+
+#### `define values(self) -> List`
+
+Returns all values as a `List`.
+@returns: List
+
+#### `define clear(self) -> void`
+
+Removes all entries from the map.
+
+#### `define is_empty(self) -> Bool { return self.length() == 0 }`
+
+Returns `true` if the map has no entries.
+@returns: Bool
+
+#### `define each(self, cb: Callable) -> void`
+
+Calls `cb` for each key-value pair.
+@param cb: Callable — `fn(key: String, value: Any)`
+
+@example:
+m.each(fn(k: String, v: Any) => print(k + ": " + v))
+
+#### `define each_value(self, cb: Callable) -> void`
+
+Calls `cb` for each value only.
+@param cb: Callable — `fn(value: Any)`
+
+#### `define each_key(self, cb: Callable) -> void`
+
+Calls `cb` for each key only.
+@param cb: Callable — `fn(key: String)`
 
 
 ## `typing/collections/queue.quirk`
@@ -73,6 +400,50 @@ print(q.pop_front())  // 0
 print(q.peek_front()) // 1
 print(q.size())       // 2
 
+#### `define push_back(self, val: Any) -> void`
+
+Appends a value to the back of the queue.
+@param val: Any
+
+#### `define push_front(self, val: Any) -> void`
+
+Prepends a value to the front of the queue.
+@param val: Any
+
+#### `define pop_front(self) -> Any`
+
+Removes and returns the front element. Returns `null` if empty.
+@returns: Any
+
+#### `define pop_back(self) -> Any`
+
+Removes and returns the back element. Returns `null` if empty.
+@returns: Any
+
+#### `define peek_front(self) -> Any`
+
+Returns the front element without removing it.
+@returns: Any
+
+#### `define peek_back(self) -> Any`
+
+Returns the back element without removing it.
+@returns: Any
+
+#### `define size(self) -> Int`
+
+Returns the number of elements.
+@returns: Int
+
+#### `define is_empty(self) -> Bool`
+
+Returns `true` if the queue is empty.
+@returns: Bool
+
+#### `define clear(self) -> void`
+
+Removes all elements.
+
 
 ## `typing/collections/set.quirk`
 
@@ -88,6 +459,87 @@ print(s.has(2))      // true
 s.remove(2)
 print(s.size())      // 3
 for v in s { print(v) }
+
+#### `define add(self, val: Any) -> void`
+
+Adds a value to the set. Does nothing if already present.
+@param val: Any
+
+#### `define remove(self, val: Any) -> void`
+
+Removes a value from the set. Does nothing if absent.
+@param val: Any
+
+#### `define has(self, val: Any) -> Bool`
+
+Returns `true` if the value is in the set.
+@param val: Any
+@returns: Bool
+
+#### `define size(self) -> Int`
+
+Returns the number of elements.
+@returns: Int
+
+#### `define is_empty(self) -> Bool`
+
+Returns `true` if the set has no elements.
+@returns: Bool
+
+#### `define clear(self) -> void`
+
+Removes all elements.
+
+#### `define union(self, other: Set) -> Set`
+
+Returns a new set containing all elements from both sets.
+@param other: Set
+@returns: Set
+
+#### `define intersection(self, other: Set) -> Set`
+
+Returns a new set containing only elements present in both sets.
+@param other: Set
+@returns: Set
+
+#### `define difference(self, other: Set) -> Set`
+
+Returns a new set with elements in this set that are not in `other`.
+@param other: Set
+@returns: Set
+
+#### `define __add(self, other: Set) -> Set { return self.union(other) }`
+
+Operator-overload aliases. `s1 + s2` is union; `s1 - s2` is
+difference. Sema's binary-op dispatch picks these up
+automatically via the magic-method path. Both return fresh
+sets and leave the operands untouched.
+
+@example a + b   // union
+@example a - b   // difference
+
+#### `extern define to_list(self) -> List`
+
+Materialise the set's elements into a fresh List in insertion
+order. Useful when downstream code wants index/sort/slice
+operations — Set itself is hash-keyed and doesn't support
+`__get(i)`. Order matches the iterator (insertion order).
+
+@example users.to_list().sort(fn(a, b) => a.name.cmp(b.name))
+
+#### `define first(self) -> Any`
+
+Returns the first element in insertion order, or `null` when
+the set is empty. Parallel to List.first(). Useful for
+sentinel-then-iterate patterns where the receiver may or may
+not have anything yet.
+
+@example pending.first()    // the oldest queued item
+
+#### `define last(self) -> Any`
+
+Returns the last element in insertion order, or `null` when
+the set is empty. Parallel to List.last().
 
 
 ## `typing/collections/tuple.quirk`
@@ -108,6 +560,28 @@ print(coords.length())  // 2
 x, y := coords          // destructuring
 nested := ((1, 2), "outer")
 print(nested[1])        // "outer"
+
+#### `define __get(self, index: Int) -> Any`
+
+Returns the element at the given index.
+@param index: Int — zero-based position
+@returns: Any — the element at that index
+@throws IndexError — if index is out of bounds
+
+#### `define __str(self) -> String`
+
+Returns a human-readable string representation of this tuple.
+@returns: String — e.g. `"(1, hello, true)"`
+
+#### `define length(self) -> Int`
+
+Returns the number of elements in this tuple.
+@returns: Int — element count
+
+#### `define __iter(self) -> TupleIterator`
+
+Returns an iterator over the elements of this tuple.
+@returns: TupleIterator
 
 
 ## `typing/exceptions/base.quirk`
@@ -764,6 +1238,92 @@ print(s.upper())            // "HELLO, WORLD!"
 print(s.contains("world")) // true
 parts := s.split(", ")
 print(parts.length())       // 2
+
+#### `define __mul(self, n: Int) -> String`
+
+`s * n` repeats `self` `n` times into a fresh String. `n <= 0`
+returns the empty string (Python semantics).
+
+@example "-" * 40   // 40-char separator
+@example "ab" * 3   // "ababab"
+
+#### `define format(self, ...args: List) -> String`
+
+Returns a new string with each `{0}`, `{1}`, … placeholder replaced by the
+corresponding argument.
+@param args: List — positional values to interpolate
+@returns: String
+@example:
+"Hello {0}, you are {1}!".format(["Alice", 30])
+
+#### `define split(self, delimiter: String) -> List`
+
+Splits the string on `delimiter` and returns a list of substrings.
+@param delimiter: String
+@returns: List — list of String parts
+
+#### `define join(self, items: List) -> String`
+
+Joins a list of strings, inserting `self` between each element.
+@param items: List — list of String values
+@returns: String
+@example:
+", ".join(["a", "b", "c"])  // "a, b, c"
+
+#### `define substring(self, start: Int, end: Int) -> String`
+
+Returns the substring from `start` (inclusive) to `end` (exclusive).
+@param start: Int — start index
+@param end: Int — end index
+@returns: String
+@throws IndexError — if indices are out of range
+
+#### `define count(self, sub: String) -> Int`
+
+Returns the number of non-overlapping occurrences of `sub`.
+@param sub: String
+@returns: Int
+
+#### `define find(self, sub: String) -> Int`
+
+Returns the index of the first occurrence of `sub`, or `-1` if not found.
+@param sub: String
+@returns: Int
+
+#### `define index(self, sub: String) -> Int`
+
+Like `find`, but throws `ValueError` if `sub` is not present.
+@param sub: String
+@returns: Int
+@throws ValueError — if `sub` is not found
+
+#### `define to_int(self) -> Int`
+
+Parses the string as an integer.
+@returns: Int
+@throws ValueError — if the string is not a valid integer
+
+#### `define to_float(self) -> Double`
+
+Parses the string as a floating-point number.
+@returns: Double
+@throws ValueError — if the string is not a valid number
+
+#### `define lines(self) -> List`
+
+Splits on newlines and returns each line as a list element.
+@returns: List
+
+#### `define distance(self, other: String) -> Int`
+
+Computes the Levenshtein edit distance between this string and `other`.
+@param other: String
+@returns: Int — number of single-character edits needed
+
+#### `define length(self) -> Int`
+
+Returns `true` if the string has zero characters.
+@returns: Bool
 
 
 ## `typing/result.quirk`

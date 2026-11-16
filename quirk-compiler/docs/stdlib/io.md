@@ -52,6 +52,11 @@ are protected from being closed.
 
 `with` exit — closes the file.
 
+### `struct FileIterator`
+
+Iterator over a file's lines. Produced by `for line in file { ... }`.
+Each `__next` call reads one line via `File.read_line`.
+
 #### `extern define __has_next(self) -> Bool`
 
 True if more lines remain.
@@ -59,8 +64,3 @@ True if more lines remain.
 #### `extern define __next(self) -> String`
 
 Returns the next line; trailing newline stripped.
-
-### `struct FileIterator`
-
-Iterator over a file's lines. Produced by `for line in file { ... }`.
-Each `__next` call reads one line via `File.read_line`.

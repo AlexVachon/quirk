@@ -257,7 +257,7 @@ typedef struct {
 } QWinEvent;
 
 enum { QEV_CLOSE = 1, QEV_KEY_DOWN, QEV_KEY_UP, QEV_TEXT, QEV_MOUSE_MOVE, QEV_MOUSE_DOWN,
-       QEV_MOUSE_UP, QEV_WHEEL, QEV_RESIZE, QEV_FOCUS, QEV_BLUR, QEV_EXPOSE, QEV_COMPOSE };
+       QEV_MOUSE_UP, QEV_WHEEL, QEV_RESIZE, QEV_FOCUS, QEV_BLUR, QEV_EXPOSE, QEV_COMPOSE, QEV_ACCESS };
 
 typedef struct {
     int used;
@@ -472,6 +472,11 @@ String* Window_error() {
     return make_String(qwin_err);
 }
 
+// Screen readers (Windows UI Automation; see window_uia.c).
+#ifdef _WIN32
+#include "window_uia.c"
+#endif
+
 // Open a window; returns its handle, or -1 (see Window_error).
 // flags: 1 resizable, 2 hidden, 4 vsync, 8 headless (no display: SDL's
 // dummy video driver + software rendering; only honoured before the first
@@ -530,6 +535,9 @@ int64_t Window_open_raw(String* title, int64_t width, int64_t height, int64_t fl
     w->ui = ui;
     w->scale = 0;
     qwin_rescale(w);
+#ifdef _WIN32
+    if (!qwin_headless) qacc_attach(slot, win);
+#endif
     return slot;
 }
 
@@ -540,6 +548,9 @@ void Window_close_raw(int64_t h) {
     if (!w) return;
     qwin_free_images_of(h);
     qfont_free_glyphs_of(h);
+#ifdef _WIN32
+    qacc_detach((int)h);
+#endif
     if (w->font) qsdl.DestroyTexture(w->font);
     qsdl.DestroyRenderer(w->ren);
     qsdl.DestroyWindow(w->win);
@@ -562,6 +573,9 @@ List* Window_next_event_raw(int64_t h, int64_t timeout_ms) {
     uint32_t start = qsdl.GetTicks();
     for (;;) {
         qwin_pump();
+#ifdef _WIN32
+        qacc_drain((int)h, w);
+#endif
         if (w->qlen > 0 || !qwin_get(h)) break;
         if (timeout_ms == 0) break;
         if (timeout_ms > 0 && (int64_t)(qsdl.GetTicks() - start) >= timeout_ms) break;
@@ -740,6 +754,58 @@ List* Window_size_raw(int64_t h) {
     Core_Collections_List_List_append(res, quirk_int_to_opaque(ww));
     Core_Collections_List_List_append(res, quirk_int_to_opaque(hh));
     return res;
+}
+
+// ----- accessibility (screen readers): see window_uia.c -----
+
+// 1 if a screen reader (UI Automation client) is reading this window —
+// only then is it worth sending the tree each frame. 0 off Windows.
+int64_t Window_access_active_raw(int64_t h) {
+#ifdef _WIN32
+    if (!qwin_get(h)) return 0;
+    return qacc_active((int)h);
+#else
+    (void)h;
+    return 0;
+#endif
+}
+
+void Window_access_update_raw(int64_t h, List* ids, List* parents, List* roles, List* names, List* values,
+                              List* descs, List* states, List* boxes, List* nums) {
+#ifdef _WIN32
+    QWin* w = qwin_get(h);
+    if (w) qacc_update((int)h, w->scale > 0 ? w->scale : 1.0f, ids, parents, roles, names, values, descs, states, boxes, nums);
+#else
+    (void)h; (void)ids; (void)parents; (void)roles; (void)names; (void)values;
+    (void)descs; (void)states; (void)boxes; (void)nums;
+#endif
+}
+
+// Keyboard focus moved to node `id` (it must be in the last update).
+void Window_access_focus_raw(int64_t h, int64_t id) {
+#ifdef _WIN32
+    if (qwin_get(h)) qacc_raise((int)h, (int)id, Q_EVT_FocusChanged);
+#else
+    (void)h; (void)id;
+#endif
+}
+
+// Node `id` changed: 1 value, 2 checked, 3 selected, 4 expanded, 5 name.
+void Window_access_changed_raw(int64_t h, int64_t id, int64_t what) {
+#ifdef _WIN32
+    if (qwin_get(h)) qacc_changed((int)h, (int)id, (int)what);
+#else
+    (void)h; (void)id; (void)what;
+#endif
+}
+
+// Have the screen reader say `text`.
+void Window_access_announce_raw(int64_t h, String* text) {
+#ifdef _WIN32
+    if (qwin_get(h) && text) qacc_announce((int)h, make_safe_cstr(text));
+#else
+    (void)h; (void)text;
+#endif
 }
 
 // Physical pixels per logical pixel (2.0 on a Retina / 200% screen).

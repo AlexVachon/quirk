@@ -51,6 +51,19 @@ Width in pixels of `text` (its longest line) in this font.
 
 Release the font. Drawing with it afterwards does nothing.
 
+#### `define add_fallback(self, path: String) -> void`
+
+Draw characters this font doesn't have (other scripts, symbols) from
+the font file at `path` — tried before the system fallbacks, in the
+order added. Text keeps this font's size and line height.
+@throws WindowError if the file can't be read or isn't a font.
+@example
+f.add_fallback("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc")
+
+#### `define covers(self, text: String) -> Bool`
+
+True if every character of `text` can be drawn — by this font or one of its fallbacks.
+
 ### `struct Image`
 
 An image loaded for one window (`Window.load_image`); `width` / `height` in pixels.
@@ -233,14 +246,18 @@ A colour from `"#rrggbb"`, `"#rrggbbaa"`, `"#rgb"` (with or without `#`).
 
 The colour's red, green, blue and alpha parts (0-255).
 
-#### `define load_font(path: String, size: Int) -> Font`
+#### `define load_font(path: String, size: Int, fallback: Bool = true) -> Font`
 
-Load a font file (`.ttf`, or `.otf` with TrueType outlines) at `size`
-pixels tall.
+Load a font file (`.ttf`, `.otf`, or the first font of a `.ttc`) at
+`size` pixels tall. Characters it doesn't have — Chinese, Japanese,
+Korean, Arabic, Hebrew, Thai, symbols — come from the system's fonts
+(Noto, Microsoft YaHei, PingFang, ...: whichever are installed, read the
+first time one is needed); `fallback=false` turns that off. Add your own
+with `Font.add_fallback`.
 @throws WindowError if the file can't be read or isn't a font.
 @example
 f := window.load_font("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 18)
-w.text("Grüße — ünïcödé ✓", 20, 20, window.white(), font=f)
+w.text("Grüße — 東京 — ✓", 20, 20, window.white(), font=f)
 
 #### `define open(title: String, width: Int, height: Int, resizable: Bool = false, hidden: Bool = false, vsync: Bool = true, headless: Bool = false) -> Window`
 

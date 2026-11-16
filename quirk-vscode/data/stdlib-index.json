@@ -1433,6 +1433,15 @@
 "doc": "Add a page with its tab title."
 }
 ],
+"add_fallback": [
+{
+"package": "window",
+"qualified": "Font.add_fallback",
+"kind": "method",
+"signature": "define add_fallback(self, path: String) -> void {",
+"doc": "Draw characters this font doesn't have (other scripts, symbols) from\nthe font file at `path` \u2014 tried before the system fallbacks, in the\norder added. Text keeps this font's size and line height.\n@throws WindowError if the file can't be read or isn't a font.\n@example\nf.add_fallback(\"/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc\")"
+}
+],
 "add_seconds": [
 {
 "package": "datetime",
@@ -2181,6 +2190,15 @@
 "kind": "method",
 "signature": "define count(self, value: Any) -> Int {",
 "doc": "Counts how many elements equal `value`. Linear scan; uses `==`\nso user structs with `__eq` overloads count correctly.\n\n@example [1, 2, 1, 1, 3].count(1)    // 3"
+}
+],
+"covers": [
+{
+"package": "window",
+"qualified": "Font.covers",
+"kind": "method",
+"signature": "define covers(self, text: String) -> Bool {",
+"doc": "True if every character of `text` can be drawn \u2014 by this font or one of its fallbacks."
 }
 ],
 "cut": [
@@ -3589,8 +3607,8 @@
 "package": "window",
 "qualified": "load_font",
 "kind": "define",
-"signature": "define load_font(path: String, size: Int) -> Font {",
-"doc": "Load a font file (`.ttf`, or `.otf` with TrueType outlines) at `size`\npixels tall.\n@throws WindowError if the file can't be read or isn't a font.\n@example\nf := window.load_font(\"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf\", 18)\nw.text(\"Gr\u00fc\u00dfe \u2014 \u00fcn\u00efc\u00f6d\u00e9 \u2713\", 20, 20, window.white(), font=f)"
+"signature": "define load_font(path: String, size: Int, fallback: Bool = true) -> Font {",
+"doc": "Load a font file (`.ttf`, `.otf`, or the first font of a `.ttc`) at\n`size` pixels tall. Characters it doesn't have \u2014 Chinese, Japanese,\nKorean, Arabic, Hebrew, Thai, symbols \u2014 come from the system's fonts\n(Noto, Microsoft YaHei, PingFang, ...: whichever are installed, read the\nfirst time one is needed); `fallback=false` turns that off. Add your own\nwith `Font.add_fallback`.\n@throws WindowError if the file can't be read or isn't a font.\n@example\nf := window.load_font(\"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf\", 18)\nw.text(\"Gr\u00fc\u00dfe \u2014 \u6771\u4eac \u2014 \u2713\", 20, 20, window.white(), font=f)"
 }
 ],
 "load_image": [

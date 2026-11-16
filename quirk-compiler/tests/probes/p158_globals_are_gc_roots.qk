@@ -1,0 +1,32 @@
+// Top-level variables live in memory the collector didn't scan (the JIT's
+// data sections): a String or struct that only a global held was freed by
+// the next collection and read back as garbage (a number, 0, null) or
+// crashed. Globals are registered as GC roots at startup now.
+struct Box {
+    items: List
+    name: String
+}
+
+name := "kept" + String(7)
+box := Box([1, 2, 3], "box" + String(1))
+m := {"k": "v" + String(2)}
+
+define churn() -> Int {
+    total := 0
+    i := 0
+    while i < 2000000 {
+        s := "item " + String(i)
+        total = total + s.length()
+        i = i + 1
+    }
+    return total
+}
+
+define main() -> void {
+    churn()
+    if name != "kept7" { print("FAIL: name") }
+    if box.name != "box1" { print("FAIL: box.name") }
+    if box.items.length() != 3 { print("FAIL: box.items") }
+    v: String = m["k"]
+    if v != "v2" { print("FAIL: map value") }
+}

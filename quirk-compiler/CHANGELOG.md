@@ -5,6 +5,24 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.38.0] — 2026-11-16 — globals survive the GC; font fallback
+
+- **Top-level variables could be freed under a running program.** Module
+  globals (`name := ...` at the top of a file) live in memory the garbage
+  collector didn't scan, so a String, struct or Map that only a global
+  held was collected once the program had allocated enough — and read
+  back as garbage (a number, `0`, `null`) or crashed (SIGSEGV / SIGBUS).
+  Present since at least 7.34. Every global that can hold a pointer is a
+  GC root now (registered at startup, merged into a few ranges).
+- **Font fallback** (`window` v1.6.0, pinned): characters a font doesn't
+  have — Chinese, Japanese, Korean, Arabic, Hebrew, Thai, symbols — are
+  drawn from the system's fonts (Noto, DejaVu, Microsoft YaHei, Malgun,
+  PingFang, ...: whichever are installed, each read the first time it's
+  needed) instead of boxes. `font.add_fallback(path)` adds your own,
+  `font.covers(text)` says whether everything can be drawn,
+  `load_font(..., fallback=false)` turns it off. `ui` apps get it with
+  no change.
+
 ## [7.37.0] — 2026-11-16 — input methods (Chinese, Japanese, Korean)
 
 - **Typing through an input method works in `ui` text fields** (`ui`

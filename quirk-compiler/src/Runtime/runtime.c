@@ -100,6 +100,55 @@ static void quirk_restore_console_cp(void) {
 }
 #endif
 
+// GC roots for the program's globals (see Codegen registerGlobalRoots):
+// collected one by one at startup, then merged into a few ranges —
+// adjacent globals of one section — so the collector gets a handful of
+// root sets instead of one per variable.
+static struct { char* lo; char* hi; } *quirk_roots = NULL;
+static size_t quirk_nroots = 0, quirk_roots_cap = 0;
+
+void quirk_gc_root(void* p, int64_t size) {
+    if (!p || size <= 0) return;
+    if (quirk_nroots == quirk_roots_cap) {
+        size_t cap = quirk_roots_cap ? quirk_roots_cap * 2 : 64;
+        void* grown = realloc(quirk_roots, cap * sizeof *quirk_roots);
+        if (!grown) { GC_add_roots(p, (char*)p + size); return; }
+        quirk_roots = grown;
+        quirk_roots_cap = cap;
+    }
+    quirk_roots[quirk_nroots].lo = (char*)p;
+    quirk_roots[quirk_nroots].hi = (char*)p + size;
+    quirk_nroots++;
+}
+
+static int quirk_root_cmp(const void* a, const void* b) {
+    const char* x = *(char* const*)a;
+    const char* y = *(char* const*)b;
+    return x < y ? -1 : x > y;
+}
+
+void quirk_gc_roots_done(void) {
+    if (!quirk_nroots) return;
+    qsort(quirk_roots, quirk_nroots, sizeof *quirk_roots, quirk_root_cmp);
+    char* lo = quirk_roots[0].lo;
+    char* hi = quirk_roots[0].hi;
+    for (size_t i = 1; i < quirk_nroots; i++) {
+        // Less than a page apart: both ends are in mapped pages, so the
+        // bytes between are too (scanning them is harmless).
+        if (quirk_roots[i].lo <= hi + 4096) {
+            if (quirk_roots[i].hi > hi) hi = quirk_roots[i].hi;
+        } else {
+            GC_add_roots(lo, hi);
+            lo = quirk_roots[i].lo;
+            hi = quirk_roots[i].hi;
+        }
+    }
+    GC_add_roots(lo, hi);
+    free(quirk_roots);
+    quirk_roots = NULL;
+    quirk_nroots = quirk_roots_cap = 0;
+}
+
 void QuirkRuntime_init(int argc, char** argv) {
 #ifdef _WIN32
     quirk_old_out_cp = GetConsoleOutputCP();

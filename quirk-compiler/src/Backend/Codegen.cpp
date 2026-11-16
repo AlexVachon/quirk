@@ -799,7 +799,7 @@ class LLVMCodegen {
         FunctionCallee runtimeInit = TheModule->getOrInsertFunction("QuirkRuntime_init", 
             FunctionType::get(Type::getVoidTy(Context), {Type::getInt32Ty(Context), Type::getInt8PtrTy(Context)->getPointerTo()}, false));
             
-        Builder.CreateCall(runtimeInit, {argc, argv});
+        CallInst* initCall = Builder.CreateCall(runtimeInit, {argc, argv});
 
         // Register each user struct's header type id with its name and
         // `__str`, so untyped runtime code (printing a List of structs,
@@ -916,7 +916,48 @@ class LLVMCodegen {
             }
         }
 
+        // Module globals (top-level `x := ...`) live in memory the collector
+        // doesn't scan — JIT-allocated sections — so an object only a global
+        // held was freed by the next collection (a top-level String or
+        // struct read back as garbage once the program allocated enough).
+        // Hand every mutable global that can hold a pointer to the runtime
+        // right after QuirkRuntime_init; it registers them as GC roots.
+        registerGlobalRoots(initCall);
+
         if (verbose) std::cerr << "[Codegen] buildIR() done\n";
+    }
+
+    static bool typeHoldsPointer(Type* t) {
+        if (t->isPointerTy()) return true;
+        if (auto* st = dyn_cast<StructType>(t)) {
+            for (Type* e : st->elements()) if (typeHoldsPointer(e)) return true;
+            return false;
+        }
+        if (auto* at = dyn_cast<ArrayType>(t)) return typeHoldsPointer(at->getElementType());
+        return false;
+    }
+
+    void registerGlobalRoots(CallInst* initCall) {
+        if (!initCall) return;
+        Type* i8p = Type::getInt8PtrTy(Context);
+        Type* i64 = Type::getInt64Ty(Context);
+        IRBuilder<> B(initCall->getNextNode());
+        FunctionCallee addRoot = TheModule->getOrInsertFunction("quirk_gc_root",
+            FunctionType::get(Type::getVoidTy(Context), {i8p, i64}, false));
+        const DataLayout& DL = TheModule->getDataLayout();
+        int n = 0;
+        for (GlobalVariable& g : TheModule->globals()) {
+            if (g.isDeclaration() || g.isConstant()) continue;
+            Type* vt = g.getValueType();
+            if (!typeHoldsPointer(vt)) continue;
+            uint64_t size = DL.getTypeAllocSize(vt);
+            if (size == 0) continue;
+            B.CreateCall(addRoot, {B.CreateBitCast(&g, i8p), ConstantInt::get(i64, size)});
+            n++;
+        }
+        if (n > 0)
+            B.CreateCall(TheModule->getOrInsertFunction("quirk_gc_roots_done",
+                FunctionType::get(Type::getVoidTy(Context), false)));
     }
 
    public:

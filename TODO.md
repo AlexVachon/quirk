@@ -19,9 +19,10 @@ TreeView, Table; ui 1.4 (7.31.0): word wrap, editable cells,
 ColorPicker, FileDialog, drag and drop; ui 1.5 (7.32.0): working menu
 shortcuts, SplitView, Toolbar, StatusBar, DatePicker; ui 1.6 (7.33.0):
 TrueType fonts, ListItem icons, Canvas, animations; window 1.4
-(7.36.0): high DPI; ui 1.7 (7.37.0): IME / composed text input. Next
-ideas: font fallback (one font draws everything — CJK next to Latin needs
-a font with both), right-to-left text, accessibility (screen readers).
+(7.36.0): high DPI; ui 1.7 (7.37.0): IME / composed text input; window
+1.6 (7.38.0): font fallback. Next ideas: right-to-left text (bidi order +
+Arabic joining — drawn left to right, unjoined today), accessibility
+(screen readers).
 
 ## Housekeeping
 

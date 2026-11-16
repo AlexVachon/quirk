@@ -980,6 +980,17 @@ typedef struct {
     int w, h, xoff, yoff;
 } QGlyph;
 
+// A fallback font: loaded the first time the main font lacks a character.
+typedef struct {
+    char path[512];
+    int state;            // 0 not loaded yet, 1 ok, -1 failed
+    unsigned char* data;
+    stbtt_fontinfo info;
+    float scale;
+} QFace;
+
+#define QFONT_FALLBACKS 24
+
 typedef struct {
     int used;
     unsigned char* data;
@@ -988,6 +999,8 @@ typedef struct {
     int size;
     int ascent, descent, line_gap;
     QGlyph* glyphs;       // QGLYPH_SLOTS, open addressing
+    QFace fb[QFONT_FALLBACKS];   // tried in order for characters it lacks
+    int nfb;
 } QFont;
 
 static QFont qfonts[QFONT_MAX];
@@ -1016,11 +1029,9 @@ static int qutf8_next(const unsigned char* s, size_t n, size_t* i) {
     return cp;
 }
 
-// Load a .ttf / .otf (TrueType outlines) at `size` pixels; a handle, or
-// -1 (see Window_error).
-int64_t Window_font_load_raw(String* path, int64_t size) {
-    const char* p = path ? make_safe_cstr(path) : "";
-    if (size < 1 || size > 512) { snprintf(qwin_err, sizeof qwin_err, "font size %lld is out of range (1-512)", (long long)size); return -1; }
+// Read a font file into GC memory and set up `info` (the first font of a
+// .ttc collection). 0 ok, -1 failed (qwin_err says why).
+static int qfont_read(const char* p, unsigned char** data_out, stbtt_fontinfo* info) {
     FILE* fp = fopen(p, "rb");
     if (!fp) { snprintf(qwin_err, sizeof qwin_err, "can't open '%s'", p); return -1; }
     fseek(fp, 0, SEEK_END);
@@ -1031,16 +1042,128 @@ int64_t Window_font_load_raw(String* path, int64_t size) {
     size_t got = data ? fread(data, 1, (size_t)n, fp) : 0;
     fclose(fp);
     if (got != (size_t)n) { snprintf(qwin_err, sizeof qwin_err, "can't read '%s'", p); return -1; }
+    int off = stbtt_GetFontOffsetForIndex(data, 0);
+    if (off < 0 || !stbtt_InitFont(info, data, off)) {
+        snprintf(qwin_err, sizeof qwin_err, "'%s' isn't a TrueType / OpenType font", p);
+        return -1;
+    }
+    *data_out = data;
+    return 0;
+}
+
+static int qfont_file_exists(const char* p) {
+    FILE* fp = fopen(p, "rb");
+    if (!fp) return 0;
+    fclose(fp);
+    return 1;
+}
+
+static void qfont_add_face(QFont* f, const char* p) {
+    if (f->nfb >= QFONT_FALLBACKS || !p || !*p) return;
+    for (int i = 0; i < f->nfb; i++) if (strcmp(f->fb[i].path, p) == 0) return;
+    QFace* fc = &f->fb[f->nfb++];
+    memset(fc, 0, sizeof *fc);
+    snprintf(fc->path, sizeof fc->path, "%s", p);
+}
+
+// Common system fonts for scripts a Latin font lacks (CJK, Hangul,
+// Arabic, Hebrew, Thai, Devanagari, symbols) — only the ones present
+// are kept, and each is read the first time it's needed.
+static void qfont_add_system_fallbacks(QFont* f) {
+#if defined(_WIN32)
+    const char* win = getenv("WINDIR");
+    char base[256];
+    snprintf(base, sizeof base, "%s\\Fonts\\", win && *win ? win : "C:\\Windows");
+    const char* names[] = { "segoeui.ttf", "msyh.ttc", "msgothic.ttc", "malgun.ttf", "simsun.ttc",
+                            "tahoma.ttf", "arial.ttf", "nirmala.ttf", "seguisym.ttf", "arialuni.ttf" };
+    for (size_t i = 0; i < sizeof names / sizeof names[0]; i++) {
+        char p[512];
+        snprintf(p, sizeof p, "%s%s", base, names[i]);
+        if (qfont_file_exists(p)) qfont_add_face(f, p);
+    }
+#else
+    const char* paths[] = {
+#if defined(__APPLE__)
+        "/System/Library/Fonts/Helvetica.ttc",
+        "/System/Library/Fonts/PingFang.ttc",
+        "/System/Library/Fonts/Hiragino Sans GB.ttc",
+        "/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc",
+        "/System/Library/Fonts/AppleSDGothicNeo.ttc",
+        "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+        "/Library/Fonts/Arial Unicode.ttf",
+        "/System/Library/Fonts/GeezaPro.ttc",
+        "/System/Library/Fonts/SFHebrew.ttf",
+        "/System/Library/Fonts/Supplemental/Arial.ttf",
+        "/System/Library/Fonts/Thonburi.ttc",
+        "/System/Library/Fonts/Apple Symbols.ttf",
+#else
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/TTF/DejaVuSans.ttf",
+        "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf",
+        "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
+        "/usr/share/fonts/google-droid/DroidSansFallbackFull.ttf",
+        "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+        "/usr/share/fonts/wenquanyi/wqy-zenhei/wqy-zenhei.ttc",
+        "/usr/share/fonts/opentype/ipafont-gothic/ipag.ttf",
+        "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSansArabic-Regular.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSansHebrew-Regular.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSansThai-Regular.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSansDevanagari-Regular.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSansSymbols-Regular.ttf",
+        "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+        "/usr/share/fonts/gnu-free/FreeSans.ttf",
+#endif
+    };
+    for (size_t i = 0; i < sizeof paths / sizeof paths[0]; i++)
+        if (qfont_file_exists(paths[i])) qfont_add_face(f, paths[i]);
+#endif
+}
+
+// The font that draws `cp`: the main one when it has the character, else
+// the first fallback that does (read on first use), else the main one
+// (its "missing" box). *fi = -1 for the main font, or the fallback index.
+static stbtt_fontinfo* qfont_pick(QFont* f, int cp, float* scale, int* fi) {
+    *fi = -1;
+    *scale = f->scale;
+    if (cp < 32 || stbtt_FindGlyphIndex(&f->info, cp)) return &f->info;
+    for (int i = 0; i < f->nfb; i++) {
+        QFace* fc = &f->fb[i];
+        if (fc->state == 0) {
+            char saved[sizeof qwin_err];
+            memcpy(saved, qwin_err, sizeof saved);          // a lazy load doesn't report
+            fc->state = qfont_read(fc->path, &fc->data, &fc->info) == 0 ? 1 : -1;
+            memcpy(qwin_err, saved, sizeof saved);
+            if (fc->state == 1) fc->scale = stbtt_ScaleForPixelHeight(&fc->info, (float)f->size);
+        }
+        if (fc->state == 1 && stbtt_FindGlyphIndex(&fc->info, cp)) {
+            *fi = i;
+            *scale = fc->scale;
+            return &fc->info;
+        }
+    }
+    return &f->info;
+}
+
+static void qfont_free_font_glyphs(QFont* f);
+
+// Load a .ttf / .otf / .ttc at `size` pixels; a handle, or -1 (see
+// Window_error). `fallback` = 1: characters it lacks come from common
+// system fonts (see qfont_add_system_fallbacks).
+int64_t Window_font_load_raw(String* path, int64_t size, int64_t fallback) {
+    const char* p = path ? make_safe_cstr(path) : "";
+    if (size < 1 || size > 512) { snprintf(qwin_err, sizeof qwin_err, "font size %lld is out of range (1-512)", (long long)size); return -1; }
     int slot = -1;
     for (int i = 0; i < QFONT_MAX; i++) if (!qfonts[i].used) { slot = i; break; }
     if (slot < 0) { snprintf(qwin_err, sizeof qwin_err, "too many fonts loaded (max %d)", QFONT_MAX); return -1; }
     QFont* f = &qfonts[slot];
     memset(f, 0, sizeof *f);
-    int off = stbtt_GetFontOffsetForIndex(data, 0);
-    if (off < 0 || !stbtt_InitFont(&f->info, data, off)) {
-        snprintf(qwin_err, sizeof qwin_err, "'%s' isn't a TrueType / OpenType font", p);
-        return -1;
-    }
+    unsigned char* data = NULL;
+    if (qfont_read(p, &data, &f->info) != 0) return -1;
     f->data = data;
     f->size = (int)size;
     f->scale = stbtt_ScaleForPixelHeight(&f->info, (float)size);
@@ -1051,8 +1174,47 @@ int64_t Window_font_load_raw(String* path, int64_t size) {
     f->line_gap = (int)(g * f->scale + 0.5f);
     f->glyphs = (QGlyph*)GC_malloc(sizeof(QGlyph) * QGLYPH_SLOTS);
     for (int i = 0; i < QGLYPH_SLOTS; i++) f->glyphs[i].win = -1;
+    if (fallback) qfont_add_system_fallbacks(f);
     f->used = 1;
     return slot;
+}
+
+// Add a font file to try (before the system ones) for characters `fh`
+// lacks. 0 ok, -1 can't read it (see Window_error).
+int64_t Window_font_add_fallback_raw(int64_t fh, String* path) {
+    QFont* f = qfont_get(fh);
+    const char* p = path ? make_safe_cstr(path) : "";
+    if (!f) { snprintf(qwin_err, sizeof qwin_err, "the font was freed"); return -1; }
+    QFace probe;
+    memset(&probe, 0, sizeof probe);
+    if (qfont_read(p, &probe.data, &probe.info) != 0) return -1;
+    if (f->nfb >= QFONT_FALLBACKS) f->nfb = QFONT_FALLBACKS - 1;   // drop the last system one
+    // Explicit fallbacks go ahead of the system ones.
+    memmove(&f->fb[1], &f->fb[0], sizeof(QFace) * (size_t)f->nfb);
+    QFace* fc = &f->fb[0];
+    *fc = probe;
+    snprintf(fc->path, sizeof fc->path, "%s", p);
+    fc->state = 1;
+    fc->scale = stbtt_ScaleForPixelHeight(&fc->info, (float)f->size);
+    f->nfb++;
+    qfont_free_font_glyphs(f);                      // characters may now come from it
+    return 0;
+}
+
+// 1 if every character of `text` can be drawn (by the font or a fallback).
+int64_t Window_font_covers_raw(int64_t fh, String* text) {
+    QFont* f = qfont_get(fh);
+    if (!f || !text) return 0;
+    const unsigned char* s = (const unsigned char*)make_safe_cstr(text);
+    size_t n = strlen((const char*)s), i = 0;
+    while (i < n) {
+        int cp = qutf8_next(s, n, &i);
+        if (cp < 32) continue;
+        float sc; int fi;
+        stbtt_fontinfo* info = qfont_pick(f, cp, &sc, &fi);
+        if (!stbtt_FindGlyphIndex(info, cp)) return 0;
+    }
+    return 1;
 }
 
 void Window_font_free_raw(int64_t fh) {
@@ -1063,6 +1225,21 @@ void Window_font_free_raw(int64_t fh) {
     f->used = 0;
     f->data = NULL;
     f->glyphs = NULL;
+    for (int i = 0; i < f->nfb; i++) f->fb[i].data = NULL;
+    f->nfb = 0;
+}
+
+// Drop every rendered glyph of font `f` (in all windows): they're drawn
+// again on next use — after a fallback is added, a character may come
+// from a different font.
+static void qfont_free_font_glyphs(QFont* f) {
+    if (!f->glyphs) return;
+    for (int i = 0; i < QGLYPH_SLOTS; i++) {
+        QGlyph* g = &f->glyphs[i];
+        if (g->win >= 0 && g->tex) qsdl.DestroyTexture(g->tex);
+        g->win = -1;
+        g->tex = NULL;
+    }
 }
 
 // [ascent, descent, line height] in pixels.
@@ -1085,15 +1262,18 @@ int64_t Window_font_text_width_raw(int64_t fh, String* text) {
     const unsigned char* s = (const unsigned char*)make_safe_cstr(text);
     size_t n = strlen((const char*)s), i = 0;
     float pen = 0, widest = 0;
-    int prev = 0;
+    int prev = 0, prevf = -2;
     while (i < n) {
         int cp = qutf8_next(s, n, &i);
         if (cp == '\n') { if (pen > widest) widest = pen; pen = 0; prev = 0; continue; }
-        int adv, lsb;
-        stbtt_GetCodepointHMetrics(&f->info, cp, &adv, &lsb);
-        if (prev) pen += stbtt_GetCodepointKernAdvance(&f->info, prev, cp) * f->scale;
-        pen += adv * f->scale;
+        int adv, lsb, fi;
+        float sc;
+        stbtt_fontinfo* info = qfont_pick(f, cp, &sc, &fi);
+        stbtt_GetCodepointHMetrics(info, cp, &adv, &lsb);
+        if (prev && fi == prevf) pen += stbtt_GetCodepointKernAdvance(info, prev, cp) * sc;
+        pen += adv * sc;
         prev = cp;
+        prevf = fi;
     }
     if (pen > widest) widest = pen;
     return (int64_t)(widest + 0.999f);
@@ -1107,8 +1287,10 @@ static QGlyph* qfont_glyph(QFont* f, int64_t h, QWin* w, int cp) {
         if (g->win >= 0) continue;
         // Empty: render it.
         int gw = 0, gh = 0, xo = 0, yo = 0;
-        float gs = f->scale * (w->scale > 0 ? w->scale : 1.0f);   // physical pixels
-        unsigned char* bmp = stbtt_GetCodepointBitmap(&f->info, gs, gs, cp, &gw, &gh, &xo, &yo);
+        float fsc; int fi;
+        stbtt_fontinfo* info = qfont_pick(f, cp, &fsc, &fi);       // the main font or a fallback
+        float gs = fsc * (w->scale > 0 ? w->scale : 1.0f);          // physical pixels
+        unsigned char* bmp = stbtt_GetCodepointBitmap(info, gs, gs, cp, &gw, &gh, &xo, &yo);
         g->win = h; g->cp = cp; g->w = gw; g->h = gh; g->xoff = xo; g->yoff = yo; g->tex = NULL;
         if (bmp && gw > 0 && gh > 0) {
             uint32_t* px = (uint32_t*)GC_malloc_atomic((size_t)gw * gh * 4);
@@ -1140,11 +1322,13 @@ void Window_font_text_raw(int64_t h, int64_t fh, String* text, int64_t x, int64_
     float pen = (float)x;
     int base = (int)y + f->ascent;
     int lh = f->ascent + f->descent + f->line_gap;
-    int prev = 0;
+    int prev = 0, prevf = -2;
     while (i < n) {
         int cp = qutf8_next(s, n, &i);
         if (cp == '\n') { pen = (float)x; base += lh; prev = 0; continue; }
-        if (prev) pen += stbtt_GetCodepointKernAdvance(&f->info, prev, cp) * f->scale;
+        float fsc; int fi;
+        stbtt_fontinfo* info = qfont_pick(f, cp, &fsc, &fi);
+        if (prev && fi == prevf) pen += stbtt_GetCodepointKernAdvance(info, prev, cp) * fsc;
         QGlyph* g = qfont_glyph(f, h, w, cp);
         if (g && g->tex) {
             qsdl.SetTextureColorMod(g->tex, r, gc, b);
@@ -1163,9 +1347,10 @@ void Window_font_text_raw(int64_t h, int64_t fh, String* text, int64_t x, int64_
             }
         }
         int adv, lsb;
-        stbtt_GetCodepointHMetrics(&f->info, cp, &adv, &lsb);
-        pen += adv * f->scale;
+        stbtt_GetCodepointHMetrics(info, cp, &adv, &lsb);
+        pen += adv * fsc;
         prev = cp;
+        prevf = fi;
     }
 }
 

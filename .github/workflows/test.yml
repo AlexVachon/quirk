@@ -273,6 +273,31 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  # The VS Code extension's analyzers under plain Node (quirk-vscode/test):
+  # lint fixtures (expected warnings, and none elsewhere), every stdlib file
+  # lints clean, and Ctrl+click resolves into a venv. Needs only the package
+  # sources (bootstrap-stdlib clones them), no compiler build.
+  vscode:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Bootstrap stdlib
+        working-directory: quirk-compiler
+        run: make bootstrap-stdlib
+
+      - name: Install
+        working-directory: quirk-vscode
+        run: npm ci
+
+      - name: Test
+        working-directory: quirk-vscode
+        run: npm test
+
   macos:
     # Same toolchain setup as release.yml's macos-arm64 job.
     runs-on: macos-latest

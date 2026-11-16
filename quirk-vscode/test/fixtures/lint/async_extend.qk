@@ -1,0 +1,26 @@
+// `async define` signatures declare their parameters; `extend` is a keyword.
+async define fetch(url: String, retries: Int = 3) -> String {
+    return url + String(retries)
+}
+
+struct Point {
+    x: Int
+    y: Int
+}
+
+extend Point {
+    define sum(self) -> Int {
+        return self.x + self.y
+    }
+}
+
+define main() -> void {
+    try {
+        page := await fetch("u")
+        print(page)
+    } catch (CancelledError) {
+        print("cancelled")
+    }
+    p := Point(1, 2)
+    print(p.sum())
+}

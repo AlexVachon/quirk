@@ -264,7 +264,8 @@
   "scripts": {
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./"
+    "watch": "tsc -watch -p ./",
+    "test": "tsc -p ./ && node test/run.js"
   },
   "devDependencies": {
     "@types/node": "^16.x",

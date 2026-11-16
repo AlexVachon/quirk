@@ -1,0 +1,10 @@
+// needs: stdlib
+// Types from a `use`d module (process.RunResult) and its members resolve.
+use process
+
+define show(r: process.RunResult) -> void {
+    print(r)
+}
+
+r := process.run("true")
+show(r)

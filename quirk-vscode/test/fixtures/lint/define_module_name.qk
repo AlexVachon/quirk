@@ -1,0 +1,6 @@
+// A function may share its name with a module (here `json`); declaring it is
+// not "calling a module".
+define json(value: String) -> String {
+    return "\"" + value + "\""
+}
+print(json("a"))

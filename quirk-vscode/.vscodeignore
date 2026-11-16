@@ -20,3 +20,6 @@ node_modules/.cache/**
 # Don't ship the extra-large SVGs when icon.png is the one referenced
 icons/icon_quark.svg
 icons/icon.svg
+
+# Tests (npm test) — not shipped
+test/**

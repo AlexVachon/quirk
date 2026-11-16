@@ -1,0 +1,16 @@
+// Warnings that must still fire.
+define f() -> Int {
+    unused := 3 // expect: 'unused' is declared but never used
+    return 1
+}
+
+define g() -> void {
+    try {
+        print(f())
+    } catch (e: Exception) { // expect: 'e' is declared but never used
+        print("failed")
+    }
+}
+
+print(nowhere) // expect: 'nowhere' is not defined
+g()

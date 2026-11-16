@@ -1,0 +1,15 @@
+// Named arguments spread over several lines, and defaults containing commas
+// or brackets: none of these names is an undefined variable.
+define draw(x: Int, y: Int, label: String = "a, b", size: Int = 1, color: List[Int] = [0, 0, 0]) -> Int {
+    return x + y + size + color.length() + label.length()
+}
+
+total := draw(
+    1,
+    2,
+    label = "hi",
+    size = 3,
+    color = [1, 2, 3],
+)
+print(total)
+print(draw(4, 5, size = (2 + 3), label = "x"))

@@ -328,7 +328,7 @@ static void qv_str(VARIANT* v, const WCHAR* w) { v->vt = VT_BSTR; v->bstrVal = q
 
 static HRESULT STDMETHODCALLTYPE simple_GetPropertyValue(void* This, int prop, VARIANT* ret) {
     QProv* p = QP_FROM(This, vSimple);
-    VariantInit(ret);
+    memset(ret, 0, sizeof(VARIANT));   /* VT_EMPTY (no OleAut32 import) */
     QAccWin* a;
     QAccNode* nd = qprov_lock(p, &a);
     if (!nd) return Q_UIA_E_ELEMENTNOTAVAILABLE;
@@ -741,9 +741,14 @@ static HWND qacc_hwnd_of(void* sdl_window) {
     return h;
 }
 
-/* Called when a window opens (not headless). */
+/* Called when a window opens (not headless). Experimental for now: only
+ * with QUIRK_ACCESSIBILITY=1 in the environment, until it has been tried
+ * with NVDA / Narrator (Windows sends UIA queries to every window, so a
+ * mistake here would reach every program). */
 static void qacc_attach(int slot, void* sdl_window) {
     QAccWin* a = &qacc[slot];
+    const char* on = getenv("QUIRK_ACCESSIBILITY");
+    if (!on || strcmp(on, "1") != 0) return;
     if (!quia_load()) return;
     HWND h = qacc_hwnd_of(sdl_window);
     if (!h) return;
@@ -889,8 +894,8 @@ static void qacc_changed(int slot, int id, int what) {
     QAccWin* a = &qacc[slot];
     if (!a->inited) return;
     VARIANT oldv, newv;
-    VariantInit(&oldv);
-    VariantInit(&newv);
+    memset(&oldv, 0, sizeof(VARIANT));   /* VT_EMPTY (no OleAut32 import) */
+    memset(&newv, 0, sizeof(VARIANT));   /* VT_EMPTY (no OleAut32 import) */
     EnterCriticalSection(&a->cs);
     int i = qacc_index(a, id);
     if (i < 0) { LeaveCriticalSection(&a->cs); return; }

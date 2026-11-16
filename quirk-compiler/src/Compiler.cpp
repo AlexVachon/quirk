@@ -26,6 +26,8 @@
 #include "llvm/Support/SourceMgr.h"
 
 #include <algorithm>
+#include <cstring>
+#include <functional>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -37,6 +39,7 @@
 #include "PackageManager.hpp"
 
 #include "lexer.hpp"
+#include "typenames.hpp"
 #include "parser.hpp"
 #include "sema.hpp"
 
@@ -603,6 +606,62 @@ std::string getModuleName(const std::string& path) {
     return mod;
 }
 
+
+// ==========================================================
+//  PER-MODULE TYPE NAMES
+// ==========================================================
+//
+// Struct / enum / interface / alias names are one namespace in Sema and
+// Codegen, so a user `struct Button` used to replace `ui.Button` (its
+// methods, fields and constructor). When a name is defined in more than one
+// file, every definition outside the main file gets an internal name,
+// `<Name>_in_<module>`, and the references that mean it are rewritten at the
+// token level before parsing (so generic templates, re-parsed from tokens,
+// see it too):
+//   - `alias.Name` where `alias` is a `use` of the defining module (or a
+//     module that re-exports it) → one identifier `Name_in_module`;
+//   - a bare `Name` in a file that doesn't define it but reaches exactly one
+//     definition through its imports (`from m use { Name }`, `use m`).
+// The main file's own definition keeps its name. Groups involving `typing`
+// (the prelude: String, List, ...) are left alone. typenames.hpp maps the
+// internal names back to `module.Name` for messages and repr.
+struct FileRewrite {
+    std::map<std::string, std::string> bare;                               // Name → internal
+    std::map<std::pair<std::string, std::string>, std::string> qualified;  // (alias, Name) → internal
+};
+static std::map<std::string, FileRewrite> g_typeRewrites;   // abs path → rewrite
+
+static void applyTypeRewrites(const std::string& absPath, std::vector<Token>& tokens) {
+    auto it = g_typeRewrites.find(absPath);
+    if (it == g_typeRewrites.end()) return;
+    const FileRewrite& rw = it->second;
+    std::vector<Token> out;
+    out.reserve(tokens.size());
+    for (size_t i = 0; i < tokens.size(); i++) {
+        const Token& t = tokens[i];
+        bool afterDot = !out.empty() && (out.back().type == TokenType::DOT ||
+                                         out.back().type == TokenType::QUESTION_DOT);
+        if (t.type == TokenType::IDENTIFIER && !afterDot) {
+            if (i + 2 < tokens.size() && tokens[i + 1].type == TokenType::DOT &&
+                tokens[i + 2].type == TokenType::IDENTIFIER) {
+                auto q = rw.qualified.find({t.value, tokens[i + 2].value});
+                if (q != rw.qualified.end()) {
+                    out.push_back({TokenType::IDENTIFIER, q->second, t.line, t.col});
+                    i += 2;
+                    continue;
+                }
+            }
+            auto b = rw.bare.find(t.value);
+            if (b != rw.bare.end()) {
+                out.push_back({TokenType::IDENTIFIER, b->second, t.line, t.col});
+                continue;
+            }
+        }
+        out.push_back(t);
+    }
+    tokens.swap(out);
+}
+
 std::vector<std::unique_ptr<Node>> processFile(const std::string& filePath,
                                                const Logger& log,
                                                std::map<std::string, std::string>& sourceMap,
@@ -631,6 +690,7 @@ std::vector<std::unique_ptr<Node>> processFile(const std::string& filePath,
 
     Lexer lexer(source);
     auto tokens = lexer.tokenize();
+    applyTypeRewrites(absPath, tokens);
     Parser parser(tokens, source, filePath);
     auto nodes = parser.parse();
     if (parser.hasErrors()) {
@@ -659,6 +719,7 @@ std::vector<std::unique_ptr<Node>> processFile(const std::string& filePath,
             sourceMap[absPath] = source;
             Lexer lexer2(source);
             auto tokens2 = lexer2.tokenize();
+            applyTypeRewrites(absPath, tokens2);
             Parser parser2(tokens2, source, filePath);
             nodes = parser2.parse();
             if (parser2.hasErrors()) {
@@ -697,6 +758,161 @@ std::vector<std::unique_ptr<Node>> processFile(const std::string& filePath,
         }
     }
     return allNodes;
+}
+
+
+
+// `ui` for <root>/packages/ui/index.quirk, `ui.widgets` for .../ui/widgets.qk,
+// `models` for a project file next to the main one — the name a type from
+// that file is shown with (`ui.Button`).
+static std::string moduleDisplayName(const std::string& absFile, const std::string& mainAbs) {
+    std::string p = absFile;
+    std::replace(p.begin(), p.end(), '\\', '/');
+    size_t cut = std::string::npos;
+    for (const char* marker : {"/site-packages/", "/packages/", "/stdlib/", "/lib/quirk/", "/libs/"}) {
+        size_t at = p.rfind(marker);
+        if (at != std::string::npos && (cut == std::string::npos || at + std::strlen(marker) > cut))
+            cut = at + std::strlen(marker);
+    }
+    if (cut != std::string::npos) p = p.substr(cut);
+    else {
+        std::string base = fs::path(mainAbs).parent_path().string() + "/";
+        if (p.rfind(base, 0) == 0) p = p.substr(base.size());
+        else p = fs::path(p).filename().string();
+    }
+    size_t dot = p.find_last_of('.');
+    if (dot != std::string::npos && p.find('/', dot) == std::string::npos) p = p.substr(0, dot);
+    const std::string idx = "/index";
+    if (p.size() > idx.size() && p.compare(p.size() - idx.size(), idx.size(), idx) == 0)
+        p = p.substr(0, p.size() - idx.size());
+    // A package's src/ layout (<pkg>/src/...) isn't part of its name.
+    if (size_t src = p.find("/src/"); src != std::string::npos) p = p.substr(0, src) + p.substr(src + 4);
+    else if (p.size() > 4 && p.compare(p.size() - 4, 4, "/src") == 0) p = p.substr(0, p.size() - 4);
+    std::replace(p.begin(), p.end(), '/', '.');
+    return p;
+}
+
+// Fills g_typeRewrites from a first parse of the program (see
+// PER-MODULE TYPE NAMES above). Returns true when some file needs one —
+// the caller then loads the program again.
+static bool planTypeRewrites(const std::vector<std::unique_ptr<Node>>& ast,
+                             const std::string& mainAbs, const std::string& typingDir) {
+    struct UseInfo { std::string alias, target; std::vector<std::string> filters; };
+    std::map<std::string, std::set<std::string>> defs;        // file → names
+    std::map<std::string, std::vector<UseInfo>> uses;         // file → imports
+    std::map<std::string, std::vector<std::string>> definers; // name → files (load order)
+    auto addDef = [&](const std::string& file, const std::string& name) {
+        if (name.empty() || file.empty()) return;
+        if (defs[file].insert(name).second) definers[name].push_back(file);
+    };
+    for (const auto& n : ast) {
+        const std::string& file = n->filePath;
+        if (auto st = dynamic_cast<StructNode*>(n.get())) addDef(file, st->name);
+        else if (auto en = dynamic_cast<EnumNode*>(n.get())) addDef(file, en->name);
+        else if (auto in = dynamic_cast<InterfaceNode*>(n.get())) addDef(file, in->name);
+        else if (auto ta = dynamic_cast<TypeAliasNode*>(n.get())) addDef(file, ta->name);
+        else if (auto u = dynamic_cast<UseNode*>(n.get())) {
+            std::string target = resolveImportPath(u->moduleName, file);
+            if (target.empty()) continue;
+            UseInfo info;
+            info.target = fs::absolute(target).string();
+            info.filters = u->filterList;
+            if (!u->alias.empty()) info.alias = u->alias;
+            else if (u->filterList.empty()) {
+                info.alias = u->moduleName;
+                size_t cut = info.alias.rfind('.');
+                if (cut == std::string::npos) cut = info.alias.rfind('/');
+                if (cut != std::string::npos) info.alias = info.alias.substr(cut + 1);
+            }
+            uses[file].push_back(info);
+        }
+    }
+
+    auto inTyping = [&](const std::string& f) {
+        return !typingDir.empty() && fs::path(f).generic_string().rfind(typingDir, 0) == 0;
+    };
+    // name → (defining file → internal name)
+    std::map<std::string, std::map<std::string, std::string>> internal;
+    std::set<std::string> taken;
+    for (const auto& [name, files] : definers) taken.insert(name);
+    for (const auto& [name, files] : definers) {
+        if (files.size() < 2) continue;
+        bool typing = false;
+        for (const auto& f : files) typing = typing || inTyping(f);
+        if (typing) continue;
+        for (const auto& f : files) {
+            if (f == mainAbs) continue;
+            std::string mod = moduleDisplayName(f, mainAbs);
+            std::string slug;
+            for (char c : mod) slug += (std::isalnum(static_cast<unsigned char>(c)) ? c : '_');
+            std::string iname = name + "_in_" + slug;
+            for (int k = 2; taken.count(iname); k++) iname = name + "_in_" + slug + std::to_string(k);
+            taken.insert(iname);
+            internal[name][f] = iname;
+            quirk::typeDisplayNames()[iname] = mod + "." + name;
+        }
+    }
+    if (internal.empty()) return false;
+
+    // The file whose definition `name` means inside `file`: its own, the one
+    // a `from m use { name }` brings in, or the single one reachable through
+    // plain `use`s. "" when none / ambiguous.
+    std::map<std::pair<std::string, std::string>, std::string> memo;
+    std::function<std::string(const std::string&, const std::string&, std::set<std::string>&)> resolve =
+        [&](const std::string& file, const std::string& name, std::set<std::string>& seen) -> std::string {
+        if (defs[file].count(name)) return file;
+        if (!seen.insert(file).second) return "";
+        auto key = std::make_pair(file, name);
+        if (auto m = memo.find(key); m != memo.end()) return m->second;
+        std::string found;
+        for (const auto& u : uses[file])
+            if (std::find(u.filters.begin(), u.filters.end(), name) != u.filters.end()) {
+                found = resolve(u.target, name, seen);
+                if (!found.empty()) break;
+            }
+        if (found.empty()) {
+            std::set<std::string> hits;
+            for (const auto& u : uses[file])
+                if (u.filters.empty()) {
+                    std::string r = resolve(u.target, name, seen);
+                    if (!r.empty()) hits.insert(r);
+                }
+            if (hits.size() == 1) found = *hits.begin();
+        }
+        memo[key] = found;
+        return found;
+    };
+    auto internalFor = [&](const std::string& name, const std::string& defFile) -> std::string {
+        auto g = internal.find(name);
+        if (g == internal.end()) return "";
+        auto f = g->second.find(defFile);
+        return f == g->second.end() ? "" : f->second;
+    };
+
+    std::set<std::string> files;
+    for (const auto& n : ast) if (!n->filePath.empty()) files.insert(n->filePath);
+    for (const auto& file : files) {
+        FileRewrite rw;
+        for (const auto& [name, perFile] : internal) {
+            std::set<std::string> seen;
+            std::string def = resolve(file, name, seen);
+            std::string iname = internalFor(name, def);
+            if (!iname.empty()) rw.bare[name] = iname;
+            for (const auto& u : uses[file]) {
+                if (u.alias.empty()) continue;
+                std::set<std::string> seen2;
+                std::string qdef = resolve(u.target, name, seen2);
+                std::string qname = internalFor(name, qdef);
+                if (!qname.empty()) rw.qualified[{u.alias, name}] = qname;
+            }
+        }
+        if (std::getenv("QUIRK_DEBUG_TYPENAMES")) {
+            for (auto& [k, v] : rw.bare) std::cerr << "[typenames] " << file << ": " << k << " -> " << v << "\n";
+            for (auto& [k, v] : rw.qualified) std::cerr << "[typenames] " << file << ": " << k.first << "." << k.second << " -> " << v << "\n";
+        }
+        if (!rw.bare.empty() || !rw.qualified.empty()) g_typeRewrites[file] = std::move(rw);
+    }
+    return !g_typeRewrites.empty();
 }
 
 // ==========================================================
@@ -1291,9 +1507,23 @@ static std::string symJsonEscape(const std::string& s) {
 // by emitSymbols so hover types read the way the user wrote them.
 static std::map<std::string, std::string> g_symDisplayNames;
 
-static void emitSymbol(const char* kind, const std::string& name,
-                       const std::string& scope, const std::string& file,
+// A symbol name / scope as written in the source: `Button_in_ui` → `Button`,
+// also as a prefix (`Button_in_ui_draw` → `Button_draw`).
+static std::string sourceTypeName(const std::string& s) {
+    for (const auto& [internal, shown] : quirk::typeDisplayNames()) {
+        if (s.rfind(internal, 0) != 0) continue;
+        if (s.size() > internal.size() && s[internal.size()] != '_') continue;
+        size_t dot = shown.rfind('.');
+        return (dot == std::string::npos ? shown : shown.substr(dot + 1)) + s.substr(internal.size());
+    }
+    return s;
+}
+
+static void emitSymbol(const char* kind, const std::string& rawName,
+                       const std::string& rawScope, const std::string& file,
                        int line, int col, const std::string& rawType = "") {
+    const std::string name = sourceTypeName(rawName);
+    const std::string scope = sourceTypeName(rawScope);
     // Temporaries the compiler generates (`assert`'s __qa_*, `quirk test`'s
     // __qt_*) aren't the user's names.
     if (name.rfind("__qa_", 0) == 0 || name.rfind("__qt_", 0) == 0) return;
@@ -1303,6 +1533,7 @@ static void emitSymbol(const char* kind, const std::string& name,
         auto it = g_symDisplayNames.find(nullable ? type.substr(0, type.size() - 1) : type);
         if (it != g_symDisplayNames.end()) type = it->second + (nullable ? "?" : "");
     }
+    type = quirk::displayTypeNames(type);
     std::cout << "{\"kind\":\""  << kind
               << "\",\"name\":\""  << symJsonEscape(name)
               << "\",\"scope\":\"" << symJsonEscape(scope)
@@ -1717,6 +1948,23 @@ int main(int argc, char* argv[]) {
     auto userNodes = processFile(opts.inputFile, log, sourceMap, true);
     for (auto& node : userNodes)
         ast.push_back(std::move(node));
+
+    // Two files define the same type name → give the non-main ones internal
+    // names and load the program again with the references rewritten.
+    {
+        std::string typingDir = corePath.empty() ? "" :
+            fs::absolute(fs::path(corePath)).parent_path().generic_string() + "/";
+        if (planTypeRewrites(ast, fs::absolute(opts.inputFile).string(), typingDir)) {
+            ast.clear();
+            sourceMap.clear();
+            loadedModules.clear();
+            if (!corePath.empty())
+                for (auto& node : processFile(corePath, log, sourceMap))
+                    ast.push_back(std::move(node));
+            for (auto& node : processFile(opts.inputFile, log, sourceMap, true))
+                ast.push_back(std::move(node));
+        }
+    }
 
     // =======================================================
     // 3. AST DUMP (opt-in only)

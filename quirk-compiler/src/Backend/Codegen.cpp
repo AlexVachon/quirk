@@ -33,6 +33,7 @@
 #include "ast.hpp"
 
 #include "../Core/ErrorCodes.hpp"
+#include "typenames.hpp"
 #include "TypeGen.hpp"
 #include "BoxInt.hpp"
 #include "CoerceGen.hpp"
@@ -235,7 +236,8 @@ class LLVMCodegen {
             PointerType::getUnqual(Type::getInt32Ty(Context)), i8p, i8p, Type::getInt32Ty(Context));
     }
 
-    [[noreturn]] void fatalError(const std::string& msg, int line, int col) {
+    [[noreturn]] void fatalError(const std::string& rawMsg, int line, int col) {
+        const std::string msg = quirk::displayTypeNames(rawMsg);
         std::cerr << quirk::errorTag(msg) << msg << "\n";
 
         if (line > 0) {
@@ -387,7 +389,9 @@ class LLVMCodegen {
             if (auto s = dynamic_cast<StructNode*>(node.get())) {
                 if (!StructTypes.count(s->name)) StructTypes[s->name] = StructType::create(Context, s->name);
                 if (!s->genericDisplayName.empty())
-                    builtinGen->displayNames[s->name] = s->genericDisplayName;
+                    builtinGen->displayNames[s->name] = quirk::displayTypeNames(s->genericDisplayName);
+                else if (quirk::typeDisplayNames().count(s->name))
+                    builtinGen->displayNames[s->name] = quirk::displayTypeName(s->name);
                 if (!s->genericBase.empty())
                     genericSpecs[s->genericBase].push_back(s->name);
             }

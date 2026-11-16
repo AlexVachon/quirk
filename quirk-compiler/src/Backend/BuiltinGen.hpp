@@ -755,7 +755,8 @@ class BuiltinGen {
                         }
                     } else {
                         Value* fmt = Builder.CreateGlobalStringPtr("<%s at %p>");
-                        Value* nameVal = Builder.CreateGlobalStringPtr(structName);
+                        Value* nameVal = Builder.CreateGlobalStringPtr(
+                            displayNames.count(structName) ? displayNames[structName] : structName);
                         Builder.CreateCall(printfFunc, {fmt, nameVal, val});
                     }
                     if (!Builder.GetInsertBlock()->getTerminator()) Builder.CreateBr(doneBB);

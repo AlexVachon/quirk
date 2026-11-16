@@ -1,0 +1,35 @@
+// Helper for p153 / p154: defines Button, Color and Box, which the probes
+// also define themselves.
+enum Color {
+    Red
+    Green
+}
+
+struct Button {
+    label: String
+    define __init(self, label: String) -> void {
+        self.label = label
+    }
+    define describe(self) -> String {
+        return "lib " + self.label
+    }
+}
+
+struct Box[T] {
+    v: T
+    define __init(self, v: T) -> void {
+        self.v = v
+    }
+}
+
+define make() -> Button {
+    return Button("made")
+}
+
+define show(b: Button) -> String {
+    return b.describe()
+}
+
+define green() -> Color {
+    return Color.Green
+}

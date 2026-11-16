@@ -1,0 +1,6 @@
+// Helper for p153: names Button only through `from ... use`.
+from .widgets153 use { Button }
+
+define build() -> Button {
+    return Button("built")
+}

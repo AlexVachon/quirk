@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include "sema.hpp"
 #include "ErrorCodes.hpp"
+#include "typenames.hpp"
 #include "parser.hpp"   // GenericTemplate (monomorphization)
 
 std::string Sema::currentClass = "";
@@ -643,7 +644,7 @@ bool Sema::addError(ErrorRecord e) {
 
 [[noreturn]] void Sema::fatalError(const std::string& rawMsg, int line, int col,
                                     const std::string& filePath) {
-    const std::string msg = monoDisplay(rawMsg);
+    const std::string msg = quirk::displayTypeNames(monoDisplay(rawMsg));
     if (line <= 0 && lastNode && lastNode->line > 0) {
         line = lastNode->line; col = lastNode->col;
     }
@@ -672,7 +673,7 @@ void Sema::reportError(const std::string& msg, int line, int col,
     std::string path = (!filePath.empty())                          ? filePath
                      : (lastNode && !lastNode->filePath.empty()) ? lastNode->filePath
                      : currentFilePath;
-    addError({monoDisplay(msg), path, line, col, {}});
+    addError({quirk::displayTypeNames(monoDisplay(msg)), path, line, col, {}});
 }
 
 void Sema::reportError(const std::string& msg,
@@ -685,7 +686,7 @@ void Sema::reportError(const std::string& msg,
     std::string path = (!filePath.empty())                          ? filePath
                      : (lastNode && !lastNode->filePath.empty()) ? lastNode->filePath
                      : currentFilePath;
-    addError({monoDisplay(msg), path, line, col, suggestions});
+    addError({quirk::displayTypeNames(monoDisplay(msg)), path, line, col, suggestions});
 }
 
 // Damerau-Levenshtein distance — counts single-char transpositions as
@@ -908,7 +909,7 @@ void Sema::reportWarning(const std::string& msg, int line, int col,
     std::string path = (!filePath.empty())                             ? filePath
                      : (lastNode && !lastNode->filePath.empty()) ? lastNode->filePath
                      : currentFilePath;
-    warnings.push_back({msg, path, line, col});
+    warnings.push_back({quirk::displayTypeNames(msg), path, line, col});
 }
 
 void Sema::flushWarnings() {
@@ -1289,6 +1290,11 @@ void Sema::checkUse(UseNode *node)
 bool Sema::isVisible(const std::string &name, const std::string &symbolModule, const std::string &currentModule)
 {
     if (currentModule != "main")
+        return true;
+    // A per-module internal type name (`Button_in_ui`, or a specialization
+    // `Box_in_shapes__Int`) only appears where the driver resolved it
+    // through this file's imports (Compiler.cpp, planTypeRewrites).
+    if (quirk::typeDisplayNames().count(name.substr(0, name.find("__"))))
         return true;
     if (symbolModule.find("typing") == 0 || symbolModule.find("core") == 0)
         return true;

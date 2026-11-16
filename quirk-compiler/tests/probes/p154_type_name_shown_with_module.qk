@@ -1,0 +1,10 @@
+// expect-error: cannot assign 'Button' to 'x' of type 'qk_fixtures.widgets153.Button'
+// The two Buttons are different types, and the message names the module's.
+from .qk_fixtures.widgets153 as widgets153
+
+struct Button {
+    size: Int
+}
+
+x: widgets153.Button = Button()
+print(x)

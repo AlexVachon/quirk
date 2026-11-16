@@ -464,6 +464,8 @@ static int find_key_index(List* keys, const char* key_name) {
 //  LIFECYCLE (Init / Del)
 // ==========================================
 
+String* quirk_opaque_to_string(void* val);   /* runtime.c */
+
 void Core_String_String___init(String* self, char* raw) {
     uintptr_t val = (uintptr_t)raw;
     if (val <= MAX_SMALL_INT) {
@@ -473,7 +475,24 @@ void Core_String_String___init(String* self, char* raw) {
         self->buffer = strdup(temp);
         return;
     }
-    if (!raw || raw[0] == '\0') {
+    // `String(s)` where `s` is already a String (or another headered object:
+    // a struct, a List...): codegen passes the object itself, and reading it
+    // as a C string copied its pointer bytes ("String(type(x))" was garbage).
+    {
+        uint32_t t = quirk_type_of(raw);
+        if (t != QT_NONE && t != QT_ANY && t != QT_CSTR) {
+            String* src = t == QT_STRING ? (String*)raw : quirk_opaque_to_string(raw);
+            const char* text = (src && src->buffer) ? src->buffer : "null";
+            self->length = src && src->buffer ? src->length : 4;
+            self->buffer = (char*)malloc((size_t)self->length + 1);
+            memcpy(self->buffer, text, (size_t)self->length);
+            self->buffer[self->length] = '\0';
+            return;
+        }
+    }
+    // (A headered Any box is checked first: the shared box for Int 0 starts
+    // with a 0 byte, so `String(0)` came out as "".)
+    if (!raw || (raw[0] == '\0' && quirk_type_of(raw) != QT_ANY)) {
         // Empty literal "" — short-circuit before the Any-tag heuristic below.
         // Reading 4 bytes past a 1-byte zeroinitializer is UB and intermittently
         // picks up adjacent memory that happens to look like a valid AnyTag.

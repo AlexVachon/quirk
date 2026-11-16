@@ -5,6 +5,21 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.35.0] — 2026-11-16 — type names per module; `String(s)`
+
+- **Two files can define the same struct / enum / interface name.** A
+  user `struct Button` used to replace `ui.Button` everywhere (its fields,
+  methods and constructor: "member 'label' not found in 'Button'"). Each
+  file now keeps its own: `Button` is yours, `ui.Button` is the library's,
+  in annotations, constructors, parents (`struct Warning : ui.Button`),
+  generics and `from ui use { Button }`. Messages, repr and `type()` name
+  the module's as `ui.Button`.
+- **`String(s)` on a value that's already a String returned garbage**
+  (also `String(type(x))`); String() of a struct or List now gives its
+  text, and `String(0)` gives "0" instead of "".
+- VS Code extension: automated tests (`npm test` in `quirk-vscode`, and a
+  `vscode` job in CI) for its warnings and Ctrl+click.
+
 ## [7.34.1] — 2026-11-13 — `compiler update` on a slow moment
 
 - **`quirk compiler update` / `compiler check` wait up to 30 s for the

@@ -1,0 +1,29 @@
+// `String(s)` where `s` is already a String returned garbage: codegen passes
+// the String object and the runtime read its bytes as a C string. Same for
+// `String(type(x))` and String() of a struct / List.
+struct P {
+    x: Int
+    define __str(self) -> String {
+        return "P(" + String(self.x) + ")"
+    }
+}
+
+define check(what: String, got: String, want: String) -> void {
+    if got == want {
+        print("ok " + what)
+    } else {
+        print("FAIL " + what + ": got '" + got + "', want '" + want + "'")
+    }
+}
+
+define main() -> void {
+    a := "abc"
+    check("String(variable)", String(a), "abc")
+    check("String(literal)", String("lit"), "lit")
+    check("String(type(x))", String(type(P(1))), "P")
+    check("String(struct)", String(P(3)), "P(3)")
+    check("String(list)", String([1, 2]), "[1, 2]")
+    check("String(Int)", String(42), "42")
+    check("String(0)", String(0), "0")
+    check("String(empty)", String(String("").length()), "0")
+}

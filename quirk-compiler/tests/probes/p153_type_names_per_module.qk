@@ -1,0 +1,60 @@
+// Two files defining the same struct / enum / generic name: each keeps its
+// own fields, methods and constructor (a user `Button` used to replace
+// `ui.Button`). The module's types are reached as `widgets153.Button`, through
+// `from ... use`, as a parent, and in annotations; repr / type() say
+// `qk_fixtures.widgets153.Button`.
+from .qk_fixtures.widgets153 as widgets153
+from .qk_fixtures.reexport153 as reexport153
+
+enum Color {
+    Blue
+    Red
+    Yellow
+}
+
+struct Button {
+    size: Int
+    define __init(self, size: Int) -> void {
+        self.size = size
+    }
+    define describe(self) -> String {
+        return "mine " + String(self.size)
+    }
+}
+
+struct Box {
+    w: Int
+    define __init(self, w: Int) -> void {
+        self.w = w
+    }
+}
+
+struct Warning : widgets153.Button {
+    define describe(self) -> String {
+        return "warning " + self.label
+    }
+}
+
+define check(what: String, got: String, want: String) -> void {
+    if got == want {
+        print("ok " + what)
+    } else {
+        print("FAIL " + what + ": got '" + got + "', want '" + want + "'")
+    }
+}
+
+define main() -> void {
+    check("own struct", Button(3).describe(), "mine 3")
+    lib: widgets153.Button = widgets153.make()
+    check("module struct", lib.describe(), "lib made")
+    check("module constructor", widgets153.Button("x").describe(), "lib x")
+    check("subclass of module struct", widgets153.show(Warning("w")), "warning w")
+    check("from-use in another module", reexport153.build().describe(), "lib built")
+    check("own non-generic Box", String(Box(4).w), "4")
+    b: widgets153.Box[Int] = widgets153.Box(5)
+    check("module generic Box", String(b.v), "5")
+    check("own enum", String(Color.Yellow), String(Color.Yellow))
+    check("module enum", String(widgets153.green() == widgets153.Color.Green), "true")
+    check("type() of module struct", String(type(lib)), "qk_fixtures.widgets153.Button")
+    check("type() of own struct", String(type(Button(1))), "Button")
+}

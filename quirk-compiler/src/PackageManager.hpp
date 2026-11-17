@@ -8164,10 +8164,10 @@ define test_notes_api() -> void {
 )QWEB";
 
 // `quirk new --live <name>`: a live app — index.html (the base page), the
-// routes in router.qk, pages as structs in src/ with their .html templates,
+// routes in router.qk, pages as structs in src/ (each with its template),
 // the server in main.qk.
 static const char* kLiveMain = R"QWEB(// myapp — a live app (quirk new --live). Run:  quirk run main.qk
-// index.html is the base page; src/ has the pages (.qk) and their templates (.html).
+// index.html is the base page; src/ has the pages and components (struct + template).
 use web
 use sys
 from router use { router }
@@ -8223,11 +8223,15 @@ struct HomePage : live.Page {
     define title(self) -> String {
         return "myapp"
     }
+
+    define template(self) -> String {
+        return r"""
+            <h1>myapp</h1>
+            <p>Clicked {{ count }} times</p>
+            <button @click="click">Click me</button>
+        """
+    }
 }
-)QWEB";
-static const char* kLiveHomeHtml = R"QWEB(<h1>myapp</h1>
-<p>Clicked {{ count }} times</p>
-<button @click="click">Click me</button>
 )QWEB";
 static const char* kLiveTodos = R"QWEB(use live
 
@@ -8237,7 +8241,7 @@ struct TodoPage : live.Page {
 
     define on_load(self) -> void {
         // Load from a database or an API here.
-        self.items = ["Edit src/todo_page.html", "Run quirk test"]
+        self.items = ["Edit src/todos.qk", "Run quirk test"]
         self.draft = ""
     }
 
@@ -8260,9 +8264,24 @@ struct TodoPage : live.Page {
     define title(self) -> String {
         return "Todos"
     }
+
+    define template(self) -> String {
+        return r"""
+            <h1>Todos</h1>
+            <input model="draft" placeholder="Something to do" @enter="add()">
+            <button @click="add">Add</button>
+            <ul>
+              {% for i, item in items %}
+                <TodoItem :text="item" :index="i" @remove="remove" />
+              {% else %}
+                <li>Nothing to do</li>
+              {% end %}
+            </ul>
+        """
+    }
 }
 
-// One line of the list, used in todo_page.html as <TodoItem ... />.
+// One line of the list, used in TodoPage's template as <TodoItem ... />.
 struct TodoItem : live.Component {
     text: String
     index: Int
@@ -8270,20 +8289,11 @@ struct TodoItem : live.Component {
     define remove(self) -> void {
         self.emit("remove", self.index)
     }
+
+    define template(self) -> String {
+        return r"""<li>{{ text }} <button @click="remove" aria-label="Remove {{ text }}">×</button></li>"""
+    }
 }
-)QWEB";
-static const char* kLiveTodosHtml = R"QWEB(<h1>Todos</h1>
-<input model="draft" placeholder="Something to do" @enter="add()">
-<button @click="add">Add</button>
-<ul>
-  {% for i, item in items %}
-    <TodoItem :text="item" :index="i" @remove="remove" />
-  {% else %}
-    <li>Nothing to do</li>
-  {% end %}
-</ul>
-)QWEB";
-static const char* kLiveItemHtml = R"QWEB(<li>{{ text }} <button @click="remove" aria-label="Remove {{ text }}">×</button></li>
 )QWEB";
 static const char* kLiveCss = R"QWEB(body { font-family: system-ui, sans-serif; max-width: 36rem; margin: 3rem auto; padding: 0 1rem; color: #1d2330; }
 nav { display: flex; gap: 1rem; margin-bottom: 1rem; }
@@ -8362,10 +8372,7 @@ static int cmd_new(const std::vector<std::string>& argsIn) {
         { std::ofstream out(dir / "index.html"); out << web_template(kLiveIndex, name); }
         { std::ofstream out(dir / ("router" + ext)); out << kLiveRouter; }
         { std::ofstream out(dir / "src" / ("home" + ext)); out << web_template(kLiveHome, name); }
-        { std::ofstream out(dir / "src" / "home_page.html"); out << web_template(kLiveHomeHtml, name); }
         { std::ofstream out(dir / "src" / ("todos" + ext)); out << kLiveTodos; }
-        { std::ofstream out(dir / "src" / "todo_page.html"); out << kLiveTodosHtml; }
-        { std::ofstream out(dir / "src" / "todo_item.html"); out << kLiveItemHtml; }
         { std::ofstream out(dir / "public" / "style.css"); out << kLiveCss; }
         { std::ofstream out(dir / "tests" / (name + "_test" + ext)); out << kLiveTest; }
         { std::ofstream out(dir / ".gitignore"); out << "packages/\n.venv/\n*.ll\n*.ast.log\n"; }
@@ -8374,11 +8381,8 @@ static int cmd_new(const std::vector<std::string>& argsIn) {
                   << "  ├── main" << ext << "             the server\n"
                   << "  ├── index.html          the base page (<slot /> = the page)\n"
                   << "  ├── router" << ext << "           the pages, by path\n"
-                  << "  ├── src/home" << ext << "         a page (live.Page) ...\n"
-                  << "  ├── src/home_page.html  ... and its template\n"
+                  << "  ├── src/home" << ext << "         a page (live.Page) with its template\n"
                   << "  ├── src/todos" << ext << "        a page and a component (TodoItem)\n"
-                  << "  ├── src/todo_page.html\n"
-                  << "  ├── src/todo_item.html\n"
                   << "  ├── public/style.css    static files\n"
                   << "  ├── tests/" << name << "_test" << ext << "\n"
                   << "  └── .gitignore\n\n"
@@ -8650,7 +8654,7 @@ static std::string help_for(const std::string& cmdIn) {
                "    public/, tests through web.TestClient.\n"
                "quirk new --live <name>\n"
                "    Scaffold a live app (the `live` package): index.html (the base\n"
-               "    page), pages as structs in src/ with .html templates, their paths\n"
+               "    page), pages as structs in src/ with their templates, their paths\n"
                "    in router.qk, the server in main.qk, tests through live.TestSession.\n";
     if (cmd == "venv")
         return "quirk venv <path>                            create a venv (= `venv new`)\n"

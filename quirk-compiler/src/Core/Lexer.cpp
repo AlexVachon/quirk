@@ -108,6 +108,17 @@ Token Lexer::nextToken()
         return {TokenType::EOF_TOKEN, "", line};
     }
 
+    // Raw strings: r"..." / r"""...""" — no `$` interpolation, and a
+    // backslash is just a backslash (templates, regexes, Windows paths).
+    if (c == 'r' && (peek(1) == '"' || peek(1) == '\''))
+    {
+        advance(); // the `r`
+        tokenizeString(true);
+        Token t = tokenBuffer.front();
+        tokenBuffer.pop_front();
+        return t;
+    }
+
     // --- FIX: Handle BOTH Double and Single Quotes ---
     if (c == '"' || c == '\'')
     {
@@ -352,7 +363,7 @@ Token Lexer::nextToken()
 //  STRING INTERPOLATION LOGIC
 // =========================================================
 
-void Lexer::tokenizeString()
+void Lexer::tokenizeString(bool raw)
 {
     int startLine = line;
     int startCol  = col;
@@ -386,6 +397,15 @@ void Lexer::tokenizeString()
     while (pos < src.length() && !atTerminator())
     {
         char c = peek();
+
+        // A raw string keeps every character as written (the literal is
+        // unescaped later, so a backslash is stored escaped).
+        if (raw)
+        {
+            if (c == '\\') { advance(); format_builder += "\\\\"; }
+            else format_builder += advance();
+            continue;
+        }
 
         // Handle Escapes
         if (c == '\\')

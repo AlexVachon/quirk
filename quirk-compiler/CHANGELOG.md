@@ -7,8 +7,9 @@ only for breaking changes.
 
 ## [7.44.0] — 2026-11-17 — `live` 2: components with HTML templates
 
-- **`live` v2.0.0**, Vue-style: a component is a struct with an HTML
-  template next to it (`counter_page.html` for `CounterPage`). Templates
+- **`live` v2.0.0**, Vue-style: a component is a struct with its HTML
+  template in the same file (`template()` returning a raw string, or an
+  `.html` file named after the struct). Templates
   show fields (`{{ count }}`), call methods on events (`@click="add(1)"`,
   `@submit`, `@input`, `@change`, `@enter`), bind inputs (`model="draft"`)
   and use other components as tags (`<PlusButton :step="10" />`, slots,
@@ -22,8 +23,11 @@ only for breaking changes.
   and set a field by name, call a method by name (defaults apply), declared
   field types, a new struct by its type name, its source file. Exposed as
   `live.get_field`, `call_method`, `new_struct`, ... (probe p174).
-- **`quirk new --live <name>`**: index.html, main.qk, router.qk, pages and
-  their templates in src/, tests.
+- **Raw strings**: `r"..."` and `r"""..."""` keep `$` and backslashes as
+  written — no interpolation (templates, regexes, Windows paths) (probe
+  p175).
+- **`quirk new --live <name>`**: index.html, main.qk, router.qk, pages in
+  src/ (each struct with its template), tests.
 - **A struct name used as a value is its constructor** (a Callable, with
   the same arguments as `__init`): `router.add("/", HomePage)`,
   `makers := [A, B]`, `pages.Home`. It used to drop the argument silently

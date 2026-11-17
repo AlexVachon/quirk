@@ -130,7 +130,7 @@ class Lexer {
     char advance();
     bool match(char expected);
 
-    void tokenizeString();
+    void tokenizeString(bool raw = false);
     Token nextToken();
 };
 

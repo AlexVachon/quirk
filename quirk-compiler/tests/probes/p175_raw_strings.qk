@@ -1,0 +1,21 @@
+// Raw strings: r"..." and r"""...""" keep `$` and backslashes as written
+// (live templates, regexes, Windows paths); "{{ }}" stays as is too.
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+define main() -> void {
+    name := "x"
+    a := r"costs $5 for $name"
+    if a != "costs " + "$" + "5 for " + "$" + "name" { fail("dollar: " + a) }
+    if a.length() != 18 { fail("length " + String(a.length())) }
+    b := r"C:\new\table"
+    if b.length() != 12 or not b.contains("\\n") { fail("backslash: " + b) }
+    t := r"""
+        <p>{{ count }} for $price</p>
+        <button @click="add(1)">+1</button>
+    """
+    if not t.startswith("<p>{{ count }} for ") or not t.contains("<button @click=\"add(1)\">") { fail("triple: " + t) }
+    if t.contains("\n    ") { fail("not dedented: " + t) }
+    if r'' != "" or r'q' != "q" { fail("single quotes") }
+    if "plain $name" != "plain x" { fail("normal strings still interpolate") }
+    print("ok")
+}

@@ -26,6 +26,15 @@
 "doc": "A running animation (`app.animate`). `cancel()` stops it (no more\n`on_step`, no `on_done`); `done` says whether it has finished."
 }
 ],
+"App": [
+{
+"package": "web",
+"qualified": "App",
+"kind": "struct",
+"signature": "struct App {",
+"doc": "A web app: routes, middleware, error handling, and a server.\n\n    app := web.App()\n    app.get(\"/\", fn(req, res) { res.text(\"hi\") })\n    app.listen(3000)\n\nRoutes run in the order added; the first whose method and path match\nanswers. `views` is the templates folder for `res.render`."
+}
+],
 "AssertionError": [
 {
 "package": "typing",
@@ -240,6 +249,15 @@
 "kind": "interface",
 "signature": "interface Hashable : Equatable {",
 "doc": "Implemented by types that can produce a stable integer hash of their value.\nRequired for use as keys in `Map` or elements in `Set`.\nAny `Hashable` type must also be `Equatable`: two equal values must hash identically.\n\n@example\nstruct Point : Hashable {\n    x: Int\n    y: Int\n\n    define __eq(self, other: Point) -> Bool {\n        return self.x == other.x and self.y == other.y\n    }\n\n    define __hash(self) -> Int {\n        return self.x * 31 + self.y\n    }\n}"
+}
+],
+"HttpError": [
+{
+"package": "web",
+"qualified": "HttpError",
+"kind": "struct",
+"signature": "struct HttpError : Exception {",
+"doc": "Throw from a handler to answer with `status` and `message` \u2014 e.g.\n`throw web.HttpError(404, \"no such user\")`. The app's error handler gets\nit (the default one sends the status and message)."
 }
 ],
 "IOError": [
@@ -573,6 +591,13 @@
 "kind": "struct",
 "signature": "struct Request {",
 "doc": "A parsed incoming HTTP request \u2014 what `Server` hands to your handler.\n\n  `method`   \u2014 uppercase verb (`GET`, `POST`, \u2026).\n  `path`     \u2014 request path with query stripped (e.g. `/users/42`).\n  `query`    \u2014 Map of query-string params (parsed via `url.parse_query`).\n  `headers`  \u2014 Map of header name \u2192 value (case-preserved as received).\n  `body`     \u2014 request body for POST/PUT, \"\" otherwise."
+},
+{
+"package": "web",
+"qualified": "Request",
+"kind": "struct",
+"signature": "struct Request {",
+"doc": "An incoming request, as a handler sees it:\n  `method`  \u2014 \"GET\", \"POST\", ... (upper case)\n  `path`    \u2014 \"/users/42\" (decoded, without the query)\n  `url`     \u2014 the request target as sent (\"/users/42?tab=1\")\n  `query`   \u2014 Map of the query string (\"?tab=1\" \u2192 {\"tab\": \"1\"})\n  `params`  \u2014 Map of the route's `:name` / `*name` parts\n  `headers` \u2014 Map of headers, names in lower case\n  `body`    \u2014 the raw body (bytes kept as they came)\n  `locals`  \u2014 a Map for middleware to pass things to handlers\n`json()`, `form()`, `cookies()`, `header(name)` read the rest."
 }
 ],
 "Response": [
@@ -582,6 +607,13 @@
 "kind": "struct",
 "signature": "struct Response {",
 "doc": "HTTP response.\n  `status_code`  \u2014 numeric status (200, 404, ...).\n  `headers`      \u2014 Map of header name \u2192 value (header names are\n                   case-preserved as the server returned them).\n  `text`         \u2014 decoded response body (chunked encoding handled).\n  `ok`           \u2014 true iff `200 <= status_code < 300`."
+},
+{
+"package": "web",
+"qualified": "Response",
+"kind": "struct",
+"signature": "struct Response {",
+"doc": "The answer a handler builds: `res.status(201).json(value)`,\n`res.html(page)`, `res.redirect(\"/login\")`, `res.file(\"report.pdf\")`,\n`res.set(\"X-Name\", \"v\")`, `res.cookie(\"session\", id)`. The first send\nwins; it's written when the handler (and middleware) return."
 }
 ],
 "Result": [
@@ -591,6 +623,15 @@
 "kind": "struct",
 "signature": "type Result[T, E] = Ok(value: T) | Err(error: E)",
 "doc": ""
+}
+],
+"Router": [
+{
+"package": "web",
+"qualified": "Router",
+"kind": "struct",
+"signature": "struct Router {",
+"doc": "A group of routes and middleware to mount in an app under a prefix:\n\n    api := web.Router()\n    api.get(\"/users\", list_users)\n    app.mount(\"/api\", api)          // GET /api/users"
 }
 ],
 "Row": [
@@ -755,6 +796,15 @@
 "doc": "Pages under a row of tabs: `ui.Tabs([\"General\", \"Advanced\"], [page1, page2])`.\nClick a tab, or Left / Right when the tab row has the focus. `selected`\nis the page shown; `on_change(index, title)` runs when it changes;\n`add(title, page)` adds one."
 }
 ],
+"Template": [
+{
+"package": "web",
+"qualified": "Template",
+"kind": "struct",
+"signature": "struct Template {",
+"doc": "A page template \u2014 HTML with places for data:\n\n    {{ user.name }}           a value, HTML-escaped (dotted: Map keys, List indexes)\n    {{ bio | raw }}           not escaped; also `| upper`, `| lower`, `| length`, `| json`\n    {% if user.admin %} \u2026 {% elif guest %} \u2026 {% else %} \u2026 {% end %}\n    {% if not items %} \u2026 {% end %}       also `==` / `!=` with \"text\" or numbers\n    {% for item in items %} {{ loop.index }}. {{ item }} {% else %} none {% end %}\n    {% include \"header.html\" %}          another file (from the same folder)\n    {# a comment #}\n\n`Template(text).render(data)` gives the page; `render_file(path, data)`\nreads (and caches) a file."
+}
+],
 "TestCase": [
 {
 "package": "test",
@@ -762,6 +812,15 @@
 "kind": "struct",
 "signature": "struct TestCase {",
 "doc": "A single named test. Construct with `TestCase(\"name\", fn() { ... })`.\nThe lambda body uses `test.assert_*` helpers; any AssertionError fails\nthe case. Other exceptions also fail it (their type is shown)."
+}
+],
+"TestClient": [
+{
+"package": "web",
+"qualified": "TestClient",
+"kind": "struct",
+"signature": "struct TestClient {",
+"doc": "Call an app's routes without a network, for tests:\n\n    client := web.TestClient(app)\n    res := client.get(\"/users/1\")\n    test.assert_eq(res.status_code, 200)\n    test.assert_eq(res.body, \"...\")\n\nCookies the app sets are sent back on later requests, like a browser."
 }
 ],
 "TextArea": [
@@ -1396,6 +1455,15 @@
 "doc": "Block until a client connects to listening socket `fd`, returning the new\nclient socket's fd. Negative on error."
 }
 ],
+"accepts": [
+{
+"package": "web",
+"qualified": "Request.accepts",
+"kind": "method",
+"signature": "define accepts(self, kind: String) -> Bool {",
+"doc": "True if the client accepts `kind` (\"json\", \"html\", or a full type) \u2014 from the Accept header."
+}
+],
 "access_action": [
 {
 "package": "ui",
@@ -1593,6 +1661,20 @@
 "kind": "method",
 "signature": "define all(self, cb: Callable) -> Bool",
 "doc": "Returns `true` if every element satisfies the predicate.\n@param cb: Callable \u2014 `fn(element: T) => Bool`\n@returns: Bool"
+},
+{
+"package": "web",
+"qualified": "Router.all",
+"kind": "method",
+"signature": "define all(self, pattern: String, handler: Callable) -> Router { return self.route(\"\", pattern, handler) }",
+"doc": "Any method."
+},
+{
+"package": "web",
+"qualified": "App.all",
+"kind": "method",
+"signature": "define all(self, pattern: String, handler: Callable) -> App { return self.route(\"\", pattern, handler) }",
+"doc": "Any method."
 }
 ],
 "and_then": [
@@ -1672,6 +1754,15 @@
 "kind": "method",
 "signature": "define append_all(self, other: List) -> void",
 "doc": "Append every element of `other` to `self` in place. Mutates\n`self`; returns nothing. Use `+` if you want a fresh List\ninstead of mutating. (Named `append_all` rather than the\nPython-conventional `extend` because `extend` is a reserved\nkeyword in Quirk \u2014 `extend Foo { ... }` blocks add methods to\nan existing struct.)\n\n@example xs.append_all([4, 5, 6])  // xs is now [1, 2, 3, 4, 5, 6]"
+}
+],
+"append_header": [
+{
+"package": "web",
+"qualified": "Response.append_header",
+"kind": "method",
+"signature": "define append_header(self, name: String, value: String) -> Response {",
+"doc": "Add a header, keeping others of the same name (Set-Cookie)."
 }
 ],
 "append_text": [
@@ -2081,6 +2172,15 @@
 "doc": "Fill the whole window with `color`."
 }
 ],
+"clear_cookie": [
+{
+"package": "web",
+"qualified": "Response.clear_cookie",
+"kind": "method",
+"signature": "define clear_cookie(self, name: String, path: String = \"/\") -> Response {",
+"doc": "Delete a cookie in the browser."
+}
+],
 "clear_line": [
 {
 "package": "console",
@@ -2277,6 +2377,40 @@
 "doc": "True if (px, py) is inside the widget's box."
 }
 ],
+"content_type": [
+{
+"package": "web",
+"qualified": "Response.content_type",
+"kind": "method",
+"signature": "define content_type(self, kind: String) -> Response {",
+"doc": "Set the Content-Type (chainable): \"json\", \"html\", \"text\", or a full type."
+}
+],
+"cookie": [
+{
+"package": "web",
+"qualified": "Request.cookie",
+"kind": "method",
+"signature": "define cookie(self, name: String) -> String {",
+"doc": "One cookie's value, or \"\" when the request doesn't have it."
+},
+{
+"package": "web",
+"qualified": "Response.cookie",
+"kind": "method",
+"signature": "define cookie(self, name: String, value: String, max_age: Int = -1, path: String = \"/\", http_only: Bool = true, secure: Bool = false, same_site: String = \"Lax\", domain: String = \"\") -> Response {",
+"doc": "Set a cookie. `max_age` in seconds (-1: until the browser closes);\n`http_only` hides it from JavaScript; `same_site` is \"Lax\", \"Strict\"\nor \"None\" (then `secure` too)."
+}
+],
+"cookies": [
+{
+"package": "web",
+"qualified": "Request.cookies",
+"kind": "method",
+"signature": "define cookies(self) -> Map {",
+"doc": "The request's cookies: a Map of name \u2192 value."
+}
+],
 "copy": [
 {
 "package": "fs",
@@ -2309,6 +2443,15 @@
 "kind": "define",
 "signature": "extern define copyright() -> String",
 "doc": "A short copyright string for the Quirk runtime."
+}
+],
+"cors": [
+{
+"package": "web",
+"qualified": "cors",
+"kind": "define",
+"signature": "define cors(origin: String = \"*\", methods: String = \"GET, POST, PUT, PATCH, DELETE, OPTIONS\", headers: String = \"Content-Type, Authorization\") -> Callable {",
+"doc": "Middleware that lets pages on other sites call this API from browsers\n(CORS): `origin` \"*\" (any) or one site (\"https://example.com\").\nAnswers preflight OPTIONS requests itself."
 }
 ],
 "cos": [
@@ -2720,6 +2863,15 @@
 "doc": "Encode `data` to a Base64 String. Output length is roughly 4/3 of input,\nrounded up to a multiple of 4 with `=` padding."
 }
 ],
+"end": [
+{
+"package": "web",
+"qualified": "Response.end",
+"kind": "method",
+"signature": "define end(self) -> Response {",
+"doc": "End the response with no body (204 if nothing else was set)."
+}
+],
 "enumerate": [
 {
 "package": "itertools",
@@ -2745,6 +2897,15 @@
 "kind": "method",
 "signature": "define err(self) -> Option {",
 "doc": "Converts to `Option` of the error: `Err(e)` \u2192 `Some(e)`; `Ok(_)` \u2192 `None`."
+}
+],
+"escape": [
+{
+"package": "web",
+"qualified": "escape",
+"kind": "define",
+"signature": "define escape(s: String) -> String {",
+"doc": "`s` with HTML's special characters escaped (& < > \" ')."
 }
 ],
 "events": [
@@ -2817,6 +2978,15 @@
 "kind": "define",
 "signature": "extern define fabs(x: Double) -> Double",
 "doc": "Absolute value of a Double. (Wrapped by `abs_f` for naming symmetry.)"
+}
+],
+"file": [
+{
+"package": "web",
+"qualified": "Response.file",
+"kind": "method",
+"signature": "define file(self, path: String, download: Bool = false, name: String = \"\") -> Response {",
+"doc": "Send a file, with its Content-Type and Last-Modified \u2014 or 304 Not\nModified when the browser's copy is current, 404 when there's no such\nfile. `download=true` makes the browser save it (as `name`, default\nthe file's own name)."
 }
 ],
 "filter": [
@@ -2976,6 +3146,15 @@
 "doc": "Give `w` the keyboard focus (null: nobody)."
 }
 ],
+"form": [
+{
+"package": "web",
+"qualified": "Request.form",
+"kind": "method",
+"signature": "define form(self) -> Map {",
+"doc": "The body parsed as a form (`a=1&b=two`, as an HTML form posts it): a Map of Strings."
+}
+],
 "format": [
 {
 "package": "datetime",
@@ -3056,6 +3235,13 @@
 "kind": "method",
 "signature": "define get(self, i: Int) -> String {",
 "doc": "Section `i`'s text (\"\" if there's none)."
+},
+{
+"package": "web",
+"qualified": "Response.get",
+"kind": "method",
+"signature": "define get(self, name: String) -> String {",
+"doc": "A header's value as set so far (\"\" if none)."
 }
 ],
 "get_or": [
@@ -3173,6 +3359,13 @@
 "kind": "method",
 "signature": "define handle(self, e: window.Event) -> Bool {",
 "doc": "React to an event; true if the widget used it."
+},
+{
+"package": "web",
+"qualified": "App.handle",
+"kind": "method",
+"signature": "define handle(self, req: Request, res: Response) -> void {",
+"doc": "Answer `req` into `res` \u2014 middleware, the matching route, error and\nnot-found handling \u2014 without a network. `listen` uses it for every\nrequest; tests can call it directly (see `TestClient`)."
 }
 ],
 "has": [
@@ -3216,6 +3409,15 @@
 "doc": "True when some text is selected."
 }
 ],
+"header": [
+{
+"package": "web",
+"qualified": "Request.header",
+"kind": "method",
+"signature": "define header(self, name: String) -> String {",
+"doc": "A header's value (\"\" if absent); the name is case-insensitive."
+}
+],
 "height": [
 {
 "package": "window",
@@ -3257,6 +3459,15 @@
 "kind": "define",
 "signature": "extern define hour(epoch: Int, utc: Int) -> Int",
 "doc": "Hour 0-23."
+}
+],
+"html": [
+{
+"package": "web",
+"qualified": "Response.html",
+"kind": "method",
+"signature": "define html(self, page: Any) -> Response {",
+"doc": "Send HTML: a String, or an `html` Element (rendered)."
 }
 ],
 "humanize": [
@@ -3546,6 +3757,15 @@
 "doc": "Returns true when the value is present."
 }
 ],
+"is_type": [
+{
+"package": "web",
+"qualified": "Request.is_type",
+"kind": "method",
+"signature": "define is_type(self, kind: String) -> Bool {",
+"doc": "True if the request's Content-Type is `kind` (\"json\", \"form\", or a full type like \"text/plain\")."
+}
+],
 "is_valid": [
 {
 "package": "uuid",
@@ -3623,6 +3843,20 @@
 "kind": "method",
 "signature": "define json(self) -> Any {",
 "doc": "Parse the response body as JSON. Equivalent to\n`encoding.json.parse(self.text)`. Returns the decoded value\n(Map / List / String / Int / Double / Bool / null) typed as Any.\n\nThrows ValueError when the body isn't valid JSON. Status code is\nnot consulted \u2014 callers wanting a strict \"2xx + valid JSON\" path\nshould check `self.ok` first.\n\nAnnotate the receiving variable with the concrete type you expect\n(`data: Map := resp.json()`) \u2014 bare `data :=` keeps the binding as\nAny, which downstream `.get` / `.length` calls won't pick the\nright method for.\n\n@example\nresp := http.get(\"https://api.example.com/user/42\")\nif resp.ok {\n    data: Map := resp.json()\n    print(data.get(\"name\"))\n}"
+},
+{
+"package": "web",
+"qualified": "Request.json",
+"kind": "method",
+"signature": "define json(self) -> Any {",
+"doc": "The body parsed as JSON (a Map, List, String, number...).\n@throws HttpError 400 if it isn't valid JSON."
+},
+{
+"package": "web",
+"qualified": "Response.json",
+"kind": "method",
+"signature": "define json(self, value: Any) -> Response {",
+"doc": "Send `value` (Map, List, String, number...) as JSON."
 }
 ],
 "key_down": [
@@ -3808,6 +4042,13 @@
 "kind": "define",
 "signature": "extern define listen(fd: Int, backlog: Int) -> Int",
 "doc": "Mark `fd` as a listening socket with the given pending-connection backlog.\nMust be called after `bind`. Returns 0 on success."
+},
+{
+"package": "web",
+"qualified": "App.listen",
+"kind": "method",
+"signature": "define listen(self, port: Int = 3000, host: String = \"127.0.0.1\", on_ready: Callable = null, quiet: Bool = false) -> void {",
+"doc": "Serve the app on `port` (and `host`: \"127.0.0.1\" only this machine,\n\"0.0.0.0\" every interface) until `stop()`. Each connection is handled\nin its own task, with keep-alive. `on_ready()` runs once listening."
 }
 ],
 "load": [
@@ -3871,6 +4112,15 @@
 "kind": "define",
 "signature": "extern define log2(x: Double) -> Double",
 "doc": "Base-2 logarithm."
+}
+],
+"logger": [
+{
+"package": "web",
+"qualified": "logger",
+"kind": "define",
+"signature": "define logger() -> Callable {",
+"doc": "Middleware that prints one line per request: method, path, status and\ntime taken (\"GET /users 200 3ms\")."
 }
 ],
 "make": [
@@ -4027,6 +4277,15 @@
 "doc": "Lower median (no averaging \u2014 returns one of the input values). For odd\nn this matches `median`; for even n it returns the lower of the two\nmidpoints."
 }
 ],
+"mime_type": [
+{
+"package": "web",
+"qualified": "mime_type",
+"kind": "define",
+"signature": "define mime_type(path: String) -> String {",
+"doc": "The Content-Type for a file name's extension (\"style.css\" \u2192 \"text/css;\ncharset=utf-8\"); \"application/octet-stream\" when unknown."
+}
+],
 "min": [
 {
 "package": "math",
@@ -4133,6 +4392,15 @@
 "doc": "Full English month name for `month` (1-12)."
 }
 ],
+"mount": [
+{
+"package": "web",
+"qualified": "App.mount",
+"kind": "method",
+"signature": "define mount(self, prefix: String, router: Router) -> App {",
+"doc": "Add a Router's routes and middleware under `prefix` (\"/api\")."
+}
+],
 "mouse": [
 {
 "package": "window",
@@ -4221,6 +4489,24 @@
 "kind": "method",
 "signature": "define ok_or(self, err: Any) -> Result {",
 "doc": "Converts to `Result`: `Some(v)` \u2192 `Ok(v)`; `None` \u2192 `Err(err)`."
+}
+],
+"on_error": [
+{
+"package": "web",
+"qualified": "App.on_error",
+"kind": "method",
+"signature": "define on_error(self, handler: Callable) -> App {",
+"doc": "Handle errors thrown by handlers: `handler(err, req, res)`. By default\nan HttpError answers with its status and message, anything else with\n500 (and the error printed)."
+}
+],
+"on_not_found": [
+{
+"package": "web",
+"qualified": "App.on_not_found",
+"kind": "method",
+"signature": "define on_not_found(self, handler: Callable) -> App {",
+"doc": "Answer requests no route matched: `handler(req, res)` (default: 404 Not Found)."
 }
 ],
 "open": [
@@ -4561,6 +4847,15 @@
 "doc": "HTTP POST with a raw body. The body is sent as-is \u2014 set the matching\n`Content-Type` in `headers` if it isn't `application/octet-stream`.\n@example resp := http.post(\"http://api/echo\", \"name=Quirk\")\n@example resp := http.post(url, \"raw\", headers: { \"Content-Type\": \"text/plain\" })"
 }
 ],
+"post_form": [
+{
+"package": "web",
+"qualified": "TestClient.post_form",
+"kind": "method",
+"signature": "define post_form(self, path: String, fields: Map) -> Response {",
+"doc": "POST a form (a Map of Strings, urlencoded)."
+}
+],
 "post_json": [
 {
 "package": "net",
@@ -4568,6 +4863,13 @@
 "kind": "define",
 "signature": "define post_json(target: String, body: Any, headers: Map = Map()) -> Response {",
 "doc": "POST a value as JSON. Serializes `body` via `json.dumps` and sets\n`Content-Type: application/json` unless the caller already supplied one.\nAccepts anything `json.dumps` does: Map, List, ISerializable structs, or\na String.\n@example resp := http.post_json(\"http://api/users\", { \"name\": \"Quirk\" })"
+},
+{
+"package": "web",
+"qualified": "TestClient.post_json",
+"kind": "method",
+"signature": "define post_json(self, path: String, value: Any) -> Response {",
+"doc": "POST `value` as JSON."
 }
 ],
 "pow": [
@@ -4855,6 +5157,15 @@
 "doc": "Read up to `size` bytes from socket `fd`. Returns the data received as\na String. An empty string indicates the peer closed the connection."
 }
 ],
+"redirect": [
+{
+"package": "web",
+"qualified": "Response.redirect",
+"kind": "method",
+"signature": "define redirect(self, location: String, code: Int = 302) -> Response {",
+"doc": "Redirect to `location` (302 Found, or `code`: 301, 303, 307, 308)."
+}
+],
 "redo": [
 {
 "package": "ui",
@@ -4914,6 +5225,31 @@
 "kind": "define",
 "signature": "extern define rename_raw(src: String, dst: String) -> Int",
 "doc": "Rename / move from one path to another. Atomic on the same filesystem.\n@throws IOError on failure."
+}
+],
+"render": [
+{
+"package": "web",
+"qualified": "Response.render",
+"kind": "method",
+"signature": "define render(self, name: String, data: Map = {}) -> Response {",
+"doc": "Render the template `name` (a file in the app's views folder, see\n`App.views`) with `data`, and send it as HTML."
+},
+{
+"package": "web",
+"qualified": "Template.render",
+"kind": "method",
+"signature": "define render(self, data: Map = {}) -> String {",
+"doc": "The page for `data` (a Map of names to values)."
+}
+],
+"render_file": [
+{
+"package": "web",
+"qualified": "render_file",
+"kind": "define",
+"signature": "define render_file(path: String, data: Map = {}) -> String {",
+"doc": "Render the template file at `path` with `data` (see `Template`)."
 }
 ],
 "repeat": [
@@ -5011,6 +5347,22 @@
 "kind": "define",
 "signature": "extern define round(x: Double) -> Double",
 "doc": "Round to nearest integer (half-away-from-zero). `round(2.5) == 3.0`."
+}
+],
+"route": [
+{
+"package": "web",
+"qualified": "Router.route",
+"kind": "method",
+"signature": "define route(self, method: String, pattern: String, handler: Callable) -> Router {",
+"doc": "Handle `method` requests to `pattern` (\"/users/:id\", \"/files/*path\")."
+},
+{
+"package": "web",
+"qualified": "App.route",
+"kind": "method",
+"signature": "define route(self, method: String, pattern: String, handler: Callable) -> App {",
+"doc": "Handle `method` requests to `pattern` (\"/users/:id\", \"/files/*path\"); `handler(req, res)`."
 }
 ],
 "run": [
@@ -5255,6 +5607,22 @@
 "kind": "define",
 "signature": "extern define send(fd: Int, data: String) -> Int",
 "doc": "Send `data` over socket `fd`. Returns the number of bytes sent (may be\nless than `data.length()` for partial sends)."
+},
+{
+"package": "web",
+"qualified": "Response.send",
+"kind": "method",
+"signature": "define send(self, body: String) -> Response {",
+"doc": "Send `body` as the response \u2014 text/html unless a Content-Type is\nset. Later sends are ignored (the first one wins)."
+}
+],
+"send_status": [
+{
+"package": "web",
+"qualified": "Response.send_status",
+"kind": "method",
+"signature": "define send_status(self, code: Int) -> Response {",
+"doc": "Answer with just a status code and its text (\"Not Found\")."
 }
 ],
 "set": [
@@ -5271,6 +5639,13 @@
 "kind": "method",
 "signature": "define set(self, i: Int, text: String) -> void {",
 "doc": "Change section `i`'s text (adds sections as needed)."
+},
+{
+"package": "web",
+"qualified": "Response.set",
+"kind": "method",
+"signature": "define set(self, name: String, value: String) -> Response {",
+"doc": "Set a header, replacing one of the same name (chainable)."
 }
 ],
 "set_clipboard": [
@@ -5637,6 +6012,24 @@
 "doc": "January 1 of `dt`'s year, at midnight."
 }
 ],
+"static": [
+{
+"package": "web",
+"qualified": "static",
+"kind": "define",
+"signature": "define static(dir: String, prefix: String = \"/\") -> Callable {",
+"doc": "Middleware that serves files under the folder `dir` \u2014 GET / HEAD of\n\"/style.css\" sends \"dir/style.css\", \"/\" and folders their index.html.\nRequests for other paths (or methods) go on to the routes. `prefix`\nserves them under a URL path instead (\"/assets\")."
+}
+],
+"status": [
+{
+"package": "web",
+"qualified": "Response.status",
+"kind": "method",
+"signature": "define status(self, code: Int) -> Response {",
+"doc": "Set the status code (chainable: `res.status(404).text(\"nope\")`)."
+}
+],
 "stderr": [
 {
 "package": "sys",
@@ -5689,6 +6082,13 @@
 "kind": "method",
 "signature": "define stop(self) -> void {",
 "doc": "Stop the accept-loop on the next iteration."
+},
+{
+"package": "web",
+"qualified": "App.stop",
+"kind": "method",
+"signature": "define stop(self) -> void {",
+"doc": "Stop `listen` (it returns after the current accept)."
 }
 ],
 "str": [
@@ -5870,6 +6270,13 @@
 "kind": "method",
 "signature": "define text(self) -> String {",
 "doc": "The chosen option as text (\"\" when there are none)."
+},
+{
+"package": "web",
+"qualified": "Response.text",
+"kind": "method",
+"signature": "define text(self, body: String) -> Response {",
+"doc": "Send plain text."
 },
 {
 "package": "window",
@@ -6181,6 +6588,15 @@
 "doc": "Decode a form-encoded value: handles `%XX` AND maps `+` to space, matching\nthe `application/x-www-form-urlencoded` spec used by HTML forms."
 }
 ],
+"unset": [
+{
+"package": "web",
+"qualified": "Response.unset",
+"kind": "method",
+"signature": "define unset(self, name: String) -> void {",
+"doc": "Remove a header."
+}
+],
 "unwrap": [
 {
 "package": "typing",
@@ -6236,6 +6652,22 @@
 "kind": "method",
 "signature": "define unwrap_or_else(self, f: Callable) -> T {",
 "doc": "Returns the success value if `Ok`, else calls `f(error)` for a lazy default."
+}
+],
+"use": [
+{
+"package": "web",
+"qualified": "Router.use",
+"kind": "method",
+"signature": "define use(self, mw: Callable, path: String = \"/\") -> Router {",
+"doc": "Run middleware `mw(req, res, next)` before the routes \u2014 for every\nrequest, or only under `path` (\"/admin\"). Call `next()` to go on; don't\nto answer here (e.g. a login check)."
+},
+{
+"package": "web",
+"qualified": "App.use",
+"kind": "method",
+"signature": "define use(self, mw: Callable, path: String = \"/\") -> App {",
+"doc": "Run middleware `mw(req, res, next)` before the routes \u2014 for every\nrequest, or only under `path`. Call `next()` to continue."
 }
 ],
 "utc_from_unix": [

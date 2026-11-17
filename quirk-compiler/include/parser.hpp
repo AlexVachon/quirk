@@ -57,6 +57,9 @@ class Parser {
     // `async define f(…) -> T { … }` → the body as `f__async_impl` plus a
     // `define f(…) -> Task[T]` that starts it as a task. True when rewritten.
     bool rewriteAsyncDefine(bool inStruct = false);
+    // > 0 while parsing a struct body: there `define use(...)` / `type` /
+    // `match` are method names (`app.use(mw)`), not keywords.
+    int inStructBody = 0;
     int assertCount = 0;
 
 public:

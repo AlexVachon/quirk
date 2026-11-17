@@ -1,0 +1,29 @@
+// An exception passed as an untyped value (an error handler's parameter):
+// `err.message` read nothing / threw "value has no field 'message'", and
+// type(err) was "Object" — exception structs had no type id. Both for
+// exceptions thrown in Quirk and by the runtime.
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+define call_with(f: Callable, e: Exception) -> void {
+    f(e)
+}
+
+define main() -> void {
+    got := []
+    try {
+        throw ValueError("kaboom")
+    } catch (e: Exception) {
+        call_with(fn(err) { got.append(type(err) + ":" + err.message) }, e)
+    }
+    try {
+        n := "abc".to_int()
+        print(n)
+    } catch (e: Exception) {
+        call_with(fn(err) { got.append(err.message) }, e)
+    }
+    if got.length() != 2 { fail("handlers: " + String(got)) }
+    first: String = got[0]
+    if first != "ValueError:kaboom" { fail("Quirk exception: " + first) }
+    second: String = got[1]
+    if not second.contains("abc") { fail("runtime exception: " + second) }
+}

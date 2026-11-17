@@ -1,0 +1,21 @@
+// `not x`, `if x`, `and` / `or` on an untyped value tested whether the
+// pointer was set: a boxed `false` or `0` (a List / Map element) was true.
+// They use its truth now (null, false, 0, 0.0 are false).
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+define main() -> void {
+    flags := [false, true, 0, 1]
+    if not (not flags[0]) { fail("not false") }
+    if not flags[1] { fail("not true") }
+    if flags[2] { fail("0 is true") }
+    if not flags[3] { fail("1 is false") }
+    if flags[0] and flags[1] { fail("false and true") }
+    if not (flags[0] or flags[1]) { fail("false or true") }
+    m := {"on": false}
+    if m["on"] { fail("map false") }
+    waited := 0
+    while not flags[0] and waited < 3 {
+        waited = waited + 1
+    }
+    if waited != 3 { fail("while not: " + String(waited)) }
+}

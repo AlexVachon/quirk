@@ -504,11 +504,24 @@ class LLVMCodegen {
                 }
             }
 
-            // Assign unique type IDs (1-based; 0 = no type / extern)
+            // Assign unique type IDs (1-based; 0 = no type / extern). Exceptions
+            // get one too — not for virtual dispatch (they aren't eligible) but
+            // so an untyped exception knows its type: `type(err)` was "Object"
+            // and `err.message` on an error handler's parameter failed.
+            std::function<bool(const std::string&, int)> isExc = [&](const std::string& name, int depth) -> bool {
+                if (name == "Exception") return true;
+                if (depth > 32) return false;
+                auto it = astH.find(name);
+                if (it != astH.end())
+                    for (const auto& p : it->second)
+                        if (isExc(p, depth + 1)) return true;
+                return false;
+            };
             int nextId = 1;
             for (const auto& n : nodes)
                 if (auto s = dynamic_cast<StructNode*>(n.get()))
-                    if (structGen->isVtableEligible(s->name)) structGen->registerTypeId(s->name, nextId++);
+                    if (structGen->isVtableEligible(s->name) || (isExc(s->name, 0) && !externOnly.count(s->name)))
+                        structGen->registerTypeId(s->name, nextId++);
         }
         // ---------------------------------
 
@@ -887,7 +900,13 @@ class LLVMCodegen {
         for (const auto& node : nodes) {
             if (!node->filePath.empty()) currentFilePath = node->filePath;
             if (auto func = dynamic_cast<FunctionNode*>(node.get())) {
-                if (func->name == "main") {
+                // Only the entry file's `main` is the program: an imported
+                // module's `main` (a demo, or an app's, when its tests import
+                // it) used to run too, before the program's own — a server's
+                // main never returned.
+                if (func->name == "main" && func->cls.empty() &&
+                    (entryFile.empty() || func->filePath.empty() ||
+                     canonPath(func->filePath) == canonPath(entryFile))) {
                     for (const auto& stmt : func->body) handleStatement(stmt.get(), mainFunc);
                 }
             } else if (!dynamic_cast<StructNode*>(node.get()) && !dynamic_cast<FunctionNode*>(node.get()) &&
@@ -1724,6 +1743,45 @@ class LLVMCodegen {
             else if (auto lst = dynamic_cast<ListLiteralNode*>(n)) {
                 for (auto& e : lst->elements) walk(e.get());
             }
+            // Names used only inside these weren't captured: the lambda read
+            // an unbound variable (a compiler crash, e.g. a captured list in
+            // `res.render("p.html", {"notes": notes})`).
+            else if (auto mp = dynamic_cast<MapLiteralNode*>(n)) {
+                for (auto& kv : mp->elements) { walk(kv.first.get()); walk(kv.second.get()); }
+            }
+            else if (auto st = dynamic_cast<SetLiteralNode*>(n)) {
+                for (auto& e : st->elements) walk(e.get());
+            }
+            else if (auto lc = dynamic_cast<ListComprehensionNode*>(n)) {
+                walk(lc->expr.get()); walk(lc->iterable.get());
+                if (lc->condition) walk(lc->condition.get());
+            }
+            else if (auto mc = dynamic_cast<MapComprehensionNode*>(n)) {
+                walk(mc->keyExpr.get()); walk(mc->valExpr.get()); walk(mc->iterable.get());
+                if (mc->condition) walk(mc->condition.get());
+            }
+            else if (auto rg = dynamic_cast<RangeLiteralNode*>(n)) {
+                if (rg->start) walk(rg->start.get());
+                if (rg->end) walk(rg->end.get());
+            }
+            else if (auto tn = dynamic_cast<TernaryNode*>(n)) {
+                walk(tn->condition.get()); walk(tn->thenExpr.get()); walk(tn->elseExpr.get());
+            }
+            else if (auto sl = dynamic_cast<SliceNode*>(n)) {
+                walk(sl->object.get());
+                if (sl->start) walk(sl->start.get());
+                if (sl->end) walk(sl->end.get());
+            }
+            else if (auto ctor = dynamic_cast<ConstructorNode*>(n)) {
+                for (auto& a : ctor->args) walk(a.value.get());
+            }
+            else if (auto wn = dynamic_cast<WithNode*>(n)) {
+                walk(wn->resource.get());
+                for (auto& s2 : wn->body) walk(s2.get());
+            }
+            else if (auto dn = dynamic_cast<DeleteNode*>(n)) {
+                walk(dn->target.get());
+            }
             else if (auto lm = dynamic_cast<LambdaNode*>(n)) {
                 // Nested lambda: only capture outer refs (don't recurse into inner params)
                 if (lm->isExpression) walk(lm->exprBody.get());
@@ -2170,9 +2228,16 @@ class LLVMCodegen {
     Value* emitDynamicField(const std::string& field, Value* obj, const std::string& semaType) {
         std::vector<std::string> owners;
         for (const auto& [name, st] : StructTypes) {
-            if (structGen->isVtableEligible(name) && structGen->hasField(name, field)) owners.push_back(name);
+            // Exceptions aren't vtable-eligible but have type ids too —
+            // `err.message` on an untyped exception (an error handler's
+            // parameter) read nothing (or crashed).
+            bool exc = structGen->inheritsFrom(name, "Exception") && structGen->typeIds().count(name);
+            if ((structGen->isVtableEligible(name) || exc) && structGen->hasField(name, field)) owners.push_back(name);
         }
-        if (owners.empty()) return nullptr;
+        // Exceptions the runtime throws carry QT_EXCEPTION, with Exception's layout.
+        bool runtimeExc = StructTypes.count("Exception") && !StructTypes["Exception"]->isOpaque() &&
+                          structGen->hasField("Exception", field);
+        if (owners.empty() && !runtimeExc) return nullptr;
         std::sort(owners.begin(), owners.end());
 
         Type* i8p = Type::getInt8PtrTy(Context);
@@ -2193,6 +2258,14 @@ class LLVMCodegen {
             Value* typed = Builder.CreateBitCast(obj, PointerType::getUnqual(StructTypes[name]));
             Value* v = structGen->generateMemberAccess(typed, field);
             results.push_back({Builder.GetInsertBlock(), v});
+        }
+        // Exceptions the runtime throws (QT_EXCEPTION) share Exception's layout.
+        if (runtimeExc) {
+            BasicBlock* bb = BasicBlock::Create(Context, "dynf_rt_exception", fn);
+            sw->addCase(Builder.getInt32(9 /* QT_EXCEPTION */), bb);
+            Builder.SetInsertPoint(bb);
+            Value* typed = Builder.CreateBitCast(obj, PointerType::getUnqual(StructTypes["Exception"]));
+            results.push_back({Builder.GetInsertBlock(), structGen->generateMemberAccess(typed, field)});
         }
         // One LLVM type across the cases: use it as is; else box them all.
         bool same = true;
@@ -4062,7 +4135,13 @@ class LLVMCodegen {
                 }
                 Builder.CreateRet(retVal);
             } else {
+                Type* rty = parentFunc->getReturnType();
                 if (parentFunc->getName() == "main") Builder.CreateRet(ConstantInt::get(Type::getInt32Ty(Context), 0));
+                // A bare `return` in a function that returns a value — a
+                // lambda (`fn(req, res) { if ... { return } ... }`), whose
+                // LLVM result is an untyped i8* — returns null / 0. It was
+                // `ret void` there: an internal compiler error.
+                else if (!rty->isVoidTy()) Builder.CreateRet(Constant::getNullValue(rty));
                 else Builder.CreateRetVoid();
             }
         }

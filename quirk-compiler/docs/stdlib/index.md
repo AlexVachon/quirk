@@ -32,4 +32,5 @@
 - [`ui`](ui.md)
 - [`url`](url.md)
 - [`uuid`](uuid.md)
+- [`web`](web.md)
 - [`window`](window.md)

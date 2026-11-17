@@ -1,0 +1,42 @@
+// A method may be named `use`, `type` or `match` (web's `app.use(mw)`):
+// it's only reached as `obj.use(...)`. It was "Expected function name
+// after 'define'". The keywords still work as keywords.
+struct App {
+    log: List
+
+    define __init(self) -> void {
+        self.log = []
+    }
+
+    define use(self, x: String) -> App {
+        self.log.append("use " + x)
+        return self
+    }
+
+    define type(self) -> String {
+        return "app"
+    }
+
+    define match(self, p: String) -> Bool {
+        return p == "/"
+    }
+}
+
+type Id = Int
+
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+define main() -> void {
+    a := App()
+    a.use("logger").use("json")
+    if a.log.length() != 2 { fail("use") }
+    if a.type() != "app" { fail("type") }
+    if not a.match("/") { fail("match") }
+    n: Id = 3
+    r := ""
+    match n {
+        case 3 => r = "three"
+        case _ => r = "other"
+    }
+    if r != "three" { fail("match statement") }
+}

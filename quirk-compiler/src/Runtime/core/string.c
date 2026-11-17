@@ -735,6 +735,17 @@ StringIterator* Core_String_String___iter(String* self) {
 //  CONSTRUCTORS
 // ==========================================
 
+// A String of exactly `len` bytes of `raw_buffer` (taking it over, like
+// make_String_taking_ownership) — binary data with zero bytes inside
+// keeps its full length (sockets, files).
+String* make_String_len(char* raw_buffer, int64_t len) {
+    if (!raw_buffer) return NULL;
+    String* s = (String*)quirk_alloc(QT_STRING, sizeof(String));
+    s->buffer = raw_buffer;
+    s->length = len < 0 ? 0 : len;
+    return s;
+}
+
 String* make_String_taking_ownership(char* raw_buffer) {
     if (!raw_buffer)
         return NULL;

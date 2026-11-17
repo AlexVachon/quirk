@@ -56,6 +56,16 @@ class MathGen {
     Value* toBool(Value* v) {
         if (!v) return nullptr;
         if (v->getType()->isIntegerTy(1)) return v;
+        // An untyped value (i8*): its truth, not whether the pointer is set —
+        // a boxed `false` / `0` (e.g. a List element) was true, so
+        // `not flags[0]` and `if xs[i]` read it wrong.
+        Module* mod = TheModule ? TheModule : (Builder.GetInsertBlock() ? Builder.GetInsertBlock()->getModule() : nullptr);
+        if (mod && v->getType()->isPointerTy() && v->getType()->getPointerElementType()->isIntegerTy(8)) {
+            FunctionCallee asBool = mod->getOrInsertFunction("quirk_any_as_bool",
+                Type::getInt32Ty(Context), Type::getInt8PtrTy(Context));
+            Value* r = Builder.CreateCall(asBool, {v}, "any_truth");
+            return Builder.CreateICmpNE(r, ConstantInt::get(Type::getInt32Ty(Context), 0), "any_is_true");
+        }
         if (v->getType()->isPointerTy())
             return Builder.CreateICmpNE(v, Constant::getNullValue(v->getType()), "ptr_is_true");
         if (v->getType()->isDoubleTy())

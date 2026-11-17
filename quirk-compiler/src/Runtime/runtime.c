@@ -73,6 +73,7 @@ static void* __gc_text_alloc(size_t n) {
 #include "libs/file.c"
 #include "libs/sys.c"
 #include "libs/net.c"
+#include "libs/web.c"
 #include "libs/math.c"
 #include "libs/fs.c"
 #include "libs/time.c"

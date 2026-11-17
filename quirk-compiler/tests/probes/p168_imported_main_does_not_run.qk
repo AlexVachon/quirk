@@ -1,0 +1,8 @@
+// Only the entry file's main() is the program. An imported module's main()
+// used to run first — e.g. a web app's `main` (which serves forever) when
+// its tests imported `make_app` from it.
+from .qk_fixtures.with_main168 use { helper }
+
+define main() -> void {
+    if helper() != "helper" { print("FAIL: helper") }
+}

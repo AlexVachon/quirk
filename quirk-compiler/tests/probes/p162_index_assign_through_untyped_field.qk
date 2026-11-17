@@ -1,0 +1,30 @@
+// `req.locals["user"] = v` where `req` is a lambda's untyped parameter
+// crashed the compiler (SIGSEGV): the target of an index assignment was
+// never type-checked, so the field read through the untyped value had no
+// type and Codegen got no object.
+struct Req {
+    locals: Map
+    items: List
+
+    define __init(self) -> void {
+        self.locals = {}
+        self.items = [0, 0]
+    }
+}
+
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+define run(f: Callable) -> Req {
+    r := Req()
+    f(r)
+    return r
+}
+
+define main() -> void {
+    r := run(fn(req) {
+        req.locals["user"] = "ada"
+        req.items[1] = 5
+    })
+    if String(r.locals) != "{\"user\": \"ada\"}" { fail("map: " + String(r.locals)) }
+    if String(r.items) != "[0, 5]" { fail("list: " + String(r.items)) }
+}

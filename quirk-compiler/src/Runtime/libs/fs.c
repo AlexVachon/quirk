@@ -671,7 +671,7 @@ String* Fs_read_text_raw(String* path) {
     fclose(f);
     if (err) return NULL;
     buf[len] = '\0';
-    return make_String_taking_ownership(buf);
+    return make_String_len(buf, (int64_t)len);   // the whole file, zero bytes included
 }
 
 // Write `data` to `path` (replacing it, or appending with `append`).

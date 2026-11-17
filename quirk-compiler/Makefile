@@ -119,7 +119,7 @@ $(DRIVER): $(TARGET)
 # bump the version inline below and re-run.
 STDLIB_PACKAGES = \
 	argparse console crypto csv datetime debug encoding fs html io itertools \
-	math net process prompt random regex statistics sys test time toml typing ui url uuid window
+	math net process prompt random regex statistics sys test time toml typing ui url uuid web window
 STDLIB_OWNER ?= AlexVachon
 STDLIB_TAG   ?= v1.0.0
 
@@ -147,7 +147,7 @@ STDLIB_TAG_html ?= v1.0.1
 # pure-Quirk one-liner so v1.2.0 has no additional compiler
 # requirement beyond what v1.1.0 already needed.
 # net v1.3.0: the HTTP server handles each connection as a task (v7.12.0).
-STDLIB_TAG_net ?= v1.3.0
+STDLIB_TAG_net ?= v1.3.1
 # test v1.1.0 documents `quirk test`'s `define test_*()` discovery (v7.10.0).
 STDLIB_TAG_test ?= v1.1.0
 # fs v1.1.0 adds remove_tree (runtime Fs_remove_tree_raw, v7.11.1).
@@ -171,6 +171,7 @@ STDLIB_TAG_window ?= v1.8.0
 # ui v1.6.0: theme fonts, ListItem icons, Canvas, animations (compiler v7.33.0).
 # ui v1.6.1: no unused bindings (editor warnings).
 STDLIB_TAG_ui ?= v1.10.1
+STDLIB_TAG_web ?= v1.0.0
 
 # --- INSTALL / UNINSTALL --------------------------------------------------
 # Copy the freshly-built compiler + runtime into $(PREFIX) (default
@@ -212,6 +213,7 @@ bootstrap-stdlib:
 	        process) tag="$(STDLIB_TAG_process)" ;;                               \
 	        window) tag="$(STDLIB_TAG_window)" ;;                                 \
 	        ui)     tag="$(STDLIB_TAG_ui)"     ;;                                 \
+	        web)    tag="$(STDLIB_TAG_web)"    ;;                                 \
 	    esac;                                                                     \
 	    if [ -f "packages/$$pkg/index.quirk" ] &&                                 \
 	       [ "$$(cat packages/$$pkg/.version 2>/dev/null)" = "$$tag" ]; then      \

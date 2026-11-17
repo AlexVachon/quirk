@@ -58,7 +58,7 @@ String* Io_File_File_read(File* self) {
     quirk_gil_acquire();
     buf[read_bytes] = '\0';
 
-    return make_String_taking_ownership(buf);
+    return make_String_len(buf, (int64_t)read_bytes);   // binary-safe
 }
 
 void Io_File_File_write(File* self, String* s) {

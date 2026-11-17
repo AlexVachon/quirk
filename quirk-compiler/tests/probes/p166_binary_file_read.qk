@@ -1,0 +1,17 @@
+// fs.read_text / File.read stopped at the first zero byte (the String's
+// length came from strlen): an image read for a web server lost most of
+// itself. They keep every byte now (web.byte_length counts them).
+use fs
+use web
+
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+define main() -> void {
+    path := "tests/probes/qk_fixtures/pixel.png"
+    if not fs.exists(path) { path = "qk_fixtures/pixel.png" }
+    if not fs.exists(path) { return }
+    data := fs.read_text(path)
+    if web.byte_length(data) != fs.size(path) {
+        fail("read " + String(web.byte_length(data)) + " of " + String(fs.size(path)) + " bytes")
+    }
+}

@@ -29,6 +29,14 @@ direction marks (embeddings / isolates) and per-paragraph direction in
 word-wrapped areas; complex scripts beyond joining forms (Indic) would
 need a shaping engine.
 
+## 3. `web` follow-ups
+
+web 1.0 (7.42.0): routes, middleware, Router, Request / Response helpers,
+static files, templates, errors, keep-alive server, TestClient, `quirk new
+--web`. Next ideas: WebSockets (`app.ws`), multipart uploads, sessions
+(signed cookies), gzip, HTTPS in the server (TLS through the runtime's
+OpenSSL), a dev mode that restarts on file changes.
+
 ## Housekeeping
 
 - Optional: Open VSX ownership claim for `Quirk` (Option 4) to get the

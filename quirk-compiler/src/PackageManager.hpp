@@ -69,7 +69,7 @@ static std::string self_binary();
 
 namespace qpm {
 
-constexpr const char* QUIRK_VERSION = "7.41.1";
+constexpr const char* QUIRK_VERSION = "7.42.0";
 
 namespace fs = std::filesystem;
 
@@ -1764,6 +1764,7 @@ static const std::map<std::string, std::string>& stdlib_registry() {
         {"ui",         "github.com/AlexVachon/quirk-ui"},
         {"url",        "github.com/AlexVachon/quirk-url"},
         {"uuid",       "github.com/AlexVachon/quirk-uuid"},
+        {"web",        "github.com/AlexVachon/quirk-web"},
         {"window",     "github.com/AlexVachon/quirk-window"},
     };
     return reg;
@@ -6546,7 +6547,7 @@ static const std::vector<CliCommand>& cli_commands() {
         {"watch",      "watch <file.qk>",          "Re-run a script on every save",   "RUN CODE", "",   "", "", false},
         {"repl",       "repl",                        "Interactive shell",               "RUN CODE", "",   "", "", false},
 
-        {"new",        "new <name>",                  "Scaffold a new package directory",          "PROJECT", "", "", "", false},
+        {"new",        "new [--web] <name>",          "Scaffold a new package (--web: a web app)", "PROJECT", "", "", "", false},
         {"init",       "init",                        "Write a quirk.toml in the current dir",     "PROJECT", "", "", "", false},
         {"venv",       "venv <path>",                 "Create/repair an isolated env",             "PROJECT", "", "", "", false},
         {"env",        "env",                         "Show the active resolution context",        "PROJECT", "", "", "", false},
@@ -8071,10 +8072,113 @@ static int cmd_stdlib(const std::vector<std::string>& args) {
 
 // `quirk new <name>` — scaffold a new package: directory, quirk.toml, src/,
 // tests/, .gitignore. Like `cargo new` or `npm init -y`.
-static int cmd_new(const std::vector<std::string>& args) {
+// `quirk new --web <name>`: a web app (web package) — routes, a template,
+// a stylesheet, a JSON API and tests through web.TestClient. "myapp" in
+// each file becomes the project's name.
+static const char* kWebIndex = R"QWEB(// myapp — a web app (quirk new --web). Run:  quirk run src/index.qk
+use web
+use sys
+
+// The app: routes, middleware, pages. Tests build it too (tests/).
+define make_app() -> web.App {
+    app := web.App()
+    app.use(web.logger())
+    app.use(web.static("public"))
+    notes := ["Edit src/index.qk", "Open views/index.html", "Run quirk test"]
+
+    // A page, from the template views/index.html.
+    app.get("/", fn(req, res) {
+        res.render("index.html", {"title": "myapp", "notes": notes})
+    })
+
+    // A JSON API.
+    app.get("/api/notes", fn(req, res) {
+        res.json(notes)
+    })
+    app.post("/api/notes", fn(req, res) {
+        body: Map = req.json()
+        if body == null or not body.has("text") { throw web.HttpError(400, "send {\"text\": ...}") }
+        notes.append(body["text"])
+        res.status(201).json({"count": notes.length()})
+    })
+    app.get("/api/notes/:id", fn(req, res) {
+        i := Int(req.params["id"])
+        if i < 0 or i >= notes.length() { throw web.HttpError(404, "no note " + req.params["id"]) }
+        res.json({"id": i, "text": notes[i]})
+    })
+    return app
+}
+
+define main() -> void {
+    port := 3000
+    if sys.getenv("PORT") != "" { port = Int(sys.getenv("PORT")) }
+    make_app().listen(port)
+}
+)QWEB";
+static const char* kWebView = R"QWEB(<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ title }}</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <main>
+    <h1>{{ title }}</h1>
+    <p>A Quirk web app. Next steps:</p>
+    <ul>
+      {% for note in notes %}<li>{{ note }}</li>{% end %}
+    </ul>
+    <p>The JSON API: <a href="/api/notes">/api/notes</a></p>
+  </main>
+</body>
+</html>
+)QWEB";
+static const char* kWebCss = R"QWEB(body { font-family: system-ui, sans-serif; margin: 0; background: #f6f7f9; color: #1d2330; }
+main { max-width: 40rem; margin: 3rem auto; padding: 0 1rem; }
+h1 { font-size: 2rem; margin-bottom: .5rem; }
+a { color: #2f6fe0; }
+)QWEB";
+static const char* kWebTest = R"QWEB(// Tests call the app without a network (web.TestClient).
+use web
+use test
+use encoding.json
+from myapp use { make_app }
+
+define test_home_page() -> void {
+    res := web.TestClient(make_app()).get("/")
+    test.assert_eq(res.status_code, 200)
+    test.assert_true(res.body.contains("<h1>myapp</h1>"))
+}
+
+define test_notes_api() -> void {
+    c := web.TestClient(make_app())
+    created := c.post_json("/api/notes", {"text": "hello"})
+    test.assert_eq(created.status_code, 201)
+    one: Map = json.loads(c.get("/api/notes/3").body)
+    test.assert_eq(one["text"], "hello")
+    test.assert_eq(c.get("/api/notes/99").status_code, 404)
+}
+)QWEB";
+
+static std::string web_template(const char* text, const std::string& name) {
+    std::string out = text, from = "myapp";
+    for (size_t at = out.find(from); at != std::string::npos; at = out.find(from, at + name.size()))
+        out.replace(at, from.size(), name);
+    return out;
+}
+
+static int cmd_new(const std::vector<std::string>& argsIn) {
+    bool web = false;
+    std::vector<std::string> args;
+    for (const auto& a : argsIn) {
+        if (a == "--web") web = true;
+        else args.push_back(a);
+    }
     if (args.empty()) {
         std::cerr << "new: need a project name\n";
-        std::cerr << "  e.g. quirk new my-lib\n";
+        std::cerr << "  e.g. quirk new my-lib    (or: quirk new --web my-site)\n";
         return 1;
     }
     fs::path dir = args[0];
@@ -8085,6 +8189,33 @@ static int cmd_new(const std::vector<std::string>& args) {
     std::string name = dir.filename().string();
     fs::create_directories(dir / "src");
     fs::create_directories(dir / "tests");
+    if (web) {
+        fs::create_directories(dir / "views");
+        fs::create_directories(dir / "public");
+        Manifest m;
+        m.name = name;
+        m.version = "0.1.0";
+        m.license = "MIT";
+        m.description = "A web app";
+        write_manifest((dir / "quirk.toml").string(), m);
+        const std::string ext = quirk_src::preferred();
+        { std::ofstream out(dir / "src" / ("index" + ext)); out << web_template(kWebIndex, name); }
+        { std::ofstream out(dir / "views" / "index.html"); out << web_template(kWebView, name); }
+        { std::ofstream out(dir / "public" / "style.css"); out << kWebCss; }
+        { std::ofstream out(dir / "tests" / (name + "_test" + ext)); out << web_template(kWebTest, name); }
+        { std::ofstream out(dir / ".gitignore"); out << "packages/\n.venv/\n*.ll\n*.ast.log\n"; }
+        std::cout << "Created Quirk web app '" << name << "' in " << dir.string() << "/\n"
+                  << "  ├── quirk.toml\n"
+                  << "  ├── src/index" << ext << "      routes and the server\n"
+                  << "  ├── views/index.html  the page template\n"
+                  << "  ├── public/style.css  static files\n"
+                  << "  ├── tests/" << name << "_test" << ext << "\n"
+                  << "  └── .gitignore\n\n"
+                  << "  cd " << dir.string() << "\n"
+                  << "  quirk run src/index" << ext << "    then open http://localhost:3000\n"
+                  << "  quirk test\n";
+        return 0;
+    }
 
     Manifest m;
     m.name = name;
@@ -8314,7 +8445,11 @@ static std::string help_for(const std::string& cmdIn) {
     if (cmd == "new")
         return "quirk new <name>\n"
                "    Scaffold a new package: <name>/quirk.toml, src/index.qk,\n"
-               "    tests/, .gitignore.\n";
+               "    tests/, .gitignore.\n"
+               "quirk new --web <name>\n"
+               "    Scaffold a web app (the `web` package): routes and a JSON API in\n"
+               "    src/index.qk, a page template in views/, static files in\n"
+               "    public/, tests through web.TestClient.\n";
     if (cmd == "venv")
         return "quirk venv <path>                            create a venv (= `venv new`)\n"
                "quirk venv new <path>                        create a venv at <path>\n"

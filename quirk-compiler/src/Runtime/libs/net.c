@@ -151,7 +151,7 @@ String* Net_recv(int64_t sockfd, int64_t size) {
     quirk_gil_acquire();
     if (n < 0) return make_String("");
     buffer[n] = '\0';
-    return make_String(buffer);
+    return make_String_len(buffer, n);        // binary-safe: keeps zero bytes
 }
 
 void Net_close(int64_t sockfd) {

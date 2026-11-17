@@ -1560,6 +1560,14 @@ std::unique_ptr<FunctionNode> Parser::parseFunction(bool allowAbstract,
     } else {
         if (peek().type == TokenType::IDENTIFIER) {
             name = advance().value;
+        } else if (inStructBody > 0 &&
+                   (peek().type == TokenType::USE || peek().type == TokenType::TYPE_KW ||
+                    peek().type == TokenType::MATCH) &&
+                   pos + 1 < (int)tokens.size() &&
+                   (tokens[pos + 1].type == TokenType::LPAREN || tokens[pos + 1].type == TokenType::LBRACKET)) {
+            // A method may be named `use`, `type` or `match` — it's only
+            // ever reached as `obj.use(...)`, where `.` makes it a name.
+            name = advance().value;
         } else {
             consume(TokenType::IDENTIFIER,
                     "Expected function name after 'define'");
@@ -1828,6 +1836,8 @@ std::unique_ptr<StructNode> Parser::parseStruct() {
     std::vector<std::unique_ptr<Node>> defaultInits;
     // --------------------------------------------------
 
+    inStructBody++;
+    struct StructBodyGuard { int& d; ~StructBodyGuard() { d--; } } structBodyGuard{inStructBody};
     while (peek().type != TokenType::RBRACE && !isAtEnd()) {
         // `async define m(self, …)` in a struct: an async method.
         if (peek().type == TokenType::IDENTIFIER && peek().value == "async")

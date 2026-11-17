@@ -5,6 +5,41 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.42.0] — 2026-11-17 — `web`: a web framework
+
+- **New stdlib package `web`** (v1.0.0): build web apps and HTTP APIs,
+  Express-style — `app.get("/users/:id", fn(req, res) { res.json(...) })`,
+  wildcards, middleware (`app.use(fn(req, res, next))`, `path=`), Routers
+  mounted under a prefix, Request helpers (query, params, headers,
+  `json()`, `form()`, cookies) and Response helpers (`text`, `html`,
+  `json`, `redirect`, `cookie`, `file`, `render`), static files
+  (`web.static`), templates (`{{ }}`, `{% if %}`, `{% for %}`,
+  `{% include %}`), `web.HttpError` and error / not-found handlers,
+  `web.logger()`, `web.cors()`, a keep-alive HTTP/1.1 server (one task per
+  connection, chunked bodies, size and idle limits) and `web.TestClient`
+  for tests without a network.
+- **`quirk new --web <name>`** scaffolds a web app: routes and a JSON API,
+  a page template, a stylesheet, tests.
+- **Binary data survives sockets and files**: `Socket.recv`, `fs.read_text`
+  and `File.read` kept a String's length from strlen, so anything after
+  a zero byte (an image, an upload) was lost. `net` v1.3.1 (pinned): the
+  server's Content-Length counts bytes, not characters — non-ASCII
+  responses were cut short.
+- Compiler fixes found building it (probes p161-p168):
+  - a lambda with a bare `return` was an internal compiler error;
+  - `req.locals[k] = v` through a lambda's untyped parameter crashed the
+    compiler (index-assignment targets were never type-checked);
+  - names used only inside a map literal, ternary, slice, comprehension,
+    range, constructor argument or `with` weren't captured by a lambda
+    (a compiler crash: `res.render("p.html", {"notes": notes})`);
+  - `not x`, `if x`, `and` / `or` on an untyped value tested the pointer —
+    a boxed `false` or `0` (a List element) was true;
+  - `err.message` on an untyped exception failed and `type(err)` was
+    "Object" — exception structs now have type ids;
+  - an imported module's `main()` ran before the program's own (an app's
+    tests importing it started its server);
+  - methods may be named `use`, `type` or `match` (`app.use(mw)`).
+
 ## [7.41.1] — 2026-11-16 — screen readers: focus on the selected item
 
 - `ui` v1.10.1 (pinned): in a tab strip, list, tree, radio group or table

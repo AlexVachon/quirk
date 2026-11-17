@@ -1,0 +1,19 @@
+// A lambda with a bare `return` (an early exit, as middleware does) was an
+// internal compiler error: "Function return type does not match operand
+// type of return inst" — the lambda returns an untyped value, the
+// `return` emitted none. It returns null now.
+define make() -> Callable {
+    return fn(a, b) {
+        if a == 1 {
+            print("early")
+            return
+        }
+        print("late")
+    }
+}
+
+define main() -> void {
+    f := make()
+    f(1, 2)
+    f(3, 4)
+}

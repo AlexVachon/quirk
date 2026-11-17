@@ -1,0 +1,9 @@
+// Helper for p168: a module with its own main(), which must not run when
+// another program imports it.
+define helper() -> String {
+    return "helper"
+}
+
+define main() -> void {
+    print("FAIL: an imported module's main() ran")
+}

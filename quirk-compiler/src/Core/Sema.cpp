@@ -1649,6 +1649,15 @@ void Sema::checkVarDecl(VarDeclNode *node)
             checkAssignType(resolveMember(objType, member->memberName), exprType,
                             "field '" + member->memberName + "'", node);
     }
+    else if (auto bin = dynamic_cast<BinaryOpNode *>(node->lhs.get()); bin && bin->op == "[]")
+    {
+        // `obj.field[k] = v` / `xs[i] = v`: check the indexed expression —
+        // a field read through an untyped value (`req.locals[k] = v` in a
+        // lambda) needs its dynFieldType, or Codegen got no object and the
+        // compiler crashed.
+        checkExpression(bin->left.get());
+        checkExpression(bin->right.get());
+    }
 }
 
 // `x: T = v`, `x = v` and `obj.field = v` must store a value of the

@@ -69,7 +69,7 @@ static std::string self_binary();
 
 namespace qpm {
 
-constexpr const char* QUIRK_VERSION = "7.43.0";
+constexpr const char* QUIRK_VERSION = "7.44.0";
 
 namespace fs = std::filesystem;
 
@@ -6548,7 +6548,7 @@ static const std::vector<CliCommand>& cli_commands() {
         {"watch",      "watch <file.qk>",          "Re-run a script on every save",   "RUN CODE", "",   "", "", false},
         {"repl",       "repl",                        "Interactive shell",               "RUN CODE", "",   "", "", false},
 
-        {"new",        "new [--web] <name>",          "Scaffold a new package (--web: a web app)", "PROJECT", "", "", "", false},
+        {"new",        "new [--web|--live] <name>",   "Scaffold a new package (--web: a web app; --live: live pages)", "PROJECT", "", "", "", false},
         {"init",       "init",                        "Write a quirk.toml in the current dir",     "PROJECT", "", "", "", false},
         {"venv",       "venv <path>",                 "Create/repair an isolated env",             "PROJECT", "", "", "", false},
         {"env",        "env",                         "Show the active resolution context",        "PROJECT", "", "", "", false},
@@ -8163,6 +8163,116 @@ define test_notes_api() -> void {
 }
 )QWEB";
 
+// `quirk new --live <name>`: a live app — pages as structs in src/, the
+// routes in router.qk, the server in main.qk.
+static const char* kLiveMain = R"QWEB(// myapp — a live app (quirk new --live). Run:  quirk run main.qk
+use web
+use live
+use sys
+from router use { router }
+
+define main() -> void {
+    live.configure(head="<link rel=\"stylesheet\" href=\"/style.css\">")
+    app := web.App()
+    app.use(web.static("public"))
+    app.mount("/", router)
+    port := 3000
+    if sys.getenv("PORT") != "" { port = Int(sys.getenv("PORT")) }
+    app.listen(port)
+}
+)QWEB";
+static const char* kLiveRouter = R"QWEB(// Every page of the app, in one place.
+from live use { Router }
+from src.home use { HomePage }
+from src.todos use { TodoPage }
+
+router = Router()
+
+router.add("/", HomePage)
+router.add("/todos", TodoPage)
+)QWEB";
+static const char* kLiveHome = R"QWEB(use live
+
+struct HomePage : live.Page {
+    count: Int
+
+    define on_load(self) -> void {
+        self.count = 0
+    }
+
+    define build(self) -> live.Widget {
+        return live.Column([
+            live.Heading("myapp"),
+            live.Label("Clicked " + String(self.count) + " times"),
+            live.Row([
+                live.Button("Click me", on_click=fn() { self.count = self.count + 1 }),
+                live.Link("Todos", "/todos"),
+            ]),
+        ])
+    }
+}
+)QWEB";
+static const char* kLiveTodos = R"QWEB(use live
+
+struct TodoPage : live.Page {
+    items: List
+    draft: String
+
+    define on_load(self) -> void {
+        // Load from a database or an API here.
+        self.items = ["Edit src/todos.qk", "Run quirk test"]
+        self.draft = ""
+    }
+
+    define build(self) -> live.Widget {
+        return live.Column([
+            live.Heading("Todos"),
+            live.TextInput(self.draft, placeholder="Something to do",
+                           on_change=fn(text) { self.draft = text },
+                           on_submit=fn(text) { self.add(text) }),
+            live.ListView(self.items),
+            live.Link("Home", "/"),
+        ])
+    }
+
+    define add(self, text: String) -> void {
+        t := text.trim()
+        if t != "" { self.items.append(t) }
+        self.draft = ""
+    }
+}
+)QWEB";
+static const char* kLiveCss = R"QWEB(body { font-family: system-ui, sans-serif; max-width: 36rem; margin: 3rem auto; padding: 0 1rem; color: #1d2330; }
+a { color: #2f6fe0; }
+)QWEB";
+static const char* kLiveTest = R"QWEB(// Tests drive the pages without a browser (live.TestSession).
+use web
+use live
+use test
+from router use { router }
+
+define make_app() -> web.App {
+    app := web.App()
+    app.mount("/", router)
+    return app
+}
+
+define test_home_page() -> void {
+    s := live.TestSession(make_app())
+    s.open("/")
+    test.assert_true(s.html.contains("Clicked 0 times"))
+    s.click("Click me")
+    test.assert_true(s.html.contains("Clicked 1 times"))
+}
+
+define test_add_a_todo() -> void {
+    s := live.TestSession(make_app())
+    s.open("/todos")
+    s.submit("Something to do", "buy milk")
+    test.assert_true(s.html.contains("<li>buy milk</li>"))
+}
+)QWEB";
+
 static std::string web_template(const char* text, const std::string& name) {
     std::string out = text, from = "myapp";
     for (size_t at = out.find(from); at != std::string::npos; at = out.find(from, at + name.size()))
@@ -8171,15 +8281,16 @@ static std::string web_template(const char* text, const std::string& name) {
 }
 
 static int cmd_new(const std::vector<std::string>& argsIn) {
-    bool web = false;
+    bool web = false, live = false;
     std::vector<std::string> args;
     for (const auto& a : argsIn) {
         if (a == "--web") web = true;
+        else if (a == "--live") live = true;
         else args.push_back(a);
     }
     if (args.empty()) {
         std::cerr << "new: need a project name\n";
-        std::cerr << "  e.g. quirk new my-lib    (or: quirk new --web my-site)\n";
+        std::cerr << "  e.g. quirk new my-lib    (or: quirk new --web my-site, quirk new --live my-app)\n";
         return 1;
     }
     fs::path dir = args[0];
@@ -8190,6 +8301,36 @@ static int cmd_new(const std::vector<std::string>& argsIn) {
     std::string name = dir.filename().string();
     fs::create_directories(dir / "src");
     fs::create_directories(dir / "tests");
+    if (live) {
+        fs::create_directories(dir / "public");
+        Manifest m;
+        m.name = name;
+        m.version = "0.1.0";
+        m.license = "MIT";
+        m.description = "A live web app";
+        write_manifest((dir / "quirk.toml").string(), m);
+        const std::string ext = quirk_src::preferred();
+        { std::ofstream out(dir / ("main" + ext)); out << web_template(kLiveMain, name); }
+        { std::ofstream out(dir / ("router" + ext)); out << kLiveRouter; }
+        { std::ofstream out(dir / "src" / ("home" + ext)); out << web_template(kLiveHome, name); }
+        { std::ofstream out(dir / "src" / ("todos" + ext)); out << kLiveTodos; }
+        { std::ofstream out(dir / "public" / "style.css"); out << kLiveCss; }
+        { std::ofstream out(dir / "tests" / (name + "_test" + ext)); out << kLiveTest; }
+        { std::ofstream out(dir / ".gitignore"); out << "packages/\n.venv/\n*.ll\n*.ast.log\n"; }
+        std::cout << "Created Quirk live app '" << name << "' in " << dir.string() << "/\n"
+                  << "  ├── quirk.toml\n"
+                  << "  ├── main" << ext << "           the server\n"
+                  << "  ├── router" << ext << "         the pages, by path\n"
+                  << "  ├── src/home" << ext << "       a page (live.Page)\n"
+                  << "  ├── src/todos" << ext << "      another\n"
+                  << "  ├── public/style.css  static files\n"
+                  << "  ├── tests/" << name << "_test" << ext << "\n"
+                  << "  └── .gitignore\n\n"
+                  << "  cd " << dir.string() << "\n"
+                  << "  quirk run main" << ext << "    then open http://localhost:3000\n"
+                  << "  quirk test\n";
+        return 0;
+    }
     if (web) {
         fs::create_directories(dir / "views");
         fs::create_directories(dir / "public");
@@ -8450,7 +8591,11 @@ static std::string help_for(const std::string& cmdIn) {
                "quirk new --web <name>\n"
                "    Scaffold a web app (the `web` package): routes and a JSON API in\n"
                "    src/index.qk, a page template in views/, static files in\n"
-               "    public/, tests through web.TestClient.\n";
+               "    public/, tests through web.TestClient.\n"
+               "quirk new --live <name>\n"
+               "    Scaffold a live app (the `live` package): pages as structs in src/,\n"
+               "    their paths in router.qk, the server in main.qk, tests through\n"
+               "    live.TestSession.\n";
     if (cmd == "venv")
         return "quirk venv <path>                            create a venv (= `venv new`)\n"
                "quirk venv new <path>                        create a venv at <path>\n"

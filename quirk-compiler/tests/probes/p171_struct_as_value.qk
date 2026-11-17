@@ -1,0 +1,47 @@
+// A struct name used as a value is its constructor (a Callable): passing
+// `Thing` used to drop the argument silently and then die as malformed IR.
+// Same arguments as __init (defaults too); `Int.parse` / `Color.red()`
+// still name the type; a module's struct works qualified (`m.Thing`).
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+struct Base {
+    name: String
+    define __init(self) -> void { self.name = "base" }
+    define hello(self) -> String { return "base " + self.name }
+}
+
+struct Child : Base {
+    define hello(self) -> String { return "child " + self.name }
+}
+
+struct Point {
+    x: Int
+    y: Int
+    define __init(self, x: Int, y: Int = 7) -> void {
+        self.x = x
+        self.y = y
+    }
+    define origin() -> Point { return Point(0, 0) }
+}
+
+define build(make: Callable) -> Base {
+    return make()
+}
+
+define main() -> void {
+    if build(Child).hello() != "child base" { fail("inherited __init through a Callable") }
+    if build(Base).hello() != "base base" { fail("Base()") }
+    mk := Point
+    p: Point = mk(3)
+    if p.x + p.y != 10 { fail("default argument: " + String(p.x + p.y)) }
+    q: Point = mk(1, 2)
+    if q.x + q.y != 3 { fail("two arguments") }
+    for m in [Child, Base] {
+        b: Base = m()
+        if b.name != "base" { fail("from a list") }
+    }
+    if Int.parse("41") + 1 != 42 { fail("Int.parse") }
+    o := Point.origin()
+    if o.x != 0 { fail("static method") }
+    print("ok")
+}

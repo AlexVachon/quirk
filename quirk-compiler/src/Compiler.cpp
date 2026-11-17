@@ -431,6 +431,13 @@ static std::vector<std::string>& getSearchPaths() {
     return paths;
 }
 
+// The folder of the file being compiled (`quirk run main.qk`): the app's
+// root, where `from src.pages use {...}` looks last.
+static std::string g_entry_dir;
+
+// The file being compiled/run: its folder is the app root for local imports.
+static std::string g_entry_file;
+
 std::string resolveImportPath(const std::string& moduleName, const std::string& relativeTo = "") {
 
     // `effectiveName` lets the relative-import miss fall through into the
@@ -546,6 +553,36 @@ std::string resolveImportPath(const std::string& moduleName, const std::string& 
                 if (fs::exists(entryPath)) return entryPath.string();
             }
         }
+    }
+
+    // Last: the app's own files, without a leading dot — `from src.pages
+    // use { Home }` in a project's router.qk. Looked up next to the
+    // importing file, then from the project root (the nearest folder with
+    // a quirk.toml). Packages and the stdlib win over a local file.
+    if (!relativeTo.empty()) {
+        // Same path shape as a relative import (`from .src.pages`), so the
+        // module gets the same name either way.
+        std::vector<fs::path> bases;
+        fs::path dir = fs::path(relativeTo).parent_path();
+        bases.push_back(dir);
+        if (!g_entry_file.empty()) {
+            fs::path entryDir = fs::path(g_entry_file).parent_path();
+            if (entryDir != dir) bases.push_back(entryDir);
+        }
+        if (!g_entry_dir.empty() || relativeTo.find('/') != std::string::npos) {
+            fs::path entry = g_entry_dir;
+            if (entry != dir) bases.push_back(entry);
+        }
+        fs::path up = dir;
+        for (fs::path d = fs::absolute(relativeTo).parent_path(); ; d = d.parent_path()) {
+            if (fs::exists(d / "quirk.toml")) { if (up != dir) bases.push_back(up); break; }
+            if (d == d.parent_path()) break;
+            up = up / "..";
+        }
+        for (const auto& base : bases)
+            for (const std::string& stem : {relPath, relPath + "/index"})
+                for (const std::string& candidate : quirk_src::variants((base / stem).string()))
+                    if (fs::exists(candidate)) return candidate;
     }
 
     return "";
@@ -1945,6 +1982,8 @@ int main(int argc, char* argv[]) {
     // =======================================================
     log.debug("Loading user file: " + opts.inputFile);
 
+    g_entry_dir = fs::path(opts.inputFile).parent_path().string();
+    g_entry_file = opts.inputFile;
     auto userNodes = processFile(opts.inputFile, log, sourceMap, true);
     for (auto& node : userNodes)
         ast.push_back(std::move(node));

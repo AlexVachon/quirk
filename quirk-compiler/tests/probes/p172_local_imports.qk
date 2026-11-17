@@ -1,0 +1,19 @@
+// An app's own files import each other without a leading dot (`from
+// src.pages use { Home }`): looked up next to the importing file, then in
+// the folder of the file being run, after packages and the stdlib.
+from qk_fixtures.routes172 use { routes172, help172 }
+from qk_fixtures.pages172 use { HomePage }
+
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+define main() -> void {
+    n := 0
+    for r in routes172 {
+        h: HomePage = r()
+        if h.title != "home" { fail("constructor from an imported module's global") }
+        n = n + 1
+    }
+    if n != 2 { fail("two routes") }
+    if help172 != "helped" { fail("function called at an imported module's top level") }
+    print("ok")
+}

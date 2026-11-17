@@ -40,7 +40,11 @@ OpenSSL), a dev mode that restarts on file changes.
 ## 4. `live` follow-ups
 
 live 1.0 (7.43.0): server components, events, patching, live pages with
-q-link navigation, TestSession. Next ideas: nested components, server
+q-link navigation, TestSession. live 2.0 (7.44.0): pages as structs
+(`on_load` / `build`) made of widgets named like `ui`, handlers as callbacks
+or overridden methods, `live.Router` taking page structs, `quirk new
+--live`. Next ideas: more widgets (Tabs, RadioGroup, DatePicker, Form),
+`on_leave`, server
 push (a component updating itself from a timer or another visitor:
 needs streaming responses — SSE — in web), loading states, file uploads,
 and moving components to the browser later if a JS / WebAssembly backend

@@ -1,0 +1,7 @@
+// Imported without a leading dot, from p172 and from routes172.
+struct HomePage {
+    title: String
+    define __init(self) -> void { self.title = "home" }
+}
+
+define helper172() -> String { return "helped" }

@@ -1,0 +1,7 @@
+// Top-level code of an imported module uses what it imported (Sema checked
+// it as if it were in `main`: "symbol 'HomePage' is not visible here").
+from qk_fixtures.pages172 use { HomePage, helper172 }
+use qk_fixtures.pages172
+
+routes172 := [HomePage, pages172.HomePage]
+help172 := helper172()

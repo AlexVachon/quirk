@@ -291,6 +291,19 @@ class StructGen {
         return false;
     }
 
+    // The __init that constructing `name` runs: its own, or the nearest
+    // ancestor's. nullptr when no struct in the chain declares one.
+    Function* findInitFunction(const std::string& name) {
+        Function* f = nullptr;
+        if (structInitMap.count(name)) f = TheModule->getFunction(structInitMap.at(name));
+        if (!f) f = TheModule->getFunction(name + "__init");
+        if (f) return f;
+        if (!structHierarchy || !structHierarchy->count(name)) return nullptr;
+        for (const std::string& parentName : structHierarchy->at(name))
+            if (Function* pf = findInitFunction(parentName)) return pf;
+        return nullptr;
+    }
+
     Value* allocateAndInit(const std::string& name, std::vector<Value*> args) {
         if (!StructTypes.count(name)) {
             std::cerr << "Error: Unknown struct " << name << std::endl;
@@ -312,31 +325,10 @@ class StructGen {
         Value* rawPtr = emitQuirkAlloc(objectTypeId(name), allocSize);
         Value* objPtr = Builder.CreateBitCast(rawPtr, PointerType::getUnqual(st));
 
-        std::string initName = name + "__init";
-        Function* initFunc = nullptr;
-        if (structInitMap.count(name))
-            initFunc = TheModule->getFunction(structInitMap.at(name));
-        if (!initFunc)
-            initFunc = TheModule->getFunction(initName);
+        Function* initFunc = TheModule->getFunction(structInitMap.count(name) ? structInitMap.at(name) : name + "__init");
+        if (!initFunc && structInitMap.count(name)) initFunc = TheModule->getFunction(name + "__init");
         const bool ownInit = initFunc != nullptr;
-
-        if (!initFunc && structHierarchy && structHierarchy->count(name)) {
-            std::function<Function*(const std::string&)> searchHierarchy = [&](const std::string& currentType) -> Function* {
-                if (structHierarchy->count(currentType)) {
-                    for (const std::string& parentName : structHierarchy->at(currentType)) {
-                        Function* foundFunc = nullptr;
-                        if (structInitMap.count(parentName))
-                            foundFunc = TheModule->getFunction(structInitMap.at(parentName));
-                        if (!foundFunc) foundFunc = TheModule->getFunction(parentName + "__init");
-                        if (foundFunc) return foundFunc;
-                        foundFunc = searchHierarchy(parentName);
-                        if (foundFunc) return foundFunc;
-                    }
-                }
-                return nullptr;
-            };
-            initFunc = searchHierarchy(name);
-        }
+        if (!initFunc) initFunc = findInitFunction(name);
 
         if (initFunc) {
             std::vector<Value*> initArgs;

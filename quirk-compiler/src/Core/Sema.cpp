@@ -1287,6 +1287,15 @@ void Sema::checkUse(UseNode *node)
     }
 }
 
+// The module the code being checked belongs to: the current function's, or
+// for top-level code, the file's (an imported router.qk's globals are not
+// in `main`).
+std::string Sema::contextModuleName() const
+{
+    if (currentFunctionNode) return currentFunctionNode->moduleName;
+    return topLevelModule;
+}
+
 bool Sema::isVisible(const std::string &name, const std::string &symbolModule, const std::string &currentModule)
 {
     if (currentModule != "main")
@@ -1713,6 +1722,7 @@ template <class F> bool Sema::recoverable(F&& fn) {
 
 void Sema::checkStatement(Node *node)
 {
+    if (!currentFunctionNode && !node->moduleName.empty()) topLevelModule = node->moduleName;
     if (recoverable([&] { checkStatementImpl(node); })) return;
     // A declaration that failed still declares its name, so the rest of
     // the body doesn't report "undefined variable" for every later use.
@@ -2240,6 +2250,16 @@ std::string Sema::checkLiteral(LiteralNode *node)
         }
         if (!shadowed) return "Callable";
     }
+    // A struct name used as a value is its constructor (a Callable), unless
+    // a variable of that name shadows it.
+    auto sIt = structRegistry.find(node->value);
+    if (sIt != structRegistry.end() && sIt->second->typeParams.empty()
+        && sIt->second->moduleName.rfind("typing", 0) != 0 && sIt->second->moduleName.rfind("core", 0) != 0) {
+        bool shadowed = false;
+        for (int i = (int)scopeStack.size() - 1; i >= 0; --i)
+            if (scopeStack[i].count(node->value)) { shadowed = true; break; }
+        if (!shadowed) return "Callable";
+    }
     return t;
 }
 
@@ -2686,7 +2706,16 @@ std::string Sema::checkMemberAccess(MemberAccessNode *node)
         }
     }
 
-    std::string objType = checkExpression(node->object.get());
+    // `Int.parse`, `Color.from`: a type name as the receiver is the type,
+    // not its constructor (which a bare struct name in a value is).
+    std::string objType;
+    auto* objLit = dynamic_cast<LiteralNode*>(node->object.get());
+    if (objLit && structRegistry.count(objLit->value)) {
+        lastNode = objLit;
+        objType = resolveVariable(objLit->value);
+    } else {
+        objType = checkExpression(node->object.get());
+    }
     // Strip Optional marker before method lookup. Preserve the full
     // parameterized form (e.g. `Box[Int]`) in `objTypeFull` so the
     // type-substitution pass below can read out the concrete args;
@@ -2707,6 +2736,9 @@ std::string Sema::checkMemberAccess(MemberAccessNode *node)
         const std::string& funcName = node->memberName;
         if (auto* fn = findMethod("", funcName))
             return fn->returnType;
+        // `pages.Home` as a value: the struct's constructor.
+        if (structRegistry.count(funcName))
+            return "Callable";
         {
             std::string msg = "module '" + modName + "' has no function '" + funcName + "'";
             msg += formatHint(suggestModuleFunctions(modName, funcName));
@@ -2982,7 +3014,7 @@ std::string Sema::checkCall(CallNode *node)
             //     use slug; slug.slug(base)     // dotted access
             //     from slug use { slug }; slug(base)
             if (vtype.rfind("MODULE$", 0) == 0) {
-                const std::string& ctxMod = currentFunctionNode ? currentFunctionNode->moduleName : "main";
+                const std::string ctxMod = contextModuleName();
                 // Single map lookup instead of count+[] (each was O(log n)).
                 bool explicitlyImported = false;
                 auto mvIt = moduleVisibility.find(ctxMod);
@@ -3189,7 +3221,17 @@ std::string Sema::checkCall(CallNode *node)
             }
         }
 
-        std::string objType = checkExpression(m->object.get());
+        std::string objType;
+        {
+            // `Int.parse(...)`: a type name receiver is the type itself.
+            auto* objLit = dynamic_cast<LiteralNode*>(m->object.get());
+            if (objLit && structRegistry.count(objLit->value)) {
+                lastNode = objLit;
+                objType = resolveVariable(objLit->value);
+            } else {
+                objType = checkExpression(m->object.get());
+            }
+        }
         // `xs.clear().length()`: calling a method on a call that returns
         // nothing reached Codegen and died as malformed IR. Reported only
         // when the inner method is declared `-> void` — Sema also says
@@ -3881,7 +3923,7 @@ std::string Sema::resolveVariable(const std::string &name)
     auto gmaIt = globalModuleAliases.find(name);
     if (gmaIt != globalModuleAliases.end()) return gmaIt->second;
 
-    std::string contextModule = currentFunctionNode ? currentFunctionNode->moduleName : "main";
+    std::string contextModule = contextModuleName();
 
     if (structRegistry.count(name))
     {

@@ -5,6 +5,33 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.44.0] — 2026-11-17 — `live` 2: pages built from widgets
+
+- **`live` v2.0.0**: a page is a struct — `struct TodoPage : live.Page`
+  with its state in fields, `on_load()` (once per visitor) and `build()`
+  returning widgets named like `ui`'s: Label, Heading, Button, Link,
+  TextInput, TextArea, Checkbox, Dropdown, Slider, ListView, Table, Image,
+  Spacer, Html, Column, Row. Handlers are callbacks
+  (`on_click=fn() {...}`) or overridden methods (`struct PlusButton :
+  live.Button { define on_click(self) ... }`); widgets of your own
+  subclass `live.Widget`. `live.Router` (a `web.Router`) takes the page
+  struct itself: `router.add("/todos", TodoPage)`, then
+  `app.mount("/", router)`. TestSession clicks and types by label. The
+  template components of 1.0 still work.
+- **`quirk new --live <name>`**: main.qk, router.qk, pages in src/, tests.
+- **A struct name used as a value is its constructor** (a Callable, with
+  the same arguments as `__init`): `router.add("/", HomePage)`,
+  `makers := [A, B]`, `pages.Home`. It used to drop the argument silently
+  and die as malformed IR (probe p171).
+- **An app's own files import each other without a leading dot**
+  (`from src.pages use { Home }`): looked up next to the importing file,
+  then in the folder of the file being run and the project root, after
+  packages and the stdlib. Top-level code of an imported module (a
+  router.qk's globals) was checked as if it were in `main`, so names it
+  imported were "not visible here" (probe p172).
+- `xs[i] = v` with an untyped `i` (a lambda parameter) on a typed List
+  died as malformed IR (probe p173).
+
 ## [7.43.0] — 2026-11-17 — `live`: interactive pages in Quirk only
 
 - **New stdlib package `live`** (v1.0.0): a page is a component — state

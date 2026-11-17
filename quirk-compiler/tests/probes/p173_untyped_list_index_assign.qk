@@ -1,0 +1,12 @@
+// `xs[i] = v` with an untyped `i` (a lambda parameter) on a typed List
+// passed the boxed index to List.__set: malformed IR.
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+define main() -> void {
+    done: List = [false, false, false]
+    mark := fn(index) { done[index] = true }
+    mark(1)
+    mark(2)
+    if done[0] != false or done[1] != true or done[2] != true { fail("marks") }
+    print("ok")
+}

@@ -146,6 +146,8 @@ class Sema {
     std::map<std::string, VisibilityContext> moduleVisibility;
     
     bool isVisible(const std::string& name, const std::string& symbolModule, const std::string& currentModule);
+    std::string contextModuleName() const;
+    std::string topLevelModule = "main";   // module of the top-level statement being checked
     // --------------------------------------
 
     std::map<std::string, Symbol> globalSymbols;

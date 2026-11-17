@@ -78,6 +78,8 @@ class LLVMCodegen {
     std::map<std::string, StructType*> StructTypes;
 
     std::map<std::string, std::vector<std::string>> structHierarchy;
+    // Structs whose name may be used as a value (a constructor Callable).
+    std::set<std::string> constructibleStructs;
     // Interfaces: method → declared return type, and the interfaces each
     // extends. Interface-typed values are untyped pointers (an interface
     // has no layout), so calls through one dispatch on the object's
@@ -527,8 +529,15 @@ class LLVMCodegen {
 
         std::unordered_map<std::string, StructNode*> structNodeMap;
         for (const auto& node : nodes)
-            if (auto s = dynamic_cast<StructNode*>(node.get()))
+            if (auto s = dynamic_cast<StructNode*>(node.get())) {
                 structNodeMap[s->name] = s;
+                static const std::set<std::string> builtinTypes = {
+                    "String", "List", "Map", "Set", "Queue", "Tuple", "Callable", "File", "Any"};
+                // Not the built-in types (`Int.parse(...)` names the type).
+                bool core = s->moduleName.rfind("typing", 0) == 0 || s->moduleName.rfind("core", 0) == 0;
+                if (s->typeParams.empty() && !builtinTypes.count(s->name) && !core)
+                    constructibleStructs.insert(s->name);
+            }
 
         // (Auto-infer of struct fields from __init is done in the parser —
         // see Parser.cpp:parseStruct's "Implicit field inference" block.)
@@ -1467,37 +1476,11 @@ class LLVMCodegen {
         return raw; // pass through as i8*
     }
 
-    // Generate (or fetch from cache) a `i8*(i8* env, i8*…)` thunk that wraps
-    // a user-defined function in the Callable ABI: unbox each i8* arg to its
-    // declared type, call the real function, box the return back to i8*.
-    //
-    // The thunk lets `define`d functions be used as first-class Callable
-    // values — passed as args, stored in variables, returned. The env pointer
-    // is unused (always null) because user-defined functions have no captures.
-    //
-    // Returns the thunk Function*; the caller allocates the wrapping Callable
-    // struct {thunk, null} at the use site.
-    Function* getOrCreateFunctionThunk(const std::string& fnName) {
-        if (functionThunkCache.count(fnName)) return functionThunkCache[fnName];
-        if (!functionDeclarations.count(fnName)) return nullptr;
-        FunctionNode* funcNode = functionDeclarations[fnName];
-        Function* realFn = resolveFunction(fnName, currentCodegenClass);
-        if (!realFn) return nullptr;
-        Type* i8PtrTy = Type::getInt8PtrTy(Context);
-
-        std::vector<Type*> thunkParamTypes = {i8PtrTy}; // env (unused)
-        for (size_t i = 0; i < funcNode->parameters.size(); i++)
-            thunkParamTypes.push_back(i8PtrTy);
-        FunctionType* thunkTy = FunctionType::get(i8PtrTy, thunkParamTypes, false);
-        Function* thunk = Function::Create(
-            thunkTy, Function::InternalLinkage,
-            fnName + "__cb_thunk", TheModule.get());
-
-        // Stash current insert point — we'll restore after writing the thunk body.
-        BasicBlock* savedBB = Builder.GetInsertBlock();
-        BasicBlock* entryBB = BasicBlock::Create(Context, "entry", thunk);
-        Builder.SetInsertPoint(entryBB);
-
+    // The real arguments of a Callable-ABI thunk (`i8*(i8* env, i8*…)`),
+    // unboxed to `funcNode`'s parameter types; a slot at or after the
+    // QUIRK_NOARG sentinel takes its default. `skipSelf` leaves out a
+    // method's `self` (the constructor thunk allocates it).
+    std::vector<Value*> unboxThunkArgs(Function* thunk, FunctionNode* funcNode, bool skipSelf) {
         // Unbox each arg according to its declared parameter type. A slot
         // with a default is only real if neither it nor an earlier slot is
         // the QUIRK_NOARG sentinel (emitCallableCall appends one after the
@@ -1505,11 +1488,14 @@ class LLVMCodegen {
         std::vector<Value*> realArgs;
         auto argIt = thunk->arg_begin();
         ++argIt; // skip env
+        std::vector<const Parameter*> params;
+        for (auto& p : funcNode->parameters)
+            if (!skipSelf || p.name != "self") params.push_back(&p);
         Value* sentinel = nullptr;
         Value* ended = nullptr; // i1: the sentinel was seen at or before this slot
-        for (size_t i = 0; i < funcNode->parameters.size(); i++, ++argIt) {
+        for (size_t i = 0; i < params.size(); i++, ++argIt) {
             Value* raw = &*argIt;
-            auto& param = funcNode->parameters[i];
+            auto& param = *params[i];
             raw->setName(param.name);
             if (!sentinel) sentinel = noArgSentinel();
             Value* isEnd = Builder.CreateICmpEQ(raw, sentinel, param.name + "_noarg");
@@ -1543,6 +1529,42 @@ class LLVMCodegen {
             realArgs.push_back(phi);
         }
 
+        return realArgs;
+    }
+
+    // Generate (or fetch from cache) a `i8*(i8* env, i8*…)` thunk that wraps
+    // a user-defined function in the Callable ABI: unbox each i8* arg to its
+    // declared type, call the real function, box the return back to i8*.
+    //
+    // The thunk lets `define`d functions be used as first-class Callable
+    // values — passed as args, stored in variables, returned. The env pointer
+    // is unused (always null) because user-defined functions have no captures.
+    //
+    // Returns the thunk Function*; the caller allocates the wrapping Callable
+    // struct {thunk, null} at the use site.
+    Function* getOrCreateFunctionThunk(const std::string& fnName) {
+        if (functionThunkCache.count(fnName)) return functionThunkCache[fnName];
+        if (!functionDeclarations.count(fnName)) return nullptr;
+        FunctionNode* funcNode = functionDeclarations[fnName];
+        Function* realFn = resolveFunction(fnName, currentCodegenClass);
+        if (!realFn) return nullptr;
+        Type* i8PtrTy = Type::getInt8PtrTy(Context);
+
+        std::vector<Type*> thunkParamTypes = {i8PtrTy}; // env (unused)
+        for (size_t i = 0; i < funcNode->parameters.size(); i++)
+            thunkParamTypes.push_back(i8PtrTy);
+        FunctionType* thunkTy = FunctionType::get(i8PtrTy, thunkParamTypes, false);
+        Function* thunk = Function::Create(
+            thunkTy, Function::InternalLinkage,
+            fnName + "__cb_thunk", TheModule.get());
+
+        // Stash current insert point — we'll restore after writing the thunk body.
+        BasicBlock* savedBB = Builder.GetInsertBlock();
+        BasicBlock* entryBB = BasicBlock::Create(Context, "entry", thunk);
+        Builder.SetInsertPoint(entryBB);
+
+        std::vector<Value*> realArgs = unboxThunkArgs(thunk, funcNode, false);
+
         // Call the real function and box the result back to i8*.
         Value* result = Builder.CreateCall(realFn, realArgs);
         if (funcNode->returnType == "void") {
@@ -1553,6 +1575,36 @@ class LLVMCodegen {
 
         if (savedBB) Builder.SetInsertPoint(savedBB);
         functionThunkCache[fnName] = thunk;
+        return thunk;
+    }
+
+    // A struct name used as a value (`router.add("/", CounterPage)`): a
+    // Callable that constructs one — same arguments as its __init (or none).
+    Function* getOrCreateConstructorThunk(const std::string& structName) {
+        std::string key = "struct:" + structName;
+        if (functionThunkCache.count(key)) return functionThunkCache[key];
+        Type* i8PtrTy = Type::getInt8PtrTy(Context);
+        Function* initFn = structGen->findInitFunction(structName);
+        FunctionNode* initNode = nullptr;
+        if (initFn && functionDeclarations.count(initFn->getName().str()))
+            initNode = functionDeclarations[initFn->getName().str()];
+        if (initFn && !initNode) return nullptr;   // an extern __init we can't describe
+        size_t nParams = 0;
+        if (initNode)
+            for (auto& p : initNode->parameters) if (p.name != "self") nParams++;
+        std::vector<Type*> thunkParamTypes(nParams + 1, i8PtrTy);
+        FunctionType* thunkTy = FunctionType::get(i8PtrTy, thunkParamTypes, false);
+        Function* thunk = Function::Create(thunkTy, Function::InternalLinkage,
+                                           structName + "__ctor_thunk", TheModule.get());
+        BasicBlock* savedBB = Builder.GetInsertBlock();
+        Builder.SetInsertPoint(BasicBlock::Create(Context, "entry", thunk));
+        std::vector<Value*> args;
+        if (initNode) args = unboxThunkArgs(thunk, initNode, true);
+        Value* obj = structGen->allocateAndInit(structName, args);
+        Builder.CreateRet(obj ? Builder.CreateBitCast(obj, i8PtrTy)
+                              : ConstantPointerNull::get(cast<PointerType>(i8PtrTy)));
+        if (savedBB) Builder.SetInsertPoint(savedBB);
+        functionThunkCache[key] = thunk;
         return thunk;
     }
 
@@ -1571,7 +1623,10 @@ class LLVMCodegen {
     // The struct is freshly allocated at every use site (cheap — 16 bytes).
     // Returns nullptr if `fnName` isn't a known user-defined function.
     Value* emitFunctionAsCallable(const std::string& fnName) {
-        Function* thunk = getOrCreateFunctionThunk(fnName);
+        return emitThunkAsCallable(getOrCreateFunctionThunk(fnName));
+    }
+
+    Value* emitThunkAsCallable(Function* thunk) {
         if (!thunk) return nullptr;
         Type* i8PtrTy = Type::getInt8PtrTy(Context);
         StructType* callableTy = StructTypes["Callable"];
@@ -2814,7 +2869,12 @@ class LLVMCodegen {
                 }
             }
 
-            Value* objPtr = handleExpression(member->object.get());
+            // `Color.red()`: a struct name receiver names the type (a static
+            // call) — not the constructor Callable it is as a value.
+            Value* objPtr = nullptr;
+            auto* recvLit = dynamic_cast<LiteralNode*>(member->object.get());
+            if (!(recvLit && StructTypes.count(recvLit->value) && !varGen->exists(recvLit->value)))
+                objPtr = handleExpression(member->object.get());
             std::string typeName;
 
             // Safe call: obj?.method(args) — skip the call if obj is null
@@ -4699,6 +4759,13 @@ class LLVMCodegen {
                                     index = structGen->allocateAndInit("String", args);
                                 }
                             }
+                            // `xs[i] = v` with an untyped `i` (a lambda parameter): unbox it.
+                            if (keyType->isIntegerTy() && index->getType()->isPointerTy())
+                                index = quirk::decodeUntypedInt(Context, TheModule.get(), Builder,
+                                    Builder.CreateBitCast(index, Type::getInt8PtrTy(Context)));
+                            if (keyType->isIntegerTy() && index->getType()->isIntegerTy()
+                                && index->getType() != keyType)
+                                index = Builder.CreateSExtOrTrunc(index, keyType);
                         }
 
                         if (func->arg_size() >= 3) {
@@ -5344,6 +5411,10 @@ Value* LLVMCodegen::handleExpression(Node* node) {
         // as Callable args, store them in variables, return them, etc.
         if (functionDeclarations.count(lit->value)) {
             if (Value* cb = emitFunctionAsCallable(lit->value)) return cb;
+        }
+        // Struct name in a value context: a Callable that constructs one.
+        if (StructTypes.count(lit->value) && constructibleStructs.count(lit->value)) {
+            if (Value* cb = emitThunkAsCallable(getOrCreateConstructorThunk(lit->value))) return cb;
         }
     }
 
@@ -6156,6 +6227,12 @@ Value* LLVMCodegen::handleExpression(Node* node) {
     }
 
     if (auto member = dynamic_cast<MemberAccessNode*>(node)) {
+        // `pages.Home` as a value (a module's struct): its constructor.
+        if (auto* lit = dynamic_cast<LiteralNode*>(member->object.get())) {
+            if (!varGen->exists(lit->value) && activeModuleAliases.count(lit->value)
+                && constructibleStructs.count(member->memberName) && StructTypes.count(member->memberName))
+                if (Value* cb = emitThunkAsCallable(getOrCreateConstructorThunk(member->memberName))) return cb;
+        }
         // Enum variant access: Direction.North
         if (auto* lit = dynamic_cast<LiteralNode*>(member->object.get())) {
             if (enumVariants.count(lit->value)) {

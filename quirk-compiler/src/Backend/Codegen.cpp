@@ -80,6 +80,8 @@ class LLVMCodegen {
     std::map<std::string, std::vector<std::string>> structHierarchy;
     // Structs whose name may be used as a value (a constructor Callable).
     std::set<std::string> constructibleStructs;
+    // Struct → the source file declaring it (for run-time reflection).
+    std::map<std::string, std::string> structFiles;
     // Interfaces: method → declared return type, and the interfaces each
     // extends. Interface-typed values are untyped pointers (an interface
     // has no layout), so calls through one dispatch on the object's
@@ -531,6 +533,7 @@ class LLVMCodegen {
         for (const auto& node : nodes)
             if (auto s = dynamic_cast<StructNode*>(node.get())) {
                 structNodeMap[s->name] = s;
+                structFiles[s->name] = s->filePath;
                 static const std::set<std::string> builtinTypes = {
                     "String", "List", "Map", "Set", "Queue", "Tuple", "Callable", "File", "Any"};
                 // Not the built-in types (`Int.parse(...)` names the type).
@@ -849,6 +852,24 @@ class LLVMCodegen {
                 Builder.CreateCall(regFn, {
                     ConstantInt::get(Type::getInt32Ty(Context), structGen->objectTypeId(sname)),
                     Builder.CreateGlobalStringPtr(shown), strFn});
+            }
+            // Fields and methods by name, for run-time reflection.
+            // Plus a constructor (by type name) and the declaring file.
+            FunctionCallee reflFn = TheModule->getOrInsertFunction("quirk_register_reflect",
+                FunctionType::get(Type::getVoidTy(Context), {Type::getInt32Ty(Context), i8p, i8p, i8p, i8p, i8p}, false));
+            for (const auto& [sname, sid] : structGen->typeIds()) {
+                std::string fields, methods;
+                Function* rf = emitReflectFunction(sname, fields, methods);
+                if (!rf) continue;
+                Value* ctor = ConstantPointerNull::get(cast<PointerType>(i8p));
+                if (constructibleStructs.count(sname))
+                    if (Function* ct = getOrCreateConstructorThunk(sname)) ctor = Builder.CreateBitCast(ct, i8p);
+                std::string file = structFiles.count(sname) ? structFiles[sname] : "";
+                Builder.CreateCall(reflFn, {
+                    ConstantInt::get(Type::getInt32Ty(Context), structGen->objectTypeId(sname)),
+                    Builder.CreateBitCast(rf, i8p),
+                    Builder.CreateGlobalStringPtr(fields), Builder.CreateGlobalStringPtr(methods),
+                    ctor, Builder.CreateGlobalStringPtr(file)});
             }
         }
 
@@ -1481,20 +1502,26 @@ class LLVMCodegen {
     // QUIRK_NOARG sentinel takes its default. `skipSelf` leaves out a
     // method's `self` (the constructor thunk allocates it).
     std::vector<Value*> unboxThunkArgs(Function* thunk, FunctionNode* funcNode, bool skipSelf) {
-        // Unbox each arg according to its declared parameter type. A slot
-        // with a default is only real if neither it nor an earlier slot is
-        // the QUIRK_NOARG sentinel (emitCallableCall appends one after the
-        // last real argument); otherwise the default expression is used.
+        std::vector<Value*> raws;
+        auto it = thunk->arg_begin();
+        for (++it; it != thunk->arg_end(); ++it) raws.push_back(&*it);   // skip env
+        return unboxArgsWithDefaults(raws, funcNode, skipSelf);
+    }
+
+    // `raws` (i8*, boxed) unboxed to `funcNode`'s parameter types. A slot
+    // with a default is only real if neither it nor an earlier slot is
+    // the QUIRK_NOARG sentinel (emitCallableCall appends one after the
+    // last real argument); otherwise the default expression is used.
+    std::vector<Value*> unboxArgsWithDefaults(const std::vector<Value*>& raws, FunctionNode* funcNode, bool skipSelf) {
         std::vector<Value*> realArgs;
-        auto argIt = thunk->arg_begin();
-        ++argIt; // skip env
+        auto argIt = raws.begin();
         std::vector<const Parameter*> params;
         for (auto& p : funcNode->parameters)
             if (!skipSelf || p.name != "self") params.push_back(&p);
         Value* sentinel = nullptr;
         Value* ended = nullptr; // i1: the sentinel was seen at or before this slot
-        for (size_t i = 0; i < params.size(); i++, ++argIt) {
-            Value* raw = &*argIt;
+        for (size_t i = 0; i < params.size() && argIt != raws.end(); i++, ++argIt) {
+            Value* raw = *argIt;
             auto& param = *params[i];
             raw->setName(param.name);
             if (!sentinel) sentinel = noArgSentinel();
@@ -1606,6 +1633,167 @@ class LLVMCodegen {
         if (savedBB) Builder.SetInsertPoint(savedBB);
         functionThunkCache[key] = thunk;
         return thunk;
+    }
+
+    // Run-time reflection for struct `S` (what `live` templates use to read
+    // `{{ count }}` and run `@click="reset"`):
+    //   i8* S__reflect(i8* self, i32 op, i8* name, i8** args)
+    // op 0: field value (boxed) · 1: set field to args[0] · 2: call method
+    // with args (padded with QUIRK_NOARG: defaults apply) · 3: has field ·
+    // 4: has method. A name it doesn't have returns QUIRK_NOARG. Fields and
+    // methods are S's own or inherited (the nearest class's method wins:
+    // S's override). `fieldsOut` / `methodsOut` get the names, comma-separated.
+    Function* emitReflectFunction(const std::string& S, std::string& fieldsOut, std::string& methodsOut) {
+        const std::vector<std::string>* layout = structGen->layoutOf(S);
+        if (!layout || !StructTypes.count(S) || StructTypes[S]->isOpaque()) return nullptr;
+        StructType* st = StructTypes[S];
+        Type* i8p = Type::getInt8PtrTy(Context);
+        Type* i32 = Type::getInt32Ty(Context);
+
+        // Methods: walk S then its ancestors; the first class defining a name wins.
+        std::vector<std::pair<std::string, FunctionNode*>> methods;
+        std::set<std::string> seenM;
+        std::function<void(const std::string&)> collect = [&](const std::string& cls) {
+            std::vector<std::pair<std::string, FunctionNode*>> own;
+            for (const auto& [fname, fn] : functionDeclarations) {
+                if (fn->cls != cls || fn->isExtern) continue;
+                if (fname.size() <= cls.size() + 1 || fname.compare(0, cls.size() + 1, cls + "_") != 0) continue;
+                std::string raw = fname.substr(cls.size() + 1);
+                if (raw.empty() || raw[0] == '_') continue;  // __init / __str / private `_name`
+                if (fn->isStatic) continue;
+                if (!fn->genericTemplate && seenM.insert(raw).second) own.push_back({raw, fn});
+            }
+            std::sort(own.begin(), own.end(), [](auto& a, auto& b) { return a.first < b.first; });
+            for (auto& m : own) methods.push_back(m);
+            auto h = structHierarchy.find(cls);
+            if (h != structHierarchy.end()) for (const auto& p : h->second) collect(p);
+        };
+        collect(S);
+
+        // Declared field type names (for unboxing on set), through the hierarchy.
+        auto fieldType = [&](const std::string& f) -> std::string {
+            std::function<std::string(const std::string&)> find = [&](const std::string& cls) -> std::string {
+                auto it = structFieldTypes.find(cls);
+                if (it != structFieldTypes.end() && it->second.count(f)) return it->second.at(f);
+                auto h = structHierarchy.find(cls);
+                if (h != structHierarchy.end())
+                    for (const auto& p : h->second) { std::string t = find(p); if (!t.empty()) return t; }
+                return "";
+            };
+            return find(S);
+        };
+
+        FunctionType* ft = FunctionType::get(i8p, {i8p, i32, i8p, PointerType::getUnqual(i8p)}, false);
+        Function* fnR = Function::Create(ft, Function::InternalLinkage, S + "__reflect", TheModule.get());
+        IRBuilderBase::InsertPointGuard guard(Builder);
+        BasicBlock* entry = BasicBlock::Create(Context, "entry", fnR);
+        Builder.SetInsertPoint(entry);
+        Value* selfRaw = fnR->getArg(0);
+        Value* op = fnR->getArg(1);
+        Value* name = fnR->getArg(2);
+        Value* args = fnR->getArg(3);
+        Value* selfPtr = Builder.CreateBitCast(selfRaw, PointerType::getUnqual(st));
+        Value* missing = Builder.CreateBitCast(noArgSentinel(), i8p);
+        FunctionCallee strcmpFn = TheModule->getOrInsertFunction("strcmp", FunctionType::get(i32, {i8p, i8p}, false));
+
+        BasicBlock* miss = BasicBlock::Create(Context, "missing", fnR);
+        BasicBlock* bGet = BasicBlock::Create(Context, "get", fnR);
+        BasicBlock* bSet = BasicBlock::Create(Context, "set", fnR);
+        BasicBlock* bCall = BasicBlock::Create(Context, "call", fnR);
+        BasicBlock* bHasF = BasicBlock::Create(Context, "hasf", fnR);
+        BasicBlock* bHasM = BasicBlock::Create(Context, "hasm", fnR);
+        SwitchInst* sw = Builder.CreateSwitch(op, miss, 5);
+        sw->addCase(ConstantInt::get(cast<IntegerType>(i32), 0), bGet);
+        sw->addCase(ConstantInt::get(cast<IntegerType>(i32), 1), bSet);
+        sw->addCase(ConstantInt::get(cast<IntegerType>(i32), 2), bCall);
+        sw->addCase(ConstantInt::get(cast<IntegerType>(i32), 3), bHasF);
+        sw->addCase(ConstantInt::get(cast<IntegerType>(i32), 4), bHasM);
+        Builder.SetInsertPoint(miss);
+        Builder.CreateRet(missing);
+
+        // One block chain per op: `if name == "x" { ... }` for each candidate.
+        auto chain = [&](BasicBlock* start, const std::vector<std::string>& names,
+                         std::function<void(size_t)> body) {
+            Builder.SetInsertPoint(start);
+            for (size_t i = 0; i < names.size(); i++) {
+                BasicBlock* hit = BasicBlock::Create(Context, "is_" + names[i], fnR);
+                BasicBlock* next = BasicBlock::Create(Context, "not_" + names[i], fnR);
+                Value* c = Builder.CreateCall(strcmpFn, {name, Builder.CreateGlobalStringPtr(names[i])});
+                Builder.CreateCondBr(Builder.CreateICmpEQ(c, ConstantInt::get(i32, 0)), hit, next);
+                Builder.SetInsertPoint(hit);
+                body(i);
+                Builder.SetInsertPoint(next);
+            }
+            Builder.CreateRet(missing);
+        };
+
+        std::vector<std::string> fields;
+        std::vector<unsigned> fieldIdx;
+        for (unsigned i = 0; i < layout->size(); i++) {
+            const std::string& f = (*layout)[i];
+            if (f == "__type_id" || f.empty() || i >= st->getNumElements()) continue;
+            fields.push_back(f);
+            fieldIdx.push_back(i);
+        }
+        std::vector<std::string> mnames;
+        for (auto& m : methods) mnames.push_back(m.first);
+
+        chain(bGet, fields, [&](size_t i) {
+            Value* ptr = Builder.CreateStructGEP(st, selfPtr, fieldIdx[i]);
+            Value* v = Builder.CreateLoad(st->getElementType(fieldIdx[i]), ptr);
+            Builder.CreateRet(boxToVoidPtr(v));
+        });
+        chain(bSet, fields, [&](size_t i) {
+            Type* fty = st->getElementType(fieldIdx[i]);
+            Value* raw = Builder.CreateLoad(i8p, args);
+            std::string tname = fieldType(fields[i]);
+            Value* v = unboxLambdaParam(raw, tname);
+            if (v->getType() != fty) v = quirk::coerceToType(v, fty, Context, Builder, TheModule.get());
+            if (v->getType() != fty) {
+                if (v->getType()->isPointerTy() && fty->isPointerTy()) v = Builder.CreateBitCast(v, fty);
+                else { Builder.CreateRet(missing); return; }
+            }
+            Builder.CreateStore(v, Builder.CreateStructGEP(st, selfPtr, fieldIdx[i]));
+            Builder.CreateRet(selfRaw);
+        });
+        chain(bHasF, fields, [&](size_t) { Builder.CreateRet(selfRaw); });
+        chain(bHasM, mnames, [&](size_t) { Builder.CreateRet(selfRaw); });
+        chain(bCall, mnames, [&](size_t i) {
+            FunctionNode* fn = methods[i].second;
+            Function* real = resolveFunction(fn->linkageName.empty() ? fn->name : fn->linkageName);
+            if (!real) real = TheModule->getFunction(fn->name);
+            if (!real) { Builder.CreateRet(missing); return; }
+            std::vector<Value*> raws;
+            size_t n = 0;
+            for (auto& p : fn->parameters) if (p.name != "self") n++;
+            for (size_t k = 0; k < n; k++)
+                raws.push_back(Builder.CreateLoad(i8p, Builder.CreateGEP(i8p, args, ConstantInt::get(i32, k))));
+            std::vector<Value*> vals = unboxArgsWithDefaults(raws, fn, true);
+            std::vector<Value*> callArgs;
+            Type* selfTy = real->getFunctionType()->getParamType(0);
+            callArgs.push_back(Builder.CreateBitCast(selfRaw, selfTy));
+            for (size_t k = 0; k < vals.size() && k + 1 < real->arg_size(); k++) {
+                Value* v = vals[k];
+                Type* want = real->getFunctionType()->getParamType(k + 1);
+                if (v && v->getType() != want) v = quirk::coerceToType(v, want, Context, Builder, TheModule.get());
+                if (!v || v->getType() != want) {
+                    if (v && v->getType()->isPointerTy() && want->isPointerTy()) v = Builder.CreateBitCast(v, want);
+                    else v = Constant::getNullValue(want);
+                }
+                callArgs.push_back(v);
+            }
+            while (callArgs.size() < real->arg_size())
+                callArgs.push_back(Constant::getNullValue(real->getFunctionType()->getParamType(callArgs.size())));
+            Value* r = Builder.CreateCall(real, callArgs);
+            Builder.CreateRet(r->getType()->isVoidTy() ? ConstantPointerNull::get(cast<PointerType>(i8p))
+                                                       : boxToVoidPtr(r));
+        });
+
+        // "name:Type" (the declared type; "" when unknown).
+        for (size_t i = 0; i < fields.size(); i++)
+            fieldsOut += (i ? "," : "") + fields[i] + ":" + fieldType(fields[i]);
+        for (size_t i = 0; i < mnames.size(); i++) methodsOut += (i ? "," : "") + mnames[i];
+        return fnR;
     }
 
     // Address of the runtime's QUIRK_NOARG marker (see types.h).

@@ -5,20 +5,25 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
-## [7.44.0] — 2026-11-17 — `live` 2: pages built from widgets
+## [7.44.0] — 2026-11-17 — `live` 2: components with HTML templates
 
-- **`live` v2.0.0**: a page is a struct — `struct TodoPage : live.Page`
-  with its state in fields, `on_load()` (once per visitor) and `build()`
-  returning widgets named like `ui`'s: Label, Heading, Button, Link,
-  TextInput, TextArea, Checkbox, Dropdown, Slider, ListView, Table, Image,
-  Spacer, Html, Column, Row. Handlers are callbacks
-  (`on_click=fn() {...}`) or overridden methods (`struct PlusButton :
-  live.Button { define on_click(self) ... }`); widgets of your own
-  subclass `live.Widget`. `live.Router` (a `web.Router`) takes the page
-  struct itself: `router.add("/todos", TodoPage)`, then
-  `app.mount("/", router)`. TestSession clicks and types by label. The
-  template components of 1.0 still work.
-- **`quirk new --live <name>`**: main.qk, router.qk, pages in src/, tests.
+- **`live` v2.0.0**, Vue-style: a component is a struct with an HTML
+  template next to it (`counter_page.html` for `CounterPage`). Templates
+  show fields (`{{ count }}`), call methods on events (`@click="add(1)"`,
+  `@submit`, `@input`, `@change`, `@enter`), bind inputs (`model="draft"`)
+  and use other components as tags (`<PlusButton :step="10" />`, slots,
+  `emit()` to the parent). `index.html` with `<slot />` is the base page.
+  `live.Router` (a `web.Router`) takes page structs:
+  `router.add("/todos", TodoPage)`, then `app.mount("/", router)`. Pages
+  can also be built from widgets named like `ui`'s (`build()`), and the
+  1.0 template components still work.
+- **Run-time reflection**: every struct with methods gets a generated table
+  of its fields and public methods (inherited and overridden ones too): get
+  and set a field by name, call a method by name (defaults apply), declared
+  field types, a new struct by its type name, its source file. Exposed as
+  `live.get_field`, `call_method`, `new_struct`, ... (probe p174).
+- **`quirk new --live <name>`**: index.html, main.qk, router.qk, pages and
+  their templates in src/, tests.
 - **A struct name used as a value is its constructor** (a Callable, with
   the same arguments as `__init`): `router.add("/", HomePage)`,
   `makers := [A, B]`, `pages.Home`. It used to drop the argument silently

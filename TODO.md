@@ -40,11 +40,13 @@ OpenSSL), a dev mode that restarts on file changes.
 ## 4. `live` follow-ups
 
 live 1.0 (7.43.0): server components, events, patching, live pages with
-q-link navigation, TestSession. live 2.0 (7.44.0): pages as structs
-(`on_load` / `build`) made of widgets named like `ui`, handlers as callbacks
-or overridden methods, `live.Router` taking page structs, `quirk new
---live`. Next ideas: more widgets (Tabs, RadioGroup, DatePicker, Form),
-`on_leave`, server
+q-link navigation, TestSession. live 2.0 (7.44.0): Vue-style components
+(struct + .html template: `{{ }}`, `@click`, `model=`, `<Component />`,
+props, emit, slots), `index.html` base page, widgets as an alternative,
+`live.Router` taking page structs, `quirk new --live`, run-time reflection
+in the compiler. Next ideas: scoped component CSS (`<style>` in a
+template), `v-show`-like `:show`, computed values cached per render, more
+widgets, `on_leave`, `web.static` relative to the app, server
 push (a component updating itself from a timer or another visitor:
 needs streaming responses — SSE — in web), loading states, file uploads,
 and moving components to the browser later if a JS / WebAssembly backend

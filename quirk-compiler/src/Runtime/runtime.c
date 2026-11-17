@@ -74,6 +74,7 @@ static void* __gc_text_alloc(size_t n) {
 #include "libs/sys.c"
 #include "libs/net.c"
 #include "libs/web.c"
+#include "libs/live.c"
 #include "libs/math.c"
 #include "libs/fs.c"
 #include "libs/time.c"
@@ -223,7 +224,15 @@ static void quirk_hdr_note(void* val, const char* where) {
 // registers each struct's header type id with its name and its `__str`
 // (or NULL) at startup, so untyped code can name and print struct values.
 typedef String* (*QuirkStrFn)(void*);
-typedef struct { const char* name; QuirkStrFn str; } QuirkTypeInfo;
+typedef void* (*QuirkReflectFn)(void* self, int32_t op, const char* name, void** args);
+typedef struct {
+    const char* name; QuirkStrFn str;
+    QuirkReflectFn reflect;          // fields / methods by name (quirk_reflect)
+    const char* fields;              // "a,b,c"
+    const char* methods;
+    void* ctor;                      // Callable-ABI constructor thunk, or NULL
+    const char* file;                // the source file declaring the struct
+} QuirkTypeInfo;
 static QuirkTypeInfo* quirk_types = NULL;
 static uint32_t quirk_types_cap = 0;
 
@@ -239,6 +248,70 @@ void quirk_register_type(uint32_t type_id, const char* name, void* str_fn) {
     }
     quirk_types[i].name = name;
     quirk_types[i].str = (QuirkStrFn)str_fn;
+}
+
+static QuirkTypeInfo* quirk_type_slot(uint32_t type_id);
+
+// Generated per struct (Codegen emitReflectFunction), registered at startup.
+void quirk_register_reflect(uint32_t type_id, void* fn, const char* fields, const char* methods,
+                            void* ctor, const char* file) {
+    QuirkTypeInfo* ti = quirk_type_slot(type_id);
+    if (!ti) return;
+    ti->reflect = (QuirkReflectFn)fn;
+    ti->fields = fields;
+    ti->methods = methods;
+    ti->ctor = ctor;
+    ti->file = file;
+}
+
+// A new `name` struct (its constructor with no arguments), or NULL.
+void* quirk_reflect_new(const char* name) {
+    if (!name) return NULL;
+    for (uint32_t i = 0; i < quirk_types_cap; i++) {
+        QuirkTypeInfo* ti = &quirk_types[i];
+        if (!ti->name || !ti->ctor || strcmp(ti->name, name) != 0) continue;
+        typedef void* (*Ctor)(void*, void*, void*, void*, void*, void*, void*, void*, void*);
+        void* n = QUIRK_NOARG;
+        return ((Ctor)ti->ctor)(NULL, n, n, n, n, n, n, n, n);
+    }
+    return NULL;
+}
+
+// Type name / declaring file of a struct value ("" if not a struct).
+const char* quirk_reflect_type_name(void* obj) {
+    QuirkTypeInfo* ti = quirk_type_slot(quirk_type_of(obj));
+    return ti && ti->name ? ti->name : "";
+}
+const char* quirk_reflect_file(void* obj) {
+    QuirkTypeInfo* ti = quirk_type_slot(quirk_type_of(obj));
+    return ti && ti->file ? ti->file : "";
+}
+
+static QuirkTypeInfo* quirk_type_slot(uint32_t type_id) {
+    if (type_id < QT_STRUCT_BASE) return NULL;
+    uint32_t i = type_id - QT_STRUCT_BASE;
+    return (i < quirk_types_cap && quirk_types[i].name) ? &quirk_types[i] : NULL;
+}
+
+// op: 0 get, 1 set (args[0]), 2 call (args, n of them), 3 has field,
+// 4 has method. QUIRK_NOARG when `obj` isn't a struct or lacks `name`.
+void* quirk_reflect(void* obj, int32_t op, const char* name, void** args, int64_t n) {
+    QuirkTypeInfo* ti = quirk_type_slot(quirk_type_of(obj));
+    if (!ti || !ti->reflect || !name) return QUIRK_NOARG;
+    // Padded with QUIRK_NOARG so a method's missing arguments take defaults.
+    void* padded[64];
+    int64_t k = 0;
+    for (; k < n && k < 32; k++) padded[k] = args[k];
+    for (; k < 64; k++) padded[k] = QUIRK_NOARG;
+    return ti->reflect(obj, op, name, padded);
+}
+
+// Comma-separated field (which=0) or method (which=1) names of `obj`'s type.
+const char* quirk_reflect_names(void* obj, int which) {
+    QuirkTypeInfo* ti = quirk_type_slot(quirk_type_of(obj));
+    if (!ti) return "";
+    const char* s = which ? ti->methods : ti->fields;
+    return s ? s : "";
 }
 
 static const QuirkTypeInfo* quirk_type_info(uint32_t type_id) {

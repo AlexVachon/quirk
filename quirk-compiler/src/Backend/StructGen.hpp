@@ -87,6 +87,12 @@ class StructGen {
                std::find(it->second.begin(), it->second.end(), field) != it->second.end();
     }
 
+    // Field names in GEP order (inherited included; "__type_id" first if any).
+    const std::vector<std::string>* layoutOf(const std::string& name) const {
+        auto it = structLayouts.find(name);
+        return it == structLayouts.end() ? nullptr : &it->second;
+    }
+
     bool isVtableEligible(const std::string& name) const {
         return vtableEligible.count(name) > 0;
     }

@@ -1,0 +1,56 @@
+// Run-time reflection (what live templates use for {{ count }} and
+// @click="add(1)"): a struct's fields and methods by name — inherited ones,
+// overrides, defaults, declared field types, making a struct by its name.
+use live
+
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+struct Base {
+    label: String
+    define __init(self) -> void { self.label = "base" }
+    define hello(self, who: String = "you") -> String { return "base hi " + who }
+    define _private(self) -> void {}
+}
+
+struct Counter : Base {
+    count: Int
+    ratio: Double
+    on: Bool
+    define __init(self) -> void {
+        super().__init()
+        self.count = 0
+        self.ratio = 1.5
+        self.on = false
+    }
+    define add(self, n: Int) -> Int {
+        self.count = self.count + n
+        return self.count
+    }
+    define hello(self, who: String = "you") -> String { return "counter hi " + who }
+}
+
+define main() -> void {
+    c := Counter()
+    if String(live.field_names(c)) != "[label, count, ratio, on]" { fail("fields: " + String(live.field_names(c))) }
+    if not live.has_method(c, "add") or live.has_method(c, "_private") or live.has_method(c, "nope") { fail("has_method") }
+    if live.field_type(c, "ratio") != "Double" or live.field_type(c, "label") != "String" { fail("field_type") }
+    v: Int = live.call_method(c, "add", [41])
+    if v != 41 { fail("add: " + String(v)) }
+    if String(live.call_method(c, "hello", [])) != "counter hi you" { fail("override + default") }
+    if String(live.call_method(c, "hello", ["bob"])) != "counter hi bob" { fail("argument") }
+    live.set_field(c, "count", 7)
+    live.set_field(c, "label", "renamed")
+    live.set_field(c, "on", true)
+    live.set_field(c, "ratio", 2.25)
+    if c.count != 7 or c.label != "renamed" or not c.on or c.ratio != 2.25 { fail("set_field") }
+    n: Int = live.get_field(c, "count")
+    if n + 1 != 8 { fail("get_field") }
+    if live.has_field(42, "x") or live.has_field("text", "x") { fail("not a struct") }
+    made := live.new_struct("Counter")
+    if live.type_name(made) != "Counter" { fail("new_struct: " + live.type_name(made)) }
+    if live.new_struct("Nope") != null { fail("unknown type") }
+    caught := false
+    try { live.call_method(c, "nope", []) } catch (e: ValueError) { caught = true }
+    if not caught { fail("missing method throws") }
+    print("ok")
+}

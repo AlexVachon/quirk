@@ -1,0 +1,75 @@
+// `return` / `break` / `continue` from inside a `try` left its handler
+// pushed (and skipped `finally`): a later exception nothing nearer caught
+// jumped into the finished function's catch — "STALE handler ran", then
+// SIGSEGV. They pop it (innermost first) and run `finally` now.
+log := []
+
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+define parse(s: String) -> Int {
+    try {
+        return s.to_int()
+    } catch (e: Exception) {
+        log.append("parse caught")
+        return -1
+    } finally {
+        log.append("finally")
+    }
+    return -2
+}
+
+define nested() -> String {
+    try {
+        try {
+            return "inner"
+        } finally {
+            log.append("inner-finally")
+        }
+    } finally {
+        log.append("outer-finally")
+    }
+    return "none"
+}
+
+define loop_sum() -> Int {
+    n := 0
+    for i in [1, 2, 3, 4] {
+        try {
+            if i == 2 { continue }
+            if i == 4 { break }
+            n = n + i
+        } catch (e: Exception) {
+            log.append("loop caught")
+        }
+    }
+    return n
+}
+
+define main() -> void {
+    if parse("12") != 12 { fail("parse") }
+    if nested() != "inner" { fail("nested") }
+    if loop_sum() != 4 { fail("loop") }
+    i := 0
+    while i < 50 {
+        parse("7")
+        i = i + 1
+    }
+    got := ""
+    try {
+        x := "abc".to_int()
+        print(x)
+    } catch (e: ValueError) {
+        got = "main"
+    }
+    if got != "main" { fail("the exception went to: " + got) }
+    if log.length() != 53 { fail("log: " + String(log.length())) }
+    first: String = log[0]
+    if first != "finally" { fail("finally on return: " + first) }
+    second: String = log[1]
+    third: String = log[2]
+    if second != "inner-finally" or third != "outer-finally" { fail("nested finally order") }
+    for entry in log {
+        s: String = entry
+        if s == "parse caught" { fail("a stale handler ran") }
+    }
+}

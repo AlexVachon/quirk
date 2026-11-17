@@ -1,0 +1,34 @@
+// json.loads kept escapes as written ("a\"b" read back as a\"b, "\n" as
+// a backslash and n) and silently parsed invalid JSON into partial values
+// ("{not json" was an empty Map). Escapes are decoded (\uXXXX, surrogate
+// pairs to UTF-8) and invalid JSON raises ValueError now.
+use encoding.json
+
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+define main() -> void {
+    s := json.dumps({"q": "say \"hi\"", "n": "a\nb", "b": "back\\slash"})
+    m: Map = json.loads(s)
+    q: String = m["q"]
+    if q != "say \"hi\"" { fail("quote: " + q) }
+    n: String = m["n"]
+    if n != "a\nb" { fail("newline") }
+    b: String = m["b"]
+    if b != "back\\slash" { fail("backslash: " + b) }
+    u: Map = json.loads("{\"e\": \"caf\\u00e9\", \"smile\": \"\\ud83d\\ude00\"}")
+    e: String = u["e"]
+    if e != "café" { fail("\\u00e9: " + e) }
+    sm: String = u["smile"]
+    if sm != "😀" { fail("surrogate pair: " + sm) }
+    errors := 0
+    for bad in ["{not json", "[1, 2", "{\"a\": 1,}", "{\"a\" 1}", "\"open", "[1] x"] {
+        t: String = bad
+        try {
+            json.loads(t)
+            fail("no error for: " + t)
+        } catch (ValueError) {
+            errors = errors + 1
+        }
+    }
+    if errors != 6 { fail("errors: " + String(errors)) }
+}

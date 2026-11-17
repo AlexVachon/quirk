@@ -125,6 +125,15 @@
 "doc": "Implemented by types that support ordering and equality comparisons.\nRequired for use in sorted collections, binary search, and generic\nfunctions that need to compare values.\n\n@example\nstruct Temperature : Comparable {\n    degrees: Double\n\n    define __lt(self, other: Temperature) -> Bool {\n        return self.degrees < other.degrees\n    }\n\n    define __eq(self, other: Temperature) -> Bool {\n        return self.degrees == other.degrees\n    }\n}"
 }
 ],
+"Component": [
+{
+"package": "live",
+"qualified": "Component",
+"kind": "struct",
+"signature": "struct Component {",
+"doc": "A live component \u2014 subclass it. Keep its state in fields; return its\nHTML from `render()` (usually `live.html(template, data)`); react to the\nevents its template names in `handle(event, data)`:\n\n    <button q-click=\"save\">          a click      (data: q-value / data-* attributes)\n    <form q-submit=\"add\">            a submit     (data: the form's fields)\n    <input q-input=\"search\">         typing       (data[\"value\"], sent after a pause)\n    <select q-change=\"pick\">         a change     (data[\"value\"]; checkboxes \"true\"/\"false\")\n    <input q-enter=\"send\">           Enter key    (data[\"value\"])\n    <a href=\"/about\" q-link>         navigate to another live page without a reload\n\nOverride `title()` for the page title. In `handle`, `self.go(path)`\nnavigates the browser to another page after the update."
+}
+],
 "DatePicker": [
 {
 "package": "ui",
@@ -821,6 +830,15 @@
 "kind": "struct",
 "signature": "struct TestClient {",
 "doc": "Call an app's routes without a network, for tests:\n\n    client := web.TestClient(app)\n    res := client.get(\"/users/1\")\n    test.assert_eq(res.status_code, 200)\n    test.assert_eq(res.body, \"...\")\n\nCookies the app sets are sent back on later requests, like a browser."
+}
+],
+"TestSession": [
+{
+"package": "live",
+"qualified": "TestSession",
+"kind": "struct",
+"signature": "struct TestSession {",
+"doc": "Drive live pages in tests, without a browser:\n\n    s := live.TestSession(app)\n    s.open(\"/\")\n    s.send(\"inc\")\n    test.assert_true(s.html.contains(\"<p>1</p>\"))\n\n`html` is the component's current HTML; `title` its title."
 }
 ],
 "TextArea": [
@@ -2336,6 +2354,15 @@
 "doc": "True while an input method is composing text in this widget (it gets every key)."
 }
 ],
+"configure": [
+{
+"package": "live",
+"qualified": "configure",
+"kind": "define",
+"signature": "define configure(head: String = \"\", layout: String = \"\") -> void {",
+"doc": "Page settings: `head` \u2014 HTML added to every page's <head> (stylesheets,\nmeta tags); `layout` \u2014 a whole page template of your own, with\n`{{ title }}`, `{{ head | raw }}`, `{{ body | raw }}` and a\n`<script src=\"/_live/live.js\" defer></script>`."
+}
+],
 "confirm": [
 {
 "package": "console",
@@ -3300,6 +3327,13 @@
 ],
 "go": [
 {
+"package": "live",
+"qualified": "Component.go",
+"kind": "method",
+"signature": "define go(self, path: String) -> void {",
+"doc": "After this event, send the browser to `path` (a live page, or any URL)."
+},
+{
 "package": "ui",
 "qualified": "FileDialog.go",
 "kind": "method",
@@ -3353,6 +3387,13 @@
 }
 ],
 "handle": [
+{
+"package": "live",
+"qualified": "Component.handle",
+"kind": "method",
+"signature": "define handle(self, event: String, data: Map) -> void {",
+"doc": "React to `event` from the page (override); `data` holds the event's values (Strings)."
+},
 {
 "package": "ui",
 "qualified": "Widget.handle",
@@ -3462,6 +3503,13 @@
 }
 ],
 "html": [
+{
+"package": "live",
+"qualified": "html",
+"kind": "define",
+"signature": "define html(template: String, data: Map = {}) -> String {",
+"doc": "`template` (web's template syntax: `{{ value }}`, `{% if %}`, `{% for %}`\n...) rendered with `data` \u2014 escaped, so user input can't inject HTML.\nTemplates are parsed once and cached."
+},
 {
 "package": "web",
 "qualified": "Response.html",
@@ -4446,6 +4494,15 @@
 "doc": "Not-a-Number (`0.0 / 0.0`). Distinguishable via `is_nan`; `nan != nan`."
 }
 ],
+"navigate": [
+{
+"package": "live",
+"qualified": "TestSession.navigate",
+"kind": "method",
+"signature": "define navigate(self, path: String) -> TestSession {",
+"doc": "Follow a `q-link` to `path`."
+}
+],
 "nil": [
 {
 "package": "uuid",
@@ -4510,6 +4567,13 @@
 }
 ],
 "open": [
+{
+"package": "live",
+"qualified": "TestSession.open",
+"kind": "method",
+"signature": "define open(self, path: String) -> TestSession {",
+"doc": "Load the page at `path`."
+},
 {
 "package": "ui",
 "qualified": "DatePicker.open",
@@ -4576,6 +4640,13 @@
 }
 ],
 "page": [
+{
+"package": "live",
+"qualified": "page",
+"kind": "define",
+"signature": "define page(app: web.App, path: String, factory: Callable) -> void {",
+"doc": "Serve a live page at `path` (\":params\" allowed, as in web routes):\n`factory(req)` makes the page's component \u2014 one per visitor, kept while\nthey use it. Links with `q-link` between live pages switch without a\nreload, and Back / Forward work."
+},
 {
 "package": "ui",
 "qualified": "Tabs.page",
@@ -5229,6 +5300,13 @@
 ],
 "render": [
 {
+"package": "live",
+"qualified": "Component.render",
+"kind": "method",
+"signature": "define render(self) -> String {",
+"doc": "The component's HTML (override)."
+},
+{
 "package": "web",
 "qualified": "Response.render",
 "kind": "method",
@@ -5595,6 +5673,13 @@
 ],
 "send": [
 {
+"package": "live",
+"qualified": "TestSession.send",
+"kind": "method",
+"signature": "define send(self, event: String, data: Map = {}) -> TestSession {",
+"doc": "Send `event` (with `data`) to the page's component, as the browser would."
+},
+{
 "package": "net",
 "qualified": "Socket.send",
 "kind": "method",
@@ -5623,6 +5708,24 @@
 "kind": "method",
 "signature": "define send_status(self, code: Int) -> Response {",
 "doc": "Answer with just a status code and its text (\"Not Found\")."
+}
+],
+"session_count": [
+{
+"package": "live",
+"qualified": "session_count",
+"kind": "define",
+"signature": "define session_count() -> Int {",
+"doc": "The number of live components the server is holding (open pages)."
+}
+],
+"session_minutes": [
+{
+"package": "live",
+"qualified": "session_minutes",
+"kind": "define",
+"signature": "define session_minutes(minutes: Int) -> void {",
+"doc": "How long a page's component is kept after its last event (minutes; default 30)."
 }
 ],
 "set": [
@@ -6356,6 +6459,15 @@
 "kind": "define",
 "signature": "extern define timer_start(label: String) -> void",
 "doc": "Start a named timer. Subsequent `timer_end(label)` returns elapsed ms.\nUp to 32 timers can be active at once."
+}
+],
+"title": [
+{
+"package": "live",
+"qualified": "Component.title",
+"kind": "method",
+"signature": "define title(self) -> String {",
+"doc": "The page title while this component is shown (override; \"\" leaves it)."
 }
 ],
 "tls_close": [

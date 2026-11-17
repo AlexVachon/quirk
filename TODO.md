@@ -37,6 +37,15 @@ static files, templates, errors, keep-alive server, TestClient, `quirk new
 (signed cookies), gzip, HTTPS in the server (TLS through the runtime's
 OpenSSL), a dev mode that restarts on file changes.
 
+## 4. `live` follow-ups
+
+live 1.0 (7.43.0): server components, events, patching, live pages with
+q-link navigation, TestSession. Next ideas: nested components, server
+push (a component updating itself from a timer or another visitor:
+needs streaming responses — SSE — in web), loading states, file uploads,
+and moving components to the browser later if a JS / WebAssembly backend
+is ever added.
+
 ## Housekeeping
 
 - Optional: Open VSX ownership claim for `Quirk` (Option 4) to get the

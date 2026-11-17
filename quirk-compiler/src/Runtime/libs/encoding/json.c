@@ -7,6 +7,7 @@
 extern void* GC_malloc(size_t);
 extern String* make_String(const char* raw);
 extern String* make_String_taking_ownership(char* raw);
+extern String* make_String_len(char* raw, int64_t len);
 
 // Any* boxing helpers from core/any.c — used to give JSON primitives their
 // real Quirk types on the way out of loads(). Without these, every numeric
@@ -20,24 +21,90 @@ extern Any* Core_Primitives_Any_box_null(void);
 // Forward Declaration
 void* Encoding_Json__parse_value(const char** cursor);
 
+// Invalid JSON raises ValueError (it used to parse into partial values
+// silently, e.g. "{not json" was an empty Map).
+extern void quirk_throw_exception(const char* type_name, const char* message);
+static const char* json_base = NULL;
+static void Json__fail(const char* cursor, const char* what) {
+    char msg[160];
+    long at = json_base && cursor >= json_base ? (long)(cursor - json_base) : -1;
+    snprintf(msg, sizeof msg, "invalid JSON: %s at position %ld", what, at);
+    quirk_throw_exception("ValueError", msg);
+}
+
 static void Json__skip_whitespace(const char** cursor) {
     while (isspace(**cursor)) (*cursor)++;
 }
 
-// Returns a String* so quirk_opaque_to_string and Json__serialize_any can detect it
+// Returns a String* so quirk_opaque_to_string and Json__serialize_any can detect it.
+// Escapes are decoded (\" \\ \/ \b \f \n \r \t \uXXXX, surrogate pairs → UTF-8);
+// they used to be kept as written, so "a\"b" read back as a\"b.
+static int Json__hex4(const char* p) {
+    int v = 0;
+    for (int i = 0; i < 4; i++) {
+        char c = p[i];
+        v <<= 4;
+        if (c >= '0' && c <= '9') v |= c - '0';
+        else if (c >= 'a' && c <= 'f') v |= c - 'a' + 10;
+        else if (c >= 'A' && c <= 'F') v |= c - 'A' + 10;
+        else return -1;
+    }
+    return v;
+}
+
+static int Json__utf8(char* out, unsigned cp) {
+    if (cp < 0x80) { out[0] = (char)cp; return 1; }
+    if (cp < 0x800) { out[0] = (char)(0xC0 | (cp >> 6)); out[1] = (char)(0x80 | (cp & 0x3F)); return 2; }
+    if (cp < 0x10000) {
+        out[0] = (char)(0xE0 | (cp >> 12)); out[1] = (char)(0x80 | ((cp >> 6) & 0x3F));
+        out[2] = (char)(0x80 | (cp & 0x3F)); return 3;
+    }
+    out[0] = (char)(0xF0 | (cp >> 18)); out[1] = (char)(0x80 | ((cp >> 12) & 0x3F));
+    out[2] = (char)(0x80 | ((cp >> 6) & 0x3F)); out[3] = (char)(0x80 | (cp & 0x3F)); return 4;
+}
+
 static String* Json__parse_raw_string(const char** cursor) {
     (*cursor)++; // Skip opening quote
     const char* start = *cursor;
     while (**cursor && **cursor != '"') {
-        if (**cursor == '\\') (*cursor)++;
+        if (**cursor == '\\' && (*cursor)[1]) (*cursor)++;
         (*cursor)++;
     }
-    int len = *cursor - start;
-    char* buf = (char*)GC_malloc(len + 1);
-    strncpy(buf, start, len);
-    buf[len] = '\0';
-    (*cursor)++; // Skip closing quote
-    return make_String_taking_ownership(buf);
+    if (**cursor != '"') Json__fail(*cursor, "unterminated string");
+    size_t len = (size_t)(*cursor - start);
+    char* buf = (char*)GC_malloc_atomic(len + 1);   // decoding only shrinks
+    size_t o = 0;
+    for (size_t i = 0; i < len; i++) {
+        char c = start[i];
+        if (c != '\\' || i + 1 >= len) { buf[o++] = c; continue; }
+        char e = start[++i];
+        switch (e) {
+            case 'n': buf[o++] = '\n'; break;
+            case 't': buf[o++] = '\t'; break;
+            case 'r': buf[o++] = '\r'; break;
+            case 'b': buf[o++] = '\b'; break;
+            case 'f': buf[o++] = '\f'; break;
+            case 'u': {
+                int cp = i + 4 < len ? Json__hex4(start + i + 1) : -1;   /* 4 hex digits follow */
+                if (cp < 0) { buf[o++] = 'u'; break; }
+                i += 4;
+                unsigned code = (unsigned)cp;
+                if (code >= 0xD800 && code <= 0xDBFF && i + 6 < len && start[i + 1] == '\\' && start[i + 2] == 'u') {
+                    int lo = Json__hex4(start + i + 3);
+                    if (lo >= 0xDC00 && lo <= 0xDFFF) {
+                        code = 0x10000 + ((code - 0xD800) << 10) + ((unsigned)lo - 0xDC00);
+                        i += 6;
+                    }
+                }
+                o += (size_t)Json__utf8(buf + o, code);
+                break;
+            }
+            default: buf[o++] = e; break;          // \" \\ \/ and anything else: the character
+        }
+    }
+    buf[o] = '\0';
+    if (**cursor) (*cursor)++; // Skip closing quote
+    return make_String_len(buf, (int64_t)o);
 }
 
 // Parse a JSON number into a typed Any* — Int if it has no decimal/exponent,
@@ -80,26 +147,29 @@ Map* Encoding_Json__parse_object(const char** cursor) {
         return map;
     }
 
-    while (**cursor) {
+    while (1) {
         Json__skip_whitespace(cursor);
-        if (**cursor != '"') break; 
-        
+        if (**cursor != '"') Json__fail(*cursor, "expected a \"key\"");
+
         // Map Keys MUST be String Objects
         String* keyObj = Json__parse_raw_string(cursor);
-        
+
         Json__skip_whitespace(cursor);
-        if (**cursor == ':') (*cursor)++;
-        
+        if (**cursor != ':') Json__fail(*cursor, "expected ':'");
+        (*cursor)++;
+
         // Map Values are raw C-strings (so 'Any' can auto-box them safely!)
         void* val = Encoding_Json__parse_value(cursor);
-        Core_Collections_Map_Map_put(map, keyObj, val); 
-        
+        Core_Collections_Map_Map_put(map, keyObj, val);
+
         Json__skip_whitespace(cursor);
         if (**cursor == ',') {
             (*cursor)++;
         } else if (**cursor == '}') {
             (*cursor)++;
             break;
+        } else {
+            Json__fail(*cursor, **cursor ? "expected ',' or '}'" : "unterminated object");
         }
     }
     return map;
@@ -119,16 +189,18 @@ List* Encoding_Json__parse_array(const char** cursor) {
         return list;
     }
 
-    while (**cursor) {
+    while (1) {
         void* val = Encoding_Json__parse_value(cursor);
-        Core_Collections_List_List_append(list, val); 
-        
+        Core_Collections_List_List_append(list, val);
+
         Json__skip_whitespace(cursor);
         if (**cursor == ',') {
             (*cursor)++;
         } else if (**cursor == ']') {
             (*cursor)++;
             break;
+        } else {
+            Json__fail(*cursor, **cursor ? "expected ',' or ']'" : "unterminated array");
         }
     }
     return list;
@@ -148,14 +220,22 @@ void* Encoding_Json__parse_value(const char** cursor) {
     if (strncmp(*cursor, "false", 5) == 0) { *cursor += 5; return Core_Primitives_Any_box_bool(0); }
     if (strncmp(*cursor, "null", 4) == 0)  { *cursor += 4; return Core_Primitives_Any_box_null(); }
 
-    (*cursor)++;
+    Json__fail(*cursor, **cursor ? "unexpected character" : "unexpected end");
     return NULL;
 }
 
 void* Encoding_Json_parse(String* json_str) {
     if (!json_str || !json_str->buffer) return NULL;
     const char* cursor = json_str->buffer;
-    return Encoding_Json__parse_value(&cursor);
+    Json__skip_whitespace(&cursor);
+    if (!*cursor) return NULL;                  // empty input: null (as before)
+    const char* saved = json_base;
+    json_base = json_str->buffer;
+    void* v = Encoding_Json__parse_value(&cursor);
+    Json__skip_whitespace(&cursor);
+    if (*cursor) Json__fail(cursor, "unexpected text after the value");
+    json_base = saved;
+    return v;
 }
 // ===================================================
 //  JSON SERIALIZATION

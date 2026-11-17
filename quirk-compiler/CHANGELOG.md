@@ -5,6 +5,28 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.43.0] — 2026-11-17 — `live`: interactive pages in Quirk only
+
+- **New stdlib package `live`** (v1.0.0): a page is a component — state
+  in fields, HTML in `render()`, events in `handle()` — running on the
+  server in a `web` app. Clicks, forms and typing (`q-click`, `q-submit`,
+  `q-input`, `q-change`, `q-enter`) go to it, and the page is patched in
+  place: no reload, and no JavaScript to write (a fixed ~120-line script
+  ships with the package). Live pages with `:params`, `q-link`
+  navigation without reloads (Back / Forward work), page titles,
+  `self.go(path)`, and `live.TestSession` for tests. Checked in a real
+  DOM (jsdom) as well.
+- **`return` / `break` / `continue` from inside a `try`** left its handler
+  pushed and skipped its `finally`: a later exception that nothing nearer
+  caught jumped into the finished function's catch and crashed (SIGSEGV).
+  They pop it and run `finally` now (probe p169).
+- **`json.loads`**: escapes are decoded (`\"`, `\n`, `\\`, `\uXXXX`,
+  surrogate pairs to UTF-8) — they were kept as written; invalid JSON
+  raises ValueError with a position instead of parsing into partial values
+  (probe p170).
+- Messages name methods of a renamed type as `web.Response.send`, not
+  `Response_in_web_send`.
+
 ## [7.42.0] — 2026-11-17 — `web`: a web framework
 
 - **New stdlib package `web`** (v1.0.0): build web apps and HTTP APIs,

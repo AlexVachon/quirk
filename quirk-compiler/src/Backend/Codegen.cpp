@@ -1008,6 +1008,12 @@ class LLVMCodegen {
     }
 
     void compileFunction(FunctionNode* node) {
+        auto flow = flowGen->enterFunction();
+        compileFunctionBody(node);
+        flowGen->leaveFunction(flow);
+    }
+
+    void compileFunctionBody(FunctionNode* node) {
         // A nested function / method compiled mid-body must not leave its
         // line slot behind for the enclosing function's remaining statements.
         struct LineSlotRestore {
@@ -1794,6 +1800,13 @@ class LLVMCodegen {
     }
 
     Value* handleLambda(LambdaNode* node) {
+        auto flow = flowGen->enterFunction();
+        Value* v = handleLambdaBody(node);
+        flowGen->leaveFunction(flow);
+        return v;
+    }
+
+    Value* handleLambdaBody(LambdaNode* node) {
         int idx = lambdaCounter++;
         Type* i8PtrTy = Type::getInt8PtrTy(Context);
 
@@ -3871,6 +3884,8 @@ class LLVMCodegen {
         else if (auto w = dynamic_cast<WhileNode*>(node)) handleWhile(w, parentFunc);
         else if (dynamic_cast<BreakNode*>(node)) {
             if (!flowGen->breakStack.empty()) {
+                if (!flowGen->loopTryBase.empty())
+                    flowGen->emitTryExits(flowGen->loopTryBase.back(), [this, parentFunc](Node* n) { handleStatement(n, parentFunc); });
                 Builder.CreateBr(flowGen->breakStack.back());
                 // Create a dead block so subsequent IR in this branch has an insert point
                 BasicBlock* dead = BasicBlock::Create(Context, "after_break", parentFunc);
@@ -3879,6 +3894,8 @@ class LLVMCodegen {
         }
         else if (dynamic_cast<ContinueNode*>(node)) {
             if (!flowGen->continueStack.empty()) {
+                if (!flowGen->loopTryBase.empty())
+                    flowGen->emitTryExits(flowGen->loopTryBase.back(), [this, parentFunc](Node* n) { handleStatement(n, parentFunc); });
                 Builder.CreateBr(flowGen->continueStack.back());
                 // Create a dead block so subsequent IR in this branch has an insert point
                 BasicBlock* dead = BasicBlock::Create(Context, "after_continue", parentFunc);
@@ -3932,8 +3949,7 @@ class LLVMCodegen {
                 // `continue` goes through the increment: it used to jump
                 // straight to the condition, so the counter never moved
                 // and `for i in 0..10 { if … { continue } }` never ended.
-                flowGen->breakStack.push_back(afterBB);
-                flowGen->continueStack.push_back(incBB);
+                flowGen->pushLoop(afterBB, incBB);
 
                 Builder.CreateBr(condBB);
                 Builder.SetInsertPoint(condBB);
@@ -3952,8 +3968,7 @@ class LLVMCodegen {
                 Builder.CreateStore(next, counterSlot);
                 Builder.CreateBr(condBB);
 
-                flowGen->breakStack.pop_back();
-                flowGen->continueStack.pop_back();
+                flowGen->popLoop();
 
                 Builder.SetInsertPoint(afterBB);
                 return;
@@ -4003,6 +4018,11 @@ class LLVMCodegen {
                 if (!retVal) return;
             }
 
+            // Leaving the function from inside `try` blocks: pop their
+            // handlers (and run their `finally`) — after the value, so an
+            // exception it throws is still caught here.
+            flowGen->emitTryExits(0, [this, parentFunc](Node* n) { handleStatement(n, parentFunc); });
+            if (Builder.GetInsertBlock()->getTerminator()) return;   // a `finally` returned
             // `return` from main: report failed tasks nobody awaited (core/task.c).
             if (parentFunc->getName() == "main")
                 Builder.CreateCall(TheModule->getOrInsertFunction("quirk_tasks_main_done", Type::getVoidTy(Context)));

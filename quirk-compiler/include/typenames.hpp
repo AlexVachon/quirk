@@ -18,10 +18,22 @@ inline std::map<std::string, std::string>& typeDisplayNames() {
 }
 
 // The display form of one type name (unchanged when it isn't renamed).
+// A method's internal name reads as `module.Type.method`
+// (`Response_in_web_send` → `web.Response.send`).
 inline std::string displayTypeName(const std::string& name) {
     auto& m = typeDisplayNames();
     auto it = m.find(name);
-    return it == m.end() ? name : it->second;
+    if (it != m.end()) return it->second;
+    if (name.find("_in_") == std::string::npos) return name;
+    for (const auto& [internal, shown] : m) {
+        if (name.size() > internal.size() + 1 && name.compare(0, internal.size(), internal) == 0 &&
+            name[internal.size()] == '_') {
+            std::string rest = name.substr(internal.size() + 1);
+            while (!rest.empty() && rest[0] == '_') rest.erase(0, 1);   // `__init` → `init`
+            return shown + "." + rest;
+        }
+    }
+    return name;
 }
 
 // Every internal name in `text` (a whole identifier) replaced by its

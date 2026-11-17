@@ -17,6 +17,51 @@ class ControlFlowGen {
    public:
     std::vector<BasicBlock*> breakStack;
     std::vector<BasicBlock*> continueStack;
+    // `try` blocks whose handler is pushed at this point of the function,
+    // outermost first, and per loop (parallel to breakStack) how many were
+    // open when it began. A `return` / `break` / `continue` leaving a try
+    // pops its handler (and runs its `finally`): it stayed pushed, so a
+    // later exception jumped into the finished function's catch and crashed.
+    std::vector<TryCatchNode*> openTries;
+    std::vector<size_t> loopTryBase;
+
+    struct FlowState {
+        std::vector<BasicBlock*> breaks, continues;
+        std::vector<TryCatchNode*> tries;
+        std::vector<size_t> bases;
+    };
+    // A function / lambda body starts with none of the enclosing ones.
+    FlowState enterFunction() {
+        FlowState s{breakStack, continueStack, openTries, loopTryBase};
+        breakStack.clear(); continueStack.clear(); openTries.clear(); loopTryBase.clear();
+        return s;
+    }
+    void leaveFunction(FlowState& s) {
+        breakStack = s.breaks; continueStack = s.continues; openTries = s.tries; loopTryBase = s.bases;
+    }
+    void pushLoop(BasicBlock* brk, BasicBlock* cont) {
+        breakStack.push_back(brk); continueStack.push_back(cont); loopTryBase.push_back(openTries.size());
+    }
+    void popLoop() {
+        breakStack.pop_back(); continueStack.pop_back();
+        if (!loopTryBase.empty()) loopTryBase.pop_back();
+    }
+    // Leave the open tries above `downTo`, innermost first: pop each
+    // handler, then run its `finally` (with that try no longer open).
+    void emitTryExits(size_t downTo, std::function<void(Node*)> stmtHandler) {
+        if (openTries.size() <= downTo) return;
+        std::vector<TryCatchNode*> saved = openTries;
+        for (size_t i = saved.size(); i > downTo; i--) {
+            if (Builder.GetInsertBlock()->getTerminator()) break;
+            Builder.CreateCall(TheModule->getFunction("quirk_pop_try"));
+            openTries.resize(i - 1);
+            for (auto& st : saved[i - 1]->finallyBlock) {
+                if (Builder.GetInsertBlock()->getTerminator()) break;
+                stmtHandler(st.get());
+            }
+        }
+        openTries = saved;
+    }
 
     ControlFlowGen(LLVMContext& ctx, Module* mod, IRBuilder<>& build)
         : Context(ctx), TheModule(mod), Builder(build) {}
@@ -115,8 +160,7 @@ class ControlFlowGen {
         BasicBlock* bodyBB  = BasicBlock::Create(Context, "loopbody",  parentFunc);
         BasicBlock* afterBB = BasicBlock::Create(Context, "afterloop", parentFunc);
 
-        breakStack.push_back(afterBB);
-        continueStack.push_back(condBB);
+        pushLoop(afterBB, condBB);
 
         Builder.CreateBr(condBB);
         Builder.SetInsertPoint(condBB);
@@ -125,8 +169,7 @@ class ControlFlowGen {
         for (auto& stmt : node->body) stmtHandler(stmt.get());
         if (!Builder.GetInsertBlock()->getTerminator()) Builder.CreateBr(condBB);
 
-        breakStack.pop_back();
-        continueStack.pop_back();
+        popLoop();
 
         Builder.SetInsertPoint(afterBB);
     }
@@ -252,11 +295,9 @@ class ControlFlowGen {
                 }
             }
 
-            breakStack.push_back(afterBB);
-            continueStack.push_back(condBB);
+            pushLoop(afterBB, condBB);
             for (auto& stmt : node->body) stmtHandler(stmt.get());
-            breakStack.pop_back();
-            continueStack.pop_back();
+            popLoop();
 
             if (!Builder.GetInsertBlock()->getTerminator()) Builder.CreateBr(condBB);
             Builder.SetInsertPoint(afterBB);
@@ -302,11 +343,9 @@ class ControlFlowGen {
                     item = Builder.CreateBitCast(item, PointerType::getUnqual(est), node->varName);
             varGen->defineLocalVariable(node->varName, item);
 
-            breakStack.push_back(afterBB);
-            continueStack.push_back(condBB);
+            pushLoop(afterBB, condBB);
             for (auto& stmt : node->body) stmtHandler(stmt.get());
-            breakStack.pop_back();
-            continueStack.pop_back();
+            popLoop();
 
             if (!Builder.GetInsertBlock()->getTerminator()) Builder.CreateBr(condBB);
             Builder.SetInsertPoint(afterBB);
@@ -365,7 +404,9 @@ class ControlFlowGen {
         };
 
         Builder.SetInsertPoint(tryBB);
+        openTries.push_back(node);
         for (auto& stmt : node->tryBlock) stmtHandler(stmt.get());
+        openTries.pop_back();
         if (!Builder.GetInsertBlock()->getTerminator()) {
             Builder.CreateCall(TheModule->getFunction("quirk_pop_try"));
             emitFinally();

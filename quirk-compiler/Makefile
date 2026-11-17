@@ -118,7 +118,7 @@ $(DRIVER): $(TARGET)
 # stdlib_registry() versions baked into the compiler). To pull newer tags,
 # bump the version inline below and re-run.
 STDLIB_PACKAGES = \
-	argparse console crypto csv datetime debug encoding fs html io itertools \
+	argparse console crypto csv datetime debug encoding fs html io itertools live \
 	math net process prompt random regex statistics sys test time toml typing ui url uuid web window
 STDLIB_OWNER ?= AlexVachon
 STDLIB_TAG   ?= v1.0.0
@@ -172,6 +172,7 @@ STDLIB_TAG_window ?= v1.8.0
 # ui v1.6.1: no unused bindings (editor warnings).
 STDLIB_TAG_ui ?= v1.10.1
 STDLIB_TAG_web ?= v1.0.0
+STDLIB_TAG_live ?= v1.0.0
 
 # --- INSTALL / UNINSTALL --------------------------------------------------
 # Copy the freshly-built compiler + runtime into $(PREFIX) (default
@@ -214,6 +215,7 @@ bootstrap-stdlib:
 	        window) tag="$(STDLIB_TAG_window)" ;;                                 \
 	        ui)     tag="$(STDLIB_TAG_ui)"     ;;                                 \
 	        web)    tag="$(STDLIB_TAG_web)"    ;;                                 \
+	        live)   tag="$(STDLIB_TAG_live)"   ;;                                 \
 	    esac;                                                                     \
 	    if [ -f "packages/$$pkg/index.quirk" ] &&                                 \
 	       [ "$$(cat packages/$$pkg/.version 2>/dev/null)" = "$$tag" ]; then      \

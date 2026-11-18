@@ -573,10 +573,14 @@ std::string resolveImportPath(const std::string& moduleName, const std::string& 
             fs::path entry = g_entry_dir;
             if (entry != dir) bases.push_back(entry);
         }
+        // Then each folder above the importing file, nearest first, up to
+        // the project root (quirk.toml): `src.components.x` from
+        // app/src/pages.qk finds app/src/components/x.qk wherever the
+        // program is run from (a test in another folder, say).
         fs::path up = dir;
         for (fs::path d = fs::absolute(relativeTo).parent_path(); ; d = d.parent_path()) {
-            if (fs::exists(d / "quirk.toml")) { if (up != dir) bases.push_back(up); break; }
-            if (d == d.parent_path()) break;
+            if (up != dir) bases.push_back(up);
+            if (fs::exists(d / "quirk.toml") || d == d.parent_path()) break;
             up = up / "..";
         }
         for (const auto& base : bases)

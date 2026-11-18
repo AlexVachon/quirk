@@ -18,6 +18,10 @@ only for breaking changes.
   inside a loop, then `n := 5` after it) is a new binding. It reused the
   first one's slot: wrong values, a crash, or an internal compiler error
   (probe p176). Also in 7.43.
+- Local imports without a leading dot also look in each folder above the
+  importing file (nearest first, up to the project root): `from
+  src.components.notification` in app/src/pages.qk finds
+  app/src/components/notification/index.qk however the program is run.
 - A module reached through two spellings of its path (`a/b/../x.qk` and
   `a/x.qk`) is loaded once — it was loaded twice, and its types clashed
   with themselves ("expected 'Component' but got 'index.Component'").

@@ -71,6 +71,21 @@ The answer a handler builds: `res.status(201).json(value)`,
 `res.set("X-Name", "v")`, `res.cookie("session", id)`. The first send
 wins; it's written when the handler (and middleware) return.
 
+#### `define event_stream(self) -> EventStream`
+
+Keep the connection open and send events as they happen (Server-Sent
+Events — the browser's `EventSource`). The handler keeps running:
+
+    app.get("/clock", fn(req, res) {
+        stream := res.event_stream()
+        while stream.open {
+            stream.send("time", String(sys.now_ms()))
+            sys.sleep(1000)
+        }
+    })
+
+`stream.open` turns false once the visitor is gone (a send failed).
+
 #### `define status(self, code: Int) -> Response`
 
 Set the status code (chainable: `res.status(404).text("nope")`).
@@ -145,6 +160,23 @@ Render the template `name` (a file in the app's views folder, see
 #### `define end(self) -> Response`
 
 End the response with no body (204 if nothing else was set).
+
+### `struct EventStream`
+
+An open Server-Sent Events stream (Response.event_stream()). In a
+TestClient, what's sent is kept in `sent`: a List of [event, data].
+
+#### `define send(self, event: String, data: String, id: String = "") -> Bool`
+
+Send `data` as event `event` ("message" is EventSource's default); false once the visitor is gone.
+
+#### `define ping(self) -> Bool`
+
+A comment line, to keep the connection (and proxies) awake — and to notice the visitor left.
+
+#### `define close(self) -> void`
+
+Stop: the connection closes when the handler returns.
 
 ### `struct Router`
 

@@ -225,6 +225,15 @@
 "doc": "Something that happened to a window. `kind` is one of:\n  \"close\"       \u2014 the close button (or Ctrl+C / quit); the window closes\n                  unless `keep_open` was set\n  \"key_down\" / \"key_up\" \u2014 `key` is the key's name in lower case: \"a\",\n                  \"escape\", \"return\", \"space\", \"left\", \"f1\", \"left_shift\"...;\n                  `repeat` is true for auto-repeat; `shift` / `ctrl` /\n                  `alt` / `meta` say which modifiers were held\n  \"text\"        \u2014 typed text (`text`), with the keyboard layout and\n                  accents applied \u2014 use this for text entry, not key_down\n  \"compose\"     \u2014 an input method (Chinese, Japanese, Korean, dead keys...)\n                  is composing `text`: show it at the cursor (underlined)\n                  until it arrives as a \"text\" event; `cursor` is the\n                  position inside it and `length` how much of it the\n                  input method has selected (characters). An empty\n                  `text` ends the composition. See `text_input_area`.\n  \"access\"      \u2014 a screen reader asks for `action` (\"invoke\", \"toggle\",\n                  \"set_value\", \"set_range\", \"select\", \"expand\",\n                  \"collapse\", \"focus\") on node `target` of the tree sent\n                  with `access_update`; `text` is the new value. `ui`\n                  handles these itself.\n  \"mouse_move\"  \u2014 `x`, `y`; `left` true while the left button is held\n  \"mouse_down\" / \"mouse_up\" \u2014 `x`, `y`, `button` (1 left, 2 middle,\n                  3 right), `clicks` (2 for a double click)\n  \"wheel\"       \u2014 `dx`, `dy` (positive = away from you / right)\n  \"resize\"      \u2014 new `width`, `height`\n  \"focus\" / \"blur\" \u2014 the window gained / lost keyboard focus"
 }
 ],
+"EventStream": [
+{
+"package": "web",
+"qualified": "EventStream",
+"kind": "struct",
+"signature": "struct EventStream {",
+"doc": "An open Server-Sent Events stream (Response.event_stream()). In a\nTestClient, what's sent is kept in `sent`: a List of [event, data]."
+}
+],
 "Exception": [
 {
 "package": "typing",
@@ -2530,6 +2539,13 @@
 "doc": "Close the window (ends `run`)."
 },
 {
+"package": "web",
+"qualified": "EventStream.close",
+"kind": "method",
+"signature": "define close(self) -> void {",
+"doc": "Stop: the connection closes when the handler returns."
+},
+{
 "package": "window",
 "qualified": "Window.close",
 "kind": "method",
@@ -3208,6 +3224,15 @@
 "doc": "`s` with HTML's special characters escaped (& < > \" ')."
 }
 ],
+"event_stream": [
+{
+"package": "web",
+"qualified": "Response.event_stream",
+"kind": "method",
+"signature": "define event_stream(self) -> EventStream {",
+"doc": "Keep the connection open and send events as they happen (Server-Sent\nEvents \u2014 the browser's `EventSource`). The handler keeps running:\n\n    app.get(\"/clock\", fn(req, res) {\n        stream := res.event_stream()\n        while stream.open {\n            stream.send(\"time\", String(sys.now_ms()))\n            sys.sleep(1000)\n        }\n    })\n\n`stream.open` turns false once the visitor is gone (a send failed)."
+}
+],
 "events": [
 {
 "package": "window",
@@ -3215,6 +3240,15 @@
 "kind": "method",
 "signature": "define events(self) -> List {",
 "doc": "Every event since the last call (an empty List if none). Doesn't wait."
+}
+],
+"every": [
+{
+"package": "live",
+"qualified": "Component.every",
+"kind": "method",
+"signature": "define every(self, ms: Int, action: Callable) -> void {",
+"doc": "Run `action()` every `ms` milliseconds while the page is open, then show\nthe page again: `self.every(1000, fn() { self.now = time.now() })`."
 }
 ],
 "exc_info": [
@@ -5012,6 +5046,15 @@
 "doc": "Set up the component's state (override). Runs once, before it's first shown."
 }
 ],
+"on_message": [
+{
+"package": "live",
+"qualified": "Component.on_message",
+"kind": "method",
+"signature": "define on_message(self, topic: String, data: Any) -> void {",
+"doc": "A message from `live.publish(topic, data)` (override); the page is shown again after it."
+}
+],
 "on_navigate": [
 {
 "package": "live",
@@ -5335,6 +5378,15 @@
 "doc": "This process's id."
 }
 ],
+"ping": [
+{
+"package": "web",
+"qualified": "EventStream.ping",
+"kind": "method",
+"signature": "define ping(self) -> Bool {",
+"doc": "A comment line, to keep the connection (and proxies) awake \u2014 and to notice the visitor left."
+}
+],
 "pixel": [
 {
 "package": "window",
@@ -5500,6 +5552,15 @@
 "kind": "define",
 "signature": "define pstdev(items: List) -> Double {",
 "doc": "Population standard deviation: `sqrt(pvariance(items))`."
+}
+],
+"publish": [
+{
+"package": "live",
+"qualified": "publish",
+"kind": "define",
+"signature": "define publish(topic: String, data: Any = null) -> void {",
+"doc": "Send `data` to every page subscribed to `topic` (`self.subscribe(topic)`):\neach gets `on_message(topic, data)` and is shown again. From anywhere \u2014 an\nevent of another visitor, a route, a timer:\n\n    live.publish(\"chat\", {\"from\": self.user(), \"text\": self.draft})"
 }
 ],
 "push_back": [
@@ -5710,6 +5771,15 @@
 "doc": "The whole contents of file `path`.\n@throws FileNotFoundError if it doesn't exist; IOError if it can't be read.\n@example config := fs.read_text(\"config.toml\")"
 }
 ],
+"receive": [
+{
+"package": "live",
+"qualified": "TestSession.receive",
+"kind": "method",
+"signature": "define receive(self) -> Bool {",
+"doc": "Take what the server pushed (refresh / every / publish), as the browser would; false if nothing."
+}
+],
 "rect": [
 {
 "package": "window",
@@ -5760,6 +5830,15 @@
 "kind": "method",
 "signature": "define reduce(self, initial: Any, cb: Callable) -> Any",
 "doc": "Folds all elements into a single accumulated value.\n@param initial: Any \u2014 the starting accumulator value\n@param cb: Callable \u2014 `fn(acc: T, element: T) => T`\n@returns: Any \u2014 final accumulated value\n\n@example:\nsum := [1, 2, 3].reduce(0, fn(acc: Int, x: Int) => acc + x)  // 6"
+}
+],
+"refresh": [
+{
+"package": "live",
+"qualified": "Component.refresh",
+"kind": "method",
+"signature": "define refresh(self) -> void {",
+"doc": "Show the page again in the browser now \u2014 after a change that didn't come\nfrom the visitor (a timer, another visitor's message, a background job).\nEvents don't need it: the page is shown again after each one anyway."
 }
 ],
 "regenerate": [
@@ -6240,6 +6319,13 @@
 "kind": "method",
 "signature": "define send(self, body: String) -> Response {",
 "doc": "Send `body` as the response \u2014 text/html unless a Content-Type is\nset. Later sends are ignored (the first one wins)."
+},
+{
+"package": "web",
+"qualified": "EventStream.send",
+"kind": "method",
+"signature": "define send(self, event: String, data: String, id: String = \"\") -> Bool {",
+"doc": "Send `data` as event `event` (\"message\" is EventSource's default); false once the visitor is gone."
 }
 ],
 "send_status": [
@@ -6812,6 +6898,24 @@
 "doc": "Submit the form holding the field with `placeholder` (or name), with `fields`."
 }
 ],
+"subscribe": [
+{
+"package": "live",
+"qualified": "Component.subscribe",
+"kind": "method",
+"signature": "define subscribe(self, topic: String) -> void {",
+"doc": "Get the messages `live.publish(topic, data)` sends \u2014 in `on_message`\n(override it). Usually in `on_load`: `self.subscribe(\"chat\")`."
+}
+],
+"subscribers": [
+{
+"package": "live",
+"qualified": "subscribers",
+"kind": "define",
+"signature": "define subscribers(topic: String) -> Int {",
+"doc": "How many pages subscribed to `topic` are open now (their tabs connected)."
+}
+],
 "substring": [
 {
 "package": "typing",
@@ -7357,6 +7461,15 @@
 "kind": "method",
 "signature": "define unset(self, name: String) -> void {",
 "doc": "Remove a header."
+}
+],
+"unsubscribe": [
+{
+"package": "live",
+"qualified": "Component.unsubscribe",
+"kind": "method",
+"signature": "define unsubscribe(self, topic: String) -> void {",
+"doc": "Stop getting `topic`'s messages."
 }
 ],
 "unwrap": [

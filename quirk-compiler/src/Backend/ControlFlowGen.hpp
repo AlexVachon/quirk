@@ -22,12 +22,20 @@ class ControlFlowGen {
     // open when it began. A `return` / `break` / `continue` leaving a try
     // pops its handler (and runs its `finally`): it stayed pushed, so a
     // later exception jumped into the finished function's catch and crashed.
-    std::vector<TryCatchNode*> openTries;
+    // `with` blocks are on the same stack (their __exit runs on the way out,
+    // as a try's finally does): a `return` inside `with conn as c` left the
+    // socket open.
+    struct OpenBlock {
+        TryCatchNode* tryNode = nullptr;   // a try: pop its handler, run finally
+        Function* exitFn = nullptr;        // a with: call exitFn(resource)
+        Value* resource = nullptr;
+    };
+    std::vector<OpenBlock> openTries;
     std::vector<size_t> loopTryBase;
 
     struct FlowState {
         std::vector<BasicBlock*> breaks, continues;
-        std::vector<TryCatchNode*> tries;
+        std::vector<OpenBlock> tries;
         std::vector<size_t> bases;
     };
     // A function / lambda body starts with none of the enclosing ones.
@@ -50,18 +58,34 @@ class ControlFlowGen {
     // handler, then run its `finally` (with that try no longer open).
     void emitTryExits(size_t downTo, std::function<void(Node*)> stmtHandler) {
         if (openTries.size() <= downTo) return;
-        std::vector<TryCatchNode*> saved = openTries;
+        std::vector<OpenBlock> saved = openTries;
         for (size_t i = saved.size(); i > downTo; i--) {
             if (Builder.GetInsertBlock()->getTerminator()) break;
-            Builder.CreateCall(TheModule->getFunction("quirk_pop_try"));
+            const OpenBlock& b = saved[i - 1];
             openTries.resize(i - 1);
-            for (auto& st : saved[i - 1]->finallyBlock) {
+            if (b.exitFn) {
+                Value* arg = b.resource;
+                Type* want = b.exitFn->getFunctionType()->getParamType(0);
+                if (arg->getType() != want) arg = Builder.CreateBitCast(arg, want);
+                Builder.CreateCall(b.exitFn, {arg});
+                continue;
+            }
+            Builder.CreateCall(TheModule->getFunction("quirk_pop_try"));
+            for (auto& st : b.tryNode->finallyBlock) {
                 if (Builder.GetInsertBlock()->getTerminator()) break;
                 stmtHandler(st.get());
             }
         }
         openTries = saved;
     }
+
+    void pushWith(Function* exitFn, Value* resource) {
+        OpenBlock b;
+        b.exitFn = exitFn;
+        b.resource = resource;
+        openTries.push_back(b);
+    }
+    void popWith() { if (!openTries.empty()) openTries.pop_back(); }
 
     ControlFlowGen(LLVMContext& ctx, Module* mod, IRBuilder<>& build)
         : Context(ctx), TheModule(mod), Builder(build) {}
@@ -192,6 +216,21 @@ class ControlFlowGen {
         if (iterable->getType()->isPointerTy() &&
             iterable->getType()->getPointerElementType()->isPointerTy())
             iterable = Builder.CreateLoad(iterable->getType()->getPointerElementType(), iterable, "iterable_load");
+
+        // An untyped value (`for it in m["k"]`, a Callable's result): what it
+        // is decides — a List, a Map's keys, a Set's elements, else its text's
+        // characters (it was always the text). Then it's a List loop.
+        if (iterable->getType()->isPointerTy() &&
+            iterable->getType()->getPointerElementType()->isIntegerTy(8) &&
+            node->varName2.empty()) {
+            StructType* listTy = StructType::getTypeByName(Context, "List");
+            if (!listTy) listTy = StructType::getTypeByName(Context, "struct.List");
+            if (listTy) {
+                FunctionCallee ofFn = TheModule->getOrInsertFunction("quirk_iterable_of",
+                    FunctionType::get(PointerType::getUnqual(listTy), {Type::getInt8PtrTy(Context)}, false));
+                iterable = Builder.CreateCall(ofFn, {iterable}, "iterable_of");
+            }
+        }
 
         if (iterable->getType()->isPointerTy() &&
             iterable->getType()->getPointerElementType()->isStructTy()) {
@@ -404,7 +443,7 @@ class ControlFlowGen {
         };
 
         Builder.SetInsertPoint(tryBB);
-        openTries.push_back(node);
+        { OpenBlock b; b.tryNode = node; openTries.push_back(b); }
         for (auto& stmt : node->tryBlock) stmtHandler(stmt.get());
         openTries.pop_back();
         if (!Builder.GetInsertBlock()->getTerminator()) {

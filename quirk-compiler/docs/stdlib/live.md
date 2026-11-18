@@ -32,6 +32,30 @@ A page is a Component served by a `live.Router` (usually a `live.Page`).
 another page. (The 1.0 way, overriding `render()` and `handle(event,
 data)` with `q-click="name"` attributes, still works.)
 
+#### `define refresh(self) -> void`
+
+Show the page again in the browser now — after a change that didn't come
+from the visitor (a timer, another visitor's message, a background job).
+Events don't need it: the page is shown again after each one anyway.
+
+#### `define every(self, ms: Int, action: Callable) -> void`
+
+Run `action()` every `ms` milliseconds while the page is open, then show
+the page again: `self.every(1000, fn() { self.now = time.now() })`.
+
+#### `define subscribe(self, topic: String) -> void`
+
+Get the messages `live.publish(topic, data)` sends — in `on_message`
+(override it). Usually in `on_load`: `self.subscribe("chat")`.
+
+#### `define unsubscribe(self, topic: String) -> void`
+
+Stop getting `topic`'s messages.
+
+#### `define on_message(self, topic: String, data: Any) -> void`
+
+A message from `live.publish(topic, data)` (override); the page is shown again after it.
+
 #### `define on_load(self) -> void`
 
 Set up the component's state (override). Runs once, before it's first shown.
@@ -387,6 +411,10 @@ Run every `@after` timer on the page now, once each (as if its delay had passed;
 
 Submit the form holding the field with `placeholder` (or name), with `fields`.
 
+#### `define receive(self) -> Bool`
+
+Take what the server pushed (refresh / every / publish), as the browser would; false if nothing.
+
 #### `define navigate(self, path: String) -> TestSession`
 
 Follow a `q-link` to `path`.
@@ -453,6 +481,18 @@ out keep their current value.
 `template` (web's template syntax: `{{ value }}`, `{% if %}`, `{% for %}`
 ...) rendered with `data` — escaped, so user input can't inject HTML.
 Templates are parsed once and cached.
+
+#### `define publish(topic: String, data: Any = null) -> void`
+
+Send `data` to every page subscribed to `topic` (`self.subscribe(topic)`):
+each gets `on_message(topic, data)` and is shown again. From anywhere — an
+event of another visitor, a route, a timer:
+
+    live.publish("chat", {"from": self.user(), "text": self.draft})
+
+#### `define subscribers(topic: String) -> Int`
+
+How many pages subscribed to `topic` are open now (their tabs connected).
 
 #### `define session_minutes(minutes: Int) -> void`
 

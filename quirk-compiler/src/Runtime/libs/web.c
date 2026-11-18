@@ -92,7 +92,7 @@ int64_t Web_send_all(int64_t fd, String* data) {
     quirk_gil_release();
     while (left > 0) {
         int chunk = left > (1 << 30) ? (1 << 30) : (int)left;
-        int n = (int)send((int)fd, data->buffer + off, chunk, 0);
+        int n = (int)net_send_nosig((int)fd, data->buffer + off, (size_t)chunk);
         if (n < 0) {
 #ifndef _WIN32
             if (errno == EINTR) continue;

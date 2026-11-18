@@ -5,6 +5,27 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.47.0] — 2026-11-18 — live updates from the server
+
+- Pins **`web` v1.2.0**: event streams (Server-Sent Events) —
+  `res.event_stream()`, `stream.send(event, data)`, `ping`, `close`.
+- Pins **`live` v2.6.0**: pages the server updates — `self.refresh()`,
+  `self.every(ms, fn)` (a timer while the page is open),
+  `self.subscribe(topic)` + `on_message`, `live.publish(topic, data)` from
+  anywhere, `live.subscribers(topic)`; one stream per open page.
+- **`return` / `break` / `continue` inside `with`** run the resource's
+  `__exit` on the way out, as a `try`'s `finally` does. They skipped it:
+  every early `return` inside `with conn as c` in web's server left the
+  socket open (probe p180).
+- **`for x in v` over an untyped value** goes by what `v` is — a List's
+  elements, a Map's keys, a Set's elements, else its text's characters. It
+  always went through the text: `for it in m["k"]` over a List gave the
+  characters of "[...]" (and calling a method on each crashed) (probe p181).
+- **A closed connection no longer kills the program**: sockets send with
+  MSG_NOSIGNAL (SO_NOSIGPIPE on macOS), so writing to a connection the other
+  side closed fails instead of raising SIGPIPE — a browser closing a page
+  with an open event stream took the server down.
+
 ## [7.46.0] — 2026-11-18 — sessions and login
 
 - Pins **`web` v1.1.0**: sessions — `app.use(web.sessions())`,

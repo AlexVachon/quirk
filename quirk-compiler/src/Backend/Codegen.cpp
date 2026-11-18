@@ -5605,12 +5605,15 @@ class LLVMCodegen {
 
         varGen->defineLocalVariable(node->varName, contextVal);
 
+        // A return / break / continue in the body runs __exit on its way
+        // out (emitTryExits); falling off the end runs it below.
+        std::string exitName = typeName + "___exit";
+        Function* exitFunc = TheModule->getFunction(exitName);
+        if (exitFunc) flowGen->pushWith(exitFunc, resource);
         for (const auto& stmt : node->body) handleStatement(stmt.get(), parentFunc);
+        if (exitFunc) flowGen->popWith();
 
-        // Only emit __exit cleanup if the body didn't already terminate (e.g. via return)
         if (!Builder.GetInsertBlock()->getTerminator()) {
-            std::string exitName = typeName + "___exit";
-            Function* exitFunc = TheModule->getFunction(exitName);
             if (exitFunc) Builder.CreateCall(exitFunc, {resource});
         }
     }

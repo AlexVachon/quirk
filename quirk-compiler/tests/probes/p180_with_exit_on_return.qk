@@ -1,0 +1,63 @@
+// `return` / `break` / `continue` inside `with` run the resource's __exit
+// on the way out (as a try's finally does). They skipped it: `with conn as
+// c { ... return }` in web's server left the socket open.
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+log := []
+
+struct Res {
+    name: String
+    define __init(self, name: String) -> void { self.name = name }
+    define __enter(self) -> Res { return self }
+    define __exit(self) -> void { log.append("exit " + self.name) }
+}
+
+define early(flag: Bool) -> Int {
+    with Res("a") as r {
+        if flag { return 1 }
+        log.append("body a")
+    }
+    return 2
+}
+
+define in_loop() -> void {
+    with Res("outer") as o {
+        for i in [1, 2, 3] {
+            with Res("i" + String(i)) as r {
+                if i == 1 { continue }
+                if i == 2 { break }
+            }
+        }
+        log.append("after loop")
+    }
+}
+
+define nested() -> String {
+    try {
+        with Res("t") as r {
+            return "from with"
+        }
+    } finally {
+        log.append("finally")
+    }
+    return "end"
+}
+
+async define in_task() {
+    with Res("task") as r {
+        return
+    }
+}
+
+define main() -> void {
+    if early(true) != 1 { fail("early value") }
+    if early(false) != 2 { fail("late value") }
+    in_loop()
+    if nested() != "from with" { fail("nested value") }
+    t := in_task()
+    await t
+    got := ", ".join(log)
+    want := "exit a, body a, exit a, exit i1, exit i2, after loop, exit outer, exit t, finally, exit task"
+    if got != want { fail("order: " + got) }
+    print("ok")
+}

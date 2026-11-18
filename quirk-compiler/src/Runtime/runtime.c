@@ -328,6 +328,36 @@ int32_t quirk_reflect_enum_ordinal(void* v, const char* names) {
     return (n >= 0 && n < count) ? (int32_t)n : -1;
 }
 
+// `for x in v` over an untyped value: what to go through, as a List — a
+// List itself, a Map's keys, a Set's elements, else the characters of its
+// text (as before: it was always the text, so `for it in m["k"]` over a
+// List went through the characters of "[...]").
+List* quirk_iterable_of(void* v) {
+    extern void Core_Collections_List_List___init(List*);
+    extern void Core_Collections_List_List_append(List*, void*);
+    extern List* Core_Collections_Map_Map_keys(Map*);
+    extern List* Core_Collections_Set_Set_to_list(Set*);
+    uint32_t t = quirk_type_of(v);
+    if (t == QT_LIST) return (List*)v;
+    if (t == QT_MAP) return Core_Collections_Map_Map_keys((Map*)v);
+    if (t == QT_SET) return Core_Collections_Set_Set_to_list((Set*)v);
+    List* out = (List*)quirk_alloc(QT_LIST, sizeof(List));
+    Core_Collections_List_List___init(out);
+    if (!v) return out;
+    String* text = quirk_opaque_to_string(v);
+    const unsigned char* p = (const unsigned char*)(text && text->buffer ? text->buffer : "");
+    while (*p) {
+        size_t n = 1;
+        if (*p >= 0xF0) n = 4; else if (*p >= 0xE0) n = 3; else if (*p >= 0xC0) n = 2;
+        char ch[5] = {0};
+        size_t k = 0;
+        for (; k < n && p[k]; k++) ch[k] = (char)p[k];
+        Core_Collections_List_List_append(out, make_String(ch));
+        p += k;
+    }
+    return out;
+}
+
 // Comma-separated field (which=0) or method (which=1) names of `obj`'s type.
 const char* quirk_reflect_names(void* obj, int which) {
     QuirkTypeInfo* ti = quirk_type_slot(quirk_type_of(obj));

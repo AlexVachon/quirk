@@ -132,13 +132,29 @@ int64_t Net_connect(int64_t sockfd, String* host, int64_t port) {
 
     return net__connect((int)sockfd, &serv_addr);
 }
+// send() that fails (-1, EPIPE) on a closed connection instead of raising
+// SIGPIPE, which killed the whole program — a browser closing a page with an
+// open event stream took the server down. Linux: MSG_NOSIGNAL; macOS has
+// no such flag: SO_NOSIGPIPE on the socket; Windows has no SIGPIPE.
+static int64_t net_send_nosig(int fd, const char* buf, size_t len) {
+#if defined(MSG_NOSIGNAL)
+    return (int64_t)send(fd, buf, len, MSG_NOSIGNAL);
+#else
+#if defined(SO_NOSIGPIPE)
+    int one = 1;
+    setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof(one));
+#endif
+    return (int64_t)send(fd, buf, (int)len, 0);
+#endif
+}
+
 int64_t Net_send(int64_t sockfd, String* data) {
     if (!data || !data->buffer) return 0;
     const char* buf = data->buffer;
     int64_t len = data->length;
     quirk_wait_io((int)sockfd, 1);
     quirk_gil_release();
-    int64_t n = send(sockfd, buf, len, 0);
+    int64_t n = net_send_nosig((int)sockfd, buf, (size_t)len);
     quirk_gil_acquire();
     return n;
 }

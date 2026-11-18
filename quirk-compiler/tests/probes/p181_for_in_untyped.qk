@@ -1,0 +1,41 @@
+// `for x in v` over an untyped value goes by what v is: a List's elements,
+// a Map's keys, a Set's elements, else the characters of its text. It was
+// always the text: `for it in m["k"]` over a List went through the
+// characters of "[...]" (and a struct method on each crashed).
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+struct T {
+    name: String
+    define __init(self, n: String) -> void { self.name = n }
+    define hi(self) -> String { return "hi " + self.name }
+}
+
+define main() -> void {
+    m := {}
+    m["k"] = [T("a"), T("b")]
+    got := []
+    for it in m["k"] {
+        t: T = it
+        got.append(t.hi())
+    }
+    if ", ".join(got) != "hi a, hi b" { fail("list of structs: " + ", ".join(got)) }
+
+    n := {"x": [1, 2, 3], "m": {"p": 1, "q": 2}, "s": "héllo"}
+    total := 0
+    for v in n["x"] { total = total + Int(v) }
+    if total != 6 { fail("ints: " + String(total)) }
+
+    keys := []
+    for k in n["m"] { keys.append(k) }
+    if keys.length() != 2 { fail("map keys") }
+
+    chars := []
+    for c in n["s"] { chars.append(c) }
+    if chars.length() != 5 or String(chars[1]) != "é" { fail("characters: " + String(chars.length())) }
+
+    typed: List = n["x"]
+    count := 0
+    for v in typed { count = count + 1 }
+    if count != 3 { fail("typed list") }
+    print("ok")
+}

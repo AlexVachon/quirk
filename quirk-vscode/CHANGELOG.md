@@ -2,6 +2,12 @@
 
 All notable changes to the extension land here. Versioning follows SemVer; minor bumps for new features, patches for fixes.
 
+## [1.1.13] — 2026-11-18 — hover docs for live updates
+
+- Hover and completion know `web` 1.2 (`res.event_stream()`, `EventStream`)
+  and `live` 2.6 (`refresh`, `every`, `subscribe`, `on_message`,
+  `live.publish`, `live.subscribers`).
+
 ## [1.1.12] — 2026-11-18 — hover docs for sessions and login
 
 - Hover and completion know `web` 1.1 (`web.sessions`, `req.session()`,

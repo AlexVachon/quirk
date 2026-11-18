@@ -7,13 +7,15 @@ only for breaking changes.
 
 ## [7.44.1] — 2026-11-18 — fixes found building a Notification component
 
-- Pins **`live` v2.2.0**: notifications like Element Plus's ElNotification —
+- Pins **`live` v2.2.1**: notifications like Element Plus's ElNotification —
   `self.notify("Saved", title=, type="success", position="bottom-right",
   duration=, on_click=, on_close=)` from any page or component, shown in the
   page's corners with slide-in / fade-out transitions, the timer paused on
   hover; `q-transition` for any element; `@after="method"` timers; enum
   fields in templates; a component's element matched by its key when the
-  page changes; it says so at startup when Quirk is too old for it.
+  page changes; the browser script's URL carries its version (an update is
+  picked up at once, not after the hour it was cached); it says so at
+  startup when Quirk is too old for it.
 - **Keywords as argument names**: `notify("Saved", type="success")` — a
   parameter may be named like a keyword, and now it can be passed by name
   too (the call failed to parse) (probe p179).

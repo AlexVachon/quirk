@@ -5,22 +5,27 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
-## [7.44.1] — 2026-11-18 — fixes found building a Notification component
+## [7.44.2] — 2026-11-18 — notifications in `live`; `type=` as an argument name
 
 - Pins **`live` v2.3.0**: notifications like Element Plus's ElNotification —
   `self.notify("Saved", title=, type="success", position="bottom-right",
   duration=, on_click=, on_close=)` from any page or component, shown in the
-  page's corners, sliding in and back out, the timer paused on
-  hover, app-wide defaults with `live.notification_defaults(position=,
-  duration=, max=)`; `q-transition` for any element (it leaves with its entrance
-  reversed unless the CSS says otherwise); `@after="method"` timers; enum
-  fields in templates; a component's element matched by its key when the
-  page changes; the browser script's URL carries its version (an update is
-  picked up at once, not after the hour it was cached); it says so at
-  startup when Quirk is too old for it.
+  page's corners, sliding in and back out, the timer paused on hover;
+  app-wide defaults with `live.notification_defaults(position=, duration=,
+  max=)`; `q-transition` for any element (it leaves with its entrance
+  reversed unless the CSS says otherwise); the browser script's URL carries
+  its version (an update is picked up at once, not after the hour it was
+  cached).
 - **Keywords as argument names**: `notify("Saved", type="success")` — a
   parameter may be named like a keyword, and now it can be passed by name
-  too (the call failed to parse) (probe p179).
+  too (the call failed to parse — in the editor too) (probe p179).
+
+## [7.44.1] — 2026-11-18 — fixes found building a Notification component
+
+- Pins **`live` v2.1.1**: `@after="method"` timers, enum fields in
+  templates, a component's element matched by its key when the page
+  changes, a Notification component in the demo; it says so at startup when
+  Quirk is too old for it.
 - **Reflection on enum fields**: an enum field reads as its variant's name
   and is set from a name or an ordinal — templates show `{{ status }}`,
   compare `status == "Error"`, and props pass `status="Error"`. It read as

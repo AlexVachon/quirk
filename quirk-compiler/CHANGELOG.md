@@ -7,11 +7,13 @@ only for breaking changes.
 
 ## [7.44.1] — 2026-11-18 — fixes found building a Notification component
 
-- Pins **`live` v2.1.0**: `@after="method"` with `delay="ms"` (timers, e.g.
+- Pins **`live` v2.1.1**: `@after="method"` with `delay="ms"` (timers, e.g.
   a notification that closes itself), enum fields in templates, a
   component's element matched by its key when the page changes (moved, not
   rewritten), a Notification component in the demo (pages in src/pages,
-  components in src/components), `TestSession.run_timers()`.
+  components in src/components), `TestSession.run_timers()`; it says so at
+  startup when Quirk is too old for it, and template errors name the value
+  (`'lower' isn't a field of an Int (2)`).
 - **Reflection on enum fields**: an enum field reads as its variant's name
   and is set from a name or an ordinal — templates show `{{ status }}`,
   compare `status == "Error"`, and props pass `status="Error"`. It read as

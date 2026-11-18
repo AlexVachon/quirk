@@ -50,7 +50,7 @@ function collectModuleExports(filePath: string): Set<string> | null {
     {
         const lines = content.split(/\r?\n/);
         let depth = 0;
-        const constRe = /^\s*([A-Za-z_]\w*)\s*(?::\s*[A-Za-z0-9_.?|&\s\[\]]+\s*)?\s*(?::=|=(?!>))/;
+        const constRe = /^\s*(?:const\s+)?([A-Za-z_]\w*)\s*(?::\s*[A-Za-z0-9_.?|&\s\[\]]+\s*)?\s*(?::=|=(?!>))/;
         for (const line of lines) {
             if (depth === 0) {
                 const cm = constRe.exec(line);
@@ -515,7 +515,8 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
         // visible from every function. Only promote when the line starts
         // at module scope — inside a function body these are locals.
         if (lineStartDepth === 0) {
-            const topLevelDeclMatch = /^\s*([a-zA-Z_]\w*)\s*(?::\s*[a-zA-Z_][\w\[\], ]*)?\s*:?=/.exec(cleanLine);
+            // (`const PORT: Int = 3000` too)
+            const topLevelDeclMatch = /^\s*(?:const\s+)?([a-zA-Z_]\w*)\s*(?::\s*[a-zA-Z_][\w\[\], ]*)?\s*:?=/.exec(cleanLine);
             if (topLevelDeclMatch) {
                 const name = topLevelDeclMatch[1];
                 if (!KEYWORDS.has(name) && !cleanLine.trimStart().startsWith('return')) {

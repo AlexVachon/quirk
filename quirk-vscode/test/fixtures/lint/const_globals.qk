@@ -1,0 +1,15 @@
+// Module-level constants (`const NAME: Type = value`) are file globals:
+// used from functions, not "declared but never used" / "not defined".
+const PORT: Int = 3000
+const NAME := "app"
+
+define main() -> void {
+    print(NAME)
+    listen(PORT)
+    const local := 2
+    print(local + missing_name)   // expect: 'missing_name' is not defined
+}
+
+define listen(port: Int) -> void {
+    print(port)
+}

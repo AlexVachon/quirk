@@ -2,6 +2,13 @@
 
 All notable changes to the extension land here. Versioning follows SemVer; minor bumps for new features, patches for fixes.
 
+## [1.1.10] — 2026-11-18 — module-level constants
+
+- **`const PORT: Int = 3000` at the top of a file is a file global**: used
+  in a function, it was "'PORT' is not defined", and its declaration
+  "declared but never used". It also counts as one of the file's exports
+  (`from main use { PORT }`).
+
 ## [1.1.9] — 2026-11-18 — imports without a leading dot
 
 - **An app's own files import each other without a leading dot** (compiler

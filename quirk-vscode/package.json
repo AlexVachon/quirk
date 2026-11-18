@@ -2,7 +2,7 @@
   "name": "quirk",
   "displayName": "Quirk",
   "description": "Language support, interactive debugger, and Run/Debug integration for the Quirk programming language.",
-  "version": "1.1.6",
+  "version": "1.1.7",
   "publisher": "quirk",
   "license": "MIT",
   "icon": "icons/icon.png",
@@ -58,7 +58,15 @@
       {
         "language": "quirk",
         "scopeName": "source.quirk",
-        "path": "./syntaxes/quirk.tmLanguage.json"
+        "path": "./syntaxes/quirk.tmLanguage.json",
+        "embeddedLanguages": {
+          "meta.embedded.block.live.quirk": "html"
+        }
+      },
+      {
+        "scopeName": "live-template.injection.quirk",
+        "path": "./syntaxes/live-template.tmLanguage.json",
+        "injectTo": ["source.quirk"]
       }
     ],
     "snippets": [

@@ -9,27 +9,43 @@
 
 ### `struct Component`
 
-A live component — subclass it. Keep its state in fields; return its
-HTML from `render()` (usually `live.html(template, data)`); react to the
-events its template names in `handle(event, data)`:
+A component: a struct with its state in fields and its HTML in a template
+— returned from `template()` (a raw string, `r"""..."""`), or in the file
+named after the struct (`counter_page.html`) next to the `.qk` file:
 
-    <button q-click="save">          a click      (data: q-value / data-* attributes)
-    <form q-submit="add">            a submit     (data: the form's fields)
-    <input q-input="search">         typing       (data["value"], sent after a pause)
-    <select q-change="pick">         a change     (data["value"]; checkboxes "true"/"false")
-    <input q-enter="send">           Enter key    (data["value"])
-    <a href="/about" q-link>         navigate to another live page without a reload
+    <h1>Count: {{ count }}</h1>
+    <button @click="add(1)">+1</button>         calls self.add(1)
+    <input model="draft" @enter="save">         self.draft follows the field; Enter calls self.save(text)
+    <PlusButton :page="self" />                 another component, by its struct's name
+    {% if count >= 10 %}<p>a lot</p>{% end %}
+    {% for i, item in items %}<li>{{ item }}</li>{% else %}<li>none</li>{% end %}
 
-Override `title()` for the page title. In `handle`, `self.go(path)`
-navigates the browser to another page after the update.
+`on_load()` sets it up (once). Events call its methods by name; the page
+is rendered again after each one. Props: `text="hi {{ name }}"` sets the
+child's `text` field (a String), `:count="n + 1"` sets it to the value;
+`@done="refresh"` runs when the child calls `self.emit("done")`. A
+`<slot />` in a component's template shows what its tag enclosed.
+
+A page is a Component served by a `live.Router` (usually a `live.Page`).
+`title()` sets the page title; `self.go(path)` sends the browser to
+another page. (The 1.0 way, overriding `render()` and `handle(event,
+data)` with `q-click="name"` attributes, still works.)
+
+#### `define on_load(self) -> void`
+
+Set up the component's state (override). Runs once, before it's first shown.
+
+#### `define template(self) -> String`
+
+The component's template (override for one written in the .qk file; "" uses its .html file).
 
 #### `define render(self) -> String`
 
-The component's HTML (override).
+Its HTML (the template, rendered). Override to write HTML yourself.
 
 #### `define handle(self, event: String, data: Map) -> void`
 
-React to `event` from the page (override); `data` holds the event's values (Strings).
+React to `event` from the page. Override only for the 1.0 `q-click="name"` style.
 
 #### `define title(self) -> String`
 
@@ -38,6 +54,193 @@ The page title while this component is shown (override; "" leaves it).
 #### `define go(self, path: String) -> void`
 
 After this event, send the browser to `path` (a live page, or any URL).
+
+#### `define emit(self, event: String, value: Any = null) -> void`
+
+Tell the parent: runs its `@event="method"` handler, with `value` (if given).
+
+#### `define param(self, name: String) -> String`
+
+A `:param` of the page's path ("/users/:id" → `self.param("id")`); "" if none.
+
+#### `define query(self, name: String) -> String`
+
+A `?name=value` of the page's URL; "" if none.
+
+### `struct Widget`
+
+Something on a page. The built-in widgets (Label, Button, TextInput,
+Column, ...) render themselves; for one of your own, subclass Widget and
+return what it's made of from `build()`:
+
+    struct TodoItem : live.Widget {
+        text: String
+        define build(self) -> live.Widget {
+            return live.Row([live.Label(self.text), live.Button("×")])
+        }
+    }
+
+`with_class("name")` / `with_style("css")` add a CSS class / inline
+style (they return the widget, so they chain).
+
+#### `define build(self) -> Widget`
+
+What this widget is made of (override for a widget of your own).
+
+#### `define with_class(self, name: String) -> Widget`
+
+Add a CSS class.
+
+#### `define with_style(self, css: String) -> Widget`
+
+Add inline CSS ("color: red").
+
+### `struct Label : Widget`
+
+A line of text.
+
+### `struct Heading : Widget`
+
+A title: `level` 1 (largest) to 6.
+
+### `struct Html : Widget`
+
+HTML of your own, as is (not escaped — don't put user input in it
+unescaped; `live.html(template, data)` escapes for you).
+
+### `struct Button : Widget`
+
+A button. `on_click()` runs when it's clicked — pass `on_click=fn() {...}`,
+or subclass Button and override `on_click(self)`.
+
+#### `define on_click(self) -> void`
+
+Runs on a click (override, or pass `on_click=`).
+
+### `struct Link : Widget`
+
+A link to another page. Between live pages it switches without a reload
+(Back / Forward work); `external=true` for a normal link (another site).
+
+### `struct Image : Widget`
+
+A picture; `alt` describes it (for screen readers).
+
+### `struct TextInput : Widget`
+
+A one-line text field. `on_change(text)` runs as the user types (after a
+short pause), `on_submit(text)` on Enter. Show the page's state in it
+(`text=self.draft`); set that to "" in on_submit to clear the field.
+
+#### `define on_change(self, text: String) -> void`
+
+Runs as the text changes (override, or pass `on_change=`).
+
+#### `define on_submit(self, text: String) -> void`
+
+Runs on Enter (override, or pass `on_submit=`).
+
+### `struct TextArea : Widget`
+
+A text field of several lines; `on_change(text)` as the user types.
+
+#### `define on_change(self, text: String) -> void`
+
+Runs as the text changes (override, or pass `on_change=`).
+
+### `struct Checkbox : Widget`
+
+A box that's ticked or not, with a label; `on_change(checked)` when it's clicked.
+
+#### `define on_change(self, checked: Bool) -> void`
+
+Runs when it's ticked or unticked (override, or pass `on_change=`).
+
+### `struct Dropdown : Widget`
+
+A list to pick one of `options` from; `selected` is the index shown.
+`on_change(index, option)` when another is picked.
+
+#### `define on_change(self, index: Int, option: Any) -> void`
+
+Runs when another option is picked (override, or pass `on_change=`).
+
+### `struct Slider : Widget`
+
+A number picked with a handle; `on_change(value)` when it's moved.
+
+#### `define on_change(self, value: Int) -> void`
+
+Runs when the value changes (override, or pass `on_change=`).
+
+### `struct Column : Widget`
+
+Widgets one above the other, `spacing` pixels apart.
+
+### `struct Row : Widget`
+
+Widgets side by side, `spacing` pixels apart (wrapping when the window is narrow).
+
+### `struct Spacer : Widget`
+
+Empty space that pushes the widgets after it in a Row to the end.
+
+### `struct ListView : Widget`
+
+A bulleted list of `items` — text, or widgets. With `on_select`, an item
+can be clicked: `on_select(index, item)`.
+
+#### `define on_select(self, index: Int, item: Any) -> void`
+
+Runs when an item is clicked (override, or pass `on_select=`).
+
+### `struct Table : Widget`
+
+A table: `columns` the header texts, `rows` a List of rows (each a List of
+cells — text or widgets). With `on_select`, a row can be clicked:
+`on_select(index, row)`.
+
+#### `define on_select(self, index: Int, row: List) -> void`
+
+Runs when a row is clicked (override, or pass `on_select=`).
+
+### `struct Page : Component`
+
+A page: a Component the router serves (`router.add("/todos", TodoPage)`).
+Write its HTML in `template()`, or build it from widgets by overriding
+`build()`:
+
+    define build(self) -> live.Widget {
+        return live.Column([
+            live.Label("Count: " + String(self.count)),
+            live.Button("+1", on_click=fn() { self.count = self.count + 1 }),
+        ])
+    }
+
+#### `define build(self) -> Widget`
+
+What the page shows, built from widgets (override) — or leave it, and write a template.
+
+### `struct Router : web.Router`
+
+The app's live pages, in one place (a `router.qk`, say):
+
+    from live use { Router }
+    from src.counter use { CounterPage }
+    from src.todos use { TodoPage }
+
+    router := Router()
+    router.add("/", CounterPage)
+    router.add("/todos", TodoPage)
+    router.add("/users/:id", UserPage)       // self.param("id") in the page
+
+and in the app, `app.mount("/", router)`. It's a `web.Router`, so it can
+hold ordinary routes too (`router.get("/api/items", handler)`). Mount it
+at "/" (the browser script talks to /_live/).
+
+#### `define add(self, path: String, page: Callable) -> Router`
+
+Serve the page struct `page` (its name: `router.add("/", HomePage)`) at `path`.
 
 ### `struct TestSession`
 
@@ -58,12 +261,82 @@ Load the page at `path`.
 
 Send `event` (with `data`) to the page's component, as the browser would.
 
+#### `define click(self, text: String) -> TestSession`
+
+Click the button (or other element) showing `text`.
+
+#### `define type(self, placeholder: String, value: String) -> TestSession`
+
+Type `value` into the text field whose placeholder is `placeholder`.
+
+#### `define submit(self, placeholder: String, value: String) -> TestSession`
+
+Type `value` into the text field with `placeholder` and press Enter.
+
+#### `define check(self, text: String, on: Bool = true) -> TestSession`
+
+Tick (`on` true) or untick the checkbox labelled `text`.
+
+#### `define choose(self, option: String, index: Int = 0) -> TestSession`
+
+Pick an option: in a template's <select>, the option showing `option`
+(`index` unused); for a live.Dropdown, the one whose first option is
+`option`, at `index`.
+
+#### `define submit_form(self, field: String, fields: Map) -> TestSession`
+
+Submit the form holding the field with `placeholder` (or name), with `fields`.
+
 #### `define navigate(self, path: String) -> TestSession`
 
 Follow a `q-link` to `path`.
 
 
 ### Module-level functions
+
+#### `extern define has_field(obj: Any, name: String) -> Bool`
+
+`obj` has a field `name`.
+
+#### `extern define get_field(obj: Any, name: String) -> Any`
+
+The value of field `name` (null if there's none).
+
+#### `extern define set_field(obj: Any, name: String, value: Any) -> Bool`
+
+Set field `name` (false if there's none).
+
+#### `extern define has_method(obj: Any, name: String) -> Bool`
+
+`obj` has a public method `name`.
+
+#### `extern define call_method(obj: Any, name: String, args: List) -> Any`
+
+Call method `name` with `args` (missing ones take their defaults); ValueError if there's none.
+
+#### `extern define new_struct(name: String) -> Any`
+
+A new struct of type `name`, made without constructor arguments (null if there's none).
+
+#### `extern define type_name(obj: Any) -> String`
+
+The struct's type name ("" for other values).
+
+#### `extern define source_file(obj: Any) -> String`
+
+The source file declaring the struct's type.
+
+#### `extern define field_type(obj: Any, name: String) -> String`
+
+The declared type of field `name` ("Int", "List", ...; "" if unknown).
+
+#### `extern define field_names(obj: Any) -> List`
+
+The struct's field names.
+
+#### `extern define method_names(obj: Any) -> List`
+
+The struct's public method names.
 
 #### `define html(template: String, data: Map = {}) -> String`
 
@@ -79,16 +352,17 @@ How long a page's component is kept after its last event (minutes; default 30).
 
 The number of live components the server is holding (open pages).
 
-#### `define configure(head: String = "", layout: String = "") -> void`
+#### `define configure(head: String = "", layout: String = "", layout_file: String = "") -> void`
 
-Page settings: `head` — HTML added to every page's <head> (stylesheets,
-meta tags); `layout` — a whole page template of your own, with
-`{{ title }}`, `{{ head | raw }}`, `{{ body | raw }}` and a
-`<script src="/_live/live.js" defer></script>`.
+Page settings: `layout_file` — the base page every page is shown in (an
+HTML file with `<slot />` where the page goes, and `{{ title }}`); by
+default `index.html` in the app's folder when it has a `<slot />`.
+`head` — HTML added to every page's <head>. `layout` — a page template
+string (web's template syntax) with `{{ title }}`, `{{ head | raw }}` and
+`{{ body | raw }}`.
 
 #### `define page(app: web.App, path: String, factory: Callable) -> void`
 
 Serve a live page at `path` (":params" allowed, as in web routes):
 `factory(req)` makes the page's component — one per visitor, kept while
-they use it. Links with `q-link` between live pages switch without a
-reload, and Back / Forward work.
+they use it. (A `live.Router` does this for you: `router.add(path, Page)`.)

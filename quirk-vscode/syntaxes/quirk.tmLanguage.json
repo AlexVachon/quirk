@@ -192,6 +192,12 @@
     },
     "strings": {
       "patterns": [
+        {"comment": "r\"\"\"...\"\"\": a raw triple-quoted string — no ${} interpolation or escapes. Its text is highlighted as HTML with live's template syntax (templates returned from a component's template()); the injection grammar live-template.tmLanguage.json adds {{ }}, {% %}, @event=, :prop=, model= and <Component /> tags.", "name": "string.quoted.triple.raw.quirk", "begin": "\\b(r)(\"\"\")", "beginCaptures": {"1": {"name": "storage.type.string.quirk"}, "2": {"name": "punctuation.definition.string.begin.quirk"}}, "end": "\"\"\"", "endCaptures": {"0": {"name": "punctuation.definition.string.end.quirk"}}, "contentName": "meta.embedded.block.live.quirk", "patterns": [{"include": "text.html.basic"}]},
+        {"name": "string.quoted.triple.raw.quirk", "begin": "\\b(r)(''')", "beginCaptures": {"1": {"name": "storage.type.string.quirk"}, "2": {"name": "punctuation.definition.string.begin.quirk"}}, "end": "'''", "endCaptures": {"0": {"name": "punctuation.definition.string.end.quirk"}}},
+        {"comment": "\"\"\"...\"\"\": a triple-quoted string over several lines, with ${} interpolation.", "name": "string.quoted.triple.quirk", "begin": "\"\"\"", "end": "\"\"\"", "patterns": [{"include": "#string-content"}]},
+        {"name": "string.quoted.triple.quirk", "begin": "'''", "end": "'''", "patterns": [{"include": "#string-content"}]},
+        {"comment": "r\"...\" / r'...': a raw string — $ and backslashes as written.", "name": "string.quoted.double.raw.quirk", "begin": "\\b(r)(\")", "beginCaptures": {"1": {"name": "storage.type.string.quirk"}, "2": {"name": "punctuation.definition.string.begin.quirk"}}, "end": "\""},
+        {"name": "string.quoted.single.raw.quirk", "begin": "\\b(r)(')", "beginCaptures": {"1": {"name": "storage.type.string.quirk"}, "2": {"name": "punctuation.definition.string.begin.quirk"}}, "end": "'"},
         {
           "name": "string.quoted.double.quirk",
           "begin": "\"",

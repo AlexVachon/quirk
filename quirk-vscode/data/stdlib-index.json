@@ -55,6 +55,13 @@
 ],
 "Button": [
 {
+"package": "live",
+"qualified": "Button",
+"kind": "struct",
+"signature": "struct Button : Widget {",
+"doc": "A button. `on_click()` runs when it's clicked \u2014 pass `on_click=fn() {...}`,\nor subclass Button and override `on_click(self)`."
+},
+{
 "package": "ui",
 "qualified": "Button",
 "kind": "struct",
@@ -91,6 +98,13 @@
 ],
 "Checkbox": [
 {
+"package": "live",
+"qualified": "Checkbox",
+"kind": "struct",
+"signature": "struct Checkbox : Widget {",
+"doc": "A box that's ticked or not, with a label; `on_change(checked)` when it's clicked."
+},
+{
 "package": "ui",
 "qualified": "Checkbox",
 "kind": "struct",
@@ -108,6 +122,13 @@
 }
 ],
 "Column": [
+{
+"package": "live",
+"qualified": "Column",
+"kind": "struct",
+"signature": "struct Column : Widget {",
+"doc": "Widgets one above the other, `spacing` pixels apart."
+},
 {
 "package": "ui",
 "qualified": "Column",
@@ -131,7 +152,7 @@
 "qualified": "Component",
 "kind": "struct",
 "signature": "struct Component {",
-"doc": "A live component \u2014 subclass it. Keep its state in fields; return its\nHTML from `render()` (usually `live.html(template, data)`); react to the\nevents its template names in `handle(event, data)`:\n\n    <button q-click=\"save\">          a click      (data: q-value / data-* attributes)\n    <form q-submit=\"add\">            a submit     (data: the form's fields)\n    <input q-input=\"search\">         typing       (data[\"value\"], sent after a pause)\n    <select q-change=\"pick\">         a change     (data[\"value\"]; checkboxes \"true\"/\"false\")\n    <input q-enter=\"send\">           Enter key    (data[\"value\"])\n    <a href=\"/about\" q-link>         navigate to another live page without a reload\n\nOverride `title()` for the page title. In `handle`, `self.go(path)`\nnavigates the browser to another page after the update."
+"doc": "A component: a struct with its state in fields and its HTML in a template\n\u2014 returned from `template()` (a raw string, `r\"\"\"...\"\"\"`), or in the file\nnamed after the struct (`counter_page.html`) next to the `.qk` file:\n\n    <h1>Count: {{ count }}</h1>\n    <button @click=\"add(1)\">+1</button>         calls self.add(1)\n    <input model=\"draft\" @enter=\"save\">         self.draft follows the field; Enter calls self.save(text)\n    <PlusButton :page=\"self\" />                 another component, by its struct's name\n    {% if count >= 10 %}<p>a lot</p>{% end %}\n    {% for i, item in items %}<li>{{ item }}</li>{% else %}<li>none</li>{% end %}\n\n`on_load()` sets it up (once). Events call its methods by name; the page\nis rendered again after each one. Props: `text=\"hi {{ name }}\"` sets the\nchild's `text` field (a String), `:count=\"n + 1\"` sets it to the value;\n`@done=\"refresh\"` runs when the child calls `self.emit(\"done\")`. A\n`<slot />` in a component's template shows what its tag enclosed.\n\nA page is a Component served by a `live.Router` (usually a `live.Page`).\n`title()` sets the page title; `self.go(path)` sends the browser to\nanother page. (The 1.0 way, overriding `render()` and `handle(event,\ndata)` with `q-click=\"name\"` attributes, still works.)"
 }
 ],
 "DatePicker": [
@@ -162,6 +183,13 @@
 }
 ],
 "Dropdown": [
+{
+"package": "live",
+"qualified": "Dropdown",
+"kind": "struct",
+"signature": "struct Dropdown : Widget {",
+"doc": "A list to pick one of `options` from; `selected` is the index shown.\n`on_change(index, option)` when another is picked."
+},
 {
 "package": "ui",
 "qualified": "Dropdown",
@@ -260,6 +288,24 @@
 "doc": "Implemented by types that can produce a stable integer hash of their value.\nRequired for use as keys in `Map` or elements in `Set`.\nAny `Hashable` type must also be `Equatable`: two equal values must hash identically.\n\n@example\nstruct Point : Hashable {\n    x: Int\n    y: Int\n\n    define __eq(self, other: Point) -> Bool {\n        return self.x == other.x and self.y == other.y\n    }\n\n    define __hash(self) -> Int {\n        return self.x * 31 + self.y\n    }\n}"
 }
 ],
+"Heading": [
+{
+"package": "live",
+"qualified": "Heading",
+"kind": "struct",
+"signature": "struct Heading : Widget {",
+"doc": "A title: `level` 1 (largest) to 6."
+}
+],
+"Html": [
+{
+"package": "live",
+"qualified": "Html",
+"kind": "struct",
+"signature": "struct Html : Widget {",
+"doc": "HTML of your own, as is (not escaped \u2014 don't put user input in it\nunescaped; `live.html(template, data)` escapes for you)."
+}
+],
 "HttpError": [
 {
 "package": "web",
@@ -288,6 +334,13 @@
 }
 ],
 "Image": [
+{
+"package": "live",
+"qualified": "Image",
+"kind": "struct",
+"signature": "struct Image : Widget {",
+"doc": "A picture; `alt` describes it (for screen readers)."
+},
 {
 "package": "window",
 "qualified": "Image",
@@ -370,11 +423,27 @@
 ],
 "Label": [
 {
+"package": "live",
+"qualified": "Label",
+"kind": "struct",
+"signature": "struct Label : Widget {",
+"doc": "A line of text."
+},
+{
 "package": "ui",
 "qualified": "Label",
 "kind": "struct",
 "signature": "struct Label : Widget {",
 "doc": "Text. \"\\n\" starts a new line. `color` -1 uses the theme's text colour;\n`align` is \"left\", \"center\" or \"right\"."
+}
+],
+"Link": [
+{
+"package": "live",
+"qualified": "Link",
+"kind": "struct",
+"signature": "struct Link : Widget {",
+"doc": "A link to another page. Between live pages it switches without a reload\n(Back / Forward work); `external=true` for a normal link (another site)."
 }
 ],
 "List": [
@@ -396,6 +465,13 @@
 }
 ],
 "ListView": [
+{
+"package": "live",
+"qualified": "ListView",
+"kind": "struct",
+"signature": "struct ListView : Widget {",
+"doc": "A bulleted list of `items` \u2014 text, or widgets. With `on_select`, an item\ncan be clicked: `on_select(index, item)`."
+},
 {
 "package": "ui",
 "qualified": "ListView",
@@ -492,6 +568,15 @@
 "kind": "struct",
 "signature": "type Option[T] = Some(value: T) | None()",
 "doc": ""
+}
+],
+"Page": [
+{
+"package": "live",
+"qualified": "Page",
+"kind": "struct",
+"signature": "struct Page : Component {",
+"doc": "A page: a Component the router serves (`router.add(\"/todos\", TodoPage)`).\nWrite its HTML in `template()`, or build it from widgets by overriding\n`build()`:\n\n    define build(self) -> live.Widget {\n        return live.Column([\n            live.Label(\"Count: \" + String(self.count)),\n            live.Button(\"+1\", on_click=fn() { self.count = self.count + 1 }),\n        ])\n    }"
 }
 ],
 "Panel": [
@@ -636,6 +721,13 @@
 ],
 "Router": [
 {
+"package": "live",
+"qualified": "Router",
+"kind": "struct",
+"signature": "struct Router : web.Router {",
+"doc": "The app's live pages, in one place (a `router.qk`, say):\n\n    from live use { Router }\n    from src.counter use { CounterPage }\n    from src.todos use { TodoPage }\n\n    router := Router()\n    router.add(\"/\", CounterPage)\n    router.add(\"/todos\", TodoPage)\n    router.add(\"/users/:id\", UserPage)       // self.param(\"id\") in the page\n\nand in the app, `app.mount(\"/\", router)`. It's a `web.Router`, so it can\nhold ordinary routes too (`router.get(\"/api/items\", handler)`). Mount it\nat \"/\" (the browser script talks to /_live/)."
+},
+{
 "package": "web",
 "qualified": "Router",
 "kind": "struct",
@@ -644,6 +736,13 @@
 }
 ],
 "Row": [
+{
+"package": "live",
+"qualified": "Row",
+"kind": "struct",
+"signature": "struct Row : Widget {",
+"doc": "Widgets side by side, `spacing` pixels apart (wrapping when the window is narrow)."
+},
 {
 "package": "ui",
 "qualified": "Row",
@@ -708,6 +807,13 @@
 ],
 "Slider": [
 {
+"package": "live",
+"qualified": "Slider",
+"kind": "struct",
+"signature": "struct Slider : Widget {",
+"doc": "A number picked with a handle; `on_change(value)` when it's moved."
+},
+{
 "package": "ui",
 "qualified": "Slider",
 "kind": "struct",
@@ -743,6 +849,13 @@
 }
 ],
 "Spacer": [
+{
+"package": "live",
+"qualified": "Spacer",
+"kind": "struct",
+"signature": "struct Spacer : Widget {",
+"doc": "Empty space that pushes the widgets after it in a Row to the end."
+},
 {
 "package": "ui",
 "qualified": "Spacer",
@@ -788,6 +901,13 @@
 }
 ],
 "Table": [
+{
+"package": "live",
+"qualified": "Table",
+"kind": "struct",
+"signature": "struct Table : Widget {",
+"doc": "A table: `columns` the header texts, `rows` a List of rows (each a List of\ncells \u2014 text or widgets). With `on_select`, a row can be clicked:\n`on_select(index, row)`."
+},
 {
 "package": "ui",
 "qualified": "Table",
@@ -843,6 +963,13 @@
 ],
 "TextArea": [
 {
+"package": "live",
+"qualified": "TextArea",
+"kind": "struct",
+"signature": "struct TextArea : Widget {",
+"doc": "A text field of several lines; `on_change(text)` as the user types."
+},
+{
 "package": "ui",
 "qualified": "TextArea",
 "kind": "struct",
@@ -860,6 +987,13 @@
 }
 ],
 "TextInput": [
+{
+"package": "live",
+"qualified": "TextInput",
+"kind": "struct",
+"signature": "struct TextInput : Widget {",
+"doc": "A one-line text field. `on_change(text)` runs as the user types (after a\nshort pause), `on_submit(text)` on Enter. Show the page's state in it\n(`text=self.draft`); set that to \"\" in on_submit to clear the field."
+},
 {
 "package": "ui",
 "qualified": "TextInput",
@@ -977,6 +1111,13 @@
 }
 ],
 "Widget": [
+{
+"package": "live",
+"qualified": "Widget",
+"kind": "struct",
+"signature": "struct Widget {",
+"doc": "Something on a page. The built-in widgets (Label, Button, TextInput,\nColumn, ...) render themselves; for one of your own, subclass Widget and\nreturn what it's made of from `build()`:\n\n    struct TodoItem : live.Widget {\n        text: String\n        define build(self) -> live.Widget {\n            return live.Row([live.Label(self.text), live.Button(\"\u00d7\")])\n        }\n    }\n\n`with_class(\"name\")` / `with_style(\"css\")` add a CSS class / inline\nstyle (they return the widget, so they chain)."
+},
 {
 "package": "ui",
 "qualified": "Widget",
@@ -1619,6 +1760,13 @@
 ],
 "add": [
 {
+"package": "live",
+"qualified": "Router.add",
+"kind": "method",
+"signature": "define add(self, path: String, page: Callable) -> Router {",
+"doc": "Serve the page struct `page` (its name: `router.add(\"/\", HomePage)`) at `path`."
+},
+{
 "package": "typing",
 "qualified": "Set.add",
 "kind": "method",
@@ -1970,6 +2118,22 @@
 "doc": "Pause execution at this line and prompt for a debugger command. `label`\nshows up in the banner so multiple breakpoints in the same file stay\ndistinguishable. Defaults to \"\" \u2014 fine when you only have one.\n\n@example\ndebug.breakpoint()                      // unlabeled, simplest form\ndebug.breakpoint(\"before db write\")     // labeled"
 }
 ],
+"build": [
+{
+"package": "live",
+"qualified": "Widget.build",
+"kind": "method",
+"signature": "define build(self) -> Widget {",
+"doc": "What this widget is made of (override for a widget of your own)."
+},
+{
+"package": "live",
+"qualified": "Page.build",
+"kind": "method",
+"signature": "define build(self) -> Widget {",
+"doc": "What the page shows, built from widgets (override) \u2014 or leave it, and write a template."
+}
+],
 "build_query": [
 {
 "package": "url",
@@ -1995,6 +2159,15 @@
 "kind": "define",
 "signature": "extern define byteorder() -> String",
 "doc": "The host machine's byte order: `\"little\"` or `\"big\"`."
+}
+],
+"call_method": [
+{
+"package": "live",
+"qualified": "call_method",
+"kind": "define",
+"signature": "extern define call_method(obj: Any, name: String, args: List) -> Any",
+"doc": "Call method `name` with `args` (missing ones take their defaults); ValueError if there's none."
 }
 ],
 "cancel": [
@@ -2087,6 +2260,13 @@
 ],
 "check": [
 {
+"package": "live",
+"qualified": "TestSession.check",
+"kind": "method",
+"signature": "define check(self, text: String, on: Bool = true) -> TestSession {",
+"doc": "Tick (`on` true) or untick the checkbox labelled `text`."
+},
+{
 "package": "process",
 "qualified": "RunResult.check",
 "kind": "method",
@@ -2117,6 +2297,15 @@
 "kind": "define",
 "signature": "extern define choice(items: List) -> Any",
 "doc": "Pick a random element from a non-empty list. Returns null if empty."
+}
+],
+"choose": [
+{
+"package": "live",
+"qualified": "TestSession.choose",
+"kind": "method",
+"signature": "define choose(self, option: String, index: Int = 0) -> TestSession {",
+"doc": "Pick an option: in a template's <select>, the option showing `option`\n(`index` unused); for a live.Dropdown, the one whose first option is\n`option`, at `index`."
 }
 ],
 "circle": [
@@ -2209,6 +2398,13 @@
 }
 ],
 "click": [
+{
+"package": "live",
+"qualified": "TestSession.click",
+"kind": "method",
+"signature": "define click(self, text: String) -> TestSession {",
+"doc": "Click the button (or other element) showing `text`."
+},
 {
 "package": "ui",
 "qualified": "Button.click",
@@ -2359,8 +2555,8 @@
 "package": "live",
 "qualified": "configure",
 "kind": "define",
-"signature": "define configure(head: String = \"\", layout: String = \"\") -> void {",
-"doc": "Page settings: `head` \u2014 HTML added to every page's <head> (stylesheets,\nmeta tags); `layout` \u2014 a whole page template of your own, with\n`{{ title }}`, `{{ head | raw }}`, `{{ body | raw }}` and a\n`<script src=\"/_live/live.js\" defer></script>`."
+"signature": "define configure(head: String = \"\", layout: String = \"\", layout_file: String = \"\") -> void {",
+"doc": "Page settings: `layout_file` \u2014 the base page every page is shown in (an\nHTML file with `<slot />` where the page goes, and `{{ title }}`); by\ndefault `index.html` in the app's folder when it has a `<slot />`.\n`head` \u2014 HTML added to every page's <head>. `layout` \u2014 a page template\nstring (web's template syntax) with `{{ title }}`, `{{ head | raw }}` and\n`{{ body | raw }}`."
 }
 ],
 "confirm": [
@@ -2874,6 +3070,15 @@
 "doc": "True while a cell is being edited."
 }
 ],
+"emit": [
+{
+"package": "live",
+"qualified": "Component.emit",
+"kind": "method",
+"signature": "define emit(self, event: String, value: Any = null) -> void {",
+"doc": "Tell the parent: runs its `@event=\"method\"` handler, with `value` (if given)."
+}
+],
 "encode": [
 {
 "package": "encoding",
@@ -3005,6 +3210,24 @@
 "kind": "define",
 "signature": "extern define fabs(x: Double) -> Double",
 "doc": "Absolute value of a Double. (Wrapped by `abs_f` for naming symmetry.)"
+}
+],
+"field_names": [
+{
+"package": "live",
+"qualified": "field_names",
+"kind": "define",
+"signature": "extern define field_names(obj: Any) -> List",
+"doc": "The struct's field names."
+}
+],
+"field_type": [
+{
+"package": "live",
+"qualified": "field_type",
+"kind": "define",
+"signature": "extern define field_type(obj: Any, name: String) -> String",
+"doc": "The declared type of field `name` (\"Int\", \"List\", ...; \"\" if unknown)."
 }
 ],
 "file": [
@@ -3271,6 +3494,15 @@
 "doc": "A header's value as set so far (\"\" if none)."
 }
 ],
+"get_field": [
+{
+"package": "live",
+"qualified": "get_field",
+"kind": "define",
+"signature": "extern define get_field(obj: Any, name: String) -> Any",
+"doc": "The value of field `name` (null if there's none)."
+}
+],
 "get_or": [
 {
 "package": "typing",
@@ -3392,7 +3624,7 @@
 "qualified": "Component.handle",
 "kind": "method",
 "signature": "define handle(self, event: String, data: Map) -> void {",
-"doc": "React to `event` from the page (override); `data` holds the event's values (Strings)."
+"doc": "React to `event` from the page. Override only for the 1.0 `q-click=\"name\"` style."
 },
 {
 "package": "ui",
@@ -3430,6 +3662,24 @@
 "kind": "method",
 "signature": "define has(self, state: String) -> Bool {",
 "doc": "True if `state` (\"focused\", \"checked\"...) is one of its states."
+}
+],
+"has_field": [
+{
+"package": "live",
+"qualified": "has_field",
+"kind": "define",
+"signature": "extern define has_field(obj: Any, name: String) -> Bool",
+"doc": "`obj` has a field `name`."
+}
+],
+"has_method": [
+{
+"package": "live",
+"qualified": "has_method",
+"kind": "define",
+"signature": "extern define has_method(obj: Any, name: String) -> Bool",
+"doc": "`obj` has a public method `name`."
 }
 ],
 "has_rtl": [
@@ -4325,6 +4575,15 @@
 "doc": "Lower median (no averaging \u2014 returns one of the input values). For odd\nn this matches `median`; for even n it returns the lower of the two\nmidpoints."
 }
 ],
+"method_names": [
+{
+"package": "live",
+"qualified": "method_names",
+"kind": "define",
+"signature": "extern define method_names(obj: Any) -> List",
+"doc": "The struct's public method names."
+}
+],
 "mime_type": [
 {
 "package": "web",
@@ -4503,6 +4762,15 @@
 "doc": "Follow a `q-link` to `path`."
 }
 ],
+"new_struct": [
+{
+"package": "live",
+"qualified": "new_struct",
+"kind": "define",
+"signature": "extern define new_struct(name: String) -> Any",
+"doc": "A new struct of type `name`, made without constructor arguments (null if there's none)."
+}
+],
 "nil": [
 {
 "package": "uuid",
@@ -4548,6 +4816,52 @@
 "doc": "Converts to `Result`: `Some(v)` \u2192 `Ok(v)`; `None` \u2192 `Err(err)`."
 }
 ],
+"on_change": [
+{
+"package": "live",
+"qualified": "TextInput.on_change",
+"kind": "method",
+"signature": "define on_change(self, text: String) -> void {",
+"doc": "Runs as the text changes (override, or pass `on_change=`)."
+},
+{
+"package": "live",
+"qualified": "TextArea.on_change",
+"kind": "method",
+"signature": "define on_change(self, text: String) -> void {",
+"doc": "Runs as the text changes (override, or pass `on_change=`)."
+},
+{
+"package": "live",
+"qualified": "Checkbox.on_change",
+"kind": "method",
+"signature": "define on_change(self, checked: Bool) -> void {",
+"doc": "Runs when it's ticked or unticked (override, or pass `on_change=`)."
+},
+{
+"package": "live",
+"qualified": "Dropdown.on_change",
+"kind": "method",
+"signature": "define on_change(self, index: Int, option: Any) -> void {",
+"doc": "Runs when another option is picked (override, or pass `on_change=`)."
+},
+{
+"package": "live",
+"qualified": "Slider.on_change",
+"kind": "method",
+"signature": "define on_change(self, value: Int) -> void {",
+"doc": "Runs when the value changes (override, or pass `on_change=`)."
+}
+],
+"on_click": [
+{
+"package": "live",
+"qualified": "Button.on_click",
+"kind": "method",
+"signature": "define on_click(self) -> void {",
+"doc": "Runs on a click (override, or pass `on_click=`)."
+}
+],
 "on_error": [
 {
 "package": "web",
@@ -4557,6 +4871,15 @@
 "doc": "Handle errors thrown by handlers: `handler(err, req, res)`. By default\nan HttpError answers with its status and message, anything else with\n500 (and the error printed)."
 }
 ],
+"on_load": [
+{
+"package": "live",
+"qualified": "Component.on_load",
+"kind": "method",
+"signature": "define on_load(self) -> void {",
+"doc": "Set up the component's state (override). Runs once, before it's first shown."
+}
+],
 "on_not_found": [
 {
 "package": "web",
@@ -4564,6 +4887,31 @@
 "kind": "method",
 "signature": "define on_not_found(self, handler: Callable) -> App {",
 "doc": "Answer requests no route matched: `handler(req, res)` (default: 404 Not Found)."
+}
+],
+"on_select": [
+{
+"package": "live",
+"qualified": "ListView.on_select",
+"kind": "method",
+"signature": "define on_select(self, index: Int, item: Any) -> void {",
+"doc": "Runs when an item is clicked (override, or pass `on_select=`)."
+},
+{
+"package": "live",
+"qualified": "Table.on_select",
+"kind": "method",
+"signature": "define on_select(self, index: Int, row: List) -> void {",
+"doc": "Runs when a row is clicked (override, or pass `on_select=`)."
+}
+],
+"on_submit": [
+{
+"package": "live",
+"qualified": "TextInput.on_submit",
+"kind": "method",
+"signature": "define on_submit(self, text: String) -> void {",
+"doc": "Runs on Enter (override, or pass `on_submit=`)."
 }
 ],
 "open": [
@@ -4645,7 +4993,7 @@
 "qualified": "page",
 "kind": "define",
 "signature": "define page(app: web.App, path: String, factory: Callable) -> void {",
-"doc": "Serve a live page at `path` (\":params\" allowed, as in web routes):\n`factory(req)` makes the page's component \u2014 one per visitor, kept while\nthey use it. Links with `q-link` between live pages switch without a\nreload, and Back / Forward work."
+"doc": "Serve a live page at `path` (\":params\" allowed, as in web routes):\n`factory(req)` makes the page's component \u2014 one per visitor, kept while\nthey use it. (A `live.Router` does this for you: `router.add(path, Page)`.)"
 },
 {
 "package": "ui",
@@ -4653,6 +5001,15 @@
 "kind": "method",
 "signature": "define page(self) -> Widget {",
 "doc": "The page being shown (null when there are none)."
+}
+],
+"param": [
+{
+"package": "live",
+"qualified": "Component.param",
+"kind": "method",
+"signature": "define param(self, name: String) -> String {",
+"doc": "A `:param` of the page's path (\"/users/:id\" \u2192 `self.param(\"id\")`); \"\" if none."
 }
 ],
 "parse": [
@@ -5065,6 +5422,15 @@
 "doc": "The `q`-th quantile of `items` for `q` in `[0.0, 1.0]`. Uses linear\ninterpolation between the two surrounding sample points. `quantile(xs,\n0.5)` is the median; `0.25` is the lower quartile; `0.75` the upper.\n\n@example\nquantile([1, 2, 3, 4, 5], 0.25)   // 2.0\nquantile([1, 2, 3, 4, 5], 0.75)   // 4.0"
 }
 ],
+"query": [
+{
+"package": "live",
+"qualified": "Component.query",
+"kind": "method",
+"signature": "define query(self, name: String) -> String {",
+"doc": "A `?name=value` of the page's URL; \"\" if none."
+}
+],
 "quote": [
 {
 "package": "url",
@@ -5304,7 +5670,7 @@
 "qualified": "Component.render",
 "kind": "method",
 "signature": "define render(self) -> String {",
-"doc": "The component's HTML (override)."
+"doc": "Its HTML (the template, rendered). Override to write HTML yourself."
 },
 {
 "package": "web",
@@ -5778,6 +6144,15 @@
 "doc": "Set the date (clamped to a real date); runs `on_change` if it changed."
 }
 ],
+"set_field": [
+{
+"package": "live",
+"qualified": "set_field",
+"kind": "define",
+"signature": "extern define set_field(obj: Any, name: String, value: Any) -> Bool",
+"doc": "Set field `name` (false if there's none)."
+}
+],
 "set_title": [
 {
 "package": "window",
@@ -6011,6 +6386,15 @@
 "doc": "Sort by column `c` (`descending` for largest / last first)."
 }
 ],
+"source_file": [
+{
+"package": "live",
+"qualified": "source_file",
+"kind": "define",
+"signature": "extern define source_file(obj: Any) -> String",
+"doc": "The source file declaring the struct's type."
+}
+],
 "spawn": [
 {
 "package": "process",
@@ -6203,6 +6587,24 @@
 "doc": "Returns the string representation of this integer.\n@returns: String"
 }
 ],
+"submit": [
+{
+"package": "live",
+"qualified": "TestSession.submit",
+"kind": "method",
+"signature": "define submit(self, placeholder: String, value: String) -> TestSession {",
+"doc": "Type `value` into the text field with `placeholder` and press Enter."
+}
+],
+"submit_form": [
+{
+"package": "live",
+"qualified": "TestSession.submit_form",
+"kind": "method",
+"signature": "define submit_form(self, field: String, fields: Map) -> TestSession {",
+"doc": "Submit the form holding the field with `placeholder` (or name), with `fields`."
+}
+],
 "substring": [
 {
 "package": "typing",
@@ -6291,6 +6693,15 @@
 "kind": "define",
 "signature": "extern define temp_root() -> String",
 "doc": "The directory temporary files go in: `$TMPDIR`, else `/tmp`."
+}
+],
+"template": [
+{
+"package": "live",
+"qualified": "Component.template",
+"kind": "method",
+"signature": "define template(self) -> String {",
+"doc": "The component's template (override for one written in the .qk file; \"\" uses its .html file)."
 }
 ],
 "terminal_cols": [
@@ -6621,6 +7032,24 @@
 "doc": "Truncate toward zero. `trunc(-2.7) == -2.0`."
 }
 ],
+"type": [
+{
+"package": "live",
+"qualified": "TestSession.type",
+"kind": "method",
+"signature": "define type(self, placeholder: String, value: String) -> TestSession {",
+"doc": "Type `value` into the text field whose placeholder is `placeholder`."
+}
+],
+"type_name": [
+{
+"package": "live",
+"qualified": "type_name",
+"kind": "define",
+"signature": "extern define type_name(obj: Any) -> String",
+"doc": "The struct's type name (\"\" for other values)."
+}
+],
 "unclip": [
 {
 "package": "window",
@@ -6929,6 +7358,24 @@
 "kind": "method",
 "signature": "define width(self) -> Int {",
 "doc": "Drawable width in (drawing) pixels \u2014 see `scale()`."
+}
+],
+"with_class": [
+{
+"package": "live",
+"qualified": "Widget.with_class",
+"kind": "method",
+"signature": "define with_class(self, name: String) -> Widget {",
+"doc": "Add a CSS class."
+}
+],
+"with_style": [
+{
+"package": "live",
+"qualified": "Widget.with_style",
+"kind": "method",
+"signature": "define with_style(self, css: String) -> Widget {",
+"doc": "Add inline CSS (\"color: red\")."
 }
 ],
 "write": [

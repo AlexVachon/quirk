@@ -2,6 +2,19 @@
 
 All notable changes to the extension land here. Versioning follows SemVer; minor bumps for new features, patches for fixes.
 
+## [1.1.7] — 2026-11-18 — live templates
+
+- **Templates are highlighted.** The HTML in a raw string (`r"""..."""`, what
+  a `live` component's `template()` returns) is highlighted as HTML, with
+  live's syntax on top: `{{ expr }}`, `{% if / for / end %}`, `@click=` /
+  `:prop=` / `model=` attributes (their values as expressions) and
+  `<Component />` tags.
+- Raw strings (`r"..."`, `r"""..."""`, compiler 7.44) and triple-quoted
+  strings (`"""..."""`) are recognised as strings — triple-quoted ones spanning
+  lines, with `${}` highlighted; raw ones without interpolation or escapes.
+- Hover and completion know the `live` 2 API (Page, Component, Router,
+  widgets, reflection helpers).
+
 ## [1.1.6] — 2026-11-16 — hover docs for the new window / ui API
 
 - Hover and completion know the `window` / `ui` API added in compiler

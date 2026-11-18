@@ -1,0 +1,156 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "comment": "live's template syntax inside a Quirk raw string (r\"\"\"...\"\"\"): {{ expr }}, {% if / for / end %}, @event= / :prop= / model= attributes, and <Component /> tags (capitalized). Injected on the left, so it wins over the HTML grammar, inside tags too.",
+  "scopeName": "live-template.injection.quirk",
+  "injectionSelector": "L:meta.embedded.block.live.quirk -comment",
+  "patterns": [
+    {
+      "include": "#expression"
+    },
+    {
+      "include": "#statement"
+    },
+    {
+      "include": "#directive"
+    },
+    {
+      "include": "#component"
+    }
+  ],
+  "repository": {
+    "expression": {
+      "name": "meta.template.expression.live",
+      "begin": "\\{\\{",
+      "end": "\\}\\}",
+      "beginCaptures": {
+        "0": {
+          "name": "punctuation.definition.template-expression.begin.live"
+        }
+      },
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.definition.template-expression.end.live"
+        }
+      },
+      "patterns": [
+        {
+          "include": "#expr"
+        }
+      ]
+    },
+    "statement": {
+      "name": "meta.template.statement.live",
+      "begin": "(\\{%)\\s*(if|elif|else|end|for)?\\b",
+      "end": "%\\}",
+      "beginCaptures": {
+        "1": {
+          "name": "punctuation.definition.template-expression.begin.live"
+        },
+        "2": {
+          "name": "keyword.control.live"
+        }
+      },
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.definition.template-expression.end.live"
+        }
+      },
+      "patterns": [
+        {
+          "match": "\\bin\\b",
+          "name": "keyword.control.live"
+        },
+        {
+          "include": "#expr"
+        }
+      ]
+    },
+    "directive": {
+      "comment": "@click=\"add(1)\", :count=\"n + 1\", model=\"draft\" — the value is an expression (or a method call).",
+      "begin": "(?<=\\s)(@[a-zA-Z]+|:[a-zA-Z_][\\w-]*|model)(=)(\")",
+      "beginCaptures": {
+        "1": {
+          "name": "entity.other.attribute-name.directive.live"
+        },
+        "2": {
+          "name": "punctuation.separator.key-value.html"
+        },
+        "3": {
+          "name": "punctuation.definition.string.begin.html"
+        }
+      },
+      "end": "\"",
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.definition.string.end.html"
+        }
+      },
+      "contentName": "meta.template.expression.live",
+      "patterns": [
+        {
+          "include": "#expr"
+        }
+      ]
+    },
+    "component": {
+      "comment": "<PlusButton ... /> and </Card>: a component, by its struct's name.",
+      "match": "(</?)([A-Z][A-Za-z0-9_]*)\\b",
+      "captures": {
+        "1": {
+          "name": "punctuation.definition.tag.begin.html"
+        },
+        "2": {
+          "name": "entity.name.type.class.component.live"
+        }
+      }
+    },
+    "expr": {
+      "patterns": [
+        {
+          "match": "\\b(and|or|not)\\b",
+          "name": "keyword.operator.logical.live"
+        },
+        {
+          "match": "\\b(true|false|null)\\b",
+          "name": "constant.language.live"
+        },
+        {
+          "match": "\\bself\\b",
+          "name": "variable.language.self.live"
+        },
+        {
+          "match": "\\b\\d+(\\.\\d+)?\\b",
+          "name": "constant.numeric.live"
+        },
+        {
+          "match": "\"[^\"]*\"|'[^']*'",
+          "name": "string.quoted.live"
+        },
+        {
+          "match": "\\|\\s*(raw)\\b",
+          "captures": {
+            "1": {
+              "name": "support.function.filter.live"
+            }
+          }
+        },
+        {
+          "match": "\\b([a-zA-Z_]\\w*)(?=\\s*\\()",
+          "name": "entity.name.function.live"
+        },
+        {
+          "match": "(?<=\\.)[a-zA-Z_]\\w*",
+          "name": "variable.other.property.live"
+        },
+        {
+          "match": "\\b[a-zA-Z_]\\w*\\b",
+          "name": "variable.other.readwrite.live"
+        },
+        {
+          "match": "==|!=|<=|>=|<|>|\\+|-|\\*|/|%",
+          "name": "keyword.operator.live"
+        }
+      ]
+    }
+  }
+}

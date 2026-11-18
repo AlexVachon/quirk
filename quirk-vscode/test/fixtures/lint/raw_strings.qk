@@ -1,0 +1,16 @@
+// Raw strings (r"...", r"""..."""): the `r` isn't a name, and `${...}`,
+// backslashes and template syntax inside them aren't code.
+define page(count: Int) -> String {
+    path := r"C:\new\${nothing}"
+    html := r"""
+        <p>{{ count }} for ${price}</p>
+        <button @click="add(1)">+1</button>
+    """
+    inline := r"""<b>{{ total }}</b>""" + path
+    return html + inline + String(count) + chr_name()
+}
+
+define chr_name() -> String {
+    name := "x"
+    return "plain ${name}" + r'q' + missing_after_raw   // expect: 'missing_after_raw' is not defined
+}

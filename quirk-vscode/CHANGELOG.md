@@ -12,6 +12,9 @@ All notable changes to the extension land here. Versioning follows SemVer; minor
 - Raw strings (`r"..."`, `r"""..."""`, compiler 7.44) and triple-quoted
   strings (`"""..."""`) are recognised as strings — triple-quoted ones spanning
   lines, with `${}` highlighted; raw ones without interpolation or escapes.
+- The editor's own checks know raw strings: no more "'r' is not defined"
+  on `r"""..."""`, and names inside a raw string (`${price}`, template
+  text) aren't taken for code.
 - Hover and completion know the `live` 2 API (Page, Component, Router,
   widgets, reflection helpers).
 

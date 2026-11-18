@@ -9,14 +9,22 @@
  * across lines so identifiers buried in triple-quoted content don't leak
  * out as undefined-variable warnings. Returns the updated state.
  */
-export type TripleState = { active: boolean; quote: '"' | "'" | '' };
+export type TripleState = { active: boolean; quote: '"' | "'" | ''; raw?: boolean };
+
+// Is the quote at `i` the opener of a raw string — `r"…"`, `r"""…"""` —
+// i.e. right after an `r` that isn't the end of a longer identifier?
+function isRawOpener(line: string, i: number): boolean {
+    return i > 0 && line[i - 1] === 'r' && (i < 2 || !/\w/.test(line[i - 2]));
+}
 
 // Mask a slice of string content: blank everything *except* the contents
 // of `${…}` interpolations, which stay as code so identifier references
 // inside them register as usages. Mirrors the single-line maskLine
 // in-string branch but operates on a bare string slice with no enclosing
 // quotes. Format specs after a top-level `:` / `%` / `|` are blanked.
-function maskStringContent(s: string): string {
+function maskStringContent(s: string, raw = false): string {
+    // A raw string has no `${…}` and no escapes: all of it is text.
+    if (raw) return ' '.repeat(s.length);
     let out = "";
     let i = 0;
     while (i < s.length) {
@@ -59,10 +67,10 @@ export function maskLineWithState(line: string, state: TripleState): { masked: s
         const idx = line.indexOf(q + q + q);
         if (idx === -1) {
             // Whole line is content — preserve any `${…}` expressions.
-            return { masked: maskStringContent(line), state };
+            return { masked: maskStringContent(line, state.raw), state };
         }
         const closedAt = idx + 3;
-        const head = maskStringContent(line.slice(0, idx)) + '   '; // 3 spaces for the closing """
+        const head = maskStringContent(line.slice(0, idx), state.raw) + '   '; // 3 spaces for the closing """
         const tail = maskLine(line.slice(closedAt));
         return {
             masked: head + tail,
@@ -80,11 +88,14 @@ export function maskLineWithState(line: string, state: TripleState): { masked: s
         if (line.slice(0, i).includes('//')) continue;
         const restStart = i + 3;
         const closeIdx = line.indexOf(c + c + c, restStart);
+        // r"""…""": the `r` is part of the literal, not an identifier.
+        const raw = isRawOpener(line, i);
+        const lead = raw ? line.slice(0, i - 1) + ' ' : line.slice(0, i);
         if (closeIdx !== -1) {
             // Same-line """...""" — handle inline. Three spaces for the
             // opener + masked content + three spaces for the close + tail.
-            const head = line.slice(0, i);
-            const content = maskStringContent(line.slice(restStart, closeIdx));
+            const head = lead;
+            const content = maskStringContent(line.slice(restStart, closeIdx), raw);
             const tail = maskLine(line.slice(closeIdx + 3));
             return {
                 masked: head + '   ' + content + '   ' + tail,
@@ -92,11 +103,11 @@ export function maskLineWithState(line: string, state: TripleState): { masked: s
             };
         }
         // Spans lines: mask from the opener to EOL, flip state.
-        const head = line.slice(0, i);
-        const content = maskStringContent(line.slice(restStart));
+        const head = lead;
+        const content = maskStringContent(line.slice(restStart), raw);
         return {
             masked: head + '   ' + content,
-            state: { active: true, quote: c as '"' | "'" },
+            state: { active: true, quote: c as '"' | "'", raw },
         };
     }
     return { masked: maskLine(line), state };
@@ -109,6 +120,7 @@ export function maskLine(line: string): string {
     let inInterpolation = false;
     let braceDepth = 0;
     let nestedQuoteChar = '';
+    let raw = false;
 
     for (let j = 0; j < line.length; j++) {
         const char = line[j];
@@ -121,12 +133,18 @@ export function maskLine(line: string): string {
             } else if (char === '"' || char === "'") {
                 inString = true;
                 quoteChar = char;
+                // r"…": blank the `r` too, and read the rest as raw text.
+                raw = isRawOpener(line, j);
+                if (raw) masked = masked.slice(0, -1) + ' ';
                 masked += ' ';
             } else {
                 masked += char;
             }
         } else {
-            if (!inInterpolation) {
+            if (raw) {
+                if (char === quoteChar) { inString = false; quoteChar = ''; raw = false; }
+                masked += ' ';
+            } else if (!inInterpolation) {
                 if (char === '\\') {
                     masked += '  ';
                     j++;

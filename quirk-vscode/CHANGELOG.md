@@ -2,6 +2,16 @@
 
 All notable changes to the extension land here. Versioning follows SemVer; minor bumps for new features, patches for fixes.
 
+## [1.1.8] — 2026-11-18 — errors follow the compiler
+
+- **When the compiler changes, open files are checked again.** Reinstalling
+  or rebuilding Quirk (or a new release) left every open file with the old
+  compiler's errors until it was edited or saved — e.g. `type="success"`
+  still marked as a syntax error after updating to a compiler that accepts
+  it. The extension notices the compiler's file changing, asks it its
+  version again and re-checks.
+- **Quirk: Check Open Files Again** (command palette) does it by hand.
+
 ## [1.1.7] — 2026-11-18 — live templates
 
 - **Templates are highlighted.** The HTML in a raw string (`r"""..."""`, what

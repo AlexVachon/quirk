@@ -200,6 +200,29 @@ export function compilerVarType(doc: vscode.TextDocument, position: vscode.Posit
     return best.type;
 }
 
+// `command` as a file path: itself when it's a path, else found on PATH.
+function resolveBinary(command: string): string | undefined {
+    if (command.includes('/') || command.includes('\\')) return fs.existsSync(command) ? command : undefined;
+    const exts = process.platform === 'win32' ? ['.exe', '.cmd', ''] : [''];
+    for (const dir of (process.env['PATH'] ?? '').split(path.delimiter).filter(Boolean)) {
+        for (const ext of exts) {
+            const candidate = path.join(dir, command + ext);
+            if (fs.existsSync(candidate)) return candidate;
+        }
+    }
+    return undefined;
+}
+
+// What changes when the file is replaced: its size, time and inode.
+function statKey(file: string): string {
+    try {
+        const st = fs.statSync(file);
+        return `${st.size}:${st.mtimeMs}:${st.ino}`;
+    } catch {
+        return 'missing';
+    }
+}
+
 export function startCompilerService(
     context: vscode.ExtensionContext,
     command: string,
@@ -213,16 +236,21 @@ export function startCompilerService(
     context.subscriptions.push(collection);
 
     // `quirk --version` → "quirk 7.9.4": live checking needs ≥ 7.9.4.
-    const probe = spawn(command, ['--version'], { env: compilerEnv });
-    let vOut = '';
-    probe.stdout?.on('data', (d: Buffer) => { vOut += d.toString(); });
-    probe.on('error', () => { /* no compiler: open/save checks just fail quietly */ });
-    probe.on('close', () => {
-        const m = /(\d+)\.(\d+)\.(\d+)/.exec(vOut);
-        if (!m) return;
-        const [maj, min, pat] = [Number(m[1]), Number(m[2]), Number(m[3])];
-        supportsStdin = maj > 7 || (maj === 7 && (min > 9 || (min === 9 && pat >= 4)));
-    });
+    const probeVersion = (then?: () => void) => {
+        const probe = spawn(command, ['--version'], { env: compilerEnv });
+        let vOut = '';
+        probe.stdout?.on('data', (d: Buffer) => { vOut += d.toString(); });
+        probe.on('error', () => { /* no compiler: open/save checks just fail quietly */ });
+        probe.on('close', () => {
+            const m = /(\d+)\.(\d+)\.(\d+)/.exec(vOut);
+            if (m) {
+                const [maj, min, pat] = [Number(m[1]), Number(m[2]), Number(m[3])];
+                supportsStdin = maj > 7 || (maj === 7 && (min > 9 || (min === 9 && pat >= 4)));
+            }
+            then?.();
+        });
+    };
+    probeVersion();
 
     const typingTimers = new Map<string, ReturnType<typeof setTimeout>>();
     const checkedOnce = new Set<string>();
@@ -232,6 +260,35 @@ export function startCompilerService(
     };
 
     for (const ed of vscode.window.visibleTextEditors) maybeCheck(ed.document);
+
+    // Every open Quirk file, checked again — after the compiler changed, a
+    // file nobody edits kept the old compiler's errors (or missed new ones).
+    const recheckAll = () => {
+        for (const doc of vscode.workspace.textDocuments) {
+            if (doc.languageId === 'quirk' && doc.uri.scheme === 'file') maybeCheck(doc);
+        }
+    };
+    context.subscriptions.push(vscode.commands.registerCommand('quirk.recheck', recheckAll));
+
+    // The compiler binary replaced (reinstalled, rebuilt, a new release):
+    // probe its version again, then re-check. Polled — fs.watch misses a
+    // file replaced by rename, which is how installers write it.
+    const binary = resolveBinary(command);
+    if (binary) {
+        let last = statKey(binary);
+        let pending: ReturnType<typeof setTimeout> | undefined;
+        const listener = () => {
+            const now = statKey(binary);
+            if (now === last) return;
+            last = now;
+            if (pending) clearTimeout(pending);
+            // Wait for the copy to finish (several files are written).
+            pending = setTimeout(() => { pending = undefined; probeVersion(recheckAll); }, 1500);
+        };
+        fs.watchFile(binary, { interval: 2000 }, listener);
+        context.subscriptions.push({ dispose: () => fs.unwatchFile(binary, listener) });
+    }
+
     context.subscriptions.push(
         vscode.workspace.onDidOpenTextDocument(maybeCheck),
         vscode.workspace.onDidSaveTextDocument(maybeCheck),

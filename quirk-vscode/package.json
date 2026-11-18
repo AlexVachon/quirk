@@ -2,7 +2,7 @@
   "name": "quirk",
   "displayName": "Quirk",
   "description": "Language support, interactive debugger, and Run/Debug integration for the Quirk programming language.",
-  "version": "1.1.7",
+  "version": "1.1.8",
   "publisher": "quirk",
   "license": "MIT",
   "icon": "icons/icon.png",
@@ -76,6 +76,10 @@
       }
     ],
     "commands": [
+      {
+        "command": "quirk.recheck",
+        "title": "Quirk: Check Open Files Again"
+      },
       {
         "command": "quirk.runFile",
         "title": "Quirk: Run File",

@@ -201,6 +201,47 @@ process.env.QUIRK_HOME = path.join(os.tmpdir(), 'quirk-ext-test-global');   // a
     else fail('an unknown local import is still unresolved', String(c));
     fs.rmSync(root, { recursive: true, force: true });
 }
+// Ctrl+click on imports and their names: the definition, wherever it is.
+{
+    const { QuirkDefinitionProvider } = require(path.join(OUT, 'ImportProvider.js'));
+    const root = project({
+        'quirk.toml': 'name = "app"\n',
+        'app/main.qk': 'from router use { router, PORT }\n\ndefine main() -> void {\n    print(router)\n    print(PORT)\n}\n',
+        'app/router.qk': 'from src.pages.counter use { CounterPage }\n\nconst PORT: Int = 3000\nrouter = Router()\nrouter.add("/", CounterPage)\n',
+        'app/src/pages/counter.qk': 'struct CounterPage {\n    count: Int\n    define template(self) -> String {\n        return r"""\nrouter = 1\n"""\n    }\n}\n',
+    });
+    const provider = new QuirkDefinitionProvider();
+    const at = (rel, line, col) => {
+        const file = path.join(root, rel);
+        const loc = provider.provideDefinition(makeDoc(file, fs.readFileSync(file, 'utf8')), new vscode.Position(line, col), {});
+        return loc ? path.relative(root, loc.uri.fsPath) + ':' + (loc.range.start.line + 1) : 'nothing';
+    };
+    const want = (what, got, expected) => got === expected ? ok(what) : fail(what, got + ', expected ' + expected);
+    want('Ctrl+click: the module path opens the module', at('app/main.qk', 0, 6), 'app/router.qk:1');
+    want('Ctrl+click: a name in { } goes to its definition (a variable)', at('app/main.qk', 0, 20), 'app/router.qk:4');
+    want('Ctrl+click: a constant', at('app/main.qk', 0, 28), 'app/router.qk:3');
+    want('Ctrl+click: an imported name used in the file', at('app/main.qk', 3, 11), 'app/router.qk:4');
+    want('Ctrl+click: a struct, through src.pages.counter', at('app/router.qk', 0, 32), 'app/src/pages/counter.qk:1');
+    want('Ctrl+click: src.pages.counter opens it', at('app/router.qk', 0, 12), 'app/src/pages/counter.qk:1');
+    fs.rmSync(root, { recursive: true, force: true });
+}
+
+// Constants are highlighted as such (semantic tokens: variable + readonly).
+{
+    const { QuirkSemanticTokensProvider } = require(path.join(OUT, 'SemanticTokensProvider.js'));
+    const root = project({
+        'quirk.toml': 'name = "app"\n',
+        'app/conf.qk': 'const LIMIT: Int = 5\n',
+        'app/main.qk': 'from conf use { LIMIT }\nconst PORT: Int = 3000\n\ndefine main() -> void {\n    s := "PORT"\n    print(PORT + LIMIT)   // PORT\n}\n',
+    });
+    const file = path.join(root, 'app/main.qk');
+    const res = new QuirkSemanticTokensProvider().provideDocumentSemanticTokens(makeDoc(file, fs.readFileSync(file, 'utf8')), {});
+    const got = res.tokens.filter(t => t[3] === 3).map(t => `${t[0] + 1}:${t[1]}${t[4] & 1 ? 'd' : ''}`).join(' ');
+    // line 1: LIMIT (import), 2: PORT (declaration), 6: PORT, LIMIT — not the string or the comment
+    if (got === '1:16 2:6d 6:10 6:17') ok('constants: declaration, uses and imports; not strings or comments');
+    else fail('constants: declaration, uses and imports; not strings or comments', got);
+    fs.rmSync(root, { recursive: true, force: true });
+}
 process.env.QUIRK_HOME = savedHome;
 
 // ---- 4. dead code (faded lines, 1-based) ----

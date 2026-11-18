@@ -19,9 +19,12 @@ class Diagnostic {
     constructor(range, message, severity) { this.range = range; this.message = message; this.severity = severity; }
 }
 const disposable = () => ({ dispose() {} });
+class SemanticTokensLegend { constructor(types, mods) { this.tokenTypes = types; this.tokenModifiers = mods; } }
+// Keeps what was pushed, in order: [line, char, length, type, modifiers].
+class SemanticTokensBuilder { constructor() { this.tokens = []; } push(...t) { this.tokens.push(t); } build() { return { tokens: this.tokens }; } }
 const config = { get: (_k, d) => d, inspect: () => undefined, has: () => false };
 module.exports = {
-    Position, Range, Location, Diagnostic,
+    Position, Range, Location, Diagnostic, SemanticTokensLegend, SemanticTokensBuilder,
     DiagnosticSeverity: { Error: 0, Warning: 1, Information: 2, Hint: 3 },
     DiagnosticTag: { Unnecessary: 1, Deprecated: 2 },
     Uri: { file: (p) => ({ fsPath: p, toString: () => p }) },

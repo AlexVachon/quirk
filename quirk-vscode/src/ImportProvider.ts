@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
+import { maskLineWithState, TripleState } from './utils/maskLine';
 import { withExts } from './sourceExt';
 
 // Read the `name = "..."` field from a quirk.toml. Returns "" on miss.
@@ -271,6 +272,25 @@ export class QuirkDefinitionProvider implements vscode.DefinitionProvider {
         //    Skip when the cursor is on a member (e.g. the `greet` in
         //    `greet.greet(...)`) so it resolves to the function, not the module.
         // =========================================================
+        // On an import line itself, what was clicked decides: the module path
+        // opens the module; a name in `{ }` goes to its definition there
+        // (`from router use { router }` has the same word in both).
+        {
+            const here = /^(\s*(?:use|from)\s+)([.a-zA-Z0-9_/]+)/.exec(lineText);
+            if (here) {
+                const pathStart = here[1].length, pathEnd = pathStart + here[2].length;
+                const file = this.resolvePath(projectRoot, currentFilePath, here[2]);
+                if (range.start.character >= pathStart && range.end.character <= pathEnd) {
+                    if (file) return new vscode.Location(vscode.Uri.file(file), new vscode.Position(0, 0));
+                }
+                const open = lineText.indexOf('{'), close = lineText.indexOf('}', open);
+                if (file && open >= 0 && range.start.character > open && (close < 0 || range.end.character <= close)) {
+                    const loc = this.findSymbolInFile(projectRoot, file, symbol);
+                    if (loc) return loc;
+                }
+            }
+        }
+
         const importLocation = !isMemberAccess && this.findImportLineInCurrentFile(document, symbol);
         if (importLocation) {
             // Resolve the actual definition regardless of where the cursor is
@@ -540,10 +560,34 @@ export class QuirkDefinitionProvider implements vscode.DefinitionProvider {
         if (!content) return null;
         const lines = content.split(/\r?\n/);
 
-        const defRe = new RegExp(`^\\s*(?:extern\\s+)?(?:struct|define|def|init|enum|interface)\\s+${symbol}\\b`);
+        const defRe = new RegExp(`^\\s*(?:extern\\s+)?(?:async\\s+)?(?:struct|define|def|init|enum|interface)\\s+${symbol}\\b`);
         for (let i = 0; i < lines.length; i++) {
             if (defRe.test(lines[i])) {
                 return new vscode.Location(vscode.Uri.file(filePath), new vscode.Position(i, Math.max(0, lines[i].indexOf(symbol))));
+            }
+        }
+        // A module-level variable, constant or type alias: `router = Router()`,
+        // `router := ...`, `const PORT: Int = 3000`, `type Id = Int` — at the
+        // top level only (brace depth 0, outside strings and docblocks).
+        {
+            const varRe = new RegExp(`^\\s*(?:const\\s+|type\\s+)?${symbol}\\s*(?::\\s*[^=]+?)?\\s*:?=(?!=)`);
+            let depth = 0;
+            let triple: TripleState = { active: false, quote: '' };
+            let inDoc = false;
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i];
+                if (!triple.active && line.trim() === '---') { inDoc = !inDoc; continue; }
+                if (inDoc) continue;
+                const startsInString = triple.active;
+                const ms = maskLineWithState(line, triple);
+                triple = ms.state;
+                if (depth === 0 && !startsInString && varRe.test(ms.masked)) {
+                    return new vscode.Location(vscode.Uri.file(filePath), new vscode.Position(i, Math.max(0, line.indexOf(symbol))));
+                }
+                for (const ch of ms.masked) {
+                    if (ch === '{') depth++;
+                    else if (ch === '}') depth = Math.max(0, depth - 1);
+                }
             }
         }
 
@@ -749,29 +793,11 @@ export class QuirkDefinitionProvider implements vscode.DefinitionProvider {
     // PATH RESOLUTION
     // =========================================================
 
+    // The same lookup as the diagnostics (resolveModulePath): Ctrl+click and
+    // "Cannot resolve module" can't disagree (this copy missed imports
+    // without a leading dot).
     public resolvePath(projectRoot: string, currentFile: string, modulePath: string): string | null {
-        if (modulePath.startsWith('.')) return this.resolveRelative(currentFile, modulePath);
-        // Self-package: `use <pkgname>` from within a package's own tree
-        // should resolve to <projectRoot>/src/index.quirk when pkgname
-        // matches `name = "..."` in quirk.toml. Mirrors what the standalone
-        // resolveModulePath() does for diagnostics, so Ctrl+click on a
-        // self-imported symbol resolves to the local definition.
-        {
-            const selfHit = resolveSelfPackage(projectRoot, modulePath);
-            if (selfHit) return selfHit;
-        }
-        const relPath = modulePath.replace(/\./g, '/');
-        for (const root of this.getSearchRoots(projectRoot)) {
-            const candidates = [
-                ...withExts(path.join(root, relPath)),
-                ...withExts(path.join(root, relPath, 'index')),
-                ...withExts(path.join(root, relPath, '__init')),
-                ...withExts(path.join(root, relPath, 'src', 'index')),
-                ...withExts(path.join(root, relPath, 'src', relPath)),
-            ];
-            for (const c of candidates) if (fs.existsSync(c)) return c;
-        }
-        return null;
+        return resolveModulePath(projectRoot, currentFile, modulePath);
     }
 
     private resolveRelative(currentFile: string, modulePath: string): string | null {

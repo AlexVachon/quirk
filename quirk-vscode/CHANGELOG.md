@@ -2,6 +2,22 @@
 
 All notable changes to the extension land here. Versioning follows SemVer; minor bumps for new features, patches for fixes.
 
+## [1.1.11] — 2026-11-18 — constants stand out; Ctrl+click on imports
+
+- **Constants have their own color**: `const PORT: Int = 3000` — its name
+  where it's declared, and every use of it (`app.listen(PORT)`), also
+  constants imported from another file (`from conf use { LIMIT }`). Shown
+  as read-only variables (semantic highlighting), the constant color in
+  VS Code's themes.
+- **Ctrl+click on an import goes to the definition**:
+  - in `from router use { router }`, the module path opens `router.qk` and
+    the name in `{ }` goes to `router = Router()` in it (the same word —
+    what was clicked decides);
+  - module-level variables, constants and `type` aliases are found, not
+    only structs and functions (it landed back on the import line);
+  - imports without a leading dot (`from src.pages.counter use { … }`)
+    resolve, as in the editor's checks since 1.1.9.
+
 ## [1.1.10] — 2026-11-18 — module-level constants
 
 - **`const PORT: Int = 3000` at the top of a file is a file global**: used

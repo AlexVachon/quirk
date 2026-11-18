@@ -145,6 +145,14 @@
           "match": "\\bfn\\b"
         },
         {
+          "comment": "`const PORT: Int = 3000`: the name is a constant (as the editor shows its uses, through semantic highlighting).",
+          "match": "\\b(const)\\s+([a-zA-Z_]\\w*)",
+          "captures": {
+            "1": { "name": "keyword.other.quirk" },
+            "2": { "name": "variable.other.constant.quirk" }
+          }
+        },
+        {
           "name": "keyword.other.quirk",
           "match": "\\b(del|const|ref|type)\\b"
         },

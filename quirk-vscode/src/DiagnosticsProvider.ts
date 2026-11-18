@@ -742,6 +742,7 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
         // `padding=36,`) is recognised too; inside a `{ }` (a lambda body in
         // the call) `x = ...` is code again.
         const namedArgNames = new Set<string>();
+        const namedArgAt = new Set<number>();   // where each `name=` starts on the line
         {
             const stack = bracketCarry.slice();
             for (let ci = 0; ci < maskedLine.length; ci++) {
@@ -751,7 +752,7 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
                 if (stack.length > 0 && stack[stack.length - 1] === '(' && /[a-zA-Z_]/.test(ch) &&
                     (ci === 0 || !/[\w.]/.test(maskedLine[ci - 1]))) {
                     const m = /^([a-zA-Z_]\w*)\s*=(?![=>])/.exec(maskedLine.slice(ci));
-                    if (m) { namedArgNames.add(m[1]); }
+                    if (m) { namedArgNames.add(m[1]); namedArgAt.add(ci); }
                 }
             }
             bracketCarry = stack.length > 64 ? [] : stack;    // runaway (unbalanced) text: start over
@@ -1028,7 +1029,9 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
         while ((match = identRegex.exec(maskedLine)) !== null) {
             const ident = match[1];
             if (KEYWORDS.has(ident) || BUILTINS.has(ident)) continue;
-            if (namedArgNames.has(ident)) continue; // named argument — not a variable reference
+            // The `name` of `f(name=...)` isn't a variable reference — but the
+            // value can be one with the same name: `cookie(secure=secure)`.
+            if (namedArgAt.has(match.index)) continue;
             if (compVarNames.has(ident)) {
                 if (!locals.has(ident)) locals.add(ident);
                 usages.add(ident);

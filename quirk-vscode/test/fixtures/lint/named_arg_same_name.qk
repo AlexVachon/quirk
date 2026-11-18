@@ -1,0 +1,11 @@
+// `f(secure=secure)`: the argument's name isn't a use, its value is.
+define cookie(name: String, secure: Bool = false) -> String {
+    return name + String(secure)
+}
+
+define main() -> void {
+    secure := true
+    print(cookie("a", secure=secure))
+    unused := 1   // expect: 'unused' is declared but never used
+    print(cookie("b", secure=missing))   // expect: 'missing' is not defined
+}

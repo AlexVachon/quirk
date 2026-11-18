@@ -805,6 +805,15 @@
 "doc": "A simple HTTP/1.1 server. Each connection is handled in its own task, so\nrequests are served concurrently: while one handler waits (on a socket,\n`sys.sleep`, or `await`), others run."
 }
 ],
+"Session": [
+{
+"package": "web",
+"qualified": "Session",
+"kind": "struct",
+"signature": "struct Session {",
+"doc": "A visitor's session: values kept on the server between their requests.\nThe browser only holds a random id, signed, in an HttpOnly cookie. Get it\nwith `req.session()` (after `app.use(web.sessions())`)."
+}
+],
 "Set": [
 {
 "package": "typing",
@@ -1781,7 +1790,7 @@
 "package": "live",
 "qualified": "Router.add",
 "kind": "method",
-"signature": "define add(self, path: String, page: Callable, layout: Callable = null) -> Router {",
+"signature": "define add(self, path: String, page: Callable, layout: Callable = null, guard: Callable = null) -> Router {",
 "doc": "Serve the page struct `page` (its name: `router.add(\"/\", HomePage)`) at\n`path` \u2014 in the live.Layout `layout`, if given (a group does that for\nseveral pages)."
 },
 {
@@ -1789,7 +1798,7 @@
 "qualified": "RouteGroup.add",
 "kind": "method",
 "signature": "define add(self, path: String, page: Callable) -> RouteGroup {",
-"doc": "Serve `page` at `path`, in the group's layout."
+"doc": "Serve `page` at `path`, in the group's layout, behind its guard."
 },
 {
 "package": "typing",
@@ -2397,6 +2406,13 @@
 "doc": "Removes all elements."
 },
 {
+"package": "web",
+"qualified": "Session.clear",
+"kind": "method",
+"signature": "define clear(self) -> void {",
+"doc": "Forget every value (the session itself stays)."
+},
+{
 "package": "window",
 "qualified": "Window.clear",
 "kind": "method",
@@ -2874,6 +2890,15 @@
 "kind": "method",
 "signature": "define describe(self) -> String {",
 "doc": "One line: `button \"Save\" [focusable, focused]`, with `= value` when it has one."
+}
+],
+"destroy": [
+{
+"package": "web",
+"qualified": "Session.destroy",
+"kind": "method",
+"signature": "define destroy(self) -> void {",
+"doc": "End the session: its values go, and the browser's cookie is cleared."
 }
 ],
 "diff_days": [
@@ -3535,6 +3560,13 @@
 "kind": "method",
 "signature": "define get(self, name: String) -> String {",
 "doc": "A header's value as set so far (\"\" if none)."
+},
+{
+"package": "web",
+"qualified": "Session.get",
+"kind": "method",
+"signature": "define get(self, key: String, default: Any = null) -> Any {",
+"doc": "The value of `key`, or `default`."
 }
 ],
 "get_field": [
@@ -3628,8 +3660,8 @@
 "package": "live",
 "qualified": "Router.group",
 "kind": "method",
-"signature": "define group(self, layout: Callable) -> RouteGroup {",
-"doc": "Pages sharing the live.Layout `layout`: `main := router.group(layout=MainLayout)`, then `main.add(\"/\", HomePage)`."
+"signature": "define group(self, layout: Callable = null, guard: Callable = null) -> RouteGroup {",
+"doc": "Pages sharing a live.Layout and / or a guard:\n`admin := router.group(layout=AdminLayout, guard=live.require_login())`,\nthen `admin.add(\"/admin\", AdminPage)`."
 }
 ],
 "group_depth_dec": [
@@ -4469,6 +4501,38 @@
 "kind": "define",
 "signature": "define logger() -> Callable {",
 "doc": "Middleware that prints one line per request: method, path, status and\ntime taken (\"GET /users 200 3ms\")."
+}
+],
+"login": [
+{
+"package": "live",
+"qualified": "Component.login",
+"kind": "method",
+"signature": "define login(self, user: Any) -> void {",
+"doc": "Log `user` in (a name, a Map, a struct): a new session id, then `user` stored."
+},
+{
+"package": "web",
+"qualified": "login",
+"kind": "define",
+"signature": "define login(req: Request, user: Any) -> void {",
+"doc": "Log `user` in (any value: a name, a Map, a struct): a new session id, then `user` stored."
+}
+],
+"logout": [
+{
+"package": "live",
+"qualified": "Component.logout",
+"kind": "method",
+"signature": "define logout(self) -> void {",
+"doc": "Log out: the session ends."
+},
+{
+"package": "web",
+"qualified": "logout",
+"kind": "define",
+"signature": "define logout(req: Request) -> void {",
+"doc": "Log out: the session ends (its values go, the cookie is cleared)."
 }
 ],
 "make": [
@@ -5698,6 +5762,15 @@
 "doc": "Folds all elements into a single accumulated value.\n@param initial: Any \u2014 the starting accumulator value\n@param cb: Callable \u2014 `fn(acc: T, element: T) => T`\n@returns: Any \u2014 final accumulated value\n\n@example:\nsum := [1, 2, 3].reduce(0, fn(acc: Int, x: Int) => acc + x)  // 6"
 }
 ],
+"regenerate": [
+{
+"package": "web",
+"qualified": "Session.regenerate",
+"kind": "method",
+"signature": "define regenerate(self) -> void {",
+"doc": "A new id for the same values \u2014 call it when someone logs in (web.login\ndoes), so an id someone else saw before can't be used to act as them."
+}
+],
 "remove": [
 {
 "package": "typing",
@@ -5814,6 +5887,22 @@
 "kind": "define",
 "signature": "define request(method: String, target: String, data: String = \"\", headers: Map = Map(), params: Map = Map(), follow_redirects: Bool = true) -> Response {",
 "doc": "Send a single HTTP request and return the response. Lower-level form\nbehind `get`/`post`/`delete`/`post_json`.\n\n@param method HTTP verb (GET, POST, DELETE, PUT, ...) \u2014 case-insensitive.\n@param target Full URL starting with `http://` or `https://`.\n@param data Request body \u2014 pass \"\" for GET/DELETE.\n@param headers Extra headers to send (case-preserved). Caller-supplied\n       Host / User-Agent / Connection / Content-Length override the defaults.\n@param params Query-string parameters; merged into the URL's existing\n       query and percent-encoded via `url.build_query`.\n@param follow_redirects When true (the default), 3xx responses are\n       followed automatically up to 5 hops. Set to false if you want to\n       inspect or short-circuit the redirect yourself.\n@returns The final `Response`."
+}
+],
+"require_login": [
+{
+"package": "live",
+"qualified": "require_login",
+"kind": "define",
+"signature": "define require_login(redirect: String = \"/login\") -> Callable {",
+"doc": "A guard: only logged-in visitors (what `self.login(user)` / `web.login`\nstored) see the page; others go to `redirect`, with `?next=` the page they\nwanted. Needs `app.use(web.sessions())`. A guard of your own is\n`fn(req) -> String`: \"\" to let the visitor in, else where to send them."
+},
+{
+"package": "web",
+"qualified": "require_login",
+"kind": "define",
+"signature": "define require_login(redirect: String = \"/login\") -> Callable {",
+"doc": "Middleware that lets only logged-in visitors through \u2014 `app.use(web.require_login(), path=\"/admin\")`.\nA page request is sent to `redirect` (with `?next=` the page it wanted);\nanything else (an API call, a form post) gets 401."
 }
 ],
 "required": [
@@ -6162,6 +6251,22 @@
 "doc": "Answer with just a status code and its text (\"Not Found\")."
 }
 ],
+"session": [
+{
+"package": "live",
+"qualified": "Component.session",
+"kind": "method",
+"signature": "define session(self) -> web.Session {",
+"doc": "The visitor's session (needs `app.use(web.sessions())`): `self.session().set(\"cart\", items)`."
+},
+{
+"package": "web",
+"qualified": "Request.session",
+"kind": "method",
+"signature": "define session(self) -> Session {",
+"doc": "The visitor's session (needs `app.use(web.sessions())`): values kept on\nthe server between their requests \u2014 `req.session().set(\"cart\", items)`."
+}
+],
 "session_count": [
 {
 "package": "live",
@@ -6169,6 +6274,13 @@
 "kind": "define",
 "signature": "define session_count() -> Int {",
 "doc": "The number of live components the server is holding (open pages)."
+},
+{
+"package": "web",
+"qualified": "session_count",
+"kind": "define",
+"signature": "define session_count() -> Int {",
+"doc": "How many sessions the server holds."
 }
 ],
 "session_minutes": [
@@ -6178,6 +6290,15 @@
 "kind": "define",
 "signature": "define session_minutes(minutes: Int) -> void {",
 "doc": "How long a page's component is kept after its last event (minutes; default 30)."
+}
+],
+"sessions": [
+{
+"package": "web",
+"qualified": "sessions",
+"kind": "define",
+"signature": "define sessions(secret: String = \"\", minutes: Int = 10080, cookie: String = \"quirk_session\", secure: Bool = false) -> Callable {",
+"doc": "Middleware for sessions \u2014 `app.use(web.sessions())`, then `req.session()`\nin handlers. Sessions live in the server's memory (they end when it\nrestarts) and expire `minutes` after the visitor's last request (default:\na week). `secret` signs the cookie; by default a random one is made when\nthe server starts. `secure=true` sends the cookie over HTTPS only."
 }
 ],
 "set": [
@@ -7309,6 +7430,22 @@
 "kind": "method",
 "signature": "define use(self, mw: Callable, path: String = \"/\") -> App {",
 "doc": "Run middleware `mw(req, res, next)` before the routes \u2014 for every\nrequest, or only under `path`. Call `next()` to continue."
+}
+],
+"user": [
+{
+"package": "live",
+"qualified": "Component.user",
+"kind": "method",
+"signature": "define user(self) -> Any {",
+"doc": "Who's logged in, or null (in templates: `{% if user %}\u2026{{ user }}\u2026{% end %}`)."
+},
+{
+"package": "web",
+"qualified": "Request.user",
+"kind": "method",
+"signature": "define user(self) -> Any {",
+"doc": "Who's logged in (what `web.login(req, user)` stored), or null."
 }
 ],
 "utc_from_unix": [

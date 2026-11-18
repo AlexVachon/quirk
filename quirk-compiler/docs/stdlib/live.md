@@ -83,6 +83,22 @@ Close notification `id` (its `on_close` runs).
 
 Close every notification.
 
+#### `define session(self) -> web.Session`
+
+The visitor's session (needs `app.use(web.sessions())`): `self.session().set("cart", items)`.
+
+#### `define login(self, user: Any) -> void`
+
+Log `user` in (a name, a Map, a struct): a new session id, then `user` stored.
+
+#### `define logout(self) -> void`
+
+Log out: the session ends.
+
+#### `define user(self) -> Any`
+
+Who's logged in, or null (in templates: `{% if user %}…{{ user }}…{% end %}`).
+
 #### `define param(self, name: String) -> String`
 
 A `:param` of the page's path ("/users/:id" → `self.param("id")`); "" if none.
@@ -302,15 +318,17 @@ and in the app, `app.mount("/", router)`. It's a `web.Router`, so it can
 hold ordinary routes too (`router.get("/api/items", handler)`). Mount it
 at "/" (the browser script talks to /_live/).
 
-#### `define add(self, path: String, page: Callable, layout: Callable = null) -> Router`
+#### `define add(self, path: String, page: Callable, layout: Callable = null, guard: Callable = null) -> Router`
 
 Serve the page struct `page` (its name: `router.add("/", HomePage)`) at
 `path` — in the live.Layout `layout`, if given (a group does that for
 several pages).
 
-#### `define group(self, layout: Callable) -> RouteGroup`
+#### `define group(self, layout: Callable = null, guard: Callable = null) -> RouteGroup`
 
-Pages sharing the live.Layout `layout`: `main := router.group(layout=MainLayout)`, then `main.add("/", HomePage)`.
+Pages sharing a live.Layout and / or a guard:
+`admin := router.group(layout=AdminLayout, guard=live.require_login())`,
+then `admin.add("/admin", AdminPage)`.
 
 ### `struct RouteGroup`
 
@@ -318,7 +336,7 @@ Routes in one layout (Router.group).
 
 #### `define add(self, path: String, page: Callable) -> RouteGroup`
 
-Serve `page` at `path`, in the group's layout.
+Serve `page` at `path`, in the group's layout, behind its guard.
 
 ### `struct TestSession`
 
@@ -458,3 +476,10 @@ string (web's template syntax) with `{{ title }}`, `{{ head | raw }}` and
 Serve a live page at `path` (":params" allowed, as in web routes):
 `factory(req)` makes the page's component — one per visitor, kept while
 they use it. (A `live.Router` does this for you: `router.add(path, Page)`.)
+
+#### `define require_login(redirect: String = "/login") -> Callable`
+
+A guard: only logged-in visitors (what `self.login(user)` / `web.login`
+stored) see the page; others go to `redirect`, with `?next=` the page they
+wanted. Needs `app.use(web.sessions())`. A guard of your own is
+`fn(req) -> String`: "" to let the visitor in, else where to send them.

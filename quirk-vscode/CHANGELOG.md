@@ -2,6 +2,15 @@
 
 All notable changes to the extension land here. Versioning follows SemVer; minor bumps for new features, patches for fixes.
 
+## [1.1.12] — 2026-11-18 — hover docs for sessions and login
+
+- Hover and completion know `web` 1.1 (`web.sessions`, `req.session()`,
+  `web.login`, `web.logout`, `web.require_login`, `Session`) and `live` 2.5
+  (`live.require_login`, `router.group(guard=)`, `self.login`,
+  `self.user`, `self.session`).
+- `f(secure=secure)` — a named argument whose value is a variable of the
+  same name: the variable counts as used (it was "declared but never used").
+
 ## [1.1.11] — 2026-11-18 — constants stand out; Ctrl+click on imports
 
 - **Constants have their own color**: `const PORT: Int = 3000` — its name

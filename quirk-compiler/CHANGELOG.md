@@ -5,6 +5,19 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.46.0] — 2026-11-18 — sessions and login
+
+- Pins **`web` v1.1.0**: sessions — `app.use(web.sessions())`,
+  `req.session()` (values on the server, a random signed id in an HttpOnly,
+  SameSite=Lax cookie), `web.login(req, user)` (a new session id, against
+  session fixation), `web.logout(req)`, `req.user()`, and
+  `web.require_login()` (page requests to `/login?next=…`, API calls 401).
+- Pins **`live` v2.5.0**: login guards — `router.group(layout=…,
+  guard=live.require_login())`, `router.add(…, guard=…)`, checked when a
+  page opens, on navigation and before every event; `self.login(user)`,
+  `self.logout()`, `self.user()` (`{{ user }}`), `self.session()` in pages,
+  layouts and components.
+
 ## [7.45.0] — 2026-11-18 — `live`: layouts that stay
 
 - Pins **`live` v2.4.0**: `live.Layout` — what some pages are shown in (a

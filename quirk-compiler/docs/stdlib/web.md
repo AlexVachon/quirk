@@ -26,6 +26,15 @@ An incoming request, as a handler sees it:
   `locals`  — a Map for middleware to pass things to handlers
 `json()`, `form()`, `cookies()`, `header(name)` read the rest.
 
+#### `define session(self) -> Session`
+
+The visitor's session (needs `app.use(web.sessions())`): values kept on
+the server between their requests — `req.session().set("cart", items)`.
+
+#### `define user(self) -> Any`
+
+Who's logged in (what `web.login(req, user)` stored), or null.
+
 #### `define header(self, name: String) -> String`
 
 A header's value ("" if absent); the name is case-insensitive.
@@ -159,6 +168,29 @@ Run middleware `mw(req, res, next)` before the routes — for every
 request, or only under `path` ("/admin"). Call `next()` to go on; don't
 to answer here (e.g. a login check).
 
+### `struct Session`
+
+A visitor's session: values kept on the server between their requests.
+The browser only holds a random id, signed, in an HttpOnly cookie. Get it
+with `req.session()` (after `app.use(web.sessions())`).
+
+#### `define get(self, key: String, default: Any = null) -> Any`
+
+The value of `key`, or `default`.
+
+#### `define clear(self) -> void`
+
+Forget every value (the session itself stays).
+
+#### `define regenerate(self) -> void`
+
+A new id for the same values — call it when someone logs in (web.login
+does), so an id someone else saw before can't be used to act as them.
+
+#### `define destroy(self) -> void`
+
+End the session: its values go, and the browser's cookie is cleared.
+
 ### `struct App`
 
 A web app: routes, middleware, error handling, and a server.
@@ -258,6 +290,32 @@ POST a form (a Map of Strings, urlencoded).
 
 The Content-Type for a file name's extension ("style.css" → "text/css;
 charset=utf-8"); "application/octet-stream" when unknown.
+
+#### `define sessions(secret: String = "", minutes: Int = 10080, cookie: String = "quirk_session", secure: Bool = false) -> Callable`
+
+Middleware for sessions — `app.use(web.sessions())`, then `req.session()`
+in handlers. Sessions live in the server's memory (they end when it
+restarts) and expire `minutes` after the visitor's last request (default:
+a week). `secret` signs the cookie; by default a random one is made when
+the server starts. `secure=true` sends the cookie over HTTPS only.
+
+#### `define session_count() -> Int`
+
+How many sessions the server holds.
+
+#### `define login(req: Request, user: Any) -> void`
+
+Log `user` in (any value: a name, a Map, a struct): a new session id, then `user` stored.
+
+#### `define logout(req: Request) -> void`
+
+Log out: the session ends (its values go, the cookie is cleared).
+
+#### `define require_login(redirect: String = "/login") -> Callable`
+
+Middleware that lets only logged-in visitors through — `app.use(web.require_login(), path="/admin")`.
+A page request is sent to `redirect` (with `?next=` the page it wanted);
+anything else (an API call, a form post) gets 401.
 
 #### `define static(dir: String, prefix: String = "/") -> Callable`
 

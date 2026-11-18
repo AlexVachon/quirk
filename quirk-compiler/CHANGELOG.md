@@ -5,6 +5,16 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.45.0] — 2026-11-18 — `live`: layouts that stay
+
+- Pins **`live` v2.4.0**: `live.Layout` — what some pages are shown in (a
+  sidebar, a header, an admin area) and that stays while you move between
+  them: only its `<slot />`, the page, changes; its fields keep their values
+  and its elements stay in the browser. `router.group(layout=MainLayout)` /
+  `router.add(path, Page, layout=…)`; `on_navigate(path)`, `self.path`.
+  Templates gain `cond ? a : b` and String / List / Map methods
+  (`path.startswith('/admin')`).
+
 ## [7.44.2] — 2026-11-18 — notifications in `live`; `type=` as an argument name
 
 - Pins **`live` v2.3.0**: notifications like Element Plus's ElNotification —

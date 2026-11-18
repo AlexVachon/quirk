@@ -152,7 +152,7 @@
 "qualified": "Component",
 "kind": "struct",
 "signature": "struct Component {",
-"doc": "A component: a struct with its state in fields and its HTML in a template\n\u2014 returned from `template()` (a raw string, `r\"\"\"...\"\"\"`), or in the file\nnamed after the struct (`counter_page.html`) next to the `.qk` file:\n\n    <h1>Count: {{ count }}</h1>\n    <button @click=\"add(1)\">+1</button>         calls self.add(1)\n    <input model=\"draft\" @enter=\"save\">         self.draft follows the field; Enter calls self.save(text)\n    <PlusButton :page=\"self\" />                 another component, by its struct's name\n    {% if count >= 10 %}<p>a lot</p>{% end %}\n    {% for i, item in items %}<li>{{ item }}</li>{% else %}<li>none</li>{% end %}\n\n`on_load()` sets it up (once). Events call its methods by name; the page\nis rendered again after each one. Props: `text=\"hi {{ name }}\"` sets the\nchild's `text` field (a String), `:count=\"n + 1\"` sets it to the value;\n`@done=\"refresh\"` runs when the child calls `self.emit(\"done\")`. A\n`<slot />` in a component's template shows what its tag enclosed.\n\nA page is a Component served by a `live.Router` (usually a `live.Page`).\n`title()` sets the page title; `self.go(path)` sends the browser to\nanother page. (The 1.0 way, overriding `render()` and `handle(event,\ndata)` with `q-click=\"name\"` attributes, still works.)"
+"doc": "A component: a struct with its state in fields and its HTML in a template\n\u2014 returned from `template()` (a raw string, `r\"\"\"...\"\"\"`), or in the file\nnamed after the struct (`counter_page.html`) next to the `.qk` file:\n\n    <h1>Count: {{ count }}</h1>\n    <button @click=\"add(1)\">+1</button>         calls self.add(1)\n    <input model=\"draft\" @enter=\"save\">         self.draft follows the field; Enter calls self.save(text)\n    <div @after=\"close\" delay=\"3000\">           calls self.close() 3 s after it appears\n    <PlusButton :page=\"self\" />                 another component, by its struct's name\n    {% if count >= 10 %}<p>a lot</p>{% end %}\n    {% for i, item in items %}<li>{{ item }}</li>{% else %}<li>none</li>{% end %}\n\n`on_load()` sets it up (once). Events call its methods by name; the page\nis rendered again after each one. Props: `text=\"hi {{ name }}\"` sets the\nchild's `text` field (a String), `:count=\"n + 1\"` sets it to the value;\n`@done=\"refresh\"` runs when the child calls `self.emit(\"done\")`. A\n`<slot />` in a component's template shows what its tag enclosed.\n\nA page is a Component served by a `live.Router` (usually a `live.Page`).\n`title()` sets the page title; `self.go(path)` sends the browser to\nanother page. (The 1.0 way, overriding `render()` and `handle(event,\ndata)` with `q-click=\"name\"` attributes, still works.)"
 }
 ],
 "DatePicker": [
@@ -437,6 +437,15 @@
 "doc": "Text. \"\\n\" starts a new line. `color` -1 uses the theme's text colour;\n`align` is \"left\", \"center\" or \"right\"."
 }
 ],
+"Layout": [
+{
+"package": "live",
+"qualified": "Layout",
+"kind": "struct",
+"signature": "struct Layout : Component {",
+"doc": "What some pages are shown in \u2014 a sidebar, a header, an admin area \u2014 that\nstays while you go from one of them to another: only its `<slot />`, the\npage, changes. Its fields keep their values (an open menu stays open);\n`on_load` runs once, `on_navigate(path)` each time the page changes.\n\n    struct MainLayout : live.Layout {\n        menu_open: Bool\n\n        define on_load(self) -> void { self.menu_open = false }\n        define toggle(self) -> void { self.menu_open = not self.menu_open }\n\n        define template(self) -> String {\n            return r\"\"\"\n                <aside><button @click=\"toggle\">Menu</button>\n                  <a href=\"/\" q-link :class=\"path == '/' ? 'active' : ''\">Home</a></aside>\n                <section><slot /></section>\n            \"\"\"\n        }\n    }\n\n    main := router.group(layout=MainLayout)\n    main.add(\"/\", HomePage)\n    main.add(\"/todos\", TodoPage)\n\n`self.path` is the current path, `self.page` the page shown."
+}
+],
 "Link": [
 {
 "package": "live",
@@ -717,6 +726,15 @@
 "kind": "struct",
 "signature": "type Result[T, E] = Ok(value: T) | Err(error: E)",
 "doc": ""
+}
+],
+"RouteGroup": [
+{
+"package": "live",
+"qualified": "RouteGroup",
+"kind": "struct",
+"signature": "struct RouteGroup {",
+"doc": "Routes in one layout (Router.group)."
 }
 ],
 "Router": [
@@ -1763,8 +1781,15 @@
 "package": "live",
 "qualified": "Router.add",
 "kind": "method",
-"signature": "define add(self, path: String, page: Callable) -> Router {",
-"doc": "Serve the page struct `page` (its name: `router.add(\"/\", HomePage)`) at `path`."
+"signature": "define add(self, path: String, page: Callable, layout: Callable = null) -> Router {",
+"doc": "Serve the page struct `page` (its name: `router.add(\"/\", HomePage)`) at\n`path` \u2014 in the live.Layout `layout`, if given (a group does that for\nseveral pages)."
+},
+{
+"package": "live",
+"qualified": "RouteGroup.add",
+"kind": "method",
+"signature": "define add(self, path: String, page: Callable) -> RouteGroup {",
+"doc": "Serve `page` at `path`, in the group's layout."
 },
 {
 "package": "typing",
@@ -2494,6 +2519,24 @@
 "kind": "method",
 "signature": "define close(self) -> void {",
 "doc": "Close the window. Further drawing is ignored."
+}
+],
+"close_notification": [
+{
+"package": "live",
+"qualified": "Component.close_notification",
+"kind": "method",
+"signature": "define close_notification(self, id: Int) -> void {",
+"doc": "Close notification `id` (its `on_close` runs)."
+}
+],
+"close_notifications": [
+{
+"package": "live",
+"qualified": "Component.close_notifications",
+"kind": "method",
+"signature": "define close_notifications(self) -> void {",
+"doc": "Close every notification."
 }
 ],
 "close_stdin": [
@@ -3580,6 +3623,13 @@
 "kind": "define",
 "signature": "define group(label: String) -> void {",
 "doc": "Start an indented log group. Subsequent log/info/warn/etc. calls are indented\n2 spaces per group level. Pair with `group_end()` to close.\n@example\nconsole.group(\"Build\")\nconsole.log(\"step 1\")\nconsole.log(\"step 2\")\nconsole.group_end()"
+},
+{
+"package": "live",
+"qualified": "Router.group",
+"kind": "method",
+"signature": "define group(self, layout: Callable) -> RouteGroup {",
+"doc": "Pages sharing the live.Layout `layout`: `main := router.group(layout=MainLayout)`, then `main.add(\"/\", HomePage)`."
 }
 ],
 "group_depth_dec": [
@@ -4780,6 +4830,24 @@
 "doc": "The all-zero \"nil\" UUID \u2014 useful as a sentinel for \"no UUID yet\" in\nschemas that disallow nulls."
 }
 ],
+"notification_defaults": [
+{
+"package": "live",
+"qualified": "notification_defaults",
+"kind": "define",
+"signature": "define notification_defaults(position: String = \"\", duration: Int = -1, max: Int = -1) -> void {",
+"doc": "Defaults for every `notify()` that doesn't say otherwise \u2014 set once, at\nstartup: `position` (\"top-right\", \"top-left\", \"bottom-right\",\n\"bottom-left\"), `duration` (milliseconds; 0: until closed) and `max` (the\nmost shown at once; over it, the oldest close; 0: no limit). Arguments left\nout keep their current value.\n\n    live.notification_defaults(position=\"bottom-right\", duration=3000, max=5)"
+}
+],
+"notify": [
+{
+"package": "live",
+"qualified": "Component.notify",
+"kind": "method",
+"signature": "define notify(self, message: String, title: String = \"\", type: String = \"\", position: String = \"\",",
+"doc": "Show a notification in a corner of the page, like Element Plus's\nElNotification \u2014 from any page or component, nothing to put in the\ntemplate. Returns its id (for `close_notification`).\n\n- `type`: \"success\", \"warning\", \"info\", \"error\" or \"\" (none)\n- `position`: \"top-right\", \"top-left\", \"bottom-right\", \"bottom-left\"\n  (\"\": the default \u2014 top-right, or live.notification_defaults')\n- `duration`: milliseconds before it closes (0: stays until closed;\n  -1: the default \u2014 4500); the timer pauses while the mouse is on it\n- `show_close`: the \u00d7 button; `icon`: instead of the type's\n- `on_click()`: when it's clicked; `on_close()`: when it closes (\u00d7,\n  timeout or close_notification)"
+}
+],
 "now": [
 {
 "package": "datetime",
@@ -4878,6 +4946,15 @@
 "kind": "method",
 "signature": "define on_load(self) -> void {",
 "doc": "Set up the component's state (override). Runs once, before it's first shown."
+}
+],
+"on_navigate": [
+{
+"package": "live",
+"qualified": "Layout.on_navigate",
+"kind": "method",
+"signature": "define on_navigate(self, path: String) -> void {",
+"doc": "The page changed (also for the first one): `path` is its path (override)."
 }
 ],
 "on_not_found": [
@@ -5848,6 +5925,15 @@
 "doc": "Run every case in `cases`, printing pass/fail marks and a final summary.\nReturns the number of failures (0 == all green)."
 }
 ],
+"run_timers": [
+{
+"package": "live",
+"qualified": "TestSession.run_timers",
+"kind": "method",
+"signature": "define run_timers(self) -> TestSession {",
+"doc": "Run every `@after` timer on the page now, once each (as if its delay had passed; `delay=\"0\"`: never)."
+}
+],
 "sample": [
 {
 "package": "random",
@@ -6702,6 +6788,13 @@
 "kind": "method",
 "signature": "define template(self) -> String {",
 "doc": "The component's template (override for one written in the .qk file; \"\" uses its .html file)."
+},
+{
+"package": "live",
+"qualified": "Layout.template",
+"kind": "method",
+"signature": "define template(self) -> String {",
+"doc": "The layout's HTML, with `<slot />` where the page goes (override)."
 }
 ],
 "terminal_cols": [
@@ -6879,6 +6972,13 @@
 "kind": "method",
 "signature": "define title(self) -> String {",
 "doc": "The page title while this component is shown (override; \"\" leaves it)."
+},
+{
+"package": "live",
+"qualified": "Layout.title",
+"kind": "method",
+"signature": "define title(self) -> String {",
+"doc": "The page's title, or the layout's own (override)."
 }
 ],
 "tls_close": [

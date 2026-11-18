@@ -17,6 +17,8 @@ All notable changes to the extension land here. Versioning follows SemVer; minor
     only structs and functions (it landed back on the import line);
   - imports without a leading dot (`from src.pages.counter use { … }`)
     resolve, as in the editor's checks since 1.1.9.
+- Hover and completion know `live` 2.4: `live.Layout`, `router.group`,
+  `notify`, `notification_defaults`.
 
 ## [1.1.10] — 2026-11-18 — module-level constants
 

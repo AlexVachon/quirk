@@ -8,6 +8,7 @@
 //      $QUIRK_STDLIB) lints clean: no false warnings in the libraries.
 //   3. Ctrl+click — in throwaway projects with a venv, go-to-definition
 //      lands in the venv's copy of a package.
+//   4. dead code — which lines the editor fades as unreachable.
 const Module = require('module');
 const fs = require('fs');
 const os = require('os');
@@ -181,6 +182,28 @@ process.env.QUIRK_HOME = path.join(os.tmpdir(), 'quirk-ext-test-global');   // a
     fs.rmSync(root, { recursive: true, force: true });
 }
 process.env.QUIRK_HOME = savedHome;
+
+// ---- 4. dead code (faded lines, 1-based) ----
+{
+    const { computeDeadLines } = require(path.join(OUT, 'DeadCodeProvider.js'));
+    const cases = [
+        ['a multi-line template after return isn\'t dead',
+         'define t(self) -> String {\n    return r"""\n    <div>\n\n    </div>\n    """\n}\n', []],
+        ['code after the template\'s closing """ is',
+         'define t() -> String {\n    return r"""\n    <p>{ x }</p>\n    """\n    x := 1\n}\n', [5]],
+        ['code after a plain return is',
+         'define f() -> Int {\n    return 1\n    y := 2\n}\n', [3]],
+        ['a string opened on a dead line is dead throughout',
+         'define f() -> Int {\n    return 1\n    s := """\n    text\n    """\n}\n', [3, 4, 5]],
+        ['"return" inside a string isn\'t a return',
+         'define f() -> Int {\n    s := """\nreturn x\n"""\n    y := 2\n    return 1\n}\n', []],
+    ];
+    for (const [what, src, want] of cases) {
+        const got = [...computeDeadLines(src)].map(x => x + 1);
+        if (JSON.stringify(got) === JSON.stringify(want)) ok(what);
+        else fail(what, `dead lines ${JSON.stringify(got)}, expected ${JSON.stringify(want)}`);
+    }
+}
 
 console.log(`\n${passed} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);

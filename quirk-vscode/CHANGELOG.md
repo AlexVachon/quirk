@@ -15,6 +15,8 @@ All notable changes to the extension land here. Versioning follows SemVer; minor
 - The editor's own checks know raw strings: no more "'r' is not defined"
   on `r"""..."""`, and names inside a raw string (`${price}`, template
   text) aren't taken for code.
+- A string spanning lines after `return` (`return r"""` and a template) is
+  part of the return: its lines aren't faded as unreachable code any more.
 - Hover and completion know the `live` 2 API (Page, Component, Router,
   widgets, reflection helpers).
 

@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { maskLineWithState, TripleState } from './utils/maskLine';
 
 const deadDecoration = vscode.window.createTextEditorDecorationType({
     opacity: '0.45',
@@ -23,7 +24,7 @@ function countBraces(line: string): { opens: number; closes: number } {
     return { opens, closes };
 }
 
-function computeDeadLines(text: string): Set<number> {
+export function computeDeadLines(text: string): Set<number> {
     const lines = text.split('\n');
     const dead = new Set<number>();
 
@@ -35,16 +36,33 @@ function computeDeadLines(text: string): Set<number> {
     // so dead-code marking is suspended until those braces close.
     let returnValueOpens = 0;
     let inDocstring = false;
+    // A `"""…"""` string spanning lines: its lines are part of the statement
+    // that opened it — `return r"""` + a template is one return, not a
+    // return followed by dead code. `stringDead`: it opened on a dead line.
+    let triple: TripleState = { active: false, quote: '' };
+    let stringDead = false;
 
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
         const trimmed = line.trim();
 
-        if (trimmed === '---') { inDocstring = !inDocstring; continue; }
+        if (!triple.active && trimmed === '---') { inDocstring = !inDocstring; continue; }
         if (inDocstring) continue;
 
-        const { opens, closes } = countBraces(line);
+        // Strings (and comments) masked out, so braces and `return` inside
+        // them don't count.
+        const inString = triple.active;
+        const ms = maskLineWithState(line, triple);
+        triple = ms.state;
+        const { opens, closes } = countBraces(ms.masked);
         const depthBefore = depth;
+
+        if (inString) {
+            if (stringDead && trimmed.length > 0) dead.add(i);
+            depth = Math.max(0, depth + opens - closes);
+            if (deadDepth >= 0 && depth < deadDepth) deadDepth = -1;
+            continue;
+        }
 
         if (
             deadDepth >= 0
@@ -56,6 +74,7 @@ function computeDeadLines(text: string): Set<number> {
         ) {
             dead.add(i);
         }
+        stringDead = triple.active && dead.has(i);
 
         // If we're inside a return value (multi-line lambda body, etc.),
         // track its brace balance and unsuspend once it closes.
@@ -70,7 +89,7 @@ function computeDeadLines(text: string): Set<number> {
             deadDepth = -1;
         }
 
-        if (deadDepth < 0 && /^\s*return\b/.test(line) && !trimmed.startsWith('//')) {
+        if (deadDepth < 0 && /^\s*return\b/.test(ms.masked) && !trimmed.startsWith('//')) {
             deadDepth = depthBefore;
             // The return expression spans multiple lines if it opens more
             // braces than it closes (e.g. `return fn() => {`). Defer dead-

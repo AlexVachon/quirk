@@ -181,6 +181,26 @@ process.env.QUIRK_HOME = path.join(os.tmpdir(), 'quirk-ext-test-global');   // a
     else fail('project site-packages', String(r));
     fs.rmSync(root, { recursive: true, force: true });
 }
+// Imports without a leading dot (compiler 7.44+): the app's own files.
+{
+    const root = project({
+        'quirk.toml': 'name = "app"\n',
+        'web/router.qk': 'router := 1\n',
+        'web/main.qk': 'from router use { router }\n',
+        'web/src/pages/counter.qk': 'from src.components.note use { Note }\n',
+        'web/src/components/note/index.qk': 'struct Note {\n    text: String\n}\n',
+    });
+    const a = importProvider.resolveModulePath(root, path.join(root, 'web/main.qk'), 'router');
+    if (a === path.join(root, 'web/router.qk')) ok('dotless import next to the file');
+    else fail('dotless import next to the file', String(a));
+    const b = importProvider.resolveModulePath(root, path.join(root, 'web/src/pages/counter.qk'), 'src.components.note');
+    if (b === path.join(root, 'web/src/components/note/index.qk')) ok('dotless import from a folder above (index.qk)');
+    else fail('dotless import from a folder above (index.qk)', String(b));
+    const c = importProvider.resolveModulePath(root, path.join(root, 'web/main.qk'), 'nowhere.at_all');
+    if (c === null) ok('an unknown local import is still unresolved');
+    else fail('an unknown local import is still unresolved', String(c));
+    fs.rmSync(root, { recursive: true, force: true });
+}
 process.env.QUIRK_HOME = savedHome;
 
 // ---- 4. dead code (faded lines, 1-based) ----

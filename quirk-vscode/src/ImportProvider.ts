@@ -110,6 +110,16 @@ export function resolveModulePath(projectRoot: string, currentFile: string, modu
             ...withExts(path.join(root, relPath, 'src', relPath)),
         ]) if (fs.existsSync(c)) return c;
     }
+    // The app's own files, without a leading dot (compiler 7.44+): `from
+    // router use { router }`, `from src.pages.counter use { CounterPage }`.
+    // Next to the importing file, then each folder above it, nearest first,
+    // up to the project root (a quirk.toml). Packages and the stdlib win.
+    for (let dir = path.dirname(currentFile); ; dir = path.dirname(dir)) {
+        for (const c of [...withExts(path.join(dir, relPath)), ...withExts(path.join(dir, relPath, 'index'))]) {
+            if (fs.existsSync(c)) return c;
+        }
+        if (fs.existsSync(path.join(dir, 'quirk.toml')) || path.dirname(dir) === dir) break;
+    }
     return null;
 }
 

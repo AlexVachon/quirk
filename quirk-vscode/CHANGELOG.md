@@ -2,6 +2,15 @@
 
 All notable changes to the extension land here. Versioning follows SemVer; minor bumps for new features, patches for fixes.
 
+## [1.1.9] — 2026-11-18 — imports without a leading dot
+
+- **An app's own files import each other without a leading dot** (compiler
+  7.44+): `from router use { router }`, `from src.pages.counter use {
+  CounterPage }`. The editor said "Cannot resolve module 'router'" (and
+  Ctrl+click went nowhere) though the compiler finds them: it now looks
+  where the compiler does — next to the file, then each folder above it up
+  to the project root, after packages and the stdlib.
+
 ## [1.1.8] — 2026-11-18 — errors follow the compiler
 
 - **When the compiler changes, open files are checked again.** Reinstalling

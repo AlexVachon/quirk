@@ -7,11 +7,12 @@ only for breaking changes.
 
 ## [7.44.1] — 2026-11-18 — fixes found building a Notification component
 
-- Pins **`live` v2.2.1**: notifications like Element Plus's ElNotification —
+- Pins **`live` v2.2.2**: notifications like Element Plus's ElNotification —
   `self.notify("Saved", title=, type="success", position="bottom-right",
   duration=, on_click=, on_close=)` from any page or component, shown in the
-  page's corners with slide-in / fade-out transitions, the timer paused on
-  hover; `q-transition` for any element; `@after="method"` timers; enum
+  page's corners, sliding in and back out, the timer paused on
+  hover; `q-transition` for any element (it leaves with its entrance
+  reversed unless the CSS says otherwise); `@after="method"` timers; enum
   fields in templates; a component's element matched by its key when the
   page changes; the browser script's URL carries its version (an update is
   picked up at once, not after the hour it was cached); it says so at

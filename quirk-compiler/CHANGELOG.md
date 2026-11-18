@@ -9,7 +9,9 @@ only for breaking changes.
 
 - Pins **`live` v2.1.0**: `@after="method"` with `delay="ms"` (timers, e.g.
   a notification that closes itself), enum fields in templates, a
-  Notification component in the demo, `TestSession.run_timers()`.
+  component's element matched by its key when the page changes (moved, not
+  rewritten), a Notification component in the demo (pages in src/pages,
+  components in src/components), `TestSession.run_timers()`.
 - **Reflection on enum fields**: an enum field reads as its variant's name
   and is set from a name or an ordinal — templates show `{{ status }}`,
   compare `status == "Error"`, and props pass `status="Error"`. It read as

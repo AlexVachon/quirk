@@ -6,6 +6,17 @@
 #include "ErrorCodes.hpp"
 #include "../PackageManager.hpp"
 
+// A word that can name an argument: an identifier, or a keyword used as
+// one (`notify(msg, type="success")` — parameters may be named `type`,
+// `match`, `use`...).
+static bool isWordToken(const Token& t) {
+    if (t.type == TokenType::IDENTIFIER) return true;
+    if (t.value.empty() || !(std::isalpha((unsigned char)t.value[0]) || t.value[0] == '_')) return false;
+    for (char c : t.value) if (!std::isalnum((unsigned char)c) && c != '_') return false;
+    return t.value != "true" && t.value != "false" && t.value != "null";
+}
+
+
 Parser::Parser(const std::vector<Token>& tokens, const std::string& source, const std::string& filePath)
     : tokens(tokens), source(source), filePath(filePath) {}
 
@@ -791,7 +802,7 @@ std::unique_ptr<Node> Parser::parseExpression(int min_precedence) {
                 if (peek().type == TokenType::ELLIPSIS) {
                     advance(); // consume '...'
                     isSpread = true;
-                } else if (peek().type == TokenType::IDENTIFIER &&
+                } else if (isWordToken(peek()) &&
                     tokens[pos + 1].type == TokenType::ASSIGN) {
                     argName = advance().value;
                     advance(); // consume '='
@@ -1735,7 +1746,7 @@ std::unique_ptr<CallNode> Parser::parseCall() {
         if (peek().type == TokenType::ELLIPSIS) {
             advance(); // consume '...'
             isSpread = true;
-        } else if (peek().type == TokenType::IDENTIFIER &&
+        } else if (isWordToken(peek()) &&
             tokens[pos + 1].type == TokenType::ASSIGN) {
             argName = advance().value;
             advance(); // consume '='

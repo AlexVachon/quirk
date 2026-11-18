@@ -1,0 +1,21 @@
+// A parameter named like a keyword (`type`) can be passed by name:
+// `notify("Saved", type="success")`. The call failed to parse
+// ("Unexpected token: =") though the definition was accepted.
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+define note(message: String, type: String = "info", position: String = "top") -> String {
+    return type + ":" + message + ":" + position
+}
+
+struct Box {
+    define tag(self, type: String = "") -> String { return "<" + type + ">" }
+}
+
+define main() -> void {
+    if note("hi", type="success") != "success:hi:top" { fail("type=") }
+    if note("hi", position="bottom", type="x") != "x:hi:bottom" { fail("position= and type=") }
+    if Box().tag(type="b") != "<b>" { fail("method, type=") }
+    f := fn(type) { return "got " + String(type) }
+    if f("t") != "got t" { fail("lambda parameter named type") }
+    print("ok")
+}

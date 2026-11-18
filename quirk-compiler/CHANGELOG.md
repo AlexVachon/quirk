@@ -7,13 +7,16 @@ only for breaking changes.
 
 ## [7.44.1] — 2026-11-18 — fixes found building a Notification component
 
-- Pins **`live` v2.1.1**: `@after="method"` with `delay="ms"` (timers, e.g.
-  a notification that closes itself), enum fields in templates, a
-  component's element matched by its key when the page changes (moved, not
-  rewritten), a Notification component in the demo (pages in src/pages,
-  components in src/components), `TestSession.run_timers()`; it says so at
-  startup when Quirk is too old for it, and template errors name the value
-  (`'lower' isn't a field of an Int (2)`).
+- Pins **`live` v2.2.0**: notifications like Element Plus's ElNotification —
+  `self.notify("Saved", title=, type="success", position="bottom-right",
+  duration=, on_click=, on_close=)` from any page or component, shown in the
+  page's corners with slide-in / fade-out transitions, the timer paused on
+  hover; `q-transition` for any element; `@after="method"` timers; enum
+  fields in templates; a component's element matched by its key when the
+  page changes; it says so at startup when Quirk is too old for it.
+- **Keywords as argument names**: `notify("Saved", type="success")` — a
+  parameter may be named like a keyword, and now it can be passed by name
+  too (the call failed to parse) (probe p179).
 - **Reflection on enum fields**: an enum field reads as its variant's name
   and is set from a name or an ordinal — templates show `{{ status }}`,
   compare `status == "Error"`, and props pass `status="Error"`. It read as

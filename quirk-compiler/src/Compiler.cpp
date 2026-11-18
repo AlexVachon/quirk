@@ -705,7 +705,9 @@ std::vector<std::unique_ptr<Node>> processFile(const std::string& filePath,
                                                bool isMainFile = false) {
     log.debug("Processing file: " + filePath);
 
-    std::string absPath = fs::absolute(filePath).string();
+    // lexically_normal: `a/b/../index.qk` and `a/index.qk` are one module
+    // (loaded twice, its types clashed with themselves).
+    std::string absPath = fs::absolute(filePath).lexically_normal().string();
     if (loadedModules.count(absPath))
         return {};
     loadedModules.insert(absPath);
@@ -852,7 +854,7 @@ static bool planTypeRewrites(const std::vector<std::unique_ptr<Node>>& ast,
             std::string target = resolveImportPath(u->moduleName, file);
             if (target.empty()) continue;
             UseInfo info;
-            info.target = fs::absolute(target).string();
+            info.target = fs::absolute(target).lexically_normal().string();
             info.filters = u->filterList;
             if (!u->alias.empty()) info.alias = u->alias;
             else if (u->filterList.empty()) {
@@ -992,7 +994,7 @@ static void hashImportGraph(const std::string& entry,
                             llvm::SHA256& hasher,
                             std::set<std::string>& visited) {
     std::string abs;
-    try { abs = fs::absolute(entry).string(); }
+    try { abs = fs::absolute(entry).lexically_normal().string(); }
     catch (...) { return; }
     if (visited.count(abs)) return;
     visited.insert(abs);

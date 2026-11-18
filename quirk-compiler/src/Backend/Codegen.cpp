@@ -1738,14 +1738,46 @@ class LLVMCodegen {
         std::vector<std::string> mnames;
         for (auto& m : methods) mnames.push_back(m.first);
 
+        // An enum field reads as its variant's name and is set from a name
+        // (or an ordinal): templates show `{{ status }}` and compare
+        // `status == "Error"`, props pass `status="Error"`.
+        auto enumOf = [&](const std::string& f) -> std::string {
+            std::string t = fieldType(f);
+            return enumVariants.count(t) ? t : "";
+        };
         chain(bGet, fields, [&](size_t i) {
             Value* ptr = Builder.CreateStructGEP(st, selfPtr, fieldIdx[i]);
             Value* v = Builder.CreateLoad(st->getElementType(fieldIdx[i]), ptr);
+            std::string en = enumOf(fields[i]);
+            if (!en.empty() && v->getType()->isIntegerTy()) {
+                if (Function* strFn = TheModule->getFunction("__" + en + "_str")) {
+                    Value* ord = Builder.CreateSExtOrTrunc(v, Type::getInt32Ty(Context));
+                    Builder.CreateRet(Builder.CreateBitCast(Builder.CreateCall(strFn, {ord}), i8p));
+                    return;
+                }
+            }
             Builder.CreateRet(boxToVoidPtr(v));
         });
         chain(bSet, fields, [&](size_t i) {
             Type* fty = st->getElementType(fieldIdx[i]);
             Value* raw = Builder.CreateLoad(i8p, args);
+            std::string en = enumOf(fields[i]);
+            if (!en.empty() && fty->isIntegerTy()) {
+                std::string names;
+                for (size_t k = 0; k < enumVariants[en].size(); k++) names += (k ? "," : "") + enumVariants[en][k];
+                FunctionCallee ordFn = TheModule->getOrInsertFunction("quirk_reflect_enum_ordinal",
+                    FunctionType::get(i32, {i8p, i8p}, false));
+                Value* ord = Builder.CreateCall(ordFn, {raw, Builder.CreateGlobalStringPtr(names)});
+                BasicBlock* okBB = BasicBlock::Create(Context, "enum_ok", fnR);
+                BasicBlock* badBB = BasicBlock::Create(Context, "enum_bad", fnR);
+                Builder.CreateCondBr(Builder.CreateICmpSGE(ord, ConstantInt::get(i32, 0)), okBB, badBB);
+                Builder.SetInsertPoint(badBB);
+                Builder.CreateRet(missing);
+                Builder.SetInsertPoint(okBB);
+                Builder.CreateStore(Builder.CreateSExtOrTrunc(ord, fty), Builder.CreateStructGEP(st, selfPtr, fieldIdx[i]));
+                Builder.CreateRet(selfRaw);
+                return;
+            }
             std::string tname = fieldType(fields[i]);
             Value* v = unboxLambdaParam(raw, tname);
             if (v->getType() != fty) v = quirk::coerceToType(v, fty, Context, Builder, TheModule.get());
@@ -4502,6 +4534,13 @@ class LLVMCodegen {
         return true;
     }
 
+    // The element type of local `name`'s stack slot (nullptr if none).
+    Type* localSlotType(const std::string& name) {
+        Value* slot = varGen->localSlot(name);
+        if (!slot || !slot->getType()->isPointerTy()) return nullptr;
+        return slot->getType()->getPointerElementType();
+    }
+
     void handleVarDecl(VarDeclNode* vdecl) {
         if (vdecl->stringAppend && tryStringAppend(vdecl)) return;
         if (auto lhs = dynamic_cast<LiteralNode*>(vdecl->lhs.get())) {
@@ -4757,6 +4796,13 @@ class LLVMCodegen {
                 // verifier.
                 varGen->defineLocalVariable(lhs->value, val);
             } else if (!varGen->exists(lhs->value)) {
+                varGen->defineLocalVariable(lhs->value, val);
+            } else if (!inModuleScope && (vdecl->op == ":=" || !vdecl->typeAnnotation.empty())
+                       && varGen->hasLocal(lhs->value) && !varGen->isNonlocal(lhs->value)
+                       && localSlotType(lhs->value) != val->getType()) {
+                // A declaration of another type: a new binding, not a
+                // write into the old slot. `n: String` inside a loop, then
+                // `n := 5` after it, converted 5 to the String slot.
                 varGen->defineLocalVariable(lhs->value, val);
             } else {
                 varGen->updateLocalVariable(lhs->value, val);

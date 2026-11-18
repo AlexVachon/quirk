@@ -5,6 +5,23 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.44.1] — 2026-11-18 — fixes found building a Notification component
+
+- Pins **`live` v2.1.0**: `@after="method"` with `delay="ms"` (timers, e.g.
+  a notification that closes itself), enum fields in templates, a
+  Notification component in the demo, `TestSession.run_timers()`.
+- **Reflection on enum fields**: an enum field reads as its variant's name
+  and is set from a name or an ordinal — templates show `{{ status }}`,
+  compare `status == "Error"`, and props pass `status="Error"`. It read as
+  the ordinal (probe p177).
+- **A name declared again with another type after a block** (`n: String`
+  inside a loop, then `n := 5` after it) is a new binding. It reused the
+  first one's slot: wrong values, a crash, or an internal compiler error
+  (probe p176). Also in 7.43.
+- A module reached through two spellings of its path (`a/b/../x.qk` and
+  `a/x.qk`) is loaded once — it was loaded twice, and its types clashed
+  with themselves ("expected 'Component' but got 'index.Component'").
+
 ## [7.44.0] — 2026-11-17 — `live` 2: components with HTML templates
 
 - **`live` v2.0.0**, Vue-style: a component is a struct with its HTML

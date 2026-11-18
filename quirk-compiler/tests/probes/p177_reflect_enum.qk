@@ -1,0 +1,28 @@
+// Reflection on an enum field: it reads as its variant's name and is set
+// from a name or an ordinal (live templates: `{{ status }}`,
+// `status == "Error"`, a prop `status="Error"`). It read as the ordinal.
+use live
+
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+enum Level {
+    Low
+    Mid
+    High
+}
+
+struct Gauge {
+    level: Level
+    define __init(self) -> void { self.level = Level.Mid }
+    define show(self) -> String { return "gauge" }
+}
+
+define main() -> void {
+    g := Gauge()
+    if String(live.get_field(g, "level")) != "Mid" { fail("get: " + String(live.get_field(g, "level"))) }
+    if not live.set_field(g, "level", "High") or g.level != Level.High { fail("set by name") }
+    if not live.set_field(g, "level", 0) or g.level != Level.Low { fail("set by ordinal") }
+    if live.set_field(g, "level", "Huge") or g.level != Level.Low { fail("unknown name refused") }
+    if live.field_type(g, "level") != "Level" { fail("type") }
+    print("ok")
+}

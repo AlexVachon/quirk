@@ -296,6 +296,11 @@ class VariableGen {
     bool hasLocal(const std::string& name) const {
         return NamedValues.count(name) > 0;
     }
+    // A local's stack slot (an alloca), or nullptr.
+    Value* localSlot(const std::string& name) const {
+        auto it = NamedValues.find(name);
+        return it == NamedValues.end() ? nullptr : it->second;
+    }
     bool isNonlocal(const std::string& name) const { return nonlocalVars.count(name) > 0; }
 
     // Register a nonlocal variable backed by a GC heap cell.

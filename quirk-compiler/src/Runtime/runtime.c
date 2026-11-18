@@ -306,6 +306,28 @@ void* quirk_reflect(void* obj, int32_t op, const char* name, void** args, int64_
     return ti->reflect(obj, op, name, padded);
 }
 
+// An enum field set by reflection: `v` is a variant's name (a String) or
+// its ordinal (an Int); `names` the variants, comma-separated. -1 if neither.
+int32_t quirk_reflect_enum_ordinal(void* v, const char* names) {
+    if (quirk_type_of(v) == QT_STRING) {
+        String* s = (String*)v;
+        const char* want = s->buffer ? s->buffer : "";
+        size_t wl = strlen(want);
+        int32_t i = 0;
+        for (const char* p = names; p && *p; i++) {
+            const char* e = strchr(p, ',');
+            size_t len = e ? (size_t)(e - p) : strlen(p);
+            if (len == wl && strncmp(p, want, len) == 0) return i;
+            p = e ? e + 1 : NULL;
+        }
+        return -1;
+    }
+    int64_t n = quirk_opaque_to_int(v);
+    int32_t count = names && *names ? 1 : 0;
+    for (const char* p = names; p && *p; p++) if (*p == ',') count++;
+    return (n >= 0 && n < count) ? (int32_t)n : -1;
+}
+
 // Comma-separated field (which=0) or method (which=1) names of `obj`'s type.
 const char* quirk_reflect_names(void* obj, int which) {
     QuirkTypeInfo* ti = quirk_type_slot(quirk_type_of(obj));

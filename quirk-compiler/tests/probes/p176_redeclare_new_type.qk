@@ -1,0 +1,30 @@
+// A name declared inside a block (`n: String` in a loop), then declared
+// again after it with another type (`n := 5`): the second is a new
+// binding. It reused the String slot — garbage, a crash, or an internal
+// compiler error ("ret %String*" in an Int function).
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+define after_loop(items: List) -> Int {
+    for a in items {
+        n: String = a
+        if n == "" { fail("empty") }
+    }
+    n := 5
+    return n + 1
+}
+
+define after_if(counts: Map) -> String {
+    if true {
+        s: String = "x"
+        if s != "x" { fail("s") }
+    }
+    s := counts.has("k") ? Int(counts["k"]) : 0
+    counts["k"] = s + 1
+    return String(counts["k"])
+}
+
+define main() -> void {
+    if after_loop(["a", "b"]) != 6 { fail("after a loop") }
+    if after_if({}) != "1" { fail("after an if") }
+    print("ok")
+}

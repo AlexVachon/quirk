@@ -292,8 +292,13 @@ String* Sys_prefix() {
     return make_String("/usr/local"); 
 }
 
+// Set by the program at startup (Codegen: quirk_set_version) to the
+// version of the compiler that built it. It said "1.0.0" whatever it was.
+static const char* quirk_version_str = "unknown";
+void quirk_set_version(const char* v) { if (v && *v) quirk_version_str = v; }
+
 String* Sys_version() {
-    return make_String("1.0.0"); 
+    return make_String(quirk_version_str);
 }
 
 String* Sys_getenv(String* key) {

@@ -24,6 +24,9 @@ only for breaking changes.
   importing file (nearest first, up to the project root): `from
   src.components.notification` in app/src/pages.qk finds
   app/src/components/notification/index.qk however the program is run.
+- **`sys.version()`** is the version of the compiler that built the program;
+  it always said "1.0.0" (probe p178). `live` uses it to say when Quirk is
+  too old for it.
 - A module reached through two spellings of its path (`a/b/../x.qk` and
   `a/x.qk`) is loaded once — it was loaded twice, and its types clashed
   with themselves ("expected 'Component' but got 'index.Component'").

@@ -1,0 +1,15 @@
+// sys.version() is the version of the compiler that built the program.
+// It returned "1.0.0" whatever the version was (the runtime library didn't
+// know), so a package couldn't check it needed a newer Quirk.
+use sys
+
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+define main() -> void {
+    v := sys.version()
+    parts := v.split(".")
+    if parts.length() < 3 { fail("not x.y.z: " + v) }
+    major := Int(String(parts[0]))
+    if major < 7 { fail("old or placeholder version: " + v) }
+    print("ok")
+}

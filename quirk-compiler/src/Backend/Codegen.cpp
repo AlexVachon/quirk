@@ -200,6 +200,9 @@ class LLVMCodegen {
     void setSourceMap(const std::map<std::string, std::string>& sm) { sourceMap = sm; }
     // The user's entry file (absolute); names the `main` frame in tracebacks.
     void setEntryFile(const std::string& f) { entryFile = f; }
+    // The compiler's version, handed to the runtime at startup (sys.version()).
+    void setQuirkVersion(const std::string& v) { quirkVersion = v; }
+    std::string quirkVersion = qpm::QUIRK_VERSION;   // Compiler.cpp includes PackageManager.hpp first
     std::string entryFile;
     // This function's shadow-frame cur_line slot (from quirk_push_frame_l)
     // and its source file; handleStatement stores each statement's line.
@@ -825,6 +828,14 @@ class LLVMCodegen {
             FunctionType::get(Type::getVoidTy(Context), {Type::getInt32Ty(Context), Type::getInt8PtrTy(Context)->getPointerTo()}, false));
             
         CallInst* initCall = Builder.CreateCall(runtimeInit, {argc, argv});
+
+        // `sys.version()`: the compiler that built this program (the runtime
+        // library itself is built separately and doesn't know).
+        if (!quirkVersion.empty()) {
+            FunctionCallee setVer = TheModule->getOrInsertFunction("quirk_set_version",
+                FunctionType::get(Type::getVoidTy(Context), {Type::getInt8PtrTy(Context)}, false));
+            Builder.CreateCall(setVer, {Builder.CreateGlobalStringPtr(quirkVersion)});
+        }
 
         // Register each user struct's header type id with its name and
         // `__str`, so untyped runtime code (printing a List of structs,

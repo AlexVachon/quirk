@@ -2130,7 +2130,7 @@ int main(int argc, char* argv[]) {
                 codegen.setDebugMode(opts.debugMode);
                 codegen.setSourceMap(sourceMap);
                 codegen.setEntryFile(fs::absolute(opts.inputFile).string());
-                codegen.compile(ast, irDest);
+                        codegen.compile(ast, irDest);
             }
             std::string err;
             if (!windowsEmitObject(irPath, objPath, err) ||

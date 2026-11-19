@@ -2,6 +2,12 @@
 
 All notable changes to the extension land here. Versioning follows SemVer; minor bumps for new features, patches for fixes.
 
+## [1.1.14] — 2026-11-19 — hover docs for scoped styles
+
+- Hover and completion know `live` 2.7 (`<style scoped>` in component
+  templates). The CSS inside a template's `<style>` is highlighted as CSS
+  (the HTML grammar does it).
+
 ## [1.1.13] — 2026-11-18 — hover docs for live updates
 
 - Hover and completion know `web` 1.2 (`res.event_stream()`, `EventStream`)

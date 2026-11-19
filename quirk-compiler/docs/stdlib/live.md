@@ -20,6 +20,7 @@ named after the struct (`counter_page.html`) next to the `.qk` file:
     <PlusButton :page="self" />                 another component, by its struct's name
     {% if count >= 10 %}<p>a lot</p>{% end %}
     {% for i, item in items %}<li>{{ item }}</li>{% else %}<li>none</li>{% end %}
+    <style scoped> .title { color: red } </style>   CSS for this component's elements only
 
 `on_load()` sets it up (once). Events call its methods by name; the page
 is rendered again after each one. Props: `text="hi {{ name }}"` sets the

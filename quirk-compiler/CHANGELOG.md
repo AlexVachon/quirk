@@ -5,6 +5,14 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.48.0] — 2026-11-19 — styles for one component
+
+- Pins **`live` v2.7.0**: `<style scoped>` in a component's template — its
+  CSS applies to that component's elements only (a `data-q-xxxxxx`
+  attribute per component type, the selectors rewritten; `@media` inside,
+  `@keyframes` as they are), added to the page once per type. Also: `live`
+  checks itself in headless Chromium and runs its checks on GitHub Actions.
+
 ## [7.47.0] — 2026-11-18 — live updates from the server
 
 - Pins **`web` v1.2.0**: event streams (Server-Sent Events) —

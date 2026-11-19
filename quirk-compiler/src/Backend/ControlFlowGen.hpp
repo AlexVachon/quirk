@@ -64,10 +64,10 @@ class ControlFlowGen {
             const OpenBlock& b = saved[i - 1];
             openTries.resize(i - 1);
             if (b.exitFn) {
-                Value* arg = b.resource;
-                Type* want = b.exitFn->getFunctionType()->getParamType(0);
-                if (arg->getType() != want) arg = Builder.CreateBitCast(arg, want);
-                Builder.CreateCall(b.exitFn, {arg});
+                // A with's handler is pushed too (an exception in its body
+                // runs __exit): pop it, then __exit with no error.
+                Builder.CreateCall(TheModule->getFunction("quirk_pop_try"));
+                emitWithExit(b.exitFn, b.resource, nullptr);
                 continue;
             }
             Builder.CreateCall(TheModule->getFunction("quirk_pop_try"));
@@ -86,6 +86,48 @@ class ControlFlowGen {
         openTries.push_back(b);
     }
     void popWith() { if (!openTries.empty()) openTries.pop_back(); }
+
+    // `__exit(self)` or `__exit(self, error)`: `error` is the exception the
+    // body threw, null when it ended normally (or by return / break).
+    void emitWithExit(Function* exitFn, Value* resource, Value* error) {
+        FunctionType* ft = exitFn->getFunctionType();
+        std::vector<Value*> args;
+        Value* self = resource;
+        if (self->getType() != ft->getParamType(0)) self = Builder.CreateBitCast(self, ft->getParamType(0));
+        args.push_back(self);
+        if (ft->getNumParams() >= 2) {
+            Type* et = ft->getParamType(1);
+            Value* e = error ? error : Constant::getNullValue(et);
+            if (e->getType() != et) {
+                if (e->getType()->isPointerTy() && et->isPointerTy()) e = Builder.CreateBitCast(e, et);
+                else e = Constant::getNullValue(et);
+            }
+            args.push_back(e);
+            // Further params (a default-param thunk's QUIRK_NOARG, ...): their zero value.
+            for (unsigned i = 2; i < ft->getNumParams(); i++) args.push_back(Constant::getNullValue(ft->getParamType(i)));
+        }
+        Builder.CreateCall(exitFn, args);
+    }
+
+    // The jump to the enclosing handler (or the uncaught-exception report)
+    // after a with's __exit ran for an exception from its body.
+    void emitRethrow(Function* parentFunc, std::map<std::string, StructType*>& StructTypes) {
+        Value* depth = Builder.CreateCall(TheModule->getFunction("quirk_get_try_depth"));
+        Value* hasParentCatch = Builder.CreateICmpSGT(depth, ConstantInt::get(Type::getInt32Ty(Context), -1));
+        BasicBlock* jumpBB  = BasicBlock::Create(Context, "with_rethrow",  parentFunc);
+        BasicBlock* crashBB = BasicBlock::Create(Context, "with_uncaught", parentFunc);
+        Builder.CreateCondBr(hasParentCatch, jumpBB, crashBB);
+        Builder.SetInsertPoint(jumpBB);
+        Value* parentBuf = Builder.CreateCall(TheModule->getFunction("quirk_get_current_jmp_buf"));
+        // Pop it, as a throw does: left pushed, the handler that catches it
+        // stayed on the stack, and a later throw jumped into its finished frame.
+        Builder.CreateCall(TheModule->getFunction("quirk_pop_try"));
+        Builder.CreateCall(TheModule->getFunction("longjmp"),
+                           {parentBuf, ConstantInt::get(Type::getInt32Ty(Context), 1)});
+        Builder.CreateUnreachable();
+        Builder.SetInsertPoint(crashBB);
+        emitUnhandledException(StructTypes);
+    }
 
     ControlFlowGen(LLVMContext& ctx, Module* mod, IRBuilder<>& build)
         : Context(ctx), TheModule(mod), Builder(build) {}
@@ -525,6 +567,9 @@ class ControlFlowGen {
 
         Builder.SetInsertPoint(jumpBB);
         Value* parentBuf = Builder.CreateCall(TheModule->getFunction("quirk_get_current_jmp_buf"));
+        // Pop it, as a throw does: left pushed, the handler that catches it
+        // stayed on the stack, and a later throw jumped into its finished frame.
+        Builder.CreateCall(TheModule->getFunction("quirk_pop_try"));
         Builder.CreateCall(TheModule->getFunction("longjmp"),
                            {parentBuf, ConstantInt::get(Type::getInt32Ty(Context), 1)});
         Builder.CreateUnreachable();
@@ -550,6 +595,7 @@ class ControlFlowGen {
 
             Builder.SetInsertPoint(jumpBB);
             Value* activeBuf = Builder.CreateCall(TheModule->getFunction("quirk_get_current_jmp_buf"));
+            Builder.CreateCall(TheModule->getFunction("quirk_pop_try"));     // as a throw does
             Builder.CreateCall(TheModule->getFunction("longjmp"),
                                {activeBuf, ConstantInt::get(Type::getInt32Ty(Context), 1)});
             Builder.CreateUnreachable();

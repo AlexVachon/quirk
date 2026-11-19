@@ -1,0 +1,69 @@
+// An exception in a `with` body runs __exit (given the exception when
+// __exit takes one: null when the body ended normally), then goes on to
+// whoever catches it (`as name` is optional). And a re-throw (a bare `throw`, or a try whose catches
+// don't match) pops its handler as a throw does: it stayed pushed, and a
+// later throw jumped back into the finished frame (a hang).
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+log := []
+
+struct R {
+    name: String
+    define __init(self, n: String) -> void { self.name = n }
+    define __enter(self) -> R { return self }
+    define __exit(self) -> void { log.append("exit " + self.name) }
+}
+
+struct Tx {
+    define __enter(self) -> Tx { return self }
+    define __exit(self, error: Exception) -> void {
+        log.append(error == null ? "commit" : "rollback " + error.message)
+    }
+}
+
+define nested() -> void {
+    with R("a") as a {
+        with R("b") as b {
+            throw ValueError("boom")
+        }
+    }
+}
+
+define tx(n: Int) -> Int {
+    with Tx() {                                     // `as name` is optional
+        if n == 1 { return 1 }
+        if n == 2 { throw ValueError("two") }
+    }
+    return 0
+}
+
+define unmatched() -> void {
+    try { throw ValueError("v") } catch (e: KeyError) { fail("KeyError caught a ValueError") }
+}
+
+define bare() -> void {
+    try { throw ValueError("w") } catch (e: ValueError) { throw }
+}
+
+define main() -> void {
+    try { nested() } catch (e: ValueError) { log.append("caught " + e.message) }
+    if ", ".join(log) != "exit b, exit a, caught boom" { fail("nested: " + ", ".join(log)) }
+
+    log = []
+    tx(0)
+    tx(1)
+    try { tx(2) } catch (e: ValueError) { log.append("caught") }
+    if ", ".join(log) != "commit, commit, rollback two, caught" { fail("tx: " + ", ".join(log)) }
+
+    got := ""
+    try { unmatched() } catch (e: ValueError) { got = got + e.message }
+    try { bare() } catch (e: ValueError) { got = got + e.message }
+    if got != "vw" { fail("re-throws: " + got) }
+    // Both handlers above are gone: this lands in its own catch, not in theirs.
+    caught := 0
+    for i in [1, 2, 3] {
+        try { throw RuntimeError("r") } catch (e: RuntimeError) { caught = caught + 1 }
+    }
+    if caught != 3 { fail("later throws: " + String(caught)) }
+    print("ok")
+}

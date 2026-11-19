@@ -2,6 +2,13 @@
 
 All notable changes to the extension land here. Versioning follows SemVer; minor bumps for new features, patches for fixes.
 
+## [1.1.16] — 2026-11-19 — sqlite
+
+- Hover and completion know the new `sqlite` package (`sqlite.open`,
+  `Database`, `Transaction`, `sqlite.Error`).
+- `__exit`'s hover: it also runs when the `with` block raises, and
+  `__exit(self, error: Exception)` receives the exception.
+
 ## [1.1.15] — 2026-11-19 — hover docs for nested layouts
 
 - Hover and completion know `live` 2.8 (`RouteGroup.group`: layouts

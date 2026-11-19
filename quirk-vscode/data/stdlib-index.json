@@ -155,6 +155,15 @@
 "doc": "A component: a struct with its state in fields and its HTML in a template\n\u2014 returned from `template()` (a raw string, `r\"\"\"...\"\"\"`), or in the file\nnamed after the struct (`counter_page.html`) next to the `.qk` file:\n\n    <h1>Count: {{ count }}</h1>\n    <button @click=\"add(1)\">+1</button>         calls self.add(1)\n    <input model=\"draft\" @enter=\"save\">         self.draft follows the field; Enter calls self.save(text)\n    <div @after=\"close\" delay=\"3000\">           calls self.close() 3 s after it appears\n    <PlusButton :page=\"self\" />                 another component, by its struct's name\n    {% if count >= 10 %}<p>a lot</p>{% end %}\n    {% for i, item in items %}<li>{{ item }}</li>{% else %}<li>none</li>{% end %}\n    <style scoped> .title { color: red } </style>   CSS for this component's elements only\n\n`on_load()` sets it up (once). Events call its methods by name; the page\nis rendered again after each one. Props: `text=\"hi {{ name }}\"` sets the\nchild's `text` field (a String), `:count=\"n + 1\"` sets it to the value;\n`@done=\"refresh\"` runs when the child calls `self.emit(\"done\")`. A\n`<slot />` in a component's template shows what its tag enclosed.\n\nA page is a Component served by a `live.Router` (usually a `live.Page`).\n`title()` sets the page title; `self.go(path)` sends the browser to\nanother page. (The 1.0 way, overriding `render()` and `handle(event,\ndata)` with `q-click=\"name\"` attributes, still works.)"
 }
 ],
+"Database": [
+{
+"package": "sqlite",
+"qualified": "Database",
+"kind": "struct",
+"signature": "struct Database {",
+"doc": "A connection to a database (`sqlite.open`). Each method runs one statement\nand is done with it: nothing to finalize or reset.\n\nParameters: `?` in the SQL with a List (in order), or `:name` with a Map:\n    db.query(\"SELECT * FROM t WHERE a = ? AND b = ?\", [1, \"x\"])\n    db.query(\"SELECT * FROM t WHERE a = :a AND b = :b\", {\"a\": 1, \"b\": \"x\"})\nValues go in as they are \u2014 never pasted into the SQL, so they can't change\nit. Int, Double, String, Bool (stored as 1 / 0) and null.\n\nRows come back as Maps, column name \u2192 value: Int, Double, String or null\n(SQLite has no Bool: a stored `true` reads back as 1)."
+}
+],
 "DatePicker": [
 {
 "package": "ui",
@@ -214,6 +223,15 @@
 "kind": "struct",
 "signature": "variant Err of Result",
 "doc": ""
+}
+],
+"Error": [
+{
+"package": "sqlite",
+"qualified": "Error",
+"kind": "struct",
+"signature": "struct Error : RuntimeError {",
+"doc": "What went wrong in the database: a constraint (a UNIQUE / NOT NULL / CHECK\n/ FOREIGN KEY), bad SQL, a locked or read-only file, a closed database.\n  `code` \u2014 SQLite's result code: `code % 256` is the primary one\n           (19 a constraint, 1 an SQL error, 5 busy, 8 read-only \u2026);\n           the whole is the extended one (2067 UNIQUE, 1299 NOT NULL \u2026)\n  `sql`  \u2014 the statement, when there was one\n\n@example:\ntry {\n    db.execute(\"INSERT INTO users (email) VALUES (?)\", [email])\n} catch (e: sqlite.Error) {\n    if e.is_constraint() { print(\"already taken\") } else { throw }\n}"
 }
 ],
 "Event": [
@@ -1063,6 +1081,15 @@
 "kind": "struct",
 "signature": "struct Toolbar : Row {",
 "doc": "A row of `ui.ToolButton`s on a raised strip, usually under the menu bar."
+}
+],
+"Transaction": [
+{
+"package": "sqlite",
+"qualified": "Transaction",
+"kind": "struct",
+"signature": "struct Transaction {",
+"doc": "A transaction (`db.transaction()`), for `with`: committed at the end of\nthe block, rolled back if it raises. Inside another one: a savepoint."
 }
 ],
 "TreeNode": [
@@ -2274,6 +2301,15 @@
 "doc": "Concatenate two Lists in order.\n@example chain([1, 2], [3, 4])   // [1, 2, 3, 4]"
 }
 ],
+"changes": [
+{
+"package": "sqlite",
+"qualified": "Database.changes",
+"kind": "method",
+"signature": "define changes(self) -> Int {",
+"doc": "How many rows the last INSERT / UPDATE / DELETE changed."
+}
+],
 "channels": [
 {
 "package": "window",
@@ -2511,6 +2547,13 @@
 "doc": "Close socket `fd`, releasing the OS resource."
 },
 {
+"package": "sqlite",
+"qualified": "Database.close",
+"kind": "method",
+"signature": "define close(self) -> void {",
+"doc": "Close it. Closing twice is fine; using it after raises sqlite.Error."
+},
+{
 "package": "ui",
 "qualified": "DatePicker.close",
 "kind": "method",
@@ -2587,6 +2630,15 @@
 "kind": "define",
 "signature": "define color_to_hsv(color: Int) -> List {",
 "doc": "[hue 0-359, saturation 0-100, value 0-100] of a colour."
+}
+],
+"columns": [
+{
+"package": "sqlite",
+"qualified": "Database.columns",
+"kind": "method",
+"signature": "define columns(self, sql: String) -> List {",
+"doc": "The column names a SELECT gives (without running it)."
 }
 ],
 "communicate": [
@@ -3269,6 +3321,24 @@
 "doc": "Absolute path to the running quirk executable."
 }
 ],
+"execute": [
+{
+"package": "sqlite",
+"qualified": "Database.execute",
+"kind": "method",
+"signature": "define execute(self, sql: String, params: Any = null) -> Int {",
+"doc": "Run a statement that returns no rows (INSERT, UPDATE, DELETE, CREATE \u2026).\nReturns how many rows it changed."
+}
+],
+"execute_many": [
+{
+"package": "sqlite",
+"qualified": "Database.execute_many",
+"kind": "method",
+"signature": "define execute_many(self, sql: String, rows: List) -> Int {",
+"doc": "Run the same statement once per item of `rows` (each a List or a Map of\nparameters), in one transaction. Returns how many rows changed in all."
+}
+],
 "exists": [
 {
 "package": "fs",
@@ -3927,6 +3997,15 @@
 "doc": "Implementation info: `name`, `cache_tag`, `version`.\n@example\nsys.implementation().get(\"version\")"
 }
 ],
+"in_transaction": [
+{
+"package": "sqlite",
+"qualified": "Database.in_transaction",
+"kind": "method",
+"signature": "define in_transaction(self) -> Bool {",
+"doc": "In a transaction now (`transaction()`, or a BEGIN of your own)."
+}
+],
 "index": [
 {
 "package": "typing",
@@ -3999,6 +4078,13 @@
 ],
 "insert": [
 {
+"package": "sqlite",
+"qualified": "Database.insert",
+"kind": "method",
+"signature": "define insert(self, sql: String, params: Any = null) -> Int {",
+"doc": "Run an INSERT; returns the new row's id (its INTEGER PRIMARY KEY)."
+},
+{
 "package": "ui",
 "qualified": "TextEdit.insert",
 "kind": "method",
@@ -4013,6 +4099,24 @@
 "kind": "method",
 "signature": "define intersection(self, other: Set) -> Set",
 "doc": "Returns a new set containing only elements present in both sets.\n@param other: Set\n@returns: Set"
+}
+],
+"is_busy": [
+{
+"package": "sqlite",
+"qualified": "Error.is_busy",
+"kind": "method",
+"signature": "define is_busy(self) -> Bool {",
+"doc": "Another connection holds the lock (after waiting `busy_ms`)."
+}
+],
+"is_constraint": [
+{
+"package": "sqlite",
+"qualified": "Error.is_constraint",
+"kind": "method",
+"signature": "define is_constraint(self) -> Bool {",
+"doc": "A constraint failed: UNIQUE, NOT NULL, CHECK, FOREIGN KEY, PRIMARY KEY."
 }
 ],
 "is_dir": [
@@ -4321,6 +4425,15 @@
 "kind": "method",
 "signature": "define last(self) -> Any {",
 "doc": "Returns the last element in insertion order, or `null` when\nthe set is empty. Parallel to List.last()."
+}
+],
+"last_id": [
+{
+"package": "sqlite",
+"qualified": "Database.last_id",
+"kind": "method",
+"signature": "define last_id(self) -> Int {",
+"doc": "The id of the last row inserted on this connection."
 }
 ],
 "layout": [
@@ -5114,6 +5227,13 @@
 "doc": "Load the page at `path`."
 },
 {
+"package": "sqlite",
+"qualified": "open",
+"kind": "define",
+"signature": "define open(path: String, read_only: Bool = false, must_exist: Bool = false, busy_ms: Int = 5000) -> Database {",
+"doc": "Open the database in the file at `path` \u2014 made if it isn't there, unless\n`must_exist`. `\":memory:\"`: a new database in memory, gone when it's closed.\n  `read_only` \u2014 no writes (a write raises sqlite.Error)\n  `busy_ms`   \u2014 when another connection is writing: how long to wait for\n                it before raising (default 5 s)\nClose it with `db.close()`, or use `with sqlite.open(path) as db { \u2026 }`."
+},
+{
 "package": "ui",
 "qualified": "DatePicker.open",
 "kind": "method",
@@ -5638,6 +5758,22 @@
 "kind": "method",
 "signature": "define query(self, name: String) -> String {",
 "doc": "A `?name=value` of the page's URL; \"\" if none."
+},
+{
+"package": "sqlite",
+"qualified": "Database.query",
+"kind": "method",
+"signature": "define query(self, sql: String, params: Any = null) -> List {",
+"doc": "Every row of a SELECT, as Maps (column name \u2192 value)."
+}
+],
+"query_one": [
+{
+"package": "sqlite",
+"qualified": "Database.query_one",
+"kind": "method",
+"signature": "define query_one(self, sql: String, params: Any = null) -> Map {",
+"doc": "The first row of a SELECT, or null when there's none."
 }
 ],
 "quote": [
@@ -6134,6 +6270,15 @@
 "kind": "method",
 "signature": "define screenshot(self, path: String) -> void {",
 "doc": "Save what's been drawn as a BMP image.\n@throws WindowError on failure."
+}
+],
+"script": [
+{
+"package": "sqlite",
+"qualified": "Database.script",
+"kind": "method",
+"signature": "define script(self, sql: String) -> void {",
+"doc": "Run several statements, separated by `;`, with no parameters: a schema,\na migration."
 }
 ],
 "scroll_to": [
@@ -6950,6 +7095,15 @@
 "doc": "Runs `cmd` via the OS shell and returns the exit status.\nPrefer `run(cmd)` for the same behavior with a friendlier name."
 }
 ],
+"tables": [
+{
+"package": "sqlite",
+"qualified": "Database.tables",
+"kind": "method",
+"signature": "define tables(self) -> List {",
+"doc": "The names of its tables."
+}
+],
 "take_while": [
 {
 "package": "itertools",
@@ -7355,6 +7509,15 @@
 "doc": "Give `w` a tooltip and return it \u2014 for building trees inline:\n`ui.tooltip(ui.Button(\"Save\", on_click=save), \"Write the file (Ctrl+S)\")`."
 }
 ],
+"transaction": [
+{
+"package": "sqlite",
+"qualified": "Database.transaction",
+"kind": "method",
+"signature": "define transaction(self) -> Transaction {",
+"doc": "`with db.transaction() { \u2026 }`: the statements inside are done all\ntogether or not at all. At the end of the block they're committed; if\nit raises, they're rolled back (and the exception goes on). Inside\nanother transaction it's a savepoint: only its own part is undone."
+}
+],
 "trunc": [
 {
 "package": "math",
@@ -7613,6 +7776,15 @@
 "doc": "Generate a random RFC 4122 v4 UUID. Two calls back-to-back return\ndifferent values (with overwhelming probability \u2014 122 random bits of\nentropy each).\n\n@example\nid := uuid.v4()\nprint(id.length())           // 36"
 }
 ],
+"value": [
+{
+"package": "sqlite",
+"qualified": "Database.value",
+"kind": "method",
+"signature": "define value(self, sql: String, params: Any = null, default: Any = null) -> Any {",
+"doc": "The first column of the first row (`SELECT count(*) \u2026`), or `default`\nwhen there's no row."
+}
+],
 "values": [
 {
 "package": "typing",
@@ -7632,6 +7804,13 @@
 }
 ],
 "version": [
+{
+"package": "sqlite",
+"qualified": "version",
+"kind": "define",
+"signature": "extern define version() -> String",
+"doc": "The version of SQLite built into Quirk (\"3.54.1\")."
+},
 {
 "package": "sys",
 "qualified": "version",

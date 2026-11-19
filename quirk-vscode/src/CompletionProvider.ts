@@ -1502,7 +1502,7 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
                 ['__ge',       'define __ge(self, other: ${1:Self}) -> Bool {\n    $0\n}',                 '>= operator'],
                 // Context manager
                 ['__enter',    'define __enter(self) -> void {\n    $0\n}',                                'Context manager open — with obj as x { }'],
-                ['__exit',     'define __exit(self) -> void {\n    $0\n}',                                 'Context manager close — always runs'],
+                ['__exit',     'define __exit(self) -> void {\n    $0\n}',                                 'Context manager close — always runs (also when the block raises)'],
             ];
             for (const [name, snippet, doc] of magicMethods) {
                 addItem(name, vscode.CompletionItemKind.Method, 'magic method', snippet, doc);

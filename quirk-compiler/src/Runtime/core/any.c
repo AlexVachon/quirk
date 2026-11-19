@@ -215,15 +215,15 @@ int Core_Primitives_Quirk_isinstance(void* val, String* type_str) {
     if (!type_str || !type_str->buffer) return 0;
     const char* t = type_str->buffer;
 
-    // Tagged integer: values <= 0xFFFFFFFF are IntToPtr-encoded ints (not real pointers)
-    uintptr_t uval = (uintptr_t)val;
-    if (uval <= 0xFFFFFFFFUL) {
-        // Bool is stored as 0 or 1; Int covers all values in this range
-        if (strcmp(t, "Bool") == 0) return uval == 0 || uval == 1;
-        return strcmp(t, "Int") == 0;
-    }
-
+    // null is only Null. It was checked after the inline-int test below,
+    // so `null is Bool` (and `null is Int`) were true.
     if (!val) return strcmp(t, "Null") == 0;
+
+    // Tagged integer: values <= 0xFFFFFFFF are IntToPtr-encoded ints (not
+    // real pointers). Only an Int: an untyped Bool is always boxed (an
+    // inline false would be null), and so is 0. `1 is Bool` was true.
+    uintptr_t uval = (uintptr_t)val;
+    if (uval <= 0xFFFFFFFFUL) return strcmp(t, "Int") == 0;
 
     // Headered value (anything quirk_alloc'd): its header names the type.
     {

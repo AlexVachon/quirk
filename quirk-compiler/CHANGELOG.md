@@ -5,6 +5,30 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.50.0] — 2026-11-19 — SQLite
+
+- **New stdlib package `sqlite`** (v1.0.0, github.com/AlexVachon/quirk-sqlite):
+  SQLite databases — `sqlite.open(path)` / `":memory:"`; `query` (rows as
+  Maps), `query_one`, `value`, `execute`, `insert`, `execute_many`,
+  `script`; `?` and `:name` parameters (values are never pasted into the
+  SQL); `with db.transaction() { … }` commits, or rolls back when the block
+  raises (savepoints when nested); `sqlite.Error` with SQLite's code.
+  **SQLite 3.54.1 is built into the runtime** (`src/third_party/sqlite`,
+  public domain, compiled once as its own object): nothing to install, on
+  Linux, macOS and Windows. Its calls release the task lock, so async tasks
+  keep running while it reads or writes.
+- **`with` runs `__exit` when its block raises**, then the exception goes
+  on. It ran only at the end of the block and on return / break /
+  continue: an exception left files, sockets and transactions open.
+  `define __exit(self, error: Exception)` gets the exception (null when the
+  block ended normally). `as name` is now optional: `with db.transaction() { … }`.
+- **A re-throw pops its handler** (a bare `throw`, or a `try` none of whose
+  catches matched): the handler stayed on the stack, so a later exception
+  jumped back into a finished `try` — a hang, or a crash.
+- **`is` on an untyped value**: `null is Bool` and `1 is Bool` were true
+  (null is only Null now, an inline Int only an Int).
+- Probes p183, p184.
+
 ## [7.49.0] — 2026-11-19 — layouts inside layouts
 
 - Pins **`live` v2.8.0**: nested layouts. `group.group(layout=, guard=)`

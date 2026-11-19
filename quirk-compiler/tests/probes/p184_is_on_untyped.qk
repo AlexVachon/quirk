@@ -1,0 +1,27 @@
+// `is` on an untyped value: null is only Null, an inline Int only an Int.
+// `null is Bool` and `1 is Bool` were true (null and 1 read as Bools), so
+// code that sorted values by type (binding SQL parameters) stored null as
+// false and 1 as true.
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+define kind(v: Any) -> String {
+    if v is Bool { return "bool" }
+    if v is Int { return "int" }
+    if v is Double { return "double" }
+    if v is String { return "string" }
+    if v == null { return "null" }
+    return "other"
+}
+
+define main() -> void {
+    got := []
+    for x in [0, null, 1, false, true, 0.0, "", 5000000000, -1, [1]] { got.append(kind(x)) }
+    want := "int, null, int, bool, bool, double, string, int, int, other"
+    if ", ".join(got) != want { fail("list: " + ", ".join(got)) }
+    m := {"a": 0, "b": null, "c": 1}
+    if kind(m["a"]) != "int" or kind(m["b"]) != "null" or kind(m["c"]) != "int" { fail("map values") }
+    if kind(null) != "null" or kind(1) != "int" or kind(false) != "bool" { fail("direct") }
+    n: Any = null
+    if n is Int or n is Bool or n is String { fail("null is a type") }
+    print("ok")
+}

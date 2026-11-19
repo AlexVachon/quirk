@@ -5611,19 +5611,50 @@ class LLVMCodegen {
 
         Value* contextVal = Builder.CreateCall(enterFunc, {resource});
 
-        varGen->defineLocalVariable(node->varName, contextVal);
+        if (!node->varName.empty()) varGen->defineLocalVariable(node->varName, contextVal);
 
-        // A return / break / continue in the body runs __exit on its way
-        // out (emitTryExits); falling off the end runs it below.
         std::string exitName = typeName + "___exit";
         Function* exitFunc = TheModule->getFunction(exitName);
-        if (exitFunc) flowGen->pushWith(exitFunc, resource);
-        for (const auto& stmt : node->body) handleStatement(stmt.get(), parentFunc);
-        if (exitFunc) flowGen->popWith();
-
-        if (!Builder.GetInsertBlock()->getTerminator()) {
-            if (exitFunc) Builder.CreateCall(exitFunc, {resource});
+        if (!exitFunc) {
+            for (const auto& stmt : node->body) handleStatement(stmt.get(), parentFunc);
+            return;
         }
+
+        // The body runs under a handler, as a try's does: an exception in
+        // it runs __exit (given the exception, if __exit takes one), then
+        // goes on to whoever catches it. A return / break / continue runs
+        // __exit on its way out (emitTryExits); falling off the end, below.
+        parentFunc->removeFnAttr(Attribute::AlwaysInline);       // setjmp: see generateTryCatch
+        parentFunc->addFnAttr(Attribute::NoInline);
+        parentFunc->addFnAttr(Attribute::OptimizeNone);
+        BasicBlock* bodyBB  = BasicBlock::Create(Context, "with_body",  parentFunc);
+        BasicBlock* errorBB = BasicBlock::Create(Context, "with_error", parentFunc);
+        BasicBlock* endBB   = BasicBlock::Create(Context, "with_end",   parentFunc);
+        Value* jmpBuf = Builder.CreateCall(TheModule->getFunction("quirk_get_jmp_buf"));
+#ifdef _WIN32
+        Value* sj = Builder.CreateCall(TheModule->getFunction("_setjmp"),
+            {jmpBuf, ConstantPointerNull::get(Type::getInt8PtrTy(Context))});
+#else
+        Value* sj = Builder.CreateCall(TheModule->getFunction("_setjmp"), {jmpBuf});
+#endif
+        Builder.CreateCondBr(Builder.CreateICmpNE(sj, ConstantInt::get(Type::getInt32Ty(Context), 0)), errorBB, bodyBB);
+
+        Builder.SetInsertPoint(bodyBB);
+        flowGen->pushWith(exitFunc, resource);
+        for (const auto& stmt : node->body) handleStatement(stmt.get(), parentFunc);
+        flowGen->popWith();
+        if (!Builder.GetInsertBlock()->getTerminator()) {
+            Builder.CreateCall(TheModule->getFunction("quirk_pop_try"));
+            flowGen->emitWithExit(exitFunc, resource, nullptr);
+            Builder.CreateBr(endBB);
+        }
+
+        Builder.SetInsertPoint(errorBB);                          // the throw popped the handler
+        Value* exc = Builder.CreateCall(TheModule->getFunction("quirk_get_exception"));
+        flowGen->emitWithExit(exitFunc, resource, exc);
+        flowGen->emitRethrow(parentFunc, StructTypes);
+
+        Builder.SetInsertPoint(endBB);
     }
 };
 

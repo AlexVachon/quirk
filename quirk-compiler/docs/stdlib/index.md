@@ -24,6 +24,7 @@
 - [`prompt`](prompt.md)
 - [`random`](random.md)
 - [`regex`](regex.md)
+- [`sqlite`](sqlite.md)
 - [`statistics`](statistics.md)
 - [`sys`](sys.md)
 - [`test`](test.md)

@@ -2237,8 +2237,11 @@ std::unique_ptr<Node> Parser::parseWith() {
     auto node = std::make_unique<WithNode>();
 
     node->resource = parseExpression(35);
-    consume(TokenType::AS, "Expected 'as'");
-    node->varName = advance().value;
+    // `as name` is optional: `with db.transaction() { … }` needs no name.
+    if (peek().type != TokenType::LBRACE) {
+        consume(TokenType::AS, "Expected 'as' or '{'");
+        node->varName = advance().value;
+    }
 
     consume(TokenType::LBRACE, "Expected '{'");
     while (peek().type != TokenType::RBRACE && !isAtEnd()) {

@@ -203,7 +203,7 @@ export class QuirkHoverProvider implements vscode.HoverProvider {
             '__gt':       '**`__gt`** — `>` operator.',
             '__ge':       '**`__ge`** — `>=` operator.',
             '__enter':    '**`__enter`** — context manager open. Called at the start of `with obj as x { }`.',
-            '__exit':     '**`__exit`** — context manager close. Always called at the end of `with`, even if an exception occurs.',
+            '__exit':     '**`__exit`** — context manager close. Always called at the end of `with`: at its end, on `return` / `break` / `continue`, and when the block raises (the exception then goes on). `define __exit(self, error: Exception)` gets that exception, or `null` when the block ended normally — commit or roll back.',
             '__name':     '**`__name`** — the struct\'s name as a `String`. When accessed on `self`, returns the compile-time class name. When accessed on a `Type` instance (`self.__class.__name`), reads the stored name.\n\n```quirk\nprint(self.__name)           // "TypeError"\nprint(self.__class.__name)   // "TypeError"\n```',
             '__parent':   '**`__parent`** — the parent struct\'s name as a `String`. Only meaningful on a `Type` instance (`self.__class.__parent`).\n\n```quirk\nprint(self.__class.__parent)  // "Exception"\n```',
             '__class':    '**`__class`** — magic attribute. Returns a `Type` descriptor for the enclosing struct.\n\nAccess `.__name` and `.__parent` on the result.\n\n```quirk\nprint(self.__class.__name)    // "TypeError"\nprint(self.__class.__parent)  // "Exception"\n```',

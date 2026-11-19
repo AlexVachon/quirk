@@ -55,6 +55,14 @@ for f in regcomp regexec regerror tre-mem; do
     REGEX_OBJS+=("obj/win/rx_$f.o")
 done
 
+step "runtime: sqlite"
+# Its own object, as in the Makefile (same flags): 9 MB of C, not in the
+# unity build. Not exported: only libs/sqlite.c (in runtime.o) calls it.
+clang -c src/third_party/sqlite/sqlite3.c -O2 -o obj/win/sqlite3.o \
+    -DSQLITE_THREADSAFE=1 -DSQLITE_OMIT_LOAD_EXTENSION -DSQLITE_DQS=0 -DSQLITE_ENABLE_FTS5 -DSQLITE_ENABLE_MATH_FUNCTIONS \
+    -D_CRT_SECURE_NO_WARNINGS -D_MT -D_DLL -Xclang --dependent-lib=msvcrt -w >> "$LOG" 2>&1
+echo "rc=$?" | tee -a "$LOG"
+
 step "runtime: export list"
 {
     echo "LIBRARY runtime"
@@ -65,7 +73,7 @@ step "runtime: export list"
 echo "$(($(wc -l < obj/win/runtime.def) - 2)) symbols" | tee -a "$LOG"
 
 step "runtime: link"
-clang -shared obj/win/runtime.o "${REGEX_OBJS[@]}" -o bin/runtime.dll -Wl,/DEF:"$(w obj/win/runtime.def)" -Wl,/NODEFAULTLIB:libcmt.lib \
+clang -shared obj/win/runtime.o "${REGEX_OBJS[@]}" obj/win/sqlite3.o -o bin/runtime.dll -Wl,/DEF:"$(w obj/win/runtime.def)" -Wl,/NODEFAULTLIB:libcmt.lib \
     -L"$CLIB/lib" ${GC_LIB:+-l${GC_LIB%.lib}} ${PTHREAD_LIB:+-l${PTHREAD_LIB%.lib}} \
     ${SSL_LIB:+-l${SSL_LIB%.lib}} ${CRYPTO_LIB:+-l${CRYPTO_LIB%.lib}} -lws2_32 -ladvapi32 -luser32 >> "$LOG" 2>&1
 echo "rc=$?" | tee -a "$LOG"

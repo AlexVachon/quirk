@@ -419,7 +419,7 @@ jobs:
           # Rebuild runtime.so with UBSan flags.
           gcc -shared -fPIC -O1 -g \
               -fsanitize=undefined -fno-omit-frame-pointer \
-              src/Runtime/runtime.c -o bin/runtime.so -lgc -lssl -lcrypto
+              src/Runtime/runtime.c obj/third_party/sqlite/sqlite3.o -o bin/runtime.so -lgc -lssl -lcrypto -lm
 
       - name: Run probes under UBSan
         working-directory: quirk-compiler

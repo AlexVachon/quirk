@@ -4098,7 +4098,7 @@ void Sema::checkWith(WithNode *node)
         fatalError("'" + resType + "' must implement __enter and __exit for use in 'with'",
                    node->line, node->col, node->filePath);
     enterScope();
-    defineVariable(node->varName, resType);
+    if (!node->varName.empty()) defineVariable(node->varName, resType);
     for (auto &stmt : node->body)
         checkStatement(stmt.get());
     exitScope();

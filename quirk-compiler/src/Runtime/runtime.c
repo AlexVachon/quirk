@@ -84,6 +84,7 @@ static void* __gc_text_alloc(size_t n) {
 #include "libs/debug.c"
 #include "libs/process.c"
 #include "libs/window.c"
+#include "libs/sqlite.c"
 
 #include "libs/encoding/json.c"
 #include "libs/encoding/base64.c"

@@ -1,0 +1,21 @@
+// An untyped value given to a Bool (a lambda's `fn(on: Bool)` parameter, a
+// field set by reflection — live's props) is what it holds: an untyped Bool
+// is boxed, never null, and `!= null` read a boxed false as true.
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+define call_with(f: Callable, v: Any) -> String {
+    return String(f(v))
+}
+
+define main() -> void {
+    g := fn(on: Bool) => on ? "yes" : "no"
+    got := [call_with(g, false), call_with(g, true), call_with(g, 0), call_with(g, 1), call_with(g, null)]
+    if ", ".join(got) != "no, yes, no, yes, no" { fail("lambda: " + ", ".join(got)) }
+    flags := {"a": false, "b": true}
+    seen := []
+    each := fn(on: Bool) { seen.append(on ? "on" : "off") }
+    each(flags["a"])
+    each(flags["b"])
+    if ", ".join(seen) != "off, on" { fail("map values: " + ", ".join(seen)) }
+    print("ok")
+}

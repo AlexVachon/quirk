@@ -1495,8 +1495,17 @@ class LLVMCodegen {
             Value* n = quirk::decodeUntypedInt(Context, TheModule.get(), Builder, raw);
             return type == "Int32" ? Builder.CreateTrunc(n, Type::getInt32Ty(Context)) : n;
         }
-        if (type == "Bool")
-            return Builder.CreateICmpNE(raw, ConstantPointerNull::get(cast<PointerType>(raw->getType())), "lambdabool");
+        if (type == "Bool") {
+            // What the value holds: an untyped Bool is a boxed Bool, never
+            // null, so `!= null` read a boxed false as true (a prop
+            // `:done="false"`, a set_field, a `fn(on: Bool)` given false).
+            Type* i8p = Type::getInt8PtrTy(Context);
+            FunctionCallee asBool = TheModule->getOrInsertFunction(
+                "quirk_any_as_bool", Type::getInt32Ty(Context), i8p);
+            Value* r = raw->getType() == i8p ? raw : Builder.CreateBitCast(raw, i8p);
+            return Builder.CreateICmpNE(Builder.CreateCall(asBool, {r}, "lambda_unbox_bool"),
+                                        ConstantInt::get(Type::getInt32Ty(Context), 0), "lambdabool");
+        }
         if (type == "Float" || type == "Double") {
             Type* i8p = Type::getInt8PtrTy(Context);
             FunctionCallee toDbl = TheModule->getOrInsertFunction(

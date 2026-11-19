@@ -5,6 +5,14 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.51.0] — 2026-11-19 — a false Bool stays false
+
+- **An untyped value given to a `Bool` is what it holds.** A lambda's
+  `fn(on: Bool)` parameter and a field set by reflection (live's props,
+  `:done="item.done == 1"`) were true for any non-null value, and an
+  untyped `false` is a boxed Bool, never null: a `false` prop, or a
+  callback given `false`, read as true. Probe p185.
+
 ## [7.50.0] — 2026-11-19 — SQLite
 
 - **New stdlib package `sqlite`** (v1.0.0, github.com/AlexVachon/quirk-sqlite):

@@ -5,6 +5,17 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.54.0] — 2026-11-19 — rows as structs
+
+- Pins **`sqlite` v1.1.0**: `db.query_as(Todo, sql, params)` /
+  `query_one_as` give structs instead of Maps — each column in the field of
+  its name, as that field's type (INTEGER 0 / 1 in a Bool, JSON text in a
+  List / Map, a name in an enum, NULL as zero; other columns left out).
+  `db.migrate([step, …])` applies schema steps once each, in order, each in
+  a transaction, keeping the count in SQLite's `user_version`
+  (`db.schema_version()`). The runtime gives the package the struct
+  reflection live uses (`Sqlite_set_field`, `field_type`, …). Probe p186.
+
 ## [7.53.0] — 2026-11-19 — form validation
 
 - Pins **`live` v2.9.0**: form validation. A component's `rules()` maps its

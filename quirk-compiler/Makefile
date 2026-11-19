@@ -173,7 +173,7 @@ STDLIB_TAG_process ?= v1.0.2
 # window v1.3.0: TrueType fonts (runtime stb_truetype, v7.33.0).
 STDLIB_TAG_window ?= v1.8.0
 # sqlite v1.0.0 is the initial release (runtime Sqlite_*, SQLite 3.54.1 built in, v7.50.0).
-STDLIB_TAG_sqlite ?= v1.0.0
+STDLIB_TAG_sqlite ?= v1.1.0
 # ui v1.0.0 is the initial release (pure Quirk on window; compiler v7.21.0).
 # ui v1.1.0: selection + clipboard in text fields, TextArea, ScrollView,
 # Dropdown, tooltips (needs window v1.2.0, compiler v7.26.0).

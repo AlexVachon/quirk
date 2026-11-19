@@ -248,3 +248,11 @@ int64_t Sqlite_in_transaction(int64_t db) {
 String* Sqlite_version(void) {
     return make_String(sqlite3_libversion());
 }
+
+// ---- rows as structs (db.query_as): through the reflection live.c has ----
+
+int32_t Sqlite_has_field(void* obj, String* name) { return Live_has_field(obj, name); }
+int32_t Sqlite_set_field(void* obj, String* name, void* value) { return Live_set_field(obj, name, value); }
+String* Sqlite_field_type(void* obj, String* name) { return Live_field_type(obj, name); }
+List* Sqlite_field_names(void* obj) { return Live_field_names(obj); }
+String* Sqlite_type_name(void* obj) { return Live_type_name(obj); }

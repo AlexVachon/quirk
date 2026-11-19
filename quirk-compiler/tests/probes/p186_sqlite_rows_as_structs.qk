@@ -1,0 +1,26 @@
+// sqlite's rows as structs: the runtime's Sqlite_set_field / field_type
+// (reflection) put each column in its field, as the field's type.
+use sqlite
+
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+struct Item {
+    id: Int
+    name: String
+    done: Bool
+    price: Double
+}
+
+define main() -> void {
+    db := sqlite.open(":memory:")
+    db.migrate(["CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT, done INTEGER, price REAL)"])
+    db.execute_many("INSERT INTO items (name, done, price) VALUES (?, ?, ?)", [["a", true, 2.5], ["b", false, 3]])
+    rows := db.query_as(Item, "SELECT * FROM items ORDER BY id")
+    if rows.length() != 2 { fail("rows: " + String(rows.length())) }
+    a: Item = rows[0]
+    b: Item = rows[1]
+    if a.id != 1 or a.name != "a" or not a.done or a.price != 2.5 { fail("first row") }
+    if b.done or b.price != 3.0 { fail("second row") }
+    if db.schema_version() != 1 { fail("schema version") }
+    print("ok")
+}

@@ -2,6 +2,11 @@
 
 All notable changes to the extension land here. Versioning follows SemVer; minor bumps for new features, patches for fixes.
 
+## [1.1.18] — 2026-11-19 — hover docs for sqlite 1.1
+
+- Hover and completion know `sqlite` 1.1: `query_as`, `query_one_as`,
+  `migrate`, `schema_version`.
+
 ## [1.1.17] — 2026-11-19 — hover docs for form validation
 
 - Hover and completion know `live` 2.9: `rules()`, `valid()`, `validate`,

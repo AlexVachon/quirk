@@ -71,6 +71,47 @@ Every row of a SELECT, as Maps (column name → value).
 
 The first row of a SELECT, or null when there's none.
 
+#### `define query_as(self, make: Callable, sql: String, params: Any = null) -> List`
+
+Every row of a SELECT as a `make` — a struct type: each column goes in
+the field of the same name, as that field's type (an INTEGER 0 / 1 in a
+Bool, TEXT holding JSON in a List or Map field, a name in an enum).
+Columns with no field are left out; fields with no column keep what
+the struct starts with (it's made with no arguments: its __init's
+parameters get their defaults, or zero).
+
+    struct Todo {
+        id: Int
+        text: String
+        done: Bool
+    }
+
+    for t in db.query_as(Todo, "SELECT * FROM todos WHERE done = ?", [false]) {
+        todo: Todo = t
+        print(todo.text)
+    }
+
+#### `define query_one_as(self, make: Callable, sql: String, params: Any = null) -> Any`
+
+The first row of a SELECT as a `make` (see query_as), or null when there's none.
+
+#### `define migrate(self, steps: List) -> Int`
+
+Bring the database's schema up to date: `steps` are SQL scripts, in
+order, each applied once. SQLite keeps how many were applied (its
+`user_version`); the ones after that run now, each in a transaction
+(all of a step, or none of it). Returns how many ran. Only ever add
+steps at the end — never change one that has run somewhere.
+
+    db.migrate([
+        "CREATE TABLE todos (id INTEGER PRIMARY KEY, text TEXT NOT NULL)",
+        "ALTER TABLE todos ADD COLUMN done INTEGER NOT NULL DEFAULT 0",
+    ])
+
+#### `define schema_version(self) -> Int`
+
+How many migrate() steps the database has had (its `user_version`).
+
 #### `define value(self, sql: String, params: Any = null, default: Any = null) -> Any`
 
 The first column of the first row (`SELECT count(*) …`), or `default`

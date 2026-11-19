@@ -4922,6 +4922,15 @@
 "doc": "The struct's public method names."
 }
 ],
+"migrate": [
+{
+"package": "sqlite",
+"qualified": "Database.migrate",
+"kind": "method",
+"signature": "define migrate(self, steps: List) -> Int {",
+"doc": "Bring the database's schema up to date: `steps` are SQL scripts, in\norder, each applied once. SQLite keeps how many were applied (its\n`user_version`); the ones after that run now, each in a transaction\n(all of a step, or none of it). Returns how many ran. Only ever add\nsteps at the end \u2014 never change one that has run somewhere.\n\n    db.migrate([\n        \"CREATE TABLE todos (id INTEGER PRIMARY KEY, text TEXT NOT NULL)\",\n        \"ALTER TABLE todos ADD COLUMN done INTEGER NOT NULL DEFAULT 0\",\n    ])"
+}
+],
 "mime_type": [
 {
 "package": "web",
@@ -5846,6 +5855,15 @@
 "doc": "Every row of a SELECT, as Maps (column name \u2192 value)."
 }
 ],
+"query_as": [
+{
+"package": "sqlite",
+"qualified": "Database.query_as",
+"kind": "method",
+"signature": "define query_as(self, make: Callable, sql: String, params: Any = null) -> List {",
+"doc": "Every row of a SELECT as a `make` \u2014 a struct type: each column goes in\nthe field of the same name, as that field's type (an INTEGER 0 / 1 in a\nBool, TEXT holding JSON in a List or Map field, a name in an enum).\nColumns with no field are left out; fields with no column keep what\nthe struct starts with (it's made with no arguments: its __init's\nparameters get their defaults, or zero).\n\n    struct Todo {\n        id: Int\n        text: String\n        done: Bool\n    }\n\n    for t in db.query_as(Todo, \"SELECT * FROM todos WHERE done = ?\", [false]) {\n        todo: Todo = t\n        print(todo.text)\n    }"
+}
+],
 "query_one": [
 {
 "package": "sqlite",
@@ -5853,6 +5871,15 @@
 "kind": "method",
 "signature": "define query_one(self, sql: String, params: Any = null) -> Map {",
 "doc": "The first row of a SELECT, or null when there's none."
+}
+],
+"query_one_as": [
+{
+"package": "sqlite",
+"qualified": "Database.query_one_as",
+"kind": "method",
+"signature": "define query_one_as(self, make: Callable, sql: String, params: Any = null) -> Any {",
+"doc": "The first row of a SELECT as a `make` (see query_as), or null when there's none."
 }
 ],
 "quote": [
@@ -6356,6 +6383,15 @@
 "kind": "method",
 "signature": "define scale(self) -> Double {",
 "doc": "Physical pixels per drawing pixel: 1.0 on a standard screen, 2.0 on a\nRetina / 200% one. Everything you draw is in drawing pixels \u2014 sizes\nand text come out the same physical size on every screen, and text and\nshapes use the full resolution. Use it to pick a sharper image\n(`icon@2x.png` when it's 2 or more). Set QUIRK_UI_SCALE (e.g. 1.5) to\nscale a program where the system doesn't (X11)."
+}
+],
+"schema_version": [
+{
+"package": "sqlite",
+"qualified": "Database.schema_version",
+"kind": "method",
+"signature": "define schema_version(self) -> Int {",
+"doc": "How many migrate() steps the database has had (its `user_version`)."
 }
 ],
 "screenshot": [

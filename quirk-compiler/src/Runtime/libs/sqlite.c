@@ -10,7 +10,19 @@
 // (exec, step, close) release the scheduler lock meanwhile, so other async
 // tasks run. SQLite is built thread-safe (SQLITE_THREADSAFE=1).
 
+// A Windows SDK header the unity build pulls in before this file defines
+// `hidden` as a macro, and sqlite3.h has a field of that name
+// (sqlite3_snapshot.hidden): "expected member name". Lifted around it only.
+#ifdef hidden
+#pragma push_macro("hidden")
+#undef hidden
+#define QUIRK_SQLITE_HIDDEN_PUSHED
+#endif
 #include "../../third_party/sqlite/sqlite3.h"
+#ifdef QUIRK_SQLITE_HIDDEN_PUSHED
+#pragma pop_macro("hidden")
+#undef QUIRK_SQLITE_HIDDEN_PUSHED
+#endif
 
 extern String* make_String(const char* raw);
 extern String* make_String_len(char* raw, int64_t len);   // takes `raw` over

@@ -2,6 +2,11 @@
 
 All notable changes to the extension land here. Versioning follows SemVer; minor bumps for new features, patches for fixes.
 
+## [1.1.15] — 2026-11-19 — hover docs for nested layouts
+
+- Hover and completion know `live` 2.8 (`RouteGroup.group`: layouts
+  inside layouts).
+
 ## [1.1.14] — 2026-11-19 — hover docs for scoped styles
 
 - Hover and completion know `live` 2.7 (`<style scoped>` in component

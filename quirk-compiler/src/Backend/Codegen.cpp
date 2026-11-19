@@ -2813,6 +2813,14 @@ class LLVMCodegen {
                 if (Value* conv = emitNumericConversion(lit->value == "Int", call->args[0].value.get()))
                     return conv;
             }
+            // `Bool(x)`: x's truthiness, as `if x` reads it — a boxed false
+            // (a Map value, an Any parameter) is false. It used to build an
+            // empty Bool "object": always true, or invalid IR at top level.
+            if (lit->value == "Bool" && call->args.size() == 1 &&
+                call->args[0].name.empty() && !call->args[0].isSpread) {
+                Value* v = handleExpression(call->args[0].value.get());
+                if (v) return flowGen->toBool(v);
+            }
 
             if (StructTypes.count(lit->value)) {
                 std::vector<Value*> args = constructorArgs(lit->value, call);

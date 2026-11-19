@@ -1807,7 +1807,7 @@
 "qualified": "RouteGroup.add",
 "kind": "method",
 "signature": "define add(self, path: String, page: Callable) -> RouteGroup {",
-"doc": "Serve `page` at `path`, in the group's layout, behind its guard."
+"doc": "Serve `page` at `path`, in the group's layouts, behind its guards."
 },
 {
 "package": "typing",
@@ -3696,6 +3696,13 @@
 "kind": "method",
 "signature": "define group(self, layout: Callable = null, guard: Callable = null) -> RouteGroup {",
 "doc": "Pages sharing a live.Layout and / or a guard:\n`admin := router.group(layout=AdminLayout, guard=live.require_login())`,\nthen `admin.add(\"/admin\", AdminPage)`."
+},
+{
+"package": "live",
+"qualified": "RouteGroup.group",
+"kind": "method",
+"signature": "define group(self, layout: Callable = null, guard: Callable = null) -> RouteGroup {",
+"doc": "A group inside this one: its pages are in `layout` *inside* this group's\nlayout, behind this group's guard and `guard`. Going between its pages\nkeeps both layouts; going to one of the outer group's keeps the outer one."
 }
 ],
 "group_depth_dec": [

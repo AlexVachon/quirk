@@ -1,0 +1,27 @@
+// `Bool(x)` is x's truthiness, as `if x` reads it. It built an empty Bool
+// "object" instead: always true inside a function (a session's stored
+// `false` came back true), invalid IR at the top level.
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+define get(default: Any = null) -> Any {
+    return default
+}
+
+struct S {
+    on: Bool
+    define load(self, v: Any) -> void { self.on = Bool(v) }
+}
+
+define main() -> void {
+    if Bool(get(false)) { fail("boxed false") }
+    if not Bool(get(true)) { fail("boxed true") }
+    m := {"a": false, "b": 1, "c": 0}
+    if Bool(m["a"]) or not Bool(m["b"]) or Bool(m["c"]) { fail("map values") }
+    if Bool(0) or not Bool(2) or Bool(0.0) or not Bool(true) or Bool(null) { fail("literals") }
+    s := S()
+    s.load(false)
+    if s.on { fail("field from Any false") }
+    s.load(true)
+    if not s.on { fail("field from Any true") }
+    print("ok")
+}

@@ -5,6 +5,18 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.49.0] — 2026-11-19 — layouts inside layouts
+
+- Pins **`live` v2.8.0**: nested layouts. `group.group(layout=, guard=)`
+  puts a group's pages in a layout that is itself in the outer group's
+  `<slot />`. Going between pages keeps every layout they share (each gets
+  its `path` and `on_navigate`); the rest is made anew. Guards add up.
+  The demo app's account pages are in an `AccountLayout` inside `MainLayout`.
+- **`Bool(x)` is x's truthiness**, as `if x` reads it. It built an empty
+  Bool object instead: always true inside a function (a stored `false` read
+  back from a Map or a session came back true), and invalid IR at the top
+  level. Probe p182.
+
 ## [7.48.0] — 2026-11-19 — styles for one component
 
 - Pins **`live` v2.7.0**: `<style scoped>` in a component's template — its

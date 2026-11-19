@@ -361,7 +361,13 @@ Routes in one layout (Router.group).
 
 #### `define add(self, path: String, page: Callable) -> RouteGroup`
 
-Serve `page` at `path`, in the group's layout, behind its guard.
+Serve `page` at `path`, in the group's layouts, behind its guards.
+
+#### `define group(self, layout: Callable = null, guard: Callable = null) -> RouteGroup`
+
+A group inside this one: its pages are in `layout` *inside* this group's
+layout, behind this group's guard and `guard`. Going between its pages
+keeps both layouts; going to one of the outer group's keeps the outer one.
 
 ### `struct TestSession`
 

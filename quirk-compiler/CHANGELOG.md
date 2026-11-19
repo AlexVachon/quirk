@@ -5,6 +5,23 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.55.0] — 2026-11-19 — password hashing
+
+- Pins **`crypto` v1.1.0**: `crypto.hash_password(pw)` — scrypt (N = 2^15,
+  r = 8, p = 3, 16-byte random salt), stored as one String
+  `$scrypt$ln=15,r=8,p=3$<salt>$<hash>`; `verify_password(pw, stored)`
+  (constant time; false for anything else, and a stored hash's settings are
+  range-checked before use); `needs_rehash(stored)`; `crypto.equal(a, b)`,
+  constant-time comparison. Hashing releases the task lock. The same keys as
+  Python's `hashlib.scrypt`.
+- **Random bytes come from OpenSSL's CSPRNG** (`RAND_bytes`, seeded by the
+  OS) on every platform, and raise if there are none. `random_hex` and
+  `uuid` fell back to `rand()` — guessable — when /dev/urandom couldn't be
+  read; they make session ids and tokens.
+- Pins **`web` v1.2.1**: the session cookie's signature is compared in
+  constant time.
+- Probe p187.
+
 ## [7.54.0] — 2026-11-19 — rows as structs
 
 - Pins **`sqlite` v1.1.0**: `db.query_as(Todo, sql, params)` /

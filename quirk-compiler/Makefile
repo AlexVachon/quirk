@@ -172,6 +172,8 @@ STDLIB_TAG_process ?= v1.0.2
 # window v1.2.0: clip / unclip, clipboard / set_clipboard (runtime v7.26.0).
 # window v1.3.0: TrueType fonts (runtime stb_truetype, v7.33.0).
 STDLIB_TAG_window ?= v1.8.0
+# crypto v1.1.0: hash_password / verify_password / needs_rehash (scrypt), equal (runtime v7.55.0).
+STDLIB_TAG_crypto ?= v1.1.0
 # sqlite v1.0.0 is the initial release (runtime Sqlite_*, SQLite 3.54.1 built in, v7.50.0).
 STDLIB_TAG_sqlite ?= v1.1.0
 # ui v1.0.0 is the initial release (pure Quirk on window; compiler v7.21.0).
@@ -184,7 +186,7 @@ STDLIB_TAG_sqlite ?= v1.1.0
 # ui v1.6.0: theme fonts, ListItem icons, Canvas, animations (compiler v7.33.0).
 # ui v1.6.1: no unused bindings (editor warnings).
 STDLIB_TAG_ui ?= v1.10.1
-STDLIB_TAG_web ?= v1.2.0
+STDLIB_TAG_web ?= v1.2.1
 STDLIB_TAG_live ?= v2.9.0
 
 # --- INSTALL / UNINSTALL --------------------------------------------------
@@ -230,6 +232,7 @@ bootstrap-stdlib:
 	        web)    tag="$(STDLIB_TAG_web)"    ;;                                 \
 	        live)   tag="$(STDLIB_TAG_live)"   ;;                                 \
 	        sqlite) tag="$(STDLIB_TAG_sqlite)" ;;                                 \
+	        crypto) tag="$(STDLIB_TAG_crypto)" ;;                                 \
 	    esac;                                                                     \
 	    if [ -f "packages/$$pkg/index.quirk" ] &&                                 \
 	       [ "$$(cat packages/$$pkg/.version 2>/dev/null)" = "$$tag" ]; then      \

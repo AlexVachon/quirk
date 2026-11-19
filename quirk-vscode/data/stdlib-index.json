@@ -3301,6 +3301,15 @@
 "doc": "Retrieves the value of an environment variable. Returns the empty string\nwhen the variable is unset.\n@example\nhome := sys.env(\"HOME\")"
 }
 ],
+"equal": [
+{
+"package": "crypto",
+"qualified": "equal",
+"kind": "define",
+"signature": "extern define equal(a: String, b: String) -> Bool",
+"doc": "`a == b` in constant time: the time taken doesn't depend on where they\ndiffer. Use it for secrets \u2014 signatures, tokens, API keys \u2014 where `==`\nlets an attacker find the right value byte by byte from how long the\ncomparison took. (The lengths aren't secret: different lengths are\njust false.)"
+}
+],
 "err": [
 {
 "package": "typing",
@@ -3952,6 +3961,15 @@
 "kind": "method",
 "signature": "define has_selection(self) -> Bool {",
 "doc": "True when some text is selected."
+}
+],
+"hash_password": [
+{
+"package": "crypto",
+"qualified": "hash_password",
+"kind": "define",
+"signature": "extern define hash_password(password: String) -> String",
+"doc": "What to store for a password: a salted scrypt hash, as one String \u2014\n`$scrypt$ln=15,r=8,p=3$<salt>$<hash>` (the settings travel with it). It\ntakes about a tenth of a second and 32 MiB, on purpose: whoever steals\nthe table pays that for every guess. Two calls with the same password\ngive different Strings (a new random salt each time); check one with\n`verify_password`. Never store the password itself, nor a plain sha256.\n\n@example\ndb.insert(\"INSERT INTO users (email, password) VALUES (?, ?)\", [email, crypto.hash_password(pw)])"
 }
 ],
 "header": [
@@ -5116,6 +5134,15 @@
 "kind": "method",
 "signature": "define navigate(self, path: String) -> TestSession {",
 "doc": "Follow a `q-link` to `path`."
+}
+],
+"needs_rehash": [
+{
+"package": "crypto",
+"qualified": "needs_rehash",
+"kind": "define",
+"signature": "extern define needs_rehash(stored: String) -> Bool",
+"doc": "True when `stored` was made with weaker settings than hash_password uses\nnow (or isn't such a hash): when its owner logs in \u2014 you have the\npassword then \u2014 store `hash_password(password)` instead."
 }
 ],
 "new_struct": [
@@ -7950,6 +7977,15 @@
 "kind": "define",
 "signature": "define variance(items: List) -> Double {",
 "doc": "Sample variance (divides by `n - 1`, the unbiased estimator). Throws if\n`n < 2`. Use `pvariance` when treating the input as the entire population."
+}
+],
+"verify_password": [
+{
+"package": "crypto",
+"qualified": "verify_password",
+"kind": "define",
+"signature": "extern define verify_password(password: String, stored: String) -> Bool",
+"doc": "Is `password` the one `stored` (from hash_password) was made from? False\nfor a wrong password \u2014 and for anything that isn't such a hash. Compared\nin constant time.\n\n@example\nrow := db.query_one(\"SELECT password FROM users WHERE email = ?\", [email])\nif row == null or not crypto.verify_password(pw, String(row[\"password\"])) {\n    self.set_error(\"password\", \"Wrong email or password\")\n}"
 }
 ],
 "version": [

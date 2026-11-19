@@ -2,6 +2,11 @@
 
 All notable changes to the extension land here. Versioning follows SemVer; minor bumps for new features, patches for fixes.
 
+## [1.1.19] — 2026-11-19 — hover docs for crypto 1.1
+
+- Hover and completion know `crypto` 1.1: `hash_password`,
+  `verify_password`, `needs_rehash`, `equal`.
+
 ## [1.1.18] — 2026-11-19 — hover docs for sqlite 1.1
 
 - Hover and completion know `sqlite` 1.1: `query_as`, `query_one_as`,

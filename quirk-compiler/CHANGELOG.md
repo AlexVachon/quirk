@@ -5,6 +5,25 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.52.0] — 2026-11-19 — quirk run --watch
+
+- **`quirk run --watch <file>`** (and `quirk watch <file>`, now the same):
+  runs the program, and runs it again each time one of the project's files
+  changes (`.qk .quirk .html .css .js .toml` under the folder with
+  `quirk.toml`, else the file's folder; not hidden folders, `packages/`,
+  `node_modules/`). A server is stopped and started again. What changed is
+  type-checked first: if it doesn't compile, the errors are shown and the
+  running version keeps running. Polling, so it works the same on Linux,
+  macOS and Windows with nothing to install (`quirk watch` needed
+  `inotifywait` / `fswatch`, watched only the file's folder, and never ran
+  a server again: it waited for the run to end). On Windows the program
+  runs in a job object, so a cached binary started by it stops too.
+  `quirk new --live` / `--web` suggest it. `tools/check_watch.sh` in CI.
+- Pins **`live` v2.8.2**: the open tabs of a live app reload as soon as the
+  restarted server is up (live updates reconnect in 250 ms instead of the
+  browser's ~3 s); and v2.8.1, the demo's todos in SQLite (`todos.db`,
+  shared, published to every open tab).
+
 ## [7.51.0] — 2026-11-19 — a false Bool stays false
 
 - **An untyped value given to a `Bool` is what it holds.** A lambda's

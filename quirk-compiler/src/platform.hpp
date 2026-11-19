@@ -149,6 +149,7 @@ struct Child {
 #ifdef _WIN32
     void* process = nullptr;    // HANDLE
     void* out = nullptr;        // HANDLE
+    void* job = nullptr;        // HANDLE: spawn_job's job object (the child and what it starts)
 #else
     pid_t pid = -1;
     int out = -1;
@@ -179,6 +180,14 @@ int run_on_big_stack(int (*fn)(int, char**), int argc, char** argv, size_t stack
 std::string self_exe();
 std::string native_arch();
 void sleep_ms(unsigned ms);
+// For `quirk run --watch` (Watch.hpp): start argv[0] with this process's
+// console, in a job object, so that kill_job stops it and whatever it
+// started (a cached binary runs as a grandchild); quiet_out: its stdout
+// goes to NUL. try_wait / wait_exit work on it.
+bool spawn_job(const std::vector<std::string>& argv, Child& c, bool quiet_out);
+void kill_job(Child& c);
+// Call `fn` on Ctrl+C / Ctrl+Break (this process isn't stopped by it).
+void on_ctrl_c(void (*fn)());
 }  // namespace qplat
 inline unsigned int sleep(unsigned int s) { qplat::sleep_ms(s * 1000); return 0; }
 inline int usleep(unsigned int us) { qplat::sleep_ms(us / 1000); return 0; }

@@ -38,6 +38,7 @@
 #include <cstdlib>
 #include <system_error>
 #include "platform.hpp"          // unistd / sys/wait / ... (Win32 on Windows)
+#include "Watch.hpp"             // quirk watch / run --watch
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/SHA256.h" // quirk_sha256_file (no sha256sum needed)
@@ -69,7 +70,7 @@ static std::string self_binary();
 
 namespace qpm {
 
-constexpr const char* QUIRK_VERSION = "7.51.0";
+constexpr const char* QUIRK_VERSION = "7.52.0";
 
 namespace fs = std::filesystem;
 
@@ -6541,12 +6542,12 @@ struct CliCommand {
 };
 static const std::vector<CliCommand>& cli_commands() {
     static const std::vector<CliCommand> t = {
-        {"run",        "run <file.qk> [args...]", "Compile + run a script",          "RUN CODE", "r",  "", "", false},
+        {"run",        "run [--watch] <file.qk> [args...]", "Compile + run a script (--watch: again on every change)",          "RUN CODE", "r",  "", "", false},
         {"",           "",                            "Also: `quirk <file.qk>`",      "RUN CODE", "",   "", "", false},
         {"eval",       "eval \"<code>\"",             "Run a one-liner",                 "RUN CODE", "-c", "", "", false},
         {"module",     "module <name>",               "Invoke a module's main()",        "RUN CODE", "-m", "", "", false},
         {"test",       "test [<path>...]",            "Run test_* functions in *_test.qk files", "RUN CODE", "t",  "", "", false},
-        {"watch",      "watch <file.qk>",          "Re-run a script on every save",   "RUN CODE", "",   "", "", false},
+        {"watch",      "watch <file.qk>",          "Run a script again on every save (= run --watch)",   "RUN CODE", "",   "", "", false},
         {"repl",       "repl",                        "Interactive shell",               "RUN CODE", "",   "", "", false},
 
         {"new",        "new [--web|--live] <name>",   "Scaffold a new package (--web: a web app; --live: live pages)", "PROJECT", "", "", "", false},
@@ -7585,79 +7586,27 @@ static int cmd_version() {
     return 0;
 }
 
-// `quirk watch <file>` — re-run `<file>` every time it (or any file
-// in its directory) changes on disk. Cheap dev-loop shortcut: edit
-// in the editor, save, terminal shows fresh output.
-//
-// Implementation: `inotifywait -m -e close_write` (Linux) drives a
-// re-exec loop. Fatal-error output shows up the same as any normal
-// `quirk <file>` run — the watcher just triggers the compile/run,
-// it doesn't try to swallow diagnostics.
+// `quirk watch <file> [args...]` — the same as `quirk run --watch <file>`
+// (Watch.hpp): run it, and again on every change to the project's files;
+// a server is stopped and started again. (It used to need inotifywait /
+// fswatch, watched only the file's folder, and waited for each run to end
+// — a server never did, so it was never run again.)
 static int cmd_watch(const std::vector<std::string>& args) {
     if (args.empty() || args[0] == "--help" || args[0] == "-h") {
-        std::cout << "quirk watch <file.qk>\n"
-                     "    Re-run <file> every time it changes on disk.\n"
-                     "    Requires `inotifywait` (from inotify-tools). On\n"
-                     "    macOS this uses `fswatch` if available.\n";
+        std::cout << "quirk watch <file.qk> [args...]\n"
+                     "    The same as `quirk run --watch <file.qk>`: run it, and again each\n"
+                     "    time a project file changes (.qk .html .css .js .toml). Checked\n"
+                     "    first — if it doesn't compile, the running version keeps running.\n";
         return args.empty() ? 1 : 0;
     }
-    std::string target = args[0];
-    if (!fs::exists(target)) {
-        std::cerr << "watch: file not found: " << target << "\n";
+    if (!fs::exists(args[0])) {
+        std::cerr << "watch: file not found: " << args[0] << "\n";
         return 1;
     }
-    // Watch the parent directory so re-saves (which some editors do
-    // via atomic-rename) still trigger. Filter to the target file
-    // name inside the loop.
-    fs::path abs = fs::absolute(target);
-    std::string dir = abs.parent_path().string();
-    std::string name = abs.filename().string();
     std::string bin = self_binary();
-
-    // Detect available watcher.
-    auto haveCmd = [](const std::string& c) {
-        return qplat::run_shell(("command -v " + c + " >/dev/null 2>&1").c_str()) == 0;
-    };
-    std::string watcher;
-    if (haveCmd("inotifywait"))     watcher = "inotifywait";
-    else if (haveCmd("fswatch"))    watcher = "fswatch";
-    else {
-        std::cerr << "watch: needs `inotifywait` (Linux: apt install inotify-tools)\n"
-                     "       or `fswatch` (macOS: brew install fswatch).\n";
-        return 1;
-    }
-
-    // Initial run.
-    std::cout << "\033[1;36m[watch]\033[0m " << target << " — Ctrl+C to stop\n";
-    std::string quickRun = bin + " " + target;
-    qplat::run_shell(quickRun.c_str());
-
-    // Loop: block on watcher until a change fires, then re-run.
-    std::string cmd;
-    if (watcher == "inotifywait") {
-        cmd = "inotifywait -q -e close_write,modify --format '%f' " + dir;
-    } else {
-        // fswatch prints filename per event
-        cmd = "fswatch -1 " + abs.string();
-    }
-    while (true) {
-        FILE* p = qplat::popen_cmd(cmd.c_str(), "r");
-        if (!p) { std::cerr << "watch: popen failed\n"; return 1; }
-        char buf[512]; std::string changed;
-        while (fgets(buf, sizeof(buf), p)) changed += buf;
-        pclose(p);
-
-        // Filter — for inotifywait we get the base filename; for
-        // fswatch we get the absolute path.
-        bool relevant =
-            (watcher == "fswatch") ||
-            (changed.find(name) != std::string::npos);
-        if (!relevant) continue;
-
-        std::cout << "\n\033[1;36m[watch]\033[0m " << target << " changed — re-running\n";
-        qplat::run_shell(quickRun.c_str());
-    }
-    return 0;
+    std::vector<std::string> argv{bin};
+    for (auto& a : args) argv.push_back(a);
+    return qwatch::run(bin, argv, args[0]);
 }
 
 // `quirk check <file>` — lex + parse + Sema only, skip Codegen and
@@ -8077,7 +8026,7 @@ static int cmd_stdlib(const std::vector<std::string>& args) {
 // `quirk new --web <name>`: a web app (web package) — routes, a template,
 // a stylesheet, a JSON API and tests through web.TestClient. "myapp" in
 // each file becomes the project's name.
-static const char* kWebIndex = R"QWEB(// myapp — a web app (quirk new --web). Run:  quirk run src/index.qk
+static const char* kWebIndex = R"QWEB(// myapp — a web app (quirk new --web). Run:  quirk run --watch src/index.qk
 use web
 use sys
 
@@ -8167,7 +8116,7 @@ define test_notes_api() -> void {
 // `quirk new --live <name>`: a live app — index.html (the base page), the
 // routes in router.qk, pages as structs in src/ (each with its template),
 // the server in main.qk.
-static const char* kLiveMain = R"QWEB(// myapp — a live app (quirk new --live). Run:  quirk run main.qk
+static const char* kLiveMain = R"QWEB(// myapp — a live app (quirk new --live). Run:  quirk run --watch main.qk
 // index.html is the base page; src/ has the pages and components (struct + template).
 use web
 use sys
@@ -8388,7 +8337,8 @@ static int cmd_new(const std::vector<std::string>& argsIn) {
                   << "  ├── tests/" << name << "_test" << ext << "\n"
                   << "  └── .gitignore\n\n"
                   << "  cd " << dir.string() << "\n"
-                  << "  quirk run main" << ext << "    then open http://localhost:3000\n"
+                  << "  quirk run --watch main" << ext << "    then open http://localhost:3000\n"
+                  << "                             (--watch: restarts on every save, the page reloads)\n"
                   << "  quirk test\n";
         return 0;
     }
@@ -8415,7 +8365,8 @@ static int cmd_new(const std::vector<std::string>& argsIn) {
                   << "  ├── tests/" << name << "_test" << ext << "\n"
                   << "  └── .gitignore\n\n"
                   << "  cd " << dir.string() << "\n"
-                  << "  quirk run src/index" << ext << "    then open http://localhost:3000\n"
+                  << "  quirk run --watch src/index" << ext << "    then open http://localhost:3000\n"
+                  << "                                  (--watch: restarts on every save)\n"
                   << "  quirk test\n";
         return 0;
     }
@@ -8473,8 +8424,11 @@ static std::string help_for(const std::string& cmdIn) {
     // to the canonical verb name.
     const std::string cmd = canonicalize_verb(cmdIn);
     if (cmd == "run")
-        return "quirk run <file.qk> [args...]\n"
-               "    Run a Quirk script. Equivalent to `quirk <file.qk>`.\n";
+        return "quirk run [--watch] <file.qk> [args...]\n"
+               "    Run a Quirk script. Equivalent to `quirk <file.qk>`.\n"
+               "    --watch   run it again each time a project file changes (.qk .html .css\n"
+               "              .js .toml): checked first — if it doesn't compile, the running\n"
+               "              version keeps running. A live app's open tabs reload.\n";
     if (cmd == "eval" || cmd == "-c")
         return "quirk eval \"<code>\"\n"
                "    Wrap a one-liner in `define main() { ... }` and run it.\n"

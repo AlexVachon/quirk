@@ -211,5 +211,62 @@ std::string native_arch() {
 
 void sleep_ms(unsigned ms) { Sleep(ms); }
 
+bool spawn_job(const std::vector<std::string>& argv, Child& c, bool quiet_out) {
+    HANDLE job = CreateJobObjectA(nullptr, nullptr);
+    if (job) {
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION li{};
+        li.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        SetInformationJobObject(job, JobObjectExtendedLimitInformation, &li, sizeof(li));
+    }
+    STARTUPINFOA si{};
+    si.cb = sizeof(si);
+    HANDLE nul = INVALID_HANDLE_VALUE;
+    if (quiet_out) {
+        SECURITY_ATTRIBUTES sa{sizeof(sa), nullptr, TRUE};
+        nul = CreateFileA("NUL", GENERIC_WRITE, FILE_SHARE_WRITE, &sa, OPEN_EXISTING, 0, nullptr);
+        si.dwFlags = STARTF_USESTDHANDLES;
+        si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+        si.hStdOutput = nul;
+        si.hStdError = GetStdHandle(STD_ERROR_HANDLE);
+    }
+    PROCESS_INFORMATION pi{};
+    std::string cmd = command_line(argv);
+    BOOL ok = CreateProcessA(argv[0].c_str(), cmd.data(), nullptr, nullptr, TRUE, CREATE_SUSPENDED,
+                             nullptr, nullptr, &si, &pi);
+    if (nul != INVALID_HANDLE_VALUE) CloseHandle(nul);
+    if (!ok) {
+        if (job) CloseHandle(job);
+        return false;
+    }
+    if (job) AssignProcessToJobObject(job, pi.hProcess);
+    ResumeThread(pi.hThread);
+    CloseHandle(pi.hThread);
+    c.process = pi.hProcess;
+    c.job = job;
+    return true;
+}
+
+void kill_job(Child& c) {
+    if (c.job) TerminateJobObject((HANDLE)c.job, 1);
+    else if (c.process) TerminateProcess((HANDLE)c.process, 1);
+    if (c.process) {
+        WaitForSingleObject((HANDLE)c.process, 5000);
+        CloseHandle((HANDLE)c.process);
+        c.process = nullptr;
+    }
+    if (c.job) { CloseHandle((HANDLE)c.job); c.job = nullptr; }
+}
+
+static void (*g_ctrl_fn)() = nullptr;
+
+void on_ctrl_c(void (*fn)()) {
+    g_ctrl_fn = fn;
+    SetConsoleCtrlHandler([](DWORD type) -> BOOL {
+        if (type != CTRL_C_EVENT && type != CTRL_BREAK_EVENT) return FALSE;
+        if (g_ctrl_fn) g_ctrl_fn();
+        return TRUE;
+    }, TRUE);
+}
+
 }  // namespace qplat
 #endif  // _WIN32

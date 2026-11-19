@@ -199,6 +199,13 @@ jobs:
         # crashes and -k, on tools/fixtures/quirk_test.
         run: tools/check_test_runner.sh
 
+      - name: Check quirk run --watch
+        working-directory: quirk-compiler
+        env:
+          QUIRK_HOME: ${{ github.workspace }}/quirk-compiler
+        # Runs again on a change, not when it doesn't compile; stops on SIGINT.
+        run: tools/check_watch.sh
+
       - name: Check package discovery
         working-directory: quirk-compiler
         env:
@@ -347,6 +354,13 @@ jobs:
         # `define test_*()` discovery, per-test results, setup/teardown,
         # crashes and -k, on tools/fixtures/quirk_test.
         run: tools/check_test_runner.sh
+
+      - name: Check quirk run --watch
+        working-directory: quirk-compiler
+        env:
+          QUIRK_HOME: ${{ github.workspace }}/quirk-compiler
+        # Runs again on a change, not when it doesn't compile; stops on SIGINT.
+        run: tools/check_watch.sh
 
       - name: Check package discovery
         working-directory: quirk-compiler

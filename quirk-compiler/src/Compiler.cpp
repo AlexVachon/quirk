@@ -37,6 +37,7 @@
 #include "platform.hpp"
 
 #include "PackageManager.hpp"
+#include "Watch.hpp"
 
 #include "lexer.hpp"
 #include "typenames.hpp"
@@ -181,6 +182,7 @@ struct CompilerOptions {
     bool emitIR       = false;
     bool emitAST      = false;
     bool checkOnly    = false; // --check: lex + parse + sema only, no codegen
+    bool watch        = false; // --watch: run it again on every change (Watch.hpp)
     // LLVM optimization level. Default 1 — runs the minimal correctness
     // pass set (mem2reg + EarlyCSE + instcombine + simplifycfg + DCE) which
     // the JIT needs to execute our codegen's "loose" IR safely. O2 adds
@@ -1800,6 +1802,7 @@ int main(int argc, char* argv[]) {
         if      (arg == "-h" || arg == "--help") { printUsage(); return 0; }
         else if (arg == "--compile-only") opts.runImmediate = false;
         else if (arg == "--check")        { opts.checkOnly = true; opts.runImmediate = false; }
+        else if (arg == "--watch")        opts.watch        = true;
         else if (arg == "-v")             opts.verbose      = true;
         else if (arg == "--emit-ir")      opts.emitIR       = true;
         else if (arg == "--emit-ast")     opts.emitAST      = true;
@@ -1864,6 +1867,14 @@ int main(int argc, char* argv[]) {
         std::cerr << "Error: No input file specified." << std::endl;
         printUsage();
         return 1;
+    }
+    // `--watch`: this process supervises; the program runs as a child
+    // (the same command without --watch), again on every change.
+    if (opts.watch) {
+        std::vector<std::string> childArgs;
+        for (int i = 0; i < argc; ++i)
+            if (i == 0 || std::string(argv[i]) != "--watch") childArgs.push_back(argv[i]);
+        return qwatch::run(qpm::self_binary(), childArgs, opts.inputFile);
     }
     // `--stdin-source`: the editor's unsaved text for the entry file.
     if (g_stdin_source && !opts.inputFile.empty()) {

@@ -2,6 +2,12 @@
 
 All notable changes to the extension land here. Versioning follows SemVer; minor bumps for new features, patches for fixes.
 
+## [1.1.17] — 2026-11-19 — hover docs for form validation
+
+- Hover and completion know `live` 2.9: `rules()`, `valid()`, `validate`,
+  `error`, `set_error`, the rules (`live.required`, `min_length`, `email`,
+  `between`, `pattern`, `check` …) and `<FieldError>`.
+
 ## [1.1.16] — 2026-11-19 — sqlite
 
 - Hover and completion know the new `sqlite` package (`sqlite.open`,

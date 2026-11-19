@@ -85,20 +85,51 @@ After this event, send the browser to `path` (a live page, or any URL).
 
 Tell the parent: runs its `@event="method"` handler, with `value` (if given).
 
-#### `define notify(self, message: String, title: String = "", type: String = "", position: String = "",`
+#### `define rules(self) -> Map`
 
-Show a notification in a corner of the page, like Element Plus's
-ElNotification — from any page or component, nothing to put in the
-template. Returns its id (for `close_notification`).
+What its `model` fields must be: field name → a List of rules, each a
+function giving "" when the value is fine, else what's wrong.
 
-- `type`: "success", "warning", "info", "error" or "" (none)
-- `position`: "top-right", "top-left", "bottom-right", "bottom-left"
-  ("": the default — top-right, or live.notification_defaults')
-- `duration`: milliseconds before it closes (0: stays until closed;
-  -1: the default — 4500); the timer pauses while the mouse is on it
-- `show_close`: the × button; `icon`: instead of the type's
-- `on_click()`: when it's clicked; `on_close()`: when it closes (×,
-  timeout or close_notification)
+    define rules(self) -> Map {
+        return {
+            "email":    [live.required(), live.email()],
+            "password": [live.required(), live.min_length(8)],
+            "age":      [live.between(13, 120)],
+            "confirm":  [live.check(fn(v) => v == self.password, "The passwords don't match")],
+        }
+    }
+
+A field is checked when the visitor leaves it, and again as they type
+once it shows an error (so it clears as soon as it's fixed); all of
+them by `valid()`. Show an error with `{{ error('email') }}` or
+`<FieldError field="email" />`; an input in error has aria-invalid.
+
+#### `define error(self, field: String) -> String`
+
+Its error for `field` ("" when there's none).
+
+#### `define errors(self) -> Map`
+
+Field → error, for the fields that have one.
+
+#### `define set_error(self, field: String, message: String) -> void`
+
+Show `message` as `field`'s error — what only the server can tell
+("That email is already taken"). "" clears it.
+
+#### `define validate(self, field: String) -> Bool`
+
+Check `field` against its rules (its error is set or cleared); true when it's fine.
+
+#### `define valid(self) -> Bool`
+
+Check every field of `rules()`: true when all are fine — else their
+errors are shown. In a submit handler:
+
+    define save(self) -> void {
+        if not self.valid() { return }
+        ...
+    }
 
 #### `define close_notification(self, id: Int) -> void`
 
@@ -131,6 +162,12 @@ A `:param` of the page's path ("/users/:id" → `self.param("id")`); "" if none.
 #### `define query(self, name: String) -> String`
 
 A `?name=value` of the page's URL; "" if none.
+
+### `struct FieldError : Component`
+
+`<FieldError field="email" />`: the error of the component's field `email`,
+in a `<p class="q-error" role="alert">` (hidden when there's none; a screen
+reader says it when it appears).
 
 ### `struct Layout : Component`
 
@@ -392,9 +429,9 @@ Send `event` (with `data`) to the page's component, as the browser would.
 
 Click the button (or other element) showing `text`.
 
-#### `define type(self, placeholder: String, value: String) -> TestSession`
+#### `define blur(self, placeholder: String) -> TestSession`
 
-Type `value` into the text field whose placeholder is `placeholder`.
+Leave the field with `placeholder` (as tabbing out of it): its rules are checked.
 
 #### `define submit(self, placeholder: String, value: String) -> TestSession`
 
@@ -482,6 +519,36 @@ most shown at once; over it, the oldest close; 0: no limit). Arguments left
 out keep their current value.
 
     live.notification_defaults(position="bottom-right", duration=3000, max=5)
+
+#### `define required(message: String = "This field is required") -> Callable`
+
+Not empty: some text (not only spaces), a ticked box, a non-empty List.
+
+#### `define min_length(n: Int, message: String = "") -> Callable`
+
+At least `n` characters (or items).
+
+#### `define max_length(n: Int, message: String = "") -> Callable`
+
+At most `n` characters (or items).
+
+#### `define between(low: Any, high: Any, message: String = "") -> Callable`
+
+A number from `low` to `high` (both included).
+
+#### `define email(message: String = "Enter an email address") -> Callable`
+
+Looks like an email address (name@domain.tld, no spaces).
+
+#### `define pattern(regex_text: String, message: String = "Not in the right form") -> Callable`
+
+All of it matches the regular expression `regex` (POSIX extended).
+
+#### `define check(test: Callable, message: String) -> Callable`
+
+Your own rule: `test(value)` true when it's fine.
+
+    live.check(fn(v) => v == self.password, "The passwords don't match")
 
 #### `define html(template: String, data: Map = {}) -> String`
 

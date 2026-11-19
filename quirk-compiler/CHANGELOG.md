@@ -5,6 +5,18 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.53.0] — 2026-11-19 — form validation
+
+- Pins **`live` v2.9.0**: form validation. A component's `rules()` maps its
+  `model` fields to rules — `live.required`, `min_length`, `max_length`,
+  `between`, `email`, `pattern`, `check(fn, message)`, or any
+  `fn(value) -> String`. A field is checked when the visitor leaves it, again
+  as they type once it shows an error, and all by `self.valid()` on submit;
+  `set_error(field, message)` for what only the server knows. `<FieldError
+  field="…" />` (role="alert") or `{{ error('…') }}` shows it; inputs in error
+  get `aria-invalid`. Text that isn't a number in an Int / Double field is an
+  error instead of an exception. The demo's login and todos use it.
+
 ## [7.52.0] — 2026-11-19 — quirk run --watch
 
 - **`quirk run --watch <file>`** (and `quirk watch <file>`, now the same):

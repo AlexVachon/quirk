@@ -261,6 +261,15 @@
 "doc": "Base class for all exceptions in Quirk.\nCatch this type to handle any exception regardless of its specific kind.\n\nFields: message, type, file, line, traceback, cause_trace\n\n@note Prefer catching a specific subclass (ValueError, IOError, etc.) over\ncatching Exception directly, so unrelated errors are not silently swallowed.\n\n@warning Catching Exception will also catch RuntimeError, NullError, and all\nother built-in exceptions \u2014 use with care in broad catch blocks.\n\n@example:\ntry {\n    throw ValueError(\"bad input\")\n} catch (e: Exception) {\n    print(e.type + \": \" + e.message)\n}"
 }
 ],
+"FieldError": [
+{
+"package": "live",
+"qualified": "FieldError",
+"kind": "struct",
+"signature": "struct FieldError : Component {",
+"doc": "`<FieldError field=\"email\" />`: the error of the component's field `email`,\nin a `<p class=\"q-error\" role=\"alert\">` (hidden when there's none; a screen\nreader says it when it appears)."
+}
+],
 "File": [
 {
 "package": "io",
@@ -2154,6 +2163,15 @@
 "doc": "Final component of `path` \u2014 strips any trailing slash and returns the\nlast segment. `\"a/b/c.txt\"` \u2192 `\"c.txt\"`; `\"/etc/\"` \u2192 `\"etc\"`."
 }
 ],
+"between": [
+{
+"package": "live",
+"qualified": "between",
+"kind": "define",
+"signature": "define between(low: Any, high: Any, message: String = \"\") -> Callable {",
+"doc": "A number from `low` to `high` (both included)."
+}
+],
 "bind": [
 {
 "package": "net",
@@ -2168,6 +2186,15 @@
 "kind": "define",
 "signature": "extern define bind(fd: Int, host: String, port: Int) -> Int",
 "doc": "Bind socket `fd` to `host:port`. Returns 0 on success, negative on error.\n@example bind(fd, \"0.0.0.0\", 8080)"
+}
+],
+"blur": [
+{
+"package": "live",
+"qualified": "TestSession.blur",
+"kind": "method",
+"signature": "define blur(self, placeholder: String) -> TestSession {",
+"doc": "Leave the field with `placeholder` (as tabbing out of it): its rules are checked."
 }
 ],
 "bool": [
@@ -2338,6 +2365,13 @@
 }
 ],
 "check": [
+{
+"package": "live",
+"qualified": "check",
+"kind": "define",
+"signature": "define check(test: Callable, message: String) -> Callable {",
+"doc": "Your own rule: `test(value)` true when it's fine.\n\n    live.check(fn(v) => v == self.password, \"The passwords don't match\")"
+},
 {
 "package": "live",
 "qualified": "TestSession.check",
@@ -3206,6 +3240,15 @@
 "doc": "True while a cell is being edited."
 }
 ],
+"email": [
+{
+"package": "live",
+"qualified": "email",
+"kind": "define",
+"signature": "define email(message: String = \"Enter an email address\") -> Callable {",
+"doc": "Looks like an email address (name@domain.tld, no spaces)."
+}
+],
 "emit": [
 {
 "package": "live",
@@ -3265,6 +3308,24 @@
 "kind": "method",
 "signature": "define err(self) -> Option {",
 "doc": "Converts to `Option` of the error: `Err(e)` \u2192 `Some(e)`; `Ok(_)` \u2192 `None`."
+}
+],
+"error": [
+{
+"package": "live",
+"qualified": "Component.error",
+"kind": "method",
+"signature": "define error(self, field: String) -> String {",
+"doc": "Its error for `field` (\"\" when there's none)."
+}
+],
+"errors": [
+{
+"package": "live",
+"qualified": "Component.errors",
+"kind": "method",
+"signature": "define errors(self) -> Map {",
+"doc": "Field \u2192 error, for the fields that have one."
 }
 ],
 "escape": [
@@ -4771,6 +4832,15 @@
 "doc": "Larger of two Doubles."
 }
 ],
+"max_length": [
+{
+"package": "live",
+"qualified": "max_length",
+"kind": "define",
+"signature": "define max_length(n: Int, message: String = \"\") -> Callable {",
+"doc": "At most `n` characters (or items)."
+}
+],
 "max_val": [
 {
 "package": "statistics",
@@ -4884,6 +4954,15 @@
 "kind": "define",
 "signature": "define min_f(a: Double, b: Double) -> Double {",
 "doc": "Smaller of two Doubles."
+}
+],
+"min_length": [
+{
+"package": "live",
+"qualified": "min_length",
+"kind": "define",
+"signature": "define min_length(n: Int, message: String = \"\") -> Callable {",
+"doc": "At least `n` characters (or items)."
 }
 ],
 "min_val": [
@@ -5055,15 +5134,6 @@
 "kind": "define",
 "signature": "define notification_defaults(position: String = \"\", duration: Int = -1, max: Int = -1) -> void {",
 "doc": "Defaults for every `notify()` that doesn't say otherwise \u2014 set once, at\nstartup: `position` (\"top-right\", \"top-left\", \"bottom-right\",\n\"bottom-left\"), `duration` (milliseconds; 0: until closed) and `max` (the\nmost shown at once; over it, the oldest close; 0: no limit). Arguments left\nout keep their current value.\n\n    live.notification_defaults(position=\"bottom-right\", duration=3000, max=5)"
-}
-],
-"notify": [
-{
-"package": "live",
-"qualified": "Component.notify",
-"kind": "method",
-"signature": "define notify(self, message: String, title: String = \"\", type: String = \"\", position: String = \"\",",
-"doc": "Show a notification in a corner of the page, like Element Plus's\nElNotification \u2014 from any page or component, nothing to put in the\ntemplate. Returns its id (for `close_notification`).\n\n- `type`: \"success\", \"warning\", \"info\", \"error\" or \"\" (none)\n- `position`: \"top-right\", \"top-left\", \"bottom-right\", \"bottom-left\"\n  (\"\": the default \u2014 top-right, or live.notification_defaults')\n- `duration`: milliseconds before it closes (0: stays until closed;\n  -1: the default \u2014 4500); the timer pauses while the mouse is on it\n- `show_close`: the \u00d7 button; `icon`: instead of the type's\n- `on_click()`: when it's clicked; `on_close()`: when it closes (\u00d7,\n  timeout or close_notification)"
 }
 ],
 "now": [
@@ -5458,6 +5528,15 @@
 "kind": "define",
 "signature": "define path() -> List {",
 "doc": "Search path for `use` / `from ... use` resolution.\nOrder: `<prefix>/libs`, `<prefix>/packages`, current directory."
+}
+],
+"pattern": [
+{
+"package": "live",
+"qualified": "pattern",
+"kind": "define",
+"signature": "define pattern(regex_text: String, message: String = \"Not in the right form\") -> Callable {",
+"doc": "All of it matches the regular expression `regex` (POSIX extended)."
 }
 ],
 "peek_back": [
@@ -6134,6 +6213,13 @@
 "kind": "method",
 "signature": "define required(self, long: String, short: String, help: String) -> void {",
 "doc": "Add a value option that MUST be provided."
+},
+{
+"package": "live",
+"qualified": "required",
+"kind": "define",
+"signature": "define required(message: String = \"This field is required\") -> Callable {",
+"doc": "Not empty: some text (not only spaces), a ticked box, a non-empty List."
 }
 ],
 "reverse": [
@@ -6195,6 +6281,15 @@
 "kind": "method",
 "signature": "define route(self, method: String, pattern: String, handler: Callable) -> App {",
 "doc": "Handle `method` requests to `pattern` (\"/users/:id\", \"/files/*path\"); `handler(req, res)`."
+}
+],
+"rules": [
+{
+"package": "live",
+"qualified": "Component.rules",
+"kind": "method",
+"signature": "define rules(self) -> Map {",
+"doc": "What its `model` fields must be: field name \u2192 a List of rules, each a\nfunction giving \"\" when the value is fine, else what's wrong.\n\n    define rules(self) -> Map {\n        return {\n            \"email\":    [live.required(), live.email()],\n            \"password\": [live.required(), live.min_length(8)],\n            \"age\":      [live.between(13, 120)],\n            \"confirm\":  [live.check(fn(v) => v == self.password, \"The passwords don't match\")],\n        }\n    }\n\nA field is checked when the visitor leaves it, and again as they type\nonce it shows an error (so it clears as soon as it's fixed); all of\nthem by `valid()`. Show an error with `{{ error('email') }}` or\n`<FieldError field=\"email\" />`; an input in error has aria-invalid."
 }
 ],
 "run": [
@@ -6587,6 +6682,15 @@
 "kind": "method",
 "signature": "define set_date(self, year: Int, month: Int, day: Int) -> void {",
 "doc": "Set the date (clamped to a real date); runs `on_change` if it changed."
+}
+],
+"set_error": [
+{
+"package": "live",
+"qualified": "Component.set_error",
+"kind": "method",
+"signature": "define set_error(self, field: String, message: String) -> void {",
+"doc": "Show `message` as `field`'s error \u2014 what only the server can tell\n(\"That email is already taken\"). \"\" clears it."
 }
 ],
 "set_field": [
@@ -7527,15 +7631,6 @@
 "doc": "Truncate toward zero. `trunc(-2.7) == -2.0`."
 }
 ],
-"type": [
-{
-"package": "live",
-"qualified": "TestSession.type",
-"kind": "method",
-"signature": "define type(self, placeholder: String, value: String) -> TestSession {",
-"doc": "Type `value` into the text field whose placeholder is `placeholder`."
-}
-],
 "type_name": [
 {
 "package": "live",
@@ -7774,6 +7869,24 @@
 "kind": "define",
 "signature": "define v4() -> String {",
 "doc": "Generate a random RFC 4122 v4 UUID. Two calls back-to-back return\ndifferent values (with overwhelming probability \u2014 122 random bits of\nentropy each).\n\n@example\nid := uuid.v4()\nprint(id.length())           // 36"
+}
+],
+"valid": [
+{
+"package": "live",
+"qualified": "Component.valid",
+"kind": "method",
+"signature": "define valid(self) -> Bool {",
+"doc": "Check every field of `rules()`: true when all are fine \u2014 else their\nerrors are shown. In a submit handler:\n\n    define save(self) -> void {\n        if not self.valid() { return }\n        ...\n    }"
+}
+],
+"validate": [
+{
+"package": "live",
+"qualified": "Component.validate",
+"kind": "method",
+"signature": "define validate(self, field: String) -> Bool {",
+"doc": "Check `field` against its rules (its error is set or cleared); true when it's fine."
 }
 ],
 "value": [

@@ -217,7 +217,7 @@ jobs:
       - name: Install toolchain
         run: |
           conda install -y -c conda-forge llvmdev=14.0.6 clangdev=14.0.6 clang=14.0.6 \
-            bdw-gc openssl sdl2 zlib zstd pthreads-win32 make lld=14.0.6
+            bdw-gc openssl sdl2=2.30 zlib zstd pthreads-win32 make lld=14.0.6
 
       - name: Bootstrap stdlib
         working-directory: quirk-compiler

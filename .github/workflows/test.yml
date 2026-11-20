@@ -506,7 +506,7 @@ jobs:
       - name: Install toolchain
         run: |
           conda install -y -c conda-forge llvmdev=14.0.6 clangdev=14.0.6 clang=14.0.6 \
-            bdw-gc openssl sdl2 zlib zstd pthreads-win32 make lld=14.0.6
+            bdw-gc openssl sdl2=2.30 zlib zstd pthreads-win32 make lld=14.0.6
 
       - name: Bootstrap stdlib
         working-directory: quirk-compiler
@@ -545,7 +545,7 @@ jobs:
         shell: pwsh
         run: |
           # The package alone (no conda env): SDL2.dll and the DLLs it loads
-          # (SDL3.dll for conda-forge's sdl2-compat) must be in it.
+          # must be in it.
           $dir = Join-Path $env:RUNNER_TEMP 'quirk-install'
           $env:QUIRK_INSTALL_TARBALL = (Resolve-Path $env:QUIRK_PKG).Path
           ./install.ps1 -Dir $dir -NoModifyPath

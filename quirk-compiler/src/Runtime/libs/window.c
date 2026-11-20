@@ -175,6 +175,9 @@ static struct {
     void (*RestoreWindow)(void*);
     uint32_t (*GetWindowFlags)(void*);
     int (*SetWindowOpacity)(void*, float);
+    void (*GetWindowPosition)(void*, int*, int*);
+    int (*GetWindowDisplayIndex)(void*);
+    int (*GetDisplayUsableBounds)(int, QSdlRect*);
 } qsdl;
 
 static char qwin_err[512] = "";
@@ -268,6 +271,9 @@ static int qsdl_load(void) {
     *(void**)&qsdl.RestoreWindow = dlsym(qsdl.lib, "SDL_RestoreWindow");
     *(void**)&qsdl.GetWindowFlags = dlsym(qsdl.lib, "SDL_GetWindowFlags");
     *(void**)&qsdl.SetWindowOpacity = dlsym(qsdl.lib, "SDL_SetWindowOpacity");
+    *(void**)&qsdl.GetWindowPosition = dlsym(qsdl.lib, "SDL_GetWindowPosition");
+    *(void**)&qsdl.GetWindowDisplayIndex = dlsym(qsdl.lib, "SDL_GetWindowDisplayIndex");
+    *(void**)&qsdl.GetDisplayUsableBounds = dlsym(qsdl.lib, "SDL_GetDisplayUsableBounds");
     qsdl.loaded = 1;
     return 1;
     }
@@ -538,6 +544,13 @@ int64_t Window_open_raw(String* title, int64_t width, int64_t height, int64_t fl
         // compositions longer than 32 bytes in one event (SDL 2.0.22+).
         qsdl.SetHint("SDL_IME_SHOW_UI", "1");
         qsdl.SetHint("SDL_IME_SUPPORT_EXTENDED_TEXT", "1");
+        // Windows: a borderless window keeps the styles of a normal one
+        // (caption, thick frame, maximize box) with the frame hidden — so it
+        // still maximizes (button, double-click, Win+Up), snaps, and gets the
+        // system's minimize / restore / close animations. Without these it's
+        // a bare popup.
+        qsdl.SetHint("SDL_BORDERLESS_WINDOWED_STYLE", "1");
+        qsdl.SetHint("SDL_BORDERLESS_RESIZABLE_STYLE", "1");
         if (qsdl.Init(QSDL_INIT_VIDEO) != 0) { qwin_set_err("can't start SDL video"); return -1; }
         qsdl.inited = 1;
         qsdl.StartTextInput();
@@ -987,6 +1000,31 @@ int64_t Window_hit_at_raw(int64_t h, int64_t x, int64_t y) {
     if (!w) return QHIT_NORMAL;
     int pt[2] = { (int)(x * w->ui), (int)(y * w->ui) };
     return qwin_hit(w->win, pt, (void*)(intptr_t)h);
+}
+
+// How far a maximized window reaches past its screen's usable area, as
+// [left, top, right, bottom] logical pixels (on Windows, a maximized window
+// with a thick frame overhangs each edge by the frame's width; a borderless
+// one draws there, out of sight). [0, 0, 0, 0] when not maximized.
+List* Window_inset_raw(int64_t h) {
+    List* res = (List*)quirk_alloc(QT_LIST, sizeof(List));
+    Core_Collections_List_List___init(res);
+    int64_t v[4] = { 0, 0, 0, 0 };
+    QWin* w = qwin_get(h);
+    if (w && !qwin_headless && qsdl.GetWindowFlags && qsdl.GetWindowPosition && qsdl.GetWindowDisplayIndex &&
+        qsdl.GetDisplayUsableBounds && (qsdl.GetWindowFlags(w->win) & QSDL_WINDOW_MAXIMIZED)) {
+        int x = 0, y = 0, ww = 0, wh = 0;
+        QSdlRect u = { 0, 0, 0, 0 };
+        qsdl.GetWindowPosition(w->win, &x, &y);
+        qsdl.GetWindowSize(w->win, &ww, &wh);
+        int d = qsdl.GetWindowDisplayIndex(w->win);
+        if (d >= 0 && qsdl.GetDisplayUsableBounds(d, &u) == 0 && u.w > 0) {
+            int e[4] = { u.x - x, u.y - y, (x + ww) - (u.x + u.w), (y + wh) - (u.y + u.h) };
+            for (int i = 0; i < 4; i++) v[i] = e[i] > 0 ? (int64_t)ceilf((float)e[i] / w->ui) : 0;
+        }
+    }
+    for (int i = 0; i < 4; i++) Core_Collections_List_List_append(res, quirk_int_to_opaque(v[i]));
+    return res;
 }
 
 // 0 minimize, 1 maximize, 2 restore.

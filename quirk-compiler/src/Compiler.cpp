@@ -406,6 +406,21 @@ static std::vector<std::string>& getSearchPaths() {
             isVenv = fs::exists(fs::path(venvBase) / "bin" / "activate");
         }
 
+        // The install the running binary came from: <root>/bin/quirk next to
+        // <root>/packages/ (install.sh / install.ps1 with a custom --dir /
+        // -Dir, an unpacked release tarball) — the stdlib made for this
+        // compiler. Before the user-global dir: that's ~/.quirk/packages/,
+        // the stdlib of a default install — another, older one when this
+        // binary lives elsewhere (its `ui` 1.0 hid this one's 1.11). Same
+        // directory as ~/.quirk/packages/ for a default install.
+        if (!envHome) {
+            std::string exe = qpm::self_binary();
+            std::error_code ec;
+            fs::path rootPkgs = fs::path(exe).parent_path().parent_path() / "packages";
+            if (!exe.empty() && exe != "quirk" && fs::is_directory(rootPkgs, ec))
+                p.push_back(rootPkgs.string() + "/");
+        }
+
         // User-global installs — `pip install --user` / `cargo install` equivalent.
         // Skipped when a venv is active so the venv stays a closed world.
         if (!isVenv) {
@@ -423,15 +438,6 @@ static std::vector<std::string>& getSearchPaths() {
         }
 
         if (!envHome) {
-            // The install the running binary came from: <root>/bin/quirk
-            // next to <root>/packages/ (install.sh / install.ps1 with a
-            // custom --dir / -Dir, an unpacked release tarball). Same
-            // directory as ~/.quirk/packages/ for a default install.
-            std::string exe = qpm::self_binary();
-            std::error_code ec;
-            fs::path rootPkgs = fs::path(exe).parent_path().parent_path() / "packages";
-            if (!exe.empty() && exe != "quirk" && fs::is_directory(rootPkgs, ec))
-                p.push_back(rootPkgs.string() + "/");
             p.push_back("/usr/local/lib/quirk/packages/");
             p.push_back("/usr/local/lib/quirk/");
         }

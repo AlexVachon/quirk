@@ -33,6 +33,11 @@ Found building an IDE in Quirk (a desktop editor on `window` + `ui`):
 - **`install.ps1` runs in Windows PowerShell 5.1** (what Windows has): its
   em dashes, read in the ANSI code page, broke the parse. ASCII only now,
   and CI parses it with 5.1.
+- **The running compiler's own stdlib comes before `~/.quirk/packages`.**
+  An older install's packages there (ui v1.0.0 from 7.25) shadowed the new
+  compiler's, so a new `ui` feature was "no member" until `QUIRK_HOME` was set.
+- **Editable installs on Windows fall back to a directory junction**: a
+  symlink needs Developer Mode or admin rights; a junction doesn't.
 - CI: the Windows job uploads the build as an artifact (`windows-build`), to
   try a branch on Windows before it's released.
 

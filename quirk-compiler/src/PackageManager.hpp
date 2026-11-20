@@ -2246,6 +2246,17 @@ static int materialize_from_cache(const fs::path& cachePath, const fs::path& pkg
         // nothing to stage; just replace the target directly.
         if (fs::exists(target) || fs::is_symlink(target)) fs::remove_all(target);
         fs::create_directory_symlink(cachePath, target, ec);
+#ifdef _WIN32
+        if (ec) {
+            // A symbolic link needs admin rights (or Developer Mode) on
+            // Windows: "A required privilege is not held by the client". A
+            // directory junction doesn't, and does the same here.
+            std::error_code ec2;
+            std::string abs = fs::absolute(cachePath, ec2).string();
+            std::string cmd = "mklink /J \"" + target.string() + "\" \"" + abs + "\" >NUL";
+            if (qplat::run_shell(cmd) == 0 && fs::exists(target, ec2)) ec.clear();
+        }
+#endif
         if (ec) {
             log::err("failed to install " + target.string() + ": " + ec.message());
             return 1;

@@ -248,6 +248,52 @@ Draw anywhere again (undoes `clip`).
 
 Change the title bar text.
 
+#### `define set_hit_areas(self, drag: List, holes: List = [], border: Int = 5) -> Bool`
+
+For a title bar of your own (a window opened `borderless=true`): a press
+in one of the `drag` rectangles moves the window (with the system's
+snapping, and a double-click maximizing on Windows), except in the
+`holes` (your buttons there); presses within `border` pixels of an edge
+resize it (when it's resizable and not maximized). Each rectangle is
+`[x, y, width, height]`; call it again when they move (after a resize).
+False if this SDL can't (before 2.0.4).
+@example w.set_hit_areas([[0, 0, w.width(), 32]], [[w.width() - 138, 0, 138, 32]])
+
+#### `define hit_at(self, x: Int, y: Int) -> String`
+
+What a press at (x, y) does with the areas of `set_hit_areas`: "drag",
+"resize_top", "resize_bottom_right", ... or "" (the program gets it).
+
+#### `define minimize(self) -> void`
+
+Minimize the window (to the taskbar / dock).
+
+#### `define maximize(self) -> void`
+
+Maximize the window (fill the screen, but for the taskbar).
+
+#### `define restore(self) -> void`
+
+Back to its size before being maximized or minimized.
+
+#### `define maximized(self) -> Bool`
+
+True while maximized.
+
+#### `define minimized(self) -> Bool`
+
+True while minimized.
+
+#### `define borderless(self) -> Bool`
+
+True if it was opened `borderless=true` (no system title bar).
+
+#### `define set_opacity(self, opacity: Double) -> Bool`
+
+How opaque the whole window is: 1.0 (normal) down to 0.0 (invisible) —
+to fade it in or out. False where the system can't (headless, some
+Linux desktops).
+
 #### `define pixel(self, x: Int, y: Int) -> Int`
 
 The colour (0xRRGGBB, opaque) of pixel (x, y) in what's been drawn — mostly for tests.
@@ -319,12 +365,14 @@ is Hebrew, Arabic, ... — so it should be aligned to the right.
 
 True if `text` has any right-to-left (Hebrew, Arabic...) characters — then carets and selections need `Font.caret_x` / `selection` rather than prefix widths.
 
-#### `define open(title: String, width: Int, height: Int, resizable: Bool = false, hidden: Bool = false, vsync: Bool = true, headless: Bool = false) -> Window`
+#### `define open(title: String, width: Int, height: Int, resizable: Bool = false, hidden: Bool = false, vsync: Bool = true, headless: Bool = false, borderless: Bool = false) -> Window`
 
 Open a window `width` x `height` pixels, centred on the screen.
 @param resizable let the user resize it ("resize" events tell you)
 @param hidden    don't show it (drawing and `screenshot` still work)
 @param vsync     make `present` wait for the display's refresh
+@param borderless no system title bar or frame: draw your own and say
+                 where it is with `set_hit_areas`
 @param headless  no display at all (CI, servers): an off-screen window
                  for drawing and screenshots. Applies from the first
                  window opened.

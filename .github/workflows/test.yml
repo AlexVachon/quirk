@@ -540,6 +540,30 @@ jobs:
           PKG=$(quirk-compiler/tools/package_release.sh "$V" windows-x86_64 "$PWD")
           echo "QUIRK_PKG=${PKG}.tar.gz" >> "$GITHUB_ENV"
 
+      - name: Install the package on a bare PATH, open a window
+        if: success()
+        shell: pwsh
+        run: |
+          # The package alone (no conda env): SDL2.dll and the DLLs it loads
+          # (SDL3.dll for conda-forge's sdl2-compat) must be in it.
+          $dir = Join-Path $env:RUNNER_TEMP 'quirk-install'
+          $env:QUIRK_INSTALL_TARBALL = (Resolve-Path $env:QUIRK_PKG).Path
+          ./install.ps1 -Dir $dir -NoModifyPath
+          $env:Path = "$dir\bin;$env:SystemRoot\System32;$env:SystemRoot"
+          Remove-Item env:QUIRK_HOME -ErrorAction SilentlyContinue
+          Remove-Item env:CONDA_PREFIX -ErrorAction SilentlyContinue
+          $w = Join-Path $env:RUNNER_TEMP 'window_smoke.qk'
+          @'
+          use window
+          win := window.open("smoke", 120, 80, hidden=true)
+          win.clear(window.hex("#336699"))
+          win.present()
+          win.close()
+          print("window ok")
+          '@ | Set-Content $w
+          quirk --no-aot $w
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
       - uses: actions/upload-artifact@v4
         if: success()
         with:

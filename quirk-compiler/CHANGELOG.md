@@ -38,6 +38,11 @@ Found building an IDE in Quirk (a desktop editor on `window` + `ui`):
   compiler's, so a new `ui` feature was "no member" until `QUIRK_HOME` was set.
 - **Editable installs on Windows fall back to a directory junction**: a
   symlink needs Developer Mode or admin rights; a junction doesn't.
+- **Windows: `window` works from the release package.** conda-forge's sdl2
+  is now sdl2-compat — an SDL2.dll that loads SDL3.dll — and the package
+  didn't have SDL3.dll, so every window failed with "SDL2 isn't installed".
+  It's bundled now; CI installs the package on a bare PATH and opens a
+  (hidden) window; and the error says when SDL2.dll is there but won't load.
 - CI: the Windows job uploads the build as an artifact (`windows-build`), to
   try a branch on Windows before it's released.
 

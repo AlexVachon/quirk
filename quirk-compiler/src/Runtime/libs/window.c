@@ -191,6 +191,17 @@ static int qsdl_load(void) {
     for (size_t i = 0; i < sizeof names / sizeof names[0] && !qsdl.lib; i++)
         if (names[i] && *names[i]) qsdl.lib = dlopen(names[i], RTLD_NOW | RTLD_LOCAL);
     if (!qsdl.lib) {
+#if defined(_WIN32)
+        // Found but not loadable (error 1114: its DllMain failed — sdl2-compat
+        // without SDL3.dll; 126: a DLL it needs is missing) — not "isn't installed".
+        DWORD werr = GetLastError();
+        if (werr != ERROR_MOD_NOT_FOUND || SearchPathA(NULL, "SDL2.dll", NULL, 0, NULL, NULL)) {
+            snprintf(qwin_err, sizeof qwin_err,
+                     "SDL2.dll is there but couldn't be loaded (Windows error %lu; "
+                     "if it's sdl2-compat, put SDL3.dll next to it)", (unsigned long)werr);
+            return 0;
+        }
+#endif
         snprintf(qwin_err, sizeof qwin_err,
 #if defined(_WIN32)
                  "SDL2 isn't installed (put SDL2.dll next to quirk.exe or on PATH)"

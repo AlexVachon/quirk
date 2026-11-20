@@ -256,6 +256,18 @@ jobs:
           '@ | Set-Content $p
           quirk --no-aot $p
           if ($LASTEXITCODE -ne 0) { exit 1 }
+          # A real (hidden) window: SDL2.dll and what it loads are in the package.
+          $w = Join-Path $env:RUNNER_TEMP 'window_smoke.qk'
+          @'
+          use window
+          win := window.open("smoke", 120, 80, hidden=true)
+          win.clear(window.hex("#336699"))
+          win.present()
+          win.close()
+          print("window ok")
+          '@ | Set-Content $w
+          quirk --no-aot $w
+          if ($LASTEXITCODE -ne 0) { exit 1 }
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2

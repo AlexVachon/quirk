@@ -44,7 +44,8 @@ windows-*)
     # import that isn't part of Windows — found in the conda env the build
     # used ($CONDA_PREFIX: GC, pthreads, OpenSSL, zlib, the MSVC runtime),
     # followed recursively. SDL2.dll is loaded at run time (window), so
-    # it's added by name. Everything sits in bin/: Windows looks for a
+    # it's added by name — and SDL3.dll: conda-forge's sdl2 is sdl2-compat,
+    # an SDL2.dll that loads SDL3.dll when it's loaded (and fails without it). Everything sits in bin/: Windows looks for a
     # DLL next to the .exe first.
     cp "$compiler/bin/quirk.exe" "$compiler/bin/runtime.dll" "$compiler/bin/runtime.lib" "$stage/$pkg/bin/"
     : "${CONDA_PREFIX:?package_release: windows packaging needs the conda env (CONDA_PREFIX)}"
@@ -60,7 +61,7 @@ windows-*)
         return 0   # not found: prints nothing (set -e would end the script on a 1)
     }
     queue=("$stage/$pkg/bin/quirk.exe" "$stage/$pkg/bin/runtime.dll")
-    for extra in SDL2.dll vcruntime140.dll vcruntime140_1.dll msvcp140.dll; do
+    for extra in SDL2.dll SDL3.dll vcruntime140.dll vcruntime140_1.dll msvcp140.dll; do
         f=$(find_dll "$extra"); [ -n "$f" ] && { cp "$f" "$stage/$pkg/bin/"; queue+=("$stage/$pkg/bin/$(basename "$f")"); }
     done
     while [ ${#queue[@]} -gt 0 ]; do

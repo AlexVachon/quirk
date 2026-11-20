@@ -304,8 +304,9 @@ request; tests can call it directly (see `TestClient`).
 #### `define listen(self, port: Int = 3000, host: String = "127.0.0.1", on_ready: Callable = null, quiet: Bool = false) -> void`
 
 Serve the app on `port` (and `host`: "127.0.0.1" only this machine,
-"0.0.0.0" every interface) until `stop()`. Each connection is handled
-in its own task, with keep-alive. `on_ready()` runs once listening.
+"0.0.0.0" every interface; the default is $QUIRK_HOST when it's set)
+until `stop()`. Each connection is handled in its own task, with
+keep-alive. `on_ready()` runs once listening.
 
 #### `define stop(self) -> void`
 

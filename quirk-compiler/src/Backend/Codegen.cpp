@@ -204,6 +204,12 @@ class LLVMCodegen {
     void setQuirkVersion(const std::string& v) { quirkVersion = v; }
     std::string quirkVersion = qpm::QUIRK_VERSION;   // Compiler.cpp includes PackageManager.hpp first
     std::string entryFile;
+    // `quirk bundle`: struct source files recorded relative to this folder
+    // (the entry's), so code that finds files next to them at run time —
+    // live's component templates — finds them in the bundle, wherever it's
+    // copied, run from its folder. "" (the default): absolute paths.
+    std::string relativeFilesRoot;
+    void setRelativeFilesRoot(const std::string& r) { relativeFilesRoot = r; }
     // This function's shadow-frame cur_line slot (from quirk_push_frame_l)
     // and its source file; handleStatement stores each statement's line.
     Value* curLineSlot = nullptr;
@@ -537,6 +543,12 @@ class LLVMCodegen {
             if (auto s = dynamic_cast<StructNode*>(node.get())) {
                 structNodeMap[s->name] = s;
                 structFiles[s->name] = s->filePath;
+                if (!relativeFilesRoot.empty()) {
+                    std::error_code ec;
+                    std::filesystem::path rel = std::filesystem::relative(s->filePath, relativeFilesRoot, ec);
+                    std::string r = rel.generic_string();
+                    if (!ec && !r.empty() && r.rfind("..", 0) != 0) structFiles[s->name] = r;
+                }
                 static const std::set<std::string> builtinTypes = {
                     "String", "List", "Map", "Set", "Queue", "Tuple", "Callable", "File", "Any"};
                 // Not the built-in types (`Int.parse(...)` names the type).

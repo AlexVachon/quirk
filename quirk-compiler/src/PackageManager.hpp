@@ -70,7 +70,7 @@ static std::string self_binary();
 
 namespace qpm {
 
-constexpr const char* QUIRK_VERSION = "7.57.0";
+constexpr const char* QUIRK_VERSION = "7.58.0";
 
 namespace fs = std::filesystem;
 
@@ -6570,6 +6570,7 @@ static const std::vector<CliCommand>& cli_commands() {
         {"module",     "module <name>",               "Invoke a module's main()",        "RUN CODE", "-m", "", "", false},
         {"test",       "test [<path>...]",            "Run test_* functions in *_test.qk files", "RUN CODE", "t",  "", "", false},
         {"watch",      "watch <file.qk>",          "Run a script again on every save (= run --watch)",   "RUN CODE", "",   "", "", false},
+        {"bundle",     "bundle <file.qk> [-o dist]", "A folder to deploy: the app, its runtime, its files (--docker)", "RUN CODE", "", "", "", false},
         {"repl",       "repl",                        "Interactive shell",               "RUN CODE", "",   "", "", false},
 
         {"new",        "new [--web|--live] <name>",   "Scaffold a new package (--web: a web app; --live: live pages)", "PROJECT", "", "", "", false},
@@ -8451,6 +8452,17 @@ static std::string help_for(const std::string& cmdIn) {
                "    --watch   run it again each time a project file changes (.qk .html .css\n"
                "              .js .toml): checked first — if it doesn't compile, the running\n"
                "              version keeps running. A live app's open tabs reload.\n";
+    if (cmd == "bundle")
+        return "quirk bundle <file.qk> [-o <dir>] [--docker] [--include <path>]...\n"
+               "    A folder to copy to a server (default: dist/), that runs there with\n"
+               "    no Quirk installed: the app built to a native binary, the runtime\n"
+               "    next to it, and the files a web / live app reads from its folder —\n"
+               "    index.html, public/, static/, views/, templates/, a component's\n"
+               "    .html next to its .qk — plus each --include. Never .db files, tests\n"
+               "    or hidden folders. Run it from that folder: cd dist && ./app\n"
+               "    --docker   also a Dockerfile (this machine's distribution and the\n"
+               "               libraries the binary needs; it listens on 0.0.0.0)\n"
+               "    Needs llc-14 and a C compiler where you bundle.\n";
     if (cmd == "eval" || cmd == "-c")
         return "quirk eval \"<code>\"\n"
                "    Wrap a one-liner in `define main() { ... }` and run it.\n"
@@ -8895,6 +8907,15 @@ inline bool dispatch(int& argc, char** argv, int& outRc) {
         for (int i = 2; i < argc; i++) rest.emplace_back(argv[i]);
         outRc = (first == "-c") ? cmd_eval(rest) : cmd_module(rest);
         return true;
+    }
+
+    // `quirk bundle <file>`: the compiler's own (main() reads "bundle").
+    if (first == "bundle") {
+        if (argc >= 3 && (std::string(argv[2]) == "-h" || std::string(argv[2]) == "--help")) {
+            std::cout << help_for("bundle");
+            outRc = 0; return true;
+        }
+        return false;
     }
 
     if (!is_subcommand(first)) {

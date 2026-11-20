@@ -4688,7 +4688,7 @@
 "qualified": "App.listen",
 "kind": "method",
 "signature": "define listen(self, port: Int = 3000, host: String = \"127.0.0.1\", on_ready: Callable = null, quiet: Bool = false) -> void {",
-"doc": "Serve the app on `port` (and `host`: \"127.0.0.1\" only this machine,\n\"0.0.0.0\" every interface) until `stop()`. Each connection is handled\nin its own task, with keep-alive. `on_ready()` runs once listening."
+"doc": "Serve the app on `port` (and `host`: \"127.0.0.1\" only this machine,\n\"0.0.0.0\" every interface; the default is $QUIRK_HOST when it's set)\nuntil `stop()`. Each connection is handled in its own task, with\nkeep-alive. `on_ready()` runs once listening."
 }
 ],
 "load": [

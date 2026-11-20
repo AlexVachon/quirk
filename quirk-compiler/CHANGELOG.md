@@ -5,6 +5,25 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.58.0] — 2026-11-20 — quirk bundle
+
+- **`quirk bundle <file> [-o dist] [--docker] [--include path]`**: a folder
+  to copy to a server, that runs there with no Quirk installed — the app built
+  to a native binary, the runtime next to it (linked as `runtime.so` with
+  `$ORIGIN`; `@executable_path` on macOS; the DLLs beside the `.exe` on
+  Windows), and the files a web / live app reads from its folder: `index.html`,
+  `public/`, `static/`, `views/`, `templates/`, a component's `.html` next to
+  its `.qk`, plus each `--include`. Never `.db` files, tests or hidden folders.
+  Struct source files are recorded relative to the entry's folder in a bundle,
+  so live finds its template files wherever the bundle goes. `--docker` writes
+  a Dockerfile: the build machine's distribution, the packages holding the
+  libraries the binary links (found with `ldd` / `dpkg -S`), `QUIRK_HOST=0.0.0.0`.
+  (A binary built with `-o` named the runtime by its absolute path on the
+  build machine: it couldn't run anywhere else.) `tools/check_bundle.sh` in CI:
+  moved, run with an empty environment.
+- Pins **`web` v1.3.1**: `app.listen`'s default host is `$QUIRK_HOST` when
+  it's set; a Deploying section in its README.
+
 ## [7.57.0] — 2026-11-20 — quirk test --watch
 
 - **`quirk test --watch [path]`**: the tests run again each time a project

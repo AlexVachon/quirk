@@ -2,6 +2,10 @@
 
 All notable changes to the extension land here. Versioning follows SemVer; minor bumps for new features, patches for fixes.
 
+## [1.1.21] — 2026-11-20 — hover docs for web 1.3.1
+
+- `app.listen`'s hover mentions `$QUIRK_HOST`.
+
 ## [1.1.20] — 2026-11-20 — hover docs for session stores
 
 - Hover and completion know `web` 1.3 (`sqlite_store`, `memory_store`,

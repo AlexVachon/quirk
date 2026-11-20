@@ -206,6 +206,13 @@ jobs:
         # Runs again on a change, not when it doesn't compile; stops on SIGINT.
         run: tools/check_watch.sh
 
+      - name: Check quirk bundle
+        working-directory: quirk-compiler
+        env:
+          QUIRK_HOME: ${{ github.workspace }}/quirk-compiler
+        # A folder that runs moved elsewhere, with an empty environment.
+        run: tools/check_bundle.sh
+
       - name: Check package discovery
         working-directory: quirk-compiler
         env:
@@ -361,6 +368,13 @@ jobs:
           QUIRK_HOME: ${{ github.workspace }}/quirk-compiler
         # Runs again on a change, not when it doesn't compile; stops on SIGINT.
         run: tools/check_watch.sh
+
+      - name: Check quirk bundle
+        working-directory: quirk-compiler
+        env:
+          QUIRK_HOME: ${{ github.workspace }}/quirk-compiler
+        # A folder that runs moved elsewhere, with an empty environment.
+        run: tools/check_bundle.sh
 
       - name: Check package discovery
         working-directory: quirk-compiler

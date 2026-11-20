@@ -215,6 +215,12 @@ struct CompilerOptions {
     // triple. A cache hit skips parse + Sema + Codegen + LLVM passes,
     // which on small scripts is most of the per-run latency.
     bool useCache     = true;
+    // `quirk bundle <file> [-o dist] [--docker] [--include path]`: a folder
+    // to copy to a server — the binary, the runtime next to it (found
+    // through $ORIGIN / @executable_path), and the app's files.
+    bool bundle       = false;
+    bool bundleDocker = false;
+    std::vector<std::string> bundleIncludes;
 };
 
 // ==========================================================
@@ -1066,6 +1072,172 @@ static void hashImportGraph(const std::string& entry,
 
 static std::string resolveRuntimeSoPath();
 
+// ---- quirk bundle ---------------------------------------------------------
+
+// Copy `from` (a file or folder) to `to`; hidden entries left out.
+static bool bundleCopy(const fs::path& from, const fs::path& to) {
+    std::error_code ec;
+    if (fs::is_directory(from, ec)) {
+        fs::create_directories(to, ec);
+        for (auto it = fs::recursive_directory_iterator(from, fs::directory_options::skip_permission_denied, ec);
+             !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
+            std::string name = it->path().filename().string();
+            if (!name.empty() && name[0] == '.') {
+                if (it->is_directory(ec)) it.disable_recursion_pending();
+                continue;
+            }
+            fs::path dest = to / fs::relative(it->path(), from, ec);
+            if (it->is_directory(ec)) fs::create_directories(dest, ec);
+            else if (it->is_regular_file(ec)) fs::copy_file(it->path(), dest, fs::copy_options::overwrite_existing, ec);
+        }
+        return true;
+    }
+    if (!fs::is_regular_file(from, ec)) return false;
+    fs::create_directories(to.parent_path(), ec);
+    fs::copy_file(from, to, fs::copy_options::overwrite_existing, ec);
+    return !ec;
+}
+
+// The rest of `quirk bundle`, once the binary is linked into `dir`: the
+// runtime (and on Windows the DLLs it needs) next to it, the app's files,
+// and with --docker a Dockerfile.
+static int finishBundle(const CompilerOptions& opts, const std::string& dir,
+                        const std::string& runtimePath, const std::string& binPath) {
+    std::error_code ec;
+    fs::path out(dir);
+    fs::path rtDir = fs::path(runtimePath).parent_path();
+#ifdef _WIN32
+    for (auto& e : fs::directory_iterator(rtDir, ec))
+        if (e.path().extension() == ".dll") fs::copy_file(e.path(), out / e.path().filename(), fs::copy_options::overwrite_existing, ec);
+#else
+    fs::copy_file(runtimePath, out / "runtime.so", fs::copy_options::overwrite_existing, ec);
+    if (ec) { std::cerr << "bundle: can't copy the runtime: " << ec.message() << "\n"; return 1; }
+#endif
+    // The app's files: what a web / live app reads from its folder at run
+    // time — the base page, static files, templates (a component's .html
+    // next to its .qk) — plus --include. Never .db files, tests, hidden or
+    // installed folders: data and secrets stay where they are.
+    fs::path root = fs::absolute(opts.inputFile).parent_path();
+    fs::path outAbs = fs::absolute(out);
+    std::vector<std::string> copied;
+    for (const char* name : {"index.html", "public", "static", "views", "templates"}) {
+        if (fs::exists(root / name, ec) && bundleCopy(root / name, out / name)) copied.push_back(name);
+    }
+    int templates = 0;
+    for (auto it = fs::recursive_directory_iterator(root, fs::directory_options::skip_permission_denied, ec);
+         !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
+        const fs::path& p = it->path();
+        std::string name = p.filename().string();
+        if (it->is_directory(ec)) {
+            fs::path abs = fs::absolute(p);
+            if ((!name.empty() && name[0] == '.') || name == "packages" || name == "node_modules" || name == "tests" ||
+                name == "public" || name == "static" || name == "views" || name == "templates" ||
+                abs == outAbs)
+                it.disable_recursion_pending();
+            continue;
+        }
+        if (p.extension() != ".html" || p.parent_path() == root) continue;
+        fs::path qk = p; qk.replace_extension(".qk");
+        bool beside = fs::exists(qk, ec);
+        if (!beside) {                                       // a component's template: any .qk in its folder
+            for (auto& sib : fs::directory_iterator(p.parent_path(), ec))
+                if (sib.path().extension() == ".qk" || sib.path().extension() == ".quirk") { beside = true; break; }
+        }
+        if (!beside) continue;
+        if (bundleCopy(p, out / fs::relative(p, root, ec))) templates++;
+    }
+    for (auto& inc : opts.bundleIncludes) {
+        fs::path src = root / inc;
+        if (!fs::exists(src, ec)) src = inc;
+        if (!fs::exists(src, ec)) { std::cerr << "bundle: --include " << inc << ": not found\n"; return 1; }
+        bundleCopy(src, out / fs::relative(fs::absolute(src), root, ec));
+        copied.push_back(inc);
+    }
+    if (opts.bundleDocker) {
+#ifdef _WIN32
+        std::cerr << "bundle: --docker makes a Linux image: bundle on Linux\n";
+#else
+        // The image: the build machine's distribution (the binary is linked
+        // against its libraries), with the packages that hold them.
+        std::string distro = "ubuntu", version = "20.04";
+        {
+            std::ifstream os("/etc/os-release");
+            std::string line;
+            while (std::getline(os, line)) {
+                auto val = [&](const std::string& k) {
+                    std::string v = line.substr(k.size());
+                    if (v.size() >= 2 && v.front() == '"') v = v.substr(1, v.size() - 2);
+                    return v;
+                };
+                if (line.rfind("ID=", 0) == 0) distro = val("ID=");
+                else if (line.rfind("VERSION_ID=", 0) == 0) version = val("VERSION_ID=");
+            }
+        }
+        std::set<std::string> pkgs;
+        bool dpkg = qplat::have_command("dpkg");
+        if (dpkg) {
+            FILE* p = qplat::popen_cmd("ldd '" + binPath + "' 2>/dev/null", "r");
+            char buf[1024];
+            while (p && fgets(buf, sizeof(buf), p)) {
+                std::string l(buf);
+                size_t arrow = l.find("=> ");
+                if (arrow == std::string::npos) continue;
+                std::string lib = l.substr(arrow + 3);
+                lib = lib.substr(0, lib.find(" ("));
+                std::string base = fs::path(lib).filename().string();
+                if (base.rfind("libc.so", 0) == 0 || base.rfind("libm.so", 0) == 0 || base.rfind("libpthread", 0) == 0 ||
+                    base.rfind("libdl.so", 0) == 0 || base.rfind("librt.so", 0) == 0 || base == "runtime.so" ||
+                    lib.find(out.string()) != std::string::npos)
+                    continue;
+                std::string real = fs::canonical(lib, ec).string();
+                FILE* q = qplat::popen_cmd("dpkg -S '" + (ec ? lib : real) + "' 2>/dev/null || dpkg -S '" + lib + "' 2>/dev/null", "r");
+                char pb[512];
+                if (q && fgets(pb, sizeof(pb), q)) {
+                    std::string pkg(pb);
+                    pkg = pkg.substr(0, pkg.find(':'));
+                    if (!pkg.empty()) pkgs.insert(pkg);
+                }
+                if (q) pclose(q);
+            }
+            if (p) pclose(p);
+        }
+        std::string list = "ca-certificates";
+        for (auto& k : pkgs) list += " " + k;
+        std::string bin = fs::path(binPath).filename().string();
+        std::ofstream df((out / "Dockerfile").string());
+        df << "# Made by `quirk bundle --docker`: the app as built on this machine (" << distro << " " << version << ").\n"
+           << "#   docker build -t myapp .\n"
+           << "#   docker run -p 3000:3000 -e QUIRK_SESSION_SECRET=... myapp\n"
+           << "# Files the app writes (a SQLite database) are lost when the container is\n"
+           << "# replaced: keep them on a volume — open the database at data/app.db, say,\n"
+           << "# and add  -v myapp-data:/app/data  to docker run.\n"
+           << "FROM " << distro << ":" << version << "\n";
+        if (dpkg)
+            df << "RUN apt-get update && apt-get install -y --no-install-recommends " << list
+               << " && rm -rf /var/lib/apt/lists/*\n";
+        else
+            df << "# Install the libraries `ldd " << bin << "` lists (the Boehm GC, OpenSSL) here.\n";
+        df << "WORKDIR /app\n"
+           << "COPY . /app\n"
+           << "# Listen on every address in the container (web's default is 127.0.0.1 only).\n"
+           << "ENV QUIRK_HOST=0.0.0.0\n"
+           << "# The port your app listens on.\n"
+           << "EXPOSE 3000\n"
+           << "CMD [\"./" << bin << "\"]\n";
+        std::ofstream di((out / ".dockerignore").string());
+        di << "*.db\n*.db-journal\n*.db-wal\n";
+#endif
+    }
+    std::cout << "Bundled " << opts.inputFile << " into " << dir << "/\n"
+              << "  " << fs::path(binPath).filename().string() << "   (the app; the runtime next to it)\n";
+    for (auto& c : copied) std::cout << "  " << c << "\n";
+    if (templates) std::cout << "  " << templates << " template file" << (templates == 1 ? "" : "s") << " (next to their .qk)\n";
+    if (opts.bundleDocker) std::cout << "  Dockerfile\n";
+    std::cout << "Run it from that folder (it reads its files from there):  cd " << dir << " && ./"
+              << fs::path(binPath).filename().string() << "\n";
+    return 0;
+}
+
 // Size + mtime of a build artifact, for the cache key. A dev rebuild
 // keeps QUIRK_VERSION but changes these, so its stale entries miss.
 static std::string fileStamp(const std::string& path) {
@@ -1795,7 +1967,9 @@ int main(int argc, char* argv[]) {
     std::vector<std::string> scriptArgs;
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
-        if (!opts.inputFile.empty()) {
+        // (`quirk bundle app.qk -o dist`: there's no script argv, its options
+        // can come after the file.)
+        if (!opts.inputFile.empty() && !opts.bundle) {
             // Already seen script — everything else is the script's own argv.
             scriptArgs.push_back(arg);
             continue;
@@ -1829,6 +2003,15 @@ int main(int argc, char* argv[]) {
             opts.buildOnly    = true;
             opts.runImmediate = false;
         }
+        else if (arg == "bundle" || arg == "--bundle") {
+            opts.bundle       = true;
+            opts.runImmediate = false;
+        }
+        else if (arg == "--docker")       opts.bundleDocker = true;
+        else if (arg == "--include") {
+            if (++i >= argc) { std::cerr << "Error: --include needs a path\n"; return 1; }
+            opts.bundleIncludes.push_back(argv[i]);
+        }
         else if (arg == "--stdin-source") g_stdin_source = true;
         else if (arg == "--test-harness") g_test_harness = true;
         else if (arg.rfind("--test-k=", 0) == 0) g_test_k = arg.substr(9);
@@ -1856,7 +2039,13 @@ int main(int argc, char* argv[]) {
             opts.outputFile    = argv[i];
             opts.runImmediate  = false;
         }
-        else if (arg[0] != '-')           opts.inputFile    = arg;
+        else if (arg[0] != '-') {
+            if (opts.bundle && !opts.inputFile.empty()) {
+                std::cerr << "bundle: one file (the app's entry), got " << opts.inputFile << " and " << arg << "\n";
+                return 1;
+            }
+            opts.inputFile = arg;
+        }
         else {
             std::cerr << "Unknown option: " << arg << std::endl;
             printUsage();
@@ -1868,6 +2057,16 @@ int main(int argc, char* argv[]) {
         std::cerr << "Error: No input file specified." << std::endl;
         printUsage();
         return 1;
+    }
+    // `bundle`: -o is the folder (default dist/); the binary goes in it,
+    // named after the entry file.
+    std::string bundleDir;
+    if (opts.bundle) {
+        bundleDir = opts.outputFile.empty() ? "dist" : opts.outputFile;
+        std::error_code ec;
+        fs::create_directories(bundleDir, ec);
+        if (ec) { std::cerr << "bundle: can't make " << bundleDir << ": " << ec.message() << "\n"; return 1; }
+        opts.outputFile = (fs::path(bundleDir) / fs::path(opts.inputFile).stem()).string();
     }
     // `--watch`: this process supervises; the program runs as a child
     // (the same command without --watch), again on every change.
@@ -2167,6 +2366,7 @@ int main(int argc, char* argv[]) {
                 codegen.setDebugMode(opts.debugMode);
                 codegen.setSourceMap(sourceMap);
                 codegen.setEntryFile(fs::absolute(opts.inputFile).string());
+                        if (opts.bundle) codegen.setRelativeFilesRoot(fs::absolute(opts.inputFile).parent_path().string());
                         codegen.compile(ast, irDest);
             }
             std::string err;
@@ -2176,6 +2376,7 @@ int main(int argc, char* argv[]) {
                 return 1;
             }
             log.debug("Binary written to " + opts.outputFile);
+            if (opts.bundle) return finishBundle(opts, bundleDir, runtimePath, opts.outputFile + ".exe");
             return 0;
         }
 #endif
@@ -2199,6 +2400,7 @@ int main(int argc, char* argv[]) {
             codegen.setDebugMode(opts.debugMode);
             codegen.setSourceMap(sourceMap);
             codegen.setEntryFile(fs::absolute(opts.inputFile).string());
+            if (opts.bundle) codegen.setRelativeFilesRoot(fs::absolute(opts.inputFile).parent_path().string());
             codegen.compile(ast, irDest);
         }
 
@@ -2216,13 +2418,35 @@ int main(int argc, char* argv[]) {
         std::string linkCmd = "gcc " + objPath + " " + runtimePath
                             + " -lgc -lm -lpthread -o " + opts.outputFile
                             + " -Wl,-rpath," + runtimeDir;
+        if (opts.bundle) {
+            // The runtime next to the binary, wherever the folder goes.
+#ifdef __APPLE__
+            linkCmd = "gcc " + objPath + " " + runtimePath + " -lgc -lm -lpthread -o " + opts.outputFile
+                    + " -Wl,-rpath,@executable_path";
+#else
+            linkCmd = "gcc " + objPath + " -L" + runtimeDir + " -l:runtime.so -lgc -lm -lpthread -o " + opts.outputFile
+                    + " -Wl,-rpath,'$ORIGIN'";
+#endif
+        }
         log.debug("Linking: " + linkCmd);
         if (int r = qplat::run_shell(linkCmd.c_str())) {
             std::cerr << "Error: linker failed (exit " << r << ")" << std::endl;
             return 1;
         }
+#ifdef __APPLE__
+        if (opts.bundle) {
+            // The binary names the runtime by its install name: point it next to itself.
+            std::string fix = "install_name_tool -change \"$(otool -D '" + runtimePath + "' | tail -1)\" "
+                              "@executable_path/runtime.so '" + opts.outputFile + "'";
+            if (int r = qplat::run_shell(fix.c_str())) {
+                std::cerr << "Error: install_name_tool failed (exit " << r << ")" << std::endl;
+                return 1;
+            }
+        }
+#endif
 
         log.debug("Binary written to " + opts.outputFile);
+        if (opts.bundle) return finishBundle(opts, bundleDir, runtimePath, opts.outputFile);
         return 0;
     }
 
@@ -2267,6 +2491,7 @@ int main(int argc, char* argv[]) {
             codegen.setDebugMode(opts.debugMode);
             codegen.setSourceMap(sourceMap);
             codegen.setEntryFile(fs::absolute(opts.inputFile).string());
+            if (opts.bundle) codegen.setRelativeFilesRoot(fs::absolute(opts.inputFile).parent_path().string());
             codegen.compile(ast, irDest);
         }
         if (runAotPipeline(irPath, binPath.string(), runtimePath, opts.verbose) != 0) {

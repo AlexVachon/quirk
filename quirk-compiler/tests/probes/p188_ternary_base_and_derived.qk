@@ -1,0 +1,29 @@
+// A ternary whose branches are a struct and one derived from it:
+// `given != null ? given : Derived()`. The cast to the first branch's type
+// was made after the merge's phi — invalid IR, and the optimiser crashed
+// (a segfault before the program's first line).
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+struct Store {
+    define name(self) -> String { return "store" }
+}
+
+struct Memory : Store {
+    items: Map
+    define __init(self) -> void { self.items = {} }
+    define name(self) -> String { return "memory" }
+}
+
+define pick(given: Store = null) -> Store {
+    return given != null ? given : Memory()
+}
+
+define main() -> void {
+    if pick().name() != "memory" { fail("default: " + pick().name()) }
+    s := Store()
+    if pick(s).name() != "store" { fail("given") }
+    flag := true
+    other: Store = flag ? Store() : Memory()
+    if other.name() != "store" { fail("then branch") }
+    print("ok")
+}

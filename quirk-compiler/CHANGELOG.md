@@ -5,6 +5,30 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.56.0] — 2026-11-20 — sessions that last
+
+- Pins **`web` v1.3.0**: session stores. `web.sessions(store=web.sqlite_store(...))`
+  keeps sessions in SQLite (a file of their own, or the app's database: tables
+  `quirk_sessions` / `quirk_session_meta`, `user_version` untouched), so they
+  last across restarts, deploys and every save under `--watch`; values as JSON,
+  written only when they changed (or once a minute), swept when they expire.
+  `web.memory_store()` stays the default; a store of your own extends
+  `web.SessionStore`. The cookie's secret: `secret=`, else
+  `$QUIRK_SESSION_SECRET`, else one the SQLite store makes once and keeps, else
+  random per start (it was always random per start: a restart made every
+  cookie invalid even if the sessions had been kept).
+- Pins **`live` v2.10.1** (and 2.10.0): the demo has real accounts — sign-up
+  with validation, passwords as scrypt hashes, a login that takes as long
+  whether or not the email has an account — and keeps its sessions in its
+  database.
+- **A ternary whose branches are a struct and one derived from it**
+  (`given != null ? given : Derived()`) was invalid IR — the cast was made
+  after the merge — and the optimiser crashed before the program's first
+  line. Probe p188.
+- **`== null` on an untyped value is true for a boxed null** too — what
+  `json.loads` gives for `null`: `{"a": null}["a"] == null` was false (while
+  `is Null` was true). Probe p189.
+
 ## [7.55.0] — 2026-11-19 — password hashing
 
 - Pins **`crypto` v1.1.0**: `crypto.hash_password(pw)` — scrypt (N = 2^15,

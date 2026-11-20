@@ -543,6 +543,15 @@
 "doc": "Result of `Regex.find`. `start` and `end` are byte offsets into the input\nString; `text` is the substring `[start, end)`; `groups` is a `List<String>`\nof the captured groups (group 0 = full match is NOT included \u2014 `text` is\nthe whole match)."
 }
 ],
+"MemoryStore": [
+{
+"package": "web",
+"qualified": "MemoryStore",
+"kind": "struct",
+"signature": "struct MemoryStore : SessionStore {",
+"doc": "Sessions in the server's memory (the default)."
+}
+],
 "Menu": [
 {
 "package": "ui",
@@ -850,6 +859,15 @@
 "doc": "A visitor's session: values kept on the server between their requests.\nThe browser only holds a random id, signed, in an HttpOnly cookie. Get it\nwith `req.session()` (after `app.use(web.sessions())`)."
 }
 ],
+"SessionStore": [
+{
+"package": "web",
+"qualified": "SessionStore",
+"kind": "struct",
+"signature": "struct SessionStore {",
+"doc": "Where sessions are kept: `web.memory_store()` (the default \u2014 the server's\nmemory: they end when it restarts) or `web.sqlite_store(...)` (a SQLite\ndatabase: they last across restarts and deploys). A store of your own is a\nstruct with these methods."
+}
+],
 "Set": [
 {
 "package": "typing",
@@ -934,6 +952,15 @@
 "kind": "struct",
 "signature": "struct SplitView : Widget {",
 "doc": "Two widgets side by side (or stacked: `vertical=true`) with a divider\nyou drag to share the space. `ratio` is the first pane's share in\npercent; `min_size` the smallest a pane gets (pixels). It takes its\ncontainer's free space (`expand`) unless told otherwise."
+}
+],
+"SqliteStore": [
+{
+"package": "web",
+"qualified": "SqliteStore",
+"kind": "struct",
+"signature": "struct SqliteStore : SessionStore {",
+"doc": "Sessions in a SQLite database (tables `quirk_sessions` and\n`quirk_session_meta`, made if they aren't there \u2014 it can be your app's own\ndatabase: `db.migrate` isn't affected). Their values are kept as JSON:\nStrings, numbers, Bools, null, Lists and Maps (a struct, store its fields)."
 }
 ],
 "StatusBar": [
@@ -4671,6 +4698,13 @@
 "kind": "define",
 "signature": "define load(file: File) -> Any {",
 "doc": "Read the entire contents of `file` and parse as JSON.\n\n@example\nwith File(\"config.json\", \"r\") as f {\n    config: Map = json.load(f)\n    print(config.get(\"host\"))\n}"
+},
+{
+"package": "web",
+"qualified": "SessionStore.load",
+"kind": "method",
+"signature": "define load(self, id: String) -> Session {",
+"doc": "The session with this id, or null."
 }
 ],
 "load_font": [
@@ -4929,6 +4963,15 @@
 "kind": "define",
 "signature": "define median_low(items: List) -> Double {",
 "doc": "Lower median (no averaging \u2014 returns one of the input values). For odd\nn this matches `median`; for even n it returns the lower of the two\nmidpoints."
+}
+],
+"memory_store": [
+{
+"package": "web",
+"qualified": "memory_store",
+"kind": "define",
+"signature": "define memory_store() -> SessionStore {",
+"doc": "Sessions in the server's memory: they end when it restarts (the default)."
 }
 ],
 "method_names": [
@@ -6403,6 +6446,15 @@
 "doc": "Return `k` distinct elements drawn from `items`. Throws if `k > items.length()`.\nImplemented as a partial Fisher-Yates over a copy so the caller's list\nisn't disturbed. O(k) work in the average case.\n\n@example\ndeck := [1,2,3,4,5,6,7,8,9,10]\nhand := random.sample(deck, 5)"
 }
 ],
+"save": [
+{
+"package": "web",
+"qualified": "SessionStore.save",
+"kind": "method",
+"signature": "define save(self, s: Session) -> void {",
+"doc": "Keep `s` (new, or changed)."
+}
+],
 "scale": [
 {
 "package": "window",
@@ -6455,6 +6507,15 @@
 "kind": "define",
 "signature": "extern define second(epoch: Int, utc: Int) -> Int",
 "doc": "Second 0-60 (60 for leap seconds, normally 0-59)."
+}
+],
+"secret": [
+{
+"package": "web",
+"qualified": "SessionStore.secret",
+"kind": "method",
+"signature": "define secret(self) -> String {",
+"doc": "A secret it keeps for signing cookies, so it lasts as long as the sessions do (\"\" for none)."
 }
 ],
 "seed": [
@@ -6676,7 +6737,7 @@
 "qualified": "session_count",
 "kind": "define",
 "signature": "define session_count() -> Int {",
-"doc": "How many sessions the server holds."
+"doc": "How many sessions the store holds."
 }
 ],
 "session_minutes": [
@@ -6693,8 +6754,8 @@
 "package": "web",
 "qualified": "sessions",
 "kind": "define",
-"signature": "define sessions(secret: String = \"\", minutes: Int = 10080, cookie: String = \"quirk_session\", secure: Bool = false) -> Callable {",
-"doc": "Middleware for sessions \u2014 `app.use(web.sessions())`, then `req.session()`\nin handlers. Sessions live in the server's memory (they end when it\nrestarts) and expire `minutes` after the visitor's last request (default:\na week). `secret` signs the cookie; by default a random one is made when\nthe server starts. `secure=true` sends the cookie over HTTPS only."
+"signature": "define sessions(secret: String = \"\", minutes: Int = 10080, cookie: String = \"quirk_session\", secure: Bool = false, store: SessionStore = null) -> Callable {",
+"doc": "Middleware for sessions \u2014 `app.use(web.sessions())`, then `req.session()`\nin handlers. They expire `minutes` after the visitor's last request\n(default: a week).\n  `store`  \u2014 where they're kept: `web.memory_store()` (the default: the\n             server's memory, they end when it restarts) or\n             `web.sqlite_store(...)` (they last across restarts)\n  `secret` \u2014 signs the cookie. Default: $QUIRK_SESSION_SECRET if it's set,\n             else one the store keeps (sqlite_store), else a new random one\n             each start. Give one (or the variable) when several servers\n             share the sessions.\n  `secure` \u2014 send the cookie over HTTPS only (true in production)."
 }
 ],
 "set": [
@@ -7050,6 +7111,15 @@
 "doc": "Splits `s` on every match of `handle`'s pattern. Empty matches advance one\nbyte to prevent infinite loops."
 }
 ],
+"sqlite_store": [
+{
+"package": "web",
+"qualified": "sqlite_store",
+"kind": "define",
+"signature": "define sqlite_store(path: String = \"sessions.db\", db: sqlite.Database = null) -> SessionStore {",
+"doc": "Sessions in a SQLite database \u2014 they last across restarts. `path`: a file\nof their own (opened here); or `db`: your app's open database, shared.\n\n    app.use(web.sessions(store=web.sqlite_store(\"sessions.db\")))\n    app.use(web.sessions(store=web.sqlite_store(db=db())))"
+}
+],
 "sqrt": [
 {
 "package": "math",
@@ -7251,6 +7321,15 @@
 "kind": "method",
 "signature": "define sum(self) -> Any {",
 "doc": "Sum of all elements. Reduces via `+` starting from 0. Works\nfor any numeric type \u2014 Sema's `+` handles Int/Double widening\nso a mixed [Int, Double, ...] list returns a Double total.\n\n@example [1, 2, 3].sum()        // 6\n@example List().sum()           // 0"
+}
+],
+"sweep": [
+{
+"package": "web",
+"qualified": "SessionStore.sweep",
+"kind": "method",
+"signature": "define sweep(self, before: Int) -> void {",
+"doc": "Forget the sessions last seen before `before` (ms since 1970)."
 }
 ],
 "system": [

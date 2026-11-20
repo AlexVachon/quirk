@@ -223,6 +223,40 @@ does), so an id someone else saw before can't be used to act as them.
 
 End the session: its values go, and the browser's cookie is cleared.
 
+### `struct SessionStore`
+
+Where sessions are kept: `web.memory_store()` (the default — the server's
+memory: they end when it restarts) or `web.sqlite_store(...)` (a SQLite
+database: they last across restarts and deploys). A store of your own is a
+struct with these methods.
+
+#### `define load(self, id: String) -> Session`
+
+The session with this id, or null.
+
+#### `define save(self, s: Session) -> void`
+
+Keep `s` (new, or changed).
+
+#### `define sweep(self, before: Int) -> void`
+
+Forget the sessions last seen before `before` (ms since 1970).
+
+#### `define secret(self) -> String`
+
+A secret it keeps for signing cookies, so it lasts as long as the sessions do ("" for none).
+
+### `struct MemoryStore : SessionStore`
+
+Sessions in the server's memory (the default).
+
+### `struct SqliteStore : SessionStore`
+
+Sessions in a SQLite database (tables `quirk_sessions` and
+`quirk_session_meta`, made if they aren't there — it can be your app's own
+database: `db.migrate` isn't affected). Their values are kept as JSON:
+Strings, numbers, Bools, null, Lists and Maps (a struct, store its fields).
+
 ### `struct App`
 
 A web app: routes, middleware, error handling, and a server.
@@ -323,17 +357,35 @@ POST a form (a Map of Strings, urlencoded).
 The Content-Type for a file name's extension ("style.css" → "text/css;
 charset=utf-8"); "application/octet-stream" when unknown.
 
-#### `define sessions(secret: String = "", minutes: Int = 10080, cookie: String = "quirk_session", secure: Bool = false) -> Callable`
+#### `define memory_store() -> SessionStore`
+
+Sessions in the server's memory: they end when it restarts (the default).
+
+#### `define sqlite_store(path: String = "sessions.db", db: sqlite.Database = null) -> SessionStore`
+
+Sessions in a SQLite database — they last across restarts. `path`: a file
+of their own (opened here); or `db`: your app's open database, shared.
+
+    app.use(web.sessions(store=web.sqlite_store("sessions.db")))
+    app.use(web.sessions(store=web.sqlite_store(db=db())))
+
+#### `define sessions(secret: String = "", minutes: Int = 10080, cookie: String = "quirk_session", secure: Bool = false, store: SessionStore = null) -> Callable`
 
 Middleware for sessions — `app.use(web.sessions())`, then `req.session()`
-in handlers. Sessions live in the server's memory (they end when it
-restarts) and expire `minutes` after the visitor's last request (default:
-a week). `secret` signs the cookie; by default a random one is made when
-the server starts. `secure=true` sends the cookie over HTTPS only.
+in handlers. They expire `minutes` after the visitor's last request
+(default: a week).
+  `store`  — where they're kept: `web.memory_store()` (the default: the
+             server's memory, they end when it restarts) or
+             `web.sqlite_store(...)` (they last across restarts)
+  `secret` — signs the cookie. Default: $QUIRK_SESSION_SECRET if it's set,
+             else one the store keeps (sqlite_store), else a new random one
+             each start. Give one (or the variable) when several servers
+             share the sessions.
+  `secure` — send the cookie over HTTPS only (true in production).
 
 #### `define session_count() -> Int`
 
-How many sessions the server holds.
+How many sessions the store holds.
 
 #### `define login(req: Request, user: Any) -> void`
 

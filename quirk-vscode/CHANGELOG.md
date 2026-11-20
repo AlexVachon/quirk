@@ -2,6 +2,11 @@
 
 All notable changes to the extension land here. Versioning follows SemVer; minor bumps for new features, patches for fixes.
 
+## [1.1.20] — 2026-11-20 — hover docs for session stores
+
+- Hover and completion know `web` 1.3 (`sqlite_store`, `memory_store`,
+  `SessionStore`, the `store=` of `sessions`) and `live` 2.10.
+
 ## [1.1.19] — 2026-11-19 — hover docs for crypto 1.1
 
 - Hover and completion know `crypto` 1.1: `hash_password`,

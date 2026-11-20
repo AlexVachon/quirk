@@ -1,0 +1,20 @@
+// `== null` on an untyped value is true for a boxed null too — what
+// json.loads gives for `null` (a session's value read back, an API's
+// field). It compared the pointer: {"a": null}["a"] == null was false,
+// while `is Null` said true.
+use encoding.json
+
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+define main() -> void {
+    m: Map = json.loads("{\"a\": null, \"b\": 0, \"c\": false, \"d\": \"\"}")
+    if not (m["a"] == null) { fail("boxed null == null") }
+    if m["a"] != null { fail("boxed null != null") }
+    if not (null == m["a"]) { fail("null == boxed null") }
+    if m["b"] == null or m["c"] == null or m["d"] == null { fail("0 / false / \"\" aren't null") }
+    xs: List = json.loads("[null, 1]")
+    if not (xs[0] == null) or xs[1] == null { fail("list elements") }
+    v: Any = null
+    if v != null { fail("Any null") }
+    print("ok")
+}

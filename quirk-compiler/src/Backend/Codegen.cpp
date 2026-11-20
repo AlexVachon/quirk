@@ -5972,6 +5972,26 @@ Value* LLVMCodegen::handleExpression(Node* node) {
             } else if (isNullPtr(L) && R->getType()->isPointerTy() && L->getType() != R->getType()) {
                 L = ConstantPointerNull::get(cast<PointerType>(R->getType()));
             }
+            // An untyped value (or an Any) is null when it's the null
+            // pointer or a boxed null — what json.loads gives for `null`:
+            // `m["a"] == null` was false for {"a": null} (`is Null` was true).
+            if (isNullPtr(L) != isNullPtr(R)) {
+                Value* other = isNullPtr(L) ? R : L;
+                Type* ot = other->getType();
+                bool untyped = ot->isPointerTy() && (ot->getPointerElementType()->isIntegerTy(8) ||
+                    (ot->getPointerElementType()->isStructTy() &&
+                     cast<StructType>(ot->getPointerElementType())->hasName() &&
+                     cast<StructType>(ot->getPointerElementType())->getName() == "Any"));
+                if (untyped) {
+                    Type* i8p = Type::getInt8PtrTy(Context);
+                    FunctionCallee nullish = TheModule->getOrInsertFunction("quirk_is_nullish",
+                        FunctionType::get(Type::getInt32Ty(Context), {i8p}, false));
+                    Value* r = Builder.CreateCall(nullish, {Builder.CreateBitCast(other, i8p)}, "is_nullish");
+                    Value* zero = ConstantInt::get(Type::getInt32Ty(Context), 0);
+                    return binOp->op == "==" ? Builder.CreateICmpNE(r, zero, "eq_null")
+                                             : Builder.CreateICmpEQ(r, zero, "ne_null");
+                }
+            }
             // Both null-pointer comparisons now resolve via the math fallback
             // ICmpEQ/ICmpNE on matching pointer types.
             if (isNullPtr(L) || isNullPtr(R)) {
@@ -6987,8 +7007,17 @@ Value* LLVMCodegen::handleExpression(Node* node) {
 
         Type* thenTy = thenVal->getType();
         Type* elseTy = elseVal->getType();
-        if (thenTy != elseTy && thenTy->isPointerTy() && elseTy->isPointerTy())
-            elseVal = Builder.CreateBitCast(elseVal, thenTy, "tern_cast");
+        if (thenTy != elseTy && thenTy->isPointerTy() && elseTy->isPointerTy()) {
+            // At the end of the else branch, before its jump here. Made in
+            // this block, the cast sat ahead of the phi and the phi took it
+            // as coming from the else branch, where it doesn't exist:
+            // `x != null ? x : Derived()` (a Base and a Derived) was invalid
+            // IR, and the optimiser crashed on it.
+            IRBuilder<> atElse(Context);
+            if (Instruction* t = elseEndBB->getTerminator()) atElse.SetInsertPoint(t);
+            else atElse.SetInsertPoint(elseEndBB);
+            elseVal = atElse.CreateBitCast(elseVal, thenTy, "tern_cast");
+        }
 
         PHINode* phi = Builder.CreatePHI(thenVal->getType(), 2, "tern_result");
         phi->addIncoming(thenVal, thenEndBB);

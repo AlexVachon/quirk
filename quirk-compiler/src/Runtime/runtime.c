@@ -805,6 +805,15 @@ void* quirk_opaque_unwrap_or_null(void* val, int32_t expected_tag,
     return val;
 }
 
+// `v == null` for an untyped value: the null pointer, or a boxed null (what
+// json.loads gives for `null`). An inline Int is never null (0 is boxed).
+int32_t quirk_is_nullish(void* v) {
+    if (!v) return 1;
+    if ((uintptr_t)v <= 0xFFFFFFFFUL) return 0;
+    if (quirk_is_any(v)) return ((Any*)v)->tag == ANY_NULL;
+    return 0;
+}
+
 // Unbox an opaque i8* / Any* / tagged-int to a C boolean (0 or 1).
 // Used by toBool() for Callable return values and any opaque condition.
 int32_t quirk_any_as_bool(void* val) {

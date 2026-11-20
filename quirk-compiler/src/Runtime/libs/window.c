@@ -85,6 +85,10 @@ typedef struct { uint8_t bytes[56]; } QSdlEvent;
 #define QSDL_WINDOW_SHOWN         0x00000004u
 #define QSDL_WINDOW_HIDDEN        0x00000008u
 #define QSDL_WINDOW_RESIZABLE     0x00000020u
+#define QSDL_WINDOW_FULLSCREEN    0x00000001u
+#define QSDL_WINDOW_BORDERLESS    0x00000010u
+#define QSDL_WINDOW_MINIMIZED     0x00000040u
+#define QSDL_WINDOW_MAXIMIZED     0x00000080u
 #define QSDL_WINDOW_ALLOW_HIGHDPI 0x00002000u
 #define QSDL_RENDERER_SOFTWARE    0x00000001u
 #define QSDL_RENDERER_ACCELERATED 0x00000002u
@@ -164,6 +168,13 @@ static struct {
     // Optional: IME (input methods for Chinese / Japanese / Korean, dead keys).
     void (*SetTextInputRect)(const QSdlRect*);
     int (*PushEvent)(QSdlEvent*);
+    // Optional: a title bar of the program's own (borderless windows).
+    int (*SetWindowHitTest)(void*, int (*)(void*, const int*, void*), void*);
+    void (*MinimizeWindow)(void*);
+    void (*MaximizeWindow)(void*);
+    void (*RestoreWindow)(void*);
+    uint32_t (*GetWindowFlags)(void*);
+    int (*SetWindowOpacity)(void*, float);
 } qsdl;
 
 static char qwin_err[512] = "";
@@ -251,6 +262,12 @@ static int qsdl_load(void) {
     *(void**)&qsdl.RenderCopyF = dlsym(qsdl.lib, "SDL_RenderCopyF");
     *(void**)&qsdl.SetTextInputRect = dlsym(qsdl.lib, "SDL_SetTextInputRect");
     *(void**)&qsdl.PushEvent = dlsym(qsdl.lib, "SDL_PushEvent");
+    *(void**)&qsdl.SetWindowHitTest = dlsym(qsdl.lib, "SDL_SetWindowHitTest");
+    *(void**)&qsdl.MinimizeWindow = dlsym(qsdl.lib, "SDL_MinimizeWindow");
+    *(void**)&qsdl.MaximizeWindow = dlsym(qsdl.lib, "SDL_MaximizeWindow");
+    *(void**)&qsdl.RestoreWindow = dlsym(qsdl.lib, "SDL_RestoreWindow");
+    *(void**)&qsdl.GetWindowFlags = dlsym(qsdl.lib, "SDL_GetWindowFlags");
+    *(void**)&qsdl.SetWindowOpacity = dlsym(qsdl.lib, "SDL_SetWindowOpacity");
     qsdl.loaded = 1;
     return 1;
     }
@@ -285,6 +302,13 @@ typedef struct {
     // factor from QUIRK_UI_SCALE / GDK_SCALE, for X11 and tests). Window
     // and mouse coordinates are in window units = logical x ui.
     float scale, ui;
+    // A title bar of the program's own (`Window.set_hit_areas`), in logical
+    // pixels: where a press drags the window, the holes in it (its buttons),
+    // and how wide the edges that resize it are.
+    int resizable;
+    int hit_on, ndrag, nholes, border;
+    QSdlRect drag[8];
+    QSdlRect holes[32];
 } QWin;
 
 static QWin qwins[QWIN_MAX];
@@ -524,6 +548,7 @@ int64_t Window_open_raw(String* title, int64_t width, int64_t height, int64_t fl
     char* t = title ? make_safe_cstr(title) : "";
     uint32_t wf = (flags & 2) ? QSDL_WINDOW_HIDDEN : QSDL_WINDOW_SHOWN;
     if (flags & 1) wf |= QSDL_WINDOW_RESIZABLE;
+    if (flags & 16) wf |= QSDL_WINDOW_BORDERLESS;
     wf |= QSDL_WINDOW_ALLOW_HIGHDPI;
     float ui = qsdl.RenderSetScale ? qwin_env_scale() : 1.0f;
     void* win = qsdl.CreateWindow(t ? t : "", QSDL_WINDOWPOS_CENTERED, QSDL_WINDOWPOS_CENTERED,
@@ -545,6 +570,7 @@ int64_t Window_open_raw(String* title, int64_t width, int64_t height, int64_t fl
     w->r = w->g = w->b = 0; w->a = 255;
     w->ui = ui;
     w->scale = 0;
+    w->resizable = (flags & 1) != 0;
     qwin_rescale(w);
 #ifdef _WIN32
     if (!qwin_headless) qacc_attach(slot, win);
@@ -888,6 +914,106 @@ String* Window_clipboard_raw() {
         }
     }
     return make_String(qwin_clipboard ? qwin_clipboard : "");
+}
+
+// ----- a title bar of the program's own -----
+
+// SDL's hit test (SDL_HitTestResult): what a press at `pt` (window units)
+// does — called by SDL from the event loop, on the thread that runs it.
+enum { QHIT_NORMAL = 0, QHIT_DRAG, QHIT_TOPLEFT, QHIT_TOP, QHIT_TOPRIGHT, QHIT_RIGHT,
+       QHIT_BOTTOMRIGHT, QHIT_BOTTOM, QHIT_BOTTOMLEFT, QHIT_LEFT };
+
+static int qwin_in(const QSdlRect* r, int x, int y) {
+    return x >= r->x && y >= r->y && x < r->x + r->w && y < r->y + r->h;
+}
+
+static int qwin_hit(void* sdlwin, const int* pt, void* data) {
+    QWin* w = qwin_get((int64_t)(intptr_t)data);
+    if (!w || w->win != sdlwin) return QHIT_NORMAL;
+    int x = pt[0], y = pt[1];
+    uint32_t f = qsdl.GetWindowFlags ? qsdl.GetWindowFlags(sdlwin) : 0;
+    if (w->resizable && w->border > 0 && !(f & (QSDL_WINDOW_MAXIMIZED | QSDL_WINDOW_FULLSCREEN))) {
+        int ww = 0, wh = 0;
+        qsdl.GetWindowSize(sdlwin, &ww, &wh);
+        int b = (int)(w->border * w->ui + 0.5f);
+        int l = x < b, r = x >= ww - b, t = y < b, bt = y >= wh - b;
+        if (t && l) return QHIT_TOPLEFT;
+        if (t && r) return QHIT_TOPRIGHT;
+        if (bt && l) return QHIT_BOTTOMLEFT;
+        if (bt && r) return QHIT_BOTTOMRIGHT;
+        if (t) return QHIT_TOP;
+        if (bt) return QHIT_BOTTOM;
+        if (l) return QHIT_LEFT;
+        if (r) return QHIT_RIGHT;
+    }
+    int lx = qwin_to_logical(w, x), ly = qwin_to_logical(w, y);
+    for (int i = 0; i < w->nholes; i++) if (qwin_in(&w->holes[i], lx, ly)) return QHIT_NORMAL;
+    for (int i = 0; i < w->ndrag; i++) if (qwin_in(&w->drag[i], lx, ly)) return QHIT_DRAG;
+    return QHIT_NORMAL;
+}
+
+static int qwin_rects(List* l, QSdlRect* out, int max) {
+    int n = 0;
+    for (int64_t i = 0; l && i + 3 < l->size && n < max; i += 4, n++) {
+        out[n].x = (int)quirk_opaque_to_int(l->data[i]);
+        out[n].y = (int)quirk_opaque_to_int(l->data[i + 1]);
+        out[n].w = (int)quirk_opaque_to_int(l->data[i + 2]);
+        out[n].h = (int)quirk_opaque_to_int(l->data[i + 3]);
+    }
+    return n;
+}
+
+// `drag` / `holes`: flat lists of x, y, width, height (logical pixels).
+// 1 if this SDL can do it (2.0.4+, not the headless driver), else 0 — the
+// areas are kept either way (`Window_hit_at_raw`).
+int64_t Window_set_hit_areas_raw(int64_t h, List* drag, List* holes, int64_t border) {
+    QWin* w = qwin_get(h);
+    if (!w) return 0;
+    w->ndrag = qwin_rects(drag, w->drag, 8);
+    w->nholes = qwin_rects(holes, w->holes, 32);
+    w->border = border < 0 ? 0 : (int)border;
+    if (!qsdl.SetWindowHitTest) return 0;
+    if (!w->hit_on) {
+        if (qsdl.SetWindowHitTest(w->win, qwin_hit, (void*)(intptr_t)h) != 0) return 0;
+        w->hit_on = 1;
+    }
+    return 1;
+}
+
+// What a press at logical (x, y) would do (QHIT_*) — tests, and programs
+// on an SDL without hit testing.
+int64_t Window_hit_at_raw(int64_t h, int64_t x, int64_t y) {
+    QWin* w = qwin_get(h);
+    if (!w) return QHIT_NORMAL;
+    int pt[2] = { (int)(x * w->ui), (int)(y * w->ui) };
+    return qwin_hit(w->win, pt, (void*)(intptr_t)h);
+}
+
+// 0 minimize, 1 maximize, 2 restore.
+void Window_set_state_raw(int64_t h, int64_t what) {
+    QWin* w = qwin_get(h);
+    if (!w) return;
+    if (what == 0 && qsdl.MinimizeWindow) qsdl.MinimizeWindow(w->win);
+    if (what == 1 && qsdl.MaximizeWindow) qsdl.MaximizeWindow(w->win);
+    if (what == 2 && qsdl.RestoreWindow) qsdl.RestoreWindow(w->win);
+}
+
+// Bits: 1 maximized, 2 minimized, 4 full screen, 8 borderless.
+int64_t Window_state_raw(int64_t h) {
+    QWin* w = qwin_get(h);
+    if (!w || !qsdl.GetWindowFlags) return 0;
+    uint32_t f = qsdl.GetWindowFlags(w->win);
+    return ((f & QSDL_WINDOW_MAXIMIZED) ? 1 : 0) | ((f & QSDL_WINDOW_MINIMIZED) ? 2 : 0) |
+           ((f & QSDL_WINDOW_FULLSCREEN) ? 4 : 0) | ((f & QSDL_WINDOW_BORDERLESS) ? 8 : 0);
+}
+
+// 0 (invisible) .. 1; 1 if this platform can do it.
+int64_t Window_set_opacity_raw(int64_t h, double opacity) {
+    QWin* w = qwin_get(h);
+    if (!w || !qsdl.SetWindowOpacity || qwin_headless) return 0;
+    if (opacity < 0) opacity = 0;
+    if (opacity > 1) opacity = 1;
+    return qsdl.SetWindowOpacity(w->win, (float)opacity) == 0;
 }
 
 void Window_set_title_raw(int64_t h, String* title) {

@@ -2914,12 +2914,12 @@ class LLVMCodegen {
                             Value* n = quirk::decodeUntypedInt(Context, TheModule.get(), Builder, raw);
                             return retType == "Int32" ? Builder.CreateTrunc(n, Type::getInt32Ty(Context)) : n;
                         }
-                        if (retType == "Bool")
-                            return Builder.CreateICmpNE(raw, ConstantPointerNull::get(cast<PointerType>(raw->getType())));
-                        if (retType == "Double" || retType == "Float") {
-                            Value* asInt = Builder.CreatePtrToInt(raw, Type::getInt64Ty(Context));
-                            return Builder.CreateBitCast(asInt, Type::getDoubleTy(Context));
-                        }
+                        // A lambda boxes what it returns (boxToVoidPtr: Any_box_bool /
+                        // Any_box_double): unbox it the same way its parameters are.
+                        // `!= null` read a boxed false as true (`if f() == true` with
+                        // f returning false), and the pointer's bits aren't a Double.
+                        if (retType == "Bool" || retType == "Double" || retType == "Float")
+                            return unboxLambdaParam(raw, retType);
                         if (!retType.empty() && StructTypes.count(retType))
                             return Builder.CreateBitCast(raw, PointerType::getUnqual(StructTypes[retType]));
                         return raw;

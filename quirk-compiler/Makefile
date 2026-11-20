@@ -188,7 +188,8 @@ STDLIB_TAG_sqlite ?= v1.1.0
 # ui v1.6.0: theme fonts, ListItem icons, Canvas, animations (compiler v7.33.0).
 # ui v1.6.1: no unused bindings (editor warnings).
 # ui v1.12.0: App(title_bar=true), TitleBar, flat TreeView, App.every / after timers (v7.61.0).
-STDLIB_TAG_ui ?= v1.12.0
+# ui v1.12.1: App.on_key returning true keeps the key from the focused widget.
+STDLIB_TAG_ui ?= v1.12.1
 STDLIB_TAG_web ?= v1.4.0
 STDLIB_TAG_live ?= v2.11.0
 

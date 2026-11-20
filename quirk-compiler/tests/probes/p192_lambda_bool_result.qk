@@ -1,0 +1,22 @@
+// A lambda's Bool / Double result, from a direct call: it's boxed, and the
+// call read it as `!= null` — every Bool was true (`fn(x) => false` gave
+// true, `if f(1) == true` with f returning false ran).
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+define main() -> void {
+    no := fn(x) => false
+    yes := fn(x) => true
+    big := fn(x) => x > 2
+    blk := fn(x) {
+        return false
+    }
+    half := fn(x) => 2.5
+    if no(1) { fail("expression lambda false") }
+    if not yes(1) { fail("expression lambda true") }
+    if blk(1) == true { fail("block lambda false == true") }
+    if big(1) or not big(3) { fail("computed Bool") }
+    b: Bool = no(0)
+    if b { fail("assigned to a Bool") }
+    if half(1) + 1.0 != 3.5 { fail("Double result") }
+    print("ok")
+}

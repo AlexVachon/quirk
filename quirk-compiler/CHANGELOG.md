@@ -22,6 +22,10 @@ Found building the IDE's title bar and its terminal:
   `fn() { app.redraw() }` (with a parameter `app`) read the *program's*
   global `app` instead ("Unknown method 'Ide.redraw'"): names with a global
   were never captured, shadowed or not. Probe p191.
+- **A lambda's Bool or Double result is right when it's called directly.**
+  `f := fn(x) => false` then `f(1)` was true — every Bool a lambda returned
+  was (the call checked the boxed value for null), and a Double came back
+  as the box's address. Probe p192.
 - Pins **`typing` v1.19.0**: `String.code(index)` and `String.codes()` (code
   points — there was no `ord`); `List.slice(start, end)` declared (it was in
   the runtime, unreachable); **`lstrip()` / `rstrip()` strip one end** —
@@ -34,12 +38,13 @@ Found building the IDE's title bar and its terminal:
   Windows); `set_opacity`; `hit_at` for tests. On Windows a borderless
   window keeps the normal window styles (it was a bare popup: no maximize,
   no minimize / close animations).
-- Pins **`ui` v1.12.0**: `App(title_bar=true)` and `TitleBar` (the title,
+- Pins **`ui` v1.12.1**: `App(title_bar=true)` and `TitleBar` (the title,
   an optional `MenuBar`, minimize / maximize / close in the theme);
   `App.every(ms, fn)` / `after(ms, fn)` timers (`run` wakes for them);
   `TreeView(flat=true)` — a side bar's look (lit rows, thin chevrons, indent
   guides, `icon` badges, `on_expand` to fill a folder lazily);
-  `Column.fill`.
+  `Column.fill`; `App.on_key` returning true keeps the key from the focused
+  widget.
 
 ## [7.60.0] — 2026-11-20 — what an editor needs
 

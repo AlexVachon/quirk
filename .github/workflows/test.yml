@@ -213,6 +213,13 @@ jobs:
         # A folder that runs moved elsewhere, with an empty environment.
         run: tools/check_bundle.sh
 
+      - name: Check installed packages with the same names
+        working-directory: quirk-compiler
+        env:
+          QUIRK_HOME: ${{ github.workspace }}/quirk-compiler
+        # Two packages in site-packages/ with a Theme and a dark() each.
+        run: tools/check_site_packages.sh
+
       - name: Check package discovery
         working-directory: quirk-compiler
         env:
@@ -376,6 +383,13 @@ jobs:
         # A folder that runs moved elsewhere, with an empty environment.
         run: tools/check_bundle.sh
 
+      - name: Check installed packages with the same names
+        working-directory: quirk-compiler
+        env:
+          QUIRK_HOME: ${{ github.workspace }}/quirk-compiler
+        # Two packages in site-packages/ with a Theme and a dark() each.
+        run: tools/check_site_packages.sh
+
       - name: Check package discovery
         working-directory: quirk-compiler
         env:
@@ -497,6 +511,18 @@ jobs:
       - name: Bootstrap stdlib
         working-directory: quirk-compiler
         run: make bootstrap-stdlib
+
+      # install.ps1 under Windows PowerShell 5.1 (what Windows has; it reads
+      # a script without a BOM in the ANSI code page, so one non-ASCII
+      # character — an em dash — broke the parse for users; pwsh didn't mind).
+      - name: install.ps1 parses in Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $errs = $null
+          [System.Management.Automation.Language.Parser]::ParseFile("$PWD\install.ps1", [ref]$null, [ref]$errs) | Out-Null
+          if ($errs.Count -gt 0) { $errs | ForEach-Object { Write-Host $_ }; exit 1 }
+          $bytes = [System.IO.File]::ReadAllBytes("$PWD\install.ps1")
+          if ($bytes | Where-Object { $_ -gt 127 }) { Write-Host "install.ps1 has non-ASCII characters"; exit 1 }
 
       - name: Build, smoke-test and run the test suite (strict)
         working-directory: quirk-compiler

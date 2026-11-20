@@ -608,6 +608,22 @@ std::string resolveImportPath(const std::string& moduleName, const std::string& 
 std::set<std::string> loadedModules;
 
 std::string getModuleName(const std::string& path) {
+    // A package installed into a project (`quirk install`: site-packages/
+    // <name>/...): its module is its path inside site-packages. It was the
+    // whole path ("site-packages.syntax.index"), so `syntax.dark()` didn't
+    // match syntax's module and found another package's `dark()` (ui's).
+    {
+        std::string p = path;
+        std::replace(p.begin(), p.end(), '\\', '/');
+        size_t sp = p.rfind("site-packages/");
+        if (sp != std::string::npos) {
+            std::string mod = p.substr(sp + 14);
+            size_t dot = mod.find_last_of('.');
+            if (dot != std::string::npos && mod.find('/', dot) == std::string::npos) mod = mod.substr(0, dot);
+            std::replace(mod.begin(), mod.end(), '/', '.');
+            return mod;
+        }
+    }
     // Fall back to the manifest's `name` ONLY if the path has no standard
     // layout marker. Otherwise the path-based stripping below handles it.
     // This prevents stdlib files reached through `<venv>/lib/quirk/` from

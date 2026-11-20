@@ -1,4 +1,4 @@
-# Quirk installer for Windows — fetches the latest GitHub Release and unpacks it.
+# Quirk installer for Windows - fetches the latest GitHub Release and unpacks it.
 #
 # One-liner (PowerShell):
 #     irm https://raw.githubusercontent.com/AlexVachon/quirk/main/install.ps1 | iex
@@ -80,7 +80,7 @@ try {
         try {
             Invoke-WebRequest -Uri $url -OutFile $tarball -UseBasicParsing
         } catch {
-            Write-Error "Download failed: $url`n(release $Version may have no Windows build — Windows builds start with 7.25.0)"
+            Write-Error "Download failed: $url`n(release $Version may have no Windows build - Windows builds start with 7.25.0)"
         }
     }
     if ($local) {
@@ -98,7 +98,7 @@ try {
         if ($expected -ne $actual) { Write-Error "Checksum mismatch! expected $expected got $actual" }
         Write-Host "Verified sha256 $($actual.Substring(0, 16))..."
     } catch [System.Net.WebException] {
-        Write-Warning "No checksum published for $Version — not verified"
+        Write-Warning "No checksum published for $Version - not verified"
     } }
 
     # --- Extract + install ---------------------------------------------------
@@ -111,7 +111,7 @@ try {
         $p = Join-Path $Dir $d
         if (Test-Path $p) {
             try { Remove-Item -Recurse -Force $p }
-            catch { Write-Error "Couldn't replace $p — is quirk (or a program it built) still running? Close it and retry." }
+            catch { Write-Error "Couldn't replace $p - is quirk (or a program it built) still running? Close it and retry." }
         }
     }
     Copy-Item -Recurse -Force (Join-Path $tmp "$pkg\*") $Dir
@@ -140,7 +140,7 @@ try {
     $code = if ($env:CODE_CMD) { $env:CODE_CMD } else { 'code' }
     if ($WithExtension) {
         if (-not (Get-Command $code -ErrorAction SilentlyContinue)) {
-            Write-Host "'$code' is not on PATH — skipping the VSCode extension (set CODE_CMD=codium / cursor / ...)."
+            Write-Host "'$code' is not on PATH - skipping the VSCode extension (set CODE_CMD=codium / cursor / ...)."
         } else {
             $all = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases" -Headers @{ 'User-Agent' = 'quirk-install' }
             $vsix = $all | ForEach-Object { $_.assets } | Where-Object { $_.name -like '*.vsix' } | Select-Object -First 1

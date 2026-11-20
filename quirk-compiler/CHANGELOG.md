@@ -24,6 +24,15 @@ Found building an IDE in Quirk (a desktop editor on `window` + `ui`):
   tooltip, `app.redraw()` — and waits for events in between: it redrew the
   whole window 60 times a second, which made a full-screen window slow on
   remote displays (WSLg). `step()` called directly still always draws.
+- **Packages installed into a project (`quirk install`, in `site-packages/`)
+  are their own modules.** Their module name kept the path's
+  "site-packages." prefix, so with two packages defining the same function —
+  `ui.dark()` and `syntax.dark()` — `syntax.dark()` found ui's (and an editor
+  library failed to compile once installed: "cannot assign 'ui.Theme' to
+  field … of type 'syntax.Theme'"). `tools/check_site_packages.sh` in CI.
+- **`install.ps1` runs in Windows PowerShell 5.1** (what Windows has): its
+  em dashes, read in the ANSI code page, broke the parse. ASCII only now,
+  and CI parses it with 5.1.
 - CI: the Windows job uploads the build as an artifact (`windows-build`), to
   try a branch on Windows before it's released.
 

@@ -510,7 +510,8 @@ jobs:
       - name: Package the build
         if: success()
         run: |
-          PKG=$(quirk-compiler/tools/package_release.sh "0.0.0-${GITHUB_SHA::7}" windows-x86_64 "$PWD")
+          V=$(grep -o 'QUIRK_VERSION = "[^"]*"' quirk-compiler/src/PackageManager.hpp | cut -d'"' -f2)
+          PKG=$(quirk-compiler/tools/package_release.sh "$V" windows-x86_64 "$PWD")
           echo "QUIRK_PKG=${PKG}.tar.gz" >> "$GITHUB_ENV"
 
       - uses: actions/upload-artifact@v4

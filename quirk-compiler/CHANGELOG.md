@@ -23,7 +23,9 @@ only for breaking changes.
   moved, run with an empty environment.
 - **`-o`, the build cache and `quirk bundle` work on macOS**: they ran
   `llc-14`, which Homebrew's llvm@14 doesn't put on PATH (it's in its own
-  bin/). The compiler now also looks beside the LLVM it was built with.
+  bin/). The compiler now also looks beside the LLVM it was built with — and
+  links the GC library runtime.so itself was linked against (Homebrew's
+  isn't on the linker's path).
 - Pins **`web` v1.3.1**: `app.listen`'s default host is `$QUIRK_HOST` when
   it's set; a Deploying section in its README.
 

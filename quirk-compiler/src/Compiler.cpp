@@ -1086,6 +1086,29 @@ static std::string llcCommand() {
     return "llc";
 }
 
+// The Boehm GC, to link a native binary with: `-lgc` — on macOS, the very
+// library runtime.so was linked against (`otool -L`): Homebrew's isn't on
+// the linker's path ("library 'gc' not found").
+static std::string gcLinkArg(const std::string& runtimePath) {
+#ifdef __APPLE__
+    FILE* p = qplat::popen_cmd("otool -L '" + runtimePath + "' 2>/dev/null", "r");
+    char buf[1024];
+    std::string found;
+    while (p && fgets(buf, sizeof(buf), p)) {
+        std::string l(buf);
+        size_t start = l.find_first_not_of(" \t");
+        if (start == std::string::npos) continue;
+        std::string path = l.substr(start, l.find(" (") - start);
+        if (path.find("libgc") != std::string::npos && path.find("cord") == std::string::npos) { found = path; break; }
+    }
+    if (p) pclose(p);
+    if (!found.empty() && found.front() == '/') return "'" + found + "'";
+#else
+    (void)runtimePath;
+#endif
+    return "-lgc";
+}
+
 // ---- quirk bundle ---------------------------------------------------------
 
 // Copy `from` (a file or folder) to `to`; hidden entries left out.
@@ -1512,7 +1535,7 @@ static int runAotPipeline(const std::string& irPath,
     }
     std::string runtimeDir = fs::path(runtimePath).parent_path().string();
     std::string linkCmd = "gcc " + tmpObj + " " + runtimePath
-                        + " -lgc -lm -lpthread -o " + tmpBin
+                        + " " + gcLinkArg(runtimePath) + " -lm -lpthread -o " + tmpBin
                         + " -Wl,-rpath," + runtimeDir;
     if (verbose) std::cerr << "build: " << linkCmd << "\n";
     if (qplat::run_shell(linkCmd.c_str()) != 0) {
@@ -2430,12 +2453,12 @@ int main(int argc, char* argv[]) {
         // Link: object + runtime.so → output binary
         std::string runtimeDir = fs::path(runtimePath).parent_path().string();
         std::string linkCmd = "gcc " + objPath + " " + runtimePath
-                            + " -lgc -lm -lpthread -o " + opts.outputFile
+                            + " " + gcLinkArg(runtimePath) + " -lm -lpthread -o " + opts.outputFile
                             + " -Wl,-rpath," + runtimeDir;
         if (opts.bundle) {
             // The runtime next to the binary, wherever the folder goes.
 #ifdef __APPLE__
-            linkCmd = "gcc " + objPath + " " + runtimePath + " -lgc -lm -lpthread -o " + opts.outputFile
+            linkCmd = "gcc " + objPath + " " + runtimePath + " " + gcLinkArg(runtimePath) + " -lm -lpthread -o " + opts.outputFile
                     + " -Wl,-rpath,@executable_path";
 #else
             linkCmd = "gcc " + objPath + " -L" + runtimeDir + " -l:runtime.so -lgc -lm -lpthread -o " + opts.outputFile

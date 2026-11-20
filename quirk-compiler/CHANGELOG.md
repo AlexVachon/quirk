@@ -15,6 +15,9 @@ Found building the IDE's title bar and its terminal:
   `pty.shell()`. posix_openpt + fork on Linux and macOS (the program's
   controlling terminal, TERM=xterm-256color); ConPTY on Windows 10 1809+.
   Reads hand back whole UTF-8 characters. In the runtime (`libs/pty.c`).
+  On Windows the program gets the pseudo console even when this process's
+  own output is redirected (it used to inherit that and write past it), and
+  its last output is still read after it exits.
 - **Closures capture a local that shares a global's name.** A library's
   `fn() { app.redraw() }` (with a parameter `app`) read the *program's*
   global `app` instead ("Unknown method 'Ide.redraw'"): names with a global

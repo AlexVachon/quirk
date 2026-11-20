@@ -48,6 +48,7 @@ typedef struct {
     char carry[4];          // the start of a UTF-8 character not yet complete
     int ncarry;
     int eof;
+    int64_t quiet_since;    // Windows: when the program was first seen ended with nothing to read (ms; 0: not yet)
 } QPty;
 
 static QPty qptys[QPTY_MAX];
@@ -377,6 +378,11 @@ List* Pty_open_raw(List* argv, String* cwd, List* env, int64_t cols, int64_t row
     STARTUPINFOEXA si;
     memset(&si, 0, sizeof si);
     si.StartupInfo.cb = sizeof si;
+    // Standard handles left NULL on purpose: without STARTF_USESTDHANDLES the
+    // child inherits *our* stdin / stdout when they're redirected (a pipe —
+    // the IDE started from a terminal, CI) and writes there, past the
+    // pseudo console.
+    si.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
     SIZE_T asz = 0;
     PROCESS_INFORMATION pi;
     memset(&pi, 0, sizeof pi);
@@ -442,21 +448,19 @@ List* Pty_read_raw(int64_t h, int64_t timeout_ms, int64_t max) {
     DWORD avail = 0;
     for (;;) {
         if (!PeekNamedPipe(p->out_r, NULL, 0, NULL, &avail, NULL)) { p->eof = 1; avail = 0; break; }
-        if (avail > 0) break;
-        // The program ended and the console said all it had: done. (The
-        // console keeps the pipe open until it's closed — see Pty_close_raw.)
-        if (WaitForSingleObject(p->proc, 0) == WAIT_OBJECT_0 && p->exited >= 0) {
-            if (p->exited == 0) p->exited = -1;       // first time: give it a moment to flush
-            else { p->eof = 1; break; }
+        if (avail > 0) { p->quiet_since = 0; break; }
+        // The program ended and the console has had 200 ms to pass on the
+        // rest of its output (it does so after the program exits): done.
+        // (The console keeps the pipe open until it's closed — Pty_close_raw.)
+        if (WaitForSingleObject(p->proc, 0) == WAIT_OBJECT_0) {
+            int64_t now = proc__now_ms();
+            if (!p->quiet_since) p->quiet_since = now;
+            else if (now - p->quiet_since >= 200) { p->eof = 1; break; }
         }
         if (until >= 0 && proc__now_ms() >= until) break;
         quirk_gil_release();
         Sleep(5);
         quirk_gil_acquire();
-    }
-    if (p->exited == -1 && avail == 0 && WaitForSingleObject(p->proc, 0) == WAIT_OBJECT_0) {
-        p->exited = 0;
-        p->eof = 1;
     }
     char* buf = (char*)GC_malloc_atomic((size_t)max);
     DWORD n = 0;

@@ -148,7 +148,7 @@ STDLIB_TAG_prompt ?= v1.1.0
 # v1.16.1: ljust / rjust / center pad with a space by default (v7.9.1).
 # v1.16.2: Exception.print_traceback() writes to stderr (v7.11.1).
 # v1.17.0: CancelledError, for task.cancel() (v7.13.0).
-STDLIB_TAG_typing ?= v1.17.0
+STDLIB_TAG_typing ?= v1.18.0
 # html v1.0.0 is the initial release (compiler v3.5.0+). The
 # explicit pin keeps a global STDLIB_TAG bump from accidentally
 # pulling a v2 with potentially breaking changes.
@@ -186,7 +186,7 @@ STDLIB_TAG_sqlite ?= v1.1.0
 # ui v1.5.0: working menu shortcuts, SplitView, Toolbar, StatusBar, DatePicker (compiler v7.32.0).
 # ui v1.6.0: theme fonts, ListItem icons, Canvas, animations (compiler v7.33.0).
 # ui v1.6.1: no unused bindings (editor warnings).
-STDLIB_TAG_ui ?= v1.10.1
+STDLIB_TAG_ui ?= v1.11.0
 STDLIB_TAG_web ?= v1.4.0
 STDLIB_TAG_live ?= v2.11.0
 

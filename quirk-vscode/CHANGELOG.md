@@ -2,6 +2,11 @@
 
 All notable changes to the extension land here. Versioning follows SemVer; minor bumps for new features, patches for fixes.
 
+## [1.1.23] — 2026-11-20 — hover docs for typing 1.18 and ui 1.11
+
+- `String.find(sub, start)`, `List.insert` / `remove_at`; `ui.Tabs`
+  `closable` / `on_close` / `close`, `Widget.takes_tab`, `App.redraw`.
+
 ## [1.1.22] — 2026-11-20 — hover docs for error pages
 
 - Hover and completion know `live` 2.11 (`not_found`, `error_page`) and

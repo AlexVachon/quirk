@@ -75,6 +75,18 @@ inner object would.
 @example zs := [0] * 5           // [0, 0, 0, 0, 0]
 @example pairs := [1, 2] * 3     // [1, 2, 1, 2, 1, 2]
 
+#### `define insert(self, index: Int, item: Any) -> void`
+
+Put `item` before index `index` (0 to the length: at the end; a
+negative index counts from the end). The elements after it move up.
+@example xs.insert(0, "first")
+
+#### `define remove_at(self, index: Int) -> Any`
+
+Remove the element at `index` (negative: from the end) and return it.
+@throws IndexError — if there is no such element
+@example second := xs.remove_at(1)
+
 #### `define pop(self) -> Any`
 
 Removes and returns the last element.
@@ -1284,9 +1296,11 @@ Returns the number of non-overlapping occurrences of `sub`.
 @param sub: String
 @returns: Int
 
-#### `define find(self, sub: String) -> Int`
+#### `define find(self, sub: String, start: Int = 0) -> Int`
 
 Returns the index of the first occurrence of `sub`, or `-1` if not found.
+With `start`: the first one at or after that index
+(`"a-b-c".find("-", 2)` is 3).
 @param sub: String
 @returns: Int
 

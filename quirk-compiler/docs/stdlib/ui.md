@@ -69,9 +69,11 @@ Draw into `win` inside the widget's box.
 
 React to an event; true if the widget used it.
 
-#### `define composing(self) -> Bool`
+#### `define next_redraw(self) -> Int`
 
-True while an input method is composing text in this widget (it gets every key).
+In how many ms it must be drawn again though nothing happened (a
+blinking caret), -1 for never. The App redraws only when something
+happened — an event, an animation — or when this says so.
 
 #### `define children(self) -> List`
 
@@ -492,7 +494,16 @@ Hide the list.
 Pages under a row of tabs: `ui.Tabs(["General", "Advanced"], [page1, page2])`.
 Click a tab, or Left / Right when the tab row has the focus. `selected`
 is the page shown; `on_change(index, title)` runs when it changes;
-`add(title, page)` adds one.
+`add(title, page)` adds one, `close(i)` removes one.
+`closable=true` puts a × on each tab: clicking it (or middle-clicking the
+tab) calls `on_close(index)` — say, to ask about unsaved changes, then
+`close(index)` — or, without an `on_close`, closes the tab.
+
+#### `define close(self, i: Int) -> void`
+
+Remove tab `i` (its title and page). The selection stays on the same
+page when it can (the one after it when it's the one removed); runs
+`on_change` when the page shown changes.
 
 #### `define add(self, title: String, page: Widget) -> void`
 

@@ -2739,6 +2739,15 @@ std::string Sema::checkMemberAccess(MemberAccessNode *node)
         // `pages.Home` as a value: the struct's constructor.
         if (structRegistry.count(funcName))
             return "Callable";
+        // `syntax.DOC`, `config.greeting`: a module's top-level constant or
+        // variable (what `from M use { NAME }` imports) — its type from the
+        // global scope, so a local of the same name doesn't get in the way.
+        if (moduleConstRegistry.count(funcName) && !scopeStack.empty()) {
+            auto& globals = scopeStack.front();
+            auto it = globals.find(funcName);
+            if (it != globals.end() && !it->second.type.empty()) return it->second.type;
+            return "Any";
+        }
         {
             std::string msg = "module '" + modName + "' has no function '" + funcName + "'";
             msg += formatHint(suggestModuleFunctions(modName, funcName));

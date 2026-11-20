@@ -1,0 +1,9 @@
+// (for p190: a module's constants and variables, read as settings190.NAME)
+const LIMIT: Int = 7
+const MODE: String = "fast"
+greeting := "hi"
+counts := [1, 2, 3]
+
+define limit() -> Int {
+    return LIMIT
+}

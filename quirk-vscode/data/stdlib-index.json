@@ -1012,7 +1012,7 @@
 "qualified": "Tabs",
 "kind": "struct",
 "signature": "struct Tabs : Widget {",
-"doc": "Pages under a row of tabs: `ui.Tabs([\"General\", \"Advanced\"], [page1, page2])`.\nClick a tab, or Left / Right when the tab row has the focus. `selected`\nis the page shown; `on_change(index, title)` runs when it changes;\n`add(title, page)` adds one."
+"doc": "Pages under a row of tabs: `ui.Tabs([\"General\", \"Advanced\"], [page1, page2])`.\nClick a tab, or Left / Right when the tab row has the focus. `selected`\nis the page shown; `on_change(index, title)` runs when it changes;\n`add(title, page)` adds one, `close(i)` removes one.\n`closable=true` puts a \u00d7 on each tab: clicking it (or middle-clicking the\ntab) calls `on_close(index)` \u2014 say, to ask about unsaved changes, then\n`close(index)` \u2014 or, without an `on_close`, closes the tab."
 }
 ],
 "Template": [
@@ -2630,6 +2630,13 @@
 },
 {
 "package": "ui",
+"qualified": "Tabs.close",
+"kind": "method",
+"signature": "define close(self, i: Int) -> void {",
+"doc": "Remove tab `i` (its title and page). The selection stays on the same\npage when it can (the one after it when it's the one removed); runs\n`on_change` when the page shown changes."
+},
+{
+"package": "ui",
 "qualified": "Menu.close",
 "kind": "method",
 "signature": "define close(self) -> void {",
@@ -2727,15 +2734,6 @@
 "kind": "define",
 "signature": "extern define compile_raw(pattern: String, flags: String) -> Any",
 "doc": "Compile a pattern. Returns an opaque handle stored in `Regex._handle`.\n@throws ValueError if the pattern fails to compile."
-}
-],
-"composing": [
-{
-"package": "ui",
-"qualified": "Widget.composing",
-"kind": "method",
-"signature": "define composing(self) -> Bool {",
-"doc": "True while an input method is composing text in this widget (it gets every key)."
 }
 ],
 "configure": [
@@ -3559,8 +3557,8 @@
 "package": "typing",
 "qualified": "String.find",
 "kind": "method",
-"signature": "define find(self, sub: String) -> Int",
-"doc": "Returns the index of the first occurrence of `sub`, or `-1` if not found.\n@param sub: String\n@returns: Int"
+"signature": "define find(self, sub: String, start: Int = 0) -> Int",
+"doc": "Returns the index of the first occurrence of `sub`, or `-1` if not found.\nWith `start`: the first one at or after that index\n(`\"a-b-c\".find(\"-\", 2)` is 3).\n@param sub: String\n@returns: Int"
 },
 {
 "package": "typing",
@@ -4205,6 +4203,13 @@
 "kind": "method",
 "signature": "define insert(self, sql: String, params: Any = null) -> Int {",
 "doc": "Run an INSERT; returns the new row's id (its INTEGER PRIMARY KEY)."
+},
+{
+"package": "typing",
+"qualified": "List.insert",
+"kind": "method",
+"signature": "define insert(self, index: Int, item: Any) -> void",
+"doc": "Put `item` before index `index` (0 to the length: at the end; a\nnegative index counts from the end). The elements after it move up.\n@example xs.insert(0, \"first\")"
 },
 {
 "package": "ui",
@@ -5213,6 +5218,15 @@
 "doc": "A new struct of type `name`, made without constructor arguments (null if there's none)."
 }
 ],
+"next_redraw": [
+{
+"package": "ui",
+"qualified": "Widget.next_redraw",
+"kind": "method",
+"signature": "define next_redraw(self) -> Int {",
+"doc": "In how many ms it must be drawn again though nothing happened (a\nblinking caret), -1 for never. The App redraws only when something\nhappened \u2014 an event, an animation \u2014 or when this says so."
+}
+],
 "nil": [
 {
 "package": "uuid",
@@ -6188,6 +6202,15 @@
 "doc": "Redo what `undo` took back (Ctrl+Y / Ctrl+Shift+Z)."
 }
 ],
+"redraw": [
+{
+"package": "ui",
+"qualified": "App.redraw",
+"kind": "method",
+"signature": "define redraw(self) -> void {",
+"doc": "Draw again at the next frame \u2014 after changing widgets outside an event (a timer, a task)."
+}
+],
 "reduce": [
 {
 "package": "typing",
@@ -6229,6 +6252,15 @@
 "kind": "method",
 "signature": "define remove(self, val: Any) -> void",
 "doc": "Removes a value from the set. Does nothing if absent.\n@param val: Any"
+}
+],
+"remove_at": [
+{
+"package": "typing",
+"qualified": "List.remove_at",
+"kind": "method",
+"signature": "define remove_at(self, index: Int) -> Any",
+"doc": "Remove the element at `index` (negative: from the end) and return it.\n@throws IndexError \u2014 if there is no such element\n@example second := xs.remove_at(1)"
 }
 ],
 "remove_raw": [
@@ -6455,7 +6487,7 @@
 "qualified": "App.run",
 "kind": "method",
 "signature": "define run(self, fps: Int = 60) -> void {",
-"doc": "Run until the window closes, about `fps` frames a second."
+"doc": "Run until the window closes. A frame is drawn when something happened\n\u2014 input, a resize, an animation, a caret's blink, `redraw()` \u2014 at most\n`fps` times a second; in between, it waits for the next event instead\nof drawing the same picture again (a window that isn't touched costs\nalmost nothing, and input isn't held up behind frames nobody needs)."
 },
 {
 "package": "window",
@@ -7286,8 +7318,8 @@
 "package": "ui",
 "qualified": "App.step",
 "kind": "method",
-"signature": "define step(self) -> Bool {",
-"doc": "One frame: handle events, lay out, draw, present. False once the window is closed."
+"signature": "define step(self, force: Bool = true) -> Bool {",
+"doc": "One frame: the events, then layout, draw and present. Called by\n`run`, it draws only when something changed (`force=false`); called\nyourself (tests, your own loop), it always draws."
 }
 ],
 "stop": [

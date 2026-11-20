@@ -6560,6 +6560,11 @@ Value* LLVMCodegen::handleExpression(Node* node) {
             if (!varGen->exists(lit->value) && activeModuleAliases.count(lit->value)
                 && constructibleStructs.count(member->memberName) && StructTypes.count(member->memberName))
                 if (Value* cb = emitThunkAsCallable(getOrCreateConstructorThunk(member->memberName))) return cb;
+            // `syntax.DOC`: a module's top-level constant / variable — the
+            // global itself (a local named DOC doesn't shadow it here).
+            if (!varGen->exists(lit->value) && activeModuleAliases.count(lit->value))
+                if (GlobalVariable* gv = varGen->getGlobal(member->memberName))
+                    return Builder.CreateLoad(gv->getValueType(), gv, member->memberName);
         }
         // Enum variant access: Direction.North
         if (auto* lit = dynamic_cast<LiteralNode*>(member->object.get())) {

@@ -963,7 +963,9 @@ int Core_String_String_endswith(String* self, String* suffix) {
                   suffix->buffer) == 0;
 }
 
-int64_t Core_String_String_find(String* self, String* sub) {
+// The character index of the first `sub` at or after character `start`
+// (`"a-b-c".find("-", 2)` is 3), or -1.
+int64_t Core_String_String_find(String* self, String* sub, int64_t start) {
     if (!self || !self->buffer || !sub || !sub->buffer)
         return -1;
     // Sanity: length fields on either String may be garbage
@@ -972,12 +974,14 @@ int64_t Core_String_String_find(String* self, String* sub) {
     // read past a truncated buffer into unmapped memory.
     if (self->length < 0 || self->length > (1 << 24)) return -1;
     if (sub->length < 0 || sub->length > (1 << 24)) return -1;
-    char* ptr = strstr(self->buffer, sub->buffer);
+    int64_t from = start > 0 ? u8_offset(self, start) : 0;
+    if (from > self->length) return -1;
+    char* ptr = strstr(self->buffer + from, sub->buffer);
     return (ptr == NULL) ? -1 : u8_count(self->buffer, ptr - self->buffer);   // a character position
 }
 
 int64_t Core_String_String_index(String* self, String* sub) {
-    int64_t idx = Core_String_String_find(self, sub);
+    int64_t idx = Core_String_String_find(self, sub, 0);
     if (idx == -1) {
         printf("ValueError: substring not found\n");
         exit(1);
@@ -1271,7 +1275,7 @@ int Core_String_String_is_space(String* self) {
 }
 
 int Core_String_String_contains(String* self, String* sub) {
-    return Core_String_String_find(self, sub) != -1;
+    return Core_String_String_find(self, sub, 0) != -1;
 }
 
 String* Core_String_String_center(String* self, int64_t width, String* pad) {

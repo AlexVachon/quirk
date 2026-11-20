@@ -5,6 +5,28 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.60.0] — 2026-11-20 — what an editor needs
+
+Found building an IDE in Quirk (a desktop editor on `window` + `ui`):
+
+- **`module.NAME` reads a module's top-level constant or variable**
+  (`syntax.DOC`, `config.greeting`), as `from module use { NAME }` could; it
+  was "module 'm' has no function 'NAME'". A local of the same name doesn't
+  shadow it. Probe p190.
+- Pins **`typing` v1.18.0**: `String.find(sub, start)` — the first one at or
+  after `start` (characters); `List.insert(index, item)` and
+  `List.remove_at(index)` — one memory move each (a text buffer's lines
+  aren't rebuilt on every Enter). In the runtime.
+- Pins **`ui` v1.11.0**: closable tabs (`Tabs(closable=true, on_close=)`, a
+  × on each tab, middle click, `Tabs.close(i)`); `Widget.takes_tab` (a widget
+  that uses Tab itself — a code editor); and **`App.run` draws a frame only
+  when something happened** — an event, an animation, a caret's blink, a
+  tooltip, `app.redraw()` — and waits for events in between: it redrew the
+  whole window 60 times a second, which made a full-screen window slow on
+  remote displays (WSLg). `step()` called directly still always draws.
+- CI: the Windows job uploads the build as an artifact (`windows-build`), to
+  try a branch on Windows before it's released.
+
 ## [7.59.0] — 2026-11-20 — not-found and error pages
 
 - Pins **`live` v2.11.0**: not-found and error pages of your own, in the

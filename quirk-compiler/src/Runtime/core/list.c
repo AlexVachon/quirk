@@ -394,3 +394,33 @@ void* Core_Collections_List_List_find(List* self, Callable* cb) {
         if (quirk_opaque_truthy(fn(cb->env, self->data[i], QUIRK_NOARG))) return self->data[i];
     return NULL;
 }
+// `xs.insert(i, item)`: `item` goes before index `i` (0 … length; a
+// negative `i` counts from the end; out of range: clamped, as in Python).
+// One memmove — a text editor's lines, say, don't get rebuilt.
+void Core_Collections_List_List_insert(List* self, int64_t index, void* item) {
+    if (!self) return;
+    int64_t n = self->size;
+    if (index < 0) index += n;
+    if (index < 0) index = 0;
+    if (index > n) index = n;
+    Core_Collections_List_List_append(self, item);          // room for one more
+    memmove(&self->data[index + 1], &self->data[index], (size_t)(n - index) * sizeof(void*));
+    self->data[index] = item;
+}
+
+// `xs.remove_at(i)`: take out the element at `i` (negative: from the end)
+// and return it. IndexError when there's none.
+void* Core_Collections_List_List_remove_at(List* self, int64_t index) {
+    int64_t n = self ? self->size : 0;
+    int64_t i = index < 0 ? index + n : index;
+    if (i < 0 || i >= n) {
+        char buf[96];
+        snprintf(buf, sizeof(buf), "remove_at(%lld): the list has %lld elements", (long long)index, (long long)n);
+        quirk_throw_exception("IndexError", buf);
+        return NULL;
+    }
+    void* v = self->data[i];
+    memmove(&self->data[i], &self->data[i + 1], (size_t)(n - i - 1) * sizeof(void*));
+    self->size--;
+    return v;
+}

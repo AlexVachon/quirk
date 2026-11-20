@@ -504,6 +504,22 @@ jobs:
           QUIRK_WIN_STRICT: "1"
         run: bash tools/windows_build.sh
 
+      # The build, as a release would ship it, to try a branch on Windows
+      # before it's released (Actions → this run → Artifacts → windows-build;
+      # install it with install.ps1: $env:QUIRK_INSTALL_TARBALL = <the .tar.gz>).
+      - name: Package the build
+        if: success()
+        run: |
+          PKG=$(quirk-compiler/tools/package_release.sh "0.0.0-${GITHUB_SHA::7}" windows-x86_64 "$PWD")
+          echo "QUIRK_PKG=${PKG}.tar.gz" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: windows-build
+          path: ${{ env.QUIRK_PKG }}
+          retention-days: 7
+
       - name: Show failing tests
         if: failure()
         working-directory: quirk-compiler

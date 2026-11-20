@@ -1,0 +1,19 @@
+// A module's top-level constants and variables, read as `module.NAME`
+// (`syntax.DOC`) — as `from module use { NAME }` already could. It was
+// "module 'm' has no function 'NAME'". A local of the same name doesn't
+// shadow it.
+use qk_fixtures.settings190
+
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+define main() -> void {
+    if settings190.LIMIT != 7 { fail("const Int") }
+    if settings190.LIMIT + 1 != 8 { fail("typed as an Int") }
+    if settings190.MODE != "fast" or settings190.MODE.length() != 4 { fail("const String") }
+    if settings190.greeting != "hi" { fail("variable") }
+    if settings190.counts.length() != 3 { fail("a List variable") }
+    LIMIT := 99
+    if settings190.LIMIT != 7 or LIMIT != 99 { fail("shadowed by a local") }
+    if settings190.limit() != 7 { fail("the module's own function") }
+    print("ok")
+}

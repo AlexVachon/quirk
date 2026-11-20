@@ -27,7 +27,7 @@ wait_for() {   # wait_for <pattern> <what>: up to 60 s for the log to show it
 (cd "$dir" && NO_COLOR=1 exec "$QUIRK" run --watch main.qk > "$dir/log" 2>&1) &
 pid=$!
 wait_for '^ran: one$'                                   "runs the file"
-wait_for 'stopped \(exit code 0\) — waiting for a change' "says when it finished"
+wait_for 'main.qk finished — waiting for a change' "says when it finished"
 sleep 1
 printf 'define word() -> String {\n    return "two"\n}\n' > "$dir/src/part.qk"
 wait_for 'src/part.qk changed — restarting'             "notices the imported file changed"
@@ -46,5 +46,29 @@ kill -INT $pid
 for _ in $(seq 1 20); do kill -0 $pid 2>/dev/null || break; sleep 0.25; done
 if kill -0 $pid 2>/dev/null; then echo "FAIL still running after SIGINT"; kill -9 $pid; fails=$((fails + 1)); else echo "  ok stops on SIGINT"; fi
 wait_for '\[watch\] stopped'                            "says it stopped"
+
+# quirk test --watch: the tests again on a change.
+cat > "$dir/src/part_test.qk" <<'Q'
+from src.part use { word }
+use test
+define test_word() -> void {
+    test.assert_eq(word(), "three")
+}
+Q
+(cd "$dir" && NO_COLOR=1 exec "$QUIRK" test --watch src/part_test.qk > "$dir/log" 2>&1) &
+pid=$!
+wait_for '1 passed, 0 failed'                           "quirk test --watch runs the tests"
+sleep 1
+printf 'define word() -> String {\n    return "four"\n}\n' > "$dir/src/part.qk"
+wait_for 'changed — running again'                      "runs them again on a change"
+wait_for '0 passed, 1 failed'                           "with the new code"
+wait_for 'exited with code 1 — waiting for a change'    "says they failed"
+kill -INT $pid
+for _ in $(seq 1 20); do kill -0 $pid 2>/dev/null || break; sleep 0.25; done
+kill -0 $pid 2>/dev/null && { echo "FAIL test --watch still running"; kill -9 $pid; fails=$((fails + 1)); }
+
+# quirk run on a test file: says to use quirk test.
+out=$(cd "$dir" && "$QUIRK" run src/part_test.qk 2>&1)
+if printf '%s\n' "$out" | grep -q 'quirk test src/part_test.qk'; then echo "  ok quirk run x_test.qk points to quirk test"; else echo "FAIL no hint: $out"; fails=$((fails + 1)); fi
 
 [ $fails -eq 0 ] && echo "quirk run --watch: ok" || { echo "quirk run --watch: $fails failed"; exit 1; }

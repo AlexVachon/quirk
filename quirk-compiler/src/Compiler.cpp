@@ -31,6 +31,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <regex>
 #include <set>
 #include <sstream>
 #include <vector>
@@ -1875,6 +1876,31 @@ int main(int argc, char* argv[]) {
         for (int i = 0; i < argc; ++i)
             if (i == 0 || std::string(argv[i]) != "--watch") childArgs.push_back(argv[i]);
         return qwatch::run(qpm::self_binary(), childArgs, opts.inputFile);
+    }
+    // `quirk run x_test.qk` of a test file (test_* functions, no main):
+    // nothing runs, and nothing said why. Point to `quirk test`.
+    if (opts.runImmediate && !opts.checkOnly && !opts.buildOnly && !g_test_harness && !g_diagnostics_json) {
+        std::string base = fs::path(opts.inputFile).filename().string();
+        if (base.find("_test.") != std::string::npos) {
+            std::ifstream in(opts.inputFile);
+            std::stringstream ss; ss << in.rdbuf();
+            std::string src = ss.str();
+            static const std::regex testFn(R"(^\s*define\s+test_\w+\s*\(\s*\))");
+            static const std::regex mainFn(R"(^\s*define\s+main\s*\()");
+            std::istringstream lines(src);
+            std::string line;
+            int tests = 0;
+            bool hasMain = false;
+            while (std::getline(lines, line)) {
+                if (std::regex_search(line, testFn)) tests++;
+                else if (std::regex_search(line, mainFn)) hasMain = true;
+            }
+            if (tests > 0 && !hasMain)
+                std::cerr << "note: " << base << " has " << tests << " test" << (tests == 1 ? "" : "s")
+                          << " and no main() — `quirk run` doesn't run them. Run them with:\n"
+                          << "    quirk test " << opts.inputFile << "\n"
+                          << "    quirk test --watch " << opts.inputFile << "    (again on every save)\n";
+        }
     }
     // `--stdin-source`: the editor's unsaved text for the entry file.
     if (g_stdin_source && !opts.inputFile.empty()) {

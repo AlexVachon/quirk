@@ -70,7 +70,7 @@ static std::string self_binary();
 
 namespace qpm {
 
-constexpr const char* QUIRK_VERSION = "7.56.0";
+constexpr const char* QUIRK_VERSION = "7.57.0";
 
 namespace fs = std::filesystem;
 
@@ -4728,7 +4728,28 @@ static TestFileResult run_one_test_file(const fs::path& file, int timeoutSecs,
     return r;
 }
 
-static int cmd_test(const std::vector<std::string>& args) {
+static int cmd_test(const std::vector<std::string>& argsIn) {
+    // `--watch`: run them again on every change (Watch.hpp), each run being
+    // this same command without --watch.
+    std::vector<std::string> args;
+    bool watch = false;
+    for (auto& a : argsIn) { if (a == "--watch") watch = true; else args.push_back(a); }
+    if (watch) {
+        std::string entry = "";
+        for (size_t i = 0; i < args.size(); i++) {
+            const std::string& a = args[i];
+            if (a == "-k" || a == "--filter" || a == "--exclude" || a == "--timeout") { i++; continue; }
+            if (!a.empty() && a[0] != '-') { entry = a; break; }
+        }
+        if (entry.empty()) {
+            std::error_code ec;
+            entry = fs::is_directory("tests", ec) ? "tests" : ".";
+        }
+        std::string bin = self_binary();
+        std::vector<std::string> argv{bin, "test"};
+        for (auto& a : args) argv.push_back(a);
+        return qwatch::run(bin, argv, entry, false);
+    }
     std::vector<std::string> roots;
     bool verbose = false;
     int  timeoutSecs = 30;           // 0 = no cap
@@ -4748,6 +4769,7 @@ static int cmd_test(const std::vector<std::string>& args) {
                 "    `teardown()` run around each test. A file with its own main()\n"
                 "    runs as one test (it fails when it exits non-zero).\n"
                 "\n"
+                "  --watch               Run them again each time a project file changes\n"
                 "  -k <substr>           Run only tests whose name contains <substr>\n"
                 "  -v, --verbose         Print each test's output, passing ones too\n"
                 "  --filter <substr>     Run only files whose path contains <substr>\n"
@@ -8639,7 +8661,7 @@ static std::string help_for(const std::string& cmdIn) {
                "    With no args: list available scripts.\n"
                "    `quirk run <name>` also works as long as <name> isn't a path.\n";
     if (cmd == "test" || cmd == "t")
-        return "quirk test [-k <name>] [-v] [<path>...]\n"
+        return "quirk test [--watch] [-k <name>] [-v] [<path>...]\n"
                "    Short alias: quirk t\n"
                "    Run the tests in *_test.qk files (default: ./tests, else the\n"
                "    current directory). Every `define test_*()` is a test and runs on\n"

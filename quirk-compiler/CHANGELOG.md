@@ -5,6 +5,17 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.57.0] — 2026-11-20 — quirk test --watch
+
+- **`quirk test --watch [path]`**: the tests run again each time a project
+  file changes (flags and paths as for `quirk test`).
+- **`quirk run` of a test file** (`*_test.qk` with `test_*` functions and no
+  `main()`) ran nothing and said nothing; it now says so and gives the
+  `quirk test` / `quirk test --watch` command.
+- `--watch` says "finished" / "exited with code N" when the program ends by
+  itself (it said "stopped (exit code 0)"). `tools/check_watch.sh` covers
+  `quirk test --watch` and the hint.
+
 ## [7.56.0] — 2026-11-20 — sessions that last
 
 - Pins **`web` v1.3.0**: session stores. `web.sessions(store=web.sqlite_store(...))`

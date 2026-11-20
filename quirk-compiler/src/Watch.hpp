@@ -194,7 +194,8 @@ static std::string what_changed(const Snap& a, const Snap& b, const fs::path& ro
 // else the file's own.
 static fs::path project_root(const std::string& file) {
     std::error_code ec;
-    fs::path dir = fs::absolute(file, ec).parent_path();
+    fs::path abs = fs::absolute(file, ec);
+    fs::path dir = fs::is_directory(abs, ec) ? abs : abs.parent_path();
     fs::path p = dir;
     for (int i = 0; i < 12 && !p.empty(); i++) {
         if (fs::exists(p / "quirk.toml", ec)) return p;
@@ -207,8 +208,11 @@ static fs::path project_root(const std::string& file) {
 // ---- the loop --------------------------------------------------------------
 
 // `self`: this quirk binary. `args`: the command without --watch (args[0]
-// is replaced by `self`). `entry`: the file being run.
-static int run(const std::string& self, std::vector<std::string> args, const std::string& entry) {
+// is replaced by `self`). `entry`: the file being run (or, for `quirk test
+// --watch`, the file / folder of tests). `check`: type-check `entry` before
+// running again, and keep the running version when it fails (a server);
+// `quirk test` shows its own compile errors — and has nothing to keep.
+static int run(const std::string& self, std::vector<std::string> args, const std::string& entry, bool check = true) {
     args[0] = self;
 #ifdef _WIN32
     qplat::on_ctrl_c(on_ctrl);
@@ -231,7 +235,8 @@ static int run(const std::string& self, std::vector<std::string> args, const std
         if (running && exited(child, &code)) {
             running = false;
             stop(child);                       // (frees what's left: the job on Windows)
-            say(entry + " stopped (exit code " + std::to_string(code) + ") — waiting for a change");
+            say(entry + (code == 0 ? std::string(" finished") : " exited with code " + std::to_string(code)) +
+                " — waiting for a change");
         }
         Snap now = snapshot(root);
         if (now == snap) continue;
@@ -245,7 +250,7 @@ static int run(const std::string& self, std::vector<std::string> args, const std
         }
         std::string what = what_changed(snap, now, root);
         snap = now;
-        int rc = run_wait({self, "--check", entry});
+        int rc = check ? run_wait({self, "--check", entry}) : 0;
         if (g_stop) break;
         if (rc != 0) {
             say(what + " changed, but it doesn't compile" +
@@ -253,7 +258,7 @@ static int run(const std::string& self, std::vector<std::string> args, const std
             continue;
         }
         if (running) stop(child);
-        say(what + " changed — restarting");
+        say(what + (check ? " changed — restarting" : " changed — running again"));
         running = start(args, child);
         if (!running) say("couldn't start " + self);
     }

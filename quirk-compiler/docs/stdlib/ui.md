@@ -592,6 +592,31 @@ A running animation (`app.animate`). `cancel()` stops it (no more
 
 Stop it where it is.
 
+### `struct TitleBar : Widget`
+
+The title bar of an `App(title_bar=true)`: the window's title, an optional
+widget on its left (`content`: a `MenuBar`, say), and minimize / maximize
+(restore) / close buttons on its right. Drawn by the program in its theme
+instead of the system's; dragging it moves the window (with the system's
+snapping), a double-click maximizes, and the window's edges still resize
+it. `app.title_bar` is it.
+
+#### `define buttons_box(self) -> List`
+
+Where the buttons are: [x, y, width, height].
+
+#### `define button_at(self, px: Int, py: Int) -> Int`
+
+The button at (px, py): 0 minimize, 1 maximize / restore, 2 close, -1 none.
+
+#### `define holes(self) -> List`
+
+What a press here doesn't drag: the buttons and `content`.
+
+#### `define press(self, i: Int) -> void`
+
+Press button `i` from code (0 minimize, 1 maximize / restore, 2 close).
+
 ### `struct AccessNode`
 
 One thing in the accessibility tree (`App.accessibility()`) — what a

@@ -1101,6 +1101,15 @@
 "doc": "Colours and sizes every widget draws with. Make your own by changing a\ncopy of `ui.dark()` / `ui.light()`.\n  `background` \u2014 the window; `surface` \u2014 panels; `text`, `muted` \u2014 text\n  `accent` / `accent_text` \u2014 buttons, checks, sliders, selection\n  `input` \u2014 text field / list background; `border`; `focus` \u2014 focus ring\n  `scale` \u2014 text size multiplier (1 = 8x16 pixel characters)\n  `font`  \u2014 a `window.Font` for all text (null: the built-in 8x16 font);\n            `theme.font = window.load_font(\"DejaVuSans.ttf\", 15)`"
 }
 ],
+"TitleBar": [
+{
+"package": "ui",
+"qualified": "TitleBar",
+"kind": "struct",
+"signature": "struct TitleBar : Widget {",
+"doc": "The title bar of an `App(title_bar=true)`: the window's title, an optional\nwidget on its left (`content`: a `MenuBar`, say), and minimize / maximize\n(restore) / close buttons on its right. Drawn by the program in its theme\ninstead of the system's; dragging it moves the window (with the system's\nsnapping), a double-click maximizes, and the window's edges still resize\nit. `app.title_bar` is it."
+}
+],
 "ToolButton": [
 {
 "package": "ui",
@@ -2233,6 +2242,15 @@
 "doc": "True or False with 50/50 odds. One-liner around `_next_int(0, 1)`; the\nsugar pays off because it reads better at call sites (`if random.bool()`)."
 }
 ],
+"borderless": [
+{
+"package": "window",
+"qualified": "Window.borderless",
+"kind": "method",
+"signature": "define borderless(self) -> Bool {",
+"doc": "True if it was opened `borderless=true` (no system title bar)."
+}
+],
 "breakpoint": [
 {
 "package": "debug",
@@ -2274,6 +2292,24 @@
 "kind": "define",
 "signature": "define builtin_module_names() -> List {",
 "doc": "Names of modules compiled into this Quirk distribution."
+}
+],
+"button_at": [
+{
+"package": "ui",
+"qualified": "TitleBar.button_at",
+"kind": "method",
+"signature": "define button_at(self, px: Int, py: Int) -> Int {",
+"doc": "The button at (px, py): 0 minimize, 1 maximize / restore, 2 close, -1 none."
+}
+],
+"buttons_box": [
+{
+"package": "ui",
+"qualified": "TitleBar.buttons_box",
+"kind": "method",
+"signature": "define buttons_box(self) -> List {",
+"doc": "Where the buttons are: [x, y, width, height]."
 }
 ],
 "byteorder": [
@@ -4047,6 +4083,15 @@
 "doc": "A colour from `\"#rrggbb\"`, `\"#rrggbbaa\"`, `\"#rgb\"` (with or without `#`).\n@throws ValueError for anything else.\n@example window.hex(\"#ff8800\")"
 }
 ],
+"hit_at": [
+{
+"package": "window",
+"qualified": "Window.hit_at",
+"kind": "method",
+"signature": "define hit_at(self, x: Int, y: Int) -> String {",
+"doc": "What a press at (x, y) does with the areas of `set_hit_areas`: \"drag\",\n\"resize_top\", \"resize_bottom_right\", ... or \"\" (the program gets it)."
+}
+],
 "hmac_sha256": [
 {
 "package": "crypto",
@@ -4054,6 +4099,15 @@
 "kind": "define",
 "signature": "extern define hmac_sha256(key: String, msg: String) -> String",
 "doc": "HMAC-SHA256 \u2014 message authentication code. Use for signed cookies, JWT\nHS256, webhook signature verification, etc. Returns 64 hex chars."
+}
+],
+"holes": [
+{
+"package": "ui",
+"qualified": "TitleBar.holes",
+"kind": "method",
+"signature": "define holes(self) -> List {",
+"doc": "What a press here doesn't drag: the buttons and `content`."
 }
 ],
 "hour": [
@@ -4923,6 +4977,24 @@
 "doc": "Largest value as Double. Throws on empty input."
 }
 ],
+"maximize": [
+{
+"package": "window",
+"qualified": "Window.maximize",
+"kind": "method",
+"signature": "define maximize(self) -> void {",
+"doc": "Maximize the window (fill the screen, but for the taskbar)."
+}
+],
+"maximized": [
+{
+"package": "window",
+"qualified": "Window.maximized",
+"kind": "method",
+"signature": "define maximized(self) -> Bool {",
+"doc": "True while maximized."
+}
+],
 "maxsize": [
 {
 "package": "sys",
@@ -5063,6 +5135,24 @@
 "kind": "define",
 "signature": "define min_val(items: List) -> Double {",
 "doc": "Smallest value as Double. Throws on empty input."
+}
+],
+"minimize": [
+{
+"package": "window",
+"qualified": "Window.minimize",
+"kind": "method",
+"signature": "define minimize(self) -> void {",
+"doc": "Minimize the window (to the taskbar / dock)."
+}
+],
+"minimized": [
+{
+"package": "window",
+"qualified": "Window.minimized",
+"kind": "method",
+"signature": "define minimized(self) -> Bool {",
+"doc": "True while minimized."
 }
 ],
 "minute": [
@@ -5460,8 +5550,8 @@
 "package": "window",
 "qualified": "open",
 "kind": "define",
-"signature": "define open(title: String, width: Int, height: Int, resizable: Bool = false, hidden: Bool = false, vsync: Bool = true, headless: Bool = false) -> Window {",
-"doc": "Open a window `width` x `height` pixels, centred on the screen.\n@param resizable let the user resize it (\"resize\" events tell you)\n@param hidden    don't show it (drawing and `screenshot` still work)\n@param vsync     make `present` wait for the display's refresh\n@param headless  no display at all (CI, servers): an off-screen window\n                 for drawing and screenshots. Applies from the first\n                 window opened.\n@throws WindowError when it can't be opened (no SDL2, no display...).\n@example w := window.open(\"Paint\", 800, 600, resizable=true)"
+"signature": "define open(title: String, width: Int, height: Int, resizable: Bool = false, hidden: Bool = false, vsync: Bool = true, headless: Bool = false, borderless: Bool = false) -> Window {",
+"doc": "Open a window `width` x `height` pixels, centred on the screen.\n@param resizable let the user resize it (\"resize\" events tell you)\n@param hidden    don't show it (drawing and `screenshot` still work)\n@param vsync     make `present` wait for the display's refresh\n@param borderless no system title bar or frame: draw your own and say\n                 where it is with `set_hit_areas`\n@param headless  no display at all (CI, servers): an off-screen window\n                 for drawing and screenshots. Applies from the first\n                 window opened.\n@throws WindowError when it can't be opened (no SDL2, no display...).\n@example w := window.open(\"Paint\", 800, 600, resizable=true)"
 }
 ],
 "open_menu": [
@@ -5870,6 +5960,15 @@
 "kind": "method",
 "signature": "define present(self) -> void {",
 "doc": "Show everything drawn since the last `present`."
+}
+],
+"press": [
+{
+"package": "ui",
+"qualified": "TitleBar.press",
+"kind": "method",
+"signature": "define press(self, i: Int) -> void {",
+"doc": "Press button `i` from code (0 minimize, 1 maximize / restore, 2 close)."
 }
 ],
 "print_help": [
@@ -6397,6 +6496,15 @@
 "doc": "Not empty: some text (not only spaces), a ticked box, a non-empty List."
 }
 ],
+"restore": [
+{
+"package": "window",
+"qualified": "Window.restore",
+"kind": "method",
+"signature": "define restore(self) -> void {",
+"doc": "Back to its size before being maximized or minimized."
+}
+],
 "reverse": [
 {
 "package": "typing",
@@ -6902,6 +7010,24 @@
 "kind": "define",
 "signature": "extern define set_field(obj: Any, name: String, value: Any) -> Bool",
 "doc": "Set field `name` (false if there's none)."
+}
+],
+"set_hit_areas": [
+{
+"package": "window",
+"qualified": "Window.set_hit_areas",
+"kind": "method",
+"signature": "define set_hit_areas(self, drag: List, holes: List = [], border: Int = 5) -> Bool {",
+"doc": "For a title bar of your own (a window opened `borderless=true`): a press\nin one of the `drag` rectangles moves the window (with the system's\nsnapping, and a double-click maximizing on Windows), except in the\n`holes` (your buttons there); presses within `border` pixels of an edge\nresize it (when it's resizable and not maximized). Each rectangle is\n`[x, y, width, height]`; call it again when they move (after a resize).\nFalse if this SDL can't (before 2.0.4).\n@example w.set_hit_areas([[0, 0, w.width(), 32]], [[w.width() - 138, 0, 138, 32]])"
+}
+],
+"set_opacity": [
+{
+"package": "window",
+"qualified": "Window.set_opacity",
+"kind": "method",
+"signature": "define set_opacity(self, opacity: Double) -> Bool {",
+"doc": "How opaque the whole window is: 1.0 (normal) down to 0.0 (invisible) \u2014\nto fade it in or out. False where the system can't (headless, some\nLinux desktops)."
 }
 ],
 "set_title": [

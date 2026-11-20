@@ -696,6 +696,24 @@
 "doc": "How far along something is: `value` out of `max` (clamped), drawn as a\nfilled bar. `show_text` adds the percentage. Set `value` as work\nprogresses."
 }
 ],
+"Pty": [
+{
+"package": "pty",
+"qualified": "Pty",
+"kind": "struct",
+"signature": "struct Pty {",
+"doc": "A program running in a pseudo-terminal (from `pty.spawn`). `exit_code`\nis set once it has ended (-N: killed by signal N)."
+}
+],
+"PtyError": [
+{
+"package": "pty",
+"qualified": "PtyError",
+"kind": "struct",
+"signature": "struct PtyError : RuntimeError {",
+"doc": "Thrown when a program can't be started in a pseudo-terminal."
+}
+],
 "Queue": [
 {
 "package": "typing",
@@ -1101,6 +1119,15 @@
 "doc": "Colours and sizes every widget draws with. Make your own by changing a\ncopy of `ui.dark()` / `ui.light()`.\n  `background` \u2014 the window; `surface` \u2014 panels; `text`, `muted` \u2014 text\n  `accent` / `accent_text` \u2014 buttons, checks, sliders, selection\n  `input` \u2014 text field / list background; `border`; `focus` \u2014 focus ring\n  `scale` \u2014 text size multiplier (1 = 8x16 pixel characters)\n  `font`  \u2014 a `window.Font` for all text (null: the built-in 8x16 font);\n            `theme.font = window.load_font(\"DejaVuSans.ttf\", 15)`"
 }
 ],
+"Timer": [
+{
+"package": "ui",
+"qualified": "Timer",
+"kind": "struct",
+"signature": "struct Timer {",
+"doc": "A timer from `app.every(ms, fn)` / `app.after(ms, fn)`: `fn()` runs on\nthe App's loop, between frames. It doesn't draw a frame by itself: call\n`app.redraw()` in it when it changed something. `cancel()` stops it."
+}
+],
 "TitleBar": [
 {
 "package": "ui",
@@ -1152,7 +1179,7 @@
 "qualified": "TreeView",
 "kind": "struct",
 "signature": "struct TreeView : Widget {",
-"doc": "A tree of `ui.TreeNode`s, nested nodes indented. Click the arrow (or\ndouble-click the row) to expand / collapse; click a row to select it.\nKeys: Up / Down move, Right expands (or goes to the first child), Left\ncollapses (or goes to the parent), Enter toggles. `on_select(node)` runs\nwhen the selection changes; `selected` is the node (or null)."
+"doc": "A tree of `ui.TreeNode`s, nested nodes indented. Click the arrow (or\ndouble-click the row) to expand / collapse; click a row to select it.\nKeys: Up / Down move, Right expands (or goes to the first child), Left\ncollapses (or goes to the parent), Enter toggles. `on_select(node)` runs\nwhen the selection changes; `selected` is the node (or null);\n`on_expand(node)` runs just before a node opens (fill in its children\nthen: a folder read lazily).\n\n`flat=true` is the look of a side bar (a file explorer): no box, rows lit\nunder the mouse, the selected row tinted (outlined while focused), thin\nchevrons, and a click on a parent opens / closes it. `row_height`,\n`indent`, `guides` (lines down each level) and `icon` \u2014 `fn(node)` giving\n`[text, colour]` (a badge before the name: \"Q\", \"{}\") or null \u2014 fine-tune\neither look; `background` fills it (-1: the theme's input colour, or\nnothing when flat)."
 }
 ],
 "Tuple": [
@@ -1935,6 +1962,24 @@
 "doc": "Returns a new DateTime offset by `n` seconds (can be negative)."
 }
 ],
+"after": [
+{
+"package": "ui",
+"qualified": "App.after",
+"kind": "method",
+"signature": "define after(self, ms: Int, action: Callable) -> Timer {",
+"doc": "Run `action()` once, `ms` milliseconds from now. Returns the `Timer`."
+}
+],
+"alive": [
+{
+"package": "pty",
+"qualified": "Pty.alive",
+"kind": "method",
+"signature": "define alive(self) -> Bool {",
+"doc": "True while the program runs."
+}
+],
 "all": [
 {
 "package": "typing",
@@ -2172,6 +2217,15 @@
 "doc": "Two-argument arctangent \u2014 angle of the point `(x, y)` from the origin.\nReturns radians in `(-pi, pi]`. Handles all four quadrants correctly.\n@example math.atan2(1.0, 0.0)  // pi/2"
 }
 ],
+"available": [
+{
+"package": "pty",
+"qualified": "available",
+"kind": "define",
+"signature": "define available() -> Bool {",
+"doc": "True where pseudo-terminals work (everywhere but Windows before 10 1809)."
+}
+],
 "backtrace_frame": [
 {
 "package": "sys",
@@ -2344,6 +2398,13 @@
 "kind": "method",
 "signature": "define cancel(self) -> void {",
 "doc": "Stop it where it is."
+},
+{
+"package": "ui",
+"qualified": "Timer.cancel",
+"kind": "method",
+"signature": "define cancel(self) -> void {",
+"doc": "Don't run it again."
 }
 ],
 "capture_backtrace": [
@@ -2644,6 +2705,13 @@
 "doc": "Close socket `fd`, releasing the OS resource."
 },
 {
+"package": "pty",
+"qualified": "Pty.close",
+"kind": "method",
+"signature": "define close(self) -> void {",
+"doc": "Close the terminal: the program is told (SIGHUP) or ended."
+},
+{
 "package": "sqlite",
 "qualified": "Database.close",
 "kind": "method",
@@ -2725,6 +2793,24 @@
 "kind": "method",
 "signature": "define close_stdin(self) -> void {",
 "doc": "Close the program's stdin, so it sees end of input."
+}
+],
+"code": [
+{
+"package": "typing",
+"qualified": "String.code",
+"kind": "method",
+"signature": "define code(self, index: Int = 0) -> Int",
+"doc": "The Unicode code point of character `index` (`\"\u00e9\".code()` is 233,\n`\"\\n\".code()` is 10), or -1 past the end.\n@returns: Int"
+}
+],
+"codes": [
+{
+"package": "typing",
+"qualified": "String.codes",
+"kind": "method",
+"signature": "define codes(self) -> List",
+"doc": "Every character's code point, in order \u2014 one pass over the string\n(a parser reading characters by number).\n@returns: List"
 }
 ],
 "color_to_hsv": [
@@ -3344,6 +3430,15 @@
 "doc": "End the response with no body (204 if nothing else was set)."
 }
 ],
+"ended": [
+{
+"package": "pty",
+"qualified": "Pty.ended",
+"kind": "method",
+"signature": "define ended(self) -> Bool {",
+"doc": "True once everything it will ever write has been read."
+}
+],
 "enumerate": [
 {
 "package": "itertools",
@@ -3448,6 +3543,13 @@
 "kind": "method",
 "signature": "define every(self, ms: Int, action: Callable) -> void {",
 "doc": "Run `action()` every `ms` milliseconds while the page is open, then show\nthe page again: `self.every(1000, fn() { self.now = time.now() })`."
+},
+{
+"package": "ui",
+"qualified": "App.every",
+"kind": "method",
+"signature": "define every(self, ms: Int, action: Callable) -> Timer {",
+"doc": "Run `action()` every `ms` milliseconds while the App runs (polling\nsomething: a process's output, a file). Returns the `Timer`.\n@example app.every(50, fn() { term.poll() })"
 }
 ],
 "exc_info": [
@@ -4180,6 +4282,15 @@
 "doc": "In a transaction now (`transaction()`, or a BEGIN of your own)."
 }
 ],
+"indent": [
+{
+"package": "ui",
+"qualified": "TreeView.indent",
+"kind": "method",
+"signature": "define indent(self) -> Int {",
+"doc": "How far each level is indented (pixels)."
+}
+],
 "index": [
 {
 "package": "typing",
@@ -4271,6 +4382,24 @@
 "kind": "method",
 "signature": "define insert(self, s: String) -> void {",
 "doc": "Insert `s` at the cursor, as typing would (replaces the selection)."
+}
+],
+"inset": [
+{
+"package": "window",
+"qualified": "Window.inset",
+"kind": "method",
+"signature": "define inset(self) -> List {",
+"doc": "How far the window reaches past the screen's usable area, as [left,\ntop, right, bottom] pixels: on Windows a maximized window overhangs each\nedge by its (hidden) frame's width, so a borderless one keeps what it\ndraws there out of sight. [0, 0, 0, 0] when not maximized."
+}
+],
+"interrupt": [
+{
+"package": "pty",
+"qualified": "Pty.interrupt",
+"kind": "method",
+"signature": "define interrupt(self) -> void {",
+"doc": "Interrupt it, as Ctrl+C would."
 }
 ],
 "intersection": [
@@ -4590,6 +4719,13 @@
 "kind": "method",
 "signature": "define kill(self) -> void {",
 "doc": "Stop it now (SIGKILL) and wait for it."
+},
+{
+"package": "pty",
+"qualified": "Pty.kill",
+"kind": "method",
+"signature": "define kill(self) -> void {",
+"doc": "End it now (SIGKILL; TerminateProcess on Windows)."
 }
 ],
 "last": [
@@ -6186,6 +6322,13 @@
 "kind": "method",
 "signature": "define read(self, size: Int = 65536) -> String {",
 "doc": "Up to `size` bytes of stdout, waiting until some arrive. \"\" once it's all been read."
+},
+{
+"package": "pty",
+"qualified": "Pty.read",
+"kind": "method",
+"signature": "define read(self, timeout_ms: Int = 0) -> String {",
+"doc": "What it wrote since the last read, waiting up to `timeout_ms` for\nsomething (0: don't wait; -1: until there is). \"\" when nothing came \u2014\nor when its output has ended (`ended()`)."
 }
 ],
 "read_err": [
@@ -6494,6 +6637,15 @@
 "kind": "define",
 "signature": "define required(message: String = \"This field is required\") -> Callable {",
 "doc": "Not empty: some text (not only spaces), a ticked box, a non-empty List."
+}
+],
+"resize": [
+{
+"package": "pty",
+"qualified": "Pty.resize",
+"kind": "method",
+"signature": "define resize(self, cols: Int, rows: Int) -> void {",
+"doc": "Its window is now `cols` x `rows` characters (it redraws to fit)."
 }
 ],
 "restore": [
@@ -7100,6 +7252,13 @@
 "kind": "define",
 "signature": "define shell(command: String, input: String = \"\", cwd: String = \"\", env: Map = Map(), inherit_env: Bool = true, timeout_ms: Int = -1, check: Bool = false, capture: Bool = true, merge_stderr: Bool = false) -> RunResult {",
 "doc": "`run` through the shell \u2014 `/bin/sh -c command` (Windows: `cmd.exe /c`),\nso pipes, globs, redirects and variables work. Only for commands you wrote \u2014 never paste\nuntrusted input into one (use `run` with an args List instead).\n@example\nr := process.shell(\"ls *.qk | wc -l\")\nprint(r.stdout.trim())"
+},
+{
+"package": "pty",
+"qualified": "shell",
+"kind": "define",
+"signature": "define shell() -> List {",
+"doc": "The user's shell, as `spawn` args: $SHELL (else /bin/sh) on Linux and\nmacOS; on Windows PowerShell 7 (`pwsh`) if it's installed, else Windows\nPowerShell."
 }
 ],
 "show": [
@@ -7236,6 +7395,15 @@
 "doc": "Pause for `ms` milliseconds (other tasks run meanwhile)."
 }
 ],
+"slice": [
+{
+"package": "typing",
+"qualified": "List.slice",
+"kind": "method",
+"signature": "define slice(self, start: Int, end: Int = 9223372036854775807) -> List",
+"doc": "A new list of the elements from `start` up to (not including) `end`;\nnegative indexes count from the end, and out-of-range ones are\nclamped (`[1, 2, 3, 4].slice(1, 3)` is `[2, 3]`; `xs.slice(-2, 99)`\nthe last two). The default `end` is the end.\n@example rest := xs.slice(1)"
+}
+],
 "socket": [
 {
 "package": "net",
@@ -7279,6 +7447,13 @@
 "kind": "define",
 "signature": "define spawn(args: List, cwd: String = \"\", env: Map = Map(), inherit_env: Bool = true, stdin: String = \"pipe\", stdout: String = \"pipe\", stderr: String = \"pipe\") -> Process {",
 "doc": "Start a program and return without waiting for it.\n\n`stdin` / `stdout` / `stderr` each say where that stream goes:\n`\"pipe\"` (default \u2014 use `write` / `read` / `read_line` / `communicate`),\n`\"inherit\"` (this process's terminal), `\"null\"` (discard / empty input);\n`stderr=\"stdout\"` sends stderr into the stdout pipe.\n\nRead its output to the end (or `communicate`) before `wait`ing: a\nprogram that fills an unread pipe stops until someone reads it.\n@throws FileNotFoundError when the program can't be found.\n@example\np := process.spawn([\"tail\", \"-f\", \"app.log\"], stderr=\"null\")\nfor i in 0..5 { print(p.read_line()) }\np.kill()"
+},
+{
+"package": "pty",
+"qualified": "spawn",
+"kind": "define",
+"signature": "define spawn(args: List, cols: Int = 80, rows: Int = 24, cwd: String = \"\", env: Map = {}) -> Pty {",
+"doc": "Start `args` (program and arguments, looked up on PATH) in a new\npseudo-terminal `cols` x `rows` characters.\n@param cwd  directory to run in (\"\" = this one)\n@param env  variables added to its environment; TERM is xterm-256color\n            unless given\n@throws PtyError when it can't be started (no such program, no ConPTY).\n@example p := pty.spawn([\"bash\", \"-l\"], cols=120, rows=30, cwd=\"/tmp\")"
 }
 ],
 "split": [
@@ -8303,6 +8478,13 @@
 "kind": "method",
 "signature": "define wait(self) -> Int {",
 "doc": "Wait for the program to finish; returns its exit code (`-N`: killed by signal N)."
+},
+{
+"package": "pty",
+"qualified": "Pty.wait",
+"kind": "method",
+"signature": "define wait(self, timeout_ms: Int = -1) -> Int {",
+"doc": "Wait for it to end (up to `timeout_ms`, -1: no limit); its exit code, or -1000 if still running."
 }
 ],
 "wait_event": [
@@ -8403,6 +8585,13 @@
 "kind": "method",
 "signature": "define write(self, data: String) -> void {",
 "doc": "Write `data` to the program's stdin. Throws `IOError` if stdin isn't a pipe or the program closed it."
+},
+{
+"package": "pty",
+"qualified": "Pty.write",
+"kind": "method",
+"signature": "define write(self, text: String) -> void {",
+"doc": "Type `text` at it: \"\\r\" is Enter, \"\\x03\" Ctrl+C, \"\\x1b[A\" the Up key."
 }
 ],
 "write_dicts": [

@@ -1,0 +1,22 @@
+// For p191: a library function whose closures capture a parameter that has
+// the same name as a global of the program using it.
+struct Thing {
+    n: Int
+    define __init(self, n: Int) -> void {
+        self.n = n
+    }
+    define value(self) -> Int {
+        return self.n
+    }
+}
+
+define via_closure(app: Thing) -> Int {
+    cb := fn() {
+        return app.value()
+    }
+    return cb()
+}
+
+define later(app: Thing) -> Callable {
+    return fn() => app.value() * 2
+}

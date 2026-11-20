@@ -1,0 +1,37 @@
+// A closure captures a local / parameter even when the program has a
+// global of the same name: the lambda read the global instead ("Unknown
+// method 'Ide.redraw'" — a library's `fn() { app.redraw() }`, a program's
+// `app := Ide(...)`). Globals not shadowed are still read live.
+use qk_fixtures.capture191
+
+struct Other {
+    s: String
+    define __init(self) -> void {
+        self.s = "other"
+    }
+}
+
+app := Other()
+count := 1
+
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+define bump() -> Callable {
+    return fn() => count + 10
+}
+
+define shadow(app: capture191.Thing) -> Callable {
+    return fn() => app.value()
+}
+
+define main() -> void {
+    if capture191.via_closure(capture191.Thing(5)) != 5 { fail("parameter shadowing a global") }
+    f := capture191.later(capture191.Thing(4))
+    if Int(f()) != 8 { fail("returned closure") }
+    count = 5
+    g := bump()
+    count = 7
+    if Int(g()) != 17 { fail("an unshadowed global read live") }
+    if Int(shadow(capture191.Thing(3))()) != 3 { fail("a parameter shadowing a global, same module") }
+    print("ok")
+}

@@ -1988,7 +1988,10 @@ class LLVMCodegen {
                 // and writes them directly through their GlobalVariable so
                 // every invocation sees the current value. Capturing them
                 // here would snapshot the value at lambda-creation time.
-                if (varGen->isGlobal(name)) return;
+                // A local of the same name (a parameter `app` in a library
+                // while the program has a global `app`) shadows it, and is
+                // captured: the lambda used to read the global instead.
+                if (varGen->isGlobal(name) && !varGen->hasLocal(name)) return;
                 if (varGen->exists(name)) { seen.insert(name); freeVars.push_back(name); }
                 return;
             }

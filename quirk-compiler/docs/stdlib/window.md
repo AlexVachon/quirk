@@ -284,6 +284,13 @@ True while maximized.
 
 True while minimized.
 
+#### `define inset(self) -> List`
+
+How far the window reaches past the screen's usable area, as [left,
+top, right, bottom] pixels: on Windows a maximized window overhangs each
+edge by its (hidden) frame's width, so a borderless one keeps what it
+draws there out of sight. [0, 0, 0, 0] when not maximized.
+
 #### `define borderless(self) -> Bool`
 
 True if it was opened `borderless=true` (no system title bar).

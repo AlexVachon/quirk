@@ -131,7 +131,7 @@ $(DRIVER): $(TARGET)
 # bump the version inline below and re-run.
 STDLIB_PACKAGES = \
 	argparse console crypto csv datetime debug encoding fs html io itertools live \
-	math net process prompt random regex sqlite statistics sys test time toml typing ui url uuid web window
+	math net process prompt pty random regex sqlite statistics sys test time toml typing ui url uuid web window
 STDLIB_OWNER ?= AlexVachon
 STDLIB_TAG   ?= v1.0.0
 
@@ -148,7 +148,7 @@ STDLIB_TAG_prompt ?= v1.1.0
 # v1.16.1: ljust / rjust / center pad with a space by default (v7.9.1).
 # v1.16.2: Exception.print_traceback() writes to stderr (v7.11.1).
 # v1.17.0: CancelledError, for task.cancel() (v7.13.0).
-STDLIB_TAG_typing ?= v1.18.0
+STDLIB_TAG_typing ?= v1.19.0
 # html v1.0.0 is the initial release (compiler v3.5.0+). The
 # explicit pin keeps a global STDLIB_TAG bump from accidentally
 # pulling a v2 with potentially breaking changes.
@@ -172,7 +172,8 @@ STDLIB_TAG_process ?= v1.0.2
 # window v1.1.0: PNG / JPEG / GIF / TGA images, sprite-sheet regions, alpha (v7.22.0).
 # window v1.2.0: clip / unclip, clipboard / set_clipboard (runtime v7.26.0).
 # window v1.3.0: TrueType fonts (runtime stb_truetype, v7.33.0).
-STDLIB_TAG_window ?= v1.8.0
+# window v1.9.0: borderless windows, set_hit_areas, minimize / maximize, inset, opacity (v7.61.0).
+STDLIB_TAG_window ?= v1.9.0
 # crypto v1.1.0: hash_password / verify_password / needs_rehash (scrypt), equal (runtime v7.55.0).
 STDLIB_TAG_crypto ?= v1.1.0
 # sqlite v1.0.0 is the initial release (runtime Sqlite_*, SQLite 3.54.1 built in, v7.50.0).
@@ -186,7 +187,8 @@ STDLIB_TAG_sqlite ?= v1.1.0
 # ui v1.5.0: working menu shortcuts, SplitView, Toolbar, StatusBar, DatePicker (compiler v7.32.0).
 # ui v1.6.0: theme fonts, ListItem icons, Canvas, animations (compiler v7.33.0).
 # ui v1.6.1: no unused bindings (editor warnings).
-STDLIB_TAG_ui ?= v1.11.0
+# ui v1.12.0: App(title_bar=true), TitleBar, flat TreeView, App.every / after timers (v7.61.0).
+STDLIB_TAG_ui ?= v1.12.0
 STDLIB_TAG_web ?= v1.4.0
 STDLIB_TAG_live ?= v2.11.0
 

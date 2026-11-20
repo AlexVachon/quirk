@@ -83,6 +83,7 @@ static void* __gc_text_alloc(size_t n) {
 #include "libs/random.c"
 #include "libs/debug.c"
 #include "libs/process.c"
+#include "libs/pty.c"
 #include "libs/window.c"
 #include "libs/sqlite.c"
 

@@ -2,6 +2,13 @@
 
 All notable changes to the extension land here. Versioning follows SemVer; minor bumps for new features, patches for fixes.
 
+## [1.1.24] — 2026-11-20 — hover docs for pty, window 1.9, ui 1.12, typing 1.19
+
+- The new `pty` package; `window.open(borderless=)`, `Window.set_hit_areas`
+  / `minimize` / `maximize` / `inset`; `ui.App(title_bar=)`, `TitleBar`,
+  `App.every` / `after`, `TreeView(flat=)`; `String.code` / `codes`,
+  `List.slice`.
+
 ## [1.1.23] — 2026-11-20 — hover docs for typing 1.18 and ui 1.11
 
 - `String.find(sub, start)`, `List.insert` / `remove_at`; `ui.Tabs`

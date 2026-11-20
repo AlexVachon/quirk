@@ -408,7 +408,21 @@ A tree of `ui.TreeNode`s, nested nodes indented. Click the arrow (or
 double-click the row) to expand / collapse; click a row to select it.
 Keys: Up / Down move, Right expands (or goes to the first child), Left
 collapses (or goes to the parent), Enter toggles. `on_select(node)` runs
-when the selection changes; `selected` is the node (or null).
+when the selection changes; `selected` is the node (or null);
+`on_expand(node)` runs just before a node opens (fill in its children
+then: a folder read lazily).
+
+`flat=true` is the look of a side bar (a file explorer): no box, rows lit
+under the mouse, the selected row tinted (outlined while focused), thin
+chevrons, and a click on a parent opens / closes it. `row_height`,
+`indent`, `guides` (lines down each level) and `icon` — `fn(node)` giving
+`[text, colour]` (a badge before the name: "Q", "{}") or null — fine-tune
+either look; `background` fills it (-1: the theme's input colour, or
+nothing when flat).
+
+#### `define indent(self) -> Int`
+
+How far each level is indented (pixels).
 
 #### `define visible_nodes(self) -> List`
 
@@ -616,6 +630,16 @@ What a press here doesn't drag: the buttons and `content`.
 #### `define press(self, i: Int) -> void`
 
 Press button `i` from code (0 minimize, 1 maximize / restore, 2 close).
+
+### `struct Timer`
+
+A timer from `app.every(ms, fn)` / `app.after(ms, fn)`: `fn()` runs on
+the App's loop, between frames. It doesn't draw a frame by itself: call
+`app.redraw()` in it when it changed something. `cancel()` stops it.
+
+#### `define cancel(self) -> void`
+
+Don't run it again.
 
 ### `struct AccessNode`
 

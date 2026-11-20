@@ -87,6 +87,14 @@ Remove the element at `index` (negative: from the end) and return it.
 @throws IndexError — if there is no such element
 @example second := xs.remove_at(1)
 
+#### `define slice(self, start: Int, end: Int = 9223372036854775807) -> List`
+
+A new list of the elements from `start` up to (not including) `end`;
+negative indexes count from the end, and out-of-range ones are
+clamped (`[1, 2, 3, 4].slice(1, 3)` is `[2, 3]`; `xs.slice(-2, 99)`
+the last two). The default `end` is the end.
+@example rest := xs.slice(1)
+
 #### `define pop(self) -> Any`
 
 Removes and returns the last element.
@@ -1333,6 +1341,18 @@ Splits on newlines and returns each line as a list element.
 Computes the Levenshtein edit distance between this string and `other`.
 @param other: String
 @returns: Int — number of single-character edits needed
+
+#### `define code(self, index: Int = 0) -> Int`
+
+The Unicode code point of character `index` (`"é".code()` is 233,
+`"\n".code()` is 10), or -1 past the end.
+@returns: Int
+
+#### `define codes(self) -> List`
+
+Every character's code point, in order — one pass over the string
+(a parser reading characters by number).
+@returns: List
 
 #### `define length(self) -> Int`
 

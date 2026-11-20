@@ -1256,11 +1256,26 @@ String* Core_String_String_rjust(String* self, int64_t width, String* pad) {
     return u8_pad(self, width, pad, 'r');
 }
 
+// Whitespace off the left (`left`) and / or right end. (lstrip / rstrip
+// were trim: both ends.)
+static String* u8_strip(String* self, int left, int right) {
+    if (!self || !self->buffer)
+        return make_String("");
+    int64_t start = 0, end = self->length;
+    if (left) while (start < end && isspace((unsigned char)self->buffer[start])) start++;
+    if (right) while (end > start && isspace((unsigned char)self->buffer[end - 1])) end--;
+    int64_t n = end - start;
+    char* temp = (char*)malloc((size_t)n + 1);
+    memcpy(temp, self->buffer + start, (size_t)n);
+    temp[n] = '\0';
+    return make_String_taking_ownership(temp);
+}
+
 String* Core_String_String_lstrip(String* self) {
-    return Core_String_String_trim(self);
+    return u8_strip(self, 1, 0);
 }
 String* Core_String_String_rstrip(String* self) {
-    return Core_String_String_trim(self);
+    return u8_strip(self, 0, 1);
 }
 
 String* Core_String_String_swapcase(String* self) { return u8_case(self, CASE_SWAP); }
@@ -1625,4 +1640,45 @@ String* Core_String__str_join(List* parts) {
         if (s && s->buffer) strcat(buf, s->buffer);
     }
     return make_String_taking_ownership(buf);
+}
+
+void* quirk_int_to_opaque(int64_t v);
+void Core_Collections_List_List___init(List* self);
+void Core_Collections_List_List_append(List* self, void* item);
+
+// The code point at byte `b` of `s` (decoding `n` = its length in bytes).
+static int64_t u8_decode_at(const char* buf, int64_t b, int64_t len, int* n) {
+    unsigned char c = (unsigned char)buf[b];
+    int k = u8_bytes(c);
+    if (b + k > len) k = 1;
+    *n = k;
+    if (k == 1) return c;
+    int64_t cp = k == 2 ? (c & 0x1F) : k == 3 ? (c & 0x0F) : (c & 0x07);
+    for (int i = 1; i < k; i++) cp = (cp << 6) | ((unsigned char)buf[b + i] & 0x3F);
+    return cp;
+}
+
+// The Unicode code point of character `index` (`"é".code()` is 233), or -1
+// past the end.
+int64_t Core_String_String_code(String* self, int64_t index) {
+    if (!self || !self->buffer || index < 0) return -1;
+    int64_t b = u8_offset(self, index);
+    if (b >= self->length) return -1;
+    int n;
+    return u8_decode_at(self->buffer, b, self->length, &n);
+}
+
+// Every character's code point, in order — one pass, for parsers.
+List* Core_String_String_codes(String* self) {
+    List* list = (List*)quirk_alloc(QT_LIST, sizeof(List));
+    Core_Collections_List_List___init(list);
+    if (!self || !self->buffer) return list;
+    int64_t b = 0;
+    while (b < self->length) {
+        int n;
+        int64_t cp = u8_decode_at(self->buffer, b, self->length, &n);
+        Core_Collections_List_List_append(list, quirk_int_to_opaque(cp));
+        b += n;
+    }
+    return list;
 }

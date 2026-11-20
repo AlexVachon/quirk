@@ -5,6 +5,39 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.61.0] — 2026-11-20 — a title bar of its own, a terminal
+
+Found building the IDE's title bar and its terminal:
+
+- **New stdlib package `pty` 1.0.0**: run a program in a pseudo-terminal —
+  a shell, vim, anything interactive. `pty.spawn(args, cols, rows)`,
+  `read(timeout_ms)`, `write`, `resize`, `wait` / `kill` / `close`,
+  `pty.shell()`. posix_openpt + fork on Linux and macOS (the program's
+  controlling terminal, TERM=xterm-256color); ConPTY on Windows 10 1809+.
+  Reads hand back whole UTF-8 characters. In the runtime (`libs/pty.c`).
+- **Closures capture a local that shares a global's name.** A library's
+  `fn() { app.redraw() }` (with a parameter `app`) read the *program's*
+  global `app` instead ("Unknown method 'Ide.redraw'"): names with a global
+  were never captured, shadowed or not. Probe p191.
+- Pins **`typing` v1.19.0**: `String.code(index)` and `String.codes()` (code
+  points — there was no `ord`); `List.slice(start, end)` declared (it was in
+  the runtime, unreachable); **`lstrip()` / `rstrip()` strip one end** —
+  both were `trim()`.
+- Pins **`window` v1.9.0**: `open(borderless=true)` and
+  `Window.set_hit_areas(drag, holes, border)` — a title bar drawn by the
+  program that still drags the window, snaps, resizes from the edges and
+  double-click maximizes; `minimize` / `maximize` / `restore` /
+  `maximized()`; `inset()` (a maximized window overhangs the screen on
+  Windows); `set_opacity`; `hit_at` for tests. On Windows a borderless
+  window keeps the normal window styles (it was a bare popup: no maximize,
+  no minimize / close animations).
+- Pins **`ui` v1.12.0**: `App(title_bar=true)` and `TitleBar` (the title,
+  an optional `MenuBar`, minimize / maximize / close in the theme);
+  `App.every(ms, fn)` / `after(ms, fn)` timers (`run` wakes for them);
+  `TreeView(flat=true)` — a side bar's look (lit rows, thin chevrons, indent
+  guides, `icon` badges, `on_expand` to fill a folder lazily);
+  `Column.fill`.
+
 ## [7.60.0] — 2026-11-20 — what an editor needs
 
 Found building an IDE in Quirk (a desktop editor on `window` + `ui`):

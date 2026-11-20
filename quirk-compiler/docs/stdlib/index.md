@@ -22,6 +22,7 @@
 - [`net`](net.md)
 - [`process`](process.md)
 - [`prompt`](prompt.md)
+- [`pty`](pty.md)
 - [`random`](random.md)
 - [`regex`](regex.md)
 - [`sqlite`](sqlite.md)

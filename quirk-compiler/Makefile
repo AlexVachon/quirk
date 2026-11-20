@@ -12,7 +12,8 @@ LLVM_CONFIG ?= llvm-config-14
 # LLVM passes it runs over user IR. Default-O0 means parser/sema/codegen
 # walk the AST unoptimized, which added ~30-40% to every invocation.
 CXX      ?= g++
-CXXFLAGS = -std=c++17 -Wall -O2 -Iinclude $(shell $(LLVM_CONFIG) --cppflags) -MMD -MP
+CXXFLAGS = -std=c++17 -Wall -O2 -Iinclude $(shell $(LLVM_CONFIG) --cppflags) -MMD -MP \
+	-DQUIRK_LLVM_BINDIR='"$(shell $(LLVM_CONFIG) --bindir)"'
 LDFLAGS  = $(shell $(LLVM_CONFIG) --ldflags --libs all --system-libs) -lpthread
 
 # Same story for runtime.so — the .c files implementing String, List, Map,

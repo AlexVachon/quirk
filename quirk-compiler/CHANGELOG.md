@@ -21,6 +21,9 @@ only for breaking changes.
   (A binary built with `-o` named the runtime by its absolute path on the
   build machine: it couldn't run anywhere else.) `tools/check_bundle.sh` in CI:
   moved, run with an empty environment.
+- **`-o`, the build cache and `quirk bundle` work on macOS**: they ran
+  `llc-14`, which Homebrew's llvm@14 doesn't put on PATH (it's in its own
+  bin/). The compiler now also looks beside the LLVM it was built with.
 - Pins **`web` v1.3.1**: `app.listen`'s default host is `$QUIRK_HOST` when
   it's set; a Deploying section in its README.
 

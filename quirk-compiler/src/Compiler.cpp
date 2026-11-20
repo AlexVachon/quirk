@@ -1072,6 +1072,20 @@ static void hashImportGraph(const std::string& entry,
 
 static std::string resolveRuntimeSoPath();
 
+// LLVM's `llc`, to make a native binary (-o, the build cache, bundle):
+// `llc-14` on PATH (Debian / Ubuntu name it so), else the one beside the LLVM
+// this compiler was built with (Homebrew's llvm@14 keeps it in its own bin,
+// not on PATH: -o and the build cache never worked on macOS), else `llc`.
+static std::string llcCommand() {
+    if (qplat::have_command("llc-14")) return "llc-14";
+#ifdef QUIRK_LLVM_BINDIR
+    std::error_code ec;
+    fs::path beside = fs::path(QUIRK_LLVM_BINDIR) / "llc";
+    if (fs::exists(beside, ec)) return "'" + beside.string() + "'";
+#endif
+    return "llc";
+}
+
 // ---- quirk bundle ---------------------------------------------------------
 
 // Copy `from` (a file or folder) to `to`; hidden entries left out.
@@ -1489,7 +1503,7 @@ static int runAotPipeline(const std::string& irPath,
     }
 #endif
 
-    std::string llcCmd = "llc-14 -filetype=obj -relocation-model=pic -O2 "
+    std::string llcCmd = llcCommand() + " -filetype=obj -relocation-model=pic -O2 "
                        + irPath + " -o " + tmpObj;
     if (verbose) std::cerr << "build: " << llcCmd << "\n";
     if (qplat::run_shell(llcCmd.c_str()) != 0) {
@@ -2405,7 +2419,7 @@ int main(int argc, char* argv[]) {
         }
 
         // Compile IR → object file
-        std::string llcCmd = "llc-14 -filetype=obj -relocation-model=pic -O2 "
+        std::string llcCmd = llcCommand() + " -filetype=obj -relocation-model=pic -O2 "
                            + irPath + " -o " + objPath;
         log.debug("Compiling: " + llcCmd);
         if (int r = qplat::run_shell(llcCmd.c_str())) {

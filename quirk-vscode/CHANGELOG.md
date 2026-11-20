@@ -2,6 +2,11 @@
 
 All notable changes to the extension land here. Versioning follows SemVer; minor bumps for new features, patches for fixes.
 
+## [1.1.22] — 2026-11-20 — hover docs for error pages
+
+- Hover and completion know `live` 2.11 (`not_found`, `error_page`) and
+  `web` 1.4 (`Router.on_not_found`, `Router.on_error`).
+
 ## [1.1.21] — 2026-11-20 — hover docs for web 1.3.1
 
 - `app.listen`'s hover mentions `$QUIRK_HOST`.

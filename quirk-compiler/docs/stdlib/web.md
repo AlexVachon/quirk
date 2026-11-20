@@ -186,6 +186,17 @@ A group of routes and middleware to mount in an app under a prefix:
     api.get("/users", list_users)
     app.mount("/api", api)          // GET /api/users
 
+#### `define on_not_found(self, handler: Callable) -> Router`
+
+What the app answers when no route matches — `handler(req, res)` — once
+this router is mounted (unless the app has its own `on_not_found`).
+
+#### `define on_error(self, handler: Callable) -> Router`
+
+What the app does when a handler throws — `handler(err, req, res)` —
+once this router is mounted (unless the app has its own `on_error`). A
+handler that doesn't answer leaves it to the default.
+
 #### `define route(self, method: String, pattern: String, handler: Callable) -> Router`
 
 Handle `method` requests to `pattern` ("/users/:id", "/files/*path").

@@ -3355,6 +3355,22 @@
 "doc": "Its error for `field` (\"\" when there's none)."
 }
 ],
+"error_page": [
+{
+"package": "live",
+"qualified": "Router.error_page",
+"kind": "method",
+"signature": "define error_page(self, page: Callable, layout: Callable = null) -> Router {",
+"doc": "The page shown when a page fails \u2014 an exception in `on_load`, in rendering,\nor in an event handler \u2014 instead of a plain 500: `router.error_page(ErrorPage)`,\nin `layout` if given. Its fields, the ones it has: `status` (500, or an\nHttpError's), `message` (an HttpError's, meant for the visitor; \"\" for any\nother exception) and `error` (the exception and where it happened \u2014 only\nwhen QUIRK_ENV isn't \"production\": visitors never see it)."
+},
+{
+"package": "live",
+"qualified": "RouteGroup.error_page",
+"kind": "method",
+"signature": "define error_page(self, page: Callable) -> RouteGroup {",
+"doc": "The error page (Router.error_page), in the group's layouts."
+}
+],
 "errors": [
 {
 "package": "live",
@@ -5206,6 +5222,22 @@
 "doc": "The all-zero \"nil\" UUID \u2014 useful as a sentinel for \"no UUID yet\" in\nschemas that disallow nulls."
 }
 ],
+"not_found": [
+{
+"package": "live",
+"qualified": "Router.not_found",
+"kind": "method",
+"signature": "define not_found(self, page: Callable, layout: Callable = null) -> Router {",
+"doc": "The page shown for a path no page or route has \u2014 `router.not_found(NotFoundPage)`\n\u2014 with the 404 status, in `layout` if given (on a group: in the group's\nlayouts). Also for a q-link to such a path (the layout stays, the URL\ndoesn't change), and for `throw web.HttpError(404, \u2026)` in a page. It can\nhave the fields `status` (404), `message` (the HttpError's) and `path`."
+},
+{
+"package": "live",
+"qualified": "RouteGroup.not_found",
+"kind": "method",
+"signature": "define not_found(self, page: Callable) -> RouteGroup {",
+"doc": "The not-found page (Router.not_found), in the group's layouts."
+}
+],
 "notification_defaults": [
 {
 "package": "live",
@@ -5300,6 +5332,13 @@
 "on_error": [
 {
 "package": "web",
+"qualified": "Router.on_error",
+"kind": "method",
+"signature": "define on_error(self, handler: Callable) -> Router {",
+"doc": "What the app does when a handler throws \u2014 `handler(err, req, res)` \u2014\nonce this router is mounted (unless the app has its own `on_error`). A\nhandler that doesn't answer leaves it to the default."
+},
+{
+"package": "web",
 "qualified": "App.on_error",
 "kind": "method",
 "signature": "define on_error(self, handler: Callable) -> App {",
@@ -5334,6 +5373,13 @@
 }
 ],
 "on_not_found": [
+{
+"package": "web",
+"qualified": "Router.on_not_found",
+"kind": "method",
+"signature": "define on_not_found(self, handler: Callable) -> Router {",
+"doc": "What the app answers when no route matches \u2014 `handler(req, res)` \u2014 once\nthis router is mounted (unless the app has its own `on_not_found`)."
+},
 {
 "package": "web",
 "qualified": "App.on_not_found",

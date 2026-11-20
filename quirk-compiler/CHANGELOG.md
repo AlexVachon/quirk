@@ -5,6 +5,21 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.59.0] — 2026-11-20 — not-found and error pages
+
+- Pins **`live` v2.11.0**: not-found and error pages of your own, in the
+  layout — `router.not_found(NotFoundPage)` / `router.error_page(ErrorPage)`, or
+  a group's (`main.not_found(...)`: in its layouts). A page load of a path no
+  page has gets the page with a 404; a q-link to one shows it in place (the
+  layout kept, the URL the one asked for); `throw web.HttpError(404, ...)` in a
+  page too. An exception in a page's `on_load`, rendering or an event handler
+  shows the error page, in the layout, with its status. The page's fields get
+  filled: `status`, `message` (an HttpError's), `path`, and `error` — what
+  failed and where — only when `QUIRK_ENV` isn't `production`. Requests that
+  aren't for a page keep the plain answer. The demo has both.
+- Pins **`web` v1.4.0**: a `Router` can carry `on_not_found` / `on_error`
+  handlers, used by the app that mounts it unless it has its own.
+
 ## [7.58.0] — 2026-11-20 — quirk bundle
 
 - **`quirk bundle <file> [-o dist] [--docker] [--include path]`**: a folder

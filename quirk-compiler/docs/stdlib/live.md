@@ -392,6 +392,23 @@ Pages sharing a live.Layout and / or a guard:
 `admin := router.group(layout=AdminLayout, guard=live.require_login())`,
 then `admin.add("/admin", AdminPage)`.
 
+#### `define not_found(self, page: Callable, layout: Callable = null) -> Router`
+
+The page shown for a path no page or route has — `router.not_found(NotFoundPage)`
+— with the 404 status, in `layout` if given (on a group: in the group's
+layouts). Also for a q-link to such a path (the layout stays, the URL
+doesn't change), and for `throw web.HttpError(404, …)` in a page. It can
+have the fields `status` (404), `message` (the HttpError's) and `path`.
+
+#### `define error_page(self, page: Callable, layout: Callable = null) -> Router`
+
+The page shown when a page fails — an exception in `on_load`, in rendering,
+or in an event handler — instead of a plain 500: `router.error_page(ErrorPage)`,
+in `layout` if given. Its fields, the ones it has: `status` (500, or an
+HttpError's), `message` (an HttpError's, meant for the visitor; "" for any
+other exception) and `error` (the exception and where it happened — only
+when QUIRK_ENV isn't "production": visitors never see it).
+
 ### `struct RouteGroup`
 
 Routes in one layout (Router.group).
@@ -399,6 +416,14 @@ Routes in one layout (Router.group).
 #### `define add(self, path: String, page: Callable) -> RouteGroup`
 
 Serve `page` at `path`, in the group's layouts, behind its guards.
+
+#### `define not_found(self, page: Callable) -> RouteGroup`
+
+The not-found page (Router.not_found), in the group's layouts.
+
+#### `define error_page(self, page: Callable) -> RouteGroup`
+
+The error page (Router.error_page), in the group's layouts.
 
 #### `define group(self, layout: Callable = null, guard: Callable = null) -> RouteGroup`
 

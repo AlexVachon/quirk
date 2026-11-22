@@ -1,0 +1,43 @@
+// `from` is a keyword only before a module path or a throw's cause: as a
+// name (a variable, a parameter, a field) it was "Expected 'use' or 'as'
+// after module path".
+from typing.collections.list use { List }
+
+struct Range {
+    from: Int
+    to: Int
+
+    define __init(self, from: Int, to: Int) -> void {
+        self.from = from
+        self.to = to
+    }
+}
+
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+define span(from: Int, to: Int) -> Int {
+    return to - from
+}
+
+define main() -> void {
+    from := 3
+    from = from + 1
+    if from != 4 { fail("assign") }
+    if span(from, 10) != 6 { fail("argument") }
+    r := Range(from, 9)
+    if r.from != 4 or span(r.from, r.to) != 5 { fail("field") }
+    xs := [from, 1]
+    if not (from in xs) or from == 0 or (from > 3 and from < 5) == false { fail("operators") }
+    caught := ""
+    try {
+        try {
+            throw ValueError("inner")
+        } catch (e: ValueError) {
+            throw RuntimeError("outer") from e
+        }
+    } catch (e2: RuntimeError) {
+        caught = e2.message
+    }
+    if caught != "outer" { fail("throw ... from") }
+    print("ok")
+}

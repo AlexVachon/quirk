@@ -32,7 +32,10 @@ typedef struct {
     // Regex_find_at(); inspected by Regex_group_start/end(idx).
     regmatch_t last_groups[MAX_GROUPS];
     int last_count;
-    int last_origin;  // offset in the original string for translating rm_so/rm_eo
+    int64_t last_origin;       // byte offset the search started at (rm_so / rm_eo count from it)
+    int64_t last_origin_char;  // the same, in characters
+    const char* last_buf;      // the searched text (to turn byte offsets into characters)
+    int cflags;
 } QkRegex;
 
 // Translate a Quirk-side flag string ("i", "m", "im", ...) into POSIX cflags.
@@ -62,8 +65,11 @@ void* Regex_compile_raw(String* pattern, String* flags) {
     qr->compiled = 0;
     qr->last_count = 0;
     qr->last_origin = 0;
+    qr->last_origin_char = 0;
+    qr->last_buf = NULL;
+    qr->cflags = parse_flags(flags);
     char* p = make_safe_cstr(pattern);
-    int err = regcomp(&qr->r, p, parse_flags(flags));
+    int err = regcomp(&qr->r, p, qr->cflags);
     if (err != 0) {
         char errbuf[256];
         regerror(err, &qr->r, errbuf, sizeof(errbuf));
@@ -92,14 +98,20 @@ int Regex_test_raw(void* handle, String* s) {
 //  group_start/end to assemble a `Match` value.
 // ---------------------------------------------------------------------------
 
+// Offsets are character positions (what String.substring / length use),
+// not bytes: "é" before a match doesn't shift it.
 int64_t Regex_find_at(void* handle, String* s, int64_t from_offset) {
     QkRegex* qr = (QkRegex*)handle;
     if (!qr || !qr->compiled || !s || !s->buffer) return -1;
-    int64_t len = s->length;
     if (from_offset < 0) from_offset = 0;
-    if (from_offset > len) return -1;
-
-    int err = regexec(&qr->r, s->buffer + from_offset, MAX_GROUPS, qr->last_groups, 0);
+    if (from_offset > u8_len(s)) return -1;
+    int64_t from_b = u8_offset(s, from_offset);
+    char* str = make_safe_cstr(s);
+    // Searching from the middle: `^` doesn't match there (only at the start,
+    // or after a newline with the "m" flag).
+    int eflags = 0;
+    if (from_b > 0 && !((qr->cflags & REG_NEWLINE) && str[from_b - 1] == '\n')) eflags |= REG_NOTBOL;
+    int err = regexec(&qr->r, str + from_b, MAX_GROUPS, qr->last_groups, eflags);
     if (err != 0) {
         qr->last_count = 0;
         return -1;
@@ -109,8 +121,10 @@ int64_t Regex_find_at(void* handle, String* s, int64_t from_offset) {
         if (qr->last_groups[i].rm_so == -1) break;
         qr->last_count++;
     }
-    qr->last_origin = from_offset;
-    return (int)qr->last_groups[0].rm_so + from_offset;
+    qr->last_origin = from_b;
+    qr->last_origin_char = from_offset;
+    qr->last_buf = str;
+    return from_offset + u8_count(str + from_b, qr->last_groups[0].rm_so);
 }
 
 int64_t Regex_group_count(void* handle) {
@@ -118,18 +132,22 @@ int64_t Regex_group_count(void* handle) {
     return qr ? qr->last_count : 0;
 }
 
+static int64_t qk_regex_char_at(QkRegex* qr, regoff_t off) {
+    return qr->last_origin_char + u8_count(qr->last_buf + qr->last_origin, off);
+}
+
 int64_t Regex_group_start(void* handle, int64_t idx) {
     QkRegex* qr = (QkRegex*)handle;
     if (!qr || idx < 0 || idx >= qr->last_count) return -1;
     if (qr->last_groups[idx].rm_so < 0) return -1;
-    return (int)qr->last_groups[idx].rm_so + qr->last_origin;
+    return qk_regex_char_at(qr, qr->last_groups[idx].rm_so);
 }
 
 int64_t Regex_group_end(void* handle, int64_t idx) {
     QkRegex* qr = (QkRegex*)handle;
     if (!qr || idx < 0 || idx >= qr->last_count) return -1;
     if (qr->last_groups[idx].rm_eo < 0) return -1;
-    return (int)qr->last_groups[idx].rm_eo + qr->last_origin;
+    return qk_regex_char_at(qr, qr->last_groups[idx].rm_eo);
 }
 
 // ---------------------------------------------------------------------------

@@ -2,6 +2,10 @@
 
 All notable changes to the extension land here. Versioning follows SemVer; minor bumps for new features, patches for fixes.
 
+## [1.1.26] — 2026-11-22 — regex 1.0.1 docs
+
+- Hover docs for `regex` 1.0.1: match positions are characters.
+
 ## [1.1.25] — 2026-11-22 — hover docs for ui 1.13
 
 - `ui.Palette` and `ui.PaletteItem` (command palette / quick open).

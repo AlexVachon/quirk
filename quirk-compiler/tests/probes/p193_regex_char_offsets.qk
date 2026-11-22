@@ -1,0 +1,24 @@
+// regex: a Match's start / end are character positions (as substring and
+// length count) — they were bytes, so text after "é" came out shifted and
+// find_all went on past the end; and searching on from a match let `^`
+// match mid-text (find_all("^a", "aaa") found 3).
+use regex
+
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+define main() -> void {
+    s := "café = 1; thé = 22"
+    r := regex.compile("[0-9]+")
+    m := r.find(s)
+    if m == null or m.start != 7 or m.end != 8 or m.text != "1" { fail("first match after é: " + String(m)) }
+    all := r.find_all(s)
+    if all.length() != 2 { fail("find_all count " + String(all.length())) }
+    second: regex.Match = all[1]
+    if second.start != 16 or second.text != "22" { fail("second match: " + String(second)) }
+    g := regex.compile("(th[^ ]*) = ([0-9]+)").find(s)
+    if g == null or g.text != "thé = 22" or String(g.groups[0]) != "thé" or String(g.groups[1]) != "22" { fail("groups after é") }
+    if regex.compile("^a").find_all("aaa").length() != 1 { fail("^ matched mid-text") }
+    if regex.compile("^a", "m").find_all("ab\nab\nb").length() != 2 { fail("^ with m: after each newline") }
+    if regex.compile("a$").find_all("aaa").length() != 1 { fail("$ only at the end") }
+    print("ok")
+}

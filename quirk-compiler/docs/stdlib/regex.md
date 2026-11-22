@@ -9,7 +9,7 @@
 
 ### `struct Match`
 
-Result of `Regex.find`. `start` and `end` are byte offsets into the input
+Result of `Regex.find`. `start` and `end` are character positions in the input
 String; `text` is the substring `[start, end)`; `groups` is a `List<String>`
 of the captured groups (group 0 = full match is NOT included — `text` is
 the whole match).
@@ -31,7 +31,7 @@ Returns null when no match is found.
 #### `define find_all(self, s: String) -> List`
 
 Find every non-overlapping match. Returns a List<Match>.
-Empty matches advance one byte to avoid infinite loops.
+Empty matches advance one character to avoid infinite loops.
 
 #### `define replace_all(self, s: String, replacement: String) -> String`
 

@@ -540,7 +540,7 @@
 "qualified": "Match",
 "kind": "struct",
 "signature": "struct Match {",
-"doc": "Result of `Regex.find`. `start` and `end` are byte offsets into the input\nString; `text` is the substring `[start, end)`; `groups` is a `List<String>`\nof the captured groups (group 0 = full match is NOT included \u2014 `text` is\nthe whole match)."
+"doc": "Result of `Regex.find`. `start` and `end` are character positions in the input\nString; `text` is the substring `[start, end)`; `groups` is a `List<String>`\nof the captured groups (group 0 = full match is NOT included \u2014 `text` is\nthe whole match)."
 }
 ],
 "MemoryStore": [
@@ -3744,7 +3744,7 @@
 "qualified": "Regex.find_all",
 "kind": "method",
 "signature": "define find_all(self, s: String) -> List {",
-"doc": "Find every non-overlapping match. Returns a List<Match>.\nEmpty matches advance one byte to avoid infinite loops."
+"doc": "Find every non-overlapping match. Returns a List<Match>.\nEmpty matches advance one character to avoid infinite loops."
 }
 ],
 "find_at": [

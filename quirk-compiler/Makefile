@@ -176,6 +176,8 @@ STDLIB_TAG_process ?= v1.0.2
 STDLIB_TAG_window ?= v1.9.0
 # crypto v1.1.0: hash_password / verify_password / needs_rehash (scrypt), equal (runtime v7.55.0).
 STDLIB_TAG_crypto ?= v1.1.0
+# regex v1.0.1: Match.start / end in characters, ^ only at the start (runtime v7.63.0).
+STDLIB_TAG_regex ?= v1.0.1
 # sqlite v1.0.0 is the initial release (runtime Sqlite_*, SQLite 3.54.1 built in, v7.50.0).
 STDLIB_TAG_sqlite ?= v1.1.0
 # ui v1.0.0 is the initial release (pure Quirk on window; compiler v7.21.0).
@@ -238,6 +240,7 @@ bootstrap-stdlib:
 	        live)   tag="$(STDLIB_TAG_live)"   ;;                                 \
 	        sqlite) tag="$(STDLIB_TAG_sqlite)" ;;                                 \
 	        crypto) tag="$(STDLIB_TAG_crypto)" ;;                                 \
+	        regex)  tag="$(STDLIB_TAG_regex)"  ;;                                 \
 	    esac;                                                                     \
 	    if [ -f "packages/$$pkg/index.quirk" ] &&                                 \
 	       [ "$$(cat packages/$$pkg/.version 2>/dev/null)" = "$$tag" ]; then      \

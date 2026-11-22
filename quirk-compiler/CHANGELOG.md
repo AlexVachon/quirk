@@ -5,6 +5,24 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.63.0] — 2026-11-22 — find / replace
+
+Found building the IDE's find / replace:
+
+- **Regex match positions are characters.** `Match.start` / `end` (and the
+  groups') were byte offsets while `substring` and `length` count
+  characters: a match after "é" came out shifted (its `text` wrong too) and
+  `find_all` searched on with a character count. Now they're character
+  positions, as everywhere else. Probe p193.
+- **`^` matches only at the start** when `find_all` (or `find_from`) searches
+  on from a match: `find_all("^a", "aaa")` found 3 (each search started a
+  "new" string). With the `m` flag, `^` still matches after each newline.
+- **`from` can be a name**: `from := pos`, a parameter `from`, a field
+  `self.from` were "Expected 'use' or 'as' after module path". It's a
+  keyword only before a module path (`from x use`, `from .pkg use`) or a
+  throw's cause (`throw e from cause`). Probe p194.
+- Pins **`regex` v1.0.1** (its docs: positions in characters; tests).
+
 ## [7.62.0] — 2026-11-22 — a command palette
 
 - Pins **`ui` v1.13.0**: `ui.Palette` — a command palette / quick open: a

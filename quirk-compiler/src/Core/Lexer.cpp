@@ -140,7 +140,29 @@ Token Lexer::nextToken()
         if (ident == "struct")   return {TokenType::STRUCT,     ident, startLine, startCol};
         if (ident == "super")    return {TokenType::SUPER,      ident, startLine, startCol};
         if (ident == "use")      return {TokenType::USE,        ident, startLine, startCol};
-        if (ident == "from")     return {TokenType::FROM,       ident, startLine, startCol};
+        if (ident == "from") {
+            // `from` is a keyword before a module path / an expression
+            // (`from x use`, `from .pkg use`, `throw e from cause`); anywhere
+            // else it's a name: `from := p`, `f(from)`, `from.line`, `from + 1`.
+            int k = 0;
+            bool spaced = false;
+            while (peek(k) == ' ' || peek(k) == '\t') { k++; spaced = true; }
+            char n = peek(k);
+            bool keyword = false;
+            if (isalpha((unsigned char)n) || n == '_' || n == '"' || n == '\'') {
+                std::string word;
+                int j = k;
+                while (isalnum((unsigned char)peek(j)) || peek(j) == '_') word += peek(j++);
+                keyword = !(word == "and" || word == "or" || word == "in" || word == "is" ||
+                            word == "if" || word == "else" || word == "not");
+            } else if (n == '.' && spaced) {
+                keyword = true;                          // from .pkg use { ... }
+            } else if (n == '(' && spaced) {
+                keyword = true;                          // throw e from (cause)
+            }
+            if (keyword) return {TokenType::FROM, ident, startLine, startCol};
+            return {TokenType::IDENTIFIER, ident, startLine, startCol};
+        }
         if (ident == "extend")   return {TokenType::EXTEND,     ident, startLine, startCol};
         if (ident == "init")     return {TokenType::INIT,       ident, startLine, startCol};
         if (ident == "extern")   return {TokenType::EXTERN,     ident, startLine, startCol};

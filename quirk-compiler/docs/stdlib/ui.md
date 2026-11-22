@@ -589,6 +589,50 @@ Show folder `path`.
 
 Dismiss the dialog without a choice.
 
+### `struct PaletteItem`
+
+A row of a `Palette`: its `label`, a muted `detail` after it (a file's
+folder), a `hint` on the right (a shortcut), any `data`. `marks` /
+`detail_marks` are character indices drawn in the accent colour — the
+letters a fuzzy match found.
+
+### `struct Palette : Widget`
+
+A command palette / quick open: a search field over a list, at the top of
+the window (under the title bar). `on_query(text) -> List` gives the rows
+for what's typed — `PaletteItem`s, or anything with `.str()`; Enter or a
+click runs `on_pick(item)`, Escape or a click outside closes it
+(`on_cancel()`). Up / Down (wrapping), Page Up / Page Down, Home / End
+(with Ctrl) move. `show(text)` opens it with `text` typed.
+
+    p := ui.Palette(on_query=fn(q) { return rows_for(q) }, on_pick=fn(it) { run(it) },
+                    placeholder="Type a command")
+    p.show()        // e.g. from Ctrl+Shift+P
+
+#### `define show(self, text: String = "") -> void`
+
+Open it with `text` typed (the cursor after it), the rows for it listed.
+
+#### `define query(self) -> String`
+
+The text typed.
+
+#### `define refresh(self) -> void`
+
+Ask `on_query` for the rows again (the first one selected).
+
+#### `define cancel(self) -> void`
+
+Close it without picking.
+
+#### `define pick(self, i: Int = -1) -> void`
+
+Pick row `i` (the selected one by default): close, then `on_pick(item)`.
+
+#### `define select(self, i: Int) -> void`
+
+Select row `i` (kept on screen).
+
 ### `struct Canvas : Widget`
 
 A widget you draw yourself: `on_draw(win, x, y, width, height)` runs every

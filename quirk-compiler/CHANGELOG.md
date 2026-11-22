@@ -5,6 +5,17 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.62.0] — 2026-11-22 — a command palette
+
+- Pins **`ui` v1.13.0**: `ui.Palette` — a command palette / quick open: a
+  search field over a list at the top of the window (under the title bar).
+  `on_query(text)` gives the rows for what's typed (`ui.PaletteItem(label,
+  detail, hint, data, marks, detail_marks)`: a muted detail after the label,
+  a shortcut on the right, the letters a fuzzy match found drawn bold);
+  Up / Down (wrapping), Page Up / Down, Ctrl+Home / End; Enter or a click
+  picks, Escape or a click outside closes. The top popup's caret blinks
+  (its `next_redraw` counts).
+
 ## [7.61.0] — 2026-11-20 — a title bar of its own, a terminal
 
 Found building the IDE's title bar and its terminal:

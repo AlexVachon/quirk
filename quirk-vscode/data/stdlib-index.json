@@ -633,6 +633,24 @@
 "doc": "A page: a Component the router serves (`router.add(\"/todos\", TodoPage)`).\nWrite its HTML in `template()`, or build it from widgets by overriding\n`build()`:\n\n    define build(self) -> live.Widget {\n        return live.Column([\n            live.Label(\"Count: \" + String(self.count)),\n            live.Button(\"+1\", on_click=fn() { self.count = self.count + 1 }),\n        ])\n    }"
 }
 ],
+"Palette": [
+{
+"package": "ui",
+"qualified": "Palette",
+"kind": "struct",
+"signature": "struct Palette : Widget {",
+"doc": "A command palette / quick open: a search field over a list, at the top of\nthe window (under the title bar). `on_query(text) -> List` gives the rows\nfor what's typed \u2014 `PaletteItem`s, or anything with `.str()`; Enter or a\nclick runs `on_pick(item)`, Escape or a click outside closes it\n(`on_cancel()`). Up / Down (wrapping), Page Up / Page Down, Home / End\n(with Ctrl) move. `show(text)` opens it with `text` typed.\n\n    p := ui.Palette(on_query=fn(q) { return rows_for(q) }, on_pick=fn(it) { run(it) },\n                    placeholder=\"Type a command\")\n    p.show()        // e.g. from Ctrl+Shift+P"
+}
+],
+"PaletteItem": [
+{
+"package": "ui",
+"qualified": "PaletteItem",
+"kind": "struct",
+"signature": "struct PaletteItem {",
+"doc": "A row of a `Palette`: its `label`, a muted `detail` after it (a file's\nfolder), a `hint` on the right (a shortcut), any `data`. `marks` /\n`detail_marks` are character indices drawn in the accent colour \u2014 the\nletters a fuzzy match found."
+}
+],
 "Panel": [
 {
 "package": "ui",
@@ -2391,6 +2409,13 @@
 "kind": "method",
 "signature": "define cancel(self) -> void {",
 "doc": "Dismiss the dialog without a choice."
+},
+{
+"package": "ui",
+"qualified": "Palette.cancel",
+"kind": "method",
+"signature": "define cancel(self) -> void {",
+"doc": "Close it without picking."
 },
 {
 "package": "ui",
@@ -5940,6 +5965,15 @@
 "doc": "\u03c0 \u2014 circle's circumference / diameter. \u2248 3.14159265358979"
 }
 ],
+"pick": [
+{
+"package": "ui",
+"qualified": "Palette.pick",
+"kind": "method",
+"signature": "define pick(self, i: Int = -1) -> void {",
+"doc": "Pick row `i` (the selected one by default): close, then `on_pick(item)`."
+}
+],
 "pid": [
 {
 "package": "process",
@@ -6218,6 +6252,13 @@
 "kind": "method",
 "signature": "define query(self, sql: String, params: Any = null) -> List {",
 "doc": "Every row of a SELECT, as Maps (column name \u2192 value)."
+},
+{
+"package": "ui",
+"qualified": "Palette.query",
+"kind": "method",
+"signature": "define query(self) -> String {",
+"doc": "The text typed."
 }
 ],
 "query_as": [
@@ -6469,6 +6510,13 @@
 "kind": "method",
 "signature": "define refresh(self) -> void {",
 "doc": "Show the page again in the browser now \u2014 after a change that didn't come\nfrom the visitor (a timer, another visitor's message, a background job).\nEvents don't need it: the page is shown again after each one anyway."
+},
+{
+"package": "ui",
+"qualified": "Palette.refresh",
+"kind": "method",
+"signature": "define refresh(self) -> void {",
+"doc": "Ask `on_query` for the rows again (the first one selected)."
 }
 ],
 "regenerate": [
@@ -6935,6 +6983,13 @@
 "kind": "method",
 "signature": "define select(self, i: Int) -> void {",
 "doc": "Show page `i` (clamped); runs `on_change` if it changed."
+},
+{
+"package": "ui",
+"qualified": "Palette.select",
+"kind": "method",
+"signature": "define select(self, i: Int) -> void {",
+"doc": "Select row `i` (kept on screen)."
 }
 ],
 "select_all": [
@@ -7268,6 +7323,13 @@
 "kind": "method",
 "signature": "define show(self) -> void {",
 "doc": "Open the dialog (reading `dir`)."
+},
+{
+"package": "ui",
+"qualified": "Palette.show",
+"kind": "method",
+"signature": "define show(self, text: String = \"\") -> void {",
+"doc": "Open it with `text` typed (the cursor after it), the rows for it listed."
 }
 ],
 "shuffle": [

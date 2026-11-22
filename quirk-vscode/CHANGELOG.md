@@ -2,6 +2,10 @@
 
 All notable changes to the extension land here. Versioning follows SemVer; minor bumps for new features, patches for fixes.
 
+## [1.1.25] — 2026-11-22 — hover docs for ui 1.13
+
+- `ui.Palette` and `ui.PaletteItem` (command palette / quick open).
+
 ## [1.1.24] — 2026-11-20 — hover docs for pty, window 1.9, ui 1.12, typing 1.19
 
 - The new `pty` package; `window.open(borderless=)`, `Window.set_hit_areas`

@@ -5,6 +5,14 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.65.0] — 2026-11-23 — a menu bar in the title bar
+
+- Pins **`ui` v1.15.0**: `MenuItem(..., bound=false)` shows a shortcut
+  without binding it (the focused widget handles that key — Ctrl+Z in an
+  editor or a terminal, not the menu); `MenuBar(titles, menus, flat=true)`
+  draws no bar of its own, for `app.title_bar.content` (a title is lit
+  when hovered or open).
+
 ## [7.64.0] — 2026-11-23 — problems in the IDE
 
 Found building the IDE's Problems panel (the compiler checks the file as

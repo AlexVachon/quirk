@@ -359,6 +359,39 @@ String* Process_read_raw(int64_t fd, int64_t max) {
 #endif
 }
 
+// What has arrived on `fd`, without waiting: [text, open] — ["", 1]
+// when nothing's there yet, ["", 0] at the end of output. (For a UI that
+// polls a program from a timer: it never blocks.)
+List* Process_read_now_raw(int64_t fd, int64_t max) {
+    List* res = proc__new_list();
+    if (fd < 0) {
+        Core_Collections_List_List_append(res, make_String(""));
+        proc__push_int(res, 0);
+        return res;
+    }
+    if (max <= 0) max = 65536;
+    struct pollfd pf = { (int)fd, POLLIN, 0 };
+    int r;
+    do { r = poll(&pf, 1, 0); } while (r < 0 && errno == EINTR);
+    if (r <= 0) {
+        Core_Collections_List_List_append(res, make_String(""));
+        proc__push_int(res, r < 0 ? 0 : 1);
+        return res;
+    }
+    char* buf = (char*)GC_malloc_atomic((size_t)max + 1);
+    ssize_t n;
+    do { n = read((int)fd, buf, (size_t)max); } while (n < 0 && errno == EINTR);
+    if (n > 0) {
+        buf[n] = '\0';
+        Core_Collections_List_List_append(res, make_String_taking_ownership(buf));
+        proc__push_int(res, 1);
+    } else {
+        Core_Collections_List_List_append(res, make_String(""));
+        proc__push_int(res, (n < 0 && errno == EAGAIN) ? 1 : 0);
+    }
+    return res;
+}
+
 // One line from `fd`, without its "\n"; [line, 1] or ["", 0] at the end.
 // Reads a byte at a time so nothing past the line is consumed.
 List* Process_read_line_raw(int64_t fd) {

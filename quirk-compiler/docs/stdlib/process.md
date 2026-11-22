@@ -48,6 +48,30 @@ Close the program's stdin, so it sees end of input.
 
 Up to `size` bytes of stdout, waiting until some arrive. "" once it's all been read.
 
+#### `define read_now(self, size: Int = 65536) -> String`
+
+What has arrived on stdout so far, without waiting ("" if nothing has
+yet). For a program watched from a UI timer: read what's there each
+tick (so it never stalls on a full pipe), then `done()`; once
+`output_ended()`, it has all been read.
+@example
+p := process.spawn(["quirk", "--check", "main.qk"])
+// each tick:
+out = out + p.read_now()
+if p.done() and p.output_ended() { show(out) }
+
+#### `define read_err_now(self) -> String`
+
+Like `read_now`, for stderr.
+
+#### `define output_ended(self) -> Bool`
+
+True once `read_now` reached the end of stdout (and of stderr, if piped).
+
+#### `define close(self) -> void`
+
+Close the pipes to and from the program (it keeps running; `wait` for it).
+
 #### `define read_line(self) -> String`
 
 The next line of stdout, without its newline; null at the end of output.

@@ -248,6 +248,30 @@ String* Process_read_raw(int64_t fd, int64_t max) {
     return make_String_taking_ownership(buf);
 }
 
+// What has arrived on `fd`, without waiting: [text, open] — ["", 1]
+// when nothing's there yet, ["", 0] at the end of output. (For a UI that
+// polls a program from a timer: it never blocks.)
+List* Process_read_now_raw(int64_t fd, int64_t max) {
+    List* res = proc__new_list();
+    DWORD avail = 0;
+    if (fd <= 0 || !PeekNamedPipe((HANDLE)(intptr_t)fd, NULL, 0, NULL, &avail, NULL)) {
+        Core_Collections_List_List_append(res, make_String(""));
+        proc__push_int(res, 0);
+        return res;
+    }
+    if (max <= 0) max = 65536;
+    DWORD got = 0;
+    char* buf = (char*)GC_malloc_atomic((size_t)max + 1);
+    if (avail > 0) {
+        DWORD want = avail < (DWORD)max ? avail : (DWORD)max;
+        if (!ReadFile((HANDLE)(intptr_t)fd, buf, want, &got, NULL)) got = 0;
+    }
+    buf[got] = '\0';
+    Core_Collections_List_List_append(res, got ? make_String_taking_ownership(buf) : make_String(""));
+    proc__push_int(res, 1);
+    return res;
+}
+
 List* Process_read_line_raw(int64_t fd) {
     List* res = proc__new_list();
     size_t cap = 128, len = 0;

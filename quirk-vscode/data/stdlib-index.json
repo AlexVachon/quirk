@@ -2730,6 +2730,13 @@
 "doc": "Close socket `fd`, releasing the OS resource."
 },
 {
+"package": "process",
+"qualified": "Process.close",
+"kind": "method",
+"signature": "define close(self) -> void {",
+"doc": "Close the pipes to and from the program (it keeps running; `wait` for it)."
+},
+{
 "package": "pty",
 "qualified": "Pty.close",
 "kind": "method",
@@ -5758,6 +5765,15 @@
 "doc": "Run a program and return its stdout, with one trailing newline removed.\nThrows `ProcessError` when it exits with a non-zero code.\n@example\nsha := process.output([\"git\", \"rev-parse\", \"HEAD\"])"
 }
 ],
+"output_ended": [
+{
+"package": "process",
+"qualified": "Process.output_ended",
+"kind": "method",
+"signature": "define output_ended(self) -> Bool {",
+"doc": "True once `read_now` reached the end of stdout (and of stderr, if piped)."
+}
+],
 "page": [
 {
 "package": "live",
@@ -6381,6 +6397,15 @@
 "doc": "Up to `size` bytes of stderr; \"\" once it's all been read."
 }
 ],
+"read_err_now": [
+{
+"package": "process",
+"qualified": "Process.read_err_now",
+"kind": "method",
+"signature": "define read_err_now(self) -> String {",
+"doc": "Like `read_now`, for stderr."
+}
+],
 "read_file": [
 {
 "package": "csv",
@@ -6413,6 +6438,15 @@
 "kind": "method",
 "signature": "define read_line(self) -> String {",
 "doc": "The next line of stdout, without its newline; null at the end of output."
+}
+],
+"read_now": [
+{
+"package": "process",
+"qualified": "Process.read_now",
+"kind": "method",
+"signature": "define read_now(self, size: Int = 65536) -> String {",
+"doc": "What has arrived on stdout so far, without waiting (\"\" if nothing has\nyet). For a program watched from a UI timer: read what's there each\ntick (so it never stalls on a full pipe), then `done()`; once\n`output_ended()`, it has all been read.\n@example\np := process.spawn([\"quirk\", \"--check\", \"main.qk\"])\n// each tick:\nout = out + p.read_now()\nif p.done() and p.output_ended() { show(out) }"
 }
 ],
 "read_password": [
@@ -8194,6 +8228,15 @@
 "kind": "define",
 "signature": "define tooltip(w: Widget, text: String) -> Widget {",
 "doc": "Give `w` a tooltip and return it \u2014 for building trees inline:\n`ui.tooltip(ui.Button(\"Save\", on_click=save), \"Write the file (Ctrl+S)\")`."
+}
+],
+"tooltip_at": [
+{
+"package": "ui",
+"qualified": "Widget.tooltip_at",
+"kind": "method",
+"signature": "define tooltip_at(self, px: Int, py: Int) -> String {",
+"doc": "The tooltip for the point (px, py) \u2014 `tooltip` by default. A widget\nwhose parts say different things (a code editor's error marks, a\ntable's cells) overrides it; \"\" for none there."
 }
 ],
 "transaction": [

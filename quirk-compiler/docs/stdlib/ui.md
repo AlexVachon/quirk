@@ -114,6 +114,12 @@ Do what a screen reader asks: `action` is "invoke", "toggle",
 on this widget or one of its items (`node.index`, `node.data`). True if
 it did something.
 
+#### `define tooltip_at(self, px: Int, py: Int) -> String`
+
+The tooltip for the point (px, py) — `tooltip` by default. A widget
+whose parts say different things (a code editor's error marks, a
+table's cells) overrides it; "" for none there.
+
 #### `define contains(self, px: Int, py: Int) -> Bool`
 
 True if (px, py) is inside the widget's box.

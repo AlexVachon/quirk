@@ -5,6 +5,20 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.64.0] — 2026-11-23 — problems in the IDE
+
+Found building the IDE's Problems panel (the compiler checks the file as
+you type):
+
+- Pins **`process` v1.1.0**: `Process.read_now()` / `read_err_now()` — what
+  a program has written so far, without waiting (a UI timer can watch a
+  program and never stall on a full pipe); `output_ended()`; `close()`
+  closes the pipes (they were never closed). In the runtime
+  (`Process_read_now_raw`: poll on Linux / macOS, PeekNamedPipe on Windows).
+- Pins **`ui` v1.14.0**: `Widget.tooltip_at(px, py)` — a tooltip that
+  depends on where the mouse is (a code editor's error under the mouse); a
+  new text waits the delay again.
+
 ## [7.63.0] — 2026-11-22 — find / replace
 
 Found building the IDE's find / replace:

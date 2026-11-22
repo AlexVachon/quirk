@@ -2,6 +2,11 @@
 
 All notable changes to the extension land here. Versioning follows SemVer; minor bumps for new features, patches for fixes.
 
+## [1.1.27] — 2026-11-23 — hover docs for process 1.1, ui 1.14
+
+- `Process.read_now` / `read_err_now` / `output_ended` / `close`;
+  `Widget.tooltip_at`.
+
 ## [1.1.26] — 2026-11-22 — regex 1.0.1 docs
 
 - Hover docs for `regex` 1.0.1: match positions are characters.

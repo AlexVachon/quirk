@@ -166,7 +166,8 @@ STDLIB_TAG_test ?= v1.1.0
 # fs v1.2.0: walk, glob, temp files, copy, read/write_text (runtime v7.19.0).
 STDLIB_TAG_fs ?= v1.2.0
 # process v1.0.0 is the initial release; v1.0.1 requires compiler 7.18.0 (runtime Process_*).
-STDLIB_TAG_process ?= v1.0.2
+# process v1.1.0: Process.read_now / read_err_now, output_ended, close (runtime Process_read_now_raw, v7.64.0).
+STDLIB_TAG_process ?= v1.1.0
 # process v1.0.2: shell() uses cmd.exe /c on Windows (sys.platform, v7.24.0).
 # window v1.0.0 is the initial release (runtime Window_*, SDL2 via dlopen, v7.20.0).
 # window v1.1.0: PNG / JPEG / GIF / TGA images, sprite-sheet regions, alpha (v7.22.0).
@@ -192,7 +193,8 @@ STDLIB_TAG_sqlite ?= v1.1.0
 # ui v1.12.0: App(title_bar=true), TitleBar, flat TreeView, App.every / after timers (v7.61.0).
 # ui v1.12.1: App.on_key returning true keeps the key from the focused widget.
 # ui v1.13.0: Palette (command palette / quick open) (v7.62.0).
-STDLIB_TAG_ui ?= v1.13.0
+# ui v1.14.0: Widget.tooltip_at (a tooltip that depends on the point) (v7.64.0).
+STDLIB_TAG_ui ?= v1.14.0
 STDLIB_TAG_web ?= v1.4.0
 STDLIB_TAG_live ?= v2.11.0
 

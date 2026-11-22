@@ -6,11 +6,13 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 QUIRK="$(pwd)/${QUIRK:-bin/quirk}"
 fails=0
+# (A here-string, not `printf | grep -q`: grep -q stops at the first match,
+# printf then gets SIGPIPE, and with pipefail a match counted as a failure.)
 expect() {   # expect <output> <grep -E pattern> <what>
-    if printf '%s\n' "$1" | grep -qE -- "$2"; then echo "  ok $3"; else echo "FAIL $3"; fails=$((fails + 1)); fi
+    if grep -qE -- "$2" <<< "$1"; then echo "  ok $3"; else echo "FAIL $3"; fails=$((fails + 1)); fi
 }
 reject() {
-    if printf '%s\n' "$1" | grep -qE -- "$2"; then echo "FAIL $3"; fails=$((fails + 1)); else echo "  ok $3"; fi
+    if grep -qE -- "$2" <<< "$1"; then echo "FAIL $3"; fails=$((fails + 1)); else echo "  ok $3"; fi
 }
 
 H=$(mktemp -d)

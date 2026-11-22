@@ -18,6 +18,9 @@ you type):
 - Pins **`ui` v1.14.0**: `Widget.tooltip_at(px, py)` — a tooltip that
   depends on where the mouse is (a code editor's error under the mouse); a
   new text waits the delay again.
+- CI: the check scripts no longer fail at random on a match (`printf |
+  grep -q` under `pipefail`: grep stopped at the first match, printf got
+  SIGPIPE, and the match counted as a failure).
 
 ## [7.63.0] — 2026-11-22 — find / replace
 

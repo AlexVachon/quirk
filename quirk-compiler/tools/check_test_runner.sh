@@ -7,10 +7,10 @@ QUIRK="${QUIRK:-bin/quirk}"
 F=tools/fixtures/quirk_test
 fails=0
 expect() {   # expect <output> <grep -E pattern> <what>
-    if printf '%s\n' "$1" | grep -qE -- "$2"; then echo "  ok $3"; else echo "FAIL $3"; fails=$((fails + 1)); fi
+    if grep -qE -- "$2" <<< "$1"; then echo "  ok $3"; else echo "FAIL $3"; fails=$((fails + 1)); fi
 }
 reject() {
-    if printf '%s\n' "$1" | grep -qE -- "$2"; then echo "FAIL $3"; fails=$((fails + 1)); else echo "  ok $3"; fi
+    if grep -qE -- "$2" <<< "$1"; then echo "FAIL $3"; fails=$((fails + 1)); else echo "  ok $3"; fi
 }
 
 out=$(NO_COLOR=1 "$QUIRK" test "$F" 2>&1); rc=$?

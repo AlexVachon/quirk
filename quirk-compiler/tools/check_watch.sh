@@ -69,6 +69,6 @@ kill -0 $pid 2>/dev/null && { echo "FAIL test --watch still running"; kill -9 $p
 
 # quirk run on a test file: says to use quirk test.
 out=$(cd "$dir" && "$QUIRK" run src/part_test.qk 2>&1)
-if printf '%s\n' "$out" | grep -q 'quirk test src/part_test.qk'; then echo "  ok quirk run x_test.qk points to quirk test"; else echo "FAIL no hint: $out"; fails=$((fails + 1)); fi
+if grep -q 'quirk test src/part_test.qk' <<< "$out"; then echo "  ok quirk run x_test.qk points to quirk test"; else echo "FAIL no hint: $out"; fails=$((fails + 1)); fi
 
 [ $fails -eq 0 ] && echo "quirk run --watch: ok" || { echo "quirk run --watch: $fails failed"; exit 1; }

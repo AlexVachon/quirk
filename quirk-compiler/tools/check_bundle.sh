@@ -54,7 +54,7 @@ port=$((20000 + RANDOM % 20000))
 pid=$!
 for _ in $(seq 1 60); do curl -s -o /dev/null "http://127.0.0.1:$port/" && break; sleep 0.5; done
 page=$(curl -s "http://127.0.0.1:$port/")
-printf '%s' "$page" | grep -q 'template file 41' && ok "runs moved, with an empty environment (template found)" \
+grep -q 'template file 41' <<< "$page" && ok "runs moved, with an empty environment (template found)" \
     || { fail "the moved bundle: $(printf '%s' "$page" | head -c 300) $(tail -5 "$work/log")"; }
 css=$(curl -s "http://127.0.0.1:$port/site.css")
 [ "$css" = "body { color: teal }" ] && ok "its static files" || fail "static: $css"

@@ -5,6 +5,28 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.72.0] — 2026-11-23 — ui 1.18.0: font weights, button colours, live previews
+
+- **`ui` 1.18.0**:
+  - **Font weights**: `ui.Label(..., weight="bold")` and
+    `ui.Button(..., weight="semibold")` take "regular", "medium",
+    "semibold", "bold", or 500 / 600 / 700.
+    `theme.set_weight("bold", window.load_font("Inter-Bold.ttf", 13))` gives
+    a weight its own font. Without one, semibold and bold are drawn twice,
+    a pixel apart.
+  - **`ui.Button(..., color=..., text_color=...)`**: a button's own
+    background and text colours. By default they're the theme's accent and
+    accent_text.
+  - **Previewed apps**, for an IDE's live view. With
+    `QUIRK_UI_PREVIEW=<folder>`, a `ui.App` opens no window of its own and
+    runs at `QUIRK_UI_PREVIEW_SIZE` (`WxH`).
+    - It writes each frame to `<folder>/frame.bmp` and counts frames in
+      `frame.n`.
+    - It reads the view's mouse and keys from `<folder>/events`, one line
+      each; `ui.preview_event` and `ui.preview_line` convert between lines
+      and events.
+    - It closes once the folder is removed.
+
 ## [7.71.0] — 2026-11-23 — round corners for borderless windows (Windows 11)
 
 - A borderless window on Windows 11 has round corners, like any other.

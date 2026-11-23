@@ -341,7 +341,7 @@ static float qwin_env_scale(void) {
         const char* v = getenv(names[i]);
         if (v && *v) {
             float f = (float)atof(v);
-            if (f >= 0.5f && f <= 8.0f) return f;
+            if (f >= 0.25f && f <= 8.0f) return f;      // (below 1: drawn small — an IDE's preview)
         }
     }
     return 1.0f;

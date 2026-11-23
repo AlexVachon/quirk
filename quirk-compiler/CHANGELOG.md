@@ -5,6 +5,14 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.73.0] — 2026-11-23 — small UI scales
+
+- `QUIRK_UI_SCALE` accepts 0.25 to 8; it was 0.5 to 8. Below 1, a window
+  draws itself small, with its text rendered at that size. Its layout and
+  events are still in its own (logical) pixels. An IDE's live preview uses
+  this to show a big app sharp in a small view, instead of shrinking a
+  full-size picture.
+
 ## [7.72.0] — 2026-11-23 — ui 1.18.1: font weights, button colours, live previews
 
 - **`ui` 1.18.1**:

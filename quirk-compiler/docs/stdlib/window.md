@@ -306,10 +306,11 @@ Linux desktops).
 
 The colour (0xRRGGBB, opaque) of pixel (x, y) in what's been drawn — mostly for tests.
 
-#### `define screenshot(self, path: String) -> void`
+#### `define set_icon(self, path: String) -> Bool`
 
-Save what's been drawn as a BMP image.
-@throws WindowError on failure.
+The window's icon (its title bar's, the taskbar's, Alt+Tab's) from an
+image file — a PNG about 256x256 with transparency. False if it couldn't
+(no such file, an SDL without icons).
 
 
 ### Module-level functions

@@ -6911,15 +6911,6 @@
 "doc": "How many migrate() steps the database has had (its `user_version`)."
 }
 ],
-"screenshot": [
-{
-"package": "window",
-"qualified": "Window.screenshot",
-"kind": "method",
-"signature": "define screenshot(self, path: String) -> void {",
-"doc": "Save what's been drawn as a BMP image.\n@throws WindowError on failure."
-}
-],
 "script": [
 {
 "package": "sqlite",
@@ -7278,6 +7269,15 @@
 "kind": "method",
 "signature": "define set_hit_areas(self, drag: List, holes: List = [], border: Int = 5) -> Bool {",
 "doc": "For a title bar of your own (a window opened `borderless=true`): a press\nin one of the `drag` rectangles moves the window (with the system's\nsnapping, and a double-click maximizing on Windows), except in the\n`holes` (your buttons there); presses within `border` pixels of an edge\nresize it (when it's resizable and not maximized). Each rectangle is\n`[x, y, width, height]`; call it again when they move (after a resize).\nFalse if this SDL can't (before 2.0.4).\n@example w.set_hit_areas([[0, 0, w.width(), 32]], [[w.width() - 138, 0, 138, 32]])"
+}
+],
+"set_icon": [
+{
+"package": "window",
+"qualified": "Window.set_icon",
+"kind": "method",
+"signature": "define set_icon(self, path: String) -> Bool {",
+"doc": "The window's icon (its title bar's, the taskbar's, Alt+Tab's) from an\nimage file \u2014 a PNG about 256x256 with transparency. False if it couldn't\n(no such file, an SDL without icons)."
 }
 ],
 "set_opacity": [

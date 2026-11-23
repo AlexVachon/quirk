@@ -8,6 +8,14 @@
 //  "<the program's folder>/assets/logo.png" are the same file.
 // ---------------------------------------------------------------------------
 
+#ifdef _WIN32
+#include <direct.h>
+#else
+#include <limits.h>
+#include <stdlib.h>
+#include <unistd.h>
+#endif
+
 typedef struct {
     const char* path;              // relative, with /
     const unsigned char* data;
@@ -71,6 +79,33 @@ static void q_embed_normalize(char* s) {
     strcpy(s, out);
 }
 
+// An absolute path through its real folders (symlinks resolved: on macOS
+// /var is /private/var): the longest start of it that's on disk, resolved,
+// and the rest as it is (a file built into the program isn't on disk).
+static void q_embed_canon(char* s) {
+#ifndef _WIN32
+    if (s[0] != '/') return;
+    char head[4096];
+    snprintf(head, sizeof head, "%s", s);
+    size_t n = strlen(head);
+    for (;;) {
+        char real[PATH_MAX];
+        if (realpath(head, real)) {
+            char out[4096];
+            snprintf(out, sizeof out, "%s%s", strcmp(real, "/") == 0 ? "" : real, s + n);
+            snprintf(s, 4096, "%s", out);
+            return;
+        }
+        char* slash = strrchr(head, '/');
+        if (!slash || slash == head) return;
+        *slash = '\0';
+        n = (size_t)(slash - head);
+    }
+#else
+    (void)s;
+#endif
+}
+
 // The embedded file at `path` (its bytes and size), or NULL.
 const unsigned char* quirk_embedded(const char* path, int64_t* size) {
     if (!q_embedded || !path || !*path) return NULL;
@@ -78,6 +113,7 @@ const unsigned char* quirk_embedded(const char* path, int64_t* size) {
     snprintf(key, sizeof key, "%s", path);
     q_embed_slashes(key);
     q_embed_normalize(key);
+    q_embed_canon(key);
     const char* k = key;
     if (!q_embed_exe_dir[0]) {
         String* exe = Sys_executable();
@@ -87,6 +123,7 @@ const unsigned char* quirk_embedded(const char* path, int64_t* size) {
             char* slash = strrchr(q_embed_exe_dir, '/');
             if (slash) *slash = '\0';
             q_embed_normalize(q_embed_exe_dir);
+            q_embed_canon(q_embed_exe_dir);
         }
     }
     const char* rel = q_embed_strip(k, q_embed_exe_dir);
@@ -98,6 +135,7 @@ const unsigned char* quirk_embedded(const char* path, int64_t* size) {
             if (!getcwd(q_embed_cwd, sizeof q_embed_cwd)) q_embed_cwd[0] = '\0';
 #endif
             q_embed_normalize(q_embed_cwd);
+            q_embed_canon(q_embed_cwd);
         }
         rel = q_embed_strip(k, q_embed_cwd);
     }
@@ -123,6 +161,7 @@ int quirk_embedded_dir(const char* path) {
     snprintf(key, sizeof key, "%s", path);
     q_embed_slashes(key);
     q_embed_normalize(key);
+    q_embed_canon(key);
     const char* k = key;
     if (q_embed_exe_dir[0]) { const char* r = q_embed_strip(k, q_embed_exe_dir); if (r) k = r; }
     if (q_embed_cwd[0]) { const char* r = q_embed_strip(k, q_embed_cwd); if (r) k = r; }

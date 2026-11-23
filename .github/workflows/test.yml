@@ -598,7 +598,7 @@ jobs:
           Write-Host "Test App.exe: GUI, with its icon, runs"
           # --embed: a file built into the program, read from there (run elsewhere).
           New-Item -ItemType Directory -Force (Join-Path $app 'assets') | Out-Null
-          Set-Content -NoNewline (Join-Path $app 'assets\msg.txt') 'inside'
+          Set-Content -Path (Join-Path $app 'assets\msg.txt') -Value 'inside' -NoNewline
           Set-Content (Join-Path $app 'emb.qk') "use fs`ndefine main() -> void {`n    print(fs.read_text(`"assets/msg.txt`"))`n}`n"
           Get-ChildItem -Recurse (Join-Path $app 'assets') | ForEach-Object { Write-Host "  in assets: $($_.FullName) $($_.Length)" }
           Push-Location $app

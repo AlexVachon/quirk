@@ -600,6 +600,7 @@ jobs:
           New-Item -ItemType Directory -Force (Join-Path $app 'assets') | Out-Null
           Set-Content -NoNewline (Join-Path $app 'assets\msg.txt') 'inside'
           Set-Content (Join-Path $app 'emb.qk') "use fs`ndefine main() -> void {`n    print(fs.read_text(`"assets/msg.txt`"))`n}`n"
+          Get-ChildItem -Recurse (Join-Path $app 'assets') | ForEach-Object { Write-Host "  in assets: $($_.FullName) $($_.Length)" }
           Push-Location $app
           quirk bundle emb.qk -o edist --include assets --embed
           if ($LASTEXITCODE -ne 0) { exit 1 }

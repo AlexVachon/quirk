@@ -1400,16 +1400,22 @@ static std::vector<std::pair<std::string, fs::path>> embedFiles(const CompilerOp
         bool dir = fs::is_directory(src, ec);
         int seen = 0;
         if (dir) {
-            std::error_code wec;
-            for (auto it = fs::recursive_directory_iterator(src, fs::directory_options::skip_permission_denied, wec);
-                 !wec && it != fs::recursive_directory_iterator(); it.increment(wec)) {
-                seen++;
-                std::error_code fec;
-                std::string n = it->path().filename().string();
-                if (!n.empty() && n[0] == '.') { if (it->is_directory(fec)) it.disable_recursion_pending(); continue; }
-                if (it->is_regular_file(fec) || fs::is_regular_file(it->path(), fec)) add(it->path());
-            }
-            if (wec) g_embedScan += " (walk: " + wec.message() + ")";
+            // One folder at a time (directory_iterator — what copying the
+            // DLLs uses; the recursive iterator listed nothing on Windows).
+            std::function<void(const fs::path&)> walk = [&](const fs::path& d) {
+                std::error_code wec;
+                for (fs::directory_iterator it(d, wec), end; !wec && it != end; it.increment(wec)) {
+                    seen++;
+                    std::error_code fec;
+                    fs::path p = it->path();
+                    std::string n = p.filename().string();
+                    if (!n.empty() && n[0] == '.') continue;
+                    if (fs::is_directory(p, fec)) walk(p);
+                    else if (fs::is_regular_file(p, fec)) add(p);
+                }
+                if (wec) g_embedScan += " (" + d.string() + ": " + wec.message() + ")";
+            };
+            walk(src);
         } else if (fs::is_regular_file(src, ec)) {
             add(src);
         }

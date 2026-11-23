@@ -1049,9 +1049,41 @@ int64_t Window_state_raw(int64_t h) {
            ((f & QSDL_WINDOW_FULLSCREEN) ? 4 : 0) | ((f & QSDL_WINDOW_BORDERLESS) ? 8 : 0);
 }
 
-// 1 while Caps Lock is on (as the window system sees it — which, under
-// WSLg, can differ from the keyboard's light), 0 when off or unknown.
+#if !defined(_WIN32) && !defined(__APPLE__)
+// The X server's own Caps Lock (XkbGetState, libX11 opened when first
+// asked): it's what turns typed letters into capitals. SDL keeps a state of
+// its own from the keys it saw, which under WSLg drifts from the X server's
+// (Caps Lock "on" there with the keyboard's light off): -1 when there's no X.
+static int qx_caps(void) {
+    static int tried = 0;
+    static void* dpy = NULL;
+    static int (*getState)(void*, unsigned int, void*) = NULL;
+    if (!tried) {
+        tried = 1;
+        const char* d = getenv("DISPLAY");
+        if (!d || !*d || qwin_headless) return -1;
+        void* x11 = dlopen("libX11.so.6", RTLD_NOW | RTLD_LOCAL);
+        if (!x11) return -1;
+        void* (*openDisplay)(const char*) = (void* (*)(const char*))dlsym(x11, "XOpenDisplay");
+        *(void**)&getState = dlsym(x11, "XkbGetState");
+        if (openDisplay && getState) dpy = openDisplay(NULL);
+    }
+    if (!dpy || !getState) return -1;
+    unsigned char st[64];                              // XkbStateRec (its `mods` at byte 6)
+    memset(st, 0, sizeof st);
+    if (getState(dpy, 0x0100 /* XkbUseCoreKbd */, st) != 0) return -1;
+    return (st[6] & 0x02 /* LockMask */) ? 1 : 0;
+}
+#endif
+
+// 1 while Caps Lock is on — as the window system sees it, which is what
+// typed letters follow (under WSLg it can differ from the keyboard's light);
+// 0 when off or unknown.
 int64_t Window_caps_lock_raw(void) {
+#if !defined(_WIN32) && !defined(__APPLE__)
+    int x = qx_caps();
+    if (x >= 0) return x;
+#endif
     if (qsdl.loaded != 1 || !qsdl.GetModState) return 0;
     return (qsdl.GetModState() & 0x2000) ? 1 : 0;
 }

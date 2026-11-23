@@ -5,6 +5,15 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.67.0] — 2026-11-23 — Caps Lock as the X server sees it
+
+- **`window.caps_lock()` asks the X server** on Linux (XkbGetState through
+  libX11, opened when first asked) instead of SDL's own state: SDL builds
+  that from the keys it saw, and under WSLg the X server's Caps Lock drifts
+  from the keyboard's light (on, with the light off — every letter typed
+  in capitals) without SDL noticing. An editor showing CAPS showed nothing.
+  Elsewhere (Windows, macOS, no X) it's SDL's state, as before.
+
 ## [7.66.0] — 2026-11-23 — null is an error, not a crash
 
 - **A method call, a field read or a field write on a null struct throws

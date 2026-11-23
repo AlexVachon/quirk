@@ -442,6 +442,10 @@ Select `node` (null: none); runs `on_select` if it changed.
 
 Expand or collapse `node`.
 
+#### `define node_at(self, px: Int, py: Int) -> TreeNode`
+
+The node on the row at (px, py) (null: none there).
+
 ### `struct Table : Widget`
 
 Rows of values under column headers: `ui.Table(["Name", "Size"], rows)`,

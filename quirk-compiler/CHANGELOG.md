@@ -21,6 +21,9 @@ only for breaking changes.
   instruction are not of the same type") that stopped the compiler. It's
   null exactly when `x` was — `Box(0)?.size()` isn't. An `Int` compared
   with `null` is never null. Probe p196.
+- Pins **`ui` v1.16.0**: a right-click on a `TreeView` / `ListView` row
+  selects it (quietly: no `on_select`) before its `context_menu` opens, so
+  the menu is about that row; `TreeView.node_at(x, y)`.
 
 ## [7.65.0] — 2026-11-23 — a menu bar in the title bar
 

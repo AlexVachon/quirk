@@ -19,7 +19,8 @@ Something that happened to a window. `kind` is one of:
   "key_down" / "key_up" — `key` is the key's name in lower case: "a",
                   "escape", "return", "space", "left", "f1", "left_shift"...;
                   `repeat` is true for auto-repeat; `shift` / `ctrl` /
-                  `alt` / `meta` say which modifiers were held
+                  `alt` / `meta` say which modifiers were held, `caps`
+                  whether Caps Lock was on
   "text"        — typed text (`text`), with the keyboard layout and
                   accents applied — use this for text entry, not key_down
   "compose"     — an input method (Chinese, Japanese, Korean, dead keys...)
@@ -402,3 +403,10 @@ define frame(w: window.Window, events: List) -> void {
     w.text("Frame at " + window.ticks().str() + "ms", 10, 10)
 }
 window.run(window.open("Demo", 400, 300), frame)
+
+#### `define caps_lock() -> Bool`
+
+True while Caps Lock is on, as the window system sees it (asked now, not
+from the last key). Under WSLg this can differ from the keyboard's light
+— letters typed then come out in capitals: show it (an editor's status
+bar). False before a window is open.

@@ -2,9 +2,10 @@
 
 All notable changes to the extension land here. Versioning follows SemVer; minor bumps for new features, patches for fixes.
 
-## [1.1.28] — 2026-11-23 — hover docs for ui 1.16
+## [1.1.28] — 2026-11-23 — hover docs for ui 1.16, window 1.10
 
 - `TreeView.node_at`; a right-click selects the row (`TreeView`, `ListView`).
+- `window.caps_lock()`, `Event.caps`.
 
 ## [1.1.27] — 2026-11-23 — hover docs for process 1.1, ui 1.14
 

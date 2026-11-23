@@ -5,9 +5,9 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
-## [7.72.0] — 2026-11-23 — ui 1.18.0: font weights, button colours, live previews
+## [7.72.0] — 2026-11-23 — ui 1.18.1: font weights, button colours, live previews
 
-- **`ui` 1.18.0**:
+- **`ui` 1.18.1**:
   - **Font weights**: `ui.Label(..., weight="bold")` and
     `ui.Button(..., weight="semibold")` take "regular", "medium",
     "semibold", "bold", or 500 / 600 / 700.

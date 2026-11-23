@@ -145,7 +145,11 @@ List* Process_spawn_raw(List* argv, String* cwd, List* env, int64_t inherit_env,
     DWORD err = 0;
     if (ok) {
         quirk_gil_release();
-        ok = CreateProcessA(NULL, cmd.p, NULL, NULL, TRUE, 0, envp, dir, &si, &pi);
+        // A program without a console of its own (a windowed app: `quirk bundle
+        // --windowed`): the child gets none either — a console program run
+        // from it used to flash up a console window of its own each time.
+        DWORD flags = GetConsoleWindow() == NULL ? CREATE_NO_WINDOW : 0;
+        ok = CreateProcessA(NULL, cmd.p, NULL, NULL, TRUE, flags, envp, dir, &si, &pi);
         if (!ok) err = GetLastError();
         quirk_gil_acquire();
     } else {

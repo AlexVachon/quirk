@@ -5,7 +5,24 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
-## [7.67.0] — 2026-11-23 — Caps Lock as the X server sees it
+## [7.67.0] — 2026-11-23 — apps of their own: a name, an icon, no console
+
+- **`quirk bundle --name "My App" --icon logo.png --windowed`**: a desktop
+  app. `--name` names the program (`My App.exe` on Windows, `my-app`
+  elsewhere); `--icon` (a PNG, 256x256 is best) is in the .exe on Windows
+  (a resource made with rc.exe / llvm-rc — a Visual Studio developer
+  prompt has it), and on Linux it goes next to a `my-app.desktop` launcher
+  (copy it to ~/.local/share/applications; under WSLg it shows in Windows'
+  Start menu); on macOS the bundle is `My App.app` (Info.plist, an .icns).
+  `--windowed` links a Windows GUI program: no console window with it (and
+  closing that console no longer closes the app). Names with spaces work.
+- **`Window.set_icon(path)`** (window v1.11.0): the window's icon — its
+  title bar's, the taskbar's, Alt+Tab's — from a PNG.
+- **A windowed program's child processes get no console** on Windows
+  (CREATE_NO_WINDOW when it has none itself): each console program it ran
+  (`quirk --check`, git) flashed up a console window.
+
+Caps Lock as the X server sees it:
 
 - **`window.caps_lock()` asks the X server** on Linux (XkbGetState through
   libX11, opened when first asked) instead of SDL's own state: SDL builds

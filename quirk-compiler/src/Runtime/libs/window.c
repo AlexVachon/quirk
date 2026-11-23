@@ -180,6 +180,8 @@ static struct {
     int (*GetDisplayUsableBounds)(int, QSdlRect*);
     // Optional: the lock keys' state (Caps Lock), asked at any time.
     int (*GetModState)(void);
+    // Optional: the window's icon (title bar, taskbar, Alt+Tab).
+    void (*SetWindowIcon)(void*, void*);
 } qsdl;
 
 static char qwin_err[512] = "";
@@ -274,6 +276,7 @@ static int qsdl_load(void) {
     *(void**)&qsdl.GetWindowFlags = dlsym(qsdl.lib, "SDL_GetWindowFlags");
     *(void**)&qsdl.SetWindowOpacity = dlsym(qsdl.lib, "SDL_SetWindowOpacity");
     *(void**)&qsdl.GetModState = dlsym(qsdl.lib, "SDL_GetModState");
+    *(void**)&qsdl.SetWindowIcon = dlsym(qsdl.lib, "SDL_SetWindowIcon");
     *(void**)&qsdl.GetWindowPosition = dlsym(qsdl.lib, "SDL_GetWindowPosition");
     *(void**)&qsdl.GetWindowDisplayIndex = dlsym(qsdl.lib, "SDL_GetWindowDisplayIndex");
     *(void**)&qsdl.GetDisplayUsableBounds = dlsym(qsdl.lib, "SDL_GetDisplayUsableBounds");
@@ -1136,6 +1139,29 @@ int64_t Window_save_bmp_raw(int64_t h, String* path) {
     if (rc != 0) qwin_set_err("can't save the image");
     qsdl.FreeSurface(surf);
     return rc == 0 ? 0 : -1;
+}
+
+// The window's icon from an image file (a PNG, 256x256 or so): the title
+// bar's, the taskbar's, Alt+Tab's. 1 if it was set.
+int64_t Window_set_icon_raw(int64_t h, String* path) {
+    QWin* w = qwin_get(h);
+    char* p = path ? make_safe_cstr(path) : NULL;
+    if (!w || !p) return 0;
+    if (!qsdl.SetWindowIcon || !qsdl.CreateRGBSurfaceWithFormat) { snprintf(qwin_err, sizeof qwin_err, "this SDL can't set an icon"); return 0; }
+    int iw = 0, ih = 0, chans = 0;
+    unsigned char* px = stbi_load(p, &iw, &ih, &chans, 4);
+    if (!px) { snprintf(qwin_err, sizeof qwin_err, "can't read the icon %s", p); return 0; }
+    void* surf = qsdl.CreateRGBSurfaceWithFormat(0, iw, ih, 32, QSDL_PIXELFORMAT_ABGR8888);
+    if (!surf) { stbi_image_free(px); qwin_set_err("can't make a surface"); return 0; }
+    // SDL_Surface: pitch @24, pixels @32.
+    int pitch; unsigned char* pixels;
+    memcpy(&pitch, (char*)surf + 24, sizeof pitch);
+    memcpy(&pixels, (char*)surf + 32, sizeof pixels);
+    for (int y = 0; y < ih; y++) memcpy(pixels + (size_t)y * pitch, px + (size_t)y * iw * 4, (size_t)iw * 4);
+    stbi_image_free(px);
+    qsdl.SetWindowIcon(w->win, surf);
+    qsdl.FreeSurface(surf);
+    return 1;
 }
 
 // ----- images (PNG / JPEG / BMP / GIF / TGA) -----

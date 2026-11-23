@@ -8466,6 +8466,7 @@ static std::string help_for(const std::string& cmdIn) {
                "              version keeps running. A live app's open tabs reload.\n";
     if (cmd == "bundle")
         return "quirk bundle <file.qk> [-o <dir>] [--docker] [--include <path>]...\n"
+               "             [--name \"My App\"] [--icon logo.png] [--windowed]\n"
                "    A folder to copy to a server (default: dist/), that runs there with\n"
                "    no Quirk installed: the app built to a native binary, the runtime\n"
                "    next to it, and the files a web / live app reads from its folder —\n"
@@ -8474,6 +8475,12 @@ static std::string help_for(const std::string& cmdIn) {
                "    or hidden folders. Run it from that folder: cd dist && ./app\n"
                "    --docker   also a Dockerfile (this machine's distribution and the\n"
                "               libraries the binary needs; it listens on 0.0.0.0)\n"
+               "    --name     the program's name (Windows: \"My App.exe\"; elsewhere\n"
+               "               my-app); with --icon, a desktop app: on Linux a\n"
+               "               my-app.desktop launcher, on macOS My App.app\n"
+               "    --icon     its icon, a PNG (256x256 is best): in the .exe on\n"
+               "               Windows (needs rc.exe / llvm-rc), the .desktop's, the .app's\n"
+               "    --windowed a window app: on Windows no console window with it\n"
                "    Needs llc-14 and a C compiler where you bundle.\n";
     if (cmd == "eval" || cmd == "-c")
         return "quirk eval \"<code>\"\n"

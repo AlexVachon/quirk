@@ -27,6 +27,8 @@
 
 #include <algorithm>
 #include <cstring>
+#include <cctype>
+#include <ctime>
 #include <functional>
 #include <filesystem>
 #include <fstream>
@@ -90,7 +92,8 @@ static bool windowsEmitObject(const std::string& irPath, const std::string& objP
 // the shared CRT. Needs a linker plus the Windows SDK / MSVC libraries —
 // a Visual Studio (Build Tools) developer prompt has both.
 static bool windowsLinkExe(const std::string& objPath, const std::string& outPath,
-                           const std::string& runtimePath, std::string& err) {
+                           const std::string& runtimePath, std::string& err,
+                           bool windowed = false, const std::string& resPath = "") {
     std::filesystem::path rtLib = std::filesystem::path(runtimePath).replace_extension(".lib");
     if (!std::filesystem::exists(rtLib)) { err = "missing " + rtLib.string() + " (the runtime's import library)"; return false; }
     std::string linker = qplat::have_command("lld-link") ? "lld-link"
@@ -102,9 +105,13 @@ static bool windowsLinkExe(const std::string& objPath, const std::string& outPat
     }
     std::string out = outPath;
     if (std::filesystem::path(out).extension().empty()) out += ".exe";
-    std::string cmd = linker + " /nologo /subsystem:console /out:\"" + out + "\" \"" + objPath
+    // A window app: the GUI subsystem (no console opens with it), still
+    // starting at main() through the CRT.
+    std::string subsystem = windowed ? " /subsystem:windows /entry:mainCRTStartup" : " /subsystem:console";
+    std::string cmd = linker + " /nologo" + subsystem + " /out:\"" + out + "\" \"" + objPath
                     + "\" \"" + rtLib.string() + "\" msvcrt.lib ucrt.lib vcruntime.lib kernel32.lib"
                       " /nodefaultlib:libcmt.lib";
+    if (!resPath.empty()) cmd += " \"" + resPath + "\"";
     if (int r = qplat::run_shell(cmd)) { err = "linker failed (exit " + std::to_string(r) + "): " + cmd; return false; }
     return true;
 }
@@ -221,6 +228,12 @@ struct CompilerOptions {
     bool bundle       = false;
     bool bundleDocker = false;
     std::vector<std::string> bundleIncludes;
+    // `--name "Quirk IDE"`: the program's name (the .exe's, the .app's, the
+    // menu entry's); `--icon logo.png`: its icon (a PNG, 256x256 is best);
+    // `--windowed`: a window app — on Windows, no console window with it.
+    std::string bundleName;
+    std::string bundleIcon;
+    bool bundleWindowed = false;
 };
 
 // ==========================================================
@@ -1157,6 +1170,122 @@ static bool bundleCopy(const fs::path& from, const fs::path& to) {
     return !ec;
 }
 
+// The program's name as a file name: "Quirk IDE" -> "quirk-ide".
+static std::string bundleSlug(const std::string& name) {
+    std::string out;
+    for (char c : name) {
+        unsigned char u = (unsigned char)c;
+        if (std::isalnum(u)) out += (char)std::tolower(u);
+        else if (!out.empty() && out.back() != '-') out += '-';
+    }
+    while (!out.empty() && out.back() == '-') out.pop_back();
+    return out.empty() ? "app" : out;
+}
+
+// A PNG's size from its header; false if it isn't a PNG.
+static bool bundlePngSize(const std::string& path, int& w, int& h) {
+    std::ifstream f(path, std::ios::binary);
+    unsigned char b[24];
+    if (!f.read((char*)b, 24)) return false;
+    static const unsigned char sig[8] = {0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
+    if (memcmp(b, sig, 8) != 0 || memcmp(b + 12, "IHDR", 4) != 0) return false;
+    w = (b[16] << 24) | (b[17] << 16) | (b[18] << 8) | b[19];
+    h = (b[20] << 24) | (b[21] << 16) | (b[22] << 8) | b[23];
+    return true;
+}
+
+static std::string bundleReadAll(const std::string& path) {
+    std::ifstream f(path, std::ios::binary);
+    return std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+}
+
+// A Windows .ico holding the PNG as is (Windows Vista and later read PNG icons).
+static bool bundleWriteIco(const std::string& png, const std::string& ico) {
+    int w = 0, h = 0;
+    if (!bundlePngSize(png, w, h)) return false;
+    std::string data = bundleReadAll(png);
+    std::ofstream o(ico, std::ios::binary);
+    auto u16 = [&](unsigned v) { o.put((char)(v & 0xFF)); o.put((char)((v >> 8) & 0xFF)); };
+    auto u32 = [&](unsigned v) { u16(v & 0xFFFF); u16(v >> 16); };
+    u16(0); u16(1); u16(1);                                  // reserved, an icon, one image
+    o.put((char)(w >= 256 ? 0 : w)); o.put((char)(h >= 256 ? 0 : h));
+    o.put(0); o.put(0);                                      // no palette, reserved
+    u16(1); u16(32);                                         // planes, bits per pixel
+    u32((unsigned)data.size()); u32(6 + 16);
+    o.write(data.data(), (std::streamsize)data.size());
+    return (bool)o;
+}
+
+// A macOS .icns holding the PNG (its type by its size).
+static bool bundleWriteIcns(const std::string& png, const std::string& icns) {
+    int w = 0, h = 0;
+    if (!bundlePngSize(png, w, h)) return false;
+    std::string data = bundleReadAll(png);
+    const char* type = w <= 16 ? "icp4" : w <= 32 ? "icp5" : w <= 64 ? "icp6" : w <= 128 ? "ic07"
+                     : w <= 256 ? "ic08" : w <= 512 ? "ic09" : "ic10";
+    std::ofstream o(icns, std::ios::binary);
+    auto be32 = [&](unsigned v) { o.put((char)(v >> 24)); o.put((char)(v >> 16)); o.put((char)(v >> 8)); o.put((char)v); };
+    o.write("icns", 4); be32((unsigned)(8 + 8 + data.size()));
+    o.write(type, 4); be32((unsigned)(8 + data.size()));
+    o.write(data.data(), (std::streamsize)data.size());
+    return (bool)o;
+}
+
+// After the binary and its files: what makes it an app of the desktop's —
+// on Linux a .desktop launcher (with the icon next to it), on macOS the .app's
+// Info.plist and icon. (On Windows the icon is in the .exe already.)
+static void bundleDesktopFiles(const CompilerOptions& opts, const fs::path& dir, const std::string& binPath,
+                               std::vector<std::string>& made) {
+    if (opts.bundleName.empty() && opts.bundleIcon.empty()) return;
+    std::string name = !opts.bundleName.empty() ? opts.bundleName : fs::path(opts.inputFile).stem().string();
+    std::string slug = bundleSlug(name);
+    std::error_code ec;
+#if defined(__APPLE__)
+    fs::path contents = dir.parent_path();                   // Name.app/Contents (dir is its MacOS/)
+    fs::create_directories(contents / "Resources", ec);
+    std::string iconFile;
+    if (!opts.bundleIcon.empty() && bundleWriteIcns(opts.bundleIcon, (contents / "Resources" / (slug + ".icns")).string()))
+        iconFile = slug + ".icns";
+    std::ofstream pl((contents / "Info.plist").string());
+    pl << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+       << "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n"
+       << "<plist version=\"1.0\">\n<dict>\n"
+       << "  <key>CFBundleName</key><string>" << name << "</string>\n"
+       << "  <key>CFBundleDisplayName</key><string>" << name << "</string>\n"
+       << "  <key>CFBundleExecutable</key><string>" << fs::path(binPath).filename().string() << "</string>\n"
+       << "  <key>CFBundleIdentifier</key><string>dev.quirk." << slug << "</string>\n"
+       << "  <key>CFBundlePackageType</key><string>APPL</string>\n"
+       << "  <key>CFBundleVersion</key><string>1.0</string>\n"
+       << "  <key>NSHighResolutionCapable</key><true/>\n";
+    if (!iconFile.empty()) pl << "  <key>CFBundleIconFile</key><string>" << iconFile << "</string>\n";
+    pl << "</dict>\n</plist>\n";
+    made.push_back(contents.parent_path().filename().string() + "  (open it, or drag it to Applications)");
+#elif !defined(_WIN32)
+    fs::path absDir = fs::absolute(dir);
+    std::string icon;
+    if (!opts.bundleIcon.empty()) {
+        fs::copy_file(opts.bundleIcon, dir / (slug + ".png"), fs::copy_options::overwrite_existing, ec);
+        if (!ec) icon = (absDir / (slug + ".png")).string();
+    }
+    std::ofstream de((dir / (slug + ".desktop")).string());
+    de << "[Desktop Entry]\n"
+       << "Type=Application\n"
+       << "Name=" << name << "\n"
+       << "Exec=\"" << (absDir / fs::path(binPath).filename()).string() << "\" %F\n"
+       << "Path=" << absDir.string() << "\n";
+    if (!icon.empty()) de << "Icon=" << icon << "\n";
+    de << "Terminal=false\n"
+       << "Categories=Development;\n";
+    de.close();
+    fs::permissions(dir / (slug + ".desktop"), fs::perms::owner_exec | fs::perms::group_exec | fs::perms::others_exec,
+                    fs::perm_options::add, ec);
+    made.push_back(slug + ".desktop  (in your menu: cp it to ~/.local/share/applications/)");
+    if (!icon.empty()) made.push_back(slug + ".png");
+#else
+    (void)dir; (void)binPath; (void)made; (void)slug; (void)ec;
+#endif
+}
+
 // The rest of `quirk bundle`, once the binary is linked into `dir`: the
 // runtime (and on Windows the DLLs it needs) next to it, the app's files,
 // and with --docker a Dockerfile.
@@ -1287,8 +1416,11 @@ static int finishBundle(const CompilerOptions& opts, const std::string& dir,
         di << "*.db\n*.db-journal\n*.db-wal\n";
 #endif
     }
+    std::vector<std::string> made;
+    bundleDesktopFiles(opts, out, binPath, made);
     std::cout << "Bundled " << opts.inputFile << " into " << dir << "/\n"
               << "  " << fs::path(binPath).filename().string() << "   (the app; the runtime next to it)\n";
+    for (auto& m : made) std::cout << "  " << m << "\n";
     for (auto& c : copied) std::cout << "  " << c << "\n";
     if (templates) std::cout << "  " << templates << " template file" << (templates == 1 ? "" : "s") << " (next to their .qk)\n";
     if (opts.bundleDocker) std::cout << "  Dockerfile\n";
@@ -2067,6 +2199,11 @@ int main(int argc, char* argv[]) {
             opts.runImmediate = false;
         }
         else if (arg == "--docker")       opts.bundleDocker = true;
+        else if (arg == "--windowed")     opts.bundleWindowed = true;
+        else if (arg == "--name" || arg == "--icon") {
+            if (++i >= argc) { std::cerr << "Error: " << arg << " needs a value\n"; return 1; }
+            (arg == "--name" ? opts.bundleName : opts.bundleIcon) = argv[i];
+        }
         else if (arg == "--include") {
             if (++i >= argc) { std::cerr << "Error: --include needs a path\n"; return 1; }
             opts.bundleIncludes.push_back(argv[i]);
@@ -2125,7 +2262,32 @@ int main(int argc, char* argv[]) {
         std::error_code ec;
         fs::create_directories(bundleDir, ec);
         if (ec) { std::cerr << "bundle: can't make " << bundleDir << ": " << ec.message() << "\n"; return 1; }
-        opts.outputFile = (fs::path(bundleDir) / fs::path(opts.inputFile).stem()).string();
+        std::string base = fs::path(opts.inputFile).stem().string();
+        if (!opts.bundleName.empty()) {
+#ifdef _WIN32
+            base = opts.bundleName;                          // "Quirk IDE.exe"
+            for (char& c : base) if (std::strchr("\\/:*?\"<>|", c)) c = '-';
+#else
+            base = bundleSlug(opts.bundleName);              // "quirk-ide"
+#endif
+        }
+        if (!opts.bundleIcon.empty()) {
+            int iw = 0, ih = 0;
+            if (!bundlePngSize(opts.bundleIcon, iw, ih)) {
+                std::cerr << "bundle: --icon " << opts.bundleIcon << ": not a PNG file\n";
+                return 1;
+            }
+            opts.bundleIcon = fs::absolute(opts.bundleIcon).string();
+        }
+#ifdef __APPLE__
+        // A named app: Name.app, the program and its files in Contents/MacOS.
+        if (!opts.bundleName.empty() || !opts.bundleIcon.empty()) {
+            std::string app = (!opts.bundleName.empty() ? opts.bundleName : base) + ".app";
+            bundleDir = (fs::path(bundleDir) / app / "Contents" / "MacOS").string();
+            fs::create_directories(bundleDir, ec);
+        }
+#endif
+        opts.outputFile = (fs::path(bundleDir) / base).string();
     }
     // `--watch`: this process supervises; the program runs as a child
     // (the same command without --watch), again on every change.
@@ -2429,8 +2591,25 @@ int main(int argc, char* argv[]) {
                         codegen.compile(ast, irDest);
             }
             std::string err;
+            // The icon, in the .exe (Explorer, the taskbar): a resource, made
+            // with the Windows SDK's rc.exe (or LLVM's llvm-rc).
+            std::string resPath;
+            if (opts.bundle && !opts.bundleIcon.empty()) {
+                fs::path tmp = fs::temp_directory_path() / ("quirk_icon_" + std::to_string((long long)std::time(nullptr)));
+                std::error_code iec;
+                fs::create_directories(tmp, iec);
+                std::string ico = (tmp / "app.ico").string(), rc = (tmp / "app.rc").string(), res = (tmp / "app.res").string();
+                std::string rcTool = qplat::have_command("rc.exe") ? "rc.exe" : qplat::have_command("llvm-rc") ? "llvm-rc" : "";
+                if (bundleWriteIco(opts.bundleIcon, ico) && !rcTool.empty()) {
+                    std::ofstream(rc) << "1 ICON \"" << fs::path(ico).generic_string() << "\"\n";
+                    if (qplat::run_shell(rcTool + " /nologo /fo \"" + res + "\" \"" + rc + "\"") == 0) resPath = res;
+                }
+                if (resPath.empty())
+                    std::cerr << "bundle: the .exe keeps the default icon (no rc.exe / llvm-rc: run from a Visual Studio"
+                                 " developer prompt); the window still shows the app's own\n";
+            }
             if (!windowsEmitObject(irPath, objPath, err) ||
-                !windowsLinkExe(objPath, opts.outputFile, runtimePath, err)) {
+                !windowsLinkExe(objPath, opts.outputFile, runtimePath, err, opts.bundle && opts.bundleWindowed, resPath)) {
                 std::cerr << "Error: " << err << std::endl;
                 return 1;
             }
@@ -2480,11 +2659,11 @@ int main(int argc, char* argv[]) {
         if (opts.bundle) {
             // The runtime next to the binary, wherever the folder goes.
 #ifdef __APPLE__
-            linkCmd = "gcc " + objPath + " " + runtimePath + " " + gcLinkArg(runtimePath) + " -lm -lpthread -o " + opts.outputFile
-                    + " -Wl,-rpath,@executable_path";
+            linkCmd = "gcc " + objPath + " " + runtimePath + " " + gcLinkArg(runtimePath) + " -lm -lpthread -o '" + opts.outputFile
+                    + "' -Wl,-rpath,@executable_path";
 #else
-            linkCmd = "gcc " + objPath + " -L" + runtimeDir + " -l:runtime.so -lgc -lm -lpthread -o " + opts.outputFile
-                    + " -Wl,-rpath,'$ORIGIN'";
+            linkCmd = "gcc " + objPath + " -L" + runtimeDir + " -l:runtime.so -lgc -lm -lpthread -o '" + opts.outputFile
+                    + "' -Wl,-rpath,'$ORIGIN'";
 #endif
         }
         log.debug("Linking: " + linkCmd);

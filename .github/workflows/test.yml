@@ -564,6 +564,39 @@ jobs:
           quirk --no-aot $w
           if ($LASTEXITCODE -ne 0) { exit 1 }
 
+      # `quirk bundle --name --icon --windowed`: a GUI .exe (no console) named
+      # after the app, its icon in it (rc.exe from the MSVC environment).
+      - name: Bundle a windowed app with an icon
+        if: success()
+        shell: pwsh
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'quirk-install'
+          $env:Path = "$dir\bin;$env:Path"
+          Remove-Item env:QUIRK_HOME -ErrorAction SilentlyContinue
+          $app = Join-Path $env:RUNNER_TEMP 'deskapp'
+          New-Item -ItemType Directory -Force $app | Out-Null
+          Set-Content (Join-Path $app 'main.qk') "define main() -> void {`n    print(`"desk ok`")`n}`n"
+          python -c "import struct,zlib,sys; w=h=32; raw=b''.join(b'\x00'+bytes([120,60,200,255])*w for _ in range(h)); c=lambda t,d: struct.pack('>I',len(d))+t+d+struct.pack('>I',zlib.crc32(t+d)&0xffffffff); open(sys.argv[1],'wb').write(b'\x89PNG\r\n\x1a\n'+c(b'IHDR',struct.pack('>IIBBBBB',w,h,8,6,0,0,0))+c(b'IDAT',zlib.compress(raw))+c(b'IEND',b''))" (Join-Path $app 'icon.png')
+          Push-Location $app
+          quirk bundle main.qk -o dist --name "Test App" --icon icon.png --windowed
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          Pop-Location
+          $exe = Join-Path $app 'dist\Test App.exe'
+          if (-not (Test-Path $exe)) { Write-Host "no Test App.exe"; Get-ChildItem (Join-Path $app 'dist'); exit 1 }
+          $b = [System.IO.File]::ReadAllBytes($exe)
+          $pe = [BitConverter]::ToInt32($b, 0x3C)
+          $sub = [BitConverter]::ToUInt16($b, $pe + 24 + 68)
+          if ($sub -ne 2) { Write-Host "subsystem $sub, not 2 (GUI)"; exit 1 }
+          $png = [byte[]](0x89, 0x50, 0x4E, 0x47)
+          $found = $false
+          for ($i = 0; $i -lt $b.Length - 4 -and -not $found; $i++) {
+            if ($b[$i] -eq 0x89 -and $b[$i+1] -eq 0x50 -and $b[$i+2] -eq 0x4E -and $b[$i+3] -eq 0x47) { $found = $true }
+          }
+          if (-not $found) { Write-Host "no icon in the .exe"; exit 1 }
+          $p = Start-Process -FilePath $exe -WorkingDirectory (Join-Path $app 'dist') -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Write-Host "exit $($p.ExitCode)"; exit 1 }
+          Write-Host "Test App.exe: GUI, with its icon, runs"
+
       - uses: actions/upload-artifact@v4
         if: success()
         with:

@@ -16,6 +16,11 @@ only for breaking changes.
   core types (String, List, Map...: their runtime methods take a null
   themselves); the check is a compare and a branch marked unlikely.
   `x?.m()` / `x?.f` still skip a null quietly. Probe p195.
+- **`x?.m() != null` works when `m` returns a number or a Bool** (and
+  `x?.f` of one): it was an LLVM assert ("Both operands to ICmp
+  instruction are not of the same type") that stopped the compiler. It's
+  null exactly when `x` was — `Box(0)?.size()` isn't. An `Int` compared
+  with `null` is never null. Probe p196.
 
 ## [7.65.0] — 2026-11-23 — a menu bar in the title bar
 

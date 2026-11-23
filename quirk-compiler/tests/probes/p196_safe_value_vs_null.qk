@@ -1,0 +1,48 @@
+// `x?.m() != null` when m returns a number or a Bool (and `x?.f` of one):
+// it was an LLVM assert (an Int compared with a pointer). Now it's null
+// exactly when x was. An Int that can't be null compares as never null.
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+struct Box {
+    n: Int
+    on: Bool
+
+    define __init(self, n: Int) -> void {
+        self.n = n
+        self.on = true
+    }
+
+    define size(self) -> Int {
+        return self.n
+    }
+
+    define ready(self) -> Bool {
+        return self.on
+    }
+
+    define half(self) -> Double {
+        return self.n / 2.0
+    }
+}
+
+define main() -> void {
+    s: String = null
+    if s?.length() != null { fail("null String?.length() != null") }
+    if not (s?.length() == null) { fail("null String?.length() == null") }
+    t: String = "abc"
+    if t?.length() == null { fail("String?.length() on a value") }
+    b: Box = null
+    if b?.size() != null { fail("null Box?.size()") }
+    if b?.ready() != null { fail("null Box?.ready() (Bool)") }
+    if b?.half() != null { fail("null Box?.half() (Double)") }
+    if b?.n != null { fail("null Box?.n (field)") }
+    c := Box(0)                                   // 0 is a value, not null
+    if c?.size() == null { fail("Box?.size() returning 0") }
+    if c?.n == null { fail("Box?.n holding 0") }
+    if c?.ready() == null { fail("Box?.ready() on a value") }
+    // An Int is never null.
+    k := 3
+    if k == null { fail("Int == null") }
+    if not (k != null) { fail("Int != null") }
+    print("ok")
+}

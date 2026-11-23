@@ -134,6 +134,9 @@ class LLVMCodegen {
     // Calls re-generated on the String path of a runtime String-or-struct
     // choice (see the untyped-receiver dispatch in handleCall).
     std::set<CallNode*> forcedStringCalls;
+    // A `x?.m()` / `x?.f` whose value is a number or a Bool -> the i1 "x was
+    // null" (that value is 0 / false then): `x?.length() != null` reads it.
+    std::map<Value*, Value*> safeNullFlags;
     int dynRecvCounter = 0;
 
     std::map<std::string, std::string> sourceMap;
@@ -3164,9 +3167,8 @@ class LLVMCodegen {
                 BasicBlock* preBB    = Builder.GetInsertBlock();
                 BasicBlock* doCallBB = BasicBlock::Create(Context, "safe_call", parentFunc);
                 BasicBlock* afterBB  = BasicBlock::Create(Context, "safe_after");
-                Builder.CreateCondBr(
-                    Builder.CreateICmpEQ(objPtr, Constant::getNullValue(objPtr->getType()), "safe_isnull"),
-                    afterBB, doCallBB);
+                Value* wasNull = Builder.CreateICmpEQ(objPtr, Constant::getNullValue(objPtr->getType()), "safe_isnull");
+                Builder.CreateCondBr(wasNull, afterBB, doCallBB);
 
                 // Execute the actual call in doCallBB
                 Builder.SetInsertPoint(doCallBB);
@@ -3183,6 +3185,7 @@ class LLVMCodegen {
                     PHINode* phi = Builder.CreatePHI(res->getType(), 2, "safe_result");
                     phi->addIncoming(Constant::getNullValue(res->getType()), preBB);
                     phi->addIncoming(res, callEndBB);
+                    if (!phi->getType()->isPointerTy()) safeNullFlags[phi] = wasNull;
                     return phi;
                 }
                 return nullptr;
@@ -6028,6 +6031,20 @@ Value* LLVMCodegen::handleExpression(Node* node) {
                                              : Builder.CreateICmpEQ(r, zero, "ne_null");
                 }
             }
+            // A number / Bool compared with null: from `x?.m()` / `x?.f`, it's
+            // null when `x` was; anything else (an Int variable) never is.
+            // (It was an ICmp of an i64 with a pointer: an LLVM assert.)
+            if (isNullPtr(L) != isNullPtr(R)) {
+                Value* other = isNullPtr(L) ? R : L;
+                if (!other->getType()->isPointerTy()) {
+                    auto it = safeNullFlags.find(other);
+                    auto* flag = it != safeNullFlags.end() ? dyn_cast<Instruction>(it->second) : nullptr;
+                    // (Only this function's: a value freed elsewhere could reuse the key.)
+                    if (flag && flag->getFunction() == Builder.GetInsertBlock()->getParent())
+                        return binOp->op == "==" ? flag : Builder.CreateNot(flag, "safe_not_null");
+                    return ConstantInt::get(Type::getInt1Ty(Context), binOp->op == "!=" ? 1 : 0);
+                }
+            }
             // Both null-pointer comparisons now resolve via the math fallback
             // ICmpEQ/ICmpNE on matching pointer types.
             if (isNullPtr(L) || isNullPtr(R)) {
@@ -6943,9 +6960,8 @@ Value* LLVMCodegen::handleExpression(Node* node) {
             BasicBlock* preBB    = Builder.GetInsertBlock();
             BasicBlock* doReadBB = BasicBlock::Create(Context, "safe_field", parentFunc);
             BasicBlock* afterBB  = BasicBlock::Create(Context, "safe_field_after");
-            Builder.CreateCondBr(
-                Builder.CreateICmpEQ(objPtr, Constant::getNullValue(objPtr->getType()), "safe_field_isnull"),
-                afterBB, doReadBB);
+            Value* wasNull = Builder.CreateICmpEQ(objPtr, Constant::getNullValue(objPtr->getType()), "safe_field_isnull");
+            Builder.CreateCondBr(wasNull, afterBB, doReadBB);
 
             Builder.SetInsertPoint(doReadBB);
             Value* val = structGen->generateMemberAccess(objPtr, member->memberName);
@@ -6958,6 +6974,7 @@ Value* LLVMCodegen::handleExpression(Node* node) {
                 PHINode* phi = Builder.CreatePHI(val->getType(), 2, "safe_field_result");
                 phi->addIncoming(Constant::getNullValue(val->getType()), preBB);
                 phi->addIncoming(val, readEndBB);
+                if (!phi->getType()->isPointerTy()) safeNullFlags[phi] = wasNull;
                 return phi;
             }
             return nullptr;

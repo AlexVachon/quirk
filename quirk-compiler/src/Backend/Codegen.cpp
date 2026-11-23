@@ -2691,6 +2691,24 @@ class LLVMCodegen {
                 args.push_back(handleExpression(funcNode->parameters[i].defaultValue.get()));
     }
 
+    // `self` / `super` can't be null: no check for them.
+    static bool isSelfRef(Node* n) {
+        auto lit = dynamic_cast<LiteralNode*>(n);
+        return lit && (lit->value == "self" || lit->value == "super");
+    }
+
+    // A null struct before `.m()` / `.f` / `.f = v`: NullError, not a SIGSEGV.
+    void guardReceiver(Node* objectNode, Value* objPtr, const std::string& verb, const std::string& member) {
+        if (!objPtr || isSelfRef(objectNode)) return;
+        if (auto call = dynamic_cast<CallNode*>(objectNode))
+            if (auto lit = dynamic_cast<LiteralNode*>(call->callee.get()))
+                if (lit->value == "super") return;
+        std::string t = structGen->structNameOf(objPtr);
+        size_t cut = t.find("_in_");
+        if (cut != std::string::npos) t = t.substr(0, cut);
+        structGen->guardNotNull(objPtr, verb + " '" + t + "." + member + "'");
+    }
+
     Value* handleCall(CallNode* call) 
     {
         // `task.done()` / `.cancel()` / `.wait(ms)` (Sema set taskMethod).
@@ -3543,6 +3561,8 @@ class LLVMCodegen {
                 fatalError("Unknown method '" + typeName + "." + member->memberName + "'",
                            member->line, member->col);
             }
+
+            guardReceiver(member->object.get(), objPtr, "call", member->memberName + "()");
 
             // --- VIRTUAL DISPATCH ---
             // When a method is overridden in a subclass and the receiver is a vtable-eligible
@@ -4935,6 +4955,7 @@ class LLVMCodegen {
                 }
             }
 
+            if (structGen->getMemberPtr(objPtr, member->memberName)) guardReceiver(member->object.get(), objPtr, "set", member->memberName);
             Value* memberPtr = structGen->getMemberPtr(objPtr, member->memberName);
             if (memberPtr) {
                 Type* fieldType = memberPtr->getType()->getPointerElementType();
@@ -6942,6 +6963,8 @@ Value* LLVMCodegen::handleExpression(Node* node) {
             return nullptr;
         }
 
+        if (structGen->getMemberPtr(objPtr, member->memberName) || member->memberName == "length")
+            guardReceiver(member->object.get(), objPtr, "read", member->memberName);
         Value* fieldVal = structGen->generateMemberAccess(objPtr, member->memberName);
         if (fieldVal) return fieldVal;
 

@@ -5,6 +5,18 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.66.0] — 2026-11-23 — null is an error, not a crash
+
+- **A method call, a field read or a field write on a null struct throws
+  `NullError`** ("can't call 'Panel.set_count()': the Panel is null"),
+  which `catch (e: NullError)` (or `RuntimeError`) catches and the
+  traceback points at. It was a SIGSEGV that took the whole program down —
+  found splitting the IDE, where a part reported to another before that one
+  was made. `self` / `super` aren't checked (they can't be null), nor the
+  core types (String, List, Map...: their runtime methods take a null
+  themselves); the check is a compare and a branch marked unlikely.
+  `x?.m()` / `x?.f` still skip a null quietly. Probe p195.
+
 ## [7.65.0] — 2026-11-23 — a menu bar in the title bar
 
 - Pins **`ui` v1.15.0**: `MenuItem(..., bound=false)` shows a shortcut

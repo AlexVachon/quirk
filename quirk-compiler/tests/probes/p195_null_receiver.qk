@@ -1,0 +1,64 @@
+// A method call, a field read or a field write on a null struct is a
+// NullError (catchable, with what and where) — it was a SIGSEGV that took
+// the program down (an IDE's `self.panel.set_count()` before `panel` was set).
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+struct Panel {
+    count: Int
+
+    define __init(self) -> void {
+        self.count = 0
+    }
+
+    define set_count(self, n: Int) -> void {
+        self.count = n
+    }
+
+    define shown(self) -> Int {
+        return self.count
+    }
+}
+
+struct Ide {
+    panel: Panel
+
+    define __init(self) -> void {
+        self.panel = null
+        self.panel.set_count(1)          // before the panel exists
+    }
+}
+
+define caught(f: Callable) -> String {
+    try {
+        f()
+    } catch (e: NullError) {
+        return e.message
+    }
+    return "(nothing thrown)"
+}
+
+define main() -> void {
+    p: Panel = null
+    m1 := caught(fn() { p.set_count(3) })
+    if m1 != "can't call 'Panel.set_count()': the Panel is null" { fail("method: " + m1) }
+    m2 := caught(fn() { print(p.count) })
+    if m2 != "can't read 'Panel.count': the Panel is null" { fail("read: " + m2) }
+    m3 := caught(fn() { p.count = 2 })
+    if m3 != "can't set 'Panel.count': the Panel is null" { fail("write: " + m3) }
+    m4 := caught(fn() { Ide() })
+    if not m4.contains("Panel.set_count()") { fail("in a constructor: " + m4) }
+    // A RuntimeError too (NullError is one).
+    as_runtime := ""
+    try {
+        p.shown()
+    } catch (e: RuntimeError) {
+        as_runtime = "yes"
+    }
+    if as_runtime != "yes" { fail("not a RuntimeError") }
+    // Not null: nothing changes; ?. still skips a null quietly.
+    q := Panel()
+    q.set_count(5)
+    if q.shown() != 5 or q.count != 5 { fail("non-null receiver") }
+    p?.set_count(1)
+    print("ok")
+}

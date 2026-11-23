@@ -1,4 +1,6 @@
 #pragma once
+#include "llvm/IR/MDBuilder.h"
+#include <set>
 #include <iostream>
 #include <map>
 #include <set>
@@ -443,6 +445,52 @@ class StructGen {
         std::vector<Value*> args;
         for (auto& arg : node->args) args.push_back(exprHandler(arg.value.get()));
         return allocateAndInit(node->structName, args);
+    }
+
+    // The core types: their methods are the runtime's (C), which take a
+    // null `self` themselves (a missing String is ""), so they're not guarded.
+    static bool isCoreType(const std::string& n) {
+        static const std::set<std::string> core = {
+            "String", "List", "Map", "Set", "Queue", "Tuple", "Any", "Int", "Double", "Float", "Bool",
+            "Callable", "Task", "File", "Exception", "Option", "Result"};
+        return core.count(n) > 0;
+    }
+
+    // The struct name `objPtr` points to ("" when it isn't a struct pointer).
+    std::string structNameOf(Value* objPtr) {
+        if (!objPtr || !objPtr->getType()->isPointerTy()) return "";
+        Type* el = objPtr->getType()->getPointerElementType();
+        if (!el->isStructTy() || cast<StructType>(el)->isLiteral()) return "";
+        std::string n = cast<StructType>(el)->getName().str();
+        if (n.find("struct.") == 0) n = n.substr(7);
+        return n;
+    }
+
+    // When `objPtr` (a struct the program defines) is null at run time, throw
+    // NullError("can't <what>: the <Type> is null") instead of reading through
+    // it (a SIGSEGV that took the program down). `what` is "call 'T.m()'",
+    // "read 'T.f'"... The null branch is marked unlikely: the check is a
+    // compare and a not-taken branch.
+    void guardNotNull(Value* objPtr, const std::string& what) {
+        std::string sName = structNameOf(objPtr);
+        if (sName.empty() || isCoreType(sName) || !structLayouts.count(sName)) return;
+        if (isa<Constant>(objPtr) && !isa<ConstantPointerNull>(objPtr)) return;
+        if (isa<AllocaInst>(objPtr)) return;
+        Function* fn = Builder.GetInsertBlock()->getParent();
+        BasicBlock* nullBB = BasicBlock::Create(Context, "null_recv", fn);
+        BasicBlock* okBB = BasicBlock::Create(Context, "recv_ok", fn);
+        MDBuilder md(Context);
+        Builder.CreateCondBr(Builder.CreateIsNull(objPtr, "recv_is_null"), nullBB, okBB, md.createBranchWeights(1, 1 << 20));
+        Builder.SetInsertPoint(nullBB);
+        Type* i8p = Type::getInt8PtrTy(Context);
+        FunctionCallee thrower = TheModule->getOrInsertFunction("quirk_throw_exception", Type::getVoidTy(Context), i8p, i8p);
+        std::string shown = sName;
+        size_t cut = shown.find("_in_");                 // (a colliding name: `Item_in_module`)
+        if (cut != std::string::npos) shown = shown.substr(0, cut);
+        Builder.CreateCall(thrower, {Builder.CreateGlobalStringPtr("NullError"),
+                                     Builder.CreateGlobalStringPtr("can't " + what + ": the " + shown + " is null")});
+        Builder.CreateUnreachable();
+        Builder.SetInsertPoint(okBB);
     }
 
     Value* generateMemberAccess(Value* objPtr, const std::string& memberName) {

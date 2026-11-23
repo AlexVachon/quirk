@@ -650,10 +650,12 @@ std::string getModuleName(const std::string& path) {
     // layout marker. Otherwise the path-based stripping below handles it.
     // This prevents stdlib files reached through `<venv>/lib/quirk/` from
     // picking up the venv's own quirk.toml as their module name.
+    std::string slashed = path;
+    std::replace(slashed.begin(), slashed.end(), '\\', '/');
     bool hasLayoutMarker =
-        path.find("/libs/") != std::string::npos ||
-        path.find("/lib/quirk/") != std::string::npos ||
-        path.find("/packages/") != std::string::npos;
+        slashed.find("/libs/") != std::string::npos ||
+        slashed.find("/lib/quirk/") != std::string::npos ||
+        slashed.find("/packages/") != std::string::npos;
     if (!hasLayoutMarker) {
         std::string pkg = qpm::project_name_for_file(path);
         if (!pkg.empty()) return pkg;
@@ -668,6 +670,7 @@ std::string getModuleName(const std::string& path) {
     else if (mod.find("src/") == 0) mod = mod.substr(4);
 
     const char* envHome = std::getenv("QUIRK_HOME");
+    std::string before = mod;
     if (envHome) {
         std::string base       = std::string(envHome);
         std::string venvPkg    = base + "/lib/quirk/packages/";
@@ -684,6 +687,22 @@ std::string getModuleName(const std::string& path) {
             mod = mod.substr(pos + venvCore.length());
         else if ((pos = mod.find(venvLibs)) != std::string::npos)
             mod = mod.substr(pos + venvLibs.length());
+    }
+    // Without QUIRK_HOME (always the case on Windows) a stdlib file is
+    // reached through another search root: the running binary's
+    // <root>/packages/, ~/.quirk/packages/, ... Strip that root, or the
+    // module is the whole path and `pty.spawn` (after `use process`) found
+    // process's `spawn`.
+    if (mod == before) {
+        std::string m = mod;
+        std::replace(m.begin(), m.end(), '\\', '/');
+        size_t best = 0;
+        for (std::string root : getSearchPaths()) {
+            std::replace(root.begin(), root.end(), '\\', '/');
+            if (root.rfind("./", 0) == 0) continue;
+            if (m.rfind(root, 0) == 0 && root.size() > best) best = root.size();
+        }
+        if (best) mod = m.substr(best);
     }
 
     size_t lastDot = mod.find_last_of('.');

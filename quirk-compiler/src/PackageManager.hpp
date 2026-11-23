@@ -70,7 +70,7 @@ static std::string self_binary();
 
 namespace qpm {
 
-constexpr const char* QUIRK_VERSION = "7.68.0";
+constexpr const char* QUIRK_VERSION = "7.69.0";
 
 namespace fs = std::filesystem;
 
@@ -2778,7 +2778,15 @@ static int cmd_install(const std::vector<std::string>& args) {
                                                                : fs::path()}) {
                 Manifest m;
                 if (mf.empty() || !read_manifest(mf.string(), m)) continue;
-                for (auto& dep : m.deps) enqueue(dep.second, e.name, false);
+                // A dependency given as a relative path ("../syntax") is the
+                // package's: relative to its own source folder (a local
+                // one) or its manifest's — not to where `quirk install` runs.
+                fs::path base = is_local_path(localSrc) ? fs::absolute(localSrc) : mf.parent_path();
+                for (auto& dep : m.deps) {
+                    std::string spec = dep.second;
+                    if (!spec.empty() && spec[0] == '.') spec = (base / spec).lexically_normal().string();
+                    enqueue(spec, e.name, false);
+                }
                 break;
             }
         };

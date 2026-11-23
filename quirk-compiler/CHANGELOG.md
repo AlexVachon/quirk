@@ -5,6 +5,21 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.69.0] — 2026-11-23 — stdlib names without QUIRK_HOME, relative deps of deps
+
+- **Stdlib modules keep their names when `QUIRK_HOME` isn't set** (always
+  the case on Windows): a file found through the binary's own
+  `<root>/packages/` or `~/.quirk/packages/` was named by its whole path,
+  so `pty.spawn(...)` in a file that also has `use process` called
+  process's `spawn` ("cannot assign 'Process' to field 'proc' of type
+  'Pty'" in `term`). The search root is now stripped, and the layout check
+  reads `\` paths too.
+- **A dependency's relative path is read from its own folder**: a plain
+  `quirk install` of an app whose `editor = "../libs/editor"` itself has
+  `syntax = "../syntax"` looked for `../syntax` next to the app
+  ("'../syntax' is not a directory").
+- `tools/check_install.sh` locks both.
+
 ## [7.68.0] — 2026-11-23 — quirk build, files inside the program
 
 - **`quirk build`** (no file): the app as the project's `quirk.toml` says,

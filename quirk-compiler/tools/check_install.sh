@@ -6,7 +6,10 @@
 #   - transitive dependencies are installed (and reported `via` the parent);
 #   - a repeat install reports everything "already installed";
 #   - with site-packages gone, packages come back "from cache";
-#   - a fresh clone (quirk.toml + quirk.lock only) installs the same set.
+#   - a fresh clone (quirk.toml + quirk.lock only) installs the same set;
+#   - a dependency's relative path ("../x") is read from its own folder;
+#   - without QUIRK_HOME (as on Windows) stdlib modules keep their names
+#     (`pty.spawn` after `use process` was process's `spawn`).
 #
 # Usage (from quirk-compiler/, after `make`):  tools/check_install.sh
 # Runs in a temp dir with its own HOME; ~/.quirk is never touched.
@@ -60,5 +63,18 @@ echo "── fresh clone: quirk.toml + quirk.lock only"
 mkdir "$work/clone" && cp quirk.toml quirk.lock "$work/clone/" && cd "$work/clone"
 out=$(q sync --no-venv)
 [ -d site-packages/app ] && [ -d site-packages/helper ] || { echo "$out"; fail "sync in a fresh clone didn't install app and helper"; }
+
+echo "── a relative dependency of a dependency"
+mkdir -p "$work/rel/libs" && cp -r "$work/quirk-helper" "$work/rel/libs/helper"
+mkpkg rel/libs/mid mid 0.1.0 .qk helper "../helper"
+mkdir "$work/rel/app" && cd "$work/rel/app"
+q init >/dev/null
+printf '\n[deps]\nmid = "../libs/mid"\n' >> quirk.toml
+out=$(q install)
+[ -d site-packages/mid ] && [ -d site-packages/helper ] || { echo "$out"; fail "../helper of ../libs/mid wasn't found from mid's own folder"; }
+
+echo "── stdlib module names without QUIRK_HOME"
+printf 'use pty\nuse process\nx: pty.Pty = pty.spawn(["sh"])\n' > order.qk
+out=$(env -u QUIRK_HOME "$quirk" check order.qk </dev/null 2>&1) || { echo "$out"; fail "pty.spawn resolved to another module's spawn without QUIRK_HOME"; }
 
 echo "install check: ok"

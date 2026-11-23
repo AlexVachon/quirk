@@ -1380,8 +1380,10 @@ static bool loadBuildConfig(CompilerOptions& opts, std::string& err) {
 
 // The --include files to build into the program: [path relative to the
 // entry's folder (with /), file].
+static std::string g_embedScan;    // what embedFiles looked at (for its error)
 static std::vector<std::pair<std::string, fs::path>> embedFiles(const CompilerOptions& opts) {
     std::vector<std::pair<std::string, fs::path>> out;
+    g_embedScan.clear();
     std::error_code ec;
     fs::path root = fs::absolute(opts.inputFile).parent_path();
     auto add = [&](const fs::path& f) {
@@ -1395,16 +1397,23 @@ static std::vector<std::pair<std::string, fs::path>> embedFiles(const CompilerOp
     for (auto& inc : opts.bundleIncludes) {
         fs::path src = root / inc;
         if (!fs::exists(src, ec)) src = inc;
-        if (fs::is_directory(src, ec)) {
-            for (auto it = fs::recursive_directory_iterator(src, fs::directory_options::skip_permission_denied, ec);
-                 !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
+        bool dir = fs::is_directory(src, ec);
+        int seen = 0;
+        if (dir) {
+            std::error_code wec;
+            for (auto it = fs::recursive_directory_iterator(src, fs::directory_options::skip_permission_denied, wec);
+                 !wec && it != fs::recursive_directory_iterator(); it.increment(wec)) {
+                seen++;
+                std::error_code fec;
                 std::string n = it->path().filename().string();
-                if (!n.empty() && n[0] == '.') { if (it->is_directory(ec)) it.disable_recursion_pending(); continue; }
-                if (it->is_regular_file(ec)) add(it->path());
+                if (!n.empty() && n[0] == '.') { if (it->is_directory(fec)) it.disable_recursion_pending(); continue; }
+                if (it->is_regular_file(fec) || fs::is_regular_file(it->path(), fec)) add(it->path());
             }
+            if (wec) g_embedScan += " (walk: " + wec.message() + ")";
         } else if (fs::is_regular_file(src, ec)) {
             add(src);
         }
+        g_embedScan += "\n  " + src.string() + (fs::exists(src, ec) ? "" : " (not found)") + (dir ? " folder, " + std::to_string(seen) + " entries" : "");
     }
     return out;
 }
@@ -2799,7 +2808,7 @@ int main(int argc, char* argv[]) {
                 auto files = embedFiles(opts);
                 std::string ll = (fs::temp_directory_path() / ("quirk_embed_" + std::to_string((long long)std::time(nullptr)) + ".ll")).string();
                 std::string eobj = ll.substr(0, ll.size() - 3) + ".obj";
-                if (files.empty()) { std::cerr << "bundle: --embed: no files in the --include folders\n"; return 1; }
+                if (files.empty()) { std::cerr << "bundle: --embed: no files in the --include folders:" << g_embedScan << "\n"; return 1; }
                 if (!writeEmbedIR(files, ll)) { std::cerr << "bundle: --embed: can't write " << ll << "\n"; return 1; }
                 if (!windowsEmitObject(ll, eobj, err)) {
                     std::cerr << "bundle: --embed: can't build the files into the program: " << err << "\n";
@@ -2856,7 +2865,7 @@ int main(int argc, char* argv[]) {
             auto files = embedFiles(opts);
             std::string ll = objPath + ".embed.ll";
             embedObj = objPath + ".embed.o";
-            if (files.empty()) { std::cerr << "bundle: --embed: no files in the --include folders\n"; return 1; }
+            if (files.empty()) { std::cerr << "bundle: --embed: no files in the --include folders:" << g_embedScan << "\n"; return 1; }
             if (!writeEmbedIR(files, ll) ||
                 qplat::run_shell((llcCommand() + " -filetype=obj -relocation-model=pic " + ll + " -o " + embedObj).c_str()) != 0) {
                 std::cerr << "bundle: --embed: can't build the files into the program (" << ll << ")\n";

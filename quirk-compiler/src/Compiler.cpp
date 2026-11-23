@@ -1385,8 +1385,12 @@ static std::vector<std::pair<std::string, fs::path>> embedFiles(const CompilerOp
     std::error_code ec;
     fs::path root = fs::absolute(opts.inputFile).parent_path();
     auto add = [&](const fs::path& f) {
-        fs::path rel = fs::relative(fs::absolute(f), root, ec);
-        out.push_back({rel.generic_string(), fs::absolute(f)});
+        std::error_code rec;                          // (its own: the walk's ec ends the loop)
+        fs::path abs = fs::absolute(f, rec);
+        fs::path rel = abs.lexically_relative(fs::absolute(root, rec));
+        if (rel.empty() || rel.native()[0] == '.') rel = f.lexically_relative(root);
+        if (rel.empty()) rel = f.filename();
+        out.push_back({rel.generic_string(), abs});
     };
     for (auto& inc : opts.bundleIncludes) {
         fs::path src = root / inc;
@@ -2791,8 +2795,10 @@ int main(int argc, char* argv[]) {
                 auto files = embedFiles(opts);
                 std::string ll = (fs::temp_directory_path() / ("quirk_embed_" + std::to_string((long long)std::time(nullptr)) + ".ll")).string();
                 std::string eobj = ll.substr(0, ll.size() - 3) + ".obj";
-                if (files.empty() || !writeEmbedIR(files, ll) || !windowsEmitObject(ll, eobj, err)) {
-                    std::cerr << "bundle: can't build the files into the program" << (err.empty() ? "" : ": " + err) << "\n";
+                if (files.empty()) { std::cerr << "bundle: --embed: no files in the --include folders\n"; return 1; }
+                if (!writeEmbedIR(files, ll)) { std::cerr << "bundle: --embed: can't write " << ll << "\n"; return 1; }
+                if (!windowsEmitObject(ll, eobj, err)) {
+                    std::cerr << "bundle: --embed: can't build the files into the program: " << err << "\n";
                     return 1;
                 }
                 extra += " \"" + eobj + "\"";
@@ -2846,9 +2852,10 @@ int main(int argc, char* argv[]) {
             auto files = embedFiles(opts);
             std::string ll = objPath + ".embed.ll";
             embedObj = objPath + ".embed.o";
-            if (files.empty() || !writeEmbedIR(files, ll) ||
+            if (files.empty()) { std::cerr << "bundle: --embed: no files in the --include folders\n"; return 1; }
+            if (!writeEmbedIR(files, ll) ||
                 qplat::run_shell((llcCommand() + " -filetype=obj -relocation-model=pic " + ll + " -o " + embedObj).c_str()) != 0) {
-                std::cerr << "bundle: can't build the files into the program (nothing to embed: --include / include = [...])\n";
+                std::cerr << "bundle: --embed: can't build the files into the program (" << ll << ")\n";
                 return 1;
             }
             objPath += " " + embedObj;

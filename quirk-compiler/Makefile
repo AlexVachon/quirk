@@ -198,7 +198,8 @@ STDLIB_TAG_sqlite ?= v1.1.0
 # ui v1.14.0: Widget.tooltip_at (a tooltip that depends on the point) (v7.64.0).
 # ui v1.15.0: MenuItem(bound=false), MenuBar(flat=true) (v7.65.0).
 # ui v1.16.0: a right-click selects the row its menu is about, TreeView.node_at (v7.66.0).
-STDLIB_TAG_ui ?= v1.16.0
+# ui v1.17.0: StatusBar lead item, PaletteItem separator, focused placeholders (v7.70.0).
+STDLIB_TAG_ui ?= v1.17.0
 STDLIB_TAG_web ?= v1.4.0
 STDLIB_TAG_live ?= v2.11.0
 

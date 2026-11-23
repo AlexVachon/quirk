@@ -5,6 +5,17 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.70.0] — 2026-11-23 — ui 1.17.0: a status bar's lead item
+
+- **`ui` 1.17.0**:
+  - `ui.StatusBar(sections, lead=..., on_lead=..., lead_tip=...)`: a
+    coloured button at the bar's left edge, as VS Code's remote indicator
+    (`><  WSL: Ubuntu`). A click runs `on_lead()`, and `lead_tip` is its tooltip.
+  - `ui.PaletteItem(..., separator=true)`: a line above the row, to start a
+    group.
+  - A `TextInput`'s placeholder shows while it's focused too. A palette's
+    field always is, so its placeholder was never seen.
+
 ## [7.69.0] — 2026-11-23 — stdlib names without QUIRK_HOME, relative deps of deps
 
 - **Stdlib modules keep their names when `QUIRK_HOME` isn't set** (always

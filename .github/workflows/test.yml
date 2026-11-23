@@ -596,6 +596,20 @@ jobs:
           $p = Start-Process -FilePath $exe -WorkingDirectory (Join-Path $app 'dist') -Wait -PassThru
           if ($p.ExitCode -ne 0) { Write-Host "exit $($p.ExitCode)"; exit 1 }
           Write-Host "Test App.exe: GUI, with its icon, runs"
+          # --embed: a file built into the program, read from there (run elsewhere).
+          New-Item -ItemType Directory -Force (Join-Path $app 'assets') | Out-Null
+          Set-Content -NoNewline (Join-Path $app 'assets\msg.txt') 'inside'
+          Set-Content (Join-Path $app 'emb.qk') "use fs`ndefine main() -> void {`n    print(fs.read_text(`"assets/msg.txt`"))`n}`n"
+          Push-Location $app
+          quirk bundle emb.qk -o edist --include assets --embed
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          Pop-Location
+          if (Test-Path (Join-Path $app 'edist\assets')) { Write-Host "assets/ was copied"; exit 1 }
+          Push-Location $env:RUNNER_TEMP
+          $got = & (Join-Path $app 'edist\emb.exe')
+          Pop-Location
+          if ($got -ne 'inside') { Write-Host "embedded file: '$got'"; exit 1 }
+          Write-Host "emb.exe: its file built in, read from anywhere"
 
       - uses: actions/upload-artifact@v4
         if: success()

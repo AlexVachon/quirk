@@ -48,6 +48,7 @@ static List* fs__new_list(void) {
 int Fs_exists(String* path) {
     char* p = make_safe_cstr(path);
     if (!p) return 0;
+    if (quirk_embedded(p, NULL) || quirk_embedded_dir(p)) return 1;      // (built into the program)
     struct stat st;
 #ifdef _WIN32
     int ok = (_stat(p, (struct _stat*)&st) == 0);
@@ -60,6 +61,7 @@ int Fs_exists(String* path) {
 int Fs_is_dir(String* path) {
     char* p = make_safe_cstr(path);
     if (!p) return 0;
+    if (quirk_embedded_dir(p)) return 1;
     struct stat st;
 #ifdef _WIN32
     if (_stat(p, (struct _stat*)&st) != 0) return 0;
@@ -72,6 +74,7 @@ int Fs_is_dir(String* path) {
 int Fs_is_file(String* path) {
     char* p = make_safe_cstr(path);
     if (!p) return 0;
+    if (quirk_embedded(p, NULL)) return 1;
     struct stat st;
 #ifdef _WIN32
     if (_stat(p, (struct _stat*)&st) != 0) return 0;
@@ -85,6 +88,8 @@ int Fs_is_file(String* path) {
 int64_t Fs_size(String* path) {
     char* p = make_safe_cstr(path);
     if (!p) return -1;
+    int64_t esz = 0;
+    if (quirk_embedded(p, &esz)) return esz;
     struct stat st;
 #ifdef _WIN32
     if (_stat(p, (struct _stat*)&st) != 0) return -1;
@@ -652,6 +657,14 @@ int64_t Fs_copy_raw(String* src, String* dst) {
 String* Fs_read_text_raw(String* path) {
     char* p = make_safe_cstr(path);
     if (!p) return NULL;
+    int64_t esz = 0;
+    const unsigned char* ed = quirk_embedded(p, &esz);
+    if (ed) {
+        char* copy = (char*)GC_malloc_atomic((size_t)esz + 1);
+        memcpy(copy, ed, (size_t)esz);
+        copy[esz] = '\0';
+        return make_String_len(copy, esz);
+    }
     FILE* f = fopen(p, "rb");
     if (!f) return NULL;
     size_t cap = 65536, len = 0;

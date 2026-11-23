@@ -70,6 +70,7 @@ static void* __gc_text_alloc(size_t n) {
 #include "core/exceptions.c"
 #include "core/task.c"
 
+#include "core/embed.c"
 #include "libs/file.c"
 #include "libs/sys.c"
 #include "libs/net.c"

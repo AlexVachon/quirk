@@ -93,7 +93,7 @@ static bool windowsEmitObject(const std::string& irPath, const std::string& objP
 // a Visual Studio (Build Tools) developer prompt has both.
 static bool windowsLinkExe(const std::string& objPath, const std::string& outPath,
                            const std::string& runtimePath, std::string& err,
-                           bool windowed = false, const std::string& resPath = "") {
+                           bool windowed = false, const std::string& extraInputs = "") {
     std::filesystem::path rtLib = std::filesystem::path(runtimePath).replace_extension(".lib");
     if (!std::filesystem::exists(rtLib)) { err = "missing " + rtLib.string() + " (the runtime's import library)"; return false; }
     std::string linker = qplat::have_command("lld-link") ? "lld-link"
@@ -111,7 +111,7 @@ static bool windowsLinkExe(const std::string& objPath, const std::string& outPat
     std::string cmd = linker + " /nologo" + subsystem + " /out:\"" + out + "\" \"" + objPath
                     + "\" \"" + rtLib.string() + "\" msvcrt.lib ucrt.lib vcruntime.lib kernel32.lib"
                       " /nodefaultlib:libcmt.lib";
-    if (!resPath.empty()) cmd += " \"" + resPath + "\"";
+    if (!extraInputs.empty()) cmd += " " + extraInputs;
     if (int r = qplat::run_shell(cmd)) { err = "linker failed (exit " + std::to_string(r) + "): " + cmd; return false; }
     return true;
 }
@@ -234,6 +234,9 @@ struct CompilerOptions {
     std::string bundleName;
     std::string bundleIcon;
     bool bundleWindowed = false;
+    // `--embed` / `embed = true`: the --include files built into the
+    // program (read from there by fs, images, fonts, icons), not copied.
+    bool bundleEmbed = false;
 };
 
 // ==========================================================
@@ -1286,6 +1289,164 @@ static void bundleDesktopFiles(const CompilerOptions& opts, const fs::path& dir,
 #endif
 }
 
+// One value of a [build] line: "text" / 'text' / true / false / ["a", "b"].
+static std::vector<std::string> buildValues(const std::string& raw) {
+    std::vector<std::string> out;
+    std::string v = raw;
+    size_t hash = std::string::npos;
+    bool inq = false;
+    char q = 0;
+    for (size_t i = 0; i < v.size(); i++) {
+        char c = v[i];
+        if (inq) { if (c == q) inq = false; continue; }
+        if (c == '"' || c == '\'') { inq = true; q = c; continue; }
+        if (c == '#') { hash = i; break; }
+    }
+    if (hash != std::string::npos) v = v.substr(0, hash);
+    auto trimS = [](std::string t) {
+        size_t a = t.find_first_not_of(" \t\r\n"), b = t.find_last_not_of(" \t\r\n");
+        return a == std::string::npos ? std::string() : t.substr(a, b - a + 1);
+    };
+    v = trimS(v);
+    if (!v.empty() && v.front() == '[') {
+        v = v.substr(1, v.size() >= 2 ? v.size() - 2 : 0);
+        std::string cur;
+        bool q2 = false;
+        char qc = 0;
+        for (char c : v) {
+            if (q2) { if (c == qc) { q2 = false; out.push_back(cur); cur.clear(); } else cur += c; continue; }
+            if (c == '"' || c == '\'') { q2 = true; qc = c; }
+        }
+        return out;
+    }
+    if (v.size() >= 2 && (v.front() == '"' || v.front() == '\'') && v.back() == v.front()) v = v.substr(1, v.size() - 2);
+    out.push_back(v);
+    return out;
+}
+
+// `quirk build`: the nearest quirk.toml's [build] section into the bundle
+// options (what's on the command line wins). Paths are the project's.
+static bool loadBuildConfig(CompilerOptions& opts, std::string& err) {
+    std::error_code ec;
+    fs::path dir = fs::current_path(ec);
+    fs::path toml;
+    for (fs::path d = dir; ; d = d.parent_path()) {
+        if (fs::exists(d / "quirk.toml", ec)) { toml = d / "quirk.toml"; break; }
+        if (d == d.parent_path()) break;
+    }
+    if (toml.empty()) { err = "no quirk.toml here (or give the entry file: quirk build main.qk)"; return false; }
+    fs::path root = toml.parent_path();
+    std::ifstream in(toml.string());
+    std::string line, section, entry, topEntry, name, icon, output;
+    std::vector<std::string> includes;
+    bool windowed = false, embed = false, any = false;
+    while (std::getline(in, line)) {
+        size_t a = line.find_first_not_of(" \t");
+        if (a == std::string::npos || line[a] == '#') continue;
+        std::string t = line.substr(a);
+        while (!t.empty() && (t.back() == '\r' || t.back() == ' ')) t.pop_back();
+        if (t.front() == '[' && t.back() == ']') { section = t.substr(1, t.size() - 2); continue; }
+        size_t eq = t.find('=');
+        if (eq == std::string::npos) continue;
+        std::string key = t.substr(0, eq);
+        while (!key.empty() && key.back() == ' ') key.pop_back();
+        std::vector<std::string> vals = buildValues(t.substr(eq + 1));
+        std::string v = vals.empty() ? "" : vals[0];
+        if (section.empty() && key == "entry") topEntry = v;
+        if (section != "build") continue;
+        any = true;
+        if (key == "entry") entry = v;
+        else if (key == "name") name = v;
+        else if (key == "icon") icon = v;
+        else if (key == "output") output = v;
+        else if (key == "windowed") windowed = v == "true";
+        else if (key == "embed") embed = v == "true";
+        else if (key == "include") includes = vals;
+        else { err = toml.string() + ": [build] has no '" + key + "' (entry, name, icon, windowed, include, embed, output)"; return false; }
+    }
+    if (entry.empty()) entry = !topEntry.empty() ? topEntry : "main.qk";
+    if (!fs::exists(root / entry, ec)) { err = "the entry " + (root / entry).string() + " isn't there (set entry = \"...\" in [build])"; return false; }
+    opts.inputFile = (root / entry).string();
+    if (opts.outputFile.empty()) opts.outputFile = (root / (output.empty() ? "dist" : output)).string();
+    if (opts.bundleName.empty()) opts.bundleName = name;
+    if (opts.bundleIcon.empty() && !icon.empty()) opts.bundleIcon = (root / icon).string();
+    if (windowed) opts.bundleWindowed = true;
+    if (embed) opts.bundleEmbed = true;
+    if (opts.bundleIncludes.empty())
+        for (auto& inc : includes) opts.bundleIncludes.push_back((root / inc).string());
+    if (!any) std::cerr << "build: no [build] in " << toml.string() << " — the defaults (" << entry << ", dist/)\n";
+    return true;
+}
+
+// The --include files to build into the program: [path relative to the
+// entry's folder (with /), file].
+static std::vector<std::pair<std::string, fs::path>> embedFiles(const CompilerOptions& opts) {
+    std::vector<std::pair<std::string, fs::path>> out;
+    std::error_code ec;
+    fs::path root = fs::absolute(opts.inputFile).parent_path();
+    auto add = [&](const fs::path& f) {
+        fs::path rel = fs::relative(fs::absolute(f), root, ec);
+        out.push_back({rel.generic_string(), fs::absolute(f)});
+    };
+    for (auto& inc : opts.bundleIncludes) {
+        fs::path src = root / inc;
+        if (!fs::exists(src, ec)) src = inc;
+        if (fs::is_directory(src, ec)) {
+            for (auto it = fs::recursive_directory_iterator(src, fs::directory_options::skip_permission_denied, ec);
+                 !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
+                std::string n = it->path().filename().string();
+                if (!n.empty() && n[0] == '.') { if (it->is_directory(ec)) it.disable_recursion_pending(); continue; }
+                if (it->is_regular_file(ec)) add(it->path());
+            }
+        } else if (fs::is_regular_file(src, ec)) {
+            add(src);
+        }
+    }
+    return out;
+}
+
+// LLVM IR (text) holding the files and a constructor that hands their table
+// to the runtime (quirk_embed_register) before main runs.
+static bool writeEmbedIR(const std::vector<std::pair<std::string, fs::path>>& files, const std::string& llPath) {
+    std::ofstream o(llPath);
+    auto bytes = [&](const std::string& d) {
+        std::string s;
+        s.reserve(d.size() * 3);
+        static const char* hex = "0123456789ABCDEF";
+        for (unsigned char c : d) {
+            if (c >= 32 && c < 127 && c != '"' && c != '\\') s += (char)c;
+            else { s += '\\'; s += hex[c >> 4]; s += hex[c & 15]; }
+        }
+        return s;
+    };
+    o << "%QEmb = type { i8*, i8*, i64 }\n";
+    size_t i = 0;
+    for (auto& [rel, path] : files) {
+        std::string data = bundleReadAll(path.string());
+        o << "@q_emb_p" << i << " = private constant [" << rel.size() + 1 << " x i8] c\"" << bytes(rel) << "\\00\"\n";
+        o << "@q_emb_d" << i << " = private constant [" << data.size() + 1 << " x i8] c\"" << bytes(data) << "\\00\"\n";
+        i++;
+    }
+    o << "@q_emb_table = private constant [" << files.size() << " x %QEmb] [";
+    i = 0;
+    for (auto& [rel, path] : files) {
+        std::error_code ec;
+        uintmax_t n = fs::file_size(path, ec);
+        if (i) o << ", ";
+        o << "%QEmb { i8* getelementptr ([" << rel.size() + 1 << " x i8], [" << rel.size() + 1 << " x i8]* @q_emb_p" << i << ", i64 0, i64 0), "
+          << "i8* getelementptr ([" << n + 1 << " x i8], [" << n + 1 << " x i8]* @q_emb_d" << i << ", i64 0, i64 0), i64 " << n << " }";
+        i++;
+    }
+    o << "]\n";
+    o << "declare void @quirk_embed_register(%QEmb*, i64)\n"
+      << "define internal void @q_emb_init() {\n"
+      << "  call void @quirk_embed_register(%QEmb* getelementptr ([" << files.size() << " x %QEmb], [" << files.size()
+      << " x %QEmb]* @q_emb_table, i64 0, i64 0), i64 " << files.size() << ")\n"
+      << "  ret void\n}\n"
+      << "@llvm.global_ctors = appending global [1 x { i32, void ()*, i8* }] [{ i32, void ()*, i8* } { i32 65535, void ()* @q_emb_init, i8* null }]\n";
+    return (bool)o;
+}
+
 // The rest of `quirk bundle`, once the binary is linked into `dir`: the
 // runtime (and on Windows the DLLs it needs) next to it, the app's files,
 // and with --docker a Dockerfile.
@@ -1338,8 +1499,10 @@ static int finishBundle(const CompilerOptions& opts, const std::string& dir,
         fs::path src = root / inc;
         if (!fs::exists(src, ec)) src = inc;
         if (!fs::exists(src, ec)) { std::cerr << "bundle: --include " << inc << ": not found\n"; return 1; }
+        std::string shown = fs::relative(fs::absolute(src), root, ec).generic_string();
+        if (opts.bundleEmbed) { copied.push_back(shown + "  (built into the program)"); continue; }
         bundleCopy(src, out / fs::relative(fs::absolute(src), root, ec));
-        copied.push_back(inc);
+        copied.push_back(shown);
     }
     if (opts.bundleDocker) {
 #ifdef _WIN32
@@ -1424,8 +1587,11 @@ static int finishBundle(const CompilerOptions& opts, const std::string& dir,
     for (auto& c : copied) std::cout << "  " << c << "\n";
     if (templates) std::cout << "  " << templates << " template file" << (templates == 1 ? "" : "s") << " (next to their .qk)\n";
     if (opts.bundleDocker) std::cout << "  Dockerfile\n";
-    std::cout << "Run it from that folder (it reads its files from there):  cd " << dir << " && ./"
-              << fs::path(binPath).filename().string() << "\n";
+    if (opts.bundleEmbed && copied.size() == opts.bundleIncludes.size() && !templates)
+        std::cout << "Run it from anywhere (its files are inside it):  " << (fs::path(dir) / fs::path(binPath).filename()).string() << "\n";
+    else
+        std::cout << "Run it from that folder (it reads its files from there):  cd " << dir << " && ./"
+                  << fs::path(binPath).filename().string() << "\n";
     return 0;
 }
 
@@ -2200,6 +2366,7 @@ int main(int argc, char* argv[]) {
         }
         else if (arg == "--docker")       opts.bundleDocker = true;
         else if (arg == "--windowed")     opts.bundleWindowed = true;
+        else if (arg == "--embed")        opts.bundleEmbed = true;
         else if (arg == "--name" || arg == "--icon") {
             if (++i >= argc) { std::cerr << "Error: " << arg << " needs a value\n"; return 1; }
             (arg == "--name" ? opts.bundleName : opts.bundleIcon) = argv[i];
@@ -2249,6 +2416,17 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    // `quirk build` with no file: the app as the project's quirk.toml
+    // describes it ([build]) — `quirk bundle` with those options.
+    if ((opts.buildOnly || opts.bundle) && opts.inputFile.empty()) {
+        std::string err;
+        if (!loadBuildConfig(opts, err)) {
+            std::cerr << "build: " << err << "\n";
+            return 1;
+        }
+        opts.buildOnly = false;
+        opts.bundle = true;
+    }
     if (opts.inputFile.empty()) {
         std::cerr << "Error: No input file specified." << std::endl;
         printUsage();
@@ -2608,8 +2786,19 @@ int main(int argc, char* argv[]) {
                     std::cerr << "bundle: the .exe keeps the default icon (no rc.exe / llvm-rc: run from a Visual Studio"
                                  " developer prompt); the window still shows the app's own\n";
             }
+            std::string extra = resPath.empty() ? "" : "\"" + resPath + "\"";
+            if (opts.bundle && opts.bundleEmbed) {
+                auto files = embedFiles(opts);
+                std::string ll = (fs::temp_directory_path() / ("quirk_embed_" + std::to_string((long long)std::time(nullptr)) + ".ll")).string();
+                std::string eobj = ll.substr(0, ll.size() - 3) + ".obj";
+                if (files.empty() || !writeEmbedIR(files, ll) || !windowsEmitObject(ll, eobj, err)) {
+                    std::cerr << "bundle: can't build the files into the program" << (err.empty() ? "" : ": " + err) << "\n";
+                    return 1;
+                }
+                extra += " \"" + eobj + "\"";
+            }
             if (!windowsEmitObject(irPath, objPath, err) ||
-                !windowsLinkExe(objPath, opts.outputFile, runtimePath, err, opts.bundle && opts.bundleWindowed, resPath)) {
+                !windowsLinkExe(objPath, opts.outputFile, runtimePath, err, opts.bundle && opts.bundleWindowed, extra)) {
                 std::cerr << "Error: " << err << std::endl;
                 return 1;
             }
@@ -2649,6 +2838,20 @@ int main(int argc, char* argv[]) {
         if (int r = qplat::run_shell(llcCmd.c_str())) {
             std::cerr << "Error: llc failed (exit " << r << ")" << std::endl;
             return 1;
+        }
+
+        // The --include files built into the program: their own object.
+        std::string embedObj;
+        if (opts.bundle && opts.bundleEmbed) {
+            auto files = embedFiles(opts);
+            std::string ll = objPath + ".embed.ll";
+            embedObj = objPath + ".embed.o";
+            if (files.empty() || !writeEmbedIR(files, ll) ||
+                qplat::run_shell((llcCommand() + " -filetype=obj -relocation-model=pic " + ll + " -o " + embedObj).c_str()) != 0) {
+                std::cerr << "bundle: can't build the files into the program (nothing to embed: --include / include = [...])\n";
+                return 1;
+            }
+            objPath += " " + embedObj;
         }
 
         // Link: object + runtime.so → output binary

@@ -5,6 +5,24 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.68.0] — 2026-11-23 — quirk build, files inside the program
+
+- **`quirk build`** (no file): the app as the project's `quirk.toml` says,
+  in a `[build]` section — `entry`, `name`, `icon`, `windowed`,
+  `include = ["assets"]`, `embed`, `output` (default `dist`) — so a long
+  `quirk bundle main.qk -o dist --name ... --icon ... --windowed --include
+  ...` is one word. Options on the command line win. (`quirk build
+  file.qk` still builds one file into the build cache.)
+- **`embed = true` / `quirk bundle --embed`: the included files built into
+  the program.** Reading them — `fs.read_text`, `is_file`, `exists`,
+  `is_dir`, `size`, images, fonts, `Window.set_icon` — finds them there
+  first (by a path relative to the program's folder or the current one:
+  `assets/logo.png`, `./assets/logo.png`, `<program folder>/assets/...`),
+  so the app runs from anywhere with only the runtime next to it. In the
+  runtime (`core/embed.c`: the table the program registers before `main`).
+- `quirk.toml` keeps the sections it doesn't read (`[build]`, others) as
+  written when `quirk install` rewrites it — they were dropped.
+
 ## [7.67.0] — 2026-11-23 — apps of their own: a name, an icon, no console
 
 - **`quirk bundle --name "My App" --icon logo.png --windowed`**: a desktop

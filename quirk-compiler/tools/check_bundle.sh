@@ -89,6 +89,31 @@ else
     cmp -s "$desk/icon.png" "$d/test-app.png" && ok "its icon next to it" || fail "no test-app.png"
     [ "$(cd "$d" && env -i PATH=/usr/bin:/bin ./test-app 2>&1)" = "desk ok" ] && ok "it runs" || fail "test-app doesn't run"
 fi
+# `quirk build`: quirk.toml's [build]; embed = true puts the files in the
+# program (read from there, run from anywhere); the manifest keeps [build].
+proj="$work/proj"
+mkdir -p "$proj/assets/sub" "$proj/elsewhere"
+printf 'name = "proj"\nversion = "0.1.0"\n\n[deps]\n\n[build]\nname = "Built App"\ninclude = ["assets"]   # data\nembed = true\noutput = "out"\n' > "$proj/quirk.toml"
+echo "inside" > "$proj/assets/msg.txt"
+echo "deep" > "$proj/assets/sub/x.txt"
+cat > "$proj/main.qk" <<'Q'
+use fs
+use sys
+define main() -> void {
+    here := fs.dirname(String(sys.argv()[0]))
+    print(fs.read_text("assets/msg.txt").trim() + " " + fs.read_text(fs.join(here, "./assets/sub/x.txt")).trim()
+          + " " + String(fs.is_dir("assets")) + " " + String(fs.size("assets/msg.txt")) + " " + String(fs.exists("assets/no.txt")))
+}
+Q
+built=$(cd "$proj/elsewhere" && "$QUIRK" build 2>&1)
+bin="$proj/out/built-app"
+[ "$(uname)" = "Darwin" ] && bin="$proj/out/Built App.app/Contents/MacOS/built-app"
+[ -x "$bin" ] && ok "quirk build: the app from [build]" || fail "quirk build: $built"
+[ ! -e "$proj/out/assets" ] && [ ! -e "$(dirname "$bin")/assets" ] && ok "embed: no assets/ copied" || fail "assets/ was copied"
+got=$(cd / && env -i PATH=/usr/bin:/bin "$bin" 2>&1)
+[ "$got" = "inside deep true 7 false" ] && ok "embed: the files read from the program, run from anywhere" || fail "embedded files: $got"
+grep -q '^embed = true$' "$proj/quirk.toml" && ok "quirk.toml keeps [build]" || fail "[build] lost"
+
 notpng=$(cd "$desk" && "$QUIRK" bundle main.qk -o "$work/bad" --icon main.qk 2>&1)
 grep -q "not a PNG" <<< "$notpng" && ok "--icon refuses what isn't a PNG" || fail "--icon main.qk: $notpng"
 

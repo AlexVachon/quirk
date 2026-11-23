@@ -70,7 +70,7 @@ static std::string self_binary();
 
 namespace qpm {
 
-constexpr const char* QUIRK_VERSION = "7.67.0";
+constexpr const char* QUIRK_VERSION = "7.68.0";
 
 namespace fs = std::filesystem;
 
@@ -534,6 +534,10 @@ struct Manifest {
     std::vector<std::pair<std::string, std::string>> deps;
     std::vector<std::pair<std::string, std::string>> dev_deps;
     std::vector<std::pair<std::string, std::string>> scripts;  // name → command
+    // Sections this file doesn't read ([build] — `quirk build`'s — and any
+    // other): their lines kept as written, so rewriting the manifest
+    // (`quirk install`) doesn't lose them.
+    std::vector<std::pair<std::string, std::vector<std::string>>> other_sections;
 };
 
 static std::string trim(std::string s) {
@@ -556,11 +560,18 @@ static bool read_manifest(const std::string& path, Manifest& out) {
     std::string section;
     while (std::getline(in, line)) {
         std::string t = trim(line);
-        if (t.empty() || t[0] == '#') continue;
-        if (t.front() == '[' && t.back() == ']') {
+        bool known = section.empty() || section == "deps" || section == "dev-deps" || section == "scripts";
+        if (!t.empty() && t.front() == '[' && t.back() == ']') {
             section = t.substr(1, t.size() - 2);
+            if (!(section == "deps" || section == "dev-deps" || section == "scripts"))
+                out.other_sections.push_back({section, {}});
             continue;
         }
+        if (!known) {
+            if (!t.empty()) out.other_sections.back().second.push_back(trim(line));
+            continue;
+        }
+        if (t.empty() || t[0] == '#') continue;
         size_t eq = t.find('=');
         if (eq == std::string::npos) continue;
         std::string key = trim(t.substr(0, eq));
@@ -606,6 +617,10 @@ static void write_manifest(const std::string& path, const Manifest& m) {
     if (!m.scripts.empty()) {
         out << "\n[scripts]\n";
         for (auto& s : m.scripts) out << s.first << " = \"" << s.second << "\"\n";
+    }
+    for (auto& sec : m.other_sections) {
+        out << "\n[" << sec.first << "]\n";
+        for (auto& l : sec.second) out << l << "\n";
     }
 }
 
@@ -8480,7 +8495,13 @@ static std::string help_for(const std::string& cmdIn) {
                "               my-app.desktop launcher, on macOS My App.app\n"
                "    --icon     its icon, a PNG (256x256 is best): in the .exe on\n"
                "               Windows (needs rc.exe / llvm-rc), the .desktop's, the .app's\n"
-               "    --windowed a window app: on Windows no console window with it\n"
+               "    --windowed a window app: on Windows no console window with it\n"               "    --embed    the --include files built into the program (read from\n"
+               "               there: fs, images, fonts, icons), not copied next to it\n"
+               "    quirk build (no file) does this as quirk.toml's [build] says:\n"
+               "      [build]\n"
+               "      entry = \"main.qk\"   name = \"My App\"   icon = \"logo.png\"\n"
+               "      windowed = true   include = [\"assets\"]   embed = true\n"
+               "      output = \"dist\"\n"
                "    Needs llc-14 and a C compiler where you bundle.\n";
     if (cmd == "eval" || cmd == "-c")
         return "quirk eval \"<code>\"\n"

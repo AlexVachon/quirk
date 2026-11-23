@@ -1141,6 +1141,14 @@ int64_t Window_save_bmp_raw(int64_t h, String* path) {
     return rc == 0 ? 0 : -1;
 }
 
+// Decode an image file (or one built into the program) to RGBA.
+static unsigned char* qimg_decode(const char* p, int* w, int* h, int* chans) {
+    int64_t esz = 0;
+    const unsigned char* ed = quirk_embedded(p, &esz);
+    if (ed) return stbi_load_from_memory(ed, (int)esz, w, h, chans, 4);
+    return stbi_load(p, w, h, chans, 4);
+}
+
 // The window's icon from an image file (a PNG, 256x256 or so): the title
 // bar's, the taskbar's, Alt+Tab's. 1 if it was set.
 int64_t Window_set_icon_raw(int64_t h, String* path) {
@@ -1149,7 +1157,7 @@ int64_t Window_set_icon_raw(int64_t h, String* path) {
     if (!w || !p) return 0;
     if (!qsdl.SetWindowIcon || !qsdl.CreateRGBSurfaceWithFormat) { snprintf(qwin_err, sizeof qwin_err, "this SDL can't set an icon"); return 0; }
     int iw = 0, ih = 0, chans = 0;
-    unsigned char* px = stbi_load(p, &iw, &ih, &chans, 4);
+    unsigned char* px = qimg_decode(p, &iw, &ih, &chans);
     if (!px) { snprintf(qwin_err, sizeof qwin_err, "can't read the icon %s", p); return 0; }
     void* surf = qsdl.CreateRGBSurfaceWithFormat(0, iw, ih, 32, QSDL_PIXELFORMAT_ABGR8888);
     if (!surf) { stbi_image_free(px); qwin_set_err("can't make a surface"); return 0; }
@@ -1178,7 +1186,7 @@ int64_t Window_image_load_raw(int64_t h, String* path) {
     if (!w || !p) return -1;
     int iw = 0, ih = 0, chans = 0;
     quirk_gil_release();
-    unsigned char* px = stbi_load(p, &iw, &ih, &chans, 4);
+    unsigned char* px = qimg_decode(p, &iw, &ih, &chans);
     quirk_gil_acquire();
     if (!px) {
         FILE* probe = fopen(p, "rb");
@@ -1343,6 +1351,19 @@ static int qutf8_next(const unsigned char* s, size_t n, size_t* i) {
 // Read a font file into GC memory and set up `info` (the first font of a
 // .ttc collection). 0 ok, -1 failed (qwin_err says why).
 static int qfont_read(const char* p, unsigned char** data_out, stbtt_fontinfo* info) {
+    int64_t esz = 0;
+    const unsigned char* ed = quirk_embedded(p, &esz);
+    if (ed) {                                          // built into the program
+        unsigned char* copy = (unsigned char*)GC_malloc_atomic((size_t)esz);
+        memcpy(copy, ed, (size_t)esz);
+        int eoff = stbtt_GetFontOffsetForIndex(copy, 0);
+        if (eoff < 0 || !stbtt_InitFont(info, copy, eoff)) {
+            snprintf(qwin_err, sizeof qwin_err, "'%s' isn't a TrueType / OpenType font", p);
+            return -1;
+        }
+        *data_out = copy;
+        return 0;
+    }
     FILE* fp = fopen(p, "rb");
     if (!fp) { snprintf(qwin_err, sizeof qwin_err, "can't open '%s'", p); return -1; }
     fseek(fp, 0, SEEK_END);
@@ -1363,6 +1384,7 @@ static int qfont_read(const char* p, unsigned char** data_out, stbtt_fontinfo* i
 }
 
 static int qfont_file_exists(const char* p) {
+    if (quirk_embedded(p, NULL)) return 1;
     FILE* fp = fopen(p, "rb");
     if (!fp) return 0;
     fclose(fp);

@@ -2455,6 +2455,10 @@ int main(int argc, char* argv[]) {
         }
         if (!opts.bundleIcon.empty()) {
             int iw = 0, ih = 0;
+            if (!fs::exists(opts.bundleIcon, ec)) {
+                std::cerr << "bundle: --icon " << opts.bundleIcon << ": no such file\n";
+                return 1;
+            }
             if (!bundlePngSize(opts.bundleIcon, iw, ih)) {
                 std::cerr << "bundle: --icon " << opts.bundleIcon << ": not a PNG file\n";
                 return 1;

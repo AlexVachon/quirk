@@ -178,6 +178,8 @@ static struct {
     void (*GetWindowPosition)(void*, int*, int*);
     int (*GetWindowDisplayIndex)(void*);
     int (*GetDisplayUsableBounds)(int, QSdlRect*);
+    // Optional: the lock keys' state (Caps Lock), asked at any time.
+    int (*GetModState)(void);
 } qsdl;
 
 static char qwin_err[512] = "";
@@ -271,6 +273,7 @@ static int qsdl_load(void) {
     *(void**)&qsdl.RestoreWindow = dlsym(qsdl.lib, "SDL_RestoreWindow");
     *(void**)&qsdl.GetWindowFlags = dlsym(qsdl.lib, "SDL_GetWindowFlags");
     *(void**)&qsdl.SetWindowOpacity = dlsym(qsdl.lib, "SDL_SetWindowOpacity");
+    *(void**)&qsdl.GetModState = dlsym(qsdl.lib, "SDL_GetModState");
     *(void**)&qsdl.GetWindowPosition = dlsym(qsdl.lib, "SDL_GetWindowPosition");
     *(void**)&qsdl.GetWindowDisplayIndex = dlsym(qsdl.lib, "SDL_GetWindowDisplayIndex");
     *(void**)&qsdl.GetDisplayUsableBounds = dlsym(qsdl.lib, "SDL_GetDisplayUsableBounds");
@@ -419,7 +422,8 @@ static void qwin_pump(void) {
                 ev.a = sym;
                 ev.b = se.bytes[13];               // repeat
                 ev.d = ((mod & 0x0003) ? 1 : 0) | ((mod & 0x00C0) ? 2 : 0) |
-                       ((mod & 0x0300) ? 4 : 0) | ((mod & 0x0C00) ? 8 : 0);
+                       ((mod & 0x0300) ? 4 : 0) | ((mod & 0x0C00) ? 8 : 0) |
+                       ((mod & 0x2000) ? 16 : 0);                 // KMOD_CAPS
                 const char* name = qsdl.GetKeyName(sym);
                 size_t k = 0;
                 for (; name && name[k] && k < sizeof ev.text - 1; k++) {
@@ -1043,6 +1047,13 @@ int64_t Window_state_raw(int64_t h) {
     uint32_t f = qsdl.GetWindowFlags(w->win);
     return ((f & QSDL_WINDOW_MAXIMIZED) ? 1 : 0) | ((f & QSDL_WINDOW_MINIMIZED) ? 2 : 0) |
            ((f & QSDL_WINDOW_FULLSCREEN) ? 4 : 0) | ((f & QSDL_WINDOW_BORDERLESS) ? 8 : 0);
+}
+
+// 1 while Caps Lock is on (as the window system sees it — which, under
+// WSLg, can differ from the keyboard's light), 0 when off or unknown.
+int64_t Window_caps_lock_raw(void) {
+    if (qsdl.loaded != 1 || !qsdl.GetModState) return 0;
+    return (qsdl.GetModState() & 0x2000) ? 1 : 0;
 }
 
 // 0 (invisible) .. 1; 1 if this platform can do it.

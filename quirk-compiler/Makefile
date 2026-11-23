@@ -174,7 +174,8 @@ STDLIB_TAG_process ?= v1.1.0
 # window v1.2.0: clip / unclip, clipboard / set_clipboard (runtime v7.26.0).
 # window v1.3.0: TrueType fonts (runtime stb_truetype, v7.33.0).
 # window v1.9.0: borderless windows, set_hit_areas, minimize / maximize, inset, opacity (v7.61.0).
-STDLIB_TAG_window ?= v1.9.0
+# window v1.10.0: Event.caps, caps_lock() (runtime v7.66.0).
+STDLIB_TAG_window ?= v1.10.0
 # crypto v1.1.0: hash_password / verify_password / needs_rehash (scrypt), equal (runtime v7.55.0).
 STDLIB_TAG_crypto ?= v1.1.0
 # regex v1.0.1: Match.start / end in characters, ^ only at the start (runtime v7.63.0).

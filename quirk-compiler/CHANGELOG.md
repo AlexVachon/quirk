@@ -24,6 +24,11 @@ only for breaking changes.
 - Pins **`ui` v1.16.0**: a right-click on a `TreeView` / `ListView` row
   selects it (quietly: no `on_select`) before its `context_menu` opens, so
   the menu is about that row; `TreeView.node_at(x, y)`.
+- Pins **`window` v1.10.0**: `Event.caps` (Caps Lock was on for that key)
+  and `window.caps_lock()` (asked now) — under WSLg Caps Lock can be on
+  while the keyboard's light is off, and typed letters come out in
+  capitals; an editor can show it. In the runtime (`SDL_GetModState`,
+  KMOD_CAPS in key events).
 
 ## [7.65.0] — 2026-11-23 — a menu bar in the title bar
 

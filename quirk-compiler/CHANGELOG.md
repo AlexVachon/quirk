@@ -5,6 +5,14 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.71.0] — 2026-11-23 — round corners for borderless windows (Windows 11)
+
+- A borderless window on Windows 11 has round corners, like any other.
+  This is a `window.Window(..., borderless=true)` window, which is what
+  `ui.App(title_bar=true)` makes. Windows rounds only windows with the
+  usual frame, so the window now asks for it (`DwmSetWindowAttribute`,
+  corner preference "round"). Windows 10 keeps square corners.
+
 ## [7.70.0] — 2026-11-23 — ui 1.17.0: a status bar's lead item
 
 - **`ui` 1.17.0**:

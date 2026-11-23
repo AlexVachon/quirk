@@ -523,6 +523,25 @@ String* Window_error() {
 // Screen readers (Windows UI Automation; see window_uia.c).
 #ifdef _WIN32
 #include "window_uia.c"
+
+// Windows 11 rounds a window's corners only when it has the usual frame;
+// a borderless one (a title bar of the program's own) is asked to
+// (DWMWA_WINDOW_CORNER_PREFERENCE = 33, DWMWCP_ROUND = 2). Windows 10
+// doesn't know the attribute: it says no, the corners stay square.
+static void qwin_round_corners(void* sdl_window) {
+    static HRESULT (WINAPI *SetAttr)(HWND, DWORD, LPCVOID, DWORD) = NULL;
+    static int tried = 0;
+    if (!tried) {
+        tried = 1;
+        HMODULE dwm = LoadLibraryW(L"dwmapi.dll");
+        if (dwm) *(void**)&SetAttr = (void*)GetProcAddress(dwm, "DwmSetWindowAttribute");
+    }
+    if (!SetAttr) return;
+    HWND h = qacc_hwnd_of(sdl_window);
+    if (!h) return;
+    int round = 2;
+    SetAttr(h, 33, &round, sizeof round);
+}
 #endif
 
 // Open a window; returns its handle, or -1 (see Window_error).
@@ -594,6 +613,7 @@ int64_t Window_open_raw(String* title, int64_t width, int64_t height, int64_t fl
     qwin_rescale(w);
 #ifdef _WIN32
     if (!qwin_headless) qacc_attach(slot, win);
+    if (!qwin_headless && (flags & 16)) qwin_round_corners(win);
 #endif
     return slot;
 }

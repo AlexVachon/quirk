@@ -386,6 +386,22 @@ public:
 // one compiler invocation. `resolveImportPath()` is hit once per import,
 // stdlib loading hits this hundreds of times, so caching saves a meaningful
 // amount of allocation + string concat + fs::exists checks.
+// The project the program being run belongs to: the nearest folder above the
+// entry file with a quirk.toml (set before the search paths are first read).
+// Its site-packages/ is searched after the current folder's, so
+// `quirk run ../app/main.qk` finds app's installed packages from anywhere.
+static std::string g_project_dir;
+
+static std::string projectDirOf(const std::string& file) {
+    std::error_code ec;
+    fs::path d = fs::absolute(file, ec).parent_path();
+    for (; !d.empty(); d = d.parent_path()) {
+        if (fs::exists(d / "quirk.toml", ec)) return d.string();
+        if (d == d.parent_path()) break;
+    }
+    return "";
+}
+
 static std::vector<std::string>& getSearchPaths() {
     static std::vector<std::string> paths = []() {
         std::vector<std::string> p;
@@ -400,6 +416,12 @@ static std::vector<std::string>& getSearchPaths() {
         // until a `quirk pkg install` migrates them on next run.
         p.push_back("./site-packages/");
         p.push_back("./packages/");
+        if (!g_project_dir.empty()) {
+            std::error_code ec;
+            fs::path site = fs::path(g_project_dir) / "site-packages";
+            if (fs::is_directory(site, ec) && !fs::equivalent(site, "site-packages", ec))
+                p.push_back(site.generic_string() + "/");
+        }
 
         const char* envHome = std::getenv("QUIRK_HOME");
         bool isVenv = false;
@@ -2568,6 +2590,8 @@ int main(int argc, char* argv[]) {
             }
         }
     }
+
+    if (!opts.inputFile.empty()) g_project_dir = projectDirOf(opts.inputFile);
 
     // Derive base name for output files (e.g. "tests/strings.quirk" -> "strings")
     fs::path inputPath(opts.inputFile);

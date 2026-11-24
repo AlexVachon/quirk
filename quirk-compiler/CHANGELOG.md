@@ -5,6 +5,16 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.75.0] — 2026-11-24 — run a project from any folder
+
+- `quirk run ../app/main.qk` (and `check`, `test`, `build`) finds the
+  app's installed packages from any folder. They are in `site-packages/`
+  next to its `quirk.toml`, the nearest one above the entry file. Before,
+  only `./site-packages/` in the current folder was searched, so running
+  from elsewhere said "Could not resolve module 'editor'". The current
+  folder's `site-packages/` still comes first.
+  `tools/check_site_packages.sh` covers this.
+
 ## [7.74.0] — 2026-11-24 — ui 1.19.0 in files; relative imports fixed
 
 - **Relative from-imports name the sibling file.** In a package split into

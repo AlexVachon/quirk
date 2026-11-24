@@ -42,6 +42,16 @@ else
     exit 1
 fi
 
+# Run from another folder: the app's own site-packages (next to its
+# quirk.toml) is found, not just ./site-packages/ of the current folder.
+out=$(cd "$work" && "$QUIRK" run --no-cache app/main.qk 2>&1)
+if [ "$out" = "alpha dark / beta dark" ]; then
+    echo "  ok quirk run app/main.qk from outside the project finds its packages"
+else
+    echo "FAIL from outside the project: $out"
+    exit 1
+fi
+
 # `from .util use { _clamp }` inside a package split into files means its
 # own util's _clamp, not another loaded module's (window._clamp(v) once
 # answered ui's three-argument calls: the source was the text ".util").

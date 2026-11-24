@@ -2,6 +2,14 @@
 
 All notable changes to the extension land here. Versioning follows SemVer; minor bumps for new features, patches for fixes.
 
+## [1.1.31] — 2026-11-24 — no completion while naming or in comments
+
+- No completion while you name a new declaration (`define _word_k|`,
+  `struct Ru|`). Picking an existing function there pasted its `(args)` too:
+  `define _word_kind(args)(args) -> void`.
+- No completion inside a `//` comment: a comment ending in `"plain".` no
+  longer lists String methods.
+
 ## [1.1.30] — 2026-11-24 — completion and Enter fixes
 
 - Picking a struct from completion inserts just its name (`LanguageConfig`).

@@ -285,5 +285,20 @@ process.env.QUIRK_HOME = savedHome;
     }
 }
 
+// ---- 6. completion: none while naming a declaration or in a comment ----
+{
+    const { noCompletionsAt } = require(path.join(OUT, 'CompletionProvider.js'));
+    const cases = [
+        ['define _word_k', true], ['    define ', true], ['struct Rul', true], ['async define fe', true],
+        ['    // a "plain".', true], ['x := 1  // see s.', true],
+        ['    s := "a // b".', false], ['    s.', false], ['    define f(a: Lan', false], ['    _word_k', false],
+    ];
+    for (const [prefix, want] of cases) {
+        const got = noCompletionsAt(prefix);
+        if (got === want) ok(`no completions: ${JSON.stringify(prefix)} → ${want}`);
+        else fail(`no completions: ${JSON.stringify(prefix)}`, `got ${got}, expected ${want}`);
+    }
+}
+
 console.log(`\n${passed} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);

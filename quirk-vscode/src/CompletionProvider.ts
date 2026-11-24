@@ -55,10 +55,11 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
         document: vscode.TextDocument,
         position: vscode.Position
     ): vscode.ProviderResult<vscode.CompletionItem[]> {
+        const linePrefix = document.lineAt(position).text.substring(0, position.character);
+        if (noCompletionsAt(linePrefix)) return [];
         const items = this.completionsAt(document, position);
         // Where a type goes (`-> Lan|`, `c: syntax.Lan|`, `List[Lan|`), a
         // pick is only its name: no `()`, no argument placeholders.
-        const linePrefix = document.lineAt(position).text.substring(0, position.character);
         if (Array.isArray(items) && isTypePosition(linePrefix)) {
             for (const item of items) item.insertText = undefined;
         }
@@ -1902,4 +1903,29 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
 export function isTypePosition(linePrefix: string): boolean {
     return /(?:->|:(?!=)|\b[A-Z][A-Za-z0-9_]*\[)\s*[A-Za-z_][A-Za-z0-9_.]*$/.test(linePrefix)
         || /(?:->|:(?!=))\s*$/.test(linePrefix);
+}
+
+// Nothing to complete: naming a new declaration (`define na|`, `struct Na|`:
+// an existing name's `(args)` would be pasted after it), or inside a `//`
+// comment (`"plain".` there isn't a String).
+export function noCompletionsAt(linePrefix: string): boolean {
+    if (/^\s*(?:async\s+)?(?:extern\s+)?(?:define|def|init|struct|enum|interface|type)\s+[A-Za-z0-9_]*$/.test(linePrefix)) return true;
+    return lineCommentStart(linePrefix) >= 0;
+}
+
+// Where a `//` comment starts in the line (not inside a string), or -1.
+function lineCommentStart(line: string): number {
+    let quote = '';
+    for (let i = 0; i < line.length; i++) {
+        const c = line[i];
+        if (quote) {
+            if (c === '\\') i++;
+            else if (c === quote) quote = '';
+        } else if (c === '"' || c === "'") {
+            quote = c;
+        } else if (c === '/' && line[i + 1] === '/') {
+            return i;
+        }
+    }
+    return -1;
 }

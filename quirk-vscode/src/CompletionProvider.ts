@@ -55,6 +55,20 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
         document: vscode.TextDocument,
         position: vscode.Position
     ): vscode.ProviderResult<vscode.CompletionItem[]> {
+        const items = this.completionsAt(document, position);
+        // Where a type goes (`-> Lan|`, `c: syntax.Lan|`, `List[Lan|`), a
+        // pick is only its name: no `()`, no argument placeholders.
+        const linePrefix = document.lineAt(position).text.substring(0, position.character);
+        if (Array.isArray(items) && isTypePosition(linePrefix)) {
+            for (const item of items) item.insertText = undefined;
+        }
+        return items;
+    }
+
+    private completionsAt(
+        document: vscode.TextDocument,
+        position: vscode.Position
+    ): vscode.ProviderResult<vscode.CompletionItem[]> {
 
         const linePrefix = document.lineAt(position).text.substring(0, position.character);
 
@@ -1412,7 +1426,8 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
             const name = match[1];
             if (name === 'main') continue;
             if (isStruct) {
-                addItem(name, vscode.CompletionItemKind.Struct, 'struct', `${name}($0)`);
+                // Just the name: it's as often a type (`-> Config`, `c: Config`) as a call.
+                addItem(name, vscode.CompletionItemKind.Struct, 'struct');
             } else if (isEnum) {
                 addItem(name, vscode.CompletionItemKind.Enum, 'enum');
             } else if (isInterface) {
@@ -1878,4 +1893,13 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
         md.appendMarkdown(formatted.md.value);
         return md;
     }
+}
+
+// The cursor is where a type is written: after `->`, after a `:` that isn't
+// `:=` (a parameter, field or variable annotation), inside `List[...]` /
+// `Map[...]` (not an index like `xs[i`),
+// with only a type's characters typed since.
+export function isTypePosition(linePrefix: string): boolean {
+    return /(?:->|:(?!=)|\b[A-Z][A-Za-z0-9_]*\[)\s*[A-Za-z_][A-Za-z0-9_.]*$/.test(linePrefix)
+        || /(?:->|:(?!=))\s*$/.test(linePrefix);
 }

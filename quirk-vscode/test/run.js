@@ -258,11 +258,30 @@ process.env.QUIRK_HOME = savedHome;
          'define f() -> Int {\n    return 1\n    s := """\n    text\n    """\n}\n', [3, 4, 5]],
         ['"return" inside a string isn\'t a return',
          'define f() -> Int {\n    s := """\nreturn x\n"""\n    y := 2\n    return 1\n}\n', []],
+        ['a return whose call goes on to the next lines isn\'t dead',
+         'define f() -> C {\n    return C(a,\n             b, [1,\n             2],\n             c)\n}\n', []],
+        ['code after that call\'s closing ) is',
+         'define f() -> C {\n    return C(a,\n             b)\n    x := 1\n}\n', [4]],
     ];
     for (const [what, src, want] of cases) {
         const got = [...computeDeadLines(src)].map(x => x + 1);
         if (JSON.stringify(got) === JSON.stringify(want)) ok(what);
         else fail(what, `dead lines ${JSON.stringify(got)}, expected ${JSON.stringify(want)}`);
+    }
+}
+
+// ---- 5. completion: where a type goes, a pick is just its name ----
+{
+    const { isTypePosition } = require(path.join(OUT, 'CompletionProvider.js'));
+    const cases = [
+        ['define f() -> Lan', true], ['define f() -> ', true], ['    c: Lan', true],
+        ['define f(c: syntax.Lan', true], ['    xs: List[Lan', true], ['m: Map[String, Lan', false],
+        ['    c := Lan', false], ['    return Lan', false], ['    y := xs[i', false], ['    print(Lan', false],
+    ];
+    for (const [prefix, want] of cases) {
+        const got = isTypePosition(prefix);
+        if (got === want) ok(`type position: ${JSON.stringify(prefix)} → ${want}`);
+        else fail(`type position: ${JSON.stringify(prefix)}`, `got ${got}, expected ${want}`);
     }
 }
 

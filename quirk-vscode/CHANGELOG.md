@@ -2,6 +2,20 @@
 
 All notable changes to the extension land here. Versioning follows SemVer; minor bumps for new features, patches for fixes.
 
+## [1.1.30] — 2026-11-24 — completion and Enter fixes
+
+- Picking a struct from completion inserts just its name (`LanguageConfig`).
+  It used to insert `LanguageConfig()`, wrong wherever a type goes
+  (`-> LanguageConfig`, `c: LanguageConfig`). Where a type goes (after `->`,
+  after a `:` annotation, in `List[...]`), no pick adds `()` or argument
+  placeholders.
+- Enter between `{` and `}` puts the cursor on an indented line and the `}` on
+  the line below. Before, the `}` was indented along with the cursor:
+  `define hello() -> void {` then `    }`.
+- `return Config(a,` with the rest of its arguments on the next lines was
+  faded as unreachable after the first line. Only `{` kept a return's value
+  going; `(` and `[` do now too.
+
 ## [1.1.29] — 2026-11-23 — hover docs for window 1.11
 
 - `Window.set_icon`.

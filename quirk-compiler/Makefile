@@ -200,7 +200,8 @@ STDLIB_TAG_sqlite ?= v1.1.0
 # ui v1.16.0: a right-click selects the row its menu is about, TreeView.node_at (v7.66.0).
 # ui v1.17.0: StatusBar lead item, PaletteItem separator, focused placeholders (v7.70.0).
 # ui v1.18.1: font weights, Button colours, previewed apps (QUIRK_UI_PREVIEW) (v7.72.0).
-STDLIB_TAG_ui ?= v1.18.1
+# ui v1.19.0: split into one file per widget family; needs relative from-imports fixed (v7.74.0).
+STDLIB_TAG_ui ?= v1.19.0
 STDLIB_TAG_web ?= v1.4.0
 STDLIB_TAG_live ?= v2.11.0
 

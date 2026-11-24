@@ -1263,7 +1263,7 @@ void Sema::checkUse(UseNode *node)
             // mapping so lookupTopLevel can dereference at
             // call-site resolution time.
             ctx.visibleSymbols.insert(localName);
-            ctx.visibleSymbolSources[localName] = node->moduleName;
+            ctx.visibleSymbolSources[localName] = node->resolvedModule.empty() ? node->moduleName : node->resolvedModule;
             if (localName != item) {
                 ctx.importAliases[localName] = item;
             }

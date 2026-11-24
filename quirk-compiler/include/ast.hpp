@@ -47,6 +47,11 @@ class UseNode : public Node {
     // alias to the source name when looking the symbol up.
     std::vector<std::string> filterAliases;
     std::string alias; // from .path as alias
+    // The module the import resolved to (`ui.util` for `from .util use`
+    // in ui/menus.quirk), set when the file is loaded. A relative path
+    // written as `.util` never matched a function's module, so a name
+    // another loaded module also defines (`window._clamp`) could win.
+    std::string resolvedModule;
 
     UseNode(std::string mod, std::vector<std::string> filters = {}, std::string alias = "")
         : moduleName(mod), filterList(filters), alias(alias) {}

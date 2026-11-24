@@ -857,6 +857,7 @@ std::vector<std::unique_ptr<Node>> processFile(const std::string& filePath,
                     std::cerr << "  - " << p << std::endl;
                 exit(1);
             }
+            use->resolvedModule = getModuleName(importPath);
 
             auto importedNodes = processFile(importPath, log, sourceMap, false);
             for (auto& importedNode : importedNodes)

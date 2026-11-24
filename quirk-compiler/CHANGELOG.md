@@ -5,6 +5,22 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.74.0] — 2026-11-24 — ui 1.19.0 in files; relative imports fixed
+
+- **Relative from-imports name the sibling file.** In a package split into
+  files, `from .util use { _clamp }` sometimes called a different module's
+  `_clamp` instead. That happened when another loaded module, such as
+  `window`, also defined a function with that name. The import was
+  recorded under its written text (`.util`), which never matched a module
+  name, so the lookup fell back to any visible function. It now records
+  the module the import resolves to (`ui.util`).
+  `tools/check_site_packages.sh` covers this.
+- **`ui` 1.19.0**: `index.quirk` (7,800 lines) is now one file per widget
+  family: `theme`, `widget`, `layout`, `controls`, `text_edit`,
+  `text_input`, `text_area`, `menus`, `app`, `title_bar` and so on. The
+  index re-exports them, so `ui.Button` and every other name work as
+  before. ui 1.19.0 needs quirk 7.74.0.
+
 ## [7.73.0] — 2026-11-23 — small UI scales
 
 - `QUIRK_UI_SCALE` accepts 0.25 to 8; it was 0.5 to 8. Below 1, a window

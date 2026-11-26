@@ -176,7 +176,7 @@ STDLIB_TAG_process ?= v1.1.0
 # window v1.9.0: borderless windows, set_hit_areas, minimize / maximize, inset, opacity (v7.61.0).
 # window v1.10.0: Event.caps, caps_lock() (runtime v7.66.0).
 # window v1.11.0: Window.set_icon (runtime v7.67.0).
-STDLIB_TAG_window ?= v1.11.0
+STDLIB_TAG_window ?= v1.12.0
 # crypto v1.1.0: hash_password / verify_password / needs_rehash (scrypt), equal (runtime v7.55.0).
 STDLIB_TAG_crypto ?= v1.1.0
 # regex v1.0.1: Match.start / end in characters, ^ only at the start (runtime v7.63.0).
@@ -201,7 +201,7 @@ STDLIB_TAG_sqlite ?= v1.1.0
 # ui v1.17.0: StatusBar lead item, PaletteItem separator, focused placeholders (v7.70.0).
 # ui v1.18.1: font weights, Button colours, previewed apps (QUIRK_UI_PREVIEW) (v7.72.0).
 # ui v1.19.0: split into one file per widget family; needs relative from-imports fixed (v7.74.0).
-STDLIB_TAG_ui ?= v1.20.0
+STDLIB_TAG_ui ?= v1.21.0
 STDLIB_TAG_web ?= v1.4.0
 STDLIB_TAG_live ?= v2.11.0
 

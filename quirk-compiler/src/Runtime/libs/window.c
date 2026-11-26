@@ -180,6 +180,8 @@ static struct {
     int (*GetDisplayUsableBounds)(int, QSdlRect*);
     // Optional: the lock keys' state (Caps Lock), asked at any time.
     int (*GetModState)(void);
+    void* (*CreateSystemCursor)(int);
+    void (*SetCursor)(void*);
     // Optional: the window's icon (title bar, taskbar, Alt+Tab).
     void (*SetWindowIcon)(void*, void*);
 } qsdl;
@@ -276,6 +278,8 @@ static int qsdl_load(void) {
     *(void**)&qsdl.GetWindowFlags = dlsym(qsdl.lib, "SDL_GetWindowFlags");
     *(void**)&qsdl.SetWindowOpacity = dlsym(qsdl.lib, "SDL_SetWindowOpacity");
     *(void**)&qsdl.GetModState = dlsym(qsdl.lib, "SDL_GetModState");
+    *(void**)&qsdl.CreateSystemCursor = dlsym(qsdl.lib, "SDL_CreateSystemCursor");
+    *(void**)&qsdl.SetCursor = dlsym(qsdl.lib, "SDL_SetCursor");
     *(void**)&qsdl.SetWindowIcon = dlsym(qsdl.lib, "SDL_SetWindowIcon");
     *(void**)&qsdl.GetWindowPosition = dlsym(qsdl.lib, "SDL_GetWindowPosition");
     *(void**)&qsdl.GetWindowDisplayIndex = dlsym(qsdl.lib, "SDL_GetWindowDisplayIndex");
@@ -294,6 +298,7 @@ typedef struct {
     int kind;              // QEV_*
     int a, b, c, d;
     char text[128];        // key name, typed text, or an IME composition
+    int mods;              // the mouse's: Shift 1, Ctrl 2, Alt 4, Meta 8 (as keys' d)
 } QWinEvent;
 
 enum { QEV_CLOSE = 1, QEV_KEY_DOWN, QEV_KEY_UP, QEV_TEXT, QEV_MOUSE_MOVE, QEV_MOUSE_DOWN,
@@ -325,6 +330,15 @@ typedef struct {
 
 static QWin qwins[QWIN_MAX];
 static int qwin_headless = 0;
+
+// The modifier keys held now (for mouse events, which don't carry them):
+// Shift 1, Ctrl 2, Alt 4, Meta / Cmd 8 — keys' `d` bits.
+static int qwin_mods_now(void) {
+    if (qsdl.loaded != 1 || !qsdl.GetModState) return 0;
+    int mod = qsdl.GetModState();
+    return ((mod & 0x0003) ? 1 : 0) | ((mod & 0x00C0) ? 2 : 0) |
+           ((mod & 0x0300) ? 4 : 0) | ((mod & 0x0C00) ? 8 : 0);
+}
 
 static QWin* qwin_get(int64_t h) {
     if (h < 0 || h >= QWIN_MAX || !qwins[h].used) return NULL;
@@ -472,6 +486,7 @@ static void qwin_pump(void) {
                 ev.kind = QEV_MOUSE_MOVE;
                 ev.a = qwin_to_logical(w, qev_i32(&se, 20)); ev.b = qwin_to_logical(w, qev_i32(&se, 24));
                 ev.c = (int)qev_u32(&se, 16);      // buttons held (bit 0 = left)
+                ev.mods = qwin_mods_now();
                 break;
             case QSDL_MOUSEBUTTONDOWN:
             case QSDL_MOUSEBUTTONUP:
@@ -479,11 +494,13 @@ static void qwin_pump(void) {
                 ev.a = qwin_to_logical(w, qev_i32(&se, 20)); ev.b = qwin_to_logical(w, qev_i32(&se, 24));
                 ev.c = se.bytes[16];               // 1 left, 2 middle, 3 right
                 ev.d = se.bytes[18];               // clicks
+                ev.mods = qwin_mods_now();
                 break;
             case QSDL_MOUSEWHEEL: {
                 int32_t dx = qev_i32(&se, 16), dy = qev_i32(&se, 20);
                 if (qev_u32(&se, 24) == 1) { dx = -dx; dy = -dy; }   // flipped
                 ev.kind = QEV_WHEEL; ev.a = dx; ev.b = dy;
+                ev.mods = qwin_mods_now();
                 break;
             }
         }
@@ -639,7 +656,7 @@ int Window_is_open_raw(int64_t h) {
     return qwin_get(h) != NULL;
 }
 
-// The window's next event as [kind, a, b, c, d, text], or [] if none is
+// The window's next event as [kind, a, b, c, d, text, mods], or [] if none is
 // waiting. `timeout_ms` > 0 waits up to that long for one (letting other
 // tasks run); -1 waits forever.
 List* Window_next_event_raw(int64_t h, int64_t timeout_ms) {
@@ -672,6 +689,7 @@ List* Window_next_event_raw(int64_t h, int64_t timeout_ms) {
     Core_Collections_List_List_append(res, quirk_int_to_opaque(ev.c));
     Core_Collections_List_List_append(res, quirk_int_to_opaque(ev.d));
     Core_Collections_List_List_append(res, make_String(ev.text));
+    Core_Collections_List_List_append(res, quirk_int_to_opaque(ev.mods));
     return res;
 }
 
@@ -1109,6 +1127,19 @@ int64_t Window_caps_lock_raw(void) {
 #endif
     if (qsdl.loaded != 1 || !qsdl.GetModState) return 0;
     return (qsdl.GetModState() & 0x2000) ? 1 : 0;
+}
+
+// The mouse pointer over the program's windows: one of SDL's system
+// cursors (0 arrow, 1 I-beam, 2 wait, 3 crosshair, 4 wait arrow, 5-8 the
+// resize arrows NWSE / NESW / WE / NS, 9 move, 10 not allowed, 11 hand),
+// each made once. 1 if it was set; 0 headless or without SDL's cursors.
+static void* qwin_cursors[12];
+int64_t Window_set_pointer_raw(int64_t id) {
+    if (id < 0 || id > 11 || qwin_headless || qsdl.loaded != 1 || !qsdl.CreateSystemCursor || !qsdl.SetCursor) return 0;
+    if (!qwin_cursors[id]) qwin_cursors[id] = qsdl.CreateSystemCursor((int)id);
+    if (!qwin_cursors[id]) return 0;
+    qsdl.SetCursor(qwin_cursors[id]);
+    return 1;
 }
 
 // 0 (invisible) .. 1; 1 if this platform can do it.

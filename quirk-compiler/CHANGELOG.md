@@ -5,6 +5,21 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.79.0] — 2026-11-26 — the mouse's modifiers, the mouse pointer
+
+- **Mouse events say which modifiers are held.** `mouse_move`,
+  `mouse_down` / `mouse_up` and `wheel` events now have `shift` / `ctrl` /
+  `alt` / `meta` (from the window system's state when they happen); they
+  were always false, so Shift+click (extend a selection), Alt+click (add a
+  cursor) and Ctrl+click only worked in tests that set them.
+- **The mouse pointer.** `win.set_pointer(name)` (window 1.12.0): `arrow`,
+  `text`, `hand`, `wait`, `progress`, `crosshair`, `move`, `not_allowed`
+  and the resize arrows, SDL's system cursors; `win.pointer()` says the last
+  one (headless too).
+- **ui 1.21.0**: the pointer follows the widget under the mouse,
+  `Widget.pointer_at(px, py)`: the I-beam over text fields, the resize
+  arrows on a split view's bar (and while dragging it), else the arrow.
+
 ## [7.78.0] — 2026-11-26 — untyped values compared with a Bool; ui 1.20.0
 
 - **An untyped value compared with a Bool or an Int is equal only when it

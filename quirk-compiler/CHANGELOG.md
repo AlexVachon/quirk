@@ -5,6 +5,16 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.76.0] — 2026-11-26 — methods named `_init…` aren't constructors
+
+- A method whose name starts with `_init` (`_init_params`, `_initialized`)
+  no longer replaces the struct's constructor. Its mangled name
+  (`A__init_params`) contains `__init`, and the parser took any such name
+  for `__init`, so `A(1)` failed with "A() takes 0 arguments but 1 was
+  given" or "Unknown method 'A._init_params'". Only `__init` itself is the
+  constructor now, in the parser and in Codegen's checks for one.
+  `tests/probes/p197_init_prefixed_method.qk` covers this.
+
 ## [7.75.0] — 2026-11-24 — run a project from any folder
 
 - `quirk run ../app/main.qk` (and `check`, `test`, `build`) finds the

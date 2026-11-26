@@ -1,0 +1,48 @@
+// A method whose name starts with `_init` (`_init_params`, `_initialized`)
+// was taken for the constructor: mangled `A__init_params`, it contains
+// "__init", so the parser renamed it `A__init` and it replaced `__init`
+// (`A() takes 0 arguments but 1 was given`). Now only `__init` is one.
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+struct Conn {
+    n: Int
+    log: String
+
+    define __init(self, n: Int) -> void {
+        self.n = n
+        self.log = ""
+        self._init_state()
+    }
+
+    define _init_state(self) -> void {
+        self.log = self.log + "state "
+    }
+
+    define _initialized(self, by: Int) -> Int {
+        return self.n + by
+    }
+}
+
+struct Sub : Conn {
+    define __init(self) -> void {
+        super().__init(10)
+    }
+
+    define _initialized(self, by: Int) -> Int {
+        return by * 100
+    }
+}
+
+define main() -> void {
+    c := Conn(1)
+    if c.n != 1 { fail("__init's argument lost: " + String(c.n)) }
+    if c._initialized(2) != 3 { fail("_initialized(2) = " + String(c._initialized(2))) }
+    if c.log != "state " { fail("Conn log: " + c.log) }
+    s := Sub()
+    if s.n != 10 { fail("Sub n: " + String(s.n)) }
+    if s.log != "state " { fail("Sub log: " + s.log) }
+    if s._initialized(2) != 200 { fail("Sub._initialized (an override) = " + String(s._initialized(2))) }
+    base: Conn = s
+    if base._initialized(2) != 200 { fail("virtual _initialized = " + String(base._initialized(2))) }
+    print("ok")
+}

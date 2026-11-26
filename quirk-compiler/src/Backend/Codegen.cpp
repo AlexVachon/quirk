@@ -241,7 +241,7 @@ class LLVMCodegen {
             n = n.substr(0, n.size() - kAsync.size());
         const std::string& c = fn->cls;
         if (!c.empty() && n.size() > c.size() && n.compare(0, c.size(), c) == 0 && n[c.size()] == '_')
-            return c + "." + (n.compare(c.size(), 2, "__") == 0 && n.compare(c.size(), 6, "__init") == 0
+            return c + "." + (n.compare(c.size(), std::string::npos, "__init") == 0
                               ? n.substr(c.size()) : n.substr(c.size() + 1));
         return n;
     }
@@ -489,7 +489,7 @@ class LLVMCodegen {
             for (const auto& n : nodes) {
                 if (auto f = dynamic_cast<FunctionNode*>(n.get())) {
                     if (!f->cls.empty() && f->isExtern &&
-                        f->name.find("__init") != std::string::npos) {
+                        f->name == f->cls + "__init") {
                         externOnly.insert(f->cls);
                     }
                 }
@@ -741,7 +741,7 @@ class LLVMCodegen {
                 // Populate structInitMap so StructGen can find renamed extern __init.
                 // e.g. String__init in libs/core/string.quirk -> "Core_String_String___init"
                 if (func->isExtern && !func->cls.empty() &&
-                    func->name.find("__init") != std::string::npos) {
+                    func->name == func->cls + "__init") {
                     structGen->registerStructInit(func->cls, llvmName);
                 }
             }
@@ -1348,7 +1348,7 @@ class LLVMCodegen {
             // Since __init is compiled once per struct, currentCodegenClass is the
             // ACTUAL subclass (e.g. "TypeError") — not the parent.  This ensures
             // that calling super().__init() doesn't silently overwrite the type.
-            bool isInitMethod = node->name.find("__init") != std::string::npos && !node->cls.empty();
+            bool isInitMethod = !node->cls.empty() && node->name == node->cls + "__init";
             if (isInitMethod && StructTypes.count("Exception") && StructTypes.count("String")) {
                 auto inheritsException = [&](const std::string& c, auto& self) -> bool {
                     if (c == "Exception") return true;

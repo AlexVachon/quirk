@@ -1889,7 +1889,7 @@ std::unique_ptr<StructNode> Parser::parseStruct() {
                 } else {
                     func->name = node->name + "_" + func->name;
                 }
-                if (!isInit && func->name.find("__init") != std::string::npos) {
+                if (!isInit && rawMethodName == "__init") {     // (`define __init`; not `_init_more`)
                     func->name = node->name + "__init";
                 }
                 std::string mp = computeModulePrefix();
@@ -1938,7 +1938,9 @@ std::unique_ptr<StructNode> Parser::parseStruct() {
                 func->name = node->name + "_" + func->name;
             }
 
-            if (!isInit && func->name.find("__init") != std::string::npos) {
+            // `define __init` (not a method that merely starts with `_init`:
+            // `_init_more` is mangled `A__init_more`, which contains "__init").
+            if (!isInit && rawMethodName == "__init") {
                 func->name = node->name + "__init";
             }
 

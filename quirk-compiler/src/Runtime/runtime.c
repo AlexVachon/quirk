@@ -523,6 +523,25 @@ int64_t quirk_opaque_to_int(void* val) {
     return 0;
 }
 
+// `v == n` for an untyped `v` and an Int / Bool `n` (`v != false`,
+// `x == 10`): equal only when `v` is a number (inline, or a boxed Int /
+// Bool / Char / Double) of that value. A Map, List, String or struct read
+// as an Int was 0, so `m["caps"] != false` was false for a Map there.
+// (null is an inline 0, as before: the two are the same bits.)
+int32_t quirk_opaque_eq_int(void* val, int64_t n) {
+    uintptr_t u = (uintptr_t)val;
+    if (u <= 0xFFFFFFFFUL) return (int64_t)(int32_t)u == n;
+    if (!quirk_is_any(val)) return 0;
+    Any* a = (Any*)val;
+    switch (a->tag) {
+        case ANY_INT:
+        case ANY_BOOL:
+        case ANY_CHAR:   return a->ival == n;
+        case ANY_DOUBLE: return a->dval == (double)n;
+        default:         return 0;
+    }
+}
+
 double quirk_opaque_to_double(void* val);
 
 // `Int(x)` / `Double(x)` on an untyped value: like quirk_opaque_to_int /

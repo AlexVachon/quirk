@@ -5,6 +5,21 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.78.0] — 2026-11-26 — untyped values compared with a Bool; ui 1.20.0
+
+- **An untyped value compared with a Bool or an Int is equal only when it
+  is a number of that value.** A Map, List, String or struct was read as
+  the Int 0, so `caps["definitionProvider"] != false` was false (and
+  `== false` true) when the value was a Map of options, as LSP servers
+  send, and `"x" == false` was true. Numbers, Bools and Chars (inline or
+  boxed, JSON's too) compare by value as before; an untyped null is still
+  equal to 0, which it is the same bits as.
+  `tests/probes/p199_untyped_eq_bool.qk` covers it.
+- **ui 1.20.0**: `app.refresh_tip()` asks the widget under the mouse for its
+  tooltip again, for a text that comes later (a language server's hover
+  answer); it shows once the mouse has rested `tooltip_delay` ms since it
+  last moved. Alt+letter opens the menu bar menu with that first letter.
+
 ## [7.77.0] — 2026-11-26 — typed loop variables
 
 - **`for x: Type in items`.** A loop variable can have a type, like any

@@ -6066,21 +6066,27 @@ Value* LLVMCodegen::handleExpression(Node* node) {
             // it derefs `.tag` on pointer N.
             Type* i8p = Type::getInt8PtrTy(Context);
             Type* intTy = Type::getInt64Ty(Context);
-            auto unboxAnyToInt = [&](Value* boxedI8p) {
-                return quirk::decodeUntypedInt(Context, TheModule.get(), Builder, boxedI8p);
-            };
-            if (L->getType() == i8p && R->getType()->isIntegerTy()) {
-                L = unboxAnyToInt(L);
-                if (R->getType()->isIntegerTy(1))
-                    R = Builder.CreateZExt(R, intTy, "bool_widen");
-                else if (R->getType() != L->getType())
-                    R = Builder.CreateIntCast(R, L->getType(), true, "rhs_widen");
-            } else if (R->getType() == i8p && L->getType()->isIntegerTy()) {
-                R = unboxAnyToInt(R);
-                if (L->getType()->isIntegerTy(1))
-                    L = Builder.CreateZExt(L, intTy, "bool_widen");
-                else if (L->getType() != R->getType())
-                    L = Builder.CreateIntCast(L, R->getType(), true, "lhs_widen");
+            // Equal only when the untyped side is a number of that value
+            // (quirk_opaque_eq_int): a Map / String / List read as an Int
+            // was 0, so `caps["x"] != false` was false for a Map there.
+            if ((L->getType() == i8p && R->getType()->isIntegerTy()) ||
+                (R->getType() == i8p && L->getType()->isIntegerTy())) {
+                Value* p = L->getType() == i8p ? L : R;
+                Value* n = L->getType() == i8p ? R : L;
+                if (n->getType()->isIntegerTy(1))
+                    n = Builder.CreateZExt(n, intTy, "bool_widen");
+                else if (n->getType() != intTy)
+                    n = Builder.CreateIntCast(n, intTy, true, "int_widen");
+                if (isa<ConstantPointerNull>(p)) {
+                    Value* eq = Builder.CreateICmpEQ(n, ConstantInt::get(intTy, 0), "null_eq_int");
+                    return binOp->op == "!=" ? Builder.CreateNot(eq, "null_ne_int") : eq;
+                }
+                FunctionCallee eqInt = TheModule->getOrInsertFunction("quirk_opaque_eq_int",
+                    FunctionType::get(Type::getInt32Ty(Context), {i8p, intTy}, false));
+                Value* r = Builder.CreateCall(eqInt, {p, n}, "opaque_eq_int");
+                Value* zero = ConstantInt::get(Type::getInt32Ty(Context), 0);
+                return binOp->op == "!=" ? Builder.CreateICmpEQ(r, zero, "opaque_ne_int")
+                                         : Builder.CreateICmpNE(r, zero, "opaque_eq_int_b");
             }
             // i8* (type-erased generic-field read) vs typed struct
             // pointer — the v3 phase 3-b substitution narrows

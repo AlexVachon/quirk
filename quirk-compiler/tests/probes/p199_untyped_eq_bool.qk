@@ -1,0 +1,32 @@
+// An untyped value compared with a Bool or Int (7.78.0): equal only when it
+// is a number / Bool of that value. A Map, List or String read as an Int
+// was 0, so `caps["definitionProvider"] != false` was false when the value
+// was a Map of options (an LSP server's capabilities).
+use encoding.json
+
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+define main() -> void {
+    caps: Map = json.loads("{\"opts\": {\"workDoneProgress\": true}, \"yes\": true, \"no\": false, \"n\": 3, \"zero\": 0, \"s\": \"x\", \"l\": [], \"null\": null}")
+    v := caps["opts"]
+    if not (v != false) { fail("Map != false") }
+    if v == false or v == true { fail("Map == Bool") }
+    if v == 0 { fail("Map == 0") }
+    s := caps["s"]
+    if s == false or not (s != false) { fail("String vs false") }
+    l := caps["l"]
+    if l == false or l == 0 { fail("List vs false / 0") }
+    // Numbers and Bools: by value, as before.
+    if caps["yes"] != true or caps["yes"] == false { fail("true") }
+    if caps["no"] != false or caps["no"] == true { fail("false") }
+    if caps["n"] != 3 or caps["n"] == 4 { fail("Int") }
+    if caps["zero"] != 0 { fail("0") }
+    // Inline (untyped list) Ints, and an Any.
+    xs := [1, 0, true]
+    if xs[0] != 1 or xs[1] != 0 or xs[2] != true { fail("list items") }
+    a: Any = {"k": 1}
+    if a == false or not (a != false) { fail("Any Map") }
+    // Bool / Int on the left.
+    if false == v or 0 == s { fail("left side") }
+    print("ok")
+}

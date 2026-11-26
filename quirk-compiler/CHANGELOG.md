@@ -5,6 +5,21 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.77.0] — 2026-11-26 — typed loop variables
+
+- **`for x: Type in items`.** A loop variable can have a type, like any
+  other variable: `for row: Map in rows`, `for p: Point in self.items`,
+  `for k: String, v: Int in m`. It saves the `row: Map = item` line an
+  untyped list (a `List` field, JSON) needed before its items' methods and
+  fields were known, and means exactly that line: the loop binds the item
+  and the body starts by declaring the variable with its type (not checked
+  at run time, as that line isn't). Hovers and `--symbols-json` show the
+  variable with its type; the hidden item name isn't listed.
+  `tests/probes/p198_typed_for_variable.qk` covers it.
+- The VS Code extension (1.1.32) knows the loop variables of the typed
+  form: they aren't flagged as unknown, and completion after `row.` uses
+  the type.
+
 ## [7.76.0] — 2026-11-26 — methods named `_init…` aren't constructors
 
 - A method whose name starts with `_init` (`_init_params`, `_initialized`)

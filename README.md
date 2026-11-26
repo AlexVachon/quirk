@@ -416,6 +416,17 @@ t := (1, "hello", true)
 for elem in t {
     print(elem)
 }
+
+// A typed loop variable: the items of an untyped list (a `List` field,
+// JSON) as what they are, their methods and fields known. It's the same
+// as `row: Map = item` at the top of the body (not checked at run time).
+rows: List = json.loads(text)
+for row: Map in rows {
+    print(row.keys())
+}
+for k: String, v: Int in m {
+    print(k.upper(), v + 1)
+}
 ```
 
 ### Break & Continue

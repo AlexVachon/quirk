@@ -2161,8 +2161,9 @@ static void emitSymbol(const char* kind, const std::string& rawName,
     const std::string name = sourceTypeName(rawName);
     const std::string scope = sourceTypeName(rawScope);
     // Temporaries the compiler generates (`assert`'s __qa_*, `quirk test`'s
-    // __qt_*) aren't the user's names.
-    if (name.rfind("__qa_", 0) == 0 || name.rfind("__qt_", 0) == 0) return;
+    // __qt_*, the item a typed `for x: T in` binds: __for_*) aren't the
+    // user's names.
+    if (name.rfind("__qa_", 0) == 0 || name.rfind("__qt_", 0) == 0 || name.rfind("__for_", 0) == 0) return;
     std::string type = rawType;
     {
         bool nullable = !type.empty() && type.back() == '?';

@@ -88,6 +88,7 @@ private:
     std::unique_ptr<Node> parseIf();
     std::unique_ptr<Node> parseWhile();
     std::unique_ptr<Node> parseFor();
+    std::string parseForVarType();
 
     // Parse a control-flow body — either a braced block `{ ... }` or
     // a single statement after `=>`. Used by if / elif / else /

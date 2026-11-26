@@ -1,0 +1,67 @@
+// `for x: Type in items`: the loop variable gets a type, as the line
+// `x: Type = item` at the top of the body would give it (7.77.0). Saves
+// that line for an untyped list (a `List` field, JSON): its methods and
+// fields are then known.
+use encoding.json
+
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+struct P {
+    n: Int
+    define __init(self, n: Int) -> void { self.n = n }
+    define twice(self) -> Int { return self.n * 2 }
+}
+
+struct Bag {
+    items: List                  // untyped: what `for p: P in` is for
+    define __init(self) -> void { self.items = [P(1), P(2), P(3)] }
+}
+
+define main() -> void {
+    // Structs from an untyped List field: their methods.
+    total := 0
+    for p: P in Bag().items { total = total + p.twice() }
+    if total != 12 { fail("structs: " + String(total)) }
+
+    // Maps from JSON.
+    rows: List = json.loads("[{\"name\": \"a\", \"n\": 1}, {\"name\": \"b\", \"n\": 2}]")
+    names := ""
+    for row: Map in rows {
+        if row.has("name") { names = names + String(row["name"]) }
+    }
+    if names != "ab" { fail("maps: " + names) }
+
+    // Strings: String methods.
+    up := []
+    for w: String in "x y".split(" ") { up.append(w.upper()) }
+    if up != ["X", "Y"] { fail("strings: " + String(up)) }
+
+    // A map's key and value, each typed.
+    m := {"a": 1, "b": 2}
+    sum := 0
+    keys := ""
+    for k: String, v: Int in m {
+        keys = keys + k.upper()
+        sum = sum + v
+    }
+    if sum != 3 or keys != "AB" { fail("pairs: " + keys + " " + String(sum)) }
+
+    // continue / break, and a closure that keeps the variable.
+    seen := []
+    later := []
+    for p: P in Bag().items {
+        if p.n == 1 { continue }
+        if p.n == 3 { break }
+        seen.append(p.n)
+        later.append(fn() { return p.n * 10 })
+    }
+    if seen != [2] { fail("continue / break: " + String(seen)) }
+    f: Callable = later[0]
+    if f() != 20 { fail("closure: " + String(f())) }
+
+    // An untyped loop still works as before.
+    count := 0
+    for x in [1, 2] { count = count + x }
+    if count != 3 { fail("untyped: " + String(count)) }
+    print("ok")
+}

@@ -1417,6 +1417,8 @@ std::unique_ptr<Node> Parser::parseFor() {
 
     std::vector<std::string> destructureVars;
     std::string varName, varName2;
+    std::string varType, varType2;          // `for x: Map in …` (empty: untyped)
+    Token varTok = peek(), varTok2 = peek();
 
     if (peek().type == TokenType::LPAREN) {
         // for (a, b) in items — tuple destructuring
@@ -1429,18 +1431,42 @@ std::unique_ptr<Node> Parser::parseFor() {
         varName = "__for_item"; // synthetic iteration variable
     } else {
         varName = advance().value;
+        varTok = tokens[pos - 1];
+        varType = parseForVarType();
         if (peek().type == TokenType::COMMA) {
             advance(); // consume ','
             varName2 = advance().value;
+            varTok2 = tokens[pos - 1];
+            varType2 = parseForVarType();
         }
     }
 
     consume(TokenType::IN, "Expected 'in'");
-    auto node = std::make_unique<ForNode>(varName, isRef, parseExpression(0));
-    node->varName2 = varName2;
+    // `for x: T in items { … }` is `for <item> in items { x: T = <item>; … }`:
+    // the loop binds a hidden name and the body starts by declaring `x`
+    // with its type, exactly as the line it saves would.
+    std::string loopName = varType.empty() ? varName : "__for_" + varName;
+    std::string loopName2 = varType2.empty() ? varName2 : "__for_" + varName2;
+    auto node = std::make_unique<ForNode>(loopName, isRef, parseExpression(0));
+    node->varName2 = loopName2;
     node->destructureVars = destructureVars;
+    auto typed = [&](const std::string& name, const std::string& type, const Token& at) {
+        auto decl = std::make_unique<VarDeclNode>(std::make_unique<LiteralNode>(name),
+                                                  std::make_unique<LiteralNode>("__for_" + name), "=", type);
+        decl->line = at.line; decl->col = at.col; decl->filePath = filePath;
+        decl->lhs->line = at.line; decl->lhs->col = at.col; decl->lhs->filePath = filePath;
+        node->body.push_back(std::move(decl));
+    };
+    if (!varType.empty()) typed(varName, varType, varTok);
+    if (!varType2.empty()) typed(varName2, varType2, varTok2);
     parseControlBody(node->body);
     return node;
+}
+
+// `: Type` after a for-loop variable (`for x: Map in …`), or "".
+std::string Parser::parseForVarType() {
+    if (!match(TokenType::COLON)) return "";
+    return parseTypeString();
 }
 
 // Computes the full hierarchical module prefix from this->filePath.

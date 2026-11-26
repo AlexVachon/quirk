@@ -2,6 +2,12 @@
 
 All notable changes to the extension land here. Versioning follows SemVer; minor bumps for new features, patches for fixes.
 
+## [1.1.32] — 2026-11-26 — typed loop variables
+
+- `for row: Map in rows` and `for k: String, v: Int in m` (quirk 7.77.0):
+  their loop variables are known (not flagged as unknown, go to definition
+  finds them), and completion after `row.` lists the type's members.
+
 ## [1.1.31] — 2026-11-24 — no completion while naming or in comments
 
 - No completion while you name a new declaration (`define _word_k|`,

@@ -762,7 +762,7 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
         // These are defined by the for-clause and are valid identifiers throughout the expression.
         const compVarNames = new Set<string>();
         {
-            const cvRe = /\bfor\s+(?:ref\s+)?([a-zA-Z_]\w*)(?:\s*,\s*([a-zA-Z_]\w*))?\s+in\b/g;
+            const cvRe = /\bfor\s+(?:ref\s+)?([a-zA-Z_]\w*)(?:\s*:\s*[A-Za-z_][\w.]*(?:\[[^\]]*\])?\??)?(?:\s*,\s*([a-zA-Z_]\w*)(?:\s*:\s*[A-Za-z_][\w.]*(?:\[[^\]]*\])?\??)?)?\s+in\b/g;
             let cvm;
             while ((cvm = cvRe.exec(maskedLine)) !== null) {
                 compVarNames.add(cvm[1]);
@@ -887,7 +887,7 @@ export function refreshDiagnostics(doc: vscode.TextDocument, quirkDiagnostics: v
                 }
             }
 
-            const forMatch = /\bfor\s+(?:ref\s+)?([a-zA-Z_]\w*)(?:\s*,\s*([a-zA-Z_]\w*))?\s+in\s+([a-zA-Z0-9_"'\[]+)/.exec(maskedLine);
+            const forMatch = /\bfor\s+(?:ref\s+)?([a-zA-Z_]\w*)(?:\s*:\s*[A-Za-z_][\w.]*(?:\[[^\]]*\])?\??)?(?:\s*,\s*([a-zA-Z_]\w*)(?:\s*:\s*[A-Za-z_][\w.]*(?:\[[^\]]*\])?\??)?)?\s+in\s+([a-zA-Z0-9_"'\[]+)/.exec(maskedLine);
             if (forMatch) {
                 const vName = forMatch[1];
                 if (!locals.has(vName)) {

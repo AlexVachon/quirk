@@ -399,7 +399,7 @@ export class QuirkDefinitionProvider implements vscode.DefinitionProvider {
 
     private findLocalDefinition(document: vscode.TextDocument, position: vscode.Position, symbol: string): vscode.Location | null {
         const assignRe          = new RegExp(`^\\s*${symbol}\\b\\s*(?::\\s*[A-Za-z0-9_.]+\\s*)?(?:=|:=)`);
-        const forRe             = new RegExp(`\\bfor\\s+(?:ref\\s+)?${symbol}\\s+in\\b`);
+        const forRe             = new RegExp(`\\bfor\\s+(?:ref\\s+)?${symbol}(?:\\s*:\\s*[A-Za-z_][\\w.]*(?:\\[[^\\]]*\\])?\\??)?\\s+in\\b`);
         const forParenDestructRe= new RegExp(`\\bfor\\s+\\([^)]*\\b${symbol}\\b[^)]*\\)\\s+in\\b`);
         const withAsRe          = new RegExp(`\\bwith\\b.*\\bas\\s+${symbol}\\b`);
         const catchRe           = new RegExp(`\\bcatch\\s*\\(\\s*${symbol}\\s*:`);

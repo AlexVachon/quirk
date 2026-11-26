@@ -751,7 +751,7 @@ export class QuirkCompletionProvider implements vscode.CompletionItemProvider {
         const reArith      = new RegExp(`\\b${esc}\\s*:=\\s*([a-zA-Z0-9_]+)\\s*[+\\-*\\/]`);
         const reTernary    = new RegExp(`\\b${esc}\\s*:=\\s*.+\\?\\s*([a-zA-Z0-9_"'\`[{]+)`);
         const reLambdaPar  = new RegExp(`\\bfn\\s*\\([^)]*\\b${esc}\\s*:\\s*([A-Za-z0-9_]+)`);
-        const reForLoop    = new RegExp(`\\bfor\\s+(?:ref\\s+)?${esc}\\s+in\\s+([a-zA-Z0-9_"'\\[]+)`);
+        const reForLoop    = new RegExp(`\\bfor\\s+(?:ref\\s+)?${esc}(?:\\s*:\\s*[A-Za-z_][\\w.]*(?:\\[[^\\]]*\\])?\\??)?\\s+in\\s+([a-zA-Z0-9_"'\\[]+)`);
         const reCatchPar   = new RegExp(`\\bcatch\\s*\\(\\s*${esc}\\s*:\\s*([A-Za-z0-9_]+)`);
         const reTypeCall   = new RegExp(`\\b${esc}\\s*:=\\s*(?:[a-zA-Z0-9_]+\\.)?([A-Z][A-Za-z0-9_]+)\\s*\\(`);
         const reAnnot      = new RegExp(`\\b${esc}\\s*:\\s*(?:[a-zA-Z0-9_]+\\.)?([A-Za-z0-9_]+)`);

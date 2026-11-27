@@ -2,6 +2,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef _WIN32
+#include <io.h>
+#include <fcntl.h>
+#else
+#include <unistd.h>
+#include <errno.h>
+#endif
 
 // Automatically called when you do `f := File("data.txt", "w")`
 void Io_File_File___init(File* self, String* path, String* mode) {
@@ -70,4 +77,42 @@ void Io_File_File_write(File* self, String* s) {
     
     // Flush to ensure it hits the disk/console immediately
     fflush((FILE*)self->handle); 
+}
+
+// Up to `max` bytes, as soon as there are any (a pipe's, stdin's: what has
+// arrived; not waiting for all `max` as fread does) — for a program that
+// talks over its stdin, a language server. "" at the end (or on an error).
+// Bytes, not characters: a UTF-8 character can be split between two reads.
+// (It reads the descriptor itself: don't mix with read_line on the same file.)
+String* Io_File_File_read_some(File* self, int64_t max) {
+    if (!self || !self->is_open || !self->handle || max <= 0) return make_String("");
+    if (max > (1 << 20)) max = 1 << 20;
+    char* buf = malloc((size_t)max + 1);
+    if (!buf) return make_String("");
+    int fd = fileno((FILE*)self->handle);
+    quirk_gil_release();
+#ifdef _WIN32
+    int n = _read(fd, buf, (unsigned)max);
+#else
+    ssize_t n;
+    do { n = read(fd, buf, (size_t)max); } while (n < 0 && errno == EINTR);
+#endif
+    quirk_gil_acquire();
+    if (n <= 0) {
+        free(buf);
+        return make_String("");
+    }
+    buf[n] = '\0';
+    return make_String_len(buf, (int64_t)n);            // (it takes `buf` over)
+}
+
+// No newline translation (Windows' text mode turns "\n" into "\r\n" on the
+// way out, and back on the way in): bytes as they are, for a protocol that
+// counts them. Nothing to do elsewhere.
+void Io_File_File_set_binary(File* self) {
+    if (!self || !self->is_open || !self->handle) return;
+#ifdef _WIN32
+    fflush((FILE*)self->handle);
+    _setmode(_fileno((FILE*)self->handle), _O_BINARY);
+#endif
 }

@@ -202,6 +202,8 @@ STDLIB_TAG_sqlite ?= v1.1.0
 # ui v1.18.1: font weights, Button colours, previewed apps (QUIRK_UI_PREVIEW) (v7.72.0).
 # ui v1.19.0: split into one file per widget family; needs relative from-imports fixed (v7.74.0).
 STDLIB_TAG_ui ?= v1.21.0
+# io v1.1.0: File.read_some / set_binary (a program talking over stdin: a language server), v7.80.0.
+STDLIB_TAG_io ?= v1.1.0
 STDLIB_TAG_web ?= v1.4.0
 STDLIB_TAG_live ?= v2.11.0
 
@@ -245,6 +247,7 @@ bootstrap-stdlib:
 	        process) tag="$(STDLIB_TAG_process)" ;;                               \
 	        window) tag="$(STDLIB_TAG_window)" ;;                                 \
 	        ui)     tag="$(STDLIB_TAG_ui)"     ;;                                 \
+	        io)     tag="$(STDLIB_TAG_io)"     ;;                                 \
 	        web)    tag="$(STDLIB_TAG_web)"    ;;                                 \
 	        live)   tag="$(STDLIB_TAG_live)"   ;;                                 \
 	        sqlite) tag="$(STDLIB_TAG_sqlite)" ;;                                 \

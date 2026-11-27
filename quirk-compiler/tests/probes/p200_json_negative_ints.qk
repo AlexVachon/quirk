@@ -1,0 +1,22 @@
+// json.dumps of a negative Int (7.80.0): an inline Int is its low 32 bits,
+// so -5 is 0xFFFFFFFB, which the encoder took for a pointer (a crash). A
+// language server's error codes are negative (-32601).
+use encoding.json
+
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+define code(n: Int) -> Map {
+    return {"code": n, "message": "m"}
+}
+
+define main() -> void {
+    if json.dumps({"code": -5}) != "{\"code\":-5}" { fail("literal") }
+    k := -7
+    if json.dumps([k, 0, 3]) != "[-7,0,3]" { fail("list") }
+    if json.dumps({"error": code(-32601)}) != "{\"error\":{\"code\":-32601,\"message\":\"m\"}}" { fail("nested") }
+    big := -5000000000                                   // (boxed: past 32 bits)
+    if json.dumps([big]) != "[-5000000000]" { fail("big: " + json.dumps([big])) }
+    back: Map = json.loads(json.dumps({"n": -12}))
+    if back["n"] != -12 { fail("round trip") }
+    print("ok")
+}

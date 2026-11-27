@@ -5,6 +5,22 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.80.0] — 2026-11-27 — stdin for a server; negative Ints in JSON
+
+- **`File.read_some(max)` and `File.set_binary()`** (io 1.1.0): up to
+  `max` bytes as soon as any have come — what a pipe or stdin has now,
+  where `read_line` stopped at 2048 characters and `read` waits for the
+  end — and no newline translation on Windows. What a program that talks
+  over stdin / stdout needs: a language server (lsp 0.2.0's `Connection`).
+- **`json.dumps` of a negative Int** crashed: an inline Int is its low 32
+  bits, so -5 is 0xFFFFFFFB, which the encoder read as a pointer. A
+  language server's error codes are negative (-32601).
+  `tests/probes/p200_json_negative_ints.qk` covers it.
+- **A ternary with an untyped value and a number** (`m.has(k) ? m[k] : 13`)
+  crashed the compiler (an LLVM assert: the result mixed a pointer and an
+  Int); the number is boxed now, as anywhere an untyped value is wanted.
+  `tests/probes/p201_ternary_untyped_and_number.qk` covers it.
+
 ## [7.79.0] — 2026-11-26 — the mouse's modifiers, the mouse pointer
 
 - **Mouse events say which modifiers are held.** `mouse_move`,

@@ -1,0 +1,25 @@
+// A ternary with an untyped value on one side and an Int / Bool / Double on
+// the other (7.80.0): `m.has(k) ? m[k] : 13` crashed the compiler (an LLVM
+// assert: the phi mixed a pointer and an i64). The number is boxed.
+define fail(msg: String) -> void { print("FAIL: " + msg) }
+
+K := {"a": 1, "flag": true, "half": 0.5}
+
+define kind(k: String) -> Int {
+    v := K.has(k) ? K[k] : 13
+    return v
+}
+
+define main() -> void {
+    if kind("a") != 1 { fail("found") }
+    if kind("zz") != 13 { fail("default") }
+    other := K.has("zz") ? 7 : K["a"]
+    o: Int = other
+    if o != 1 { fail("number first") }
+    b := K.has("flag") ? K["flag"] : false
+    if b != true { fail("bool") }
+    d := K.has("nope") ? K["half"] : 2.5
+    dd: Double = d
+    if dd != 2.5 { fail("double: " + String(dd)) }
+    print("ok")
+}

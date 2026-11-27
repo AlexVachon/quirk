@@ -7071,6 +7071,24 @@ Value* LLVMCodegen::handleExpression(Node* node) {
         if (!thenVal || !elseVal || thenVal->getType()->isVoidTy() || elseVal->getType()->isVoidTy())
             return nullptr;
 
+        // One side untyped (a pointer: `m[k]`, an Any), the other an Int /
+        // Bool / Double: the number is boxed, at the end of its own branch
+        // (before its jump here). The phi mixed an i8* and an i64: an LLVM
+        // assert, `m.has(k) ? m[k] : 13` crashed the compiler (7.80.0).
+        if (thenVal->getType()->isPointerTy() != elseVal->getType()->isPointerTy()) {
+            bool thenScalar = !thenVal->getType()->isPointerTy();
+            Value* scalar = thenScalar ? thenVal : elseVal;
+            Type* st = scalar->getType();
+            if (st->isIntegerTy() || st->isDoubleTy()) {
+                BasicBlock* at = thenScalar ? thenEndBB : elseEndBB;
+                auto saved = Builder.saveIP();
+                if (Instruction* t = at->getTerminator()) Builder.SetInsertPoint(t);
+                else Builder.SetInsertPoint(at);
+                Value* boxed = boxToVoidPtr(scalar);
+                Builder.restoreIP(saved);
+                if (thenScalar) thenVal = boxed; else elseVal = boxed;
+            }
+        }
         Type* thenTy = thenVal->getType();
         Type* elseTy = elseVal->getType();
         if (thenTy != elseTy && thenTy->isPointerTy() && elseTy->isPointerTy()) {

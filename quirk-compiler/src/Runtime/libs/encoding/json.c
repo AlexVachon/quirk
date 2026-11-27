@@ -355,9 +355,11 @@ static void Json__serialize_any(void* val, AnyTag hint, char** buf, int* cap, in
     // *(int32_t*)val on a low-address non-pointer segfaults.
     // Below .rodata start (~4MB), assume tagged int; format as
     // decimal.
-    if ((uintptr_t)val < 0x400000UL) {
+    // An inline Int is its low 32 bits (as quirk_opaque_to_int reads it):
+    // a negative one is 0xFFFFFFxx, which was read as a pointer (7.80.0).
+    if ((uintptr_t)val <= 0xFFFFFFFFUL) {
         char numbuf[32];
-        snprintf(numbuf, 32, "%d", (int)(uintptr_t)val);
+        snprintf(numbuf, 32, "%d", (int)(int32_t)(uintptr_t)val);
         Json__buf_append(buf, cap, len, numbuf);
         return;
     }

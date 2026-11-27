@@ -13,7 +13,7 @@ only for breaking changes.
   completion (members after `.`, the stdlib's extern methods too), find
   references and rename. It asks the compiler that runs it. The same as
   `quirk module ls`. Quirk IDE uses it for Quirk files.
-- **Two stdlib packages**: `ls` (quirk-ls 0.5.0, the server) and `lsp`
+- **Two stdlib packages**: `ls` (quirk-ls 0.5.1, the server) and `lsp`
   (0.2.1: the protocol, a client, and a server's `Connection` — to write a
   language server in Quirk). `tests/lsp_server_test.quirk` starts
   `quirk lsp` and asks it about a file.

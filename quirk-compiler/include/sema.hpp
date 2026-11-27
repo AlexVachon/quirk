@@ -79,12 +79,24 @@ class Sema {
         std::string filePath;
         int line = 0;
         int col  = 0;
+        // What the name refers to (7.82.0): "local" (a parameter or variable of
+        // the function `scope`), "module" (a top-level name), "member" (a field
+        // or method of the struct `owner`).
+        std::string ref;
+        std::string owner;
     };
     std::vector<UsageRecord> usages;
+    // A use of `name` at `at` (its identifier's node: the exact place).
+    void recordUsage(const std::string& name, Node* at, const std::string& ref, const std::string& owner = "");
+    // The struct that declares member `mName` of `sName` (itself or a parent); "" for none.
+    std::string memberOwner(const std::string& sName, const std::string& mName);
    private:
     // The function currently being checked; usages encountered while
     // walking its body get this as their `scope`. Empty == "module".
     std::string currentScope = "module";
+    // scopeStack's index of the current function's own scope (-1: none):
+    // a name found there or above is one of its locals.
+    int fnScopeBase = -1;
     void flushErrors();    // print all accumulated errors
     void flushWarnings();  // print all accumulated warnings
     void reportWarning(const std::string& msg, int line = 0, int col = 0,
@@ -258,7 +270,7 @@ class Sema {
     void exitScope();
     void defineVariable(const std::string& name, const std::string& type, bool isConst = false, bool isParam = false);
 
-    std::string resolveVariable(const std::string& name);
+    std::string resolveVariable(const std::string& name, Node* at = nullptr);
     std::string resolveMember(const std::string& structName, const std::string& memberName);
     std::string dynamicFieldType(const std::string& field);
 

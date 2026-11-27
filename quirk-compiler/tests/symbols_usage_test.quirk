@@ -1,0 +1,37 @@
+// `--symbols-json`'s usage table (7.82.0): each use of a name at its own
+// place (a call's name, not its last argument's; `${n}` inside a string),
+// with what it refers to — "local" (of the function), "module", "member"
+// (and the struct that declares it). What an editor's references and
+// rename go by.
+use test
+use fs
+use sys
+use process
+use encoding.json
+
+SRC := "struct Point {\n    x: Int\n    define __init(self, x: Int) -> void { self.x = x }\n    define twice(self) -> Int { return self.x * 2 }\n}\n\ndefine helper(n: Int) -> Int {\n    p := Point(n)\n    total := p.twice() + p.x\n    print(\"n is \${n}\")\n    return total\n}\n\ndefine main() -> void {\n    print(helper(3))\n}\n"
+
+define test_usages_are_exact() -> void {
+    dir := fs.temp_dir(prefix="quirk-usage-")
+    path := fs.join(dir, "m.qk")
+    fs.write_text(path, SRC)
+    r := process.run([sys.executable(), "--symbols-json", "m.qk"], cwd=dir)
+    got := []
+    for x in r.stdout.split("\n") {
+        l := String(x).trim()
+        if not l.startswith("{") { continue }
+        m: Map = json.loads(l)
+        if String(m["kind"]) != "usage" or fs.basename(String(m["file"])) != "m.qk" { continue }
+        owner := m.has("owner") ? "/" + String(m["owner"]) : ""
+        got.append(String(m["name"]) + "@" + String(m["line"]) + ":" + String(m["col"]) + " " + String(m["ref"]) + owner)
+    }
+    for want in ["self@3:43 local", "x@3:48 member/Point", "x@3:52 local",
+                 "x@4:45 member/Point",
+                 "Point@8:10 module", "n@8:16 local",
+                 "p@9:14 local", "twice@9:16 member/Point", "p@9:26 local", "x@9:28 member/Point",
+                 "n@10:19 local",                                    // (inside "${n}")
+                 "total@11:12 local",
+                 "helper@15:11 module"] {                            // (not where its argument is)
+        test.assert_true(got.count(want) == 1, String(want) + " in " + String(got))
+    }
+}

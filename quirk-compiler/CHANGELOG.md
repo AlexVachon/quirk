@@ -5,6 +5,21 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.82.0] — 2026-11-27 — exact usages in `--symbols-json`
+
+- **Each use of a name at its own place.** `--symbols-json`'s `usage`
+  entries took the place of whatever Sema had checked last: in `f(n)`, `f`
+  was at `n`'s column. Each is now at its identifier — a call's name, a
+  variable, a struct in `Point(n)`, a field or method after `.` (`p.x`,
+  `self.x = …`, `p.twice()`: these weren't listed at all) — with what it
+  refers to: `"ref":"local"` (of the function `scope`), `"module"`, or
+  `"member"` with `"owner"`, the struct that declares it. Each use once.
+  quirk-ls 0.6.0 (`quirk lsp`) finds references and renames by it.
+  `tests/symbols_usage_test.quirk` covers it.
+- **Interpolated expressions have their own place.** The tokens of
+  `"${expr}"` / `"$name"` all had the string's position: a use of `name`
+  there, and an error in `expr`, now point at it.
+
 ## [7.81.0] — 2026-11-27 — `quirk lsp`, the Quirk language server
 
 - **`quirk lsp`** runs the Quirk language server, quirk-ls (written in

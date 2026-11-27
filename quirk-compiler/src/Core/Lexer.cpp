@@ -404,6 +404,10 @@ void Lexer::tokenizeString(bool raw)
     }
 
     std::vector<std::string> args;
+    // Where each interpolated expression starts in the source (7.82.0): its
+    // tokens get their own place, not the string's — `${name}` is a use of
+    // `name` there (an editor's references, rename).
+    std::vector<std::pair<int, int>> argAt;
     std::string format_builder = "";
 
     // Read until we hit the closing delimiter. For triple-quoted strings,
@@ -451,6 +455,7 @@ void Lexer::tokenizeString(bool raw)
             if (peek() == '{')
             {
                 advance(); // Skip '{'
+                int exprLine = line, exprCol = col;
                 std::string expr = "";
                 std::string fmt = "";
                 bool readingFmt = false;
@@ -507,19 +512,23 @@ void Lexer::tokenizeString(bool raw)
                 {
                     size_t last = expr.find_last_not_of(" \t");
                     expr = expr.substr(first, (last - first + 1));
+                    exprCol += (int)first;
                 }
                 args.push_back(expr);
+                argAt.push_back({exprLine, exprCol});
             }
             // Case B: $variable (Simple Identifier)
             else if (isalpha(peek()) || peek() == '_')
             {
                 std::string id = "";
+                int idLine = line, idCol = col;
                 while (isalnum(peek()) || peek() == '_')
                 {
                     id += advance();
                 }
                 format_builder += "{}";
                 args.push_back(id);
+                argAt.push_back({idLine, idCol});
             }
             // Case C: Just a '$' symbol (escaped or trailing)
             else
@@ -620,8 +629,14 @@ void Lexer::tokenizeString(bool raw)
                     if (t.type != TokenType::EOF_TOKEN)
                     {
                         Token adjustedToken = t;
-                        adjustedToken.line = startLine;
-                        adjustedToken.col  = startCol;
+                        if (i < argAt.size() && argAt[i].first > 0) {
+                            // Its place in the source: the sub-lexer counted from 1:1.
+                            adjustedToken.line = argAt[i].first + (t.line - 1);
+                            adjustedToken.col  = t.line == 1 ? argAt[i].second + (t.col - 1) : t.col;
+                        } else {
+                            adjustedToken.line = startLine;
+                            adjustedToken.col  = startCol;
+                        }
                         tokenBuffer.push_back(adjustedToken);
                     }
                 }

@@ -1401,6 +1401,8 @@ void Sema::checkFunction(FunctionNode *f)
     }
 
     enterScope();
+    int prevFnScopeBase = fnScopeBase;
+    fnScopeBase = (int)scopeStack.size() - 1;          // (its parameters and locals: here and above)
 
     if (!f->cls.empty() && !f->isStatic)
         defineVariable("self", f->cls, false, true);
@@ -1486,6 +1488,7 @@ void Sema::checkFunction(FunctionNode *f)
     currentClass = prevClass;
     currentFunctionNode = prevFunc;
     currentScope = prevScope;
+    fnScopeBase = prevFnScopeBase;
 }
 
 // Is this expression a String without type-checking it again (that would
@@ -1619,7 +1622,7 @@ void Sema::checkVarDecl(VarDeclNode *node)
             defineVariable(lit->value, finalType, node->isConst);
         } else {
             // Reassignment — mark the existing binding as used
-            std::string varType = resolveVariable(lit->value);
+            std::string varType = resolveVariable(lit->value, lit);
             if (node->op == "=") checkAssignType(varType, exprType, "'" + lit->value + "'", node);
             // String append (`s = s + e` / `s += e`): Codegen's in-place path.
             if (varType == "String") {
@@ -1653,6 +1656,10 @@ void Sema::checkVarDecl(VarDeclNode *node)
             std::string msg = "member '" + member->memberName + "' not found in '" + objType + "'";
             msg += formatHint(suggestMembers(baseType(objType), member->memberName));
             fatalError(msg, member->line, member->col, member->filePath);
+        }
+        {
+            std::string owner = memberOwner(objType, member->memberName);
+            if (!owner.empty()) recordUsage(member->memberName, member, "member", owner);   // (`self.x = ...`: a use of x)
         }
         if (node->op == "=")
             checkAssignType(resolveMember(objType, member->memberName), exprType,
@@ -2226,7 +2233,7 @@ std::string Sema::checkLiteral(LiteralNode *node)
         return "Bool";
     if (node->value == "null")
         return "Null";
-    std::string t = resolveVariable(node->value);
+    std::string t = resolveVariable(node->value, node);
     // Bare function name used as a value (passed as an arg, stored
     // in a variable, returned from a function) resolves to its
     // **return type** by default — `apply(dbl, 5)` saw `dbl` typed
@@ -2693,7 +2700,7 @@ std::string Sema::checkMemberAccess(MemberAccessNode *node)
         if (instanceMethods.count(node->memberName)) {
             std::string objType;
             if (auto lit = dynamic_cast<LiteralNode*>(node->object.get())) {
-                objType = resolveVariable(lit->value);
+                objType = resolveVariable(lit->value, lit);
             } else {
                 objType = checkExpression(node->object.get());
             }
@@ -2712,7 +2719,7 @@ std::string Sema::checkMemberAccess(MemberAccessNode *node)
     auto* objLit = dynamic_cast<LiteralNode*>(node->object.get());
     if (objLit && structRegistry.count(objLit->value)) {
         lastNode = objLit;
-        objType = resolveVariable(objLit->value);
+        objType = resolveVariable(objLit->value, objLit);
     } else {
         objType = checkExpression(node->object.get());
     }
@@ -2756,6 +2763,10 @@ std::string Sema::checkMemberAccess(MemberAccessNode *node)
     }
 
     std::string type = resolveMember(objType, node->memberName);
+    if (type != "unknown") {
+        std::string owner = memberOwner(objType, node->memberName);
+        if (!owner.empty()) recordUsage(node->memberName, node, "member", owner);
+    }
     // Substitute generic type params with the concrete args from
     // the receiver type. `b: Box[Int]; b.value` returns the raw
     // field type `T` from resolveMember; we now rewrite it to `Int`
@@ -2962,6 +2973,7 @@ std::string Sema::checkCall(CallNode *node)
         // Positional constructor call: Foo(...) where Foo is a known struct.
         // Validate argument count against __init (self already stripped by parser).
         if (structRegistry.count(l->value)) {
+            recordUsage(l->value, l, "module");                  // (`Point(n)`: a use of Point)
             // Generic struct with inferable type args: `Box(42)` →
             // `Box__Int(42)`. The callee is rewritten in place so Codegen
             // constructs the specialized layout. Uninferable calls keep
@@ -3014,7 +3026,7 @@ std::string Sema::checkCall(CallNode *node)
         }
 
         {
-            std::string vtype = resolveVariable(l->value);
+            std::string vtype = resolveVariable(l->value, l);
 
             // Hard error: bare call into a module that was imported with `use X`
             // but NOT explicitly named via `from X use { name }`. Forbids:
@@ -3062,7 +3074,7 @@ std::string Sema::checkCall(CallNode *node)
                     std::string m = monoInstantiateFunction(gfn, targs);
                     if (!m.empty()) {
                         l->value = m;
-                        vtype = resolveVariable(m);
+                        vtype = resolveVariable(m, l);
                         if (currentFunctionNode)
                             moduleVisibility[currentFunctionNode->moduleName].visibleSymbols.insert(m);
                     }
@@ -3176,7 +3188,7 @@ std::string Sema::checkCall(CallNode *node)
                 std::string objType;
                 if (oLit) {
                     if (!isIdentLit(oLit->value)) objType = ""; // not a binding name
-                    else objType = resolveVariable(oLit->value);
+                    else objType = resolveVariable(oLit->value, oLit);
                 } else {
                     objType = checkExpression(m->object.get());
                 }
@@ -3236,7 +3248,7 @@ std::string Sema::checkCall(CallNode *node)
             auto* objLit = dynamic_cast<LiteralNode*>(m->object.get());
             if (objLit && structRegistry.count(objLit->value)) {
                 lastNode = objLit;
-                objType = resolveVariable(objLit->value);
+                objType = resolveVariable(objLit->value, objLit);
             } else {
                 objType = checkExpression(m->object.get());
             }
@@ -3526,6 +3538,7 @@ std::string Sema::checkCall(CallNode *node)
                     func = findMethod(currentType, currentType + "__init");
                 }
                 if (func) {
+                    recordUsage(m->memberName, m, "member", currentType);
                     checkMethodArity(func, objType + "." + m->memberName);
                     for (size_t i = 0; i < node->args.size(); ++i) {
                         // A `name=value` argument checks against that parameter
@@ -3904,18 +3917,20 @@ void Sema::defineVariable(const std::string &name, const std::string &type, bool
     scopeStack.back()[name] = VarInfo{canonIntType(type), isConst, false, isParam, currentFilePath};
 }
 
-std::string Sema::resolveVariable(const std::string &name)
+void Sema::recordUsage(const std::string& name, Node* at, const std::string& ref, const std::string& owner)
 {
-    // Every identifier reference Sema actually evaluates lands here.
-    // Record the position so `--symbols-json` can ship a usage table
-    // to the LSP for semantic find-references and rename. `lastNode`
-    // is set by checkExpression entry points to the LiteralNode that
-    // names the identifier, so its line/col is precise.
-    if (lastNode && lastNode->line > 0 &&
-        !(currentFunctionNode && currentFunctionNode->isSpecialization)) {
-        usages.push_back({name, currentScope,
-                          lastNode->filePath, lastNode->line, lastNode->col});
-    }
+    if (!at || at->line <= 0 || (currentFunctionNode && currentFunctionNode->isSpecialization)) return;
+    usages.push_back({name, currentScope, at->filePath, at->line, at->col, ref, owner});
+}
+
+std::string Sema::resolveVariable(const std::string &name, Node* at)
+{
+    // Every identifier reference Sema actually evaluates lands here, and
+    // is recorded for `--symbols-json`'s usage table (the LSP's references
+    // and rename): at `at`, the identifier's own node — `lastNode` is only
+    // a fallback (it's whatever was checked last: in `f(n)`, `n`), with
+    // what the name refers to (a local of this function, a top-level name).
+    Node* pos = at ? at : lastNode;
 
     // 1. Check local scopes first.
     // Single find() per scope avoids the double-lookup (count + [] pattern)
@@ -3924,6 +3939,7 @@ std::string Sema::resolveVariable(const std::string &name)
         auto it = scopeStack[i].find(name);
         if (it != scopeStack[i].end()) {
             it->second.used = true;
+            recordUsage(name, pos, (fnScopeBase >= 0 && i >= fnScopeBase) ? "local" : "module");
             return it->second.type;
         }
     }
@@ -3939,6 +3955,7 @@ std::string Sema::resolveVariable(const std::string &name)
         StructNode *s = structRegistry[name];
         if (!isVisible(name, s->moduleName, contextModule))
             fatalError("symbol '" + name + "' (from '" + s->moduleName + "') is not visible here — did you 'use' it?");
+        recordUsage(name, pos, "module");
         return name;
     }
 
@@ -3946,6 +3963,7 @@ std::string Sema::resolveVariable(const std::string &name)
     {
         if (!isVisible(name, f->moduleName, contextModule))
             fatalError("function '" + name + "' (from '" + f->moduleName + "') is not visible here — did you 'use' it?");
+        recordUsage(name, pos, "module");
         std::string ret = f->returnType;
         return ret.empty() ? "void" : ret;
     }
@@ -4093,6 +4111,25 @@ std::string Sema::resolveMember(const std::string &sName, const std::string &mNa
     };
 
     return searchMember(lookupName, searchMember);
+}
+
+std::string Sema::memberOwner(const std::string &sName, const std::string &mName)
+{
+    std::string lookupName = baseType(sName);
+    auto search = [&](const std::string& currentType, auto& self) -> std::string {
+        auto sIt = structRegistry.find(currentType);
+        if (sIt == structRegistry.end()) return "";
+        StructNode* st = sIt->second;
+        for (const auto& f : st->fields)
+            if (f.name == mName) return currentType;
+        if (findMethod(currentType, currentType + "_" + mName)) return currentType;
+        for (const std::string& parentName : st->parents) {
+            std::string res = self(parentName, self);
+            if (!res.empty()) return res;
+        }
+        return "";
+    };
+    return search(lookupName, search);
 }
 
 void Sema::checkWith(WithNode *node)

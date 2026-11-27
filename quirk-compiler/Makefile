@@ -208,7 +208,7 @@ STDLIB_TAG_io ?= v1.1.0
 # lsp (quirk-lsp: the protocol, a client and a server's Connection) and ls
 # (quirk-ls: the Quirk language server, `quirk lsp`), v7.81.0.
 STDLIB_TAG_lsp ?= v0.2.1
-STDLIB_TAG_ls ?= v0.5.1
+STDLIB_TAG_ls ?= v0.6.0
 STDLIB_TAG_web ?= v1.4.0
 STDLIB_TAG_live ?= v2.11.0
 

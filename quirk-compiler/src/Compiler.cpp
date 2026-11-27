@@ -2758,9 +2758,22 @@ int main(int argc, char* argv[]) {
         // find-references and rename without re-resolving.
         if (opts.symbolsJson) {
             emitSymbols(ast);
+            // Each use once (Sema can check an identifier twice), with
+            // what it refers to (7.82.0): `ref` "local" (of the function
+            // `scope`), "module", or "member" (of the struct `owner`).
+            std::set<std::string> seen;
             for (const auto& u : sema.usages) {
-                emitSymbol("usage", u.name, u.scope,
-                           u.filePath, u.line, u.col);
+                std::string key = u.name + "\x1f" + u.filePath + "\x1f" + std::to_string(u.line) + ":" + std::to_string(u.col);
+                if (!seen.insert(key).second) continue;
+                const std::string name = sourceTypeName(u.name);
+                if (name.rfind("__qa_", 0) == 0 || name.rfind("__qt_", 0) == 0 || name.rfind("__for_", 0) == 0) continue;
+                std::cout << "{\"kind\":\"usage\",\"name\":\"" << symJsonEscape(name)
+                          << "\",\"scope\":\"" << symJsonEscape(sourceTypeName(u.scope))
+                          << "\",\"file\":\"" << symJsonEscape(u.filePath)
+                          << "\",\"line\":" << u.line << ",\"col\":" << u.col;
+                if (!u.ref.empty()) std::cout << ",\"ref\":\"" << u.ref << "\"";
+                if (!u.owner.empty()) std::cout << ",\"owner\":\"" << symJsonEscape(sourceTypeName(u.owner)) << "\"";
+                std::cout << "}\n";
             }
             std::cout.flush();
         }

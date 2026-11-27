@@ -131,7 +131,8 @@ $(DRIVER): $(TARGET)
 # bump the version inline below and re-run.
 STDLIB_PACKAGES = \
 	argparse console crypto csv datetime debug encoding fs html io itertools live \
-	math net process prompt pty random regex sqlite statistics sys test time toml typing ui url uuid web window
+	math net process prompt pty random regex sqlite statistics sys test time toml typing ui url uuid web window \
+	lsp ls
 STDLIB_OWNER ?= AlexVachon
 STDLIB_TAG   ?= v1.0.0
 
@@ -204,6 +205,10 @@ STDLIB_TAG_sqlite ?= v1.1.0
 STDLIB_TAG_ui ?= v1.21.0
 # io v1.1.0: File.read_some / set_binary (a program talking over stdin: a language server), v7.80.0.
 STDLIB_TAG_io ?= v1.1.0
+# lsp (quirk-lsp: the protocol, a client and a server's Connection) and ls
+# (quirk-ls: the Quirk language server, `quirk lsp`), v7.81.0.
+STDLIB_TAG_lsp ?= v0.2.1
+STDLIB_TAG_ls ?= v0.5.0
 STDLIB_TAG_web ?= v1.4.0
 STDLIB_TAG_live ?= v2.11.0
 
@@ -248,6 +253,8 @@ bootstrap-stdlib:
 	        window) tag="$(STDLIB_TAG_window)" ;;                                 \
 	        ui)     tag="$(STDLIB_TAG_ui)"     ;;                                 \
 	        io)     tag="$(STDLIB_TAG_io)"     ;;                                 \
+	        lsp)    tag="$(STDLIB_TAG_lsp)"    ;;                                 \
+	        ls)     tag="$(STDLIB_TAG_ls)"     ;;                                 \
 	        web)    tag="$(STDLIB_TAG_web)"    ;;                                 \
 	        live)   tag="$(STDLIB_TAG_live)"   ;;                                 \
 	        sqlite) tag="$(STDLIB_TAG_sqlite)" ;;                                 \

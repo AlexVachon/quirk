@@ -70,7 +70,7 @@ static std::string self_binary();
 
 namespace qpm {
 
-constexpr const char* QUIRK_VERSION = "7.80.0";
+constexpr const char* QUIRK_VERSION = "7.81.0";
 
 namespace fs = std::filesystem;
 
@@ -1766,6 +1766,8 @@ static const std::map<std::string, std::string>& stdlib_registry() {
         {"io",         "github.com/AlexVachon/quirk-io"},
         {"itertools",  "github.com/AlexVachon/quirk-itertools"},
         {"live",       "github.com/AlexVachon/quirk-live"},
+        {"lsp",        "github.com/AlexVachon/quirk-lsp"},
+        {"ls",         "github.com/AlexVachon/quirk-ls"},
         {"math",       "github.com/AlexVachon/quirk-math"},
         {"net",        "github.com/AlexVachon/quirk-net"},
         {"process",    "github.com/AlexVachon/quirk-process"},
@@ -6603,6 +6605,7 @@ static const std::vector<CliCommand>& cli_commands() {
         {"",           "",                            "Also: `quirk <file.qk>`",      "RUN CODE", "",   "", "", false},
         {"eval",       "eval \"<code>\"",             "Run a one-liner",                 "RUN CODE", "-c", "", "", false},
         {"module",     "module <name>",               "Invoke a module's main()",        "RUN CODE", "-m", "", "", false},
+        {"lsp",        "lsp",                         "The Quirk language server, for an editor (stdin / stdout)", "RUN CODE", "", "", "", false},
         {"test",       "test [<path>...]",            "Run test_* functions in *_test.qk files", "RUN CODE", "t",  "", "", false},
         {"watch",      "watch <file.qk>",          "Run a script again on every save (= run --watch)",   "RUN CODE", "",   "", "", false},
         {"bundle",     "bundle <file.qk> [-o dist]", "A folder to deploy: the app, its runtime, its files (--docker)", "RUN CODE", "", "", "", false},
@@ -8515,6 +8518,12 @@ static std::string help_for(const std::string& cmdIn) {
         return "quirk eval \"<code>\"\n"
                "    Wrap a one-liner in `define main() { ... }` and run it.\n"
                "    Short form: quirk -c \"<code>\"\n";
+    if (cmd == "lsp")
+        return "quirk lsp\n"
+               "    The Quirk language server (quirk-ls, the stdlib's `ls` package), for an\n"
+               "    editor to run: it talks the Language Server Protocol over stdin / stdout.\n"
+               "    Diagnostics, hover, go to definition, the outline, completion, references\n"
+               "    and rename, from this compiler. The same as `quirk module ls`.\n";
     if (cmd == "module" || cmd == "-m")
         return "quirk module <name> [args...]\n"
                "    Import the named module and call its `main()`.\n"
@@ -9133,6 +9142,13 @@ inline bool dispatch(int& argc, char** argv, int& outRc) {
     else if (verb == "version")      outRc = cmd_version();
     else if (verb == "eval")         outRc = cmd_eval(verbArgs);
     else if (verb == "module")       outRc = cmd_module(verbArgs);
+    else if (verb == "lsp") {
+        // `quirk lsp`: the Quirk language server (the stdlib's `ls`, quirk-ls),
+        // for an editor to run and talk to over stdin / stdout (7.81.0).
+        std::vector<std::string> a{"ls"};
+        a.insert(a.end(), verbArgs.begin(), verbArgs.end());
+        outRc = cmd_module(a);
+    }
     else if (verb == "resolve")      outRc = cmd_resolve(verbArgs);
     else if (verb == "deps")         outRc = cmd_deps();
     else if (verb == "env")          outRc = cmd_env();

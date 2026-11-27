@@ -1,0 +1,41 @@
+// `quirk lsp` (7.81.0): the Quirk language server shipped with the stdlib
+// (quirk-ls, the `ls` package) answers an editor over stdin / stdout.
+use test
+use fs
+use sys
+use lsp
+
+define _ask(c: lsp.Client, method: String, params: Any) -> Any {
+    got := {}
+    c.request(method, params, fn(result, error) {
+        got["r"] = result
+        got["e"] = error
+    })
+    tries := 0
+    while not got.has("r") and tries < 6000 {
+        c.poll()
+        sleep(10)
+        tries = tries + 1
+    }
+    test.assert_true(got.has("r"), method + ": no answer")
+    return got["r"]
+}
+
+define test_quirk_lsp_answers() -> void {
+    dir := fs.temp_dir(prefix="quirk-lsp-")
+    path := fs.join(dir, "m.qk")
+    text := "define helper(n: Int) -> Int {\n    return n * 2\n}\n\ndefine main() -> void {\n    print(helper(3))\n}\n"
+    fs.write_text(path, text)
+    c := lsp.Client([sys.executable(), "lsp"], cwd=dir)
+    uri := "file://" + path
+    answer: Map = _ask(c, "initialize", {"processId": null, "rootUri": "file://" + dir, "capabilities": {}})
+    info: Map = answer["serverInfo"]
+    test.assert_eq(info["name"], "quirk-ls")
+    c.notify("textDocument/didOpen", {"textDocument": {"uri": uri, "languageId": "quirk", "version": 1, "text": text}})
+    h: Map = _ask(c, "textDocument/hover", {"textDocument": {"uri": uri}, "position": {"line": 5, "character": 11}})
+    contents: Map = h["contents"]
+    test.assert_true(String(contents["value"]).contains("define helper(n: Int) -> Int"))
+    _ask(c, "shutdown", null)
+    c.notify("exit", null)
+    c.close()
+}

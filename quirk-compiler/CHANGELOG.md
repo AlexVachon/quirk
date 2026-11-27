@@ -5,6 +5,19 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.81.0] — 2026-11-27 — `quirk lsp`, the Quirk language server
+
+- **`quirk lsp`** runs the Quirk language server, quirk-ls (written in
+  Quirk), for an editor to talk to over stdin / stdout: diagnostics
+  (`--check`), hover with docstrings, go to definition, the outline,
+  completion (members after `.`, the stdlib's extern methods too), find
+  references and rename. It asks the compiler that runs it. The same as
+  `quirk module ls`. Quirk IDE uses it for Quirk files.
+- **Two stdlib packages**: `ls` (quirk-ls 0.5.0, the server) and `lsp`
+  (0.2.1: the protocol, a client, and a server's `Connection` — to write a
+  language server in Quirk). `tests/lsp_server_test.quirk` starts
+  `quirk lsp` and asks it about a file.
+
 ## [7.80.0] — 2026-11-27 — stdin for a server; negative Ints in JSON
 
 - **`File.read_some(max)` and `File.set_binary()`** (io 1.1.0): up to

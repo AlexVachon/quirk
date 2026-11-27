@@ -5,6 +5,15 @@ All notable changes to Quirk land here. The format is loosely
 SemVer — minor bumps for new features, patches for fixes, major bumps
 only for breaking changes.
 
+## [7.83.0] — 2026-11-27 — fs.list_dir lists a program's built-in files
+
+- **`fs.list_dir` of a folder built into the program** (`quirk build` with
+  `embed = true`) listed nothing: reading its files worked, listing them
+  didn't. Quirk IDE (built that way) found no language configs in its
+  `assets/languages`, so Python files had no colours (and no language
+  server). The embedded entries are listed now, with the folder's own on
+  disk. `tools/check_bundle.sh` checks it.
+
 ## [7.82.0] — 2026-11-27 — exact usages in `--symbols-json`
 
 - **Each use of a name at its own place.** `--symbols-json`'s `usage`

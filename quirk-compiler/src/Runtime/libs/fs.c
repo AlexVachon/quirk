@@ -254,8 +254,22 @@ int64_t Fs_rename_raw(String* from, String* to) {
     return rename(a, b) == 0 ? 0 : -1;
 }
 
+int64_t quirk_embedded_list(const char* path, void (*add)(const char* name, void* ctx), void* ctx);
+
+// An embedded entry's name, unless the folder on disk had it too.
+static void fs__add_embedded(const char* name, void* ctx) {
+    List* list = (List*)ctx;
+    for (int64_t i = 0; i < list->size; i++) {
+        String* s = (String*)list->data[i];
+        if (s && s->buffer && strcmp(s->buffer, name) == 0) return;
+    }
+    Core_Collections_List_List_append(list, make_String((char*)name));
+}
+
 // List directory entries (NOT recursive). Skips "." and "..".
-// Returns a List<String> on success, an empty List on error.
+// Returns a List<String> on success, an empty List on error. The files
+// built into the program (`embed = true`) are entries too (7.83.0: a
+// program's built-in assets folder listed nothing).
 List* Fs_list_dir(String* path) {
     char* p = make_safe_cstr(path);
     List* result = fs__new_list();
@@ -266,24 +280,27 @@ List* Fs_list_dir(String* path) {
     snprintf(pattern, sizeof(pattern), "%s\\*", p);
     WIN32_FIND_DATAA fd;
     HANDLE h = FindFirstFileA(pattern, &fd);
-    if (h == INVALID_HANDLE_VALUE) return result;
-    do {
-        const char* name = fd.cFileName;
-        if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) continue;
-        Core_Collections_List_List_append(result, make_String((char*)name));
-    } while (FindNextFileA(h, &fd));
-    FindClose(h);
+    if (h != INVALID_HANDLE_VALUE) {
+        do {
+            const char* name = fd.cFileName;
+            if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) continue;
+            Core_Collections_List_List_append(result, make_String((char*)name));
+        } while (FindNextFileA(h, &fd));
+        FindClose(h);
+    }
 #else
     DIR* d = opendir(p);
-    if (!d) return result;
-    struct dirent* entry;
-    while ((entry = readdir(d)) != NULL) {
-        const char* name = entry->d_name;
-        if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) continue;
-        Core_Collections_List_List_append(result, make_String((char*)name));
+    if (d) {
+        struct dirent* entry;
+        while ((entry = readdir(d)) != NULL) {
+            const char* name = entry->d_name;
+            if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) continue;
+            Core_Collections_List_List_append(result, make_String((char*)name));
+        }
+        closedir(d);
     }
-    closedir(d);
 #endif
+    quirk_embedded_list(p, fs__add_embedded, result);
     return result;
 }
 

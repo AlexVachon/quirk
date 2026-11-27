@@ -170,3 +170,46 @@ int quirk_embedded_dir(const char* path) {
         if (strncmp(q_embedded[i].path, k, kn) == 0 && q_embedded[i].path[kn] == '/') return 1;
     return 0;
 }
+
+// The entries directly in the embedded folder `path` (files and folders,
+// each once): `add(name, ctx)` for each. How many. (fs.list_dir lists them
+// with the folder's own on disk: a program's built-in assets/languages.)
+int64_t quirk_embedded_list(const char* path, void (*add)(const char* name, void* ctx), void* ctx) {
+    if (!q_embedded || !path) return 0;
+    quirk_embedded(path, NULL);                     // (finds the program's folder, the current one)
+    char key[4096];
+    snprintf(key, sizeof key, "%s", path);
+    q_embed_slashes(key);
+    q_embed_normalize(key);
+    q_embed_canon(key);
+    const char* k = key;
+    if (q_embed_exe_dir[0]) { const char* r = q_embed_strip(k, q_embed_exe_dir); if (r) k = r; }
+    if (q_embed_cwd[0]) { const char* r = q_embed_strip(k, q_embed_cwd); if (r) k = r; }
+    if (strcmp(k, ".") == 0) k = "";
+    size_t kn = strlen(k);
+    int64_t n = 0;
+    char seen[256][256];
+    int nseen = 0;
+    for (int64_t i = 0; i < q_embedded_n; i++) {
+        const char* e = q_embedded[i].path;
+        const char* rest = NULL;
+        if (kn == 0) rest = e;
+#ifdef _WIN32
+        else if (_strnicmp(e, k, kn) == 0 && e[kn] == '/') rest = e + kn + 1;
+#else
+        else if (strncmp(e, k, kn) == 0 && e[kn] == '/') rest = e + kn + 1;
+#endif
+        if (!rest || !*rest) continue;
+        char name[256];
+        size_t j = 0;
+        while (rest[j] && rest[j] != '/' && j < sizeof name - 1) { name[j] = rest[j]; j++; }
+        name[j] = '\0';
+        int dup = 0;
+        for (int s2 = 0; s2 < nseen; s2++) if (strcmp(seen[s2], name) == 0) { dup = 1; break; }
+        if (dup) continue;
+        if (nseen < 256) snprintf(seen[nseen++], sizeof seen[0], "%s", name);
+        add(name, ctx);
+        n++;
+    }
+    return n;
+}

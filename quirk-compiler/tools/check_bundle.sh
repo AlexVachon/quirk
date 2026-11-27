@@ -102,7 +102,8 @@ use sys
 define main() -> void {
     here := fs.dirname(String(sys.argv()[0]))
     print(fs.read_text("assets/msg.txt").trim() + " " + fs.read_text(fs.join(here, "./assets/sub/x.txt")).trim()
-          + " " + String(fs.is_dir("assets")) + " " + String(fs.size("assets/msg.txt")) + " " + String(fs.exists("assets/no.txt")))
+          + " " + String(fs.is_dir("assets")) + " " + String(fs.size("assets/msg.txt")) + " " + String(fs.exists("assets/no.txt"))
+          + " " + String(fs.list_dir(fs.join(here, "assets")).sort()))
 }
 Q
 built=$(cd "$proj/elsewhere" && "$QUIRK" build 2>&1)
@@ -111,7 +112,7 @@ bin="$proj/out/built-app"
 [ -x "$bin" ] && ok "quirk build: the app from [build]" || fail "quirk build: $built"
 [ ! -e "$proj/out/assets" ] && [ ! -e "$(dirname "$bin")/assets" ] && ok "embed: no assets/ copied" || fail "assets/ was copied"
 got=$(cd / && env -i PATH=/usr/bin:/bin "$bin" 2>&1)
-[ "$got" = "inside deep true 7 false" ] && ok "embed: the files read from the program, run from anywhere" || fail "embedded files: $got"
+[ "$got" = "inside deep true 7 false [msg.txt, sub]" ] && ok "embed: the files read from the program (and listed), run from anywhere" || fail "embedded files: $got"
 grep -q '^embed = true$' "$proj/quirk.toml" && ok "quirk.toml keeps [build]" || fail "[build] lost"
 
 notpng=$(cd "$desk" && "$QUIRK" bundle main.qk -o "$work/bad" --icon main.qk 2>&1)
